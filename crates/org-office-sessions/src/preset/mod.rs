@@ -14,10 +14,9 @@ mod policy;
 mod shell;
 mod targets;
 
-use paths::*;
-use policy::*;
-use shell::*;
-use targets::*;
+use paths::{all_targets_within_writable_roots, build_deny_strings};
+use policy::{evaluate_allow_policy, matches_any_deny, request_in_allowed_tools};
+use targets::{collect_json_strings, extract_concrete_file_targets};
 
 /// Effective configuration derived from a [`PermissionPreset`] and sandbox toggle.
 #[derive(Debug, Clone)]

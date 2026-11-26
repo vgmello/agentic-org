@@ -35,6 +35,7 @@ use crate::runtime_registry::RuntimeRegistry;
 use crate::wake::{PendingWakeItem, SuspendedAskEntry, WakeHoldReason, WakeKind, WakeOutcome};
 
 mod failover;
+mod start_races;
 
 #[derive(Default)]
 struct PoolRecorded {

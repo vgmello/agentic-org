@@ -10,8 +10,9 @@ use org_agent_runtime::{
 use org_proto::sessions::{PendingApprovalView, SessionState};
 use org_supervise::StopMode;
 
-use crate::credentials::{format_rfc3339_ms, now_ms, redact_secrets, rfc3339_now};
+use crate::credentials::{format_rfc3339_ms, now_ms, rfc3339_now};
 use crate::preset::{decide_escalation_with_roots, EscalationDisposition};
+use crate::redact::redact_text;
 
 use super::{persist_turn_update, PumpContext, SessionRuntimeState};
 
@@ -37,7 +38,7 @@ pub(super) fn handle_approval_request(
         EscalationDisposition::AutoDeny { reason } => Some(Control::Answer {
             request_id: req.id.clone(),
             decision: Decision::Deny {
-                message: Some(redact_secrets(&reason, active_tokens)),
+                message: Some(redact_text(&reason, active_tokens)),
                 stop_turn: false,
             },
         }),
@@ -45,9 +46,9 @@ pub(super) fn handle_approval_request(
             state.state = SessionState::WaitingApproval;
             state.pending_approvals.push(PendingApprovalView {
                 approval_id: req.id.as_str().to_owned(),
-                tool: redact_secrets(&req.tool, active_tokens),
+                tool: redact_text(&req.tool, active_tokens),
                 escalation: escalation_label(req.effective_escalation()).to_owned(),
-                reason: Some(redact_secrets(&warning, active_tokens)),
+                reason: Some(redact_text(&warning, active_tokens)),
                 requested_at: format_rfc3339_ms(now_ms()),
             });
             None

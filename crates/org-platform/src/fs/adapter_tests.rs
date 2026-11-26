@@ -169,6 +169,83 @@ fn owner_only_dir_tightens_mode_to_0700() {
     set_owner_only_dir(&child).unwrap();
     let mode = fs::symlink_metadata(&child).unwrap().mode() & 0o7777;
     assert_eq!(mode, 0o700);
+
+    // Special bits are cleared and a trailing `/` or `/.` still names the real directory.
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o2775)).unwrap();
+    set_owner_only_dir(&directory.path().join("private/.")).unwrap();
+    assert_eq!(fs::symlink_metadata(&child).unwrap().mode() & 0o7777, 0o700);
+}
+
+#[test]
+fn owner_only_dir_refuses_symlinks_without_touching_their_target() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("victim");
+    fs::create_dir(&target).unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+    let link = directory.path().join("link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let dangling = directory.path().join("dangling");
+    std::os::unix::fs::symlink(directory.path().join("missing"), &dangling).unwrap();
+    let looping = directory.path().join("loop");
+    std::os::unix::fs::symlink(&looping, &looping).unwrap();
+
+    // `lstat("link/")` would resolve the link; the trailing slash must not let it through.
+    let link_slash = {
+        let mut raw = link.as_os_str().to_owned();
+        raw.push("/");
+        std::path::PathBuf::from(raw)
+    };
+    for refused in [&link, &link_slash, &link.join("."), &dangling, &looping] {
+        assert!(
+            set_owner_only_dir(refused).is_err(),
+            "{} must be refused",
+            refused.display()
+        );
+    }
+    assert_eq!(
+        fs::symlink_metadata(&target).unwrap().mode() & 0o7777,
+        0o755,
+        "the symlink target's mode must never change"
+    );
+}
+
+#[test]
+fn owner_only_dir_refuses_files_fifos_and_missing_paths() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("file");
+    fs::write(&file, b"x").unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+    let fifo = directory.path().join("fifo");
+    let c_fifo = c_path(&fifo);
+    // SAFETY: `c_fifo` is a NUL-terminated path that outlives the call.
+    assert_eq!(unsafe { libc::mkfifo(c_fifo.as_ptr(), 0o644) }, 0);
+    let fifo_mode = fs::symlink_metadata(&fifo).unwrap().mode();
+
+    // A FIFO must fail fast (`O_NONBLOCK`) rather than block the open.
+    for refused in [&file, &fifo, &directory.path().join("missing")] {
+        assert!(
+            set_owner_only_dir(refused).is_err(),
+            "{}",
+            refused.display()
+        );
+    }
+    assert_eq!(fs::symlink_metadata(&file).unwrap().mode() & 0o7777, 0o644);
+    assert_eq!(fs::symlink_metadata(&fifo).unwrap().mode(), fifo_mode);
+}
+
+#[test]
+fn owner_only_dir_refuses_a_directory_owned_by_another_account() {
+    if super::effective_uid().unwrap() == 0 {
+        // Root owns `/`; never risk tightening it.
+        return;
+    }
+    let root = Path::new("/");
+    let before = fs::symlink_metadata(root).unwrap().mode();
+    let err = set_owner_only_dir(root).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
+    assert_eq!(fs::symlink_metadata(root).unwrap().mode(), before);
 }
 
 #[test]

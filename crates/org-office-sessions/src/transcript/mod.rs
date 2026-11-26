@@ -11,11 +11,8 @@ pub mod codex;
 pub mod redact;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
 
 use org_proto::sessions::{
     FileEventKind, FileTouchSummary, SessionListResult, SessionSummaryView,
@@ -28,7 +25,7 @@ use crate::credentials::format_rfc3339_ms;
 
 mod discover;
 
-use discover::*;
+use discover::{discover_sessions, read_bounded_utf8, read_prefix_utf8};
 
 /// Maximum bytes read from one transcript file (8 MiB).
 pub const MAX_TRANSCRIPT_READ_BYTES: u64 = 8 * 1024 * 1024;

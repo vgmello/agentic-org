@@ -1,6 +1,18 @@
 //! Usage endpoint resolution and strict URL, authority, IP, and header validation.
 
-use super::*;
+use std::net::IpAddr;
+
+use org_office::accounting::canonical_provider_namespace;
+use org_office::organization_family::records::ProviderConnection;
+use org_proto::{ApiError, ErrorCode};
+
+use crate::redact::redact_text;
+
+use super::parse::parse_provider_payload;
+use super::{
+    HttpUsageResponse, SubscriptionUsageCollectOutcome, UsageTransportError,
+    DEFAULT_ANTHROPIC_USAGE_URL, DEFAULT_OPENAI_USAGE_URL, MAX_USAGE_SECRET_BYTES,
+};
 
 /// Validated canonical HTTPS authority extracted by [`validate_usage_endpoint_url`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,7 +162,7 @@ pub(super) fn classify_http_and_parse(
         },
         code => SubscriptionUsageCollectOutcome::Unavailable {
             issue_code: "PROVIDER_UNAVAILABLE".into(),
-            message: redact_secrets(
+            message: redact_text(
                 &format!("Provider usage endpoint returned HTTP {code}."),
                 &[token],
             ),

@@ -3,6 +3,14 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+/// `true` when `path` lies inside a forbidden root or contains one (`TASK-190`, rules §3.1): a
+/// host cache at `/home` would expose every agent home below it, as `sandbox_rules` checks.
+fn overlaps_any_root(path: &Path, roots: &[PathBuf]) -> bool {
+    roots
+        .iter()
+        .any(|root| path.starts_with(root) || root.starts_with(path))
+}
+
 /// Points `<agent_home>/.cargo/<name>` at a host read-only cache directory, relative to the
 /// already-verified `.cargo` descriptor. Refuses a target under a forbidden root.
 pub(super) fn link_readonly_cache(
@@ -17,10 +25,7 @@ pub(super) fn link_readonly_cache(
     let Ok(resolved_target) = target.canonicalize() else {
         return false;
     };
-    if forbidden_canon
-        .iter()
-        .any(|root| resolved_target.starts_with(root))
-    {
+    if overlaps_any_root(&resolved_target, forbidden_canon) {
         return false;
     }
     // An existing real directory is the agent's own cache and is kept; a regular file is refused.
@@ -156,10 +161,7 @@ pub(crate) fn host_rust_dir_env_from(
         .iter()
         .map(|p| canonicalize_with_tail(p))
         .collect();
-    if forbidden_canon
-        .iter()
-        .any(|root| resolved.starts_with(root))
-    {
+    if overlaps_any_root(&resolved, &forbidden_canon) {
         return None;
     }
     Some(resolved.into_os_string())

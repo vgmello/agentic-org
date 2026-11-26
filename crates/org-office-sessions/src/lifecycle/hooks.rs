@@ -119,9 +119,7 @@ impl SessionManager {
                 let office = Arc::clone(&self.office);
                 let emp = employee_id.to_owned();
                 Arc::new(move || {
-                    crate::bwrap_isolation::has_unmasked_bwrap_sibling_in_office(
-                        &office, &emp, &masked,
-                    )
+                    crate::manager::has_unmasked_bwrap_sibling_in_office(&office, &emp, &masked)
                 }) as crate::pump::BwrapTopologyStaleHook
             });
 

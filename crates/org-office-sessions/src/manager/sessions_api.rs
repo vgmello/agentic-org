@@ -47,13 +47,13 @@ impl SessionManager {
             .instruction
             .as_deref()
             .map(|text| build_objective_text(&employee, actor_member_id, text));
-        let (live_view, finished_handle) =
+        let reservation =
             self.reserve_start_or_send(&employee, initial_obj, None, params.workspace.as_deref())?;
-        if let Some(view) = live_view {
+        if let Some(view) = reservation.live_view {
             return Ok(view);
         }
-        let _guard = StartSlotGuard::new(&self.registry, emp_id.to_owned());
-        reap_replaced_handle(self, emp_id, finished_handle)?;
+        let slot = StartSlotGuard::new(&self.registry, emp_id.to_owned());
+        reap_replaced_handle(self, emp_id, reservation.finished_handle)?;
         self.check_not_recovery_required(emp_id)?;
         self.clear_persisted_stall_only(emp_id);
         let tokens = self.bindings.active_tokens();
@@ -69,8 +69,14 @@ impl SessionManager {
             }),
             &refs,
         );
-        let prepared = self.prepare_and_spawn(actor_member_id, &employee, params, None)?;
-        self.install_live_session(prepared)
+        let prepared = self.prepare_and_spawn(
+            actor_member_id,
+            &employee,
+            params,
+            None,
+            reservation.start_stop_epoch,
+        )?;
+        self.install_live_session(prepared, slot)
     }
 
     /// Starts or resumes a supervised session autonomously (C6 required-ask resume, C8 peer wake,
@@ -91,16 +97,16 @@ impl SessionManager {
             instruction: Some(objective.clone()),
             workspace: None,
         };
-        let (live_view, finished_handle) =
+        let reservation =
             self.reserve_start_or_send(employee, Some(objective.clone()), task_ref, None)?;
-        if let Some(view) = live_view {
+        if let Some(view) = reservation.live_view {
             let tokens = self.bindings.active_tokens();
             let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
             let _ = self.store.append_history(emp_id, &trigger_entry, &refs);
             return Ok(view);
         }
-        let _guard = StartSlotGuard::new(&self.registry, emp_id.to_owned());
-        reap_replaced_handle(self, emp_id, finished_handle)?;
+        let slot = StartSlotGuard::new(&self.registry, emp_id.to_owned());
+        reap_replaced_handle(self, emp_id, reservation.finished_handle)?;
         self.check_not_blocked(emp_id)?;
         let tokens = self.bindings.active_tokens();
         let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
@@ -111,8 +117,9 @@ impl SessionManager {
             objective,
             resume_runtime_session_id,
             task_ref,
+            reservation.start_stop_epoch,
         )?;
-        self.install_live_session(prepared)
+        self.install_live_session(prepared, slot)
     }
 
     /// Inspects an agent's live or last session (`CLI-9`). Agents may only inspect themselves.

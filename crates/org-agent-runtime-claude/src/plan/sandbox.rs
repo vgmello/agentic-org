@@ -82,39 +82,66 @@ fn apply_linux_bwrap_sandbox_rules(
         // Linux `bwrap` mounts `--tmpfs <dir>` cleanly on concrete directory paths, whereas
         // `dir/**` causes `@anthropic-ai/sandbox-runtime` to walk inside denied directories and
         // follow symlinks (e.g. a sibling agent's `.cargo/registry`, `TASK-163`). Strip trailing
-        // `/**`/`/*` on concrete non-wildcard prefixes in `denyRead` so bwrap masks the directory
-        // atomically at its boundary.
-        *deny_read = normalize_linux_bwrap_deny_read(std::mem::take(deny_read));
+        // `/**`/`/*` on concrete non-wildcard prefixes in `denyRead` and `denyWrite` so bwrap
+        // masks the directory atomically at its boundary (`TASK-190`).
+        *deny_read = normalize_linux_bwrap_concrete_globs(std::mem::take(deny_read));
         // Linux `bwrap` mounts `/` read-only (`--ro-bind / /`) and only `allowWrite` roots are
         // writable. Omitting `denyWrite` entries outside `allowWrite` keeps write protection
         // intact while preventing `@anthropic-ai/sandbox-runtime` from creating 0-byte `0444`
         // regular files on the real host for absent paths (`TASK-144`). Full write denies remain
         // enforced in `permissions.deny` and the office approval bridge.
-        *deny_write = filter_linux_bwrap_deny_write(std::mem::take(deny_write), writable);
+        let kept = filter_linux_bwrap_deny_write(std::mem::take(deny_write), writable);
+        *deny_write = normalize_linux_bwrap_concrete_globs(kept);
     }
 }
 
-pub(super) fn strip_concrete_dir_glob(raw: &str) -> &str {
-    raw.strip_suffix("/**")
-        .or_else(|| raw.strip_suffix("/*"))
-        .filter(|prefix| {
-            !prefix.is_empty()
-                && !prefix.contains('*')
-                && !prefix.contains('?')
-                && !prefix.contains('[')
-        })
-        .unwrap_or(raw)
+/// `raw` without trailing `/` and without any run of trailing `/**` segments, and whether at
+/// least one `/**` was removed. Callers append at most one `/**` back, so a malformed
+/// `dir/**/**` can never be emitted (`TASK-190`).
+pub(super) fn split_trailing_globstar(raw: &str) -> (&str, bool) {
+    let mut base = raw.trim_end_matches('/');
+    let mut had_globstar = false;
+    while let Some(stripped) = base.strip_suffix("/**") {
+        base = stripped.trim_end_matches('/');
+        had_globstar = true;
+    }
+    (base, had_globstar)
 }
 
-fn normalize_linux_bwrap_deny_read(deny_read: Vec<String>) -> Vec<String> {
-    let mut out = Vec::with_capacity(deny_read.len());
-    for entry in deny_read {
-        let stripped = strip_concrete_dir_glob(&entry);
-        let candidate = if stripped.len() == entry.len() {
-            entry
-        } else {
-            stripped.to_owned()
-        };
+/// `true` for a non-empty path with no glob metacharacters.
+pub(super) fn is_concrete_path(path: &str) -> bool {
+    !path.is_empty() && !path.contains(['*', '?', '['])
+}
+
+/// Linux `bwrap` form of a deny pattern: a concrete `dir/**` or `dir/*` becomes `dir`, so
+/// `@anthropic-ai/sandbox-runtime` masks the directory atomically at its boundary instead of
+/// walking inside it and following symlinks into sibling homes (`TASK-163`, `TASK-190`). A
+/// wildcard pattern keeps exactly one trailing `/**` (or its `/*`); the root is left alone.
+pub(super) fn normalize_bwrap_pattern(raw: &str) -> String {
+    let (base, had_globstar) = split_trailing_globstar(raw);
+    let (base, had_star) = match base.strip_suffix("/*") {
+        Some(dir) if !had_globstar => (dir.trim_end_matches('/'), true),
+        _ => (base, false),
+    };
+    if base.is_empty() {
+        return raw.to_owned();
+    }
+    if is_concrete_path(base) {
+        return base.to_owned();
+    }
+    if had_globstar {
+        format!("{base}/**")
+    } else if had_star {
+        format!("{base}/*")
+    } else {
+        base.to_owned()
+    }
+}
+
+fn normalize_linux_bwrap_concrete_globs(patterns: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(patterns.len());
+    for entry in patterns {
+        let candidate = normalize_bwrap_pattern(&entry);
         if !out.iter().any(|existing| existing == &candidate) {
             out.push(candidate);
         }
@@ -201,7 +228,8 @@ fn build_sandbox_network_json(
 mod tests {
     use super::{
         append_linux_privileged_socket_denies, build_sandbox_network_json,
-        filter_linux_bwrap_deny_write, normalize_linux_bwrap_deny_read,
+        filter_linux_bwrap_deny_write, normalize_bwrap_pattern,
+        normalize_linux_bwrap_concrete_globs, split_trailing_globstar,
     };
     use org_agent_runtime::SpecPath;
     use serde_json::json;
@@ -244,7 +272,7 @@ mod tests {
 
         // `TASK-163`: concrete `dir/**` entries normalize to `dir` (deduplicated) while wildcard
         // patterns like `/run/user/*/systemd/**` stay intact.
-        let normalized = normalize_linux_bwrap_deny_read(vec![
+        let normalized = normalize_linux_bwrap_concrete_globs(vec![
             "/office/agents/sibling-1/**".into(),
             "/office/agents/sibling-1".into(),
             "/office/durable/state/**".into(),
@@ -260,6 +288,31 @@ mod tests {
                 "/home/agents/.cargo/credentials.toml",
             ]
         );
+    }
+
+    #[test]
+    fn trailing_globstars_collapse_and_bwrap_drops_them_only_on_concrete_dirs() {
+        assert_eq!(split_trailing_globstar("/a/b/**/**/"), ("/a/b", true));
+        assert_eq!(split_trailing_globstar("/a/b/"), ("/a/b", false));
+        assert_eq!(split_trailing_globstar("/a/*/b/**"), ("/a/*/b", true));
+        assert_eq!(split_trailing_globstar("/**"), ("", true));
+        for (raw, expected) in [
+            ("/office/agents/sib/**/**", "/office/agents/sib"),
+            ("/office/agents/sib/**", "/office/agents/sib"),
+            ("/office/agents/sib/*", "/office/agents/sib"),
+            ("/office/agents/sib/", "/office/agents/sib"),
+            ("/office/offices/*/**/**", "/office/offices/*/**"),
+            ("/run/user/*/bus", "/run/user/*/bus"),
+            ("/**", "/**"),
+        ] {
+            assert_eq!(normalize_bwrap_pattern(raw), expected, "{raw}");
+        }
+        let normalized = normalize_linux_bwrap_concrete_globs(vec![
+            "/work/t-1/.git/hooks/**".into(),
+            "/work/t-1/.git/hooks".into(),
+            "/work/t-1/.git/hooks/**/**".into(),
+        ]);
+        assert_eq!(normalized, vec!["/work/t-1/.git/hooks"]);
     }
 
     #[test]

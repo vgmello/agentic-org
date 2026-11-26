@@ -1,22 +1,10 @@
 //! Wrapped provider credential custody and browser-driven CLI enrollment (`ADR-0032`,
 //! `ENROLL-1..6`, `FC-189`).
 
-use std::collections::HashMap;
 use std::fmt;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use org_pki::wrap::{
-    derive_wrapping_key, unwrap_provider_credential, wrap_provider_credential, KeyClass,
-    ProviderCredentialBinding, WrapError,
-};
-use org_proto::costs::SubscriptionUsageCredentialView;
-use org_proto::sessions::{EnrollmentSessionView, EnrollmentState, ProviderCredentialView};
+use org_pki::wrap::WrapError;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -24,8 +12,10 @@ use zeroize::Zeroizing;
 mod enrollment;
 mod vault;
 
-pub use enrollment::*;
-pub use vault::*;
+pub use enrollment::{
+    CliEnrollmentDriver, EnrollmentDriver, EnrollmentManager, EnrollmentOutcome, EnrollmentPrompt,
+};
+pub use vault::CredentialVault;
 
 /// Default enrollment timeout: 15 minutes (`ADR-0032` / `ENROLL-4`).
 pub const DEFAULT_ENROLLMENT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
@@ -97,62 +87,11 @@ pub struct CredentialMetadata {
     pub wrapped_b64: String,
 }
 
-/// Redacts all known active secret values and recognizable provider token prefixes (`ENROLL-3`).
+/// Redacts active secrets and every known secret shape (`ENROLL-3`). Kept for callers of the
+/// public credentials API; it is the crate's single redaction choke-point,
+/// [`crate::redact::redact_text`], and nothing else.
 pub fn redact_secrets(text: &str, active_secrets: &[&str]) -> String {
-    let mut out = text.to_owned();
-    for secret in active_secrets {
-        if !secret.is_empty() && secret.len() >= 6 {
-            out = out.replace(secret, "[REDACTED]");
-        }
-    }
-    for prefix in [
-        "sk-ant-oat",
-        "sk-ant-api",
-        "sk-ant-ort",
-        "sk-proj-",
-        "sk-svcacct-",
-        "sk-admin-",
-        "AIza",
-        "gho_",
-        "ghp_",
-    ] {
-        out = redact_prefixed_tokens(&out, prefix);
-    }
-    redact_bearer_tokens(&out)
-}
-
-fn redact_prefixed_tokens(input: &str, prefix: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut rest = input;
-    while let Some(idx) = rest.find(prefix) {
-        result.push_str(&rest[..idx]);
-        result.push_str("[REDACTED]");
-        let after = &rest[idx + prefix.len()..];
-        let token_len = after
-            .bytes()
-            .take_while(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
-            .count();
-        rest = &after[token_len..];
-    }
-    result.push_str(rest);
-    result
-}
-
-fn redact_bearer_tokens(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut rest = input;
-    while let Some(idx) = rest.find("Bearer ") {
-        result.push_str(&rest[..idx]);
-        result.push_str("Bearer [REDACTED]");
-        let after = &rest[idx + "Bearer ".len()..];
-        let token_len = after
-            .bytes()
-            .take_while(|b| !b.is_ascii_whitespace() && *b != b'"' && *b != b'\'')
-            .count();
-        rest = &after[token_len..];
-    }
-    result.push_str(rest);
-    result
+    crate::redact::redact_text(text, active_secrets)
 }
 
 /// Validates a pasted callback/auth code from the browser (`ENROLL-2`): strictly printable ASCII,

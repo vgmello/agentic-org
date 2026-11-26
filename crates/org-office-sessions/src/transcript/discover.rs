@@ -1,6 +1,18 @@
 //! Bounded, symlink-safe discovery of runtime session and sub-agent transcript files.
 
-use super::*;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
+
+use org_proto::sessions::TranscriptFormat;
+use serde_json::Value;
+
+use super::{
+    agy, is_safe_session_id, DiscoveredSession, SubagentFile, MAX_META_READ_BYTES,
+    MAX_TRANSCRIPT_READ_BYTES, MAX_WALK_DEPTH,
+};
 
 pub(super) fn discover_sessions(canon_home: &Path) -> Vec<DiscoveredSession> {
     let mut out = Vec::new();

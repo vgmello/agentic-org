@@ -457,3 +457,62 @@ fn provider_alias_and_custom_query_endpoint_path_joining() {
         Some(1_250)
     );
 }
+
+#[test]
+fn transport_and_endpoint_failure_messages_are_redacted() {
+    use crate::redact::testing::{assert_no_corpus_secret, secret_corpus};
+
+    let fx = SubUsageFixture::new();
+    let conn_id = fx.create_connection(
+        "claude-redact",
+        "anthropic",
+        ProviderAuthMode::SubscriptionCli,
+        Some("sub-anthropic-redact"),
+        None,
+    );
+    enroll_claude_fallback(&fx, &conn_id, b"sk-ant-oat-redact-fallback-12345");
+    let corpus = secret_corpus();
+    let leaked = corpus.text.clone();
+    fx.transport
+        .on_url("https://api.anthropic.com/api/oauth/usage", move |_, _| {
+            Err(UsageTransportError::Unavailable(format!(
+                "upstream failure: {leaked}"
+            )))
+        });
+    let unavailable = fx
+        .mgr
+        .subscription_usage_collect(
+            &fx.owner,
+            CostSubscriptionUsageCollectParams {
+                connection_id: Some(conn_id.clone()),
+                time_zone: None,
+            },
+        )
+        .unwrap();
+    let snapshot = &unavailable.snapshots[0];
+    assert_eq!(snapshot.status, SubscriptionUsageStatus::Unavailable);
+    let message = snapshot.message.as_deref().unwrap_or_default();
+    assert!(message.contains("upstream failure"), "{message}");
+    assert_no_corpus_secret(&corpus, message, "subscription_usage transport error");
+    assert!(!message.contains("redact-fallback-12345"), "{message}");
+
+    let leaked = corpus.text.clone();
+    fx.transport
+        .on_url("https://api.anthropic.com/api/oauth/usage", move |_, _| {
+            Err(UsageTransportError::InvalidEndpoint(format!(
+                "bad endpoint: {leaked}"
+            )))
+        });
+    let invalid = fx
+        .mgr
+        .subscription_usage_collect(
+            &fx.owner,
+            CostSubscriptionUsageCollectParams {
+                connection_id: Some(conn_id),
+                time_zone: None,
+            },
+        )
+        .unwrap();
+    let message = invalid.snapshots[0].message.as_deref().unwrap_or_default();
+    assert_no_corpus_secret(&corpus, message, "subscription_usage endpoint error");
+}

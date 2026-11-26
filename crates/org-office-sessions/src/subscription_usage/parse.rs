@@ -12,7 +12,7 @@ use org_proto::costs::{SubscriptionModelUsageView, SubscriptionUsageWindowView};
 use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 
-use crate::credentials::redact_secrets;
+use crate::redact::redact_text;
 use crate::subscription_usage::SubscriptionUsageCollectOutcome;
 
 const MAX_RFC3339_EPOCH_SECS: u64 = 253_402_300_799; // 9999-12-31T23:59:59Z
@@ -638,5 +638,5 @@ fn reflects_secret(text: &str, token: &str) -> bool {
     if !token.is_empty() && text.contains(token) {
         return true;
     }
-    redact_secrets(text, &[token]) != text
+    redact_text(text, &[token]) != text
 }

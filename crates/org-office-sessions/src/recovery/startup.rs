@@ -1,7 +1,17 @@
 //! Pending-start and active-turn records, history, and startup recovery scanning
 //! (`LIVE-9..13`, `ADR-0030`).
 
-use super::*;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::os::unix::fs::OpenOptionsExt;
+
+use crate::redact::redact_json;
+
+use super::{
+    ensure_owner_dirs, is_safe_id, read_optional_json, rfc3339_now, write_atomic_json,
+    ActiveTurnRecord, PendingStartRecord, ProcessExitOracle, RecoveryAction, RecoveryReport,
+    SessionStore, MAX_RESUME_ATTEMPTS,
+};
 
 impl SessionStore {
     pub fn write_pending_start(&self, record: &PendingStartRecord) -> io::Result<()> {
@@ -106,8 +116,10 @@ impl SessionStore {
     ) -> io::Result<()> {
         let dir = self.employee_dir(employee_id)?;
         ensure_owner_dirs(&dir)?;
-        let raw = serde_json::to_string(entry).map_err(io::Error::other)?;
-        let redacted = redact_secrets(&raw, active_secrets);
+        // Redact structurally, then serialize: every string (and every value under a secret
+        // key) goes through the choke-point and the line always stays valid JSON.
+        let redacted =
+            serde_json::to_string(&redact_json(entry, active_secrets)).map_err(io::Error::other)?;
         let path = self.history_path(employee_id)?;
         let mut file = OpenOptions::new()
             .create(true)

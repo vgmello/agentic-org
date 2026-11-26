@@ -1,7 +1,16 @@
 //! Warm-session route digests (config, topology, worktree sandbox) and warm turn-permit
 //! acquisition (`doc-88` §6, `AE-04`, `AE-11`).
 
-use super::*;
+use org_office::organization_family::records::ProviderConnection;
+use org_office::providers::PermitAcquireOutcome;
+use org_office::Office;
+use org_proto::providers::PermitAuthority;
+use org_proto::{ApiError, ErrorCode};
+
+use super::{
+    check_local_readiness, hex_short_sha256, permit_authority_for, HqPermitAcquireSpec,
+    HqPermitCoordinator,
+};
 
 /// Outcome of attempting to re-acquire a turn permit on an idle warm session's existing connection.
 #[derive(Debug)]
