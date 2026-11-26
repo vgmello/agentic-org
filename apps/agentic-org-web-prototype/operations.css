@@ -3415,6 +3415,10 @@ html[data-theme="report"] .assembly-release {
 @media (max-width: 639px) {
   .work-toolbar .work-cal-btn > span { display: none; }
   .work-toolbar .menu-textbtn { padding-inline: 8px; }
+  /* Layout toggle and New task share a row; search, filter and display go on the next */
+  .work-toolbar > .work-layout-toggle { order: 1; }
+  .work-toolbar > .work-tb-end { order: 2; }
+  .work-toolbar > :not(.primary-tab-row, .work-layout-toggle, .work-tb-end) { order: 3; }
 }
 .board-lanes { display: none; }
 @media (max-width: 639px) {
