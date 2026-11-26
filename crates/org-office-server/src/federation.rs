@@ -85,6 +85,7 @@ pub type InboundDeliveryNotifier = Arc<dyn Fn(&org_office::RelayedMessageOutcome
 struct InboundCallbacks<'a> {
     wake: Option<&'a WakeRelayHandler>,
     notify: Option<&'a InboundDeliveryNotifier>,
+    feed_wake: Option<&'a FeedWake>,
 }
 
 struct StaticPeer(PeerIdentity);
@@ -163,6 +164,26 @@ impl HqFederationServer {
         wake_handler: Option<WakeRelayHandler>,
         delivery_notifier: Option<InboundDeliveryNotifier>,
     ) -> Result<Self, String> {
+        Self::start_with_hooks(
+            office,
+            bind_addr,
+            san_hosts,
+            wake_handler,
+            delivery_notifier,
+            None,
+        )
+    }
+
+    /// Starts HQ's Org-CA TLS federation listener with durable wake, delivery notification, and
+    /// local SSE `FeedWake` callbacks (`TASK-117`, `TASK-140`).
+    pub(crate) fn start_with_hooks(
+        office: Arc<Office>,
+        bind_addr: SocketAddr,
+        san_hosts: &[String],
+        wake_handler: Option<WakeRelayHandler>,
+        delivery_notifier: Option<InboundDeliveryNotifier>,
+        feed_wake: Option<Arc<FeedWake>>,
+    ) -> Result<Self, String> {
         let hq_tls = office
             .ensure_hq_tls_identity(san_hosts)
             .map_err(|e| format!("failed preparing HQ TLS identity: {e}"))?;
@@ -202,6 +223,7 @@ impl HqFederationServer {
                         stop: stop_bg,
                         wake_handler,
                         delivery_notifier,
+                        feed_wake,
                         peers: peers_bg,
                         snapshot_budget: HqSnapshotTransferBudget::production(),
                     },
@@ -303,6 +325,7 @@ struct AcceptCtx {
     stop: Arc<AtomicBool>,
     wake_handler: Option<WakeRelayHandler>,
     delivery_notifier: Option<InboundDeliveryNotifier>,
+    feed_wake: Option<Arc<FeedWake>>,
     peers: Arc<HqPeerRegistry>,
     snapshot_budget: HqSnapshotTransferBudget,
 }
@@ -448,6 +471,7 @@ fn handle_hq_connection(stream: TcpStream, ctx: AcceptCtx) {
                 InboundCallbacks {
                     wake: ctx.wake_handler.as_ref(),
                     notify: ctx.delivery_notifier.as_ref(),
+                    feed_wake: ctx.feed_wake.as_deref(),
                 },
                 &ctx.peers,
                 &ctx.snapshot_budget,
@@ -796,8 +820,23 @@ fn push_hq_org_events_if_behind(
     true
 }
 
-type InflightRpcMap =
-    HashMap<String, mpsc::Sender<Result<org_proto::Outcome, org_proto::ApiError>>>;
+type InflightRpcMap = HashMap<
+    String,
+    (
+        Instant,
+        mpsc::Sender<Result<org_proto::Outcome, org_proto::ApiError>>,
+    ),
+>;
+
+fn prune_expired_inflight_rpcs(
+    inflight_rpcs: &mut InflightRpcMap,
+    peer_handle: &crate::federation_stream::HqPeerHandle,
+) {
+    let now = Instant::now();
+    let before = inflight_rpcs.len();
+    inflight_rpcs.retain(|_, (deadline, _)| now < *deadline);
+    peer_handle.release_inflight(before.saturating_sub(inflight_rpcs.len()));
+}
 
 fn flush_hq_session_rpcs(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,
@@ -805,7 +844,9 @@ fn flush_hq_session_rpcs(
     peer_handle: &crate::federation_stream::HqPeerHandle,
     inflight_rpcs: &mut InflightRpcMap,
 ) -> bool {
-    for rpc in peer_handle.take_rpcs() {
+    prune_expired_inflight_rpcs(inflight_rpcs, peer_handle);
+    let mut pending = peer_handle.take_rpcs().into_iter();
+    while let Some(rpc) = pending.next() {
         let frame = SyncFrame::SessionRpcRequest {
             request_id: rpc.request_id.clone(),
             caller_member_id: rpc.caller_member_id,
@@ -814,25 +855,35 @@ fn flush_hq_session_rpcs(
             params_json: rpc.params_json,
         };
         if !write_sync_frame_if_peer_active(tls, peer, &frame) {
+            let remaining = 1 + pending.len();
+            peer_handle.release_inflight(remaining);
             let _ = rpc.reply.send(Err(org_proto::ApiError::new(
                 org_proto::ErrorCode::Unavailable,
                 "failed sending session RPC to satellite office",
             )));
+            for unsent in pending {
+                let _ = unsent.reply.send(Err(org_proto::ApiError::new(
+                    org_proto::ErrorCode::Unavailable,
+                    "failed sending session RPC to satellite office",
+                )));
+            }
             return false;
         }
-        inflight_rpcs.insert(rpc.request_id, rpc.reply);
+        inflight_rpcs.insert(rpc.request_id, (rpc.deadline, rpc.reply));
     }
     true
 }
 
 fn deliver_hq_session_rpc_response(
     inflight_rpcs: &mut InflightRpcMap,
+    peer_handle: &crate::federation_stream::HqPeerHandle,
     request_id: &str,
     outcome_json: &str,
 ) {
-    let Some(tx) = inflight_rpcs.remove(request_id) else {
+    let Some((_, tx)) = inflight_rpcs.remove(request_id) else {
         return;
     };
+    peer_handle.release_inflight(1);
     let parsed = serde_json::from_str::<org_proto::Outcome>(outcome_json).map_err(|_| {
         org_proto::ApiError::new(
             org_proto::ErrorCode::Unavailable,
@@ -855,6 +906,7 @@ struct HqSessionState<'a> {
 fn drain_hq_inbound_frames(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,
     peer: &HqSessionPeer<'_>,
+    peer_handle: &crate::federation_stream::HqPeerHandle,
     snapshot_budget: &HqSnapshotTransferBudget,
     peers: &HqPeerRegistry,
     state: &mut HqSessionState<'_>,
@@ -872,37 +924,46 @@ fn drain_hq_inbound_frames(
                 {
                     return false;
                 }
-                if let SyncFrame::SessionRpcResponse {
-                    request_id,
-                    outcome_json,
-                } = frame
-                {
-                    deliver_hq_session_rpc_response(
-                        &mut state.inflight_rpcs,
-                        &request_id,
-                        &outcome_json,
-                    );
-                    continue;
-                }
-                let is_hello = matches!(frame, SyncFrame::Hello { .. });
-                let is_org_gap = matches!(frame, SyncFrame::OrgGap { .. });
-                if !dispatch_hq_frame(
-                    tls,
-                    peer,
-                    snapshot_budget,
-                    &mut state.active_snapshot,
-                    frame,
-                    state.callbacks,
-                    peers,
-                ) {
-                    return false;
-                }
-                if is_hello {
-                    state.hello_done = true;
-                }
-                if is_org_gap {
-                    if let Ok(cp) = peer.office.replication().org_checkpoint() {
-                        state.peer_org_cursor = Some((cp.position.epoch.get(), cp.position.seq));
+                match frame {
+                    SyncFrame::SessionRpcResponse {
+                        request_id,
+                        outcome_json,
+                    } => {
+                        deliver_hq_session_rpc_response(
+                            &mut state.inflight_rpcs,
+                            peer_handle,
+                            &request_id,
+                            &outcome_json,
+                        );
+                    }
+                    SyncFrame::OrgGap {
+                        after_epoch,
+                        after_seq,
+                    } => {
+                        state.active_snapshot = None;
+                        let Some(last_sent) =
+                            send_hq_org_events_after(tls, peer, after_epoch, after_seq)
+                        else {
+                            return false;
+                        };
+                        state.peer_org_cursor = Some(last_sent);
+                    }
+                    other => {
+                        let is_hello = matches!(other, SyncFrame::Hello { .. });
+                        if !dispatch_hq_frame(
+                            tls,
+                            peer,
+                            snapshot_budget,
+                            &mut state.active_snapshot,
+                            other,
+                            state.callbacks,
+                            peers,
+                        ) {
+                            return false;
+                        }
+                        if is_hello {
+                            state.hello_done = true;
+                        }
                     }
                 }
             }
@@ -1016,12 +1077,25 @@ fn handle_hq_satellite_session(
         callbacks,
     };
     let mut buffered_flush_until: Option<Instant> = None;
+    let mut last_wake_gen = peer_reg.handle().wake_generation();
     let mut wake_triggered = false;
     while !stop.load(Ordering::Acquire) && !session_stop.load(Ordering::Acquire) {
         ActiveSnapshotTransfer::expire_if_idle(&mut state.active_snapshot);
+        let cur_gen = peer_reg.handle().wake_generation();
+        if cur_gen != last_wake_gen {
+            last_wake_gen = cur_gen;
+            wake_triggered = true;
+        }
         let alive =
             check_not_revoked_fail_closed(tls, office, satellite_office_id, cert_serial_hex)
-                && drain_hq_inbound_frames(tls, &peer, snapshot_budget, peers, &mut state)
+                && drain_hq_inbound_frames(
+                    tls,
+                    &peer,
+                    peer_reg.handle(),
+                    snapshot_budget,
+                    peers,
+                    &mut state,
+                )
                 && hq_session_flush_outbound(
                     tls,
                     &peer,
@@ -1034,7 +1108,9 @@ fn handle_hq_satellite_session(
             return;
         }
         peer_reg.handle().wake.drain();
-        if peer_reg.handle().has_pending_rpcs() {
+        if peer_reg.handle().wake_generation() != last_wake_gen
+            || peer_reg.handle().has_pending_rpcs()
+        {
             continue;
         }
         let wait = hq_session_poll_wait(office, &state, buffered_flush_until);
@@ -1081,7 +1157,7 @@ fn dispatch_hq_frame(
         SyncFrame::OrgGap {
             after_epoch,
             after_seq,
-        } => send_hq_org_events_after(tls, peer, after_epoch, after_seq),
+        } => send_hq_org_events_after(tls, peer, after_epoch, after_seq).is_some(),
         SyncFrame::WorkChange {
             org_id: work_org,
             origin_office,
@@ -1119,6 +1195,7 @@ fn dispatch_hq_frame(
                 created_ms,
             },
             peers,
+            callbacks.feed_wake,
         ),
         SyncFrame::MessageDeliver {
             org_id: msg_org,
@@ -1437,19 +1514,24 @@ fn send_hq_org_events_after(
     peer: &HqSessionPeer<'_>,
     epoch: u64,
     seq: u64,
-) -> bool {
+) -> Option<(u64, u64)> {
     // Publish any accepted HQ `org-store` entries via the `ARCH-03` consumer before streaming (`TASK-52` F2).
     if peer.office.sync_org_journal_to_replication().is_err() {
-        return false;
+        return None;
     }
-    let Ok(events) = peer.office.replication().org_events_after(epoch, seq) else {
-        return false;
-    };
+    let events = peer
+        .office
+        .replication()
+        .org_events_after(epoch, seq)
+        .ok()?;
+    let mut last_sent = (epoch, seq);
     for ev in events {
+        let ep = ev.position.epoch.get();
+        let sq = ev.position.seq;
         let frame = SyncFrame::OrgEvent {
             org_id: ev.org_id.as_str().to_owned(),
-            epoch: ev.position.epoch.get(),
-            seq: ev.position.seq,
+            epoch: ep,
+            seq: sq,
             previous_hex: ev.previous.to_hex(),
             digest_hex: ev.digest.to_hex(),
             codec_name: ev.codec.id().to_owned(),
@@ -1458,10 +1540,11 @@ fn send_hq_org_events_after(
         };
         // Fence every outbound org event against concurrent removal (`TASK-52` P20-#1).
         if !write_sync_frame_if_peer_active(tls, peer, &frame) {
-            return false;
+            return None;
         }
+        last_sent = (ep, sq);
     }
-    write_sync_frame_if_peer_active(tls, peer, &SyncFrame::Pong { nonce: seq })
+    write_sync_frame_if_peer_active(tls, peer, &SyncFrame::Pong { nonce: seq }).then_some(last_sent)
 }
 
 struct WorkChangeInput {
@@ -1599,6 +1682,7 @@ fn handle_hq_work_change(
     peer: &HqSessionPeer<'_>,
     input: WorkChangeInput,
     peers: &HqPeerRegistry,
+    feed_wake: Option<&FeedWake>,
 ) -> bool {
     let ValidatedWorkChange {
         inc,
@@ -1670,9 +1754,12 @@ fn handle_hq_work_change(
     let Ok(proof) = work_ack_proof_digest_v1(&ack) else {
         return false;
     };
-    // Wake all connected satellites immediately so the newly ingested work delta pushes out
-    // without waiting for an idle poll (`TASK-140`).
+    // Wake all connected satellites and local HQ SSE subscribers immediately so the newly
+    // ingested work delta pushes out without waiting for an idle poll (`TASK-140`).
     peers.notify_all();
+    if let Some(wake) = feed_wake {
+        wake.notify();
+    }
     write_sync_frame_if_peer_active(
         tls,
         peer,
@@ -2515,6 +2602,7 @@ impl SatelliteSyncSession {
             InboundCallbacks {
                 wake: wake_handler,
                 notify: delivery_notifier,
+                feed_wake: None,
             },
         )
     }
@@ -2657,7 +2745,9 @@ fn read_correlated_frame_opts(
             Some(frame @ SyncFrame::OrgEvent { .. }) if buffer_org_events => {
                 session.pending_inbound.push_back(frame);
             }
-            Some(SyncFrame::Pong { .. }) if buffer_org_events => {}
+            Some(frame @ SyncFrame::Pong { .. }) if buffer_org_events => {
+                session.pending_inbound.push_back(frame);
+            }
             Some(SyncFrame::Ping { nonce }) => {
                 let _ = write_sync_frame(&mut session.tls, &SyncFrame::Pong { nonce });
             }
@@ -3026,6 +3116,7 @@ pub(crate) fn drain_satellite_inbound_persistent(
     let callbacks = InboundCallbacks {
         wake: wake_handler,
         notify: delivery_notifier,
+        feed_wake,
     };
     let peer = StaticPeer(session.hq_peer.clone());
     let mut handled = 0usize;

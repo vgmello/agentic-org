@@ -734,5 +734,112 @@ fn task140_host_channel_blocking_events_poll_avoids_hol_blocking_and_enforces_re
     srv.join().unwrap();
 }
 
+#[test]
+fn task140_host_channel_held_events_poll_refuses_offboarded_person() {
+    struct TogglePersonDirectory {
+        active: Arc<std::sync::atomic::AtomicBool>,
+    }
+    impl org_mailbox::MemberDirectory for TogglePersonDirectory {
+        fn resolve_member(
+            &self,
+            id: &str,
+        ) -> Result<Option<(Member, org_proto::Position)>, org_mailbox::StoreError> {
+            if !self.active.load(Ordering::SeqCst) {
+                return Ok(None);
+            }
+            let member = org_mailbox::testkit::fixture::members()
+                .into_iter()
+                .find(|m| m.id == id)
+                .expect("fixture member");
+            Ok(Some((member, POSITION)))
+        }
+    }
+
+    let mut shared = shared();
+    let person_active = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    shared.ports.directory = Arc::new(TogglePersonDirectory {
+        active: Arc::clone(&person_active),
+    });
+    let entered = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let entered_cb = Arc::clone(&entered);
+    let release_cb = Arc::clone(&release);
+    shared.ports.chat = Some(Box::new(move |_member, _via_grant, _stop, req| {
+        if !req.is::<org_proto::chat::ChatEventsPoll>() {
+            return None;
+        }
+        {
+            let mut g = entered_cb.0.lock().unwrap();
+            *g = true;
+            entered_cb.1.notify_all();
+        }
+        let mut r = release_cb.0.lock().unwrap();
+        while !*r {
+            r = release_cb.1.wait(r).unwrap();
+        }
+        Some(
+            Response::ok::<org_proto::chat::ChatEventsPoll>(
+                req.id,
+                &org_proto::chat::ChatEventsPollResult {
+                    org_head_seq: 2,
+                    live_head_seq: 0,
+                    presence_head_seq: 0,
+                    snapshot_required: false,
+                    live_lost: false,
+                    org_changes: Vec::new(),
+                    messages_received: Vec::new(),
+                    message_states: Vec::new(),
+                    presence_changes: Vec::new(),
+                    inbox_changes: Vec::new(),
+                },
+            )
+            .unwrap(),
+        )
+    }));
+    let ctx = context();
+    let mut poll_req = signed(
+        &shared,
+        "chat.events_poll",
+        json!({"after_org_seq": 1, "wait_ms": 2000}),
+    );
+    poll_req.id = 201;
+
+    let (socket, peer) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    let shared = Arc::new(shared);
+    let srv_shared = Arc::clone(&shared);
+    let srv = std::thread::spawn(move || {
+        serve(socket, &srv_shared, ctx, &Default::default());
+    });
+    let mut reader = std::io::BufReader::new(peer);
+    let hello = exchange(&mut reader, "hello", json!({"api": {"min": 2, "max": 2}}));
+    assert_eq!(hello["result"]["api_version"], 2);
+
+    frame::write_message(reader.get_mut(), &poll_req).unwrap();
+    {
+        let mut g = entered.0.lock().unwrap();
+        while !*g {
+            g = entered.1.wait(g).unwrap();
+        }
+    }
+
+    // Offboard/remove the person WITHOUT revoking the browser session token, then release poll.
+    person_active.store(false, Ordering::SeqCst);
+    {
+        let mut r = release.0.lock().unwrap();
+        *r = true;
+        release.1.notify_all();
+    }
+    let reply: Value = frame::read_message(&mut reader).unwrap().unwrap();
+    assert_eq!(reply["id"], 201);
+    assert_eq!(
+        reply["error"]["code"], "not_authorized",
+        "offboarded/removed person must never receive held poll events: {reply}"
+    );
+
+    drop(reader);
+    srv.join().unwrap();
+}
+
 #[path = "inventory.rs"]
 mod inventory;

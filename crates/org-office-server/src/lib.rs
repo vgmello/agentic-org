@@ -802,6 +802,7 @@ impl FederationRuntime {
             office,
             Some(Arc::clone(&wake_handler)),
             Some(Arc::clone(&delivery_notifier)),
+            Some(Arc::clone(&feed_wake)),
         )?;
         hq_listening.store(hq.is_some(), Ordering::SeqCst);
         let sat_thread = start_optional_satellite_sync(
@@ -959,6 +960,7 @@ fn start_optional_hq_federation(
     office: &Arc<Office>,
     wake_handler: Option<federation::WakeRelayHandler>,
     delivery_notifier: Option<federation::InboundDeliveryNotifier>,
+    feed_wake: Option<Arc<org_feed::FeedWake>>,
 ) -> Result<Option<federation::HqFederationServer>, String> {
     if office.info().role != org_office::OfficeRole::Hq {
         return Ok(None);
@@ -980,12 +982,13 @@ fn start_optional_hq_federation(
             san_hosts.push(item.to_owned());
         }
     }
-    federation::HqFederationServer::start_with_notifier(
+    federation::HqFederationServer::start_with_hooks(
         Arc::clone(office),
         addr,
         &san_hosts,
         wake_handler,
         delivery_notifier,
+        feed_wake,
     )
     .map(Some)
 }
@@ -1756,12 +1759,14 @@ fn try_proxy_remote_session_rpc(
         ));
     };
     let forwarded = rewrite_proxied_employee_id(request, &target_id);
+    // Keep the proxy deadline strictly below `agentic-org-web`'s 5 s `OFFICE_DEADLINE` so a
+    // stalled satellite never times out and evicts the Web BFF's shared multiplexed channel.
     match hq_fed.proxy_session_rpc(
         &target_office,
         caller_id,
         caller_is_owner,
         &forwarded,
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(4),
     ) {
         Ok(resp) => Some(resp),
         Err(err) => Some(org_proto::Response::error(request.id, err)),

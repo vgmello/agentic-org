@@ -73,11 +73,6 @@ fn spawn_held_events_poll<'scope, 'env>(
             Timing::default(),
         );
     }
-    let session_id = request
-        .principal()
-        .ok()
-        .flatten()
-        .map(|p| p.grant.claims.session_id);
     if held_polls.fetch_add(1, Ordering::SeqCst) >= MAX_HELD_EVENT_POLLS {
         held_polls.fetch_sub(1, Ordering::SeqCst);
         let busy = Response::error(
@@ -89,6 +84,7 @@ fn spawn_held_events_poll<'scope, 'env>(
         );
         return send(out, request.id, &busy, Timing::default());
     }
+    let office_info = office.office.clone();
     let request_id = request.id;
     let started = std::thread::Builder::new()
         .name("org-host-events-poll".into())
@@ -112,18 +108,20 @@ fn spawn_held_events_poll<'scope, 'env>(
                     })
             }))
             .unwrap_or_else(|_| internal(id));
-            // Never deliver an event frame to a browser session revoked while waiting.
-            let revoked = session_id.as_deref().is_some_and(|sid| {
-                context
-                    ._revocations
-                    .lock()
-                    .map(|r| r.contains(sid))
-                    .unwrap_or(true)
-            });
-            let final_resp = if revoked {
-                refuse(id, ErrorCode::NotAuthorized)
-            } else {
+            // Re-run full live authorization (session revocation, grant expiry, and live person
+            // membership) before emitting any held event frame so offboarded/removed persons and
+            // revoked browser sessions never receive post-revocation events (`doc-7` #9).
+            let post_checks = authority::Live {
+                shared,
+                revocations: &context._revocations,
+            };
+            let still_authorized =
+                authority::authorize(&request, &context._channel_id, &office_info, &post_checks)
+                    .is_ok();
+            let final_resp = if still_authorized {
                 answer
+            } else {
+                refuse(id, ErrorCode::NotAuthorized)
             };
             let _ = send(out, id, &final_resp, Timing::default());
         });

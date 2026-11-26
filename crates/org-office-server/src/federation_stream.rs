@@ -92,55 +92,93 @@ pub(crate) struct PendingSessionRpc {
     pub(crate) caller_is_owner: bool,
     pub(crate) method: String,
     pub(crate) params_json: String,
+    pub(crate) deadline: Instant,
     pub(crate) reply: mpsc::Sender<Result<Outcome, ApiError>>,
+}
+
+#[derive(Default)]
+struct PeerRpcQueue {
+    closed: bool,
+    active_inflight: usize,
+    inbox: VecDeque<PendingSessionRpc>,
 }
 
 /// Live HQ-side wakeup and RPC queue handle for one connected satellite mTLS session.
 pub(crate) struct HqPeerHandle {
     pub(crate) wake: WakePipe,
-    rpc_inbox: Mutex<VecDeque<PendingSessionRpc>>,
+    wake_gen: AtomicU64,
+    rpc_queue: Mutex<PeerRpcQueue>,
 }
 
 impl HqPeerHandle {
     fn new() -> io::Result<Self> {
         Ok(Self {
             wake: WakePipe::new()?,
-            rpc_inbox: Mutex::new(VecDeque::new()),
+            wake_gen: AtomicU64::new(0),
+            rpc_queue: Mutex::new(PeerRpcQueue::default()),
         })
     }
 
+    pub(crate) fn notify_wake(&self) {
+        self.wake_gen.fetch_add(1, Ordering::Release);
+        self.wake.notify();
+    }
+
+    pub(crate) fn wake_generation(&self) -> u64 {
+        self.wake_gen.load(Ordering::Acquire)
+    }
+
     fn enqueue_rpc(&self, rpc: PendingSessionRpc) -> Result<(), ApiError> {
-        let mut q = self.rpc_inbox.lock().unwrap_or_else(|p| p.into_inner());
-        if q.len() >= MAX_INFLIGHT_PROXIED_RPCS {
+        let mut q = self.rpc_queue.lock().unwrap_or_else(|p| p.into_inner());
+        if q.closed {
+            return Err(ApiError::new(
+                ErrorCode::Unavailable,
+                "satellite office disconnected before accepting session request",
+            ));
+        }
+        if q.inbox.len().saturating_add(q.active_inflight) >= MAX_INFLIGHT_PROXIED_RPCS {
             return Err(ApiError::new(
                 ErrorCode::Unavailable,
                 "too many concurrent proxied session requests for satellite office",
             ));
         }
-        q.push_back(rpc);
+        q.inbox.push_back(rpc);
         drop(q);
-        self.wake.notify();
+        self.notify_wake();
         Ok(())
     }
 
     pub(crate) fn take_rpcs(&self) -> Vec<PendingSessionRpc> {
-        let mut q = self.rpc_inbox.lock().unwrap_or_else(|p| p.into_inner());
-        q.drain(..).collect()
+        let mut q = self.rpc_queue.lock().unwrap_or_else(|p| p.into_inner());
+        let taken: Vec<PendingSessionRpc> = q.inbox.drain(..).collect();
+        q.active_inflight = q.active_inflight.saturating_add(taken.len());
+        taken
+    }
+
+    pub(crate) fn release_inflight(&self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let mut q = self.rpc_queue.lock().unwrap_or_else(|p| p.into_inner());
+        q.active_inflight = q.active_inflight.saturating_sub(count);
     }
 
     pub(crate) fn has_pending_rpcs(&self) -> bool {
         !self
-            .rpc_inbox
+            .rpc_queue
             .lock()
             .unwrap_or_else(|p| p.into_inner())
+            .inbox
             .is_empty()
     }
 
-    fn clear_rpcs(&self) {
-        self.rpc_inbox
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clear();
+    fn close_and_clear(&self) {
+        let mut q = self.rpc_queue.lock().unwrap_or_else(|p| p.into_inner());
+        q.closed = true;
+        q.active_inflight = 0;
+        q.inbox.clear();
+        drop(q);
+        self.notify_wake();
     }
 }
 
@@ -170,7 +208,6 @@ impl HqPeerRegistration {
 
 impl Drop for HqPeerRegistration {
     fn drop(&mut self) {
-        self.handle.clear_rpcs();
         let mut map = self
             .registry
             .sessions
@@ -182,6 +219,8 @@ impl Drop for HqPeerRegistration {
                 map.remove(&self.office_id);
             }
         }
+        drop(map);
+        self.handle.close_and_clear();
     }
 }
 
@@ -209,7 +248,7 @@ impl HqPeerRegistry {
                 .unwrap_or_default()
         };
         for handle in handles {
-            handle.wake.notify();
+            handle.notify_wake();
         }
     }
 
@@ -221,7 +260,7 @@ impl HqPeerRegistry {
                 .collect()
         };
         for handle in handles {
-            handle.wake.notify();
+            handle.notify_wake();
         }
     }
 
@@ -254,16 +293,31 @@ impl HqPeerRegistry {
                 "unable to serialize session RPC parameters",
             )
         })?;
+        let request_id = format!(
+            "srpc-{}",
+            self.next_rpc_id.fetch_add(1, Ordering::Relaxed) + 1
+        );
+        // Pre-validate the encoded SyncFrame size before enqueueing so an oversized request can
+        // never trigger FrameCodecError::TooLarge on the persistent mTLS transport.
+        let probe = SyncFrame::SessionRpcRequest {
+            request_id: request_id.clone(),
+            caller_member_id: caller_member_id.to_owned(),
+            caller_is_owner,
+            method: request.method.clone(),
+            params_json: params_json.clone(),
+        };
+        org_sync_proto::encode_sync_frame(&probe).map_err(|_| {
+            ApiError::new(
+                ErrorCode::InvalidRequest,
+                "proxied session RPC request exceeds federation frame size limit",
+            )
+        })?;
         let Some(handle) = self.latest_peer(target_office_id) else {
             return Err(ApiError::new(
                 ErrorCode::Unavailable,
                 format!("satellite office `{target_office_id}` is not connected to HQ"),
             ));
         };
-        let request_id = format!(
-            "srpc-{}",
-            self.next_rpc_id.fetch_add(1, Ordering::Relaxed) + 1
-        );
         let (tx, rx) = mpsc::channel();
         handle.enqueue_rpc(PendingSessionRpc {
             request_id,
@@ -271,8 +325,10 @@ impl HqPeerRegistry {
             caller_is_owner,
             method: request.method.clone(),
             params_json,
+            deadline: Instant::now() + timeout,
             reply: tx,
         })?;
+        drop(handle);
         match rx.recv_timeout(timeout) {
             Ok(Ok(outcome)) => Ok(Response {
                 id: request.id,
@@ -418,6 +474,32 @@ pub(crate) struct SatRpcContext<'a> {
     pub(crate) active_workers: &'a Arc<AtomicUsize>,
 }
 
+fn encode_bounded_rpc_reply(request_id: String, outcome: Outcome) -> SyncFrame {
+    let outcome_json = serde_json::to_string(&outcome).unwrap_or_else(|_| {
+        r#"{"error":{"code":"unavailable","message":"failed encoding session RPC outcome"}}"#
+            .to_owned()
+    });
+    let frame = SyncFrame::SessionRpcResponse {
+        request_id: request_id.clone(),
+        outcome_json,
+    };
+    if org_sync_proto::encode_sync_frame(&frame).is_ok() {
+        return frame;
+    }
+    let fallback = Outcome::Error(ApiError::new(
+        ErrorCode::StorageError,
+        "session RPC response exceeds federation frame size limit",
+    ));
+    let fallback_json = serde_json::to_string(&fallback).unwrap_or_else(|_| {
+        r#"{"error":{"code":"storage_error","message":"session RPC response exceeds federation frame size limit"}}"#
+            .to_owned()
+    });
+    SyncFrame::SessionRpcResponse {
+        request_id,
+        outcome_json: fallback_json,
+    }
+}
+
 /// Dispatches an HQ-proxied `SessionRpcRequest` on a bounded satellite worker thread and posts
 /// the resulting `SessionRpcResponse` back onto the persistent mTLS stream (`TASK-143` AC #3).
 pub(crate) fn spawn_satellite_session_rpc(
@@ -432,36 +514,39 @@ pub(crate) fn spawn_satellite_session_rpc(
     let sat_wake = Arc::clone(ctx.sat_wake);
     let sessions = Weak::clone(ctx.sessions);
     let active_workers = Arc::clone(ctx.active_workers);
-    let push_reply = move |outcome: Outcome| {
-        let outcome_json = serde_json::to_string(&outcome).unwrap_or_else(|_| {
-            r#"{"error":{"code":"unavailable","message":"failed encoding session RPC outcome"}}"#
-                .to_owned()
-        });
-        replies.lock().unwrap_or_else(|p| p.into_inner()).push_back(
-            SyncFrame::SessionRpcResponse {
-                request_id,
-                outcome_json,
-            },
-        );
+    let push_reply = move |req_id: String, outcome: Outcome| {
+        replies
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push_back(encode_bounded_rpc_reply(req_id, outcome));
         sat_wake.notify();
     };
     if !is_proxied_session_method(&method) {
-        push_reply(Outcome::Error(ApiError::new(
-            ErrorCode::NotAuthorized,
-            "method is not permitted over HQ session proxy",
-        )));
+        push_reply(
+            request_id,
+            Outcome::Error(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "method is not permitted over HQ session proxy",
+            )),
+        );
         return;
     }
     if active_workers.fetch_add(1, Ordering::AcqRel) >= MAX_SATELLITE_RPC_WORKERS {
         active_workers.fetch_sub(1, Ordering::AcqRel);
-        push_reply(Outcome::Error(ApiError::new(
-            ErrorCode::Unavailable,
-            "satellite session proxy busy",
-        )));
+        push_reply(
+            request_id,
+            Outcome::Error(ApiError::new(
+                ErrorCode::Unavailable,
+                "satellite session proxy busy",
+            )),
+        );
         return;
     }
     let slot = WorkerSlot(active_workers);
-    let _ = std::thread::Builder::new()
+    let replies_err = Arc::clone(ctx.replies);
+    let wake_err = Arc::clone(ctx.sat_wake);
+    let err_req_id = request_id.clone();
+    if std::thread::Builder::new()
         .name("sat-session-rpc".into())
         .spawn(move || {
             let _slot = slot;
@@ -472,8 +557,22 @@ pub(crate) fn spawn_satellite_session_rpc(
                 &params_json,
                 &sessions,
             );
-            push_reply(outcome);
-        });
+            push_reply(request_id, outcome);
+        })
+        .is_err()
+    {
+        replies_err
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push_back(encode_bounded_rpc_reply(
+                err_req_id,
+                Outcome::Error(ApiError::new(
+                    ErrorCode::Unavailable,
+                    "satellite session proxy worker unavailable",
+                )),
+            ));
+        wake_err.notify();
+    }
 }
 
 fn execute_satellite_session_rpc(
@@ -596,6 +695,8 @@ fn flush_satellite_outboxes(
     let flushed = session.flush_work_outbox()? + session.flush_message_outbox()?;
     if flushed > 0 {
         state.buffered_flush_until = None;
+        state.last_rx = Instant::now();
+        state.ping_sent_at = None;
     } else if wake_fired || office.has_pending_journal_pipeline() {
         // Buffered `org-store` writes (e.g. `msg.reply`) return before the background
         // flusher confirms/materializes the entry a few milliseconds later; poll briefly at
@@ -726,5 +827,109 @@ fn flush_rpc_replies(
             return Ok(());
         };
         session.write_frame(&frame)?;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn proxy_session_rpc_rejects_oversized_request_and_bounds_inflight_and_reply_frame() {
+        let registry = Arc::new(HqPeerRegistry::default());
+        let reg = registry.register("sat-1").unwrap();
+
+        // Blocking #1a: oversized request is rejected BEFORE enqueueing (never reaches mTLS).
+        let huge = "x".repeat(org_sync_proto::MAX_ENCODED_FRAME_BYTES);
+        let huge_req = Request {
+            id: 1,
+            method: "member.session_start".into(),
+            params: json!({ "employee_id": "emp-1", "instruction": huge }),
+            principal: None,
+        };
+        let err = registry
+            .proxy_session_rpc("sat-1", "owner-1", true, &huge_req, Duration::from_secs(1))
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidRequest);
+        assert!(!reg.handle().has_pending_rpcs());
+
+        // Blocking #1b: oversized satellite reply falls back to a valid bounded error frame.
+        let huge_reply = encode_bounded_rpc_reply(
+            "srpc-big".into(),
+            Outcome::Result(json!({ "blob": "y".repeat(org_sync_proto::MAX_ENCODED_FRAME_BYTES) })),
+        );
+        assert!(org_sync_proto::encode_sync_frame(&huge_reply).is_ok());
+        match huge_reply {
+            SyncFrame::SessionRpcResponse { outcome_json, .. } => {
+                let parsed: Outcome = serde_json::from_str(&outcome_json).unwrap();
+                assert!(matches!(
+                    parsed,
+                    Outcome::Error(ref e) if e.code == ErrorCode::StorageError
+                ));
+            }
+            other => panic!("expected SessionRpcResponse, got {other:?}"),
+        }
+
+        // Blocking #2: active_inflight after take_rpcs still enforces MAX_INFLIGHT_PROXIED_RPCS.
+        let handle = Arc::clone(reg.handle());
+        for i in 0..MAX_INFLIGHT_PROXIED_RPCS {
+            let (tx, _rx) = mpsc::channel();
+            handle
+                .enqueue_rpc(PendingSessionRpc {
+                    request_id: format!("r-{i}"),
+                    caller_member_id: "owner-1".into(),
+                    caller_is_owner: true,
+                    method: "member.session_inspect".into(),
+                    params_json: "{}".into(),
+                    deadline: Instant::now() + Duration::from_secs(5),
+                    reply: tx,
+                })
+                .unwrap();
+        }
+        let taken = handle.take_rpcs();
+        assert_eq!(taken.len(), MAX_INFLIGHT_PROXIED_RPCS);
+        let (tx_over, _rx_over) = mpsc::channel();
+        let over_err = handle
+            .enqueue_rpc(PendingSessionRpc {
+                request_id: "r-over".into(),
+                caller_member_id: "owner-1".into(),
+                caller_is_owner: true,
+                method: "member.session_inspect".into(),
+                params_json: "{}".into(),
+                deadline: Instant::now() + Duration::from_secs(5),
+                reply: tx_over,
+            })
+            .unwrap_err();
+        assert_eq!(over_err.code, ErrorCode::Unavailable);
+
+        // Releasing inflight restores capacity; dropping registration closes handle immediately.
+        handle.release_inflight(1);
+        let (tx_ok, _rx_ok) = mpsc::channel();
+        assert!(handle
+            .enqueue_rpc(PendingSessionRpc {
+                request_id: "r-reclaimed".into(),
+                caller_member_id: "owner-1".into(),
+                caller_is_owner: true,
+                method: "member.session_inspect".into(),
+                params_json: "{}".into(),
+                deadline: Instant::now() + Duration::from_secs(5),
+                reply: tx_ok,
+            })
+            .is_ok());
+        drop(reg);
+        let (tx_closed, _rx_closed) = mpsc::channel();
+        let closed_err = handle
+            .enqueue_rpc(PendingSessionRpc {
+                request_id: "r-after-drop".into(),
+                caller_member_id: "owner-1".into(),
+                caller_is_owner: true,
+                method: "member.session_inspect".into(),
+                params_json: "{}".into(),
+                deadline: Instant::now() + Duration::from_secs(5),
+                reply: tx_closed,
+            })
+            .unwrap_err();
+        assert_eq!(closed_err.code, ErrorCode::Unavailable);
     }
 }

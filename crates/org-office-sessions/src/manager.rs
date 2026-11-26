@@ -583,7 +583,16 @@ impl SessionManager {
         actor_member_id: &str,
         params: &MemberSessionStartParams,
     ) -> Result<SessionView, ApiError> {
-        self.authorize_owner_or_person(actor_member_id)?;
+        self.start_session_inner(actor_member_id, false, params)
+    }
+
+    fn start_session_inner(
+        &self,
+        actor_member_id: &str,
+        hq_attested_owner: bool,
+        params: &MemberSessionStartParams,
+    ) -> Result<SessionView, ApiError> {
+        self.authorize_owner_or_person_inner(actor_member_id, hq_attested_owner)?;
         let employee = self.require_active_agent(&params.employee_id)?;
         let emp_id = employee.id.as_str();
         self.check_not_recovery_required(emp_id)?;
@@ -679,9 +688,18 @@ impl SessionManager {
         caller_id: &str,
         employee_id: Option<&str>,
     ) -> Result<SessionInspectResult, ApiError> {
+        self.inspect_session_inner(caller_id, false, employee_id)
+    }
+
+    fn inspect_session_inner(
+        &self,
+        caller_id: &str,
+        hq_attested_owner: bool,
+        employee_id: Option<&str>,
+    ) -> Result<SessionInspectResult, ApiError> {
         let target = employee_id.unwrap_or(caller_id);
         if target != caller_id {
-            self.authorize_owner_or_person(caller_id)?;
+            self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
         }
         let employee = self.require_agent(target)?;
         let accepted = self.bindings.accepted_commands(target).len() as u64;
@@ -718,9 +736,18 @@ impl SessionManager {
         caller_id: &str,
         params: &MemberSessionListParams,
     ) -> Result<SessionListResult, ApiError> {
+        self.list_sessions_inner(caller_id, false, params)
+    }
+
+    fn list_sessions_inner(
+        &self,
+        caller_id: &str,
+        hq_attested_owner: bool,
+        params: &MemberSessionListParams,
+    ) -> Result<SessionListResult, ApiError> {
         let target = params.employee_id.as_deref().unwrap_or(caller_id);
         if target != caller_id {
-            self.authorize_owner_or_person(caller_id)?;
+            self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
         }
         if params.limit == Some(0) {
             return Err(ApiError::new(
@@ -749,9 +776,18 @@ impl SessionManager {
         caller_id: &str,
         params: &MemberSessionTranscriptParams,
     ) -> Result<SessionTranscriptResult, ApiError> {
+        self.read_session_transcript_inner(caller_id, false, params)
+    }
+
+    fn read_session_transcript_inner(
+        &self,
+        caller_id: &str,
+        hq_attested_owner: bool,
+        params: &MemberSessionTranscriptParams,
+    ) -> Result<SessionTranscriptResult, ApiError> {
         let target = params.employee_id.as_deref().unwrap_or(caller_id);
         if target != caller_id {
-            self.authorize_owner_or_person(caller_id)?;
+            self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
         }
         if params.limit == Some(0) {
             return Err(ApiError::new(
@@ -877,9 +913,18 @@ impl SessionManager {
         caller_id: &str,
         employee_id: Option<&str>,
     ) -> Result<SessionGrantsResult, ApiError> {
+        self.list_grants_inner(caller_id, false, employee_id)
+    }
+
+    fn list_grants_inner(
+        &self,
+        caller_id: &str,
+        hq_attested_owner: bool,
+        employee_id: Option<&str>,
+    ) -> Result<SessionGrantsResult, ApiError> {
         let target = employee_id.unwrap_or(caller_id);
         if target != caller_id {
-            self.authorize_owner_or_person(caller_id)?;
+            self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
         }
         let employee = self.require_agent(target)?;
         let home = self.office.agent_private_home_path(employee.id.as_str());
@@ -1193,7 +1238,7 @@ impl SessionManager {
             return Some(handle_call::<MemberSessionStart>(
                 request,
                 member,
-                |m, p| self.start_session(m, &p),
+                |m, p| self.start_session_inner(m, hq_attested_owner, &p),
             ));
         }
         if request.is::<MemberSessionStop>() {
@@ -1206,14 +1251,14 @@ impl SessionManager {
             return Some(handle_call::<MemberSessionInspect>(
                 request,
                 member,
-                |m, p| self.inspect_session(m, p.employee_id.as_deref()),
+                |m, p| self.inspect_session_inner(m, hq_attested_owner, p.employee_id.as_deref()),
             ));
         }
         if request.is::<MemberSessionGrants>() {
             return Some(handle_call::<MemberSessionGrants>(
                 request,
                 member,
-                |m, p| self.list_grants(m, p.employee_id.as_deref()),
+                |m, p| self.list_grants_inner(m, hq_attested_owner, p.employee_id.as_deref()),
             ));
         }
         if request.is::<MemberSessionApprovalDecide>() {
@@ -1241,14 +1286,14 @@ impl SessionManager {
         }
         if request.is::<MemberSessionList>() {
             return Some(handle_call::<MemberSessionList>(request, member, |m, p| {
-                self.list_sessions(m, &p)
+                self.list_sessions_inner(m, hq_attested_owner, &p)
             }));
         }
         if request.is::<MemberSessionTranscript>() {
             return Some(handle_call::<MemberSessionTranscript>(
                 request,
                 member,
-                |m, p| self.read_session_transcript(m, &p),
+                |m, p| self.read_session_transcript_inner(m, hq_attested_owner, &p),
             ));
         }
         None
@@ -1369,10 +1414,6 @@ impl SessionManager {
             ErrorCode::NotAuthorized,
             "only the organization owner may perform this operation",
         ))
-    }
-
-    fn authorize_owner_or_person(&self, member_id: &str) -> Result<(), ApiError> {
-        self.authorize_owner_or_person_inner(member_id, false)
     }
 
     fn authorize_owner_or_person_inner(

@@ -470,7 +470,12 @@ fn build_settings_json(
     // `@anthropic-ai/sandbox-runtime` (which merges `permissions.deny` into `bwrap` mounts)
     // mounts `--tmpfs <dir>` atomically without traversing symlinks inside sibling homes.
     for path in &spec.sandbox.deny_read {
-        push_file_read_denies(&mut deny_rules, path.as_str(), !is_linux_bwrap);
+        let effective = if is_linux_bwrap {
+            strip_concrete_dir_glob(path.as_str())
+        } else {
+            path.as_str()
+        };
+        push_file_read_denies(&mut deny_rules, effective, !is_linux_bwrap);
     }
     for path in &spec.sandbox.deny_write {
         push_file_write_denies(&mut deny_rules, path.as_str(), true);
@@ -604,20 +609,27 @@ fn apply_linux_bwrap_sandbox_rules(
     }
 }
 
+fn strip_concrete_dir_glob(raw: &str) -> &str {
+    raw.strip_suffix("/**")
+        .or_else(|| raw.strip_suffix("/*"))
+        .filter(|prefix| {
+            !prefix.is_empty()
+                && !prefix.contains('*')
+                && !prefix.contains('?')
+                && !prefix.contains('[')
+        })
+        .unwrap_or(raw)
+}
+
 pub(crate) fn normalize_linux_bwrap_deny_read(deny_read: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(deny_read.len());
     for entry in deny_read {
-        let candidate = entry
-            .strip_suffix("/**")
-            .or_else(|| entry.strip_suffix("/*"))
-            .filter(|prefix| {
-                !prefix.is_empty()
-                    && !prefix.contains('*')
-                    && !prefix.contains('?')
-                    && !prefix.contains('[')
-            })
-            .map(str::to_owned)
-            .unwrap_or(entry);
+        let stripped = strip_concrete_dir_glob(&entry);
+        let candidate = if stripped.len() == entry.len() {
+            entry
+        } else {
+            stripped.to_owned()
+        };
         if !out.iter().any(|existing| existing == &candidate) {
             out.push(candidate);
         }
