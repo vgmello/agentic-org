@@ -626,7 +626,7 @@ a.hb-pillar-hero:hover { background: rgba(186, 222, 255, .05); }
 .hb-pillar-num {
   font-family: var(--font-sans);
   font-size: clamp(1.625rem, 2vw, 2.125rem); line-height: 1; font-weight: 500;
-  letter-spacing: var(--ls-kpi); color: var(--hb-ink); font-variant-numeric: tabular-nums;
+  letter-spacing: var(--ls-kpi); color: var(--hb-ink); font-variant-numeric: proportional-nums;
 }
 .hb-pillar-unit { font-size: var(--fs-sm); font-weight: 400; color: var(--hb-muted); white-space: nowrap; }
 .hb-pillar-right { font-size: var(--fs-xs); font-weight: 500; color: var(--hb-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }

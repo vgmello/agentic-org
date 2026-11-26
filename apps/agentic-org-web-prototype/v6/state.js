@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------------- state */
-const S = { theme: "ocean", fontStyle: "noto-sans", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
+const S = { theme: "ocean", fontStyle: "inter", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
   scopedWorkView: "all", scopedWorkLayout: "list", scopedWorkStatus: "all", scopedWorkProject: "all", scopedWorkTeam: "all", scopedWorkGroup: "status", scopedWorkSubgroup: "none", scopedWorkSort: "default", scopedWorkOrder: "asc",
   actView: "assembly", actProject: "all", actFilter: "all", actPanel: null,
   projectActView: "assembly", projectActFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
@@ -56,8 +56,9 @@ function applyTheme(remember = false) {
   }
 }
 applyTheme();
-const FONT_STORE = "agentic-org.v6.fontStyle.v4";
+const FONT_STORE = "agentic-org.v6.fontStyle.v5";
 const FONT_OPTIONS = [
+  ["inter", "Inter"],
   ["noto-sans", "Noto Sans (Ellosoft)"],
   ["instrument", "Instrument Sans"],
   ["manrope", "Manrope"],
@@ -81,7 +82,7 @@ if (VALID_FONTS.has(urlFont)) {
   } catch (e) {}
 }
 function applyFontStyle(remember = false) {
-  const f = VALID_FONTS.has(S.fontStyle) ? S.fontStyle : "noto-sans";
+  const f = VALID_FONTS.has(S.fontStyle) ? S.fontStyle : "inter";
   S.fontStyle = f;
   document.documentElement.dataset.font = f;
   if (!remember) return;
