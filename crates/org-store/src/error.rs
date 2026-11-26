@@ -1,8 +1,9 @@
-//! Errors of the store. Every one is plain data, so one failure can answer many waiters.
+//! Errors of the store, of its journal and of its file publication. Every one is plain data, so
+//! one failure can answer many waiters.
 
-use std::fmt;
+use std::{fmt, io, path::Path};
 
-use crate::{change::DurablePath, files::FilesError, journal::JournalError};
+use crate::change::DurablePath;
 
 /// A failure of the projection's database.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -203,3 +204,158 @@ impl From<ProjectionError> for StoreError {
         Self::Projection(error)
     }
 }
+
+/// A failure of the acceptance journal.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum JournalError {
+    Io {
+        path: String,
+        action: &'static str,
+        message: String,
+    },
+    /// A full flush failed. Never retried in this process.
+    Flush {
+        path: String,
+        message: String,
+    },
+    /// A bad entry at or below the head the host confirmed, or an entry that is whole but
+    /// does not continue the chain. Never truncated.
+    Corrupt {
+        ordinal: u64,
+        reason: String,
+    },
+    /// The journal ends before the head the host confirmed.
+    Behind {
+        journal: u64,
+        custody: u64,
+    },
+    /// The entry at the confirmed ordinal is not the one the host confirmed.
+    Fork {
+        ordinal: u64,
+    },
+    /// The entries before this ordinal are neither present nor covered by the checkpoint,
+    /// or the entry at this ordinal, which the host confirmed, is no longer held.
+    MissingPredecessor {
+        ordinal: u64,
+    },
+    UnknownFormat(String),
+    /// The journal belongs to another office, incarnation or writer.
+    IdentityMismatch,
+    /// `create` found a journal already there.
+    Exists,
+    Custody(String),
+    Exhausted(&'static str),
+    TooLarge {
+        bytes: usize,
+    },
+    /// The append failed or was short. The segment is back at its last good entry.
+    Append(String),
+    /// A failed append could not be truncated away. The journal accepts nothing more.
+    Broken {
+        path: String,
+        message: String,
+    },
+    Internal(String),
+}
+
+impl fmt::Display for JournalError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io {
+                path,
+                action,
+                message,
+            } => write!(f, "journal: {action} {path}: {message}"),
+            Self::Flush { path, message } => write!(f, "journal: flush {path}: {message}"),
+            Self::Corrupt { ordinal, reason } => {
+                write!(f, "journal entry {ordinal} is corrupt: {reason}")
+            }
+            Self::Behind { journal, custody } => write!(
+                f,
+                "the journal ends at {journal}, behind the confirmed head {custody}"
+            ),
+            Self::Fork { ordinal } => {
+                write!(
+                    f,
+                    "journal entry {ordinal} is not the one the host confirmed"
+                )
+            }
+            Self::MissingPredecessor { ordinal } => {
+                write!(f, "the journal entries before {ordinal} are missing")
+            }
+            Self::UnknownFormat(format) => write!(f, "unknown journal format {format:?}"),
+            Self::IdentityMismatch => f.write_str("the journal belongs to another writer"),
+            Self::Exists => f.write_str("a journal already exists here"),
+            Self::Custody(message) => write!(f, "writer custody: {message}"),
+            Self::Exhausted(what) => write!(f, "{what} exhausted"),
+            Self::TooLarge { bytes } => write!(f, "a journal entry of {bytes} bytes is too large"),
+            Self::Append(message) => write!(f, "journal append failed: {message}"),
+            Self::Broken { path, message } => {
+                write!(f, "journal segment {path} could not be repaired: {message}")
+            }
+            Self::Internal(message) => write!(f, "journal: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for JournalError {}
+
+/// A failure to publish or read a canonical file.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum FilesError {
+    /// The file holds bytes this office did not write. Nothing was replaced.
+    Foreign { path: DurablePath },
+    Io {
+        path: String,
+        action: &'static str,
+        message: String,
+        /// A flush failed. It must not be retried in this process.
+        flush: bool,
+    },
+}
+
+impl FilesError {
+    pub(crate) fn io(path: &Path, action: &'static str, error: &io::Error) -> Self {
+        Self::Io {
+            path: path.display().to_string(),
+            action,
+            message: error.to_string(),
+            flush: false,
+        }
+    }
+
+    pub(crate) fn flush(path: &Path, action: &'static str, error: &io::Error) -> Self {
+        Self::Io {
+            path: path.display().to_string(),
+            action,
+            message: error.to_string(),
+            flush: true,
+        }
+    }
+
+    /// The path the failure names.
+    pub fn path(&self) -> String {
+        match self {
+            Self::Foreign { path } => path.to_string(),
+            Self::Io { path, .. } => path.clone(),
+        }
+    }
+}
+
+impl fmt::Display for FilesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Foreign { path } => {
+                write!(f, "{path} holds bytes this office did not write")
+            }
+            Self::Io {
+                path,
+                action,
+                message,
+                ..
+            } => write!(f, "{action} {path}: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for FilesError {}

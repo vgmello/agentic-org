@@ -1622,9 +1622,11 @@ fn actual_browser_and_native_cli_list_offices_and_restart_contract() {
     drop(wire);
 
     // 3b. Exercise `setup_flow::office_command` (`agentic-org office list` & `office restart`)
-    // directly against the live `host.sock` (text + JSON + error translation + SessionEnd).
+    // directly against the live `host.sock` (the answered DTOs + error translation + SessionEnd).
     {
-        use crate::setup_flow::office_command::{list, restart, Target};
+        use crate::setup_flow::cli_session::Target;
+        use crate::setup_flow::office_command::{list, restart};
+        use crate::setup_flow::HostCliErrorKind;
         let target = Target {
             socket: &socket,
             instance_id: &instance_id,
@@ -1637,88 +1639,48 @@ fn actual_browser_and_native_cli_list_offices_and_restart_contract() {
             crate::test_programs::image_identity(),
             org_platform_host::admission::ImageIdentity::CodeSignature
         );
-        let mut out = Vec::new();
         let mut err = Vec::new();
         if by_code {
-            // Wrong password is refused cleanly.
-            let bad_pw = list(
-                &target,
-                Some("Owner"),
-                None,
-                false,
-                &mut wrong,
-                &mut err,
-                &mut out,
-            )
-            .unwrap_err();
-            assert!(bad_pw.contains("invalid login or password"), "{bad_pw}");
+            // Wrong password is refused cleanly, as a sign-in failure.
+            let bad_pw = list(&target, Some("Owner"), None, &mut wrong, &mut err).unwrap_err();
+            assert!(
+                bad_pw.message.contains("invalid login or password"),
+                "{bad_pw:?}"
+            );
+            assert_eq!(bad_pw.kind, HostCliErrorKind::Auth);
 
-            // Human-readable list prints office id and status without leaking endpoints.
-            out.clear();
-            list(
+            // The list names the office and its status, and never an endpoint.
+            let listed = list(
                 &target,
                 Some("Owner"),
                 Some(&organization),
-                false,
                 &mut typed,
                 &mut err,
-                &mut out,
             )
             .unwrap();
-            let text = String::from_utf8(out.clone()).unwrap();
-            assert!(text.contains(&office), "{text}");
-            assert!(text.contains("status=Active"), "{text}");
-            assert!(!text.contains(".sock"), "{text}");
-
-            // JSON list decodes as valid JSON with `endpoint` omitted.
-            out.clear();
-            list(
-                &target,
-                Some("Owner"),
-                Some(&organization),
-                true,
-                &mut typed,
-                &mut err,
-                &mut out,
-            )
-            .unwrap();
-            let parsed: Value = serde_json::from_slice(&out).unwrap();
+            assert_eq!(listed.offices[0].id, office);
+            assert_eq!(listed.offices[0].status, OfficeStatus::Active);
+            let parsed = serde_json::to_value(&listed).unwrap();
             assert_eq!(parsed["offices"][0]["id"], office.as_str());
             assert!(parsed["offices"][0].get("endpoint").is_none());
 
-            // CLI restart on an active office reports the human conflict message.
-            out.clear();
-            let conflict_msg = restart(
-                &target,
-                Some("Owner"),
-                &office,
-                false,
-                &mut typed,
-                &mut err,
-                &mut out,
-            )
-            .unwrap_err();
+            // Restart on an active office is the host's conflict, in words.
+            let conflict =
+                restart(&target, Some("Owner"), &office, &mut typed, &mut err).unwrap_err();
             assert!(
-                conflict_msg.contains("not offline or unavailable"),
-                "{conflict_msg}"
+                conflict.message.contains("not offline or unavailable"),
+                "{conflict:?}"
             );
+            assert_eq!(conflict.code, Some(org_proto::ErrorCode::Conflict));
         } else {
             let asked = std::cell::Cell::new(0);
             let mut count_pw = || {
                 asked.set(asked.get() + 1);
                 Ok(org_host_control::Password::new(PASSWORD.into()).unwrap())
             };
-            let err_msg = list(
-                &target,
-                Some("Owner"),
-                None,
-                false,
-                &mut count_pw,
-                &mut err,
-                &mut out,
-            )
-            .unwrap_err();
-            assert!(err_msg.contains("browser"), "{err_msg}");
+            let refused = list(&target, Some("Owner"), None, &mut count_pw, &mut err).unwrap_err();
+            assert!(refused.message.contains("browser"), "{refused:?}");
+            assert_eq!(refused.kind, HostCliErrorKind::Auth);
             assert_eq!(
                 asked.get(),
                 0,
@@ -2031,7 +1993,7 @@ fn actual_browser_and_native_cli_projects_lifecycle_survives_restart_and_rebuild
     // 6. Exercise native `setup_flow::project_command` (`list`, `inspect`, `create`) over `host.sock`.
     let mut expected_count = 1usize;
     {
-        use crate::setup_flow::office_command::Target;
+        use crate::setup_flow::cli_session::Target;
         use crate::setup_flow::project_command::{create, inspect, list, ProjectCreateInput};
         let target = Target {
             socket: &socket,
@@ -2043,53 +2005,53 @@ fn actual_browser_and_native_cli_projects_lifecycle_survives_restart_and_rebuild
             crate::test_programs::image_identity(),
             org_platform_host::admission::ImageIdentity::CodeSignature
         );
-        let mut out = Vec::new();
+        let mut err = Vec::new();
         if by_code {
-            list(
+            let listed = list(
                 &target,
-                "Owner",
+                Some("Owner"),
                 Some(&organization),
                 false,
-                false,
                 &mut typed,
-                &mut out,
+                &mut err,
             )
             .unwrap();
-            let text_out = String::from_utf8(out.clone()).unwrap();
-            assert!(text_out.contains("P-1\tbilling-service"), "{text_out}");
+            assert!(
+                listed
+                    .projects
+                    .iter()
+                    .any(|p| p.key == "P-1" && p.slug == "billing-service"),
+                "{listed:?}"
+            );
 
-            out.clear();
-            inspect(
+            let inspected = inspect(
                 &target,
-                "Owner",
+                Some("Owner"),
                 Some(&organization),
                 "P-1",
-                true,
                 &mut typed,
-                &mut out,
+                &mut err,
             )
             .unwrap();
-            let parsed: Value = serde_json::from_slice(&out).unwrap();
+            let parsed = serde_json::to_value(&inspected).unwrap();
             assert_eq!(parsed["id"], project_id);
             assert_eq!(parsed["key"], "P-1");
 
-            out.clear();
-            create(
+            let created = create(
                 &target,
-                "Owner",
+                Some("Owner"),
                 &ProjectCreateInput {
                     org_id: Some(&organization),
                     name: "Analytics",
                     slug: None,
                     owner_team_id: Some(&security_team_id),
                     parent_team_id: None,
-                    json: true,
                 },
                 &mut typed,
-                &mut out,
+                &mut err,
             )
             .unwrap();
-            let created_cli: Value = serde_json::from_slice(&out).unwrap();
+            let created_cli = serde_json::to_value(&created).unwrap();
             assert_eq!(created_cli["key"], "P-2");
             assert_eq!(created_cli["slug"], "analytics");
             assert_eq!(created_cli["owner_team_id"], security_team_id);

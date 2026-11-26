@@ -372,7 +372,7 @@ fn setup_starts_the_service_prints_one_link_and_a_second_run_changes_nothing() {
         "{:?}",
         text(&status)
     );
-    let stop = account.run(&["service", "stop"]);
+    let stop = account.run(&["service", "stop", "--yes"]);
     assert!(stop.status.success(), "{:?}", text(&stop));
     assert!(!alive(pid));
     // With the service stopped, admin reset names the recovery. Where the system names a
@@ -439,7 +439,7 @@ fn a_named_instance_skips_ports_other_instances_saved() {
     let (out, err) = text(&first);
     assert!(first.status.success(), "stdout:\n{out}\nstderr:\n{err}");
     let saved = Account::address(&out);
-    let stop = account.run(&["service", "stop", "--name", "one"]);
+    let stop = account.run(&["service", "stop", "--name", "one", "--yes"]);
     assert!(stop.status.success(), "{:?}", text(&stop));
     let second = account.run(&["setup", "--name", "two"]);
     let (out2, err2) = text(&second);

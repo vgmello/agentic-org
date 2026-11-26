@@ -7,8 +7,8 @@ use crate::node::Node;
 #[cfg(doc)]
 use crate::office::Request;
 use crate::office::{Answer, Refusal, Status};
+use crate::row::Ack;
 use crate::shape::SCHEMA_DIALECT;
-use crate::table::Ack;
 
 /// The spelling of a code: the one `org-proto` gives it on the wire.
 pub fn code_name(code: ErrorCode) -> String {

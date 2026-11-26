@@ -1,5 +1,18 @@
+use super::super::signal::Signal;
 use super::*;
-use org_office_launch::ServerEvent;
+use crate::cloexec::SPAWN_LOCK;
+use crate::sync::lock;
+use org_office_launch::{ServerEvent, MAX_CHANNELS, MAX_WEB_CHANNELS};
+use org_platform_host::admission::{Admission, Child};
+use org_proto::{frame, OfficeSecretsKey};
+use std::io;
+use std::io::{BufReader, Write};
+use std::os::fd::OwnedFd;
+use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// This test process stands in for a worker whose pid is `pid`: an admission that checks no
 /// image (a debug build's) and a child handle that is never signalled or waited for. A system
@@ -762,27 +775,41 @@ fn actual_host_reserves_web_and_total_before_fd_send_and_keeps_held_fd_occupied(
     let fixture = worker_fixture("office");
     let endpoint = &fixture.endpoint;
     let mut held = Vec::new();
-    for _ in 0..7 {
+    for _ in 0..MAX_WEB_CHANNELS {
         held.push(endpoint.open(org_office_launch::ChannelKind::Web).unwrap());
     }
-    assert_eq!(fixture.transferred.load(Ordering::SeqCst), 7);
+    assert_eq!(fixture.transferred.load(Ordering::SeqCst), MAX_WEB_CHANNELS);
     assert!(endpoint.open(org_office_launch::ChannelKind::Web).is_err());
     assert_eq!(
         fixture.transferred.load(Ordering::SeqCst),
-        7,
+        MAX_WEB_CHANNELS,
         "refusal must precede FD send"
     );
+    // Local callers take the ordinary slots the web allowance leaves, up to the total.
     let (_, mut local, local_slot) = endpoint
         .open(org_office_launch::ChannelKind::Local)
         .unwrap();
+    let mut locals = Vec::new();
+    for _ in MAX_WEB_CHANNELS + 1..MAX_CHANNELS {
+        locals.push(
+            endpoint
+                .open(org_office_launch::ChannelKind::Local)
+                .unwrap(),
+        );
+    }
     assert!(endpoint
         .open(org_office_launch::ChannelKind::Local)
         .is_err());
+    assert_eq!(
+        fixture.transferred.load(Ordering::SeqCst),
+        MAX_CHANNELS,
+        "refusal must precede FD send"
+    );
     // Dropping permission witnesses must not free a descriptor still held by a caller.
     let (id, stream, slot) = held.pop().unwrap();
     let closed = slot.clone();
     drop((id, slot));
-    assert_eq!(lock(&endpoint.channels).len(), 8);
+    assert_eq!(lock(&endpoint.channels).len(), MAX_CHANNELS);
     assert!(endpoint.open(org_office_launch::ChannelKind::Web).is_err());
     drop(stream);
     await_closed(&closed);
@@ -823,7 +850,7 @@ fn actual_host_negative_ack_keeps_endpoint_and_existing_rpc_live_and_writer_inde
     client.read_exact(&mut bytes).unwrap();
     assert_eq!(&bytes, b"still live");
     let mut held = Vec::new();
-    for _ in 1..8 {
+    for _ in 1..MAX_CHANNELS {
         held.push(
             fixture
                 .endpoint
@@ -833,7 +860,7 @@ fn actual_host_negative_ack_keeps_endpoint_and_existing_rpc_live_and_writer_inde
     }
     let (host, worker) = UnixStream::pair().unwrap();
     fixture.endpoint.writer_control(worker).unwrap();
-    assert_eq!(lock(&fixture.endpoint.channels).len(), 8);
+    assert_eq!(lock(&fixture.endpoint.channels).len(), MAX_CHANNELS);
     let request = org_office_launch::recovery::Request {
         version: 1,
         instance_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182".into(),
@@ -852,7 +879,7 @@ fn actual_host_negative_ack_keeps_endpoint_and_existing_rpc_live_and_writer_inde
     );
     assert_eq!(fixture.transferred.load(Ordering::SeqCst), count + 1);
     let until = Instant::now() + Duration::from_secs(3);
-    while lock(&fixture.endpoint.channels).len() != 7 {
+    while lock(&fixture.endpoint.channels).len() != MAX_CHANNELS - 1 {
         assert!(Instant::now() < until);
         std::thread::yield_now();
     }
@@ -893,8 +920,22 @@ fn incompatible_profile_gets_no_secret_or_descriptor() {
 #[test]
 fn actual_concurrent_web_opens_reserve_before_send_without_overadmission_or_deadlock() {
     let fixture = worker_fixture("office");
-    let barrier = Arc::new(std::sync::Barrier::new(17));
-    let threads: Vec<_> = (0..16)
+    // At most MAX_PENDING transfers may be in flight, a cap independent of the web
+    // allowance. Fill the allowance one by one down to the slots a single burst can contend
+    // for without meeting that cap, so only the web cap can refuse below.
+    let contested = MAX_WEB_CHANNELS.min(MAX_PENDING);
+    let mut held: Vec<_> = (contested..MAX_WEB_CHANNELS)
+        .map(|_| {
+            fixture
+                .endpoint
+                .open(org_office_launch::ChannelKind::Web)
+                .unwrap()
+        })
+        .collect();
+    // More contenders than the slots left, so some must be refused.
+    let contenders = contested + 8;
+    let barrier = Arc::new(std::sync::Barrier::new(contenders + 1));
+    let threads: Vec<_> = (0..contenders)
         .map(|_| {
             let endpoint = Arc::clone(&fixture.endpoint);
             let barrier = Arc::clone(&barrier);
@@ -905,18 +946,22 @@ fn actual_concurrent_web_opens_reserve_before_send_without_overadmission_or_dead
         })
         .collect();
     barrier.wait();
-    let held: Vec<_> = threads
-        .into_iter()
-        .filter_map(|thread| thread.join().unwrap().ok())
-        .collect();
-    assert_eq!(held.len(), 7);
-    assert_eq!(fixture.transferred.load(Ordering::SeqCst), 7);
+    held.extend(
+        threads
+            .into_iter()
+            .filter_map(|thread| thread.join().unwrap().ok()),
+    );
+    assert_eq!(held.len(), MAX_WEB_CHANNELS);
+    assert_eq!(fixture.transferred.load(Ordering::SeqCst), MAX_WEB_CHANNELS);
     let local = fixture
         .endpoint
         .open(org_office_launch::ChannelKind::Local)
         .unwrap();
-    assert_eq!(fixture.transferred.load(Ordering::SeqCst), 8);
-    assert_eq!(lock(&fixture.endpoint.channels).len(), 8);
+    assert_eq!(
+        fixture.transferred.load(Ordering::SeqCst),
+        MAX_WEB_CHANNELS + 1
+    );
+    assert_eq!(lock(&fixture.endpoint.channels).len(), MAX_WEB_CHANNELS + 1);
     let witnesses: Vec<_> = held
         .iter()
         .map(|(_, _, slot)| slot.clone())

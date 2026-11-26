@@ -111,7 +111,7 @@ fn start(base: &Path, address: SocketAddr, first: bool) -> (Host, PathBuf, Vec<S
     });
     // As the registered start installs it: the administrator calls' admission (this test's
     // executable is the development `agentic-org` peer of `fixture_config`).
-    let policy = crate::startup_app_policy(&fixture_config(base), true).unwrap();
+    let policy = crate::startup::startup_app_policy(&fixture_config(base), true).unwrap();
     let db = host
         .service
         .authentication
@@ -383,7 +383,7 @@ fn a_real_host_serves_the_browser_over_tls_with_its_own_certificate_and_a_suppli
 
 /// `agentic-org admin tls set` against a real host: where the command can identify the host's
 /// program it signs the administrator in with the password asked at the terminal (once),
-/// replaces the pair in the running web process and prints only the new fingerprint; a
+/// replaces the pair in the running web process and answers only the new fingerprint; a
 /// pair for another name or a wrong password changes nothing. Where the host is known by its
 /// user alone, it refuses before a password is asked or anything is sent.
 #[test]
@@ -419,16 +419,12 @@ fn the_admin_tls_set_command_replaces_the_pair_where_it_may_send_the_password() 
         }
     };
     let run = |cert: &Path, password: &'static str| {
-        let mut out = Vec::new();
-        let result = set(
-            &target,
-            cert,
-            &key_path,
-            "Owner",
-            &mut typed(password),
-            &mut out,
-        );
-        (result, String::from_utf8(out).unwrap())
+        let result = set(&target, cert, &key_path, "Owner", &mut typed(password));
+        let out = result
+            .as_ref()
+            .map(|replaced| serde_json::to_string(replaced).unwrap())
+            .unwrap_or_default();
+        (result.map_err(|refused| refused.message), out)
     };
     let by_code = matches!(
         crate::test_programs::image_identity(),

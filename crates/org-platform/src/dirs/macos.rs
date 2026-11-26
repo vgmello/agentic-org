@@ -46,6 +46,12 @@ pub(super) fn user_temp_base(_home: &Path) -> Result<PathBuf, UserTempError> {
     path.canonicalize().map_err(UserTempError::Invalid)
 }
 
+/// The user's own `Library/Caches`, never the system's per-user temporary folder (whose
+/// parent, `/private/var/folders/<xx>/<user>`, others may list).
+pub(super) fn cli_cache_dir(home: &Path) -> Result<PathBuf, Refused> {
+    Ok(home.join("Library/Caches/agentic.org/cli-cache"))
+}
+
 /// macOS has no credential directory: a release host's secrets are in the Keychain.
 pub(super) fn credential_directory_base(_home: &Path) -> Result<PathBuf, Refused> {
     Err(Refused::unsupported("a credential directory"))
@@ -85,6 +91,22 @@ mod tests {
         assert_eq!(
             application_base(Path::new("/Users/a")).unwrap(),
             Path::new("/Users/a/Library/Application Support/agentic.org")
+        );
+    }
+
+    #[test]
+    fn the_cli_cache_is_in_the_users_own_library_caches() {
+        let cache = cli_cache_dir(Path::new("/Users/a")).unwrap();
+        assert_eq!(
+            cache,
+            Path::new("/Users/a/Library/Caches/agentic.org/cli-cache")
+        );
+        assert!(!cache.starts_with("/private/var") && !cache.starts_with("/var"));
+        let temp = user_temp_base(Path::new("/Users/a")).unwrap();
+        assert!(
+            !cache.starts_with(temp.parent().unwrap()),
+            "{}",
+            cache.display()
         );
     }
 

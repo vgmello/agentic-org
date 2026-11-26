@@ -2,8 +2,42 @@
 //! `FC-171`, `INSTR-4, 5, 7, 8, 12, 15, 21`).
 
 use std::collections::BTreeSet;
+use std::sync::OnceLock;
 
 use org_command::CommandTable;
+
+/// Produces the live `agent-os` command table rendered into standing instructions (`INSTR-5`).
+pub type CommandCatalogue = fn() -> CommandTable;
+
+static INSTALLED_COMMAND_CATALOGUE: OnceLock<CommandCatalogue> = OnceLock::new();
+
+/// Installs the process-wide `agent-os` command catalogue. The office binary's composition root
+/// calls this once, before the server starts, with the CLI's own table builder, so this crate
+/// never links the CLI implementation (`TASK-171`). Returns `false` when one was already set.
+pub fn install_command_catalogue(catalogue: CommandCatalogue) -> bool {
+    INSTALLED_COMMAND_CATALOGUE.set(catalogue).is_ok()
+}
+
+/// The catalogue installed by [`install_command_catalogue`], if any.
+pub fn installed_command_catalogue() -> Option<CommandCatalogue> {
+    INSTALLED_COMMAND_CATALOGUE.get().copied()
+}
+
+/// The live command table from `catalogue`, or an empty one. A composition root that never
+/// installed a catalogue is reported once on stderr, so agents' missing command list is visible.
+pub(crate) fn command_table_or_empty(catalogue: Option<CommandCatalogue>) -> CommandTable {
+    static REPORTED_MISSING: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    if let Some(catalogue) = catalogue {
+        return catalogue();
+    }
+    if !REPORTED_MISSING.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        eprintln!(
+            "org-office-sessions: warning: no agent-os command catalogue installed; standing instructions list no commands"
+        );
+    }
+    CommandTable::unchecked(&[])
+}
 
 /// Maximum UTF-8 byte budget for the built-in standing instruction text (`INSTR-4`).
 pub const BUILTIN_INSTRUCTIONS_MAX_BYTES: usize = 10 * 1024;

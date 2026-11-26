@@ -19,9 +19,8 @@ use crate::{
     organization::{
         features::Op,
         records::{self, By, EmployeeKind, EmployeeStatus, Meta, TeamStatus},
-        snapshot::position,
-        wire,
     },
+    structure::{snapshot::position, wire},
 };
 
 const HR: u64 = 0x13;

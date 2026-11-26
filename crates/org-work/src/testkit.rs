@@ -18,8 +18,8 @@ use org_proto::work::{
     EventRef, ItemKind, ItemStatus, Link, LinkKind, LinkTarget, WorkEvent, WorkPosition,
 };
 
-use crate::engine::TxnOutput;
 use crate::model::{link_view, StoredItem, StoredResult};
+use crate::ports::TxnOutput;
 use crate::ports::{Clock, NumberScope, OrgView, StoreError, TxnFn, WorkReads, WorkStore, WorkTxn};
 
 /// The organization, in memory.

@@ -60,7 +60,7 @@ pub use team_limit::SetTeamMaxMembers;
 pub use update_person::{Edit, UpdatePerson};
 pub use update_team::UpdateTeam;
 
-use crate::projects::ports::ProjectsRead;
+use crate::organization::ports::TeamDependents;
 
 /// Every operation of the family. The one place their acknowledgement classes are
 /// declared (ADR-0014).
@@ -238,7 +238,7 @@ pub trait Feature: Serialize + Clone + Send + 'static {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: ProjectsRead;
+        E::Tx: TeamDependents;
 
     /// The identity a retry is matched on.
     fn operation(&self, id: Id, by: &Actor) -> Operation {

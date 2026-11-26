@@ -14,7 +14,8 @@ use org_proto::msg::{MsgBind, MsgBindParams};
 use org_proto::ErrorCode;
 use serde_json::Value;
 
-use crate::dispatch::{self, hint_for, OfficeTransport};
+use crate::dispatch;
+use crate::transport::{hint_for, OfficeTransport};
 
 /// Environment variable naming the office socket path (`doc-28` §2.8).
 pub const SOCKET_ENV: &str = "AGENT_OS_SOCKET";
@@ -115,6 +116,8 @@ fn read_binding_file_token(path: &str) -> Option<String> {
 pub struct BoundOffice {
     binding: Binding,
     client: Option<Client>,
+    /// Per-command `waiting_messages` hint returned by the most recent office RPC call.
+    waiting_messages: Option<u32>,
 }
 
 impl BoundOffice {
@@ -122,6 +125,7 @@ impl BoundOffice {
         Self {
             binding,
             client: None,
+            waiting_messages: None,
         }
     }
 
@@ -216,8 +220,13 @@ impl BoundOffice {
 
 impl OfficeTransport for BoundOffice {
     fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
-        let client = self.client()?;
-        client.call_raw(method, params).map_err(map_client_error)
+        self.waiting_messages = None;
+        let outcome = self
+            .client()?
+            .call_raw_with_meta(method, params)
+            .map_err(map_client_error)?;
+        self.waiting_messages = outcome.meta.waiting_messages;
+        Ok(outcome.value)
     }
 
     fn call_method_with_timeout(
@@ -226,22 +235,21 @@ impl OfficeTransport for BoundOffice {
         params: Value,
         timeout: std::time::Duration,
     ) -> Result<Value, Refusal> {
-        let client = self.client()?;
-        client
-            .call_raw_with_timeout(method, params, timeout)
-            .map_err(map_client_error)
+        self.waiting_messages = None;
+        let outcome = self
+            .client()?
+            .call_raw_with_timeout_and_meta(method, params, timeout)
+            .map_err(map_client_error)?;
+        self.waiting_messages = outcome.meta.waiting_messages;
+        Ok(outcome.value)
     }
 }
 
 impl Office for BoundOffice {
     fn call(&mut self, request: &Request) -> Result<Answer, Refusal> {
-        if let Some(client) = &self.client {
-            client.clear_last_waiting_messages();
-        }
+        self.waiting_messages = None;
         let mut answer = dispatch::execute(self, request)?;
-        if let Some(client) = &self.client {
-            answer.waiting_messages = client.last_waiting_messages();
-        }
+        answer.waiting_messages = self.waiting_messages.take();
         Ok(answer)
     }
 }
@@ -360,5 +368,91 @@ mod tests {
         let huge = dir.path().join("huge-binding.v1");
         std::fs::write(&huge, "x".repeat((MAX_BINDING_FILE_BYTES + 1) as usize)).unwrap();
         assert_eq!(read_binding_file_token(huge.to_str().unwrap()), None);
+    }
+
+    #[test]
+    fn bound_office_propagates_per_call_waiting_messages_without_stale_leaks() {
+        use std::io::BufReader;
+        use std::os::unix::net::UnixListener;
+
+        use org_proto::msg::MsgBindResult;
+        use org_proto::{frame, Request as WireRequest, Response as WireResponse};
+        use serde_json::json;
+
+        let dir = tempfile::Builder::new().prefix("oac-wm").tempdir().unwrap();
+        let sock = dir.path().join("office.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+
+            // 1. `msg.bind` returns a non-zero waiting_messages hint that must NOT leak.
+            let bind_req: WireRequest = frame::read_message(&mut reader).unwrap().unwrap();
+            assert_eq!(bind_req.method, "msg.bind");
+            let bind_resp = WireResponse::ok::<MsgBind>(
+                bind_req.id,
+                &MsgBindResult {
+                    member_id: Some("0193a5c0-0000-7000-8000-000000000003".into()),
+                    office_id: "0193a5c0-0000-7000-8000-000000000001".into(),
+                },
+            )
+            .unwrap()
+            .with_waiting_messages(99);
+            frame::write_message(&mut stream, &bind_resp).unwrap();
+
+            // 2. First command RPC returns `waiting_messages: Some(4)`.
+            let req1: WireRequest = frame::read_message(&mut reader).unwrap().unwrap();
+            assert_eq!(req1.method, "budget.agent_own");
+            let resp1 = WireResponse {
+                id: req1.id,
+                outcome: org_proto::Outcome::Result(json!({
+                    "agent_id": "0193a5c0-0000-7000-8000-000000000003"
+                })),
+                waiting_messages: None,
+            }
+            .with_waiting_messages(4);
+            frame::write_message(&mut stream, &resp1).unwrap();
+
+            // 3. Second command RPC returns `waiting_messages: None`.
+            let req2: WireRequest = frame::read_message(&mut reader).unwrap().unwrap();
+            assert_eq!(req2.method, "budget.agent_own");
+            let resp2 = WireResponse {
+                id: req2.id,
+                outcome: org_proto::Outcome::Result(json!({
+                    "agent_id": "0193a5c0-0000-7000-8000-000000000003"
+                })),
+                waiting_messages: None,
+            };
+            frame::write_message(&mut stream, &resp2).unwrap();
+        });
+
+        let mut office = BoundOffice::new(Binding {
+            socket: Some(sock),
+            office_id: None,
+            runtime_dir: None,
+            session_token: Some("tok-123".into()),
+            agent_id: Some("0193a5c0-0000-7000-8000-000000000003".into()),
+        });
+        office.ensure_connected().unwrap();
+        assert_eq!(office.waiting_messages, None);
+
+        let args: Vec<String> = ["budget", "status", "--format", "json"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+
+        let first = crate::execute_with_office("agent-os", &args, &mut office);
+        assert_eq!(first.exit_code, 0, "{}", first.stdout);
+        let first_json: Value = serde_json::from_str(&first.stdout).unwrap();
+        assert_eq!(first_json["meta"]["waiting_messages"], 4);
+
+        let second = crate::execute_with_office("agent-os", &args, &mut office);
+        assert_eq!(second.exit_code, 0, "{}", second.stdout);
+        let second_json: Value = serde_json::from_str(&second.stdout).unwrap();
+        assert!(second_json["meta"].get("waiting_messages").is_none());
+
+        drop(office);
+        server.join().unwrap();
     }
 }

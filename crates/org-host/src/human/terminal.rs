@@ -1,5 +1,8 @@
 //! Bounded secret input from the controlling terminal, with restoration before
 //! pending termination/job-control signals are unblocked. Never reads stdin/env.
+//! A pending termination signal or end of input cancels the entry with
+//! [`PASSWORD_CANCELLED`], which callers turn into a cancellation.
+use crate::cli_error::PASSWORD_CANCELLED;
 use org_host_control::Password;
 use std::{
     fs::OpenOptions,
@@ -100,7 +103,7 @@ pub(super) fn secret(label: &[u8]) -> Result<Password, String> {
         tty.flush().map_err(|_| "terminal unavailable")?;
         loop {
             if signals.pending() {
-                return Err("password entry cancelled");
+                return Err(PASSWORD_CANCELLED);
             }
             let mut poll = libc::pollfd {
                 fd: tty.as_raw_fd(),
@@ -116,8 +119,14 @@ pub(super) fn secret(label: &[u8]) -> Result<Password, String> {
                 continue;
             }
             let mut b = [0];
-            tty.read_exact(&mut b)
-                .map_err(|_| "password input failed")?;
+            // End of input (Ctrl+D at the prompt) cancels the entry, as Ctrl+C does.
+            tty.read_exact(&mut b).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::UnexpectedEof {
+                    PASSWORD_CANCELLED
+                } else {
+                    "password input failed"
+                }
+            })?;
             if b[0] == b'\n' {
                 break;
             }

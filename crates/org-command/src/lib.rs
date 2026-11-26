@@ -17,13 +17,14 @@
 //! The library knows no socket, database or operating system, and makes no randomness. The
 //! executable supplies the office (how the caller is identified), the sources and the keys.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 mod envelope;
 mod help;
 mod node;
 mod office;
 mod parse;
+mod row;
 mod shape;
 mod table;
 #[cfg(feature = "testkit")]
@@ -34,7 +35,8 @@ pub use help::CATALOGUE_LIMIT;
 pub use node::Node;
 pub use office::{Answer, KeySource, Office, Refusal, Request, Sources, Status};
 pub use parse::{DEFAULT_LIMIT, MAX_INPUT_BYTES, MAX_LIMIT, MAX_YAML_INPUT_BYTES};
-pub use table::{Ack, Command, CommandTable, Example, Field, IfMatch, Kind, TableError, Type};
+pub use row::{Ack, Command, Example, Field, IfMatch, Kind, Type};
+pub use table::{CommandTable, TableError};
 
 use org_proto::ErrorCode;
 use parse::{Format, Parsed};
@@ -65,6 +67,15 @@ fn failed(refusal: &Refusal, dry_run: bool) -> Output {
         stdout: print(&envelope::failure(refusal, dry_run), Format::Json),
         exit_code: 1,
     }
+}
+
+/// The failure envelope of `refusal` as one line of JSON, without the new line: `ok` false,
+/// `data` null, `meta` (its `operation_id`, and `dry_run` when `dry_run`), and `error` with the
+/// refusal's code, message, hint and `retry_with`. It is the envelope [`run`] prints for a
+/// refusal, for a caller that is refused before any command line is read (`session attach`
+/// when its office cannot be reached), so that caller never writes an envelope by hand.
+pub fn failure_envelope_json(refusal: &Refusal, dry_run: bool) -> String {
+    envelope::failure(refusal, dry_run).to_one_line()
 }
 
 /// Runs one command line. `program` is the executable's name, for help and hints; `args` are

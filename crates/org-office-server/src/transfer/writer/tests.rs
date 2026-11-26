@@ -119,32 +119,137 @@ fn the_office_refuses_custody_or_roots_that_differ_from_its_creation() {
     world.open(Some(key())).unwrap();
 }
 
+/// The host's confirmations, held while `held` is set: a test decides which commits one
+/// group flush covers instead of racing the flusher. Every call still reaches the worker's
+/// own adapter (`inner`) and, through it, the host.
+struct Gate {
+    inner: Arc<dyn WriterAuthority>,
+    /// Whether confirmations are held, and how many are waiting.
+    state: Mutex<(bool, usize)>,
+    changed: std::sync::Condvar,
+}
+
+impl Gate {
+    const WAIT: Duration = Duration::from_secs(10);
+
+    fn set_held(&self, held: bool) {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).0 = held;
+        self.changed.notify_all();
+    }
+
+    /// Waits until a confirmation is held here: a group flush is at the host.
+    fn await_held_confirmation(&self) {
+        let (waiting, timed_out) = {
+            let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let (state, timeout) = self
+                .changed
+                .wait_timeout_while(state, Self::WAIT, |(_, waiting)| *waiting == 0)
+                .unwrap_or_else(|e| e.into_inner());
+            (state.1, timeout.timed_out())
+        };
+        assert!(
+            !timed_out && waiting == 1,
+            "no group flush reached the host"
+        );
+    }
+}
+
+impl WriterAuthority for Gate {
+    fn checkpoint(&self, identity: &OfficeIdentity) -> Result<Option<JournalHead>, CustodyError> {
+        self.inner.checkpoint(identity)
+    }
+
+    fn confirm(
+        &self,
+        identity: &OfficeIdentity,
+        before: Option<&JournalHead>,
+        after: &JournalHead,
+    ) -> Result<(), CustodyError> {
+        {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.1 += 1;
+            self.changed.notify_all();
+            state = self
+                .changed
+                .wait_while(state, |(held, _)| *held)
+                .unwrap_or_else(|e| e.into_inner());
+            state.1 -= 1;
+        }
+        self.inner.confirm(identity, before, after)
+    }
+}
+
+/// Lets held confirmations go when dropped, so a failed assertion never leaves a submit
+/// waiting on the host for good.
+struct Release<'a>(&'a Gate);
+
+impl Drop for Release<'_> {
+    fn drop(&mut self) {
+        self.0.set_held(false);
+    }
+}
+
 /// L8: the office confirms once per group flush, never once per operation. Three
-/// `team.create` committed at once are confirmed in fewer confirmations than operations.
+/// `team.create` committed while one group flush is at the host are confirmed in fewer
+/// confirmations than operations.
+///
+/// Deterministic: the first flush's confirmation is held until the other two are committed
+/// (their journal entries are appended before their commit), so the next group flush must
+/// cover both, however the threads are scheduled.
 #[test]
 fn the_adapter_confirms_per_flush_not_per_operation() {
     let world = World::new();
-    let office = std::sync::Arc::new(world.prepare(Some(key()), code()).unwrap());
+    world.prepare(Some(key()), code()).unwrap().close().unwrap();
+    let (custody, roots) = world.writer.admitted();
+    let gate = Arc::new(Gate {
+        inner: custody.authority,
+        state: Mutex::new((false, 0)),
+        changed: std::sync::Condvar::new(),
+    });
+    let custody = Custody {
+        identity: custody.identity,
+        authority: Arc::clone(&gate) as Arc<dyn WriterAuthority>,
+    };
+    let office =
+        Arc::new(Office::open(&world.folder, Some(key()), INSTANCE, roots, custody).unwrap());
+    // A durable commit answered: everything before it is flushed and confirmed, so no
+    // earlier flush is still on its way to the host.
+    office.submit_org(OWNER, team_create(4)).unwrap().unwrap();
+    let teams_before = office.org_snapshot().unwrap().teams.len();
+    gate.set_held(true);
     let before = world.writer.confirms();
-    // The three submits start together, so they meet in one group flush.
-    let start = std::sync::Barrier::new(3);
     std::thread::scope(|scope| {
-        for n in 1..=3 {
-            let office = std::sync::Arc::clone(&office);
-            let start = &start;
+        let release = Release(&gate);
+        let submit = |n| {
+            let office = &office;
             scope.spawn(move || {
-                start.wait();
                 let accepted = office.submit_org(OWNER, team_create(n)).unwrap().unwrap();
                 assert_eq!(accepted.status, org_proto::org::CommandStatus::Committed);
-            });
+            })
+        };
+        submit(1);
+        // The first group flush, with the first commit, is held at the host.
+        gate.await_held_confirmation();
+        submit(2);
+        submit(3);
+        // Both later commits are in the journal (a snapshot shows them only after their
+        // entries are appended) while that flush is still held.
+        let until = std::time::Instant::now() + Gate::WAIT;
+        while office.org_snapshot().unwrap().teams.len() < teams_before + 3 {
+            assert!(
+                std::time::Instant::now() < until,
+                "the commits never landed"
+            );
+            std::thread::sleep(Duration::from_millis(1));
         }
+        drop(release);
     });
     let confirms = world.writer.confirms() - before;
     assert!(confirms >= 1, "the commits were never confirmed");
     assert!(confirms < 3, "{confirms} confirmations for 3 operations");
     // Every confirmation was accepted: the host holds the office's flushed head.
     let head = world.writer.head().unwrap();
-    assert!(head.ordinal >= 4, "{head:?}");
+    assert!(head.ordinal >= 5, "{head:?}");
     let teams = office.org_snapshot().unwrap().teams.len();
     std::sync::Arc::try_unwrap(office).unwrap().close().unwrap();
     let reopened = world.open(Some(key())).unwrap();

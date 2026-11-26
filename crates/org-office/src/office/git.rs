@@ -269,7 +269,13 @@ impl Office {
         branch: String,
         integrated_commit: Option<String>,
     ) -> Result<Result<(), ApiError>, OfficeError> {
-        self.store
+        if let Err(err) = super::tasks::ensure_local_task_write_authority(self, task_id.as_str())? {
+            return Ok(Err(err));
+        }
+        let enforce_satellite_office_id = (self.info.role == crate::model::OfficeRole::Satellite)
+            .then(|| self.identity.office_id.clone());
+        let res = self
+            .store
             .run(RecordTaskRepoBranchOp {
                 actor: actor.to_owned(),
                 command_id: command_id.to_owned(),
@@ -277,8 +283,13 @@ impl Office {
                 repository_id: repository_id.clone(),
                 branch,
                 integrated_commit,
+                enforce_satellite_office_id,
             })
-            .map_err(storage)
+            .map_err(storage)?;
+        if res.is_ok() {
+            let _ = self.sync_satellite_work_outbox();
+        }
+        Ok(res)
     }
 
     /// Stores the office-local `origin_path` for a `kind: local` repository.

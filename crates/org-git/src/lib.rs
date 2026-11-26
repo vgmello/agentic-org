@@ -7,7 +7,7 @@
 //!
 //! Knows only paths, URLs, references, and commit OIDs — never projects, tasks, or databases.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 pub mod cache;
 pub mod runner;

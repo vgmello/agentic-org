@@ -16,7 +16,7 @@ use org_proto::hiring::{
 use org_proto::web::{organizations, ReadResponse, WebError, WebErrorCode};
 use serde_json::Value;
 
-use super::org_routes::{resolve_hq_office, revalidate_and_resolve_hq};
+use super::hq_context::{resolve_hq_office, revalidate_and_resolve_hq};
 use super::{
     bad_input, failure, invalid, not_found, result, unavailable, Call, CallerAuth, Route,
     SessionApi,

@@ -3,7 +3,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
+use super::{
+    AttributionBasis, CompletenessStatus, CorrectionKind, ModelPriceView, UsageActorKind,
+    UsageCostBasis, UsageScopeKind, WorkType,
+};
 use crate::Call;
 
 /// `cost.price.set`: publish a new immutable USD model price version (`doc-87`, `FC-085`).

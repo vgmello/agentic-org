@@ -105,3 +105,23 @@ impl AgentRuntime for CodexRuntime {
         probe::parse_probe(probe, out)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn claude_auth_error_replies_are_ordinary_replies_for_codex() {
+        // Codex has no in-band expired-credentials reply, so the default applies and
+        // Claude's 401 forms are ordinary reply text.
+        let runtime = CodexRuntime::new();
+        for reply in [
+            r#"Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}}"#,
+            "401 OAuth access token has expired",
+            "OAuth access token has expired",
+            "API Error: 401 OAuth token has expired",
+        ] {
+            assert!(!runtime.reply_signals_auth_expired(reply), "{reply:?}");
+        }
+    }
+}

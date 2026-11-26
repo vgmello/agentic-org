@@ -5,9 +5,9 @@
 //! writes one compact single-line JSON envelope per line to stdout. A failing line writes an
 //! error envelope and never stops subsequent lines.
 
-use std::io::{BufRead, Write};
+use std::io::{self, BufRead, Write};
 
-use org_command::{CommandTable, Office};
+use org_command::{CommandTable, Office, Refusal};
 use org_proto::ErrorCode;
 use serde_json::{Map, Value};
 
@@ -15,14 +15,20 @@ use crate::keys::UuidV7KeySource;
 use crate::sources::StdSources;
 use crate::table;
 
+/// The hint of a line `session attach` could not read.
+const LINE_HINT: &str =
+    "Send one JSON object per line with `command`, optional `input`, and optional `options`.";
+
 /// Runs the `session attach` line loop over arbitrary `reader`, `writer`, and `office`.
+/// Answers 0 when the input ends or the reader of `writer` goes away (a closed pipe), and 1
+/// when `writer` fails otherwise.
 pub fn run_attach_loop<R: BufRead, W: Write>(
     program: &str,
     reader: R,
     mut writer: W,
     office: &mut dyn Office,
 ) -> u8 {
-    let table = table::table();
+    let table = table::runtime_table();
     let mut sources = StdSources;
     let mut keys = UuidV7KeySource;
     for line in reader.lines() {
@@ -34,13 +40,15 @@ pub fn run_attach_loop<R: BufRead, W: Write>(
             continue;
         }
         let reply = match parse_line_args(trimmed) {
-            Ok(args) => run_one(&table, program, &args, &mut sources, &mut keys, office),
+            Ok(args) => run_one(table, program, &args, &mut sources, &mut keys, office),
             Err(message) => error_envelope(ErrorCode::InvalidRequest, &message),
         };
-        if writeln!(writer, "{reply}").is_err() {
-            break;
+        let written = writeln!(writer, "{reply}").and_then(|()| writer.flush());
+        match written {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::BrokenPipe => return 0,
+            Err(_) => return 1,
         }
-        let _ = writer.flush();
     }
     0
 }
@@ -131,21 +139,11 @@ fn append_options(args: &mut Vec<String>, options: &Map<String, Value>) -> Resul
     Ok(())
 }
 
-/// Formats a single-line `org-command` error envelope when `session attach` fails before dispatch.
+/// The single-line `org-command` failure envelope of a line `session attach` could not run:
+/// the same envelope, key order and escaping as every other refusal (`data` null, `meta` {}),
+/// with the line hint.
 pub fn error_envelope(code: ErrorCode, message: &str) -> String {
-    let code_str = serde_json::to_value(code)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "invalid_request".into());
-    serde_json::json!({
-        "ok": false,
-        "error": {
-            "code": code_str,
-            "message": message,
-            "hint": "Send one JSON object per line with `command`, optional `input`, and optional `options`."
-        }
-    })
-    .to_string()
+    org_command::failure_envelope_json(&Refusal::new(code, message, LINE_HINT), false)
 }
 
 #[cfg(test)]
@@ -153,7 +151,7 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::dispatch::{OfficeTransport, TransportOffice};
+    use crate::transport::{OfficeTransport, TransportOffice};
 
     struct StubTransport {
         calls: Vec<(String, Value)>,
@@ -235,5 +233,74 @@ mod tests {
                 .unwrap();
         assert_eq!(parsed[0], "task-note");
         assert_eq!(parsed[1], "add");
+    }
+
+    #[test]
+    fn a_line_that_cannot_be_read_answers_a_schema_valid_envelope() {
+        let stdin = "not json\n{\"command\":\"\u{9b}31m\"}\n";
+        let mut out = Vec::new();
+        let mut office = TransportOffice(StubTransport { calls: Vec::new() });
+        assert_eq!(
+            run_attach_loop("agent-os", Cursor::new(stdin), &mut out, &mut office),
+            0
+        );
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains('\u{9b}'), "{text}");
+        let schema = org_command::envelope_schema();
+        let envelopes: Vec<Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(envelopes.len(), 2, "{text}");
+        for envelope in &envelopes {
+            org_command::testkit::validate_schema(&schema, envelope).expect("schema");
+            assert_eq!(envelope["data"], Value::Null, "{envelope}");
+            assert_eq!(envelope["meta"], serde_json::json!({}), "{envelope}");
+        }
+        // A line that is not JSON gets the line hint; a command it names that does not exist
+        // gets the parser's own hint, and the C1 control in it arrives as an escape.
+        assert_eq!(envelopes[0]["error"]["hint"], LINE_HINT);
+        assert!(
+            text.lines().nth(1).unwrap().contains("\\u009b31m"),
+            "{text}"
+        );
+        assert_eq!(
+            envelopes[1]["error"]["message"]
+                .as_str()
+                .map(|m| m.contains('\u{9b}')),
+            Some(true)
+        );
+    }
+
+    struct FailingWriter(io::ErrorKind);
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::Error::from(self.0))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_closed_pipe_ends_the_loop_with_0_and_another_write_error_with_1() {
+        let stdin = "{\"command\":\"msg inbox\"}\n{\"command\":\"msg inbox\"}\n";
+        for (kind, code) in [(io::ErrorKind::BrokenPipe, 0), (io::ErrorKind::Other, 1)] {
+            let mut office = TransportOffice(StubTransport { calls: Vec::new() });
+            let exit = run_attach_loop(
+                "agent-os",
+                Cursor::new(stdin),
+                FailingWriter(kind),
+                &mut office,
+            );
+            assert_eq!(exit, code, "{kind:?}");
+            assert_eq!(
+                office.0.calls.len(),
+                1,
+                "{kind:?}: stopped after the failed write"
+            );
+        }
     }
 }

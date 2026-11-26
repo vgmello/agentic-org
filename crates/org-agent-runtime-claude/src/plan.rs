@@ -1,9 +1,16 @@
+mod sandbox;
+
 use serde_json::{json, Map, Value};
 
 use org_agent_runtime::{
+    expand_capability_allowlist, runtime_env_add, static_env_names, validate_plan_paths,
     Capabilities, EnvName, FileLocation, LaunchContext, LaunchPlan, PermissionMode, PlanError,
     PlannedFile, RelPath, Rule, RuleScope, SessionId, SessionKind, SessionSpec, SignalTarget,
-    SpecPath, Stdio, StopPlan, StopSignal, StopStep, ToolCapability, ToolName,
+    Stdio, StopPlan, StopSignal, StopStep, ToolCapability, ToolName,
+};
+
+use self::sandbox::{
+    build_sandbox_json, is_concrete_path, normalize_bwrap_pattern, split_trailing_globstar,
 };
 
 const SETTINGS_FILE: &str = "claude-settings.json";
@@ -80,27 +87,10 @@ fn capability_tools(cap: ToolCapability, kind: RuleKind) -> Option<&'static [&'s
 }
 
 /// Expands a `SessionSpec::tools` allowlist by translating runtime-neutral `cap:*` capability
-/// tokens into Claude Code's concrete tool names while passing concrete tool names through.
-/// Fails closed on any unrecognized `cap:*` token.
-pub(crate) fn expand_tool_allowlist(tools: &[ToolName]) -> Result<Vec<String>, PlanError> {
-    let mut expanded = Vec::new();
-    for tool in tools {
-        let raw = tool.as_str();
-        if ToolCapability::is_capability_token(raw) {
-            let cap = ToolCapability::parse_rule_token(raw)
-                .ok_or(PlanError::Unsupported("tool capability"))?;
-            let concrete = capability_tools(cap, RuleKind::Allow)
-                .ok_or(PlanError::Unsupported("tool capability"))?;
-            for &name in concrete {
-                if !expanded.iter().any(|existing| existing == name) {
-                    expanded.push(name.to_owned());
-                }
-            }
-        } else if !expanded.iter().any(|existing| existing == raw) {
-            expanded.push(raw.to_owned());
-        }
-    }
-    Ok(expanded)
+/// tokens into Claude Code's concrete tool names (the allow-side lists) while passing concrete
+/// tool names through. Fails closed on any unrecognized `cap:*` token.
+fn expand_tool_allowlist(tools: &[ToolName]) -> Result<Vec<String>, PlanError> {
+    expand_capability_allowlist(tools, |cap| capability_tools(cap, RuleKind::Allow))
 }
 
 pub(crate) fn build_headless_plan(
@@ -108,7 +98,7 @@ pub(crate) fn build_headless_plan(
     ctx: &LaunchContext,
     caps: &Capabilities,
 ) -> Result<(LaunchPlan, ExpectedMode, Option<Vec<String>>), PlanError> {
-    validate_paths(spec, ctx)?;
+    validate_plan_paths(spec, ctx)?;
     let (session_id, is_resume) = resolve_session_id(ctx)?;
     let effective_mode = spec.effective_permission_mode(caps);
     let expected_mode = map_permission_mode(effective_mode)?;
@@ -203,7 +193,7 @@ pub(crate) fn build_headless_plan(
         program: ctx.runtime_path.clone(),
         args,
         cwd: spec.workspace.clone(),
-        env_add: build_env_add(ctx),
+        env_add: runtime_env_add(ENV_ADD, CONFIG_DIR_ENV, ctx),
         dirs: Vec::new(),
         files,
         stdio: Stdio::Piped,
@@ -238,7 +228,7 @@ pub(crate) fn build_take_over_plan(
             "one-off sessions cannot be taken over".to_owned(),
         ));
     }
-    validate_paths(spec, ctx)?;
+    validate_plan_paths(spec, ctx)?;
     let Some(resume_id) = ctx.resume.clone() else {
         return Err(PlanError::InvalidSpec(
             "take-over requires LaunchContext::resume to be set".to_owned(),
@@ -314,7 +304,7 @@ pub(crate) fn build_take_over_plan(
         program: ctx.runtime_path.clone(),
         args,
         cwd: spec.workspace.clone(),
-        env_add: build_env_add(ctx),
+        env_add: runtime_env_add(ENV_ADD, CONFIG_DIR_ENV, ctx),
         dirs: Vec::new(),
         files,
         stdio: Stdio::Pty { cols, rows },
@@ -330,33 +320,6 @@ pub(crate) fn build_take_over_plan(
         secret_env_names: secret_env_names(),
         auth_env_names: auth_env_names(),
     })
-}
-
-fn validate_paths(spec: &SessionSpec, ctx: &LaunchContext) -> Result<(), PlanError> {
-    if spec.workspace.is_root() {
-        return Err(PlanError::InvalidSpec(
-            "workspace must not be `/`".to_owned(),
-        ));
-    }
-    if ctx.tmpdir.is_root() {
-        return Err(PlanError::InvalidSpec("tmpdir must not be `/`".to_owned()));
-    }
-    if ctx.runtime_dir.is_root() {
-        return Err(PlanError::InvalidSpec(
-            "runtime_dir must not be `/`".to_owned(),
-        ));
-    }
-    if ctx.config_dir.as_ref().is_some_and(SpecPath::is_root) {
-        return Err(PlanError::InvalidSpec(
-            "config_dir must not be `/`".to_owned(),
-        ));
-    }
-    if spec.sandbox.writable_roots.iter().any(SpecPath::is_root) {
-        return Err(PlanError::InvalidSpec(
-            "sandbox writable_roots must not include `/`".to_owned(),
-        ));
-    }
-    Ok(())
 }
 
 fn resolve_session_id(ctx: &LaunchContext) -> Result<(SessionId, bool), PlanError> {
@@ -425,24 +388,58 @@ fn claude_rule_path(path: &str) -> String {
     }
 }
 
-fn push_file_write_denies(deny_rules: &mut Vec<Value>, raw_path: &str, include_exact: bool) {
-    let trimmed = raw_path.trim_end_matches('/');
-    let exact = claude_rule_path(trimmed);
+/// `(exact, glob)` Claude rule paths for a deny base path without trailing `/**`: the base
+/// itself and everything beneath it. The root has no exact form, only `//**`.
+fn rule_base_and_glob(base: &str) -> (Option<String>, String) {
+    if base.is_empty() {
+        return (None, "//**".to_owned());
+    }
+    let exact = claude_rule_path(base);
     let glob = format!("{exact}/**");
+    (Some(exact), glob)
+}
+
+/// Write denies for Claude's edit tools. Trailing `/**` is stripped before one is appended, so
+/// `dir/**/**` is never emitted (`TASK-190`). On Linux `bwrap` the path first goes through
+/// [`normalize_bwrap_pattern`] (as every other deny surface does), so a concrete `dir/**` or
+/// `dir/*` gets only its exact `dir` rule: Claude 2.1.x merges these rules into `bwrap`'s write
+/// masks, and a concrete directory glob makes `@anthropic-ai/sandbox-runtime` walk `dir` and
+/// follow symlinks into sibling homes (`TASK-163`); the bare `dir` rule covers everything
+/// beneath it.
+fn push_file_write_denies(
+    deny_rules: &mut Vec<Value>,
+    raw_path: &str,
+    include_exact: bool,
+    is_linux_bwrap: bool,
+) {
+    let normalized = is_linux_bwrap.then(|| normalize_bwrap_pattern(raw_path));
+    let (base, _) = split_trailing_globstar(normalized.as_deref().unwrap_or(raw_path));
+    let (exact, glob) = rule_base_and_glob(base);
+    let bwrap_concrete = is_linux_bwrap && is_concrete_path(base);
     for tool in ["Edit", "Write", "MultiEdit", "NotebookEdit"] {
-        if include_exact {
+        if let Some(exact) = exact.as_ref().filter(|_| include_exact || bwrap_concrete) {
             deny_rules.push(Value::String(format!("{tool}({exact})")));
         }
-        deny_rules.push(Value::String(format!("{tool}({glob})")));
+        if !bwrap_concrete {
+            deny_rules.push(Value::String(format!("{tool}({glob})")));
+        }
     }
 }
 
+/// Read denies for Claude's read tools. With `include_glob`, the path and everything beneath
+/// it; without, the path as given, keeping at most one trailing `/**` (`TASK-190`).
 fn push_file_read_denies(deny_rules: &mut Vec<Value>, raw_path: &str, include_glob: bool) {
-    let trimmed = raw_path.trim_end_matches('/');
-    let exact = claude_rule_path(trimmed);
-    deny_rules.push(Value::String(format!("Read({exact})")));
-    if include_glob {
-        deny_rules.push(Value::String(format!("Read({exact}/**)")));
+    let (base, had_globstar) = split_trailing_globstar(raw_path);
+    let (exact, glob) = rule_base_and_glob(base);
+    match exact {
+        Some(exact) if include_glob => {
+            deny_rules.push(Value::String(format!("Read({exact})")));
+            deny_rules.push(Value::String(format!("Read({glob})")));
+        }
+        Some(exact) if !had_globstar => {
+            deny_rules.push(Value::String(format!("Read({exact})")));
+        }
+        _ => deny_rules.push(Value::String(format!("Read({glob})"))),
     }
 }
 
@@ -457,35 +454,36 @@ fn build_settings_json(
     // Permissions: deny always written before allow; allow rules are dropped whenever
     // `keeps_allow_rules` is false (deny wins over allow). `disableBypassPermissionsMode`
     // is pinned to `"disable"` per agent-sessions.md (B1).
+    let is_linux_bwrap = !org_platform::confinement::unix_socket_path_filter_supported();
     let mut deny_rules = Vec::new();
     for rule in &spec.policy.deny {
-        let formatted =
-            format_rule(rule, RuleKind::Deny).ok_or(PlanError::Unsupported("deny rule scope"))?;
+        let formatted = format_rule(rule, RuleKind::Deny, is_linux_bwrap)
+            .ok_or(PlanError::Unsupported("deny rule scope"))?;
         deny_rules.extend(formatted.into_iter().map(Value::String));
     }
-    let is_linux_bwrap = !org_platform::confinement::unix_socket_path_filter_supported();
     // Mirror sandbox read/write denies onto Claude's file tools using `//` absolute path
     // grammar so Read/Edit/Write/MultiEdit/NotebookEdit cannot bypass the Bash sandbox (B2).
-    // On Linux `bwrap`, omit trailing `/**` on concrete read-deny directories (`TASK-163`) so
-    // `@anthropic-ai/sandbox-runtime` (which merges `permissions.deny` into `bwrap` mounts)
-    // mounts `--tmpfs <dir>` atomically without traversing symlinks inside sibling homes.
+    // On Linux `bwrap`, omit trailing `/**` on concrete read- and write-deny directories
+    // (`TASK-163`, `TASK-190`) so `@anthropic-ai/sandbox-runtime` (which merges
+    // `permissions.deny` into `bwrap` mounts) masks each directory atomically without
+    // traversing symlinks inside sibling homes.
     for path in &spec.sandbox.deny_read {
-        let effective = if is_linux_bwrap {
-            strip_concrete_dir_glob(path.as_str())
+        if is_linux_bwrap {
+            let normalized = normalize_bwrap_pattern(path.as_str());
+            push_file_read_denies(&mut deny_rules, &normalized, false);
         } else {
-            path.as_str()
-        };
-        push_file_read_denies(&mut deny_rules, effective, !is_linux_bwrap);
+            push_file_read_denies(&mut deny_rules, path.as_str(), true);
+        }
     }
     for path in &spec.sandbox.deny_write {
-        push_file_write_denies(&mut deny_rules, path.as_str(), true);
+        push_file_write_denies(&mut deny_rules, path.as_str(), true, is_linux_bwrap);
     }
     for dir in &spec.read_only_dirs {
-        push_file_write_denies(&mut deny_rules, dir.as_str(), false);
+        push_file_write_denies(&mut deny_rules, dir.as_str(), false, is_linux_bwrap);
     }
     // Protect vendor config dir from tool writes and its credential file from tool reads (S2).
     if let Some(cfg_dir) = &ctx.config_dir {
-        push_file_write_denies(&mut deny_rules, cfg_dir.as_str(), true);
+        push_file_write_denies(&mut deny_rules, cfg_dir.as_str(), true, is_linux_bwrap);
         let cred_file = format!(
             "{}/.credentials.json",
             cfg_dir.as_str().trim_end_matches('/')
@@ -497,7 +495,7 @@ fn build_settings_json(
     if spec.keeps_allow_rules(caps) {
         for rule in &spec.policy.allow {
             // Grants we cannot express exactly are dropped (never widened).
-            if let Some(formatted) = format_rule(rule, RuleKind::Allow) {
+            if let Some(formatted) = format_rule(rule, RuleKind::Allow, is_linux_bwrap) {
                 allow_rules.extend(formatted.into_iter().map(Value::String));
             }
         }
@@ -520,201 +518,6 @@ fn build_settings_json(
     Ok(serde_json::to_vec(&Value::Object(root)).expect("settings JSON serialization cannot fail"))
 }
 
-fn build_sandbox_json(spec: &SessionSpec, ctx: &LaunchContext) -> Value {
-    if !spec.sandbox.enabled {
-        return json!({ "enabled": false });
-    }
-    let mut writable: Vec<String> = spec
-        .sandbox
-        .writable_roots
-        .iter()
-        .map(|p| p.as_str().to_owned())
-        .collect();
-    if !writable.iter().any(|p| p == ctx.tmpdir.as_str()) {
-        writable.push(ctx.tmpdir.as_str().to_owned());
-    }
-
-    let mut deny_write: Vec<String> = spec
-        .sandbox
-        .deny_write
-        .iter()
-        .map(|p| p.as_str().to_owned())
-        .collect();
-    let mut deny_read: Vec<String> = spec
-        .sandbox
-        .deny_read
-        .iter()
-        .map(|p| p.as_str().to_owned())
-        .collect();
-    if let Some(cfg_dir) = &ctx.config_dir {
-        if !deny_write.iter().any(|p| p == cfg_dir.as_str()) {
-            deny_write.push(cfg_dir.as_str().to_owned());
-        }
-        let cred_file = format!(
-            "{}/.credentials.json",
-            cfg_dir.as_str().trim_end_matches('/')
-        );
-        if !deny_read.iter().any(|p| p == &cred_file) {
-            deny_read.push(cred_file);
-        }
-    }
-
-    let is_linux_bwrap = !org_platform::confinement::unix_socket_path_filter_supported();
-    let allow_all_unix = !spec.sandbox.allowed_unix_sockets.is_empty() && is_linux_bwrap;
-    apply_linux_bwrap_sandbox_rules(
-        &mut deny_read,
-        &mut deny_write,
-        &writable,
-        is_linux_bwrap,
-        allow_all_unix,
-    );
-    let network = build_sandbox_network_json(&spec.sandbox.allowed_unix_sockets, allow_all_unix);
-
-    json!({
-        "enabled": true,
-        "autoAllowBashIfSandboxed": false,
-        "allowUnsandboxedCommands": false,
-        "filesystem": {
-            "allowWrite": writable,
-            "denyWrite": deny_write,
-            "denyRead": deny_read,
-        },
-        "network": network,
-    })
-}
-
-fn apply_linux_bwrap_sandbox_rules(
-    deny_read: &mut Vec<String>,
-    deny_write: &mut Vec<String>,
-    writable: &[String],
-    is_linux_bwrap: bool,
-    allow_all_unix: bool,
-) {
-    if allow_all_unix {
-        append_linux_privileged_socket_denies(deny_read);
-    }
-    if is_linux_bwrap {
-        // Linux `bwrap` mounts `--tmpfs <dir>` cleanly on concrete directory paths, whereas
-        // `dir/**` causes `@anthropic-ai/sandbox-runtime` to walk inside denied directories and
-        // follow symlinks (e.g. a sibling agent's `.cargo/registry`, `TASK-163`). Strip trailing
-        // `/**`/`/*` on concrete non-wildcard prefixes in `denyRead` so bwrap masks the directory
-        // atomically at its boundary.
-        *deny_read = normalize_linux_bwrap_deny_read(std::mem::take(deny_read));
-        // Linux `bwrap` mounts `/` read-only (`--ro-bind / /`) and only `allowWrite` roots are
-        // writable. Omitting `denyWrite` entries outside `allowWrite` keeps write protection
-        // intact while preventing `@anthropic-ai/sandbox-runtime` from creating 0-byte `0444`
-        // regular files on the real host for absent paths (`TASK-144`). Full write denies remain
-        // enforced in `permissions.deny` and the office approval bridge.
-        *deny_write = filter_linux_bwrap_deny_write(std::mem::take(deny_write), writable);
-    }
-}
-
-fn strip_concrete_dir_glob(raw: &str) -> &str {
-    raw.strip_suffix("/**")
-        .or_else(|| raw.strip_suffix("/*"))
-        .filter(|prefix| {
-            !prefix.is_empty()
-                && !prefix.contains('*')
-                && !prefix.contains('?')
-                && !prefix.contains('[')
-        })
-        .unwrap_or(raw)
-}
-
-pub(crate) fn normalize_linux_bwrap_deny_read(deny_read: Vec<String>) -> Vec<String> {
-    let mut out = Vec::with_capacity(deny_read.len());
-    for entry in deny_read {
-        let stripped = strip_concrete_dir_glob(&entry);
-        let candidate = if stripped.len() == entry.len() {
-            entry
-        } else {
-            stripped.to_owned()
-        };
-        if !out.iter().any(|existing| existing == &candidate) {
-            out.push(candidate);
-        }
-    }
-    out
-}
-
-fn split_path_segments(raw: &str) -> Vec<&str> {
-    raw.split('/').filter(|seg| !seg.is_empty()).collect()
-}
-
-/// Returns `true` when `pattern` could match any path at, inside, or enclosing `root`.
-/// Used on Linux `bwrap` (where `/` is read-only) so `denyWrite` retains every write deny that
-/// overlaps an `allowWrite` root while dropping disjoint entries outside `allowWrite`.
-fn pattern_overlaps_root(pattern: &str, root: &str) -> bool {
-    let trimmed = pattern
-        .strip_suffix("/**")
-        .or_else(|| pattern.strip_suffix("/*"))
-        .unwrap_or(pattern);
-    let pat_segs = split_path_segments(trimmed);
-    let root_segs = split_path_segments(root);
-    for (p, r) in pat_segs.iter().zip(root_segs.iter()) {
-        if *p == "**" {
-            return true;
-        }
-        if p.contains('*') || p.contains('?') || p.contains('[') {
-            continue;
-        }
-        if p != r {
-            return false;
-        }
-    }
-    true
-}
-
-pub(crate) fn filter_linux_bwrap_deny_write(
-    deny_write: Vec<String>,
-    writable: &[String],
-) -> Vec<String> {
-    deny_write
-        .into_iter()
-        .filter(|pat| writable.iter().any(|root| pattern_overlaps_root(pat, root)))
-        .collect()
-}
-
-const LINUX_PRIVILEGED_SOCKET_DENIES: &[&str] = &[
-    "/run/user/*/bus",
-    "/run/user/*/systemd/**",
-    "/run/user/*/podman/**",
-    "/run/dbus/system_bus_socket",
-    "/var/run/dbus/system_bus_socket",
-    "/var/run/docker.sock",
-    "/run/docker.sock",
-    "/run/podman/**",
-];
-
-fn append_linux_privileged_socket_denies(deny_read: &mut Vec<String>) {
-    // Defense-in-depth when Linux seccomp requires `allowAllUnixSockets`: hide well-known
-    // privileged host sockets (systemd user D-Bus, system D-Bus, Docker/Podman) inside bwrap.
-    // Under Linux `bwrap` `/` is already read-only, so these only need `denyRead` (`TASK-144`).
-    for &pat in LINUX_PRIVILEGED_SOCKET_DENIES {
-        if !deny_read.iter().any(|p| p == pat) {
-            deny_read.push(pat.to_owned());
-        }
-    }
-}
-
-fn build_sandbox_network_json(
-    allowed_unix_sockets: &[SpecPath],
-    allow_all_unix_sockets: bool,
-) -> Value {
-    let allow_sockets: Vec<Value> = allowed_unix_sockets
-        .iter()
-        .map(|p| Value::String(p.as_str().to_owned()))
-        .collect();
-    let mut network = Map::new();
-    network.insert("allowUnixSockets".to_owned(), Value::Array(allow_sockets));
-    if allow_all_unix_sockets {
-        // Linux seccomp filters `socket(AF_UNIX)` without inspecting `connect()` paths,
-        // so Claude's `bwrap` sandbox blocks `agent-os` unless `allowAllUnixSockets` is set.
-        network.insert("allowAllUnixSockets".to_owned(), Value::Bool(true));
-    }
-    Value::Object(network)
-}
-
 /// Claude Code's file tools that take a path rule. `Read` rules also cover Claude's other
 /// read-only file tools (`Glob`, `Grep`); the edit tools are listed one by one, as for the
 /// sandbox mirrors above.
@@ -734,18 +537,18 @@ const SHELL_TOOL: &str = "Bash";
 /// use of every tool), a path rule for a tool outside [`PATH_RULE_TOOLS`], a command prefix
 /// for a tool other than [`SHELL_TOOL`], and an MCP-server rule for a tool that isn't that
 /// server's (`mcp__<server>__<tool>`) have no exact Claude form and give `None`.
-fn format_rule(rule: &Rule, kind: RuleKind) -> Option<Vec<String>> {
+fn format_rule(rule: &Rule, kind: RuleKind, is_linux_bwrap: bool) -> Option<Vec<String>> {
     let tool = rule.tool.as_str();
     if ToolCapability::is_capability_token(tool) {
         let cap = ToolCapability::parse_rule_token(tool)?;
-        return format_capability_rule(cap, &rule.scope, kind);
+        return format_capability_rule(cap, &rule.scope, kind, is_linux_bwrap);
     }
     let any_tool = tool == "*";
     match &rule.scope {
         RuleScope::Any if any_tool => None,
         RuleScope::Any => Some(vec![tool.to_owned()]),
         RuleScope::Path(pattern) => {
-            let path = claude_rule_path(pattern.as_str());
+            let path = policy_rule_path(pattern.as_str(), kind, is_linux_bwrap);
             let tools: &[&str] = if any_tool {
                 PATH_RULE_TOOLS
             } else if PATH_RULE_TOOLS.contains(&tool) {
@@ -783,13 +586,14 @@ fn format_capability_rule(
     cap: ToolCapability,
     scope: &RuleScope,
     kind: RuleKind,
+    is_linux_bwrap: bool,
 ) -> Option<Vec<String>> {
     match scope {
         RuleScope::Any => {
             capability_tools(cap, kind).map(|tools| tools.iter().map(|&t| t.to_owned()).collect())
         }
         RuleScope::Path(pattern) => {
-            let path = claude_rule_path(pattern.as_str());
+            let path = policy_rule_path(pattern.as_str(), kind, is_linux_bwrap);
             let tools: &[&str] = match cap {
                 ToolCapability::Read => CAP_READ_TOOLS,
                 ToolCapability::Edit => match kind {
@@ -805,6 +609,19 @@ fn format_capability_rule(
         }
         RuleScope::CommandPrefix(_) | RuleScope::McpServer(_) => None,
         _ => None,
+    }
+}
+
+/// Claude rule path for a policy path pattern. A run of trailing `/**` collapses to one on
+/// every platform; on Linux `bwrap` a concrete deny directory loses it, like the sandbox
+/// mirrors (`TASK-190`). Any other pattern, and the root, is passed through unchanged.
+fn policy_rule_path(pattern: &str, kind: RuleKind, is_linux_bwrap: bool) -> String {
+    if kind == RuleKind::Deny && is_linux_bwrap {
+        return claude_rule_path(&normalize_bwrap_pattern(pattern));
+    }
+    match split_trailing_globstar(pattern) {
+        (base, true) if !base.is_empty() => format!("{}/**", claude_rule_path(base)),
+        _ => claude_rule_path(pattern),
     }
 }
 
@@ -876,165 +693,34 @@ fn build_agents_json(spec: &SessionSpec, expanded_tools: Option<&[String]>) -> S
     serde_json::to_string(&Value::Object(agents)).expect("agents JSON serialization cannot fail")
 }
 
-fn build_env_add(ctx: &LaunchContext) -> Vec<(EnvName, String)> {
-    let mut env = vec![
-        (
-            EnvName::try_from("DISABLE_AUTOUPDATER").expect("static env name is valid"),
-            "1".to_owned(),
-        ),
-        (
-            EnvName::try_from("ENABLE_TOOL_SEARCH").expect("static env name is valid"),
-            "false".to_owned(),
-        ),
-        // Scrub Claude credentials from tool subprocesses (empirically verified in Claude 2.1.311
-        // scrub list `lts` + `U7r`; defense-in-depth alongside CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR).
-        (
-            EnvName::try_from("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB")
-                .expect("static env name is valid"),
-            "1".to_owned(),
-        ),
-    ];
-    if let Some(cfg_dir) = &ctx.config_dir {
-        env.push((
-            EnvName::try_from("CLAUDE_CONFIG_DIR").expect("static env name is valid"),
-            cfg_dir.as_str().to_owned(),
-        ));
-    }
-    env
-}
+/// Claude Code's own switches, added to the office's environment.
+const ENV_ADD: &[(&str, &str)] = &[
+    ("DISABLE_AUTOUPDATER", "1"),
+    ("ENABLE_TOOL_SEARCH", "false"),
+    // Scrub Claude credentials from tool subprocesses (empirically verified in Claude 2.1.311
+    // scrub list `lts` + `U7r`; defense-in-depth alongside CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR).
+    ("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1"),
+];
+
+/// Where Claude Code keeps its config, set to `LaunchContext::config_dir` when given.
+const CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 
 pub(crate) fn auth_env_names() -> Vec<EnvName> {
-    [
+    static_env_names(&[
         "CLAUDE_CODE_OAUTH_TOKEN",
         "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
         "ANTHROPIC_BASE_URL",
-    ]
-    .into_iter()
-    .map(|name| EnvName::try_from(name).expect("static auth env name is valid"))
-    .collect()
+    ])
 }
 
 fn secret_env_names() -> Vec<EnvName> {
-    [
+    static_env_names(&[
         "CLAUDE_CODE_OAUTH_TOKEN",
         "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
         "CLAUDE_CODE_MESSAGING_TOKEN",
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
-    ]
-    .into_iter()
-    .map(|name| EnvName::try_from(name).expect("static secret env name is valid"))
-    .collect()
-}
-
-#[cfg(test)]
-mod sandbox_network_tests {
-    use super::*;
-
-    #[test]
-    fn build_sandbox_network_json_sets_allow_all_only_when_requested() {
-        let sock = SpecPath::try_from("/run/office/off.sock").unwrap();
-        let strict = build_sandbox_network_json(std::slice::from_ref(&sock), false);
-        assert_eq!(strict["allowUnixSockets"], json!(["/run/office/off.sock"]));
-        assert!(strict.get("allowAllUnixSockets").is_none());
-
-        let linux = build_sandbox_network_json(std::slice::from_ref(&sock), true);
-        assert_eq!(linux["allowUnixSockets"], json!(["/run/office/off.sock"]));
-        assert_eq!(linux["allowAllUnixSockets"], json!(true));
-    }
-
-    #[test]
-    fn linux_privileged_socket_denies_mask_dbus_and_docker_without_duplicates() {
-        let mut deny_read = vec!["/run/docker.sock".to_owned()];
-        append_linux_privileged_socket_denies(&mut deny_read);
-        for expected in [
-            "/run/user/*/bus",
-            "/run/user/*/systemd/**",
-            "/run/dbus/system_bus_socket",
-            "/var/run/docker.sock",
-            "/run/docker.sock",
-        ] {
-            assert!(
-                deny_read.iter().any(|p| p == expected),
-                "deny_read missing {expected}"
-            );
-        }
-        assert_eq!(
-            deny_read
-                .iter()
-                .filter(|p| *p == "/run/docker.sock")
-                .count(),
-            1
-        );
-
-        // `TASK-163`: concrete `dir/**` entries normalize to `dir` (deduplicated) while wildcard
-        // patterns like `/run/user/*/systemd/**` stay intact.
-        let normalized = normalize_linux_bwrap_deny_read(vec![
-            "/office/agents/sibling-1/**".into(),
-            "/office/agents/sibling-1".into(),
-            "/office/durable/state/**".into(),
-            "/run/user/*/systemd/**".into(),
-            "/home/agents/.cargo/credentials.toml".into(),
-        ]);
-        assert_eq!(
-            normalized,
-            vec![
-                "/office/agents/sibling-1",
-                "/office/durable/state",
-                "/run/user/*/systemd/**",
-                "/home/agents/.cargo/credentials.toml",
-            ]
-        );
-    }
-
-    #[test]
-    fn filter_linux_bwrap_deny_write_keeps_only_entries_overlapping_allow_write() {
-        let writable = vec![
-            "/work/t-1".to_owned(),
-            "/run/user/1001/t/abc".to_owned(),
-            "/var/lib/org/repos/r1.git/objects".to_owned(),
-            "/var/lib/org/repos/r1.git/worktrees/wt1".to_owned(),
-        ];
-        let deny_write = vec![
-            "/work/t-1/.git/hooks/**".to_owned(),
-            "/var/lib/org/repos/r1.git/objects/info".to_owned(),
-            "/var/lib/org/repos/r1.git/objects/info/**".to_owned(),
-            "/var/lib/org/repos/r1.git/worktrees/wt1/commondir".to_owned(),
-            "/var/lib/org/repos/r1.git/hooks".to_owned(),
-            "/var/lib/org/repos/r1.git/hooks/**".to_owned(),
-            "/var/lib/org/repos/r1.git/config".to_owned(),
-            "/office/durable/authority/**".to_owned(),
-            "/home/agents/.claude".to_owned(),
-            "/run/user/*/bus".to_owned(),
-            "/var/lib/org/repos/**".to_owned(),
-        ];
-        let kept = filter_linux_bwrap_deny_write(deny_write, &writable);
-        for must_keep in [
-            "/work/t-1/.git/hooks/**",
-            "/var/lib/org/repos/r1.git/objects/info",
-            "/var/lib/org/repos/r1.git/objects/info/**",
-            "/var/lib/org/repos/r1.git/worktrees/wt1/commondir",
-            "/var/lib/org/repos/**",
-        ] {
-            assert!(
-                kept.iter().any(|p| p == must_keep),
-                "expected {must_keep} to remain in denyWrite: {kept:?}"
-            );
-        }
-        for must_drop in [
-            "/var/lib/org/repos/r1.git/hooks",
-            "/var/lib/org/repos/r1.git/hooks/**",
-            "/var/lib/org/repos/r1.git/config",
-            "/office/durable/authority/**",
-            "/home/agents/.claude",
-            "/run/user/*/bus",
-        ] {
-            assert!(
-                !kept.iter().any(|p| p == must_drop),
-                "expected {must_drop} outside allowWrite to be dropped: {kept:?}"
-            );
-        }
-    }
+    ])
 }

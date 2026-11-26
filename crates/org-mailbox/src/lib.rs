@@ -1,6 +1,6 @@
 //! Office messaging domain over the ADR-0003 storage, directory and session ports.
 //! Database implementations and socket authorization stay outside this crate.
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 mod deadline;
 mod error;

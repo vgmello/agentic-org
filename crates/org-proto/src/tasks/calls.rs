@@ -2,7 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
+use super::records::{
+    ChecklistStepWire, PatchField, TaskCommentWire, TaskDependenciesResult, TaskDetailsWire,
+    TaskEventWire, TaskInspectResult, TaskLabelSummary, TaskView,
+};
+use super::{LabelMatchMode, TaskPriority, TaskSortMode, TaskStatus, WorkType};
 use crate::calls::Call;
 
 /// `tasks.create`: create a unified task (`task`, `bug`, `request`, ...), minting its final

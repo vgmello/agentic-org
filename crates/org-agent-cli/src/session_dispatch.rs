@@ -6,7 +6,7 @@ use org_proto::org::{AgentStatus, MemberKind};
 use org_proto::ErrorCode;
 use serde_json::Value;
 
-use crate::dispatch::OfficeTransport;
+use crate::transport::OfficeTransport;
 
 /// Attempts to handle a C3 session, grant, or directory command.
 pub fn try_execute<T: OfficeTransport + ?Sized>(

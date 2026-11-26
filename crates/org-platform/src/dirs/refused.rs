@@ -32,6 +32,10 @@ pub(super) fn user_temp_base(_home: &Path) -> Result<PathBuf, UserTempError> {
     Err(UserTempError::Unsupported(refusal()))
 }
 
+pub(super) fn cli_cache_dir(_home: &Path) -> Result<PathBuf, Refused> {
+    Err(refusal())
+}
+
 pub(super) fn credential_directory_base(_home: &Path) -> Result<PathBuf, Refused> {
     Err(refusal())
 }
@@ -67,6 +71,7 @@ mod tests {
             Err(UserTempError::Unsupported(refused)) if refused == refusal()
         ));
         assert_eq!(credential_directory_base(home), Err(refusal()));
+        assert_eq!(cli_cache_dir(home), Err(refusal()));
         assert_eq!(location_variables(), Err(refusal()));
         assert_eq!(environment_spelling(home), Err(refusal()));
         assert_eq!(socket_path_limit(), Err(refusal()));

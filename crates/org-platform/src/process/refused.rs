@@ -32,6 +32,11 @@ pub(super) fn harden_self() -> io::Result<()> {
     refused()
 }
 
+/// Refused: the caller does not go on without the limit ([`super::disable_core_dumps`]).
+pub(super) fn disable_core_dumps() -> io::Result<()> {
+    refused()
+}
+
 pub(super) fn parent_pid(_pid: libc::pid_t) -> io::Result<Option<libc::pid_t>> {
     refused()
 }
@@ -238,6 +243,7 @@ mod tests {
     #[test]
     fn hardening_refuses_and_reports_nothing() {
         assert_refused(super::harden_self());
+        assert_refused(super::disable_core_dumps());
         assert_refused(super::parent_pid(1));
         assert_refused(super::hardened());
         assert_refused(super::open_paths());

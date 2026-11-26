@@ -4,7 +4,7 @@ use org_command::{Answer, Refusal, Request};
 use org_proto::budgets::{BudgetAgentOwn, BudgetAgentOwnParams, BudgetAgentOwnResult};
 use org_proto::{Call, ErrorCode};
 
-use crate::dispatch::OfficeTransport;
+use crate::transport::OfficeTransport;
 
 pub fn try_execute<T: OfficeTransport + ?Sized>(
     transport: &mut T,
@@ -55,9 +55,9 @@ fn read_budget_status<T: OfficeTransport + ?Sized>(
 mod tests {
     use serde_json::{json, Value};
 
-    use crate::dispatch::OfficeTransport;
-    use crate::dispatch::TransportOffice;
     use crate::execute_with_office;
+    use crate::transport::OfficeTransport;
+    use crate::transport::TransportOffice;
 
     struct FakeBudgetTransport {
         last_method: Option<String>,

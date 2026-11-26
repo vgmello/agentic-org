@@ -9,7 +9,7 @@ use org_proto::work::{
 
 use crate::aspects::Aspect;
 use crate::common::{load, not_deleted, require_ulid, unused};
-use crate::engine::{Ctx, Origin, Plan};
+use crate::decision::{Ctx, Origin, Plan};
 use crate::fail::{already_exists, invalid, not_found, Fail};
 use crate::fixes::{self, Edge};
 use crate::model::{link_view, StoredComment, StoredLink};
@@ -153,7 +153,7 @@ pub(crate) fn link(ctx: &mut Ctx, p: &WorkLinkParams) -> Result<Plan, Fail> {
                 return Err(invalid("a `fixes` link goes from a task to a bug"));
             }
             match (&target, &item.project_id) {
-                (Some(bug), Some(project)) => crate::bugs::check_fixable(project, bug)?,
+                (Some(bug), Some(project)) => fixes::check_fixable(project, bug)?,
                 _ => return Err(invalid("a `fixes` link goes from a task to a bug")),
             }
         }

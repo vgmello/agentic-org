@@ -5,7 +5,7 @@
 use serde_json::{Map, Number, Value};
 
 use crate::node::Node;
-use crate::table::{Command, Field, Kind, Type};
+use crate::row::{Command, Field, Kind, Type};
 
 pub(crate) const SCHEMA_DIALECT: &str = "https://json-schema.org/draft/2020-12/schema";
 

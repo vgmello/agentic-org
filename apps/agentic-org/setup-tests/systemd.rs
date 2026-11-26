@@ -181,7 +181,7 @@ fn setup_registers_a_systemd_user_unit_starts_it_once_and_reports_lingering() {
     let (shown, _) = text(&status);
     assert!(shown.contains(&format!("running (pid {pid})")), "{shown}");
     assert!(shown.contains("loginctl enable-linger "), "{shown}");
-    let stop = account.run(&["service", "stop"]);
+    let stop = account.run(&["service", "stop", "--yes"]);
     assert!(stop.status.success(), "{:?}", text(&stop));
     assert!(!alive(pid), "the unit's process outlived its stop");
     assert!(calls(&account).contains(&format!("systemctl --user stop {name}")));
@@ -206,7 +206,7 @@ fn setup_registers_a_systemd_user_unit_starts_it_once_and_reports_lingering() {
         "stderr: {}",
         text(&status).1
     );
-    let stop = account.run(&["service", "stop"]);
+    let stop = account.run(&["service", "stop", "--yes"]);
     assert!(stop.status.success(), "{:?}", text(&stop));
 }
 
@@ -305,7 +305,7 @@ fn the_unit_carries_the_variables_that_decided_the_instances_paths() {
                 "{variable}: {other} is not unset: {unit}"
             );
         }
-        let stop = account.run(&["service", "stop"]);
+        let stop = account.run(&["service", "stop", "--yes"]);
         assert!(stop.status.success(), "{:?}", text(&stop));
     }
 }

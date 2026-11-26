@@ -6,7 +6,8 @@ use crate::{
     custody::WriterAuthority,
     engine::CoreRead,
     journal::AnchorFacts,
-    store::{Limits, Opening, Store, StoreParts},
+    state::Limits,
+    store::{Opening, Store, StoreParts},
     testkit::{
         identity, probe::REFUSED, rebuild_equivalence, with_faults, CrashPoint, Dump, FakeCustody,
         Faults, FixedClock, MemoryEngine, Probe,

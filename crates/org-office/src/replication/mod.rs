@@ -1,12 +1,15 @@
 //! Engine-independent durable replication store bridging `org-sync` (`organization`, `work`,
 //! `messages`) onto `org-office` (`TASK-52` / `FC-145` / `ADR-0018` `ENG-3`).
 //!
-//! Zero SQLite types or SQL appear anywhere in this module (`ENG-1`); the SQLite adapter lives
-//! exclusively in `crate::store::sqlite::replication`.
+//! Zero SQLite types or SQL appear anywhere in this module (`ENG-1`); the SQLite projection
+//! lives exclusively in `crate::store::sqlite::replication`; `durable` keeps the durable
+//! state the same way for every engine (`TASK-172`).
 
 #[cfg(any(test, feature = "testkit"))]
 pub mod conformance;
+pub(crate) mod durable;
 pub mod memory;
+pub(crate) mod state_files;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;

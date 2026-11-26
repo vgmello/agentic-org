@@ -14,7 +14,7 @@ use crate::aspects::Aspect;
 use crate::common::{
     distinct, expect_kind, known_priority, load, new_steps, not_deleted, require_ulid, unused,
 };
-use crate::engine::{Ctx, Draft, Origin, Plan};
+use crate::decision::{Ctx, Draft, Origin, Plan};
 use crate::fail::{invalid, not_found, refuse, Fail};
 use crate::fixes::{self, Edge};
 use crate::model::{BugFields, StoredItem, StoredLink, TaskFields};
@@ -63,7 +63,7 @@ pub(crate) fn create(ctx: &mut Ctx, p: &TaskCreateParams) -> Result<Plan, Fail> 
     distinct(p.fixes.iter().map(|f| f.bug_id.as_str()))?;
     for (fix, bug) in p.fixes.iter().zip(&fix_bugs) {
         require_ulid("link_id", &fix.link_id)?;
-        crate::bugs::check_fixable(&project.id, bug)?;
+        fixes::check_fixable(&project.id, bug)?;
     }
     if let Some(team) = &p.team_id {
         check_team(ctx, &project.id, team)?;

@@ -23,7 +23,7 @@ use org_proto::tasks::{
 use org_proto::web::{ReadResponse, WebError, WebErrorCode};
 use serde_json::Value;
 
-use super::org_routes::{resolve_hq_office, revalidate_and_resolve_hq};
+use super::hq_context::{resolve_hq_office, revalidate_and_resolve_hq};
 use super::{
     failure, invalid, not_found, result, unavailable, Call, CallerAuth, Route, SessionApi,
 };

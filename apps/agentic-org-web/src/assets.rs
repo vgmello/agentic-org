@@ -10,31 +10,12 @@ use hyper::body::Bytes;
 use hyper::header::HeaderValue;
 use sha2::{Digest, Sha256};
 
+pub use crate::build_error::BuildError;
 use crate::csp;
 
 pub const MAX_BUILD_BYTES: usize = org_release::MAX_UI_BYTES as usize;
 const MAX_BUILD_FILES: usize = org_release::MAX_UI_ENTRIES;
 const MAX_KEY_BYTES: usize = 1024;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BuildError {
-    TooLarge,
-    TooManyFiles,
-    InvalidKey,
-    DuplicateKey,
-    MissingEntry,
-    InvalidEntry,
-    InvalidHtml,
-    MissingInlineScript,
-    InlineEventHandler,
-    JavascriptUrl,
-    CspMetaTag,
-    InvalidPolicy,
-    UnreadableBuild,
-    UnsafeBuildEntry,
-    UnauthenticatedRelease,
-    ReleaseImageMismatch,
-}
 
 struct BuildFile {
     bytes: Bytes,

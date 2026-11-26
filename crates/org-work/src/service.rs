@@ -6,9 +6,10 @@ use std::sync::Arc;
 use org_proto::work::{WorkItem, WORK_GET_MAX_LISTED};
 
 use crate::call::{Caller, WorkCall};
-use crate::engine::{execute, TxnOutput};
+use crate::engine::execute;
 use crate::kpi::time_figures;
 use crate::model::{work_item, ItemReadParts, StoredItem};
+use crate::ports::TxnOutput;
 use crate::ports::{Clock, OrgView, StoreError, WorkReads, WorkStore};
 
 /// Work writes for one office.

@@ -16,10 +16,15 @@ path = "tests/launch.rs"
 
 [dependencies]
 org-office-server = { path = "../../crates/org-office-server" }
-libc.workspace = true
+# Composition root wiring: the `agent-os` command table rendered into agents' standing
+# instructions is injected here so the session crate never links the CLI implementation.
+org-agent-cli = { path = "../../crates/org-agent-cli" }
+org-office-sessions = { path = "../../crates/org-office-sessions" }
+org-platform = { path = "../../crates/org-platform" }
 
 [dev-dependencies]
 org-office-server = { path = "../../crates/org-office-server", features = ["test-support"] }
+libc.workspace = true
 org-client = { path = "../../crates/org-client", features = ["testkit"] }
 org-office = { path = "../../crates/org-office", features = ["testkit"] }
 org-office-launch = { path = "../../crates/org-office-launch" }

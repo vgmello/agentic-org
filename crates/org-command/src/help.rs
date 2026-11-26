@@ -2,10 +2,13 @@
 //! `--schema` document, the hint of a refused command line and the launch catalogue. All of it
 //! is generated from the table.
 
+use serde_json::{Map, Value};
+
 use crate::envelope::code_name;
 use crate::node::Node;
+use crate::row::{Command, Field, IfMatch, Type, OPTIONS};
 use crate::shape;
-use crate::table::{Command, CommandTable, Field, Type, OPTIONS};
+use crate::table::CommandTable;
 
 /// The launch catalogue may not be longer than this (design 2.5).
 pub const CATALOGUE_LIMIT: usize = 4096;
@@ -146,7 +149,102 @@ pub(crate) fn command(program: &str, command: &Command) -> String {
         .collect();
     out.push_str("\nOptions:\n");
     push_lines(&mut out, &options);
+    let words: Vec<String> = example_args(command)
+        .iter()
+        .map(|word| shell_word(word))
+        .collect();
+    out.push_str(&format!("\nExample:\n  {program} {}\n", words.join(" ")));
     out
+}
+
+/// The command line of the row's example (AX-7), as the words a shell hands the program: each
+/// input field a flag can carry as that flag, in the row's field order, and every other field
+/// in one `--json` object. A text that holds a character that does not print goes in `--json`
+/// too, where it is an escape, so the example is always one line a caller can copy. A write
+/// that requires `--if-match` gets revision 1.
+pub(crate) fn example_args(command: &Command) -> Vec<String> {
+    let mut args = vec![command.resource.to_owned(), command.verb.to_owned()];
+    let input = match serde_json::from_str::<Value>(command.example.input) {
+        Ok(Value::Object(input)) => input,
+        _ => Map::new(),
+    };
+    let mut rest = Map::new();
+    for (name, value) in &input {
+        match command.input_field(name) {
+            Some(field) if flag_words(field, value).is_some() => {}
+            _ => {
+                rest.insert(name.clone(), value.clone());
+            }
+        }
+    }
+    for field in command.input {
+        if let Some(words) = input
+            .get(field.name)
+            .and_then(|value| flag_words(field, value))
+        {
+            args.extend(words);
+        }
+    }
+    if !rest.is_empty() {
+        args.push("--json".to_owned());
+        args.push(Node::from_value(&Value::Object(rest)).to_one_line());
+    }
+    if command.if_match() == IfMatch::Required {
+        args.push("--if-match".to_owned());
+        args.push("1".to_owned());
+    }
+    args
+}
+
+/// `value` written as `field`'s flag, when a flag carries it exactly.
+fn flag_words(field: &Field, value: &Value) -> Option<Vec<String>> {
+    if !field.is_flag() {
+        return None;
+    }
+    let flag = format!("--{}", field.flag());
+    match (&field.ty, value) {
+        (Type::Boolean, Value::Bool(true)) => Some(vec![flag]),
+        (Type::List(_), Value::Array(items)) if !items.is_empty() => {
+            let mut words = Vec::with_capacity(items.len() * 2);
+            for item in items {
+                words.push(flag.clone());
+                words.push(scalar_word(item)?);
+            }
+            Some(words)
+        }
+        (Type::String | Type::Integer | Type::Enum(_), value) => {
+            Some(vec![flag, scalar_word(value)?])
+        }
+        _ => None,
+    }
+}
+
+fn scalar_word(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) if !text.chars().any(|c| c.is_control() || is_separator(c)) => {
+            Some(text.clone())
+        }
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
+}
+
+fn is_separator(c: char) -> bool {
+    matches!(c, '\u{2028}' | '\u{2029}')
+}
+
+/// `word` as a POSIX shell reads it back: bare when it holds only characters no shell treats
+/// specially, otherwise in single quotes (a single quote inside is written `'\''`).
+pub(crate) fn shell_word(word: &str) -> String {
+    let bare = !word.is_empty()
+        && word
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_./:,@%+".contains(&b));
+    if bare {
+        word.to_owned()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''"))
+    }
 }
 
 fn push_lines(out: &mut String, lines: &[(String, String)]) {

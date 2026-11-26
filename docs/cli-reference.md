@@ -3,7 +3,8 @@
 `agentic-org` is the human/operator command line and service host entrypoint for **Agentic Org**.
 Managed AI agents use the separate `agent-os` binary (`agent-os --help`).
 
-Run `agentic-org help <command>` or `agentic-org <command> --help` for live in-binary usage.
+Run `agentic-org help <command>` or `agentic-org <command> --help` for live in-binary usage; every
+command's help ends with copy-paste `Examples:`.
 
 ---
 
@@ -89,6 +90,46 @@ agentic-org office list --name hq --json
 
 ---
 
+## Global Options, Output and Exit Codes
+
+Every command takes these flags (before or after the command):
+
+- `--json` — the result as JSON on `stdout` (indented on a terminal, one compact line in a pipe); an error as `{"error": {"code", "message", "help", "exit_code"}}` on `stderr`, with an empty `stdout`. Implies no color and no prompts.
+- `-q, --quiet` — only the primary IDs, one per line (nothing for an empty list or a `--dry-run`). Cannot be combined with `--json` (exit `2`).
+- `--no-input` (or `AGENTIC_ORG_NO_INPUT=1`) — never prompt; a missing value or confirmation fails instead.
+- `--dry-run` — show what would change (`[DRY-RUN] ...` on `stderr`, or `{"dry_run": true, ...}` under `--json`) and change nothing. Office commands (`task`, `msg`, ...) always receive it: a write is previewed, and a command that changes nothing refuses it (exit `2`) instead of running as if it were not given. A `--dry-run` that is a flag's value (`--body --dry-run`) or follows `--` is text, not the flag.
+- `--color auto|always|never` — `auto` honours `NO_COLOR`, `FORCE_COLOR`/`CLICOLOR_FORCE`, `CLICOLOR=0`, `TERM=dumb` and whether the stream is a terminal.
+
+Directories (each an absolute path; an empty variable is unset; a relative one is refused with exit `1`, `cli::config::invalid`, and never read against the working directory):
+
+- `AGENTIC_ORG_CONFIG_DIR` — where the context saved by `agentic-org context use` lives (`cli-context.json`, owner-only). Default: this account's own folder.
+- `AGENTIC_ORG_CACHE_DIR` — the completion cache (`completion/`, created owner-only `0700`). Default: an absolute `XDG_CACHE_HOME` joined with `agentic-org`, else `~/Library/Caches/agentic.org/cli-cache` on macOS and `~/.cache/agentic-org/cli-cache` on Linux — never a shared temporary folder.
+
+Output is shaped for the reader: on a terminal, lists are borderless tables and records aligned cards; in a pipe, lists are header-less tab-separated lines with bare values and no color; notices (empty lists, progress, approval links, `✓` confirmations) go to `stderr` only. Every value that came from a host, an office or a file is escaped before it reaches a terminal (control characters, `U+2028`/`U+2029` and bidirectional overrides are printed as `\u{..}`), and DEL, C1 controls, `U+2028`/`U+2029` and bidirectional controls are escaped (`\uXXXX`) inside every JSON document, the `--json` error envelope included.
+
+Exit codes: `0` success (also when the reader of `stdout` went away, e.g. `| head -1`); `1` a refusal or failure; `2` a command line that cannot be used, or a destructive command without `--yes` where no one can be asked; `4` not signed in or not allowed; `130` cancelled (Ctrl+C at a prompt, or a declined confirmation). Office commands (`task`, `msg`, ...) keep their own `0`/`1`/`2`.
+
+Destructive commands (`office restart|decline|cancel|remove|remove-pending|join|re-enroll`, `context clear`, `admin tls set`, `service stop`) ask for confirmation on a terminal and require `-y, --yes` when no terminal can be asked (a pipe, `--no-input`, `--json`, `-q`). `admin reset` shows its link on a terminal only and keeps its own local confirmation (Touch ID or the login password on a Mac, root on Linux); it also asks a person at the terminal, and needs `--yes` under `--no-input`, `--json` or `-q`. `serve`, `setup` and `recovery` refuse `--json`, `-q` and `--dry-run` (exit `2`; `setup` also when they follow its own flags), and `sign-in` refuses `--dry-run`, instead of ignoring them. `setup` asks for its port only when someone can be asked: never under `--no-input` or `AGENTIC_ORG_NO_INPUT=1`, even on a terminal.
+
+### Selecting the Instance and Office
+
+Host commands act on one instance and, where it matters, one office. Each is chosen in this order: the flag (`--name`/`--instance`, `--office`); the environment (`AGENTIC_ORG_INSTANCE`, `AGENTIC_ORG_OFFICE`; empty means unset); the nearest `agentic-org.toml` in the working directory or above it; the context saved by `agentic-org context use`; then the built-in default (the `default` instance, and the office the host picks). `agentic-org.toml` may hold only these two non-secret names:
+
+```toml
+instance = "lab"
+office = "0193a5c0-0000-7000-8000-000000000001"
+```
+
+Any other key, a control character or an over-long value makes it invalid (exit `1`, `cli::config::invalid`); the error names the line and column and never repeats the file's text. A saved context whose instance name is not an instance name (or holds a control or bidirectional character), or whose office is not an ID, or that is a symbolic link or not a regular file, is refused the same way until `agentic-org context clear` removes it. An `agentic-org.toml`, a saved context or an `--invitation-file` is read only as a regular file of at most 64 KiB, never through a symbolic link (pipe an invitation with `--invitation-stdin` instead). `agentic-org status` shows what was chosen and where it came from.
+
+### Shell Completion
+
+- `agentic-org completion <bash|zsh|fish|elvish|powershell> [--dynamic]`
+  Print the shell's completion script; `--dynamic` (or `COMPLETE=<shell> agentic-org`) asks the binary on every `<TAB>`, completing instance names, organizations, offices and projects from the cache the list commands fill, without contacting a host.
+  **Use when:** enabling `<TAB>` completion of commands, flags and the names this host knows.
+
+---
+
 ## Commands
 
 ### Instance Setup & Lifecycle
@@ -105,12 +146,15 @@ agentic-org office list --name hq --json
 - `agentic-org service start [--name <instance>]`
   Start the instance's registered OS service.
   **Use when:** launching a stopped background host service registered with `launchd`/`systemd`.
-- `agentic-org service stop [--name <instance>]`
-  Stop the instance's registered OS service.
+- `agentic-org service stop [--name <instance>] [--yes]`
+  Stop the instance's registered OS service (asks first on a terminal; `--yes` where no one can be asked).
   **Use when:** cleanly shutting down the registered background host service for maintenance.
 - `agentic-org service status [--name <instance>]`
   Inspect whether the instance's registered OS service is running.
   **Use when:** checking host service health before running organization or office commands.
+- `agentic-org status [--name <instance>] [--office <office_id>]`
+  Show the selected instance and office (and which tier chose them), the instance's service state and the saved context.
+  **Use when:** checking which instance and office commands act on before running them.
 
 ### Sign-In, Context & Administration
 
@@ -123,15 +167,18 @@ agentic-org office list --name hq --json
 - `agentic-org context use --office <office_id> [--name <instance>]`
   Save a default instance and office selection.
   **Use when:** pinning a default office so you do not repeat `--office` and `--name` on every command.
-- `agentic-org context clear`
+- `agentic-org context clear [--yes]`
   Remove the saved CLI context.
   **Use when:** clearing saved defaults before switching to another instance or office.
-- `agentic-org admin reset [--name <instance>] [--user <user>]`
+- `agentic-org admin reset [--name <instance>] [--user <user>] [--yes]`
   Issue a one-time administrator registration or password-reset link after local OS confirmation.
   **Use when:** recovering administrator access, generating an initial registration link, or cancelling an unused registration link.
-- `agentic-org admin tls set --cert <file> --key <file> --login <login> [--name <instance>]`
+- `agentic-org admin tls set --cert <file> --key <file> --login <login> [--name <instance>] [--yes]`
   Install or replace the instance's browser HTTPS certificate pair without restarting the host.
   **Use when:** installing or rotating an HTTPS instance's PEM certificate chain and unencrypted private key.
+- `agentic-org recovery status|release [--name <instance>] [--org <name> | --org-id <id>] [--login <login>] [--redeliver] [--package <file>]`
+  The protected organization recovery client; recovery codes are read from the controlling terminal only.
+  **Use when:** checking or releasing an organization's recovery package as its administrator.
 
 ### Organizations (`org`)
 
@@ -141,13 +188,16 @@ agentic-org office list --name hq --json
 - `agentic-org org list [--login <login>] [--name <instance>] [--json]`
   List organizations visible to the account and any creates in flight.
   **Use when:** finding an `org_id` or HQ office ID, or checking progress on a `--no-wait` organization create.
+- `agentic-org org inspect [--format json|yaml|compact]`
+  Read the organization's record from its office (the office command `org inspect`).
+  **Use when:** checking the organization's name, identifiers and settings from the terminal.
 
 ### Offices & Multi-Office Federation (`office`)
 
 - `agentic-org office list [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   List offices visible to the account (plus local satellite offices for the instance administrator on `host.sock`).
   **Use when:** discovering office IDs, HQ/satellite roles, or checking live readiness and crash backoff status.
-- `agentic-org office restart <office_id> [--login <login>] [--name <instance>] [--json]`
+- `agentic-org office restart <office_id> [--yes] [--login <login>] [--name <instance>] [--json]`
   Restart an offline or unavailable office (instance administrator or organization owner).
   **Use when:** recovering an offline or crashed office without restarting the entire host.
 - `agentic-org office invite <office_name> --address <host:port> [--address <host:port>...] [--org <org_id>] [--ttl <secs>] [--re-enroll-office <office_id>] [--login <login>] [--name <instance>] [--json]`
@@ -159,37 +209,37 @@ agentic-org office list --name hq --json
 - `agentic-org office approve <invitation_id> --code <check_code> [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   Approve a satellite enrollment on HQ using the satellite's out-of-band check code and issue its Org-CA mTLS certificate.
   **Use when:** completing satellite enrollment on HQ after reading the `check_code` printed on the satellite.
-- `agentic-org office decline <invitation_id> [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+- `agentic-org office decline <invitation_id> [--org <org_id>] [--yes] [--login <login>] [--name <instance>] [--json]`
   Decline a satellite invitation on HQ.
   **Use when:** rejecting a pending satellite join request on HQ.
-- `agentic-org office cancel <invitation_id> [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+- `agentic-org office cancel <invitation_id> [--org <org_id>] [--yes] [--login <login>] [--name <instance>] [--json]`
   Cancel an active satellite invitation on HQ.
   **Use when:** revoking an unused satellite invitation on HQ before approval completes.
-- `agentic-org office remove <office_id> [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+- `agentic-org office remove <office_id> [--org <org_id>] [--yes] [--login <login>] [--name <instance>] [--json]`
   Remove a satellite office on HQ and revoke its issued Org-CA certificates.
   **Use when:** decommissioning a satellite office from HQ and revoking its mTLS client certificates.
 - `agentic-org office sync-status [--org <org_id>] [--office <office_id>] [--login <login>] [--name <instance>] [--json]`
   Show live federation and replication sync status for an HQ or satellite office.
   **Use when:** verifying live mTLS federation and replication health on either HQ or a satellite.
-- `agentic-org office join (--invitation-file <path> | --invitation-stdin) --yes [--login <login>] [--name <instance>] [--json]`
+- `agentic-org office join (--invitation-file <path> | --invitation-stdin) [--yes] [--login <login>] [--name <instance>] [--json]`
   Join this host as a satellite office using an HQ-issued invitation token.
   **Use when:** enrolling this remote host as a new satellite office after running `agentic-org setup`.
-- `agentic-org office remove-pending <office_id> [--login <login>] [--name <instance>] [--json]`
+- `agentic-org office remove-pending <office_id> [--yes] [--login <login>] [--name <instance>] [--json]`
   Cancel and remove a pending satellite join before approval completes.
   **Use when:** aborting an unapproved join on the satellite host before HQ approves it.
-- `agentic-org office re-enroll <office_id> (--invitation-file <path> | --invitation-stdin) --yes [--login <login>] [--name <instance>] [--json]`
+- `agentic-org office re-enroll <office_id> (--invitation-file <path> | --invitation-stdin) [--yes] [--login <login>] [--name <instance>] [--json]`
   Re-enroll an existing satellite office onto a replacement HQ after Git import.
   **Use when:** reconnecting an existing satellite office to a replacement HQ after Git recovery import.
 
 ### Projects, Repositories, Worktrees & Tasks
 
-- `agentic-org project list --login <login> [--org <org_id>] [--include-archived] [--name <instance>] [--json]`
+- `agentic-org project list [--login <login>] [--org <org_id>] [--include-archived] [--name <instance>] [--json]`
   List projects in an organization (`agentic-org project --help`).
   **Use when:** discovering active (or archived) projects, `P-<number>` keys, slugs, and owning teams.
-- `agentic-org project inspect <project> --login <login> [--org <org_id>] [--name <instance>] [--json]`
+- `agentic-org project inspect <project> [--login <login>] [--org <org_id>] [--name <instance>] [--json]`
   Inspect one project by ID, `P-<number>` key, or slug.
   **Use when:** checking one project's owning team, contributing teams, and archive status.
-- `agentic-org project create <name> --login <login> [--org <org_id>] [--slug <slug>] [--owner-team <team_id>] [--parent-team <team_id>] [--name <instance>] [--json]`
+- `agentic-org project create <name> [--login <login>] [--org <org_id>] [--slug <slug>] [--owner-team <team_id>] [--parent-team <team_id>] [--name <instance>] [--json]`
   Create a project (creates a dedicated owning team automatically unless `--owner-team` is given).
   **Use when:** creating a new organization project with an accountable owning team.
 
@@ -255,10 +305,17 @@ agentic-org office list --name hq --json
 - `agentic-org task-note add|list|get|update|remove|publish` (alias: `agentic-org task note ...`)
   Manage private task notes over an approved office channel.
   **Use when:** keeping private working notes on a task or publishing a copy as a shared task comment.
+- `agentic-org directory|person|member|session|grant|process|skill|budget <verb>`
+  The remaining office resources, over the same approved office channel as `task` and `msg`.
+  **Use when:** browsing the directory, people and membership, sessions and grants, supervised processes, agent skills or budgets from the terminal.
+
+Office commands (`msg`, `task`, `who`, `team`, ...) run the same command table as `agent-os`. On a terminal their answers are shown as tables and cards; in a pipe as the table's `compact` form; `--json` (before the command) prints the table's JSON envelope; `--format json|yaml|compact` prints exactly that format; `-q` prints IDs. `<resource> <verb> --help` (or `-h`) ends with a copy-paste `Example:`.
 
 ---
 
 ## `agent-os` Quick Pointer (Managed AI Agents)
+
+`agent-os <resource> <verb> --help` (or `-h`) lists a command's flags and ends with a mechanical, copy-paste `Example:` built from the command's contract example.
 
 Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os <resource> --help`, `agent-os <resource> <verb> --help`, `agent-os <resource> <verb> --schema`). All commands use named flags only (no positional arguments) and return a single deterministic envelope.
 

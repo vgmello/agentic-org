@@ -1,0 +1,576 @@
+//! Turn-end drain of queued wakes into a live warm session and stale warm-handle recycling
+//! (`TASK-115`, `TASK-170`).
+
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::AtomicU32;
+use std::sync::{Arc, Mutex};
+
+use org_office::organization_family::records::EmployeeStatus;
+use org_office::Office;
+use org_proto::sessions::SessionState;
+
+use crate::binding::RunBindingRegistry;
+use crate::credentials::{now_ms, rfc3339_now};
+use crate::employee_locks::EmployeeLockMap;
+use crate::manager::{set_waiting_messages_count, SessionManager, SessionRegistry};
+use crate::pump::PumpCommand;
+use crate::recovery::SessionStore;
+use crate::wake::{compose_coalesced_wake_objective, WakeHoldReason, WakeKind, WakeQuotaRecord};
+
+use super::DispatchWakeGuard;
+
+pub(super) fn recycle_stale_warm_handle(
+    employee_id: &str,
+    expected_run_id: &str,
+    reason: &str,
+    ctx: &TurnEndDrainCtx,
+) -> bool {
+    let Some(mgr) = ctx.weak_mgr.as_ref().and_then(|w| w.upgrade()) else {
+        return false;
+    };
+    recycle_stale_warm_handle_in(&mgr, employee_id, expected_run_id, reason)
+}
+
+pub(crate) fn recycle_stale_warm_handle_in(
+    mgr: &Arc<SessionManager>,
+    employee_id: &str,
+    expected_run_id: &str,
+    reason: &str,
+) -> bool {
+    let removed = {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if reg.draining || reg.shutting_down || reg.starting.contains(employee_id) {
+            return false;
+        }
+        let still_recyclable = reg.live.get(employee_id).is_some_and(|handle| {
+            let permit_free = handle
+                .active_permit
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .is_none();
+            let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+            st.run_id.as_deref() == Some(expected_run_id)
+                && st.state == SessionState::Idle
+                && !st.recovery_required
+                && permit_free
+        });
+        if !still_recyclable {
+            return false;
+        }
+        let Some(handle) = reg.live.remove(employee_id) else {
+            return false;
+        };
+        reg.starting.insert(employee_id.to_owned());
+        reg.bg_workers.retain(|h| !h.is_finished());
+        reg.bg_spawning += 1;
+        let _ = handle.tx.send(PumpCommand::Stop {
+            reason: reason.to_owned(),
+        });
+        handle
+    };
+    let emp = employee_id.to_owned();
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(removed)));
+    let worker_slot = std::sync::Arc::clone(&slot);
+    let spawned = crate::manager::spawn_bg_worker_reserved(mgr, "org-warm-recycle", move |m| {
+        let mut reaped_cleanly = true;
+        {
+            let _start_guard = crate::manager::StartSlotGuard::new(&m.registry, emp.clone());
+            if let Some(old) = worker_slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                reaped_cleanly = crate::manager::reap_live_handle(
+                    &m,
+                    &emp,
+                    old,
+                    None,
+                    crate::manager::ReapMode::FailClosedRestore {
+                        conflict_message: format!(
+                            "could not verify teardown of recycled warm session `{emp}`; resolve recovery first"
+                        ),
+                    },
+                )
+                .is_ok();
+            }
+        }
+        if reaped_cleanly {
+            let _ = m.process_due_wakes_for(&emp);
+        }
+    });
+    if !spawned {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(old) = slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            reg.live.insert(employee_id.to_owned(), old);
+        }
+        reg.starting.remove(employee_id);
+        return false;
+    }
+    true
+}
+
+pub(super) fn try_send_wake_on_live_handle(
+    employee_id: &str,
+    queue_task_id: Option<&str>,
+    objective: String,
+    ctx: &TurnEndDrainCtx,
+) -> Result<bool, WakeHoldReason> {
+    let handle_info = {
+        let reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
+        reg.live.get(employee_id).map(|handle| {
+            let run_id = handle
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .run_id
+                .clone()
+                .unwrap_or_default();
+            (
+                run_id,
+                handle.tx.clone(),
+                handle.connection_id.clone(),
+                handle.route_digest.clone(),
+                handle.oauth_expires_at_ms,
+                Arc::clone(&handle.active_permit),
+                handle.bwrap_masked_siblings.clone(),
+            )
+        })
+    };
+    let Some((
+        run_id,
+        tx,
+        conn_id,
+        route_digest,
+        oauth_expires_at_ms,
+        active_permit,
+        bwrap_masked_siblings,
+    )) = handle_info
+    else {
+        return Ok(false);
+    };
+    if crate::host_auth::is_oauth_expiring(oauth_expires_at_ms, now_ms()) {
+        recycle_stale_warm_handle(employee_id, &run_id, "oauth_token_expiring", ctx);
+        return Ok(false);
+    }
+    if bwrap_masked_siblings.as_ref().is_some_and(|masked| {
+        crate::manager::has_unmasked_bwrap_sibling_in_office(&ctx.office, employee_id, masked)
+    }) {
+        recycle_stale_warm_handle(employee_id, &run_id, "bwrap_sibling_topology_changed", ctx);
+        return Ok(false);
+    }
+    if conn_id.is_none()
+        && ctx
+            .office
+            .load_agent_execution(employee_id)
+            .ok()
+            .flatten()
+            .is_some()
+    {
+        recycle_stale_warm_handle(employee_id, &run_id, "warm_route_stale", ctx);
+        return Ok(false);
+    }
+    let acquired_permit = match acquire_live_handle_permit(
+        &ctx.acquire_warm_permit,
+        &ctx.office,
+        ctx.hq_permits.as_deref(),
+        conn_id.as_deref(),
+        (!route_digest.is_empty()).then_some(route_digest.as_str()),
+        &active_permit,
+        employee_id,
+        queue_task_id,
+    ) {
+        Ok(permit) => permit,
+        Err(LivePermitError::Stale) => {
+            recycle_stale_warm_handle(employee_id, &run_id, "warm_route_stale", ctx);
+            return Ok(false);
+        }
+        Err(LivePermitError::Hold(reason)) => return Err(reason),
+    };
+    let (sent, release_pid) = commit_wake_send_locked(
+        &ctx.registry,
+        employee_id,
+        &run_id,
+        &tx,
+        &active_permit,
+        acquired_permit,
+        objective,
+    );
+    if let Some(pid) = release_pid {
+        crate::router::release_turn_permit_any(&ctx.office, ctx.hq_permits.as_deref(), &pid);
+    }
+    Ok(sent)
+}
+
+pub(super) fn commit_wake_send_locked(
+    registry: &Arc<Mutex<SessionRegistry>>,
+    employee_id: &str,
+    run_id: &str,
+    tx: &std::sync::mpsc::Sender<PumpCommand>,
+    active_permit: &Arc<Mutex<Option<(String, u64)>>>,
+    acquired_permit: Option<(String, u64)>,
+    objective: String,
+) -> (bool, Option<String>) {
+    let reg = registry.lock().unwrap_or_else(|p| p.into_inner());
+    let still_live = !reg.draining
+        && !reg.shutting_down
+        && !reg.starting.contains(employee_id)
+        && reg.live.get(employee_id).is_some_and(|handle| {
+            handle
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .run_id
+                .as_deref()
+                == Some(run_id)
+        });
+    if !still_live {
+        return (false, acquired_permit.map(|(pid, _)| pid));
+    }
+    let (installed_pid, redundant_pid) = match acquired_permit {
+        Some(p) => {
+            let mut slot = active_permit.lock().unwrap_or_else(|e| e.into_inner());
+            if slot.is_none() {
+                let pid = p.0.clone();
+                *slot = Some(p);
+                (Some(pid), None)
+            } else {
+                (None, Some(p.0))
+            }
+        }
+        None => (None, None),
+    };
+    if tx.send(PumpCommand::SendTurn(objective)).is_ok() {
+        return (true, redundant_pid);
+    }
+    let rollback_pid = installed_pid.and_then(|pid| {
+        let mut slot = active_permit.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.as_ref().is_some_and(|(cur, _)| cur == &pid) {
+            slot.take().map(|(id, _)| id)
+        } else {
+            None
+        }
+    });
+    (false, rollback_pid.or(redundant_pid))
+}
+
+pub(super) enum LivePermitError {
+    Stale,
+    Hold(WakeHoldReason),
+}
+
+/// Acquires a warm turn permit for a live handle: [`crate::router::acquire_warm_permit_for_office`]
+/// in production, which on a satellite is an HQ permit RPC (after worktree and bare-repository
+/// digest walks). The drain calls it with no employee lock held (`TASK-170`).
+pub(crate) type WarmPermitAcquirer = Arc<
+    dyn Fn(
+            &Office,
+            Option<&dyn crate::router::HqPermitCoordinator>,
+            &str,
+            &str,
+            Option<&str>,
+            Option<&str>,
+        ) -> crate::router::WarmPermitOutcome
+        + Send
+        + Sync,
+>;
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "permit acquisition takes the acquirer, office, HQ port, route, permit slot, employee, and task"
+)]
+pub(super) fn acquire_live_handle_permit(
+    acquire_warm_permit: &WarmPermitAcquirer,
+    office: &Office,
+    hq_permits: Option<&dyn crate::router::HqPermitCoordinator>,
+    conn_id: Option<&str>,
+    route_digest: Option<&str>,
+    active_permit: &Arc<Mutex<Option<(String, u64)>>>,
+    employee_id: &str,
+    task_id: Option<&str>,
+) -> Result<Option<(String, u64)>, LivePermitError> {
+    let Some(cid) = conn_id else {
+        return Ok(None);
+    };
+    if active_permit
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .is_some()
+    {
+        return Ok(None);
+    }
+    match acquire_warm_permit(office, hq_permits, cid, employee_id, task_id, route_digest) {
+        crate::router::WarmPermitOutcome::Granted(p) => Ok(Some(p)),
+        crate::router::WarmPermitOutcome::StaleWarm => Err(LivePermitError::Stale),
+        crate::router::WarmPermitOutcome::Unavailable { .. } => {
+            Err(LivePermitError::Hold(WakeHoldReason::AdmissionRefused))
+        }
+        crate::router::WarmPermitOutcome::Refused(err) => {
+            let reason = if err.message.starts_with("BUDGET_HELD") {
+                WakeHoldReason::BudgetHold
+            } else {
+                WakeHoldReason::AdmissionRefused
+            };
+            Err(LivePermitError::Hold(reason))
+        }
+    }
+}
+
+/// Turn-end drain of queued wakes into the live warm session (`TASK-115`, `TASK-170`).
+///
+/// Three phases so the employee lock is never held across the warm-permit acquisition (an HQ
+/// permit RPC on satellites, plus worktree and bare-repository digest walks) or the bwrap sibling
+/// topology scan: claim under the lock, send without it, then commit under the lock against a
+/// fresh read of the queue so wakes enqueued meanwhile are never lost. The per-employee
+/// [`DispatchWakeGuard`] stays held throughout, so no other dispatcher or mid-turn stager can claim
+/// the same items in between. A wake withdrawn while the permit RPC runs may still reach the
+/// session in this turn (as on the cold-start path, `launch_claimed_wakes`); it is pruned from
+/// the durable queue either way.
+pub(super) fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEndDrainCtx) {
+    if !ctx
+        .store
+        .pending_wakes_path(employee_id)
+        .is_ok_and(|p| p.exists())
+    {
+        return;
+    }
+    let Some(_dispatch_guard) = DispatchWakeGuard::try_acquire(&ctx.dispatching_wakes, employee_id)
+    else {
+        return;
+    };
+    let Some(claim) = claim_live_drain_batch(employee_id, ctx) else {
+        return;
+    };
+    let sent = try_send_wake_on_live_handle(
+        employee_id,
+        claim.task_id.as_deref(),
+        claim.objective.clone(),
+        ctx,
+    );
+    commit_live_drain(employee_id, ctx, &claim, sent);
+}
+
+/// Runs one turn-end drain for `employee_id` with `acquirer` standing in for the warm-permit
+/// acquisition (the `TASK-170` lock-scope regression test blocks inside it).
+#[cfg(test)]
+pub(crate) fn drain_into_live_pump_with_acquirer(
+    mgr: &SessionManager,
+    employee_id: &str,
+    acquirer: WarmPermitAcquirer,
+) {
+    let mut ctx = mgr.turn_end_drain_ctx();
+    ctx.acquire_warm_permit = acquirer;
+    drain_pending_wakes_into_live_pump(employee_id, &ctx);
+}
+
+/// Items claimed from the durable queue for one live-pump drain, with the provenance recorded in
+/// history once the turn is actually sent.
+pub(super) struct LiveDrainClaim {
+    pub(super) item_ids: HashSet<String>,
+    pub(super) objective: String,
+    pub(super) task_id: Option<String>,
+    pub(super) person_triggered: bool,
+    pub(super) trigger: serde_json::Value,
+    pub(super) ts: u64,
+}
+
+/// Phase 1 of the drain, under the employee lock: reads the queue and applies every hold that
+/// needs no network or disk walk (suspension, inactive agent, budget hold, hourly quota).
+pub(super) fn claim_live_drain_batch(
+    employee_id: &str,
+    ctx: &TurnEndDrainCtx,
+) -> Option<LiveDrainClaim> {
+    let _lock = ctx.employee_locks.lock(employee_id);
+    let Ok(Some(mut queue)) = ctx.store.read_pending_wakes(employee_id) else {
+        return None;
+    };
+    if queue.items.is_empty() {
+        if queue.seen_item_ids.is_empty() {
+            let _ = ctx.store.clear_pending_wakes(employee_id);
+        }
+        return None;
+    }
+    if ctx
+        .store
+        .read_suspended_state(employee_id)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return None;
+    }
+    let emp = ctx.office.load_employee(employee_id).ok().flatten()?;
+    if emp.status != EmployeeStatus::Active {
+        return None;
+    }
+    let ts = now_ms();
+    let tokens = ctx.bindings.active_tokens();
+    let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    let task_id = queue
+        .items
+        .iter()
+        .find(|i| i.kind == WakeKind::TaskAssignment)
+        .map(|i| i.source_id.clone());
+    let office_held = ctx
+        .office
+        .active_budget_holds(Some(employee_id), task_id.as_deref())
+        .map(|h| !h.is_empty())
+        .unwrap_or(false);
+    if office_held
+        || ctx
+            .budget_hold
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_some()
+    {
+        queue.set_hold(WakeHoldReason::BudgetHold, ts, None);
+        let _ = ctx.store.write_pending_wakes_redacted(&queue, &refs);
+        return None;
+    }
+    let person_triggered = queue.has_person_item();
+    if !person_triggered {
+        let mut quota = ctx
+            .store
+            .read_wake_quota(employee_id)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| WakeQuotaRecord::empty(employee_id));
+        if let Err(retry_after) = quota.check_limit(ts, ctx.window_ms, ctx.hourly_limit) {
+            queue.set_hold(WakeHoldReason::HourlyLimit, ts, Some(retry_after));
+            let _ = ctx.store.write_pending_wakes_redacted(&queue, &refs);
+            return None;
+        }
+    }
+    let first = &queue.items[0];
+    let trigger = serde_json::json!({
+        "type": "turn_trigger",
+        "kind": first.kind.as_str(),
+        "sender_id": first.sender_id,
+        "source_id": first.source_id,
+        "coalesced_count": queue.items.len(),
+        "held_reason": queue.hold_reason.map(|r| r.as_str()),
+        "waited_ms": queue.held_since_ms.map(|since| ts.saturating_sub(since)),
+        "at": rfc3339_now(),
+    });
+    Some(LiveDrainClaim {
+        item_ids: queue.items.iter().map(|i| i.item_id.clone()).collect(),
+        objective: compose_coalesced_wake_objective(&queue.items, &[]),
+        task_id,
+        person_triggered,
+        trigger,
+        ts,
+    })
+}
+
+/// Phase 3 of the drain, under the employee lock again: re-reads the queue and quota so wakes
+/// enqueued while the permit RPC ran are kept, then records the hold or the sent turn.
+pub(super) fn commit_live_drain(
+    employee_id: &str,
+    ctx: &TurnEndDrainCtx,
+    claim: &LiveDrainClaim,
+    sent: Result<bool, WakeHoldReason>,
+) {
+    let _lock = ctx.employee_locks.lock(employee_id);
+    let tokens = ctx.bindings.active_tokens();
+    let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    match sent {
+        Err(reason) => {
+            if let Ok(Some(mut queue)) = ctx.store.read_pending_wakes(employee_id) {
+                queue.set_hold(reason, claim.ts, None);
+                let _ = ctx.store.write_pending_wakes_redacted(&queue, &refs);
+            }
+        }
+        Ok(false) => {}
+        Ok(true) => {
+            if !claim.person_triggered {
+                let mut quota = ctx
+                    .store
+                    .read_wake_quota(employee_id)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| WakeQuotaRecord::empty(employee_id));
+                quota.record_start(claim.ts, ctx.window_ms);
+                let _ = ctx.store.write_wake_quota(&quota);
+            }
+            let _ = ctx.store.append_history(employee_id, &claim.trigger, &refs);
+            let remaining_mid_turn = remove_claimed_wakes(
+                &ctx.store,
+                &ctx.waiting_messages,
+                &refs,
+                employee_id,
+                &claim.item_ids,
+            );
+            if remaining_mid_turn {
+                let reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(handle) = reg.live.get(employee_id).filter(|h| h.supports_mid_turn) {
+                    let _ = handle.tx.send(PumpCommand::NotifyPendingWakes);
+                }
+            }
+        }
+    }
+}
+
+/// Removes `claimed` item IDs from `emp_id`'s durable queue (callers hold the employee lock),
+/// keeping `seen_item_ids` so a replayed relay never starts a duplicate turn (`TASK-52` P7-#12,
+/// P8-#10). Returns whether mid-turn-eligible items that arrived meanwhile remain queued.
+pub(crate) fn remove_claimed_wakes(
+    store: &SessionStore,
+    waiting_messages: &Mutex<HashMap<String, Arc<AtomicU32>>>,
+    redaction_tokens: &[&str],
+    emp_id: &str,
+    claimed: &HashSet<String>,
+) -> bool {
+    let Ok(Some(mut queue)) = store.read_pending_wakes(emp_id) else {
+        return false;
+    };
+    queue.items.retain(|i| !claimed.contains(&i.item_id));
+    let has_remaining_mid_turn = queue.items.iter().any(|i| i.kind.is_mid_turn_eligible());
+    if queue.items.is_empty() && queue.seen_item_ids.is_empty() {
+        if store.clear_pending_wakes(emp_id).is_ok() {
+            set_waiting_messages_count(waiting_messages, emp_id, 0);
+        }
+        return has_remaining_mid_turn;
+    }
+    if queue.items.is_empty() {
+        queue.hold_reason = None;
+        queue.held_since_ms = None;
+        queue.retry_after_ms = None;
+    }
+    queue.updated_at = rfc3339_now();
+    let _ = store.write_pending_wakes_redacted(&queue, redaction_tokens);
+    set_waiting_messages_count(waiting_messages, emp_id, queue.items.len());
+    has_remaining_mid_turn
+}
+
+pub(super) struct TurnEndDrainCtx {
+    pub(super) store: SessionStore,
+    pub(super) registry: Arc<Mutex<SessionRegistry>>,
+    pub(super) budget_hold: Arc<Mutex<Option<String>>>,
+    pub(super) employee_locks: Arc<EmployeeLockMap>,
+    pub(super) dispatching_wakes: Arc<Mutex<HashSet<String>>>,
+    pub(super) waiting_messages: Arc<Mutex<HashMap<String, Arc<AtomicU32>>>>,
+    pub(super) bindings: RunBindingRegistry,
+    pub(super) office: Arc<Office>,
+    pub(super) hq_permits: Option<Arc<dyn crate::router::HqPermitCoordinator>>,
+    pub(super) acquire_warm_permit: WarmPermitAcquirer,
+    pub(super) weak_mgr: Option<std::sync::Weak<SessionManager>>,
+    pub(super) hourly_limit: usize,
+    pub(super) window_ms: u64,
+}
+
+impl SessionManager {
+    /// The turn-end drain context of this manager's pump hooks; it acquires warm permits through
+    /// the office router (an HQ permit RPC on satellites).
+    pub(super) fn turn_end_drain_ctx(&self) -> TurnEndDrainCtx {
+        TurnEndDrainCtx {
+            store: self.store.clone(),
+            registry: Arc::clone(&self.registry),
+            budget_hold: Arc::clone(&self.budget_hold),
+            employee_locks: Arc::clone(&self.employee_locks),
+            dispatching_wakes: Arc::clone(&self.dispatching_wakes),
+            waiting_messages: Arc::clone(&self.waiting_messages),
+            bindings: self.bindings.clone(),
+            office: Arc::clone(&self.office),
+            hq_permits: self.config.hq_permits.clone(),
+            acquire_warm_permit: Arc::new(crate::router::acquire_warm_permit_for_office),
+            weak_mgr: self.weak_self(),
+            hourly_limit: self.config.hourly_wake_limit,
+            window_ms: self.config.wake_window.as_millis() as u64,
+        }
+    }
+}

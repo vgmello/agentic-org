@@ -617,7 +617,7 @@ fn a_replay_returns_the_same_organization_and_another_plan_or_account_is_operati
         .provisioning_lookup(account.account_id(), &id)
         .unwrap()
         .unwrap();
-    let recovery = crate::provisioning::pending_recovery(&*host.custody, &{
+    let recovery = crate::hostdb::pending_recovery::pending_recovery(&*host.custody, &{
         let mut unlinked = reservation.clone();
         unlinked.linked = false;
         unlinked.key_fingerprint = None;

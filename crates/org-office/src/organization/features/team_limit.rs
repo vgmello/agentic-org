@@ -13,7 +13,7 @@ use super::{
     stable, Feature, Op, RejectCode, NOT_AUTHORIZED,
 };
 use crate::organization::{
-    ports::OrganizationRead,
+    ports::{OrganizationRead, TeamDependents},
     records::{self, EmployeeKind, Team},
 };
 
@@ -35,7 +35,7 @@ impl Feature for SetTeamMaxMembers {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         decide(uow, here, owner, by, self)
     }

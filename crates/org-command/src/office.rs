@@ -7,7 +7,7 @@ use std::io;
 use org_proto::ErrorCode;
 use serde_json::{Map, Value};
 
-use crate::table::{Ack, Command};
+use crate::row::{Ack, Command};
 
 /// One command, read and checked, ready for the office. The office authorizes and decides;
 /// nothing here is a check that protects anything.

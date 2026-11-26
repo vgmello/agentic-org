@@ -1,5 +1,12 @@
 //! Native, terminal-only composition. No secret argv/config/stdout/JSON mode.
+//!
+//! What it says goes to the `out` it is given (the command's standard output): a write
+//! there that fails because the reader went away is [`HostCliError::output_closed`], never a
+//! panic. The recovery code itself is written only to `/dev/tty`. Invalid arguments are
+//! `Usage` errors whose help is the command's help.
 use super::{session, Wire};
+use crate::cli_error::{wire_name, HostCliError};
+use crate::host_log::untrusted;
 use org_host_control::{ops, recovery as dto, SessionHandle};
 use org_proto::{Hello, HelloParams, HelloResult};
 use std::{
@@ -17,6 +24,20 @@ Use when: inspecting recovery code delivery status (`status`) or releasing and e
 Or select an explicit --host-socket PATH --instance-id ID. Collection requires this Mac's foreground terminal and a fresh OS confirmation. REC-1 HQ-loss recovery is unsupported.";
 fn error<T>(_: T) -> String {
     "recovery is unresolved; inspect persisted status before explicit redelivery; no retention acknowledgement was inferred".into()
+}
+/// Invalid recovery arguments: `Usage`, with the command's help.
+fn usage() -> HostCliError {
+    HostCliError::usage("the recovery arguments are not valid").with_help(HELP)
+}
+/// `ms` (Unix milliseconds) as RFC 3339 UTC, or `never`.
+fn when(ms: Option<i64>) -> String {
+    match ms {
+        None => "never".into(),
+        Some(ms) => u64::try_from(ms)
+            .ok()
+            .and_then(org_proto::format_rfc3339_ms)
+            .unwrap_or_else(|| format!("{ms} ms from the Unix epoch")),
+    }
 }
 pub(super) fn interactive() -> bool {
     std::io::stdin().is_terminal()
@@ -50,23 +71,46 @@ fn prompt(label: &str, max: usize) -> Result<String, String> {
     }
     String::from_utf8(bytes).map_err(error)
 }
-fn show(status: &dto::StatusResult) {
-    println!("Recovery: {:?}; delivery ordinal {}; first shown {:?}; last redelivered {:?}; redeliveries {}; acknowledged {:?} by {:?}.",status.state,status.delivery_ordinal,status.first_shown_ms,status.last_redelivered_ms,status.redelivery_count,status.acknowledged_ms,status.acknowledged_by);
+/// The delivery status as lines: the state in its wire spelling, times as RFC 3339 UTC or
+/// `never`, an absent account as `none`; the host's own words escaped.
+fn shown(status: &dto::StatusResult) -> Vec<String> {
+    let mut lines = vec![format!(
+        "Recovery: {}; delivery ordinal {}; first shown {}; last redelivered {}; redeliveries {}; acknowledged {} by {}.",
+        wire_name(&status.state),
+        untrusted(&status.delivery_ordinal),
+        when(status.first_shown_ms),
+        when(status.last_redelivered_ms),
+        untrusted(&status.redelivery_count),
+        when(status.acknowledged_ms),
+        status.acknowledged_by.as_deref().map_or_else(|| "none".into(), untrusted),
+    )];
     for event in &status.audit {
-        println!(
-            "Delivery {}: {} by {} at {} ms UTC",
-            event.ordinal, event.action, event.account, event.at_ms
-        );
+        lines.push(format!(
+            "Delivery {}: {} by {} at {}",
+            untrusted(&event.ordinal),
+            untrusted(&event.action),
+            untrusted(&event.account),
+            when(Some(event.at_ms))
+        ));
     }
-    println!(
+    lines.push(
         "REC-1 HQ-loss recovery is unsupported. Delivery/export does not prove off-HQ retention."
+            .into(),
     );
+    lines
+}
+fn show(status: &dto::StatusResult, out: &mut dyn Write) -> Result<(), HostCliError> {
+    for line in shown(status) {
+        writeln!(out, "{line}").map_err(HostCliError::output)?;
+    }
+    Ok(())
 }
 pub(super) fn status(
     wire: &mut Wire,
     handle: &SessionHandle,
     org: &str,
-) -> Result<dto::StatusResult, String> {
+    out: &mut dyn Write,
+) -> Result<dto::StatusResult, HostCliError> {
     let mut after = None;
     loop {
         let result = wire
@@ -79,13 +123,13 @@ pub(super) fn status(
                 None,
             )
             .map_err(error)?;
-        show(&result);
+        show(&result, out)?;
         if result.next_after_ordinal.is_none() {
             return Ok(result);
         }
         let next = result.next_after_ordinal.clone();
         if next == after {
-            return Err(error(()));
+            return Err(error(()).into());
         }
         after = next;
     }
@@ -155,11 +199,12 @@ pub(super) fn collect(
     org: &str,
     redeliver: bool,
     destination: Option<PathBuf>,
-) -> Result<(), String> {
+    out: &mut dyn Write,
+) -> Result<(), HostCliError> {
     if !interactive() {
-        return Err("recovery releaseion requires the local foreground console terminal; no credentials or code collected".into());
+        return Err(HostCliError::usage("recovery releaseion requires the local foreground console terminal; no credentials or code collected"));
     }
-    let observed = status(wire, handle, org)?;
+    let observed = status(wire, handle, org, out)?;
     if observed.state == dto::DeliveryState::Acknowledged {
         return Ok(());
     }
@@ -173,11 +218,11 @@ pub(super) fn collect(
                 None,
             )
             .map_err(error)?;
-        status(wire, handle, org)?;
+        status(wire, handle, org, out)?;
         return Ok(());
     }
     if observed.state == dto::DeliveryState::Delivered && !redeliver {
-        return Err("already shown; inspect the recorded dates and use --redeliver for a fresh authenticated showing of the same code".into());
+        return Err(HostCliError::refused(None, "already shown; inspect the recorded dates and use --redeliver for a fresh authenticated showing of the same code"));
     }
     let destination = match destination {
         Some(p) => p,
@@ -187,7 +232,7 @@ pub(super) fn collect(
         )?),
     };
     if !destination.is_absolute() {
-        return Err("package destination must be absolute".into());
+        return Err(HostCliError::usage("package destination must be absolute"));
     }
     if !prompt("Press Enter to show the code and record BOTH code and package as stored off this Mac; any text defers: ",256)?.is_empty(){return Ok(());}
     let result = wire
@@ -201,7 +246,7 @@ pub(super) fn collect(
         )
         .map_err(error)?;
     if !interactive() {
-        return Err(error(()));
+        return Err(error(()).into());
     }
     let mut terminal = tty()?;
     writeln!(terminal, "Recovery code: {}", result.code.expose())
@@ -218,7 +263,8 @@ pub(super) fn collect(
         .map_err(error)?;
     export(&destination, &package_bytes(package, instance, org)?)?;
     writeln!(terminal,"Encrypted public package exported. Copy BOTH the code and this package off HQ. Export alone is not a backup. REC-1 HQ-loss recovery is unsupported.").map_err(error)?;
-    let challenge = super::terminal::secret(b"Final code group (hidden): ")?;
+    let challenge =
+        super::terminal::secret(b"Final code group (hidden): ").map_err(HostCliError::password)?;
     if challenge.expose().as_bytes()
         != result
             .code
@@ -227,7 +273,10 @@ pub(super) fn collect(
             .get(45..49)
             .ok_or_else(|| error(()))?
     {
-        return Err("code group did not match; remains Shown; no ACK was sent".into());
+        return Err(HostCliError::refused(
+            None,
+            "code group did not match; remains Shown; no ACK was sent",
+        ));
     }
     drop(challenge);
     if prompt(
@@ -238,7 +287,7 @@ pub(super) fn collect(
         return Ok(());
     }
     if !interactive() {
-        return Err(error(()));
+        return Err(error(()).into());
     }
     let _: org_proto::Empty = wire
         .call::<ops::RecoveryAcknowledge>(
@@ -249,20 +298,20 @@ pub(super) fn collect(
             None,
         )
         .map_err(error)?;
-    status(wire, handle, org)?;
+    status(wire, handle, org, out)?;
     Ok(())
 }
 fn recovery_options<'a>(
     command: &str,
     arguments: &'a [String],
-) -> Result<(BTreeMap<&'a str, &'a str>, bool), String> {
+) -> Result<(BTreeMap<&'a str, &'a str>, bool), HostCliError> {
     let mut options = BTreeMap::new();
     let mut redeliver = false;
     let mut args = arguments.iter();
     while let Some(flag) = args.next() {
         if flag == "--redeliver" {
             if redeliver || command != "release" {
-                return Err(HELP.into());
+                return Err(usage());
             }
             redeliver = true;
             continue;
@@ -277,17 +326,17 @@ fn recovery_options<'a>(
                 | "--instance-id"
                 | "--package"
         ) || options
-            .insert(flag.as_str(), args.next().ok_or(HELP)?.as_str())
+            .insert(flag.as_str(), args.next().ok_or_else(usage)?.as_str())
             .is_some()
         {
-            return Err(HELP.into());
+            return Err(usage());
         }
     }
     if command == "status" && options.contains_key("--package") {
-        return Err(HELP.into());
+        return Err(usage());
     }
     if options.contains_key("--org") && options.contains_key("--org-id") {
-        return Err(HELP.into());
+        return Err(usage());
     }
     Ok((options, redeliver))
 }
@@ -298,7 +347,7 @@ struct RecoveryTarget {
     default_org: Option<String>,
     default_login: Option<String>,
 }
-fn recovery_target(options: &BTreeMap<&str, &str>) -> Result<RecoveryTarget, String> {
+fn recovery_target(options: &BTreeMap<&str, &str>) -> Result<RecoveryTarget, HostCliError> {
     let (instance, socket, default_org, default_login) =
         match (options.get("--host-socket"), options.get("--instance-id")) {
             (Some(socket), Some(instance)) if !options.contains_key("--name") => {
@@ -314,7 +363,7 @@ fn recovery_target(options: &BTreeMap<&str, &str>) -> Result<RecoveryTarget, Str
                         .map_err(error)?;
                 let (instance, temp) = registry.locate(name, &record.input.root).map_err(error)?;
                 if record.instance_id.as_deref() != Some(&instance) {
-                    return Err(error(()));
+                    return Err(error(()).into());
                 }
                 (
                     instance,
@@ -324,12 +373,12 @@ fn recovery_target(options: &BTreeMap<&str, &str>) -> Result<RecoveryTarget, Str
                     None,
                 )
             }
-            _ => return Err(HELP.into()),
+            _ => return Err(usage()),
         };
     // Every target (explicit or setup-located) must name an absolute socket and a canonical
     // UUIDv7 instance id.
     if !socket.is_absolute() || !org_proto::is_uuid_v7(&instance) {
-        return Err(HELP.into());
+        return Err(usage());
     }
     Ok(RecoveryTarget {
         instance,
@@ -342,7 +391,7 @@ fn recovery_target(options: &BTreeMap<&str, &str>) -> Result<RecoveryTarget, Str
 /// The id of the organization named `name` among those the signed-in account is linked
 /// to. Names are unique on an instance whatever their letter case, so at most one
 /// matches. An unknown name is refused with the names the account can see.
-fn resolve_org(orgs: &[ops::LinkedOrg], name: &str) -> Result<String, String> {
+fn resolve_org(orgs: &[ops::LinkedOrg], name: &str) -> Result<String, HostCliError> {
     // The instance's own rule for "the same name" (`OrganizationName::key`), not a copy
     // of it. What is not an organization name has no key and matches nothing.
     let key = |name: &str| {
@@ -357,19 +406,24 @@ fn resolve_org(orgs: &[ops::LinkedOrg], name: &str) -> Result<String, String> {
     if let (Some(org), None) = (found.next(), found.next()) {
         return Ok(org.org_id.clone());
     }
-    // Debug formatting escapes anything a terminal would interpret.
+    // Quoted, with anything a terminal would interpret escaped.
+    let quoted = |name: &str| format!("\"{}\"", untrusted(name));
     let visible: Vec<String> = orgs
         .iter()
         .filter(|o| !o.name.is_empty())
-        .map(|o| format!("{:?}", o.name))
+        .map(|o| quoted(&o.name))
         .collect();
-    Err(format!(
-        "no organization named {name:?} for this account; it can see: {}",
-        if visible.is_empty() {
-            "none".into()
-        } else {
-            visible.join(", ")
-        }
+    Err(HostCliError::refused(
+        None,
+        format!(
+            "no organization named {} for this account; it can see: {}",
+            quoted(name),
+            if visible.is_empty() {
+                "none".into()
+            } else {
+                visible.join(", ")
+            }
+        ),
     ))
 }
 
@@ -383,20 +437,20 @@ fn is_recovery_help_request(arguments: &[String]) -> bool {
     }
 }
 
-pub fn recovery(arguments: &[String]) -> Result<(), String> {
+/// `agentic-org recovery <status|release> ...`, saying what it does to `out`.
+pub fn recovery(arguments: &[String], out: &mut dyn Write) -> Result<(), HostCliError> {
     if is_recovery_help_request(arguments) {
-        println!("{HELP}");
-        return Ok(());
+        return writeln!(out, "{HELP}").map_err(HostCliError::output);
     }
     let command = arguments[0].as_str();
     if !matches!(command, "status" | "release") {
-        return Err(HELP.into());
+        return Err(usage());
     }
     let (options, redeliver) = recovery_options(command, &arguments[1..])?;
     // No password collection before terminal/local-console preflight, even for
     // status sign-in. Native host status itself remains nonsecret/no-dialog.
     if !interactive() {
-        return Err("use the foreground terminal on this Mac; SSH/noninteractive recovery releases no credentials".into());
+        return Err(HostCliError::usage("use the foreground terminal on this Mac; SSH/noninteractive recovery releases no credentials"));
     }
     let RecoveryTarget {
         instance,
@@ -410,25 +464,30 @@ pub fn recovery(arguments: &[String]) -> Result<(), String> {
         .map(|s| s.to_string())
         .or(default_org);
     if org_name.is_none() && org_id.is_none() {
-        return Err("explicit --org ORGANIZATION_NAME or --org-id ID required".into());
+        return Err(HostCliError::usage(
+            "explicit --org ORGANIZATION_NAME or --org-id ID required",
+        )
+        .with_help(HELP));
     }
     if org_name.as_deref().is_some_and(str::is_empty)
         || org_id
             .as_deref()
             .is_some_and(|id| !org_office_launch::is_storage_id(id))
     {
-        return Err(HELP.into());
+        return Err(usage());
     }
     let login = options
         .get("--login")
         .map(|s| s.to_string())
         .or(default_login)
-        .ok_or("explicit --login required")?;
+        .ok_or_else(|| HostCliError::usage("explicit --login required").with_help(HELP))?;
     let stream = UnixStream::connect(socket).map_err(error)?;
     // Before anything is said to it, and before a password is asked for: this command signs
     // in with a password and collects a recovery secret, and a host known only by its user
     // is sent neither.
-    super::verify_host(&stream)?.may_receive_secrets()?;
+    super::verify_host(&stream)?
+        .may_receive_secrets()
+        .map_err(HostCliError::auth)?;
     let mut wire = Wire::new(stream)?;
     let hello: HelloResult = wire
         .call::<Hello>(
@@ -437,17 +496,21 @@ pub fn recovery(arguments: &[String]) -> Result<(), String> {
         )
         .map_err(error)?;
     if hello.instance_id.as_deref() != Some(instance.as_str()) {
-        return Err(error(()));
+        return Err(error(()).into());
     }
-    let signed = wire
-        .call::<ops::AccountVerify>(
-            &ops::AccountVerifyParams {
-                login,
-                password: super::password()?,
-            },
-            None,
-        )
-        .map_err(error)?;
+    let password = super::password().map_err(HostCliError::password)?;
+    let signed = match wire
+        .call_answer::<ops::AccountVerify>(&ops::AccountVerifyParams { login, password }, None)
+        .map_err(error)?
+    {
+        Ok(signed) => signed,
+        Err(code) => {
+            return Err(crate::cli_error::sign_in_refused(
+                code,
+                "invalid login or password",
+            ))
+        }
+    };
     if !signed.admin {
         // The sign-in made a session; it ends before the refusal is returned.
         let _ = wire.call::<ops::SessionEnd>(
@@ -456,7 +519,7 @@ pub fn recovery(arguments: &[String]) -> Result<(), String> {
             },
             None,
         );
-        return Err("instance administrator required".into());
+        return Err(HostCliError::auth("instance administrator required"));
     }
     // A name is resolved among the organizations this account is linked to, after it
     // signed in; the session is ended whatever the answer.
@@ -464,7 +527,7 @@ pub fn recovery(arguments: &[String]) -> Result<(), String> {
     let org = match (org_name, org_id) {
         (Some(name), _) => resolve_org(&signed.orgs, &name),
         (None, Some(id)) => Ok(id),
-        (None, None) => Err(HELP.into()),
+        (None, None) => Err(usage()),
     };
     let result = org.and_then(|org| {
         if command == "release" {
@@ -475,9 +538,10 @@ pub fn recovery(arguments: &[String]) -> Result<(), String> {
                 &org,
                 redeliver,
                 options.get("--package").map(PathBuf::from),
+                out,
             )
         } else {
-            status(&mut wire, &signed.session, &org).map(drop)
+            status(&mut wire, &signed.session, &org, out).map(drop)
         }
     });
     // Logout cannot undo accepted office transactions or acknowledged delivery.

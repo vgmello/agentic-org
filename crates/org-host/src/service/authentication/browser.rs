@@ -21,9 +21,9 @@ use org_host_control::ops::LinkedOrg;
 use org_host_control::organization::BrowserAuth;
 use org_proto::{ApiError, ErrorCode};
 
+use super::grants::{sign_grant, GrantInput};
 use super::{
-    argon, denied, hash_password, sign_grant, unavailable, Authentication, GrantInput, HashPermit,
-    WebChannel, MAX_HASHES,
+    argon, denied, hash_password, unavailable, Authentication, HashPermit, WebChannel, MAX_HASHES,
 };
 use crate::accounts::identity::{AccountId, LoginKey};
 use crate::accounts::rules::{check_new_password, PasswordRule, Username};
