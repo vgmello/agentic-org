@@ -180,7 +180,7 @@
 						>{#if message.reason}{' · ' + REASON_LABEL[message.reason]}{/if}</span
 					>{/if}
 				{#if message.bridge}<span
-						class="rounded bg-surface-overlay px-1.5 text-[10px]/4 font-semibold text-fg-body"
+						class="rounded bg-surface-overlay px-1.5 text-xs/4 font-semibold text-fg-body"
 						data-testid="bridge-badge"
 						title="Posted from {bridgeName} as {nameOf(ctx, message.from)}, never as the owner"
 						>{bridgeName}</span

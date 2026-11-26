@@ -124,7 +124,7 @@
 					<span id="cozy-contrast-label" class="text-sm/6 font-semibold text-fg">
 						Cozy Glass high contrast
 					</span>
-					<span class="contrast-badge rounded-full px-2 py-0.5 text-[11px] font-medium">
+					<span class="contrast-badge rounded-full px-2 py-0.5 text-xs font-medium">
 						{isCozyTheme ? 'Active theme' : 'Applies in Cozy Glass'}
 					</span>
 				</div>

@@ -234,7 +234,7 @@
 										: i === points.length - 1
 											? 'end'
 											: 'middle'}
-								class="fill-fg-muted text-[11px]"
+								class="fill-fg-muted text-xs"
 							>
 								{pt.bucket.label}{pt.bucket.partial ? '*' : ''}
 							</text>

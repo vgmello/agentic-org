@@ -53,7 +53,7 @@
 							{proj.name}
 						</a>
 						{#if showRelTag}
-							<span class="key-tag shrink-0 font-mono text-[11px]">{proj.key}</span>
+							<span class="key-tag shrink-0 font-mono text-xs">{proj.key}</span>
 						{/if}
 					</div>
 					<span class={['health-pill inline-flex items-center gap-1', proj.statusPillClass]}>
@@ -127,7 +127,7 @@
 								type="button"
 								data-spot-jump={proj.spotDecisionId}
 								onclick={() => onSpotJump?.(proj.spotDecisionId!)}
-								class="unblock-btn inline-flex min-h-9 shrink-0 items-center gap-0.5 rounded-md px-2.5 py-1 text-[11px] font-semibold"
+								class="unblock-btn inline-flex min-h-9 shrink-0 items-center gap-0.5 rounded-md px-2.5 py-1 text-xs font-semibold"
 							>
 								<span>{proj.actionLabel}</span>
 								<ChevronRight class="size-3" aria-hidden="true" />
@@ -135,7 +135,7 @@
 						{:else}
 							<a
 								href={resolve(proj.actionHref as '/work')}
-								class="unblock-btn inline-flex min-h-9 shrink-0 items-center gap-0.5 rounded-md px-2.5 py-1 text-[11px] font-semibold"
+								class="unblock-btn inline-flex min-h-9 shrink-0 items-center gap-0.5 rounded-md px-2.5 py-1 text-xs font-semibold"
 							>
 								<span>{proj.actionLabel}</span>
 								<ChevronRight class="size-3" aria-hidden="true" />
@@ -156,7 +156,7 @@
 							</span>
 						{/each}
 						{#if proj.extraMembers > 0}
-							<span class="ml-1.5 text-[11px]">+{proj.extraMembers}</span>
+							<span class="ml-1.5 text-xs">+{proj.extraMembers}</span>
 						{/if}
 					</div>
 					<a

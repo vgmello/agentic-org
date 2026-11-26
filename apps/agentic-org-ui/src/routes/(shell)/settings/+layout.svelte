@@ -39,7 +39,7 @@
 		>
 			<p
 				aria-hidden="true"
-				class="px-3 pb-2 text-[11px]/4 font-semibold tracking-wider text-fg-subtle uppercase"
+				class="px-3 pb-2 text-xs/4 font-semibold tracking-wider text-fg-subtle uppercase"
 			>
 				Organization
 			</p>
