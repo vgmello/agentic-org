@@ -232,7 +232,7 @@
 								{#if proj.healthLabel && proj.tone}
 									<span
 										class={[
-											'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold whitespace-nowrap',
+											'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs/4 font-semibold whitespace-nowrap',
 											healthPillClass(proj.tone)
 										]}
 									>

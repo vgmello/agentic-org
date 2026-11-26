@@ -478,7 +478,7 @@
 							aria-pressed={uiPrefs.theme === option.id}
 							title={option.label}
 							class={[
-								'exec-theme-pill min-h-9 truncate rounded-md px-1.5 py-1 text-[11px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid',
+								'exec-theme-pill min-h-9 truncate rounded-md px-1.5 py-1 text-xs font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid',
 								uiPrefs.theme === option.id && 'is-on'
 							]}
 						>

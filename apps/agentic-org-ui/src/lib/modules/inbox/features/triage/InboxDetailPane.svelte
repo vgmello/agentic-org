@@ -943,22 +943,22 @@
 
 							<!-- Desktop keyboard ergonomics hint -->
 							{#if shortcutsEnabled}
-								<div class="triage-kbd-hints hidden items-center gap-2 text-[11px] lg:flex">
+								<div class="triage-kbd-hints hidden items-center gap-2 text-xs lg:flex">
 									<span class="inline-flex items-center gap-1">
-										<kbd class="triage-kbd px-1.5 py-0.5 font-mono text-[10px]">J</kbd>/<kbd
-											class="triage-kbd px-1.5 py-0.5 font-mono text-[10px]">K</kbd
+										<kbd class="triage-kbd px-1.5 py-0.5 font-mono text-xs">J</kbd>/<kbd
+											class="triage-kbd px-1.5 py-0.5 font-mono text-xs">K</kbd
 										>
 										<span>navigate</span>
 									</span>
 									{#if isExplicitApprove}
 										<span class="inline-flex items-center gap-1">
-											<kbd class="triage-kbd px-1.5 py-0.5 font-mono text-[10px]">A</kbd>
+											<kbd class="triage-kbd px-1.5 py-0.5 font-mono text-xs">A</kbd>
 											<span>approve</span>
 										</span>
 									{/if}
 									{#if canDeny}
 										<span class="inline-flex items-center gap-1">
-											<kbd class="triage-kbd px-1.5 py-0.5 font-mono text-[10px]">D</kbd>
+											<kbd class="triage-kbd px-1.5 py-0.5 font-mono text-xs">D</kbd>
 											<span>deny</span>
 										</span>
 									{/if}

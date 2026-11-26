@@ -58,7 +58,7 @@
 		archived: 'var(--quiet)'
 	};
 
-	const h4 = 'text-[11px]/5 font-semibold tracking-wider uppercase text-fg-muted';
+	const h4 = 'text-xs/5 font-semibold tracking-wider uppercase text-fg-muted';
 	/** Read between a figure's qualifiers, which are shown apart by space alone. */
 	const separator = ', ';
 </script>
@@ -71,7 +71,7 @@
 	bar?: { pct: number; fill: string }
 )}
 	<div class="ov-figure flex flex-col gap-1">
-		<dt class="text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase">{label}</dt>
+		<dt class="text-xs/5 font-semibold tracking-wider text-fg-muted uppercase">{label}</dt>
 		<dd class="text-2xl/8 font-bold tracking-tight text-fg tabular-nums">{value}</dd>
 		{#if bar}
 			<dd class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-bar-track" aria-hidden="true">
@@ -134,7 +134,7 @@
 		)}
 		<!-- The features line, word for word (features-ux "Overview tile"). -->
 		<div class="ov-figure flex flex-col gap-1" data-testid="features-line">
-			<dt class="text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase">
+			<dt class="text-xs/5 font-semibold tracking-wider text-fg-muted uppercase">
 				Features<span class="sr-only">:</span>
 			</dt>
 			<dd class="mt-0.5 text-base/7 font-semibold text-fg [overflow-wrap:anywhere]">

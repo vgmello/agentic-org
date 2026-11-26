@@ -95,7 +95,7 @@
 					onclick={() => selectLens(option.id)}
 					onkeydown={(e) => handleBriefTabKeydown(e, idx)}
 					class={[
-						'lens-tab inline-flex min-h-9 items-center px-2.5 py-1 text-[11px] font-semibold',
+						'lens-tab inline-flex min-h-9 items-center px-2.5 py-1 text-xs font-semibold',
 						briefLens === option.id && 'is-on'
 					]}
 				>
@@ -145,7 +145,7 @@
 								<span class="min-w-0 flex-1 leading-snug text-[var(--exec-body)]">
 									<strong class="text-[var(--exec-ink)]">{row.title}</strong> — {row.detail}
 								</span>
-								<span class="shrink-0 text-[11px] text-[var(--exec-dim)] tabular-nums">
+								<span class="shrink-0 text-xs text-[var(--exec-dim)] tabular-nums">
 									{row.timeLabel}
 								</span>
 							</a>
@@ -188,7 +188,7 @@
 			</a>
 			<div class="flex flex-wrap items-center justify-end gap-2.5">
 				{#if briefLens !== 'board'}
-					<span class="font-mono text-[11px] text-[var(--exec-dim)]">
+					<span class="font-mono text-xs text-[var(--exec-dim)]">
 						{activeBrief.updatedLabel}
 					</span>
 				{/if}

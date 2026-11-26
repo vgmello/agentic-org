@@ -202,7 +202,7 @@
 		});
 	}
 
-	// Home's "New task" CTA links to /work?new=1: open the task composer and strip the parameter so reload doesn't reopen it.
+	// Deep links to /work?new=1 open the task composer and strip the parameter so reload doesn't reopen it.
 	const wantsNewTask = $derived(isOrgScope && page.url.searchParams.get('new') === '1');
 	$effect(() => {
 		if (!wantsNewTask) return;
@@ -919,7 +919,7 @@
 									{#if shortcutsEnabled && !filters.query}
 										<kbd
 											aria-hidden="true"
-											class="pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 rounded border border-line-strong px-1.5 py-0.5 font-mono text-[11px]/none text-fg-muted min-[721px]:inline"
+											class="pointer-events-none absolute top-1/2 right-2 hidden -translate-y-1/2 rounded border border-line-strong px-1.5 py-0.5 font-mono text-xs/none text-fg-muted min-[721px]:inline"
 											>/</kbd
 										>
 									{/if}
