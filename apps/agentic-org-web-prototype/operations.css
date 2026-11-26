@@ -181,7 +181,10 @@
   gap: 8px 16px;
   padding: 12px var(--gutter) 10px;
 
-  &:has(> .back) { --page-title-row: 2; }
+  &:has(> .back) {
+    --page-title-row: 2;
+    row-gap: 4px;
+  }
 
   & > :is(.ph-t, h1), &.prof > .grow > h1 {
     grid-column: 1;
@@ -195,6 +198,7 @@
     grid-column: 1;
     grid-row: 1;
     justify-self: start;
+    align-self: start;
     padding: 0;
   }
 
@@ -205,6 +209,7 @@
     width: 100%;
     margin: 0;
   }
+  &:has(> .back) > #page-search-tools { grid-row: 1 / span 2; }
 
   & > .ph-actions {
     grid-column: 1 / -1;
@@ -238,7 +243,7 @@
     }
     &:has(> .back) { --page-title-row: 3; }
     & > .menu-btn { grid-column: 1; grid-row: 1; }
-    & > #page-search-tools { grid-column: 2; }
+    & > #page-search-tools { grid-column: 2; grid-row: 1; }
     & > :is(.ph-t, h1) { grid-column: 1 / -1; }
     & > .back, &.prof > .back { grid-column: 1 / -1; grid-row: 2; }
   }
@@ -256,7 +261,11 @@
   z-index: 1;
   container: queue-header / inline-size;
 }
-.queue-headline { border-bottom: 0; }
+#main .queue-headline {
+  border-bottom: 0;
+  border-block-end: 0;
+  padding-block-end: 4px;
+}
 /* Unified Work / Scoped Work toolbar tokens across themes (Cozy overrides live in cozy.css) */
 :root {
   --toolbar-group-gap: 16px;
@@ -299,7 +308,7 @@ html[data-theme="report"] {
 .section-toolbar { column-gap: 12px; align-items: stretch; }
 .section-toolbar > :not(.primary-tab-row) { align-self: center; }
 .section-toolbar > .primary-tab-row { align-items: stretch; }
-.section-toolbar > :is(.queue-controls, .section-actions) { margin-block: 4px 12px; }
+.section-toolbar > :is(.queue-controls, .section-actions) { margin-block: 2px 6px; }
 
 .work-subbar-header {
   position: relative;
@@ -1850,8 +1859,10 @@ html[data-theme="report"] .tess-return-btn.is-ready:hover { background: var(--to
   container-type: inline-size;
 }
 #main .section-header > :is(.ph, .prof) {
+  border-bottom: 0;
   border-block-end: 0;
   background: none;
+  padding-block: 10px 2px;
 }
 #main .section-header > .prof {
   border: 0;
@@ -1859,11 +1870,10 @@ html[data-theme="report"] .tess-return-btn.is-ready:hover { background: var(--to
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  padding-block: 10px 2px;
   row-gap: 4px;
 }
-#main .section-header:has(> .prof) > .section-toolbar { padding-top: 0; }
-#main .section-header:has(> .prof) > .section-toolbar > .section-actions { margin-block: 2px 10px; }
+#main .section-header > .section-toolbar { padding-top: 0; }
+#main .section-header:has(> .prof) > .section-toolbar > .section-actions { margin-block: 2px 6px; }
 html[data-theme="ocean"] .section-header { background-image: var(--ocean-header); }
 .section-toolbar { position: relative; }
 .section-toolbar .tabs {
