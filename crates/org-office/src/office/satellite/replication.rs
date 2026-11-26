@@ -1,6 +1,8 @@
 //! Replicated `state/` application on satellites, HQ ingest of satellite work batches, and
 //! the org journal and satellite work outbox feeds into `org-sync`.
 
+use std::collections::BTreeMap;
+
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use org_store::{Actor, DurablePath, Id, Outcome};
 use org_sync_proto::{Digest, Epoch, OfficeId};
@@ -30,7 +32,31 @@ impl Office {
                 "only satellites apply replicated state batches",
             ));
         }
-        self.apply_replicated_files_inner(operation_id, files, false)
+        self.apply_replicated_files_inner(operation_id, files, false, BTreeMap::new())
+    }
+
+    /// Applies one batch of an HQ snapshot applied in several (`TASK-52` P21-#2):
+    /// `task_revisions` names, for the tasks of the batch, the effective revision the whole
+    /// snapshot brings each to, so a batch holding a task's `task.md` without its later
+    /// history (or the reverse) is never taken for stale (`doc-79`).
+    pub fn apply_replicated_snapshot_batch(
+        &self,
+        operation_id: &str,
+        files: Vec<(String, Option<Vec<u8>>)>,
+        task_revisions: BTreeMap<String, u64>,
+    ) -> Result<(), OfficeError> {
+        if self.info.role != OfficeRole::Satellite {
+            return Err(OfficeError::Invalid(
+                "only satellites apply replicated state batches",
+            ));
+        }
+        let mut revisions = BTreeMap::new();
+        for (task, revision) in task_revisions {
+            let id = Id::parse(&task)
+                .map_err(|_| OfficeError::Invalid("invalid task id in snapshot revisions"))?;
+            revisions.insert(id, revision);
+        }
+        self.apply_replicated_files_inner(operation_id, files, false, revisions)
     }
 
     /// Applies a validated satellite-originated work file batch strictly under projector-owned
@@ -47,7 +73,7 @@ impl Office {
             ));
         }
         validate_work_file_paths(&files)?;
-        self.apply_replicated_files_inner(operation_id, files, true)
+        self.apply_replicated_files_inner(operation_id, files, true, BTreeMap::new())
     }
 
     /// Validates a satellite's typed work batch against HQ's organization snapshot (actor/team
@@ -84,7 +110,7 @@ impl Office {
             expected_record_id,
             &files,
         )?;
-        self.apply_replicated_files_inner(operation_id, files, true)?;
+        self.apply_replicated_files_inner(operation_id, files, true, BTreeMap::new())?;
         self.replication.record_remote_work_seq(origin, seq)?;
         Ok(prev_hw)
     }
@@ -96,6 +122,7 @@ impl Office {
         operation_id: &str,
         files: Vec<(String, Option<Vec<u8>>)>,
         rehome_tasks: bool,
+        task_revisions: BTreeMap<Id, u64>,
     ) -> Result<(), OfficeError> {
         let op_id = Id::parse(operation_id)
             .map_err(|_| OfficeError::Invalid("invalid replication operation_id"))?;
@@ -108,6 +135,7 @@ impl Office {
                 command: ApplyReplicatedFiles {
                     files,
                     rehome_tasks,
+                    task_revisions,
                 },
             })
             .map_err(storage)?;

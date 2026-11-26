@@ -1,48 +1,60 @@
 //! The tasks family's files in a replicated batch (`TASK-52`, `doc-77`, `doc-79`):
 //!
 //! - a task whose local effective revision is already past the batch's is stale, and the
-//!   batch's files for it are skipped (an older replacement-HQ snapshot never downgrades a
-//!   newer local task);
+//!   batch's files for it are skipped (an older replacement-HQ snapshot or a self-echo never
+//!   downgrades a newer local task), whether or not the batch writes its `task.md`;
 //! - on HQ ingesting a satellite's work, each task folder file goes to the folder HQ's own
 //!   projection names for its task ([`rehome`]);
-//! - when a batch moves a task's `task.md` to another folder (HQ's `MoveTeam`), the files it
-//!   left behind in the old folder follow it ([`relocation_leftovers`]).
+//! - when a batch moves a task to another folder (HQ's `MoveTeam`, which moves every
+//!   projectless task folder of the moved subtree), the files of the old folder follow it
+//!   ([`relocation_leftovers`]), the tasks this office has and HQ never named included;
+//! - a removal never takes a task's only copy ([`Removal`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use org_store::{DurablePath, Id, Refusal};
 
+use crate::organization::records as org;
 use crate::tasks::ports::TasksRead;
-use crate::tasks::records::{self, Kind, Location, TaskRecord};
+use crate::tasks::records::{self, Kind, Location, TaskDir, TaskRecord};
 use crate::tasks::relocation::task_folder_moves;
 use crate::tasks::replica::incoming_tasks;
 
 type Files = Vec<(String, Option<Vec<u8>>)>;
-/// Files to write (`Some`) or remove (`None`) at their paths.
-type Moves = Vec<(DurablePath, Option<Vec<u8>>)>;
 
 fn as_refs(files: &[(String, Option<Vec<u8>>)]) -> impl Iterator<Item = (&str, Option<&[u8]>)> {
     files.iter().map(|(p, b)| (p.as_str(), b.as_deref()))
 }
 
 /// Tasks whose committed local revision is already past the revision the batch brings them
-/// to, for the same owning office code. A batch whose `task.md` does not decode has no stale
-/// task: the projector refuses it whole.
+/// to: the later of the batch's `task.md` and its latest history event, so a batch of
+/// child-only changes (no `task.md`) is judged by its events. `hints` is the revision the
+/// whole replicated set the batch is one part of brings a task to (a snapshot applied in
+/// several batches, whose `task.md` and history are in different ones). A batch writing
+/// `task.md` with another owning office code is never stale; one whose `task.md` does not
+/// decode has no stale task: the projector refuses it whole.
 pub(super) fn stale_tasks(
     view: &impl TasksRead,
     files: &[(String, Option<Vec<u8>>)],
+    hints: &BTreeMap<Id, u64>,
 ) -> BTreeSet<Id> {
     let Ok(incoming) = incoming_tasks(as_refs(files)) else {
         return BTreeSet::new();
     };
     let mut stale = BTreeSet::new();
     for (id, incoming) in incoming {
-        if let Ok(Some(local)) = view.task(&id) {
-            if local.office_code == incoming.task.office_code
-                && local.meta.revision > incoming.revision
-            {
-                stale.insert(id);
-            }
+        let Ok(Some(local)) = view.task(&id) else {
+            continue;
+        };
+        let other_office = incoming
+            .task
+            .as_ref()
+            .is_some_and(|task| task.office_code != local.office_code);
+        let revision = hints
+            .get(&id)
+            .map_or(incoming.revision, |hint| incoming.revision.max(*hint));
+        if !other_office && local.meta.revision > revision {
+            stale.insert(id);
         }
     }
     stale
@@ -64,6 +76,35 @@ fn location_of(view: &impl TasksRead, task: &TaskRecord) -> Option<Location> {
     }
 }
 
+/// Where each task's files are here, by the files themselves: for a task whose owning team
+/// is not known here while a move of it arrives in pieces.
+type OnDisk = Option<BTreeMap<Id, Location>>;
+
+/// The folder `task`'s files are in here: the one its fields name, or, when its owning team
+/// has no chain here, the one its files are found in.
+fn current_location(
+    view: &impl TasksRead,
+    task: &TaskRecord,
+    on_disk: &mut OnDisk,
+) -> Result<Option<Location>, Refusal> {
+    if let Some(location) = location_of(view, task) {
+        return Ok(Some(location));
+    }
+    if on_disk.is_none() {
+        let teams = DurablePath::parse("state/teams").expect("a fixed path");
+        let mut found = BTreeMap::new();
+        for path in view.sources_under(&teams)? {
+            if let Some(dir) = records::task_dir_of(&path) {
+                found.entry(dir.task_id).or_insert(dir.location);
+            }
+        }
+        *on_disk = Some(found);
+    }
+    Ok(on_disk
+        .as_ref()
+        .and_then(|found| found.get(&task.id).cloned()))
+}
+
 /// `files`, with every task folder file in the folder this office's projection names for
 /// its task: from the batch's own `task.md` when it has one, else from the task as it
 /// stands. A file of a task neither names is left where it is, for the projector to judge.
@@ -83,8 +124,8 @@ pub(super) fn rehome(
             continue;
         };
         let folder = folders.entry(dir.task_id.clone()).or_insert_with(|| {
-            let task = match incoming.get(&dir.task_id) {
-                Some(incoming) => Some(incoming.task.clone()),
+            let task = match incoming.get(&dir.task_id).and_then(|i| i.task.as_ref()) {
+                Some(task) => Some(task.clone()),
                 None => view.task(&dir.task_id).ok().flatten(),
             };
             task.and_then(|t| location_of(view, &t).map(|l| records::task_folder(&l, &t.id)))
@@ -103,17 +144,77 @@ pub(super) fn rehome(
     Ok(out)
 }
 
-/// For each task whose `task.md` the batch writes in a folder other than the one the task
-/// is in here, the files of the old folder the batch does not write: removed there and
-/// written in the new folder from the task's records. A stale task's own files are not
-/// written by the batch, so all of them move from here, its newer local `task.md` included.
-/// The projector ignores the removal of a file left in a folder its task has moved out of,
-/// so the order of the moves is free.
+/// The chain each team has once the batch applies, for every team whose chain it changes:
+/// each team whose `team.yaml` it writes at a chain other than the one the team has here
+/// (HQ's `MoveTeam`, or a team this office no longer knows while a move arrives in pieces),
+/// and every team below one of those, whose own file may come in a later piece.
+fn moved_team_chains(
+    view: &impl TasksRead,
+    files: &[(String, Option<Vec<u8>>)],
+) -> Result<BTreeMap<Id, Vec<Id>>, Refusal> {
+    let mut moved = BTreeMap::new();
+    for (raw, bytes) in files {
+        let path = match (DurablePath::parse(raw), bytes) {
+            (Ok(path), Some(_)) => path,
+            _ => continue,
+        };
+        let Some(org::Kind::Team(chain)) = org::kind_of(&path) else {
+            continue;
+        };
+        let Some(team) = chain.last() else {
+            continue;
+        };
+        if view.team_chain(team)?.as_ref() != Some(&chain) {
+            moved.insert(team.clone(), chain);
+        }
+    }
+    if moved.is_empty() {
+        return Ok(moved);
+    }
+    let named = moved.clone();
+    for team in view.teams()? {
+        if named.contains_key(&team.id) {
+            continue;
+        }
+        let Some(chain) = view.team_chain(&team.id)? else {
+            continue;
+        };
+        let above = chain.len().saturating_sub(1);
+        let nearest = (0..above)
+            .rev()
+            .find_map(|at| named.get(&chain[at]).map(|new| (at, new)));
+        if let Some((at, new)) = nearest {
+            let mut to = new.clone();
+            to.extend_from_slice(&chain[at + 1..]);
+            moved.insert(team.id, to);
+        }
+    }
+    Ok(moved)
+}
+
+/// What a batch moves out of the folders its tasks leave, beside its own files.
+#[derive(Default)]
+pub(super) struct Leftovers {
+    /// The tasks the batch moves to another folder.
+    pub relocated: BTreeSet<Id>,
+    /// Files of an old folder the batch does not name, written again in the new folder.
+    pub puts: Vec<(DurablePath, Vec<u8>)>,
+    /// Those files, removed from the old folder.
+    pub removes: Vec<DurablePath>,
+}
+
+/// Every task the batch moves to another folder, and the files of its old folder the batch
+/// does not write or remove. A task moves when the batch writes its `task.md` in another
+/// folder, or writes its owning team (or a team above it) at another chain: every local
+/// projectless task of a moved subtree moves with `team.yaml` in the same entry, including
+/// the tasks HQ has never seen (made here offline) and those whose own files come in a later
+/// piece of the move. A stale task's own files are not written by the batch, so all of them
+/// move from here, its newer local `task.md` included.
 pub(super) fn relocation_leftovers(
     view: &impl TasksRead,
     files: &[(String, Option<Vec<u8>>)],
     stale: &BTreeSet<Id>,
-) -> Result<Moves, Refusal> {
+) -> Result<Leftovers, Refusal> {
     let named: BTreeSet<&str> = files
         .iter()
         .filter(|(p, bytes)| {
@@ -123,8 +224,8 @@ pub(super) fn relocation_leftovers(
         })
         .map(|(p, _)| p.as_str())
         .collect();
-    let mut removes = Vec::new();
-    let mut puts = Vec::new();
+    let mut on_disk: OnDisk = None;
+    let mut moving: BTreeMap<Id, (TaskRecord, Location, Location)> = BTreeMap::new();
     for (raw, bytes) in files {
         let Ok(path) = DurablePath::parse(raw) else {
             continue;
@@ -138,26 +239,96 @@ pub(super) fn relocation_leftovers(
         let Some(task) = view.task(&id)? else {
             continue;
         };
-        let Some(from) = location_of(view, &task) else {
-            continue;
-        };
-        if from == to.location {
-            continue;
+        if let Some(from) = current_location(view, &task, &mut on_disk)? {
+            if from != to.location {
+                moving.insert(id, (task, from, to.location));
+            }
         }
-        for moved in task_folder_moves(view, &task, &from, &to.location)? {
-            let Ok(old) = moved.from else {
+    }
+    let teams = moved_team_chains(view, files)?;
+    if !teams.is_empty() {
+        for task in view.tasks()? {
+            if task.project_id.is_some() || moving.contains_key(&task.id) {
+                continue;
+            }
+            let Some(chain) = teams.get(&task.team_id) else {
                 continue;
             };
-            if !named.contains(old.as_str()) {
-                removes.push((old, None));
-            }
-            if let Some(new) = moved.to {
-                if !named.contains(new.as_str()) {
-                    puts.push((new, Some(moved.bytes)));
+            let to = Location::Team(chain.clone());
+            if let Some(from) = current_location(view, &task, &mut on_disk)? {
+                if from != to {
+                    moving.insert(task.id.clone(), (task, from, to));
                 }
             }
         }
     }
-    removes.extend(puts);
-    Ok(removes)
+    let mut out = Leftovers::default();
+    for (id, (task, from, to)) in moving {
+        for moved in task_folder_moves(view, &task, &from, &to)? {
+            // A file no path can hold under the new chain stays where it is.
+            let (Ok(old), Some(new)) = (moved.from, moved.to) else {
+                continue;
+            };
+            if !named.contains(old.as_str()) {
+                out.removes.push(old);
+            }
+            if !named.contains(new.as_str()) {
+                out.puts.push((new, moved.bytes));
+            }
+        }
+        out.relocated.insert(id);
+    }
+    Ok(out)
+}
+
+/// What becomes of a removal the batch carries of a task folder file.
+pub(super) enum Removal {
+    /// Not a task folder file, or one of no task here: removed where it stands.
+    Now,
+    /// A file of the old folder of a task the batch moves: removed once every write of the
+    /// batch stands, so the moved task's records are never taken with it.
+    AfterWrites,
+    /// A file of the folder the task is in here, which the batch does not move: removing it
+    /// would take the task's only copy (a move arriving in pieces, whose new folder comes in
+    /// a later piece that moves the files). It stays.
+    Kept,
+}
+
+/// Judges the batch's removals of task folder files against the tasks it moves.
+pub(super) struct Removals<'a> {
+    relocated: &'a BTreeSet<Id>,
+    on_disk: OnDisk,
+}
+
+impl<'a> Removals<'a> {
+    /// `relocated`: the tasks the batch moves.
+    pub(super) fn new(relocated: &'a BTreeSet<Id>) -> Self {
+        Self {
+            relocated,
+            on_disk: None,
+        }
+    }
+
+    /// How the batch's removal of `path` applies.
+    pub(super) fn of(
+        &mut self,
+        view: &impl TasksRead,
+        path: &DurablePath,
+    ) -> Result<Removal, Refusal> {
+        let Some(TaskDir { location, task_id }) = records::task_dir_of(path) else {
+            return Ok(Removal::Now);
+        };
+        if self.relocated.contains(&task_id) {
+            return Ok(Removal::AfterWrites);
+        }
+        let Some(task) = view.task(&task_id)? else {
+            return Ok(Removal::Now);
+        };
+        let here = current_location(view, &task, &mut self.on_disk)?;
+        Ok(if here.as_ref() == Some(&location) {
+            Removal::Kept
+        } else {
+            Removal::Now
+        })
+    }
 }

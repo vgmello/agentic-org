@@ -110,6 +110,17 @@ macro_rules! memory_tasks_read {
                 })
             }
 
+            fn max_task_number(&self, office_code: &str) -> Result<u64, EngineError> {
+                read(self.table(), |t| {
+                    t.tasks
+                        .values()
+                        .filter(|r| r.office_code == office_code)
+                        .map(|r| r.number)
+                        .max()
+                        .unwrap_or(0)
+                })
+            }
+
             fn tasks(&self) -> Result<Vec<TaskRecord>, EngineError> {
                 read(self.table(), |t| {
                     let mut out: Vec<TaskRecord> = t.tasks.values().cloned().collect();

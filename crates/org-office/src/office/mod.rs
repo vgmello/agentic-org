@@ -71,12 +71,12 @@ pub use self::invitations::{
 pub use self::providers::OfficePermitSpec;
 pub use self::satellite::{
     classify_replicated_snapshot_path, export_authoritative_state_snapshot_pages,
-    is_immutable_state_path, is_stale_snapshot_task_entry, relocated_task_paths,
-    resolve_employee_office, strip_org_core_employee_refs_typed, task_id_for_work_path,
-    ConsistentStateSnapshot, ExportedSnapshotPages, OrgDeltaPayload, PendingMessageJournalBatch,
-    PendingMessageJournalEntry, RelayedAskAnswer, RelayedAskWithdrawal, RelayedMessageOutcome,
-    RelayedRecipientWake, ReplicatedFileBatch, SatelliteFederationConfig, SatelliteProvisionSpec,
-    SatelliteReEnrollSpec, SatelliteTlsIdentity, SnapshotExportProgress, SnapshotPathClass,
+    is_immutable_state_path, relocated_task_paths, resolve_employee_office,
+    strip_org_core_employee_refs_typed, task_id_for_work_path, ConsistentStateSnapshot,
+    ExportedSnapshotPages, OrgDeltaPayload, PendingMessageJournalBatch, PendingMessageJournalEntry,
+    RelayedAskAnswer, RelayedAskWithdrawal, RelayedMessageOutcome, RelayedRecipientWake,
+    ReplicatedFileBatch, SatelliteFederationConfig, SatelliteProvisionSpec, SatelliteReEnrollSpec,
+    SatelliteTlsIdentity, SnapshotExportProgress, SnapshotPathClass,
 };
 #[cfg(any(test, feature = "testkit"))]
 pub use self::testkit::TestOffice;

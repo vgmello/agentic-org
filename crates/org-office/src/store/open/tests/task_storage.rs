@@ -33,32 +33,32 @@ use crate::tasks::records::{OfficeTaskCounterRecord, TaskRecord};
 
 use super::*;
 
-const TEAM_B: u64 = 0x31;
-const TEAM_C: u64 = 0x32;
-const TEAM_D: u64 = 0x33;
-const PROJECT: u64 = 0x41;
+pub(super) const TEAM_B: u64 = 0x31;
+pub(super) const TEAM_C: u64 = 0x32;
+pub(super) const TEAM_D: u64 = 0x33;
+pub(super) const PROJECT: u64 = 0x41;
 
 /// A UUIDv7 for the `n`th command, task, comment or step of a test.
-fn uid(n: u64) -> Id {
+pub(super) fn uid(n: u64) -> Id {
     id(0x7000_0000 + n)
 }
 
-fn params<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> T {
+pub(super) fn params<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> T {
     serde_json::from_value(value).expect("valid params")
 }
 
-struct Bench {
-    place: Place,
-    engine: EngineChoice,
-    store: Option<OfficeStore>,
-    here: OfficeIdentity,
-    next: u64,
+pub(super) struct Bench {
+    pub(super) place: Place,
+    pub(super) engine: EngineChoice,
+    pub(super) store: Option<OfficeStore>,
+    pub(super) here: OfficeIdentity,
+    pub(super) next: u64,
 }
 
 impl Bench {
     /// An organization (top team), team B under it, team C under B and team D under the
     /// top team, and a project owned by the top team.
-    fn new(engine: EngineChoice) -> Self {
+    pub(super) fn new(engine: EngineChoice) -> Self {
         let place = Place::new();
         let store = place.create(engine);
         assert_eq!(
@@ -103,20 +103,28 @@ impl Bench {
         bench
     }
 
-    fn store(&self) -> &OfficeStore {
+    pub(super) fn store(&self) -> &OfficeStore {
         self.store.as_ref().expect("an open store")
     }
 
-    fn fresh(&mut self) -> Id {
+    pub(super) fn fresh(&mut self) -> Id {
         self.next += 1;
         uid(self.next)
     }
 
-    fn actor(&self) -> String {
+    pub(super) fn actor(&self) -> String {
         id(CREATOR).as_str().to_owned()
     }
 
-    fn create(&mut self, team: Option<u64>, project: Option<u64>) -> TaskView {
+    pub(super) fn create(&mut self, team: Option<u64>, project: Option<u64>) -> TaskView {
+        self.try_create(team, project).expect("created")
+    }
+
+    pub(super) fn try_create(
+        &mut self,
+        team: Option<u64>,
+        project: Option<u64>,
+    ) -> Result<TaskView, ErrorCode> {
         let (command, task) = (self.fresh(), self.fresh());
         let out = self.store().run(TaskCreateOp {
             actor: self.actor(),
@@ -130,12 +138,12 @@ impl Bench {
                 "body_markdown": "The body.\n",
                 "labels": ["storage"],
             })),
-            counter_unsettled: self.store().task_counter_unsettled(),
+            numbering: self.store().task_numbering(),
         });
-        out.expect("stored").expect("created").task
+        out.expect("stored").map(|o| o.task).map_err(|e| e.code)
     }
 
-    fn update(&mut self, task: &TaskView, expected: u64) -> Result<TaskView, ErrorCode> {
+    pub(super) fn update(&mut self, task: &TaskView, expected: u64) -> Result<TaskView, ErrorCode> {
         let command = self.fresh();
         let out = self.store().run(TaskUpdateOp {
             actor: self.actor(),
@@ -151,7 +159,7 @@ impl Bench {
 
     /// A comment, a watch, a checklist step and its check: the child-only changes.
     /// Returns their command IDs in that order.
-    fn child_changes(&mut self, task: &TaskView) -> [Id; 4] {
+    pub(super) fn child_changes(&mut self, task: &TaskView) -> [Id; 4] {
         let ids = [self.fresh(), self.fresh(), self.fresh(), self.fresh()];
         let (comment, step) = (self.fresh(), self.fresh());
         let actor = self.actor();
@@ -198,45 +206,45 @@ impl Bench {
         ids
     }
 
-    fn task(&self, task: &str) -> Option<TaskRecord> {
+    pub(super) fn task(&self, task: &str) -> Option<TaskRecord> {
         let id = Id::parse(task).unwrap();
         self.store().read(ReadTask(id)).expect("a read").0
     }
 
-    fn ack(&self, operation: &Id) -> Option<Ack> {
+    pub(super) fn ack(&self, operation: &Id) -> Option<Ack> {
         self.store()
             .read(ReadAck(operation.clone()))
             .expect("a read")
             .0
     }
 
-    fn counter(&self) -> Vec<OfficeTaskCounterRecord> {
+    pub(super) fn counter(&self) -> Vec<OfficeTaskCounterRecord> {
         self.store().read(ReadCounters).expect("a read").0
     }
 
-    fn durable(&self, path: &str) -> PathBuf {
+    pub(super) fn durable(&self, path: &str) -> PathBuf {
         self.place.durable().join(path)
     }
 
-    fn file(&self, path: &str) -> Option<Vec<u8>> {
+    pub(super) fn file(&self, path: &str) -> Option<Vec<u8>> {
         std::fs::read(self.durable(path)).ok()
     }
 
     /// An orderly stop and a new opening.
-    fn reopen_clean(&mut self) {
+    pub(super) fn reopen_clean(&mut self) {
         self.store.take().expect("open").close().expect("closed");
         self.store = Some(self.place.reopen(self.engine));
     }
 
     /// A kill: no close, no clean-stop marker.
-    fn reopen_after_crash(&mut self) {
+    pub(super) fn reopen_after_crash(&mut self) {
         self.store().sync().expect("synced");
         drop(self.store.take());
         self.store = Some(self.place.reopen(self.engine));
     }
 
     /// An orderly stop, the projection deleted, and a rebuild from the files and journal.
-    fn rebuild(&mut self) {
+    pub(super) fn rebuild(&mut self) {
         self.store.take().expect("open").close().expect("closed");
         let _ = std::fs::remove_dir_all(self.place.runtime());
         self.store = Some(self.place.reopen(self.engine));
@@ -276,7 +284,7 @@ impl ReadOp for ReadCounters {
     }
 }
 
-fn team_folder(chain: &[u64]) -> String {
+pub(super) fn team_folder(chain: &[u64]) -> String {
     let mut folder = String::from("state");
     for team in chain {
         folder.push_str(&format!("/teams/{}", id(*team)));
@@ -620,7 +628,7 @@ fn move_team_moves_every_projectless_task_folder_of_the_subtree_in_one_entry() {
 
 /// Registers a consumer so the journal keeps its entries, and returns the head: the mark the
 /// entries after it are read from.
-fn keep_entries_from_here(store: &OfficeStore) -> u64 {
+pub(super) fn keep_entries_from_here(store: &OfficeStore) -> u64 {
     store.register_consumer("task-storage-test").unwrap();
     store.sync().unwrap();
     store.status().flushed
@@ -628,7 +636,7 @@ fn keep_entries_from_here(store: &OfficeStore) -> u64 {
 
 /// The `state/` files of each entry after `mark`, one batch per entry, as replication carries
 /// them.
-fn batches_after(store: &OfficeStore, mark: u64) -> Vec<Vec<(String, Option<Vec<u8>>)>> {
+pub(super) fn batches_after(store: &OfficeStore, mark: u64) -> Vec<Vec<(String, Option<Vec<u8>>)>> {
     // `committed` entries are read once they are flushed.
     store.sync().unwrap();
     store
@@ -645,19 +653,25 @@ fn batches_after(store: &OfficeStore, mark: u64) -> Vec<Vec<(String, Option<Vec<
         .collect()
 }
 
-fn apply_batch(store: &OfficeStore, op: u64, files: Vec<(String, Option<Vec<u8>>)>, rehome: bool) {
+pub(super) fn apply_batch(
+    store: &OfficeStore,
+    op: u64,
+    files: Vec<(String, Option<Vec<u8>>)>,
+    rehome: bool,
+) {
     let reply = store.run(ApplyReplicatedFilesOp {
         operation_id: id(op),
         actor: Actor::System,
         command: crate::replication::state_files::ApplyReplicatedFiles {
             files,
             rehome_tasks: rehome,
+            task_revisions: Default::default(),
         },
     });
     assert_eq!(reply.expect("applied").outcome, Outcome::Completed);
 }
 
-fn move_b_under_d(store: &OfficeStore) {
+pub(super) fn move_b_under_d(store: &OfficeStore) {
     let moved = store.run(MoveTeamOp {
         operation_id: id(0x60),
         here: identity(),

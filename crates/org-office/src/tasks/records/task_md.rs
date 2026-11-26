@@ -392,8 +392,15 @@ pub fn decode_task_md(bytes: &[u8]) -> Result<TaskDoc, RecordError> {
         task_type,
         work_type,
     };
+    // Features and milestones are a project's (`doc-77`): both engines refuse them on a
+    // projectless task, not only the one whose schema says so.
+    if task.project_id.is_none() && (task.feature_id.is_some() || task.milestone_id.is_some()) {
+        let reason = "a projectless task has no feature or milestone";
+        return Err(RecordError::new("project_id", reason));
+    }
     let links = read_links(&mut r, &task.id)?;
-    if !r.strings("attachments").is_ok_and(|a| a.is_empty()) {
+    // Omitted reads as none; any attachment fails closed until `TASK-98.4`.
+    if r.has("attachments") && !r.strings("attachments").is_ok_and(|a| a.is_empty()) {
         let reason = "task attachments are not supported by this office yet";
         return Err(RecordError::new("attachments", reason));
     }

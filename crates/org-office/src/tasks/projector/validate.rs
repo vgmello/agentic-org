@@ -136,6 +136,15 @@ fn validate_history<Tx: TasksWrite>(
     if latest == 0 {
         return Err(refuse(path, "the task has no history"));
     }
+    // Revision 1 is the task's `created` change (`doc-79`), whatever wrote the row.
+    let created = events.first().is_some_and(|first| {
+        serde_json::from_str::<serde_json::Value>(&first.change_json)
+            .is_ok_and(|change| change.get("type") == Some(&serde_json::json!("created")))
+    });
+    if !created {
+        let at = records::event_path(&task.id, 1);
+        return Err(refuse(&at, "revision 1 is not the task's `created` change"));
+    }
     if task.meta.revision > latest {
         return Err(refuse(
             path,

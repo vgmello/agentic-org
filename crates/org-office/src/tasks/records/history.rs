@@ -148,7 +148,11 @@ fn check_change(change: Option<&Value>, revision: u64) -> Result<&Map<String, Va
     let Some(Value::Object(change)) = change else {
         return Err("`change` is not an object".into());
     };
-    match text(change, "type")? {
+    let kind = text(change, "type")?;
+    if revision == 1 && kind != "created" {
+        return Err("revision 1 is the task's `created` change".into());
+    }
+    match kind {
         "created" => {
             if revision != 1 {
                 return Err("a `created` change is only at revision 1".into());

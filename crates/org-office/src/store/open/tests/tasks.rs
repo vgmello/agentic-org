@@ -171,7 +171,7 @@ fn create_basic(
         .run(TaskCreateOp {
             actor: spec.actor.as_str().to_owned(),
             here: here.clone(),
-            counter_unsettled: store.task_counter_unsettled(),
+            numbering: store.task_numbering(),
             params: TasksCreateParams {
                 command_id: next_uuid(),
                 task_id: next_uuid(),
@@ -869,7 +869,7 @@ fn assert_idempotency_and_noop_guards(s: &Seed) {
         .run(TaskCreateOp {
             actor: s.owner.as_str().to_owned(),
             here: s.here.clone(),
-            counter_unsettled: s.store.task_counter_unsettled(),
+            numbering: s.store.task_numbering(),
             params: params.clone(),
         })
         .unwrap()
@@ -882,7 +882,7 @@ fn assert_idempotency_and_noop_guards(s: &Seed) {
         .run(TaskCreateOp {
             actor: s.owner.as_str().to_owned(),
             here: s.here.clone(),
-            counter_unsettled: s.store.task_counter_unsettled(),
+            numbering: s.store.task_numbering(),
             params: params.clone(),
         })
         .unwrap()
@@ -898,7 +898,7 @@ fn assert_idempotency_and_noop_guards(s: &Seed) {
         .run(TaskCreateOp {
             actor: s.owner.as_str().to_owned(),
             here: s.here.clone(),
-            counter_unsettled: s.store.task_counter_unsettled(),
+            numbering: s.store.task_numbering(),
             params: mutated,
         })
         .unwrap()
@@ -940,7 +940,7 @@ fn assert_validation_bounds_and_cap_swap(s: &Seed) {
         .run(TaskCreateOp {
             actor: s.owner.as_str().to_owned(),
             here: s.here.clone(),
-            counter_unsettled: s.store.task_counter_unsettled(),
+            numbering: s.store.task_numbering(),
             params: TasksCreateParams {
                 command_id: next_uuid(),
                 task_id: next_uuid(),
@@ -973,7 +973,7 @@ fn assert_validation_bounds_and_cap_swap(s: &Seed) {
         .run(TaskCreateOp {
             actor: s.owner.as_str().to_owned(),
             here: s.here.clone(),
-            counter_unsettled: s.store.task_counter_unsettled(),
+            numbering: s.store.task_numbering(),
             params: TasksCreateParams {
                 command_id: next_uuid(),
                 task_id: next_uuid(),
@@ -1009,7 +1009,7 @@ fn assert_validation_bounds_and_cap_swap(s: &Seed) {
         .run(TaskCreateOp {
             actor: s.owner.as_str().to_owned(),
             here: s.here.clone(),
-            counter_unsettled: s.store.task_counter_unsettled(),
+            numbering: s.store.task_numbering(),
             params: TasksCreateParams {
                 command_id: next_uuid(),
                 task_id: next_uuid(),

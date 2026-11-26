@@ -139,6 +139,17 @@ pub fn decode_checklist(bytes: &[u8]) -> Result<Vec<ChecklistStepRecord>, Record
             revision: item.number("revision")?,
         };
         item.finish()?;
+        // What the SQLite schema checks, decided for both engines alike.
+        if step.revision == 0 {
+            return Err(RecordError::new(
+                "checklist",
+                "a step's revision is at least 1",
+            ));
+        }
+        if !step.done && (step.checked_by_employee_id.is_some() || step.checked_at.is_some()) {
+            let reason = "an unchecked step has no checker or check time";
+            return Err(RecordError::new("checklist", reason));
+        }
         if steps.iter().any(|s: &ChecklistStepRecord| s.id == step.id) {
             return Err(RecordError::new("checklist", "a step is listed twice"));
         }

@@ -69,6 +69,18 @@ macro_rules! sqlite_tasks_read {
                 Ok(out)
             }
 
+            fn max_task_number(&self, office_code: &str) -> Result<u64, EngineError> {
+                let (db, scope) = self.view()?;
+                let max: Option<i64> = one(
+                    db,
+                    "SELECT MAX(number) FROM tasks WHERE organization_id = ?1 AND office_code = ?2",
+                    vec![text(scope), text(office_code)],
+                    |row| row.get(0),
+                )?
+                .flatten();
+                Ok(max.and_then(|n| u64::try_from(n).ok()).unwrap_or(0))
+            }
+
             fn task_ids_by_label(&self, label: &str) -> Result<Vec<Id>, EngineError> {
                 let (db, scope) = self.view()?;
                 all(

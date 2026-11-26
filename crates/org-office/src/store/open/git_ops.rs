@@ -135,7 +135,7 @@ impl ReadOp for TaskGitContextRead {
     }
 }
 
-/// Records or updates one `(repository_id, branch, integrated_commit)` entry on `task.json`
+/// Records or updates one `(repository_id, branch, integrated_commit)` entry on `task.md`
 /// (projected into `task_repositories`) alongside an immutable `task_events` entry.
 pub struct RecordTaskRepoBranchOp {
     pub actor: String,

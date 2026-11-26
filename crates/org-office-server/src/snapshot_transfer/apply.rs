@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::federation_link::{
     collect_pending_work_paths_checked, deterministic_uuid_v7, SatelliteSyncSession,
 };
+use org_office::tasks::replica::SnapshotTasks;
 use org_office::Office;
 use org_sync::organization::{install_snapshot, ValidatedSnapshot};
 use org_sync_proto::{Codec, Digest, Epoch, Position};
@@ -27,6 +28,10 @@ use super::{
 
 struct BoundedBatchCommitter<'a> {
     office: &'a Office,
+    /// The snapshot's tasks: each batch names the effective revision the whole snapshot
+    /// brings its tasks to, so a batch holding a task's `task.md` apart from its later
+    /// history is never judged stale alone (`doc-79`).
+    tasks: &'a SnapshotTasks,
     hq_office_id: &'a str,
     operation_id: &'a str,
     single_commit_mode: bool,
@@ -38,12 +43,14 @@ struct BoundedBatchCommitter<'a> {
 impl<'a> BoundedBatchCommitter<'a> {
     fn new(
         office: &'a Office,
+        tasks: &'a SnapshotTasks,
         hq_office_id: &'a str,
         operation_id: &'a str,
         single_commit_mode: bool,
     ) -> Self {
         Self {
             office,
+            tasks,
             hq_office_id,
             operation_id,
             single_commit_mode,
@@ -81,8 +88,11 @@ impl<'a> BoundedBatchCommitter<'a> {
                 self.hq_office_id, self.operation_id
             ))
         };
+        let revisions = self
+            .tasks
+            .revisions_of(batch.iter().map(|(p, _)| p.as_str()));
         self.office
-            .apply_replicated_state_files(&op_id, batch)
+            .apply_replicated_snapshot_batch(&op_id, batch, revisions)
             .map_err(|e| format!("failed applying snapshot batch {idx} to satellite store: {e}"))
     }
 }
@@ -264,6 +274,7 @@ pub(crate) fn sync_initial_snapshot_paged(
         && staged.org_core_bytes <= MAX_NATIVE_BATCH_BYTES;
     let mut committer = BoundedBatchCommitter::new(
         &session.office,
+        &staged.tasks,
         session.hq_peer.office_id.as_str(),
         operation_id,
         single_commit_mode,

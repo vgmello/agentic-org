@@ -27,6 +27,8 @@ mod companions;
 mod crashes;
 mod local;
 mod messaging;
+mod task_numbering;
+mod task_replicas;
 mod task_storage;
 mod tasks;
 

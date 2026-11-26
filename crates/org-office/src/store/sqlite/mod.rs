@@ -49,6 +49,20 @@ mod tx;
 pub(crate) const ANOTHER_BUILDS_DDL: &str =
     "CREATE INDEX teams_by_name ON teams(organization_id, name);";
 
+/// Drift for tests: removes a project's row from the projection at `db` behind the store's
+/// back, as no operation can (a rebuild refuses that state). Returns the rows removed. It
+/// lives here because SQL is written only in this adapter (ENG-1, `tests/engine_boundary.rs`).
+#[cfg(test)]
+pub(crate) fn drift_remove_project_row(db: &Path, project_id: &str) -> usize {
+    let drift = Connection::open(db).expect("the projection opens");
+    drift
+        .pragma_update(None, "foreign_keys", false)
+        .expect("foreign keys off");
+    drift
+        .execute("DELETE FROM projects WHERE id = ?1", [project_id])
+        .expect("the row is removed")
+}
+
 use std::{
     fs,
     path::{Path, PathBuf},

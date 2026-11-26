@@ -5,11 +5,19 @@
 //!
 //! The counter reserves numbers a block at a time (`ADR-0019`): `last_number <=
 //! reserved_through`, and a number above `reserved_through` is only issued with a new
-//! reservation answered `durable`. A create inside the reserved block is answered
-//! `committed`. After a stop that was not clean the next number is past the reservation, so
-//! a number an answer named but a crash lost is never issued again.
+//! reservation answered `durable`. A create inside a reserved block whose reservation is
+//! flushed is answered `committed`; one inside a block another create reserved but has not
+//! flushed yet is `durable` too, so a power cut never takes a reservation back while an
+//! answer names a number inside it. After a stop that was not clean the next number is past
+//! the reservation, so a number an answer named but a crash lost is never issued again; a
+//! clean stop that comes first spends the reservation durably ([`TaskNumbering::settled`]).
+//!
+//! An office whose counter is missing or behind the numbers its code already has cannot
+//! prove its sequence (a lost or restored-from-backup `task-counter.yaml`): it refuses to
+//! create rather than reissue or reconstruct a number (`doc-80`).
 
 use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex};
 
 use org_proto::tasks::{TaskPriority, TaskStatus, TasksCreateParams, TASK_MAX_DEPENDENCIES};
 use org_proto::ErrorCode;
@@ -36,47 +44,135 @@ use super::{
 /// its reservation to be `durable`.
 pub const TASK_NUMBER_BLOCK: u64 = 32;
 
+/// What one open store knows of its office's task-number reservation beyond the projection
+/// (`ADR-0019`), shared by every task create it runs. Every decision reads the projection
+/// as the store's single writer leaves it, so concurrent creates never jump twice.
+#[derive(Debug, Default)]
+pub struct TaskNumbering {
+    /// After a stop that was not clean: the counter as the store opened. Numbers up to its
+    /// `reserved_through` may have been issued and lost, so the first create jumps past it.
+    unsettled: Option<OfficeTaskCounterRecord>,
+    /// The office code and highest `reserved_through` known flushed.
+    durable: Mutex<Option<(String, u64)>>,
+}
+
+impl TaskNumbering {
+    /// The numbering of a store that opened with `counter` (what is on disk is flushed),
+    /// after a clean stop or not.
+    pub fn opened(counter: Option<OfficeTaskCounterRecord>, stopped_cleanly: bool) -> Self {
+        let durable = counter
+            .as_ref()
+            .map(|c| (c.office_code.clone(), c.reserved_through));
+        Self {
+            unsettled: counter.filter(|_| !stopped_cleanly),
+            durable: Mutex::new(durable),
+        }
+    }
+
+    /// Past what the next number must be after a stop that was not clean: the opening
+    /// counter's reservation, until a create has issued past it.
+    fn jump_floor(&self, counter: &OfficeTaskCounterRecord) -> Option<u64> {
+        let opened = self.unsettled.as_ref()?;
+        let reserved = opened.reserved_through;
+        (opened.office_code == counter.office_code && counter.last_number <= reserved)
+            .then_some(reserved)
+    }
+
+    /// The highest `reserved_through` of `office_code` known flushed.
+    fn durable_through(&self, office_code: &str) -> u64 {
+        let durable = self.durable.lock().unwrap_or_else(|p| p.into_inner());
+        durable
+            .as_ref()
+            .filter(|(code, _)| code == office_code)
+            .map_or(0, |(_, through)| *through)
+    }
+
+    /// Records that `counter` is flushed: a create that issued it was answered `durable`.
+    pub fn flushed(&self, counter: &OfficeTaskCounterRecord) {
+        let mut durable = self.durable.lock().unwrap_or_else(|p| p.into_inner());
+        let through = match durable.as_ref() {
+            Some((code, through)) if *code == counter.office_code => {
+                (*through).max(counter.reserved_through)
+            }
+            _ => counter.reserved_through,
+        };
+        *durable = Some((counter.office_code.clone(), through));
+    }
+
+    /// The counter a clean stop must leave in place of `counter`, if any: after a stop
+    /// that was not clean and before any create, the numbers up to the reservation may
+    /// have been issued and lost, so they are spent, durably, before the stop is clean
+    /// (`ADR-0019` Decision 7). Otherwise the next opening would issue them again.
+    pub fn settled(&self, counter: &OfficeTaskCounterRecord) -> Option<OfficeTaskCounterRecord> {
+        let reserved = self.jump_floor(counter)?;
+        (counter.last_number < reserved).then(|| OfficeTaskCounterRecord {
+            last_number: reserved,
+            ..counter.clone()
+        })
+    }
+}
+
 /// Creates a unified task (`task`, `bug`, `request`, ...), minting its office-coded key locally.
 pub struct CreateTask {
     pub actor_member_id: String,
     pub params: TasksCreateParams,
-    /// Whether numbers up to the counter's `reserved_through` may have been issued by a run
-    /// that did not stop cleanly (`ADR-0019`): the next number is then past the reservation,
-    /// so no `T-<CODE><N>` an earlier answer named is ever issued again.
-    pub jump_reserved: bool,
+    /// The store's task numbering: whether numbers up to the counter's reservation may have
+    /// been issued by a run that did not stop cleanly, and how far a reservation is flushed.
+    pub numbering: Arc<TaskNumbering>,
+}
+
+/// What a decided create leaves: its change, the task, the agent it newly assigns, and the
+/// office counter after it.
+pub struct CreatedTask {
+    pub change: Change,
+    pub task_id: Id,
+    pub assigned_agent: Option<Id>,
+    pub counter: OfficeTaskCounterRecord,
 }
 
 /// The office's counter after issuing one more number, and the class the create is
-/// answered in: `durable` when it reserves the next block, `committed` inside one.
+/// answered in: `durable` when it reserves the next block or its block is not known
+/// flushed, `committed` inside a flushed one.
 fn issue_number<R: TasksRead>(
     view: &R,
     office_code: &str,
-    jump_reserved: bool,
+    numbering: &TaskNumbering,
 ) -> Result<(OfficeTaskCounterRecord, Ack), Refusal> {
     let prev = view
         .office_task_counter(office_code)
         .map_err(storage_refusal)?;
-    let floor = match &prev {
-        Some(c) if jump_reserved => c.last_number.max(c.reserved_through),
-        Some(c) => c.last_number,
-        // No counter (a new office, or one whose local files are gone): past every number
-        // this office code already has.
-        None => view
-            .tasks()
-            .map_err(storage_refusal)?
-            .iter()
-            .filter(|t| t.office_code == office_code)
-            .map(|t| t.number)
-            .max()
-            .unwrap_or(0),
+    let issued = view.max_task_number(office_code).map_err(storage_refusal)?;
+    let unproven = match &prev {
+        None => issued > 0,
+        Some(c) => c.last_number < issued || c.reserved_through < issued,
+    };
+    if unproven {
+        return Err(refuse(
+            ErrorCode::Unavailable,
+            format!(
+                "this office cannot prove its task numbering for office code `{office_code}`: \
+                 its task counter is missing or behind T-{office_code}{issued}, so it needs a \
+                 new office code before it creates tasks"
+            ),
+        ));
+    }
+    let (floor, reserved) = match &prev {
+        Some(c) => {
+            let floor = numbering
+                .jump_floor(c)
+                .map_or(c.last_number, |r| c.last_number.max(r));
+            (floor, c.reserved_through)
+        }
+        None => (0, 0),
     };
     let next = super::validate_i64_u64(floor + 1, "task number")?;
-    let reserved = prev.as_ref().map_or(0, |c| c.reserved_through);
-    let (reserved_through, ack) = if jump_reserved || next > reserved {
+    let (reserved_through, ack) = if next > reserved {
         let through = next
             .saturating_add(TASK_NUMBER_BLOCK - 1)
             .min(i64::MAX as u64);
         (through, Ack::Durable)
+    } else if next > numbering.durable_through(office_code) {
+        (reserved, Ack::Durable)
     } else {
         (reserved, Ack::Committed)
     };
@@ -93,7 +189,7 @@ impl CreateTask {
         &self,
         uow: &mut UnitOfWork<'_, E>,
         here: &OfficeIdentity,
-    ) -> Result<(Change, Id, Option<Id>), Refusal>
+    ) -> Result<CreatedTask, Refusal>
     where
         E::Tx: TasksRead,
     {
@@ -144,7 +240,7 @@ impl CreateTask {
 
         // Mint final `T-<CODE><N>` reference locally using this office's active office_code.
         let office_code = require_office_code(uow.view(), &here.office_id)?;
-        let (counter, ack) = issue_number(uow.view(), &office_code, self.jump_reserved)?;
+        let (counter, ack) = issue_number(uow.view(), &office_code, &self.numbering)?;
         let next_number = counter.last_number;
 
         if let Some(effort) = self.params.effort {
@@ -192,7 +288,12 @@ impl CreateTask {
             records::encode_counter(&here.office_id, &counter),
         );
         let change = writer.task_and_event(change, &location, &task, &links, created)?;
-        Ok((change, task_id, assigned_agent))
+        Ok(CreatedTask {
+            change,
+            task_id,
+            assigned_agent,
+            counter,
+        })
     }
 }
 

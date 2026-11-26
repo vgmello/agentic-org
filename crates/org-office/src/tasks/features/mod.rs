@@ -29,7 +29,7 @@ pub use self::checklist::{
 };
 pub(crate) use self::core::rewrite_task;
 pub use self::core::{AssignTask, TransitionTask, UpdateTask};
-pub use self::create::{CreateTask, TASK_NUMBER_BLOCK};
+pub use self::create::{CreateTask, CreatedTask, TaskNumbering, TASK_NUMBER_BLOCK};
 pub use self::ops::{AddDependency, CommentTask, RemoveDependency, UnwatchTask, WatchTask};
 pub use self::queries::{
     inspect_task, list_comments, list_history, list_labels, list_tasks, task_dependencies,
