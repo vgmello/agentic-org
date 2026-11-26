@@ -19,7 +19,7 @@ const FIELDS: [Column; 3] = [
 pub(crate) fn run(args: SignInArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let target = selection::select(args.instance.name.as_deref(), args.office.as_deref())?;
     let (instance, office) = (target.explicit_instance(), target.explicit_office());
-    let mut prompt = std::io::stderr();
+    let mut prompt = super::approval_link_stream();
     if !args.command.is_empty() {
         let channel = org_host::setup_flow::open_for_command(instance, office, &mut prompt)?;
         let mut transport = TransportOffice(GrantTransport(channel));

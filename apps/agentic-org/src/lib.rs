@@ -5,7 +5,9 @@
 //!
 //! Module graph (an arrow points at what a module uses; no slice uses another slice):
 //! `lib -> cli, features, error`; `cli -> args, features::*` (their grammars);
-//! `features::* -> args, error, host, selection, completers`; `args -> completers -> host`.
+//! `features::* -> args, completers, error, host, selection, view`;
+//! `args -> completers -> selection -> host`; `completers -> host`; `selection -> error`;
+//! `host -> view -> error`.
 
 #![forbid(unsafe_code)]
 

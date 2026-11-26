@@ -9,7 +9,10 @@
 //!   as a diagnostic on standard error;
 //! - a pipe: the table's `compact` form (headerless, tab-separated lines).
 //!
-//! The exit code is the table's: 0, 1 (refused) or 2 (a command line it cannot read).
+//! The exit code is the table's: 0, 1 (refused) or 2 (a command line it cannot read). A line
+//! this command cannot split (a selector given twice, a flag left without its value at the
+//! end) is refused before the table as the CLI's usage error (exit 2, under `--json` the
+//! CLI's error envelope on standard error), before any instance or office is reached.
 
 use org_agent_cli::dispatch::{hint_for, OfficeTransport, TransportOffice};
 use org_cli_shell::context::{ColorMode, ExecutionContext};
@@ -19,7 +22,7 @@ use org_proto::ErrorCode;
 use serde_json::Value;
 
 use super::render::{self, print_answer};
-use super::selectors::{self, has_flag, resource_and_verb, Selectors};
+use super::selectors::{self, command_path_len, has_flag, resource_and_verb, Selectors};
 use crate::error::CliError;
 
 /// The office channel the sign-in opened.
@@ -43,11 +46,10 @@ struct LazyGrantTransport {
 impl LazyGrantTransport {
     fn channel_mut(&mut self) -> Result<&mut ApprovedOfficeChannel, Refusal> {
         if self.channel.is_none() {
-            let mut err = std::io::stderr();
             let opened = org_host::setup_flow::open_for_command(
                 self.instance.as_deref(),
                 self.office.as_deref(),
-                &mut err,
+                &mut super::approval_link_stream(),
             )
             .map_err(|error| {
                 let code = match error.kind {
@@ -136,8 +138,7 @@ fn hoist(scanned: &Selectors, ctx: &mut ExecutionContext) -> Result<(), CliError
 
 /// Runs office command `words` (`<resource> <verb> ...`) for the selected office.
 pub(crate) fn run(words: Vec<String>, ctx: &mut ExecutionContext) -> Result<(), CliError> {
-    let scanned = selectors::split(&words).map_err(CliError::usage)?;
-    hoist(&scanned, ctx)?;
+    let scanned = prepare(&words, ctx)?;
     let target = crate::selection::select(scanned.instance.as_deref(), scanned.office.as_deref())?;
     let mut transport = TransportOffice(LazyGrantTransport {
         instance: target.explicit_instance().map(str::to_owned),
@@ -145,6 +146,15 @@ pub(crate) fn run(words: Vec<String>, ctx: &mut ExecutionContext) -> Result<(), 
         channel: None,
     });
     execute(scanned.forwarded, ctx, &mut transport)
+}
+
+/// Splits `words` and applies the global flags written after the resource. A line the scan
+/// refuses (a selector given twice, a flag left without its value) fails here, before an
+/// instance is selected or an office is asked.
+fn prepare(words: &[String], ctx: &mut ExecutionContext) -> Result<Selectors, CliError> {
+    let scanned = selectors::split(words).map_err(CliError::usage)?;
+    hoist(&scanned, ctx)?;
+    Ok(scanned)
 }
 
 /// Runs `forwarded` against `office` and shows the answer.
@@ -156,20 +166,28 @@ pub(super) fn execute(
     let shown = shown(&forwarded, ctx);
     let command = resource_and_verb(&forwarded)
         .and_then(|(resource, verb)| org_agent_cli::table::runtime_table().find(resource, verb));
+    // The words the run adds go right after the command path, before every flag and value
+    // the caller wrote and before any `--`: never at the end, where a value-taking flag left
+    // without its value (`--body`) would take `--dry-run` or `--format` as its text and a dry
+    // run would become a live write. Such a line stays without a value and the table refuses
+    // it (exit 2) before the office is asked.
+    let mut added: Vec<String> = Vec::with_capacity(3);
     // The global `--dry-run` always reaches the table, which previews a write and refuses it
     // (exit 2) for a command that changes nothing: `agentic-org --dry-run task list` never
     // runs as if it had not been given. A `--dry-run` that is a flag's value or follows `--`
     // is not the flag (`has_flag`).
     if ctx.modes().dry_run && !has_flag(&forwarded, &["--dry-run"]) {
-        forwarded.push("--dry-run".to_owned());
+        added.push("--dry-run".to_owned());
     }
     match shown {
         Shown::AsWritten => {}
-        Shown::Compact => forwarded.extend(["--format".to_owned(), "compact".to_owned()]),
+        Shown::Compact => added.extend(["--format".to_owned(), "compact".to_owned()]),
         Shown::Json | Shown::Quiet | Shown::Rendered => {
-            forwarded.extend(["--format".to_owned(), "json".to_owned()]);
+            added.extend(["--format".to_owned(), "json".to_owned()]);
         }
     }
+    let at = command_path_len(&forwarded);
+    forwarded.splice(at..at, added);
     let output = org_agent_cli::execute_with_office("agentic-org", &forwarded, office);
     match shown {
         Shown::Quiet | Shown::Rendered => {
@@ -246,6 +264,76 @@ mod tests {
             use org_cli_shell::error::CliDiagnostic;
             assert_eq!(error.exit_code(), 2, "{list:?}");
             assert!(office.0.is_empty(), "{list:?} ran: {:?}", office.0);
+        }
+    }
+
+    /// P0-1: a dry run whose line ends in a flag that takes a value, or writes a flag after
+    /// `--`, is a usage error (exit 2) and the office is never asked: the added `--dry-run`
+    /// and `--format` never become the missing value. Both ways in are covered: the office
+    /// resources (`prepare`, then `execute`) and `sign-in -- <command>` (`execute` alone).
+    #[test]
+    fn a_dry_run_missing_a_value_or_with_flags_after_the_terminator_never_asks_the_office() {
+        use org_cli_shell::error::CliDiagnostic;
+        let modes = Modes {
+            dry_run: true,
+            ..Modes::default()
+        };
+        for list in [
+            &["msg", "send", "--to", "ada", "--body"][..],
+            &["task", "create", "--title"],
+            &["msg", "send", "--to", "ada", "--", "--body", "x"],
+            &["task", "note", "add", "--task", "T-1", "--text"],
+        ] {
+            for terminal in [Terminal::piped(), tty(Some(80))] {
+                let mut office = Recording::default();
+                let (mut ctx, _streams) = captured(modes.clone(), terminal, &[]);
+                let error = prepare(&words(list), &mut ctx)
+                    .and_then(|scanned| execute(scanned.forwarded, &mut ctx, &mut office))
+                    .unwrap_err();
+                assert_eq!(error.exit_code(), 2, "{list:?}");
+                let (mut ctx, _streams) = captured(modes.clone(), terminal, &[]);
+                let error = execute(words(list), &mut ctx, &mut office).unwrap_err();
+                assert_eq!(error.exit_code(), 2, "sign-in -- {list:?}");
+                assert!(
+                    office.0.is_empty(),
+                    "{list:?} reached the office: {:?}",
+                    office.0
+                );
+            }
+        }
+    }
+
+    /// The added words sit right after the command path, so a value written last keeps its
+    /// own text and the request is a dry run.
+    #[test]
+    fn the_added_flags_go_after_the_command_path() {
+        let modes = Modes {
+            dry_run: true,
+            ..Modes::default()
+        };
+        for (list, field, value) in [
+            (
+                &["msg", "send", "--to", "ada", "--body", "hi"][..],
+                "body",
+                "hi",
+            ),
+            (
+                &["task", "create", "--title", "--format"],
+                "title",
+                "--format",
+            ),
+            (
+                &["task", "note", "add", "--task", "T-1", "--text", "b"],
+                "text",
+                "b",
+            ),
+        ] {
+            let (mut ctx, _streams) = captured(modes.clone(), Terminal::piped(), &[]);
+            let mut office = Recording::default();
+            let _ = execute(words(list), &mut ctx, &mut office);
+            assert_eq!(office.0.len(), 1, "{list:?} was not sent");
+            assert!(office.0[0].dry_run, "{list:?}: {:?}", office.0[0]);
+            assert_eq!(office.0[0].input[field], value, "{list:?}");
         }
     }
 

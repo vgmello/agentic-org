@@ -315,6 +315,45 @@ fn a_directory_is_not_loaded() {
     assert!(matches!(missing, ShellError::Io { .. }));
 }
 
+/// P1-2: a manifest that is a symbolic link (to a file, dangling) or a FIFO is refused by
+/// name, never followed, never blocked on, and never skipped for one further up.
+#[test]
+fn a_linked_or_special_manifest_is_refused_and_not_skipped() {
+    let (root, start) = tree("instance = \"outer\"\n");
+    let elsewhere = root.path().join("elsewhere.toml");
+    fs::write(&elsewhere, "instance = \"redirected\"\n").unwrap();
+    let inner = start.join(MANIFEST_FILE);
+    for target in [elsewhere.clone(), root.path().join("missing.toml")] {
+        let _ = fs::remove_file(&inner);
+        std::os::unix::fs::symlink(&target, &inner).unwrap();
+        assert_eq!(find_manifest(&start), Some(inner.clone()));
+        let error = load_manifest(&inner).unwrap_err();
+        assert!(error.to_string().contains("not a regular file"), "{error}");
+        let input = SelectionInput {
+            start_dir: Some(&start),
+            ..SelectionInput::default()
+        };
+        assert!(
+            select(&input, &[]).is_err(),
+            "a linked manifest fell through"
+        );
+    }
+    fs::remove_file(&inner).unwrap();
+    let status = std::process::Command::new("/usr/bin/mkfifo")
+        .arg(&inner)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert_eq!(find_manifest(&start), Some(inner.clone()));
+    let error = load_manifest(&inner).unwrap_err();
+    assert!(error.to_string().contains("not a regular file"), "{error}");
+    let input = SelectionInput {
+        start_dir: Some(&start),
+        ..SelectionInput::default()
+    };
+    assert!(select(&input, &[]).is_err(), "a FIFO manifest fell through");
+}
+
 #[test]
 fn positions() {
     assert_eq!(line_column("abc", 0), (1, 1));

@@ -186,17 +186,24 @@ impl ExecutionContext {
         let _ = self.err.flush();
     }
 
-    /// One sanitized line on standard error, unless `--quiet`. Best effort.
+    /// Whether prose for a person (notes, success marks) stays off standard error: under
+    /// `--quiet`, and under `--json`, where standard error carries only the error envelope.
+    fn prose_off(&self) -> bool {
+        self.modes.quiet || self.modes.json
+    }
+
+    /// One sanitized line on standard error, unless `--quiet` or `--json`. Best effort.
     pub fn note(&mut self, text: &str) {
-        if self.modes.quiet {
+        if self.prose_off() {
             return;
         }
         self.err_raw(&format!("{}\n", sanitize(text)));
     }
 
-    /// `✓ text` on standard error (a green mark with color), unless `--quiet`. Best effort.
+    /// `✓ text` on standard error (a green mark with color), unless `--quiet` or `--json`.
+    /// Best effort.
     pub fn success(&mut self, text: &str) {
-        if self.modes.quiet {
+        if self.prose_off() {
             return;
         }
         let mark = if self.stderr_color {

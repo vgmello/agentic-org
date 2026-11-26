@@ -109,7 +109,7 @@ Output is shaped for the reader: on a terminal, lists are borderless tables and 
 
 Exit codes: `0` success (also when the reader of `stdout` went away, e.g. `| head -1`); `1` a refusal or failure; `2` a command line that cannot be used, or a destructive command without `--yes` where no one can be asked; `4` not signed in or not allowed; `130` cancelled (Ctrl+C at a prompt, or a declined confirmation). Office commands (`task`, `msg`, ...) keep their own `0`/`1`/`2`.
 
-Destructive commands (`office restart|decline|cancel|remove|remove-pending|join|re-enroll`, `context clear`, `admin tls set`) ask for confirmation on a terminal and require `-y, --yes` when no terminal can be asked (a pipe, `--no-input`, `--json`, `-q`). `admin reset` shows its link on a terminal only and keeps its own local confirmation (Touch ID or the login password on a Mac, root on Linux); it also asks a person at the terminal, and needs `--yes` under `--no-input`, `--json` or `-q`. `serve`, `setup` and `recovery` refuse `--json`, `-q` and `--dry-run` (exit `2`; `setup` also when they follow its own flags), and `sign-in` refuses `--dry-run`, instead of ignoring them. `setup` asks for its port only when someone can be asked: never under `--no-input` or `AGENTIC_ORG_NO_INPUT=1`, even on a terminal.
+Destructive commands (`office restart|decline|cancel|remove|remove-pending|join|re-enroll`, `context clear`, `admin tls set`, `service stop`) ask for confirmation on a terminal and require `-y, --yes` when no terminal can be asked (a pipe, `--no-input`, `--json`, `-q`). `admin reset` shows its link on a terminal only and keeps its own local confirmation (Touch ID or the login password on a Mac, root on Linux); it also asks a person at the terminal, and needs `--yes` under `--no-input`, `--json` or `-q`. `serve`, `setup` and `recovery` refuse `--json`, `-q` and `--dry-run` (exit `2`; `setup` also when they follow its own flags), and `sign-in` refuses `--dry-run`, instead of ignoring them. `setup` asks for its port only when someone can be asked: never under `--no-input` or `AGENTIC_ORG_NO_INPUT=1`, even on a terminal.
 
 ### Selecting the Instance and Office
 
@@ -120,7 +120,7 @@ instance = "lab"
 office = "0193a5c0-0000-7000-8000-000000000001"
 ```
 
-Any other key, a control character or an over-long value makes it invalid (exit `1`, `cli::config::invalid`); the error names the line and column and never repeats the file's text. A saved context whose instance name is not an instance name (or holds a control or bidirectional character), or whose office is not an ID, is refused the same way until `agentic-org context clear` removes it. `agentic-org status` shows what was chosen and where it came from.
+Any other key, a control character or an over-long value makes it invalid (exit `1`, `cli::config::invalid`); the error names the line and column and never repeats the file's text. A saved context whose instance name is not an instance name (or holds a control or bidirectional character), or whose office is not an ID, or that is a symbolic link or not a regular file, is refused the same way until `agentic-org context clear` removes it. An `agentic-org.toml`, a saved context or an `--invitation-file` is read only as a regular file of at most 64 KiB, never through a symbolic link (pipe an invitation with `--invitation-stdin` instead). `agentic-org status` shows what was chosen and where it came from.
 
 ### Shell Completion
 
@@ -146,8 +146,8 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org service start [--name <instance>]`
   Start the instance's registered OS service.
   **Use when:** launching a stopped background host service registered with `launchd`/`systemd`.
-- `agentic-org service stop [--name <instance>]`
-  Stop the instance's registered OS service.
+- `agentic-org service stop [--name <instance>] [--yes]`
+  Stop the instance's registered OS service (asks first on a terminal; `--yes` where no one can be asked).
   **Use when:** cleanly shutting down the registered background host service for maintenance.
 - `agentic-org service status [--name <instance>]`
   Inspect whether the instance's registered OS service is running.

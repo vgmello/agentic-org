@@ -155,6 +155,24 @@ fn quiet_keeps_warnings_only() {
     assert_eq!(streams.stderr.text(), "! warning\n");
 }
 
+/// P1: under `--json` standard error carries only the error envelope, so a successful run
+/// writes nothing there: no note, no success mark. Warnings still show.
+#[test]
+fn json_keeps_standard_error_free_of_notes_and_success_marks() {
+    let json = Modes {
+        json: true,
+        ..Modes::default()
+    };
+    for terminal in [Terminal::piped(), tty(Some(80))] {
+        let (mut context, streams) = captured(json.clone(), terminal, &[]);
+        context.note("note");
+        context.success("Cleared the saved CLI context.");
+        assert_eq!(streams.stderr.text(), "");
+        context.warn("warning");
+        assert_eq!(streams.stderr.text(), "! warning\n");
+    }
+}
+
 #[test]
 fn marks_are_colored_only_with_color() {
     let (mut context, streams) = captured(Modes::default(), tty(None), &[]);

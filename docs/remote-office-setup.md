@@ -349,7 +349,7 @@ Upgrading a running Linux satellite preserves its enrolled mTLS identity, SQLite
 ssh agents@apps-main-eu '
   set -euo pipefail
   export PATH="$HOME/.local/bin:$PATH"
-  agentic-org service stop
+  agentic-org service stop --yes
   bash "$HOME/dist/install.sh" \
     --archive "$HOME/dist/agentic-org-<new-release-id>-linux-x86_64.tar.gz" \
     --bin-dir "$HOME/.local/bin"

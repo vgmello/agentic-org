@@ -18,7 +18,7 @@ use crate::{host, selection};
 
 const EXAMPLES: &str = "Examples:
   agentic-org service status
-  agentic-org service stop --name lab
+  agentic-org service stop --name lab --yes
   agentic-org service start --json";
 
 #[derive(Args, Debug)]
@@ -39,11 +39,8 @@ enum ServiceCommand {
     Start(InstanceArgs),
     /// Stop the instance's registered OS service
     /// Use when: cleanly shutting down the host background service for maintenance.
-    #[command(
-        verbatim_doc_comment,
-        after_help = "Examples:\n  agentic-org service stop\n  agentic-org service stop --dry-run"
-    )]
-    Stop(InstanceArgs),
+    #[command(verbatim_doc_comment, after_help = stop::EXAMPLES)]
+    Stop(stop::StopArgs),
     /// Show whether the instance's registered OS service is running
     /// Use when: checking host service health before running organization or office commands.
     #[command(
@@ -51,6 +48,13 @@ enum ServiceCommand {
         after_help = "Examples:\n  agentic-org service status\n  agentic-org service status -q\n  agentic-org service status --json"
     )]
     Status(InstanceArgs),
+}
+
+impl ServiceArgs {
+    /// `--yes` of `service stop`, the destructive verb.
+    pub(crate) fn yes(&self) -> bool {
+        matches!(&self.command, ServiceCommand::Stop(args) if args.yes.yes)
+    }
 }
 
 pub(crate) fn run(args: ServiceArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {

@@ -10,21 +10,32 @@
 //! the way in and out; help text is sanitized on the way out.
 //!
 //! The folders from `completion` down are the user's alone (`0700`, created so and tightened
-//! when they exist): the names they list are not for other users to read. The cache
-//! directory itself is the caller's: created owner-only when it is missing, left as it is
-//! otherwise.
+//! when they exist): the names they list are not for other users to read. A writer walks them
+//! one at a time through descriptors (`org_platform::fs::OwnerOnlyDir`) before it writes, so
+//! a symbolic link or another account's folder from `completion` down is refused, never
+//! followed. The cache directory itself is the caller's: created owner-only when it is missing,
+//! refused when it is a symbolic link, not a directory, another account's or writable by
+//! anyone, left as it is otherwise. The lock, the temporary file and the list are then reached
+//! by path inside the walked folders (a follow-up moves them to `*at` calls on the walked
+//! descriptor through `org-platform`); the lock is opened without following a link or
+//! blocking on a FIFO and must be a regular file. A reader gets an empty list when any folder
+//! from `completion` down is a symbolic link, and reads the list through
+//! [`crate::files::read_regular`].
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use org_platform::fs::{OwnerOnlyDir, O_CLOEXEC, O_NOFOLLOW, O_NONBLOCK};
 use serde::{Deserialize, Serialize};
 
 use crate::error::ShellError;
 use crate::escape::{is_unsafe_char, sanitize};
+use crate::files::read_regular;
 
 /// The cache's subdirectory for completion lists.
 pub const COMPLETION_DIR: &str = "completion";
@@ -81,7 +92,7 @@ impl CompletionCache {
     ) -> Result<(), ShellError> {
         let dir = self.partition_dir(partition);
         let kind = partition_key(kind);
-        self.create_private(&dir)
+        self.create_private(partition)
             .map_err(|e| ShellError::io("creating the completion cache", e))?;
         let _lock = lock(&dir.join(format!("{kind}.lock")))?;
         let kept: Vec<&CachedCandidate> = candidates
@@ -100,45 +111,128 @@ impl CompletionCache {
         Ok(())
     }
 
-    /// Creates `dir` (a folder below `<cache>/completion`) and every missing folder above it
-    /// owner-only, then tightens the folders from `dir` up to `completion` that already
-    /// existed. On a system without an adapter it fails closed (`org_platform::fs`).
-    fn create_private(&self, dir: &Path) -> io::Result<()> {
-        org_platform::fs::create_owner_only_dir_all(dir)?;
-        let completion = self.dir.join(COMPLETION_DIR);
-        let mut current = Some(dir);
-        while let Some(folder) = current {
-            org_platform::fs::set_owner_only_dir(folder)?;
-            if folder == completion {
-                break;
-            }
-            current = folder
-                .parent()
-                .filter(|parent| parent.starts_with(&completion));
+    /// Opens `<cache>/completion/<partition...>` one folder at a time through descriptors:
+    /// each is created `0700` when missing, tightened to `0700` through its descriptor when it
+    /// is the user's and more open, and refused when it is a symbolic link, not a directory or
+    /// another account's. On a system without an adapter it fails closed (`org_platform::fs`).
+    fn create_private(&self, partition: &[&str]) -> io::Result<()> {
+        let uid = org_platform::fs::effective_uid()?;
+        let mut dir = self.open_completion(uid)?;
+        for part in partition {
+            dir = dir.open_or_create_child(OsStr::new(&partition_key(part)), uid)?;
         }
         Ok(())
     }
 
-    /// The `kind` list of `partition`: empty when missing, unreadable, too large or corrupt.
-    /// Takes no lock.
+    /// `<cache>/completion`, verified by descriptor. A missing cache directory is created
+    /// owner-only and re-opened to verify it; an existing one that is a symbolic link or not a
+    /// directory is refused; one that is not the user's alone is the caller's and left as it
+    /// is, `completion` then made or tightened through its own descriptor.
+    fn open_completion(&self, uid: u32) -> io::Result<OwnerOnlyDir> {
+        // `components` drops a trailing `/` or `/.`, which would make `lstat` follow a link.
+        let root: PathBuf = self.dir.components().collect();
+        let existing = match fs::symlink_metadata(&root) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                org_platform::fs::create_owner_only_dir_all(&root)?;
+                None
+            }
+            Err(error) => return Err(error),
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("the cache directory {} is not a directory", root.display()),
+                ))
+            }
+            Ok(metadata) => Some(metadata),
+        };
+        match OwnerOnlyDir::open(&root, uid) {
+            Ok(owned) => owned.open_or_create_child(OsStr::new(COMPLETION_DIR), uid),
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                // The caller's directory, more open than owner-only. Another account, or anyone
+                // at all, could swap `completion` for a link after this walk: refuse it.
+                if existing
+                    .is_some_and(|metadata| metadata.uid() != uid || metadata.mode() & 0o002 != 0)
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        format!(
+                            "the cache directory {} is another account's or writable by anyone",
+                            root.display()
+                        ),
+                    ));
+                }
+                let completion = root.join(COMPLETION_DIR);
+                match org_platform::fs::create_owner_only_dir(&completion) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                        tighten_own_dir(&completion, uid)?;
+                    }
+                    Err(error) => return Err(error),
+                }
+                OwnerOnlyDir::open(&completion, uid)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// The `kind` list of `partition`: empty when missing, unreadable, too large or corrupt,
+    /// or when a folder from `completion` down is a symbolic link. Takes no lock.
     pub fn load(&self, partition: &[&str], kind: &str) -> Vec<CachedCandidate> {
-        let path = self
-            .partition_dir(partition)
-            .join(format!("{}.json", partition_key(kind)));
-        read_list(&path).unwrap_or_default()
+        let mut dir = self.dir.join(COMPLETION_DIR);
+        for part in std::iter::once(None).chain(partition.iter().map(Some)) {
+            if let Some(part) = part {
+                dir.push(partition_key(part));
+            }
+            let linked = fs::symlink_metadata(&dir).map_or(true, |metadata| !metadata.is_dir());
+            if linked {
+                return Vec::new();
+            }
+        }
+        read_list(&dir.join(format!("{}.json", partition_key(kind)))).unwrap_or_default()
     }
 }
 
-/// Opens (creating) and exclusively locks `path`, retrying for at most [`LOCK_WAIT`]. The
-/// lock is released when the file is dropped.
+/// Tightens the user's own directory at `path` to `0700` through a descriptor opened without
+/// following a symbolic link; another account's directory, a link or any other entry is
+/// refused.
+fn tighten_own_dir(path: &Path, uid: u32) -> io::Result<()> {
+    let dir = OpenOptions::new()
+        .read(true)
+        .custom_flags(O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        .open(path)?;
+    let metadata = dir.metadata()?;
+    if !metadata.is_dir() || metadata.uid() != uid {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{} is not the user's own directory", path.display()),
+        ));
+    }
+    if metadata.permissions().mode() & 0o7077 != 0 {
+        dir.set_permissions(fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// Opens (creating, `0600`) and exclusively locks `path`, retrying for at most
+/// [`LOCK_WAIT`]. The open neither follows a symbolic link nor blocks on a FIFO, and the
+/// opened handle must be a regular file. The lock is released when the file is dropped.
 fn lock(path: &Path) -> Result<File, ShellError> {
+    let open_error = |e| ShellError::io("opening the completion cache lock", e);
     let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
+        .mode(0o600)
+        .custom_flags(O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         .open(path)
-        .map_err(|e| ShellError::io("opening the completion cache lock", e))?;
+        .map_err(open_error)?;
+    if !file.metadata().map_err(open_error)?.is_file() {
+        return Err(open_error(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the lock is not a regular file",
+        )));
+    }
     let deadline = Instant::now() + LOCK_WAIT;
     loop {
         match file.try_lock() {
@@ -159,19 +253,10 @@ fn lock(path: &Path) -> Result<File, ShellError> {
     }
 }
 
+/// A list: `None` when it is missing, a symbolic link, not a regular file, larger than
+/// [`MAX_LIST_BYTES`] or corrupt.
 fn read_list(path: &Path) -> Option<Vec<CachedCandidate>> {
-    if !fs::metadata(path).ok()?.is_file() {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    File::open(path)
-        .ok()?
-        .take(MAX_LIST_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    if bytes.len() as u64 > MAX_LIST_BYTES {
-        return None;
-    }
+    let bytes = read_regular(path, MAX_LIST_BYTES).ok()?;
     let raw: Vec<CachedCandidate> = serde_json::from_slice(&bytes).ok()?;
     Some(
         raw.into_iter()

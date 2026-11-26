@@ -163,16 +163,17 @@ fn take_value<'a, I: Iterator<Item = &'a String>>(
     set_selector(slot, arg, value)
 }
 
-/// Splits the words of an office command.
+/// Splits the words of an office command. A flag that takes a value but is the last word is
+/// refused here, naming the flag: nothing is sent, and no word added later (`--dry-run`,
+/// `--format`) can become its value.
 pub(super) fn split(args: &[String]) -> Result<Selectors, String> {
     let mut scanned = Selectors::default();
     let mut iter = args.iter();
-    let mut expect_value = false;
+    let mut awaiting: Option<&str> = None;
     let mut after_terminator = false;
     while let Some(arg) = iter.next() {
-        if expect_value || after_terminator {
+        if awaiting.take().is_some() || after_terminator {
             scanned.forwarded.push(arg.clone());
-            expect_value = false;
             continue;
         }
         if arg == "--" {
@@ -184,13 +185,35 @@ pub(super) fn split(args: &[String]) -> Result<Selectors, String> {
             continue;
         }
         if let Some(flag_name) = arg.strip_prefix("--") {
-            if !flag_name.contains('=') {
-                expect_value = flag_takes_value(&scanned.forwarded, flag_name);
+            if !flag_name.contains('=') && flag_takes_value(&scanned.forwarded, flag_name) {
+                awaiting = Some(arg);
             }
         }
         scanned.forwarded.push(arg.clone());
     }
-    Ok(scanned)
+    match awaiting {
+        // The command's own `--json` takes the input as JSON; the global `--json` (JSON
+        // output) is written before the resource.
+        Some("--json") => Err(
+            "--json needs a value: after the command it is the input as JSON; for JSON output \
+             write --json before the command (`agentic-org --json task list`)"
+                .to_owned(),
+        ),
+        Some(flag) => Err(format!("{flag} needs a value")),
+        None => Ok(scanned),
+    }
+}
+
+/// How many leading words of `forwarded` name the command: `who` is one, `task note <verb>`
+/// three, `<resource> <verb>` two (fewer when the line is shorter). Words the run adds go
+/// right after them, before every flag and value the caller wrote.
+pub(super) fn command_path_len(forwarded: &[String]) -> usize {
+    let wanted = match forwarded {
+        [first, ..] if first == "who" => 1,
+        [first, second, ..] if first == "task" && second == "note" => 3,
+        _ => 2,
+    };
+    wanted.min(forwarded.len())
 }
 
 #[cfg(test)]
@@ -236,6 +259,44 @@ mod tests {
         assert_eq!(scanned.instance.as_deref(), Some("lab"));
         assert!(split(&words(&["team", "list", "--office", "a", "--office", "b"])).is_err());
         assert!(split(&words(&["team", "list", "--office"])).is_err());
+    }
+
+    /// P0-1: a value-taking flag at the end of the line is refused and named, so a word the
+    /// run adds (`--dry-run`, `--format json`) can never become its value.
+    #[test]
+    fn a_trailing_flag_without_its_value_is_refused_by_name() {
+        for (list, flag) in [
+            (&["msg", "send", "--to", "ada", "--body"][..], "--body"),
+            (&["task", "create", "--title"], "--title"),
+            (&["task", "list", "--format"], "--format"),
+            (&["task", "list", "--json"], "before the command"),
+            (&["task", "create", "-q", "--title"], "--title"),
+        ] {
+            let error = split(&words(list)).unwrap_err();
+            assert!(error.contains(flag), "{list:?}: {error}");
+        }
+        // A value that reads like a flag is still a value; `--name=value` needs nothing more.
+        for list in [
+            &["msg", "send", "--to", "ada", "--body", "--body"][..],
+            &["task", "create", "--title=x"],
+            &["msg", "send", "--to", "ada", "--", "--body"],
+        ] {
+            assert!(split(&words(list)).is_ok(), "{list:?}");
+        }
+    }
+
+    #[test]
+    fn the_command_path_is_one_two_or_three_words() {
+        for (list, len) in [
+            (&["who", "--format", "json"][..], 1),
+            (&["task", "note", "add", "--task", "T"], 3),
+            (&["task", "note"], 2),
+            (&["msg", "send", "--to", "ada"], 2),
+            (&["task"], 1),
+            (&[], 0),
+        ] {
+            assert_eq!(command_path_len(&words(list)), len, "{list:?}");
+        }
     }
 
     /// B-02: a flag's value and the words after `--` are never taken for a flag.

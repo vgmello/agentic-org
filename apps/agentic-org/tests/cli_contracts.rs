@@ -216,6 +216,7 @@ fn canary_destructive_commands_need_yes_without_a_terminal() {
         &["office", "restart", OFFICE],
         &["office", "remove-pending", OFFICE],
         &["context", "clear"],
+        &["service", "stop"],
     ] {
         let refused = sandbox.run(args);
         assert_eq!(
@@ -909,4 +910,91 @@ fn a_diagnostic_of_several_lines_keeps_its_lines() {
     let stderr = text(&refused.stderr);
     assert!(stderr.lines().count() > 2, "{stderr}");
     assert!(!stderr.contains("\\u{a}"), "{stderr}");
+}
+
+/// P0-1: a global `--dry-run` whose office command ends in a flag left without its value, or
+/// writes flags after `--`, is a usage error (exit 2) before any instance or office is
+/// reached (which, with no host here, would be exit 1): the added `--dry-run` can never
+/// become that value and turn the preview into a live write.
+#[test]
+fn a_dry_run_with_a_flag_missing_its_value_is_refused_before_any_office_is_asked() {
+    let sandbox = Sandbox::new();
+    sandbox.save_context(None, OFFICE);
+    for (args, named) in [
+        (
+            &["--dry-run", "msg", "send", "--to", "ada", "--body"][..],
+            Some("--body"),
+        ),
+        (&["--dry-run", "task", "create", "--title"], Some("--title")),
+        (&["task", "create", "--title"], Some("--title")),
+        (
+            &[
+                "--dry-run",
+                "msg",
+                "send",
+                "--to",
+                "ada",
+                "--",
+                "--body",
+                "x",
+            ],
+            None,
+        ),
+    ] {
+        for json in [false, true] {
+            let mut all = if json { vec!["--json"] } else { vec![] };
+            all.extend_from_slice(args);
+            let refused = sandbox.run(&all);
+            let stderr = text(&refused.stderr);
+            assert_eq!(refused.status.code(), Some(2), "{all:?}: {stderr}");
+            if let Some(flag) = named {
+                let shown = format!("{stderr}{}", text(&refused.stdout));
+                assert!(shown.contains(flag), "{all:?}: {shown}");
+            }
+        }
+    }
+    let base = fs::read_dir(sandbox.root.join("base")).unwrap().count();
+    assert_eq!(base, 0, "a refused command reached the instance");
+}
+
+/// P1: under `--json` standard error carries only an error envelope: a successful mutation,
+/// a preview and a read write nothing there.
+#[test]
+fn a_successful_json_run_writes_nothing_on_standard_error() {
+    let sandbox = Sandbox::new();
+    sandbox.save_context(Some("lab"), OFFICE);
+    for args in [
+        &["--json", "--dry-run", "context", "clear"][..],
+        &["context", "show", "--json"],
+        &["context", "clear", "--yes", "--json"],
+        &["context", "clear", "--yes", "--json"],
+    ] {
+        let ran = sandbox.run(args);
+        assert_eq!(
+            ran.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            text(&ran.stderr)
+        );
+        assert!(ran.stderr.is_empty(), "{args:?}: {}", text(&ran.stderr));
+        serde_json::from_slice::<Value>(&ran.stdout).unwrap();
+    }
+    assert!(!sandbox.context_file().exists());
+}
+
+/// A saved context that is a symbolic link (here dangling) is refused when read and
+/// removed (the link itself) by `context clear`, never followed.
+#[test]
+fn a_linked_saved_context_is_refused_and_can_be_cleared() {
+    let sandbox = Sandbox::new();
+    let target = sandbox.root.join("elsewhere.json");
+    std::os::unix::fs::symlink(&target, sandbox.context_file()).unwrap();
+    let shown = sandbox.run(&["context", "show", "--json"]);
+    assert_eq!(shown.status.code(), Some(1), "{}", text(&shown.stderr));
+    let cleared = sandbox.run(&["context", "clear", "--yes", "--json"]);
+    assert_eq!(cleared.status.code(), Some(0), "{}", text(&cleared.stderr));
+    let answer: Value = serde_json::from_slice(&cleared.stdout).unwrap();
+    assert_eq!(answer["cleared"], true);
+    assert!(fs::symlink_metadata(sandbox.context_file()).is_err());
+    assert!(!target.exists());
 }
