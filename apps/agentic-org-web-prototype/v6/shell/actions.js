@@ -281,6 +281,11 @@ const CLICK_ACTIONS = {
   "work-comment-focus": () => document.getElementById("work-comment")?.focus(),
   "inbox-reopen": (_e, _t, id) => { const item = IN.find((c) => c.id === id); if (item?.handled) { if (item.reopen) item.reopen(); else reopenInboxItem(item); } },
   set: (_e, t, _id, v) => handleSetAction(t, v),
+  "board-done": () => { S.workBoardAllDone = !S.workBoardAllDone; render(false); document.querySelector(".bcol-older")?.focus({ preventScroll: true }); },
+  "board-lane": (_e, _t, _id, v) => {
+    const board = document.querySelector(".board"), col = board?.querySelectorAll(".bcol")[Number(v)];
+    if (col) board.scrollTo({ left: col.offsetLeft - parseFloat(getComputedStyle(board).scrollPaddingInlineStart || "0"), behavior: "smooth" });
+  },
   "cozy-contrast": (_e, t) => { S.cozyContrast = !S.cozyContrast; try { localStorage.setItem(COZY_CONTRAST_STORE, S.cozyContrast ? "1" : "0"); } catch (e) {} applyCozyContrast(); t.setAttribute("aria-checked", String(S.cozyContrast)); },
   "work-expand-detail": (_e, t) => { const panel = t.closest("dialog"); setWorkPanelExpanded(panel, !panel.hasAttribute("data-expanded")); },
   "agent-focus-open": (_e, t, id) => { if (id) openAgentFocus(id, t); },
