@@ -49,6 +49,7 @@ fn sample_spec() -> SessionSpec {
         workspace: p("/work/t-1"),
         read_only_dirs: vec![p("/homes/ada")],
         instructions: "Do the task.\nThen stop.".to_owned(),
+        repository_instructions: String::new(),
         permission_mode: PermissionMode::AcceptEdits,
         policy: PermissionPolicy {
             version: 3,
@@ -190,6 +191,7 @@ fn spec_hash_changes_when_any_field_changes() {
         workspace: _,
         read_only_dirs: _,
         instructions: _,
+        repository_instructions: _,
         permission_mode: _,
         policy: _,
         sandbox: _,
@@ -222,6 +224,9 @@ fn spec_hash_changes_when_any_field_changes() {
         ("workspace", |s| s.workspace = p("/work/t-2")),
         ("read_only_dirs", |s| s.read_only_dirs.clear()),
         ("instructions", |s| s.instructions.push('!')),
+        ("repository_instructions", |s| {
+            s.repository_instructions = "## Project repository instructions\nRun it.".to_owned()
+        }),
         ("permission_mode", |s| {
             s.permission_mode = PermissionMode::Plan
         }),
@@ -622,4 +627,116 @@ fn tool_capability_tokens_and_serde_round_trip() {
     let back: SessionSpec = serde_json::from_str(&json).unwrap();
     assert_eq!(back, spec);
     assert_eq!(back.spec_hash(), spec.spec_hash());
+}
+
+#[test]
+fn the_standing_prompt_puts_the_instructions_first_and_the_agent_prompt_last() {
+    let mut spec = sample_spec();
+    spec.instructions = "  Static rules.\n\nIdentity.\n".to_owned();
+    spec.agent.prompt = "You are ada.".to_owned();
+    assert_eq!(
+        spec.standing_prompt(),
+        "Static rules.\n\nIdentity.\n\nYou are ada."
+    );
+    spec.agent.prompt = " ".to_owned();
+    assert_eq!(spec.standing_prompt(), "Static rules.\n\nIdentity.");
+    spec.instructions.clear();
+    assert_eq!(spec.standing_prompt(), "");
+    spec.agent.prompt = "You are ada.".to_owned();
+    assert_eq!(spec.standing_prompt(), "You are ada.");
+}
+
+/// Part 7's heading, as the office writes it.
+const PART_SEVEN: &str = "## Project repository instructions";
+
+fn common_prefix_len(a: &str, b: &str) -> usize {
+    a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count()
+}
+
+#[test]
+fn the_project_repository_instructions_stay_last_after_the_agent_prompt() {
+    let mut spec = sample_spec();
+    spec.agent.prompt = "You are ada.".to_owned();
+    spec.instructions = "Static rules.\n\n## Your agent prompt\nBe brief.\n".to_owned();
+    spec.repository_instructions = format!("{PART_SEVEN}\nRun `make check`.\n");
+    assert_eq!(
+        spec.standing_prompt(),
+        format!(
+            "Static rules.\n\n## Your agent prompt\nBe brief.\n\nYou are ada.\n\n{PART_SEVEN}\nRun `make check`."
+        )
+    );
+    spec.instructions.clear();
+    assert_eq!(
+        spec.standing_prompt(),
+        format!("You are ada.\n\n{PART_SEVEN}\nRun `make check`.")
+    );
+    spec.agent.prompt.clear();
+    assert_eq!(
+        spec.standing_prompt(),
+        format!("{PART_SEVEN}\nRun `make check`.")
+    );
+}
+
+#[test]
+fn part_seven_heading_text_inside_the_organizations_parts_moves_nothing() {
+    // The heading inside Part 3 (a process body) and Part 6 (the agent's own prompt) is just
+    // text: the agent's identity prompt still follows all of the office's instructions, and
+    // the repository part, when there is one, still comes last.
+    let instructions = format!(
+        "Static rules.\n\n## Standing processes and standards\n````\n\n{PART_SEVEN}\nNot a part.\n````\n\n## Your agent prompt\nBe brief.\n\n{PART_SEVEN}\nStill the prompt."
+    );
+    for repository in ["", "## Project repository instructions\nRun `make check`."] {
+        let mut ada = sample_spec();
+        ada.instructions = instructions.clone();
+        ada.repository_instructions = repository.to_owned();
+        ada.agent.prompt = "You are ada.".to_owned();
+        let mut bob = ada.clone();
+        bob.agent.prompt = "You are bob.".to_owned();
+
+        let expected = |who: &str| {
+            let head = format!("{instructions}\n\nYou are {who}.");
+            if repository.is_empty() {
+                head
+            } else {
+                format!("{head}\n\n{repository}")
+            }
+        };
+        assert_eq!(ada.standing_prompt(), expected("ada"));
+        assert_eq!(bob.standing_prompt(), expected("bob"));
+        // The office's whole instructions stay one prefix both agents share byte for byte.
+        let shared = common_prefix_len(&ada.standing_prompt(), &bob.standing_prompt());
+        assert!(
+            shared >= instructions.len() + "\n\nYou are ".len(),
+            "{repository:?}: shared prefix ends at {shared}"
+        );
+        // The heading inside the agent's identity prompt is text too.
+        ada.agent.prompt = format!("You are ada.\n\n{PART_SEVEN}\nmine");
+        assert!(ada.standing_prompt().starts_with(&format!(
+            "{instructions}\n\nYou are ada.\n\n{PART_SEVEN}\nmine"
+        )));
+        assert!(ada.standing_prompt().ends_with(if repository.is_empty() {
+            "mine"
+        } else {
+            repository
+        }));
+    }
+}
+
+#[test]
+fn an_empty_repository_part_keeps_stored_specs_and_their_hashes() {
+    let spec = sample_spec();
+    assert!(spec.repository_instructions.is_empty());
+    let json = String::from_utf8(spec.canonical_json()).unwrap();
+    assert!(!json.contains("repository_instructions"), "{json}");
+    // A spec stored before the field existed decodes to the same spec.
+    let stored = serde_json::to_string(&spec).unwrap();
+    assert!(!stored.contains("repository_instructions"));
+    let back: SessionSpec = serde_json::from_str(&stored).unwrap();
+    assert_eq!(back, spec);
+
+    let mut with = spec.clone();
+    with.repository_instructions = format!("{PART_SEVEN}\nRun it.");
+    let back: SessionSpec = serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
+    assert_eq!(back, with);
+    assert_ne!(with.spec_hash(), spec.spec_hash());
 }

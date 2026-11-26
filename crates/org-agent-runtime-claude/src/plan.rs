@@ -1,7 +1,8 @@
+mod definitions;
 mod effort;
 mod sandbox;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 
 use org_agent_runtime::{
     expand_capability_allowlist, runtime_env_add, static_env_names, validate_plan_paths,
@@ -10,6 +11,7 @@ use org_agent_runtime::{
     Stdio, StopPlan, StopSignal, StopStep, ToolCapability, ToolName,
 };
 
+use self::definitions::{build_agents_json, build_mcp_json};
 use self::effort::claude_effort;
 use self::sandbox::{
     build_sandbox_json, is_concrete_path, normalize_bwrap_pattern, split_trailing_globstar,
@@ -149,7 +151,8 @@ pub(crate) fn build_headless_plan(
         spec.agent.name.as_str().to_owned(),
     ];
 
-    if !spec.instructions.is_empty() {
+    let standing_prompt = spec.standing_prompt();
+    if !standing_prompt.is_empty() {
         args.push("--append-system-prompt-file".to_owned());
         args.push(instructions_path);
     }
@@ -182,12 +185,12 @@ pub(crate) fn build_headless_plan(
             git_exclude: false,
         },
     ];
-    if !spec.instructions.is_empty() {
+    if !standing_prompt.is_empty() {
         files.push(PlannedFile {
             location: FileLocation::RuntimeDir,
             rel_path: RelPath::try_from(INSTRUCTIONS_FILE)
                 .expect("constant relative path is valid"),
-            contents: spec.instructions.as_bytes().to_vec(),
+            contents: standing_prompt.into_bytes(),
             git_exclude: false,
         });
     }
@@ -273,7 +276,8 @@ pub(crate) fn build_take_over_plan(
         spec.agent.name.as_str().to_owned(),
     ];
 
-    if !spec.instructions.is_empty() {
+    let standing_prompt = spec.standing_prompt();
+    if !standing_prompt.is_empty() {
         args.push("--append-system-prompt-file".to_owned());
         args.push(instructions_path);
     }
@@ -294,12 +298,12 @@ pub(crate) fn build_take_over_plan(
             git_exclude: false,
         },
     ];
-    if !spec.instructions.is_empty() {
+    if !standing_prompt.is_empty() {
         files.push(PlannedFile {
             location: FileLocation::RuntimeDir,
             rel_path: RelPath::try_from(INSTRUCTIONS_FILE)
                 .expect("constant relative path is valid"),
-            contents: spec.instructions.as_bytes().to_vec(),
+            contents: standing_prompt.into_bytes(),
             git_exclude: false,
         });
     }
@@ -660,43 +664,6 @@ fn command_prefix_rules(prefix: &str, kind: RuleKind) -> Option<Vec<String>> {
         RuleKind::Allow if prefix.ends_with(char::is_whitespace) => None,
         RuleKind::Allow => Some(vec![format!("{SHELL_TOOL}({prefix} *)")]),
     }
-}
-
-fn build_mcp_json(spec: &SessionSpec) -> Vec<u8> {
-    let mut servers = Map::new();
-    for (name, server) in &spec.mcp_servers {
-        servers.insert(
-            name.as_str().to_owned(),
-            json!({
-                "command": server.command.as_str(),
-                "args": server.args,
-            }),
-        );
-    }
-    serde_json::to_vec(&json!({ "mcpServers": servers }))
-        .expect("MCP JSON serialization cannot fail")
-}
-
-fn build_agents_json(spec: &SessionSpec, expanded_tools: Option<&[String]>) -> String {
-    let mut def = Map::new();
-    def.insert(
-        "description".to_owned(),
-        Value::String(spec.agent.description.clone()),
-    );
-    def.insert(
-        "prompt".to_owned(),
-        Value::String(spec.agent.prompt.clone()),
-    );
-    if let Some(tools) = expanded_tools {
-        def.insert(
-            "tools".to_owned(),
-            Value::Array(tools.iter().map(|t| Value::String(t.clone())).collect()),
-        );
-    }
-
-    let mut agents = Map::new();
-    agents.insert(spec.agent.name.as_str().to_owned(), Value::Object(def));
-    serde_json::to_string(&Value::Object(agents)).expect("agents JSON serialization cannot fail")
 }
 
 /// Claude Code's own switches, added to the office's environment.

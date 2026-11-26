@@ -95,17 +95,7 @@ pub fn render_instructions(
     set: &EffectiveSet,
     input: &RenderInput,
 ) -> Result<Rendered, RenderError> {
-    let mut mandatory: Vec<(&str, &Winner)> = Vec::new();
-    let mut overridable: Vec<(&str, &Winner)> = Vec::new();
-    for entry in &set.entries {
-        if let Some(winner) = &entry.winner {
-            if winner.doc.overridable {
-                overridable.push((entry.entry_id.as_str(), winner));
-            } else {
-                mandatory.push((entry.entry_id.as_str(), winner));
-            }
-        }
-    }
+    let (mandatory, overridable) = split_winners(set);
 
     if mandatory.is_empty() && overridable.is_empty() {
         return Ok(Rendered {
@@ -154,6 +144,34 @@ pub fn render_instructions(
         overridable_count: overridable.len(),
         omitted_overridable_count,
     })
+}
+
+/// The winners of `set`, split into must-follow and overridable documents in set order.
+type SplitWinners<'a> = (Vec<(&'a str, &'a Winner)>, Vec<(&'a str, &'a Winner)>);
+
+fn split_winners(set: &EffectiveSet) -> SplitWinners<'_> {
+    let mut mandatory = Vec::new();
+    let mut overridable = Vec::new();
+    for entry in &set.entries {
+        if let Some(winner) = &entry.winner {
+            if winner.doc.overridable {
+                overridable.push((entry.entry_id.as_str(), winner));
+            } else {
+                mandatory.push((entry.entry_id.as_str(), winner));
+            }
+        }
+    }
+    (mandatory, overridable)
+}
+
+/// The must-follow section [`render_instructions`] renders for `set`: its UTF-8 bytes and the
+/// titles of its documents. It does not depend on what was read before, so it measures exactly
+/// what a launch put in the standing instructions.
+pub(crate) fn mandatory_footprint(set: &EffectiveSet) -> (usize, Vec<String>) {
+    let (mandatory, _) = split_winners(set);
+    let bytes = render_mandatory_section(&mandatory, &mut Vec::new()).len();
+    let titles = mandatory.iter().map(|(_, w)| w.doc.title.clone()).collect();
+    (bytes, titles)
 }
 
 fn render_mandatory_section(

@@ -36,6 +36,7 @@ fn production_registry_wires_claude_codex_and_agy_and_refuses_unknown() {
             workspace: ws.clone(),
             read_only_dirs: Vec::new(),
             instructions: "test".into(),
+            repository_instructions: String::new(),
             permission_mode: PermissionMode::Ask,
             policy: org_agent_runtime::PermissionPolicy {
                 version: 1,

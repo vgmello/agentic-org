@@ -9,19 +9,20 @@ use org_proto::sessions::SessionState;
 use crate::credentials::{now_ms, rfc3339_now};
 use crate::manager::SessionManager;
 use crate::wake::{
-    compose_coalesced_wake_objective, PendingWakeItem, PendingWakeQueueRecord,
-    SuspendedStateRecord, WakeHoldReason, WakeKind, WakeOutcome, WakeQuotaRecord,
+    PendingWakeItem, PendingWakeQueueRecord, SuspendedStateRecord, WakeHoldReason, WakeKind,
+    WakeOutcome, WakeQuotaRecord,
 };
 
 use super::asks::insert_open_required_ask;
 use super::drain::remove_claimed_wakes;
+use super::wake_turn::{assigned_task_refs, compose_wake_turn};
 use super::DispatchWakeGuard;
 
 impl SessionManager {
     pub(super) fn queue_hold_reason(
         &self,
         employee: &Employee,
-        task_id: Option<&str>,
+        task_refs: &[&str],
         person_triggered: bool,
         ts: u64,
     ) -> Option<(WakeHoldReason, Option<u64>)> {
@@ -49,7 +50,7 @@ impl SessionManager {
         if self.has_live_active_turn(employee.id.as_str()) {
             return Some((WakeHoldReason::Busy, None));
         }
-        if self.is_budget_held_for(employee.id.as_str(), task_id) {
+        if self.is_budget_held_for(employee.id.as_str(), task_refs) {
             return Some((WakeHoldReason::BudgetHold, None));
         }
         if !person_triggered {
@@ -116,14 +117,12 @@ impl SessionManager {
                 };
             }
             let person_triggered = matching.iter().any(|i| i.sender_is_person);
-            let task_ref = matching
-                .iter()
-                .find(|i| i.kind == WakeKind::TaskAssignment)
-                .map(|i| i.source_id.as_str())
-                .filter(|s| !s.is_empty());
-            if let Some((reason, retry_after)) =
-                self.queue_hold_reason(employee, task_ref, person_triggered, ts)
-            {
+            if let Some((reason, retry_after)) = self.queue_hold_reason(
+                employee,
+                &assigned_task_refs(&matching),
+                person_triggered,
+                ts,
+            ) {
                 queue.set_hold(reason, ts, retry_after);
                 self.write_wakes_redacted(&queue);
                 self.record_wake_held(emp_id, &matching[0], reason, retry_after);
@@ -144,13 +143,15 @@ impl SessionManager {
     ) -> WakeOutcome {
         let emp_id = employee.id.as_str();
         let person_triggered = matching.iter().any(|i| i.sender_is_person);
+        let Ok(objective) = compose_wake_turn(&self.office, emp_id, &matching, &susp.asks) else {
+            return self.hold_refused_batch(emp_id, ts);
+        };
         {
             let _lock = self.employee_locks.lock(emp_id);
             for open in &susp.asks {
                 insert_open_required_ask(&self.open_required_asks, emp_id, open.clone());
             }
         }
-        let objective = compose_coalesced_wake_objective(&matching, &susp.asks);
         let first = &matching[0];
         let trigger = serde_json::json!({
             "type": "turn_trigger",
@@ -161,11 +162,7 @@ impl SessionManager {
             "waited_ms": held_since.map(|s| ts.saturating_sub(s)),
             "at": rfc3339_now(),
         });
-        let task_ref = matching
-            .iter()
-            .find(|i| i.kind == WakeKind::TaskAssignment)
-            .map(|i| i.source_id.as_str())
-            .filter(|s| !s.is_empty());
+        let task_ref = assigned_task_refs(&matching).first().copied();
         match self.spawn_or_send_autonomous(
             employee,
             objective,
@@ -188,12 +185,16 @@ impl SessionManager {
                 }
                 WakeOutcome::Started
             }
-            Err(_) => {
-                self.mark_queue_hold_locked(emp_id, WakeHoldReason::AdmissionRefused, ts, None);
-                WakeOutcome::Queued {
-                    reason: WakeHoldReason::AdmissionRefused,
-                }
-            }
+            Err(_) => self.hold_refused_batch(emp_id, ts),
+        }
+    }
+
+    /// Keeps a batch the office refused to start (admission, or must-follow processes over
+    /// budget) queued under [`WakeHoldReason::AdmissionRefused`] for a later retry.
+    fn hold_refused_batch(&self, emp_id: &str, ts: u64) -> WakeOutcome {
+        self.mark_queue_hold_locked(emp_id, WakeHoldReason::AdmissionRefused, ts, None);
+        WakeOutcome::Queued {
+            reason: WakeHoldReason::AdmissionRefused,
         }
     }
 
@@ -226,15 +227,12 @@ impl SessionManager {
                 }
                 return WakeOutcome::Ignored;
             }
-            let task_ref = queue
-                .items
-                .iter()
-                .find(|i| i.kind == WakeKind::TaskAssignment)
-                .map(|i| i.source_id.as_str())
-                .filter(|s| !s.is_empty());
-            if let Some((reason, retry_after)) =
-                self.queue_hold_reason(employee, task_ref, queue.has_person_item(), ts)
-            {
+            if let Some((reason, retry_after)) = self.queue_hold_reason(
+                employee,
+                &assigned_task_refs(&queue.items),
+                queue.has_person_item(),
+                ts,
+            ) {
                 let first = queue.items[0].clone();
                 let has_mid_turn_eligible =
                     queue.items.iter().any(|i| i.kind.is_mid_turn_eligible());
@@ -262,7 +260,9 @@ impl SessionManager {
     ) -> WakeOutcome {
         let emp_id = employee.id.as_str();
         let person_triggered = queue.has_person_item();
-        let objective = compose_coalesced_wake_objective(&queue.items, &[]);
+        let Ok(objective) = compose_wake_turn(&self.office, emp_id, &queue.items, &[]) else {
+            return self.hold_refused_batch(emp_id, ts);
+        };
         let waited_ms = queue.held_since_ms.map(|since| ts.saturating_sub(since));
         let first = &queue.items[0];
         let wants_resume = queue
@@ -288,12 +288,7 @@ impl SessionManager {
             "waited_ms": waited_ms,
             "at": rfc3339_now(),
         });
-        let task_ref = queue
-            .items
-            .iter()
-            .find(|i| i.kind == WakeKind::TaskAssignment)
-            .map(|i| i.source_id.as_str())
-            .filter(|s| !s.is_empty());
+        let task_ref = assigned_task_refs(&queue.items).first().copied();
         match self.spawn_or_send_autonomous(
             employee,
             objective,
@@ -316,12 +311,7 @@ impl SessionManager {
                 }
                 WakeOutcome::Started
             }
-            Err(_) => {
-                self.mark_queue_hold_locked(emp_id, WakeHoldReason::AdmissionRefused, ts, None);
-                WakeOutcome::Queued {
-                    reason: WakeHoldReason::AdmissionRefused,
-                }
-            }
+            Err(_) => self.hold_refused_batch(emp_id, ts),
         }
     }
 

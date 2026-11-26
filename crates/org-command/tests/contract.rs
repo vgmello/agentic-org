@@ -1837,3 +1837,38 @@ fn compact_keeps_one_value_on_one_line_and_tells_values_apart() {
         "null\t\n\"\"\t\"null\"\n\tx\n"
     );
 }
+
+/// `check` reads a line exactly as `run` does and stops there: it refuses what `run` refuses
+/// with exit code 2, with the same message, and accepts what `run` would answer or send, without
+/// asking for a key or calling the office.
+#[test]
+fn check_reads_a_line_like_run_and_calls_nothing() {
+    let table = sample_table();
+    let lines: [&[&str]; 9] = [
+        &["sample", "inspect", "--id", "S-1"],
+        &["sample", "inspect", "--help"],
+        &["sample", "list", "--schema"],
+        &["sample", "create", "--title", "A", "--body", "B"],
+        &["sample", "destroy"],
+        &["sample", "inspect", "S-1"],
+        &["sample", "inspect", "--id"],
+        &["sample", "inspect", "--id", "S-1", "--dry-run"],
+        &["sample", "inspect", "--id", "S-1", "--nope", "x"],
+    ];
+    for line in lines {
+        let checked =
+            org_command::check(&table, "agent-os", &args(line), &mut StubSources::default());
+        let (output, office) = run_stub(&table, &args(line), &mut StubSources::default());
+        match checked {
+            Ok(()) => assert_ne!(output.exit_code, 2, "{line:?}: {}", output.stdout),
+            Err(refusal) => {
+                assert_eq!(output.exit_code, 2, "{line:?}");
+                assert_eq!(refusal.code, ErrorCode::InvalidRequest);
+                let envelope = json_envelope(&output, &format!("{line:?}"));
+                assert_eq!(envelope["error"]["message"], json!(refusal.message));
+                assert_eq!(envelope["error"]["hint"], json!(refusal.hint));
+                assert!(office.calls.is_empty());
+            }
+        }
+    }
+}

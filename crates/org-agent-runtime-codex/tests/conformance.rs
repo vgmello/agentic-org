@@ -45,6 +45,7 @@ fn sample_spec() -> SessionSpec {
         workspace: sp("/work/t-1"),
         read_only_dirs: vec![sp("/homes/gpt")],
         instructions: "Follow workspace rules.".to_owned(),
+        repository_instructions: String::new(),
         permission_mode: PermissionMode::AcceptEdits,
         policy: PermissionPolicy {
             version: 1,

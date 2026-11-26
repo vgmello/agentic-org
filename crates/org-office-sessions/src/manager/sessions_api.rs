@@ -13,7 +13,6 @@ use crate::credentials::rfc3339_now;
 use crate::preset::build_grants_summary;
 use crate::pump::PumpCommand;
 
-use super::environment::build_objective_text;
 use super::lifecycle_ops::reap_replaced_handle;
 use super::spec::canonical_or_spec;
 use super::views::overlay_durable_wake_state;
@@ -46,7 +45,7 @@ impl SessionManager {
         let initial_obj = params
             .instruction
             .as_deref()
-            .map(|text| build_objective_text(&employee, actor_member_id, text));
+            .map(|text| self.objective_text(&employee, actor_member_id, text));
         let reservation =
             self.reserve_start_or_send(&employee, initial_obj, None, params.workspace.as_deref())?;
         if let Some(view) = reservation.live_view {
@@ -81,6 +80,9 @@ impl SessionManager {
 
     /// Starts or resumes a supervised session autonomously (C6 required-ask resume, C8 peer wake,
     /// C10 always-available wake). Uses the exact same runtime, binding, and sandbox path as `Run`.
+    /// `objective` is the complete turn input: queued wakes compose it, task process deltas
+    /// included, through `lifecycle::wake_turn`; `task_ref` only scopes route admission and the
+    /// turn permit.
     pub(crate) fn spawn_or_send_autonomous(
         &self,
         employee: &Employee,

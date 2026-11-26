@@ -240,7 +240,7 @@ impl SessionManager {
             }
             let hold = if employee.status == EmployeeStatus::Paused {
                 Some(WakeHoldReason::Paused)
-            } else if self.is_budget_held_for(employee_id, None) {
+            } else if self.is_budget_held_for(employee_id, &[]) {
                 Some(WakeHoldReason::BudgetHold)
             } else {
                 None

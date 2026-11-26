@@ -154,6 +154,7 @@ mod tests {
             workspace: p("/work/t-1"),
             read_only_dirs: Vec::new(),
             instructions: String::new(),
+            repository_instructions: String::new(),
             permission_mode: PermissionMode::Ask,
             policy: PermissionPolicy {
                 version: 1,

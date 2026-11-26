@@ -5,6 +5,7 @@ use org_agent_runtime::Token;
 use org_proto::hiring::{AgentExecutionSet, AgentExecutionSetParams};
 
 use super::*;
+use crate::instructions::StandingInstructions;
 use crate::manager::{build_session_spec, ModelChoice};
 use crate::router::{
     acquire_warm_permit_for_office, select_and_admit_route, AdmitRouteRequest, AdmittedRoute,
@@ -212,7 +213,10 @@ impl Agent {
             },
             workspace,
             Vec::new(),
-            "Review carefully.".into(),
+            StandingInstructions {
+                instructions: "Review carefully.".into(),
+                repository_instructions: String::new(),
+            },
             &preset,
         )
         .unwrap()
