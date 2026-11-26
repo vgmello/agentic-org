@@ -83,6 +83,14 @@ pub struct SessionSpec {
     /// `developerInstructions` for Codex, the agent file for Antigravity). Free text that
     /// reaches a file or a protocol message: never a secret.
     pub instructions: String,
+    /// The project repository's instruction files (`doc-27` §1, Part 7), as the office composed
+    /// them. Held apart from [`instructions`](Self::instructions) so that
+    /// [`standing_prompt`](Self::standing_prompt) keeps them last by structure, whatever text
+    /// the organization's parts carry. Free text that reaches a file or a protocol message:
+    /// never a secret. Added after v1, so optional: absent when empty, which keeps every
+    /// existing spec's [`canonical_json`](Self::canonical_json) and hash.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub repository_instructions: String,
     /// How the runtime asks before acting. There is no bypass mode.
     pub permission_mode: PermissionMode,
     /// The runtime's own first line of defence, set from the office's policy.
@@ -102,6 +110,25 @@ pub struct SessionSpec {
 }
 
 impl SessionSpec {
+    /// The whole standing system prompt in static-to-volatile order (`doc-27` §1): the office's
+    /// [`instructions`](Self::instructions) first, so the release-static start of the
+    /// instructions is byte 0 of what the runtime caches, then the agent's own
+    /// [`prompt`](AgentIdentity::prompt), then the project repository's
+    /// [`repository_instructions`](Self::repository_instructions) last. Each part is trimmed and
+    /// empty parts are left out; parts are joined by a blank line. Empty when every part is.
+    pub fn standing_prompt(&self) -> String {
+        [
+            self.instructions.as_str(),
+            self.agent.prompt.as_str(),
+            self.repository_instructions.as_str(),
+        ]
+        .iter()
+        .map(|part| part.trim())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+    }
+
     /// The spec's canonical JSON: the input to [`spec_hash`](Self::spec_hash), and a stable
     /// form to diff two specs by.
     ///
@@ -248,7 +275,9 @@ pub struct AgentIdentity {
     /// file: never a secret.
     pub description: String,
     /// The agent definition's own one-line prompt. The real instructions go in
-    /// [`SessionSpec::instructions`]. Free text that may reach argv or a file: never a secret.
+    /// [`SessionSpec::instructions`]; adapters place this after them
+    /// ([`SessionSpec::standing_prompt`]). Free text that may reach argv or a file: never a
+    /// secret.
     pub prompt: String,
 }
 

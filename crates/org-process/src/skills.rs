@@ -1,10 +1,18 @@
 //! Built-in product skills served by `agent-os skill list` and `agent-os skill read`
 //! (`doc-34` Decision 4, `doc-28` §3.5, `FC-111`).
+//!
+//! Each skill's body is a body-only Markdown file under `skills/<key>.md`, embedded at compile
+//! time; the metadata stays here. The crate's tests check the budgets, the text hygiene and that
+//! the files and this list match one to one.
+
+/// Most bytes one skill body may take (4 KiB).
+pub const SKILL_MAX_BYTES: usize = 4 * 1024;
 
 /// One built-in product skill explaining how to operate inside Agentic Org.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BuiltinSkill {
-    /// Stable lowercase skill key passed to `agent-os skill read --name <key>`.
+    /// Stable lowercase skill key passed to `agent-os skill read --name <key>`; the body is
+    /// `skills/<key>.md`.
     pub key: &'static str,
     /// Human-readable title.
     pub title: &'static str,
@@ -16,76 +24,94 @@ pub struct BuiltinSkill {
     pub body_markdown: &'static str,
 }
 
+const fn skill(
+    key: &'static str,
+    title: &'static str,
+    description: &'static str,
+    body_markdown: &'static str,
+) -> BuiltinSkill {
+    BuiltinSkill {
+        key,
+        title,
+        description,
+        source: "built_in",
+        body_markdown,
+    }
+}
+
 const BUILTIN_SKILLS: &[BuiltinSkill] = &[
-    BuiltinSkill {
-        key: "agent-os-basics",
-        title: "Using agent-os",
-        description: "Grammar, JSON envelopes, dry-run checks, idempotency, and session attach.",
-        source: "built_in",
-        body_markdown: "\
-# Using `agent-os`
-
-Every organization action runs through `agent-os <resource> <verb> [flags]` and returns one JSON envelope: `{\"ok\":true,\"data\":...,\"meta\":...,\"error\":null}`.
-
-- Discover commands with `agent-os --help`, `agent-os <resource> --help`, or `agent-os <resource> <verb> --schema`.
-- Verify authorization and validation without committing by passing `--dry-run`.
-- For retries after transient errors, reuse `--idempotency-key` and supply `--if-match <revision>` on revisioned updates.
-- Inspect your own live session and permissions with `agent-os session inspect` and `agent-os grant list`.
-- Batch multiple commands in one shell call with `agent-os session attach`.",
-    },
-    BuiltinSkill {
-        key: "messaging-and-asks",
-        title: "Messaging, channels, and structured asks",
-        description: "Reading your inbox, sending messages, asking structured questions, and suspending cleanly.",
-        source: "built_in",
-        body_markdown: "\
-# Messaging and Structured Asks
-
-- Check work addressed to you with `agent-os msg inbox` and read threads with `agent-os msg read --id <id>`.
-- Send direct messages or channel posts with `agent-os msg send --to <target> --body <text>` (use `@handle` for mentions and `--kind handoff` for handoffs).
-- Ask structured questions with `agent-os msg ask --to <person-or-agent> --prompt <text>`.
-  - Leave `--required` off and provide defaults when you can continue work without blocking.
-  - Set `--required` only when you genuinely cannot proceed; the office suspends your turn and resumes you in the same context once answered.
-- Summarize busy channels without flooding your context using `agent-os channel summarize --channel <ch> --about <topic>`.",
-    },
-    BuiltinSkill {
-        key: "tasks-and-worktrees",
-        title: "Tasks, checklists, private notes, and Git worktrees",
-        description: "Managing tasks, private scratch notes, isolated per-task worktrees, and office Git pushes.",
-        source: "built_in",
-        body_markdown: "\
-# Tasks, Private Notes, and Git Worktrees
-
-- List and inspect tasks with `agent-os task list` and `agent-os task inspect --task <ref>`.
-- Transition status with `agent-os task transition --task <ref> --status <status>` (supply `--reason` for `blocked`).
-- Track your private reasoning or plans with `agent-os task note add|list|update|remove` (private to you and people; never shown to other agents).
-- Prepare your isolated per-task Git worktree with `agent-os worktree prepare --task <ref> --repo <repo>` and publish your `task/*` branch only through `agent-os repo push`.",
-    },
-    BuiltinSkill {
-        key: "processes-and-standards",
-        title: "Organization processes and standards",
-        description: "Inspecting effective processes/standards, checking override chains, and adding project standards.",
-        source: "built_in",
-        body_markdown: "\
-# Organization Processes and Standards
-
-- List effective processes and standards for your work with `agent-os process list` (filter with `--kind process` or `--kind standard`).
-- Read any document's full text with `agent-os process inspect --key <key>`, or inspect its single-chain inheritance with `agent-os process inspect --key <key> --why`.
-- Non-overridable (`overridable: false`) documents are mandatory and cannot be superseded by lower scopes or workspace files.
-- Agents whose home team owns a project (or sits beneath the owning team) may document new project-scoped conventions with `agent-os process create` and `agent-os process update` (overridable only; never replacing keys inherited from the organization or teams).",
-    },
-    BuiltinSkill {
-        key: "hiring-and-directory",
-        title: "Directory lookup and hiring through HR",
-        description: "Finding people, teams, and roles, and drafting or confirming agent hires.",
-        source: "built_in",
-        body_markdown: "\
-# Directory Lookup and Hiring
-
-- Inspect the organization with `agent-os org inspect`, teams with `agent-os team list|inspect`, and employees with `agent-os person inspect` or `agent-os agent inspect`.
-- Inspect available roles with `agent-os role list` and `agent-os role inspect --role <key>`.
-- Authorized hirers (owner or team leads with hiring permission) hire into their subtree using `agent-os hr hire` (or `--draft` to have the HR lead prepare a proposal first).",
-    },
+    skill(
+        "agent-os-basics",
+        "Using agent-os",
+        "Command grammar, the JSON envelope, help and schemas, small answers, long text, writes and dry runs.",
+        include_str!("../skills/agent-os-basics.md"),
+    ),
+    skill(
+        "tasks-create",
+        "Creating tasks",
+        "Search first, decide the scope, then write a durable why and testable acceptance criteria.",
+        include_str!("../skills/tasks-create.md"),
+    ),
+    skill(
+        "tasks-execute",
+        "Executing a task",
+        "Read the task and its dependencies, plan privately against live code, start, and work in verified loops.",
+        include_str!("../skills/tasks-execute.md"),
+    ),
+    skill(
+        "tasks-finalize",
+        "Finishing a task",
+        "Verify each criterion, tick the checklist with evidence, update docs, comment, and close.",
+        include_str!("../skills/tasks-finalize.md"),
+    ),
+    skill(
+        "messaging-and-asks",
+        "Messages and structured asks",
+        "Inbox, sending and replying, handoffs, structured asks and answers, snoozing, and waiting well.",
+        include_str!("../skills/messaging-and-asks.md"),
+    ),
+    skill(
+        "channels",
+        "Channels",
+        "Joining, summarizing with a question, reading, posting, and asking a channel.",
+        include_str!("../skills/channels.md"),
+    ),
+    skill(
+        "code-and-worktrees",
+        "Code, worktrees and pushes",
+        "Preparing a task worktree, working in it, and publishing the task branch through the office.",
+        include_str!("../skills/code-and-worktrees.md"),
+    ),
+    skill(
+        "hiring-and-directory",
+        "Directory and hiring",
+        "Finding people, teams and roles, who decides, and hiring agents through HR.",
+        include_str!("../skills/hiring-and-directory.md"),
+    ),
+    skill(
+        "processes-and-standards",
+        "Processes and standards",
+        "Which processes apply, must-follow versus overridable, the --why chain, and project conventions.",
+        include_str!("../skills/processes-and-standards.md"),
+    ),
+    skill(
+        "budgets",
+        "Budgets",
+        "Checking your and your task's budget, spending well, and what a budget hold means.",
+        include_str!("../skills/budgets.md"),
+    ),
+    skill(
+        "errors-and-recovery",
+        "Errors and recovery",
+        "The error codes, optimistic concurrency, safe retries, and stalled or restarted sessions.",
+        include_str!("../skills/errors-and-recovery.md"),
+    ),
+    skill(
+        "batch-and-attach",
+        "Batching with session attach",
+        "Running several commands over one connection, one JSON line in and one envelope out each.",
+        include_str!("../skills/batch-and-attach.md"),
+    ),
 ];
 
 /// Returns all built-in product skills in stable order.

@@ -5,7 +5,8 @@
 //! office binary, see [`install_command_catalogue`]) to implement:
 //! - Headless supervised agent sessions in private `0700` agent homes (`TASK-42` / C3)
 //! - Permission presets, default-on sandbox, and escalation policy (`ADR-0032` §3 / `ENROLL-7`)
-//! - Standing 7-part agent instructions & generated `agent-os` command catalogue (`doc-27` / `FC-171`)
+//! - Standing agent instructions in static-to-volatile prefix order, the generated `agent-os`
+//!   command catalogue, fenced turn objectives and the command drift guard (`doc-27` / `FC-171`)
 //! - Office-owned sub-agents and cross-turn background task tracking & reaping (`ADR-0025`)
 //! - Per-run cryptographic `AGENT_OS_SESSION_TOKEN` & kernel descendant verification (`CLI-12`, `SUB-3`)
 //! - Restart continuation & stall watchdog (`ADR-0030` / `LIVE-9..13`)
@@ -21,6 +22,7 @@ pub mod instructions;
 mod lifecycle;
 pub mod manager;
 pub mod preset;
+mod provenance;
 mod pump;
 pub mod recovery;
 pub mod redact;
@@ -38,8 +40,8 @@ pub use credentials::{
 };
 pub use instructions::{
     assemble_standing_instructions, compose_turn_objective, install_command_catalogue,
-    verify_command_references, CommandCatalogue, InstructionInput, TurnTrigger,
-    BUILTIN_INSTRUCTIONS_MAX_BYTES, SAME_USER_ISOLATION_NOTICE,
+    verify_command_references, CommandCatalogue, InstructionInput, StandingInstructions,
+    TurnTrigger, BUILTIN_INSTRUCTIONS_MAX_BYTES, SAME_USER_ISOLATION_NOTICE,
 };
 pub use lifecycle::spawn_wake_retry_loop;
 pub use manager::{SessionManager, SessionManagerConfig};

@@ -36,11 +36,7 @@ use crate::credentials::{
     redact_secrets, validate_pasted_code, CredentialVault, EnrollmentDriver, EnrollmentManager,
     EnrollmentOutcome, EnrollmentPrompt, EnrollmentVaultError,
 };
-use crate::instructions::{
-    assemble_standing_instructions, compose_turn_objective, verify_command_references,
-    InstructionInput, TurnTrigger, BUILTIN_BEHAVIORAL_RULES, BUILTIN_INSTRUCTIONS_MAX_BYTES,
-    HR_LEAD_GUIDANCE, SAME_USER_ISOLATION_NOTICE,
-};
+use crate::instructions::SAME_USER_ISOLATION_NOTICE;
 use crate::manager::{SessionManager, SessionManagerConfig};
 use crate::preset::{
     build_grants_summary, build_session_policy, decide_escalation, decide_escalation_with_tools,
@@ -62,9 +58,12 @@ mod bwrap;
 mod effort;
 mod enrollment;
 mod instructions;
+mod instructions_fencing;
+mod instructions_guard;
 mod launch;
 mod pool;
 mod presets;
+mod provenance;
 mod real_process;
 mod recovery;
 mod recovery_clear;

@@ -1,0 +1,2 @@
+# Markdown prompts and skills are embedded with include_str!: keep them LF on every checkout.
+*.md text eol=lf

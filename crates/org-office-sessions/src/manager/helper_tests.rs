@@ -134,6 +134,7 @@ fn prune_nonexistent_bwrap_denies_drops_absent_paths_and_preserves_policy_enforc
         workspace: ws_spec,
         read_only_dirs: Vec::new(),
         instructions: String::new(),
+        repository_instructions: String::new(),
         permission_mode: org_agent_runtime::PermissionMode::AcceptEdits,
         policy: spec_policy,
         sandbox: preset_cfg.sandbox.clone(),
@@ -551,6 +552,7 @@ fn agy_read_only_dirs_mounts_release_store_and_toolchain_subdirs_never_cargo_roo
         workspace: ws_spec,
         read_only_dirs: ro_dirs,
         instructions: String::new(),
+        repository_instructions: String::new(),
         permission_mode: preset_cfg.permission_mode,
         policy: preset_cfg.policy,
         sandbox: preset_cfg.sandbox,
@@ -784,6 +786,7 @@ fn bwrap_pruned_claude_plan_has_no_double_globstar_and_no_concrete_sibling_globs
         workspace: sp(&workspace),
         read_only_dirs: vec![sp(&sibling)],
         instructions: String::new(),
+        repository_instructions: String::new(),
         permission_mode: org_agent_runtime::PermissionMode::Ask,
         policy: org_agent_runtime::PermissionPolicy {
             version: 1,

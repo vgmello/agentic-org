@@ -15,8 +15,9 @@ use crate::employee_locks::EmployeeLockMap;
 use crate::manager::{set_waiting_messages_count, SessionManager, SessionRegistry};
 use crate::pump::PumpCommand;
 use crate::recovery::SessionStore;
-use crate::wake::{compose_coalesced_wake_objective, WakeHoldReason, WakeKind, WakeQuotaRecord};
+use crate::wake::{WakeHoldReason, WakeQuotaRecord};
 
+use super::wake_turn::{assigned_task_refs, compose_wake_turn, office_budget_held};
 use super::DispatchWakeGuard;
 
 pub(super) fn recycle_stale_warm_handle(
@@ -369,8 +370,10 @@ pub(super) struct LiveDrainClaim {
     pub(super) ts: u64,
 }
 
-/// Phase 1 of the drain, under the employee lock: reads the queue and applies every hold that
-/// needs no network or disk walk (suspension, inactive agent, budget hold, hourly quota).
+/// Phase 1 of the drain, under the employee lock: reads the queue, applies every hold that
+/// needs no network or disk walk (suspension, inactive agent, budget hold, hourly quota), and
+/// composes the turn input, holding the batch when its tasks' must-follow processes cannot
+/// travel with it.
 pub(super) fn claim_live_drain_batch(
     employee_id: &str,
     ctx: &TurnEndDrainCtx,
@@ -401,17 +404,9 @@ pub(super) fn claim_live_drain_batch(
     let ts = now_ms();
     let tokens = ctx.bindings.active_tokens();
     let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
-    let task_id = queue
-        .items
-        .iter()
-        .find(|i| i.kind == WakeKind::TaskAssignment)
-        .map(|i| i.source_id.clone());
-    let office_held = ctx
-        .office
-        .active_budget_holds(Some(employee_id), task_id.as_deref())
-        .map(|h| !h.is_empty())
-        .unwrap_or(false);
-    if office_held
+    let task_refs = assigned_task_refs(&queue.items);
+    let task_id = task_refs.first().map(|t| (*t).to_owned());
+    if office_budget_held(&ctx.office, employee_id, &task_refs)
         || ctx
             .budget_hold
             .lock()
@@ -436,6 +431,13 @@ pub(super) fn claim_live_drain_batch(
             return None;
         }
     }
+    // The same turn input as a fresh start: the tasks' must-follow rules travel with it, and a
+    // batch they cannot travel with stays queued instead of reaching the agent without them.
+    let Ok(objective) = compose_wake_turn(&ctx.office, employee_id, &queue.items, &[]) else {
+        queue.set_hold(WakeHoldReason::AdmissionRefused, ts, None);
+        let _ = ctx.store.write_pending_wakes_redacted(&queue, &refs);
+        return None;
+    };
     let first = &queue.items[0];
     let trigger = serde_json::json!({
         "type": "turn_trigger",
@@ -449,7 +451,7 @@ pub(super) fn claim_live_drain_batch(
     });
     Some(LiveDrainClaim {
         item_ids: queue.items.iter().map(|i| i.item_id.clone()).collect(),
-        objective: compose_coalesced_wake_objective(&queue.items, &[]),
+        objective,
         task_id,
         person_triggered,
         trigger,

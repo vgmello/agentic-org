@@ -1352,6 +1352,7 @@ dependencies = [
  "org-office",
  "org-pki",
  "org-platform",
+ "org-process",
  "org-proto",
  "org-supervise",
  "ring",

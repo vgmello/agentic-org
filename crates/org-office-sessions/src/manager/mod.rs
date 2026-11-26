@@ -62,6 +62,7 @@ mod warm;
 pub(crate) use bwrap_isolation::has_unmasked_bwrap_sibling_in_office;
 #[cfg(test)]
 pub(crate) use bwrap_isolation::{enforce_bwrap_sibling_isolation, ensure_bwrap_deny_dirs};
+pub(crate) use environment::task_process_context;
 #[cfg(test)]
 pub(crate) use failover::{
     is_host_claude_subscription_refresh_eligible, requeue_contended_failover, run_failover_relaunch,
