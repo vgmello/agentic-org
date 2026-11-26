@@ -103,7 +103,7 @@ pub(crate) fn has_local_task_write_authority(
             .iter()
             .any(|c| c.office_id.as_str() == office.info.office_id && c.code == task_office_code));
     }
-    let enrolled = office.enrolled_office_ids().unwrap_or_default();
+    let enrolled = office.enrolled_office_ids()?;
     let removed = crate::office::invitations::removed_satellite_offices(office)?;
     let owned_by_active_satellite = codes.iter().any(|c| {
         c.code == task_office_code

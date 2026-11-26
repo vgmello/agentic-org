@@ -146,20 +146,52 @@ struct PrepareLockedArgs<'a> {
     remote: Result<&'a RemoteSpec, &'a ApiError>,
 }
 
+fn check_durable_link_matches_branch(
+    durable_link: Option<&org_office::tasks::records::TaskRepositoryRecord>,
+    branch: &str,
+) -> Result<(), ApiError> {
+    if let Some(link) = durable_link {
+        if link.branch.as_deref() != Some(branch) {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "workspace branch does not match the recorded durable task branch",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn prepare_worktree_locked(
     svc: &GitService,
     args: &PrepareLockedArgs<'_>,
 ) -> Result<Result<WorktreePrepareResult, ApiError>, GitError> {
     let PrepareLockedArgs {
         runner,
-        member,
-        command_id,
         ctx,
         repo,
         base_branch,
         bare_path,
         remote,
+        ..
     } = *args;
+    let durable_link = ctx
+        .task
+        .repositories
+        .iter()
+        .find(|r| r.repository_id == repo.id);
+    if durable_link.is_some_and(|l| l.integrated_commit.is_some()) {
+        return Ok(Err(ApiError::new(
+            ErrorCode::Conflict,
+            "task branch is already recorded as integrated",
+        )));
+    }
+    let has_local_task_write = match svc
+        .office
+        .has_local_task_write_authority_for_code(&ctx.task.office_code)
+    {
+        Ok(allowed) => allowed,
+        Err(err) => return Ok(Err(map_office_error(err))),
+    };
     if let Err(api_err) = ensure_bare_cache_ready(svc, runner, repo, bare_path, remote) {
         return Ok(Err(api_err));
     }
@@ -169,11 +201,16 @@ fn prepare_worktree_locked(
         repo.id.as_str(),
         ctx.workspace_owner_id.as_str(),
     );
-    let taken_branches =
-        match try_reuse_workspace(&svc.state, bare_path, &ws_key, repo.id.as_str())? {
-            Ok(reused) => return Ok(Ok(reused)),
-            Err(taken) => taken,
-        };
+    let taken_branches = match try_reuse_workspace(
+        &svc.state,
+        bare_path,
+        &ws_key,
+        repo.id.as_str(),
+        durable_link,
+    )? {
+        Ok(reused) => return Ok(reused),
+        Err(taken) => taken,
+    };
     let base_commit = resolve_remote_branch_commit(runner, bare_path, base_branch)?;
     let branch = choose_unique_task_branch(
         runner,
@@ -182,6 +219,11 @@ fn prepare_worktree_locked(
         &ctx.task.title,
         &taken_branches,
     )?;
+    if !has_local_task_write {
+        if let Err(err) = check_durable_link_matches_branch(durable_link, &branch) {
+            return Ok(Err(err));
+        }
+    }
     let wt_path = worktree_path(
         svc.office.runtime_root(),
         &office_id,
@@ -192,21 +234,10 @@ fn prepare_worktree_locked(
         &repo.id,
     );
     let created = create_worktree(runner, bare_path, &wt_path, &branch, &base_commit, false)?;
-    if let Err(err) = svc
-        .office
-        .record_task_repository_branch(
-            member,
-            command_id,
-            &ctx.task.id,
-            &repo.id,
-            branch.clone(),
-            None,
-        )
-        .map_err(map_office_error)
-        .and_then(|inner| inner)
-    {
-        rollback_created_worktree(runner, bare_path, &created.worktree_path, &branch);
-        return Ok(Err(err));
+    if has_local_task_write {
+        if let Err(err) = record_branch_or_rollback(svc, args, &created.worktree_path, &branch) {
+            return Ok(Err(err));
+        }
     }
     let ws_record = TaskWorkspaceRecord {
         office_id,
@@ -240,28 +271,57 @@ fn prepare_worktree_locked(
     )))
 }
 
+fn record_branch_or_rollback(
+    svc: &GitService,
+    args: &PrepareLockedArgs<'_>,
+    created_path: &Path,
+    branch: &str,
+) -> Result<(), ApiError> {
+    if let Err(err) = svc
+        .office
+        .record_task_repository_branch(
+            args.member,
+            args.command_id,
+            &args.ctx.task.id,
+            &args.repo.id,
+            branch.to_owned(),
+            None,
+        )
+        .map_err(map_office_error)
+        .and_then(|inner| inner)
+    {
+        rollback_created_worktree(args.runner, args.bare_path, created_path, branch);
+        return Err(err);
+    }
+    Ok(())
+}
+
 fn try_reuse_workspace(
     state: &Mutex<OfficeGitState>,
     bare_path: &Path,
     ws_key: &str,
     repo_id: &str,
-) -> Result<Result<WorktreePrepareResult, BTreeSet<String>>, GitError> {
+    durable_link: Option<&org_office::tasks::records::TaskRepositoryRecord>,
+) -> Result<Result<Result<WorktreePrepareResult, ApiError>, BTreeSet<String>>, GitError> {
     let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(existing) = state_guard.workspaces.get(ws_key) {
         let existing_path = PathBuf::from(&existing.worktree_path);
         if existing.state == "active" && existing_path.is_dir() {
+            if let Err(err) = check_durable_link_matches_branch(durable_link, &existing.branch) {
+                return Ok(Ok(Err(err)));
+            }
             if existing.admin_dir_name.is_empty() {
                 return Err(GitError::SecurityViolation(
                     "workspace is missing recorded admin_dir_name".into(),
                 ));
             }
             sanitize_worktree_links(bare_path, &existing.admin_dir_name, &existing_path)?;
-            return Ok(Ok(build_prepare_result(
+            return Ok(Ok(Ok(build_prepare_result(
                 existing,
                 bare_path,
                 &existing.admin_dir_name,
                 &existing_path,
-            )));
+            ))));
         }
     }
     let taken = state_guard

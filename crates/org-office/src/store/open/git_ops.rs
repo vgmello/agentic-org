@@ -144,6 +144,69 @@ pub struct RecordTaskRepoBranchOp {
     pub repository_id: Id,
     pub branch: String,
     pub integrated_commit: Option<String>,
+    /// When `Some(office_id)`, atomically verifies inside the store `UnitOfWork` that the target
+    /// task's `office_code` belongs to `office_id` (eliminating TOCTOU on satellites, `TASK-192`).
+    pub enforce_satellite_office_id: Option<Id>,
+}
+
+fn rejected_api_error(code: ErrorCode, message: impl Into<String>) -> Refusal {
+    Refusal::rejected(serde_json::to_vec(&ApiError::new(code, message)).unwrap())
+}
+
+fn verify_satellite_branch_authority(
+    view: &impl OrganizationRead,
+    sat_office_id: &Id,
+    task: &TaskRecord,
+) -> Result<(), Refusal> {
+    let codes = view.office_codes().map_err(storage_refusal)?;
+    let owns_code = codes
+        .iter()
+        .any(|c| c.office_id == *sat_office_id && c.code == task.office_code);
+    if owns_code {
+        return Ok(());
+    }
+    Err(rejected_api_error(
+        ErrorCode::NotAuthorized,
+        format!(
+            "office {} cannot locally modify task {} owned by office code {}; submit edits to the owning office",
+            sat_office_id.as_str(),
+            task.key(),
+            task.office_code
+        ),
+    ))
+}
+
+fn upsert_task_repository_link(
+    task: &mut TaskRecord,
+    repository_id: &Id,
+    branch: &str,
+    integrated_commit: &Option<String>,
+) -> Result<(), Refusal> {
+    if let Some(existing) = task
+        .repositories
+        .iter_mut()
+        .find(|r| r.repository_id == *repository_id)
+    {
+        if existing.integrated_commit.is_some() && integrated_commit.is_none() {
+            return Err(rejected_api_error(
+                ErrorCode::Conflict,
+                "task branch is already recorded as integrated",
+            ));
+        }
+        existing.branch = Some(branch.to_owned());
+        if let Some(ref sha) = integrated_commit {
+            existing.integrated_commit = Some(sha.clone());
+        }
+        return Ok(());
+    }
+    task.repositories.push(TaskRepositoryRecord {
+        repository_id: repository_id.clone(),
+        branch: Some(branch.to_owned()),
+        integrated_commit: integrated_commit.clone(),
+    });
+    task.repositories
+        .sort_by(|a, b| a.repository_id.cmp(&b.repository_id));
+    Ok(())
 }
 
 impl StoreOp for RecordTaskRepoBranchOp {
@@ -181,6 +244,7 @@ impl StoreOp for RecordTaskRepoBranchOp {
             repository_id,
             branch,
             integrated_commit,
+            enforce_satellite_office_id,
         } = self;
 
         let reply = match store.submit(Some(op), false, move |uow| {
@@ -190,42 +254,19 @@ impl StoreOp for RecordTaskRepoBranchOp {
                 .task(&task_id)
                 .map_err(storage_refusal)?
                 .ok_or_else(|| {
-                    Refusal::rejected(
-                        serde_json::to_vec(&ApiError::new(
-                            ErrorCode::NotFound,
-                            format!("task `{task_id}` not found"),
-                        ))
-                        .unwrap(),
-                    )
+                    rejected_api_error(ErrorCode::NotFound, format!("task `{task_id}` not found"))
                 })?;
+            if let Some(ref sat_office_id) = enforce_satellite_office_id {
+                verify_satellite_branch_authority(uow.view(), sat_office_id, &task)?;
+            }
             let repos = uow.view().repositories().map_err(storage_refusal)?;
             if !repos.iter().any(|r| r.id == repository_id) {
-                return Err(Refusal::rejected(
-                    serde_json::to_vec(&ApiError::new(
-                        ErrorCode::NotFound,
-                        format!("repository `{repository_id}` not found"),
-                    ))
-                    .unwrap(),
+                return Err(rejected_api_error(
+                    ErrorCode::NotFound,
+                    format!("repository `{repository_id}` not found"),
                 ));
             }
-            if let Some(existing) = task
-                .repositories
-                .iter_mut()
-                .find(|r| r.repository_id == repository_id)
-            {
-                existing.branch = Some(branch.clone());
-                if let Some(ref sha) = integrated_commit {
-                    existing.integrated_commit = Some(sha.clone());
-                }
-            } else {
-                task.repositories.push(TaskRepositoryRecord {
-                    repository_id: repository_id.clone(),
-                    branch: Some(branch.clone()),
-                    integrated_commit: integrated_commit.clone(),
-                });
-                task.repositories
-                    .sort_by(|a, b| a.repository_id.cmp(&b.repository_id));
-            }
+            upsert_task_repository_link(&mut task, &repository_id, &branch, &integrated_commit)?;
             let at = format_rfc3339_ms(uow.now().0);
             task.meta.touch(&emp.id, &at);
             write_task_and_event(

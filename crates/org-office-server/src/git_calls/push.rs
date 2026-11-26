@@ -37,7 +37,11 @@ impl GitService {
             &ctx,
             params.repository.as_deref(),
         )?;
-        verify_durable_push_branch(&ctx.task, &ws)?;
+        let local_task_write = self
+            .office
+            .has_local_task_write_authority_for_code(&ctx.task.office_code)
+            .map_err(map_office_error)?;
+        verify_durable_push_branch(&ctx.task, &ws, local_task_write)?;
         if ws.admin_dir_name.is_empty() {
             return Err(ApiError::new(
                 ErrorCode::InvalidRequest,
@@ -136,31 +140,180 @@ fn select_push_workspace(
     }
 }
 
+fn is_valid_canonical_task_branch(task_key: &str, branch: &str) -> bool {
+    let expected_prefix = format!("task/{task_key}-");
+    let Some(suffix) = branch.strip_prefix(&expected_prefix) else {
+        return false;
+    };
+    !suffix.is_empty()
+        && !suffix.contains('/')
+        && !suffix.contains("..")
+        && suffix
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 fn verify_durable_push_branch(
     task: &org_office::tasks::records::TaskRecord,
     ws: &TaskWorkspaceRecord,
+    local_task_write: bool,
 ) -> Result<(), ApiError> {
-    let durable_link = task
+    if let Some(durable_link) = task
         .repositories
         .iter()
         .find(|r| r.repository_id.as_str() == ws.repository_id)
-        .ok_or_else(|| {
-            ApiError::new(
+    {
+        if durable_link.integrated_commit.is_some() {
+            return Err(ApiError::new(
                 ErrorCode::Conflict,
-                "workspace repository is not recorded on the durable task record",
-            )
-        })?;
-    if durable_link.branch.as_deref() != Some(ws.branch.as_str()) {
+                "task branch is already recorded as integrated",
+            ));
+        }
+        if durable_link.branch.as_deref() != Some(ws.branch.as_str()) {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "workspace branch does not match the recorded durable task branch",
+            ));
+        }
+        return Ok(());
+    }
+    if local_task_write {
         return Err(ApiError::new(
             ErrorCode::Conflict,
-            "workspace branch does not match the recorded durable task branch",
+            "workspace repository is not recorded on the durable task record",
         ));
     }
-    if durable_link.integrated_commit.is_some() {
+    // Non-owning offices (e.g. satellites working on HQ-owned tasks, `TASK-192`) never mutate
+    // remote-owned `task.json` locally, so no durable `task_repositories` link exists yet; enforce
+    // the canonical flat `task/<KEY>-<slug>` branch shape against the office-private record.
+    if !is_valid_canonical_task_branch(&task.key(), &ws.branch) {
         return Err(ApiError::new(
             ErrorCode::Conflict,
-            "task branch is already recorded as integrated",
+            "workspace branch does not match the canonical task branch prefix",
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use org_office::tasks::records::{TaskMeta, TaskRecord, TaskRepositoryRecord};
+    use org_proto::tasks::{TaskPriority, TaskStatus};
+    use org_store::Id;
+
+    fn sample_task(repos: Vec<TaskRepositoryRecord>) -> TaskRecord {
+        TaskRecord {
+            id: Id::parse("018bce83-1200-7000-8000-000000000001").unwrap(),
+            office_code: "A".into(),
+            number: 7,
+            team_id: Id::parse("018bce83-1200-7000-8000-000000000002").unwrap(),
+            assigned_team_id: None,
+            project_id: None,
+            task_type: "task".into(),
+            work_type: None,
+            title: "Test".into(),
+            status: TaskStatus::Todo,
+            assignee_id: None,
+            body_markdown: String::new(),
+            feature_id: None,
+            milestone_id: None,
+            priority: TaskPriority::Normal,
+            effort: None,
+            severity: None,
+            resolution: None,
+            blocked_reason: None,
+            rank_order: None,
+            labels: Vec::new(),
+            reference_files: Vec::new(),
+            modified_files: Vec::new(),
+            repositories: repos,
+            details: None,
+            meta: TaskMeta::created(
+                &Id::parse("018bce83-1200-7000-8000-000000000003").unwrap(),
+                "2026-11-26T00:00:00.000Z",
+            ),
+        }
+    }
+
+    fn sample_ws(branch: &str) -> TaskWorkspaceRecord {
+        TaskWorkspaceRecord {
+            office_id: "018bce83-1200-7000-8000-000000000099".into(),
+            employee_id: "018bce83-1200-7000-8000-000000000003".into(),
+            task_id: "018bce83-1200-7000-8000-000000000001".into(),
+            task_key: "T-A7".into(),
+            repository_id: "018bce83-1200-7000-8000-000000000010".into(),
+            repository_key: Some("organization".into()),
+            branch: branch.into(),
+            worktree_path: "/tmp/wt".into(),
+            admin_dir_name: "wt".into(),
+            base_commit: "0000000000000000000000000000000000000000".into(),
+            pushed_head: None,
+            state: "active".into(),
+        }
+    }
+
+    #[test]
+    fn verify_durable_push_branch_enforces_local_and_satellite_invariants() {
+        let repo_id = Id::parse("018bce83-1200-7000-8000-000000000010").unwrap();
+        let ws = sample_ws("task/T-A7-fix-sync");
+
+        // Local office without durable link fails closed.
+        let no_link = sample_task(Vec::new());
+        assert_eq!(
+            verify_durable_push_branch(&no_link, &ws, true)
+                .unwrap_err()
+                .code,
+            ErrorCode::Conflict
+        );
+
+        // Satellite on remote-owned task allows valid `task/<KEY>-` workspace branch.
+        assert!(verify_durable_push_branch(&no_link, &ws, false).is_ok());
+
+        // Satellite rejects any tampered, empty, hierarchical, or wrong-task branch suffix.
+        for bad in [
+            "main",
+            "v1",
+            "task/T-A7",
+            "task/T-A7-",
+            "task/T-A7-foo/bar",
+            "task/T-A7-../main",
+            "task/T-A70-other",
+            "task/T-A8-other",
+            "feature/T-A7",
+        ] {
+            assert_eq!(
+                verify_durable_push_branch(&no_link, &sample_ws(bad), false)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Conflict,
+                "expected conflict for `{bad}`"
+            );
+        }
+
+        // Integrated or mismatched durable links are always rejected even on satellites.
+        let integrated = sample_task(vec![TaskRepositoryRecord {
+            repository_id: repo_id.clone(),
+            branch: Some("task/T-A7-fix-sync".into()),
+            integrated_commit: Some("deadbeef".into()),
+        }]);
+        assert_eq!(
+            verify_durable_push_branch(&integrated, &ws, false)
+                .unwrap_err()
+                .code,
+            ErrorCode::Conflict
+        );
+
+        let mismatched = sample_task(vec![TaskRepositoryRecord {
+            repository_id: repo_id,
+            branch: Some("task/T-A7-different".into()),
+            integrated_commit: None,
+        }]);
+        assert_eq!(
+            verify_durable_push_branch(&mismatched, &ws, false)
+                .unwrap_err()
+                .code,
+            ErrorCode::Conflict
+        );
+    }
 }
