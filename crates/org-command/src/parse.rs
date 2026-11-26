@@ -7,8 +7,9 @@ use serde_json::{Map, Value};
 
 use crate::help;
 use crate::office::{Request, Sources};
+use crate::row::{common_option, Command, Field, IfMatch, Kind, Type};
 use crate::shape::{self, FieldPath};
-use crate::table::{common_option, Command, CommandTable, Field, IfMatch, Kind, Type};
+use crate::table::CommandTable;
 
 /// The default page of a list, and the largest.
 pub const DEFAULT_LIMIT: u32 = 20;
@@ -60,13 +61,16 @@ pub(crate) fn parse(
     sources: &mut dyn Sources,
 ) -> Result<Parsed, Usage> {
     let usage = |message: String, hint: String| Usage { message, hint };
+    // A shorthand is read as the command it stands for, whatever follows it.
+    let args = table.expand(args);
+    let args = args.as_ref();
     let Some(resource) = args.first() else {
         return Err(usage(
             "No command was given.".into(),
             help::resources_hint(table, program),
         ));
     };
-    if resource == "--help" {
+    if is_help(resource) {
         return Ok(Parsed::Help(help::top(table, program)));
     }
     if table.verbs(resource).is_empty() {
@@ -76,7 +80,7 @@ pub(crate) fn parse(
         ));
     }
     let verb = match args.get(1) {
-        Some(verb) if verb == "--help" => {
+        Some(verb) if is_help(verb) => {
             return Ok(Parsed::Help(help::resource(table, program, resource)))
         }
         Some(verb) => verb,
@@ -128,29 +132,27 @@ pub(crate) fn parse(
     }
 }
 
-/// Whether `--help` is written where a flag is read. The scan is tolerant: it stops at nothing,
-/// so help is found on a line that is otherwise wrong. It skips the value of every flag it
-/// knows takes one, so `--body --help` gives the body the text `--help` and is not a request
-/// for help.
+/// Whether `arg` asks for help: `--help`, or its short form `-h`.
+pub(crate) fn is_help(arg: &str) -> bool {
+    arg == "--help" || arg == "-h"
+}
+
+/// Whether `--help` (or `-h`) is written where a flag is read. The scan is tolerant: it stops
+/// at nothing, so help is found on a line that is otherwise wrong. It skips the value of every
+/// flag it knows takes one, so `--body --help` gives the body the text `--help` and is not a
+/// request for help.
 fn asks_for_help(command: &Command, rest: &[String]) -> bool {
     let mut at = 0;
     while let Some(arg) = rest.get(at) {
         at += 1;
-        if arg == "--help" {
+        if is_help(arg) {
             return true;
         }
         let Some(name) = arg.strip_prefix("--") else {
             continue;
         };
-        let takes_value = match common_option(name) {
-            Some(option) => option.value.is_some(),
-            None => command
-                .input
-                .iter()
-                .any(|field| field.flag() == name && field.is_flag() && field.ty != Type::Boolean),
-        };
         // `--name=value` is no flag's name, so nothing is skipped after it.
-        if takes_value {
+        if command.flag_takes_value(name) == Some(true) {
             at += 1;
         }
     }

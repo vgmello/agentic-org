@@ -24,6 +24,7 @@ mod failure;
 pub mod fdswap;
 pub mod federation;
 mod federation_calls;
+mod federation_link;
 mod federation_runtime;
 mod federation_stream;
 mod follow;
@@ -89,6 +90,11 @@ pub fn install_panic_hook() {
     }));
 }
 
+/// The command line the host gives the server; `--help` and `--version` the executable
+/// answers itself, before it touches a descriptor.
+pub const USAGE: &str =
+    "usage: agentic-org-office --create | --join | --office <id> | --discard <id> | --inspect-import";
+
 /// What the server was asked to do.
 #[derive(Debug, PartialEq, Eq)]
 enum Mode {
@@ -106,9 +112,7 @@ fn parse_args(args: &[String]) -> Result<Mode, &'static str> {
         [flag, id] if flag == OFFICE_FLAG => Ok(Mode::Serve(id.clone())),
         [flag, id] if flag == DISCARD_FLAG => Ok(Mode::Discard(id.clone())),
         [flag] if flag == INSPECT_IMPORT_FLAG => Ok(Mode::InspectImport),
-        _ => Err(
-            "usage: agentic-org-office --create | --join | --office <id> | --discard <id> | --inspect-import",
-        ),
+        _ => Err(USAGE),
     }
 }
 

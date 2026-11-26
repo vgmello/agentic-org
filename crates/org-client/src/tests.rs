@@ -62,7 +62,6 @@ fn ticked_reader_stops_on_a_closed_client_after_one_idle_tick() {
         events: Arc::new(Mutex::new(None)),
         next_subscription: AtomicU64::new(1),
         queued_bytes: AtomicUsize::new(0),
-        last_waiting_messages: AtomicU32::new(0),
         stream: stream.try_clone().unwrap(),
     };
     let mut polls = 0;
@@ -87,7 +86,6 @@ fn ticked_reader_repolls_a_missed_eof_and_closes_pending_calls() {
         events: Arc::new(Mutex::new(None)),
         next_subscription: AtomicU64::new(1),
         queued_bytes: AtomicUsize::new(0),
-        last_waiting_messages: AtomicU32::new(0),
         stream: stream.try_clone().unwrap(),
     };
     let polls = std::cell::Cell::new(0);
@@ -121,7 +119,6 @@ fn a_concurrent_close_does_not_finish_calls_before_the_first_shutdown_finishes()
         events: Arc::new(Mutex::new(None)),
         next_subscription: AtomicU64::new(1),
         queued_bytes: AtomicUsize::new(0),
-        last_waiting_messages: AtomicU32::new(0),
         stream,
     };
     let (entered, shutdown_started) = mpsc::channel();
@@ -545,5 +542,112 @@ fn connect_selected_office_fails_closed_on_missing_or_mismatched_office_hello() 
         Client::connect_selected_office(office_id, dir.path()),
         Err(ClientError::OfficeNotReachable)
     ));
+    server.join().unwrap();
+}
+
+#[test]
+fn concurrent_calls_receive_their_own_waiting_messages_metadata() {
+    let dir = tempfile::Builder::new()
+        .prefix("ocl-meta")
+        .tempdir()
+        .unwrap();
+    let path = dir.path().join("s.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+
+        // Read both concurrent requests before replying out of order so any shared
+        // mutable state on `Client` would race or clobber the sibling call's hint.
+        let req1: Request = frame::read_message(&mut reader).unwrap().unwrap();
+        let req2: Request = frame::read_message(&mut reader).unwrap().unwrap();
+
+        let (first_resp, second_resp) = if req1.method == "meta.alpha" {
+            (
+                Response::ok::<Hello>(req2.id, &HelloResult::host("beta", "h"))
+                    .unwrap()
+                    .with_waiting_messages(9),
+                Response::ok::<Hello>(req1.id, &HelloResult::host("alpha", "h"))
+                    .unwrap()
+                    .with_waiting_messages(3),
+            )
+        } else {
+            (
+                Response::ok::<Hello>(req1.id, &HelloResult::host("beta", "h"))
+                    .unwrap()
+                    .with_waiting_messages(9),
+                Response::ok::<Hello>(req2.id, &HelloResult::host("alpha", "h"))
+                    .unwrap()
+                    .with_waiting_messages(3),
+            )
+        };
+        frame::write_message(&mut stream, &first_resp).unwrap();
+        frame::write_message(&mut stream, &second_resp).unwrap();
+
+        // Third request: explicit `None` hint on typed `call_with_meta`.
+        let req3: Request = frame::read_message(&mut reader).unwrap().unwrap();
+        let resp3 = Response::ok::<Hello>(req3.id, &HelloResult::host("none", "h")).unwrap();
+        frame::write_message(&mut stream, &resp3).unwrap();
+
+        // Fourth request: raw zero hint on wire normalizes to `None`.
+        let req4: Request = frame::read_message(&mut reader).unwrap().unwrap();
+        let raw_zero = format!(
+            "{{\"id\":{},\"result\":{{\"ok\":true}},\"waiting_messages\":0}}\n",
+            req4.id
+        );
+        stream.write_all(raw_zero.as_bytes()).unwrap();
+    });
+
+    let client = Arc::new(Client::connect(&path).unwrap());
+    let (alpha_res, beta_res) = std::thread::scope(|scope| {
+        let c1 = Arc::clone(&client);
+        let c2 = Arc::clone(&client);
+        let alpha = scope.spawn(move || c1.call_raw_with_meta("meta.alpha", serde_json::json!({})));
+        let beta = scope.spawn(move || c2.call_raw_with_meta("meta.beta", serde_json::json!({})));
+        (
+            alpha.join().unwrap().unwrap(),
+            beta.join().unwrap().unwrap(),
+        )
+    });
+
+    assert_eq!(alpha_res.value["server_version"], "alpha");
+    assert_eq!(
+        alpha_res.meta,
+        CallMeta {
+            waiting_messages: Some(3)
+        }
+    );
+    assert_eq!(beta_res.value["server_version"], "beta");
+    assert_eq!(
+        beta_res.meta,
+        CallMeta {
+            waiting_messages: Some(9)
+        }
+    );
+
+    let typed = client
+        .call_with_meta::<Hello>(&HelloParams::default())
+        .unwrap();
+    assert_eq!(typed.value.server_version, "none");
+    assert_eq!(
+        typed.meta,
+        CallMeta {
+            waiting_messages: None
+        }
+    );
+
+    let zero = client
+        .call_raw_with_meta("meta.zero", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(zero.value["ok"], true);
+    assert_eq!(
+        zero.meta,
+        CallMeta {
+            waiting_messages: None
+        }
+    );
+
+    drop(client);
     server.join().unwrap();
 }

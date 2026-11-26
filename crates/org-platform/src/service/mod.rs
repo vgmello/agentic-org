@@ -168,6 +168,34 @@ pub trait ServiceManager: Send + Sync {
     fn status(&self, instance_id: &str) -> Result<ServiceStatus, ServiceError>;
     /// Unloads the service and removes its definition.
     fn unregister(&self, instance_id: &str) -> Result<(), ServiceError>;
+    /// The unit the instance's registered definition is an exact rendering of, read back
+    /// without changing anything (its `instance_id` is the one asked for). `Ok(None)` when
+    /// nothing is defined under the instance's name. A definition under the name that is not
+    /// exactly what this adapter writes (edited by hand, or another program's), or that the
+    /// service manager would not run as written, is a [`ServiceError::Conflict`]: neither
+    /// [`register`](Self::register) nor [`redefine`](Self::redefine) ever takes it over.
+    /// Managers that cannot read a definition back refuse.
+    fn definition(&self, instance_id: &str) -> Result<Option<Unit>, ServiceError> {
+        valid_instance_id(instance_id)?;
+        Err(ServiceError::Invalid(
+            "this service manager cannot read a definition back",
+        ))
+    }
+    /// Replaces the instance's registered definition, which must be an exact earlier
+    /// rendering of this adapter for the same instance, with `unit` (a release upgrade: the
+    /// same service with another program), and never starts the service. It is called with
+    /// the service stopped: a running service is a conflict, so a running program is never
+    /// replaced underneath. Any other definition under the name is a conflict and is left
+    /// untouched; no definition is `Invalid`. A definition that already is `unit` is
+    /// [`Registration::Unchanged`]. systemd keeps the unit enabled, reloaded and stopped;
+    /// launchd, which starts an agent when it loads it, leaves the job unloaded until the
+    /// next login or [`register`](Self::register). Managers that cannot replace refuse.
+    fn redefine(&self, unit: &Unit) -> Result<Registration, ServiceError> {
+        validate(unit)?;
+        Err(ServiceError::Invalid(
+            "this service manager cannot replace a definition",
+        ))
+    }
     /// Whether the service manager answers at all and would load a definition from this
     /// adapter's placement, asked before anything is changed. [`ServiceError::Unavailable`]
     /// where the system has none to register with; another error where it answers but
@@ -397,6 +425,11 @@ mod tests {
             assert_eq!(manager.status(&id).unwrap(), ServiceStatus::NotRegistered);
             manager.unregister(&id).unwrap();
             assert_eq!(manager.lingering(), Lingering::NotApplicable);
+            assert_eq!(manager.definition(&id).unwrap(), None);
+            assert!(matches!(
+                manager.redefine(&unit()),
+                Err(ServiceError::Invalid(_))
+            ));
             let broken = Unit {
                 program: "agentic-org".into(),
                 ..unit()
@@ -410,6 +443,7 @@ mod tests {
                 manager.stop("../x"),
                 manager.unregister("../x"),
                 manager.status("../x").map(drop),
+                manager.definition("../x").map(drop),
             ] {
                 assert!(matches!(call, Err(ServiceError::Invalid(_))));
             }

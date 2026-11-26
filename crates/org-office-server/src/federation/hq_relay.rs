@@ -13,9 +13,9 @@ use org_sync::organization::{PeerIdentity, PeerRole};
 use org_sync_proto::{write_sync_frame, Digest, OfficeId, OrgId, SyncFrame};
 use rustls::{ServerConnection, StreamOwned};
 
-use super::hq_peer::{write_sync_frame_if_peer_active, HqSessionPeer};
 use super::relay::deliver_inbound_message_checked;
 use super::{now_ms, InboundCallbacks, InboundMessage, StaticPeer};
+use crate::federation_link::hq_peer::{write_sync_frame_if_peer_active, HqSessionPeer};
 
 fn forward_hq_relay_to_satellite(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,

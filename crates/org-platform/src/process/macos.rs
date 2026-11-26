@@ -55,6 +55,11 @@ pub(super) fn harden_self() -> io::Result<()> {
     super::no_core_dumps()
 }
 
+/// The core-dump limit of this process, soft and hard, set to 0 ([`super::disable_core_dumps`]).
+pub(super) fn disable_core_dumps() -> io::Result<()> {
+    super::no_core_dumps()
+}
+
 pub(super) fn parent_pid(pid: libc::pid_t) -> io::Result<Option<libc::pid_t>> {
     let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
     let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;

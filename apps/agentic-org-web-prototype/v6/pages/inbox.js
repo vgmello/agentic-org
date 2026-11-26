@@ -1,6 +1,8 @@
 import { CH, IN, KIND, M, P, TEAMS, WORK_DISCUSSIONS } from "../data.js";
 import { itemActionsV4 } from "./home.js";
-import { findWorkItem, fitTextarea, workCommentPrefix, workHref } from "./work.js";
+import { boardOrigin } from "../shell/board-return.js";
+import { chatTitle } from "./chat-model.js";
+import { boardItemHref, findWorkItem, fitTextarea, workCommentPrefix } from "./work.js";
 import { route } from "../shell/router.js";
 import { getNotifications, getRunningJobs, markNotificationRead, unreadNotificationsCount } from "../shell/topbar-utils.js";
 import { S } from "../state.js";
@@ -192,6 +194,8 @@ function pageInboxNotifications(selId) {
 }
 function pageInbox(sel, sub) {
   if (sel === "notifications") S.inboxKind = "notifications";
+  /* A link to a specific request (e.g. from a Work card) opens it even if Notifications was last open */
+  else if (sel && S.inboxKind === "notifications" && IN.some((i) => i.id === sel)) S.inboxKind = "all";
   if (S.inboxKind === "notifications") return pageInboxNotifications(sel === "notifications" ? sub : null);
   const items = inboxItems(), item = inboxSelection(items, sel);
   const queueLabel = INBOX_MORE.includes(S.inboxKind)
@@ -311,9 +315,10 @@ ${esc(detailCommentDrafts.get(inboxCommentPrefix(it.id)) || "")}</textarea>
 
 function inboxDetail(it) {
   const m = M[it.from], k = KIND[it.kind], project = P[it.proj];
-  const channel = CH[project.channel], work = it.task && findWorkItem(it.task).item;
+  const channel = CH[project.channel], work = it.task && findWorkItem(it.task).item, origin = boardOrigin();
   return `<article class="triage-document" aria-labelledby="triage-detail-title">
     <a class="triage-back btn ghost sm" href="#/inbox">${ic("chev-left", "ic16")}Back to Inbox</a>
+    ${origin ? `<a class="triage-board-return btn outline sm" href="${esc(origin)}">${ic("chev-left", "ic16")}Back to work board</a>` : ""}
     <header class="triage-intro">
       <p class="triage-from">
         <span>From:</span>
@@ -334,10 +339,10 @@ function inboxDetail(it) {
       <dl class="triage-fields">
         <div><dt>Kind</dt><dd>${esc(k.label)} · ${esc(it.sub)}</dd></div>
         <div><dt>Project</dt><dd>${plink(it.proj)}</dd></div>
-        ${it.task ? `<div><dt>Work item</dt><dd><a class="alink" href="${esc(workHref({ item: it.task }))}">${esc(it.task)}${work ? " · " + esc(work.title) : ""}</a>${inboxCopy("Copy", it.task, it.task)}</dd></div>` : ""}
+        ${it.task ? `<div><dt>Work item</dt><dd><a class="alink" href="${esc(boardItemHref(origin, it.task))}">${esc(it.task)}${work ? " · " + esc(work.title) : ""}</a>${inboxCopy("Copy", it.task, it.task)}</dd></div>` : ""}
         ${it.expires ? `<div><dt>Expires</dt><dd${it.handled ? "" : ' class="triage-expiry"'}>${esc(it.expires)}</dd></div>` : ""}
         <div><dt>Clears</dt><dd>${esc(it.clears || k.clears)}</dd></div>
-        ${channel ? `<div><dt>Conversation</dt><dd><a class="alink" href="#/chat/${project.channel}">#${esc(channel.name)}</a>${inboxCopy("Copy", "#" + channel.name, "#" + channel.name)}</dd></div>` : ""}
+        ${inboxConversation(it, project, channel)}
         ${it.src ? `<div><dt>Related page</dt><dd><a class="alink" href="${esc(it.src.href)}">${esc(it.src.label)}</a></dd></div>` : ""}
       </dl>
     </section>
@@ -348,6 +353,20 @@ function inboxDetail(it) {
     </div>
     ${inboxActivity(it)}
   </article>`;
+}
+/* Where the ask was raised (it.origin) when known, with a deep link to that message; else the project's channel. */
+function inboxConversation(it, project, channel) {
+  const src = it.origin && CH[it.origin.ch];
+  if (!src) return channel ? `<div><dt>Conversation</dt><dd><a class="alink" href="#/chat/${project.channel}">#${esc(channel.name)}</a>${inboxCopy("Copy", "#" + channel.name, "#" + channel.name)}</dd></div>` : "";
+  const title = src.kind === "dm" ? "Direct message with " + chatTitle(src) : chatTitle(src);
+  return `<div><dt>Conversation</dt><dd><a class="alink" href="#/chat/${esc(it.origin.ch)}">${esc(title)}</a>
+    · <a class="alink" href="#/chat/${esc(it.origin.ch)}/${esc(it.origin.msg)}">Open source message</a></dd></div>${inboxRelated(it)}`;
+}
+/* A message the ask came out of (e.g. an agent-to-agent exchange the owner can read), kept as context. */
+function inboxRelated(it) {
+  const ch = it.related && CH[it.related.ch], m = ch && ch.msgs.find((x) => x.id === it.related.msg);
+  if (!m) return "";
+  return `<div><dt>Related</dt><dd><a class="alink" href="#/chat/${esc(it.related.ch)}/${esc(m.id)}">${esc(M[m.who].name)}'s message in ${esc(chatTitle(ch))}</a></dd></div>`;
 }
 function refreshInboxSearch() {
   if (S.inboxKind === "notifications") {
@@ -371,7 +390,7 @@ function refreshInboxSearch() {
   document.getElementById("triage-reading").innerHTML = item ? inboxDetail(item) : inboxEmptyDetail();
 }
 function resetInboxSelection() {
-  history.replaceState(null, "", "#/inbox");
+  history.replaceState(history.state, "", "#/inbox");
   S.lastRoute = location.hash;
   S.confirmDeny = null;
   S.replying = null;

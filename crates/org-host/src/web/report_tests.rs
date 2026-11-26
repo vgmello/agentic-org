@@ -3,7 +3,7 @@
 use org_host_control::web::{LandlockEnforcement, LandlockStatus, WebReadyForSecrets};
 use org_platform::confinement::Enforcement;
 
-use super::reported;
+use super::running::reported;
 
 fn ready(landlock: Option<(u32, LandlockEnforcement)>) -> WebReadyForSecrets {
     WebReadyForSecrets {

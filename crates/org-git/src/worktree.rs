@@ -194,7 +194,7 @@ pub fn create_worktree(
         return Err(GitError::Conflict("worktree path already exists".into()));
     }
     if let Some(parent) = worktree_dir.parent() {
-        fs::create_dir_all(parent).map_err(|e| GitError::io(parent, e))?;
+        crate::create_git_dirs(parent, shared_group)?;
     }
     let wt_str = worktree_dir
         .to_str()
@@ -652,7 +652,7 @@ pub fn create_checkpoint_bundle(
         ));
     }
     if let Some(parent) = bundle_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| GitError::io(parent, e))?;
+        crate::create_git_dirs(parent, shared_group)?;
     }
     runner.run_checked(
         Some(cache_dir),

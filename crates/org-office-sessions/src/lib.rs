@@ -1,43 +1,53 @@
 //! # org-office-sessions: production agent session runner, supervision, and CLI enrollment
 //!
-//! Composes `org-agent-runtime`, `org-agent-runtime-claude`, `org-supervise`, `org-pki::wrap`,
-//! `org-platform::process`, `org-office`, and `org-agent-cli::table` to implement:
+//! Composes `org-agent-runtime` and its adapters, `org-supervise`, `org-pki::wrap`,
+//! `org-platform::process`, and `org-office` (the `agent-os` command table is injected by the
+//! office binary, see [`install_command_catalogue`]) to implement:
 //! - Headless supervised agent sessions in private `0700` agent homes (`TASK-42` / C3)
 //! - Permission presets, default-on sandbox, and escalation policy (`ADR-0032` §3 / `ENROLL-7`)
-//! - Standing 7-part agent instructions & generated `agent-os` command catalogue (`doc-27` / `FC-171`)
+//! - Standing agent instructions in static-to-volatile prefix order, the generated `agent-os`
+//!   command catalogue, fenced turn objectives and the command drift guard (`doc-27` / `FC-171`)
 //! - Office-owned sub-agents and cross-turn background task tracking & reaping (`ADR-0025`)
 //! - Per-run cryptographic `AGENT_OS_SESSION_TOKEN` & kernel descendant verification (`CLI-12`, `SUB-3`)
+//! - External (BYOA) agent leases, Ed25519 challenge-response and RAM-only fast tokens under a
+//!   single-active-lease invariant (`TASK-137`)
 //! - Restart continuation & stall watchdog (`ADR-0030` / `LIVE-9..13`)
 //! - Browser-driven provider CLI enrollment & wrapped credential custody (`ADR-0032` / `ENROLL-1..6`)
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 pub mod binding;
-pub(crate) mod bwrap_isolation;
 pub mod credentials;
+mod employee_locks;
+mod external;
 mod host_auth;
 pub mod instructions;
 mod lifecycle;
 pub mod manager;
 pub mod preset;
+mod provenance;
 mod pump;
 pub mod recovery;
+pub mod redact;
 pub mod router;
 pub mod runtime_registry;
 pub mod subagents;
 pub mod subscription_usage;
-mod subscription_usage_parse;
 pub mod transcript;
 pub mod wake;
 
-pub use binding::{AcceptedCommandRecord, ActiveRunBinding, BindingRejection, RunBindingRegistry};
+pub use binding::{
+    AcceptedCommandRecord, ActiveRunBinding, BindingMode, BindingRejection, RunBindingRegistry,
+};
 pub use credentials::{
     CliEnrollmentDriver, CredentialMetadata, CredentialVault, EnrollmentDriver, EnrollmentManager,
     EnrollmentOutcome, EnrollmentPrompt, EnrollmentVaultError,
 };
+pub use external::{ExternalLeaseRecord, EXTERNAL_LEASE_VERSION};
 pub use instructions::{
-    assemble_standing_instructions, compose_turn_objective, verify_command_references,
-    InstructionInput, TurnTrigger, BUILTIN_INSTRUCTIONS_MAX_BYTES, SAME_USER_ISOLATION_NOTICE,
+    assemble_standing_instructions, compose_turn_objective, install_command_catalogue,
+    verify_command_references, CommandCatalogue, InstructionInput, StandingInstructions,
+    TurnTrigger, BUILTIN_INSTRUCTIONS_MAX_BYTES, SAME_USER_ISOLATION_NOTICE,
 };
 pub use lifecycle::spawn_wake_retry_loop;
 pub use manager::{SessionManager, SessionManagerConfig};
@@ -73,10 +83,4 @@ pub use wake::{
 };
 
 #[cfg(test)]
-mod pool_tests;
-#[cfg(test)]
-mod subscription_usage_tests;
-#[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod wake_tests;

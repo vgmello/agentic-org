@@ -16,12 +16,12 @@ use org_sync_proto::{FrameCodecError, FrameReader, OfficeId, OrgId, SyncFrame};
 use rustls::{ServerConnection, StreamOwned};
 
 use super::hq_dispatch::dispatch_hq_frame;
-use super::hq_peer::{
+use super::relay::sync_native_message_relays;
+use super::{now_ms, InboundCallbacks};
+use crate::federation_link::hq_peer::{
     check_not_revoked_fail_closed, push_hq_org_events_if_behind, read_hq_frame_nonblocking,
     send_hq_org_events_after, write_sync_frame_if_peer_active, HqSessionPeer,
 };
-use super::relay::sync_native_message_relays;
-use super::{now_ms, InboundCallbacks};
 
 fn flush_durable_relays_to_satellite(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,
@@ -211,6 +211,12 @@ fn drain_hq_inbound_frames(
                             return false;
                         };
                         state.peer_org_cursor = Some(last_sent);
+                        // Only the satellite's persistent sync session follows the organization
+                        // stream; proxied session RPCs prefer it (`TASK-174` AC #1). Marked only
+                        // once the session said Hello and its gap was answered.
+                        if state.hello_done {
+                            peer_handle.mark_persistent();
+                        }
                     }
                     other => {
                         let is_hello = matches!(other, SyncFrame::Hello { .. });
@@ -252,6 +258,11 @@ fn hq_session_flush_outbound(
 ) -> bool {
     if !state.hello_done || state.reader.has_partial_frame() {
         return true;
+    }
+    if *wake_triggered || peer.office.has_pending_journal_pipeline() {
+        // A committed write another office waits on: confirm it now rather than after the
+        // store's group-flush interval (`TASK-140`); this never blocks the session.
+        peer.office.request_store_flush();
     }
     let sent_before = state.sent_in_session.len();
     let cursor_before = state.peer_org_cursor;

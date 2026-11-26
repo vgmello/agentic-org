@@ -2,11 +2,40 @@
 //! one through the system's real admission: the fake web process of
 //! `examples/fake_web.rs`, or the real `agentic-org-web` built beside these tests. The
 //! tests of a whole host starting the real web process are in `web_process_tests.rs`.
+use super::control::{failed, ControlEof};
+use super::image::{admission, gated, https_gate, unconfinable, Configuration, Image};
+use super::running::{
+    check_ack, ended_cause, fatal_receive, line, send_handoff, still_running, transfer_pair,
+    web_env, Rendezvous, Running, WAIT,
+};
+use super::stderr::{
+    captured_stderr, confined_by, line_reason, refusal_reason, renewal_kept_text, with_refusal,
+    Ending, RenewalKept, Stderr, CAPTURED_STDERR, EXIT_GRACE, LANDLOCK_NOT_APPLIED_PREFIX,
+    REASON_BYTES, REFUSAL_PREFIX, RENEWAL_KEPT_LOGGED, RENEWAL_KEPT_PREFIX, STDERR_GRACE,
+    STDERR_KEPT,
+};
+use super::supervise::{supervise, Serving, Timing, MAX_STARTS, SERVING_DEADLINE};
 use super::*;
-use crate::service::listener::Connection;
+use crate::cloexec::SPAWN_LOCK;
+use crate::server_check::ServerCheck;
+use crate::service::listener::{Connection, Handler, WebConnection};
+use crate::sync::lock;
 use crate::test_programs::{fake_web, image_identity, sibling_program};
-use org_platform_host::admission::ImageIdentity;
+use org_host_control::listen::ListenConfig;
+use org_host_control::web::{WebHandoff, WEB_HANDOFF_FDS};
+use org_host_control::WebState;
+use org_platform_host::admission::{Child, ChildEnv, ImageIdentity, ImageRefusal};
+use std::ffi::OsStr;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::os::fd::OwnedFd;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::net::{UnixDatagram, UnixStream};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use std::{fs, io, thread};
 
 struct NoOps;
 impl Handler for NoOps {

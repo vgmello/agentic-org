@@ -15,9 +15,21 @@
 
 use org_proto::work::{EventRef, ItemKind, ItemStatus, LinkKind, Resolution, WorkEventKind};
 
-use crate::engine::{Ctx, Draft, Origin};
-use crate::fail::Fail;
+use crate::common::not_deleted;
+use crate::decision::{Ctx, Draft, Origin};
+use crate::fail::{invalid, Fail};
 use crate::model::StoredItem;
+
+/// A bug a task may fix (`fixes`, C8): a bug of the task's project that isn't deleted.
+pub(crate) fn check_fixable(project_id: &str, bug: &StoredItem) -> Result<(), Fail> {
+    if bug.kind != ItemKind::Bug {
+        return Err(invalid("a task fixes a bug, and the item isn't one"));
+    }
+    if bug.project_id.as_deref() != Some(project_id) {
+        return Err(invalid("a task fixes only bugs of its own project"));
+    }
+    not_deleted(bug)
+}
 
 /// What happened to a fix task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

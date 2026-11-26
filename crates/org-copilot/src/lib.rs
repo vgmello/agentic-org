@@ -20,7 +20,7 @@
 //!
 //! Depends on `serde` and `serde_json` only. Nothing depends on a runtime or on the office.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 mod builtin;
 mod contract;
@@ -28,6 +28,7 @@ mod fake;
 mod feature;
 mod limits;
 pub mod prompt;
+mod prompt_text;
 mod runtime;
 mod schema;
 mod secrets;

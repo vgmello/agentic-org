@@ -3,30 +3,20 @@
 //! browser-to-office organization routing and `web-api-v1` §9 authorization rechecks.
 
 use hyper::{http::request::Parts, Method, StatusCode};
-use org_host_control::{
-    browser::{
-        BrowserCliApprovalDecide, BrowserCliApprovalDecideParams, BrowserOfficeRestart,
-        BrowserOfficeRestartParams,
-    },
-    organization::{self as host_org, BrowserAuth},
-    HostOpResult, LinkToken,
-};
 use org_proto::web::{
     self as gateway,
-    org_mutations::{classify_org_reply, OrgMutation, OrgOperation, OrgReplyClassification},
-    organizations, MutationOutcome, OfficeList, OfficeRestartResult, OfficeView, OperationId,
-    OperationKind, OperationLookup, ResumeCursor, Scope, SnapshotResponse, WebError, WebErrorCode,
+    org_mutations::{classify_org_reply, OrgOperation, OrgReplyClassification},
+    organizations, MutationOutcome, OperationId, OperationKind, OperationLookup, Scope,
+    WebErrorCode,
 };
 
 use super::{
-    bad_input, failure, invalid, mutation, not_found, result, signed_out, unavailable, Call,
-    CallerAuth, Route, SessionApi,
+    bad_input, failure, invalid, not_found, result, unavailable, Call, CallerAuth, Route,
+    SessionApi,
 };
 use crate::{
-    host::Failure,
     office::OfficeFailure,
     service::{ApiReply, PreparedCall},
-    sse::HubEvent,
 };
 
 mod office_calls;
@@ -37,7 +27,6 @@ pub(super) use office_calls::{execute_office_restart, execute_org_offices};
 pub(super) use org_calls::{
     execute_cli_approval_decide, execute_org_mutation, execute_org_operation, execute_org_snapshot,
 };
-use org_calls::{finish_named_org_mutation, mutation_setup_failure};
 pub(super) use project_calls::{
     execute_project_create, execute_project_inspect, execute_projects_list,
 };
@@ -320,20 +309,6 @@ pub(super) fn route_org_action(resource: &str, action: &str) -> Option<OrgOperat
         .map(|(_, _, op)| *op)
 }
 
-fn find_hq_office(list: host_org::ListResult, org_id: &str) -> Result<String, Failure> {
-    let org = list
-        .organizations
-        .into_iter()
-        .find(|org| org.id == org_id)
-        .ok_or(Failure::NotFound)?;
-    org.offices
-        .iter()
-        .find(|office| office.role == org_proto::OfficeRole::Hq)
-        .or_else(|| org.offices.first())
-        .map(|office| office.id.clone())
-        .ok_or(Failure::Unavailable)
-}
-
 fn map_read_office_error(error: OfficeFailure, forbidden_message: &'static str) -> ApiReply {
     match error {
         OfficeFailure::BeforeDispatch(e) => failure(e),
@@ -382,34 +357,4 @@ fn classify_stored_outcome(op_id: OperationId, outcome: org_proto::OperationOutc
         }
         _ => unavailable(),
     }
-}
-
-pub(super) async fn resolve_hq_office(
-    api: &SessionApi,
-    pair: CallerAuth,
-    org_id: &str,
-) -> Result<String, Failure> {
-    api.validate_async(pair).await?;
-    let list = api
-        .host
-        .request_async::<host_org::List>(&host_org::ListParams {
-            auth: api.auth(&pair),
-        })
-        .await?;
-    find_hq_office(list, org_id)
-}
-
-pub(super) async fn revalidate_and_resolve_hq(
-    api: &SessionApi,
-    pair: CallerAuth,
-    org_id: &str,
-) -> Result<String, Failure> {
-    api.revalidate_session_async(pair).await?;
-    let list = api
-        .host
-        .request_async::<host_org::List>(&host_org::ListParams {
-            auth: api.auth(&pair),
-        })
-        .await?;
-    find_hq_office(list, org_id)
 }

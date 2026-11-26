@@ -1,4 +1,11 @@
 use super::*;
+use crate::host_secrets::{HostSecrets, Name, Value};
+use crate::hostdb::accounts::Account;
+use crate::hostdb::provisioning::Reservation;
+use crate::hostdb::HostDb;
+use crate::keys::OfficeSecretsKeys;
+use crate::offices::Offices;
+use crate::writer::Writers;
 use crate::{
     accounts::identity::LoginKey,
     broadcast::Broadcast,
@@ -7,8 +14,12 @@ use crate::{
     supervisor::{Supervisor, SupervisorConfig},
     Timings,
 };
-use org_proto::selected_bootstrap::PlanV1;
-use std::os::unix::fs::PermissionsExt;
+use org_host_control::HostOpResult;
+use org_proto::selected_bootstrap::{PlanV1, PreparedV1};
+use sha2::{Digest, Sha256};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 fn plan() -> PlanV1 {
     PlanV1 {
@@ -521,7 +532,12 @@ fn pending_recovery_survives_registry_loss_before_writer_reservation() {
     assert!(actual.expose() == frozen);
     let original: Pending = serde_json::from_slice(&frozen).unwrap();
     assert_eq!(original.reservation.prepared, reservation.prepared);
-    assert!(pending_recovery(&custody, &reservation).unwrap().expose() == original.code.expose());
+    assert!(
+        crate::hostdb::pending_recovery::pending_recovery(&custody, &reservation)
+            .unwrap()
+            .expose()
+            == original.code.expose()
+    );
     assert_eq!(
         std::fs::read(root.join("retained-registry.db")).unwrap(),
         original_registry

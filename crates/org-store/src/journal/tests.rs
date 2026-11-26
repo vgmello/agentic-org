@@ -1,4 +1,7 @@
+use std::fs;
+
 use super::*;
+use crate::sequences::MAX_POSITION;
 use crate::testkit::{id, identity, DiskOp, FakeCustody, Faults, Rng, Target};
 
 struct Fixture {
@@ -1062,4 +1065,95 @@ fn no_header_key_or_value_names_a_table_a_column_or_an_engine() {
             assert!(!lower.contains(term), "{text:?} names {term:?}");
         }
     }
+}
+
+/// Every byte of every file under `dir`, to prove a look changed none.
+fn snapshot_tree(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut out = BTreeMap::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(folder) = stack.pop() {
+        for entry in fs::read_dir(&folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                out.insert(path.clone(), fs::read(&path).unwrap());
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn an_inspection_reports_the_head_and_a_probe_and_changes_nothing() {
+    let f = fixture();
+    let journal = f.create();
+    let entries = f.fill(&journal, 5);
+    let head = journal.head();
+    let dir = journal.dir().to_path_buf();
+    drop(journal);
+    let before = snapshot_tree(&dir);
+
+    let seen = Journal::inspect(&dir, Some(3)).unwrap();
+    assert_eq!(seen.identity, f.identity);
+    assert_eq!(seen.head, head);
+    assert_eq!(seen.base.ordinal, 0);
+    assert_eq!(seen.torn, None);
+    assert_eq!(seen.probe, Some(entries[2].sha256));
+    assert_eq!(Journal::inspect(&dir, Some(9)).unwrap().probe, None);
+    assert_eq!(snapshot_tree(&dir), before);
+}
+
+#[test]
+fn an_inspection_reports_a_torn_tail_without_cutting_it_and_refuses_a_broken_chain() {
+    let f = fixture();
+    let journal = f.create();
+    let entries = f.fill(&journal, 4);
+    let dir = journal.dir().to_path_buf();
+    drop(journal);
+    let segment = f.segment(1);
+    let mut bytes = fs::read(&segment).unwrap();
+    let cut = ends(&entries)[2] + 3;
+    bytes.truncate(cut);
+    fs::write(&segment, &bytes).unwrap();
+
+    let seen = Journal::inspect(&dir, None).unwrap();
+    assert_eq!(seen.head.ordinal, 3);
+    assert_eq!(seen.torn, Some(4));
+    assert_eq!(fs::read(&segment).unwrap().len(), cut);
+
+    // A whole, correctly hashed entry that does not continue the chain is corruption.
+    let other = fixture();
+    let journal = other.create();
+    let entries = other.fill(&journal, 2);
+    let dir = journal.dir().to_path_buf();
+    drop(journal);
+    let mut bytes = fs::read(other.segment(1)).unwrap();
+    bytes.extend_from_slice(entries[1].stored());
+    fs::write(other.segment(1), &bytes).unwrap();
+    assert!(matches!(
+        Journal::inspect(&dir, None),
+        Err(JournalError::Corrupt { ordinal: 3, .. })
+    ));
+}
+
+#[test]
+fn an_inspection_refuses_a_folder_that_is_not_its_anchors_incarnation_or_has_no_anchor() {
+    let f = fixture();
+    let journal = f.create();
+    f.fill(&journal, 1);
+    let dir = journal.dir().to_path_buf();
+    drop(journal);
+    let renamed = dir.with_file_name(id(99).as_str());
+    fs::rename(&dir, &renamed).unwrap();
+    assert_eq!(
+        Journal::inspect(&renamed, None),
+        Err(JournalError::IdentityMismatch)
+    );
+    let empty = renamed.with_file_name(id(98).as_str());
+    fs::create_dir_all(&empty).unwrap();
+    assert_eq!(
+        Journal::inspect(&empty, None),
+        Err(JournalError::MissingPredecessor { ordinal: 0 })
+    );
 }

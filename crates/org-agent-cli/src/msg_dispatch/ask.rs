@@ -1,6 +1,18 @@
 //! Asks: asking, withdrawing, answering and accepting, with their outcome fields.
 
-use super::*;
+use org_command::{Answer, Refusal, Request, Status};
+use org_proto::ask::{
+    AskStatus, ChatAnswerResult, ChatAskResult, MsgWithdrawResult, MAX_SHORT_HOLD_MS,
+};
+use org_proto::ErrorCode;
+use serde_json::{Map, Value};
+
+use super::ask_input::questions;
+use super::{
+    decode_err, insert_delivery, insert_opt, message_id_for, opt_bool, opt_non_neg_u64, opt_str,
+    reject_dry_run, require_str, with_ack, AskOutcomeRef,
+};
+use crate::transport::OfficeTransport;
 
 pub(super) fn insert_ask_outcome_fields(obj: &mut Map<String, Value>, outcome: AskOutcomeRef<'_>) {
     obj.insert(
@@ -32,24 +44,31 @@ pub(super) fn insert_ask_outcome_fields(obj: &mut Map<String, Value>, outcome: A
     insert_opt(obj, "required_notice", outcome.required_notice);
 }
 
+/// `meta.status` of an ask's outcome, so `meta` and `data.status` never disagree: an answered
+/// ask completed; one still open after the short hold is `waiting`; a required one the agent
+/// must wind down for is `suspended`; a timeout and a withdrawal say so.
+pub(super) fn ask_meta_status(status: AskStatus) -> Status {
+    match status {
+        AskStatus::Answered => Status::Completed,
+        AskStatus::TimedOut => Status::TimedOut,
+        AskStatus::RequiredPending => Status::Suspended,
+        AskStatus::Withdrawn => Status::Withdrawn,
+        _ => Status::Waiting,
+    }
+}
+
 pub(super) fn write_msg_ask<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
     reject_dry_run(request)?;
     let to = require_str(request, "to")?;
-    let Some(questions) = request.input.get("questions") else {
-        return Err(Refusal::new(
-            ErrorCode::InvalidRequest,
-            "Missing required `questions` array.",
-            "Pass `--json` with 1..=8 typed questions.",
-        ));
-    };
+    let questions = questions(request)?;
     let id = message_id_for(request)?;
     let mut params = Map::new();
     params.insert("id".into(), Value::String(id));
     params.insert("to".into(), Value::String(to.to_owned()));
-    params.insert("questions".into(), questions.clone());
+    params.insert("questions".into(), questions);
     insert_opt(&mut params, "body", opt_str(request, "body"));
     insert_opt(&mut params, "subject", opt_str(request, "subject"));
     insert_opt(&mut params, "blocks", opt_str(request, "blocks"));
@@ -100,7 +119,10 @@ pub(super) fn write_msg_ask<T: OfficeTransport + ?Sized>(
         "watch_not_started_reason",
         res.watch_not_started_reason.as_deref(),
     );
-    Ok(with_ack(Answer::completed(Value::Object(obj)), request))
+    insert_delivery(&mut obj, &res.recipient_presence, &res.woke_agents);
+    let mut answer = with_ack(Answer::completed(Value::Object(obj)), request);
+    answer.status = ask_meta_status(res.status);
+    Ok(answer)
 }
 
 pub(super) fn write_msg_withdraw<T: OfficeTransport + ?Sized>(

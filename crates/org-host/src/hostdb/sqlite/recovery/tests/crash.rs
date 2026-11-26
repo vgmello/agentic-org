@@ -165,7 +165,7 @@ fn sigkill_reopens_all_eight_delivery_ack_and_custody_boundaries_without_new_act
                 recovered, observed,
                 "restart cannot acknowledge an unconfirmed delivery"
             );
-            assert!(crate::provisioning::pending_recovery(&stored, &r).is_ok());
+            assert!(crate::hostdb::pending_recovery::pending_recovery(&stored, &r).is_ok());
         } else {
             assert_eq!(recovered.state, State::Acknowledged);
             assert_eq!(recovered.ordinal, 1);

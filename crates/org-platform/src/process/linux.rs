@@ -51,6 +51,12 @@ pub(super) fn harden_self() -> io::Result<()> {
     Ok(())
 }
 
+/// The core-dump limit of this process, soft and hard, set to 0 ([`super::disable_core_dumps`]):
+/// the process stays dumpable otherwise, unlike [`harden_self`].
+pub(super) fn disable_core_dumps() -> io::Result<()> {
+    super::no_core_dumps()
+}
+
 pub(super) fn parent_pid(pid: libc::pid_t) -> io::Result<Option<libc::pid_t>> {
     let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
         Ok(stat) => stat,

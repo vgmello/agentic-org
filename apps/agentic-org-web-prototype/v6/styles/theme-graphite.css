@@ -155,7 +155,7 @@ html[data-theme^="graphite"] {
     backdrop-filter: none;
   }
   & .overlay { background: rgb(0 0 0 / .58); backdrop-filter: none; }
-  & :is(.card, .bcard, .c-entry, .k-doc, .grp-h) { background: var(--graphite-panel); }
+  & :is(.card, .c-entry, .k-doc, .grp-h) { background: var(--graphite-panel); }
   & :is(.work-group-title, .grp-h) { background: #1E2021; }
   & :is(.rows > li.linked, .ibx):hover { background: var(--hover); }
   & .ibx[aria-current="true"] { background: var(--graphite-active); box-shadow: inset 2px 0 var(--tone-accent); }

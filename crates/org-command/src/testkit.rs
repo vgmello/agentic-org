@@ -98,6 +98,10 @@ impl KeySource for StubKeys {
     }
 }
 
+mod example;
+
+pub use example::shell_words;
+
 const PROGRAM: &str = "agent-os";
 
 /// Runs one command line against a fresh stub office, with fresh [`StubKeys`].
@@ -470,6 +474,7 @@ pub fn check_answers(table: &CommandTable, make: OfficeFactory) {
             );
         }
         assert!(office.calls.is_empty(), "{name}: --help called the office");
+        example::assert_help_ends_with_example(row, &name, &output.stdout);
     }
 }
 
@@ -534,6 +539,7 @@ pub fn check_schemas(table: &CommandTable, make: OfficeFactory) {
             Some(&input),
             "{name}: the parser fills the example"
         );
+        example::assert_example_parses(table, row, &name, &input, make);
         let recorded = json_envelope(&output, &format!("{name}: the recorded output"));
         if let Err(problem) = validate_schema(&data["output"], &recorded["data"]) {
             panic!("{name}: the recorded output does not validate against the output schema: {problem}");
@@ -701,22 +707,73 @@ pub fn schema_snapshot(table: &CommandTable) -> String {
     out
 }
 
-/// CLI-11, first half: the launch catalogue is generated from the table, has one line for each
-/// command and is at most 4 KiB.
+/// CLI-11, first half: the launch catalogue is generated from the table, grouped by resource,
+/// and at most 4 KiB. It opens with its heading, then has exactly one line for each resource, in
+/// the table's order, listing every verb of that resource once, in name order: no command is
+/// missing, none is listed twice and nothing is listed that the table does not hold.
 pub fn check_catalogue(table: &CommandTable) {
     let catalogue = table.catalogue();
-    let lines: Vec<&str> = catalogue.lines().collect();
+    let Some(groups) = catalogue.strip_prefix(crate::help::CATALOGUE_HEADING) else {
+        panic!("the catalogue does not open with its heading:\n{catalogue}");
+    };
+    let mut lines: Vec<&str> = groups.lines().collect();
+    if let Some(shorthands) = crate::help::shorthands_line(table) {
+        assert_eq!(
+            lines.pop(),
+            Some(shorthands.as_str()),
+            "the catalogue ends with the shorthands"
+        );
+        for alias in table.aliases() {
+            let words: Vec<String> = alias.words.iter().map(|w| (*w).to_owned()).collect();
+            // A shorthand never hides what the table holds: a word that is a resource, or a
+            // resource and one of its verbs.
+            let hides = match alias.words {
+                [word] => !table.verbs(word).is_empty(),
+                [resource, verb, ..] => table.find(resource, verb).is_some(),
+                [] => true,
+            };
+            assert!(
+                !hides,
+                "shorthand `{}` hides a command of the table",
+                alias.words.join(" ")
+            );
+            let expanded = table.expand(&words);
+            let target = match expanded.as_ref() {
+                [resource, verb, ..] => table.find(resource, verb).is_some(),
+                [resource] => !table.verbs(resource).is_empty(),
+                [] => false,
+            };
+            assert!(
+                target,
+                "shorthand `{}` names no command",
+                alias.words.join(" ")
+            );
+        }
+    }
+    let resources = table.resources();
     assert_eq!(
         lines.len(),
-        table.rows().len(),
-        "the catalogue has one line for each command"
+        resources.len(),
+        "the catalogue has one line for each resource:\n{catalogue}"
     );
-    for (line, row) in lines.iter().zip(table.rows()) {
-        assert!(
-            line.starts_with(&format!("{}: ", row.name())),
-            "catalogue line `{line}`"
+    let mut listed = 0usize;
+    for (line, resource) in lines.iter().zip(&resources) {
+        let Some(verbs) = line.strip_prefix(&format!("{resource}: ")) else {
+            panic!("catalogue line `{line}` is not the line of `{resource}`");
+        };
+        let verbs: Vec<&str> = verbs.split(", ").collect();
+        let expected: Vec<&str> = table.verbs(resource).iter().map(|row| row.verb).collect();
+        assert_eq!(
+            verbs, expected,
+            "the verbs of `{resource}` in the catalogue"
         );
+        listed += verbs.len();
     }
+    assert_eq!(
+        listed,
+        table.rows().len(),
+        "the catalogue lists every command once"
+    );
     assert!(
         catalogue.len() <= CATALOGUE_LIMIT,
         "the launch catalogue is {} bytes; the limit is {CATALOGUE_LIMIT}",

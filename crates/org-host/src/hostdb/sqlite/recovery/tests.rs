@@ -222,7 +222,7 @@ fn durable_show_redelivery_ack_intent_deletion_and_exact_retry() {
         .unwrap();
     assert_eq!(second.ordinal, 2);
     assert_eq!(second.redelivery_count, 1);
-    assert!(crate::provisioning::pending_recovery(
+    assert!(crate::hostdb::pending_recovery::pending_recovery(
         &*f.custody,
         &db.recovery_source(&f.public.organization_id).unwrap()
     )
@@ -406,7 +406,7 @@ fn malformed_pending_code_and_duplicate_completed_organization_fail_closed() {
     let r = f.db.recovery_source(&f.r.prepared.organization_id).unwrap();
     let name = Name::parse(&r.recovery_handle).unwrap();
     f.custody.put(&name,&Value::new(serde_json::to_vec(&serde_json::json!({"version":1,"reservation":f.r,"code":"not-a-recovery-code"})).unwrap()).unwrap()).unwrap();
-    assert!(crate::provisioning::pending_recovery(&*f.custody, &r).is_err());
+    assert!(crate::hostdb::pending_recovery::pending_recovery(&*f.custody, &r).is_err());
     let db = f.db.connection.lock().unwrap();
     let second = crate::ids::uuid_v7().unwrap();
     db.execute("INSERT INTO selected_provisioning SELECT ?1,account,fingerprint,'different-name','different-slug',prepared,owner_member,?2,key_fingerprint,linked,expires_at_ms FROM selected_provisioning WHERE operation_id=?3",params![second,format!("recovery.{second}"),r.operation_id]).unwrap();

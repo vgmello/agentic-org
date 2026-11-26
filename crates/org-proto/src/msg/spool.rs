@@ -5,7 +5,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
+use super::message::MessagePriority;
+use super::{BodySize, Meta, MetaSize};
 
 /// A `msg.send` written to the office's spool by `agent-os` while its office server is
 /// unreachable (ADR-0003 §3.5), and ingested by the office when it starts. Only

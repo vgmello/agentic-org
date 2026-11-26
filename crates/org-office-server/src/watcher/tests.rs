@@ -254,6 +254,7 @@ impl WatcherFixture {
                     tools_config: Vec::new(),
                     system_prompt_markdown: Some("Be helpful.".into()),
                     body: None,
+                    effort: None,
                 },
                 reason: "test".into(),
             },

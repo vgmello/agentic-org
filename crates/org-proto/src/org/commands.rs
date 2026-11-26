@@ -2,8 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
-use crate::calls::Call;
+use super::projects::RepoSpec;
+use super::structure::{AgentProfile, AgentRuntime, AgentStatus, Position, RunMode, Schedule};
+use crate::call::Call;
 
 /// What happened to an organization command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -19,6 +19,7 @@ use crate::private_notes::{
     non_author_mutation_error, parse_receipt_error_code, BeginPublishCmd, CreateNoteCmd,
     DeleteNoteCmd, EditNoteCmd, PrivateNoteRecord, PrivateNotesStore, PublishAttempt,
 };
+use crate::store::layout;
 
 /// Verbatim DDL for the isolated private task notes database (`doc-79`, `doc-93`).
 const PRIVATE_NOTES_DDL: &str =
@@ -34,7 +35,7 @@ impl SqlitePrivateNotesStore {
     /// Opens (or initializes) HQ-authoritative `<durable-root>/private/task-notes.db` with
     /// owner-only directory and file permissions (`doc-79`, `ADR-0016`, `PN-04`).
     pub fn open(durable_root: &Path) -> Result<Self, OfficeError> {
-        let private_folder = durable_root.join("private");
+        let private_folder = layout::private_notes(durable_root);
         private_dir_synced(durable_root, &private_folder).map_err(OfficeError::storage)?;
 
         let db_path =

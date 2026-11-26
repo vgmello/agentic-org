@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::*;
+use super::{TaskPriority, TaskStatus, WorkType};
 
 /// Optional structured bug/request/definition-of-done payload (`doc-77` `task_details`).
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]

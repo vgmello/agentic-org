@@ -13,7 +13,7 @@
 
 use std::{
     collections::{BTreeMap, VecDeque},
-    fmt, fs, io,
+    io,
     ops::Range,
     path::{Path, PathBuf},
     sync::{
@@ -25,21 +25,22 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    change::{Ack, Actor, Bytes, DurablePath, Id, Outcome, Sha256, Timestamp, TEMP_PREFIX},
-    custody::{JournalHead, OfficeIdentity, WriterAuthority},
-    disk::{write_all, Disk, DiskFile, RealDisk},
-    engine::Cursor,
-    files::{FileOp, FileVersion},
-    sequences::{successor, FeedPosition, HighWaters, Stream, MAX_POSITION},
+    change::{Ack, Actor, Bytes, DurablePath, Id, Outcome, Sha256, Timestamp},
+    custody::{JournalHead, OfficeIdentity},
+    disk::{Disk, DiskFile},
+    error::JournalError,
+    files::FileOp,
+    sequences::{successor, FeedPosition, HighWaters},
 };
 
 mod append;
 mod entry;
+mod inspect;
 mod open;
 mod segment;
 
 pub use entry::positions_between;
-use segment::{ends_at_or_below, read_small, scan, write_small, Bad, Repair};
+pub use inspect::Inspection;
 
 /// The largest framed entry.
 pub const MAX_ENTRY_BYTES: usize = 16 * 1024 * 1024;
@@ -47,100 +48,6 @@ pub const MAX_ENTRY_BYTES: usize = 16 * 1024 * 1024;
 pub const SEGMENT_BYTES: u64 = 64 * 1024 * 1024;
 const FORMAT: &str = "acceptance-journal/1";
 const TRAILER: usize = 32;
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum JournalError {
-    Io {
-        path: String,
-        action: &'static str,
-        message: String,
-    },
-    /// A full flush failed. Never retried in this process.
-    Flush {
-        path: String,
-        message: String,
-    },
-    /// A bad entry at or below the head the host confirmed, or an entry that is whole but
-    /// does not continue the chain. Never truncated.
-    Corrupt {
-        ordinal: u64,
-        reason: String,
-    },
-    /// The journal ends before the head the host confirmed.
-    Behind {
-        journal: u64,
-        custody: u64,
-    },
-    /// The entry at the confirmed ordinal is not the one the host confirmed.
-    Fork {
-        ordinal: u64,
-    },
-    /// The entries before this ordinal are neither present nor covered by the checkpoint,
-    /// or the entry at this ordinal, which the host confirmed, is no longer held.
-    MissingPredecessor {
-        ordinal: u64,
-    },
-    UnknownFormat(String),
-    /// The journal belongs to another office, incarnation or writer.
-    IdentityMismatch,
-    /// `create` found a journal already there.
-    Exists,
-    Custody(String),
-    Exhausted(&'static str),
-    TooLarge {
-        bytes: usize,
-    },
-    /// The append failed or was short. The segment is back at its last good entry.
-    Append(String),
-    /// A failed append could not be truncated away. The journal accepts nothing more.
-    Broken {
-        path: String,
-        message: String,
-    },
-    Internal(String),
-}
-
-impl fmt::Display for JournalError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io {
-                path,
-                action,
-                message,
-            } => write!(f, "journal: {action} {path}: {message}"),
-            Self::Flush { path, message } => write!(f, "journal: flush {path}: {message}"),
-            Self::Corrupt { ordinal, reason } => {
-                write!(f, "journal entry {ordinal} is corrupt: {reason}")
-            }
-            Self::Behind { journal, custody } => write!(
-                f,
-                "the journal ends at {journal}, behind the confirmed head {custody}"
-            ),
-            Self::Fork { ordinal } => {
-                write!(
-                    f,
-                    "journal entry {ordinal} is not the one the host confirmed"
-                )
-            }
-            Self::MissingPredecessor { ordinal } => {
-                write!(f, "the journal entries before {ordinal} are missing")
-            }
-            Self::UnknownFormat(format) => write!(f, "unknown journal format {format:?}"),
-            Self::IdentityMismatch => f.write_str("the journal belongs to another writer"),
-            Self::Exists => f.write_str("a journal already exists here"),
-            Self::Custody(message) => write!(f, "writer custody: {message}"),
-            Self::Exhausted(what) => write!(f, "{what} exhausted"),
-            Self::TooLarge { bytes } => write!(f, "a journal entry of {bytes} bytes is too large"),
-            Self::Append(message) => write!(f, "journal append failed: {message}"),
-            Self::Broken { path, message } => {
-                write!(f, "journal segment {path} could not be repaired: {message}")
-            }
-            Self::Internal(message) => write!(f, "journal: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for JournalError {}
 
 fn io_error(path: &Path, action: &'static str, error: &io::Error) -> JournalError {
     JournalError::Io {

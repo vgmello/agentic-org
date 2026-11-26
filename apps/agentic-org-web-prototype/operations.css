@@ -24,6 +24,14 @@
     --page-header-base-image: var(--ocean-header);
   }
 
+  /* Report Night: the same corner light as Graphite under the Agentic Org mark */
+  html[data-theme="report-dark"] {
+    --sidebar-top-light: rgb(255 255 255 / .12);
+    --sidebar-light-rx: 145%;
+    --sidebar-light-y: -24px;
+    --page-header-light: rgb(255 255 255 / .05);
+  }
+
   html[data-theme="report"] {
     --sidebar-top-light: rgb(255 255 255 / .96);
     --page-header-light: rgb(136 159 188 / .065);
@@ -43,10 +51,21 @@
         transparent 78%);
   }
 
-  html[data-interior-page]:not([data-theme="cozy"]) #main :is(.queue-header, .section-header, :is(.has-page-toolbar, .has-page-nav):not(.queue-headline, :where(.section-header) > *)) {
+  /* Home has no header band, so the same light falls on its top-left corner */
+  html:not([data-interior-page]):not([data-theme="cozy"]) #main > .hb {
     background-image:
-      linear-gradient(to right, var(--page-header-light), transparent 28rem),
+      radial-gradient(ellipse 46rem 16rem at 0 0, var(--page-header-light), var(--page-header-light) 35%, transparent 100%),
+      radial-gradient(ellipse 30rem 10rem at 0 0, var(--page-header-light), transparent 100%);
+    background-repeat: no-repeat;
+  }
+
+  html[data-interior-page]:not([data-theme="cozy"]) #main :is(.queue-header, .section-header, :is(.has-page-toolbar, .has-page-nav):not(.queue-headline, :where(.section-header) > *)) {
+    /* Same top-left light as Home, so every page header shares it */
+    background-image:
+      radial-gradient(ellipse 46rem 16rem at 0 0, var(--page-header-light), var(--page-header-light) 35%, transparent 100%),
+      radial-gradient(ellipse 30rem 10rem at 0 0, var(--page-header-light), transparent 100%),
       var(--page-header-base-image, none);
+    background-repeat: no-repeat;
   }
 }
 
@@ -347,7 +366,7 @@ html[data-theme="report"] {
   align-self: center;
   margin-block: 6px 8px;
 }
-.work-toolbar #work-new-task { margin-inline-start: auto; }
+.work-toolbar .work-tb-end { display: flex; align-items: center; gap: 8px; margin-inline-start: auto; }
 .work-toolbar > * + :is(.work-layout-toggle, .queue-controls) { position: relative; }
 .work-toolbar > * + :is(.work-layout-toggle, .queue-controls)::before {
   content: "";
@@ -2165,7 +2184,8 @@ html[data-theme="report"] .tess-return-btn.is-ready:hover { background: var(--to
 }
 
 /* Work board */
-.work-header + #work-results:has(> .board) {
+/* Global and project Work share one height-bounded board: it scrolls on both axes under sticky lane headers */
+#work-results:has(> .board) {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -2179,7 +2199,7 @@ html[data-theme="report"] .tess-return-btn.is-ready:hover { background: var(--to
 }
 .board:focus-visible { outline-offset: -2px; }
 .board-columns {
-  --board-column-width: 15.5rem;
+  --board-column-width: 13rem;
   --board-column-gap: 18px;
   display: grid;
   grid-template-columns: repeat(var(--board-column-count), minmax(0, 1fr));
@@ -2188,47 +2208,6 @@ html[data-theme="report"] .tess-return-btn.is-ready:hover { background: var(--to
     (var(--board-column-count) - 1) * var(--board-column-gap) + 2 * var(--gutter));
   padding: 12px var(--gutter) 24px;
 }
-.bcol { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.bcol > h3 {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 4px 10px;
-  border-block-end: 1px solid var(--line2);
-  font-size: var(--fs-base);
-  font-weight: 600;
-}
-.bcard {
-  display: grid;
-  grid-template-rows: 2lh 1.25rem 1.5rem;
-  gap: 6px;
-  min-width: 0;
-  padding: 12px 14px;
-  border: 1px solid var(--line2);
-  border-radius: var(--radius-lg);
-  font-size: var(--item-title-size);
-  line-height: 1.35;
-}
-.board .bcard[data-attention] { border-color: var(--tone-warn-ring); }
-.bcard > .t {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  font-weight: 600;
-}
-.board-card-meta, .board-card-footer, .board-assignee {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: var(--gray-300);
-  font-size: var(--fs-sm);
-}
-.board-card-meta > .mono { flex: none; font-size: var(--fs-sm); }
-.board-card-footer { justify-content: space-between; }
-.board-project, .board-owner-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .section-header {
   position: relative;
@@ -2463,6 +2442,7 @@ html[data-theme^="report"] .triage-queue {
   line-height: 1.6;
 }
 .triage-document .triage-back { display: none; }
+.triage-document .triage-board-return { align-self: start; }
 .triage-intro { display: grid; gap: 8px; }
 .triage-from {
   display: flex;
@@ -2873,22 +2853,6 @@ html[data-theme^="graphite"]:has(.triage-workspace) {
 .thread-title h2 { font-size: var(--section-title-size); }
 .thread-title .muted { font-size: var(--fs-sm); }
 .chat-context .alink { color: var(--gray-300); }
-.chat-jump {
-  justify-content: flex-start;
-  width: 100%;
-  margin-block-end: 8px;
-  color: var(--white);
-}
-.chat-jump kbd { margin-inline-start: auto; color: var(--gray-400); }
-.chat-directory summary {
-  padding: 0 8px;
-  color: var(--gray-300);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  cursor: pointer;
-}
-.chat-directory h2:not(:first-child) { margin-block-start: 12px; }
-.chat-directory a:focus-visible { outline-offset: -2px; }
 .chat .msg > .av { align-self: start; }
 .chat .compose .field {
   flex: 1;
@@ -2897,27 +2861,6 @@ html[data-theme^="graphite"]:has(.triage-workspace) {
   max-height: min(12rem, 35dvh);
   resize: none;
   field-sizing: content;
-}
-
-@media (min-width: 960px) {
-  .chat-directory summary { display: none; }
-}
-@media (max-width: 959px) {
-  .chat:not(.withthread) { min-height: 100dvh; grid-template-rows: auto auto minmax(min-content, 1fr); }
-  .chat .chlist {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
-    gap: 8px;
-    padding: 6px var(--gutter);
-    border-block-end: 1px solid var(--line);
-  }
-  .chat-directory { grid-column: 2; }
-  .chat-directory summary { line-height: var(--control-height); }
-  .chat .chlist:has(.chat-directory[open]) { grid-template-columns: minmax(0, 1fr); }
-  .chat-directory[open] { grid-column: 1; }
-  .chat-jump { margin-block-end: 0; }
-  .chat-jump kbd { margin-inline-start: 2px; }
 }
 
 /* Activity command center */
@@ -3124,6 +3067,10 @@ html[data-assembly-dividers] .assembly-table tbody tr:not(.assembly-milestone) +
   background: var(--tone-accent-soft);
   border-block: 1px solid var(--line2);
 }
+/* Classic and Report Night: the purple accent tint fought the table; milestone rows stay neutral */
+html:is([data-theme="classic"], [data-theme="report-dark"]) .assembly-table .assembly-milestone th { color: var(--white); background: var(--hover); }
+html:is([data-theme="classic"], [data-theme="report-dark"]) .assembly-milestone .alink { color: inherit; text-decoration: none; }
+html:is([data-theme="classic"], [data-theme="report-dark"]) .assembly-milestone .alink:hover { text-decoration: underline; }
 .assembly-milestone th > div { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .assembly-progress { display: grid; justify-items: start; gap: 2px; color: var(--gray-400); font-size: var(--fs-xs); white-space: nowrap; }
 .assembly-milestone .assembly-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-weight: 400; white-space: normal; }
@@ -3372,129 +3319,6 @@ html[data-theme="report"] .assembly-release {
 .activity-triage:focus { outline: 2px solid var(--tone-accent); outline-offset: 1px; }
 .activity-timeline .runlog, .activity-triage { max-width: calc(100% - 32px); }
 
-:is(.project-insights, .team-overview) {
-  container: project-insights / inline-size;
-  display: grid;
-  gap: 14px;
-  min-width: 0;
-  padding: 18px var(--gutter) 32px;
-  color: var(--white);
-}
-.insights-header,
-.insight-card-head {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: start;
-  gap: 8px 14px;
-}
-.insights-header h2 { font-size: 1.25rem; font-weight: 600; }
-.insights-header p,
-.insight-card-head p { margin-block-start: 3px; color: var(--gray-400); font-size: var(--fs-sm); }
-.insights-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
-.insight-select { display: grid; gap: 3px; color: var(--gray-300); font-size: var(--fs-xs); font-weight: 600; }
-.project-insights :is(.insight-select .field, .insights-controls .btn, .insight-card-head .btn) {
-  min-height: var(--control-height);
-  color: var(--white);
-}
-.project-insights .insight-select .field { padding-inline: 10px; background: var(--hover); }
-.insight-kpis,
-.insights-grid { display: grid; gap: 12px; min-width: 0; }
-.insight-kpis { grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr)); }
-.insights-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
-/* An odd last card spans the row so the grid never leaves a hole */
-.insights-grid > :last-child:nth-child(odd) { grid-column: 1 / -1; }
-.insight-kpis > div,
-.insight-card,
-.insight-actions > a {
-  min-width: 0;
-  padding: 14px;
-  border: 1px solid var(--line2);
-  border-radius: var(--radius-md);
-  background: var(--hover);
-}
-.insight-kpis dt { color: var(--gray-300); font-size: var(--fs-sm); }
-.insight-kpis dd { margin-block-start: 3px; font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; }
-.insight-kpis .insight-kpi-note { color: var(--gray-400); font-size: var(--fs-xs); font-weight: 500; }
-.insights-section-title { margin-block-start: 7px; font-size: var(--fs-md); font-weight: 600; }
-.insight-card { display: grid; align-content: start; gap: 12px; }
-.insight-card-head h3 { font-size: var(--fs-md); font-weight: 600; }
-.insight-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.insight-actions > a { flex: 1 1 260px; display: flex; align-items: center; gap: 10px; padding-block: 8px; font-size: var(--fs-sm); }
-.insight-actions > a > svg:first-child { color: var(--tone-accent-ink); }
-.insight-actions > a > svg:last-child { margin-inline-start: auto; }
-.insight-actions > a:hover { background: var(--line2); }
-.insight-actions small { display: block; color: var(--gray-400); font-size: var(--fs-xs); }
-.insight-link { color: var(--gray-300); text-decoration: none; font-weight: 500; }
-.insight-link:hover { color: var(--white); text-decoration: underline; text-underline-offset: 3px; }
-.insight-point-value { font-variant-numeric: tabular-nums; }
-.insight-plot,
-.insight-series,
-.insight-gates { display: grid; gap: 8px; min-width: 0; }
-.insight-series { gap: 3px; }
-.insight-plot li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
-  align-items: center;
-  gap: 4px 10px;
-  min-width: 0;
-  font-size: var(--fs-sm);
-}
-.insight-point-label { color: var(--gray-300); overflow-wrap: anywhere; }
-.insight-point {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(5.5rem, max-content);
-  align-items: center;
-  gap: 5px;
-}
-.insight-point-value { justify-self: end; }
-.insight-bar {
-  width: var(--insight-value);
-  height: 6px;
-  border-radius: 2px;
-  background: var(--insight-series-color, var(--tone-accent));
-  forced-color-adjust: none;
-}
-:is(.project-insights, .team-overview) [data-series="1"] { --insight-series-color: var(--gray-400); }
-.project-insights [data-series="2"] { --insight-series-color: var(--tone-warn-ink); }
-.project-insights [aria-labelledby="insight-readiness-title"] [data-series="0"] { --insight-series-color: var(--tone-ok-ink); }
-.project-insights [aria-labelledby="insight-readiness-title"] [data-series="1"] { --insight-series-color: var(--gray-400); }
-.insight-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--gray-300); font-size: var(--fs-xs); }
-.insight-legend li::before {
-  content: "";
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-inline-end: 5px;
-  border-radius: 2px;
-  background: var(--insight-series-color, var(--tone-accent));
-  forced-color-adjust: none;
-}
-.insight-empty { color: var(--gray-400); font-size: var(--fs-base); }
-.insight-table-scroll { max-width: 100%; overflow-x: auto; }
-.insight-table-scroll table { width: 100%; border-collapse: collapse; text-align: start; font-size: var(--fs-sm); }
-.insight-table-scroll :is(th, td) { padding: 7px 5px; border-block-end: 1px solid var(--line); }
-.insight-table-scroll td { font-variant-numeric: tabular-nums; }
-.insight-table-scroll thead { color: var(--gray-400); }
-.insight-table-scroll :is(th, td):not(:first-child) { text-align: end; }
-.insight-records .insight-table-scroll :is(th, td) { padding-inline: 8px; text-align: start; white-space: nowrap; }
-.insight-records .insight-table-scroll :is(th, td):nth-last-child(-n+2) { text-align: end; }
-.insight-cap { color: var(--gray-300); font-size: var(--fs-sm); }
-.insight-cap .assembly-progress-bar { display: block; width: 100%; margin-block-start: 6px; }
-.insight-gates { gap: 0; }
-.insight-gates li {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 4px 12px;
-  padding-block: 6px;
-  border-block-start: 1px solid var(--line);
-  font-size: var(--fs-sm);
-}
-.insight-gates [data-gate-state="pending"] { color: var(--tone-warn-ink); }
-.insight-gates [data-gate-state="blocked"] { color: var(--tone-bad-ink); }
-.insight-gates [data-gate-state="cleared"] { color: var(--tone-ok-ink); }
-.insight-trend { display: none; }
 
 .team-overview-intro,
 .team-overview-projects li > div:first-child,
@@ -3511,7 +3335,6 @@ html[data-theme="report"] .assembly-release {
 .team-overview-events time { color: var(--gray-400); font-size: var(--fs-sm); }
 .team-overview .insights-grid { align-items: stretch; }
 .team-overview .insight-card-head > .insight-link { font-size: var(--fs-sm); }
-.team-overview .insight-point { grid-template-columns: minmax(0, 1fr) minmax(1.25rem, max-content); }
 .team-overview .insight-table-scroll :is(th, td) { overflow-wrap: anywhere; }
 .team-overview .insight-table-scroll th:first-child { text-align: start; }
 .team-overview .insight-table-scroll tbody th { font-weight: 500; }
@@ -3523,71 +3346,223 @@ html[data-theme="report"] .assembly-release {
 .team-overview-events li > span { flex: 1; min-width: min(100%, 15rem); }
 .team-roster-title { padding: 16px var(--gutter) 0; font-size: 1rem; font-weight: 600; }
 
-@container project-insights (min-width: 1040px) {
-  .insight-trend-card .insight-plot { display: none; }
-  .insight-trend {
-    position: relative;
-    display: grid;
-    grid-template-columns: repeat(var(--insight-points), minmax(0, 1fr));
-    min-height: 138px;
-    text-align: center;
-    --trend-height: 102px;
-  }
-  .insight-trend::before,
-  .insight-trend::after { content: ""; position: absolute; inset: 0 0 auto; height: var(--trend-height); pointer-events: none; }
-  .insight-trend::before { content: ""; border-block-end: 1px solid var(--line2); }
-  .insight-trend::after { background: var(--tone-accent); clip-path: var(--insight-trace); }
-  .insight-trend li { display: flex; justify-content: center; padding-block-start: calc(var(--trend-height) + 5px); }
-  .insight-trend-date { color: var(--gray-300); font-size: var(--fs-xs); }
-  .insight-trend-value {
-    position: absolute;
-    z-index: 1;
-    inset-inline-start: var(--insight-x);
-    top: calc(var(--trend-height) * var(--insight-y));
-    translate: -50% calc(-100% - 6px);
-    white-space: nowrap;
-    font-size: var(--fs-xs);
-    font-variant-numeric: tabular-nums;
-  }
-  .insight-trend-value::after {
-    position: absolute;
-    content: "";
-    inset: calc(100% + 3px) auto auto 50%;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    translate: -50%;
-    background: var(--tone-accent);
-  }
-  .insight-columns { grid-template-columns: repeat(var(--insight-points), minmax(0, 1fr)); }
-  .insight-columns li {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 100px auto;
-    align-items: start;
-    text-align: center;
-  }
-  .insight-columns .insight-series {
-    grid-row: 1;
-    display: flex;
-    justify-content: center;
-    height: 100%;
-    border-block-end: 1px solid var(--line2);
-  }
-  .insight-columns .insight-point {
-    display: flex;
-    flex: 1;
-    max-width: 55px;
-    flex-direction: column-reverse;
-    gap: 2px;
-    font-size: var(--fs-xs);
-  }
-  .insight-columns .insight-bar { flex: none; width: 70%; height: calc(.79 * var(--insight-value)); }
-}
-@container project-insights (max-width: 660px) {
-  .insights-grid { grid-template-columns: minmax(0, 1fr); }
-}
 @media (max-width: 620px) {
   :is(.assembly-summary, .assembly-release) { --summary-block-padding: 10px; }
   .assembly-legend { padding: 10px var(--gutter); }
   .assembly-release-gates { margin-inline-start: 0; }
 }
+
+/* Work toolbar rows follow the space the content has. DOM order is the visual and tab order at every width:
+   views, layout, search/filter/display, then Calendar and New task. Labels give way before items wrap. */
+@container queue-header (max-width: 61rem) {
+  .work-toolbar .work-cal-btn > span { display: none; }
+}
+@media (max-width: 639px) {
+  /* Phones: one control row under the views; names stay in each control's accessible name */
+  .work-toolbar { column-gap: 8px; }
+  .work-toolbar .work-cal-btn > span { display: none; }
+  .work-toolbar .menu-textbtn { padding-inline: 8px; }
+  .work-toolbar .work-layout-toggle .queue-tab { padding-inline: 10px; }
+  .work-toolbar .work-layout-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+@container queue-header (max-width: 26rem) {
+  .work-toolbar .work-new-word { display: none; }
+}
+@container work-subbar (max-width: 26rem) {
+  .work-toolbar .work-new-word { display: none; }
+}
+/* Column jump: only when lanes overflow the board. Named chips when they all fit on one row, a picker otherwise. */
+.board-lanes { display: none; }
+.board-lanes[data-overflow] { display: flex; flex: none; align-items: center; gap: 10px; min-width: 0; padding: 8px var(--gutter) 0; }
+.board-lanes-label { flex: none; font-size: var(--fs-xs); font-weight: 600; color: var(--gray-300); }
+.board-lane-chips { display: flex; flex: 1 1 auto; gap: 6px; min-width: 0; overflow: hidden; }
+.board-lane-chips button { flex: none; min-height: 32px; padding: 0 12px; border-radius: 999px; font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; color: var(--gray-300); box-shadow: inset 0 0 0 1px var(--line2); }
+.board-lane-chips button:hover { color: var(--white); background: var(--hover); }
+.board-lane-chips button[data-in-view] { color: var(--white); box-shadow: inset 0 0 0 1px var(--gray-500); }
+.board-lane-chips .cnt { color: inherit; font-weight: 500; }
+.board-lane-pick { display: none; position: relative; flex: 1 1 auto; min-width: 0; max-width: 22rem; }
+.board-lanes[data-fit="picker"] .board-lane-chips { display: none; }
+.board-lanes[data-fit="picker"] .board-lane-pick { display: block; }
+.board-lane-pick select.field { appearance: none; width: 100%; min-height: 40px; padding-inline-end: 36px; font-size: var(--fs-sm); font-weight: 600; text-overflow: ellipsis; }
+.board-lane-pick > .ic { position: absolute; inset-inline-end: 12px; top: 50%; translate: 0 -50%; pointer-events: none; color: var(--gray-400); }
+@media (max-width: 639px) {
+  .board-lane-chips button, .board-lane-pick select.field { min-height: 44px; }
+}
+.menu-textbtn { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 600; color: var(--gray-300); }
+.menu-textbtn:hover, .menu-textbtn[aria-expanded="true"] { color: var(--white); }
+.menu-textbtn[data-active] { color: var(--white); }
+.menu-textbtn-count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--tone-accent-soft); color: var(--tone-accent-ink); font-size: var(--fs-xs); display: inline-grid; place-items: center; }
+
+.board-lane-chips button[aria-current="true"] { color: var(--white); background: var(--tone-accent-soft); box-shadow: inset 0 0 0 1px var(--tone-accent-ring); }
+
+/* Board menus (several requests, Done history) open in the top layer, placed and clamped by popover-menu.js,
+   so the board's scroller and the cards' stacking contexts never clip them */
+.menu.board-pop-menu { position: fixed; inset: auto; margin: 0; border: 0; overflow-y: auto; color: inherit; }
+/* Several requests on one card: the badge opens a menu that lists each of them, soonest expiry first */
+.board-need-wrap { position: relative; z-index: 1; display: inline-block; max-width: 100%; }
+.board-need-wrap > .board-need { cursor: pointer; }
+.board-need-menu { min-width: 0; width: max-content; max-width: min(22rem, calc(100vw - 16px)); }
+.board-need-menu a { display: grid; gap: 2px; padding: 8px 12px; color: var(--white); text-decoration: none; white-space: normal; }
+.board-need-menu a:hover, .board-need-menu a:focus-visible { background: var(--hover); outline-offset: -2px; }
+.board-need-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: var(--fs-xs); font-weight: 600; color: var(--tone-warn-ink); }
+.board-need-exp { display: inline-flex; align-items: center; gap: 3px; font-weight: 500; color: var(--gray-300); }
+.board-need-what { font-size: var(--fs-sm); line-height: 1.35; }
+/* Empty lanes and zero results say why and offer the way back */
+.bcol-empty { display: grid; justify-items: start; gap: 8px; }
+.bcol-empty > p, .work-empty > p { margin: 0; }
+.work-empty { display: grid; justify-items: center; gap: 12px; }
+
+/* Touch and phones: menu items in board menus are 44px targets (card icons get theirs in board.css) */
+@media (max-width: 639px), (pointer: coarse) {
+  .board-pop-menu :is(a, button) { min-height: 44px; }
+}
+
+/* ── Work board, review round 6 ───────────────────────────────────────────
+   Selectors are scoped to the board and toolbar (not bare utility classes) so they win whatever order the
+   stylesheets are bundled in. */
+
+/* Display ▾ with the column mode as secondary text; Filter keeps its label on phones */
+.work-toolbar .menu-textbtn > .menu-textbtn-sub { font-weight: 500; color: var(--gray-400); }
+.work-toolbar .menu-textbtn > .menu-textbtn-chev { margin-inline-start: -2px; color: var(--gray-400); }
+@media (max-width: 420px) {
+  .work-toolbar .menu-textbtn { gap: 4px; }
+  .work-toolbar .menu-textbtn > .menu-textbtn-sub { max-width: 6.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+/* Calendar overflows into Display when the toolbar would otherwise need a third row */
+.work-toolbar .queue-controls .menu .work-cal-overflow { display: none; }
+@container queue-header (max-width: 23.5rem) {
+  .work-toolbar .work-tb-end > .work-cal-btn { display: none; }
+  .work-toolbar .queue-controls .menu hr.work-cal-overflow { display: block; }
+  .work-toolbar .queue-controls .menu a.work-cal-overflow {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 36px;
+    border-radius: max(4px, calc(var(--radius-md) - 2px)); color: var(--white); font-size: var(--fs-sm); text-decoration: none;
+  }
+  .work-toolbar .queue-controls .menu a.work-cal-overflow:is(:hover, :focus-visible) { background: var(--hover); outline-offset: -2px; }
+  .work-toolbar .work-layout-toggle .queue-tab { padding-inline: 8px; }
+  .work-toolbar { column-gap: 6px; }
+  /* 320px: views + layout on one row, search/Filter/Display/New on the next; text triggers drop their icons */
+  .work-toolbar .primary-tab-row > .queue-tabs { gap: 2px; }
+  .work-toolbar .primary-tab-row .queue-tab { padding-inline: 5px; }
+  .work-toolbar .queue-controls .menu-textbtn > .ic:first-child { display: none; }
+}
+/* "New task" says "New" before the toolbar would wrap */
+@container queue-header (max-width: 27rem) {
+  .work-toolbar .work-new-word { display: none; }
+}
+.work-empty .work-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+
+
+/* Phones: the selected lane takes the full content width with no peek of the next one; swipe snaps lane to lane
+   and the picker names them */
+.board { container: work-board / inline-size; }
+@media (max-width: 639px) {
+  .board { scroll-snap-type: x mandatory; }
+  .board .board-columns { --board-column-width: calc(100cqi - 2 * var(--gutter)); --board-column-gap: calc(var(--gutter) * 2); }
+  .board .bcol { scroll-snap-align: start; scroll-snap-stop: always; }
+  .board-lanes[data-overflow] .board-lane-chips { display: none; }
+  .board-lanes[data-overflow] .board-lane-pick { display: block; max-width: none; }
+}
+
+/* A committed column jump lands on the lane heading */
+.board .bcol-title:focus { outline: none; }
+.board .bcol-title:focus-visible { outline: 2px solid var(--tone-accent-ink); outline-offset: 2px; border-radius: 4px; }
+
+
+/* ── Work board, review round 7 ───────────────────────────────────────────
+   Scoped to the board and toolbar, so they win whatever order the stylesheets are bundled in. */
+
+/* One filter summary above the board: how many cards show, what filters them, and the one Clear filters */
+#work-results > .board-filterbar {
+  display: flex; flex: none; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px;
+  padding: 8px var(--gutter) 0; font-size: var(--fs-sm); color: var(--gray-300);
+}
+#work-results > .board-filterbar > p { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+#work-results > .board-filterbar strong { font-weight: 600; color: var(--white); }
+
+
+
+/* ── Work board, review round 8 ─────────────────────────────────────────── */
+
+/* Filter and Display always keep their words. A current value ("Display  Stages", "Filter  Fixed") is secondary text
+   only where it fits (work.js measures it at 420px and below); otherwise it is left to the menu, the accessible name
+   and the results summary. */
+.work-toolbar[data-values="hidden"] .queue-controls .menu-textbtn > .menu-textbtn-sub { display: none; }
+
+/* Phones and touch: each List / Board button is a 44 × 44 target */
+@media (max-width: 639px), (pointer: coarse) {
+  .work-toolbar .work-layout-toggle .queue-tab { min-width: 44px; min-height: 44px; justify-content: center; }
+}
+
+/* Results summary: count, column mode and filters on the start side; reveal and Clear filters on the end side */
+#work-results > .board-filterbar > .board-summary-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+
+/* ── Work board, review round 9 ───────────────────────────────────────────
+   Scoped to the board, list rows and toolbar so they win whatever order the stylesheets are bundled in. */
+
+/* Intermediate widths: lanes keep a readable width (about 260px) and overflow sooner, with the column jump.
+   Phones keep their own full-width lanes. */
+@media (min-width: 640px) {
+  .board .board-columns { --board-column-width: 16.25rem; }
+}
+
+.work-row .work-hold-tag {
+  display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 6px; padding: 1px 7px;
+  border-radius: 999px; border: 1px solid var(--line2); color: var(--gray-300);
+  font-size: var(--fs-xs); font-weight: 600; line-height: 1.2; vertical-align: middle;
+}
+/* The List's inferred priority bars are fainter, as on the Board */
+.work-row .work-priority-mark.is-inferred, .work-panel .work-priority-mark.is-inferred, .work-detail-links .work-priority-mark.is-inferred { opacity: .55; }
+.work-row .work-severity { color: var(--gray-300); }
+
+/* Results summary: parts separated by a small dot */
+#work-results > .board-filterbar .bsum-part:not(:first-child)::before {
+  content: ""; display: inline-block; width: 2px; height: 2px; margin-inline-end: 8px; border-radius: 99px;
+  background: var(--gray-400); vertical-align: middle;
+}
+/* The lane picker's label names the column mode while the toolbar hides it ("Stages"), else says "Columns" */
+.board-lanes .board-lanes-mode { display: none; }
+body:has(.work-toolbar[data-values="hidden"]) .board-lanes .board-lanes-word { display: none; }
+body:has(.work-toolbar[data-values="hidden"]) .board-lanes .board-lanes-mode { display: inline; }
+/* Narrow headers: the headline keeps the open count; Needs you's count is on its tab already */
+@container queue-header (max-width: 27rem) {
+  #main .work-header .queue-count .work-head-needs { display: none; }
+}
+
+/* 320px: two toolbar rows. New follows the views in the DOM, so it shares their row; layout, search, Filter and
+   Display take the second. Calendar has moved into Display, so its empty end group leaves the flow. No CSS order. */
+@container queue-header (max-width: 23.5rem) {
+  .queue-header .work-toolbar > .work-tb-end { display: none; }
+  .work-toolbar #work-new-task { padding-inline: 10px; gap: 4px; }
+}
+@container work-subbar (max-width: 23.5rem) {
+  .work-toolbar #work-new-task { padding-inline: 10px; gap: 4px; }
+  /* Same compact controls as the Work page: tighter views and layout, text triggers without their icons */
+  .work-subbar-header .work-toolbar { column-gap: 6px; }
+  .project-header ~ .work-subbar-header .work-toolbar .primary-tab-row > .queue-tabs .queue-tab,
+  .work-subbar-header .work-toolbar .primary-tab-row > .queue-tabs .queue-tab { padding-inline: 5px; min-width: 44px; justify-content: center; }
+  .work-subbar-header .work-toolbar .work-layout-toggle .queue-tab { padding-inline: 8px; }
+  .work-subbar-header .work-toolbar .queue-controls .menu-textbtn > .ic:first-child { display: none; }
+}
+
+/* ── Work page, review round 10 ──────────────────────────────────────────
+   New task is the page's primary action: at the end of the title row at every width, so it comes before the
+   views in both the DOM and the visual order. The title and its count wrap; the button never does. */
+#main .work-header > .ph.queue-headline:has(> .ph-actions) {
+  display: flex; flex-wrap: nowrap; align-items: flex-start; justify-content: space-between; gap: 12px;
+}
+#main .work-header > .ph.queue-headline > .ph-t { flex: 1 1 auto; min-width: 0; }
+#main .work-header > .ph.queue-headline > .ph-actions { flex: none; margin-inline-start: auto; }
+#main .work-header > .ph.queue-headline > .ph-actions > #work-new-task { min-height: 40px; white-space: nowrap; }
+@media (max-width: 639px), (pointer: coarse) {
+  #main .work-header > .ph.queue-headline > .ph-actions > #work-new-task { min-height: 44px; }
+}
+/* Narrow headers: "New" keeps the title's count on fewer lines; the accessible name stays "New task" */
+@container queue-header (max-width: 27rem) {
+  #main .work-header > .ph.queue-headline .work-new-word { display: none; }
+}
+
+/* ── Work page, review round 11 ──────────────────────────────────────────
+   The List's progress reads like the Board's ("1/4 criteria", "1/3 subtasks"); a fixed-width column keeps every
+   title starting at the same x, and the count sits on the title's line. */
+.work-row .work-markers .work-criteria.work-row-progress { min-width: 6.75em; text-align: start; line-height: 1rem; }

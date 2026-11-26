@@ -2,8 +2,7 @@
 //! (`TASK-49` AC #3 `CLI-15` + `TASK-77` B4b: dependencies, searchable labels, reference/modified
 //! files, and task ordering).
 
-use org_command::{Ack, Command, Example, Field, IfMatch, Kind, Type};
-use org_proto::ErrorCode;
+use org_command::{Ack, Command, Example, IfMatch, Kind};
 
 mod schema;
 
@@ -24,7 +23,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Create a task, bug, or request",
         call: "tasks.create",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: TASK_CREATE_INPUT,
@@ -72,7 +71,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Update task fields, labels, files, or order",
         call: "tasks.update",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: TASK_UPDATE_INPUT,
@@ -90,7 +89,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Change task status",
         call: "tasks.transition",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: TASK_TRANSITION_INPUT,
@@ -108,7 +107,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Assign task team or employee",
         call: "tasks.assign",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: TASK_ASSIGN_INPUT,
@@ -126,7 +125,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Add a public task comment",
         call: "tasks.comment",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: TASK_COMMENT_INPUT,
@@ -144,7 +143,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Watch a task",
         call: "tasks.watch",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: TASK_REF_INPUT,
@@ -162,7 +161,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Stop watching a task",
         call: "tasks.unwatch",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: TASK_REF_INPUT,
@@ -210,7 +209,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Add task dependency",
         call: "tasks.add_dependency",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: TASK_DEP_MUTATION_INPUT,
@@ -228,7 +227,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Remove task dependency",
         call: "tasks.remove_dependency",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: TASK_DEP_MUTATION_INPUT,
@@ -261,7 +260,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Add checklist step",
         call: "tasks.checklist.add",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: CHECKLIST_ADD_INPUT,
@@ -279,7 +278,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Check or uncheck step",
         call: "tasks.checklist.check",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: CHECKLIST_CHECK_INPUT,
@@ -297,7 +296,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Edit checklist step",
         call: "tasks.checklist.edit",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: CHECKLIST_EDIT_INPUT,
@@ -315,7 +314,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Remove checklist step",
         call: "tasks.checklist.remove",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: CHECKLIST_REMOVE_INPUT,
@@ -333,7 +332,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Move checklist step",
         call: "tasks.checklist.move",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: CHECKLIST_MOVE_INPUT,
@@ -351,7 +350,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Add private note",
         call: "tasks.notes.add",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: NOTE_ADD_INPUT,
@@ -399,7 +398,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Edit private note",
         call: "tasks.notes.update",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: NOTE_UPDATE_INPUT,
@@ -417,7 +416,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Delete private note",
         call: "tasks.notes.remove",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: NOTE_ID_INPUT,
@@ -435,7 +434,7 @@ pub const TASK_COMMANDS: &[Command] = &[
         summary: "Publish note copy",
         call: "tasks.notes.publish",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: NOTE_ID_INPUT,

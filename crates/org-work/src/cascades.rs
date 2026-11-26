@@ -19,7 +19,9 @@ use serde_json::Value;
 
 use crate::bugs::sync_triage;
 use crate::call::Caller;
-use crate::engine::{write, Ctx, Origin, Plan, TxnOutput};
+use crate::decision::{Ctx, Origin, Plan};
+use crate::engine::write;
+use crate::ports::TxnOutput;
 use crate::ports::{Clock, OrgView, StoreError, WorkTxn};
 
 /// The live area a deleted area's bugs belong in: its replacement, followed through further

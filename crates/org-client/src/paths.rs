@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 
 use org_proto::{location, OfficeInfo};
 
-use super::*;
+use super::error::ClientError;
 
 /// The office home on this machine, found the way the server finds it: `ORG_OFFICE_HOME` when
 /// it is an absolute path, else this system's application base for the user whose home folder

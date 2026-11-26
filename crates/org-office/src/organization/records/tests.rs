@@ -1,3 +1,5 @@
+use org_store::StoreError;
+
 use super::*;
 
 fn id(n: u64) -> Id {
@@ -613,4 +615,72 @@ fn a_time_reads_at_second_or_millisecond_precision_and_is_written_in_millisecond
         time_text(Timestamp(1_794_650_400_000)),
         "2026-11-14T10:00:00.000Z"
     );
+}
+
+fn execution(effort: Option<ReasoningEffort>) -> AgentExecutionConfig {
+    AgentExecutionConfig {
+        employee_id: id(7),
+        model_profile_id: id(8),
+        model_id: "opus".into(),
+        tools_config: vec!["Read".into()],
+        permission_preset: PermissionPreset::WorkspaceEdits,
+        effort,
+        enabled: true,
+        meta: meta(),
+        system_prompt_markdown: "You review code.\n".into(),
+    }
+}
+
+#[test]
+fn the_effort_levels_are_the_wire_contracts() {
+    let names = ReasoningEffort::ALL.map(ReasoningEffort::as_str);
+    assert_eq!(names, org_proto::hiring::AGENT_EFFORT_LEVELS);
+    for level in ReasoningEffort::ALL {
+        assert_eq!(ReasoningEffort::parse(level.as_str()), Some(level));
+        let json = serde_json::to_value(level).unwrap();
+        assert_eq!(json, serde_json::json!(level.as_str()));
+    }
+    for other in ["", "none", "High", "XHIGH", "extra", " low", "max "] {
+        assert_eq!(ReasoningEffort::parse(other), None, "{other:?}");
+    }
+}
+
+#[test]
+fn an_execution_file_keeps_its_effort_and_one_without_reads_as_before() {
+    for level in ReasoningEffort::ALL {
+        let record = execution(Some(level));
+        let bytes = encode_agent_execution(&record);
+        let text = std::str::from_utf8(&bytes).unwrap();
+        let line = format!("\neffort: \"{}\"\n", level.as_str());
+        assert!(text.contains(&line), "{text}");
+        assert_eq!(decode_agent_execution(&bytes).unwrap(), record);
+    }
+
+    // No effort: no key at all, so a file written before efforts existed is byte-for-byte
+    // what this build writes, and reads back the same.
+    let record = execution(None);
+    let bytes = encode_agent_execution(&record);
+    assert!(!std::str::from_utf8(&bytes).unwrap().contains("effort"));
+    assert_eq!(decode_agent_execution(&bytes).unwrap(), record);
+
+    // An explicit `null` is the runtime's default too.
+    let with_xhigh = encode_agent_execution(&execution(Some(ReasoningEffort::Xhigh)));
+    let null = with_line(&with_xhigh, "effort", "effort: null\n");
+    assert_eq!(decode_agent_execution(&null).unwrap(), record);
+}
+
+#[test]
+fn an_execution_file_with_an_unknown_effort_is_refused_by_field() {
+    let bytes = encode_agent_execution(&execution(Some(ReasoningEffort::High)));
+    for line in [
+        "effort: turbo\n",
+        "effort: \"\"\n",
+        "effort: none\n",
+        "effort: High\n",
+        "effort: 3\n",
+        "effort: [high]\n",
+    ] {
+        let err = decode_agent_execution(&with_line(&bytes, "effort", line)).unwrap_err();
+        assert_eq!(err.field, "effort", "{line}: {err:?}");
+    }
 }

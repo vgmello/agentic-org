@@ -1,6 +1,33 @@
 //! One multiplexed office channel: negotiation, its read and write loops, round trips and eviction.
 
-use super::*;
+use super::MultiplexedChannel;
+use super::PendingMap;
+use super::CHANNEL_WRITE_QUEUE;
+use super::OFFICE_DEADLINE;
+use crate::event_hub::EventHub;
+use crate::event_hub::HubEvent;
+use org_proto::ApiRange;
+use org_proto::Hello;
+use org_proto::HelloParams;
+use org_proto::HelloResult;
+use org_proto::Outcome;
+use org_proto::Request;
+use org_proto::Response;
+use org_proto::MAX_FRAME_BYTES;
+use serde_json::Value;
+use std::collections::BTreeMap;
+use std::io;
+use std::os::unix::net::UnixStream as StdUnixStream;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Duration;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::io::BufReader;
+use tokio::net::UnixStream;
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
+use tokio::time;
 
 impl MultiplexedChannel {
     pub(super) fn from_std(
@@ -68,26 +95,49 @@ impl MultiplexedChannel {
                 .map_err(|_| io::Error::other("office pending map poisoned"))?;
             map.insert(rpc_id, tx);
         }
+        // From here on the entry is removed however the round trip ends without its reply:
+        // a closed writer, a timeout, or the caller dropping this future while it waits for
+        // a slot in the full write queue (`race_until_closed`, `TASK-174` AC #3).
+        let mut entry = PendingEntry {
+            pending: &self.pending,
+            rpc_id,
+            armed: true,
+        };
         if self.writer.send(bytes).await.is_err() {
-            if let Ok(mut map) = self.pending.lock() {
-                map.remove(&rpc_id);
-            }
             return Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
                 "office writer closed",
             ));
         }
         match time::timeout(deadline, rx).await {
-            Ok(Ok(reply)) => Ok(reply),
-            _ => {
-                if let Ok(mut map) = self.pending.lock() {
-                    map.remove(&rpc_id);
-                }
-                Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "office reply unavailable",
-                ))
+            Ok(Ok(reply)) => {
+                // The read loop removed the entry when it delivered the reply.
+                entry.armed = false;
+                Ok(reply)
             }
+            _ => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "office reply unavailable",
+            )),
+        }
+    }
+}
+
+/// A round trip's entry in the pending map, removed on drop unless its reply arrived, so a
+/// cancelled or failed round trip never leaves a stale waiter behind.
+struct PendingEntry<'a> {
+    pending: &'a PendingMap,
+    rpc_id: u64,
+    armed: bool,
+}
+
+impl Drop for PendingEntry<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.pending
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(&self.rpc_id);
         }
     }
 }

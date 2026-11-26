@@ -12,6 +12,7 @@ use org_proto::{frame, ApiError, ErrorCode, Hello, Request, Response};
 use super::auth::Binding;
 use super::binding::{is_gone, lookup_live_binding, Lookup};
 use super::dispatch::{answer_and_record, hello_response};
+use super::external::answer_auth;
 use super::held::{CancelOnDrop, Control, Registration};
 use super::messaging::{attach_waiting_messages_hint, handle_msg_wait_request};
 use super::shared::{deliver_hint, Shared, Subscriber};
@@ -119,7 +120,7 @@ pub(super) fn serve_connection_as(
         member: None,
     };
     // A connection that starts bound is watched from its first frame, as one bound by a call is.
-    registration.sync(initial.member());
+    registration.sync(initial.member(), initial.external_session());
     // The events sent on this connection, whichever subscription sent them.
     let sent = AtomicU64::new(0);
     // The subscription's thread is joined when the connection ends: it reads the office, which
@@ -133,6 +134,8 @@ pub(super) fn serve_connection_as(
             poll,
         );
         let mut binding = initial;
+        // `auth.*` calls made on this connection, against its budget.
+        let mut auth_calls = 0u32;
         let mut bound_waiting: Option<(String, Arc<std::sync::atomic::AtomicU32>)> = None;
         let mut subscribed = false;
         // The last subscription's thread: a new one waits for it, so a client that binds and
@@ -169,18 +172,15 @@ pub(super) fn serve_connection_as(
             }
             if !request.is::<MsgBind>() && matches!(member_lookup, Some(Lookup::Failed)) {
                 binding = Binding::Anonymous;
-                registration.sync(None);
+                registration.sync(None, None);
                 generation.fetch_add(1, Ordering::SeqCst);
                 subscribed = false;
                 held.cancel_all();
             }
-            if request.is::<Hello>() {
-                let response = hello_response(&request, shared);
-                let unsupported = matches!(
-                    &response.outcome,
-                    org_proto::Outcome::Error(error) if error.code == ErrorCode::UnsupportedVersion
-                );
-                if !send(&out, request.id, &response, shared.timing) || unsupported {
+            if let Some(keep_open) =
+                handle_auth_or_hello(&request, shared, &binding, &mut auth_calls, &out)
+            {
+                if !keep_open {
                     break;
                 }
                 continue;
@@ -261,7 +261,7 @@ pub(super) fn serve_connection_as(
             };
             // The watcher finds this connection by the member it now acts as. Registered before
             // the answer goes out, so a client that has its bind's answer is already watched.
-            if registration.sync(binding.member()) {
+            if registration.sync(binding.member(), binding.external_session()) {
                 // Registered after the member may already have gone: the watcher cannot have
                 // seen this entry, so look once.
                 if let Some(member) = binding.member() {
@@ -286,4 +286,25 @@ pub(super) fn serve_connection_as(
         }
         generation.fetch_add(1, Ordering::SeqCst);
     });
+}
+
+fn handle_auth_or_hello(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+    auth_calls: &mut u32,
+    out: &Mutex<UnixStream>,
+) -> Option<bool> {
+    if let Some(auth) = answer_auth(request, shared, binding, auth_calls) {
+        return Some(send(out, request.id, &auth.response, shared.timing) && !auth.close);
+    }
+    if request.is::<Hello>() {
+        let response = hello_response(request, shared);
+        let unsupported = matches!(
+            &response.outcome,
+            org_proto::Outcome::Error(error) if error.code == ErrorCode::UnsupportedVersion
+        );
+        return Some(send(out, request.id, &response, shared.timing) && !unsupported);
+    }
+    None
 }

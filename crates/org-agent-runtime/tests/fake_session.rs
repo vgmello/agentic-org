@@ -757,6 +757,7 @@ fn spec() -> SessionSpec {
         workspace: SpecPath::try_from("/homes/echo").unwrap(),
         read_only_dirs: vec![],
         instructions: "Be brief.".into(),
+        repository_instructions: String::new(),
         permission_mode: PermissionMode::Ask,
         policy: PermissionPolicy {
             version: 1,

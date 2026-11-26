@@ -1,6 +1,6 @@
 use std::fs;
 
-use crate::federation::FIRST_FRAME_DEADLINE;
+use crate::federation_link::FIRST_FRAME_DEADLINE;
 use org_sync_proto::SyncFrame;
 
 use super::staging::StagedImportGuard;

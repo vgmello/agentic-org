@@ -15,14 +15,24 @@ pub(super) fn lookup_live_binding(
     binding: &Binding,
     control: &Control,
 ) -> Option<Lookup> {
-    let run_revoked = !binding.via_grant()
-        && binding.member().is_some_and(|member| {
-            shared
-                .ports
-                .run_binding_active
-                .as_ref()
-                .is_some_and(|active| !active(member))
-        });
+    let run_revoked = match binding {
+        // An external connection lives exactly as long as its lease's fast token (RAM-only).
+        Binding::External { id, session_id } => shared
+            .ports
+            .external_auth
+            .as_ref()
+            .is_none_or(|port| !port.is_active(id, session_id)),
+        _ => {
+            !binding.via_grant()
+                && binding.member().is_some_and(|member| {
+                    shared
+                        .ports
+                        .run_binding_active
+                        .as_ref()
+                        .is_some_and(|active| !active(member))
+                })
+        }
+    };
     if control.revoked.load(Ordering::SeqCst) || run_revoked {
         Some(Lookup::Not)
     } else {
@@ -72,7 +82,9 @@ pub(super) fn bind_connection(
 }
 
 /// As a member: an agent of this office that may message. Office-run agents require a live
-/// `AGENT_OS_SESSION_TOKEN` and kernel descendant PID check (`CLI-12`, `SUB-3`, `B2 Q9`).
+/// `AGENT_OS_SESSION_TOKEN` and kernel descendant PID check (`CLI-12`, `SUB-3`, `B2 Q9`); an
+/// external (BYOA) workspace presents its lease's fast token instead (`TASK-137`), which binds
+/// the connection as [`Binding::External`].
 fn bind_member(
     id: u64,
     shared: &Shared,
@@ -115,7 +127,21 @@ fn bind_member(
     }
     if let Some(verify) = &shared.ports.run_binding_verify {
         if !verify(&found.id, session_token, peer_pid) {
-            return Err(refused());
+            let external = shared
+                .ports
+                .external_auth
+                .as_ref()
+                .and_then(|port| port.verify(&found.id, session_token));
+            let Some(session_id) = external else {
+                return Err(refused());
+            };
+            return Ok((
+                Binding::External {
+                    id: found.id.clone(),
+                    session_id,
+                },
+                Some(found.id),
+            ));
         }
     } else if session_token.is_some()
         || found

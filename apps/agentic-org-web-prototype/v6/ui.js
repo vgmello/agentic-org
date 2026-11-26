@@ -73,14 +73,15 @@ function statusLine(id) {
 function hdr(title, count, trailing = "", extra = "") {
   return `<header class="ph"><div class="ph-t"><h1 tabindex="-1">${esc(title)}</h1>${extra}${count ? `<p class="cnt">${count}</p>` : ""}</div>${trailing ? `<div class="ph-actions">${trailing}</div>` : ""}</header>`;
 }
-function queueHeadline(title, count, announce = false) {
+/* countTail: optional trusted markup after the escaped count (a part a narrow page can drop) */
+function queueHeadline(title, count, announce = false, trailing = "", countTail = "") {
   return `<div class="ph queue-headline"><div class="ph-t"><h1 tabindex="-1">${esc(title)}</h1>
-    <span class="cnt queue-count"${announce ? ' role="status"' : ""}><i aria-hidden="true"></i>${esc(count)}</span></div></div>`;
+    <span class="cnt queue-count"${announce ? ' role="status"' : ""}><i aria-hidden="true"></i>${esc(count)}${countTail}</span></div>${trailing ? `<div class="ph-actions">${trailing}</div>` : ""}</div>`;
 }
 /* Section header shared by Home, project Overview and other pages. repTitle swaps the label in Report themes. */
-function sectionHead({ id, title, repTitle = title, count = "", right = "", cls = "" }) {
+function sectionHead({ id, title, repTitle = title, count = "", right = "", cls = "", level = "h2" }) {
   const label = repTitle === title ? title : `<span class="lbl-std">${title}</span><span class="lbl-rep">${repTitle}</span>`;
-  return `<div class="sec-head${cls ? " " + cls : ""}"><div class="sec-head-l"><h2 id="${id}">${label}</h2>${count ? `<span class="sec-head-count">${count}</span>` : ""}</div>${right}</div>`;
+  return `<div class="sec-head${cls ? " " + cls : ""}"><div class="sec-head-l"><${level} id="${id}">${label}</${level}>${count ? `<span class="sec-head-count">${count}</span>` : ""}</div>${right}</div>`;
 }
 /* Inline page search: a toolbar icon reveals a search row above the results ("/" opens it too). */
 const searchIsOpen = (inputId, value) => Boolean(S.searchOpen?.[inputId] || String(value ?? "").trim());
@@ -117,14 +118,29 @@ function sectionTabs(tabs, controls = "", actions = "", actionClass = "") {
 function iconWithTooltip(label, icon, size = "ic16") {
   return ic(icon, size) + `<span class="icon-tooltip" aria-hidden="true">${esc(label)}</span>`;
 }
-function showMenu(id, groups, { align = "", icon, label, active, focusTooltip = false, footer = "" } = {}) {
+/* Menu trigger: labelled ("Filter · 2"), icon-only, or the "Show <current>" text button. */
+function menuTrigger({ icon, label, active, focusTooltip, text, sub, count, tooltip, cur }) {
+  const on = active ? " data-active" : "";
+  if (icon && text) {
+    /* sub: secondary text for the current mode ("Display  Stages ▾"); it is in the accessible name already */
+    const secondary = sub ? `<span class="menu-textbtn-sub" aria-hidden="true">${esc(sub)}</span>${ic("chev-down", "ic14 menu-textbtn-chev")}` : "";
+    return {
+      triggerAttrs: `class="btn ghost menu-textbtn" aria-label="${esc(label)}${count ? `, ${count} active` : ""}"${on}`,
+      triggerContent: `${ic(icon, "ic16")}<span class="menu-textbtn-label">${esc(text)}</span>${secondary}${count ? `<span class="menu-textbtn-count">${count}</span>` : ""}`,
+    };
+  }
+  if (icon) {
+    return {
+      triggerAttrs: `class="btn ghost icon${focusTooltip ? " icon-with-tooltip" : ""}" aria-label="${esc(label)}"${tooltip}${on}`,
+      triggerContent: focusTooltip ? iconWithTooltip(label, icon, "ic20") : ic(icon, "ic20"),
+    };
+  }
+  return { triggerAttrs: 'class="btn textbtn"', triggerContent: `Show <span class="cur">${esc(cur.length ? cur.join(", ") : "all")}</span>${ic("chev-down", "ic16 muted")}` };
+}
+function showMenu(id, groups, { align = "", icon, label, active, focusTooltip = false, footer = "", text = "", sub = "", count = 0 } = {}) {
   const cur = groups.map(([k, , opts]) => { const o = opts.find((x) => String(x[0]) === String(S[k])); return o && o[0] !== "all" ? o[1] : null; }).filter(Boolean);
   const tooltip = focusTooltip ? "" : ` title="${esc(label)}"`;
-  const triggerAttrs = icon
-    ? `class="btn ghost icon${focusTooltip ? " icon-with-tooltip" : ""}" aria-label="${esc(label)}"${tooltip}${active ? " data-active" : ""}`
-    : 'class="btn textbtn"';
-  const triggerContent = icon ? (focusTooltip ? iconWithTooltip(label, icon, "ic20") : ic(icon, "ic20"))
-    : `Show <span class="cur">${esc(cur.length ? cur.join(", ") : "all")}</span>${ic("chev-down", "ic16 muted")}`;
+  const { triggerAttrs, triggerContent } = menuTrigger({ icon, label, active, focusTooltip, text, sub, count, tooltip, cur });
   return `<div class="menu-wrap"><button ${triggerAttrs} type="button" data-act="menu" data-id="${id}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${id}">${triggerContent}</button>
     <div class="menu ${align}" id="menu-${id}" role="menu"${label ? ` aria-label="${esc(label)}"` : ""} hidden>${groups.map(([k, title, opts], gi) => `${gi ? "<hr>" : ""}<p class="menu-h" id="mh-${id}-${gi}">${esc(title)}</p><div role="group" aria-labelledby="mh-${id}-${gi}">${opts.map(([v, l, n]) => { const on = String(S[k]) === String(v); return `<button role="menuitemradio" aria-checked="${on}" type="button" data-act="set" data-k="${k}" data-v="${v}">${on ? ic("check", "ic20") : '<span class="spacer20" aria-hidden="true"></span>'}<span style="flex:1">${esc(l)}</span>${n != null ? `<span class="muted tnum">${n}</span>` : ""}</button>`; }).join("")}</div>`).join("")}${footer}</div></div>`;
 }
@@ -240,7 +256,7 @@ function feedItemHtml(a, opts) {
   const stamp = opts.day === a.time ? "" : `<time>${esc(a.time)}</time>`;
   const proj = opts.noProj ? "" : " · " + plink(a.proj);
   const summary = a.summary ? `<br><span class="muted">${esc(a.summary)}</span>` : "";
-  const triage = inboxItem ? `<div class="activity-triage" id="activity-triage-${inboxItem.id}" tabindex="-1"><a class="alink" href="#/inbox/${inboxItem.id}">${esc(inboxItem.what)}</a>${itemActionsV4(inboxItem, { hideDetails: true })}</div>` : "";
+  const triage = inboxItem ? `<div class="activity-triage" id="activity-triage-${inboxItem.id}" tabindex="-1"><a class="alink" href="#/inbox/${inboxItem.id}">${esc(inboxItem.what)}</a>${itemActionsV4(inboxItem, { hideDetails: true, route: true })}</div>` : "";
   return `<li><div class="l1">${av(a.who, 24, opts.noDots ? false : "tip")}<span class="actor">${mlink(a.who)}<span class="kind">${ic(t.icon, "ic14")}${t.label}</span></span>${stamp}</div>
       <p class="l2">${esc(a.text)}${proj}${summary}</p>
       ${feedRunLogHtml(a)}
@@ -322,6 +338,8 @@ export {
   projPill,
   queueHeadline,
   itemActions,
+  itemActionButtons,
+  itemReplyComposer,
   recommendationCallout,
   sectionTabs,
   seg,

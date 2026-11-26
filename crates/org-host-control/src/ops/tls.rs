@@ -1,7 +1,18 @@
 //! TLS ops: `tls.fetch`, `web.serving` and `tls.set`, their refusals, certificate timestamps and
 //! pair fingerprints.
 
-use super::*;
+use std::fmt;
+use std::fmt::Write;
+
+use org_proto::{Call, Empty};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use crate::listen::{
+    Hsts, InvalidListenConfig, ListenFailure, ListenMode, ListenOrigin, Uncovered,
+};
+use crate::pem::InvalidPem;
+use crate::{pem, HostOpResult, SessionHandle, TlsPrivateKey};
 
 /// `tls.fetch` (**control connection only**; refused on `host.sock`): what the gateway serves, at
 /// start and after each `tls.renew` event. `mode`, `origin` and `hsts` come from the **per-bind

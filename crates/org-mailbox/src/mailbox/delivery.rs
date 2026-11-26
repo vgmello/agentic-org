@@ -11,13 +11,14 @@ use org_proto::msg::{
 };
 use org_proto::{ulid_time_ms, uuid_v7_time_ms, MemberKind};
 
+use super::{
+    address, can_message, epoch_ms, lock, optional_size, size, Mailbox, NoticeFailure, MAX_RECHECKS,
+};
 use crate::waiters::WaitOutcome;
 use crate::{
     content_hash, format_utc, past_deadline, Cancellation, HeaderQuery, HeaderScope, MailboxError,
     MessageEvent, NewStoredMessage, StoredMessage, MAX_EXPIRED_IDS,
 };
-
-use super::*;
 
 impl Mailbox {
     pub fn send(

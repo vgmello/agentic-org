@@ -1,11 +1,34 @@
 //! Concise `Use when:` intent guidance for every `agent-os` (and shared `agentic-org`)
 //! `--help` output without bloating the 4 KiB `CommandTable::catalogue()` launch summary.
 
-use org_command::{Command, CommandTable, Output, Type};
-
 mod augment;
 
 pub(crate) use augment::augment_help;
+
+/// The four lines that open `agent-os --help` in a shell with no office binding.
+const QUICKSTART_UNBOUND: &str = "Agent quickstart: this shell has no office binding.
+  Sign in first: agent-os login --as @<handle>
+  Rules, commands and guides without the office: agent-os boot --offline --format yaml
+  Office-started sessions are bound already and get their rules on turn 1.
+";
+
+/// The four lines that open `agent-os --help` in a bound shell: an office-started session
+/// (`AGENT_OS_*`) or a workspace signed in with `agent-os login`.
+const QUICKSTART_BOUND: &str = "Agent quickstart: this shell is bound to its office (an office-started session or a signed-in workspace).
+  Rules, commands, guides and must-follow processes: agent-os boot --format yaml
+  Office-started sessions get them on turn 1 and `agent-os login` prints them: re-run only after context compaction.
+  Then: agent-os whoami, agent-os <resource> --help, and agent-os skill list for guides.
+";
+
+/// The quickstart `agent-os --help` opens with: how to get bound when `bound` is false, and
+/// when `agent-os boot` is worth running when it is true.
+pub fn quickstart(bound: bool) -> &'static str {
+    if bound {
+        QUICKSTART_BOUND
+    } else {
+        QUICKSTART_UNBOUND
+    }
+}
 
 const TOP_USE_WHEN: &str = "running bound agent or signed-in operator organization commands \
 (tasks, messages, channels, repos, worktrees, processes, HR, sessions).";
@@ -26,7 +49,7 @@ const COMMON_VALUE_OPTIONS: &[&str] = &[
 pub const RESOURCE_GUIDANCE: &[(&str, &str)] = &[
     (
         "agent",
-        "inspecting or managing agent profiles, team placement, pause/resume, or offboarding.",
+        "inspecting or managing agent profiles, team placement, pause/resume, offboarding, or external (bring-your-own) agent sessions.",
     ),
     (
         "budget",
@@ -78,7 +101,7 @@ pub const RESOURCE_GUIDANCE: &[(&str, &str)] = &[
     ),
     (
         "repo",
-        "registering or listing Git repositories, attaching them to projects, checking cache readiness, or pushing task branches.",
+        "registering or listing Git repositories, attaching them to projects, checking cache readiness, fetching new origin branches, or pushing task branches.",
     ),
     (
         "role",
@@ -86,7 +109,7 @@ pub const RESOURCE_GUIDANCE: &[(&str, &str)] = &[
     ),
     (
         "session",
-        "inspecting agent session state/usage or batching commands over a persistent socket (`session attach`).",
+        "loading your rules and catalogue (`agent-os boot`), inspecting agent session state/usage, or batching commands over a persistent socket (`session attach`).",
     ),
     (
         "skill",
@@ -119,13 +142,18 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
     // agent
     (
         "agent",
+        "approve",
+        "approving an external workspace's `agent-os login` code so it acts as the agent (`--takeover` parks a live managed turn).",
+    ),
+    (
+        "agent",
         "execution-get",
-        "inspecting an agent's model profile, model ID, permission preset, and standing system prompt.",
+        "inspecting an agent's model profile, model ID, permission preset, reasoning effort, and standing system prompt.",
     ),
     (
         "agent",
         "execution-set",
-        "configuring or updating an agent's model profile, model ID, permission preset, and system prompt.",
+        "configuring or updating an agent's model profile, model ID, permission preset, reasoning effort, and system prompt.",
     ),
     (
         "agent",
@@ -151,6 +179,16 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
         "agent",
         "resume",
         "re-activating a paused agent so it can take turns again (requires `--if-match`).",
+    ),
+    (
+        "agent",
+        "revoke",
+        "ending an agent's external workspace session at once (its connections close and held wakes run again).",
+    ),
+    (
+        "agent",
+        "sessions",
+        "checking which external workspace an agent is signed in from, until when, and its sign-in history.",
     ),
     (
         "agent",
@@ -242,7 +280,7 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
     (
         "member",
         "set-hiring",
-        "granting or revoking an employee's authorization to hire agents (requires `--if-match`).",
+        "granting (`--allow`) or revoking (`--revoke`) an employee's authorization to hire agents (requires `--if-match`).",
     ),
     // msg
     (
@@ -382,6 +420,11 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
     ),
     (
         "repo",
+        "fetch",
+        "seeing branches pushed to the origin after your worktree was prepared: the office refreshes `origin/*` with its own credentials and never moves your checkout.",
+    ),
+    (
+        "repo",
         "list",
         "listing registered Git repositories and their office bare-cache state (optionally by `--project`).",
     ),
@@ -422,6 +465,11 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
         "updating a catalog role's name, key, or Markdown description (requires `--if-match`).",
     ),
     // session
+    (
+        "session",
+        "boot",
+        "loading the standing rules, command catalogue, guide index and your must-follow processes at once (`agent-os boot`; offline with `--offline`); a managed session already has them from turn 1.",
+    ),
     (
         "session",
         "inspect",
@@ -498,7 +546,7 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
     (
         "task",
         "list",
-        "querying and sorting tasks by status, team, assignee, project, labels, dependencies, or search text.",
+        "querying, sorting and paging tasks by status (or `--exclude-status`), team, assignee (or `--unassigned`), project, labels, dependencies, `--modified-file` or search text; `--count` for the total only.",
     ),
     (
         "task",

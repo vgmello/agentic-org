@@ -9,7 +9,6 @@ use org_office::Office;
 use org_sync_proto::{OfficeId, OrgId, SyncFrame, WireOfficeRole};
 use rustls::{ServerConnection, StreamOwned};
 
-use super::hq_peer::{send_hq_org_events_after, write_sync_frame_if_peer_active, HqSessionPeer};
 use super::hq_relay::{
     handle_hq_message_deliver, handle_hq_message_receipt_frame, InboundMessageReceipt,
 };
@@ -17,6 +16,9 @@ use super::hq_work::{handle_hq_work_change, WorkChangeInput};
 use super::permits::{handle_hq_permit_sync, PermitSyncInput};
 use super::{
     now_ms, InboundCallbacks, InboundMessage, RelayedWake, WakeRelayHandler, WAKE_RELAY_TTL_MS,
+};
+use crate::federation_link::hq_peer::{
+    send_hq_org_events_after, write_sync_frame_if_peer_active, HqSessionPeer,
 };
 
 pub(super) fn dispatch_hq_frame(
@@ -298,6 +300,7 @@ fn send_hq_hello(
             supported_max: 1,
             codec_max: 1,
             hq_addresses: Vec::new(),
+            owner_member_id: Some(peer.office.owner_member_id().to_owned()),
         },
     )
 }

@@ -111,7 +111,7 @@ html[data-theme="ocean"]:where([data-interior-page]) {
     .chlist a[aria-current="page"], .subnav a[aria-current="page"]) {
     background-color: var(--ocean-selected);
   }
-  & :is(.card, .bcard, .c-entry, .k-doc, .split .list, .thread, .compose,
+  & :is(.card, .c-entry, .k-doc, .split .list, .thread, .compose,
     .assembly-view, .activity-rail) {
     background-color: var(--ocean-glass-fill);
     background-image: var(--ocean-glass-sheen);
@@ -123,7 +123,7 @@ html[data-theme="ocean"]:where([data-interior-page]) {
   & :is(.seg, .cmdk-shell, .search, select.field, input.field, textarea) {
     background-image: var(--ocean-glass-sheen);
   }
-  & :is(.card, .bcard, .c-entry, .k-doc, .agent-rail, .chlist, .prof, .subnav, .split .list,
+  & :is(.card, .c-entry, .k-doc, .agent-rail, .chlist, .prof, .subnav, .split .list,
     .seg, .cmdk-shell, .search, select.field, input.field, textarea) {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
@@ -139,30 +139,37 @@ html[data-theme="classic"] {
   --line: rgb(255 255 255 / .06); --line2: rgb(255 255 255 / .11);
   --hover: rgb(255 255 255 / .05);
   --bar-track: rgba(148, 163, 184, .20);
-  --tone-accent: #615fff;
-  --tone-accent-bar: #615fff;
-  --tone-accent-ink: #a3b3ff;
-  --tone-accent-hover: #c7d2fe;
-  --tone-accent-on-soft: #e0e7ff;
-  --tone-accent-solid: var(--tone-accent);
-  --tone-accent-solid-hi: #7c86ff;
-  --tone-accent-soft: rgba(97, 95, 255, .14);
-  --tone-accent-soft-hi: rgba(97, 95, 255, .20);
-  --tone-accent-ring: rgba(124, 134, 255, .30);
+  /* Classic accent: Graphite's steel data blue (#86a9cc / #5f84a8 / #b9c1cc), one family for
+     indicators, charts, selection and actions. Text-bearing fills use the deeper solid step. */
+  --classic-blue: #86a9cc;
+  --classic-blue-deep: #5f84a8;
+  --classic-blue-2: #a9c6e4;
+  --tone-accent: var(--classic-blue);
+  --tone-accent-bar: linear-gradient(90deg, var(--classic-blue-deep), var(--classic-blue));
+  --tone-accent-ink: #a9c3de;
+  --tone-accent-hover: #cbdcee;
+  --tone-accent-on-soft: #e2ecf6;
+  --tone-accent-solid: #4a7096;
+  --tone-accent-solid-hi: #52789e;
+  --tone-accent-edge: rgba(134, 169, 204, .62);
+  --tone-accent-soft: rgba(134, 169, 204, .14);
+  --tone-accent-soft-hi: rgba(134, 169, 204, .22);
+  --tone-accent-ring: rgba(134, 169, 204, .34);
   --tone-ok-bar: #34D399;
   --tone-warn-ink: #FBBF24;
   --tone-warn-ring: rgba(251, 191, 36, .32);
   --tone-queued-bar: #A78BFA;
   --bar-fill-spend: var(--tone-accent-bar);
-  --blocker-accent-bg: rgba(97, 95, 255, .10);
-  --blocker-accent-ring: rgba(124, 134, 255, .24);
+  --blocker-accent-bg: rgba(134, 169, 204, .10);
+  --blocker-accent-ring: rgba(134, 169, 204, .26);
   --dot-cur: var(--indigo-400);
-  --indigo-500: var(--tone-accent); --indigo-400: #7c86ff; --indigo-300: var(--tone-accent-ink);
+  --cmdk-tab-selected-ring: rgba(134, 169, 204, .46);
+  --indigo-500: var(--tone-accent-solid); --indigo-400: var(--tone-accent); --indigo-300: var(--tone-accent-ink);
 }
 html[data-theme="classic"], html[data-theme="classic"] body { background: #1e2939; color: #ffffff; }
 html[data-theme="classic"] body::before,
 html[data-theme="classic"] body::after { display: none; }
-html[data-theme="classic"] .ao-mark-bg { fill: var(--tone-accent); }
+html[data-theme="classic"] .ao-mark-bg { fill: var(--tone-accent-solid); }
 html[data-theme="classic"] .sidebar {
   background: #161f2d;
   backdrop-filter: none; -webkit-backdrop-filter: none;
@@ -208,7 +215,7 @@ html[data-theme="classic"] .cmdk-ai-btn {
   color: var(--tone-accent-on-soft);
 }
 html[data-theme="classic"] .cmdk-ai-btn:hover {
-  background: var(--tone-accent); box-shadow: inset 0 0 0 1px var(--indigo-400); color: #ffffff;
+  background: var(--tone-accent-solid); box-shadow: inset 0 0 0 1px var(--tone-accent-edge); color: #ffffff;
 }
 html[data-theme="classic"] .cmdk-dialog {
   background: #182230; backdrop-filter: none; -webkit-backdrop-filter: none;
@@ -216,8 +223,8 @@ html[data-theme="classic"] .cmdk-dialog {
 }
 html[data-theme="classic"] .cmdk-foot { background: #131b27; border-top-color: rgba(255, 255, 255, .07); color: #99a1af; }
 html[data-theme="classic"] .cmdk-foot kbd { background: #1e2939; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14); color: #d1d5dc; }
-html[data-theme="classic"] .cmdk-ask-go { background: var(--tone-accent); color: #ffffff; box-shadow: none; }
-html[data-theme="classic"] .cmdk-ask-go:hover:not(:disabled) { background: var(--indigo-400); }
+html[data-theme="classic"] .cmdk-ask-go { background: var(--tone-accent-solid); color: #ffffff; box-shadow: inset 0 0 0 1px var(--tone-accent-edge); }
+html[data-theme="classic"] .cmdk-ask-go:hover:not(:disabled) { background: var(--tone-accent-solid-hi); }
 html[data-theme="classic"] .cmdk-ai-list li::before { background: var(--indigo-400); }
 html[data-theme="classic"] .hb {
   --hb-surface: #243144;
@@ -260,29 +267,33 @@ html[data-theme="classic"] .hb-ai-eyebrow .ic { color: var(--tone-accent-ink); }
 html[data-theme="classic"] .hb-ai-chip { background: #1e2939; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10); color: #d1d5dc; }
 html[data-theme="classic"] .hb-ai-chip:hover { background: #263447; color: #ffffff; box-shadow: inset 0 0 0 1px var(--indigo-400); }
 html[data-theme="classic"] .hb-brief-lenses { background: #101828; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .09); }
-html[data-theme="classic"] .hb-brief-lenses button[aria-pressed="true"] { background: var(--tone-accent); color: #ffffff; box-shadow: none; }
+html[data-theme="classic"] .hb-brief-lenses button[aria-pressed="true"] { background: var(--tone-accent-solid); color: #ffffff; box-shadow: inset 0 0 0 1px var(--tone-accent-edge); }
 html[data-theme="classic"] .hb-cos-memo { --hb-cos-fade: #16202e; background: #16202e; box-shadow: inset 3px 0 0 var(--indigo-400), inset 0 0 0 1px rgba(255, 255, 255, .09); }
 html[data-theme="classic"] .hb-dig-item { background: #1a2433; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08); }
 html[data-theme="classic"] a.hb-dig-item:hover { background: #1e2939; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16); }
 html[data-theme="classic"] .hb-spot-foot .btn.outline,
 html[data-theme="classic"] .hb-unblock-btn { background: #1e2939; color: #d1d5dc; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16); }
 html[data-theme="classic"] .hb-spot-foot .btn.outline:hover,
-html[data-theme="classic"] .hb-unblock-btn:hover { background: var(--tone-accent); color: #ffffff; box-shadow: inset 0 0 0 1px var(--indigo-400); }
+html[data-theme="classic"] .hb-unblock-btn:hover { background: var(--tone-accent-solid); color: #ffffff; box-shadow: inset 0 0 0 1px var(--tone-accent-edge); }
 html[data-theme="classic"] .hb-tseg.queued,
 html[data-theme="classic"] .hb-tseg.queued.is-high { box-shadow: none; }
 html[data-theme="classic"] .btn.primary.h4-cta,
-html[data-theme="classic"] .h4-cta {
-  background: var(--tone-accent); box-shadow: none;
+html[data-theme="classic"] .h4-cta,
+html[data-theme="classic"] .btn.primary,
+html[data-theme="classic"] .h4-d-foot .btn.primary {
+  background: var(--tone-accent-solid); box-shadow: inset 0 0 0 1px var(--tone-accent-edge);
 }
+html[data-theme="classic"] .btn.primary:hover,
+html[data-theme="classic"] .h4-d-foot .btn.primary:hover { background: var(--tone-accent-solid-hi); }
 html[data-theme="classic"] .h4-cta-fill,
 html[data-theme="classic"] .h4-cta[data-cta-tone="ocean"] .h4-cta-fill,
-html[data-theme="classic"] .h4-cta[data-cta-tone="reply"] .h4-cta-fill { background: var(--indigo-400); }
+html[data-theme="classic"] .h4-cta[data-cta-tone="reply"] .h4-cta-fill { background: var(--tone-accent-solid-hi); }
 html[data-theme="classic"] .h4-cta-sheen { display: none; }
 html[data-theme="classic"] .h4-cta:hover,
 html[data-theme="classic"] .h4-cta:focus-visible,
 html[data-theme="classic"] .btn.primary.h4-cta:hover,
 html[data-theme="classic"] .btn.primary.h4-cta:focus-visible {
-  background: var(--indigo-400); transform: none; box-shadow: none;
+  background: var(--tone-accent-solid-hi); transform: none; box-shadow: inset 0 0 0 1px var(--tone-accent-edge);
 }
 html[data-theme="classic"] .h4-cta.hb-cta-glass {
   background: var(--tone-accent-soft); backdrop-filter: none; -webkit-backdrop-filter: none;
@@ -291,10 +302,17 @@ html[data-theme="classic"] .h4-cta.hb-cta-glass {
 html[data-theme="classic"] .h4-cta.hb-cta-glass .h4-cta-lbl .ic { color: var(--tone-accent-ink); }
 html[data-theme="classic"] .h4-cta.hb-cta-glass:hover,
 html[data-theme="classic"] .h4-cta.hb-cta-glass:focus-visible {
-  background: var(--tone-accent); box-shadow: inset 0 0 0 1px var(--indigo-400); color: #ffffff; transform: none;
+  background: var(--tone-accent-solid); box-shadow: inset 0 0 0 1px var(--tone-accent-edge); color: #ffffff; transform: none;
 }
 html[data-theme="classic"] .menu { background: #182230; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14); }
 html[data-theme="classic"] .sheet { background: #182230; box-shadow: inset 1px 0 0 rgba(255, 255, 255, .12); }
 html[data-theme="classic"] .toast { background: #182230; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14); }
 html[data-theme="classic"] .chlist, html[data-theme="classic"] .prof, html[data-theme="classic"] .subnav, html[data-theme="classic"] .split .list { background: var(--workspace-secondary-surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
 
+/* Topbar "New" button: the shared style hard-codes indigo; Classic uses its steel blue */
+html[data-theme="classic"] .btn.new-btn {
+  background: var(--tone-accent-soft-hi); color: var(--tone-accent-on-soft);
+  box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+}
+html[data-theme="classic"] .btn.new-btn:hover { background: rgba(134, 169, 204, .30); box-shadow: inset 0 0 0 1px var(--tone-accent-edge); transform: none; }
+html[data-theme="classic"] .new-btn .new-chev { color: var(--tone-accent-ink); }

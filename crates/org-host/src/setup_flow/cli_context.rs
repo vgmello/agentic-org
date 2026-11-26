@@ -3,15 +3,34 @@
 //! Stores only non-secret selection identifiers (`instance_id`, optional `instance_name`,
 //! `office_id`) under the account configuration folder with owner-only `0o600` permissions.
 //! Never stores passwords, sessions, tokens, or keys.
+//!
+//! The folder is `AGENTIC_ORG_CONFIG_DIR` when it is set (an absolute path, else refused),
+//! then a development build's `ORG_DEV_ACCOUNT_BASE`, then the account's own folder.
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::ffi::OsString;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use org_platform::fs::{ELOOP, O_CLOEXEC, O_NOFOLLOW};
 use serde::{Deserialize, Serialize};
 
 const CONTEXT_FILE: &str = "cli-context.json";
+
+/// The most of a saved context that is read: three identifiers need far less.
+pub const MAX_CLI_CONTEXT_BYTES: u64 = 64 * 1024;
+
+/// How many fresh temporary names [`save_to`] tries before it gives up.
+const TEMP_ATTEMPTS: u32 = 16;
+
+/// Tells this process's temporary names apart.
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// The operator command line's configuration folder (an absolute path), where the saved
+/// context lives: the same variable as `org_cli_shell::paths::CONFIG_DIR_ENV`.
+pub const CONFIG_DIR_ENV: &str = "AGENTIC_ORG_CONFIG_DIR";
 
 /// Non-secret saved selection binding a person's terminal commands to one instance and office.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +54,18 @@ impl CliContext {
         if !org_proto::is_uuid_v7(&office_id) {
             return Err("office_id must be a canonical UUIDv7".into());
         }
+        // A saved name is an instance's name (lowercase letters, digits, hyphens): no
+        // control, line-breaking or bidirectional character from an edited file ever reaches
+        // a terminal or a selection (B-06).
+        if let Some(name) = &instance_name {
+            if crate::instance::Name::parse(Some(name)).is_err() {
+                return Err(
+                    "instance_name must be an instance name: 1-32 lowercase ASCII \
+                     letters, digits or hyphens, starting with a letter or digit"
+                        .into(),
+                );
+            }
+        }
         Ok(Self {
             instance_id,
             instance_name,
@@ -43,51 +74,158 @@ impl CliContext {
     }
 }
 
+/// The saved context's file: under `AGENTIC_ORG_CONFIG_DIR` when it is set (an absolute
+/// path, else an error: never a file relative to the working directory), else under a
+/// development build's `ORG_DEV_ACCOUNT_BASE` (absolute; a release build refuses it), else
+/// in the account's folder. An empty variable is unset.
 pub fn default_context_path() -> Result<PathBuf, String> {
-    if let Some(base) = std::env::var_os(crate::human::DEV_ACCOUNT_BASE).filter(|b| !b.is_empty()) {
-        return Ok(PathBuf::from(base).join(CONTEXT_FILE));
+    context_path_in(
+        &|name| std::env::var_os(name),
+        cfg!(debug_assertions),
+        crate::home::account_dir,
+    )
+}
+
+fn context_path_in(
+    env: &dyn Fn(&str) -> Option<OsString>,
+    development: bool,
+    account_dir: impl FnOnce() -> Option<PathBuf>,
+) -> Result<PathBuf, String> {
+    let set = |name: &str| {
+        env(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    if let Some(dir) = set(CONFIG_DIR_ENV) {
+        if !dir.is_absolute() {
+            return Err(format!(
+                "{CONFIG_DIR_ENV} must be an absolute path; set it to one, or unset it"
+            ));
+        }
+        return Ok(dir.join(CONTEXT_FILE));
     }
-    let home = crate::home::account_dir().ok_or_else(|| "account home unavailable".to_owned())?;
+    let dev_base = crate::human::DEV_ACCOUNT_BASE;
+    if let Some(base) = set(dev_base) {
+        if !development {
+            return Err(format!(
+                "{dev_base} is a development setting; this release build refuses it"
+            ));
+        }
+        if !base.is_absolute() {
+            return Err(format!("{dev_base} must be an absolute path"));
+        }
+        return Ok(base.join(CONTEXT_FILE));
+    }
+    let home = account_dir().ok_or_else(|| "account home unavailable".to_owned())?;
     Ok(home.join(CONTEXT_FILE))
 }
 
+/// The saved context at `path`, `None` when there is none. The file is opened without
+/// following a symbolic link or blocking on a FIFO (`O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`),
+/// must be a regular file on the opened handle (`fstat`), and is read bounded
+/// ([`MAX_CLI_CONTEXT_BYTES`]); a link, a special file, a larger file or an invalid context
+/// fails closed.
 pub fn load_from(path: &Path) -> Result<Option<CliContext>, String> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+    let file = match org_platform::fs::open_nofollow_ro(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.raw_os_error() == Some(ELOOP) || e.kind() == io::ErrorKind::InvalidInput => {
+            return Err(NOT_REGULAR.to_owned())
+        }
         Err(e) => return Err(format!("could not read CLI context: {e}")),
     };
+    let bytes = read_bounded(file)?;
     let ctx: CliContext =
         serde_json::from_slice(&bytes).map_err(|_| "saved CLI context is unreadable".to_owned())?;
     CliContext::new(ctx.instance_id, ctx.instance_name, ctx.office_id).map(Some)
 }
 
+const NOT_REGULAR: &str =
+    "saved CLI context is not a regular file (a symbolic link or special file is refused)";
+
+fn read_bounded(file: File) -> Result<Vec<u8>, String> {
+    let metadata = file
+        .metadata()
+        .map_err(|e| format!("could not read CLI context: {e}"))?;
+    if !metadata.is_file() {
+        return Err(NOT_REGULAR.to_owned());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_CLI_CONTEXT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("could not read CLI context: {e}"))?;
+    if bytes.len() as u64 > MAX_CLI_CONTEXT_BYTES {
+        return Err("saved CLI context is larger than 64 KiB".to_owned());
+    }
+    Ok(bytes)
+}
+
+/// Saves `context` at `path` atomically: written to a fresh temporary file in the same
+/// folder (a unique name, created new with `O_NOFOLLOW | O_CLOEXEC`, mode `0600` set on the
+/// descriptor), flushed to disk, then renamed over `path`. A temporary file is removed when
+/// anything fails, and no name a planted link could sit on in advance is ever opened.
 pub fn save_to(path: &Path, context: &CliContext) -> Result<(), String> {
     CliContext::new(
         context.instance_id.clone(),
         context.instance_name.clone(),
         context.office_id.clone(),
     )?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("could not create context folder: {e}"))?;
-    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| "the CLI context path has no folder".to_owned())?;
+    // A folder made here is the user's alone.
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(parent)
+        .map_err(|e| format!("could not create context folder: {e}"))?;
     let bytes = serde_json::to_vec_pretty(context)
         .map_err(|_| "could not encode CLI context".to_owned())?;
-    let tmp = path.with_extension("json.tmp");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&tmp)
-        .map_err(|e| format!("could not write CLI context: {e}"))?;
-    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))
-        .map_err(|e| format!("could not tighten CLI context permissions: {e}"))?;
-    file.write_all(&bytes)
-        .and_then(|_| file.sync_all())
-        .map_err(|e| format!("could not flush CLI context: {e}"))?;
-    fs::rename(&tmp, path).map_err(|e| format!("could not install CLI context: {e}"))?;
-    Ok(())
+    let (tmp, mut file) = create_temp(parent)?;
+    let written = file
+        .set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("could not tighten CLI context permissions: {e}"))
+        .and_then(|()| {
+            file.write_all(&bytes)
+                .and_then(|()| file.sync_all())
+                .map_err(|e| format!("could not flush CLI context: {e}"))
+        })
+        .and_then(|()| {
+            fs::rename(&tmp, path).map_err(|e| format!("could not install CLI context: {e}"))
+        });
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written
+}
+
+/// A new, empty temporary file in `dir` with a name no other writer uses: the process ID, a
+/// per-process counter and the time. An existing entry under the name (a leftover, a
+/// planted link) is never opened: the next name is tried.
+fn create_temp(dir: &Path) -> Result<(PathBuf, File), String> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.subsec_nanos());
+    for _ in 0..TEMP_ATTEMPTS {
+        let count = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let tmp = dir.join(format!(
+            ".{CONTEXT_FILE}.{}.{count}.{nanos}.tmp",
+            std::process::id()
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(O_NOFOLLOW | O_CLOEXEC)
+            .open(&tmp)
+        {
+            Ok(file) => return Ok((tmp, file)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("could not write CLI context: {e}")),
+        }
+    }
+    Err("could not write CLI context: no free temporary name".to_owned())
 }
 
 pub fn clear_at(path: &Path) -> Result<bool, String> {
@@ -133,45 +271,4 @@ pub fn resolve_selection(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const INST: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607101";
-    const OFF1: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607102";
-    const OFF2: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607103";
-
-    #[test]
-    fn context_round_trips_owner_only_and_enforces_selection_rules() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("cli-context.json");
-        assert_eq!(load_from(&path).unwrap(), None);
-
-        // Missing both explicit and saved context fails with actionable hint.
-        let err = resolve_selection(None, None, None).unwrap_err();
-        assert!(err.contains("--office"), "{err}");
-
-        // Invalid non-UUIDv7 office rejected immediately.
-        assert!(CliContext::new(INST.into(), None, "not-uuid".into()).is_err());
-
-        let ctx = CliContext::new(INST.into(), Some("dev".into()), OFF1.into()).unwrap();
-        save_to(&path, &ctx).unwrap();
-        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
-        assert_eq!(load_from(&path).unwrap(), Some(ctx.clone()));
-
-        // Saved context resolves when omitted; explicit office overrides.
-        assert_eq!(
-            resolve_selection(None, None, Some(&ctx)).unwrap(),
-            (Some("dev".into()), OFF1.into())
-        );
-        assert_eq!(
-            resolve_selection(Some("other"), Some(OFF2), Some(&ctx)).unwrap(),
-            (Some("other".into()), OFF2.into())
-        );
-        // Mismatched explicit instance without explicit office refuses rather than crossing instances.
-        assert!(resolve_selection(Some("other"), None, Some(&ctx)).is_err());
-
-        assert!(clear_at(&path).unwrap());
-        assert!(!clear_at(&path).unwrap());
-    }
-}
+mod tests;

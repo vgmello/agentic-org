@@ -1,7 +1,13 @@
 //! The browser-facing origin: parsing and checking its scheme, host and port (X-02 §2), and WHATWG
 //! IPv6 serialization.
 
-use super::*;
+use std::fmt;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::str::FromStr;
+
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use super::ListenMode;
 
 /// An origin's scheme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

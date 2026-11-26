@@ -664,6 +664,7 @@ fn c2_agent_lifecycle_move_team_relocation_and_hr_protection() {
                 permission_preset: Some("read_only".into()),
                 enabled: true,
                 system_prompt_markdown: "Strict mode.".into(),
+                effort: None,
             },
         )
         .unwrap();
@@ -1203,4 +1204,205 @@ fn role_inspect_prefers_exact_id_over_colliding_key() {
         assert_eq!(inspected.id, ROLE_B);
         assert_eq!(inspected.name, "Target Role");
     }
+}
+
+fn effort_set(n: u32, expected: Option<u64>, effort: Option<&str>) -> AgentExecutionSetParams {
+    AgentExecutionSetParams {
+        command_id: cmd_id(n),
+        employee_id: AGENT_1.into(),
+        expected_version: expected,
+        model_profile_id: PROF_1.into(),
+        model_id: "claude-opus-4-6".into(),
+        tools_config: vec!["read".into()],
+        permission_preset: Some("workspace_edits".into()),
+        effort: effort.map(str::to_owned),
+        enabled: true,
+        system_prompt_markdown: "Think hard.".into(),
+    }
+}
+
+fn effort_of(office: &Office) -> (Option<String>, u64) {
+    let exec: AgentExecutionRecord = call_c2::<AgentExecutionGet>(
+        office,
+        CREATOR,
+        &AgentExecutionGetParams {
+            employee_id: AGENT_1.into(),
+        },
+    )
+    .unwrap();
+    (exec.effort, exec.revision)
+}
+
+/// The agent's `execution.md` as text, wherever its home team's chain puts it. Only that
+/// file is read: the office is open, so other durable files may come and go meanwhile.
+fn execution_file(site: &Site) -> String {
+    let suffix = format!("agents/{AGENT_1}/execution.md");
+    let mut folders = vec![site.roots.durable.clone()];
+    while let Some(folder) = folders.pop() {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for path in entries.flatten().map(|entry| entry.path()) {
+            if path.ends_with(&suffix) {
+                return std::fs::read_to_string(&path).unwrap();
+            }
+            if path.is_dir() {
+                folders.push(path);
+            }
+        }
+    }
+    panic!("no {suffix} under the durable root");
+}
+
+/// TASK-181: an agent's reasoning effort is set at hire and by `agent.execution_set`, read
+/// back by `agent.execution_get`, written to `execution.md` only when set, refused when it is
+/// not one of the five levels, cleared by a set without it, and rebuilt from the files the
+/// same way on SQLite and on Memory.
+#[test]
+fn agent_execution_effort_round_trips_on_every_engine_and_unknown_levels_are_refused() {
+    let mut seen = Vec::new();
+    for engine in ENGINES {
+        let site = Site::new();
+        let office = site.provision(engine).unwrap();
+        call_c2::<ProviderConnectionCreate>(
+            &office,
+            CREATOR,
+            &ProviderConnectionCreateParams {
+                command_id: cmd_id(400),
+                connection_id: CONN_1.into(),
+                default_profile_id: PROF_1.into(),
+                key: "claude-main".into(),
+                name: "Claude Main".into(),
+                provider_type: "anthropic".into(),
+                auth_mode: "api_key".into(),
+                subscription_identity: None,
+                runtime_driver: "claude-code".into(),
+                endpoint_url: None,
+                max_concurrent_turns: 1,
+            },
+        )
+        .unwrap();
+
+        // A hire proposal names an unknown effort: refused before anything is written.
+        let mut bad = base_proposal("Atlas", "atlas");
+        bad.effort = Some("turbo".into());
+        let hire = |n: u32, proposal: HireProposalWire| {
+            call_c2::<HrHire>(
+                &office,
+                CREATOR,
+                &HrHireParams {
+                    command_id: cmd_id(n),
+                    request_id: REQ_1.into(),
+                    employee_id: AGENT_1.into(),
+                    home_team_id: TOP_TEAM.into(),
+                    role_id: None,
+                    proposal,
+                    reason: "Deep reviews".into(),
+                },
+            )
+        };
+        assert_eq!(hire(401, bad).unwrap_err().code, ErrorCode::InvalidRequest);
+        let mut proposal = base_proposal("Atlas", "atlas");
+        proposal.effort = Some("high".into());
+        hire(402, proposal).unwrap();
+        assert_eq!(effort_of(&office), (Some("high".into()), 1));
+        let inspected: HireRequestRecord = call_c2::<HrHireInspect>(
+            &office,
+            CREATOR,
+            &HrHireInspectParams {
+                request_id: REQ_1.into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(inspected.proposal.effort.as_deref(), Some("high"));
+
+        call_c2::<AgentExecutionSet>(&office, CREATOR, &effort_set(403, Some(1), Some("xhigh")))
+            .unwrap();
+        assert_eq!(effort_of(&office), (Some("xhigh".into()), 2));
+        office.sync_store().unwrap();
+        assert!(
+            execution_file(&site).contains("\neffort: \"xhigh\"\n"),
+            "{}",
+            execution_file(&site)
+        );
+
+        // Unknown levels, an empty one and `none` are refused and change nothing.
+        for (n, wrong) in [(404, "turbo"), (405, ""), (406, "none"), (407, "XHIGH")] {
+            let err = call_c2::<AgentExecutionSet>(
+                &office,
+                CREATOR,
+                &effort_set(n, Some(2), Some(wrong)),
+            )
+            .unwrap_err();
+            assert_eq!(err.code, ErrorCode::InvalidRequest, "{wrong:?}");
+        }
+        assert_eq!(effort_of(&office), (Some("xhigh".into()), 2));
+
+        // Every level is accepted; the last one stays across a rebuild from the files.
+        for (n, level) in [(408, "low"), (409, "medium"), (410, "high"), (411, "max")] {
+            call_c2::<AgentExecutionSet>(&office, CREATOR, &effort_set(n, None, Some(level)))
+                .unwrap();
+            assert_eq!(effort_of(&office).0.as_deref(), Some(level));
+        }
+        drop(office);
+        let _ = std::fs::remove_dir_all(site.runtime_folder());
+        let office = site.open(engine).unwrap();
+        assert_eq!(effort_of(&office), (Some("max".into()), 6));
+
+        // A full replacement without an effort clears it: no key in the file any more.
+        call_c2::<AgentExecutionSet>(&office, CREATOR, &effort_set(412, Some(6), None)).unwrap();
+        assert_eq!(effort_of(&office), (None, 7));
+        office.sync_store().unwrap();
+        assert!(!execution_file(&site).contains("effort"));
+        drop(office);
+        let _ = std::fs::remove_dir_all(site.runtime_folder());
+        let office = site.open(engine).unwrap();
+        assert_eq!(effort_of(&office), (None, 7));
+        seen.push(execution_file(&site));
+    }
+    // Both engines leave the same `execution.md` behind.
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0], seen[1]);
+}
+
+/// TASK-155: an agent's folder and home are made owner-only even when they already existed
+/// more open (an earlier build, a `0002` mask), and a link in the home's place is refused,
+/// never followed.
+#[test]
+fn an_existing_open_agent_home_is_made_owner_only_and_a_linked_one_is_refused() {
+    let site = Site::new();
+    let office = site.provision(ENGINES[1]).unwrap();
+    let mode = |path: &std::path::Path| {
+        std::fs::symlink_metadata(path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    let home = office.agent_private_home_path(AGENT_1);
+    let agent = home.parent().unwrap().to_path_buf();
+    std::fs::create_dir_all(&home).unwrap();
+    for dir in [&agent, &home] {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o775)).unwrap();
+    }
+    std::fs::write(home.join("notes.md"), b"x").unwrap();
+    std::fs::set_permissions(
+        home.join("notes.md"),
+        std::fs::Permissions::from_mode(0o664),
+    )
+    .unwrap();
+    assert_eq!(office.ensure_private_home(AGENT_1).unwrap(), home);
+    assert_eq!(mode(&agent), 0o700);
+    assert_eq!(mode(&home), 0o700);
+    // What the agent wrote inside keeps its own mode: the folder is the boundary.
+    assert_eq!(mode(&home.join("notes.md")), 0o664);
+
+    let other_home = office.agent_private_home_path(AGENT_2);
+    let outside = site.root.join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::create_dir_all(other_home.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&outside, &other_home).unwrap();
+    assert!(office.ensure_private_home(AGENT_2).is_err());
+    assert_eq!(mode(&outside), 0o755, "a linked home is never followed");
 }

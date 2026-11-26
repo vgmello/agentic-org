@@ -7,7 +7,7 @@ use std::io;
 use org_proto::ErrorCode;
 use serde_json::{Map, Value};
 
-use crate::table::{Ack, Command};
+use crate::row::{Ack, Command};
 
 /// One command, read and checked, ready for the office. The office authorizes and decides;
 /// nothing here is a check that protects anything.
@@ -81,6 +81,8 @@ pub struct Answer {
     pub next_cursor: Option<String>,
     /// Optional non-zero waiting messages/wakes hint for bound agents (`TASK-115` / `doc-28` §2.3).
     pub waiting_messages: Option<u32>,
+    /// For a list: how many records match across every page (`meta.total`).
+    pub total: Option<u64>,
 }
 
 impl Answer {
@@ -94,6 +96,7 @@ impl Answer {
             revision: None,
             next_cursor: None,
             waiting_messages: None,
+            total: None,
         }
     }
 }
@@ -107,11 +110,25 @@ pub struct Refusal {
     /// What to do next, in a sentence.
     pub hint: String,
     /// The flags to change for a retry that can succeed, from flag name to value. For
-    /// `unavailable` and `not_ready` the library adds the write's `idempotency-key` itself.
+    /// `unavailable`, `not_ready` and `timeout` the library adds the write's `idempotency-key` itself.
     pub retry_with: Option<Map<String, Value>>,
     /// For a write, when the office has one to report. Without it `meta.operation_id` is the
     /// request's idempotency key.
     pub operation_id: Option<String>,
+    /// What else the office said in structured form, when it said anything
+    /// ([`RefusalDetails`]). Boxed: most refusals carry none.
+    pub details: Option<Box<RefusalDetails>>,
+}
+
+/// The structured details of a refusal, printed in `error` beside the code, message and hint.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RefusalDetails {
+    /// With `rate_limited`: how long until a retry can succeed (`error.retry_after_ms`).
+    pub retry_after_ms: Option<u64>,
+    /// The input field a rule refused (`error.field`), when the office names one.
+    pub field: Option<String>,
+    /// With `field`: the rule it failed (`error.rule`), such as `format` or `too_long`.
+    pub rule: Option<String>,
 }
 
 impl Refusal {
@@ -122,6 +139,7 @@ impl Refusal {
             hint: hint.into(),
             retry_with: None,
             operation_id: None,
+            details: None,
         }
     }
 }

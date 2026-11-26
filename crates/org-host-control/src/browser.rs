@@ -11,68 +11,13 @@ use std::fmt;
 use std::net::IpAddr;
 
 use org_proto::{Call, Empty};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
+pub use crate::browser_auth::{BrowserAuth, BrowserOrigin, Digest32};
 use crate::listen::Hsts;
 use crate::ops::{LinkedOrg, OfficeOpenChannelResult, SessionGrantResult};
-use crate::organization::BrowserAuth;
 use crate::status::{Administrator, InstanceMode, WebState};
 use crate::{LinkToken, Password, TlsPrivateKey};
-
-/// A 32-byte digest as 64 lowercase hex digits. Not secret: it is the stored form.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Digest32(pub [u8; 32]);
-impl fmt::Debug for Digest32 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Digest32(..)")
-    }
-}
-impl Serialize for Digest32 {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let mut text = String::with_capacity(64);
-        for b in self.0 {
-            text.push_str(&format!("{b:02x}"));
-        }
-        s.serialize_str(&text)
-    }
-}
-impl<'de> Deserialize<'de> for Digest32 {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(d)?;
-        let bytes = text.as_bytes();
-        let nibble = |c: u8| match c {
-            b'0'..=b'9' => Some(c - b'0'),
-            b'a'..=b'f' => Some(c - b'a' + 10),
-            _ => None,
-        };
-        if bytes.len() != 64 {
-            return Err(serde::de::Error::custom(
-                "a digest is 64 lowercase hex digits",
-            ));
-        }
-        let mut out = [0u8; 32];
-        for (i, [high, low]) in bytes.as_chunks::<2>().0.iter().enumerate() {
-            out[i] = match (nibble(*high), nibble(*low)) {
-                (Some(h), Some(l)) => (h << 4) | l,
-                _ => {
-                    return Err(serde::de::Error::custom(
-                        "a digest is 64 lowercase hex digits",
-                    ))
-                }
-            };
-        }
-        Ok(Self(out))
-    }
-}
-
-/// The browser origin a session is bound to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BrowserOrigin {
-    pub scheme: String,
-    pub host: String,
-    pub port: u16,
-}
 
 /// `link.register`: redeem the setup registration link and create the administrator.
 pub struct LinkRegister;

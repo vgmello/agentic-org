@@ -21,35 +21,25 @@
 use org_proto::{selected_bootstrap::PlanV1, Call, EventKind, OfficeInfo};
 use serde::{Deserialize, Serialize};
 
-use crate::browser::{BrowserOrigin, Digest32};
+pub use crate::browser_auth::BrowserAuth;
 use crate::journal::Journaled;
-use crate::ops::RecoveryState;
 use crate::HostOpResult;
 
-/// The browser session a call acts for: the pair digests and the origin they are bound to.
-/// When `local_authless` is set on a local plain-HTTP instance whose authentication is disabled,
-/// the host authorizes the implicit local owner account and ignores the sentinel digests; the
-/// host refuses `local_authless` whenever authentication is enabled or the listener is HTTPS.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BrowserAuth {
-    pub cookie_digest: Digest32,
-    pub proof_digest: Digest32,
-    pub origin: BrowserOrigin,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub local_authless: bool,
-}
-
-impl BrowserAuth {
-    /// Constructs a local-authless browser auth envelope for an unauthenticated local HTTP HQ.
-    pub fn local_authless(origin: BrowserOrigin) -> Self {
-        Self {
-            cookie_digest: Digest32([0u8; 32]),
-            proof_digest: Digest32([0u8; 32]),
-            origin,
-            local_authless: true,
-        }
-    }
+/// Where an organization's recovery code is (X-02 §6.4). Unknown values decode as
+/// [`RecoveryState::Unknown`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum RecoveryState {
+    /// Staged by the host, never shown.
+    Pending,
+    /// Shown once with `recovery.release`, not yet acknowledged.
+    Delivered,
+    /// Acknowledged: the staged copy is erased.
+    Acknowledged,
+    /// A state this build doesn't know. It is never sent: serializing it fails.
+    #[serde(other, skip_serializing)]
+    Unknown,
 }
 
 /// `organization.create`: admit a create, or report on the one `operation_id` names.
@@ -251,6 +241,7 @@ impl EventKind for AccountChanged {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::browser_auth::{BrowserOrigin, Digest32};
     use crate::journal;
 
     fn auth(byte: u8) -> BrowserAuth {

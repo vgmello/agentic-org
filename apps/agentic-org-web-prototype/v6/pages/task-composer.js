@@ -3,6 +3,7 @@ import { own, render, route } from "../shell/router.js";
 import { finishBackgroundJob, startBackgroundJob } from "../shell/topbar-utils.js";
 import { S } from "../state.js";
 import { av, esc, ic, memberIds, toast } from "../ui.js";
+import { closeContextPicker, contextForTask, createContextState, refreshContextResults, renderContextSection, runContextAction } from "./task-context.js";
 import { persistCreatedWorkTask, workHref, workSelection } from "./work.js";
 
 const TASK_TYPES = [
@@ -208,6 +209,7 @@ function finalizeDraftIntake(intake, ctx) {
     pri: ctx.effPri,
     etaHours: null,
     criteria: tessBuildCriteria(intake.prompt, ctx.kind),
+    context: intake.context,
     ideationComments: seedIdeationComments(leadId, intake.prompt, ctx.proj, intake.mentions),
     draftPrompt: intake.prompt.trim(),
   });
@@ -239,6 +241,7 @@ function finalizeFastIntake(intake, ctx) {
     pri: ctx.effPri,
     etaHours: 2,
     criteria: tessBuildCriteria(intake.prompt, ctx.kind),
+    context: intake.context,
   });
   const assigneeNote = who && M[who] ? ` · Assigned to ${M[who].name}` : "";
   finishBackgroundJob(intake.id, {
@@ -282,6 +285,7 @@ function enqueueTessIntake(state) {
     pinnedType: state.pinnedType,
     pinnedPriority: state.pinnedPriority,
     pinnedSeverity: state.pinnedSeverity,
+    context: contextForTask(state.ctx),
   };
   const complex = isComplexIntake(intake.prompt, intake.pinnedType || "task", intake.mentions);
   startBackgroundJob({
@@ -389,6 +393,7 @@ function renderCaptureStep(state) {
       ${renderMentionStrip(state)}
     </div>
     ${errHtml}
+    ${renderContextSection(state.ctx)}
     ${renderCaptureOverrides(state)}
     ${renderRoutingPreviewLine(state)}
   </div>`;
@@ -513,6 +518,7 @@ function requestComposerClose() {
   if (!STC) return;
   if (STC.openMenu) { STC.openMenu = null; paintComposer(); return; }
   if (STC.mention.open) { STC.mention.open = false; updateMentionPopoverOnly(); return; }
+  if (STC.ctx.picker) { paintComposer(closeContextPicker(STC.ctx)); return; }
   if (STC.confirmDiscard) { STC.confirmDiscard = false; paintComposer(); return; }
   if (STC.prompt.trim()) { STC.confirmDiscard = true; paintComposer("#stc-keep-editing"); return; }
   closeComposerNow();
@@ -563,6 +569,7 @@ function commitRawTaskNow() {
     status: kind === "bug" ? STATUSES.bug[0] : STATUSES.task[0],
     pri: kind === "bug" && STC.pinnedSeverity ? STC.pinnedSeverity : (STC.pinnedPriority || "Normal"),
     etaHours: null,
+    context: contextForTask(STC.ctx),
   });
   toast(`Created ${created.id}`, "check-circle");
   if (STC.createMore) {
@@ -658,10 +665,12 @@ function handleComposerClick(e) {
     if (STC.openMenu && !e.target.closest(".stc-menu-anchor")) { STC.openMenu = null; paintComposer(); }
     return;
   }
+  if (btn.dataset.stc.startsWith("ctx-")) { paintComposer(runContextAction(btn, STC.ctx)); return; }
   STC_CLICK_ACTIONS[btn.dataset.stc]?.(btn);
 }
 
 function handleComposerInput(e) {
+  if (STC && e.target.id === "stc-ctx-q") { STC.ctx.q = e.target.value; refreshContextResults(STC.dialog, STC.ctx); return; }
   if (!STC || e.target.id !== "stc-prompt") return;
   STC.prompt = e.target.value;
   if (STC.error) { STC.error = ""; STC.dialog.querySelector(".stc-inline-err")?.remove(); }
@@ -708,6 +717,8 @@ function inferOpeningContext(opts = {}) {
   const [page, id] = route();
   const projects = activeProjects();
   let { proj, team } = inferProjectFromRoute(page, id, projects);
+  /* A caller that knows the context (a channel's project, for "Turn into task") names it. */
+  if (isActiveProject(opts.proj)) { proj = opts.proj; team = defaultTeamForProject(proj); }
   let agentId = opts.agentId && own(M, opts.agentId) ? opts.agentId : null;
   if (!agentId && page === "members" && own(M, id) && id !== "you") agentId = id;
   if (agentId && isActiveProject(M[agentId]?.proj)) {
@@ -730,7 +741,7 @@ function openSmartTaskComposer(trigger, opts = {}) {
     step: "capture",
     proj,
     team,
-    prompt: "",
+    prompt: opts.prompt || "",
     pinnedAssignee: agentId || null,
     pinnedType: null,
     pinnedPriority: null,
@@ -742,6 +753,8 @@ function openSmartTaskComposer(trigger, opts = {}) {
     error: "",
     mention: { open: false, start: 0, end: 0, query: "", activeIdx: 0 },
     context: { agentId, trigger },
+    /* Task context (what the assignee reads): Chat's excerpt by default, otherwise this page on offer. */
+    ctx: createContextState(opts.excerpt, route()),
   };
   dialog.addEventListener("click", handleComposerClick);
   dialog.addEventListener("input", handleComposerInput);

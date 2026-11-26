@@ -543,7 +543,7 @@ fn render_budget_respects_separator_unique_omitted_count_and_preserves_notice() 
 #[test]
 fn builtin_skills_are_discoverable_and_readable() {
     let skills = list_builtin_skills();
-    assert!(skills.len() >= 5);
+    assert_eq!(skills.len(), 12);
     let skill = find_builtin_skill("processes-and-standards").expect("skill found");
     assert_eq!(skill.source, "built_in");
     assert!(skill.body_markdown.contains("agent-os process list"));

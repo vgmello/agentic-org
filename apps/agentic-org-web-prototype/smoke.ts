@@ -9,12 +9,14 @@ const ALL_SUITE: Array<[string, string]> = [
   ["activity", "cozy"],
   ["projects/office-federation/activity", "report"],
   ["projects/agency-v1/insights", "report-dark"],
+  ["chat", "classic"],
+  ["projects/agency-v1", "graphite-light"],
 ];
 
 const SWEEP_ROUTES = [
   "home", "inbox", "projects", "projects/agency-v1", "projects/agency-v1/work",
   "projects/agency-v1/insights", "projects/office-federation/activity", "projects/office-federation/team",
-  "work", "chat", "chat/general", "activity",
+  "work", "chat", "chat/general", "activity", "insights", "calendar", "projects/agency-v1/calendar", "teams/platform/calendar",
   "teams", "teams/platform", "teams/members", "teams/org-chart",
   "members/ada", "members/ada/sessions", "members/ada/journal",
   "members/ada/memory", "members/ada/knowledge", "members/ada/settings",
@@ -70,21 +72,778 @@ async function checkWorkBoard(page: Page) {
   const columns = board.locator(".bcol");
   const cards = board.locator(".bcard");
   const cardIds = () => cards.evaluateAll((items) => items.map((item) => item.getAttribute("data-work-id")).sort());
-  assert.equal(await columns.count(), 6);
-  const detailedIds = await cardIds();
+  assert.equal(await columns.count(), 4, "Stages board has 4 columns");
+  const stageIds = await cardIds();
   const attention = board.locator(".bcard[data-attention]").first();
-  await attention.locator(".board-card-footer .pill").waitFor();
-  assert.equal(await attention.locator(":scope > *").count(), 3);
+  await attention.locator(".board-foot .board-need").waitFor();
+  assert.match((await attention.locator(".board-foot .board-need").getAttribute("aria-label"))!, /^Needs you: /, "The Needs you bell's name says what is needed");
+  assert.equal(await board.locator(".bcard[data-attention]").count(), Number(await page.locator('[data-work-count="needs-me"]').textContent()),
+    "Needs you count and amber bells come from the same pending owner actions");
+  assert.equal(await board.locator(".bcard .board-need").count(), await board.locator(".bcard[data-attention]").count(), "Every card that needs you has its bell");
+  const multi = board.locator("button.board-need").first();
+  const asked = Number((await multi.getAttribute("aria-label"))!.match(/(\d+) requests/)![1]);
+  assert.equal((await multi.locator(".board-need-n").textContent())!.trim(), String(asked), "The bell shows the request count");
+  await multi.click();
+  const requests = page.getByRole("menu", { name: /^Requests waiting on you for / }).getByRole("menuitem");
+  assert.equal(await requests.count(), asked, "A badge for several requests lists each of them");
+  await page.keyboard.press("Escape");
+  for (const width of [1440, 1024, 420, 320]) await checkToolbarTabOrder(page, width);
+  await checkBoardRequestMenus(page, board);
+  await checkAttentionFirst(page, board);
+  await checkBoardPrioritySort(page, board);
+  await checkBoardCountsAndLabels(page, board);
+  await checkPendingApprovalAndHold(page, board);
+  await checkListBoardPriority(page, board);
+  await checkCardLayout(page, board);
+  await checkCardTooltip(page, board);
+  assert.match((await page.getByRole("button", { name: /^Work display/ }).getAttribute("aria-label"))!, /Stages columns/, "Display names the column mode");
   const trailingGutter = await board.evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
     const lastColumn = el.querySelector(".bcol:last-child")!;
     return el.getBoundingClientRect().left + el.clientWidth - lastColumn.getBoundingClientRect().right;
   });
   assert.ok(trailingGutter >= 15, "The final board column scrolls clear of the right edge");
-  await page.getByRole("button", { name: "4-Stage Unified" }).press("Enter");
+  await page.getByRole("button", { name: "Work display" }).click();
+  await page.getByRole("menuitemradio", { name: "Status", exact: true }).click();
+  assert.ok(await columns.count() > 4, "Status columns split the stages");
+  assert.deepEqual(await cardIds(), stageIds, "Status columns keep every card");
+  await checkStatusLaneJump(page);
+  await page.getByRole("button", { name: "Work display" }).click();
+  await page.getByRole("menuitemradio", { name: "Stages", exact: true }).click();
   assert.equal(await columns.count(), 4);
-  assert.deepEqual(await cardIds(), detailedIds, "Unified stages keep every card");
+  await checkDoneHistory(page, board);
+  await checkArchivedOnlyMatches(page, board);
+  await checkMixedArchivedMatches(page, board);
+  await checkBoardSubtaskSearch(page, board);
+  await checkSubtaskFocusReturn(page, board);
+  await checkBoardClearFilters(page, board);
+  await checkBoardReturnFromInbox(page, board);
+  await checkPhoneLaneJump(page);
+  await checkPhoneSearchRevealsLane(page);
+  await checkCompactCardLabels(page);
+  await checkReturnAfterResolve(page, board);
+  await checkDeniedAccess(page, board);
+  await checkVerifyApproved(page, board);
   await layout.getByRole("button", { name: "List" }).press("Enter");
+  await checkProjectWorkTab(page);
+}
+
+/* Preset counts are the cards the Board shows; Done names its history window; priority and severity read in words */
+async function checkBoardCountsAndLabels(page: Page, board: ReturnType<Page["locator"]>) {
+  assert.equal(await board.locator(".bcard").count(), Number(await page.locator('[data-work-count="all"]').textContent()),
+    "All counts the cards the Board shows, inside the Done history window");
+  const shownHead = await board.locator("#bcol-done .bcol-h").evaluate((el) => { const c = el.cloneNode(true) as Element; c.querySelectorAll(".sr-only, .menu").forEach((n) => n.remove()); return c.textContent!; });
+  assert.doesNotMatch(shownHead, /Last 7 days/, "Done's history window is not inline text");
+  const more = board.locator("#bcol-done").getByRole("button", { name: "Done history: Last 7 days. Change" });
+  assert.equal(await more.count(), 1, "The history window is in the ⋯ button's name");
+  assert.equal(await more.getAttribute("data-icon-tip"), "Done history: Last 7 days", "…and its tooltip");
+  const set = board.locator('.bcard[data-work-id="T-A146"]');
+  assert.equal(await set.locator(".bpri").getAttribute("aria-label"), "High priority");
+  assert.equal((await set.locator(".bpill").innerText()).trim(), "High", "A set priority is a word beside the bars");
+  const bug = board.locator('.bcard[data-work-id="T-A88"]');
+  assert.equal((await bug.locator(".bpill").innerText()).trim(), "High*", "An inferred priority reads High*");
+  assert.equal(await bug.locator(".bpri").getAttribute("aria-label"), "Inferred priority: High (none set)");
+  assert.equal(await bug.locator(".bpill").getAttribute("aria-label"), "Bug · Inferred priority: High (none set)", "The pill names the bug and the inferred priority");
+  assert.equal(await bug.locator(".bpill .ic").count(), 1, "A bug has a small bug icon in its pill");
+  const sev = bug.locator(".board-foot .bsev");
+  assert.equal(await sev.getAttribute("aria-label"), "Critical severity", "Bug severity is a footer icon, labelled apart from priority");
+  assert.equal(await sev.getAttribute("data-tone"), "bad", "Critical severity is red");
+}
+
+/* The toolbar's Tab order is its visual reading order (rows top to bottom, each left to right) at every width: no
+   control is moved visually away from its place in the DOM */
+async function checkToolbarTabOrder(page: Page, width: number) {
+  await page.setViewportSize({ width, height: 900 });
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await page.waitForTimeout(150);
+  const visual = await page.evaluate(() => {
+    const els = [...document.querySelectorAll<HTMLElement>(".work-toolbar :is(a[href], button, select, input, [tabindex])")]
+      .filter((el) => el.tabIndex >= 0 && el.getClientRects().length && !el.closest("[hidden], .menu"));
+    const rows: { cy: number; items: { id: string; left: number }[] }[] = [];
+    els.forEach((el, i) => {
+      el.dataset.tabProbe = String(i);
+      const r = el.getBoundingClientRect(), cy = r.top + r.height / 2;
+      const row = rows.find((row) => Math.abs(row.cy - cy) < 16);
+      if (row) row.items.push({ id: String(i), left: r.left }); else rows.push({ cy, items: [{ id: String(i), left: r.left }] });
+    });
+    return rows.sort((a, b) => a.cy - b.cy).flatMap((row) => row.items.sort((a, b) => a.left - b.left).map((item) => item.id));
+  });
+  assert.ok(visual.length >= 6, `The toolbar has its controls at ${width}px (${visual.length})`);
+  await page.locator('.work-toolbar [data-tab-probe="0"]').focus();
+  const tabbed = [await page.evaluate(() => (document.activeElement as HTMLElement).dataset.tabProbe)];
+  for (let i = 1; i < visual.length; i++) {
+    await page.keyboard.press("Tab");
+    tabbed.push(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.tabProbe));
+  }
+  assert.deepEqual(tabbed, visual, `Tab order follows the toolbar's visual order at ${width}px`);
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+/* A pending owner approval on Fixed work stays in view: it counts in Needs you, ignores the Done history window and
+   archiving, and Needs you shows a Done lane holding only such cards. A known execution hold is its own cue. */
+async function checkPendingApprovalAndHold(page: Page, board: ReturnType<Page["locator"]>) {
+  const fixed = board.locator('#bcol-done .bcard[data-work-id="T-A81"]');
+  assert.equal(await fixed.count(), 1, "T-A81 (Fixed 21 days ago, fix waiting for approval) stays in Done");
+  assert.equal(await fixed.getAttribute("data-attention"), "", "Its pending approval marks it as needing you");
+  assert.match((await fixed.locator(".board-need").getAttribute("aria-label"))!, /^Needs you: Fix to verify/);
+  assert.equal(await fixed.locator(".bdate").getAttribute("aria-label"), "Waiting on your verification", "Pending verification is not dated as closed history");
+  assert.equal(await fixed.locator(".bstatus").getAttribute("aria-label"), "Status: Fixed", "The exact status is a footer icon");
+  assert.doesNotMatch(await fixed.innerText(), /Closed \d+d ago|Fixed/, "No closing date or status chip on the card face");
+  const hold = board.locator('.bcard[data-work-id="T-A135"]');
+  assert.match((await hold.locator(".board-hold").innerText()).replace(/\s+/g, " ").trim(), /^Waiting for office · Build box is offline$/, "A known execution hold says the office is waiting");
+  assert.equal(await hold.getAttribute("data-attention"), null, "An execution hold is not Needs you");
+  assert.equal(await hold.locator(".board-hold a").getAttribute("href"), "#/inbox/in9", "The hold opens its Inbox explanation");
+  await page.locator('[data-act="work-preset"][data-v="needs-me"]').click();
+  await page.locator('[data-act="work-preset"][data-v="needs-me"][aria-pressed="true"]').waitFor();
+  await board.locator(".bcard").first().waitFor();
+  const lanes = await board.locator(".bcol").evaluateAll((cols) => cols.map((col) => [col.id, [...col.querySelectorAll(".bcard")].map((c) => c.getAttribute("data-work-id"))]));
+  const done = lanes.find(([id]) => id === "bcol-done");
+  assert.deepEqual(done?.[1], ["T-A81"], `Needs you shows a Done lane holding only the pending approval (${JSON.stringify(lanes)})`);
+  assert.equal(await board.locator(".bcard").count(), Number(await page.locator('[data-work-count="needs-me"]').textContent()), "Needs you counts every card it shows");
+  await page.locator('[data-act="work-preset"][data-v="all"]').click();
+  await page.locator('[data-act="work-preset"][data-v="all"][aria-pressed="true"]').waitFor();
+  await board.locator('.bcard[data-work-id="T-A112"]').waitFor();
+}
+
+/* List and Board read one priority (set, else inferred) and label bug severity apart from it, and sort the same way */
+async function checkListBoardPriority(page: Page, board: ReturnType<Page["locator"]>) {
+  const boardLabels = Object.fromEntries(await board.locator(".bcard").evaluateAll((cards) => cards.map((c) => [c.getAttribute("data-work-id"), c.querySelector(".bpri")!.getAttribute("aria-label")])));
+  const layout = page.getByRole("group", { name: "Work layout" });
+  await layout.getByRole("button", { name: "List" }).click();
+  const rows = page.locator("#work-results .work-list > .work-item > .work-row");
+  await rows.first().waitFor();
+  const listLabels = Object.fromEntries(await rows.evaluateAll((els) => els.map((r) => [r.getAttribute("data-work-id"), r.querySelector(".work-priority-mark")!.getAttribute("aria-label")])));
+  for (const [id, label] of Object.entries(boardLabels)) assert.equal(listLabels[id], label, `${id} has the same priority in List and Board`);
+  const bug = page.locator('#work-results .work-row[data-work-id="T-A84"]');
+  assert.equal(await bug.locator(".work-priority-mark").getAttribute("data-level"), "3", "T-A84's bars show its inferred High, not its Minor severity");
+  assert.match(await bug.locator(".work-severity").innerText(), /^Minor severity$/, "The List labels severity apart from priority");
+  await page.getByRole("button", { name: "Work display" }).click();
+  await page.getByRole("group", { name: "Group by", exact: true }).getByRole("menuitemradio", { name: "No grouping" }).click();
+  await page.getByRole("button", { name: "Work display" }).click();
+  await page.getByRole("group", { name: "Sort by" }).getByRole("menuitemradio", { name: "Priority", exact: true }).click();
+  await page.keyboard.press("Escape").catch(() => {});
+  const ranks = await rows.evaluateAll((els) => els.map((r) => Number(r.querySelector(".work-priority-mark")!.getAttribute("data-level"))));
+  assert.ok(ranks.every((rank, i) => i === 0 || rank <= ranks[i - 1]), `The List's Priority sort follows the displayed priority (${ranks})`);
+  await page.goto(page.url().replace(/#.*$/, "#/work"));
+  await page.locator("#main h1").first().waitFor();
+  await page.getByRole("button", { name: "Work display" }).click();
+  await page.getByRole("group", { name: "Sort by" }).getByRole("menuitemradio", { name: "Original order" }).click();
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.getByRole("group", { name: "Work layout" }).getByRole("button", { name: "Board" }).click();
+  await board.locator(".bcard").first().waitFor();
+}
+
+/* Closing a task returns focus to the link that opened it: a subtask link on its parent card, or the parent card */
+async function checkSubtaskFocusReturn(page: Page, board: ReturnType<Page["locator"]>) {
+  await page.getByRole("button", { name: "Search work" }).first().click();
+  await page.keyboard.type("Inventory CSP");
+  const hit = board.locator('.bcard .board-subhits a[data-item="T-A147"]');
+  await hit.click();
+  const panel = page.getByRole("dialog");
+  await panel.waitFor({ state: "visible" });
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "detached" });
+  assert.ok(await focusedIs(hit), "Closing a subtask opened from search returns to its subtask link");
+  const search = page.getByRole("searchbox", { name: "Search work" });
+  await search.fill("");
+  await search.press("Escape");
+  await search.waitFor({ state: "detached" });
+  const parent = board.locator('.bcard[data-work-id="T-A124"] > .work-item-link');
+  await parent.click();
+  await panel.waitFor({ state: "visible" });
+  await panel.locator('.work-detail-links a[href*="item=T-A147"]').click();
+  await page.getByRole("heading", { name: "Inventory CSP fixtures" }).waitFor();
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "detached" });
+  assert.ok(await focusedIs(parent), "A subtask with no link of its own on the board returns to its parent card");
+}
+
+/* Phones show one lane: a search whose matches are all in another lane brings that lane into view, keeps focus in
+   search and says the result */
+async function checkPhoneSearchRevealsLane(page: Page) {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.locator("select[data-board-lane]").selectOption("0");
+  await page.waitForFunction(() => document.querySelector(".board")!.scrollLeft === 0);
+  const search = page.getByRole("searchbox", { name: "Search work" });
+  /* Clear filters leaves an empty search row open; the toggle would close it */
+  if (!(await search.count())) await page.locator('[data-act="search-toggle"][data-v="work-search"]').click();
+  await search.focus();
+  await page.keyboard.type("Inventory CSP");
+  await page.waitForFunction(() => /Showing/.test(document.getElementById("work-results-status")?.textContent ?? ""));
+  const lane = await page.evaluate(() => {
+    const board = document.querySelector(".board")!, view = board.getBoundingClientRect();
+    const shown = [...board.querySelectorAll(".bcol")].find((col) => Math.abs(col.getBoundingClientRect().left - view.left) < view.width / 2);
+    return { name: shown?.querySelector(".bcol-name")?.textContent, cards: shown?.querySelectorAll(".bcard").length };
+  });
+  assert.ok(lane.cards! > 0, `The lane in view has the match (${lane.name})`);
+  assert.equal(await page.locator("#work-results-status").textContent(), `1 match. Showing ${lane.name}.`, "The result and lane are announced");
+  assert.equal(await page.locator("select[data-board-lane]").inputValue(), "2", "The picker names the revealed lane");
+  assert.ok(await focusedIs(search), "Focus stays in search");
+  assert.equal(await page.locator("#work-results").getByRole("button", { name: "Clear filters" }).count(), 1, "One Clear filters for the whole board");
+  /* Touch: project, owner and subtask links have 44px hit areas */
+  const sizes = await page.locator(".board .bcard :is(.board-project a, .board-owner-label a, .board-subhits a)").evaluateAll((links) =>
+    links.filter((a) => a.getClientRects().length).map((a) => { const r = a.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; }));
+  assert.ok(sizes.length >= 3 && sizes.every(([w, h]) => w >= 44 && h >= 44), `Secondary links are 44px targets (${JSON.stringify(sizes)})`);
+  /* Footer icons, the bell and a focusable pill reach 44px through their hit area (::after) */
+  const hits = await page.locator(".board .bcard :is(.bicon, .board-need, .bpill[tabindex])").evaluateAll((els) =>
+    els.filter((el) => el.getClientRects().length).map((el) => { const a = getComputedStyle(el, "::after"), r = el.getBoundingClientRect();
+      return [Math.round(r.width - parseFloat(a.left) - parseFloat(a.right)), Math.round(r.height - parseFloat(a.top) - parseFloat(a.bottom))]; }));
+  assert.ok(hits.length >= 3 && hits.every(([w, h]) => w >= 34 && h >= 44), `Card icons have 44px-high touch targets (${JSON.stringify(hits)})`);
+  await search.fill("");
+  await search.press("Escape");
+  await search.waitFor({ state: "detached" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+/* 1024px: lanes keep about 260px and overflow into the column jump. Compact cards keep the team (the footer wraps
+   instead) and keep the progress row on one line; the order stays progress, the assignee, then the footer icons. */
+async function checkCompactCardLabels(page: Page) {
+  await page.setViewportSize({ width: 1024, height: 800 });
+  await page.waitForFunction(() => document.querySelector(".board-lanes")?.hasAttribute("data-overflow"));
+  const widths = await page.locator(".board .bcol").evaluateAll((cols) => cols.map((c) => c.getBoundingClientRect().width));
+  assert.ok(widths.every((w) => w >= 255), `Lanes keep a readable width at 1024 (${widths.map(Math.round)})`);
+  const card = page.locator('.board .bcard[data-work-id="T-A146"]');
+  assert.ok(await page.locator('.board .bcard[data-work-id="T-A88"] .bsev').isVisible(), "Compact cards keep severity");
+  const teams = await page.locator(".board .bcard .board-team").evaluateAll((els) => els.filter((el) => !el.getClientRects().length).length);
+  assert.equal(teams, 0, "No card hides its team at 1024");
+  const progressHeight = await card.locator(".board-progress").evaluate((el) => el.getBoundingClientRect().height);
+  assert.ok(progressHeight <= 24, `The progress row stays on one line (${progressHeight}px)`);
+  const [progress, owner, foot] = await card.evaluate((el) => [".board-progress", ".board-assignee", ".board-foot"].map((sel) => el.querySelector(sel)!.getBoundingClientRect().top));
+  assert.ok(progress < owner && owner < foot, "Progress, then the assignee, then the footer icons");
+  await card.locator(":scope > .work-item-link").click();
+  await page.locator("#work-detail-subtasks").waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "detached" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+/* The project's Work tab says what its count is */
+async function checkProjectWorkTab(page: Page) {
+  const back = page.url();
+  await page.goto(back.replace(/#.*$/, "#/projects/agency-v1/work"));
+  assert.match((await page.locator('.tabs a[href$="/work"]').innerText()).replace(/\s+/g, " "), /^Work \d+ open$/, "Work tab count says open");
+  await page.goto(back);
+  await page.locator("#main h1").first().waitFor();
+}
+
+/* Priority sort follows the priority each card shows (set, else inferred), never the bug's raw severity */
+async function checkBoardPrioritySort(page: Page, board: ReturnType<Page["locator"]>) {
+  const display = page.getByRole("button", { name: /^Work display/ });
+  await display.click();
+  await page.getByRole("group", { name: "Sort by" }).getByRole("menuitemradio", { name: "Priority", exact: true }).click();
+  await page.keyboard.press("Escape");
+  const ranks = await board.locator(".bcol").evaluateAll((lanes) => lanes.map((lane) => [...lane.querySelectorAll(".bcard .bpri")].map((el) => {
+    const word = el.getAttribute("aria-label")!.match(/(Low|Medium|High|Urgent)/)![1];
+    return { Low: 1, Medium: 2, High: 3, Urgent: 4 }[word]!;
+  })));
+  assert.ok(ranks.every((lane) => lane.every((rank, i) => i === 0 || rank <= lane[i - 1])), `Each lane runs from the highest displayed priority down (${JSON.stringify(ranks)})`);
+  const order = await board.locator("#bcol-in-progress .bcard").evaluateAll((cards) => cards.map((card) => card.getAttribute("data-work-id")));
+  assert.ok(order.indexOf("T-A84") < order.indexOf("T-A121"), `Inferred High (Minor severity) sorts above set Medium (${order})`);
+  const summary = page.locator("#work-results > .board-filterbar");
+  assert.match((await summary.innerText()).replace(/\s+/g, " "), /Highest priority first/, "The summary names the sort and its direction");
+  assert.doesNotMatch(await summary.innerText(), /\bcards?\b|Stages columns/, "The summary repeats neither the preset count nor the mode the toolbar shows");
+  await display.click();
+  await page.getByRole("group", { name: "Direction" }).getByRole("menuitemradio", { name: "Lowest first" }).click();
+  await page.keyboard.press("Escape");
+  assert.match((await summary.innerText()).replace(/\s+/g, " "), /Lowest priority first/);
+  await display.click();
+  await page.getByRole("group", { name: "Direction" }).getByRole("menuitemradio", { name: "Highest first" }).click();
+  await page.keyboard.press("Escape");
+  await display.click();
+  await page.getByRole("group", { name: "Sort by" }).getByRole("menuitemradio", { name: "Attention first" }).click();
+  await page.keyboard.press("Escape");
+}
+
+/* One canonical card: a single top row (project chip, one pill, the reference), the title, progress, the assignee, then
+   the right-aligned footer icons with the Needs you bell. No stripe, no outlines, no second chip row, in every theme. */
+async function checkCardLayout(page: Page, board: ReturnType<Page["locator"]>) {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const card = board.locator('.bcard[data-work-id="T-A146"]');
+  /* Resizing can re-render the page, so measure in one pass once it has settled */
+  await page.waitForTimeout(300);
+  const [top, title, progress, owner, foot, need, box] = await card.evaluate((el) => [".board-top", ":scope > .work-item-link", ".board-progress", ".board-owner-label a", ".board-foot", ".board-foot .board-need", ":scope"]
+    .map((sel) => { const r = (sel === ":scope" ? el : el.querySelector(sel))!.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }));
+  assert.ok(top!.y + top!.height <= title!.y + 1, "The top row sits above the title");
+  assert.ok(progress!.y >= title!.y + title!.height - 1 && owner!.y >= progress!.y + progress!.height - 1, "Progress, then the assignee");
+  assert.ok(foot!.y >= owner!.y, "The footer comes last");
+  assert.ok(Math.abs(need!.x + need!.width - (foot!.x + foot!.width)) <= 60, "The bell sits at the right of the footer");
+  const [projectLink, ownerLink] = await card.evaluate((el) => [".board-project a", ".board-owner-label a"].map((sel) => { const r = el.querySelector(sel)!.getBoundingClientRect(); return [r.width, r.height]; }));
+  assert.ok(projectLink[1] >= 44 && ownerLink[0] >= 44 && ownerLink[1] >= 44, `Both card links are 44px targets (${projectLink} ${ownerLink})`);
+  assert.ok(box!.height <= 300, `The first card stays compact at 375px (${Math.round(box!.height)}px)`);
+  const borders = await board.evaluate((el) => [el.querySelector(".bcol")!, el.querySelector(".bcard")!].map((n) => {
+    const st = getComputedStyle(n);
+    return st.borderTopStyle === "none" || st.borderTopWidth === "0px" || st.borderTopColor === "rgba(0, 0, 0, 0)" ? "none" : `${st.borderTopWidth} ${st.borderTopColor}`;
+  }));
+  assert.deepEqual(borders, ["none", "none"], "Lanes and cards draw no outline");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  for (const theme of ALL_THEMES) await checkCardTheme(page, board, theme);
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "graphite"));
+}
+
+/* In one theme: every card has exactly one chip row and no stripe; the bell and descriptions keep their contrast */
+async function checkCardTheme(page: Page, board: ReturnType<Page["locator"]>, theme: string) {
+  await page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
+  /* Let the card's colour transition settle before reading colours */
+  await page.waitForTimeout(250);
+  {
+    const cards = await board.locator(".bcard").evaluateAll((els) => els.map((el) => {
+      const row = el.querySelectorAll(":scope > .board-top"), parts = [...(row[0]?.children ?? [])].filter((c) => c.getClientRects().length);
+      const tops = parts.map((c) => { const r = c.getBoundingClientRect(); return r.top + r.height / 2; });
+      const stripe = getComputedStyle(el, "::before");
+      return { id: el.getAttribute("data-work-id"), rows: row.length, pills: el.querySelectorAll(".bpill").length, chips: el.querySelectorAll(".board-chips, .bchip, .board-status").length,
+        spread: Math.max(...tops) - Math.min(...tops), stripe: stripe.content !== "none" && stripe.borderInlineStartWidth !== "0px" };
+    }));
+    for (const c of cards) {
+      assert.ok(c.rows === 1 && c.pills === 1 && c.chips === 0 && c.spread <= 4, `${c.id} has exactly one chip row in ${theme} (${JSON.stringify(c)})`);
+      assert.equal(c.stripe, false, `${c.id} has no attention stripe in ${theme}`);
+    }
+    /* The bell is the card's attention signal: amber, its icon at 3:1 and its text at 4.5:1 against the card */
+    const bellEl = board.locator('.bcard[data-work-id="T-A121"] .board-need');
+    const bell = { text: await bellEl.evaluate(textContrast), icon: await bellEl.evaluate(iconContrast) };
+    assert.ok(bell.text >= 4.5 && bell.icon >= 3, `The Needs you bell stays visible in ${theme} (${JSON.stringify(bell)})`);
+    const descEl = board.locator('.bcard[data-work-id="T-A121"] .board-desc');
+    await descEl.evaluate((el) => Object.assign((el.closest(".bcard") as HTMLElement).style, { background: "var(--bd-card-hover)", transition: "none" }));
+    const desc = await descEl.evaluate(textContrast);
+    await descEl.evaluate((el) => Object.assign((el.closest(".bcard") as HTMLElement).style, { background: "", transition: "" }));
+    assert.ok(desc >= 4.5, `Description ink holds 4.5:1 on the hover fill in ${theme} (${desc.toFixed(2)})`);
+  }
+}
+
+/* Hovering a card, or focusing its title, shows the card tooltip only when the title is clamped (it reveals the rest).
+   Footer icons have their own tooltips on hover and keyboard focus. Escape dismisses them. */
+async function checkCardTooltip(page: Page, board: ReturnType<Page["locator"]>) {
+  const tip = page.locator(".board-tip:not(.board-icon-tip)");
+  const title = board.locator('.bcard[data-work-id="T-A121"] > .work-item-link');
+  await title.hover();
+  await page.waitForTimeout(600);
+  assert.equal(await page.locator(".board-tip:not(.board-icon-tip):popover-open").count(), 0, "A title that fits gets no tooltip");
+  await page.mouse.move(0, 0);
+  await title.evaluate((el) => { el.dataset.was = el.textContent!; el.textContent = "Split codec 2a.3.2b ".repeat(8).trim(); });
+  await title.hover();
+  await page.locator(".board-tip:not(.board-icon-tip):popover-open").waitFor();
+  assert.match((await tip.innerText()).replace(/\s+/g, " ").trim(), /In progress · ETA 2h$/, "A clamped title's tooltip shows it whole, with status and ETA");
+  assert.doesNotMatch(await tip.innerText(), /drag/i);
+  assert.equal(await board.locator(".bcard[data-tip], .bcard [data-tip], .bcard[title]").count(), 0, "Cards have one tooltip, not the shell's or the browser's as well");
+  assert.equal(await tip.getAttribute("aria-hidden"), "true", "The tooltip repeats the card, so it is hidden from assistive technology");
+  const [tipBox, cardBox] = await Promise.all([tip.boundingBox(), board.locator('.bcard[data-work-id="T-A121"]').boundingBox()]);
+  assert.ok(tipBox!.y + tipBox!.height <= cardBox!.y + 1, "The tooltip sits above the card, clear of its content");
+  await page.keyboard.press("Escape");
+  await page.locator(".board-tip:not(.board-icon-tip):popover-open").waitFor({ state: "detached" });
+  await title.evaluate((el) => { el.textContent = el.dataset.was!; delete el.dataset.was; });
+  await page.mouse.move(0, 0);
+  /* Icons: hover and keyboard focus show the full text; it matches the accessible name */
+  const eta = board.locator('.bcard[data-work-id="T-A121"] .bdate');
+  assert.equal(await eta.getAttribute("aria-label"), "ETA 2h", "The ETA is an icon named in full");
+  assert.equal((await eta.innerText()).trim(), "", "The ETA has no visible text");
+  await eta.hover();
+  const iconTip = page.locator(".board-icon-tip:popover-open");
+  await iconTip.waitFor();
+  assert.equal(await iconTip.textContent(), "ETA 2h", "Hovering the icon shows its tooltip");
+  await page.mouse.move(0, 0);
+  await iconTip.waitFor({ state: "detached" });
+  await eta.focus();
+  await iconTip.waitFor();
+  assert.ok(await eta.evaluate((el) => getComputedStyle(el).outlineStyle !== "none"), "A focused icon shows a focus ring");
+  await page.keyboard.press("Escape");
+  await iconTip.waitFor({ state: "detached" });
+}
+
+/* Filtered results that leave out archived matches say so beside the count, with the way to reveal them */
+async function checkMixedArchivedMatches(page: Page, board: ReturnType<Page["locator"]>) {
+  await page.getByRole("button", { name: /^Filter work/ }).click();
+  await page.getByRole("group", { name: "Status" }).getByRole("menuitemradio", { name: "Approved", exact: true }).click();
+  await page.keyboard.press("Escape").catch(() => {});
+  const summary = page.locator("#work-results > .board-filterbar");
+  const text = (await summary.innerText()).replace(/\s+/g, " ");
+  const [, shown, archived] = (text.match(/^(\d+) shown\W+(\d+) archived match/) ?? assert.fail(`Mixed results summary: ${text}`)).map(Number);
+  assert.ok(shown > 0 && archived > 0, `Mixed results say what is shown and what is archived (${text})`);
+  assert.equal(await board.locator(".bcard").count(), shown);
+  const before = await board.locator(".bcard").evaluateAll((cards) => cards.map((c) => c.getAttribute("data-work-id")));
+  await summary.getByRole("button", { name: `Show ${archived} archived ${archived === 1 ? "match" : "matches"}` }).click();
+  assert.equal(await board.locator(".bcard").count(), shown + archived, "Revealing adds the archived matches");
+  const focused = await page.evaluate(() => document.activeElement?.closest(".bcard")?.getAttribute("data-work-id"));
+  assert.ok(focused && !before.includes(focused), `Focus lands on the newly revealed card (${focused}, already shown: ${before})`);
+  assert.ok(await page.evaluate(() => document.activeElement?.matches(".bcard > .work-item-link")), "Focus is on the revealed card's title");
+  await page.waitForFunction((n) => document.getElementById("work-results-status")?.textContent === `${n} more ${n === 1 ? "card" : "cards"} shown`, archived);
+  assert.doesNotMatch((await summary.innerText()).replace(/\s+/g, " "), /archived match/, "Nothing is left hidden");
+  await page.locator(".work-archived-chip").click();
+  await page.locator("#work-results").getByRole("button", { name: "Clear filters" }).click();
+}
+
+/* Answering a card's last request in Inbox and coming back: focus finds the card's title in its new lane; a card that
+   left the view hands focus to the active view and the count is announced */
+async function checkReturnAfterResolve(page: Page, board: ReturnType<Page["locator"]>) {
+  const back = page.getByRole("link", { name: "Back to work board" });
+  await board.locator('.bcard[data-work-id="T-A118"] a.board-need').focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Use timed access" }).click();
+  await back.click();
+  const title = board.locator('.bcard[data-work-id="T-A118"] > .work-item-link');
+  await title.waitFor();
+  assert.ok(await focusedIs(title), "With its badge gone, focus returns to the card's title");
+  assert.equal(await title.evaluate((el) => el.closest(".bcol")!.id), "bcol-to-do", "The card moved lanes");
+  await page.waitForFunction(() => /T-A118 is now in To do/.test(document.getElementById("work-results-status")?.textContent ?? ""));
+  const shown = await title.evaluate((el) => { const r = el.getBoundingClientRect(), v = el.closest(".board")!.getBoundingClientRect(); return r.top >= v.top && r.bottom <= v.bottom; });
+  assert.ok(shown, "The card's title is in view");
+  await page.locator('[data-act="work-preset"][data-v="needs-me"]').click();
+  /* Wait for the Needs you view to render before focusing, then for the Inbox item to open */
+  await page.locator('[data-act="work-preset"][data-v="needs-me"][aria-pressed="true"]').waitFor();
+  const handoff = board.locator('.bcard[data-work-id="T-A146"] a.board-need');
+  await handoff.waitFor();
+  await handoff.focus();
+  await page.keyboard.press("Enter");
+  await page.waitForURL(/#\/inbox\/in14/);
+  await page.getByRole("button", { name: "Accept", exact: true }).click();
+  await back.click();
+  const view = page.locator('[data-act="work-preset"][data-v="needs-me"]');
+  await page.waitForFunction(() => document.activeElement?.matches('[data-act="work-preset"][data-v="needs-me"]'));
+  assert.equal(await board.locator('.bcard[data-work-id="T-A146"]').count(), 0, "The answered card left Needs you");
+  await page.waitForFunction(() => /T-A146 is no longer in this view\. \d+ cards? shown\./.test(document.getElementById("work-results-status")?.textContent ?? ""));
+  assert.equal(await view.getAttribute("aria-pressed"), "true");
+  await page.locator('[data-act="work-preset"][data-v="all"]').click();
+}
+
+/* Denying T-A124's access request: the card leaves Needs you, keeps its block, says "Access denied" and who acts next.
+   Undo brings the request back. */
+async function checkDeniedAccess(page: Page, board: ReturnType<Page["locator"]>) {
+  const needs = async () => Number(await page.locator('[data-work-count="needs-me"]').textContent());
+  const before = await needs();
+  await board.locator('.bcard[data-work-id="T-A124"] a.board-need').click();
+  await page.waitForURL(/#\/inbox\/in5/);
+  await page.locator('#main [data-act="deny-arm"][data-id="in5"]').click();
+  await page.locator('#main [data-act="deny-confirm"][data-id="in5"], #main [data-act="send-reply"][data-id="in5"]').first().click();
+  await page.getByRole("link", { name: "Back to work board" }).click();
+  const card = board.locator('.bcard[data-work-id="T-A124"]');
+  await card.waitFor();
+  assert.equal(await card.getAttribute("data-attention"), null, "A denied request leaves Needs you");
+  assert.equal(await card.locator(".board-need").count(), 0, "No bell or inert Unblock control");
+  assert.equal(await card.evaluate((el) => el.closest(".bcol")!.id), "bcol-blocked", "The block stays visible");
+  assert.equal((await card.locator(".board-reason").innerText()).trim(), "Access denied · Waiting on Jules", "It says the outcome and the next actor");
+  assert.equal(await needs(), before - 1, "Needs you counts one fewer");
+  await page.locator(".toast-undo").last().click();
+  await card.locator(".board-need").waitFor();
+  assert.equal(await card.locator(".board-reason").count(), 0, "Undo brings the request back");
+}
+
+/* Approving T-A81's fix closes it today, so it stays in recent Done history; Undo restores the pending verification */
+async function checkVerifyApproved(page: Page, board: ReturnType<Page["locator"]>) {
+  await board.locator('.bcard[data-work-id="T-A81"] a.board-need').click();
+  await page.waitForURL(/#\/inbox\/in11/);
+  await page.getByRole("button", { name: "Approve fix", exact: true }).click();
+  await page.getByRole("link", { name: "Back to work board" }).click();
+  const card = board.locator('#bcol-done .bcard[data-work-id="T-A81"]');
+  await card.waitFor();
+  assert.equal(await card.locator(".bdate").getAttribute("aria-label"), "Closed today", "The approval is dated today");
+  assert.equal(await card.locator(".bstatus").getAttribute("aria-label"), "Status: Closed");
+  assert.equal(await card.locator(".board-need").count(), 0);
+  await page.locator(".toast-undo").last().click();
+  await card.locator(".board-need").waitFor();
+  assert.equal(await card.locator(".bdate").getAttribute("aria-label"), "Waiting on your verification", "Undo restores the pending verification");
+}
+
+const focusedIs = (locator: ReturnType<Page["locator"]>) => locator.evaluate((el) => el === document.activeElement);
+
+/* Request menus live in the top layer, stay inside the viewport and hand focus back predictably */
+async function checkBoardRequestMenus(page: Page, board: ReturnType<Page["locator"]>) {
+  assert.match((await page.locator(".queue-count").textContent())!, /^Across all work: \d+ open · \d+ need you$/, "Headline totals say they cover all work");
+  const card = board.locator('.bcard[data-work-id="T-A121"]');
+  const trigger = card.locator("button.board-need");
+  assert.equal(await trigger.getAttribute("aria-label"), "Needs you: 3 requests, 1 expires in 4 hours", "The bell's name says how many and when the soonest expires");
+  assert.equal(await trigger.getAttribute("data-icon-tip"), await trigger.getAttribute("aria-label"), "Its tooltip says the same");
+  assert.equal((await trigger.locator(".board-need-when").textContent())!.trim(), "4h", "The soonest expiry shows in short beside the bell");
+  assert.equal(await card.locator(".board-need-due, .board-status").count(), 0, "No separate badge row or expiry line in the card body");
+  await page.setViewportSize({ width: 1024, height: 520 });
+  /* Lanes overflow at 1024: put the card's lane against the board's right edge, then open its menu */
+  await board.evaluate((el) => {
+    const lane = el.querySelector('.bcard[data-work-id="T-A121"]')!.closest(".bcol")!;
+    el.scrollLeft += lane.getBoundingClientRect().right - el.getBoundingClientRect().right + 4;
+  });
+  await trigger.click();
+  const menu = page.locator(".board-need-menu:popover-open");
+  const box = (await menu.boundingBox())!;
+  assert.ok(box.x >= 0 && box.x + box.width <= 1024 && box.y >= 0 && box.y + box.height <= 520, "The menu stays inside the viewport");
+  assert.match((await menu.getByRole("menuitem").first().textContent())!, /Expires in 4 hours/, "The expiring request comes first and says when");
+  await page.keyboard.press("Escape");
+  assert.equal(await menu.count(), 0);
+  assert.ok(await focusedIs(trigger), "Escape returns focus to the badge");
+  await trigger.press("Enter");
+  await page.keyboard.press("Shift+Tab");
+  assert.ok(await focusedIs(trigger), "Shift+Tab leaves the menu for its badge");
+  await trigger.press("Enter");
+  await page.keyboard.press("Tab");
+  assert.equal(await menu.count(), 0, "Tab closes the menu");
+  assert.ok(await page.evaluate(() => Boolean(document.activeElement?.closest('.bcard[data-work-id="T-A121"] .board-foot')) && !document.activeElement?.matches(".board-need")), "Tab moves on to the next control on the card");
+  /* Scrolling the badge under its lane's sticky header closes its menu, though the badge is still in the viewport */
+  await board.evaluate((el) => { el.scrollTop = 0; });
+  await trigger.click();
+  await menu.waitFor();
+  await board.evaluate((el) => {
+    const t = el.querySelector('.bcard[data-work-id="T-A121"] button.board-need')!.getBoundingClientRect();
+    /* Where the sticky header's bottom sits once it is pinned to the top of the board */
+    const head = el.querySelector('.bcard[data-work-id="T-A121"]')!.closest(".bcol")!.querySelector(".bcol-h")!.getBoundingClientRect();
+    el.scrollTop += t.top + t.height / 2 - (el.getBoundingClientRect().top + head.height) + 4;
+  });
+  await page.waitForFunction(() => !document.querySelector(".board-need-menu:popover-open"));
+  assert.ok(await trigger.evaluate((el) => el.getBoundingClientRect().bottom > 0), "The badge is still inside the viewport, under the header");
+  assert.equal(await trigger.getAttribute("aria-expanded"), "false");
+  await board.evaluate((el) => { el.scrollTop = 0; });
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+/* Contrast of an icon's colour against its card's background */
+function iconContrast(el: Element) {
+  const card = el.closest(".bcard")!;
+  const parse = (c: string) => {
+    const m = c.match(/[\d.]+/g)!.map(Number);
+    return c.startsWith("color(srgb") ? [m[0] * 255, m[1] * 255, m[2] * 255] : [m[0], m[1], m[2]];
+  };
+  const channel = (v: number) => (v / 255 <= 0.03928 ? v / 255 / 12.92 : ((v / 255 + 0.055) / 1.055) ** 2.4);
+  const lum = (c: number[]) => 0.2126 * channel(c[0]) + 0.7152 * channel(c[1]) + 0.0722 * channel(c[2]);
+  const [a, b] = [lum(parse(getComputedStyle(el).color)), lum(parse(getComputedStyle(card).backgroundColor))];
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
+/* Text contrast of an element against its composited background (solid colours only) */
+function textContrast(el: Element) {
+  const parse = (c: string) => {
+    const m = c.match(/[\d.]+/g)!.map(Number);
+    return c.startsWith("color(srgb") ? [m[0] * 255, m[1] * 255, m[2] * 255, m[3] ?? 1] : [m[0], m[1], m[2], m[3] ?? 1];
+  };
+  const layers: number[][] = [];
+  for (let n: Element | null = el; n; n = n.parentElement) {
+    const bg = getComputedStyle(n).backgroundColor;
+    if (bg !== "rgba(0, 0, 0, 0)") layers.push(parse(bg));
+  }
+  const base = layers.findIndex((l) => l[3] >= 1);
+  let acc = base < 0 ? [255, 255, 255] : layers[base].slice(0, 3);
+  for (let i = (base < 0 ? layers.length : base) - 1; i >= 0; i--) {
+    const [r, g, b, a] = layers[i];
+    acc = [r * a + acc[0] * (1 - a), g * a + acc[1] * (1 - a), b * a + acc[2] * (1 - a)];
+  }
+  const channel = (v: number) => (v / 255 <= 0.03928 ? v / 255 / 12.92 : ((v / 255 + 0.055) / 1.055) ** 2.4);
+  const lum = (c: number[]) => 0.2126 * channel(c[0]) + 0.7152 * channel(c[1]) + 0.0722 * channel(c[2]);
+  const [a, b] = [lum(parse(getComputedStyle(el).color)), lum(acc)];
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
+/* Attention first: an expiring owner ask leads its lane, soonest deadline first, ahead of other asks and priority.
+   The request badge keeps its fill and text on hover (no brightness filter), so its contrast holds. */
+async function checkAttentionFirst(page: Page, board: ReturnType<Page["locator"]>) {
+  const first = (lane: string) => board.locator(`#${lane} .bcard`).first().getAttribute("data-work-id");
+  assert.equal(await first("bcol-in-progress"), "T-A121", "The ask that expires in 4 hours leads In progress");
+  assert.equal(await first("bcol-blocked"), "T-A124", "The ask that expires tomorrow leads Blocked");
+  const display = page.getByRole("button", { name: /^Work display/ });
+  await display.click();
+  const sorts = page.getByRole("group", { name: "Sort by" });
+  assert.equal(await sorts.getByRole("menuitemradio", { name: "Attention first" }).getAttribute("aria-checked"), "true", "Attention first is the default");
+  assert.equal(await sorts.getByRole("menuitemradio", { name: "Priority", exact: true }).count(), 1, "Priority stays as an explicit sort");
+  assert.equal(await page.getByRole("group", { name: "Direction" }).count(), 0, "Attention first has no direction");
+  await page.keyboard.press("Escape");
+  const badge = board.locator('.bcard[data-work-id="T-A124"] a.board-need');
+  await badge.hover();
+  assert.equal(await badge.evaluate((el) => getComputedStyle(el).filter), "none", "The request badge hover has no brightness filter");
+  const ratio = await badge.evaluate(textContrast);
+  assert.ok(ratio >= 4.5, `Request badge text keeps 4.5:1 on hover (${ratio.toFixed(2)})`);
+  await page.mouse.move(0, 0);
+}
+
+/* A committed chip jump makes its lane current, even when the board cannot scroll it to the start edge, and moves
+   focus to that lane's heading */
+async function checkStatusLaneJump(page: Page) {
+  const chips = page.locator(".board-lane-chips button");
+  const last = chips.last();
+  await last.focus();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.querySelector(".board-lane-chips button:last-child")?.getAttribute("aria-current") === "true");
+  assert.equal(await page.locator('.board-lane-chips button[aria-current="true"]').count(), 1, "Only the jump target is current");
+  assert.ok(await focusedIs(page.locator(".board .bcol").last().locator(".bcol-title")), "A keyboard jump moves focus to the lane heading");
+  assert.equal(await page.locator(".board .bcol-title").first().getAttribute("tabindex"), "-1");
+  assert.equal(await page.locator(".bcol-older, .bcol-history").count(), 0, "Status lanes have no per-lane history menus");
+}
+
+/* One board-level Done history control, in Display; a toolbar chip says when it is not the default */
+async function checkDoneHistory(page: Page, board: ReturnType<Page["locator"]>) {
+  const done = board.locator("#bcol-done");
+  const display = page.getByRole("button", { name: /^Work display/ });
+  assert.equal(await page.getByText("Show older").count(), 0);
+  await display.click();
+  const history = page.getByRole("group", { name: "Done history" });
+  assert.equal(await history.getByRole("menuitemradio", { name: "Last 7 days" }).getAttribute("aria-checked"), "true");
+  assert.equal(await page.getByRole("menuitemcheckbox", { name: "Show archived" }).count(), 0, "The board's Display has no second archive control");
+  const before = await done.locator(".bcard").count();
+  await history.getByRole("menuitemradio", { name: "Include archived" }).click();
+  assert.ok(await done.locator(".bcard").count() > before, "Include archived reaches back past the last week");
+  assert.ok(await focusedIs(display), "Focus returns to Display");
+  const chip = page.locator(".work-archived-chip");
+  assert.match((await chip.textContent())!, /Done: with archived/, "The toolbar says history is widened");
+  await chip.click();
+  assert.equal(await done.locator(".bcard").count(), before);
+  assert.equal(await chip.count(), 0);
+  assert.ok(await focusedIs(display), "Resetting history returns focus to Display");
+  /* The Done lane's ⋯ opens the same choices as a popover anchored to it */
+  const more = done.locator("button.bcol-window");
+  await more.click();
+  const pop = page.getByRole("menu", { name: "Done history" });
+  const current = pop.getByRole("menuitemradio", { name: "Last 7 days" });
+  await current.waitFor();
+  assert.ok(await focusedIs(current), "The Done lane's ⋯ opens Done history with the current choice focused");
+  const [popBox, moreBox] = [(await pop.boundingBox())!, (await more.boundingBox())!];
+  assert.ok(Math.abs(popBox.y - (moreBox.y + moreBox.height)) <= 12 && Math.abs(popBox.x + popBox.width / 2 - (moreBox.x + moreBox.width / 2)) <= popBox.width, "The choices open next to the ⋯");
+  assert.equal(await page.locator("#menu-work-display:not([hidden])").count(), 0, "Display stays closed");
+  await page.keyboard.press("Escape");
+  assert.ok(await focusedIs(more), "Escape returns focus to the ⋯");
+  await more.press("Enter");
+  await pop.getByRole("menuitemradio", { name: "Include archived" }).press("Enter");
+  assert.ok(await focusedIs(done.locator("button.bcol-window")), "Choosing returns focus to the ⋯");
+  assert.equal(await done.locator("button.bcol-window").getAttribute("aria-label"), "Done history: With archived. Change");
+  assert.ok(await done.locator(".bcard").count() > before, "Include archived reaches back past the last week");
+  await display.click();
+  assert.equal(await page.getByRole("group", { name: "Done history" }).getByRole("menuitemradio", { name: "Include archived" }).getAttribute("aria-checked"), "true", "Display shows the same setting");
+  await page.getByRole("group", { name: "Done history" }).getByRole("menuitemradio", { name: "Last 7 days" }).click();
+  assert.equal(await done.locator(".bcard").count(), before);
+}
+
+/* Filtering to a status whose only matches are archived offers to show them instead of a dead end */
+async function checkArchivedOnlyMatches(page: Page, board: ReturnType<Page["locator"]>) {
+  await page.getByRole("button", { name: /^Filter work/ }).click();
+  await page.getByRole("group", { name: "Status" }).getByRole("menuitemradio", { name: "Fixed", exact: true }).click();
+  const filter = page.getByRole("button", { name: "Filter work, Status Fixed" });
+  assert.match(await filter.innerText(), /Fixed/, "The Filter trigger shows the active value");
+  const reveal = page.locator("#work-results").getByRole("button", { name: /^Show \d+ archived match/ });
+  await reveal.waitFor();
+  const n = Number((await reveal.textContent())!.match(/\d+/)![0]);
+  assert.ok(n > 0);
+  /* T-A81 (Fixed, its fix still waiting for approval) is never archived, so it is shown before the reveal */
+  const before = await board.locator(".bcard").count();
+  assert.equal(await board.locator('.bcard[data-work-id="T-A81"]').count(), 1, "A Fixed item with a pending approval is not archived");
+  /* Lanes with no matches collapse to their heading, so the matches get the room */
+  const lanes = await board.locator(".bcol").evaluateAll((cols) => cols.map((c) => ({ id: c.id, shut: c.hasAttribute("data-collapsed"), cards: c.querySelectorAll(".bcard").length, w: c.getBoundingClientRect().width })));
+  const open = lanes.filter((l) => !l.shut), shut = lanes.filter((l) => l.shut);
+  assert.ok(shut.length > 0 && shut.every((l) => l.cards === 0 && l.w < Math.min(...open.map((o) => o.w)) / 1.5), `Zero-match lanes collapse (${JSON.stringify(lanes)})`);
+  const summary = (await page.locator("#work-results > .board-filterbar").innerText()).replace(/\s+/g, " ");
+  assert.match(summary, /^\d+ (shown|match|matches)\b.*Status: Fixed/, `The summary says the match count and the filter (${summary})`);
+  await reveal.click();
+  assert.equal(await board.locator(".bcard").count(), before + n, "Show archived matches reveals each of them");
+  assert.ok(await page.evaluate(() => Boolean(document.activeElement?.matches(".bcard .work-item-link"))), "Focus lands on the first revealed item");
+  await page.locator(".work-archived-chip").click();
+  await page.locator("#work-results").getByRole("button", { name: "Clear filters" }).click();
+}
+
+/* Board search that matches a subtask names the subtask on its parent card, with a link */
+async function checkBoardSubtaskSearch(page: Page, board: ReturnType<Page["locator"]>) {
+  await page.getByRole("button", { name: "Search work" }).first().click();
+  await page.keyboard.type("Inventory CSP");
+  const hit = board.locator(".bcard .board-subhits a");
+  await hit.first().waitFor();
+  assert.match((await hit.first().textContent())!, /Inventory CSP fixtures/, "The matching subtask is named on its parent card");
+  assert.match((await hit.first().getAttribute("href"))!, /item=/, "The subtask line links to the subtask");
+  assert.ok(await hit.first().evaluate((el) => el.scrollWidth <= el.clientWidth + 1 && el.querySelector(".board-subhit-title")!.scrollWidth <= el.querySelector(".board-subhit-title")!.clientWidth + 1), "The subtask title wraps instead of clipping");
+  const summary = (await page.locator("#work-results > .board-filterbar").innerText()).replace(/\s+/g, " ");
+  assert.match(summary, /^1 match\b/, `The summary gives the match count (${summary})`);
+  assert.doesNotMatch(summary, /Inventory CSP/, "The summary does not repeat the query under the search field");
+  assert.equal(await page.locator("#work-results").getByRole("button", { name: "Clear filters" }).count(), 1, "The summary offers recovery");
+  const search = page.getByRole("searchbox", { name: "Search work" });
+  await search.fill("");
+  await search.press("Escape");
+  await search.waitFor({ state: "detached" });
+}
+
+async function checkBoardClearFilters(page: Page, board: ReturnType<Page["locator"]>) {
+  const cards = await board.locator(".bcard").count();
+  await page.getByRole("button", { name: "Search work" }).first().click();
+  await page.keyboard.type("zzzz");
+  const clear = page.locator("#work-results").getByRole("button", { name: "Clear filters" });
+  await clear.click();
+  assert.equal(await board.locator(".bcard").count(), cards, "Clear filters brings every card back");
+  assert.ok(await focusedIs(page.getByRole("button", { name: "Filter work" })));
+}
+
+/* Following a request to Inbox and coming back keeps the board's place and the control you used */
+async function checkBoardReturnFromInbox(page: Page, board: ReturnType<Page["locator"]>) {
+  await page.setViewportSize({ width: 1440, height: 600 });
+  const badge = board.locator('.bcard[data-work-id="T-A124"] a.board-need');
+  /* Scrolled, with the badge still in view (the badge sits just under the card's title) */
+  await board.evaluate((el) => { el.scrollTop = 30; });
+  await badge.focus();
+  const top = await board.evaluate((el) => el.scrollTop);
+  assert.ok(top > 0, "The board is scrolled before leaving");
+  await page.keyboard.press("Enter");
+  await page.getByRole("link", { name: "Back to work board" }).waitFor();
+  await page.goBack();
+  await badge.waitFor();
+  assert.equal(await board.evaluate((el) => el.scrollTop), top, "Back restores the board's scroll");
+  assert.ok(await focusedIs(badge), "Back returns focus to the badge you followed");
+  await badge.press("Enter");
+  await page.getByRole("link", { name: "Back to work board" }).click();
+  await badge.waitFor();
+  assert.ok(await focusedIs(badge), "Back to work board returns to the same badge");
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+/* Phones: Filter and Display keep their labels; the selected lane takes the full width with no peek of the next;
+   the picker browses with arrow keys and jumps (to the top of the lane, focus on its heading) only on commit */
+async function checkPhoneLaneJump(page: Page) {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const display = page.getByRole("button", { name: /^Work display/ });
+  assert.match((await display.innerText()).trim(), /^Display\b/, "At 420px and below Display keeps its word");
+  assert.match((await display.getAttribute("aria-label"))!, /^Work display, Stages columns/);
+  const valuesHidden = await page.locator(".work-toolbar").evaluate((el) => el.getAttribute("data-values") === "hidden");
+  const modeShown = await page.locator(".board-lanes .board-lanes-mode").isVisible();
+  assert.equal(modeShown, valuesHidden, "The lane picker's label names the column mode exactly when the toolbar hides it");
+  const toggles = await page.getByRole("group", { name: "Work layout" }).getByRole("button").evaluateAll((els) => els.map((el) => { const r = el.getBoundingClientRect(); return [r.width, r.height]; }));
+  assert.ok(toggles.every(([w, h]) => w >= 44 && h >= 44), `List and Board are 44 × 44 on phones (${JSON.stringify(toggles)})`);
+  assert.match((await page.getByRole("button", { name: /^Filter work/ }).innerText()).trim(), /^Filter/, "Phones keep the Filter label");
+  const board = page.locator(".board");
+  const [peek, chipsShown] = await board.evaluate((el) => {
+    const view = el.getBoundingClientRect(), next = el.querySelectorAll(".bcol")[1].getBoundingClientRect();
+    return [view.right - next.left, Boolean(document.querySelector(".board-lane-chips")!.getClientRects().length)];
+  });
+  assert.ok(peek <= 0, `The next lane does not peek in (${peek}px)`);
+  assert.equal(chipsShown, false, "Phones navigate lanes with the picker");
+  await board.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  const picker = page.locator("select[data-board-lane]");
+  await picker.focus();
+  /* Closed-picker browsing as Windows and Linux do it: the value changes during the arrow key's default action
+     (macOS opens the native list instead, which a headless run cannot drive) */
+  await picker.evaluate((el: HTMLSelectElement) => {
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    el.value = "1";
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  assert.equal(await board.evaluate((el) => "jump" in el.dataset), false, "Arrow keys browse the picker without jumping");
+  assert.ok(await focusedIs(picker));
+  await page.keyboard.press("Enter");
+  assert.ok(await focusedIs(page.locator(".board .bcol").nth(1).locator(".bcol-title")), "Enter commits and focuses the lane heading");
+  await picker.selectOption("3");
+  await page.waitForFunction(() => document.querySelector(".board")!.scrollTop === 0);
+  assert.equal(await picker.inputValue(), "3", "The picked lane stays current");
+  await page.setViewportSize({ width: 320, height: 812 });
+  /* Let the resize settle (layout and the measured compact labels) before counting toolbar rows */
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await page.waitForTimeout(150);
+  const rows = await page.locator(".work-toolbar > *").evaluateAll((els) => els.filter((el) => el.getClientRects().length).map((el) => el.getBoundingClientRect().top).sort((a, b) => a - b)
+    .filter((top, i, tops) => i === 0 || top - tops[i - 1] > 20).length);
+  /* Two rows at 320px: the views, then layout, search, Filter and Display; nothing is clipped or scrolls sideways */
+  assert.equal(rows, 2, `The 320px toolbar has two rows (${rows})`);
+  /* New task is the page's primary action: at the end of the title row, above the toolbar, at every width */
+  const [titleBox, tabsTop, newBox] = await page.evaluate(() => [document.querySelector("#main h1")!.getBoundingClientRect().toJSON(), document.querySelector(".work-toolbar .primary-tab-row")!.getBoundingClientRect().top, document.getElementById("work-new-task")!.getBoundingClientRect().toJSON()]);
+  assert.ok(newBox.top < tabsTop && newBox.top < titleBox.bottom && newBox.left > titleBox.right, "New sits at the end of the title row, above the views");
+  assert.ok(newBox.right <= 320, "New stays inside the 320px viewport");
+  assert.ok(newBox.width >= 44 && newBox.height >= 44, "New stays a 44px target");
+  assert.match((await page.getByRole("button", { name: /^Filter work/ }).innerText()).trim(), /^Filter$/, "At 320px Filter keeps its word");
+  assert.equal((await page.locator(".board-lanes .board-lanes-label").innerText()).trim(), "Stages", "At 320px the picker's label names the column mode the toolbar hides");
+  assert.equal(await page.locator("#work-results > .board-filterbar").count(), 0, "No summary row just for the mode");
+  assert.match((await page.locator(".queue-count").innerText()).trim(), /^Across all work: \d+ open$/, "At 320px the headline keeps the open count, not the Needs you tab's count");
+  const overflow = await page.locator(".work-toolbar").evaluate((el) => el.scrollWidth - el.clientWidth);
+  assert.ok(overflow <= 1, `The 320px toolbar does not overflow (${overflow}px)`);
+  assert.match((await page.getByRole("button", { name: /^Work display/ }).innerText()).trim(), /^Display$/, "At 320px Display keeps its word; the mode is in the picker label");
+  await page.getByRole("button", { name: /^Work display/ }).click();
+  const calendar = page.getByRole("menuitem", { name: "Calendar" });
+  assert.ok(await calendar.isVisible(), "At 320px Calendar is in the Display overflow");
+  await page.keyboard.press("End");
+  assert.ok(await focusedIs(calendar), "Keyboard reaches the overflow Calendar link");
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1440, height: 900 });
 }
 
 async function checkWork(page: Page, href: string) {
@@ -368,12 +1127,667 @@ async function checkProjectInsights(page: Page) {
   await insights.getByRole("heading", { name: "Spend over time" }).waitFor();
 }
 
+/* Chat: ask routing rule, Message entry points, conversation search, source links and the narrow thread dialog. */
+async function checkChatAsks(page: Page) {
+  const card = (mid: string) => page.locator(`.chat-needs:has(#needs-${mid})`);
+  await card("m2").getByRole("link", { name: "Review in Inbox" }).waitFor();
+  assert.equal(await card("m2").locator(".chat-needs-route").innerText(), "Decide in Inbox · high-impact release");
+  assert.equal(await card("m3").getByRole("button", { name: "Allow test access" }).count(), 1, "Low-risk ask answers inline");
+  const replyLabels = await page.locator(".chat-needs button").evaluateAll((els) => els.map((e) => e.textContent?.trim() ?? "").filter((t) => /^Reply/.test(t)));
+  assert.deepEqual(replyLabels, [], "No card button labelled Reply");
+  await card("m3").getByRole("button", { name: "Ask a follow-up" }).click();
+  await page.keyboard.type("Is the sandbox wiped?");
+  await page.keyboard.press("Control+Enter");
+  await page.locator(".chat-needs-note").waitFor();
+  assert.equal(await card("m3").getByRole("button", { name: "Allow test access" }).count(), 1, "A follow-up keeps the ask open");
+  await page.evaluate(() => { location.hash = "#/chat/dm-eden"; });
+  await page.getByRole("button", { name: "Answer…" }).click();
+  assert.equal(await page.locator('.chat-needs [data-act="send-reply"]').innerText(), "Send answer");
+}
+async function checkChatEntryPoints(page: Page) {
+  await page.evaluate(() => { location.hash = "#/chat/general"; });
+  await page.getByRole("button", { name: "New message" }).click();
+  await page.locator("#chat-to").fill("quinn");
+  await page.locator("#chat-to-list").getByRole("button", { name: /Quinn/ }).click();
+  await page.locator("#ch-title", { hasText: /^Quinn$/ }).waitFor();
+  assert.equal(new URL(page.url()).hash, "#/chat/dm-quinn");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "compose");
+  await page.locator("#chat-find").fill("rowan");
+  assert.match(await page.locator("#chat-nav").innerText(), /Kai and Rowan/);
+  await page.evaluate(() => { location.hash = "#/members/noor"; });
+  await page.locator('[data-act="go"][data-v="#/chat/dm-noor"]').click();
+  await page.locator("#ch-title", { hasText: /^Noor Haddad$/ }).waitFor(); /* their DM, not #general */
+  await page.evaluate(() => { location.hash = "#/chat/a2a-kai-rowan"; });
+  await page.locator('.msg[data-mid="k2"]').hover();
+  await page.locator('.msg[data-mid="k2"] .msg-tool[data-act="chat-dm-msg"]').click();
+  await page.locator("#ch-title", { hasText: /^Rowan$/ }).waitFor();
+  assert.equal(await page.locator(".chat-compose-src a").getAttribute("href"), "#/chat/a2a-kai-rowan/k2");
+  await page.evaluate(() => { location.hash = "#/inbox/in14"; });
+  await page.getByRole("link", { name: "Open source message" }).click();
+  await page.locator('.msg.is-linked[data-mid="x3"]').waitFor();
+}
+async function checkChatNarrow(page: Page) {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.evaluate(() => { location.hash = "#/chat/agency-v1"; });
+  await page.locator('.msg[data-mid="m2"] .msg-menu .btn').click();
+  assert.match(await page.locator("#menu-msg-m2").innerText(), /Sent Today 09:40/);
+  await page.getByRole("menuitem", { name: "Reply in thread" }).click();
+  await page.locator('.thread[role="dialog"][aria-modal="true"]').waitFor();
+  assert.ok(await page.evaluate(() => Boolean(document.querySelector(".chmain")?.closest("[inert]"))), "Background inert under the thread dialog");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-controls")), "menu-msg-m2", "Focus returns to the visible trigger");
+  await page.locator(".chat-list-btn").click();
+  await page.locator("#chat-find").fill("tomas");
+  assert.match(await page.locator("#chat-nav").innerText(), /Tomas and Sage/);
+  const heights = await page.locator("#chat-nav a").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+  assert.ok(heights.every((h) => h >= 44), "Drawer rows are touch-sized");
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+/* One response record per ask: the same receipt in Chat and Inbox; approval clears the blocker without inferring a start. */
+async function checkChatRecords(page: Page) {
+  const nav = (h: string) => page.evaluate((x) => { location.hash = x; }, h);
+  await page.locator(".chat-needs .reply textarea").fill("One tree, with the kind word on each node.");
+  await page.locator('.chat-needs [data-act="send-reply"]').click();
+  const receipt = page.locator(".chat-needs .ask-receipt");
+  assert.match(await receipt.innerText(), /^Answered by you · \d\d:\d\d[\s\S]*One tree, with the kind word on each node\.$/);
+  const line = await receipt.locator("p > span").innerText();
+  await nav("#/inbox/in3");
+  const inbox = page.locator(".triage-actions .ask-receipt");
+  assert.equal(await inbox.locator("p > span").innerText(), line, "Inbox shows the same receipt line");
+  assert.match(await inbox.innerText(), /One tree, with the kind word on each node\./, "Inbox shows the written answer");
+  await nav("#/chat/agency-v1");
+  await page.locator('.chat-needs:has(#needs-m3)').getByRole("button", { name: "Allow test access" }).click();
+  assert.match(await page.locator('.chat-needs:has(#needs-m3) .ask-receipt').innerText(), /^Approved by you · /);
+  await page.locator('.msg[data-mid="m3"] .tx a.chat-ref').first().click();
+  assert.match(await page.locator("#work-panel").innerText(), /Status\s+To do/, "Approval clears the blocker; no inferred In progress");
+}
+/* Threads carry the ask's card; cross-posting only from channel threads; Back closes overlays; source links win over search. */
+async function checkChatOverlays(page: Page) {
+  const nav = (h: string) => page.evaluate((x) => { location.hash = x; }, h);
+  await nav("#/chat/agency-v1");
+  assert.match(await page.locator(".chat-list-btn").getAttribute("aria-label") ?? "", /^Conversations, \d+ requests? waiting on you in other conversations/);
+  assert.deepEqual(await page.locator(".chlist .chat-views .chat-row-name").allInnerTexts(), ["Mentions", "Threads"]);
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  await page.locator(".thread .chat-needs").getByRole("link", { name: "Review in Inbox" }).waitFor();
+  assert.equal(await page.locator(".thread .chat-also").count(), 1, "Channel threads offer cross-posting");
+  await page.goBack();
+  await page.locator(".thread").waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("thr")), true, "Back closes the thread and restores focus");
+  await page.locator(".chat-context .chat-members-btn").click();
+  assert.equal(await page.locator("#chat-members .chat-member").count(), 8, "Members come from the channel's membership");
+  await page.keyboard.press("Escape");
+  await nav("#/chat/dm-ada");
+  await page.locator('.msg[data-mid="x3"]').hover();
+  await page.locator('.msg[data-mid="x3"] .msg-tool[data-act="thread"]').click();
+  assert.equal(await page.locator(".thread .chat-also").count(), 0, "No cross-posting in a DM thread");
+  await page.locator(".thread").getByRole("button", { name: "Accept" }).waitFor();
+  await nav("#/chat/dm-noor");
+  assert.match(await page.locator(".chat-compose-note").innerText(), /can't run right now/);
+  await nav("#/chat/platform");
+  await page.locator(".chat-search").click();
+  await page.keyboard.type("waiting");
+  await nav("#/inbox/in7");
+  assert.match(await page.locator(".triage-fields").innerText(), /Direct message with Rowan[\s\S]*Related\s+Rowan's message in Kai and Rowan/);
+  await nav("#/inbox/in2");
+  await page.getByRole("link", { name: "Open source message" }).click();
+  await page.locator('.msg.is-linked[data-mid="p2"]').waitFor();
+  assert.equal(await page.locator(".chat-search-row").count(), 0, "A source link opens the unfiltered stream");
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-mid")), "p2", "Focus moves to the linked message");
+}
+/* Follow-ups sent from a thread stay in that thread; chips name where an ask is settled; drafts and thread
+   positions survive closing; a reply sent in a thread is shown with focus kept in the composer. */
+async function checkChatThreads(page: Page) {
+  const nav = (h: string) => page.evaluate((x) => { location.hash = x; }, h);
+  const threadGap = () => page.evaluate(() => { const s = document.querySelector(".thread .msgs")!; return s.scrollHeight - s.clientHeight - s.scrollTop; });
+  await page.reload();
+  await nav("#/chat/agency-v1");
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  const chip = page.locator('.chmain .msg[data-mid="m2"] .chat-needs-chip a');
+  assert.equal(await chip.innerText(), "Needs you · Decide in Inbox", "A consequential ask's chip names its route");
+  assert.equal(await chip.getAttribute("href"), "#/inbox/in1");
+  await page.locator('.thread [data-act="chat-ask-reply"]').click();
+  assert.match(await page.locator(".thread .chat-ask-dest").innerText(), /^Posts in this thread and on the Inbox request\./);
+  const streamCount = await page.locator(".chmain .msgs > .msg").count();
+  await page.keyboard.type("Which fixtures did Tomas run?");
+  await page.keyboard.press("Control+Enter");
+  await page.locator(".thread .chat-needs-note").waitFor();
+  assert.match(await page.locator(".thread .msgs > .msg").last().innerText(), /Which fixtures did Tomas run\?/, "Follow-up posts in the thread");
+  assert.equal(await page.locator(".chmain .msgs > .msg").count(), streamCount, "Follow-up does not post in the channel");
+  await page.locator("#thread-compose").fill("Approving after the fixtures review.");
+  await page.locator("#thread-compose").press("Control+Enter");
+  await page.locator(".thread .msgs > .msg", { hasText: "Approving after the fixtures review." }).waitFor();
+  assert.ok(await threadGap() < 2, "A sent thread reply is scrolled into view");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "thread-compose", "Focus stays in the thread composer");
+  await page.evaluate(() => { document.querySelector(".thread .msgs")!.scrollTop = 40; });
+  await page.locator(".thread [data-act=thread-close]").click();
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  assert.equal(await page.evaluate(() => document.querySelector(".thread .msgs")!.scrollTop), 40, "Reopening a thread restores its position");
+  await page.locator(".thread [data-act=thread-close]").click();
+  await page.locator('.msg[data-mid="m3"]').hover();
+  await page.locator('.msg[data-mid="m3"] .msg-tool[data-act="thread"]').click();
+  await page.locator('.thread [data-act="deny-arm"]').click();
+  await page.keyboard.type("Not this week");
+  await page.locator(".thread [data-act=thread-close]").click();
+  assert.equal(await page.locator("#deny-msg-in5").inputValue(), "Not this week", "A denial note survives closing the thread");
+  await nav("#/chat/dm-eden");
+  await page.getByRole("button", { name: "Answer…" }).click();
+  await page.keyboard.type("One tree");
+  await nav("#/chat/general");
+  await nav("#/chat/dm-eden");
+  await page.getByRole("button", { name: "Answer…" }).click();
+  assert.equal(await page.locator("#r-in3").inputValue(), "One tree", "A written answer is kept per ask");
+  await nav("#/chat/a2a-kai-rowan");
+  const rowan = page.locator('.msg[data-mid="k2"] .chat-needs-chip a');
+  assert.equal(await rowan.innerText(), "Needs you · Answer in Rowan's DM");
+  assert.equal(await rowan.getAttribute("href"), "#/chat/dm-rowan/r1");
+  await nav("#/chat/dm-rowan/r1");
+  await page.locator('.msg.is-linked[data-mid="r1"] .chat-needs a[href="#/inbox/in7"]').waitFor();
+}
+/* Context and entry points: Ada's other requests, a task from #platform, New message to the open DM. */
+async function checkChatContext(page: Page) {
+  const nav = (h: string) => page.evaluate((x) => { location.hash = x; }, h);
+  await nav("#/chat/dm-ada");
+  await page.locator(".chat-context .chat-wait-full .chat-more-btn").click();
+  const more = page.locator("#menu-chat-more-ctx");
+  await more.waitFor();
+  assert.deepEqual(await more.getByRole("menuitem").evaluateAll((els) => els.map((e) => e.getAttribute("href"))), ["#/inbox/in4"], "Ada's other requests link to their Inbox records");
+  await page.keyboard.press("Escape");
+  await nav("#/chat/platform");
+  await page.locator('.msg[data-mid="p2"]').hover();
+  await page.locator('.msg[data-mid="p2"] .msg-tool[data-act="chat-task"]').click();
+  assert.match(await page.locator("#work-task-dialog").innerText(), /Office federation/, "A task from #platform starts in its project");
+  await page.evaluate(() => (document.getElementById("work-task-dialog") as HTMLDialogElement).close()); /* prefilled: Escape asks to discard */
+  await page.locator("#work-task-dialog").waitFor({ state: "detached" });
+  await nav("#/chat/dm-maya");
+  await page.getByRole("button", { name: "New message" }).click();
+  await page.keyboard.type("maya");
+  await page.keyboard.press("Enter");
+  await page.locator("#chat-picker").waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "compose", "Picking the open DM focuses its composer");
+}
+/* Opening position, sticky day label and the Tradeoff disclosure at 375. */
+async function checkChatLayout(page: Page) {
+  for (const width of [1440, 1024]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 768 });
+    await page.goto(page.url().split("#")[0] + "#/chat/general");
+    await page.goto(page.url().split("#")[0] + "#/chat/agency-v1");
+    await page.waitForTimeout(400);
+    const pos = await page.evaluate(() => {
+      const s = document.querySelector(".chmain .msgs[data-ch]")!, sr = s.getBoundingClientRect();
+      const last = [...s.querySelectorAll(":scope > .msg")].pop()!.getBoundingClientRect(), day = s.querySelector(".chat-day")!;
+      return { full: last.top >= sr.top && last.bottom <= sr.bottom, dayAtTop: Math.round(day.getBoundingClientRect().top - sr.top), stuck: day.classList.contains("is-stuck"), sticky: getComputedStyle(day).position };
+    });
+    assert.ok(pos.full, `Newest message fully visible at ${width}`);
+    assert.equal(pos.sticky, "sticky", "The day label is sticky");
+    if (pos.stuck) assert.equal(pos.dayAtTop, 0, "A stuck day label sits at the stream's top edge");
+  }
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.goto(page.url().split("#")[0] + "#/chat/platform");
+  const summary = page.locator(".chat-needs-why summary");
+  assert.ok((await summary.evaluate((e) => e.getBoundingClientRect().height)) >= 44, "Tradeoff is a 44px target at 375");
+  const chev = () => summary.locator(".chat-needs-chev").evaluate((e) => getComputedStyle(e).transform);
+  assert.equal(await chev(), "none");
+  await summary.click();
+  await page.waitForTimeout(250);
+  assert.notEqual(await chev(), "none", "The chevron turns when the Tradeoff opens");
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+/* Primary actions keep white text at 4.5:1 or more on hover and keyboard focus in every theme. */
+async function checkPrimaryContrast(page: Page) {
+  const base = page.url().split("?")[0];
+  for (const theme of ALL_THEMES) {
+    await page.goto(`${base}?theme=${theme}#/chat/dm-eden`);
+    const send = page.locator(".chat-compose .btn.primary");
+    const ratio = () => send.evaluate((e) => {
+      const rgb = (c: string) => c.match(/[\d.]+/g)!.map(Number);
+      const lum = ([r, g, b]: number[]) => [r, g, b].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }).reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0);
+      const cs = getComputedStyle(e);
+      if (cs.backgroundImage !== "none" || rgb(cs.backgroundColor)[3] === 0) return 99; /* gradient/glass fills are measured by the theme audit */
+      const [a, b] = [lum(rgb(cs.color)), lum(rgb(cs.backgroundColor))];
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    });
+    await send.hover();
+    await page.waitForTimeout(250);
+    assert.ok(await ratio() >= 4.5, `${theme}: primary hover text contrast`);
+    await page.mouse.move(0, 0);
+    await page.locator("#compose").focus();
+    await page.keyboard.press("Tab");
+    await page.waitForTimeout(250);
+    assert.ok(await ratio() >= 4.5, `${theme}: primary focus text contrast`);
+  }
+}
+/* ---------------------------------------------------------------- Chat review round 6 */
+const navTo = (page: Page, h: string) => page.evaluate((x) => { location.hash = x; }, h);
+const activeAttr = (page: Page, name: string) => page.evaluate((n) => document.activeElement?.getAttribute(n) ?? null, name);
+/* Touch keeps where a follow-up posts and that the ask stays open; only the shortcut hint goes. */
+async function checkChatTouch(page: Page) {
+  const context = await page.context().browser()!.newContext({ viewport: { width: 375, height: 667 }, hasTouch: true, isMobile: true, reducedMotion: "reduce" });
+  const touch = await context.newPage();
+  const errors: string[] = [];
+  touch.on("pageerror", (e) => errors.push(e.message));
+  touch.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+  try {
+    touch.setDefaultTimeout(5000);
+    await touch.goto(page.url().split("#")[0] + "#/chat/agency-v1");
+    assert.ok(await touch.evaluate(() => matchMedia("(pointer: coarse)").matches), "Touch context reports a coarse pointer");
+    assert.equal(await touch.locator("#compose-help").isVisible(), false, "The Ctrl/⌘ hint is hidden on touch");
+    await touch.locator('.chat-needs:has(#needs-m3) [data-act="chat-ask-reply"]').click();
+    const dest = touch.locator(".chat-needs .chat-ask-dest");
+    assert.ok(await dest.isVisible(), "The follow-up destination shows on touch");
+    assert.match(await dest.innerText(), /^Posts in #agentic-org-v1 and on the Inbox request\. It stays open until you decide\.$/);
+    await touch.locator('.chat-needs [data-act="chat-ask-send"]').click();
+    assert.ok(await touch.locator(".chat-needs .chat-ask-dest.is-error").isVisible(), "An empty follow-up's error shows on touch");
+    assert.deepEqual(errors, [], "No errors in the touch context");
+  } finally {
+    await context.close();
+  }
+}
+/* The linked message's author line is clear of the stuck day band, and focused. */
+async function linkedPlacement(page: Page, mid: string) {
+  await page.locator(`.msg.is-linked[data-mid="${mid}"]`).waitFor();
+  await page.waitForTimeout(300);
+  return page.evaluate((id) => {
+    const s = document.querySelector(".chmain .msgs[data-ch]")!, el = s.querySelector(`:scope > [data-mid="${id}"]`)!;
+    const band = [...s.querySelectorAll(":scope > .chat-day")].filter((d) => d.classList.contains("is-stuck")).pop();
+    const head = el.querySelector(".hd")!.getBoundingClientRect(), top = s.getBoundingClientRect().top;
+    return { focused: document.activeElement === el, headTop: head.top - top, bandBottom: band ? band.getBoundingClientRect().bottom - top : 0, inView: head.top >= top };
+  }, mid);
+}
+async function assertLinked(page: Page, mid: string, label: string) {
+  const at = await linkedPlacement(page, mid);
+  assert.ok(at.focused, `${label}: focus moves to the linked message`);
+  assert.ok(at.inView && at.headTop >= at.bandBottom, `${label}: the day band does not cover the author line (${JSON.stringify(at)})`);
+}
+/* Every source navigation re-anchors: a repeat visit to the same URL, and a click on the URL already open. */
+async function checkChatSourceRepeat(page: Page) {
+  await page.setViewportSize({ width: 375, height: 667 });
+  for (const visit of ["first", "repeat"]) {
+    await navTo(page, "#/inbox/in1");
+    await page.getByRole("link", { name: "Open source message" }).click();
+    await assertLinked(page, "m2", `${visit} visit`);
+    await page.evaluate(() => { document.querySelector(".chmain .msgs[data-ch]")!.scrollTop = 0; (document.activeElement as HTMLElement)?.blur(); });
+  }
+  await page.evaluate(() => {
+    const a = document.createElement("a");
+    a.href = location.hash; a.id = "same-url-link"; a.textContent = "same";
+    document.querySelector("#main .chat-heading")!.append(a);
+  });
+  await page.locator("#same-url-link").click();
+  await assertLinked(page, "m2", "same-URL click");
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+/* Home's Spotlight and cards route a consequential ask to Inbox with the same reason as Chat. */
+async function checkHomeRouting(page: Page) {
+  await navTo(page, "#/chat/agency-v1");
+  const chatReason = await page.locator('.chat-needs:has(#needs-m2) .chat-needs-route').innerText();
+  await navTo(page, "#/home");
+  const spot = page.locator("#hb-spotlight");
+  await spot.getByRole("link", { name: "Review in Inbox" }).waitFor();
+  assert.equal(await spot.getByRole("link", { name: "Review in Inbox" }).getAttribute("href"), "#/inbox/in1");
+  assert.equal(await spot.locator(".ask-route").innerText(), chatReason, "Home states the same short reason as Chat");
+  const direct = await page.locator("#main [data-act='handle'], #main [data-act='deny-arm'], #main [data-act='reply']").evaluateAll((els) => els.map((e) => e.getAttribute("data-id")));
+  for (const id of ["in1", "in2", "in4", "in16"]) assert.ok(!direct.includes(id), `Home offers no direct decision on consequential ${id}`);
+}
+/* The thread's "Also send to" choice is kept with its draft and cleared on send. */
+async function checkThreadAlsoDraft(page: Page) {
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  await page.locator("#thread-compose").fill("Holding the merge until the fixtures land.");
+  await page.locator(".thread .chat-also input").check();
+  await page.locator(".thread [data-act=thread-close]").click();
+  await page.locator(".chat-search").click(); /* an unrelated re-render */
+  await page.locator(".chat-search-row [aria-label='Close search']").click();
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  assert.equal(await page.locator("#thread-compose").inputValue(), "Holding the merge until the fixtures land.");
+  assert.ok(await page.locator(".thread .chat-also input").isChecked(), "The cross-post choice is kept with the draft");
+  await page.locator("#thread-compose").press("Control+Enter");
+  await page.locator(".chmain .msgs > .msg", { hasText: "Holding the merge until the fixtures land." }).locator(".msg-src").waitFor();
+  assert.equal(await page.locator(".thread .chat-also input").isChecked(), false, "Sending clears the cross-post choice");
+  await page.locator(".thread [data-act=thread-close]").click();
+}
+/* Search covers thread replies; a match opens in its thread, marked and focused. */
+async function checkChatSearchThread(page: Page) {
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator(".chat-search").click();
+  await page.keyboard.type("as soon as");
+  const hitLine = page.locator('.chmain .msg[data-mid="m2"] .chat-thread-hit');
+  await hitLine.waitFor();
+  assert.match(await hitLine.innerText(), /Kai in the thread: .*I'll merge as soon as it's approved/);
+  assert.equal(await page.locator("#chat-search-status").innerText(), "1 message");
+  await hitLine.getByRole("button", { name: "Open in thread" }).click();
+  const reply = page.locator(".thread .msgs > .msg.is-linked");
+  await reply.waitFor();
+  assert.match(await reply.innerText(), /I'll merge as soon as it's approved/);
+  assert.ok(await reply.evaluate((el) => el === document.activeElement), "Focus moves to the matching reply");
+  assert.equal(await page.locator(".thread mark").first().innerText(), "as soon as");
+  await page.locator(".thread [data-act=thread-close]").click();
+  await page.locator(".chat-search-row [aria-label='Close search']").click();
+}
+/* Eden's one-tap question shows what the choice weighs above the answers. */
+async function checkChoiceContext(page: Page) {
+  await navTo(page, "#/chat/dm-eden");
+  const card = page.locator(".chat-needs");
+  const context = card.locator(".chat-needs-context");
+  assert.match(await context.innerText(), /Splitting them makes reporting lines harder to follow[\s\S]*Eden recommends: one tree/);
+  assert.ok(await context.evaluate((el) => Boolean(el.compareDocumentPosition(el.parentElement!.querySelector(".actions")!) & Node.DOCUMENT_POSITION_FOLLOWING)), "Context sits above the answers");
+  await card.getByRole("button", { name: "One tree", exact: true }).waitFor();
+}
+/* Agents' conversations: owner access by the title at 375; DM actions name their destination. */
+async function checkA2AHeader(page: Page) {
+  await navTo(page, "#/chat/a2a-kai-rowan");
+  assert.deepEqual(await page.locator(".readfoot .actions .btn").allInnerTexts(), ["DM Kai", "DM Rowan"]);
+  assert.equal(await page.locator(".chat-title .chat-readas-tag").isVisible(), false, "Wide: the context line carries access");
+  await page.setViewportSize({ width: 375, height: 667 });
+  const tag = page.locator(".chat-title .chat-readas-tag");
+  assert.ok(await tag.isVisible(), "Narrow: access label beside the title");
+  assert.equal(await tag.innerText(), "Reading as the owner");
+  const [title, label] = await Promise.all([page.locator("#ch-title").boundingBox(), tag.boundingBox()]);
+  assert.ok(title && label && label.y < title.y + title.height && label.y + label.height > title.y, "The label shares the title's row");
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+/* Choosing any conversation in the drawer, the open one included, closes it and focuses the heading. */
+async function checkDrawerChoice(page: Page) {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await navTo(page, "#/chat/design");
+  for (const pick of ['#chat-nav a[aria-current="page"]', '#chat-nav a[href="#/chat/general"]']) {
+    await page.locator(".chat-list-btn").click();
+    await page.locator(pick).click();
+    await page.locator(".chat.list-open").waitFor({ state: "detached" });
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "ch-title", `${pick}: focus on the conversation heading`);
+    assert.equal(await page.evaluate(() => document.querySelectorAll("[inert]").length), 0, `${pick}: nothing left inert`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+/* Ada's other requests at a constrained width: one compact control opening the full list. */
+async function checkCompactRequests(page: Page) {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await navTo(page, "#/chat/dm-ada");
+  const compact = page.locator(".chat-context .chat-wait-compact .chat-more-btn");
+  assert.equal(await compact.innerText(), "2 other requests");
+  assert.equal(await page.locator(".chat-context .chat-wait-full").isVisible(), false);
+  assert.equal(await page.locator(".chat").evaluate((el) => el.classList.contains("ctx-overflow")), false, "The context line fits");
+  await compact.click();
+  const hrefs = await page.locator("#menu-chat-more-ctx-compact").getByRole("menuitem").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
+  assert.equal(hrefs.length, 2);
+  assert.ok(hrefs.includes("#/inbox/in4"));
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+/* Short screens: a reply-count tap lands on the replies with the ask above; Jump to latest when the newest is below. */
+async function checkShortScreens(page: Page) {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.reload();
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  const landing = await page.evaluate(() => {
+    const s = document.querySelector(".thread .msgs")!, sr = s.getBoundingClientRect();
+    const first = s.querySelector(":scope > .chat-thread-count + .msg")!.getBoundingClientRect();
+    return { firstReplyVisible: first.top >= sr.top && first.top < sr.bottom - 24, askAbove: s.scrollTop > 0 };
+  });
+  assert.ok(landing.firstReplyVisible && landing.askAbove, `Reply count lands on the replies (${JSON.stringify(landing)})`);
+  await page.locator(".thread [data-act=thread-close]").click();
+  await page.setViewportSize({ width: 420, height: 900 });
+  await page.goto(page.url().split("#")[0] + "#/chat/agency-v1");
+  await page.waitForTimeout(500);
+  const jump = page.locator('[data-act="chat-latest-jump"]');
+  const newestBelow = () => page.evaluate(() => { const s = document.querySelector(".chmain .msgs[data-ch]")!; return [...s.querySelectorAll(":scope > .msg")].pop()!.getBoundingClientRect().bottom > s.getBoundingClientRect().bottom + 1; });
+  assert.equal(await jump.isVisible(), await newestBelow(), "Jump to latest shows exactly when the newest message is below the fold");
+  if (await jump.isVisible()) {
+    const [stream, button] = await Promise.all([page.locator(".chmain .msgs[data-ch]").boundingBox(), jump.boundingBox()]);
+    assert.ok(stream && button && button.y >= stream.y + stream.height - 1, "On phones Jump to latest is its own row, never over the stream");
+  }
+  await page.evaluate(() => { document.querySelector(".chmain .msgs[data-ch]")!.scrollTop = 0; });
+  await jump.waitFor();
+  await jump.click();
+  assert.equal(await newestBelow(), false, "Jump to latest shows the newest message");
+  assert.equal(await activeAttr(page, "data-mid"), "m4", "Focus moves to the newest message");
+  assert.equal(await jump.isVisible(), false);
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+async function checkChatRound6(page: Page) {
+  await checkChatTouch(page);
+  await checkChatSourceRepeat(page);
+  await checkHomeRouting(page);
+  await checkThreadAlsoDraft(page);
+  await checkChatSearchThread(page);
+  await checkChoiceContext(page);
+  await checkA2AHeader(page);
+  await checkDrawerChoice(page);
+  await checkCompactRequests(page);
+  await checkShortScreens(page);
+}
+/* ---------------------------------------------------------------- task context (TASK-205) */
+const savedTaskWithContext = (page: Page) => page.evaluate(() => Object.keys(localStorage)
+  .filter((k) => k.startsWith("agentic-org.v6.task."))
+  .map((k) => JSON.parse(localStorage.getItem(k)!))
+  .find((t) => t.context?.length) ?? null);
+
+/* Chat's Turn into task attaches the message and the 5 before it (here 3 exist) by default, with ids, not prose. */
+async function checkTaskContextFromChat(page: Page) {
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator('.msg[data-mid="m4"]').hover();
+  await page.locator('.msg[data-mid="m4"] .msg-tool[data-act="chat-task"]').click();
+  const dlg = page.locator("#work-task-dialog");
+  const card = dlg.locator(".stc-ctx-card");
+  assert.equal(await card.count(), 1, "Turn into task attaches one context item by default");
+  assert.equal((await card.locator(".stc-ctx-title").innerText()).replace(/\s*\(opens in a new tab\)/, ""), "Conversation excerpt · #agentic-org-v1 · 4 messages", "The excerpt is the message and the 3 earlier ones, not the whole chat");
+  assert.equal(await card.locator(".stc-ctx-title").getAttribute("href"), "#/chat/agency-v1/m4", "The excerpt deep-links to the message");
+  assert.doesNotMatch(await dlg.locator("#stc-prompt").inputValue(), /#\/chat\//, "The prompt carries no raw chat link");
+  assert.equal(await dlg.locator(".stc-ctx-offer").count(), 0, "Chat's default excerpt replaces the page offer");
+  assert.equal(await dlg.getByRole("button", { name: "Include one more earlier message" }).getAttribute("aria-disabled"), "true", "No earlier messages exist past the start");
+  await dlg.getByRole("button", { name: "Include one fewer earlier message" }).click();
+  assert.match(await card.locator(".stc-ctx-title").innerText(), /· 3 messages/, "Fewer earlier messages shrinks the excerpt");
+  assert.equal(await activeAttr(page, "data-stc"), "ctx-fewer", "Focus stays on the stepper");
+  await dlg.getByRole("button", { name: "Show 3 messages" }).click();
+  assert.equal(await dlg.locator(".stc-ctx-lines li").count(), 3, "The preview expands to the excerpt's messages");
+  await dlg.getByRole("button", { name: /^Remove context: Conversation excerpt · #agentic-org-v1/ }).waitFor();
+  await page.evaluate(() => (document.getElementById("work-task-dialog") as HTMLDialogElement).close());
+  await dlg.waitFor({ state: "detached" });
+}
+
+/* Elsewhere the page is offered, never attached; attaching and creating stores it; the task shows Context links. */
+async function checkTaskContextFromPage(page: Page) {
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press("n");
+  const dlg = page.locator("#work-task-dialog");
+  const offer = dlg.getByRole("button", { name: "Add this page as context: Agentic Org v1.0 · Overview" });
+  await offer.waitFor();
+  assert.equal(await dlg.locator(".stc-ctx-card").count(), 0, "A project page is offered as context, not attached");
+  await offer.click();
+  assert.equal(await dlg.locator(".stc-ctx-card").count(), 1, "One click attaches the page");
+  assert.equal(await activeAttr(page, "class"), "stc-ctx-title", "Focus moves to the attached item");
+  await dlg.getByRole("button", { name: "Add context…" }).click();
+  await page.keyboard.type("CSP gates");
+  await dlg.locator(".stc-ctx-result", { hasText: "T-A124" }).first().click();
+  assert.equal(await dlg.locator(".stc-ctx-card").count(), 2, "Add context… attaches a searched work item");
+  await dlg.locator("#stc-prompt").fill("Unblock the CSP gateway permission for the release");
+  await dlg.getByRole("button", { name: "Create as-is" }).click();
+  await dlg.waitFor({ state: "detached" });
+  const saved = await savedTaskWithContext(page);
+  assert.ok(saved, "The created task stores its context");
+  assert.deepEqual(saved.context.map((c: { kind: string }) => c.kind), ["project", "work"]);
+  assert.equal(saved.context[0].href, "#/projects/agency-v1");
+  await navTo(page, `#/work?item=${saved.ref}`);
+  const section = page.locator("#work-panel .work-ctx");
+  await section.waitFor();
+  assert.deepEqual(await section.locator(".work-ctx-links > a").evaluateAll((els) => els.map((e) => e.getAttribute("href"))), ["#/projects/agency-v1", "#/work?item=T-A124"], "The task detail links its context");
+}
+
+/* A chat excerpt stored on a task keeps its ids and opens the source message, as Inbox does. */
+async function checkTaskContextSourceLink(page: Page) {
+  await navTo(page, "#/chat/platform");
+  await page.locator('.msg[data-mid="p2"]').hover();
+  await page.locator('.msg[data-mid="p2"] .msg-tool[data-act="chat-task"]').click();
+  const dlg = page.locator("#work-task-dialog");
+  await dlg.getByRole("button", { name: "Create as-is" }).click();
+  await dlg.waitFor({ state: "detached" });
+  const saved = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("agentic-org.v6.task."))
+    .map((k) => JSON.parse(localStorage.getItem(k)!)).find((t) => t.context?.[0]?.source?.ch === "platform"));
+  assert.deepEqual(saved.context[0].source, { ch: "platform", msg: "p2" }, "The excerpt stores conversation and message ids");
+  assert.doesNotMatch(saved.description + saved.title, /#\/chat\//, "No raw chat link in the task text");
+  await navTo(page, `#/work?item=${saved.ref}`);
+  await page.locator("#work-panel").getByRole("link", { name: "Open source message" }).waitFor();
+  assert.equal(await page.locator("#work-panel").getByRole("link", { name: "Open source message" }).getAttribute("href"), "#/chat/platform/p2");
+}
+/* Attachments (TASK-206): picker, tray, remove, size limit, attachment-only send, image viewer, Files panel, search. */
+const PNG_1PX = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+const mainComposer = (page: Page) => page.locator('#main .chat form[data-form="send"]');
+const trayItems = (page: Page) => mainComposer(page).locator(".chat-att-item");
+async function waitUploads(page: Page) {
+  await page.waitForFunction(() => document.querySelectorAll("#main .chat .chat-att-item").length > 0 && !document.querySelector("#main .chat .chat-att-item.is-uploading"));
+}
+async function checkAttachTray(page: Page) {
+  await page.getByRole("button", { name: /^Attach files, up to 25 MB each$/ }).waitFor();
+  await mainComposer(page).locator(".chat-att-input").setInputFiles([
+    { name: "board.png", mimeType: "image/png", buffer: PNG_1PX },
+    { name: "notes.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 test") },
+    { name: "extra.txt", mimeType: "text/plain", buffer: Buffer.from("extra") },
+  ]);
+  assert.equal(await trayItems(page).count(), 3, "Picked files show in the tray");
+  assert.equal(await trayItems(page).locator("img").count(), 1, "An image shows a thumbnail");
+  assert.match(await trayItems(page).nth(1).innerText(), /notes\.pdf[\s\S]*PDF/, "A file shows its name and type");
+  await page.locator(".chat-att-item.is-uploading").first().waitFor();
+  await waitUploads(page);
+  await page.getByRole("button", { name: "Remove extra.txt" }).click();
+  assert.equal(await trayItems(page).count(), 2, "Remove takes the file out of the tray");
+  assert.equal(await page.evaluate(() => document.activeElement?.closest("form")?.dataset.form), "send", "Focus stays in the composer after Remove");
+}
+async function checkAttachLimit(page: Page) {
+  /* Built in the page: sending 26 MB through the driver is slow. */
+  await page.evaluate(() => {
+    const input = document.querySelector<HTMLInputElement>('#main .chat form[data-form="send"] .chat-att-input')!, dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array(26 * 1024 * 1024)], "huge.zip", { type: "application/zip" }));
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  assert.match(await mainComposer(page).locator(".chat-att-error").innerText(), /huge\.zip.*26\.0 MB.*up to 25 MB/, "An oversize file is rejected with the limit");
+  assert.equal(await trayItems(page).count(), 2, "The rejected file is not attached");
+}
+async function checkAttachSend(page: Page) {
+  await mainComposer(page).getByRole("button", { name: "Send" }).click();
+  const sent = page.locator("#main .chat .chmain .msgs > .msg").last();
+  await sent.locator(".chat-att-img img").waitFor();
+  await page.waitForFunction(() => !document.querySelector("#main .chat .msg.is-pending"));
+  assert.equal(await sent.locator(".chat-att-file .chat-att-name").innerText(), "notes.pdf", "A sent file renders as a card");
+  assert.equal(await sent.locator(".tx").count(), 0, "A message can carry only attachments");
+  assert.equal(await trayItems(page).count(), 0, "Sending clears the tray");
+  await mainComposer(page).getByRole("button", { name: "Send" }).click();
+  assert.match(await mainComposer(page).locator(".chat-compose-hint").innerText(), /Write a message or attach a file first/);
+}
+async function checkAttachViewer(page: Page) {
+  const tile = page.locator('.msg[data-mid="m1"] .chat-att-img').first();
+  await tile.click();
+  const viewer = page.getByRole("dialog", { name: "ia-v2-nav-before.png" });
+  await viewer.waitFor();
+  assert.ok(await viewer.evaluate((d) => d.contains(document.activeElement)), "Focus moves into the viewer");
+  assert.equal(await viewer.getByRole("link", { name: "Download" }).getAttribute("download"), "ia-v2-nav-before.png");
+  await page.keyboard.press("ArrowRight");
+  await page.getByRole("dialog", { name: "ia-v2-nav-after.png" }).waitFor();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  assert.ok(await page.evaluate(() => Boolean(document.activeElement?.closest("dialog.chat-lightbox"))), "Focus stays in the viewer");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("dialog.chat-lightbox").count(), 0, "Esc closes the viewer");
+  assert.equal(await activeAttr(page, "data-act"), "chat-att-view", "Focus returns to the image");
+  assert.equal(await activeAttr(page, "data-id"), "m1");
+}
+async function checkAttachDropAndPaste(page: Page) {
+  await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(["drop"], "dropped.log", { type: "text/plain" }));
+    const zone = document.querySelector("#main .chat .chmain .msgs")!;
+    zone.dispatchEvent(new DragEvent("dragenter", { bubbles: true, dataTransfer: dt }));
+    zone.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+  });
+  assert.match(await page.locator("#main .chat .chmain > .chat-drop").innerText(), /Drop to attach/, "Dragging files shows the drop target");
+  await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(["drop"], "dropped.log", { type: "text/plain" }));
+    document.querySelector("#main .chat .chmain .msgs")!.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+    const paste = new DataTransfer();
+    paste.items.add(new File([new Uint8Array([137, 80, 78, 71])], "pasted.png", { type: "image/png" }));
+    document.getElementById("compose")!.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: paste }));
+  });
+  assert.equal(await page.locator("#main .chat .chat-drop").count(), 0, "Drop clears the target");
+  assert.deepEqual(await trayItems(page).locator(".chat-att-name").allInnerTexts(), ["dropped.log", "pasted.png"], "Drop and paste attach");
+  await page.getByRole("button", { name: "Remove dropped.log" }).click();
+  await page.getByRole("button", { name: "Remove pasted.png" }).click();
+}
+async function checkAttachFilesAndSearch(page: Page) {
+  await page.locator(".chat-files-btn").click();
+  const panel = page.locator("#chat-files");
+  await panel.waitFor();
+  assert.ok((await panel.locator(".chat-file-row").count()) >= 4, "Files lists the conversation's attachments");
+  assert.match(await panel.locator(".chat-file-row").last().innerText(), /Ada · Today 09:12/, "Each file says who sent it and when");
+  await panel.getByRole("link", { name: "ia-v2-nav-before.png", exact: true }).click();
+  await page.locator('.msg.is-linked[data-mid="m1"]').waitFor();
+  assert.equal(await page.locator("#chat-files").count(), 0, "Following a file closes Files");
+  await navTo(page, "#/chat/platform");
+  await page.locator(".chat-search").click();
+  await page.locator("#chat-search-input").fill("lease-race");
+  assert.equal(await page.locator("#chat-search-status").innerText(), "1 message", "Search finds an attachment name");
+  assert.equal(await page.locator('.msgs > .msg[data-mid="p1"] .chat-att-name mark').count(), 1, "The matching name is marked");
+  await page.locator("#chat-search-input").press("Escape");
+}
+async function checkAttachThread(page: Page) {
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  const form = page.locator('aside.thread form[data-form="thread-send"]');
+  await form.locator(".chat-att-input").setInputFiles([{ name: "review.diff", mimeType: "text/x-diff", buffer: Buffer.from("+ok") }]);
+  await waitUploads(page);
+  await form.locator("#thread-compose").press("Control+Enter");
+  await page.locator('aside.thread .msgs > .msg:last-child .chat-att-file .chat-att-name', { hasText: "review.diff" }).waitFor();
+  assert.equal(await form.locator(".chat-att-item").count(), 0, "Ctrl+Enter sends a thread reply with only an attachment");
+  await page.locator("aside.thread [data-act=thread-close]").click();
+}
+async function checkAttachReadOnly(page: Page) {
+  await navTo(page, "#/chat/a2a-kai-rowan");
+  await page.locator('.msg[data-mid="k1"] .chat-att-file').waitFor();
+  assert.equal(await page.locator(".chat-attach-btn").count(), 0, "Agents' conversations have no Attach");
+}
+async function checkChatAttachments(page: Page) {
+  const errors: string[] = [];
+  page.on("console", (msg) => { if (msg.type() === "error") errors.push(msg.text()); });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await navTo(page, "#/chat/agency-v1");
+  assert.equal(await page.locator('.msg[data-mid="m1"] .chat-att-img').count(), 2, "Seeded screenshots show");
+  await checkAttachTray(page);
+  await checkAttachLimit(page);
+  await checkAttachSend(page);
+  await checkAttachViewer(page);
+  await checkAttachDropAndPaste(page);
+  await checkAttachFilesAndSearch(page);
+  await checkAttachThread(page);
+  await checkAttachReadOnly(page);
+  assert.deepEqual(errors, [], "No console errors while attaching");
+}
+async function checkChat(page: Page) {
+  await checkChatAsks(page);
+  await checkChatRecords(page);
+  await checkChatOverlays(page);
+  await checkChatEntryPoints(page);
+  await checkChatNarrow(page);
+  await checkChatThreads(page);
+  await checkChatContext(page);
+  await checkChatLayout(page);
+  await page.reload();
+  await checkChatRound6(page);
+  await checkPrimaryContrast(page);
+  await checkTaskContextFromChat(page);
+  await checkTaskContextSourceLink(page);
+  await page.reload();
+  await checkChatAttachments(page);
+}
+
 const ROUTE_CHECKS: Record<string, (page: Page, href: string, theme: string) => Promise<void>> = {
   inbox: (page) => checkInbox(page),
   work: (page, href) => checkWork(page, href),
   activity: (page, _href, theme) => checkActivity(page, theme),
   "projects/office-federation/activity": (page) => checkProjectActivity(page),
   "projects/agency-v1/insights": (page) => checkProjectInsights(page),
+  chat: (page) => checkChat(page),
+  "projects/agency-v1": (page) => checkTaskContextFromPage(page),
 };
 
 async function runRouteCheck(browser: Awaited<ReturnType<typeof chromium.launch>>, baseUrl: URL, pageRoute: string, theme: string) {
@@ -439,7 +1853,8 @@ async function runFullSweep(browser: Awaited<ReturnType<typeof chromium.launch>>
 
 const args = process.argv.slice(2);
 const runAll = args.includes("--all");
-const server = servePrototype(0, false);
+/* --dev serves the page as the owner's dev server does (development mode, stylesheets unbundled) */
+const server = servePrototype(0, args.includes("--dev"));
 
 try {
   const browser = await chromium.launch();

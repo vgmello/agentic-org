@@ -9,6 +9,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::credentials::rfc3339_now;
 
+mod sanitize;
+
+pub use sanitize::sanitize_untrusted_body;
+pub(crate) use sanitize::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
+
 /// Default maximum agent-initiated turns per rolling hour per target agent (`ADR-0023` d5).
 pub const DEFAULT_HOURLY_WAKE_LIMIT: usize = 12;
 
@@ -42,8 +47,8 @@ pub const MAX_WAKE_ITEM_BODY_BYTES: usize = 2_048;
 /// Maximum UTF-8 byte budget for one mid-turn notice batch (`doc-101` §4C, under Claude 10k char cap).
 pub const MAX_MID_TURN_BATCH_BYTES: usize = 8_000;
 
-const UNTRUSTED_OPEN: &str = "<<<UNTRUSTED_MESSAGE";
-const UNTRUSTED_CLOSE: &str = "<<<END_UNTRUSTED_MESSAGE>>>";
+pub(crate) const UNTRUSTED_OPEN: &str = "<<<UNTRUSTED_MESSAGE";
+pub(crate) const UNTRUSTED_CLOSE: &str = "<<<END_UNTRUSTED_MESSAGE>>>";
 const MID_TURN_HEADER: &str = "=== OFFICE MID-TURN NOTICE (untrusted message data) ===";
 const MID_TURN_FOOTER: &str = "=== END OFFICE MID-TURN NOTICE ===";
 
@@ -491,75 +496,6 @@ pub(crate) fn sender_conv_key(item: &PendingWakeItem) -> (String, String) {
     (item.sender_id.clone(), scope)
 }
 
-/// Maximum UTF-8 byte budget for one sanitized header/provenance metadata token (`INSTR-5`).
-const MAX_META_FIELD_BYTES: usize = 96;
-
-/// Neutralizes fence-breakout tokens and caps untrusted text to `max_bytes` UTF-8 bytes (`INSTR-5`).
-pub fn sanitize_untrusted_body(raw: &str, max_bytes: usize) -> String {
-    let trimmed = raw.trim();
-    // Break every triple-delimiter sequence so no variant of `<<<UNTRUSTED_MESSAGE...>>>`,
-    // `<<<END_UNTRUSTED_MESSAGE>>>`, `=== OFFICE MID-TURN NOTICE ===`, or
-    // `=== END OFFICE MID-TURN NOTICE ===` can escape the untrusted data fence.
-    let mut neutralized = trimmed.to_owned();
-    while neutralized.contains("<<<") {
-        neutralized = neutralized.replace("<<<", "< < <");
-    }
-    while neutralized.contains(">>>") {
-        neutralized = neutralized.replace(">>>", "> > >");
-    }
-    while neutralized.contains("===") {
-        neutralized = neutralized.replace("===", "= = =");
-    }
-    truncate_utf8(&neutralized, max_bytes)
-}
-
-/// Sanitizes untrusted or user-editable header metadata (display name, handle, IDs) before
-/// interpolating into fence attributes or objective headers (`INSTR-5`).
-fn sanitize_untrusted_meta(raw: &str, max_bytes: usize) -> String {
-    let cleaned: String = raw
-        .trim()
-        .chars()
-        .map(|ch| match ch {
-            '\n' | '\r' | '\t' => ' ',
-            '"' => '\'',
-            c if c.is_control() => ' ',
-            c => c,
-        })
-        .collect();
-    let mut out = cleaned
-        .replace("[verified:", "(verified:")
-        .replace("[VERIFIED:", "(verified:");
-    while out.contains("<<<") {
-        out = out.replace("<<<", "< < <");
-    }
-    while out.contains(">>>") {
-        out = out.replace(">>>", "> > >");
-    }
-    while out.contains("===") {
-        out = out.replace("===", "= = =");
-    }
-    truncate_utf8(&out, max_bytes)
-}
-
-fn truncate_utf8(text: &str, max_bytes: usize) -> String {
-    if text.len() <= max_bytes {
-        return text.to_owned();
-    }
-    const SUFFIX: &str = "… [truncated]";
-    if max_bytes <= SUFFIX.len() {
-        let mut end = max_bytes;
-        while end > 0 && !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        return text[..end].to_owned();
-    }
-    let mut end = max_bytes - SUFFIX.len();
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}{SUFFIX}", &text[..end])
-}
-
 fn format_sender_provenance(item: &PendingWakeItem) -> String {
     let name = sanitize_untrusted_meta(&item.sender_name, MAX_META_FIELD_BYTES);
     let handle = item
@@ -584,29 +520,9 @@ fn format_sender_provenance(item: &PendingWakeItem) -> String {
     format!("{name}{handle} [verified: {relation}]")
 }
 
-/// Returns the replyable identifier for a wake item, stripping legacy `<message_id>:<employee_id>`
-/// composite relay keys persisted before `TASK-157` so `agent-os msg reply --id` always receives
-/// the real message UUIDv7 (only when both halves are valid UUIDv7s so arbitrary single-colon IDs
-/// like `msg:123` are never mangled; remove once pre-TASK-157 dogfood queues drain).
+/// Returns the replyable identifier for a wake item, sanitized for prompt interpolation.
 fn display_source_id(item: &PendingWakeItem) -> String {
-    let raw = item.source_id.as_str();
-    let trimmed = if matches!(
-        item.kind,
-        WakeKind::DirectMessage | WakeKind::Mention | WakeKind::Handoff | WakeKind::Ask
-    ) {
-        if let Some((head, tail)) = raw.split_once(':') {
-            if org_proto::is_uuid_v7(head) && org_proto::is_uuid_v7(tail) {
-                head
-            } else {
-                raw
-            }
-        } else {
-            raw
-        }
-    } else {
-        raw
-    };
-    sanitize_untrusted_meta(trimmed, MAX_META_FIELD_BYTES)
+    sanitize_untrusted_meta(&item.source_id, MAX_META_FIELD_BYTES)
 }
 
 fn format_action_hint(item: &PendingWakeItem) -> String {
@@ -614,6 +530,9 @@ fn format_action_hint(item: &PendingWakeItem) -> String {
     match item.kind {
         WakeKind::Ask => format!(
             "Reply/answer via `agent-os msg reply --id {sid} --answer '<json>'` or inspect with `agent-os msg read --id {sid}`.",
+        ),
+        WakeKind::Handoff => format!(
+            "Take it with `agent-os msg accept --id {sid}`, inspect with `agent-os msg read --id {sid}`, or reply via `agent-os msg reply --id {sid} --body '...'`.",
         ),
         WakeKind::TaskAssignment => format!("Inspect with `agent-os task inspect --task {sid}`."),
         WakeKind::Recovery => {

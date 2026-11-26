@@ -1,5 +1,6 @@
 use super::*;
 use http_body_util::BodyExt;
+use org_proto::web::ResyncReason;
 
 #[test]
 fn sse_stream_emits_ready_live_org_change_and_closes_on_session_ended() {

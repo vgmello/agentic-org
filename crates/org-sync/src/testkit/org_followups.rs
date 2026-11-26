@@ -162,3 +162,174 @@ fn malformed_snapshot_reference_remains_invalid_input_before_adapter_lookup() {
     );
     assert_eq!(satellite.restart().applied(), vec![payload]);
 }
+
+/// `TASK-140`: a burst of HQ events applies in one transaction exactly as one `apply` per
+/// event would: every event acknowledged in order, a gap stops the batch after committing
+/// the events before it, and an error commits nothing.
+#[test]
+fn apply_batch_applies_consecutive_events_in_one_transaction_like_apply() {
+    let (hq, satellite, peer) = offices();
+    let events: Vec<OrgEvent> = (1..=6)
+        .map(|n| hq.publish(format!("event-{n}").as_bytes()).unwrap())
+        .collect();
+    assert!(apply_batch(&satellite, &peer, Vec::new())
+        .unwrap()
+        .is_empty());
+
+    let outputs = apply_batch(&satellite, &peer, events[..3].to_vec()).unwrap();
+    assert_eq!(outputs.len(), 3);
+    for (output, event) in outputs.iter().zip(&events) {
+        assert_eq!(
+            *output,
+            OrgOutput::Ack {
+                position: event.position,
+                digest: event.digest,
+                duplicate: false,
+            }
+        );
+    }
+    assert_eq!(satellite.checkpoint().position, events[2].position);
+    assert_eq!(satellite.applied().len(), 3);
+
+    // An error anywhere aborts the whole batch: the duplicate before it is not committed
+    // twice and the valid event before it is not committed at all.
+    let mut corrupt = events[4].clone();
+    corrupt.payload = Arc::from(b"changed".as_slice());
+    let before = satellite.checkpoint();
+    let error = apply_batch(
+        &satellite,
+        &peer,
+        vec![events[2].clone(), events[3].clone(), corrupt],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SyncError::Refused(Refusal::IntegrityFailure)
+    ));
+    assert_eq!(satellite.checkpoint(), before);
+    assert_eq!(satellite.applied().len(), 3);
+
+    // A gap stops the batch; the events before it commit, the ones after it are not tried.
+    let outputs = apply_batch(
+        &satellite,
+        &peer,
+        vec![
+            events[2].clone(),
+            events[3].clone(),
+            events[5].clone(),
+            events[4].clone(),
+        ],
+    )
+    .unwrap();
+    assert_eq!(outputs.len(), 3);
+    assert!(matches!(
+        outputs[0],
+        OrgOutput::Ack {
+            duplicate: true,
+            ..
+        }
+    ));
+    assert!(matches!(
+        outputs[1],
+        OrgOutput::Ack {
+            duplicate: false,
+            ..
+        }
+    ));
+    assert_eq!(
+        outputs[2],
+        OrgOutput::Gap {
+            after: events[3].position
+        }
+    );
+    assert_eq!(satellite.checkpoint().position, events[3].position);
+    assert_eq!(satellite.applied().len(), 4);
+
+    let outputs = apply_batch(&satellite, &peer, events[4..].to_vec()).unwrap();
+    assert_eq!(outputs.len(), 2);
+    assert_eq!(satellite.checkpoint().position, events[5].position);
+    assert_eq!(satellite.applied().len(), 6);
+}
+
+/// Review B-P2-1: [`verify_pre_apply`] is the very gate [`apply`] runs before it consults the
+/// store, so a caller that pre-verifies events (a satellite staging their files) refuses each
+/// one with the refusal a lone `apply` reports, and `apply` commits nothing for it: an invalid
+/// checkpoint, another HQ, an oversized payload with its own digest, a codec the protocol
+/// level does not allow, and a restore fence.
+#[test]
+fn verify_pre_apply_refuses_exactly_what_apply_refuses() {
+    let (hq, satellite, peer) = offices();
+    let one = hq.publish(b"one").unwrap();
+    let event = |codec: Codec, payload: Vec<u8>| {
+        let payload: Arc<[u8]> = Arc::from(payload);
+        let digest = org_sync_proto::event_digest_v1(
+            &one.org_id,
+            one.position,
+            one.previous,
+            &codec,
+            &payload,
+        )
+        .unwrap();
+        OrgEvent {
+            digest,
+            codec,
+            payload,
+            ..one.clone()
+        }
+    };
+    let oversized = event(one.codec.clone(), vec![b'x'; MAX_PAYLOAD_BYTES + 1]);
+    let unsupported = event(Codec::new("org.unknown", 1).unwrap(), b"one".to_vec());
+    let mut other_hq = peer.0.clone();
+    other_hq.office_id = OfficeId::new("SAT1").unwrap();
+    let committed = satellite.checkpoint();
+    let mut invalid = committed.clone();
+    invalid.protocol_level = 0;
+    let mut fenced = committed.clone();
+    fenced.restore_pending = true;
+    let cases = [
+        (
+            invalid,
+            peer.0.clone(),
+            one.clone(),
+            Refusal::InvariantFailure,
+        ),
+        (
+            committed.clone(),
+            other_hq,
+            one.clone(),
+            Refusal::NotAuthorized,
+        ),
+        (
+            committed.clone(),
+            peer.0.clone(),
+            oversized,
+            Refusal::InvalidInput,
+        ),
+        (
+            committed.clone(),
+            peer.0.clone(),
+            unsupported,
+            Refusal::UnsupportedVersion,
+        ),
+        (fenced, peer.0.clone(), one.clone(), Refusal::RestorePending),
+    ];
+    for (checkpoint, identity, ev, expected) in cases {
+        assert_eq!(
+            verify_pre_apply(&checkpoint, &identity, &ev),
+            Err(expected),
+            "{expected:?}"
+        );
+        satellite.data.borrow_mut().checkpoint = checkpoint.clone();
+        let error = apply(&satellite, &MemoryPeer(identity), ev).unwrap_err();
+        assert!(
+            matches!(error, SyncError::Refused(actual) if actual == expected),
+            "a lone apply refuses with {expected:?}, got {error}"
+        );
+        assert_eq!(satellite.checkpoint(), checkpoint);
+        assert!(satellite.applied().is_empty());
+    }
+    satellite.data.borrow_mut().checkpoint = committed.clone();
+    assert_eq!(verify_pre_apply(&committed, &peer.0, &one), Ok(()));
+    apply(&satellite, &peer, one.clone()).unwrap();
+    assert_eq!(satellite.checkpoint().position, one.position);
+}

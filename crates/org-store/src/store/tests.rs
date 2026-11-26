@@ -6,9 +6,10 @@ use std::{
 
 use super::*;
 use crate::{
-    change::{Ack, DurablePath, Sha256, Timestamp},
+    change::{Ack, DurablePath, Outcome, Sha256, Timestamp},
+    custody::JournalHead,
     engine::Cursor,
-    journal::JournalError,
+    error::JournalError,
     receipts::receipt_path,
     sequences::Stream,
     testkit::{
@@ -350,6 +351,44 @@ fn a_committed_write_is_answered_while_the_flush_is_held_and_a_durable_one_is_no
     assert_eq!(office.file("c").unwrap(), b"c");
     assert_eq!(office.file("d").unwrap(), b"d");
     assert_eq!(office.custody.head().unwrap().ordinal, 2);
+}
+
+/// TASK-140: a committed (buffered) write waits for the flush interval (an hour here) unless someone
+/// asks for an immediate flush; `request_flush` returns at once and the flusher then
+/// flushes, confirms and writes the entry without any durable waiter or sync.
+#[test]
+fn request_flush_flushes_buffered_entries_now_without_waiting_for_the_interval() {
+    let office = Office::new();
+    let store = office.create();
+    // Nothing waits to be flushed: the request neither raises the flag nor wakes the flusher.
+    store.request_flush();
+    assert!(
+        !store.core.flow().flush_now,
+        "no request for an empty queue"
+    );
+
+    office.put(&store, "b", Ack::Committed).unwrap();
+    assert_eq!(store.status().flushed, 0, "the interval has not passed");
+    assert_eq!(office.file("b"), None);
+
+    store.request_flush();
+    let status = wait_until("the requested flush", &store, |s| {
+        s.flushed >= 1 && s.confirmed >= 1 && s.materialized >= 1
+    });
+    assert_eq!(status.waiting_durable, 0);
+    assert_eq!(office.file("b").unwrap(), b"b");
+    assert_eq!(office.custody.head().unwrap().ordinal, 1);
+    assert!(
+        !store.core.flow().flush_now,
+        "the flusher clears the request it served"
+    );
+
+    office.put(&store, "c", Ack::Committed).unwrap();
+    store.request_flush();
+    wait_until("the second requested flush", &store, |s| {
+        s.flushed >= 2 && s.materialized >= 2
+    });
+    assert_eq!(office.file("c").unwrap(), b"c");
 }
 
 /// STORE-5.

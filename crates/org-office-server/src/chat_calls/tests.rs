@@ -26,7 +26,7 @@ use crate::federation_runtime::{build_sync_wake_fn, HqFederationSlot};
 use crate::federation_stream::SatSyncWake;
 use crate::office_ports::{build_messaging_ports, build_office_ports};
 use crate::office_runtime::start_session_manager;
-use crate::{inbox, live, org_feed, serve};
+use crate::{live, org_feed, serve};
 
 fn uuidv7(seed: u16) -> String {
     // Matches `TestOffice`'s fixed clock (`CREATION_AT = 1_700_000_000_000` ms).
@@ -80,7 +80,7 @@ impl LiveOfficeFixture {
             Box::new(move || live_wake.notify()),
             owner_id.clone(),
         ));
-        let hq = inbox::Hq::for_office(Arc::clone(&office)).unwrap();
+        let hq = crate::office_runtime::hq_inbox(Arc::clone(&office)).unwrap();
         let sessions = start_session_manager(Arc::clone(&office), &socket);
         let channel_watcher = Arc::new(crate::watcher::ChannelWatcher::production(
             Arc::clone(&office),
@@ -88,7 +88,7 @@ impl LiveOfficeFixture {
         ));
         let sat_wake = Arc::new(SatSyncWake::default());
         let hq_fed_slot: HqFederationSlot = Arc::default();
-        let sync_wake = build_sync_wake_fn(sat_wake, Arc::clone(&hq_fed_slot));
+        let sync_wake = build_sync_wake_fn(&office, sat_wake, Arc::clone(&hq_fed_slot));
         let messaging = build_messaging_ports(
             &office,
             &live,
@@ -164,6 +164,7 @@ impl LiveOfficeFixture {
             runtime_dir: None,
             session_token: Some(token),
             agent_id: Some(employee_id.to_owned()),
+            external_state: None,
         }
     }
 }

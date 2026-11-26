@@ -1,31 +1,62 @@
-import { IN, M, OFFICES, P, TEAMS, W, blockedOnOwner } from "../data.js";
+import { calendarAction } from "../pages/calendar.js";
+import { IN, M, OFFICES, OPEN, P, TEAMS, W, blockedOnOwner } from "../data.js";
 import { activityFilterKey, activityViewKey, addAssemblySample, assemblySimulation, projectActivityId, refreshAssemblySimulation, setActivityPanel, syncAssemblySimulationTimer, updateAssemblyPlayback } from "../pages/activity.js";
 import { closeAgentFocus, isAgentFocusOpen, openAgentFocus } from "../pages/agent-focus.js";
 import { consoleSessions } from "../pages/agent-profile.js";
-import { chatDrafts, sendChatMessage } from "../pages/chat.js";
+import { chatDrafts, findConversation, openDirectMessage, sendChatMessage, sendThreadReply, toggleChatList } from "../pages/chat.js";
+import { receiptLine, responseRecord } from "../pages/ask-receipt.js";
 import { answerOrgQuestion } from "../pages/home.js";
 import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment, refreshInboxSearch, resetInboxSelection } from "../pages/inbox.js";
 import { updateProjectInsights } from "../pages/insights.js";
 import { removeTeam } from "../pages/projects.js";
-import { addIdeationComment, changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkCounts, refreshWorkResults, scopedWorkQueries, scopedWorkResults, scopedWorkType, scopedWorkView, selectWorkView, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
+import { addIdeationComment, boardPlace, changeWorkCriterion, focusRevealedWork, shownWorkIds, closeWorkPanel, createWorkTask, fitTextarea, jumpToBoardLane, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkResults, refreshWorkResults, scopedWorkQueries, scopedWorkType, scopedWorkView, selectWorkView, setDoneHistory, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
 import { openSmartTaskComposer } from "../pages/task-composer.js";
 import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, goSearch, narrowSearch, openCmdk, renderCmdk, runCmdkItem, setCmdkMode } from "./cmdk.js";
+import { rememberBoardExit, returnToBoard } from "./board-return.js";
+import { closePopoverMenu, isPopoverMenu, openPopoverMenu, tabOutOfPopoverMenu } from "./popover-menu.js";
 import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRemove, openHealth, openShortcutsHelp, setSheetReturn } from "./dialogs.js";
 import { endNavigationKeys, getNavigationKeys, handleNavigationKeys } from "./keyboard.js";
 import { pageSearchInput, render, route } from "./router.js";
 import { askTessInPanel, clearCompanionHistory, clearReadNotifications, closeCompanion, dismissCompanionContext, handleCompanionEscape, handleCompanionInput, isCompanionModal, markAllNotificationsRead, markNotificationRead, openTessPanel, toggleExpandCompanion, toggleNotificationRead, toggleTessPanel } from "./topbar-utils.js";
-import { ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, ORG_NAME_STORE, S, SR, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, applyCozyContrast, applyFontStyle, applyShortcuts, applyTheme, inTextField, overlayOpen, qs, setOrgName, showOrgName, toggleNavPinned, writeSingleKey } from "../state.js";
+import { applyCozyContrast, applyFontStyle, applyShortcuts, applyTheme, ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, inTextField, ORG_NAME_STORE, overlayOpen, qs, S, saveNavWorkspace, setOrgName, showOrgName, SR, toggleNavPinned, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, writeSingleKey } from "../state.js";
 import { spotQueue, toast } from "../ui.js";
 
 /* ---------------------------------------------------------------- actions */
 
+/* An answer clears only the blocker it settles: the task stops waiting on the owner (To do) once no other
+   ask for it is open. In progress is set by the task's start event when the agent next runs, never inferred here.
+   A denial keeps the block, says so ("Access denied") and hands the next step to whoever asked. Work the answer
+   closes is dated today, so it lands in recent Done history. */
+const DENIED = /Denied|Declined|Dismissed/;
+const WORK_FIELDS = ["who", "status", "waitsOn", "blockNote", "closedDaysAgo"];
+const workSnapshot = (w) => Object.fromEntries(WORK_FIELDS.map((key) => [key, w[key]]));
+function restoreWork(w, prev) {
+  for (const key of WORK_FIELDS) { if (prev[key] !== undefined) w[key] = prev[key]; else delete w[key]; }
+}
+function applyDenialToWork(w, it) {
+  w.waitsOn = it.from;
+  w.blockNote = `${(it.sub || "Request").replace(/\s+request$/i, "")} denied`;
+}
+/* The answer settles the owner's block when no other ask for the work is open */
+function settleOwnerBlock(w, it, outcome) {
+  const otherAsks = IN.some((i) => i !== it && !i.handled && i.task === w.id);
+  if (!blockedOnOwner(w) || otherAsks) return;
+  if (DENIED.test(outcome)) applyDenialToWork(w, it);
+  else { delete w.waitsOn; delete w.blockNote; w.status = "To do"; }
+}
+function nextWorkStatus(w, it, outcome) {
+  if (it.sets?.[outcome]) return it.sets[outcome];
+  if (w.status === "Scoped") return /Approve/.test(outcome) ? "Approved" : "Declined";
+  return w.status;
+}
 function applyHandleToWork(w, it, outcome, assignee) {
   if (!w) return;
   const assignedTo = assignee || it.assignTo?.[outcome];
   if (assignedTo) w.who = assignedTo;
-  if (blockedOnOwner(w) && !/Denied|Declined|Dismissed/.test(outcome)) { delete w.waitsOn; w.status = "In progress"; }
-  if (it.sets?.[outcome]) w.status = it.sets[outcome];
-  else if (w.status === "Scoped") w.status = /Approve/.test(outcome) ? "Approved" : "Declined";
+  const before = w.status, wasOpen = OPEN(w);
+  settleOwnerBlock(w, it, outcome);
+  w.status = nextWorkStatus(w, it, outcome);
+  if (!OPEN(w) && (wasOpen || w.status !== before)) w.closedDaysAgo = 0;
 }
 
 function advanceSpotlightAfterHandle() {
@@ -40,10 +71,7 @@ function makeReopenCallback(it, w, prevW, appliedW, prevSpotIdx) {
   const reopen = () => {
     if (it.reopen !== reopen) return;
     delete it.reopen;
-    if (w && Object.keys(appliedW).every((key) => w[key] === appliedW[key])) {
-      w.who = prevW.who; w.status = prevW.status;
-      if (prevW.waitsOn !== undefined) w.waitsOn = prevW.waitsOn; else delete w.waitsOn;
-    }
+    if (w && Object.keys(appliedW).every((key) => w[key] === appliedW[key])) restoreWork(w, prevW);
     S.spotIdx = prevSpotIdx;
     reopenInboxItem(it);
   };
@@ -59,25 +87,25 @@ function focusHandledTarget(id, inInbox) {
 
 function advanceInboxAfterHandle(id, it, next) {
   if (route()[1] !== id && route()[1]) return;
-  history.replaceState(null, "", "#/inbox/" + (next || it).id);
+  history.replaceState(history.state, "", "#/inbox/" + (next || it).id);
   S.lastRoute = location.hash;
 }
 
-function handle(id, outcome, assignee = null) {
+function handle(id, outcome, assignee = null, text = "") {
   const it = IN.find((i) => i.id === id); if (!it || it.handled) return;
   const w = it.task && W.find((x) => x.id === it.task);
-  const prevW = w ? { who: w.who, status: w.status, waitsOn: w.waitsOn } : null;
+  const prevW = w ? workSnapshot(w) : null;
   const prevSpotIdx = S.spotIdx, inInbox = route()[0] === "inbox";
   const visible = inInbox ? inboxItems() : [], index = visible.indexOf(it);
   const next = index < 0 ? null : visible[index + 1] || visible[index - 1];
-  Object.assign(it, { handled: true, handledNow: true, justHandled: true, outcome });
+  Object.assign(it, { handled: true, handledNow: true, justHandled: true, outcome, response: responseRecord(outcome, text) });
   S.replying = null;
   (it.activity ||= []).push({
-    icon: /Denied|Declined|Dismissed/.test(outcome) ? "deny" : "check-circle", text: outcome, at: Date.now(),
+    icon: /Denied|Declined|Dismissed/.test(outcome) ? "deny" : "check-circle", text: receiptLine(it) + (text ? `: “${text}”` : ""), at: Date.now(),
     assemblyRun: assemblySimulation.run, assemblyHour: assemblySimulation.hours,
   });
   applyHandleToWork(w, it, outcome, assignee);
-  it.reopen = makeReopenCallback(it, w, prevW, w ? { who: w.who, status: w.status, waitsOn: w.waitsOn } : null, prevSpotIdx);
+  it.reopen = makeReopenCallback(it, w, prevW, w ? workSnapshot(w) : null, prevSpotIdx);
   toast(`${outcome}. ${M[it.from].name} has been notified.`, "check-circle", it.reopen);
   if (inInbox) advanceInboxAfterHandle(id, it, next);
   if (route()[0] === "home") advanceSpotlightAfterHandle();
@@ -92,7 +120,8 @@ function reopenInboxItem(item) {
   });
   item.handled = false; item.handledNow = false; item.justHandled = false;
   delete item.outcome;
-  if (route()[0] === "inbox") { S.inboxKind = "all"; history.replaceState(null, "", "#/inbox/" + item.id); S.lastRoute = location.hash; }
+  delete item.response;
+  if (route()[0] === "inbox") { S.inboxKind = "all"; history.replaceState(history.state, "", "#/inbox/" + item.id); S.lastRoute = location.hash; }
   render(false);
   document.getElementById("triage-detail-title")?.focus();
   toast("Returned to your queue.", "refresh");
@@ -101,9 +130,24 @@ function reopenInboxItem(item) {
 function closeMenus(except) {
   document.querySelectorAll(".menu").forEach((m) => {
     if (m.id === except) return;
+    if (isPopoverMenu(m)) closePopoverMenu(m);
     m.hidden = true;
     document.querySelector(`[aria-controls="${m.id}"]`)?.setAttribute("aria-expanded", "false");
   });
+}
+
+/* Zero results: clear filters and search for the current Work view, then return to the Filter control */
+function clearWorkFilters() {
+  if (document.getElementById("work-results")?.dataset.scope) {
+    const r = route();
+    Object.assign(S, { scopedWorkStatus: "all", scopedWorkProject: "all", scopedWorkTeam: "all" });
+    scopedWorkQueries.delete(scopedWorkType(r) + ":" + r[1]);
+  } else {
+    Object.assign(S, { workQuery: "", workStatus: "all", workProject: "all", workTeam: "all" });
+  }
+  render(false);
+  document.querySelector('[aria-controls="menu-scoped-work-filter"], [aria-controls="menu-work-filter"]')?.focus();
+  toast("Filters cleared.");
 }
 
 function toggleStoredFlag(stateKey, attr, storeKey, t, invertAttr = false) {
@@ -115,7 +159,7 @@ function toggleStoredFlag(stateKey, attr, storeKey, t, invertAttr = false) {
 
 function handleSendReply(id) {
   const ta = document.getElementById("r-" + id), txt = ta ? ta.value.trim() : "";
-  if (S.replyMode === "deny") { S.replyMode = null; handle(id, txt ? "Denied with note" : "Denied"); return; }
+  if (S.replyMode === "deny") { S.replyMode = null; handle(id, txt ? "Denied with note" : "Denied", null, txt); return; }
   if (!txt) {
     if (!ta) return;
     let er = document.getElementById("rerr-" + id);
@@ -131,7 +175,8 @@ function handleSendReply(id) {
   }
   const outcome = S.replyMode === "changes" ? "Changes requested" : "Answered";
   S.replyMode = null;
-  handle(id, outcome);
+  /* The written answer is kept on the ask's one response record, shown the same in Chat, Inbox and Home. */
+  handle(id, outcome, null, txt);
 }
 
 function handleSetAction(t, v) {
@@ -224,7 +269,8 @@ const CLICK_ACTIONS = {
   menu: (_e, t, id) => {
     const m = document.getElementById("menu-" + id), open = m.hidden;
     closeMenus(m.id); m.hidden = !open; t.setAttribute("aria-expanded", String(open));
-    if (open) m.querySelector("button")?.focus();
+    if (isPopoverMenu(m)) { if (open) openPopoverMenu(m, t); else closePopoverMenu(m); }
+    if (open) (m.querySelector('[role^="menuitem"][aria-checked="true"]') || m.querySelector('[role^="menuitem"], button'))?.focus();
   },
   proto: (_e, t, _id, v) => {
     const mm = t.closest(".menu"); closeMenus();
@@ -280,6 +326,22 @@ const CLICK_ACTIONS = {
   "work-comment-focus": () => document.getElementById("work-comment")?.focus(),
   "inbox-reopen": (_e, _t, id) => { const item = IN.find((c) => c.id === id); if (item?.handled) { if (item.reopen) item.reopen(); else reopenInboxItem(item); } },
   set: (_e, t, _id, v) => handleSetAction(t, v),
+  /* The toolbar's history chip resets Done history; focus goes to Display, where the history lives */
+  "board-done": (_e, _t, _id, v) => {
+    setDoneHistory(v);
+    closeMenus();
+    render(false);
+    document.querySelector('[aria-controls="menu-work-display"], [aria-controls="menu-scoped-work-display"]')?.focus();
+  },
+  /* "Show N older/archived matches" widens history, then lands on the first item it added and says how many */
+  "work-reveal": (_e, _t, _id, v) => {
+    const before = shownWorkIds();
+    setDoneHistory(v);
+    render(false);
+    focusRevealedWork(before);
+  },
+  "work-clear-filters": () => clearWorkFilters(),
+  "board-lane": (_e, _t, _id, v) => jumpToBoardLane(v),
   "cozy-contrast": (_e, t) => { S.cozyContrast = !S.cozyContrast; try { localStorage.setItem(COZY_CONTRAST_STORE, S.cozyContrast ? "1" : "0"); } catch (e) {} applyCozyContrast(); t.setAttribute("aria-checked", String(S.cozyContrast)); },
   "work-expand-detail": (_e, t) => { const panel = t.closest("dialog"); setWorkPanelExpanded(panel, !panel.hasAttribute("data-expanded")); },
   "agent-focus-open": (_e, t, id) => { if (id) openAgentFocus(id, t); },
@@ -308,13 +370,11 @@ const CLICK_ACTIONS = {
     trigger?.focus();
   },
   "fav-proj": (_e, _t, id) => { const idx = S.favProjs.indexOf(id); if (idx >= 0) { S.favProjs.splice(idx, 1); toast(`Removed ${P[id].name} from favorites.`); } else { S.favProjs.push(id); toast(`Added ${P[id].name} to favorites.`); } render(false); },
-  thread: (_e, _t, id) => { S.thread = S.thread === id ? null : id; render(false); (S.thread ? document.getElementById("chat-thread-title") : document.querySelector(`.chmain [data-act="thread"][data-id="${CSS.escape(id)}"]`))?.focus(); },
-  "thread-close": () => document.querySelector(`.chmain [data-act="thread"][data-id="${CSS.escape(S.thread)}"]`)?.click(),
   answer: (_e, t, id, v) => {
     if (/^Ask why/i.test(v)) { toast("Prototype: your question goes to the agent; the ask stays open."); return; }
     S.answered[id] = v;
     const it = IN.find((i) => i.id === t.dataset.inbox);
-    if (it && !it.handled) { handle(it.id, (/^(Not now|No|Deny|Decline)/i.test(v) ? "Denied in chat: " : "Answered in chat: ") + v); return; }
+    if (it && !it.handled) { handle(it.id, (/^(Not now|No|Deny|Decline)/i.test(v) ? "Denied: " : "Answered: ") + v); return; }
     render(false);
   },
   pause: (_e, t, id) => handlePauseAgent(t, id),
@@ -344,7 +404,8 @@ const CLICK_ACTIONS = {
   },
   "search-close": () => closeCmdk(true),
   sgo: (_e, _t, _id, v) => goSearch(v),
-  "chat-jump": (_e, t) => openCmdk("#", "cmd", t, false),
+  "chat-list": (_e, _t, id) => toggleChatList(id),
+  "chat-dm": (_e, _t, id, v) => { location.hash = openDirectMessage(id, v); },
   "search-toggle": (_e, _t, _id, v) => toggleInlineSearch(v),
   "search-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
   "cmdk-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
@@ -367,6 +428,12 @@ const CLICK_ACTIONS = {
   "notif-mark-all": () => markAllNotificationsRead(),
   "notif-clear-read": () => clearReadNotifications(),
   "brief-lens": (_e, _t, _id, v) => { S.briefLens = v; S.briefCopied = false; render(false); document.querySelector(`[data-act="brief-lens"][data-v="${CSS.escape(v || "")}"]`)?.focus(); },
+  "nav-pin": (_e, _t, _id, v) => {
+    S.navWorkspace = S.navWorkspace.includes(v) ? S.navWorkspace.filter((k) => k !== v) : [...S.navWorkspace, v];
+    saveNavWorkspace(); render(false);
+    document.querySelector(`.nav [data-act="nav-pin"][data-v="${CSS.escape(v)}"]`)?.focus();
+  },
+  cal: (_e, _t, id, v) => calendarAction(id, v),
   "brief-view": (_e, _t, _id, v) => { S.briefView = v === "memo" ? "memo" : "highlights"; render(false); document.querySelector(`[data-act="brief-view"][data-v="${CSS.escape(S.briefView)}"]`)?.focus(); },
   "brief-expand": () => { S.briefExpanded = !S.briefExpanded; render(false); },
   "ai-copy-brief": () => handleCopyBrief(),
@@ -407,11 +474,20 @@ function dismissTopbarOverlaysForLink(link) {
   if (act === "close-sheet") closeSheet();
 }
 
+/* Leaving a work board by one of its links (an Inbox request, a project, a person) keeps the board's place */
+function rememberBoardLinkExit(link, href) {
+  const results = document.getElementById("work-results");
+  if (!results?.querySelector(".board") || !results.contains(link) || link.matches(".work-item-link") || href === location.hash) return;
+  rememberBoardExit(boardPlace(results, link), href);
+}
+
 function handleHashLinkClick(e) {
   const link = e.target.closest('a[href^="#/"]');
   if (!link || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return false;
   const href = link.getAttribute("href");
   e.preventDefault();
+  if (link.matches(".triage-board-return") && returnToBoard()) return true;
+  rememberBoardLinkExit(link, href);
   document.body.classList.remove("drawer");
   closeMenus();
   dismissTopbarOverlaysForLink(link);
@@ -496,8 +572,7 @@ const INPUT_BY_ID = {
   "scoped-work-search": (target) => {
     const currentRoute = route(), view = scopedWorkView(currentRoute, scopedWorkType(currentRoute));
     scopedWorkQueries.set(view.key, target.value);
-    document.getElementById("work-results").innerHTML = scopedWorkResults(view);
-    refreshScopedWorkCounts(view);
+    refreshScopedWorkResults(view);
   },
   "work-search": handleWorkSearchInput,
   "o-name": (target) => target.setCustomValidity(""),
@@ -584,11 +659,17 @@ document.addEventListener("submit", (e) => {
     return;
   }
   if (e.target.dataset.form === "send") sendChatMessage(e.target);
+  if (e.target.dataset.form === "thread-send" && sendThreadReply(e.target)) { render(false); document.getElementById("thread-compose")?.focus(); }
 });
 
+const CHAT_COMPOSERS = new Set(["compose", "thread-compose"]);
+function isChatSendKey(e) {
+  if (!CHAT_COMPOSERS.has(e.target.id) || e.key !== "Enter" || e.altKey || e.shiftKey) return false;
+  return (e.ctrlKey && S.chatSend !== "command") || (e.metaKey && S.chatSend !== "control");
+}
+
 function handleComposerKeydown(e) {
-  if (e.target.id === "compose" && e.key === "Enter" && !e.altKey && !e.shiftKey
-      && ((e.ctrlKey && S.chatSend !== "command") || (e.metaKey && S.chatSend !== "control"))) {
+  if (isChatSendKey(e)) {
     e.preventDefault(); if (!e.repeat) e.target.form.requestSubmit(); return true;
   }
   if (e.target.id === "work-comment" && (e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -629,7 +710,8 @@ function handleCmdkKeydown(e) {
 }
 
 function handleOpenMenuKeydown(e, openMenu) {
-  const items = [...openMenu.querySelectorAll('[role^="menuitem"]')], i = items.indexOf(e.target);
+  /* Items a narrow layout hides (an overflow link shown only on phones) are skipped */
+  const items = [...openMenu.querySelectorAll('[role^="menuitem"]')].filter((el) => el.getClientRects().length), i = items.indexOf(e.target);
   const go = (n) => { e.preventDefault(); items[(n + items.length) % items.length].focus(); return true; };
   if (e.key === "ArrowDown") return go(i + 1);
   if (e.key === "ArrowUp") return go(i - 1);
@@ -641,6 +723,12 @@ function handleOpenMenuKeydown(e, openMenu) {
     const trigger = document.querySelector(`[aria-controls="${openMenu.id}"]`);
     closeMenus(); trigger?.focus(); return true;
   }
+  if (e.key === "Tab" && isPopoverMenu(openMenu)) {
+    e.preventDefault();
+    closeMenus();
+    tabOutOfPopoverMenu(openMenu, e.shiftKey);
+    return true;
+  }
   if (e.key === "Tab") {
     closeMenus();
     if (openMenu.closest(".queue-controls")) document.querySelector(`[aria-controls="${openMenu.id}"]`)?.focus();
@@ -649,6 +737,7 @@ function handleOpenMenuKeydown(e, openMenu) {
 }
 
 function dismissLocalEscapeTarget(e) {
+  if (S.chatList && e.target.closest?.(".chat.list-open .chlist")) { e.preventDefault(); toggleChatList(S.chatList); return true; }
   if (e.target.tagName === "TEXTAREA" && /^r-/.test(e.target.id || "")) {
     const c = document.querySelector(`[data-act="cancel-reply"][data-id="${CSS.escape(e.target.id.slice(2))}"]`);
     if (c) { e.preventDefault(); c.click(); return true; }
@@ -746,7 +835,7 @@ function isSingleKeyBlocked(e) {
 
 function tryPunctuationShortcut(e) {
   if (!isPlainAltGrOrUnmodified(e)) return false;
-  if (e.key === "#" && route()[0] === "chat") { e.preventDefault(); openCmdk("#", "cmd", e.target, false); return true; }
+  if (e.key === "#" && route()[0] === "chat") { e.preventDefault(); findConversation(); return true; }
   if (e.key === "/") {
     e.preventDefault();
     const inline = document.querySelector('#main [data-act="search-toggle"]');

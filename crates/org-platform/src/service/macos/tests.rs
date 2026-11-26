@@ -560,9 +560,9 @@ fn an_earlier_rendering_for_the_same_instance_is_replaced() {
         ],
         ..unit()
     };
-    assert!(definition(LABEL, &render(LABEL, &unit())).is_some());
+    assert!(definition(LABEL, ID, &render(LABEL, &unit())).is_some());
     assert_eq!(
-        definition(LABEL, &render(LABEL, &fixed)).unwrap().env,
+        definition(LABEL, ID, &render(LABEL, &fixed)).unwrap().env,
         fixed.env
     );
     fake.clear();
@@ -583,7 +583,7 @@ fn an_earlier_rendering_for_the_same_instance_is_replaced() {
         .unwrap()
         .replace("<integer>63</integer>", "<integer>18</integer>");
     fs::write(&file, &edited).unwrap();
-    assert!(definition(LABEL, edited.as_bytes()).is_none());
+    assert!(definition(LABEL, ID, edited.as_bytes()).is_none());
     fake.clear();
     assert!(matches!(
         launchd.register(&unit()),
@@ -591,4 +591,141 @@ fn an_earlier_rendering_for_the_same_instance_is_replaced() {
     ));
     assert_eq!(fs::read_to_string(&file).unwrap(), edited);
     assert_eq!(fake.verbs(), ["print"]);
+}
+
+/// TASK-155: a release upgrade reads the registered unit back and points it at the new
+/// program. `definition` reads only an exact rendering (a file changed by hand is a
+/// conflict); `redefine` refuses a running job, replaces an earlier rendering of a stopped
+/// one without loading it (launchd would start it), and never takes over another file.
+#[test]
+fn an_upgrade_reads_the_unit_back_and_redefines_it_only_while_it_is_stopped() {
+    let temp = tempfile::tempdir().unwrap();
+    let (launchd, fake) = launchd(temp.path());
+    let file = temp.path().join(format!("LaunchAgents/{LABEL}.plist"));
+    assert_eq!(launchd.definition(ID).unwrap(), None);
+    assert!(matches!(
+        launchd.redefine(&unit()),
+        Err(ServiceError::Invalid(_))
+    ));
+    launchd.register(&unit()).unwrap();
+    assert_eq!(launchd.definition(ID).unwrap(), Some(unit()));
+    let upgraded = Unit {
+        program: "/opt/agentic org/releases/2/agentic-org".into(),
+        ..unit()
+    };
+
+    // A running job is never redefined underneath.
+    fake.clear();
+    assert!(matches!(
+        launchd.redefine(&upgraded),
+        Err(ServiceError::Conflict(_))
+    ));
+    assert_eq!(fs::read(&file).unwrap(), render(LABEL, &unit()));
+    assert_eq!(fake.verbs(), ["print"]);
+
+    // Stopped: booted out, replaced, and not loaded again, so it does not start.
+    launchd.stop(ID).unwrap();
+    fake.clear();
+    assert_eq!(launchd.redefine(&upgraded).unwrap(), Registration::Loaded);
+    assert_eq!(fs::read(&file).unwrap(), render(LABEL, &upgraded));
+    assert_eq!(fake.verbs(), ["print", "bootout", "print"]);
+    assert_eq!(launchd.status(ID).unwrap(), ServiceStatus::Unloaded);
+    assert_eq!(launchd.definition(ID).unwrap(), Some(upgraded.clone()));
+    assert_eq!(
+        launchd.redefine(&upgraded).unwrap(),
+        Registration::Unchanged
+    );
+    // Register loads the new definition (and launchd starts it).
+    fake.clear();
+    assert_eq!(launchd.register(&upgraded).unwrap(), Registration::Loaded);
+    assert_eq!(fake.verbs(), ["print", "bootstrap"]);
+    assert_eq!(
+        launchd.status(ID).unwrap(),
+        ServiceStatus::Running { pid: 42 }
+    );
+
+    // A file changed by hand is read back as a conflict and never replaced.
+    launchd.stop(ID).unwrap();
+    let edited = String::from_utf8(render(LABEL, &upgraded))
+        .unwrap()
+        .replace(
+            "<key>RunAtLoad</key>",
+            "<key>Nice</key>\n\t<integer>5</integer>\n\t<key>RunAtLoad</key>",
+        );
+    fs::write(&file, &edited).unwrap();
+    let error = launchd.definition(ID).unwrap_err();
+    assert!(
+        matches!(&error, ServiceError::Conflict(why) if why.contains("changed by hand")),
+        "{error}"
+    );
+    fake.clear();
+    assert!(matches!(
+        launchd.redefine(&unit()),
+        Err(ServiceError::Conflict(_))
+    ));
+    assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+    assert_eq!(fake.verbs(), ["print"]);
+}
+
+/// TASK-155 review B4: a definition file that is an exact rendering of a unit this adapter
+/// would never write (a loader variable such as `DYLD_INSERT_LIBRARIES`, a repeated
+/// variable, a relative program) was written by hand. It is read back as a conflict, and
+/// neither redefine nor register replaces, boots out or loads it.
+#[test]
+fn an_exact_rendering_of_a_unit_the_adapter_refuses_is_a_hand_edit() {
+    let hostile = [
+        Unit {
+            env: vec![("DYLD_INSERT_LIBRARIES".into(), "/tmp/x.dylib".into())],
+            ..unit()
+        },
+        Unit {
+            env: vec![("LD_PRELOAD".into(), "/tmp/x.so".into())],
+            ..unit()
+        },
+        Unit {
+            env: vec![
+                ("HOME".into(), "/Users/a".into()),
+                ("HOME".into(), "/x".into()),
+            ],
+            ..unit()
+        },
+        Unit {
+            program: "agentic-org".into(),
+            ..unit()
+        },
+    ];
+    let upgraded = Unit {
+        program: "/opt/agentic org/releases/2/agentic-org".into(),
+        ..unit()
+    };
+    for edited in hostile {
+        assert!(validate(&edited).is_err(), "{edited:?}");
+        let bytes = render(LABEL, &edited);
+        assert!(definition(LABEL, ID, &bytes).is_none(), "{edited:?}");
+
+        let temp = tempfile::tempdir().unwrap();
+        let (launchd, fake) = launchd(temp.path());
+        launchd.register(&unit()).unwrap();
+        launchd.stop(ID).unwrap();
+        let file = temp.path().join(format!("LaunchAgents/{LABEL}.plist"));
+        fs::write(&file, &bytes).unwrap();
+        fake.clear();
+        let error = launchd.definition(ID).unwrap_err();
+        assert!(
+            matches!(&error, ServiceError::Conflict(why) if why.contains("changed by hand")),
+            "{edited:?}: {error}"
+        );
+        for refused in [launchd.redefine(&upgraded), launchd.register(&upgraded)] {
+            assert!(
+                matches!(refused, Err(ServiceError::Conflict(_))),
+                "{edited:?}: {refused:?}"
+            );
+        }
+        assert_eq!(fs::read(&file).unwrap(), bytes, "the file was changed");
+        assert!(
+            fake.verbs().iter().all(|verb| verb == "print"),
+            "{:?}",
+            fake.verbs()
+        );
+    }
 }

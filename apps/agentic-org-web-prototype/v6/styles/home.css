@@ -283,7 +283,8 @@
   overflow: hidden;
   isolation: isolate;
   padding: 0 14px;
-  background: linear-gradient(135deg, #0369A1 0%, #0284C7 100%);
+  /* Ocean primary-action fill: white text holds at least 5.9:1 across the gradient (its #0284C7 end was 4.1:1). */
+  background: linear-gradient(135deg, #075985 0%, #0369A1 100%);
   color: #FFFFFF;
   box-shadow: inset 0 1px 0 rgba(224, 242, 254, .28), inset 0 0 0 1px rgba(125, 211, 252, .32), 0 2px 6px rgba(0, 0, 0, .34);
   transition: transform .2s cubic-bezier(.22, 1, .36, 1), box-shadow .24s ease;
@@ -296,10 +297,10 @@
   transition: transform .32s cubic-bezier(.22, 1, .36, 1);
 }
 .h4-cta[data-cta-tone="reply"] .h4-cta-fill {
-  background: linear-gradient(135deg, #075985 0%, #0284C7 55%, #0EA5E9 100%);
+  background: linear-gradient(135deg, #0C4A6E 0%, #075985 55%, #0369A1 100%);
 }
 .h4-cta[data-cta-tone="ocean"] .h4-cta-fill {
-  background: linear-gradient(135deg, #0369A1 0%, #0284C7 55%, #0EA5E9 100%);
+  background: linear-gradient(135deg, #0C4A6E 0%, #075985 55%, #0369A1 100%);
 }
 .h4-cta.hb-cta-glass {
   height: 36px; padding: 0 15px; border-radius: 10px;
@@ -346,7 +347,7 @@
 .h4-cta:focus-visible,
 .btn.primary.h4-cta:hover,
 .btn.primary.h4-cta:focus-visible {
-  background: linear-gradient(135deg, #0369A1 0%, #0284C7 100%);
+  background: linear-gradient(135deg, #075985 0%, #0369A1 100%);
   transform: translateY(-1.5px);
   box-shadow: inset 0 1px 0 rgba(167, 243, 208, .42), 0 8px 22px -5px rgba(16, 185, 129, .55);
 }
@@ -377,6 +378,13 @@
   transition-duration: .08s;
 }
 
+/* An ask's response receipt (Home, Inbox, Chat): the line, then a written answer quoted under it. */
+.ask-receipt { display: grid; justify-items: start; gap: 6px; min-width: 0; }
+.triage-actions > .ask-receipt { flex: 1 1 100%; }
+.ask-receipt-text { margin: 0; padding: 2px 0 2px 12px; border-inline-start: 2px solid var(--line2); font-size: var(--fs-sm); line-height: 1.5; color: var(--gray-300); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Outside Inbox, a consequential ask's short reason sits beside its "Review in Inbox" control (ask-route.js). */
+.ask-route { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin: 0; font-size: var(--fs-sm); color: var(--gray-400); overflow-wrap: anywhere; }
+.ask-route .ic14 { flex: none; }
 /* Satisfying completion win burst on handled card */
 .h4-handled-win {
   display: inline-flex; align-items: center; gap: 6px;
@@ -512,7 +520,7 @@
 .h4-callout { margin: 0; background: var(--tone-warn-soft); backdrop-filter: blur(18px) saturate(150%); -webkit-backdrop-filter: blur(18px) saturate(150%); box-shadow: inset 0 1px 0 var(--tone-warn-ring), inset 0 0 0 1px var(--tone-warn-ring); }
 
 /* Frosted glass elevation for shared layered surfaces across the app */
-.card, .bcard, .c-entry, .k-doc {
+.card, .c-entry, .k-doc {
   background: rgba(13, 24, 42, .48);
   backdrop-filter: blur(18px) saturate(150%);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
@@ -629,6 +637,9 @@ a.hb-pillar-hero:hover { background: rgba(186, 222, 255, .05); }
   letter-spacing: var(--ls-kpi); color: var(--hb-ink); font-variant-numeric: proportional-nums;
 }
 .hb-pillar-unit { font-size: var(--fs-sm); font-weight: 400; color: var(--hb-muted); white-space: nowrap; }
+.hb-spark { display: inline-flex; align-items: flex-end; gap: 3px; height: 24px; flex: none; }
+.hb-spark i { display: block; width: 6px; border-radius: 2px 2px 0 0; background: var(--tone-accent-bar, var(--tone-accent)); opacity: .55; }
+.hb-spark i:last-child { opacity: 1; }
 .hb-pillar-right { font-size: var(--fs-xs); font-weight: 500; color: var(--hb-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hb-pillar-right.ok { color: var(--tone-ok-ink); }
 .hb-pillar-right.warn { color: var(--tone-warn-ink); }
@@ -1423,3 +1434,10 @@ a.hb-tleg:hover { color: var(--hb-ink); }
   .hb-spot { padding: 18px; min-height: 0; }
 }
 
+
+/* Spotlight recommendation uses the shared toned callout */
+.hb-spot .recommendation { font-size: var(--fs-base); padding: 10px 14px; }
+
+/* Where task time goes: header outside like the other Home sections */
+.hb-time-sec { display: flex; flex-direction: column; gap: 12px; }
+.hb-time-sec > .sec-head { margin: 0; }

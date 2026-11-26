@@ -109,6 +109,30 @@ pub(super) fn verify_owner_only_file(
     refused()
 }
 
+pub(super) fn open_owner_only_dir(_path: &Path, _expected_uid: u32) -> io::Result<File> {
+    refused()
+}
+
+pub(super) fn open_or_create_owner_only_child(
+    _dir: &File,
+    _name: &std::ffi::OsStr,
+    _expected_uid: u32,
+) -> io::Result<File> {
+    refused()
+}
+
+pub(super) fn ensure_symlink_at(
+    _dir: &File,
+    _name: &std::ffi::OsStr,
+    _target: &Path,
+) -> io::Result<super::SymlinkOutcome> {
+    refused()
+}
+
+pub(super) fn remove_symlink_at(_dir: &File, _name: &std::ffi::OsStr) -> io::Result<bool> {
+    refused()
+}
+
 pub(super) fn paths_case_insensitive_by_default() -> bool {
     false
 }
@@ -199,5 +223,33 @@ mod tests {
         ));
         assert!(!super::paths_case_insensitive_by_default());
         assert!(!super::has_macos_private_root_aliases());
+    }
+
+    #[test]
+    fn no_owner_only_directory_is_opened_or_created_and_no_symlink_is_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let held = File::open(dir.path()).unwrap();
+        assert_refused(super::open_owner_only_dir(dir.path(), 0));
+        assert_refused(super::open_or_create_owner_only_child(
+            &held,
+            std::ffi::OsStr::new("child"),
+            0,
+        ));
+        assert!(!dir.path().join("child").exists(), "nothing is created");
+        assert_refused(super::ensure_symlink_at(
+            &held,
+            std::ffi::OsStr::new("link"),
+            Path::new("/target"),
+        ));
+        assert!(fs::symlink_metadata(dir.path().join("link")).is_err());
+        std::os::unix::fs::symlink("/target", dir.path().join("kept")).unwrap();
+        assert_refused(super::remove_symlink_at(
+            &held,
+            std::ffi::OsStr::new("kept"),
+        ));
+        assert!(
+            fs::symlink_metadata(dir.path().join("kept")).is_ok(),
+            "an existing symlink is never removed"
+        );
     }
 }

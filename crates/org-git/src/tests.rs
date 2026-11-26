@@ -234,13 +234,29 @@ fn bare_cache_worktree_commit_push_hostile_config_hooks_and_cleanup() {
         false,
     )
     .unwrap();
+    // TASK-155: the cache and the worktree's folders are owner-only whatever the mask.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&cache_dir), 0o700);
+        for folder in [
+            "teams/t1/agents/a1/tasks/k1",
+            "teams/t1/agents/a1/tasks/k1/repositories",
+        ] {
+            assert_eq!(
+                mode(&tmp.path().join("runtime/office-1").join(folder)),
+                0o700
+            );
+        }
+    }
     let rules = derive_sandbox_rules(&cache_dir, &created.admin_dir_name, &wt_dir);
     assert!(rules.writable_roots.contains(&wt_dir));
     assert!(rules.fixed_write_denies.contains(&cache_dir.join("config")));
 
     // 6. Agent commits in worktree; office pushes by commit OID.
     fs::write(wt_dir.join("feature.rs"), "pub fn ok() -> bool { true }\n").unwrap();
-    git_raw(&wt_dir, &["add", "feature.rs"]);
+    fs::write(wt_dir.join(".gitignore"), "/target/\n").unwrap();
+    git_raw(&wt_dir, &["add", "feature.rs", ".gitignore"]);
     git_raw(&wt_dir, &["commit", "-m", "Implement fix"]);
     let head_sha = git_raw(&wt_dir, &["rev-parse", "HEAD"]);
 
@@ -289,6 +305,16 @@ fn bare_cache_worktree_commit_push_hostile_config_hooks_and_cleanup() {
         Err(GitError::Conflict(_))
     ));
     fs::remove_file(wt_dir.join("dirty.tmp")).unwrap();
+    // An agent's Cargo build output inside its worktree is ignored, so it neither blocks the
+    // cleanup nor outlives it: tearing the worktree down reclaims its `target/` too.
+    let build = wt_dir.join("target/debug/deps");
+    fs::create_dir_all(&build).unwrap();
+    fs::write(build.join("libfeature.rlib"), vec![0_u8; 64 * 1024]).unwrap();
+    fs::write(
+        wt_dir.join("target/CACHEDIR.TAG"),
+        "Signature: 8a477f597d28d172789f06886806bc55\n",
+    )
+    .unwrap();
     let cleaned = cleanup_worktree(
         &runner,
         &cache_dir,
@@ -302,5 +328,73 @@ fn bare_cache_worktree_commit_push_hostile_config_hooks_and_cleanup() {
     .unwrap();
     assert_eq!(cleaned.tag_name, "archive/task/T-A1-fix-login");
     assert!(!cleaned.merged);
+    assert!(
+        !wt_dir.join("target").exists(),
+        "teardown leaves no Cargo target"
+    );
     assert!(!wt_dir.exists());
+}
+
+/// TASK-155: the folders the office makes for Git are owner-only (`0700`) whatever the
+/// process's file-creation mask (a user-private-group account's `0002`); folders that exist
+/// are left as they are.
+#[test]
+fn git_folders_are_created_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let tmp = tempfile::tempdir().unwrap();
+    let existing = tmp.path().join("existing");
+    fs::create_dir(&existing).unwrap();
+    fs::set_permissions(&existing, fs::Permissions::from_mode(0o755)).unwrap();
+    let nested = existing.join("teams/t1/agents/a1/tasks/k1/repositories");
+    crate::create_git_dirs(&nested, false).unwrap();
+    let mut at = existing.clone();
+    for part in ["teams", "t1", "agents", "a1", "tasks", "k1", "repositories"] {
+        at.push(part);
+        assert_eq!(mode(&at), 0o700, "{}", at.display());
+    }
+    assert_eq!(mode(&existing), 0o755, "an existing folder is not changed");
+    crate::create_git_dirs(&nested, false).unwrap();
+    // A file in the way is an error naming the folder, never replaced.
+    fs::write(tmp.path().join("file"), b"x").unwrap();
+    assert!(matches!(
+        crate::create_git_dirs(&tmp.path().join("file/below"), false),
+        Err(GitError::Io { .. })
+    ));
+    assert_eq!(fs::read(tmp.path().join("file")).unwrap(), b"x");
+}
+
+/// TASK-155 review B1: the folders `RepoLocks::with_lock` makes above a cache (the office's
+/// `repositories` folder and the office's runtime folder) are owner-only (`0700`) like the
+/// cache itself, and its lock file is owner-only (`0600`), whatever the mask; an existing
+/// lock file is locked again as it is.
+#[test]
+fn repository_locks_make_owner_only_folders_and_lock_files() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let tmp = tempfile::tempdir().unwrap();
+    let runner = GitRunner::new(tmp.path().join("clean-home")).unwrap();
+    let cache_dir = tmp.path().join("runtime/office-1/repositories/repo-1.git");
+    let lock_file = tmp
+        .path()
+        .join("runtime/office-1/repositories/repo-1.git.lock");
+    let locks = RepoLocks::new();
+    locks
+        .with_lock(&cache_dir, || init_bare_cache(&runner, &cache_dir, false))
+        .unwrap();
+    for folder in [
+        cache_dir.clone(),
+        tmp.path().join("runtime/office-1/repositories"),
+        tmp.path().join("runtime/office-1"),
+        tmp.path().join("runtime"),
+    ] {
+        assert_eq!(mode(&folder), 0o700, "{}", folder.display());
+    }
+    assert!(fs::symlink_metadata(&lock_file).unwrap().is_file());
+    assert_eq!(mode(&lock_file), 0o600);
+    // Taken again: the same lock file, not truncated or replaced.
+    fs::write(&lock_file, b"kept").unwrap();
+    locks.with_lock(&cache_dir, || Ok(())).unwrap();
+    assert_eq!(fs::read(&lock_file).unwrap(), b"kept");
+    assert_eq!(mode(&lock_file), 0o600);
 }

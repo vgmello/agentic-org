@@ -17,7 +17,9 @@ fn bin() -> Command {
         .env_remove("AGENT_OS_RUNTIME_DIR")
         .env_remove("ORG_OFFICE_HOME")
         .env_remove("AGENT_OS_SESSION_TOKEN")
-        .env_remove("AGENT_OS_AGENT_ID");
+        .env_remove("AGENT_OS_AGENT_ID")
+        // No signed-in workspace of the account running the tests is ever picked up.
+        .env("AGENT_OS_STATE_DIR", "/nonexistent/agent-os-test-state");
     cmd
 }
 
@@ -42,6 +44,62 @@ fn help_schema_and_version_run_without_binding() {
     assert!(String::from_utf8(ver.stdout)
         .unwrap()
         .starts_with("agent-os "));
+}
+
+#[test]
+fn short_help_and_command_examples_run_without_binding() {
+    let long = bin().arg("--help").output().unwrap();
+    let short = bin().arg("-h").output().unwrap();
+    assert_eq!(short.status.code(), Some(0));
+    assert_eq!(short.stdout, long.stdout);
+    let command = bin().args(["team", "list", "-h"]).output().unwrap();
+    assert_eq!(command.status.code(), Some(0));
+    let text = String::from_utf8(command.stdout).unwrap();
+    assert!(text.contains("\nExample:\n  agent-os team list"), "{text}");
+}
+
+#[test]
+fn a_closed_standard_output_keeps_the_exit_code_without_a_panic() {
+    // A refusal (unbound `team list`, exit 1) stays a refusal when its reader went away.
+    for (args, code) in [
+        (&["--help"][..], 0),
+        (&["team", "list", "--schema"], 0),
+        (&["--version"], 0),
+        (&["team", "list"], 1),
+    ] {
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let out = bin().args(args).stdout(writer).output().unwrap();
+        assert_eq!(out.status.code(), Some(code), "{args:?}: {out:?}");
+        assert!(
+            out.stderr.is_empty(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
+fn unbound_session_attach_refuses_like_a_one_shot_command() {
+    let one_shot = bin().args(["team", "list"]).output().unwrap();
+    let attach = bin()
+        .args(["session", "attach"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    // The same envelope, byte for byte: `data` null, `meta` {}, the refusal's own hint, and
+    // exit 1 (a refusal), not 2 (a command line that cannot be read).
+    assert_eq!(attach.status.code(), Some(1));
+    assert_eq!(attach.stdout, one_shot.stdout);
+    let env: Value = serde_json::from_slice(&attach.stdout).unwrap();
+    assert_eq!(env["data"], Value::Null);
+    assert_eq!(env["meta"], serde_json::json!({}));
+    assert_eq!(env["error"]["code"], "not_authorized");
+    let hint = env["error"]["hint"].as_str().unwrap();
+    assert!(
+        !hint.is_empty() && !hint.contains("one JSON object per line"),
+        "{hint}"
+    );
 }
 
 #[test]

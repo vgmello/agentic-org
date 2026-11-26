@@ -1,14 +1,17 @@
-import { CH, M, P, TEAMS } from "../data.js";
+import { M, P, TEAMS } from "../data.js";
 import { activityPanelResize, pageActivity, projectActivityId, refreshActivityPanel, syncAssemblySimulationTimer, updateActivityPanelScroll } from "../pages/activity.js";
 import { mountAgentProfile, stopAgentOrb } from "../pages/agent-profile.js";
 import { mountOrgChart } from "../pages/org-chart.js";
-import { pageChat } from "../pages/chat.js";
+import { pageCalendar } from "../pages/calendar-page.js";
+import { chatDocTitle, mountChat, pageChat } from "../pages/chat.js";
 import { pageHome } from "../pages/home.js";
 import { pageInbox } from "../pages/inbox.js";
+import { pageInsights } from "../pages/org-insights.js";
 import { mountProjectQueue, pageProject, pageProjects } from "../pages/projects.js";
 import { SET, notFound, pagePreferences, pageSearch, pageSettings } from "../pages/settings.js";
 import { pageMember, pageMembersDir, pageOrgChart, pageTeam, pageTeams } from "../pages/teams.js";
-import { fitTextarea, pageWork, setWorkPanelExpanded, showSidePanel } from "../pages/work.js";
+import { boardPlace, fitTextarea, mountBoard, mountWorkToolbar, pageWork, restoreBoardPlace, setWorkPanelExpanded, settleWorkResults, showSidePanel, workPanelOpener } from "../pages/work.js";
+import { adoptBoardReturn, takeBoardReturnPlace } from "./board-return.js";
 import { isMacPlatform } from "./cmdk.js";
 import { endNavigationKeys } from "./keyboard.js";
 import { mountHomeProjectHint, renderBanner, renderNav } from "./sidebar.js";
@@ -19,7 +22,7 @@ import { esc, ic } from "../ui.js";
 /* ---------------------------------------------------------------- router */
 function route() { const h = location.hash.replace(/^#\/?/, "").split("?")[0] || "home"; return h.split("/").filter(Boolean).map((s) => { try { return decodeURIComponent(s); } catch (e) { return s; } }); }
 const own = (o, k) => k != null && Object.prototype.hasOwnProperty.call(o, k);
-const TITLES = { home: "Home", inbox: "Inbox", projects: "Projects", work: "Work", chat: "Chat", activity: "Activity", teams: "Teams", members: "Member", settings: "Organization settings", preferences: "Your preferences", search: "Search" };
+const TITLES = { home: "Home", inbox: "Inbox", projects: "Projects", work: "Work", chat: "Chat", activity: "Activity", insights: "Insights", calendar: "Calendar", teams: "Teams", members: "Member", settings: "Organization settings", preferences: "Your preferences", search: "Search" };
 const MEMBER_ALIASES = ["members", "people", "everyone"];
 const homeToolbar = document.getElementById("home-toolbar");
 const drawerButton = homeToolbar.querySelector(".menu-btn");
@@ -93,8 +96,10 @@ const ROUTE_RENDERERS = {
   inbox: (r1, r2) => pageInbox(r1, r2),
   projects: (r1, r2) => (!r1 ? pageProjects() : own(P, r1) ? pageProject(r1, r2) : notFound()),
   work: () => pageWork(),
-  chat: (r1) => pageChat(own(CH, r1) ? r1 : null),
+  chat: (r1) => pageChat(r1), /* Chat resolves unknown ids; dm-<member> opens or creates that DM */
   activity: () => pageActivity(),
+  insights: () => pageInsights(),
+  calendar: () => pageCalendar(),
   teams: (r1, r2) => (MEMBER_ALIASES.includes(r1) ? pageMembersDir() : r1 === "org-chart" ? pageOrgChart() : !r1 ? pageTeams() : own(TEAMS, r1) ? pageTeam(r1, r2) : notFound()),
   members: (r1, r2) => (own(M, r1) ? pageMember(r1, r2) : notFound()),
   settings: (r1, r2) => (!r1 || SET.some(([k]) => k === r1) ? pageSettings(r1, own(M, r2) ? r2 : null) : notFound()),
@@ -130,7 +135,7 @@ function mountActivityAfterRender(main, sameActivity, priorActivity, panelScroll
 
 function resolveRouteFocus(main, r0, r1, priorPanel, sameWorkPage) {
   const requestedFocus = S.focusAfter ? document.querySelector(S.focusAfter) : null;
-  const workLink = sameWorkPage && priorPanel ? main.querySelector(`#work-results .work-item-link[data-item="${CSS.escape(priorPanel.dataset.item)}"]`) : null;
+  const workLink = sameWorkPage && priorPanel ? workPanelOpener(main, priorPanel.dataset.item) : null;
   const keep = [requestedFocus, workLink].find((control) => control?.getClientRects().length);
   const target = keep || (r0 === "inbox" && r1 && main.querySelector("#triage-detail-title")) || main.querySelector("h1");
   return { keep, target };
@@ -146,7 +151,7 @@ function restoreFocusAfterRender({ main, content, r0, r1, key, focus, workPanel,
     const { keep, target } = resolveRouteFocus(main, r0, r1, priorPanel, sameWorkPage);
     if (!sameWorkPage) content.scrollTop = 0;
     target?.focus({ preventScroll: true });
-    if (keep?.matches(".work-item-link") && !sameWorkPage) keep.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (keep?.matches("[data-item]") && !sameWorkPage) keep.scrollIntoView({ block: "nearest", inline: "nearest" });
     return;
   }
   if (!toolbarFocus) return;
@@ -156,7 +161,7 @@ function restoreFocusAfterRender({ main, content, r0, r1, key, focus, workPanel,
 }
 
 function captureBeforeRender(main, content) {
-  const priorBoard = main.querySelector("#work-results .board");
+  const priorResults = main.querySelector("#work-results");
   const active = document.activeElement;
   const toolbarFocus = pageSearchTools.contains(active) || active?.classList?.contains("inline-search-input") ? active.id : "";
   const toolbarCaret = toolbarFocus && document.activeElement.type === "search" ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
@@ -165,7 +170,7 @@ function captureBeforeRender(main, content) {
     priorActivity: main.querySelector(".activity-main"),
     panelScroll: document.getElementById("activity-panel-scroll")?.scrollTop ?? 0,
     pageScroll: content.scrollTop,
-    workBoardScroll: priorBoard && { left: priorBoard.scrollLeft, top: priorBoard.scrollTop },
+    workBoardPlace: priorResults && boardPlace(priorResults),
     toolbarFocus,
     toolbarCaret,
   };
@@ -181,12 +186,31 @@ function syncActivityScopeState(r0, projectId) {
   return sameActivity;
 }
 
+function pageTitle(r0, r1) {
+  if (r0 === "members" && own(M, r1)) return M[r1].name;
+  if (r0 === "chat") return chatDocTitle(r1); /* Chat resolves conversations and its Mentions and Threads views */
+  return TITLES[r0] || "Not found";
+}
+
+/* An in-place re-render (search opened, Display changed, panel opened) keeps the board's lane and scroll */
+function restoreBoardInPlace(results, place) {
+  if (results && place) restoreBoardPlace(results, place, "");
+  settleWorkResults(results);
+}
+
+/* Coming back to a board you left (Back, or "Back to work board" in Inbox) returns to its lanes, scroll and control */
+function restoreReturnedBoard(results) {
+  const back = takeBoardReturnPlace();
+  if (back && results) restoreBoardPlace(results, back);
+}
+
 function render(focus = true) {
   endNavigationKeys();
   const r = normalizeRouteRedirects();
   if (!r) return;
   stopAgentOrb();
   const [r0, r1, r2] = r, projectId = projectActivityId(r);
+  adoptBoardReturn(r0);
   const sameActivity = syncActivityScopeState(r0, projectId);
   document.documentElement.toggleAttribute("data-interior-page", r0 !== "home");
   const main = document.getElementById("main"), content = document.getElementById("content"), key = location.hash;
@@ -198,22 +222,25 @@ function render(focus = true) {
   if (shell) mountAgentProfile(shell.dataset.agent, shell.dataset.tab);
   mountOrgChart(main);
   mountProjectQueue(main);
+  mountBoard(main);
   placeSearchToolbar(main, r);
+  mountWorkToolbar();
   if (S.singleKey) main.querySelector("[data-page-menu]")?.setAttribute("aria-keyshortcuts", "M");
   scrollCurrentTabsIntoView(main);
   renderNav(r);
   renderBanner(r0);
   mountActivityAfterRender(main, sameActivity, snap.priorActivity, snap.panelScroll, projectId);
-  document.title = (r0 === "members" && own(M, r1) ? M[r1].name : (TITLES[r0] || "Not found")) + " · Agentic Org";
-  if (sameWorkPage) {
-    content.scrollTop = snap.pageScroll;
-    if (snap.workBoardScroll) main.querySelector("#work-results .board")?.scrollTo(snap.workBoardScroll);
-  }
+  document.title = pageTitle(r0, r1) + " · Agentic Org";
+  if (sameWorkPage) content.scrollTop = snap.pageScroll;
+  const results = main.querySelector("#work-results");
+  if (sameWorkPage || key === S.lastRoute) restoreBoardInPlace(results, snap.workBoardPlace);
   restoreFocusAfterRender({ main, content, r0, r1, key, focus, workPanel, priorPanel: snap.priorPanel, sameWorkPage, toolbarFocus: snap.toolbarFocus, toolbarCaret: snap.toolbarCaret });
+  if (focus && key !== S.lastRoute && !workPanel) restoreReturnedBoard(results);
   S.lastRoute = key; S.focusAfter = null;
   mountHomeProjectHint();
   fitTextarea(document.getElementById("work-comment"));
   fitTextarea(document.getElementById("compose"));
+  if (r0 === "chat") mountChat();
   applyShortcuts();
   syncTopbarUtils(r);
   syncAssemblySimulationTimer();

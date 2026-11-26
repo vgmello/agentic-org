@@ -3,7 +3,7 @@
 //! The service consumes an already-bound listener. It never binds a production
 //! listener, opens an office database or obtains an office database key.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 // A release-profile or app-bundle build with debug assertions on would keep the
 // unpinned development startup path (release.rs), skipping publisher authentication
@@ -24,7 +24,9 @@ pub mod api;
 pub mod assets;
 pub mod blocking;
 pub mod body;
+mod build_error;
 mod csp;
+mod event_hub;
 pub mod host;
 mod ingress;
 pub mod office;

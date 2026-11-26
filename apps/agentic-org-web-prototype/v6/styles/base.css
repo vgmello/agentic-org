@@ -156,8 +156,9 @@
   --tone-accent-hover: #BAE6FD;
   --tone-accent-on-soft: #E0F2FE;
   --tone-accent-on-dark: #7DD3FC;
-  --tone-accent-solid: #0284C7;
-  --tone-accent-solid-hi: #0369A1;
+  /* Primary fill: white text holds 5.9:1 at rest and 7.6:1 on hover/press (was #0284C7, 4.1:1). */
+  --tone-accent-solid: #0369A1;
+  --tone-accent-solid-hi: #075985;
   --tone-accent-soft: rgba(56, 189, 248, .13);
   --tone-accent-soft-hi: rgba(56, 189, 248, .22);
   --tone-accent-ring: rgba(125, 211, 252, .30);
@@ -942,6 +943,9 @@ body.nokeys .search kbd { display: none; }
 .pj-q-item .triage-state-icon[data-state="handled"] { color: var(--tone-ok-ink); }
 .pj-q-item .triage-meta { grid-column: 2 / -1; padding-inline-start: 0; }
 .pj-q-item { width: 100%; text-align: left; }
+.pj-q-more { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 8px 16px; border-top: 1px solid var(--line); font-size: var(--fs-sm); font-weight: 500; color: var(--gray-400); }
+.pj-q-more:hover { color: var(--white); background: var(--hover); }
+.pj-q-more[hidden] { display: none; }
 .pj-detail-title a { color: inherit; }
 .pj-detail-title a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .pj-q-item + * { margin-top: 0; }
@@ -1172,7 +1176,7 @@ html[data-hide-work-subtasks] .work-subtasks { display: none; }
   border-radius: 0 100% 100% 0; border-inline-end: .24rem solid currentColor;
   transform: translateX(50%);
 }
-.work-priority-mark { align-items: flex-end; gap: 2px; padding-bottom: 3px; color: var(--work-team-color, var(--gray-400)); }
+.work-priority-mark { align-items: flex-end; gap: 2px; padding-bottom: 3px; color: var(--gray-300); }
 .work-priority-mark span { width: .15rem; height: .28rem; border-radius: 1px; background: currentColor; }
 .work-priority-mark span:nth-child(2) { height: .44rem; }
 .work-priority-mark span:nth-child(3) { height: .6rem; }
@@ -1685,8 +1689,6 @@ body.agent-focus-open #content { overflow: hidden; }
   .settings-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 4px var(--gutter) 8px; border-bottom: 1px solid var(--line); }
   .settings-picker label { color: var(--gray-300); font-weight: 600; }
   .settings-picker select { flex: 1; min-width: min(100%, 12rem); max-width: 100%; }
-  .chat, .chat.withthread { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; height: auto; }
-  .chlist { border-right: 0; }
 }
 @media (min-width: 640px) and (max-width: 959px) {
   .sidebar { width: 64px; padding: 0 8px; gap: 12px; overflow: visible; }

@@ -3,22 +3,22 @@
 
 use std::io::{BufReader, Write};
 use std::os::unix::net::UnixStream;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use org_host_control::ops::{
-    CliApprovalCreate, CliApprovalCreateParams, CliApprovalPoll, CliApprovalPollParams,
-    CliApprovalPollResult, FdsReceived, FdsReceivedParams, LinkedOrg, OfficeOpenChannel,
-    OfficeOpenChannelParams, SessionEnd, SessionGrant, SessionGrantParams, SessionParams,
+    FdsReceived, FdsReceivedParams, LinkedOrg, OfficeOpenChannel, OfficeOpenChannelParams,
+    SessionEnd, SessionGrant, SessionGrantParams, SessionParams,
 };
 use org_host_control::SessionHandle;
-use org_proto::{
-    frame, ApiError, ApiRange, ErrorCode, Hello, HelloParams, Principal, Request, Response,
-};
+use org_proto::{frame, ApiError, ErrorCode, Principal, Request, Response};
+use serde::Serialize;
 use serde_json::Value;
 
 use super::cli_context::{self, CliContext};
-use super::office_command::Target;
-use super::{registered, say};
+use super::cli_session::{approve_on_wire, Target};
+use super::project_command::office_hello;
+use super::wire::registered;
+use crate::cli_error::{refused_by, HostCliError};
 use crate::human::Wire;
 
 /// Help text for `agentic-org sign-in`.
@@ -122,6 +122,22 @@ impl Drop for ApprovedOfficeChannel {
     }
 }
 
+/// What standalone `agentic-org sign-in` did: the approved account, and the default context
+/// it saved when one office was known (the one named, or the account's only office).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SignedIn {
+    pub account: String,
+    pub saved_context: Option<CliContext>,
+}
+
+/// What `agentic-org context clear` found: a saved context it removed, or none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextCleared {
+    Cleared,
+    NothingSaved,
+}
+
 /// Runs the browser-approved sign-in flow against `target`, printing the one-time approval
 /// URL to `out` and polling until approved, declined, expired, or timed out.
 pub(crate) fn approve_on_target(
@@ -129,69 +145,9 @@ pub(crate) fn approve_on_target(
     poll_interval: Duration,
     max_wait: Duration,
     out: &mut dyn Write,
-) -> Result<(Wire, SessionHandle, String, Vec<LinkedOrg>), String> {
-    let wire = super::office_command::connect_local_peer(target)?;
+) -> Result<(Wire, SessionHandle, String, Vec<LinkedOrg>), HostCliError> {
+    let wire = super::cli_session::connect_local_peer(target)?;
     approve_on_wire(wire, poll_interval, max_wait, out)
-}
-
-/// Runs the browser-approved sign-in flow over an already-verified `host.sock` [`Wire`].
-pub(super) fn approve_on_wire(
-    mut wire: Wire,
-    poll_interval: Duration,
-    max_wait: Duration,
-    out: &mut dyn Write,
-) -> Result<(Wire, SessionHandle, String, Vec<LinkedOrg>), String> {
-    let created = match wire.call_answer::<CliApprovalCreate>(&CliApprovalCreateParams {}, None)? {
-        Ok(created) => created,
-        Err(ErrorCode::NotAuthorized) => {
-            return Err("the host refused terminal sign-in approval".into())
-        }
-        Err(code) => return Err(format!("could not start terminal sign-in ({code:?})")),
-    };
-    say(
-        out,
-        format!(
-            "Open this approval link in a signed-in browser (expires in 10 minutes):\n  {}",
-            created.url.expose()
-        ),
-    )?;
-    let _ = out.flush();
-
-    let deadline = Instant::now() + max_wait;
-    loop {
-        match wire.call_answer::<CliApprovalPoll>(
-            &CliApprovalPollParams {
-                approval_id: created.approval_id.clone(),
-            },
-            None,
-        )? {
-            Ok(CliApprovalPollResult::Pending) => {
-                if Instant::now() >= deadline {
-                    return Err(
-                        "approval link expired before it was approved; run the command again"
-                            .into(),
-                    );
-                }
-                std::thread::sleep(poll_interval);
-            }
-            Ok(CliApprovalPollResult::Approved {
-                session,
-                account,
-                orgs,
-                ..
-            }) => return Ok((wire, session, account, orgs)),
-            Ok(CliApprovalPollResult::Declined) => {
-                return Err("terminal sign-in was declined in the browser".into())
-            }
-            Ok(CliApprovalPollResult::Expired) => {
-                return Err("approval link expired; run the command again".into())
-            }
-            Err(ErrorCode::NotAuthorized) => {
-                return Err("terminal sign-in approval is not authorized".into())
-            }
-            Err(code) => return Err(format!("terminal sign-in poll failed ({code:?})")),
-        }
-    }
 }
 
 /// Opens an authenticated host-mediated channel to `office_id` on an already-approved
@@ -200,7 +156,7 @@ pub(crate) fn open_approved_office(
     mut wire: Wire,
     session: SessionHandle,
     office_id: String,
-) -> Result<ApprovedOfficeChannel, String> {
+) -> Result<ApprovedOfficeChannel, HostCliError> {
     let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
     let opened = match wire.call_answer::<OfficeOpenChannel>(
         &OfficeOpenChannelParams {
@@ -210,11 +166,19 @@ pub(crate) fn open_approved_office(
         None,
     )? {
         Ok(opened) => opened,
-        Err(ErrorCode::NotFound) => return Err(format!("office `{office_id}` not found")),
-        Err(ErrorCode::NotAuthorized) => {
-            return Err(format!("not authorized for office `{office_id}`"))
+        Err(code @ ErrorCode::NotFound) => {
+            return Err(HostCliError::refused(
+                code,
+                format!("office `{office_id}` not found"),
+            ))
         }
-        Err(code) => return Err(format!("could not open office channel ({code:?})")),
+        Err(code @ ErrorCode::NotAuthorized) => {
+            return Err(HostCliError::refused(
+                code,
+                format!("not authorized for office `{office_id}`"),
+            ))
+        }
+        Err(code) => return Err(refused_by("opening the office channel", code)),
     };
     let stream = wire.receive_office_channel()?;
     wire.call::<FdsReceived>(
@@ -224,22 +188,7 @@ pub(crate) fn open_approved_office(
         None,
     )?;
     let mut reader = BufReader::new(stream);
-    let mut hello = HelloParams::default();
-    hello.api = Some(ApiRange { min: 2, max: 2 });
-    hello.client = Some(format!("agentic-org {}", env!("CARGO_PKG_VERSION")));
-    let req =
-        Request::new::<Hello>(1, &hello).map_err(|_| "could not encode office hello".to_owned())?;
-    frame::write_message(reader.get_mut(), &req)
-        .map_err(|_| "could not write office hello".to_owned())?;
-    let reply: Response = frame::read_message(&mut reader)
-        .map_err(|_| "could not read office hello".to_owned())?
-        .ok_or_else(|| "office closed channel during hello".to_owned())?;
-    let negotiated = reply
-        .into_result::<Hello>()
-        .map_err(|_| "office refused hello negotiation".to_owned())?;
-    if negotiated.api_version != 2 {
-        return Err("office negotiated unexpected protocol version".into());
-    }
+    office_hello(&mut reader)?;
     Ok(ApprovedOfficeChannel {
         wire,
         session,
@@ -254,14 +203,15 @@ pub(crate) fn open_approved_office(
 /// `agentic-org sign-in -- <cmd>`).
 ///
 /// Authentication tries `session.local` first (instant on local authless HTTP instances per
-/// ADR-0034) and falls back to browser-approved sign-in when authentication is enabled.
+/// ADR-0034) and falls back to browser-approved sign-in when authentication is enabled, its
+/// approval link written to `prompt_out`.
 /// When no `--office` and no saved context are present, auto-selects the host's HQ or sole
 /// office; when multiple offices exist without a unique HQ, refuses with an actionable hint.
 pub fn open_for_command(
     explicit_instance: Option<&str>,
     explicit_office: Option<&str>,
-    out: &mut dyn Write,
-) -> Result<ApprovedOfficeChannel, String> {
+    prompt_out: &mut dyn Write,
+) -> Result<ApprovedOfficeChannel, HostCliError> {
     let ctx_path = cli_context::default_context_path()?;
     let saved = cli_context::load_from(&ctx_path)?;
     let (instance_name, selected_office) =
@@ -273,7 +223,7 @@ pub fn open_for_command(
                     .or_else(|| saved.as_ref().and_then(|s| s.instance_name.clone())),
                 None,
             ),
-            Err(err) => return Err(err),
+            Err(err) => return Err(HostCliError::usage(err)),
         };
     let (_, instance_id, socket) = registered(
         &crate::human::paths(instance_name.as_deref())?,
@@ -282,10 +232,11 @@ pub fn open_for_command(
     if selected_office.is_some() && (explicit_office.is_none() || explicit_instance.is_none()) {
         if let Some(ctx) = &saved {
             if ctx.instance_id != instance_id {
-                return Err(format!(
-                    "saved CLI context points to instance {} but this instance is {}; update it with `agentic-org context use --office <office_id>`",
+                return Err(HostCliError::runtime(format!(
+                    "saved CLI context points to instance {} but this instance is {}",
                     ctx.instance_id, instance_id
-                ));
+                ))
+                .with_help("update it with `agentic-org context use --office <office_id>`"));
             }
         }
     }
@@ -294,18 +245,18 @@ pub fn open_for_command(
         instance_id: &instance_id,
         name: instance_name.as_deref(),
     };
-    let (mut wire, session) = super::office_command::connect_cli_session(
+    let (mut wire, session) = super::cli_session::connect_cli_session(
         &target,
         None,
         &mut crate::human::password,
-        out,
+        prompt_out,
     )?;
     let office_id = match selected_office {
         Some(id) => id,
         None => match resolve_default_office(&mut wire, &session) {
             Ok(id) => id,
             Err(err) => {
-                super::office_command::end_session(&mut wire, &session);
+                super::cli_session::end_session(&mut wire, &session);
                 return Err(err);
             }
         },
@@ -313,7 +264,10 @@ pub fn open_for_command(
     open_approved_office(wire, session, office_id)
 }
 
-fn resolve_default_office(wire: &mut Wire, session: &SessionHandle) -> Result<String, String> {
+fn resolve_default_office(
+    wire: &mut Wire,
+    session: &SessionHandle,
+) -> Result<String, HostCliError> {
     use org_host_control::ops::{OfficeList, OfficeListParams};
     let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
     let listed = match wire.call_answer::<OfficeList>(
@@ -324,12 +278,14 @@ fn resolve_default_office(wire: &mut Wire, session: &SessionHandle) -> Result<St
         None,
     )? {
         Ok(listed) => listed,
-        Err(code) => return Err(format!("the service refused office lookup ({code:?})")),
+        Err(code) => return Err(refused_by("the office lookup", code)),
     };
     if listed.offices.is_empty() {
         return Err(
-            "no offices found on this host; create an organization with `agentic-org org create` or join as a satellite with `agentic-org office join`"
-                .into(),
+            HostCliError::refused(None, "no offices found on this host").with_help(
+                "create an organization with `agentic-org org create` or join as a satellite with \
+             `agentic-org office join`",
+            ),
         );
     }
     let hqs: Vec<&str> = listed
@@ -344,24 +300,23 @@ fn resolve_default_office(wire: &mut Wire, session: &SessionHandle) -> Result<St
     if listed.offices.len() == 1 {
         return Ok(listed.offices[0].id.clone());
     }
-    Err(
-        "multiple offices found; pass --office <office_id> [--name <instance>] or save a default with `agentic-org context use --office <office_id>`"
-            .into(),
-    )
+    Err(HostCliError::usage("multiple offices found").with_help(
+        "pass --office <office_id> [--name <instance>] or save a default with \
+         `agentic-org context use --office <office_id>`",
+    ))
 }
 
-/// Standalone `agentic-org sign-in` (without `-- <command>`): verifies browser approval, saves
-/// instance+office context when known, prints signed-in confirmation, and ends the session.
+/// Standalone `agentic-org sign-in` (without `-- <command>`): browser approval (its link
+/// written to `prompt_out`), then the instance and office context saved when one office is
+/// known, and the session ended.
 pub fn sign_in_only(
     explicit_instance: Option<&str>,
     explicit_office: Option<&str>,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+    prompt_out: &mut dyn Write,
+) -> Result<SignedIn, HostCliError> {
     if let Some(office) = explicit_office {
         if !org_proto::is_uuid_v7(office) {
-            return Err(format!(
-                "office ID `{office}` must be a canonical UUIDv7; run `agentic-org office list` to inspect offices"
-            ));
+            return Err(office_id_usage(office));
         }
     }
     let (_, instance_id, socket) =
@@ -374,7 +329,7 @@ pub fn sign_in_only(
         },
         Duration::from_millis(250),
         Duration::from_secs(10 * 60),
-        out,
+        prompt_out,
     )?;
     let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
     let _ = wire.call::<SessionEnd>(&SessionParams { session: handle }, None);
@@ -386,49 +341,41 @@ pub fn sign_in_only(
             .collect();
         (all.len() == 1).then(|| all[0].to_owned())
     });
-    if let Some(office_id) = chosen_office {
-        let ctx_path = cli_context::default_context_path()?;
-        let ctx = CliContext::new(
-            instance_id,
-            explicit_instance.map(str::to_owned),
-            office_id.clone(),
-        )?;
-        cli_context::save_to(&ctx_path, &ctx)?;
-        say(
-            out,
-            format!("Signed in as account {account}. Saved default office context: {office_id}"),
-        )
-    } else {
-        say(
-            out,
-            format!(
-                "Signed in as account {account}. Select an office with `agentic-org context use --office <office_id>`."
-            ),
-        )
-    }
+    let saved_context = match chosen_office {
+        Some(office_id) => {
+            let ctx_path = cli_context::default_context_path()?;
+            let ctx =
+                CliContext::new(instance_id, explicit_instance.map(str::to_owned), office_id)?;
+            cli_context::save_to(&ctx_path, &ctx)?;
+            Some(ctx)
+        }
+        None => None,
+    };
+    Ok(SignedIn {
+        account,
+        saved_context,
+    })
 }
 
-pub fn context_show(out: &mut dyn Write) -> Result<(), String> {
+fn office_id_usage(office: &str) -> HostCliError {
+    HostCliError::usage(format!("office ID `{office}` must be a canonical UUIDv7"))
+        .with_help("run `agentic-org office list` to inspect offices")
+}
+
+/// `agentic-org context show`: the saved context, if any.
+pub fn context_show() -> Result<Option<CliContext>, HostCliError> {
     let path = cli_context::default_context_path()?;
-    match cli_context::load_from(&path)? {
-        Some(ctx) => say(
-            out,
-            format!(
-                "instance_id={}\tinstance_name={}\toffice_id={}",
-                ctx.instance_id,
-                ctx.instance_name.as_deref().unwrap_or("default"),
-                ctx.office_id
-            ),
-        ),
-        None => say(out, "No saved CLI context."),
-    }
+    Ok(cli_context::load_from(&path)?)
 }
 
+/// `agentic-org context use`: saves and returns the default instance and office.
 pub fn context_use(
     instance_name: Option<&str>,
     office_id: &str,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<CliContext, HostCliError> {
+    if !org_proto::is_uuid_v7(office_id) {
+        return Err(office_id_usage(office_id));
+    }
     let (_, instance_id, _) = registered(&crate::human::paths(instance_name)?, instance_name)?;
     let ctx = CliContext::new(
         instance_id,
@@ -437,23 +384,17 @@ pub fn context_use(
     )?;
     let path = cli_context::default_context_path()?;
     cli_context::save_to(&path, &ctx)?;
-    say(
-        out,
-        format!(
-            "Saved CLI context: instance={} office={}",
-            ctx.instance_name.as_deref().unwrap_or("default"),
-            ctx.office_id
-        ),
-    )
+    Ok(ctx)
 }
 
-pub fn context_clear(out: &mut dyn Write) -> Result<(), String> {
+/// `agentic-org context clear`.
+pub fn context_clear() -> Result<ContextCleared, HostCliError> {
     let path = cli_context::default_context_path()?;
-    if cli_context::clear_at(&path)? {
-        say(out, "Cleared saved CLI context.")
+    Ok(if cli_context::clear_at(&path)? {
+        ContextCleared::Cleared
     } else {
-        say(out, "No saved CLI context.")
-    }
+        ContextCleared::NothingSaved
+    })
 }
 
 #[cfg(test)]

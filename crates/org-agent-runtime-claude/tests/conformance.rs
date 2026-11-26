@@ -47,6 +47,7 @@ fn sample_spec() -> SessionSpec {
         workspace: sp("/work/t-1"),
         read_only_dirs: vec![sp("/homes/ada")],
         instructions: "Follow workspace rules.".to_owned(),
+        repository_instructions: String::new(),
         permission_mode: PermissionMode::Ask,
         policy: PermissionPolicy {
             version: 1,
@@ -236,7 +237,9 @@ fn plan_keeps_background_tasks_enabled_and_maps_private_config_dir() {
         assert!(!deny_write
             .iter()
             .any(|v| v == "/office/agents/ada/home/claude"));
-        assert!(deny_write.iter().any(|v| v == "/work/t-1/.git/hooks/**"));
+        // A concrete directory is masked at its boundary, never walked via `dir/**` (TASK-190).
+        assert!(deny_write.iter().any(|v| v == "/work/t-1/.git/hooks"));
+        assert!(!deny_write.iter().any(|v| v == "/work/t-1/.git/hooks/**"));
     }
     let deny_read = settings["sandbox"]["filesystem"]["denyRead"]
         .as_array()
@@ -257,14 +260,25 @@ fn plan_keeps_background_tasks_enabled_and_maps_private_config_dir() {
         !deny_rules.iter().any(|r| r.starts_with('*')),
         "`*(...)` is not a Claude rule form: {deny_rules:?}"
     );
+    // On Linux `bwrap`, concrete directories carry no trailing `/**` (TASK-163, TASK-190): the
+    // bare directory rule covers everything beneath it without a symlink-following walk.
+    let dir_suffix = if org_platform::confinement::unix_socket_path_filter_supported() {
+        "/**"
+    } else {
+        ""
+    };
     for tool in ["Read", "Edit", "Write", "MultiEdit", "NotebookEdit"] {
-        let rule = format!("{tool}(//office/**)");
+        let rule = format!("{tool}(//office{dir_suffix})");
         assert!(deny_rules.contains(&rule.as_str()), "missing {rule}");
     }
-    assert!(deny_rules.contains(&"Edit(//homes/ada/**)"));
-    assert!(deny_rules.contains(&"NotebookEdit(//homes/ada/**)"));
-    assert!(deny_rules.contains(&"Read(//office/agents/ada/home/claude/.credentials.json)"));
-    assert!(deny_rules.contains(&"Write(//office/agents/ada/home/claude/**)"));
+    for rule in [
+        format!("Edit(//homes/ada{dir_suffix})"),
+        format!("NotebookEdit(//homes/ada{dir_suffix})"),
+        "Read(//office/agents/ada/home/claude/.credentials.json)".to_owned(),
+        format!("Write(//office/agents/ada/home/claude{dir_suffix})"),
+    ] {
+        assert!(deny_rules.contains(&rule.as_str()), "missing {rule}");
+    }
 
     // Low 1: --disallowedTools is still emitted when spec.tools is None.
     let mut unrestricted_tools_spec = sample_spec();
@@ -279,6 +293,136 @@ fn plan_keeps_background_tasks_enabled_and_maps_private_config_dir() {
         .expect("--disallowedTools must be emitted even when spec.tools is None");
     assert!(plan_none.args[dis_pos + 1].contains("WebFetch"));
     assert!(plan_none.args[dis_pos + 1].contains("CronCreate"));
+}
+
+/// Every path inside a Claude rule such as `Edit(//dir/**)`, or the bare entry itself.
+fn rule_paths(entries: &[serde_json::Value]) -> Vec<String> {
+    entries
+        .iter()
+        .filter_map(|v| v.as_str())
+        .map(|raw| {
+            raw.split_once('(')
+                .and_then(|(_, rest)| rest.strip_suffix(')'))
+                .unwrap_or(raw)
+                .to_owned()
+        })
+        .collect()
+}
+
+/// `true` when `path` ends in `/**` below a prefix with no glob metacharacters (a concrete
+/// directory walked with a globstar).
+fn is_concrete_dir_glob(path: &str) -> bool {
+    path.strip_suffix("/**")
+        .is_some_and(|prefix| !prefix.is_empty() && !prefix.contains(['*', '?', '[']))
+}
+
+#[test]
+fn plan_never_emits_double_globstar_and_bwrap_never_walks_concrete_dirs() {
+    let runtime = ClaudeRuntime::new();
+    let mut spec = sample_spec();
+    // Malformed and sibling-style inputs the office could hand over (TASK-190).
+    spec.policy.deny.push(Rule {
+        tool: RuleTool::try_from("Edit").unwrap(),
+        scope: RuleScope::Path(pat("/office/agents/sibling-b/**/**")),
+    });
+    spec.sandbox.deny_write = vec![
+        pat("/work/t-1/.git/hooks/**/**"),
+        pat("/work/t-1/.git/config"),
+        pat("/work/t-1/sibling-a/**"),
+        pat("/work/t-1/sibling-c/*"),
+    ];
+    spec.sandbox.deny_read = vec![
+        pat("/office/agents/sibling-a/**"),
+        pat("/office/agents/sibling-b/**/**"),
+        pat("/office/offices/*/**/**"),
+    ];
+    spec.read_only_dirs = vec![sp("/homes/ada")];
+    let (plan, _) = runtime
+        .plan_session(&spec, &sample_ctx())
+        .expect("plan_session");
+    let settings_file = plan
+        .files
+        .iter()
+        .find(|f| f.rel_path.as_str() == "claude-settings.json")
+        .expect("settings file");
+    let settings: serde_json::Value =
+        serde_json::from_slice(&settings_file.contents).expect("valid settings JSON");
+    let deny = rule_paths(settings["permissions"]["deny"].as_array().unwrap());
+    let deny_write = rule_paths(
+        settings["sandbox"]["filesystem"]["denyWrite"]
+            .as_array()
+            .unwrap(),
+    );
+    let deny_read = rule_paths(
+        settings["sandbox"]["filesystem"]["denyRead"]
+            .as_array()
+            .unwrap(),
+    );
+    for path in deny.iter().chain(&deny_write).chain(&deny_read) {
+        assert!(
+            !path.contains("/**/**"),
+            "malformed `/**/**` emitted: {path}"
+        );
+    }
+    // The wildcard pattern keeps exactly one globstar on every platform.
+    assert!(
+        deny_read.iter().any(|p| p == "/office/offices/*/**"),
+        "{deny_read:?}"
+    );
+    if org_platform::confinement::unix_socket_path_filter_supported() {
+        assert!(
+            deny.iter().any(|p| p == "//work/t-1/.git/hooks/**"),
+            "{deny:?}"
+        );
+        assert!(deny.iter().any(|p| p == "//homes/ada/**"), "{deny:?}");
+        return;
+    }
+    // Linux `bwrap`: zero concrete-directory globs anywhere Claude merges into `bwrap` masks.
+    for path in deny.iter().chain(&deny_write).chain(&deny_read) {
+        let fs_path = path.strip_prefix('/').unwrap_or(path);
+        assert!(
+            !is_concrete_dir_glob(fs_path),
+            "concrete directory walked with `/**` on Linux bwrap: {path}"
+        );
+    }
+    for tool in ["Edit", "Write", "MultiEdit", "NotebookEdit"] {
+        for rule in [
+            format!("{tool}(//work/t-1/.git/hooks)"),
+            format!("{tool}(//work/t-1/.git/config)"),
+            format!("{tool}(//work/t-1/sibling-a)"),
+            format!("{tool}(//homes/ada)"),
+        ] {
+            assert!(
+                settings["permissions"]["deny"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|v| v == &serde_json::json!(rule)),
+                "missing {rule}"
+            );
+        }
+    }
+    assert!(
+        deny.iter().any(|p| p == "//office/agents/sibling-b"),
+        "{deny:?}"
+    );
+    assert!(deny_write.iter().any(|p| p == "/work/t-1/.git/hooks"));
+    assert!(deny_write.iter().any(|p| p == "/work/t-1/sibling-a"));
+    // A direct `dir/*` write deny normalizes to the bare `dir` on every surface.
+    assert!(deny_write.iter().any(|p| p == "/work/t-1/sibling-c"));
+    for tool in ["Edit", "Write", "MultiEdit", "NotebookEdit"] {
+        let rules = settings["permissions"]["deny"].as_array().unwrap();
+        assert!(rules.contains(&serde_json::json!(format!("{tool}(//work/t-1/sibling-c)"))));
+        assert!(
+            !rules
+                .iter()
+                .filter_map(|v| v.as_str())
+                .any(|r| r.starts_with(&format!("{tool}(//work/t-1/sibling-c/"))),
+            "`dir/*` must not survive as a walked glob: {rules:?}"
+        );
+    }
+    assert!(deny_read.iter().any(|p| p == "/office/agents/sibling-a"));
+    assert!(deny_read.iter().any(|p| p == "/office/agents/sibling-b"));
 }
 
 #[test]
@@ -2109,4 +2253,79 @@ fn task115_step_hook_registers_post_tool_use_delivers_additional_context_and_fai
         .iter()
         .position(|o| matches!(o, Output::Event(SessionEvent::TurnEnded { .. })));
     assert!(matches!((fail_idx, end_idx), (Some(f), Some(e)) if f < e));
+}
+
+/// `TASK-181`: Claude Code's `--effort` takes the office's five levels by the same names, so
+/// each one reaches the command line as it is, once; no effort means no flag.
+#[test]
+fn every_office_effort_level_reaches_claude_as_effort_flag() {
+    let runtime = ClaudeRuntime::new();
+    for level in ["low", "medium", "high", "xhigh", "max"] {
+        let mut spec = sample_spec();
+        spec.effort = Some(Token::try_from(level).unwrap());
+        let (plan, _) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+        let at: Vec<usize> = plan
+            .args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "--effort")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(at.len(), 1, "{level}: {:?}", plan.args);
+        assert_eq!(plan.args[at[0] + 1], level, "{:?}", plan.args);
+    }
+    let mut spec = sample_spec();
+    spec.effort = None;
+    let (plan, _) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    assert!(
+        !plan.args.iter().any(|a| a == "--effort"),
+        "{:?}",
+        plan.args
+    );
+}
+
+/// `TASK-181`: an effort Claude Code does not take fails closed in both the headless and the
+/// take-over plan, instead of reaching `--effort` (where Claude would reject it at start) or
+/// being dropped. That covers Codex-only names (`none`, `minimal`) and other spellings.
+#[test]
+fn unknown_effort_level_fails_closed_in_headless_and_take_over_plans() {
+    let runtime = ClaudeRuntime::new();
+    let mut resume_ctx = sample_ctx();
+    resume_ctx.resume = Some(SessionId::try_from("00000000-0000-0000-0000-000000000001").unwrap());
+
+    // The empty string never reaches an adapter: it is not a `Token`.
+    assert!(Token::try_from("").is_err());
+    for unknown in [
+        "turbo", "none", "minimal", "XHIGH", "High", "ultra", "max:1", "xhigh.",
+    ] {
+        let mut spec = sample_spec();
+        spec.effort = Some(Token::try_from(unknown).unwrap());
+        assert!(
+            matches!(
+                runtime.plan_session(&spec, &sample_ctx()),
+                Err(PlanError::InvalidSpec(_))
+            ),
+            "headless accepted effort {unknown}"
+        );
+        assert!(
+            matches!(
+                runtime.plan_take_over(&spec, &resume_ctx, 120, 40),
+                Err(PlanError::InvalidSpec(_))
+            ),
+            "take-over accepted effort {unknown}"
+        );
+    }
+
+    // A known level still reaches the take-over command line.
+    let mut spec = sample_spec();
+    spec.effort = Some(Token::try_from("max").unwrap());
+    let plan = runtime
+        .plan_take_over(&spec, &resume_ctx, 120, 40)
+        .expect("take-over with a known effort");
+    let at = plan
+        .args
+        .iter()
+        .position(|a| a == "--effort")
+        .expect("--effort");
+    assert_eq!(plan.args[at + 1], "max", "{:?}", plan.args);
 }

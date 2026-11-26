@@ -1,5 +1,6 @@
 import { CH, IN, KIND, M, OPEN, P, TEAMS, W, needsMe } from "../data.js";
 import { pageActivity, projectReleaseSummary } from "./activity.js";
+import { calendarHtml } from "./calendar.js";
 import { msgHtml } from "./chat.js";
 import { INSIGHT_DAY, INSIGHT_TODAY, insightCompletions, projectInsights } from "./insights.js";
 import { notFound } from "./settings.js";
@@ -36,7 +37,8 @@ function pageProject(id, tab) {
   const tabs = [
     ["", "Overview"],
     ["activity", "Activity"],
-    ["work", "Work", ws.filter(OPEN).length],
+    ["work", "Work", `${ws.filter(OPEN).length} open`],
+    ["calendar", "Calendar"],
     ["insights", "Insights"],
     ["conversations", "Conversations"],
     ["team", "Team", projMembers(id).length],
@@ -60,6 +62,7 @@ function projectBody(id, tab) {
     </div>`;
   }
   if (tab === "work") return scopedWorkToolbar("project", id, ws) + scopedWorkWorkspace();
+  if (tab === "calendar") return calendarHtml("project", id);
   if (tab === "team") return `<div class="pj-team">${projectTeams(id)}${memberRows(projMembers(id), { emptyText: "No members yet." })}</div>`;
   if (tab === "activity") return pageActivity(id);
   if (tab === "insights") return projectInsights(id);
@@ -152,7 +155,8 @@ function projectDecisionsHtml(needs) {
   const sel = needs.find((it) => it.id === S.pjDecision) || needs[0];
   return `<div class="pj-split">
       <nav class="pj-queue-pane" aria-label="Priority queue">
-        <ul role="list" class="pj-q-list" tabindex="-1">${needs.map((it) => queueRowHtml(it, sel)).join("")}</ul></nav>
+        <ul role="list" class="pj-q-list" tabindex="-1">${needs.map((it) => queueRowHtml(it, sel)).join("")}</ul>
+        <button type="button" class="pj-q-more" hidden>${ic("chev-down", "ic16")}<span></span></button></nav>
       ${decisionDetailHtml(sel)}
     </div>`;
 }
@@ -193,6 +197,25 @@ function memberRows(ids, opts = {}) {
   }).join("")}</ul>`;
 }
 
+/* "↓ N more" under the queue: counts rows below the visible area, scrolls to them, hides at the end. */
+function bindQueueMore(list) {
+  const more = list.parentElement.querySelector(".pj-q-more");
+  if (!more) return;
+  const hiddenBelow = () => [...list.children].filter((li) => li.offsetTop - list.offsetTop + li.offsetHeight > list.scrollTop + list.clientHeight + 2);
+  const sync = () => {
+    const n = hiddenBelow().length;
+    more.hidden = n === 0;
+    list.classList.toggle("is-scrolling", n > 0);
+    more.querySelector("span").textContent = `${n} more`;
+    more.setAttribute("aria-label", `Show ${n} more ${n === 1 ? "item" : "items"}`);
+  };
+  list.addEventListener("scroll", sync, { passive: true });
+  more.addEventListener("click", () => {
+    const next = hiddenBelow()[0];
+    if (next) list.scrollTo({ top: next.offsetTop - list.offsetTop - 8, behavior: "smooth" });
+  });
+  sync();
+}
 /* Keep the selected queue item visible inside the scrolling queue after a re-render. */
 function mountProjectQueue(main) {
   const list = main.querySelector(".pj-q-list"), cur = list?.querySelector('[aria-current="true"]');
@@ -207,6 +230,7 @@ function mountProjectQueue(main) {
   const top = cur.offsetTop - list.offsetTop, bottom = top + cur.offsetHeight;
   if (top < list.scrollTop) list.scrollTop = top;
   else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+  bindQueueMore(list);
 }
 
 export {

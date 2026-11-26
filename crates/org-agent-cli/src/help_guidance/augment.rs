@@ -1,6 +1,11 @@
 //! Recognizing `--help` requests and enriching their plain-text output with `Use when:` guidance.
 
-use super::*;
+use org_command::{Ack, Command, CommandTable, Output, Type};
+
+/// The help `org-command` prints for `--durable`.
+const DURABLE_OPTION_HELP: &str = "Answer only after the drive has it";
+
+use super::{command_use_when, resource_use_when_for, COMMON_VALUE_OPTIONS, TOP_USE_WHEN};
 
 pub(super) enum HelpTarget<'a> {
     Top,
@@ -8,11 +13,16 @@ pub(super) enum HelpTarget<'a> {
     Command(&'static Command),
 }
 
+/// `--help`, or its short form `-h` (as `org-command` reads them).
+fn is_help(arg: &str) -> bool {
+    arg == "--help" || arg == "-h"
+}
+
 pub(super) fn asks_for_help(command: &Command, rest: &[String]) -> bool {
     let mut at = 0;
     while let Some(arg) = rest.get(at) {
         at += 1;
-        if arg == "--help" {
+        if is_help(arg) {
             return true;
         }
         let Some(name) = arg.strip_prefix("--") else {
@@ -35,14 +45,14 @@ pub(super) fn help_target<'a>(
     effective_args: &'a [String],
 ) -> Option<HelpTarget<'a>> {
     let first = effective_args.first()?;
-    if first == "--help" {
+    if is_help(first) {
         return Some(HelpTarget::Top);
     }
     if table.verbs(first).is_empty() {
         return None;
     }
     let second = effective_args.get(1)?;
-    if second == "--help" {
+    if is_help(second) {
         return Some(HelpTarget::Resource(first));
     }
     let command = table.find(first, second)?;
@@ -110,8 +120,20 @@ pub(super) fn augment_top_help(table: &CommandTable, program: &str, help: &str) 
             }
         }
     }
+    if program == "agent-os" {
+        out.push_str(WORKSPACE_SIGN_IN_HELP);
+    }
     out
 }
+
+/// The external lifecycle verbs (`TASK-137`), which sit outside the command table.
+const WORKSPACE_SIGN_IN_HELP: &str = "
+Workspace sign-in (bring your own agent):
+  login   Sign this workspace in as an agent once a person approves (agent-os login --as @<handle>)
+  whoami  Show the agent, office, mode (managed|external), session and expiry this shell acts as
+  logout  End this workspace's external session and remove its local binding
+  exec    Run one command as an agent with a session your signed-in agentic-org approves
+";
 
 pub(super) fn augment_resource_help(
     table: &CommandTable,
@@ -170,14 +192,33 @@ pub(super) fn augment_resource_help(
     out
 }
 
+/// What `--durable` does for `command`, as `agent-os` dispatches it: always on for a write the
+/// office acknowledges only once durable, refused for one it acknowledges at commit
+/// (`transport::refuse_durable`).
+fn durable_help(command: &Command) -> Option<&'static str> {
+    match command.ack()? {
+        Ack::Durable => Some("Always on: this command answers only after the drive has it"),
+        Ack::Committed => {
+            Some("Refused: this command is acknowledged at commit (`ack: committed` in --schema)")
+        }
+    }
+}
+
 pub(super) fn augment_command_help(command: &Command, help: &str) -> String {
-    let Some(cue) = command_use_when(command.resource, command.verb) else {
-        return help.to_owned();
-    };
-    let mut out = String::with_capacity(help.len() + cue.len() + 16);
+    let durable = durable_help(command);
+    let cue = command_use_when(command.resource, command.verb);
+    let mut out = String::with_capacity(help.len() + 256);
     for (idx, line) in help.lines().enumerate() {
-        out.push_str(line);
+        match durable {
+            Some(text) if line.trim_start().starts_with("--durable ") => {
+                out.push_str(&line.replace(DURABLE_OPTION_HELP, text));
+            }
+            _ => out.push_str(line),
+        }
         out.push('\n');
+        let Some(cue) = cue else {
+            continue;
+        };
         // Line 0 is `Usage: ...`, line 1 is blank, line 2 is `{summary}`.
         if idx == 2 {
             out.push_str(&format!("Use when: {cue}\n"));

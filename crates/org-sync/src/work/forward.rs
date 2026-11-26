@@ -1,9 +1,15 @@
 //! Current-HQ receipt ledger; native storage owns the transaction and retention.
-use super::*;
-use crate::organization::{PeerIdentity, PeerRole, VerifiedPeer};
+use std::sync::Arc;
+
 use org_sync_proto::{
-    work_ack_proof_digest_v1, work_rejection_code_valid, Epoch, WorkAck, WORK_CREDIT_WINDOW,
+    work_ack_proof_digest_v1, work_rejection_code_valid, Digest, Epoch, OfficeId, SourceSeq,
+    WorkAck, WORK_CREDIT_WINDOW,
 };
+
+use super::{validate_queue, Change, LocalContext, LocalOutbox, LocalWorkTxn, Origin, SourceKey};
+use crate::error::{Refusal, StoreError, SyncError};
+use crate::organization::{PeerIdentity, PeerRole, VerifiedPeer};
+use crate::versions;
 
 #[derive(Clone, Debug)]
 pub struct StreamAuthority {

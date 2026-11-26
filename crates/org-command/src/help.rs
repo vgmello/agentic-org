@@ -2,22 +2,57 @@
 //! `--schema` document, the hint of a refused command line and the launch catalogue. All of it
 //! is generated from the table.
 
+use serde_json::{Map, Value};
+
 use crate::envelope::code_name;
 use crate::node::Node;
+use crate::row::{Command, Field, IfMatch, Type, OPTIONS};
 use crate::shape;
-use crate::table::{Command, CommandTable, Field, Type, OPTIONS};
+use crate::table::CommandTable;
 
 /// The launch catalogue may not be longer than this (design 2.5).
 pub const CATALOGUE_LIMIT: usize = 4096;
 
+/// The lines that open the launch catalogue, before one line for each resource.
+pub(crate) const CATALOGUE_HEADING: &str = "## Commands\n\
+Each line is a resource and its verbs: run `<resource> <verb> --flag value`. `--help` after a \
+resource or a command lists its verbs or flags, with an example; `--schema` shows a command's \
+input and answer.\n";
+
 impl CommandTable {
-    /// The short catalogue an agent receives at launch: one line for each command.
+    /// The short catalogue an agent receives at launch, grouped by resource: the heading, then
+    /// one line for each resource with its verbs in name order (`task: create, inspect, list`),
+    /// then the shorthands when there are any.
+    /// The summaries are in `--help`, so the catalogue grows by a word, not a line, for each
+    /// command and stays far under [`CATALOGUE_LIMIT`]. An empty table has the heading alone.
     pub fn catalogue(&self) -> String {
-        self.rows()
-            .iter()
-            .map(|row| format!("{} {}: {}\n", row.resource, row.verb, row.summary))
-            .collect()
+        let mut out = CATALOGUE_HEADING.to_owned();
+        for resource in self.resources() {
+            out.push_str(resource);
+            out.push_str(": ");
+            out.push_str(&verb_names(&self.verbs(resource)));
+            out.push('\n');
+        }
+        if let Some(line) = shorthands_line(self) {
+            out.push_str(&line);
+            out.push('\n');
+        }
+        out
     }
+}
+
+/// The catalogue's last line when the table has shorthands:
+/// `Shorthands: who = directory list; boot = session boot.`
+pub(crate) fn shorthands_line(table: &CommandTable) -> Option<String> {
+    let aliases = table.aliases();
+    if aliases.is_empty() {
+        return None;
+    }
+    let pairs: Vec<String> = aliases
+        .iter()
+        .map(|alias| format!("{} = {}", alias.words.join(" "), alias.command.join(" ")))
+        .collect();
+    Some(format!("Shorthands: {}.", pairs.join("; ")))
 }
 
 fn verb_names(rows: &[&'static Command]) -> String {
@@ -146,7 +181,102 @@ pub(crate) fn command(program: &str, command: &Command) -> String {
         .collect();
     out.push_str("\nOptions:\n");
     push_lines(&mut out, &options);
+    let words: Vec<String> = example_args(command)
+        .iter()
+        .map(|word| shell_word(word))
+        .collect();
+    out.push_str(&format!("\nExample:\n  {program} {}\n", words.join(" ")));
     out
+}
+
+/// The command line of the row's example (AX-7), as the words a shell hands the program: each
+/// input field a flag can carry as that flag, in the row's field order, and every other field
+/// in one `--json` object. A text that holds a character that does not print goes in `--json`
+/// too, where it is an escape, so the example is always one line a caller can copy. A write
+/// that requires `--if-match` gets revision 1.
+pub(crate) fn example_args(command: &Command) -> Vec<String> {
+    let mut args = vec![command.resource.to_owned(), command.verb.to_owned()];
+    let input = match serde_json::from_str::<Value>(command.example.input) {
+        Ok(Value::Object(input)) => input,
+        _ => Map::new(),
+    };
+    let mut rest = Map::new();
+    for (name, value) in &input {
+        match command.input_field(name) {
+            Some(field) if flag_words(field, value).is_some() => {}
+            _ => {
+                rest.insert(name.clone(), value.clone());
+            }
+        }
+    }
+    for field in command.input {
+        if let Some(words) = input
+            .get(field.name)
+            .and_then(|value| flag_words(field, value))
+        {
+            args.extend(words);
+        }
+    }
+    if !rest.is_empty() {
+        args.push("--json".to_owned());
+        args.push(Node::from_value(&Value::Object(rest)).to_one_line());
+    }
+    if command.if_match() == IfMatch::Required {
+        args.push("--if-match".to_owned());
+        args.push("1".to_owned());
+    }
+    args
+}
+
+/// `value` written as `field`'s flag, when a flag carries it exactly.
+fn flag_words(field: &Field, value: &Value) -> Option<Vec<String>> {
+    if !field.is_flag() {
+        return None;
+    }
+    let flag = format!("--{}", field.flag());
+    match (&field.ty, value) {
+        (Type::Boolean, Value::Bool(true)) => Some(vec![flag]),
+        (Type::List(_), Value::Array(items)) if !items.is_empty() => {
+            let mut words = Vec::with_capacity(items.len() * 2);
+            for item in items {
+                words.push(flag.clone());
+                words.push(scalar_word(item)?);
+            }
+            Some(words)
+        }
+        (Type::String | Type::Integer | Type::Enum(_), value) => {
+            Some(vec![flag, scalar_word(value)?])
+        }
+        _ => None,
+    }
+}
+
+fn scalar_word(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) if !text.chars().any(|c| c.is_control() || is_separator(c)) => {
+            Some(text.clone())
+        }
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
+}
+
+fn is_separator(c: char) -> bool {
+    matches!(c, '\u{2028}' | '\u{2029}')
+}
+
+/// `word` as a POSIX shell reads it back: bare when it holds only characters no shell treats
+/// specially, otherwise in single quotes (a single quote inside is written `'\''`).
+pub(crate) fn shell_word(word: &str) -> String {
+    let bare = !word.is_empty()
+        && word
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_./:,@%+".contains(&b));
+    if bare {
+        word.to_owned()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''"))
+    }
 }
 
 fn push_lines(out: &mut String, lines: &[(String, String)]) {
@@ -185,8 +315,26 @@ pub(crate) fn flags_hint(program: &str, command: &Command) -> String {
     } else {
         flags.join(", ")
     };
+    // A field with structure has no flag: name it, so a caller knows to give it in `--json`.
+    let structured: Vec<String> = command
+        .input
+        .iter()
+        .filter(|field| !field.is_flag())
+        .map(|field| {
+            if field.required {
+                format!("{} (required)", field.name)
+            } else {
+                field.name.to_owned()
+            }
+        })
+        .collect();
+    let structured = if structured.is_empty() {
+        String::new()
+    } else {
+        format!(" Fields given in --json: {}.", structured.join(", "))
+    };
     format!(
-        "Flags of `{}`: {flags}. Options: {}. `{program} {} --help` says what each does.",
+        "Flags of `{}`: {flags}.{structured} Options: {}. `{program} {} --help` says what each does.",
         command.name(),
         options.join(", "),
         command.name()

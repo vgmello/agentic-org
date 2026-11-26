@@ -37,6 +37,6 @@ pub fn with_faults<E: crate::Engine>(
     faults: &std::sync::Arc<Faults>,
 ) -> crate::StoreParts<E> {
     parts.disk = faults.disk();
-    parts.hooks = std::sync::Arc::clone(faults) as std::sync::Arc<dyn crate::store::Hooks>;
+    parts.hooks = std::sync::Arc::clone(faults) as std::sync::Arc<dyn crate::hooks::Hooks>;
     parts
 }

@@ -1,0 +1,187 @@
+/* Owner asks inside Chat messages.
+   Routing rule: questions and low-risk asks are answered inline on the card; an ask whose data marks it
+   `consequential` (binding choice, tradeoff, high or irreversible impact) is decided in Inbox, and the card
+   says why. "Ask a follow-up" posts where the owner is (the thread, or the conversation) and on the request,
+   and never resolves it; only an explicit answer, option or decision button does. */
+import { CH, KIND, M, W, blockedOnOwner } from "../data.js";
+import { workHref } from "./work.js";
+import { v4BuildButtons, v4ReplyBox } from "./home.js";
+import { inboxCommentPrefix } from "./inbox.js";
+import { render } from "../shell/router.js";
+import { S } from "../state.js";
+import { esc, ic, joinSep, pill } from "../ui.js";
+import { chatTitle, inboxItem } from "./chat-model.js";
+import { followThreadEnd } from "./chat-scroll.js";
+import { receiptHtml } from "./ask-receipt.js";
+import { decidedInInbox, reviewInInbox, routeReasonHtml } from "./ask-route.js";
+
+const askDrafts = new Map(); /* inbox item id -> unsent follow-up on that request */
+const asks = { followUp: null, note: null };
+const clock = () => new Date().toTimeString().slice(0, 5);
+
+function workRef(id) {
+  return W.some((w) => w.id === id) ? `<a class="alink chat-ref" href="${esc(workHref({ item: id }))}">${id}</a>` : id;
+}
+function waitingFor(it) {
+  if (/^\d/.test(it.time)) return "waiting " + it.time;
+  return it.time === "Yesterday" ? "waiting since yesterday" : "waiting since " + it.time;
+}
+function taskPhrase(it) {
+  const w = it.task && W.find((x) => x.id === it.task);
+  return w ? `<span>${blockedOnOwner(w) ? "Blocks" : "For"} ${workRef(w.id)}</span>` : "";
+}
+function needsHead(it) {
+  const state = it.handled ? pill("Handled", "gray", "check-circle") : pill("Needs you", "amber", "bell");
+  return `<p class="chat-needs-head">${state}<span>${esc(it.sub)} from ${esc(M[it.from].name)}${it.handled ? "" : " · " + waitingFor(it)}</span></p>`;
+}
+const inboxLink = (it, label, cls = "btn ghost sm") => `<a class="${cls}" href="#/inbox/${esc(it.id)}">${label}</a>`;
+/* The ask's one response record: the same receipt as Inbox and Home, plus the way to the full record. */
+const handledLine = (it) => receiptHtml(it, "handled chat-needs-done", inboxLink(it, "View in Inbox", "alink chat-needs-record"));
+const settles = (it) => (it.kind === "question" ? "you answer" : "you decide");
+/* The conversation an ask was raised in: its origin, or the conversation whose message carries its card. */
+function askHomeId(it) {
+  if (it?.origin && CH[it.origin.ch]) return it.origin.ch;
+  return Object.keys(CH).find((k) => CH[k].msgs.some((m) => m.needs === it?.id));
+}
+const placeName = (chId) => (CH[chId].kind === "dm" ? `${M[CH[chId].with].name}'s DM` : chatTitle(CH[chId]));
+/* The follow-up names where it will appear before it is sent: this thread, or the conversation. */
+function followUpBox(it, where) {
+  const who = esc(M[it.from].name), id = esc(it.id), home = askHomeId(it);
+  const dest = where.thread ? "this thread" : home ? esc(placeName(home)) : "this conversation";
+  const root = where.thread ? ` data-root="${esc(where.thread)}"` : "";
+  return `<div class="reply chat-ask-reply"><label class="sr-only" for="ar-${id}">Ask ${who} a follow-up</label>
+    <textarea class="field" id="ar-${id}" rows="2" placeholder="Ask ${who} a follow-up…" aria-describedby="ar-help-${id}"${root}>${esc(askDrafts.get(it.id) || "")}</textarea>
+    <p class="chat-compose-hint chat-ask-dest" id="ar-help-${id}">${ic(where.thread ? "thread" : "chat", "ic14")}<span>Posts in ${dest} and on the Inbox request. It stays open until ${settles(it)}.</span></p>
+    <div class="actions"><button class="btn primary sm" type="button" data-act="chat-ask-send" data-id="${id}">${ic("send", "ic16")}${where.thread ? "Send to thread" : "Send follow-up"}</button><button class="btn ghost sm" type="button" data-act="chat-ask-cancel" data-id="${id}">Cancel</button></div></div>`;
+}
+function inlineControls(it) {
+  const { b, guardedHtml } = v4BuildButtons(it);
+  const sep = guardedHtml && S.confirmDeny !== it.id ? '<span class="hb-act-sep" aria-hidden="true"></span>' : "";
+  return [...b, sep, guardedHtml];
+}
+function needsActions(it, where) {
+  if (it.handled) return handledLine(it);
+  if (S.replying === it.id) return v4ReplyBox(it);
+  if (asks.followUp === it.id) return followUpBox(it, where);
+  const inbox = decidedInInbox(it);
+  const primary = inbox ? [reviewInInbox(it)] : inlineControls(it);
+  const followUp = `<button class="btn ghost sm" type="button" data-act="chat-ask-reply" data-id="${esc(it.id)}">${ic("reply", "ic16")}Ask a follow-up</button>`;
+  const open = inbox ? "" : inboxLink(it, `${ic("inbox", "ic16")}<span><span class="chat-long">Open in </span>Inbox</span>`);
+  const why = inbox ? routeReasonHtml(it, "chat-needs-route") : "";
+  const sentTo = where.thread ? " in this thread" : "";
+  const note = asks.note === it.id ? `<p class="chat-needs-note" role="status">${ic("check-circle", "ic14")}Follow-up sent to ${esc(M[it.from].name)}${sentTo}. The request stays open until ${settles(it)}.</p>` : "";
+  return `${note}${why}<div class="actions">${[...primary, followUp, open].join("")}</div>`;
+}
+function tradeoff(it) {
+  if (!decidedInInbox(it) || !it.why) return "";
+  return `<details class="chat-needs-why"><summary>${ic("scale", "ic14")}Tradeoff${ic("chev-right", "ic14 chat-needs-chev")}</summary><p>${esc(it.why)}</p>${it.rec ? `<p class="chat-needs-rec">${esc(it.rec)}</p>` : ""}</details>`;
+}
+/* A one-tap question shows what the choice weighs (the same context Inbox shows) right above its answers. */
+function choiceContext(it) {
+  if (decidedInInbox(it) || it.handled || !it.answers?.length || !it.why) return "";
+  const rec = it.rec ? `<p class="chat-needs-rec">${esc(it.rec)}</p>` : "";
+  return `<div class="chat-needs-context"><p>${esc(it.why).replace(/\bT-A\d+\b/g, workRef)}</p>${rec}</div>`;
+}
+/* `where.thread`: the card is shown in that thread's panel, so a follow-up from it posts in the thread. */
+function needsCardHtml(it, msgId, where = {}) {
+  const titleId = `needs-${esc(msgId)}`;
+  const meta = joinSep([
+    taskPhrase(it),
+    it.expires && !it.handled ? `<span class="pin">${ic("clock", "ic14")}${esc(it.expires)}</span>` : "",
+  ]);
+  return `<section class="chat-needs${it.handled ? " is-done" : ""}" aria-labelledby="${titleId}">
+    ${needsHead(it)}
+    <h3 class="chat-needs-q" id="${titleId}" tabindex="-1">${esc(it.what)}</h3>
+    ${meta ? `<p class="chat-needs-meta">${meta}</p>` : ""}
+    ${it.scope && !it.handled ? `<p class="chat-needs-scope">${ic("lock", "ic14")}<span>Scope: ${esc(it.scope)}</span></p>` : ""}
+    ${tradeoff(it)}${choiceContext(it)}
+    ${needsActions(it, where)}
+  </section>`;
+}
+/* A chip says where the ask is settled: Inbox for a consequential ask, its answerable card when that card is
+   in another conversation (e.g. Rowan's DM, from the agents' conversation), otherwise the Inbox record. */
+function chipRoute(it, here) {
+  const inbox = `#/inbox/${it.id}`;
+  if (it.handled) return [inbox, `Handled · ${it.outcome}`];
+  if (decidedInInbox(it)) return [inbox, "Needs you · Decide in Inbox"];
+  const home = askHomeId(it), msg = home && CH[home].kind !== "a2a" && CH[home].msgs.find((m) => m.needs === it.id);
+  if (msg && home !== here) return [`#/chat/${home}/${msg.id}`, `Needs you · Answer in ${placeName(home)}`];
+  return [inbox, `Needs you · ${KIND[it.kind].label} in Inbox`];
+}
+function needsChipHtml(it, here) {
+  const [href, label] = chipRoute(it, here);
+  return `<p class="chat-needs-chip${it.handled ? " is-done" : ""}"><a href="${esc(href)}">${ic(it.handled ? "check-circle" : "bell", "ic14")}<span>${esc(label)}</span>${ic("chev-right", "ic14")}</a></p>`;
+}
+/* While the ask's message is open in the thread panel, its card lives there; the stream points to it.
+   A consequential ask is still decided in Inbox, so its chip says so and goes there. */
+function inThreadChip(it, msgId) {
+  if (decidedInInbox(it)) return needsChipHtml(it);
+  const label = it.handled ? `Handled · ${esc(it.outcome)}` : "Needs you · answer in the thread";
+  return `<p class="chat-needs-chip${it.handled ? " is-done" : ""}"><button type="button" data-act="chat-thread-card" data-id="${esc(msgId)}">${ic(it.handled ? "check-circle" : "bell", "ic14")}<span>${label}</span>${ic("chev-right", "ic14")}</button></p>`;
+}
+/* A card where the ask was raised (m.needs); a chip where it is only mentioned (m.ref) or previewed elsewhere.
+   `mode`: "card" (writable stream), "thread-card" (card in the thread panel), "in-thread" (the stream's pointer
+   to a card shown in the open thread), or a chip. `here` is the conversation being shown. */
+function messageNeeds(m, mode, here) {
+  const it = inboxItem(m.needs || m.ref);
+  if (!it) return "";
+  if (!m.needs) return needsChipHtml(it, here);
+  if (mode === "in-thread") return inThreadChip(it, m.id);
+  if (mode === "thread-card") return needsCardHtml(it, m.id, { thread: m.id });
+  return mode === "card" ? needsCardHtml(it, m.id) : needsChipHtml(it, here);
+}
+
+/* ---------------------------------------------------------------- follow-ups and answers posted from Chat */
+function saveInboxComment(id, text) {
+  try { localStorage.setItem(inboxCommentPrefix(id) + crypto.randomUUID(), JSON.stringify({ text, at: Date.now() })); } catch (e) {}
+}
+/* Posts the owner's words on the Inbox record and where the owner wrote them: the thread on the ask's
+   message (`root`), or the conversation where the request was raised. */
+function recordAskReply(id, text, root) {
+  const home = CH[askHomeId(inboxItem(id))];
+  const rootMsg = root && home?.msgs.find((m) => m.id === root);
+  const reply = { who: "you", time: clock(), text, ref: id };
+  if (rootMsg) { (rootMsg.thread ||= []).push(reply); followThreadEnd(); }
+  else if (home) home.msgs.push({ id: "u" + Date.now(), ...reply });
+  saveInboxComment(id, text);
+}
+const focusFollowUp = (id) => document.querySelector(`[data-act="chat-ask-reply"][data-id="${CSS.escape(id)}"]`)?.focus();
+function sendFollowUp(id) {
+  const field = document.getElementById("ar-" + id), text = field?.value.trim();
+  if (!field) return;
+  if (!text) {
+    const hint = document.getElementById("ar-help-" + id);
+    hint.classList.add("is-error");
+    hint.textContent = "Write a follow-up first.";
+    field.focus();
+    return;
+  }
+  recordAskReply(id, text, field.dataset.root);
+  askDrafts.delete(id);
+  Object.assign(asks, { followUp: null, note: id });
+  render(false);
+  focusFollowUp(id);
+}
+function closeFollowUp(id) {
+  asks.followUp = null;
+  render(false);
+  focusFollowUp(id);
+}
+function openFollowUp(id) {
+  Object.assign(asks, { followUp: id, note: null });
+  S.replying = null; S.confirmDeny = null;
+  render(false);
+  document.getElementById("ar-" + id)?.focus();
+}
+const ASK_CLICKS = { "chat-ask-reply": openFollowUp, "chat-ask-send": sendFollowUp, "chat-ask-cancel": closeFollowUp };
+function onAskKeydown(e) {
+  const t = e.target;
+  if (!t.id.startsWith("ar-") || t.tagName !== "TEXTAREA") return;
+  const id = t.id.slice(3);
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeFollowUp(id); }
+  else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); sendFollowUp(id); }
+}
+const saveAskDraft = (t) => askDrafts.set(t.id.slice(3), t.value);
+const resetAsks = () => Object.assign(asks, { followUp: null, note: null });
+
+export { ASK_CLICKS, messageNeeds, onAskKeydown, recordAskReply, resetAsks, saveAskDraft, workRef };

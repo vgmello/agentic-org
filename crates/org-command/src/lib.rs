@@ -17,13 +17,14 @@
 //! The library knows no socket, database or operating system, and makes no randomness. The
 //! executable supplies the office (how the caller is identified), the sources and the keys.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 mod envelope;
 mod help;
 mod node;
 mod office;
 mod parse;
+mod row;
 mod shape;
 mod table;
 #[cfg(feature = "testkit")]
@@ -32,9 +33,10 @@ pub mod testkit;
 pub use envelope::{code_name, envelope_schema};
 pub use help::CATALOGUE_LIMIT;
 pub use node::Node;
-pub use office::{Answer, KeySource, Office, Refusal, Request, Sources, Status};
+pub use office::{Answer, KeySource, Office, Refusal, RefusalDetails, Request, Sources, Status};
 pub use parse::{DEFAULT_LIMIT, MAX_INPUT_BYTES, MAX_LIMIT, MAX_YAML_INPUT_BYTES};
-pub use table::{Ack, Command, CommandTable, Example, Field, IfMatch, Kind, TableError, Type};
+pub use row::{Ack, Command, Example, Field, IfMatch, Kind, Type};
+pub use table::{Alias, CommandTable, TableError};
 
 use org_proto::ErrorCode;
 use parse::{Format, Parsed};
@@ -64,6 +66,36 @@ fn failed(refusal: &Refusal, dry_run: bool) -> Output {
     Output {
         stdout: print(&envelope::failure(refusal, dry_run), Format::Json),
         exit_code: 1,
+    }
+}
+
+/// The failure envelope of `refusal` as one line of JSON, without the new line: `ok` false,
+/// `data` null, `meta` (its `operation_id`, and `dry_run` when `dry_run`), and `error` with the
+/// refusal's code, message, hint and `retry_with`. It is the envelope [`run`] prints for a
+/// refusal, for a caller that is refused before any command line is read (`session attach`
+/// when its office cannot be reached), so that caller never writes an envelope by hand.
+pub fn failure_envelope_json(refusal: &Refusal, dry_run: bool) -> String {
+    envelope::failure(refusal, dry_run).to_one_line()
+}
+
+/// Reads one command line against `table` exactly as [`run`] does, and stops there: no key is
+/// made and no office is called. `Ok` when [`run`] would print help or a schema, or send the
+/// call; otherwise the `invalid_request` refusal (exit code 2) [`run`] would print. Text that
+/// cites command lines, such as an agent's standing instructions, is checked with it against
+/// the live table, so a cited flag that does not exist or a missing required option fails.
+pub fn check(
+    table: &CommandTable,
+    program: &str,
+    args: &[String],
+    sources: &mut dyn Sources,
+) -> Result<(), Refusal> {
+    match parse::parse(table, program, args, sources) {
+        Ok(_) => Ok(()),
+        Err(usage) => Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            usage.message,
+            usage.hint,
+        )),
     }
 }
 
@@ -130,8 +162,12 @@ pub fn run(
             if refusal.operation_id.is_none() {
                 refusal.operation_id = key.map(str::to_owned);
             }
-            // Repeating the call with the same key is what can succeed (design 2.4).
-            if let (ErrorCode::Unavailable | ErrorCode::NotReady, Some(key)) = (refusal.code, key) {
+            // Repeating the call with the same key is what can succeed (design 2.4). A timeout
+            // is the same: the office may have made the change, and only the same key makes a
+            // repeat safe.
+            if let (ErrorCode::Unavailable | ErrorCode::NotReady | ErrorCode::Timeout, Some(key)) =
+                (refusal.code, key)
+            {
                 refusal
                     .retry_with
                     .get_or_insert_with(Map::new)
@@ -180,8 +216,12 @@ pub fn run(
         Format::Compact => {
             let mut out = data.to_compact(&columns);
             // `compact` prints `data` alone, except when the caller cannot act without `meta`:
-            // the command did not complete, or there is another page.
-            if answer.status != Status::Completed || answer.next_cursor.is_some() {
+            // the command did not complete, there is another page, or a list that reports its
+            // total printed no line (`task list --count`, or nothing matched).
+            let counted_nothing =
+                answer.total.is_some() && matches!(&data, Node::List(items) if items.is_empty());
+            if answer.status != Status::Completed || answer.next_cursor.is_some() || counted_nothing
+            {
                 out.push_str(&format!("meta: {}\n", meta.to_one_line()));
             }
             out

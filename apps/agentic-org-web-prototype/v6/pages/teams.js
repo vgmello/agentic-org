@@ -1,3 +1,4 @@
+import { calendarHtml } from "./calendar.js";
 import { orgChartBody, orgSummary } from "./org-chart.js";
 import { CH, KNOWLEDGE, M, NOTES, OFFICES, OPEN, P, TEAMS, W } from "../data.js";
 import { activityEventTime, activityTimeline, formatTelemetryHours } from "./activity.js";
@@ -114,13 +115,14 @@ function pageTeam(id, tab = "overview") {
   const actions = hireMenu(id) + moreMenu("tmore", "More actions for " + t.name, menuItem("proto", "Edit team " + t.name, "pencil", "Edit team") + menuItem("proto", "Move team " + t.name + " (choose its parent team)", "user-group", "Move team…") + menuItem("proto", "Change manager of " + t.name, "user", "Change manager…"));
   const ws = teamWork(id);
   const tabs = linkTabs("#/teams/" + id, [
-    ["", "Overview"], ["members", "Members", t.members.length], ["work", "Work", ws.filter(OPEN).length],
+    ["", "Overview"], ["members", "Members", t.members.length], ["work", "Work", `${ws.filter(OPEN).length} open`], ["calendar", "Calendar"],
     ["projects", "Projects"], ["activity", "Activity"], ["conversations", "Conversations"],
   ], tab === "overview" ? "" : tab, "Team sections");
   const header = crumbs([["#/teams", "Teams"], [null, t.name]]) + `<div class="section-header">${queueHeadline(t.name, count)}${sectionTabs(tabs, "", actions)}</div>`;
   if (tab === "overview") return header + teamOverview(id, ws);
   if (tab === "members") return header + `<section aria-labelledby="h-mem"><h2 class="team-roster-title" id="h-mem">All members</h2>${memberRows(t.members, { noTeam: true })}</section>`;
   if (tab === "work") return header + scopedWorkToolbar("team", id, ws) + scopedWorkWorkspace();
+  if (tab === "calendar") return header + calendarHtml("team", id);
   if (tab === "projects") {
     const projects = teamProjects(id);
     return header + (projects.length ? `<ul class="rows" role="list" aria-label="Team projects">${projects.map((p) => `<li class="linked"><div class="grow"><p class="rt"><a class="stretch" href="#/projects/${p}">${esc(P[p].name)}</a>${leadOf(p) ? `<span class="sec">${esc(leadTxt(p))}</span>` : ""}</p><div style="max-width:320px;margin-top:8px">${progress(p)}</div></div>${projPill(p)}</li>`).join("")}</ul>` : '<p class="empty-row">No projects for this team.</p>');
@@ -188,7 +190,7 @@ function personOverviewHtml(m, owner, myW, myActs) {
 }
 
 function personMemberView(id, tab, m, owner, myW, myActs) {
-  const tabs = [["", "Overview"], ["work", "Work", myW.filter(OPEN).length], ["conversations", "Conversations"], ["activity", "Activity"]];
+  const tabs = [["", "Overview"], ["work", "Work", `${myW.filter(OPEN).length} open`], ["conversations", "Conversations"], ["activity", "Activity"]];
   if (tab === "work") return { tabs, controls: "", body: scopedWorkToolbar("person", id, myW) + scopedWorkWorkspace() };
   if (tab === "activity") return { tabs, controls: "", body: activityTimeline(myActs) };
   if (tab === "conversations") return { tabs, controls: "", body: personConversationsHtml(id) };
@@ -271,7 +273,7 @@ function memberActionsHtml(id, m, agent, owner, tab) {
   const more = agent
     ? `<button role="menuitem" type="button" data-act="pause" data-id="${id}">${ic(pauseIcon, "ic20")}${pauseLabel}</button><button role="menuitem" type="button" data-act="proto" data-v="Edit ${esc(m.name)}">${ic("pencil", "ic20")}Edit</button><hr><button role="menuitem" class="danger-item" type="button" data-act="offboard" data-id="${id}">${ic("logout", "ic20")}Offboard</button>`
     : `<button role="menuitem" type="button" data-act="proto" data-v="Edit ${esc(m.name)}">${ic("pencil", "ic20")}Edit</button>`;
-  return `<button class="btn ${hasSecondaryPrimary ? "outline" : "primary"}" type="button" data-act="go" data-v="#/chat/${CH["dm-" + id] ? "dm-" + id : "general"}">${ic("chat", "ic20")}Message</button>
+  return `<button class="btn ${hasSecondaryPrimary ? "outline" : "primary"}" type="button" data-act="go" data-v="#/chat/dm-${id}">${ic("chat", "ic20")}Message</button>
       ${agent ? `<button class="btn outline" type="button" data-act="agent-focus-open" data-id="${id}">${ic("maximize", "ic20")}Analysis Mode</button>` : ""}
       <button class="btn outline" type="button" data-act="work-new-task" data-id="${id}">${ic("clipboard", "ic20")}Assign task</button>
       <div class="menu-wrap"><button class="btn outline icon" type="button" data-act="menu" data-id="more" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-more" aria-label="More actions for ${esc(m.name)}" title="More actions">${ic("ellipsis", "ic20")}</button><div class="menu" id="menu-more" role="menu" hidden>${more}</div></div>`;
@@ -287,7 +289,7 @@ function memberMetaFacts(id, m, owner) {
 }
 
 function agentMemberView(id, resolvedTab, m, myW, myActs) {
-  const tabs = [["", "Overview"], ["tasks", "Tasks", myW.filter(OPEN).length], ["sessions", "Sessions"], ["journal", "Journal"], ["memory", "Memory"], ["knowledge", "Knowledge"], ["settings", "Settings"]];
+  const tabs = [["", "Overview"], ["tasks", "Tasks", `${myW.filter(OPEN).length} open`], ["sessions", "Sessions"], ["journal", "Journal"], ["memory", "Memory"], ["knowledge", "Knowledge"], ["settings", "Settings"]];
   const { controls, leftBody } = agentTabContent(id, resolvedTab, m, agentSessionAvailability(id), myW, myActs);
   const body = `<div class="agent-shell" id="agent-shell" data-agent="${id}" data-tab="${resolvedTab}"><div class="agent-main">${leftBody}</div>${agentRailHtml(id, resolvedTab)}</div>`;
   return { tabs, controls, body };

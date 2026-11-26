@@ -154,7 +154,18 @@ impl Office {
     pub fn for_test_with_real_ca(spec: TestOffice) -> Office {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let root = dir.path().canonicalize().expect("a real path");
-        let (folder, roots) = places(&root);
+        let (mut office, _, _, _) = Self::for_test_with_real_ca_in(&root, spec);
+        office._test_root = Some(dir);
+        office
+    }
+
+    /// Like [`Self::for_test_with_real_ca`], rooted in a caller-owned directory and returning the
+    /// `(DataRoots, Custody, Key)` needed to reopen the HQ via `Office::open_as_owner` in tests.
+    pub fn for_test_with_real_ca_in(
+        root: &Path,
+        spec: TestOffice,
+    ) -> (Office, DataRoots, Custody, Key) {
+        let (folder, roots) = places(root);
         let (new, binding) = request();
         let custody = custody(Arc::new(FakeCustody::new()));
         let key = Key::from_bytes([7; 32]);
@@ -163,13 +174,13 @@ impl Office {
         let office_id = new.office_id.clone();
         let mut opts = options(spec.engine);
         opts.clock = Arc::new(org_store::SystemClock);
-        let mut office = Office::provision_with(
+        let office = Office::provision_with(
             folder,
             &new,
-            Some(key),
+            Some(key.clone()),
             &binding,
-            roots,
-            custody,
+            roots.clone(),
+            custody.clone(),
             move |prior| {
                 if let Some(p) = prior {
                     return Ok(p);
@@ -196,7 +207,149 @@ impl Office {
             opts,
         )
         .expect("a real-CA test office");
-        office._test_root = Some(dir);
-        office
+        (office, roots, custody, key)
+    }
+}
+
+/// A satellite office for tests outside this crate (`TASK-203`): provisioned on its own
+/// temporary roots with a fresh Org CA and a certificate issued from it (no HQ runs), plus
+/// what reopening it needs. Its organization state is empty until a test replicates some.
+pub struct TestSatellite {
+    pub office: Office,
+    /// The HQ office the satellite is bound to.
+    pub hq_office_id: String,
+    folder: std::path::PathBuf,
+    roots: DataRoots,
+    custody: Custody,
+    key: Key,
+    _dir: tempfile::TempDir,
+}
+
+impl TestSatellite {
+    pub fn new() -> Self {
+        use org_pki::cert::{
+            build_org_ca_cert, issue_satellite_cert_from_pubkey, sign_satellite_key_pop,
+            IssueSatelliteCertParams,
+        };
+        const ORG: &str = "0195a000-0000-7000-8000-0000000000e1";
+        const SATELLITE: &str = "0195a000-0000-7000-8000-0000000000e2";
+        const HQ: &str = "0195a000-0000-7000-8000-0000000000e3";
+        const INVITATION: &str = "0195a000-0000-7000-8000-0000000000e4";
+        let id = |text: &str| org_store::Id::parse(text).expect("a test id");
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let root = dir.path().canonicalize().expect("a real path");
+        let folder = root.join("home/offices").join(SATELLITE);
+        let data = root.join("data").join(ORG);
+        let roots = DataRoots {
+            durable: data.join("durable"),
+            runtime: data.join("runtime"),
+        };
+        for made in [&roots.durable, &roots.runtime] {
+            std::fs::create_dir_all(made).expect("a data root");
+        }
+        let custody = Custody {
+            identity: org_store::OfficeIdentity {
+                instance_id: id("0195a000-0000-7000-8000-0000000000e5"),
+                organization_id: id(ORG),
+                office_id: id(SATELLITE),
+                journal_incarnation: id("0195a000-0000-7000-8000-0000000000e6"),
+                writer_epoch: 1,
+                machine_id: id("0195a000-0000-7000-8000-0000000000e7"),
+            },
+            authority: Arc::new(FakeCustody::new()) as Arc<dyn WriterAuthority>,
+        };
+        let now_unix = (org_store::Clock::now(&org_store::SystemClock).0 / 1000) as i64;
+        let ca_key = org_pki::SigningKey::generate().expect("a CA key");
+        let ca = build_org_ca_cert(&ca_key, ORG, now_unix).expect("a CA certificate");
+        let tls = org_pki::SigningKey::generate().expect("a satellite key");
+        let pop = sign_satellite_key_pop(&tls, ORG, SATELLITE, INVITATION).expect("a proof");
+        let cert = issue_satellite_cert_from_pubkey(
+            &ca_key,
+            &ca.cert_der,
+            &IssueSatelliteCertParams {
+                org_id: ORG,
+                office_id: SATELLITE,
+                invitation_id: INVITATION,
+                subject_pub_key_uncompressed: &tls.public_key(),
+                pop_signature_der: &pop,
+                now_unix,
+                validity_days: 365,
+            },
+        )
+        .expect("a satellite certificate");
+        let key = Key::from_bytes([0x5a; 32]);
+        let office = Office::provision_satellite(
+            folder.clone(),
+            super::SatelliteProvisionSpec {
+                new: NewOffice {
+                    office_id: SATELLITE.into(),
+                    office_name: "Test Satellite".into(),
+                    role: OfficeRole::Satellite,
+                    org_id: ORG.into(),
+                    org_name: "Acme".into(),
+                },
+                operation_id: "0195a000-0000-7000-8000-0000000000e8".into(),
+                hq_office_id: HQ.into(),
+                hq_addresses: vec!["127.0.0.1:9443".into()],
+                epoch: 1,
+                ca_cert_der: ca.cert_der,
+                office_cert_der: cert.cert_der,
+                office_key_der: org_pki::Zeroizing::new(tls.local_der().to_vec()),
+            },
+            key.clone(),
+            roots.clone(),
+            custody.clone(),
+        )
+        .expect("a test satellite");
+        Self {
+            office,
+            hq_office_id: HQ.into(),
+            folder,
+            roots,
+            custody,
+            key,
+            _dir: dir,
+        }
+    }
+
+    /// Closes the satellite, deletes its runtime root and opens it again, so every
+    /// projection is rebuilt from the durable root.
+    pub fn rebuilt(self) -> Self {
+        let Self {
+            office,
+            hq_office_id,
+            folder,
+            roots,
+            custody,
+            key,
+            _dir,
+        } = self;
+        office.close().expect("the satellite closes");
+        std::fs::remove_dir_all(&roots.runtime).expect("the runtime root goes");
+        std::fs::create_dir_all(&roots.runtime).expect("a fresh runtime root");
+        let instance = custody.identity.instance_id.to_string();
+        let office = Office::open(
+            folder.clone(),
+            Some(key.clone()),
+            &instance,
+            roots.clone(),
+            custody.clone(),
+        )
+        .expect("the satellite reopens");
+        Self {
+            office,
+            hq_office_id,
+            folder,
+            roots,
+            custody,
+            key,
+            _dir,
+        }
+    }
+}
+
+impl Default for TestSatellite {
+    fn default() -> Self {
+        Self::new()
     }
 }

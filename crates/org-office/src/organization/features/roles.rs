@@ -9,7 +9,7 @@ use super::{
     stable, Feature, Op, RejectCode,
 };
 use crate::organization::{
-    ports::OrganizationRead,
+    ports::{OrganizationRead, TeamDependents},
     records::{self, Meta, Role},
 };
 
@@ -32,7 +32,7 @@ impl Feature for CreateRole {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         decide_create(uow, here, owner, by, self)
     }
@@ -46,7 +46,7 @@ fn decide_create<E: Engine>(
     command: &CreateRole,
 ) -> Result<Change, Refusal>
 where
-    E::Tx: crate::projects::ports::ProjectsRead,
+    E::Tx: TeamDependents,
 {
     stable(&command.id, "the role's ID")?;
     let admitted = admit(uow, here, owner, by)?;
@@ -109,7 +109,7 @@ impl Feature for UpdateRole {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         decide_update(uow, here, owner, by, self)
     }
@@ -123,7 +123,7 @@ fn decide_update<E: Engine>(
     command: &UpdateRole,
 ) -> Result<Change, Refusal>
 where
-    E::Tx: crate::projects::ports::ProjectsRead,
+    E::Tx: TeamDependents,
 {
     if command.key.is_some() && command.clear_key {
         return invalid("a role key is set or cleared, not both");

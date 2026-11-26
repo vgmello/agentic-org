@@ -1,18 +1,18 @@
-//! Dispatch for C7 `repo` and `worktree` commands over [`OfficeTransport`] (`TASK-51`).
+//! Dispatch for C7 `repo` and `worktree` commands over [`OfficeTransport`] (`TASK-51`,
+//! `TASK-173`).
 
-use org_command::{Ack, Answer, Refusal, Request, Status};
+use org_command::{Answer, Refusal, Request, Status};
 use org_proto::git::{
     GitPush, GitPushParams, GitPushResult, RepoAttach, RepoAttachParams, RepoAttachResult,
-    RepoList, RepoListParams, RepoListResult, RepoRegister, RepoRegisterParams, RepoRegisterResult,
-    RepoStatus, RepoStatusParams, RepoStatusResult, RepositoryKindWire, WorktreeList,
-    WorktreeListParams, WorktreeListResult, WorktreePrepare, WorktreePrepareParams,
-    WorktreePrepareResult,
+    RepoFetch, RepoFetchParams, RepoFetchResult, RepoList, RepoListParams, RepoListResult,
+    RepoRegister, RepoRegisterParams, RepoRegisterResult, RepoStatus, RepoStatusParams,
+    RepoStatusResult, RepositoryKindWire, WorktreeList, WorktreeListParams, WorktreeListResult,
+    WorktreePrepare, WorktreePrepareParams, WorktreePrepareResult,
 };
 use org_proto::{Call, ErrorCode};
 use serde_json::{Map, Value};
 
-use crate::dispatch::OfficeTransport;
-use crate::keys::try_new_uuid_v7;
+use crate::transport::{command_id, paginate, parse_cursor, write_ack, OfficeTransport};
 
 pub fn try_execute<T: OfficeTransport + ?Sized>(
     transport: &mut T,
@@ -24,6 +24,7 @@ pub fn try_execute<T: OfficeTransport + ?Sized>(
             "list" => Some(read_repo_list(transport, request)),
             "attach" => Some(write_repo_attach(transport, request)),
             "status" => Some(read_repo_status(transport, request)),
+            "fetch" => Some(write_repo_fetch(transport, request)),
             "push" => Some(write_repo_push(transport, request)),
             _ => None,
         },
@@ -49,30 +50,11 @@ fn reject_dry_run(request: &Request) -> Result<(), Refusal> {
 
 fn cmd_id(request: &Request) -> Result<String, Refusal> {
     reject_dry_run(request)?;
-    if let Some(key) = request.idempotency_key.as_deref() {
-        if org_proto::is_uuid_v7(key) {
-            return Ok(key.to_owned());
-        }
-        return Ok(crate::dispatch::derive_uuid_v7("git-command", key));
-    }
-    fresh_id()
+    command_id(request, "git-command")
 }
 
 fn entity_id(request: &Request, domain: &str) -> Result<String, Refusal> {
-    if let Some(key) = request.idempotency_key.as_deref() {
-        return Ok(crate::dispatch::derive_uuid_v7(domain, key));
-    }
-    fresh_id()
-}
-
-fn fresh_id() -> Result<String, Refusal> {
-    try_new_uuid_v7().ok_or_else(|| {
-        Refusal::new(
-            ErrorCode::StorageError,
-            "could not mint a UUIDv7 identifier",
-            "Retry the command.",
-        )
-    })
+    crate::transport::entity_id(request, None, domain)
 }
 
 fn req_str<'a>(input: &'a Map<String, Value>, key: &str) -> Result<&'a str, Refusal> {
@@ -115,10 +97,11 @@ fn write_answer(request: &Request, data: Value, revision: Option<u64>) -> Answer
         data,
         status: Status::Completed,
         operation_id: request.idempotency_key.clone(),
-        ack: Some(Ack::Committed),
+        ack: Some(write_ack(request)),
         revision,
         next_cursor: None,
         waiting_messages: None,
+        total: None,
     }
 }
 
@@ -153,32 +136,12 @@ fn write_repo_register<T: OfficeTransport + ?Sized>(
     Ok(write_answer(request, data, rev))
 }
 
-fn paginate_items(request: &Request, items: Vec<Value>) -> Result<Answer, Refusal> {
-    let offset = match request.cursor.as_deref() {
-        None => 0usize,
-        Some(raw) => raw.parse::<usize>().map_err(|_| {
-            Refusal::new(
-                ErrorCode::InvalidRequest,
-                "invalid pagination cursor",
-                "Pass the `next_cursor` returned by the previous page.",
-            )
-        })?,
-    };
-    let total = items.len();
-    let limit = request.limit.unwrap_or(org_command::DEFAULT_LIMIT) as usize;
-    let page: Vec<Value> = items.into_iter().skip(offset).take(limit).collect();
-    let next = offset.saturating_add(page.len());
-    let mut answer = Answer::completed(Value::Array(page));
-    if next < total {
-        answer.next_cursor = Some(next.to_string());
-    }
-    Ok(answer)
-}
-
 fn read_repo_list<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    // A bad cursor is refused before the office is asked.
+    parse_cursor(request.cursor.as_deref())?;
     let params = RepoListParams {
         project: opt_str(&request.input, "project"),
     };
@@ -188,7 +151,7 @@ fn read_repo_list<T: OfficeTransport + ?Sized>(
         .into_iter()
         .map(|r| serde_json::to_value(r).unwrap_or(Value::Null))
         .collect();
-    paginate_items(request, items)
+    paginate(request, items)
 }
 
 fn write_repo_attach<T: OfficeTransport + ?Sized>(
@@ -221,6 +184,21 @@ fn read_repo_status<T: OfficeTransport + ?Sized>(
     ))
 }
 
+/// `repo fetch`: the office refreshes its cache of the origin; the caller never needs Git
+/// credentials, and no worktree's checkout moves.
+fn write_repo_fetch<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    reject_dry_run(request)?;
+    let params = RepoFetchParams {
+        repository: req_str(&request.input, "repo")?.to_owned(),
+    };
+    let res: RepoFetchResult = call_rpc::<RepoFetch, _>(transport, &params)?;
+    let data = serde_json::to_value(res).unwrap_or(Value::Null);
+    Ok(write_answer(request, data, None))
+}
+
 fn write_repo_push<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
@@ -239,6 +217,8 @@ fn read_worktree_list<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    // A bad cursor is refused before the office is asked.
+    parse_cursor(request.cursor.as_deref())?;
     let params = WorktreeListParams {
         task: opt_str(&request.input, "task"),
     };
@@ -248,7 +228,7 @@ fn read_worktree_list<T: OfficeTransport + ?Sized>(
         .into_iter()
         .map(|w| serde_json::to_value(w).unwrap_or(Value::Null))
         .collect();
-    paginate_items(request, items)
+    paginate(request, items)
 }
 
 fn write_worktree_prepare<T: OfficeTransport + ?Sized>(
@@ -268,103 +248,4 @@ fn write_worktree_prepare<T: OfficeTransport + ?Sized>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::dispatch::TransportOffice;
-    use serde_json::json;
-
-    struct FakeTransport {
-        calls: Vec<(String, Value)>,
-    }
-
-    impl OfficeTransport for FakeTransport {
-        fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
-            self.calls.push((method.to_owned(), params));
-            match method {
-                "repo.register" => Ok(json!({
-                    "repository": {
-                        "id": "01950000-0000-7000-8000-000000000301",
-                        "key": "api",
-                        "kind": "remote",
-                        "remote_url": "https://github.com/acme/api.git",
-                        "cache_state": "unprepared",
-                        "revision": 1
-                    }
-                })),
-                "repo.list" => Ok(json!({
-                    "repositories": [
-                        {"id": "01950000-0000-7000-8000-000000000301", "key": "a", "kind": "remote", "cache_state": "ready", "revision": 1},
-                        {"id": "01950000-0000-7000-8000-000000000302", "key": "b", "kind": "remote", "cache_state": "ready", "revision": 1}
-                    ]
-                })),
-                "git.push" => Ok(json!({
-                    "task_id": "01950000-0000-7000-8000-000000000401",
-                    "repository_id": "01950000-0000-7000-8000-000000000301",
-                    "branch": "task/T-A1-fix",
-                    "commit": "0123456789abcdef0123456789abcdef01234567"
-                })),
-                _ => Ok(json!({})),
-            }
-        }
-    }
-
-    #[test]
-    fn git_cli_rejects_dry_run_derives_deterministic_ids_and_paginates_list() {
-        let mut office = TransportOffice(FakeTransport { calls: Vec::new() });
-
-        // `--dry-run` refused before hitting transport.
-        let dry = crate::execute_with_office(
-            "agent-os",
-            &[
-                "repo".into(),
-                "push".into(),
-                "--task".into(),
-                "T-A1".into(),
-                "--dry-run".into(),
-            ],
-            &mut office,
-        );
-        assert_ne!(dry.exit_code, 0);
-        assert!(office.0.calls.is_empty());
-
-        // Same `--idempotency-key` derives deterministic `command_id` & `repository_id`.
-        for _ in 0..2 {
-            let out = crate::execute_with_office(
-                "agent-os",
-                &[
-                    "repo".into(),
-                    "register".into(),
-                    "--kind".into(),
-                    "remote".into(),
-                    "--key".into(),
-                    "api".into(),
-                    "--remote-url".into(),
-                    "https://github.com/acme/api.git".into(),
-                    "--idempotency-key".into(),
-                    "retry-key-1".into(),
-                ],
-                &mut office,
-            );
-            assert_eq!(out.exit_code, 0, "stdout: {}", out.stdout);
-        }
-        assert_eq!(
-            office.0.calls[0].1["command_id"],
-            office.0.calls[1].1["command_id"]
-        );
-        assert_eq!(
-            office.0.calls[0].1["repository_id"],
-            office.0.calls[1].1["repository_id"]
-        );
-
-        // `repo list --limit 1` returns page of 1 with `next_cursor: "1"`.
-        let page = crate::execute_with_office(
-            "agent-os",
-            &["repo".into(), "list".into(), "--limit".into(), "1".into()],
-            &mut office,
-        );
-        assert_eq!(page.exit_code, 0);
-        let v: Value = serde_json::from_str(&page.stdout).unwrap();
-        assert_eq!(v["data"].as_array().unwrap().len(), 1);
-        assert_eq!(v["meta"]["next_cursor"].as_str(), Some("1"));
-    }
-}
+mod tests;

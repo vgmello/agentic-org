@@ -5,12 +5,15 @@
 //! imports `rusqlite` or holds SQL), [`memory`] provides a second in-memory adapter in
 //! tests, and `contract_tests` runs one conformance suite against both.
 
+pub(crate) mod pending_recovery;
 pub(crate) mod sqlite;
 
 #[cfg(test)]
 mod contract_tests;
 #[cfg(test)]
-pub(crate) mod memory;
+mod testing;
+#[cfg(test)]
+pub(crate) use testing::memory;
 
 use std::collections::BTreeSet;
 use std::io;

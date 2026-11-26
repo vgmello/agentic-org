@@ -48,13 +48,14 @@ use helper::Helper;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use org_proto::{Event, Response};
 
+pub use call::{CallMeta, CallOutcome};
 pub use error::ClientError;
 pub use paths::{default_host_socket_path, default_office_home};
 
@@ -117,8 +118,6 @@ struct Shared {
     events: Arc<EventSlot>,
     next_subscription: AtomicU64,
     queued_bytes: AtomicUsize,
-    /// Non-zero pending wakes/messages hint observed on the most recent response (`TASK-115`).
-    last_waiting_messages: AtomicU32,
     /// To cut the connection from any thread.
     stream: UnixStream,
 }

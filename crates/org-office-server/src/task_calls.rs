@@ -24,6 +24,8 @@ use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
 use crate::live::LiveEvents;
 
+mod list;
+
 fn is_task_core_method(request: &Request) -> bool {
     request.is::<TasksCreate>()
         || request.is::<TasksList>()
@@ -140,7 +142,9 @@ impl TaskService {
             }));
         }
         if request.is::<TasksList>() {
-            return Some(run_call::<TasksList>(request, |p| self.office.task_list(p)));
+            return Some(run_call::<TasksList>(request, |p| {
+                list::list_tasks(&self.office, p)
+            }));
         }
         if request.is::<TasksInspect>() {
             return Some(run_call::<TasksInspect>(request, |p| {

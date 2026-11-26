@@ -3,7 +3,8 @@
 `agentic-org` is the human/operator command line and service host entrypoint for **Agentic Org**.
 Managed AI agents use the separate `agent-os` binary (`agent-os --help`).
 
-Run `agentic-org help <command>` or `agentic-org <command> --help` for live in-binary usage.
+Run `agentic-org help <command>` or `agentic-org <command> --help` for live in-binary usage; every
+command's help ends with copy-paste `Examples:`.
 
 ---
 
@@ -89,6 +90,46 @@ agentic-org office list --name hq --json
 
 ---
 
+## Global Options, Output and Exit Codes
+
+Every command takes these flags (before or after the command):
+
+- `--json` — the result as JSON on `stdout` (indented on a terminal, one compact line in a pipe); an error as `{"error": {"code", "message", "help", "exit_code"}}` on `stderr`, with an empty `stdout`. Implies no color and no prompts.
+- `-q, --quiet` — only the primary IDs, one per line (nothing for an empty list or a `--dry-run`). Cannot be combined with `--json` (exit `2`).
+- `--no-input` (or `AGENTIC_ORG_NO_INPUT=1`) — never prompt; a missing value or confirmation fails instead.
+- `--dry-run` — show what would change (`[DRY-RUN] ...` on `stderr`, or `{"dry_run": true, ...}` under `--json`) and change nothing. Office commands (`task`, `msg`, ...) always receive it: a write is previewed, and a command that changes nothing refuses it (exit `2`) instead of running as if it were not given. A `--dry-run` that is a flag's value (`--body --dry-run`) or follows `--` is text, not the flag.
+- `--color auto|always|never` — `auto` honours `NO_COLOR`, `FORCE_COLOR`/`CLICOLOR_FORCE`, `CLICOLOR=0`, `TERM=dumb` and whether the stream is a terminal.
+
+Directories (each an absolute path; an empty variable is unset; a relative one is refused with exit `1`, `cli::config::invalid`, and never read against the working directory):
+
+- `AGENTIC_ORG_CONFIG_DIR` — where the context saved by `agentic-org context use` lives (`cli-context.json`, owner-only). Default: this account's own folder.
+- `AGENTIC_ORG_CACHE_DIR` — the completion cache (`completion/`, created owner-only `0700`). Default: an absolute `XDG_CACHE_HOME` joined with `agentic-org`, else `~/Library/Caches/agentic.org/cli-cache` on macOS and `~/.cache/agentic-org/cli-cache` on Linux — never a shared temporary folder.
+
+Output is shaped for the reader: on a terminal, lists are borderless tables and records aligned cards; in a pipe, lists are header-less tab-separated lines with bare values and no color; notices (empty lists, progress, approval links, `✓` confirmations) go to `stderr` only. Every value that came from a host, an office or a file is escaped before it reaches a terminal (control characters, `U+2028`/`U+2029` and bidirectional overrides are printed as `\u{..}`), and DEL, C1 controls, `U+2028`/`U+2029` and bidirectional controls are escaped (`\uXXXX`) inside every JSON document, the `--json` error envelope included.
+
+Exit codes: `0` success (also when the reader of `stdout` went away, e.g. `| head -1`); `1` a refusal or failure; `2` a command line that cannot be used, or a destructive command without `--yes` where no one can be asked; `4` not signed in or not allowed; `130` cancelled (Ctrl+C at a prompt, or a declined confirmation). Office commands (`task`, `msg`, ...) keep their own `0`/`1`/`2`.
+
+Destructive commands (`office restart|decline|cancel|remove|remove-pending|join|re-enroll`, `context clear`, `admin tls set`, `service stop`) ask for confirmation on a terminal and require `-y, --yes` when no terminal can be asked (a pipe, `--no-input`, `--json`, `-q`). `admin reset` shows its link on a terminal only and keeps its own local confirmation (Touch ID or the login password on a Mac, root on Linux); it also asks a person at the terminal, and needs `--yes` under `--no-input`, `--json` or `-q`. `serve`, `setup` and `recovery` refuse `--json`, `-q` and `--dry-run` (exit `2`; `setup` also when they follow its own flags), and `sign-in` refuses `--dry-run`, instead of ignoring them. `setup` asks for its port only when someone can be asked: never under `--no-input` or `AGENTIC_ORG_NO_INPUT=1`, even on a terminal.
+
+### Selecting the Instance and Office
+
+Host commands act on one instance and, where it matters, one office. Each is chosen in this order: the flag (`--name`/`--instance`, `--office`); the environment (`AGENTIC_ORG_INSTANCE`, `AGENTIC_ORG_OFFICE`; empty means unset); the nearest `agentic-org.toml` in the working directory or above it; the context saved by `agentic-org context use`; then the built-in default (the `default` instance, and the office the host picks). `agentic-org.toml` may hold only these two non-secret names:
+
+```toml
+instance = "lab"
+office = "0193a5c0-0000-7000-8000-000000000001"
+```
+
+Any other key, a control character or an over-long value makes it invalid (exit `1`, `cli::config::invalid`); the error names the line and column and never repeats the file's text. A saved context whose instance name is not an instance name (or holds a control or bidirectional character), or whose office is not an ID, or that is a symbolic link or not a regular file, is refused the same way until `agentic-org context clear` removes it. An `agentic-org.toml`, a saved context or an `--invitation-file` is read only as a regular file of at most 64 KiB, never through a symbolic link (pipe an invitation with `--invitation-stdin` instead). `agentic-org status` shows what was chosen and where it came from.
+
+### Shell Completion
+
+- `agentic-org completion <bash|zsh|fish|elvish|powershell> [--dynamic]`
+  Print the shell's completion script; `--dynamic` (or `COMPLETE=<shell> agentic-org`) asks the binary on every `<TAB>`, completing instance names, organizations, offices and projects from the cache the list commands fill, without contacting a host.
+  **Use when:** enabling `<TAB>` completion of commands, flags and the names this host knows.
+
+---
+
 ## Commands
 
 ### Instance Setup & Lifecycle
@@ -105,12 +146,15 @@ agentic-org office list --name hq --json
 - `agentic-org service start [--name <instance>]`
   Start the instance's registered OS service.
   **Use when:** launching a stopped background host service registered with `launchd`/`systemd`.
-- `agentic-org service stop [--name <instance>]`
-  Stop the instance's registered OS service.
+- `agentic-org service stop [--name <instance>] [--yes]`
+  Stop the instance's registered OS service (asks first on a terminal; `--yes` where no one can be asked).
   **Use when:** cleanly shutting down the registered background host service for maintenance.
 - `agentic-org service status [--name <instance>]`
   Inspect whether the instance's registered OS service is running.
   **Use when:** checking host service health before running organization or office commands.
+- `agentic-org status [--name <instance>] [--office <office_id>]`
+  Show the selected instance and office (and which tier chose them), the instance's service state and the saved context.
+  **Use when:** checking which instance and office commands act on before running them.
 
 ### Sign-In, Context & Administration
 
@@ -123,15 +167,18 @@ agentic-org office list --name hq --json
 - `agentic-org context use --office <office_id> [--name <instance>]`
   Save a default instance and office selection.
   **Use when:** pinning a default office so you do not repeat `--office` and `--name` on every command.
-- `agentic-org context clear`
+- `agentic-org context clear [--yes]`
   Remove the saved CLI context.
   **Use when:** clearing saved defaults before switching to another instance or office.
-- `agentic-org admin reset [--name <instance>] [--user <user>]`
+- `agentic-org admin reset [--name <instance>] [--user <user>] [--yes]`
   Issue a one-time administrator registration or password-reset link after local OS confirmation.
   **Use when:** recovering administrator access, generating an initial registration link, or cancelling an unused registration link.
-- `agentic-org admin tls set --cert <file> --key <file> --login <login> [--name <instance>]`
+- `agentic-org admin tls set --cert <file> --key <file> --login <login> [--name <instance>] [--yes]`
   Install or replace the instance's browser HTTPS certificate pair without restarting the host.
   **Use when:** installing or rotating an HTTPS instance's PEM certificate chain and unencrypted private key.
+- `agentic-org recovery status|release [--name <instance>] [--org <name> | --org-id <id>] [--login <login>] [--redeliver] [--package <file>]`
+  The protected organization recovery client; recovery codes are read from the controlling terminal only.
+  **Use when:** checking or releasing an organization's recovery package as its administrator.
 
 ### Organizations (`org`)
 
@@ -141,13 +188,28 @@ agentic-org office list --name hq --json
 - `agentic-org org list [--login <login>] [--name <instance>] [--json]`
   List organizations visible to the account and any creates in flight.
   **Use when:** finding an `org_id` or HQ office ID, or checking progress on a `--no-wait` organization create.
+- `agentic-org org inspect [--format json|yaml|compact]`
+  Read the organization's record from its office (the office command `org inspect`).
+  **Use when:** checking the organization's name, identifiers and settings from the terminal.
+
+### Backup & Restore (`backup`, `restore`)
+
+- `agentic-org backup <org_id> --out <path> [--office <office_id>] [--encrypt] [--passphrase-file <path> | --passphrase-fd <fd>] [--name <instance>] [--json]`
+  Write one consistent, deterministic `.tar.gz` of the office's `<data-root>/<org_id>/durable/` folder (Org Git `state/`, `messaging/`, `recovery/` with the acceptance journal, `authority/`, `accounting/`, `budgets/`, `checkpoints/`, `blobs/` when present, `local/offices/<id>/` less `enroll-tmp/` and each agent's `runtime/` and `tmp/`), with a versioned `manifest.json` (org, office, journal incarnation and head, `created_at`, and every file's length and SHA-256). `private/task-notes.db` is carried as a consistent SQLite `VACUUM INTO` copy; the disposable `runtime/` folder never is. The office must be stopped (a held `host.lock` or `office.lock` is refused), and the archive is written owner-only and atomically and never replaces a file. `--encrypt` seals it with a passphrase (Argon2id 64 MiB, t=3, p=4 and AES-256-GCM) read from the terminal, `--passphrase-file` (owner-only) or `--passphrase-fd`, never from the command line.
+  **Use when:** taking a local safety-net backup of an organization before maintenance, an upgrade or risky work, with the office stopped (`agentic-org service stop`).
+- `agentic-org restore --verify <archive> [--to <dir>] [--work-dir <dir>] [--passphrase-file <path> | --passphrase-fd <fd>] [--json]`
+  Verify an archive and change nothing: the encryption tag (detected from the archive's first bytes), every member against the manifest (no `..`, absolute paths, links, special, unlisted, duplicated or oversized members), SQLite's `integrity_check` on the notes copy, the journal to its recorded head, the replication state and replicated HQ owner when present, and a full rebuild of the office's projections from it in an owner-only disposable folder (beside `--to` or the archive, or in `--work-dir`; never the shared temporary folder). Paths that differ only in letter case, and other spellings of the notes database or of a path a backup never carries, are refused. `--to` also extracts the verified archive into a new or empty folder.
+  **Use when:** proving a backup actually restores before you rely on it, or inspecting its files without touching the organization.
+- `agentic-org restore <archive> --org <org_id> [--office <office_id>] [--yes] [--passphrase-file <path> | --passphrase-fd <fd>] [--name <instance>] [--json]`
+  Verify the archive in full, then replace the stopped office's durable folder with it (the previous one is kept as `restore-backups/before-*` in the owner-only `restore-backups` folder beside it, where the restore also stages and checks the archive; agent sandboxes never see it) and discard the rebuildable projections. It never resets the host's writer custody: an archive of another incarnation, behind the office's journal or off its chain is refused. Host-local custody, the host registry and accounts, and the office secrets key in the Keychain or credential store are not in a backup; moving an office to another machine is not supported in v1.
+  **Use when:** putting an organization's durable data back on this computer after it was lost or damaged, with the office stopped.
 
 ### Offices & Multi-Office Federation (`office`)
 
 - `agentic-org office list [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   List offices visible to the account (plus local satellite offices for the instance administrator on `host.sock`).
   **Use when:** discovering office IDs, HQ/satellite roles, or checking live readiness and crash backoff status.
-- `agentic-org office restart <office_id> [--login <login>] [--name <instance>] [--json]`
+- `agentic-org office restart <office_id> [--yes] [--login <login>] [--name <instance>] [--json]`
   Restart an offline or unavailable office (instance administrator or organization owner).
   **Use when:** recovering an offline or crashed office without restarting the entire host.
 - `agentic-org office invite <office_name> --address <host:port> [--address <host:port>...] [--org <org_id>] [--ttl <secs>] [--re-enroll-office <office_id>] [--login <login>] [--name <instance>] [--json]`
@@ -159,37 +221,37 @@ agentic-org office list --name hq --json
 - `agentic-org office approve <invitation_id> --code <check_code> [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   Approve a satellite enrollment on HQ using the satellite's out-of-band check code and issue its Org-CA mTLS certificate.
   **Use when:** completing satellite enrollment on HQ after reading the `check_code` printed on the satellite.
-- `agentic-org office decline <invitation_id> [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+- `agentic-org office decline <invitation_id> [--org <org_id>] [--yes] [--login <login>] [--name <instance>] [--json]`
   Decline a satellite invitation on HQ.
   **Use when:** rejecting a pending satellite join request on HQ.
-- `agentic-org office cancel <invitation_id> [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+- `agentic-org office cancel <invitation_id> [--org <org_id>] [--yes] [--login <login>] [--name <instance>] [--json]`
   Cancel an active satellite invitation on HQ.
   **Use when:** revoking an unused satellite invitation on HQ before approval completes.
-- `agentic-org office remove <office_id> [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+- `agentic-org office remove <office_id> [--org <org_id>] [--yes] [--login <login>] [--name <instance>] [--json]`
   Remove a satellite office on HQ and revoke its issued Org-CA certificates.
   **Use when:** decommissioning a satellite office from HQ and revoking its mTLS client certificates.
 - `agentic-org office sync-status [--org <org_id>] [--office <office_id>] [--login <login>] [--name <instance>] [--json]`
   Show live federation and replication sync status for an HQ or satellite office.
   **Use when:** verifying live mTLS federation and replication health on either HQ or a satellite.
-- `agentic-org office join (--invitation-file <path> | --invitation-stdin) --yes [--login <login>] [--name <instance>] [--json]`
+- `agentic-org office join (--invitation-file <path> | --invitation-stdin) [--yes] [--login <login>] [--name <instance>] [--json]`
   Join this host as a satellite office using an HQ-issued invitation token.
   **Use when:** enrolling this remote host as a new satellite office after running `agentic-org setup`.
-- `agentic-org office remove-pending <office_id> [--login <login>] [--name <instance>] [--json]`
+- `agentic-org office remove-pending <office_id> [--yes] [--login <login>] [--name <instance>] [--json]`
   Cancel and remove a pending satellite join before approval completes.
   **Use when:** aborting an unapproved join on the satellite host before HQ approves it.
-- `agentic-org office re-enroll <office_id> (--invitation-file <path> | --invitation-stdin) --yes [--login <login>] [--name <instance>] [--json]`
+- `agentic-org office re-enroll <office_id> (--invitation-file <path> | --invitation-stdin) [--yes] [--login <login>] [--name <instance>] [--json]`
   Re-enroll an existing satellite office onto a replacement HQ after Git import.
   **Use when:** reconnecting an existing satellite office to a replacement HQ after Git recovery import.
 
 ### Projects, Repositories, Worktrees & Tasks
 
-- `agentic-org project list --login <login> [--org <org_id>] [--include-archived] [--name <instance>] [--json]`
+- `agentic-org project list [--login <login>] [--org <org_id>] [--include-archived] [--name <instance>] [--json]`
   List projects in an organization (`agentic-org project --help`).
   **Use when:** discovering active (or archived) projects, `P-<number>` keys, slugs, and owning teams.
-- `agentic-org project inspect <project> --login <login> [--org <org_id>] [--name <instance>] [--json]`
+- `agentic-org project inspect <project> [--login <login>] [--org <org_id>] [--name <instance>] [--json]`
   Inspect one project by ID, `P-<number>` key, or slug.
   **Use when:** checking one project's owning team, contributing teams, and archive status.
-- `agentic-org project create <name> --login <login> [--org <org_id>] [--slug <slug>] [--owner-team <team_id>] [--parent-team <team_id>] [--name <instance>] [--json]`
+- `agentic-org project create <name> [--login <login>] [--org <org_id>] [--slug <slug>] [--owner-team <team_id>] [--parent-team <team_id>] [--name <instance>] [--json]`
   Create a project (creates a dedicated owning team automatically unless `--owner-team` is given).
   **Use when:** creating a new organization project with an accountable owning team.
 
@@ -213,8 +275,8 @@ agentic-org office list --name hq --json
 - `agentic-org provider models [--org <org_id>] [--office <office_id>] [--login <login>] [--name <instance>] [--json]`
   List model profiles available for hiring.
   **Use when:** finding a `model_profile_id` before hiring an agent with `agentic-org hr hire`.
-- `agentic-org release install <bundle.tar.gz | bundle-dir> [--store <dir>] [--json]`
-  Verify Ed25519 signature, closed inventory, and executable hashes, then atomically pin a signed release into this host's release store.
+- `agentic-org release install <bundle.tar.gz | bundle-dir> [--store <dir>] [--no-restart] [--json]`
+  Verify Ed25519 signature, closed inventory, and executable hashes, then atomically pin a signed release into this host's release store. Each instance's registered service that `setup` wrote then moves to the new release (its `launchd` `ProgramArguments` / `systemd` `ExecStart`; arguments and environment unchanged): a running service holds the store, so it is stopped for the install and started again on the new release (`--no-restart` leaves it stopped); a stopped service stays stopped (a stopped `launchd` agent loads again at the next login or with `agentic-org setup`); a failed install starts again what it stopped. A service definition changed by hand, or one running a program outside this store, is left untouched and the install prints the steps to upgrade it. `--json` adds `services` (`instance`, `outcome` `refreshed|unchanged|refused|skipped|failed`, `was_running`, `running`, `program`, `note`), and `services_warning` when the registered services could not be read (the install goes on without them; standard error stays empty or holds only an error's envelope); `--dry-run` lists what would happen to each service (`action`, `running`, and `restart`: whether it would be started again).
   **Use when:** installing or upgrading prebuilt signed binaries on macOS or Linux without compiling from source (see [Remote Satellite Office Setup](remote-office-setup.md)).
 - `agentic-org release status [--store <dir>] [--json]`
   Show the active pinned release ID, sequence, manifest SHA-256, and installed executable paths.
@@ -228,9 +290,18 @@ agentic-org office list --name hq --json
 - `agentic-org hr hire|list|inspect`
   Hire and manage agents across HQ and satellite offices over an approved office channel (confirm or withdraw pending proposals with `hr hire --id <proposal_id> [--withdraw]`).
   **Use when:** hiring an agent onto HQ or a remote satellite office from the terminal.
-- `agentic-org agent inspect|update|move|pause|resume|offboard|execution-get|execution-set`
-  Inspect or manage hired agents and their execution configuration (`model_profile_id`, `model_id`, `permission_preset`, `system_prompt_markdown`) over an approved office channel.
-  **Use when:** checking agent status, placement, lifecycle state, or configuring an agent's model profile, permission preset, and system prompt.
+- `agentic-org agent inspect|update|move|pause|resume|offboard|execution-get|execution-set|approve|sessions|revoke`
+  Inspect or manage hired agents and their execution configuration (`model_profile_id`, `model_id`, `permission_preset`, optional `effort`, `system_prompt_markdown`) over an approved office channel. `execution-set` is a full replacement: `--effort low|medium|high|xhigh|max` sets the agent's reasoning effort (any other value is refused), and leaving it out returns the agent to the runtime's default. Claude Code receives the level as `--effort`; Codex receives it as `model_reasoning_effort`, with `max` running as Codex's highest level, `xhigh`. A changed effort recycles the agent's warm session. `hr hire --effort <level>` sets it at hire.
+  **Use when:** checking agent status, placement, lifecycle state, or configuring an agent's model profile, permission preset, reasoning effort, and system prompt.
+- `agentic-org agent approve <code> [--ttl <duration>] [--takeover]` (also `--code <code>`)
+  Approve an external ("bring your own agent") workspace that ran `agent-os login --as @<handle>`: the code is the one `agent-os login` printed (`ABCD-EFGH`, valid 10 minutes, locked after 3 wrong attempts by people who may approve it; a person without authority over the agent never spends an attempt). The agent gets one active external lease (default `--ttl 24h`, 5 minutes to 7 days); approving supersedes the agent's previous external session and closes its connections. A live managed turn is refused unless `--takeover` parks it first; while the lease is active, the agent's wakes stay queued instead of starting managed runs. Only the owner, a person who may hire, or the agent's manager or team lead may approve; an agent can never approve itself.
+  **Use when:** letting a terminal, IDE or external agent harness act as an organization agent after it asked to sign in.
+- `agentic-org agent sessions @<handle> [--limit <n>]` (also `--member <handle|employee_id>`, `--history-limit <n>`)
+  Show an agent's active external lease (workspace, key fingerprint, approver, expiry) and its recent sign-in history, the last `--limit` entries (default 20, at most 200): lifecycle and security events only (`approved`, `superseded`, `token_issued`, `revoked`, `logout`, `offboarded`, `paused`). Commands an external session runs are counted in the office's memory, never written per command.
+  **Use when:** checking which external workspace an agent is signed in from and until when.
+- `agentic-org agent revoke @<handle> [<session_id>]` (also `--member`, `--session`)
+  End an agent's external lease at once: its fast tokens stop working, its connections close, and its held wakes run again as managed turns. Pausing or offboarding the agent revokes it too.
+  **Use when:** cutting off an external agent session immediately (a lost laptop, a finished pairing session).
 - `agentic-org team list|inspect|create|update`
   Discover, inspect, or create organization teams over an approved office channel.
   **Use when:** finding a `team_id` before hiring agents or creating projects.
@@ -240,9 +311,9 @@ agentic-org office list --name hq --json
 - `agentic-org who`
   List people and agents with live presence and `@handles` over an approved office channel.
   **Use when:** checking active handles and online presence across HQ and satellite offices.
-- `agentic-org repo register|list|attach|status|push`
-  Register and manage organization/project Git repositories and push task branches over an approved office channel.
-  **Use when:** registering a Git repo, attaching it to a project's integration branch, checking office bare-cache status, or pushing a task branch.
+- `agentic-org repo register|list|attach|status|fetch|push`
+  Register and manage organization/project Git repositories, refresh an office's cache of the origin, and push task branches over an approved office channel.
+  **Use when:** registering a Git repo, attaching it to a project's integration branch, checking office bare-cache status, fetching newly pushed origin branches (`repo fetch --repo <id-or-key>`), or pushing a task branch.
 - `agentic-org worktree list|prepare`
   List or prepare isolated task Git worktrees over an approved office channel.
   **Use when:** preparing a clean per-task Git worktree before editing code or inspecting active worktrees.
@@ -255,31 +326,57 @@ agentic-org office list --name hq --json
 - `agentic-org task-note add|list|get|update|remove|publish` (alias: `agentic-org task note ...`)
   Manage private task notes over an approved office channel.
   **Use when:** keeping private working notes on a task or publishing a copy as a shared task comment.
+- `agentic-org directory|person|member|session|grant|process|skill|budget <verb>`
+  The remaining office resources, over the same approved office channel as `task` and `msg`.
+  **Use when:** browsing the directory, people and membership, sessions and grants, organization, team and project processes and standards, agent skills or budgets from the terminal.
+
+Office commands (`msg`, `task`, `who`, `team`, ...) run the same command table as `agent-os`. On a terminal their answers are shown as tables and cards; in a pipe as the table's `compact` form; `--json` (before the command) prints the table's JSON envelope; `--format json|yaml|compact` prints exactly that format; `-q` prints IDs. `<resource> <verb> --help` (or `-h`) ends with a copy-paste `Example:`.
 
 ---
 
 ## `agent-os` Quick Pointer (Managed AI Agents)
 
+`agent-os <resource> <verb> --help` (or `-h`) lists a command's flags and ends with a mechanical, copy-paste `Example:` built from the command's contract example.
+
 Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os <resource> --help`, `agent-os <resource> <verb> --help`, `agent-os <resource> <verb> --schema`). All commands use named flags only (no positional arguments) and return a single deterministic envelope.
+
+`agent-os --help` opens with a four-line quickstart for the shell's binding state: an unbound shell points to `agent-os login --as @<handle>` and `agent-os boot --offline`; a bound one to `agent-os boot` (managed sessions already receive the rules on turn 1, so re-run it only after context compaction).
+
+Contract rules every command follows:
+
+- **Lists are pages.** Every list takes `--limit` (1 to 200, default 20) and `--cursor`; `meta.next_cursor` names the next page and, on counted lists, `meta.total` counts every match (`msg inbox` and `msg list` report no total).
+- **Acknowledgements are truthful.** `--schema` shows each write's `ack`. Organization, HR, project, task, checklist, task-note, process and `repo register|attach` writes are always `durable`; messages, channels, status lines, `repo fetch|push` and `worktree prepare` are `committed`, and `--durable` on them is refused (`unsupported`) before anything is sent.
+- **Retries are safe.** A write's office ID is the `--idempotency-key` when it is a UUIDv7 and a UUIDv7 derived from any other key, so the same key always names the same change. `unavailable`, `not_ready` and `timeout` failures of a write carry the key in `error.retry_with`.
+- **Office error details reach you.** `error.retry_after_ms` (with `rate_limited`) and `error.field` / `error.rule` (an input that broke a rule) are printed when the office reports them.
+- **Yes-or-no flags take no value.** Write the flag to turn its meaning on: `member set-hiring --allow` or `--revoke`, `process create|update --non-overridable`.
+- **Flags are never dropped.** A combination a command cannot honor (for example `msg reply --answer` with `--body`, `msg list --channel` with `--unread-only`) is refused with `invalid_request`.
+- **Shorthands are one command everywhere**: `who` = `directory list`, `task note` = `task-note`, `boot` and `instructions overview` = `session boot`, in a command line, its `--help` and `--schema`, and `session attach` lines.
+
+- `agent-os boot` (shorthand for `agent-os session boot`; also `agent-os instructions overview`)
+  One envelope with the standing rules, the grouped command catalogue, the guide index and, when bound, who you are and the must-follow (non-overridable) processes and standards that apply, whole, within 8 KiB (`mandatory_truncated` and `mandatory_omitted` name any left out, to read with `process inspect`). `--offline` (or a shell without a binding) answers from the binary alone, without the office, in at most 6 KiB; `--project <project>` adds a project's must-follow processes. When a session token or binding file is set, an office or auth failure fails the command; it never falls back to offline.
+  **Use when:** starting work outside a managed session, or after context compaction, to load the rules and catalogue in one call (`agent-os boot --format yaml`).
 
 - `agent-os msg send|ask|reply|accept|withdraw|inbox|read|list|done|defer|unsnooze|wait`
   Direct messages (DMs), channel messages, handoffs, inbox triage, and structured asks. Send a DM with `agent-os msg send --to <handle|employee_id|owner>` or browse a DM with `agent-os msg list --participant <handle>`.
   **Use when:** sending a DM or `#channel` post (`msg send`), asking typed questions/approvals with bounded wait (`msg ask`), replying in a thread or answering an ask (`msg reply`), accepting a handoff (`msg accept`), triaging your inbox (`msg inbox|read|done|defer|unsnooze`), or waiting up to 90s for a reply (`msg wait`).
+  `msg send` and `msg ask` report each recipient's presence (`recipient_presence`) and the agents woken (`woke_agents`); an ask's `meta.status` matches its `data.status` (`waiting`, `timed_out`, `suspended` for `required_pending`, `withdrawn`). Ask one question with `--prompt`, `--question-type choice|yes_no|free_text`, repeated `--option <id>[=<label>]` and `--default-value`, or several with a `questions` array in `--json` (never both).
 - `agent-os channel list|join|leave|summarize`
   Discover channels, manage manual channel membership, and summarize channel Q&A.
   **Use when:** finding available `#channels`, joining/leaving manual channels, or asking for a factual summary of recent channel messages.
 - `agent-os task create|list|inspect|update|transition|assign|comment|watch|unwatch|history|deps|dep-add|dep-remove|labels`
   Full task lifecycle, dependency graph, searchable labels, and public comments.
   **Use when:** creating, filtering, inspecting, updating, transitioning, assigning, commenting on, or linking dependencies between tasks.
+  `task list` pages with `--limit`/`--cursor` (the old `--max-results` is gone) and reports `meta.total`; `--count` answers only the total. Beyond its status, team, assignee, project, label, dependency and text filters it takes `--exclude-status <status>` (repeatable), `--unassigned` and `--modified-file <path>` (that path or any file under it).
 - `agent-os checklist add|check|edit|remove|move`
   Step-level checklist tracking on tasks.
   **Use when:** adding, checking/unchecking, editing, removing, or reordering checklist steps on a task.
 - `agent-os task-note add|list|get|update|remove|publish` (alias: `agent-os task note ...`)
   Private task notes with optional copy-to-comment publishing.
   **Use when:** recording private working notes on a task (`add|list|get|update|remove`) without notifying the team until you choose to `publish` a copy as a public comment.
-- `agent-os repo register|list|attach|status|push`
-  Git repository registry, office bare-cache status, and task-branch pushes.
-  **Use when:** listing registered repos, verifying office bare-cache readiness (`repo status`), registering/attaching a repo, or pushing your task branch (`repo push`).
+- `agent-os repo register|list|attach|status|fetch|push`
+  Git repository registry, office bare-cache status, on-demand origin fetch, and task-branch pushes.
+  **Use when:** listing registered repos, verifying office bare-cache readiness (`repo status`), registering/attaching a repo, seeing branches pushed to the origin after your worktree was prepared (`repo fetch --repo <id-or-key>`), or pushing your task branch (`repo push`).
+  `repo fetch` asks the office to refresh its cache of the origin with the office's own credentials (none reach your session); afterwards `git branch -r` in your task worktree shows new `origin/*` branches. It writes only `origin/*` refs and tags, never your checkout or uncommitted edits, and answers `added`/`updated`/`pruned` branches, `default_branch`, `head_oid` and `fetched_at`. One fetch per repository runs at a time and a repository is fetched at most once every 10 seconds (`rate_limited` otherwise); an unreachable origin answers `unavailable`, leaving a `ready` cache as it was; a cache that was never filled is recorded `failed` until a fetch succeeds.
 - `agent-os worktree list|prepare`
   Isolated per-task Git worktrees.
   **Use when:** preparing a clean task worktree before making code changes (`worktree prepare`) or inspecting active worktrees (`worktree list`).
@@ -293,17 +390,33 @@ Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os 
   Effective organization, team, and project processes and standards.
   **Use when:** checking mandatory or overridable rules for your scope (`process list`), reading full guidance or `--why` inheritance chains (`process inspect`), or authoring/updating a process or standard.
 - `agent-os skill list|read`
-  Built-in on-demand `agent-os` product skills.
-  **Use when:** discovering (`skill list`) or loading (`skill read`) built-in operational guides on demand.
-- `agent-os session inspect|attach`
-  Self-inspection and persistent JSON-line batching over one office socket.
-  **Use when:** inspecting your live session/usage (`session inspect`) or pipelining multiple commands in one shell turn without rebinding (`session attach`).
+  Built-in on-demand `agent-os` product skills: `agent-os-basics`, `tasks-create`, `tasks-execute`, `tasks-finalize`, `messaging-and-asks`, `channels`, `code-and-worktrees`, `hiring-and-directory`, `processes-and-standards`, `budgets`, `errors-and-recovery` and `batch-and-attach` (bodies in `crates/org-process/skills/`, each checked flag by flag against the live command table).
+  **Use when:** discovering (`skill list`) or loading (`skill read --name <key>`) built-in operational guides on demand.
+- `agent-os session boot|inspect|attach`
+  Boot context (`session boot`, above), self-inspection and persistent JSON-line batching over one office socket.
+  **Use when:** loading your rules and catalogue (`session boot`), inspecting your live session/usage (`session inspect`) or pipelining multiple commands in one shell turn without rebinding (`session attach`).
+  `session attach` takes no flags (exit 2 otherwise) and exits 1 with the office's hint when it cannot bind. A line has only `command`, `input` and `options`; every answer is one line of JSON, so a line with another key, a `format` other than `json`, `stdin` or `help` is refused before anything is sent.
 - `agent-os grant list`
   Effective permission preset, tool rules, and sandbox boundaries.
   **Use when:** verifying your writable roots, denied paths, and effective tool allow/deny rules.
 - `agent-os budget status`
   Own daily, monthly, and task budget status.
   **Use when:** checking remaining budget allowance before starting expensive work.
+- `agent-os login --as @<handle> [--office <office_id> | --socket <path>] [--wait <seconds>] [--workspace <dir>] [--label <text>]`
+  Sign a workspace in as an organization agent you bring yourself: generates a workspace Ed25519 key, prints `agentic-org agent approve <code>` (and the agent's page in the web app) on standard error, waits for a person to approve it (`--wait`, default 120 seconds; the code stays valid 10 minutes), then saves the binding outside Git in `<application base>/agent-os/workspaces/<sha256 of the workspace root>/` (`0700`: `binding.v1.json`, `key.ed25519.pkcs8`, `token.v1`, each `0600`, never through a symbolic link) and prints `whoami` plus the command catalogue. The workspace root is the Git root of the working folder (else the folder). A development build may move the state with `AGENT_OS_STATE_DIR` or `ORG_DEV_ACCOUNT_BASE`.
+  **Use when:** running your own agent harness (or a terminal) as an organization agent instead of an office-launched managed run.
+- `agent-os whoami`
+  The agent, office, mode (`managed` or `external`), session and expiries this shell acts as.
+  **Use when:** checking which identity a command will act as before running it.
+- `agent-os logout [--workspace <dir>]`
+  End this workspace's external session on the office (signed with the workspace key) and remove its local binding, key and token.
+  **Use when:** finishing work in an external workspace or handing the agent back to managed runs.
+- `agent-os exec --as @<handle> [--ttl <duration>] [--takeover] [--office <office_id> | --socket <path>] -- <command...>`
+  Mint an external session with your signed-in `agentic-org` (`agentic-org agent approve --code <code>`, or `AGENTIC_ORG_BIN`), run the command with `AGENT_OS_SESSION_TOKEN`, `AGENT_OS_BINDING_FILE`, `AGENT_OS_SOCKET` and `AGENT_OS_AGENT_ID` set (the token file is refreshed while it runs), and end the session when it exits. Ctrl-C goes to the command; `SIGTERM` or `SIGHUP` to `agent-os exec` is forwarded to it (killed after 10 seconds). Either way the session is ended and the token file removed, and `agent-os exec` exits with the command's code (128 + the signal when a signal ended it).
+  **Use when:** launching one external agent harness as an organization agent without a manual approval step.
+
+Binding order: `AGENT_OS_BINDING_FILE` / `AGENT_OS_SESSION_TOKEN` with `AGENT_OS_SOCKET` (or `AGENT_OS_OFFICE`) always win (managed runs and `agent-os exec`); otherwise `agent-os` walks up from the working folder to its Git root looking for a signed-in workspace. An external workspace's fast token lives in office memory only (1 hour); a stale token, or one the office no longer knows after a restart, is refreshed with one Ed25519 challenge-response. Sign-in calls (`auth.*`) have an office-wide budget per kind of call besides each connection's own; a refused call answers `rate_limited` with `retry_after_ms`, and a waiting `agent-os login` keeps polling. An external session may only use collaboration commands (messages, chat, tasks, directory, status, projects, processes, skills, own budget).
+
 - `agent-os org|team|person|agent|project|role|hr|member <verb>`
   Organization structure, directory cards, role catalog, and HR hiring lifecycle.
   **Use when:** inspecting org/team/project structure, reading role definitions, or running authorized HR hiring and agent lifecycle workflows.

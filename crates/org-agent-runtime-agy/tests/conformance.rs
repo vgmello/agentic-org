@@ -45,6 +45,7 @@ fn sample_spec() -> SessionSpec {
         workspace: sp("/work/t-1"),
         read_only_dirs: vec![sp("/homes/ada")],
         instructions: "Follow workspace rules.".to_owned(),
+        repository_instructions: String::new(),
         permission_mode: PermissionMode::Ask,
         policy: PermissionPolicy {
             version: 1,
@@ -228,7 +229,7 @@ fn handshake_injects_system_prompt_selects_model_and_supports_resume_and_timeout
     assert_eq!(open_json["params"]["mcpServers"][0]["name"], "office");
     assert_eq!(
         open_json["params"]["_meta"]["antigravity"]["systemPrompt"]["append"],
-        "You are ada.\n\nFollow workspace rules."
+        "Follow workspace rules.\n\nYou are ada."
     );
 
     // Server defaults to neon-high; adapter must emit `session/set_model` for neon-xhigh before Ready.

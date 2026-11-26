@@ -1,6 +1,6 @@
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+pub use crate::call::{Call, Empty};
 use crate::types::{OfficeInfo, Organization};
 
 /// The identity an office server reports in `hello`.
@@ -10,18 +10,6 @@ pub struct OfficeHello {
     pub organization_name: String,
     pub office: OfficeInfo,
 }
-
-/// One method of the API: its wire name and the shapes of its params and result.
-/// Params and results are JSON objects (structs), so fields can be added later.
-pub trait Call {
-    const METHOD: &'static str;
-    type Params: Serialize + DeserializeOwned;
-    type Result: Serialize + DeserializeOwned;
-}
-
-/// Params or result with no fields. Serializes as `{}`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Empty {}
 
 /// `hello`: the first call on a connection. The client checks `api_version`.
 ///

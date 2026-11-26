@@ -22,10 +22,10 @@ use super::{
     stable, Feature, Op, RejectCode, NOT_AUTHORIZED,
 };
 use crate::organization::{
-    ports::OrganizationRead,
+    ports::{OrganizationRead, TeamDependents},
     records::{
         self, AgentExecutionConfig, Employee, EmployeeKind, EmployeeStatus, Meta, ModelProfile,
-        PermissionPreset, ProviderAuthMode, ProviderConnection, Team,
+        PermissionPreset, ProviderAuthMode, ProviderConnection, ReasoningEffort, Team,
     },
 };
 
@@ -60,7 +60,7 @@ impl Feature for UpdateAgent {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         stable(&self.id, "the agent's ID")?;
         if let Some(role_id) = &self.role_id {
@@ -243,7 +243,7 @@ impl Feature for MoveAgent {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         stable(&self.id, "the agent's ID")?;
         stable(&self.home_team, "the destination team's ID")?;
@@ -347,7 +347,7 @@ impl Feature for SetAgentStatus {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         stable(&self.id, "the agent's ID")?;
         let admitted = admit_active_employee(uow, here, by)?;
@@ -413,7 +413,7 @@ impl Feature for OffboardAgent {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         stable(&self.id, "the agent's ID")?;
         let admitted = admit_active_employee(uow, here, by)?;
@@ -478,6 +478,10 @@ pub struct UpsertAgentExecution {
     pub model_id: String,
     pub tools_config: Vec<String>,
     pub permission_preset: PermissionPreset,
+    /// Left out of the operation fingerprint when `None`, so a retry from before `TASK-181`
+    /// still matches its receipt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<ReasoningEffort>,
     pub enabled: bool,
     pub system_prompt_markdown: String,
 }
@@ -493,7 +497,7 @@ impl Feature for UpsertAgentExecution {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         stable(&self.employee_id, "the agent's ID")?;
         stable(&self.model_profile_id, "the model profile's ID")?;
@@ -550,6 +554,7 @@ impl Feature for UpsertAgentExecution {
             model_id: self.model_id.clone(),
             tools_config: self.tools_config.clone(),
             permission_preset: self.permission_preset,
+            effort: self.effort,
             enabled: self.enabled,
             meta,
             system_prompt_markdown: self.system_prompt_markdown.clone(),
@@ -594,7 +599,7 @@ impl Feature for CreateProviderConnection {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         stable(&self.id, "the connection's ID")?;
         stable(&self.default_profile_id, "the default profile's ID")?;
@@ -689,7 +694,7 @@ fn check_provider_fields(cmd: &CreateProviderConnection) -> Result<(), Refusal> 
 }
 
 fn validate_provider_connection(
-    view: &impl crate::projects::ports::ProjectsRead,
+    view: &impl TeamDependents,
     organization: &records::Organization,
     cmd: &CreateProviderConnection,
 ) -> Result<(), Refusal> {
@@ -740,7 +745,7 @@ impl Feature for SetWatchingModel {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         if let Some(pid) = &self.model_profile_id {
             stable(pid, "the watching model profile's ID")?;

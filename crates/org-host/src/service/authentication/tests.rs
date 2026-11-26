@@ -1,7 +1,19 @@
+use super::super::listener::Connection;
 use super::*;
+use crate::accounts::identity::{AccountId, LoginKey};
+use crate::host_secrets::HostSecrets;
 use crate::host_secrets::{Name, Value};
-use crate::hostdb::HostDbInit;
+use crate::hostdb::lockout::{Outcome, Socket};
+use crate::hostdb::{HostDb, HostDbInit};
+use org_host_control::ops::AccountVerifyResult;
+use org_host_control::{Password, SessionHandle};
+use org_proto::ErrorCode;
+use sha2::Sha256;
+use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 // These behavioral tests use production Argon2 parameters in a parallel debug
 // suite. This bounds a hung test; sign-in latency is not the assertion here.
@@ -667,7 +679,7 @@ fn session_64_cross_office_permissions_prune_physical_closure_before_limit_65() 
 #[test]
 fn actual_close_denies_grants_and_logout_revokes_without_freeing_a_held_descriptor() {
     use crate::supervisor::channels::tests::{await_closed, worker_fixture};
-    use org_office_launch::ChannelKind;
+    use org_office_launch::{ChannelKind, MAX_CHANNELS, MAX_WEB_CHANNELS};
     let (_root, auth, connection) = fixture();
     let signed_in = login(&auth, &connection);
     link_owner(&auth, &connection, &signed_in.session);
@@ -710,8 +722,14 @@ fn actual_close_denies_grants_and_logout_revokes_without_freeing_a_held_descript
         slot.is_live(),
         "logout ends permission, not physical peer ownership"
     );
-    let _held: Vec<_> = (0..7)
+    // Fill every other ordinary slot: the web allowance, then local callers up to the total,
+    // beside the logged-out channel's still-held descriptor.
+    let _held: Vec<_> = (0..MAX_WEB_CHANNELS)
         .map(|_| worker.endpoint.open(ChannelKind::Web).unwrap())
+        .chain(
+            (MAX_WEB_CHANNELS + 1..MAX_CHANNELS)
+                .map(|_| worker.endpoint.open(ChannelKind::Local).unwrap()),
+        )
         .collect();
     assert!(worker.endpoint.open(ChannelKind::Local).is_err());
     drop(stream);

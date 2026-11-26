@@ -1,7 +1,7 @@
 //! GNU/Linux: the directory store, and the release directory.
 //!
 //! There is no Keychain, so a Keychain location is refused. A release build's
-//! protected store is a release directory (`linux/release.rs`): a checked, locked
+//! protected store is a release directory (`linux/release/`): a checked, locked
 //! directory outside the data root, below which each item store is a directory store.
 
 mod release;

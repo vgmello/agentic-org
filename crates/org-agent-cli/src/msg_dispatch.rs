@@ -1,27 +1,21 @@
 //! Dispatch for B6 `msg`, `channel`, and `status` commands over [`OfficeTransport`] (`TASK-45`).
 
-use org_command::{Ack, Answer, Refusal, Request};
-use org_proto::ask::{
-    AskStatus, ChatAnswerResult, ChatAskResult, ChatWaitAskResult, MsgWithdrawResult,
-    MAX_SHORT_HOLD_MS,
-};
-use org_proto::chat::{ChatChannelsResult, ChatInboxResult, ChatMessagesResult, ChatSendResult};
-use org_proto::directory::StatusSetResult;
-use org_proto::msg::{HeaderPage, MsgReadResult, MsgWaitResult, SendResult, MAX_WAIT_MS};
+use org_command::{Answer, Refusal, Request};
+use org_proto::ask::AskStatus;
+use org_proto::chat::ChatSendResult;
+use org_proto::directory::{RecipientPresence, StatusSetResult};
+use org_proto::msg::SendResult;
 use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
 
-use crate::dispatch::OfficeTransport;
-use crate::keys::try_new_uuid_v7;
+use crate::transport::{command_id, write_ack, OfficeTransport};
 
 mod ask;
+mod ask_input;
 mod channel;
 mod read;
 
-use ask::{
-    insert_ask_outcome_fields, write_msg_accept, write_msg_answer, write_msg_ask,
-    write_msg_withdraw,
-};
+use ask::{write_msg_accept, write_msg_answer, write_msg_ask, write_msg_withdraw};
 use channel::try_channel;
 use read::{read_msg_inbox, read_msg_list, read_msg_read, read_msg_wait};
 
@@ -84,19 +78,24 @@ fn try_status<T: OfficeTransport + ?Sized>(
     }
 }
 
+/// The message's ID: the caller's UUIDv7 key as it is, or the UUIDv7 derived from any other
+/// key, so a retry with the same `--idempotency-key` is the same message and never a second one.
 fn message_id_for(request: &Request) -> Result<String, Refusal> {
-    if let Some(key) = &request.idempotency_key {
-        if org_proto::is_uuid_v7(key) {
-            return Ok(key.clone());
-        }
-    }
-    try_new_uuid_v7().ok_or_else(|| {
-        Refusal::new(
-            ErrorCode::Unavailable,
-            "Could not mint a canonical UUIDv7 message ID.",
-            "Retry the command or supply a UUIDv7 --idempotency-key.",
-        )
-    })
+    command_id(request, "msg-message")
+}
+
+/// Who the office reported on and woke for a message or an ask: each recipient's presence when
+/// it was sent, and the agents it woke. Always both lists, empty when there is no one.
+fn insert_delivery(
+    obj: &mut Map<String, Value>,
+    presence: &[RecipientPresence],
+    woke_agents: &[String],
+) {
+    obj.insert(
+        "recipient_presence".into(),
+        serde_json::to_value(presence).unwrap_or(Value::Array(Vec::new())),
+    );
+    obj.insert("woke_agents".into(), json!(woke_agents));
 }
 
 fn write_msg_send<T: OfficeTransport + ?Sized>(
@@ -124,16 +123,16 @@ fn write_msg_send<T: OfficeTransport + ?Sized>(
     }
     let raw = transport.call_method("chat.send", Value::Object(params))?;
     let res: ChatSendResult = serde_json::from_value(raw).map_err(|_| decode_err("chat.send"))?;
-    let val = json!({
-        "id": res.id,
-        "conversation_id": res.conversation_id,
-        "thread_id": res.thread_id,
-        "local_seq": res.local_seq,
-        "origin_seq": res.origin_seq,
-        "mentions": res.mentions,
-        "unmatched_mentions": res.unmatched_mentions,
-    });
-    Ok(with_ack(Answer::completed(val), request))
+    let mut obj = Map::new();
+    obj.insert("id".into(), json!(res.id));
+    obj.insert("conversation_id".into(), json!(res.conversation_id));
+    obj.insert("thread_id".into(), json!(res.thread_id));
+    obj.insert("local_seq".into(), json!(res.local_seq));
+    obj.insert("origin_seq".into(), json!(res.origin_seq));
+    obj.insert("mentions".into(), json!(res.mentions));
+    obj.insert("unmatched_mentions".into(), json!(res.unmatched_mentions));
+    insert_delivery(&mut obj, &res.recipient_presence, &res.woke_agents);
+    Ok(with_ack(Answer::completed(Value::Object(obj)), request))
 }
 
 struct AskOutcomeRef<'a> {
@@ -153,9 +152,26 @@ fn write_msg_reply<T: OfficeTransport + ?Sized>(
     reject_dry_run(request)?;
     let to_id = require_str(request, "id")?;
     if let Some(answer_raw) = opt_str(request, "answer") {
+        // An answer to an ask carries no text of its own: a flag it would drop is refused.
+        if let Some(flag) = ["body", "subject", "priority"]
+            .into_iter()
+            .find(|name| request.input.contains_key(*name))
+        {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                format!("--answer cannot be combined with --{flag}: an answer to an ask carries no text, subject or priority."),
+                "Answer the ask with --id and --answer alone, or reply in its thread with --body and no --answer.",
+            ));
+        }
         return write_msg_answer(transport, request, to_id, answer_raw);
     }
-    let body = require_str(request, "body")?;
+    let body = opt_str(request, "body").ok_or_else(|| {
+        Refusal::new(
+            ErrorCode::InvalidRequest,
+            "`msg reply` needs --body, or --answer to answer an ask.",
+            "Pass --body <text> (or --input-file <path>) to reply, or --answer <json> to answer an ask.",
+        )
+    })?;
     let id = message_id_for(request)?;
     let mut params = Map::new();
     params.insert("id".into(), Value::String(id));
@@ -297,12 +313,10 @@ fn write_status<T: OfficeTransport + ?Sized>(
     Ok(with_ack(Answer::completed(Value::Object(obj)), request))
 }
 
+/// A write's answer with the acknowledgement its row declares (`committed` for messages,
+/// channels and status lines; `--durable` never reaches them, see `transport::refuse_durable`).
 fn with_ack(mut answer: Answer, request: &Request) -> Answer {
-    answer.ack = Some(if request.durable {
-        Ack::Durable
-    } else {
-        Ack::Committed
-    });
+    answer.ack = Some(write_ack(request));
     answer
 }
 

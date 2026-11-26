@@ -6,11 +6,10 @@ use std::{sync::Arc, time::Instant};
 
 use crate::{
     engine::Engine,
-    error::StoreError,
-    files::FilesError,
-    journal::JournalError,
+    error::{FilesError, JournalError, StoreError},
+    hooks::Site,
     rebuild::materialize,
-    store::{Core, Site},
+    state::Core,
 };
 
 pub(crate) fn run<E: Engine>(core: Arc<Core<E>>) {
@@ -39,12 +38,16 @@ pub(crate) fn run<E: Engine>(core: Arc<Core<E>>) {
                 let urgent = !flow.waiters.is_empty()
                     || flow.closing
                     || flow.sync_wanted
+                    || flow.flush_now
                     || flow.holding_back;
                 if (unflushed && urgent) || behind {
+                    flow.flush_now = false;
                     break;
                 }
                 if !unflushed {
                     deadline = None;
+                    // Nothing left to flush: an immediate-flush request is satisfied.
+                    flow.flush_now = false;
                     if flow.sync_wanted {
                         flow.sync_wanted = false;
                         core.wake.notify_all();

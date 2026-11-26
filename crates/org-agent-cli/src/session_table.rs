@@ -1,8 +1,10 @@
 //! `org-command` table rows for C3 session inspection (`CLI-9`), effective grants (`CLI-10`),
-//! and directory lookup (`who` / `B2 Q9`).
+//! directory lookup (`who` / `B2 Q9`) and `session boot` ([`boot`]).
 
 use org_command::{Command, Example, Field, Kind, Type};
 use org_proto::ErrorCode;
+
+mod boot;
 
 const READ_ERRORS: &[ErrorCode] = &[
     ErrorCode::InvalidRequest,
@@ -185,6 +187,7 @@ const DIRECTORY_CARD_FIELDS: &[Field] = &[
 ];
 
 pub static SESSION_COMMANDS: &[Command] = &[
+    boot::SESSION_BOOT,
     Command {
         resource: "session",
         verb: "inspect",

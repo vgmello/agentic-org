@@ -38,7 +38,7 @@ use super::{
 };
 use crate::{
     setup_flow::{
-        office_command::Target,
+        cli_session::Target,
         sign_in_command::{approve_on_target, open_approved_office, ApprovedOfficeChannel},
     },
     Host,
@@ -161,7 +161,8 @@ fn verify_declined_link(socket: &Path, instance_id: &str, browser: &Browser) {
     );
     assert_eq!(again.status, 404, "{}", again.body);
     let err = worker.join().unwrap().err().expect("declined sign-in");
-    assert!(err.contains("declined"), "{err}");
+    assert!(err.message.contains("declined"), "{err:?}");
+    assert_eq!(err.kind, crate::setup_flow::HostCliErrorKind::Auth);
 }
 
 fn exercise_team_and_cli_contracts(channel: &mut ApprovedOfficeChannel, root_team: &str) -> String {

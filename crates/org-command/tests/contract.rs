@@ -11,9 +11,9 @@ use org_command::testkit::{
     StubOffice, StubSources, HARD_TEXT, SAMPLE_ROWS,
 };
 use org_command::{
-    envelope_schema, run, Ack, Answer, Command, CommandTable, Example, Field, IfMatch, KeySource,
-    Kind, Node, Office, Output, Refusal, Request, Status, Type, MAX_INPUT_BYTES,
-    MAX_YAML_INPUT_BYTES,
+    envelope_schema, run, Ack, Alias, Answer, Command, CommandTable, Example, Field, IfMatch,
+    KeySource, Kind, Node, Office, Output, Refusal, RefusalDetails, Request, Status, Type,
+    MAX_INPUT_BYTES, MAX_YAML_INPUT_BYTES,
 };
 use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
@@ -99,9 +99,7 @@ fn a_row_is_added_without_touching_the_parser() {
         json!({"widget_id": "W-1", "new_name": "Sprocket"})
     );
     assert_eq!((request.if_match, request.durable), (Some(7), true));
-    assert!(table
-        .catalogue()
-        .contains("widget rename: Rename a widget\n"));
+    assert!(table.catalogue().contains("\nwidget: rename\n"));
     let (help, _) = run_stub(&table, &args(&["--help"]), &mut StubSources::default());
     assert!(help.stdout.contains("widget"), "{}", help.stdout);
 }
@@ -761,6 +759,163 @@ fn help_is_text_at_three_levels_and_never_calls_the_office() {
 }
 
 #[test]
+fn short_help_is_help_at_three_levels_and_a_value_where_a_flag_takes_one() {
+    let table = sample_table();
+    for (short, long) in [
+        (&["-h"][..], &["--help"][..]),
+        (&["sample", "-h"], &["sample", "--help"]),
+        (&["sample", "create", "-h"], &["sample", "create", "--help"]),
+        (
+            &["sample", "create", "--priority", "high", "-h"],
+            &["sample", "create", "--help"],
+        ),
+    ] {
+        let (output, office) = run_stub(&table, &args(short), &mut StubSources::default());
+        let (expected, _) = run_stub(&table, &args(long), &mut StubSources::default());
+        assert_eq!(output, expected, "{short:?}");
+        assert_eq!(output.exit_code, 0, "{short:?}");
+        assert!(office.calls.is_empty(), "{short:?}");
+    }
+    // As the value of a flag that takes one, `-h` is that value.
+    let request = sent(&table, &["sample", "create", "--title", "-h"]);
+    assert_eq!(Value::Object(request.input), json!({"title": "-h"}));
+}
+
+#[test]
+fn command_help_ends_with_its_example_as_one_line_a_shell_reads_back() {
+    let table = sample_table();
+    let (output, _) = run_stub(
+        &table,
+        &args(&["sample", "create", "--help"]),
+        &mut StubSources::default(),
+    );
+    let example = output
+        .stdout
+        .split("\nExample:\n  ")
+        .nth(1)
+        .expect("an Example section");
+    assert!(
+        example.ends_with('\n') && example.lines().count() == 1,
+        "{example}"
+    );
+    assert!(
+        example.starts_with("agent-os sample create --title 1.5 "),
+        "{example}"
+    );
+    // A list repeats its flag, a yes-or-no is bare, text a shell would split is quoted and
+    // fields with structure go in one --json object, in name order.
+    for part in [
+        "--body 'Short body'",
+        "--labels 'a b' --labels yes",
+        "--urgent",
+        r#"--json '{"extra":{"a":[null],"z":1},"owner":{"id":"E-1","name":"Ada"}}'"#,
+    ] {
+        assert!(example.contains(part), "`{part}` is not in {example}");
+    }
+    let (inspect, _) = run_stub(
+        &table,
+        &args(&["sample", "update", "--help"]),
+        &mut StubSources::default(),
+    );
+    assert!(
+        inspect.stdout.ends_with(
+            "\nExample:\n  agent-os sample update --id S-1 --title Renamed --if-match 1\n"
+        ),
+        "{}",
+        inspect.stdout
+    );
+    let words = org_command::testkit::shell_words("a 'b c' 'it'\\''s' --json '{\"k\":\"v\"}'");
+    assert_eq!(words, ["a", "b c", "it's", "--json", r#"{"k":"v"}"#]);
+}
+
+#[test]
+fn json_escapes_del_c1_and_line_separators_and_reads_back_the_same() {
+    let hostile =
+        "ok\u{7f}del\u{80}c1\u{9b}31mcsi\u{9f}\u{2028}ls\u{2029}ps\u{1b}[2Jesc\u{a0}nbsp é";
+    let node = Node::map([
+        ("text", Node::text(hostile)),
+        (hostile, Node::List(vec![Node::text(hostile)])),
+    ]);
+    let json = node.to_json();
+    for raw in [
+        '\u{7f}', '\u{80}', '\u{9b}', '\u{9f}', '\u{2028}', '\u{2029}', '\u{1b}',
+    ] {
+        assert!(!json.contains(raw), "{raw:?} is raw in {json}");
+    }
+    for escape in [
+        "\\u007f", "\\u0080", "\\u009b", "\\u009f", "\\u2028", "\\u2029", "\\u001b",
+    ] {
+        assert!(json.contains(escape), "{escape} is not in {json}");
+    }
+    // Printable text past the C1 block is kept as it is.
+    assert!(json.contains("\u{a0}nbsp é"), "{json}");
+    let back: Value = serde_json::from_str(&json).expect("valid JSON");
+    assert_eq!(back, node.to_value());
+    assert_eq!(json.lines().count(), 1);
+}
+
+/// B-07: the bidirectional marks, embeddings, overrides and isolates never reach a reader
+/// raw in any printed form (JSON, compact, YAML), and the JSON reads back the same.
+#[test]
+fn every_format_escapes_bidi_controls_and_json_reads_back_the_same() {
+    const BIDI: [char; 12] = [
+        '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}',
+        '\u{202e}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+    ];
+    let hostile: String = BIDI.iter().flat_map(|c| ['x', *c]).collect();
+    let node = Node::map([
+        ("office", Node::text(hostile.as_str())),
+        (
+            hostile.as_str(),
+            Node::List(vec![Node::text(hostile.as_str())]),
+        ),
+    ]);
+    let json = node.to_json();
+    let compact = node.to_compact(&[]);
+    let yaml = node.to_yaml();
+    for c in BIDI {
+        let escape = format!("\\u{:04x}", u32::from(c));
+        for (format, printed) in [("json", &json), ("compact", &compact), ("yaml", &yaml)] {
+            assert!(!printed.contains(c), "{c:?} is raw in {format}: {printed}");
+            assert!(
+                printed.contains(&escape),
+                "{escape} not in {format}: {printed}"
+            );
+        }
+    }
+    let back: Value = serde_json::from_str(&json).expect("valid JSON");
+    assert_eq!(back, node.to_value());
+    // Neighbours of the escaped ranges are ordinary text, printed as they are.
+    let plain = Node::text("\u{2027}\u{202f}\u{2065}\u{206a}");
+    assert!(plain.to_json().contains("\u{2027}\u{202f}\u{2065}\u{206a}"));
+}
+
+#[test]
+fn a_refusal_envelope_line_matches_the_envelope_schema_and_keeps_the_hint() {
+    let mut refusal = Refusal::new(
+        ErrorCode::NotAuthorized,
+        "No office binding.\u{9b}31m",
+        "Run agent-os inside an office-started agent session.",
+    );
+    refusal.operation_id = Some("op-1".to_owned());
+    let line = org_command::failure_envelope_json(&refusal, true);
+    assert!(!line.contains('\n') && !line.contains('\u{9b}'), "{line}");
+    let envelope: Value = serde_json::from_str(&line).expect("one JSON line");
+    validate_schema(&envelope_schema(), &envelope).expect("the envelope schema");
+    assert_eq!(
+        envelope,
+        json!({"ok": false, "data": null, "meta": {"operation_id": "op-1", "dry_run": true}, "error": {
+            "code": "not_authorized", "message": "No office binding.\u{9b}31m",
+            "hint": "Run agent-os inside an office-started agent session."
+        }})
+    );
+    assert!(
+        line.starts_with(r#"{"ok":false,"data":null,"meta":{"#),
+        "{line}"
+    );
+}
+
+#[test]
 fn a_table_refuses_a_row_that_breaks_the_grammar() {
     let good = SAMPLE_ROWS[0];
     const RESERVED: &[Field] = &[Field::optional("dry_run", Type::Boolean, "No")];
@@ -1280,10 +1435,14 @@ fn a_write_without_a_key_is_given_one() {
         }
     }
 
-    // On failure the key is reported too. For `unavailable` and `not_ready`, `retry_with`
-    // carries it, beside what the office already said to change.
+    // On failure the key is reported too. For `unavailable`, `not_ready` and `timeout`,
+    // `retry_with` carries it, beside what the office already said to change.
     let refusal = |code| Refusal::new(code, "It did not answer.", "Repeat the call.");
-    for code in [ErrorCode::Unavailable, ErrorCode::NotReady] {
+    for code in [
+        ErrorCode::Unavailable,
+        ErrorCode::NotReady,
+        ErrorCode::Timeout,
+    ] {
         let (output, _, _) = run_counted(create, Some(refusal(code)));
         let envelope = json_envelope(&output, "a failure");
         assert_eq!(output.exit_code, 1);
@@ -1679,4 +1838,159 @@ fn compact_keeps_one_value_on_one_line_and_tells_values_apart() {
         list.to_compact(&["a", "b"]),
         "null\t\n\"\"\t\"null\"\n\tx\n"
     );
+}
+
+/// `check` reads a line exactly as `run` does and stops there: it refuses what `run` refuses
+/// with exit code 2, with the same message, and accepts what `run` would answer or send, without
+/// asking for a key or calling the office.
+#[test]
+fn check_reads_a_line_like_run_and_calls_nothing() {
+    let table = sample_table();
+    let lines: [&[&str]; 9] = [
+        &["sample", "inspect", "--id", "S-1"],
+        &["sample", "inspect", "--help"],
+        &["sample", "list", "--schema"],
+        &["sample", "create", "--title", "A", "--body", "B"],
+        &["sample", "destroy"],
+        &["sample", "inspect", "S-1"],
+        &["sample", "inspect", "--id"],
+        &["sample", "inspect", "--id", "S-1", "--dry-run"],
+        &["sample", "inspect", "--id", "S-1", "--nope", "x"],
+    ];
+    for line in lines {
+        let checked =
+            org_command::check(&table, "agent-os", &args(line), &mut StubSources::default());
+        let (output, office) = run_stub(&table, &args(line), &mut StubSources::default());
+        match checked {
+            Ok(()) => assert_ne!(output.exit_code, 2, "{line:?}: {}", output.stdout),
+            Err(refusal) => {
+                assert_eq!(output.exit_code, 2, "{line:?}");
+                assert_eq!(refusal.code, ErrorCode::InvalidRequest);
+                let envelope = json_envelope(&output, &format!("{line:?}"));
+                assert_eq!(envelope["error"]["message"], json!(refusal.message));
+                assert_eq!(envelope["error"]["hint"], json!(refusal.hint));
+                assert!(office.calls.is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn a_refusal_carries_the_offices_retry_delay_field_and_rule() {
+    let table = sample_table();
+    let refusal = Refusal {
+        details: Some(Box::new(RefusalDetails {
+            retry_after_ms: Some(1500),
+            field: Some("title".to_owned()),
+            rule: Some("too_long".to_owned()),
+        })),
+        ..Refusal::new(
+            ErrorCode::RateLimited,
+            "Too many attempts.",
+            "Wait, then retry.",
+        )
+    };
+    let output = answered(&table, &["sample", "inspect", "--id", "S-1"], Err(refusal));
+    assert_eq!(output.exit_code, 1);
+    assert_eq!(
+        output.stdout,
+        "{\"ok\":false,\"data\":null,\"meta\":{},\"error\":{\"code\":\"rate_limited\",\"message\":\"Too many attempts.\",\"hint\":\"Wait, then retry.\",\"field\":\"title\",\"rule\":\"too_long\",\"retry_after_ms\":1500}}\n"
+    );
+    let envelope: Value = serde_json::from_str(&output.stdout).expect("json");
+    assert_eq!(validate_schema(&envelope_schema(), &envelope), Ok(()));
+}
+
+#[test]
+fn a_list_reports_its_total_and_compact_shows_it_when_no_line_printed() {
+    let table = sample_table();
+    let item = json!({"id": "S-1", "title": "T", "state": "open", "labels": [], "revision": 1});
+    let mut page = Answer::completed(json!([item]));
+    page.total = Some(7);
+    page.next_cursor = Some("1".to_owned());
+    let output = answered(&table, &["sample", "list"], Ok(page));
+    let envelope = json_envelope(&output, "a page");
+    assert_eq!(
+        envelope["meta"],
+        json!({"status": "completed", "next_cursor": "1", "total": 7})
+    );
+    assert_eq!(validate_schema(&envelope_schema(), &envelope), Ok(()));
+    // Only a count: no line of data, so compact prints `meta` with the total.
+    let mut counted = Answer::completed(json!([]));
+    counted.total = Some(7);
+    let output = answered(
+        &table,
+        &["sample", "list", "--format", "compact"],
+        Ok(counted),
+    );
+    assert_eq!(
+        output.stdout,
+        "meta: {\"status\":\"completed\",\"total\":7}\n"
+    );
+    // A list that reports no total and printed nothing stays empty, as before.
+    let output = answered(
+        &table,
+        &["sample", "list", "--format", "compact"],
+        Ok(Answer::completed(json!([]))),
+    );
+    assert_eq!(output.stdout, "");
+}
+
+#[test]
+fn a_refused_line_names_the_fields_given_only_in_json() {
+    let table = sample_table();
+    let hint = refused(&table, &["sample", "create", "--owner", "x"]);
+    assert!(
+        hint.contains("Fields given in --json: owner, extra."),
+        "{hint}"
+    );
+    let hint = refused(&table, &["sample", "inspect", "--nope", "x"]);
+    assert!(!hint.contains("Fields given in --json"), "{hint}");
+}
+
+static SAMPLE_ALIASES: &[Alias] = &[
+    Alias {
+        words: &["ls"],
+        command: &["sample", "list"],
+    },
+    Alias {
+        words: &["sample", "all"],
+        command: &["sample", "list"],
+    },
+];
+
+#[test]
+fn a_shorthand_is_its_command_for_a_call_its_help_its_schema_and_a_check() {
+    let table = sample_table().with_aliases(SAMPLE_ALIASES);
+    check_rows(&table);
+    assert!(
+        table
+            .catalogue()
+            .ends_with("\nShorthands: ls = sample list; sample all = sample list.\n"),
+        "{}",
+        table.catalogue()
+    );
+    for (short, long) in [
+        (
+            &["ls", "--limit", "2"][..],
+            &["sample", "list", "--limit", "2"][..],
+        ),
+        (
+            &["sample", "all", "--schema"],
+            &["sample", "list", "--schema"],
+        ),
+        (&["ls", "--help"], &["sample", "list", "--help"]),
+        (&["ls", "--bogus"], &["sample", "list", "--bogus"]),
+    ] {
+        let (a, a_office) = run_stub(&table, &args(short), &mut StubSources::default());
+        let (b, b_office) = run_stub(&table, &args(long), &mut StubSources::default());
+        assert_eq!(a, b, "{short:?}");
+        assert_eq!(a_office.calls, b_office.calls, "{short:?}");
+    }
+    let mut sources = StubSources::default();
+    assert!(org_command::check(&table, "agent-os", &args(&["ls"]), &mut sources).is_ok());
+    assert!(
+        org_command::check(&table, "agent-os", &args(&["ls", "--nope"]), &mut sources).is_err()
+    );
+    // Without the shorthands the same words are not a command.
+    assert!(org_command::check(&sample_table(), "agent-os", &args(&["ls"]), &mut sources).is_err());
 }

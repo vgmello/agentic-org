@@ -1,4 +1,5 @@
-//! Dispatch for C3 `session inspect` (`CLI-9`), `grant list` (`CLI-10`), and `directory list` / `who` (`B2 Q9`).
+//! Dispatch for C3 `session inspect` (`CLI-9`), `session boot` ([`crate::boot`]), `grant list`
+//! (`CLI-10`), and `directory list` / `who` (`B2 Q9`).
 
 use org_command::{Answer, Refusal, Request};
 use org_proto::directory::{DirectoryCard, WhoResult};
@@ -6,7 +7,7 @@ use org_proto::org::{AgentStatus, MemberKind};
 use org_proto::ErrorCode;
 use serde_json::Value;
 
-use crate::dispatch::OfficeTransport;
+use crate::transport::{paginate, parse_cursor, OfficeTransport};
 
 /// Attempts to handle a C3 session, grant, or directory command.
 pub fn try_execute<T: OfficeTransport + ?Sized>(
@@ -15,6 +16,7 @@ pub fn try_execute<T: OfficeTransport + ?Sized>(
 ) -> Option<Result<Answer, Refusal>> {
     match (request.command.resource, request.command.verb) {
         ("session", "inspect") => Some(read_session_inspect(transport, request)),
+        ("session", "boot") => Some(crate::boot::read_session_boot(transport, request)),
         ("grant", "list") => Some(read_grant_list(transport, request)),
         ("directory", "list") => Some(read_directory_list(transport, request)),
         _ => None,
@@ -49,6 +51,7 @@ fn read_directory_list<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    parse_cursor(request.cursor.as_deref())?;
     let mut params = serde_json::Map::new();
     if let Some(team) = opt_str(request, "team") {
         params.insert("team".into(), Value::String(team.to_owned()));
@@ -65,7 +68,7 @@ fn read_directory_list<T: OfficeTransport + ?Sized>(
         )
     })?;
     let cards: Vec<Value> = who.members.iter().map(card_summary).collect();
-    Ok(Answer::completed(Value::Array(cards)))
+    paginate(request, cards)
 }
 
 fn card_summary(card: &DirectoryCard) -> Value {

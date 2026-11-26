@@ -1,12 +1,16 @@
 //! Engine-independent durable replication store bridging `org-sync` (`organization`, `work`,
 //! `messages`) onto `org-office` (`TASK-52` / `FC-145` / `ADR-0018` `ENG-3`).
 //!
-//! Zero SQLite types or SQL appear anywhere in this module (`ENG-1`); the SQLite adapter lives
-//! exclusively in `crate::store::sqlite::replication`.
+//! Zero SQLite types or SQL appear anywhere in this module (`ENG-1`); the SQLite projection
+//! lives exclusively in `crate::store::sqlite::replication`; `durable` keeps the durable
+//! state the same way for every engine (`TASK-172`).
 
 #[cfg(any(test, feature = "testkit"))]
 pub mod conformance;
+pub(crate) mod durable;
+pub(crate) use durable::check_committed_state;
 pub mod memory;
+pub(crate) mod state_files;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
@@ -38,7 +42,15 @@ pub struct ReplicationStateFile {
     pub pending_restore_base_hex: Option<String>,
     pub protocol_level: u32,
     pub initial_snapshot_required: bool,
+    /// Every organization event, inline, while `events_log` is `None`: each state file written
+    /// before `TASK-140`, and the commit point of a rare non-append rewrite. Empty otherwise.
+    #[serde(default)]
     pub events: Vec<StoredOrgEvent>,
+    /// The committed prefix of the append-only `events.v1.ndjson` beside this file that holds
+    /// the organization events, so a commit appends its new events and rewrites only this
+    /// small file instead of the whole history (`TASK-140`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub events_log: Option<StoredEventsLog>,
     pub work_incarnation: String,
     pub work_last_seq: u64,
     pub work_acked_seq: u64,
@@ -98,6 +110,17 @@ pub struct StoredOrgEvent {
     pub codec_name: String,
     pub codec_version: u32,
     pub payload_b64: String,
+}
+
+/// The committed part of `events.v1.ndjson` (`TASK-140`): its first `bytes` bytes, `count`
+/// newline-terminated lines of one JSON [`StoredOrgEvent`] each, the last one's digest
+/// `last_digest_hex`. Anything after `bytes` is an append whose state file never committed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredEventsLog {
+    pub bytes: u64,
+    pub count: u64,
+    #[serde(default)]
+    pub last_digest_hex: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

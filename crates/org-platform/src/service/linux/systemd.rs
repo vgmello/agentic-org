@@ -146,9 +146,14 @@ impl Systemd {
         // since systemd read it is not compared: it is `Unloaded`, nothing starts it, and
         // register compares its bytes and reloads it, which compares again.
         if runs && shown.load == "loaded" && !shown.needs_reload {
+            // `name` is the placement's prefix, the instance's ID and `.service`.
+            let instance_id = name
+                .strip_prefix(self.placement.prefix.as_str())
+                .and_then(|rest| rest.strip_suffix(".service"))
+                .unwrap_or_default();
             let defined = self
                 .read_definition(name)?
-                .and_then(|bytes| definition(name, &bytes));
+                .and_then(|bytes| definition(name, instance_id, &bytes));
             let Some(defined) = defined else {
                 return Err(ServiceError::Conflict(format!(
                     "{} is not a definition this adapter wrote; systemd would run what it says",
@@ -327,7 +332,7 @@ impl ServiceManager for Systemd {
             // review V-b). It is replaced, never edited: what systemd runs from it stops and
             // loses its enablement first. Anything else is never taken over.
             Some(existing) if existing != bytes => {
-                if definition(&name, &existing).is_none() {
+                if definition(&name, &unit.instance_id, &existing).is_none() {
                     return Err(ServiceError::Conflict(format!(
                         "{} already defines {name} differently; it is left untouched",
                         file.display()
@@ -471,6 +476,78 @@ impl ServiceManager for Systemd {
             }
         }
         Ok(())
+    }
+
+    fn definition(&self, instance_id: &str) -> Result<Option<Unit>, ServiceError> {
+        let name = self.name(instance_id)?;
+        // A drop-in or another file under the name is a conflict, as for what runs it.
+        let shown = self.show_ours(&name, true)?;
+        match self.read_definition(&name)? {
+            Some(bytes) => match definition(&name, instance_id, &bytes) {
+                Some(unit) => Ok(Some(unit)),
+                None => Err(ServiceError::Conflict(format!(
+                    "{} is not a definition this adapter wrote (it was changed by hand); it \
+                     is left untouched",
+                    self.file(&name).display()
+                ))),
+            },
+            None if shown.is_some() => Err(ServiceError::Conflict(format!(
+                "systemd still has {name} from a definition that is gone"
+            ))),
+            None => Ok(None),
+        }
+    }
+
+    fn redefine(&self, unit: &Unit) -> Result<Registration, ServiceError> {
+        validate(unit)?;
+        unit_file_safe(unit)?;
+        let name = self.name(&unit.instance_id)?;
+        let file = self.file(&name);
+        let bytes = render(&name, unit);
+        let shown = self.show_ours(&name, true)?;
+        // As in stop: also a start systemd has only scheduled (`activating`, `MainPID=0`,
+        // an automatic restart after a crash) would run the program being replaced.
+        if shown
+            .as_ref()
+            .is_some_and(|s| !matches!(s.active.as_str(), "inactive" | "failed"))
+        {
+            return Err(ServiceError::Conflict(format!(
+                "{name} is running; stop it before its definition is replaced"
+            )));
+        }
+        // Only an exact earlier rendering, which holds the instance's ID, is replaced, as in
+        // register; its enablement stays (the file keeps its name) and nothing is started.
+        let earlier = match self.read_definition(&name)? {
+            Some(existing) if existing == bytes => return Ok(Registration::Unchanged),
+            Some(existing) if definition(&name, &unit.instance_id, &existing).is_some() => existing,
+            Some(_) => {
+                return Err(ServiceError::Conflict(format!(
+                    "{} already defines {name} differently; it is left untouched",
+                    file.display()
+                )))
+            }
+            None if shown.is_some() => {
+                return Err(ServiceError::Conflict(format!(
+                    "systemd still has {name} from a definition that is gone"
+                )))
+            }
+            None => return Err(ServiceError::Invalid("the service is not registered")),
+        };
+        let directory = self.directory(false)?.ok_or_else(|| {
+            ServiceError::System(format!("{} is gone", self.placement.directory.display()))
+        })?;
+        directory.publish(&name, &bytes, true)?;
+        if let Err(refused) = self.expect_ok(&["daemon-reload".as_ref()]) {
+            // The earlier rendering is put back, so the file on disk stays what systemd
+            // runs from and the next call replaces it from the start.
+            return Err(match directory.publish(&name, &earlier, true) {
+                Ok(()) => refused,
+                Err(restore) => ServiceError::System(format!(
+                    "{refused}; the earlier definition could not be put back: {restore}"
+                )),
+            });
+        }
+        Ok(Registration::Loaded)
     }
 
     fn available(&self) -> Result<(), ServiceError> {

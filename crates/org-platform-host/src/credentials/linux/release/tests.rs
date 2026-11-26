@@ -27,9 +27,10 @@ use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use super::*;
+use crate::credentials::rules::Identity;
 use crate::credentials::{
-    release_directory_with_stores as contract, Credentials, FilesystemClass, ItemName, Sharing,
-    MAX_ITEM_BYTES,
+    release_directory_with_stores as contract, Credentials, FilesystemClass, ItemName, MountDoubt,
+    Sharing, MAX_ITEM_BYTES,
 };
 // The contract's handle: what a host holds. The tests wrap the adapter's own.
 use crate::credentials::ReleaseRoot as Opened;
@@ -2034,7 +2035,7 @@ fn a_bind_mount_cannot_hide_a_store_inside_the_data_root_or_the_reverse() {
     if !is_root() {
         println!(
             "skipped: only root can make a bind mount; the decision over mount records \
-             (mounts.rs) covers the cases on every target"
+             (mounts/) covers the cases on every target"
         );
         return;
     }
@@ -2255,7 +2256,7 @@ fn a_bind_mount_cannot_hide_a_store_inside_the_data_root_or_the_reverse() {
     //     data/extra`), and a folder of it there: refused, naming that mount, and nothing
     //     is made. Mounted again outside the data, it is accepted where no mount point is
     //     required (X5 final review; the mount-point case is the mount table's, in
-    //     mounts.rs: here this machine's own mount of the disk shows every directory).
+    //     mounts/: here this machine's own mount of the disk shows every directory).
     let keys = tree.dir("keys-volume", 0o700);
     mkdir(&keys.join("office-keys"), 0o700);
     let extra = tree.data.join("extra");

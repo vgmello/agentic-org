@@ -172,6 +172,7 @@ What `install.sh` does automatically:
 - Verifies the archive SHA-256 against the `.sha256` checksum file.
 - Tightens Ubuntu User-Private-Group directory permissions (`chmod go-w ~/.local ~/.local/share` and `0700 ~/.local/share/agentic-org`) required for the protected release store.
 - Runs `agentic-org release install` to verify the Ed25519 manifest signature, closed inventory, and executable digests, pinning the release atomically into `~/.local/share/agentic-org/release-store`.
+- Moves each instance's registered `systemd --user` / `launchd` service to the new release: a running service is stopped for the install and started again on the new release (`--no-restart` leaves it stopped), a stopped one stays stopped, and a unit edited by hand is left untouched with the steps to upgrade it.
 - Symlinks `agentic-org` and `agent-os` into `~/.local/bin`.
 
 ### Initialize the remote host's `systemd --user` service
@@ -344,33 +345,29 @@ agentic-org task create --project-id "<project_id>" --title "Verify remote CI ch
 
 ## Step 6: Rolling Upgrades (Zero Re-Enrollment)
 
-Upgrading a running Linux satellite preserves its enrolled mTLS identity, SQLite database, and hired agents:
+Upgrading a running Linux satellite preserves its enrolled mTLS identity, SQLite database, and hired agents. The installer stops the running service for the install, points its unit's `ExecStart` at the new release and starts it again:
 ```bash
 ssh agents@apps-main-eu '
   set -euo pipefail
   export PATH="$HOME/.local/bin:$PATH"
-  agentic-org service stop
   bash "$HOME/dist/install.sh" \
     --archive "$HOME/dist/agentic-org-<new-release-id>-linux-x86_64.tar.gz" \
     --bin-dir "$HOME/.local/bin"
   agentic-org release status --json
-  UNIT="$(ls "$HOME/.config/systemd/user"/agentic-org-*.service | head -n 1)"
-  NEW_BIN="$(readlink -f "$HOME/.local/bin/agentic-org")"
-  sed -i "s|^ExecStart=.*|ExecStart=\"${NEW_BIN}\" \"serve\" \"--name\" \"default\"|" "$UNIT"
-  systemctl --user daemon-reload
-  agentic-org service start
   agentic-org service status
   agentic-org office sync-status --json
 '
 ```
+
+Upgrading from a release whose installed `agentic-org` predates this (its `release install --help` has no `--no-restart`): that CLI cannot install while the service runs, so run `agentic-org service stop --yes` first. `install.sh` then has the newly installed release move the stopped unit to itself, and `agentic-org service start` starts it. Never edit the unit's `ExecStart` by hand: a changed unit is left untouched by every later upgrade.
 
 ---
 
 ## Troubleshooting
 
 - **`release verification: UnsafeInput` on Ubuntu/Debian:** Ubuntu User Private Groups use `umask 0002`, creating `~/.local` and `~/.local/share` as `0775` (group-writable). Run `chmod go-w ~/.local ~/.local/share` and `chmod 0700 ~/.local/share/agentic-org` (`scripts/install.sh` handles this automatically).
-- **`release verification: Busy` on `agentic-org release status` or `release install`:** A running `agentic-org serve` holds `store.lock` exclusively. Run `agentic-org service stop` before installing a new release, then `agentic-org service start`.
-- **`service conflict: ... is not a definition this adapter wrote`:** Keep the exact quoted `ExecStart="<binary>" "serve" "--name" "<instance>"` format in the systemd unit file when updating the release path.
+- **`release verification: Busy` on `agentic-org release status` or `release install`:** A running `agentic-org serve` holds `store.lock` exclusively. `release install` stops the services `setup` registered by itself; one it left running (a unit edited by hand, named in the error) is stopped with `agentic-org service stop --yes` before installing again.
+- **`service conflict: ... is not a definition this adapter wrote`:** The unit was edited by hand, so `setup` and `release install` never overwrite it. Undo the edit (or remove the unit after `agentic-org service stop --yes`) and run `agentic-org setup` to register the current release again.
 - **Claude Code exits before `initialize` on Linux (`bubblewrap is required for subprocess env scrubbing`):** Install `sudo apt-get install -y bubblewrap socat` on the Linux satellite so Claude Code can enforce `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` and OS-level sandboxing (plus `socat` for proxying `AGENT_OS_SOCKET` into the sandbox).
 - **macOS `cannot write ~/Library/LaunchAgents/...: Permission denied`:** Fix ownership (`sudo chown "$USER":staff ~/Library/LaunchAgents`) or run HQ in foreground mode via `agentic-org serve --setup <config.json>`.
 - **Satellite cannot reach HQ port `7443`:** Verify HQ is listening (`lsof -iTCP:7443 -sTCP:LISTEN`) and reachable over Tailscale (`nc -vz 100.64.0.10 7443`). Remember HQ starts its mTLS listener after the first organization is created.

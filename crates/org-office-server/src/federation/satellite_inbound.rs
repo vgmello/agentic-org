@@ -13,12 +13,12 @@ use org_sync::messages::{acknowledge, Message, Receipt};
 use org_sync_proto::{write_sync_frame, Digest, FrameCodecError, OfficeId, SyncFrame};
 use rustls::{ClientConnection, StreamOwned};
 
-use super::org_events::apply_satellite_org_event_frame;
 use super::relay::deliver_inbound_message_checked;
 use super::{
     InboundCallbacks, InboundDeliveryNotifier, InboundMessage, RelayedWake, SatelliteSyncSession,
     StaticPeer, WakeRelayHandler, PARTIAL_FRAME_DEADLINE,
 };
+use crate::federation_link::org_events::{apply_satellite_org_event_frames, ORG_EVENT_BATCH_MAX};
 
 fn dispatch_inbound_relay_frame(
     session: &mut SatelliteSyncSession,
@@ -205,6 +205,42 @@ pub(crate) fn drain_satellite_inbound_persistent(
     Ok(handled)
 }
 
+/// Takes the `OrgEvent` frames that follow `first` back to back, buffered or already readable
+/// on the socket, up to [`ORG_EVENT_BATCH_MAX`], so a burst HQ pushes (a catch-up of hundreds
+/// of tasks) applies in verified batches instead of one durable commit per event
+/// (`TASK-140`). The first other frame goes back to the front of the inbound buffer, so frames
+/// are still handled in arrival order. A read failure is returned beside the burst so the
+/// events received before it are applied first.
+fn collect_org_event_burst(
+    session: &mut SatelliteSyncSession,
+    first: SyncFrame,
+) -> (Vec<SyncFrame>, Option<String>) {
+    let mut burst = vec![first];
+    while burst.len() < ORG_EVENT_BATCH_MAX {
+        let next = match session.pending_inbound.pop_front() {
+            Some(buffered) => buffered,
+            None => match read_satellite_frame_nonblocking(session) {
+                Ok(Some(frame)) => frame,
+                Ok(None) => return (burst, Some("HQ closed persistent mTLS session".into())),
+                Err(FrameCodecError::Io(e))
+                    if e.kind() == io::ErrorKind::WouldBlock
+                        || e.kind() == io::ErrorKind::TimedOut =>
+                {
+                    break;
+                }
+                Err(e) => return (burst, Some(e.to_string())),
+            },
+        };
+        if matches!(next, SyncFrame::OrgEvent { .. }) {
+            burst.push(next);
+        } else {
+            session.pending_inbound.push_front(next);
+            break;
+        }
+    }
+    (burst, None)
+}
+
 fn handle_persistent_wake_frame(
     tls: &mut StreamOwned<ClientConnection, TcpStream>,
     wake_handler: Option<&WakeRelayHandler>,
@@ -227,10 +263,16 @@ fn handle_persistent_inbound_frame(
 ) -> Result<(), String> {
     match frame {
         ev @ SyncFrame::OrgEvent { .. } => {
-            if apply_satellite_org_event_frame(&session.office, &session.hq_peer, ev)? {
+            let (burst, read_error) = collect_org_event_burst(session, ev);
+            let applied =
+                apply_satellite_org_event_frames(&session.office, &session.hq_peer, burst)?;
+            if applied > 0 {
                 if let Some(wake) = feed_wake {
                     wake.notify();
                 }
+            }
+            if let Some(error) = read_error {
+                return Err(error);
             }
         }
         SyncFrame::MessageDeliver {

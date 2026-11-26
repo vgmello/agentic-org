@@ -1,6 +1,17 @@
 //! Message reads: inbox, one message, list and waits.
 
-use super::*;
+use org_command::{Answer, Refusal, Request};
+use org_proto::ask::{AskStatus, ChatWaitAskResult, MAX_SHORT_HOLD_MS};
+use org_proto::chat::{ChatInboxResult, ChatMessagesResult};
+use org_proto::msg::{HeaderPage, MsgReadResult, MsgWaitResult, MAX_WAIT_MS};
+use org_proto::ErrorCode;
+use serde_json::{json, Map, Value};
+
+use super::ask::{ask_meta_status, insert_ask_outcome_fields};
+use super::{
+    decode_err, insert_opt, opt_bool, opt_non_neg_u64, opt_str, parse_u64_cursor, AskOutcomeRef,
+};
+use crate::transport::OfficeTransport;
 
 pub(super) fn read_msg_inbox<T: OfficeTransport + ?Sized>(
     transport: &mut T,
@@ -78,7 +89,7 @@ pub(super) fn read_msg_list<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
-    let conversation = opt_str(request, "conversation").or_else(|| opt_str(request, "channel"));
+    let conversation = list_conversation(request)?;
     let thread = opt_str(request, "thread");
     let participant = opt_str(request, "participant");
     if conversation.is_some() || (thread.is_some() && participant.is_none()) {
@@ -170,6 +181,36 @@ pub(super) fn read_msg_list<T: OfficeTransport + ?Sized>(
     Ok(answer)
 }
 
+/// The conversation `msg list` reads, refusing flag combinations one of whose flags the list
+/// would otherwise drop: `--conversation` with `--channel`, and `--participant` or
+/// `--unread-only` with a conversation, a channel or a thread alone (only a DM history by
+/// `--participant` filters by participant and unread state).
+fn list_conversation(request: &Request) -> Result<Option<&str>, Refusal> {
+    let refuse = |message: &str| {
+        Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            message.to_owned(),
+            "Read a channel or conversation with --channel or --conversation (and --thread); read a DM history with --participant (and --thread, --unread-only).",
+        ))
+    };
+    let conversation = opt_str(request, "conversation");
+    let channel = opt_str(request, "channel");
+    let participant = opt_str(request, "participant").is_some();
+    let unread_only = opt_bool(request, "unread_only").unwrap_or(false);
+    if conversation.is_some() && channel.is_some() {
+        return refuse("--conversation and --channel cannot be given together.");
+    }
+    let target = conversation.or(channel);
+    if target.is_some() && participant {
+        return refuse("--participant cannot be combined with --conversation or --channel.");
+    }
+    let by_thread_alone = opt_str(request, "thread").is_some() && !participant;
+    if unread_only && (target.is_some() || by_thread_alone) {
+        return refuse("--unread-only reads a DM history and needs --participant; a channel, conversation or thread has no unread filter.");
+    }
+    Ok(target)
+}
+
 pub(super) fn read_msg_wait_ask<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
@@ -186,6 +227,7 @@ pub(super) fn read_msg_wait_ask<T: OfficeTransport + ?Sized>(
         transport.call_method_with_timeout("chat.wait_ask", Value::Object(params), timeout)?;
     let res: ChatWaitAskResult =
         serde_json::from_value(raw).map_err(|_| decode_err("chat.wait_ask"))?;
+    let status = ask_meta_status(res.status);
     let mut obj = Map::new();
     let woken = !matches!(res.status, AskStatus::Waiting);
     obj.insert("woken".into(), Value::Bool(woken));
@@ -202,7 +244,9 @@ pub(super) fn read_msg_wait_ask<T: OfficeTransport + ?Sized>(
             required_notice: res.required_notice.as_deref(),
         },
     );
-    Ok(Answer::completed(Value::Object(obj)))
+    let mut answer = Answer::completed(Value::Object(obj));
+    answer.status = status;
+    Ok(answer)
 }
 
 pub(super) fn read_msg_wait<T: OfficeTransport + ?Sized>(

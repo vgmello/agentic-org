@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-use crate::federation::{InboundDeliveryNotifier, SatelliteSyncSession, WakeRelayHandler};
+use crate::federation_link::{InboundDeliveryNotifier, SatelliteSyncSession, WakeRelayHandler};
 use crate::org_feed::FeedWake;
 use org_office::Office;
 use org_sync_proto::SyncFrame;
@@ -17,12 +17,25 @@ use super::{
     SatSyncWake, IDLE_POLL_SLICE, KEEPALIVE_IDLE, KEEPALIVE_TIMEOUT, RECONNECT_MAX, RECONNECT_MIN,
 };
 
+/// Drains every buffered and socket-ready inbound frame of a persistent session, answering
+/// relays, org events and session RPCs; the count handled, or why the session must end.
+/// `federation_runtime` injects `federation::drain_satellite_inbound_persistent`, so this
+/// stream never imports the federation module that drives it.
+pub(crate) type DrainInbound = fn(
+    &mut SatelliteSyncSession,
+    Option<&WakeRelayHandler>,
+    Option<&InboundDeliveryNotifier>,
+    Option<&FeedWake>,
+    &SatRpcContext<'_>,
+) -> Result<usize, String>;
+
 /// Runtime hooks passed into the satellite's persistent bidirectional mTLS loop.
 pub(crate) struct PersistentSyncHooks {
     pub(crate) wake_handler: WakeRelayHandler,
     pub(crate) delivery_notifier: InboundDeliveryNotifier,
     pub(crate) feed_wake: Option<Arc<FeedWake>>,
     pub(crate) sessions: Weak<org_office_sessions::SessionManager>,
+    pub(crate) drain_inbound: DrainInbound,
 }
 
 /// Runs the satellite's persistent bidirectional mTLS loop with instant local outbox flush,
@@ -34,6 +47,10 @@ pub(crate) fn run_persistent_satellite_sync(
     hooks: &PersistentSyncHooks,
 ) {
     let mut backoff = RECONNECT_MIN;
+    // One worker budget for every connection this loop makes: an RPC worker of a dropped
+    // session keeps its slot until it finishes, so rapid reconnects can never run more than
+    // `MAX_SATELLITE_RPC_WORKERS` at once (`TASK-174` AC #2).
+    let rpc_workers = Arc::new(AtomicUsize::new(0));
     while !stop.load(Ordering::SeqCst) {
         let mut session =
             match SatelliteSyncSession::connect_cancellable(Arc::clone(office), Some(stop)) {
@@ -48,7 +65,8 @@ pub(crate) fn run_persistent_satellite_sync(
                     continue;
                 }
             };
-        if run_connected_session(&mut session, office, stop, sat_wake, hooks).is_err() {
+        if run_connected_session(&mut session, office, stop, sat_wake, hooks, &rpc_workers).is_err()
+        {
             if stop.load(Ordering::SeqCst) {
                 break;
             }
@@ -104,6 +122,11 @@ fn flush_satellite_outboxes(
     let wake_fired = cur_gen != state.last_wake_gen;
     if wake_fired {
         state.last_wake_gen = cur_gen;
+    }
+    if wake_fired || office.has_pending_journal_pipeline() {
+        // A local write is waiting on the journal: confirm it now rather than after the
+        // store's group-flush interval (`TASK-140`); this never blocks the loop.
+        office.request_store_flush();
     }
     let flushed = session.flush_work_outbox()? + session.flush_message_outbox()?;
     if flushed > 0 {
@@ -181,10 +204,10 @@ fn run_connected_session(
     stop: &Arc<AtomicBool>,
     sat_wake: &Arc<SatSyncWake>,
     hooks: &PersistentSyncHooks,
+    rpc_workers: &Arc<AtomicUsize>,
 ) -> Result<(), String> {
     bootstrap_connected_session(session, office, hooks)?;
     let replies: Arc<Mutex<VecDeque<SyncFrame>>> = Arc::default();
-    let rpc_workers = Arc::new(AtomicUsize::new(0));
     let mut state = PersistentLoopState {
         last_wake_gen: sat_wake.generation().wrapping_sub(1),
         buffered_flush_until: None,
@@ -200,9 +223,9 @@ fn run_connected_session(
             sessions: &hooks.sessions,
             replies: &replies,
             sat_wake,
-            active_workers: &rpc_workers,
+            active_workers: rpc_workers,
         };
-        let drained = crate::federation::drain_satellite_inbound_persistent(
+        let drained = (hooks.drain_inbound)(
             session,
             Some(&hooks.wake_handler),
             Some(&hooks.delivery_notifier),

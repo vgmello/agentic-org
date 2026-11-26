@@ -35,6 +35,10 @@ pub(super) fn user_temp_base(home: &Path) -> Result<PathBuf, UserTempError> {
     Ok(user_temp_base_from(std::env::var_os(CACHE_HOME), home))
 }
 
+pub(super) fn cli_cache_dir(home: &Path) -> Result<PathBuf, Refused> {
+    Ok(cli_cache_dir_from(std::env::var_os(CACHE_HOME), home))
+}
+
 pub(super) fn credential_directory_base(home: &Path) -> Result<PathBuf, Refused> {
     Ok(credential_directory_base_from(
         std::env::var_os(STATE_HOME),
@@ -102,6 +106,13 @@ fn user_temp_base_from(cache_home: Option<OsString>, home: &Path) -> PathBuf {
     xdg_base(cache_home, home, ".cache")
         .join(PRODUCT)
         .join("tmp")
+}
+
+/// `<XDG_CACHE_HOME>/agentic-org/cli-cache`, or `<home>/.cache/agentic-org/cli-cache`.
+fn cli_cache_dir_from(cache_home: Option<OsString>, home: &Path) -> PathBuf {
+    xdg_base(cache_home, home, ".cache")
+        .join(PRODUCT)
+        .join("cli-cache")
 }
 
 /// `<XDG_STATE_HOME>/agentic-org/credentials`, or
@@ -230,6 +241,30 @@ mod tests {
     }
 
     #[test]
+    fn the_cli_cache_follows_xdg_cache_home_when_it_is_absolute() {
+        let from =
+            |value: Option<&str>| cli_cache_dir_from(value.map(OsString::from), Path::new(HOME));
+        assert_eq!(
+            from(None),
+            Path::new("/home/a/.cache/agentic-org/cli-cache")
+        );
+        assert_eq!(
+            from(Some("/cache/xdg")),
+            Path::new("/cache/xdg/agentic-org/cli-cache")
+        );
+        for ignored in ["", "cache", "../cache", "~/cache"] {
+            assert_eq!(
+                from(Some(ignored)),
+                Path::new("/home/a/.cache/agentic-org/cli-cache"),
+                "{ignored:?}"
+            );
+        }
+        // Beside the user temp base, never inside it or in a shared temporary folder.
+        assert!(!from(None).starts_with(user_temp_base_from(None, Path::new(HOME))));
+        assert!(!from(None).starts_with("/tmp") && !from(None).starts_with("/var"));
+    }
+
+    #[test]
     fn the_credential_directory_base_follows_xdg_state_home_when_it_is_absolute() {
         let from = |value: Option<&str>| {
             credential_directory_base_from(value.map(OsString::from), Path::new(HOME))
@@ -262,6 +297,8 @@ mod tests {
         let base = application_base(home.path()).unwrap();
         let temp = user_temp_base(home.path()).unwrap();
         let credentials = credential_directory_base(home.path()).unwrap();
+        let cli_cache = cli_cache_dir(home.path()).unwrap();
+        assert!(cli_cache.is_absolute() && cli_cache.ends_with("agentic-org/cli-cache"));
         assert!(base.is_absolute() && base.ends_with("agentic-org"));
         assert!(temp.is_absolute() && temp.ends_with("agentic-org/tmp"));
         assert!(credentials.is_absolute() && credentials.ends_with("agentic-org/credentials"));
