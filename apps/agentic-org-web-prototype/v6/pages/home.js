@@ -520,8 +520,7 @@ function renderHomeSpotlight({ st, queue, open, curItem, allQueueCleared, remain
   if (!queue.length || (allQueueCleared && !S.v4Open["spot-review"])) return spotlightClearedHtml(st, queue, open, allQueueCleared);
   const it = curItem, isUrgent = Boolean(it.expires && !it.handled);
   const ctxKey = "spot-ctx-" + it.id, ctxOpen = !!S.v4Open[ctxKey];
-  return `<section class="hb-spot${isUrgent ? " is-urgent" : ""}${it.handled ? " is-done" : ""}" id="hb-spotlight" aria-label="Decision spotlight">
-      <div class="hb-rep-only hb-rep-sec-hd"><h2 class="hb-rep-sec-title">Decision &amp; Approval Queue</h2></div>
+  return `<section class="hb-spot${isUrgent ? " is-urgent" : ""}${it.handled ? " is-done" : ""}" id="hb-spotlight" aria-labelledby="hb-spot-h">
       ${spotlightHeaderBarHtml(it, queue, isUrgent)}
       ${spotlightBodyHtml(it, ctxKey, ctxOpen)}
       ${spotlightFootHtml(it, open, allQueueCleared, remainingInInbox)}
@@ -529,22 +528,35 @@ function renderHomeSpotlight({ st, queue, open, curItem, allQueueCleared, remain
     </section>`;
 }
 
+const digestItem = (tone, icon, title, detail) =>
+  `<li class="hb-dg-item is-${tone}"><span class="hb-dg-ic" aria-hidden="true">${ic(icon, "ic16")}</span><div class="hb-dg-txt"><span class="hb-dg-t">${title}</span><span class="hb-dg-d">${detail}</span></div></li>`;
+
 function briefSectionsHtml(lens, recentDoneN, tessApplied, liveWorkingN) {
   if (lens === "week") {
-    return `<div class="hb-cos-sec"><span class="hb-cos-k is-ok">Velocity &amp; Delivery</span><p class="hb-cos-p">The team shipped <strong>19 tasks over the last 7 days</strong> (+4 WoW) with median turnaround improving <strong>14% to 18m</strong>. <strong>Look &amp; feel refresh</strong> is running 1 day ahead of its Nov 28 milestone.</p></div>
-        <div class="hb-cos-sec"><span class="hb-cos-k">Autonomy &amp; Budget</span><p class="hb-cos-p"><strong>78% of work ran autonomously</strong> across 4 leads and 7 specialists. Month-to-date spend is <strong>$142 of $210</strong> (68%), pacing to <strong>~$204</strong> — inside budget, though Jules hit its individual cap.</p></div>
-        <div class="hb-cos-sec"><span class="hb-cos-k is-ok">Quality Bar</span><p class="hb-cos-p"><strong>84% of deliverables were approved on the first try</strong> (+6% WoW). All <strong>412 automated workspace checks</strong> are green on the v1.0 release candidate.</p></div>`;
+    return `<p class="hb-dg-lead"><strong>19 tasks shipped this week,</strong> 4 more than last week.</p>
+        <ul class="hb-dg-list">
+          ${digestItem("ok", "bolt", "Turnaround improved 14%", "Median is now 18m. Look &amp; feel refresh is 1 day ahead of Nov 28.")}
+          ${digestItem("ok", "check-circle", "84% approved on the first try", "Up 6% on last week. All 412 workspace checks are green.")}
+          ${digestItem("accent", "signal", "78% of work ran autonomously", "Across 4 leads and 7 specialists.")}
+          ${digestItem("warn", "currency", "$142 of $210 spent", "Pacing to ~$204, inside budget. Jules hit its individual cap.")}
+        </ul>`;
   }
   if (lens === "board") {
-    return `<div class="hb-cos-sec"><span class="hb-cos-k is-ok">Executive Summary</span><p class="hb-cos-p">Delivery throughput rose <strong>+27% week over week</strong> (19 tasks shipped) at <strong>84% first-pass approval</strong>, with <strong>78%</strong> autonomous execution and spend tracking <strong>$6 under the $210 monthly budget</strong>.</p></div>
-          <div class="hb-cos-sec"><span class="hb-cos-k">v1.0 Launch Readiness</span><p class="hb-cos-p"><strong>Agentic Org v1.0</strong> has passed 412 automated checks with release notes and onboarding complete; <strong>${recentDoneN ? "priority release sign-offs are advancing" : "Kai’s sync sign-off is the primary remaining gate"}</strong> for the Dec 5 target.</p></div>
-          <div class="hb-cos-sec"><span class="hb-cos-k is-warn">Operational Watchpoints</span><p class="hb-cos-p">The Build box satellite office is offline (+5d slip on Office federation v0.9), with a verified reconnect fix staged. ${tessApplied ? "Jules’s stalled queue has been rerouted to Maya &amp; Rowan at $0 extra spend." : "A zero-cost reassignment for Jules’s 3 stalled tasks is queued for owner approval."}</p></div>`;
+    return `<p class="hb-dg-lead"><strong>Throughput up 27% week over week</strong> at 84% first-pass approval, $6 under the monthly budget.</p>
+        <ul class="hb-dg-list">
+          ${digestItem("ok", "flag", "v1.0 launch readiness", `412 checks passed; notes and onboarding done. ${recentDoneN ? "Release sign-offs are advancing" : "Kai’s sync sign-off is the last gate"} for Dec 5.`)}
+          ${digestItem("bad", "offline", "Build box office offline", "Office federation v0.9 slips 5 days. A verified reconnect fix is staged.")}
+          ${digestItem(tessApplied ? "ok" : "warn", "currency", "Jules’s stalled queue", tessApplied ? "Rerouted to Maya &amp; Rowan at $0 extra spend." : "A zero-cost reassignment is waiting for your approval.")}
+        </ul>`;
   }
-  const doneLead = recentDoneN ? `You’ve already cleared <strong>${recentDoneN} ${recentDoneN === 1 ? "item" : "items"}</strong> this session. ` : "";
-  const tessNote = tessApplied ? " and applied the reroute for Jules’s 3 tasks to Maya &amp; Rowan at $0 added spend." : " and added my suggested <strong>zero-cost reroute for Jules’s 3 stalled tasks</strong> right behind it — clearing both keeps v1.0 on schedule for Dec 5.";
-  return `<div class="hb-cos-sec"><span class="hb-cos-k is-ok">Live Status &amp; Highlights</span><p class="hb-cos-p"><strong>${liveWorkingN} agents are working live</strong> across 3 projects — Kai is in session with you and Maya is auditing the v1.0 launch checklist. In the last 4 hours, Ada &amp; Maya drafted the v1.0 release notes, Avery shipped 2 UI polish updates, and all 412 CI checks cleared green.</p></div>
-          <div class="hb-cos-sec"><span class="hb-cos-k is-warn">Problems Needing Attention</span><p class="hb-cos-p"><strong>Build box office</strong> has been offline for 2h, putting Office federation <strong>+5d behind</strong> (Sage’s reconnect fix is staged for your review). Separately, <strong>Jules reached its $210 monthly cap</strong>, leaving 3 tasks stalled in the queue.</p></div>
-          <div class="hb-cos-sec"><span class="hb-cos-k">What I’ve Queued For You</span><p class="hb-cos-p">${doneLead}I prioritized <strong>Kai’s v1.0 sync sign-off</strong> first on the left${tessNote}</p></div>`;
+  const cleared = recentDoneN ? `You’ve cleared ${plural(recentDoneN, "item", "items")} this session. ` : "";
+  return `<p class="hb-dg-lead"><strong>${liveWorkingN} agents are working across 3 projects.</strong> Two problems need you to keep v1.0 on track for Dec 5.</p>
+        <ul class="hb-dg-list">
+          ${digestItem("ok", "check-circle", "Release checks passed", "All 412 CI checks are green; Ada &amp; Maya drafted the v1.0 notes.")}
+          ${digestItem("bad", "offline", "Build box office offline for 2h", "Office federation is 5 days behind. Sage’s reconnect fix is staged.")}
+          ${digestItem(tessApplied ? "ok" : "warn", "currency", tessApplied ? "Jules’s tasks rerouted" : "Jules reached its $210 cap", tessApplied ? "3 tasks moved to Maya &amp; Rowan at $0 added spend." : "3 tasks are stalled. A zero-cost reroute is queued for you.")}
+          ${digestItem("accent", "sparkle", "Queued for you", `${cleared}Kai’s v1.0 sync sign-off is first in your queue.`)}
+        </ul>`;
 }
 
 function renderHomeCatchup(st, liveWorkingN) {
@@ -571,15 +583,7 @@ function renderHomeCatchup(st, liveWorkingN) {
           </div>
         </div>
       </div>`;
-  return `<aside class="hb-catchup" aria-label="Executive brief from Tess, Chief of Staff">
-      <div class="hb-cu-hd">
-        <div class="hb-cu-title">${ic("sparkle", "ic16")}<span class="lbl-std">Executive Brief</span><span class="lbl-rep">Executive Brief</span></div>
-        <div class="hb-brief-lenses" role="group" aria-label="Brief timeframe">
-          <button type="button" data-act="brief-lens" data-v="today" aria-pressed="${lens === "today"}">Today</button>
-          <button type="button" data-act="brief-lens" data-v="week" aria-pressed="${lens === "week"}">7-Day</button>
-          <button type="button" data-act="brief-lens" data-v="board" aria-pressed="${lens === "board"}">Board</button>
-        </div>
-      </div>
+  return `<aside class="hb-catchup" aria-labelledby="hb-brief-h">
       ${memoBody}
     </aside>`;
 }
@@ -683,12 +687,30 @@ function summarizeHomeFleet(st) {
   };
 }
 
+function secHeadHtml({ id, title, repTitle = title, count = "", right = "", cls = "" }) {
+  const label = repTitle === title ? title : `<span class="lbl-std">${title}</span><span class="lbl-rep">${repTitle}</span>`;
+  return `<div class="hb-sec-hd${cls ? " " + cls : ""}"><div class="hb-sec-hd-l"><h2 id="${id}">${label}</h2>${count ? `<span class="hb-sec-count">${count}</span>` : ""}</div>${right}</div>`;
+}
+
+function briefLensesHtml() {
+  const lens = S.briefLens || "today";
+  const btn = (v, label) => `<button type="button" data-act="brief-lens" data-v="${v}" aria-pressed="${lens === v}">${label}</button>`;
+  return `<div class="hb-brief-lenses" role="group" aria-label="Brief timeframe">${btn("today", "Today")}${btn("week", "7-day")}${btn("board", "Board")}</div>`;
+}
+
+function stageHeadsHtml(st, open) {
+  if (st !== "filled" && st !== "loading") return "";
+  const pending = st === "loading" ? "" : `${open.length} pending`;
+  return secHeadHtml({ id: "hb-spot-h", title: "Needs your attention", repTitle: "Decision &amp; approval queue", count: pending, cls: "is-spot", right: `<a class="link" href="#/inbox">Open inbox${ic("chev-right", "ic16")}</a>` })
+    + secHeadHtml({ id: "hb-brief-h", title: "Executive digest", count: "from Tess", cls: "is-brief", right: briefLensesHtml() });
+}
+
 function homeProjectsSectionHtml(st, projs, queue, needsAttnProjs) {
   if (st === "error" || st === "empty") return "";
-  const countTxt = st === "loading" ? "" : `<span>${projs.length} active${needsAttnProjs ? ` · ${needsAttnProjs} need attention` : ""}</span>`;
+  const countTxt = st === "loading" ? "" : `${projs.length} active${needsAttnProjs ? ` · ${needsAttnProjs} need attention` : ""}`;
   const body = st === "loading" ? homeSkelCards(3, "Loading projects…") : `<div class="hb-bento">${projs.map((p) => renderProjBentoCard(p, queue)).join("")}</div>`;
   return `<div><section class="hb-proj-sec" id="hb-projects" aria-labelledby="hb-projs-h">
-        <div class="hb-proj-head"><div class="hb-proj-head-l"><h2 id="hb-projs-h"><span class="lbl-std">Projects</span><span class="lbl-rep">Project Delivery Scorecard</span></h2>${countTxt}</div><a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a></div>
+        ${secHeadHtml({ id: "hb-projs-h", title: "Projects", repTitle: "Project delivery scorecard", count: countTxt, right: `<a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a>` })}
         ${body}
       </section></div>`;
 }
@@ -709,7 +731,7 @@ function pageHome() {
   const spotlightHtml = renderHomeSpotlight({ st, queue, open, curItem: queue[S.spotIdx] || null, allQueueCleared, remainingInInbox });
   const mainBody = isEmpty
     ? `<div class="hb-stage is-single">${spotlightHtml}</div>${metricsHtml}`
-    : `${metricsHtml}<div class="hb-stage${st === "error" ? " is-single" : ""}">${spotlightHtml}${renderHomeCatchup(st, fleet.liveWorkingN)}</div>`;
+    : `${metricsHtml}<div class="hb-stage${st === "error" ? " is-single" : " has-heads"}">${stageHeadsHtml(st, open)}${spotlightHtml}${renderHomeCatchup(st, fleet.liveWorkingN)}</div>`;
   return `<div class="hb"><header class="hb-hero"><div class="hb-brief"><h1 class="hb-title" tabindex="-1">${headline}</h1></div></header>${mainBody}${homeProjectsSectionHtml(st, projs, queue, offTrackProjs + atRiskProjs)}${renderTaskTimeSection(st, open.length, fleet.idleSpecsN)}</div>`;
 }
 
