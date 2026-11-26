@@ -175,6 +175,60 @@ fn the_folder_walk_refuses_symbolic_links() {
     assert!(entries(&outside).is_empty(), "written through a link");
 }
 
+/// `open_completion` fails closed whenever `OwnerOnlyDir` refuses the cache directory: one it
+/// has just made that does not then open as the user's alone (a race, or not the account
+/// expected), and an existing one that is writable by anyone or another account's, checked on
+/// its opened handle. Nothing is made inside a refused directory.
+#[test]
+fn a_refused_cache_directory_is_never_written_in() {
+    let uid = org_platform::fs::effective_uid().unwrap();
+    let other = uid.wrapping_add(1);
+    let root = tempfile::tempdir().unwrap();
+    let refused = |dir: &Path, uid: u32, kind: io::ErrorKind| {
+        let error = CompletionCache::new(dir).open_completion(uid).unwrap_err();
+        assert_eq!(error.kind(), kind, "{}: {error}", dir.display());
+    };
+
+    // Made just now, yet refused when opened: never kept and written in.
+    let fresh = root.path().join("fresh");
+    refused(&fresh, other, io::ErrorKind::PermissionDenied);
+    assert!(fresh.is_dir());
+    assert!(
+        entries(&fresh).is_empty(),
+        "made `completion` in a cache directory that did not verify"
+    );
+
+    // Existing and writable by anyone (sticky or not), or another account's.
+    for (name, mode, uid) in [
+        ("open", 0o777, uid),
+        ("sticky", 0o1777, uid),
+        ("other-writable", 0o757, uid),
+        ("foreign", 0o755, other),
+    ] {
+        let dir = root.path().join(name);
+        fs::create_dir(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).unwrap();
+        refused(&dir, uid, io::ErrorKind::PermissionDenied);
+        assert!(entries(&dir).is_empty(), "made something in {name}");
+    }
+
+    // A FIFO where the cache directory should be: refused, without blocking.
+    let fifo = root.path().join("fifo");
+    mkfifo(&fifo);
+    refused(&fifo, uid, io::ErrorKind::InvalidInput);
+
+    // The user's own, more open but not writable by others: `completion` is made owner-only.
+    let shared = root.path().join("shared");
+    fs::create_dir(&shared).unwrap();
+    fs::set_permissions(&shared, fs::Permissions::from_mode(0o775)).unwrap();
+    CompletionCache::new(&shared).open_completion(uid).unwrap();
+    let mode = fs::symlink_metadata(shared.join(COMPLETION_DIR))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o700);
+}
+
 /// A reader never follows a linked `completion` or partition folder to planted candidates.
 #[test]
 fn a_reader_refuses_linked_folders() {
@@ -204,6 +258,30 @@ fn a_reader_refuses_linked_folders() {
         cache.load(&["p"], "orgs").is_empty(),
         "followed a partition"
     );
+
+    // A linked cache directory is read as `store` sees it: refused, trailing `/` or `/.` too.
+    let real = root.path().join("real-cache");
+    let list = [candidate("x", None)];
+    CompletionCache::new(&real)
+        .store(&["p"], "orgs", &list)
+        .unwrap();
+    assert_eq!(CompletionCache::new(&real).load(&["p"], "orgs"), list);
+    let linked = root.path().join("linked-cache");
+    symlink(&real, &linked);
+    for dir in [
+        linked.clone(),
+        PathBuf::from(format!("{}/", linked.display())),
+        PathBuf::from(format!("{}/.", linked.display())),
+    ] {
+        assert!(
+            CompletionCache::new(&dir).load(&["p"], "orgs").is_empty(),
+            "followed the linked cache directory {}",
+            dir.display()
+        );
+        assert!(CompletionCache::new(&dir)
+            .store(&["p"], "orgs", &list)
+            .is_err());
+    }
 }
 
 /// P1-2: a lock that is a symbolic link (live or dangling) or a FIFO is refused without

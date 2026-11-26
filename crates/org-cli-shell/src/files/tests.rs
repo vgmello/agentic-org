@@ -105,6 +105,20 @@ fn an_endless_stream_stops_at_the_bound_in_one_buffer() {
     assert_eq!(out, b"abc", "the caller's old bytes are gone");
 }
 
+/// A limit with no room for its extra byte, or one no buffer can hold, is refused as invalid
+/// input before anything is read or allocated: it never panics.
+#[test]
+fn an_unbounded_limit_is_refused_without_a_panic() {
+    for limit in [u64::MAX, u64::MAX - 1] {
+        let mut out = vec![b'?'; 2];
+        let refused = read_bounded_into(&mut Endless(0), limit, &mut out);
+        assert!(
+            matches!(&refused, Err(ReadRefusal::Io(error)) if error.kind() == std::io::ErrorKind::InvalidInput),
+            "{limit}: {refused:?}"
+        );
+    }
+}
+
 #[test]
 fn a_refused_file_leaves_only_what_was_read() {
     let root = tempfile::tempdir().unwrap();

@@ -13,14 +13,15 @@
 //! when they exist): the names they list are not for other users to read. A writer walks them
 //! one at a time through descriptors (`org_platform::fs::OwnerOnlyDir`) before it writes, so
 //! a symbolic link or another account's folder from `completion` down is refused, never
-//! followed. The cache directory itself is the caller's: created owner-only when it is missing,
-//! refused when it is a symbolic link, not a directory, another account's or writable by
-//! anyone, left as it is otherwise. The lock, the temporary file and the list are then reached
+//! followed. The cache directory itself is the caller's: created owner-only when it is missing
+//! (and refused when it then does not open as such), refused when it is a symbolic link, not a
+//! directory, another account's or writable by anyone (checked on its opened handle), left as
+//! it is otherwise. The lock, the temporary file and the list are then reached
 //! by path inside the walked folders (a follow-up moves them to `*at` calls on the walked
 //! descriptor through `org-platform`); the lock is opened without following a link or
-//! blocking on a FIFO and must be a regular file. A reader gets an empty list when any folder
-//! from `completion` down is a symbolic link, and reads the list through
-//! [`crate::files::read_regular`].
+//! blocking on a FIFO and must be a regular file. A reader gets an empty list when the cache
+//! directory or any folder from `completion` down is a symbolic link, and reads the list
+//! through [`crate::files::read_regular`].
 
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -125,16 +126,19 @@ impl CompletionCache {
     }
 
     /// `<cache>/completion`, verified by descriptor. A missing cache directory is created
-    /// owner-only and re-opened to verify it; an existing one that is a symbolic link or not a
-    /// directory is refused; one that is not the user's alone is the caller's and left as it
-    /// is, `completion` then made or tightened through its own descriptor.
+    /// owner-only and must then open as such: one that does not (raced, replaced or loosened
+    /// after it was made) is refused. An existing one that is a symbolic link or not a
+    /// directory is refused; one that is not the user's alone is the caller's: it is opened
+    /// without following a link and refused, by its opened handle, when it is not a directory,
+    /// is another account's or is writable by anyone, and otherwise left as it is,
+    /// `completion` then made or tightened through its own descriptor.
     fn open_completion(&self, uid: u32) -> io::Result<OwnerOnlyDir> {
         // `components` drops a trailing `/` or `/.`, which would make `lstat` follow a link.
         let root: PathBuf = self.dir.components().collect();
-        let existing = match fs::symlink_metadata(&root) {
+        let created = match fs::symlink_metadata(&root) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 org_platform::fs::create_owner_only_dir_all(&root)?;
-                None
+                true
             }
             Err(error) => return Err(error),
             Ok(metadata) if !metadata.is_dir() => {
@@ -143,24 +147,16 @@ impl CompletionCache {
                     format!("the cache directory {} is not a directory", root.display()),
                 ))
             }
-            Ok(metadata) => Some(metadata),
+            Ok(_) => false,
         };
         match OwnerOnlyDir::open(&root, uid) {
             Ok(owned) => owned.open_or_create_child(OsStr::new(COMPLETION_DIR), uid),
+            // Made owner-only just now, yet not so when opened: never the caller's to keep.
+            Err(error) if created => Err(error),
             Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
                 // The caller's directory, more open than owner-only. Another account, or anyone
                 // at all, could swap `completion` for a link after this walk: refuse it.
-                if existing
-                    .is_some_and(|metadata| metadata.uid() != uid || metadata.mode() & 0o002 != 0)
-                {
-                    return Err(io::Error::new(
-                        io::ErrorKind::PermissionDenied,
-                        format!(
-                            "the cache directory {} is another account's or writable by anyone",
-                            root.display()
-                        ),
-                    ));
-                }
+                verify_caller_dir(&root, uid)?;
                 let completion = root.join(COMPLETION_DIR);
                 match org_platform::fs::create_owner_only_dir(&completion) {
                     Ok(()) => {}
@@ -176,15 +172,20 @@ impl CompletionCache {
     }
 
     /// The `kind` list of `partition`: empty when missing, unreadable, too large or corrupt,
-    /// or when a folder from `completion` down is a symbolic link. Takes no lock.
+    /// or when the cache directory or a folder from `completion` down is a symbolic link (as
+    /// [`CompletionCache::store`] refuses them). Takes no lock.
     pub fn load(&self, partition: &[&str], kind: &str) -> Vec<CachedCandidate> {
-        let mut dir = self.dir.join(COMPLETION_DIR);
-        for part in std::iter::once(None).chain(partition.iter().map(Some)) {
-            if let Some(part) = part {
-                dir.push(partition_key(part));
-            }
-            let linked = fs::symlink_metadata(&dir).map_or(true, |metadata| !metadata.is_dir());
-            if linked {
+        let real_dir = |path: &Path| fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir());
+        // `components` drops a trailing `/` or `/.`, which would make `lstat` follow a link.
+        let mut dir: PathBuf = self.dir.components().collect();
+        if !real_dir(&dir) {
+            return Vec::new();
+        }
+        let folders = std::iter::once(COMPLETION_DIR.to_owned())
+            .chain(partition.iter().map(|part| partition_key(part)));
+        for folder in folders {
+            dir.push(folder);
+            if !real_dir(&dir) {
                 return Vec::new();
             }
         }
@@ -192,10 +193,10 @@ impl CompletionCache {
     }
 }
 
-/// Tightens the user's own directory at `path` to `0700` through a descriptor opened without
-/// following a symbolic link; another account's directory, a link or any other entry is
-/// refused.
-fn tighten_own_dir(path: &Path, uid: u32) -> io::Result<()> {
+/// The user's own directory at `path`, opened without following a symbolic link or blocking
+/// on a FIFO, with its metadata read from the opened handle (`fstat`, never an `lstat` made
+/// before the open). A link, another account's directory or any other entry is refused.
+fn open_own_dir(path: &Path, uid: u32) -> io::Result<(File, fs::Metadata)> {
     let dir = OpenOptions::new()
         .read(true)
         .custom_flags(O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
@@ -207,6 +208,29 @@ fn tighten_own_dir(path: &Path, uid: u32) -> io::Result<()> {
             format!("{} is not the user's own directory", path.display()),
         ));
     }
+    Ok((dir, metadata))
+}
+
+/// Verifies the caller's cache directory at `path` on its opened handle ([`open_own_dir`]):
+/// the user's own directory, and not writable by anyone.
+fn verify_caller_dir(path: &Path, uid: u32) -> io::Result<()> {
+    let (_dir, metadata) = open_own_dir(path, uid)?;
+    if metadata.mode() & 0o002 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "the cache directory {} is writable by anyone",
+                path.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Tightens the user's own directory at `path` ([`open_own_dir`]) to `0700` through its
+/// descriptor.
+fn tighten_own_dir(path: &Path, uid: u32) -> io::Result<()> {
+    let (dir, metadata) = open_own_dir(path, uid)?;
     if metadata.permissions().mode() & 0o7077 != 0 {
         dir.set_permissions(fs::Permissions::from_mode(0o700))?;
     }

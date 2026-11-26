@@ -204,16 +204,27 @@ pub(super) fn split(args: &[String]) -> Result<Selectors, String> {
     }
 }
 
-/// How many leading words of `forwarded` name the command: `who` is one, `task note <verb>`
-/// three, `<resource> <verb>` two (fewer when the line is shorter). Words the run adds go
-/// right after them, before every flag and value the caller wrote.
-pub(super) fn command_path_len(forwarded: &[String]) -> usize {
-    let wanted = match forwarded {
+/// How many leading words name a command: `who` is one, `task note <verb>` three,
+/// `<resource> <verb>` two.
+fn command_path_words(forwarded: &[String]) -> usize {
+    match forwarded {
         [first, ..] if first == "who" => 1,
         [first, second, ..] if first == "task" && second == "note" => 3,
         _ => 2,
-    };
-    wanted.min(forwarded.len())
+    }
+}
+
+/// How many leading words of `forwarded` name the command ([`command_path_words`], fewer when
+/// the line is shorter). Words the run adds go right after them, before every flag and value
+/// the caller wrote.
+pub(super) fn command_path_len(forwarded: &[String]) -> usize {
+    command_path_words(forwarded).min(forwarded.len())
+}
+
+/// Whether `forwarded` names a whole command: `task note` (no verb yet), `task` and an empty
+/// line do not.
+pub(super) fn names_a_command(forwarded: &[String]) -> bool {
+    forwarded.len() >= command_path_words(forwarded)
 }
 
 #[cfg(test)]
@@ -296,6 +307,21 @@ mod tests {
             (&[], 0),
         ] {
             assert_eq!(command_path_len(&words(list)), len, "{list:?}");
+        }
+    }
+
+    /// `task note` without its verb is not a command yet, so nothing is added after its path.
+    #[test]
+    fn a_command_path_without_its_verb_is_not_a_command() {
+        for (list, whole) in [
+            (&["who"][..], true),
+            (&["msg", "send"], true),
+            (&["task", "note", "add"], true),
+            (&["task", "note"], false),
+            (&["task"], false),
+            (&[], false),
+        ] {
+            assert_eq!(names_a_command(&words(list)), whole, "{list:?}");
         }
     }
 

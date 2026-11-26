@@ -957,6 +957,45 @@ fn a_dry_run_with_a_flag_missing_its_value_is_refused_before_any_office_is_asked
     assert_eq!(base, 0, "a refused command reached the instance");
 }
 
+/// `sign-in -- <command>` reads the command before it signs in: a flag left without its value
+/// (even after a `--dry-run` the caller wrote) or flags after `--` are a usage error (exit 2)
+/// before any instance or office is reached. With no host here, reaching one would fail
+/// instead (exit 1), as a whole line does.
+#[test]
+fn sign_in_refuses_a_malformed_command_before_reaching_the_host() {
+    let sandbox = Sandbox::new();
+    sandbox.save_context(None, OFFICE);
+    for (command, named) in [
+        (
+            &["msg", "send", "--to", "ada", "--dry-run", "--body"][..],
+            Some("--body"),
+        ),
+        (&["task", "create", "--title"], Some("--title")),
+        (&["msg", "send", "--to", "ada", "--", "--body", "x"], None),
+    ] {
+        for json in [false, true] {
+            let mut all = if json { vec!["--json"] } else { vec![] };
+            all.extend(["sign-in", "--"]);
+            all.extend_from_slice(command);
+            let refused = sandbox.run(&all);
+            let shown = format!("{}{}", text(&refused.stderr), text(&refused.stdout));
+            assert_eq!(refused.status.code(), Some(2), "{all:?}: {shown}");
+            if let Some(flag) = named {
+                assert!(shown.contains(flag), "{all:?}: {shown}");
+            }
+        }
+    }
+    let base = fs::read_dir(sandbox.root.join("base")).unwrap().count();
+    assert_eq!(base, 0, "a refused command reached the instance");
+    let reached = sandbox.run(&["sign-in", "--", "task", "list"]);
+    assert_eq!(
+        reached.status.code(),
+        Some(1),
+        "a whole line goes on to the host: {}",
+        text(&reached.stderr)
+    );
+}
+
 /// P1: under `--json` standard error carries only an error envelope: a successful mutation,
 /// a preview and a read write nothing there.
 #[test]

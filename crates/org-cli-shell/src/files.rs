@@ -89,12 +89,19 @@ pub fn read_bounded_into(
     limit: u64,
     out: &mut Vec<u8>,
 ) -> Result<(), ReadRefusal> {
-    let room = usize::try_from(limit.saturating_add(1)).map_err(|_| {
+    let too_large = || {
         ReadRefusal::Io(io::Error::new(
             io::ErrorKind::InvalidInput,
             "the read limit does not fit in memory",
         ))
-    })?;
+    };
+    // `limit + 1` must not overflow, and the buffer must be one `Vec` can hold (at most
+    // `isize::MAX` bytes), so no limit makes the allocation panic.
+    let room = limit
+        .checked_add(1)
+        .and_then(|room| usize::try_from(room).ok())
+        .filter(|&room| isize::try_from(room).is_ok())
+        .ok_or_else(too_large)?;
     // Zeroed by the allocator: pages a small read never touches cost nothing.
     *out = vec![0; room];
     let mut filled = 0;
