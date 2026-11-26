@@ -90,6 +90,12 @@ pub fn hint_for(code: ErrorCode) -> &'static str {
         }
         ErrorCode::Unsupported => "This office build does not serve that command yet.",
         ErrorCode::Unavailable | ErrorCode::NotReady => "Wait briefly and retry the command.",
+        ErrorCode::RateLimited => {
+            "Wait for the cooldown given in the message to pass, then retry the command."
+        }
+        ErrorCode::StorageError => {
+            "The office could not read or write its storage; check the office status, then retry."
+        }
         _ => "Check the flags with --help and retry.",
     }
 }

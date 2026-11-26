@@ -76,7 +76,7 @@ pub const RESOURCE_GUIDANCE: &[(&str, &str)] = &[
     ),
     (
         "repo",
-        "registering or listing Git repositories, attaching them to projects, checking cache readiness, or pushing task branches.",
+        "registering or listing Git repositories, attaching them to projects, checking cache readiness, fetching new origin branches, or pushing task branches.",
     ),
     (
         "role",
@@ -377,6 +377,11 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
         "repo",
         "attach",
         "linking a registered repository and verified integration branch to a project.",
+    ),
+    (
+        "repo",
+        "fetch",
+        "seeing branches pushed to the origin after your worktree was prepared: the office refreshes `origin/*` with its own credentials and never moves your checkout.",
     ),
     (
         "repo",
