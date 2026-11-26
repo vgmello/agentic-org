@@ -105,6 +105,20 @@ pub(super) fn create_owner_only_dir(path: &Path) -> io::Result<()> {
     std::fs::DirBuilder::new().mode(0o700).create(path)
 }
 
+pub(super) use super::shared::{
+    create_owner_only_dir_all, create_symlink, effective_uid, open_nofollow_ro,
+    verify_owner_only_ancestors, verify_owner_only_dir, verify_owner_only_file,
+    write_owner_only_file,
+};
+
+pub(super) fn paths_case_insensitive_by_default() -> bool {
+    true
+}
+
+pub(super) fn has_macos_private_root_aliases() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

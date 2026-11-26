@@ -2905,7 +2905,7 @@ fn real_process_fake_cli_runs_native_agy_and_codex_adapters_end_to_end() {
 read init_line
 echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"antigravity","version":"1.5.17"}}}'
 read open_line
-echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"agy-live-1","models":{"currentModelId":"gemini-2.5-pro"}}}'
+echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"agy-live-1","models":{"currentModelId":"gemini-2.5-pro"},"modes":{"currentModeId":"default"}}}'
 read prompt_line
 mkdir -p "$HOME/.gemini/antigravity-cli/brain/agy-live-1/.system_generated/logs"
 printf '{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"2026-11-22T06:00:00Z","content":"Transcript leak key=%s"}\n' "$GEMINI_API_KEY" > "$HOME/.gemini/antigravity-cli/brain/agy-live-1/.system_generated/logs/transcript.jsonl"
@@ -3154,7 +3154,7 @@ read init_line
 echo '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentInfo":{{"name":"antigravity","version":"1.5.17"}}}}}}'
 read open_line
 printf '%s\n' "$open_line" > "{capture}"
-echo '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"agy-proc-1","models":{{"currentModelId":"gemini-2.5-pro"}}}}}}'
+echo '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"agy-proc-1","models":{{"currentModelId":"gemini-2.5-pro"}},"modes":{{"currentModeId":"default"}}}}}}'
 read prompt_line
 echo '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"agy-proc-1","update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"Ack"}}}}}}}}'
 echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inputTokens":5,"outputTokens":2}}}}}}'
@@ -3426,7 +3426,7 @@ read init_line
 echo '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentInfo":{{"name":"antigravity","version":"1.5.17"}}}}}}'
 read open_line
 printf '%s\n' "$open_line" > "{capture}"
-echo '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"agy-task-1","models":{{"currentModelId":"gemini-2.5-pro"}}}}}}'
+echo '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"agy-task-1","models":{{"currentModelId":"gemini-2.5-pro"}},"modes":{{"currentModeId":"default"}}}}}}'
 read prompt_line
 echo '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"agy-task-1","update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"Audited"}}}}}}}}'
 echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inputTokens":5,"outputTokens":2}}}}}}'
@@ -3738,22 +3738,19 @@ fn task126_worktree_sandbox_grants_protect_git_metadata_and_compile_cleanly_for_
         );
     }
     // A dangling symlink at `packed-refs` MUST be detected via `symlink_metadata` and write-denied.
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(
-            cache_dir.join("nonexistent-target"),
-            cache_dir.join("packed-refs"),
-        )
-        .unwrap();
-        let (_, wt_write_denies_dangling) = mgr.worktree_sandbox_grants(&self_emp_id, false);
-        assert!(
-            wt_write_denies_dangling
-                .iter()
-                .any(|p| p.as_str().ends_with("/packed-refs")),
-            "dangling symlink at packed-refs must still be write-denied"
-        );
-        std::fs::remove_file(cache_dir.join("packed-refs")).unwrap();
-    }
+    org_platform::fs::create_symlink(
+        &cache_dir.join("nonexistent-target"),
+        &cache_dir.join("packed-refs"),
+    )
+    .unwrap();
+    let (_, wt_write_denies_dangling) = mgr.worktree_sandbox_grants(&self_emp_id, false);
+    assert!(
+        wt_write_denies_dangling
+            .iter()
+            .any(|p| p.as_str().ends_with("/packed-refs")),
+        "dangling symlink at packed-refs must still be write-denied"
+    );
+    std::fs::remove_file(cache_dir.join("packed-refs")).unwrap();
     // When `packed-refs` DOES exist on disk, it MUST be protected in `deny_write`.
     std::fs::write(cache_dir.join("packed-refs"), "# pack-refs\n").unwrap();
     let (_, wt_write_denies_with_packed) = mgr.worktree_sandbox_grants(&self_emp_id, false);
@@ -4580,6 +4577,7 @@ fn task126_recycle_stale_warm_handle_atomicity_and_stale_failover_non_drop() {
                 workspace: None,
                 active_permit: Arc::clone(&permit),
                 supports_mid_turn: false,
+                bwrap_masked_siblings: None,
             },
         );
     }
@@ -4978,28 +4976,25 @@ fn task126_approval_bridge_enforces_writable_roots_and_strict_git_admin_names() 
     }
 
     // Denied: leaf and intermediate dangling symlinks inside writable root pointing outside.
-    #[cfg(unix)]
-    {
-        let leaf_link = wt.join("escape-leaf.toml");
-        std::os::unix::fs::symlink(cargo_home.join("config.toml"), &leaf_link).unwrap();
-        let dir_link = wt.join("escape-dir");
-        std::os::unix::fs::symlink(cargo_home.join("missing-subdir"), &dir_link).unwrap();
-        for escaped in [leaf_link, dir_link.join("config.toml")] {
-            assert!(
-                matches!(
-                    crate::preset::decide_escalation_with_roots(
-                        &edit_req(&escaped),
-                        &cfg.policy,
-                        cfg.preset,
-                        cfg.allowed_tools.as_deref(),
-                        Some(cfg.sandbox.writable_roots.as_slice()),
-                    ),
-                    crate::preset::EscalationDisposition::AutoDeny { .. }
+    let leaf_link = wt.join("escape-leaf.toml");
+    org_platform::fs::create_symlink(&cargo_home.join("config.toml"), &leaf_link).unwrap();
+    let dir_link = wt.join("escape-dir");
+    org_platform::fs::create_symlink(&cargo_home.join("missing-subdir"), &dir_link).unwrap();
+    for escaped in [leaf_link, dir_link.join("config.toml")] {
+        assert!(
+            matches!(
+                crate::preset::decide_escalation_with_roots(
+                    &edit_req(&escaped),
+                    &cfg.policy,
+                    cfg.preset,
+                    cfg.allowed_tools.as_deref(),
+                    Some(cfg.sandbox.writable_roots.as_slice()),
                 ),
-                "dangling symlink escape must be AutoDenied: {}",
-                escaped.display()
-            );
-        }
+                crate::preset::EscalationDisposition::AutoDeny { .. }
+            ),
+            "dangling symlink escape must be AutoDenied: {}",
+            escaped.display()
+        );
     }
 
     // Verify `.git` as directory emits `.git/hooks` and `.git/hooks/**`, and unsafe glob/whitespace
@@ -5245,16 +5240,15 @@ fn task126_approval_bridge_blocks_canonical_deny_bypasses_trailing_slash_symlink
     }
 
     // Finding 1B + 2: in-root symlinks to denied targets and trailing `/` / `/.` on dangling symlinks.
-    #[cfg(unix)]
     {
         let adm_link = wt.join("adm");
-        std::os::unix::fs::symlink(&admin_dir, &adm_link).unwrap();
+        org_platform::fs::create_symlink(&admin_dir, &adm_link).unwrap();
         let git_link = wt.join("g");
-        std::os::unix::fs::symlink(wt.join(".git"), &git_link).unwrap();
+        org_platform::fs::create_symlink(&wt.join(".git"), &git_link).unwrap();
         let oi_link = wt.join("oi");
-        std::os::unix::fs::symlink(&objects_info, &oi_link).unwrap();
+        org_platform::fs::create_symlink(&objects_info, &oi_link).unwrap();
         let dangling = wt.join("escape");
-        std::os::unix::fs::symlink(cargo_home.join("config.toml"), &dangling).unwrap();
+        org_platform::fs::create_symlink(&cargo_home.join("config.toml"), &dangling).unwrap();
 
         for bypass in [
             format!("{}/config.worktree", adm_link.display()),
@@ -5514,12 +5508,11 @@ fn task126_pass3_notebook_edit_unsandboxed_deny_resolver_macos_case_and_dual_key
     });
 
     // Finding 1: NotebookEdit (`capability: None`, `kind: FileChange`) must still hit `cap:edit` denies.
-    #[cfg(unix)]
     {
         let adm_link = wt.join("adm");
-        std::os::unix::fs::symlink(&admin_dir, &adm_link).unwrap();
+        org_platform::fs::create_symlink(&admin_dir, &adm_link).unwrap();
         let dangling_cw = wt.join("cw");
-        std::os::unix::fs::symlink(admin_dir.join("config.worktree"), &dangling_cw).unwrap();
+        org_platform::fs::create_symlink(&admin_dir.join("config.worktree"), &dangling_cw).unwrap();
 
         for target in [adm_link.join("config.worktree"), wt.join(".git")] {
             let nb_req = ApprovalRequest::new(
@@ -5576,8 +5569,7 @@ fn task126_pass3_notebook_edit_unsandboxed_deny_resolver_macos_case_and_dual_key
     }
 
     // Finding 3: macOS APFS case-folded absent denied target inside writable admin dir.
-    #[cfg(target_os = "macos")]
-    {
+    if org_platform::fs::paths_case_insensitive_by_default() {
         let mut upper = ApprovalRequest::new(
             ApprovalId::new("apfs-case"),
             ApprovalKind::FileChange,
@@ -5642,4 +5634,174 @@ fn task126_pass3_notebook_edit_unsandboxed_deny_resolver_macos_case_and_dual_key
             crate::preset::EscalationDisposition::AutoDeny { .. }
         ));
     }
+}
+
+#[test]
+fn task166_bwrap_deny_dirs_fail_closed_and_precreate_unstarted_siblings_and_git_credentials() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let sock_dir = office.durable_root().join("run-sock");
+    std::fs::create_dir_all(&sock_dir).unwrap();
+    let mgr = SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(sock_dir.join("office.sock")),
+    );
+    let employees = office.list_employees().unwrap();
+    assert!(!employees.is_empty());
+    let me = employees[0].id.as_str().to_owned();
+    let unstarted_sibling = "01a212a8-982e-7000-8000-000000000166";
+    let office_id = office.info().office_id.clone();
+    let office_local = office
+        .durable_root()
+        .join("local")
+        .join("offices")
+        .join(&office_id);
+    // Register an unstarted sibling agent dir name by hiring or placing an employee dir check:
+    // also verify all existing employees (like HR Lead) are pre-created as `0700` dirs.
+    let sibling_ids = mgr.ensure_bwrap_deny_dirs(&me).unwrap();
+    for other in &sibling_ids {
+        let agent_dir = office_local.join("agents").join(other);
+        assert!(
+            agent_dir.is_dir(),
+            "unstarted sibling dir must be pre-created"
+        );
+        assert_eq!(
+            std::fs::symlink_metadata(&agent_dir)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        let slug = crate::host_auth::agent_tmpdir_slug(&office_id, other);
+        let tmp_dir = sock_dir.join("t").join(slug);
+        assert!(tmp_dir.is_dir(), "sibling tmpdir must be pre-created");
+    }
+    assert!(office.durable_root().join("authority").is_dir());
+    assert!(office.folder().join("git-credentials").is_dir());
+    let denies = mgr.denied_office_globs_for(Some(&me));
+    let git_creds_canon = office
+        .folder()
+        .join("git-credentials")
+        .canonicalize()
+        .unwrap();
+    assert!(
+        denies
+            .iter()
+            .any(|p| p.as_str().starts_with(git_creds_canon.to_str().unwrap())),
+        "denied globs must cover host-local git-credentials dir"
+    );
+
+    // Fail-closed: if a required deny directory is replaced by a regular file, `ensure_bwrap_deny_dirs`
+    // MUST return `Err` instead of silently swallowing it with `let _ = ...`.
+    let tampered = office_local.join("agents").join(unstarted_sibling);
+    std::fs::write(&tampered, b"not-a-dir").unwrap();
+    let err = mgr.ensure_bwrap_deny_dirs(&me).unwrap_err();
+    assert_eq!(err.code, org_proto::ErrorCode::StorageError);
+}
+
+#[test]
+fn task166_enforce_bwrap_sibling_isolation_blocks_working_and_stops_idle_for_post_launch_sibling() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let mgr = Arc::new(SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    ));
+    let emp_a = "01a212a8-982e-7000-8000-000000000a01";
+    let emp_b = "01a212a8-982e-7000-8000-000000000b02";
+    let emp_c = "01a212a8-982e-7000-8000-000000000c03";
+
+    let spawn_stub_handle = |state_kind: SessionState,
+                             masked: std::collections::BTreeSet<String>|
+     -> (crate::manager::LiveSessionHandle, Arc<AtomicBool>) {
+        let (tx, rx) = std::sync::mpsc::channel::<crate::pump::PumpCommand>();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stopped_c = Arc::clone(&stopped);
+        let worker = std::thread::spawn(move || {
+            while let Ok(cmd) = rx.recv() {
+                if matches!(cmd, crate::pump::PumpCommand::Stop { .. }) {
+                    stopped_c.store(true, Ordering::SeqCst);
+                    break;
+                }
+            }
+        });
+        let state = Arc::new(Mutex::new(crate::pump::SessionRuntimeState {
+            employee_id: emp_a.into(),
+            office_id: office.info().office_id.clone(),
+            state: state_kind,
+            run_id: Some("run-a".into()),
+            session_id: Some("sess-a".into()),
+            runtime_id: Some("claude".into()),
+            runtime_session_id: None,
+            private_home: "/tmp/home-a".into(),
+            permission_preset: "autonomous_sandboxed".into(),
+            sandbox_enabled: true,
+            spec_hash: "h".into(),
+            watchdog: crate::recovery::StallWatchdog::new(Duration::from_secs(60), Instant::now()),
+            recovery_required: false,
+            last_reply: None,
+            last_error: None,
+            backgrounds: crate::subagents::BackgroundRegistry::default(),
+            pending_approvals: Vec::new(),
+            policy: org_agent_runtime::PermissionPolicy {
+                version: 1,
+                allow: Vec::new(),
+                deny: Vec::new(),
+            },
+            preset: PermissionPreset::AutonomousSandboxed,
+            allowed_tools: None,
+            writable_roots: Vec::new(),
+            suspended_on_asks: Vec::new(),
+            waiting_for_member_id: None,
+            waiting_for_name: None,
+            suspended_since: None,
+            pending_wake_count: 0,
+            pending_wake_reason: None,
+        }));
+        (
+            crate::manager::LiveSessionHandle {
+                state,
+                tx,
+                thread: Some(worker),
+                connection_id: None,
+                route_digest: String::new(),
+                oauth_expires_at_ms: None,
+                workspace: None,
+                active_permit: Arc::new(Mutex::new(None)),
+                supports_mid_turn: false,
+                bwrap_masked_siblings: Some(masked),
+            },
+            stopped,
+        )
+    };
+
+    // 1. Pre-launch sibling `emp_b` IS masked by `emp_a`, while post-launch `emp_c` is NOT.
+    // While `emp_a` is actively `Running`:
+    //   - `emp_b` passes cleanly without disturbing `emp_a`.
+    //   - `emp_c` MUST fail closed with `Conflict` before any binding file is written.
+    let masked: std::collections::BTreeSet<String> = [emp_b.to_owned()].into_iter().collect();
+    let (handle_a, stopped_a) = spawn_stub_handle(SessionState::Running, masked.clone());
+    mgr.registry
+        .lock()
+        .unwrap()
+        .live
+        .insert(emp_a.into(), handle_a);
+
+    mgr.enforce_bwrap_sibling_isolation(emp_b).unwrap();
+    assert!(!stopped_a.load(Ordering::SeqCst));
+
+    let conflict = mgr.enforce_bwrap_sibling_isolation(emp_c).unwrap_err();
+    assert_eq!(conflict.code, org_proto::ErrorCode::Conflict);
+    assert!(!stopped_a.load(Ordering::SeqCst));
+
+    // 2. Once `emp_a` becomes `Idle`, starting post-launch sibling `emp_c` MUST stop & reap
+    // `emp_a`'s stale bwrap session before `emp_c` launches.
+    {
+        let reg = mgr.registry.lock().unwrap();
+        reg.live[emp_a].state.lock().unwrap().state = SessionState::Idle;
+    }
+    mgr.enforce_bwrap_sibling_isolation(emp_c).unwrap();
+    assert!(stopped_a.load(Ordering::SeqCst));
+    assert!(!mgr.registry.lock().unwrap().live.contains_key(emp_a));
 }

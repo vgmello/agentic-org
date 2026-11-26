@@ -110,6 +110,9 @@ pub(crate) struct LiveSessionHandle {
     pub workspace: Option<String>,
     pub active_permit: Arc<Mutex<Option<(String, u64)>>>,
     pub supports_mid_turn: bool,
+    /// Set of sibling employee IDs whose directories were pre-created and masked when this
+    /// session launched under Linux Claude `bwrap` (`TASK-166`). `None` for non-bwrap sessions.
+    pub bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
 }
 
 #[derive(Default)]
@@ -188,11 +191,14 @@ impl Drop for PermitGuard<'_> {
 
 struct PlannedSessionLaunch {
     emp_id: String,
+    employee_name: String,
+    employee_handle: String,
     run_id: String,
     session_id: String,
     mark_str: String,
     runtime_id: String,
     supports_mid_turn: bool,
+    bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
     connection_id: Option<String>,
     route_digest: String,
     oauth_expires_at_ms: Option<u64>,
@@ -220,6 +226,7 @@ struct PreparedSessionLaunch {
     session_id: String,
     runtime_id: String,
     supports_mid_turn: bool,
+    bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
     connection_id: Option<String>,
     route_digest: String,
     oauth_expires_at_ms: Option<u64>,
@@ -1547,12 +1554,17 @@ impl SessionManager {
         check_registry_startable(&reg, emp_id)?;
         let finished = if let Some(handle) = reg.live.get(emp_id) {
             let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+            let bwrap_topology_stale = handle
+                .bwrap_masked_siblings
+                .as_ref()
+                .is_some_and(|masked| self.has_unmasked_bwrap_sibling(emp_id, masked));
             let stop_reason = warm_handle_stop_reason(
                 &self.office,
                 emp_id,
                 handle,
                 requested_workspace,
                 state.state,
+                bwrap_topology_stale,
             );
             if stop_reason.is_none() && is_warm_state_reusable(state.state) {
                 if let Some(text) = objective {
@@ -1650,6 +1662,10 @@ impl SessionManager {
         opts: LaunchRouteOpts<'_>,
     ) -> Result<PlannedSessionLaunch, ApiError> {
         let emp_id = employee.id.as_str().to_owned();
+        // Before creating this agent's runtime directory or session-binding token on disk,
+        // ensure no already-running Linux `bwrap` sibling lacks a mount mask for `emp_id`
+        // (`TASK-166`).
+        self.enforce_bwrap_sibling_isolation(&emp_id)?;
         let home = self
             .office
             .ensure_private_home(&emp_id)
@@ -1680,9 +1696,11 @@ impl SessionManager {
 
         let is_linux_claude_bwrap =
             is_linux_claude_bwrap(admitted.sandbox_enabled, admitted.adapter.id().as_str());
-        if is_linux_claude_bwrap {
-            ensure_bwrap_deny_dirs(&self.office, &emp_id);
-        }
+        let bwrap_masked_siblings = if is_linux_claude_bwrap {
+            Some(self.ensure_bwrap_deny_dirs(&emp_id)?)
+        } else {
+            None
+        };
 
         let preset_cfg = self.build_employee_preset_cfg(
             &emp_id,
@@ -1698,52 +1716,39 @@ impl SessionManager {
 
         let instructions =
             self.build_instructions(employee, &home, &workspace_real, &preset_cfg, opts.task_ref)?;
+        let read_only_dirs = self.collect_session_read_only_dirs(
+            admitted.adapter.id(),
+            &home,
+            &workspace_real,
+            preset_cfg.sandbox.enabled,
+        );
         let spec = build_session_spec_for_launch(
             admitted.adapter.id(),
             employee,
             admitted.model_token,
             workspace_spec,
+            read_only_dirs,
             instructions,
             &preset_cfg,
             is_linux_claude_bwrap,
         )?;
-        let spec_hash = if admitted.route_digest_suffix.is_empty() {
-            spec.spec_hash()
-        } else {
-            format!(
-                "{}:route={}",
-                spec.spec_hash(),
-                admitted.route_digest_suffix
-            )
-        };
+        let spec_hash = compute_launch_spec_hash(&spec, &admitted.route_digest_suffix);
         let run_id = format!("run-{}", next_entropy_hex(10)?);
-        // Claude Code (`--session-id`), Codex, and Agy accept canonical lowercase UUIDs;
-        // Claude Code 2.1.323+ rejects non-UUID strings before the `initialize` handshake.
         let session_id = next_uuid_v4()?;
         let mark_str = format!("m-{}", next_entropy_hex(12)?);
-
-        let resume_sid = opts
-            .resume_runtime_session_id
-            .and_then(|raw| SessionId::try_from(raw).ok());
-        let new_sid = if resume_sid.is_some() {
-            None
-        } else {
-            SessionId::try_from(session_id.as_str()).ok()
-        };
         let allow_host_auth =
             crate::host_auth::allows_host_subscription_auth(&admitted.auth_env, admitted.auth_mode);
         let adapter_id = admitted.adapter.id();
         let runtime_name = adapter_id.as_str();
-        let ctx = LaunchContext {
-            runtime_path: binary,
-            runtime_version: None,
-            runtime_dir: canonical_or_spec(&runtime_dir)?,
-            tmpdir: canonical_or_spec(&tmpdir)?,
-            office_env_names: office_env_names(),
-            new_session_id: new_sid,
-            resume: resume_sid,
-            config_dir: crate::host_auth::host_config_dir_for(runtime_name, allow_host_auth),
-        };
+        let ctx = build_launch_context(
+            binary,
+            &runtime_dir,
+            &tmpdir,
+            &session_id,
+            opts.resume_runtime_session_id,
+            runtime_name,
+            allow_host_auth,
+        )?;
         let (plan, session) = admitted
             .adapter
             .plan_session(&spec, &ctx)
@@ -1760,11 +1765,14 @@ impl SessionManager {
 
         Ok(PlannedSessionLaunch {
             emp_id,
+            employee_name: employee.name.clone(),
+            employee_handle: employee.handle.clone(),
             run_id,
             session_id,
             mark_str,
             runtime_id: admitted.adapter.id().as_str().to_owned(),
             supports_mid_turn: admitted.adapter.capabilities().supports_mid_turn_delivery(),
+            bwrap_masked_siblings,
             connection_id: admitted.connection_id,
             route_digest: admitted.route_digest_suffix,
             oauth_expires_at_ms,
@@ -1794,11 +1802,14 @@ impl SessionManager {
     ) -> Result<PreparedSessionLaunch, ApiError> {
         let PlannedSessionLaunch {
             emp_id,
+            employee_name,
+            employee_handle,
             run_id,
             session_id,
             mark_str,
             runtime_id,
             supports_mid_turn,
+            bwrap_masked_siblings,
             connection_id,
             route_digest,
             oauth_expires_at_ms,
@@ -1833,6 +1844,8 @@ impl SessionManager {
             workspace: &workspace_real,
             tmpdir: &tmpdir,
             employee_id: &emp_id,
+            employee_name: &employee_name,
+            employee_handle: &employee_handle,
             session_id: &session_id,
             token: binding.expose_token(),
             binding_file: &binding_file,
@@ -1877,6 +1890,7 @@ impl SessionManager {
             session_id,
             runtime_id,
             supports_mid_turn,
+            bwrap_masked_siblings,
             connection_id,
             route_digest,
             oauth_expires_at_ms,
@@ -1980,6 +1994,7 @@ impl SessionManager {
             run_id,
             runtime_id,
             supports_mid_turn,
+            bwrap_masked_siblings,
             connection_id,
             route_digest,
             oauth_expires_at_ms,
@@ -2047,16 +2062,33 @@ impl SessionManager {
             .unwrap_or_else(|p| p.into_inner())
             .to_view();
         let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-        if reg.draining || reg.shutting_down {
+        let bwrap_raced_unmasked = bwrap_masked_siblings.as_ref().is_some_and(|masked| {
+            reg.live
+                .keys()
+                .chain(reg.starting.iter())
+                .any(|other| other != &emp_id && !masked.contains(other))
+        });
+        if reg.draining || reg.shutting_down || bwrap_raced_unmasked {
             drop(reg);
-            return Err(abort_post_spawn_shutdown(
+            let _ = abort_post_spawn_shutdown(
                 self,
                 &emp_id,
                 tx,
                 thread,
                 &runtime_state,
                 &active_permit,
-            ));
+            );
+            return Err(if bwrap_raced_unmasked {
+                ApiError::new(
+                    ErrorCode::Conflict,
+                    "a newly started sibling agent was not masked in this sandbox; retry launch",
+                )
+            } else {
+                ApiError::new(
+                    ErrorCode::Unavailable,
+                    "office session manager is shutting down",
+                )
+            });
         }
         reg.live.insert(
             emp_id,
@@ -2070,6 +2102,7 @@ impl SessionManager {
                 workspace: workspace_arg,
                 active_permit,
                 supports_mid_turn,
+                bwrap_masked_siblings,
             },
         );
         Ok(view)
@@ -2219,6 +2252,7 @@ impl SessionManager {
             input.sandbox_enabled,
         );
         let info = self.office.info();
+        let (git_name, git_email) = agent_git_identity(input.employee_name, input.employee_handle);
         let context = vec![
             (
                 OsString::from("AGENT_OS_SOCKET"),
@@ -2245,10 +2279,225 @@ impl SessionManager {
                 OsString::from("AGENT_OS_BINDING_FILE"),
                 input.binding_file.as_os_str().to_os_string(),
             ),
+            (OsString::from("GIT_AUTHOR_NAME"), OsString::from(&git_name)),
+            (
+                OsString::from("GIT_AUTHOR_EMAIL"),
+                OsString::from(&git_email),
+            ),
+            (
+                OsString::from("GIT_COMMITTER_NAME"),
+                OsString::from(&git_name),
+            ),
+            (
+                OsString::from("GIT_COMMITTER_EMAIL"),
+                OsString::from(&git_email),
+            ),
         ];
         Environment::new(search_path, &captured)
             .and_then(|env| env.with_context(&context))
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "could not build session env"))
+    }
+
+    fn collect_session_read_only_dirs(
+        &self,
+        runtime: RuntimeId,
+        home: &Path,
+        workspace: &Path,
+        sandbox_enabled: bool,
+    ) -> Vec<SpecPath> {
+        if !sandbox_enabled || runtime.as_str() != "agy" {
+            return Vec::new();
+        }
+        let helper_dir = RuntimeRegistry::resolve_helper_dir(self.config.helper_dir.as_deref());
+        let forbidden = vec![
+            home.to_path_buf(),
+            workspace.to_path_buf(),
+            self.office.folder().to_path_buf(),
+            self.office.durable_root().to_path_buf(),
+            self.office.runtime_root().to_path_buf(),
+        ];
+        collect_agy_read_only_dirs(
+            &helper_dir,
+            std::env::var_os("RUSTUP_HOME"),
+            std::env::var_os("CARGO_HOME"),
+            std::env::var_os("HOME"),
+            &forbidden,
+        )
+    }
+
+    /// Pre-creates fixed `0700` sensitive office and sibling directories before launching a Linux
+    /// Claude `bwrap` sandbox so `bwrap` bind-mounts atomic directory masks without leaving
+    /// unmasked holes or creating 0-byte `0444` files (`TASK-144`, `TASK-166`). Fails closed on
+    /// any filesystem error (zero silent swallows). Never creates `<durable>/private` on
+    /// satellites (`ARCH-02`).
+    pub(crate) fn ensure_bwrap_deny_dirs(
+        &self,
+        employee_id: &str,
+    ) -> Result<std::collections::BTreeSet<String>, ApiError> {
+        let durable = self.office.durable_root();
+        let office_id = &self.office.info().office_id;
+        let office_local = durable.join("local").join("offices").join(office_id);
+        let runtime_root = self.office.runtime_root();
+        let office_rt = runtime_root.join(office_id);
+        // `authority` is pre-created on BOTH HQ and satellites; `private` stays HQ-only (`ARCH-02`).
+        for sub in [
+            "state",
+            "journal",
+            "authority",
+            "messaging",
+            "budgets",
+            "accounting",
+            "recovery",
+        ] {
+            ensure_owner_only_dir(&durable.join(sub))?;
+        }
+        if self.office.info().role == org_office::OfficeRole::Hq {
+            ensure_owner_only_dir(&durable.join("private"))?;
+        }
+        ensure_owner_only_dir(&self.office.folder().join("git-credentials"))?;
+        for sub in [
+            "auth",
+            "connections",
+            "sessions",
+            "enroll-tmp",
+            "security",
+            "subscription-usage",
+            "agents",
+        ] {
+            ensure_owner_only_dir(&office_local.join(sub))?;
+        }
+        for dir in [
+            office_rt.join("protected"),
+            office_rt.join("git-home"),
+            runtime_root.join("snapshot-import"),
+            runtime_root.join("snapshot-export"),
+        ] {
+            ensure_owner_only_dir(&dir)?;
+        }
+        let repos_root = office_rt.join("repositories");
+        let self_admins = org_office::git::OfficeGitState::load(runtime_root, office_id)
+            .ok()
+            .map(|gs| collect_self_active_admins(&gs, employee_id))
+            .unwrap_or_default();
+        if self_admins.is_empty() {
+            ensure_owner_only_dir(&repos_root)?;
+        } else {
+            for repo_id in self_admins.keys() {
+                let objects_dir = repos_root.join(format!("{repo_id}.git")).join("objects");
+                if objects_dir.is_dir() {
+                    ensure_owner_only_dir(&objects_dir.join("info"))?;
+                }
+            }
+        }
+        self.ensure_bwrap_sibling_dirs(&office_local, &office_rt, office_id, employee_id)
+    }
+
+    fn ensure_bwrap_sibling_dirs(
+        &self,
+        office_local: &Path,
+        office_rt: &Path,
+        office_id: &str,
+        employee_id: &str,
+    ) -> Result<std::collections::BTreeSet<String>, ApiError> {
+        let agents_root = office_local.join("agents");
+        let sibling_ids = self.collect_sibling_agent_ids(&agents_root, Some(employee_id));
+        for other in &sibling_ids {
+            ensure_owner_only_dir(&agents_root.join(other))?;
+        }
+        if let Some(sock_parent) = self.config.office_socket.parent() {
+            if sock_parent.is_dir() {
+                let short_root = sock_parent.join("t");
+                ensure_owner_only_dir(&short_root)?;
+                let own_slug = crate::host_auth::agent_tmpdir_slug(office_id, employee_id);
+                for other in &sibling_ids {
+                    let slug = crate::host_auth::agent_tmpdir_slug(office_id, other);
+                    if slug != own_slug {
+                        ensure_owner_only_dir(&short_root.join(slug))?;
+                    }
+                }
+            }
+        }
+        let chain = self.resolve_employee_team_chain(employee_id);
+        if !chain.is_empty() {
+            let mut team_dir = office_rt.to_path_buf();
+            for tid in &chain {
+                team_dir = team_dir.join("teams").join(tid);
+            }
+            let rt_agents_dir = team_dir.join("agents");
+            ensure_owner_only_dir(&rt_agents_dir)?;
+            for other in &sibling_ids {
+                ensure_owner_only_dir(&rt_agents_dir.join(other))?;
+            }
+        }
+        Ok(sibling_ids)
+    }
+
+    fn has_unmasked_bwrap_sibling(
+        &self,
+        self_employee_id: &str,
+        masked: &std::collections::BTreeSet<String>,
+    ) -> bool {
+        let office_id = &self.office.info().office_id;
+        let agents_root = self
+            .office
+            .durable_root()
+            .join("local")
+            .join("offices")
+            .join(office_id)
+            .join("agents");
+        let current = self.collect_sibling_agent_ids(&agents_root, Some(self_employee_id));
+        current.iter().any(|id| !masked.contains(id))
+    }
+
+    /// Ensures no live Linux `bwrap` session started before `starting_emp_id` existed can read
+    /// `starting_emp_id`'s newly created directory or `session-binding-*.v1` token (`TASK-166`).
+    /// Stale non-working `bwrap` siblings are stopped and reaped before launch proceeds; any stale
+    /// actively-working `bwrap` sibling fails launch closed with `Conflict`.
+    pub(crate) fn enforce_bwrap_sibling_isolation(
+        &self,
+        starting_emp_id: &str,
+    ) -> Result<(), ApiError> {
+        let stale_handles: Vec<LiveSessionHandle> = {
+            let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+            let mut stale_idle_ids = Vec::new();
+            for (other_id, handle) in &reg.live {
+                if other_id == starting_emp_id {
+                    continue;
+                }
+                let Some(masked) = &handle.bwrap_masked_siblings else {
+                    continue;
+                };
+                if masked.contains(starting_emp_id) {
+                    continue;
+                }
+                let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+                if matches!(
+                    st.state,
+                    SessionState::Starting | SessionState::Running | SessionState::WaitingApproval
+                ) {
+                    return Err(ApiError::new(
+                        ErrorCode::Conflict,
+                        format!(
+                            "cannot start `{starting_emp_id}` while active sandboxed session `{other_id}` does not isolate it; wait for its turn to finish or stop `{other_id}` first"
+                        ),
+                    ));
+                }
+                stale_idle_ids.push(other_id.clone());
+            }
+            stale_idle_ids
+                .into_iter()
+                .filter_map(|id| reg.live.remove(&id))
+                .collect()
+        };
+        for mut handle in stale_handles {
+            let _ = handle.tx.send(PumpCommand::Stop {
+                reason: "bwrap_sibling_isolation_refresh".into(),
+            });
+            if let Some(thread) = handle.thread.take() {
+                let _ = thread.join();
+            }
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -2262,6 +2511,7 @@ impl SessionManager {
     ) -> Vec<PathPattern> {
         let mut out = Vec::new();
         push_glob_pattern(&mut out, self.office.folder());
+        push_glob_pattern(&mut out, &self.office.folder().join("git-credentials"));
         let durable = self.office.durable_root();
         let office_id = &self.office.info().office_id;
         let office_local = durable.join("local").join("offices").join(office_id);
@@ -3240,12 +3490,16 @@ fn warm_handle_stop_reason(
     handle: &LiveSessionHandle,
     requested_workspace: Option<&str>,
     state: SessionState,
+    bwrap_topology_stale: bool,
 ) -> Option<&'static str> {
     if handle.workspace.as_deref() != requested_workspace {
         return Some("workspace_changed");
     }
     if state != SessionState::Idle {
         return None;
+    }
+    if bwrap_topology_stale {
+        return Some("bwrap_sibling_topology_changed");
     }
     if crate::host_auth::is_oauth_expiring(handle.oauth_expires_at_ms, crate::credentials::now_ms())
     {
@@ -3704,23 +3958,14 @@ fn resolve_workspace(home: &Path, explicit: Option<&str>) -> Result<PathBuf, Api
 }
 
 fn ensure_owner_only_dir(path: &Path) -> Result<(), ApiError> {
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        current.push(component);
-        if !current.exists() {
-            match org_platform::fs::create_owner_only_dir(&current) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(_) => {
-                    return Err(ApiError::new(
-                        ErrorCode::StorageError,
-                        "could not create private session directory",
-                    ))
-                }
-            }
-        }
-    }
-    Ok(())
+    org_platform::fs::create_owner_only_dir_all(path)
+        .and_then(|()| org_platform::fs::set_owner_only_dir(path))
+        .map_err(|_| {
+            ApiError::new(
+                ErrorCode::StorageError,
+                "could not create private session directory",
+            )
+        })
 }
 
 fn build_objective_text(employee: &Employee, requester: &str, text: &str) -> String {
@@ -3760,11 +4005,16 @@ fn apply_linux_claude_bwrap_pruning(spec: &mut SessionSpec) {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "launch spec builder takes runtime, employee, model, workspace, read-only dirs, instructions, preset, and bwrap flag"
+)]
 fn build_session_spec_for_launch(
     runtime: RuntimeId,
     employee: &Employee,
     model: Option<Token>,
     workspace: SpecPath,
+    read_only_dirs: Vec<SpecPath>,
     instructions: String,
     preset_cfg: &PresetConfig,
     linux_claude_bwrap: bool,
@@ -3774,6 +4024,7 @@ fn build_session_spec_for_launch(
         employee,
         model,
         workspace,
+        read_only_dirs,
         instructions,
         preset_cfg,
     )?;
@@ -3783,11 +4034,49 @@ fn build_session_spec_for_launch(
     Ok(spec)
 }
 
+fn compute_launch_spec_hash(spec: &SessionSpec, route_digest_suffix: &str) -> String {
+    if route_digest_suffix.is_empty() {
+        spec.spec_hash()
+    } else {
+        format!("{}:route={route_digest_suffix}", spec.spec_hash())
+    }
+}
+
+fn build_launch_context(
+    runtime_path: PathBuf,
+    runtime_dir: &Path,
+    tmpdir: &Path,
+    session_id: &str,
+    resume_runtime_session_id: Option<&str>,
+    runtime_name: &str,
+    allow_host_auth: bool,
+) -> Result<LaunchContext, ApiError> {
+    let resume = resume_runtime_session_id.and_then(|raw| SessionId::try_from(raw).ok());
+    // Claude Code (`--session-id`), Codex, and Agy accept canonical lowercase UUIDs;
+    // Claude Code 2.1.323+ rejects non-UUID strings before the `initialize` handshake.
+    let new_session_id = if resume.is_some() {
+        None
+    } else {
+        SessionId::try_from(session_id).ok()
+    };
+    Ok(LaunchContext {
+        runtime_path,
+        runtime_version: None,
+        runtime_dir: canonical_or_spec(runtime_dir)?,
+        tmpdir: canonical_or_spec(tmpdir)?,
+        office_env_names: office_env_names(),
+        new_session_id,
+        resume,
+        config_dir: crate::host_auth::host_config_dir_for(runtime_name, allow_host_auth),
+    })
+}
+
 fn build_session_spec(
     runtime: RuntimeId,
     employee: &Employee,
     model: Option<Token>,
     workspace: SpecPath,
+    read_only_dirs: Vec<SpecPath>,
     instructions: String,
     preset_cfg: &PresetConfig,
 ) -> Result<SessionSpec, ApiError> {
@@ -3806,7 +4095,7 @@ fn build_session_spec(
         model,
         effort: None,
         workspace,
-        read_only_dirs: Vec::new(),
+        read_only_dirs,
         instructions,
         permission_mode: preset_cfg.permission_mode,
         policy: preset_cfg.policy.clone(),
@@ -3834,19 +4123,86 @@ fn sanitize_agent_name(handle: &str) -> String {
     out
 }
 
+pub(crate) fn agent_git_identity(name: &str, handle: &str) -> (String, String) {
+    let safe_handle = sanitize_agent_name(handle);
+    let clean_name: String = name
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let trimmed = clean_name.trim();
+    let display = if trimmed.is_empty() {
+        safe_handle.clone()
+    } else {
+        trimmed.to_owned()
+    };
+    let email = format!("{safe_handle}@agents.agentic-org.local");
+    (display, email)
+}
+
+fn push_safe_ro_dir(out: &mut Vec<SpecPath>, candidate: &Path, forbidden_canon: &[PathBuf]) {
+    if !candidate.is_absolute() || !candidate.is_dir() {
+        return;
+    }
+    let Ok(resolved) = candidate.canonicalize() else {
+        return;
+    };
+    if resolved.parent().is_none()
+        || forbidden_canon
+            .iter()
+            .any(|root| resolved.starts_with(root))
+    {
+        return;
+    }
+    let text = resolved.display().to_string();
+    if let Ok(spec) = SpecPath::try_from(text.as_str()) {
+        if !spec.is_root() && !out.contains(&spec) {
+            out.push(spec);
+        }
+    }
+}
+
+/// Collects safe read-only directories for Agy `--sandbox` (`--add-dir`) so `agent-os` and the
+/// host Rust toolchain execute without `BypassSandbox` (`TASK-164`). Mounts only individual safe
+/// Cargo subdirs (`bin`, `registry`, `git`) — NEVER host `~/.cargo` root, so `credentials*` stay
+/// inaccessible.
+pub(crate) fn collect_agy_read_only_dirs(
+    helper_dir: &Path,
+    rustup_explicit: Option<OsString>,
+    cargo_explicit: Option<OsString>,
+    host_home: Option<OsString>,
+    forbidden: &[PathBuf],
+) -> Vec<SpecPath> {
+    let forbidden_canon: Vec<PathBuf> = forbidden
+        .iter()
+        .map(|p| canonicalize_with_tail(p))
+        .collect();
+    let mut out = Vec::new();
+    push_safe_ro_dir(&mut out, helper_dir, &forbidden_canon);
+    // If `<helper_dir>/agent-os` is a symlink into a release-store directory, also mount the
+    // canonical release directory holding the target binary.
+    if let Ok(agent_os_real) = helper_dir.join("agent-os").canonicalize() {
+        if let Some(parent) = agent_os_real.parent() {
+            push_safe_ro_dir(&mut out, parent, &forbidden_canon);
+        }
+    }
+    if let Some(rustup) =
+        host_rust_dir_env_from(rustup_explicit, host_home.clone(), ".rustup", forbidden)
+    {
+        push_safe_ro_dir(&mut out, Path::new(&rustup), &forbidden_canon);
+    }
+    if let Some(cargo) = host_rust_dir_env_from(cargo_explicit, host_home, ".cargo", forbidden) {
+        let cargo_path = Path::new(&cargo);
+        for sub in ["bin", "registry", "git"] {
+            push_safe_ro_dir(&mut out, &cargo_path.join(sub), &forbidden_canon);
+        }
+    }
+    out
+}
+
 fn write_owner_only_binding_file(path: &Path, token: &str) -> Result<(), ApiError> {
-    use std::io::Write as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
     let _ = std::fs::remove_file(path);
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not write session binding"))?;
-    file.write_all(token.as_bytes())
-        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not write session binding"))?;
-    Ok(())
+    org_platform::fs::write_owner_only_file(path, token.as_bytes())
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not write session binding"))
 }
 
 struct SessionEnvInput<'a> {
@@ -3854,6 +4210,8 @@ struct SessionEnvInput<'a> {
     workspace: &'a Path,
     tmpdir: &'a Path,
     employee_id: &'a str,
+    employee_name: &'a str,
+    employee_handle: &'a str,
     session_id: &'a str,
     token: &'a str,
     binding_file: &'a Path,
@@ -3904,15 +4262,7 @@ fn ensure_readonly_cache_symlink(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => return false,
     }
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(&resolved_target, link_path).is_ok()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (link_path, resolved_target);
-        false
-    }
+    org_platform::fs::create_symlink(&resolved_target, link_path).is_ok()
 }
 
 /// Links host read-only Rust cache subdirs (`registry`, `git`, `.rustup`) into an isolated agent
@@ -4007,65 +4357,6 @@ fn append_rust_toolchain_env(
     }
 }
 
-/// Pre-creates fixed `0700` sensitive office directories before launching a Linux Claude `bwrap`
-/// sandbox so `bwrap` bind-mounts read-only masks over real directories instead of colliding with
-/// future directory creation (`TASK-144`). Never creates `<durable>/private` on satellites (`ARCH-02`).
-fn ensure_bwrap_deny_dirs(office: &Office, employee_id: &str) {
-    let durable = office.durable_root();
-    let office_id = &office.info().office_id;
-    let office_local = durable.join("local").join("offices").join(office_id);
-    let runtime_root = office.runtime_root();
-    let office_rt = runtime_root.join(office_id);
-    for sub in [
-        "state",
-        "journal",
-        "messaging",
-        "budgets",
-        "accounting",
-        "recovery",
-    ] {
-        let _ = ensure_owner_only_dir(&durable.join(sub));
-    }
-    if office.info().role == org_office::OfficeRole::Hq {
-        for sub in ["authority", "private"] {
-            let _ = ensure_owner_only_dir(&durable.join(sub));
-        }
-    }
-    for sub in [
-        "auth",
-        "connections",
-        "sessions",
-        "enroll-tmp",
-        "security",
-        "subscription-usage",
-    ] {
-        let _ = ensure_owner_only_dir(&office_local.join(sub));
-    }
-    for dir in [
-        office_rt.join("protected"),
-        office_rt.join("git-home"),
-        runtime_root.join("snapshot-import"),
-        runtime_root.join("snapshot-export"),
-    ] {
-        let _ = ensure_owner_only_dir(&dir);
-    }
-    let repos_root = office_rt.join("repositories");
-    let self_admins = org_office::git::OfficeGitState::load(runtime_root, office_id)
-        .ok()
-        .map(|gs| collect_self_active_admins(&gs, employee_id))
-        .unwrap_or_default();
-    if self_admins.is_empty() {
-        let _ = ensure_owner_only_dir(&repos_root);
-    } else {
-        for repo_id in self_admins.keys() {
-            let objects_dir = repos_root.join(format!("{repo_id}.git")).join("objects");
-            if objects_dir.is_dir() {
-                let _ = ensure_owner_only_dir(&objects_dir.join("info"));
-            }
-        }
-    }
-}
-
 fn pattern_exists_for_bwrap(pat: &PathPattern) -> bool {
     let raw = pat.as_str();
     let stripped = raw
@@ -4147,6 +4438,10 @@ fn office_env_names() -> Vec<EnvName> {
         "AGENT_OS_SESSION_ID",
         "AGENT_OS_SESSION_TOKEN",
         "AGENT_OS_BINDING_FILE",
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
         "RUSTUP_HOME",
         "CARGO_HOME",
         "CARGO_NET_OFFLINE",
@@ -4553,7 +4848,7 @@ mod manager_helper_tests {
         // without `/**` traversal so bwrap never follows the symlink onto host `.rustup`/`.cargo`.
         let fake_host_rustup = root.join("host-rustup");
         std::fs::create_dir_all(&fake_host_rustup).unwrap();
-        std::os::unix::fs::symlink(&fake_host_rustup, existing_sibling.join("home/.rustup"))
+        org_platform::fs::create_symlink(&fake_host_rustup, &existing_sibling.join("home/.rustup"))
             .unwrap();
 
         let denied = vec![
@@ -4768,7 +5063,7 @@ mod manager_helper_tests {
         assert!(!home_dir.join(".cargo").join("config.toml").exists());
 
         // Legacy `<agent_home>/.rustup` symlink is automatically cleaned up (`TASK-163`).
-        std::os::unix::fs::symlink(&rustup_dir, home_dir.join(".rustup")).unwrap();
+        org_platform::fs::create_symlink(&rustup_dir, &home_dir.join(".rustup")).unwrap();
         assert!(home_dir.join(".rustup").symlink_metadata().is_ok());
         assert!(link_host_rust_caches(
             &home_dir,
@@ -4785,7 +5080,7 @@ mod manager_helper_tests {
         std::fs::create_dir_all(&escape_target).unwrap();
         let tampered_home = root.join("tampered-home");
         std::fs::create_dir_all(&tampered_home).unwrap();
-        std::os::unix::fs::symlink(&escape_target, tampered_home.join(".cargo")).unwrap();
+        org_platform::fs::create_symlink(&escape_target, &tampered_home.join(".cargo")).unwrap();
         let mut tampered_env = Vec::new();
         append_rust_toolchain_env(
             &mut tampered_env,
@@ -4855,5 +5150,231 @@ mod manager_helper_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn agy_read_only_dirs_mounts_release_store_and_toolchain_subdirs_never_cargo_root() {
+        use org_agent_runtime::AgentRuntime as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let release_bin = root.join("release-store/releases/0.1.0-v14");
+        let shim_bin = root.join("bin");
+        let rustup_dir = root.join("host-rustup");
+        let cargo_dir = root.join("host-cargo");
+        let home_dir = root.join("agent-home");
+        let ws_dir = root.join("workspace");
+        let rt_dir = root.join("runtime");
+        let tmp_dir = root.join("tmp");
+        for d in [
+            &release_bin,
+            &shim_bin,
+            &rustup_dir,
+            &cargo_dir.join("bin"),
+            &cargo_dir.join("registry"),
+            &cargo_dir.join("git"),
+            &home_dir,
+            &ws_dir,
+            &rt_dir,
+            &tmp_dir,
+        ] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(release_bin.join("agent-os"), b"#!/bin/sh\n").unwrap();
+        org_platform::fs::create_symlink(&release_bin.join("agent-os"), &shim_bin.join("agent-os"))
+            .unwrap();
+        std::fs::write(cargo_dir.join("credentials.toml"), b"secret").unwrap();
+
+        let forbidden = vec![home_dir.clone(), ws_dir.clone()];
+        let ro_dirs = collect_agy_read_only_dirs(
+            &shim_bin,
+            Some(rustup_dir.as_os_str().to_os_string()),
+            Some(cargo_dir.as_os_str().to_os_string()),
+            None,
+            &forbidden,
+        );
+        let ro_strs: Vec<&str> = ro_dirs.iter().map(SpecPath::as_str).collect();
+        assert!(ro_strs.contains(&shim_bin.to_str().unwrap()));
+        assert!(ro_strs.contains(&release_bin.to_str().unwrap()));
+        assert!(ro_strs.contains(&rustup_dir.to_str().unwrap()));
+        assert!(ro_strs.contains(&cargo_dir.join("bin").to_str().unwrap()));
+        assert!(ro_strs.contains(&cargo_dir.join("registry").to_str().unwrap()));
+        assert!(ro_strs.contains(&cargo_dir.join("git").to_str().unwrap()));
+        assert!(
+            !ro_strs.contains(&cargo_dir.to_str().unwrap()),
+            "must NEVER mount raw host CARGO_HOME root into Agy sandbox: {ro_strs:?}"
+        );
+        assert!(!ro_strs.contains(&"/"));
+
+        // Verify `AgyRuntime::plan_session` emits `--add-dir` for every collected RO dir.
+        let ws_spec = SpecPath::try_from(ws_dir.to_str().unwrap()).unwrap();
+        let preset_cfg = build_session_policy(
+            PermissionPreset::AutonomousSandboxed,
+            true,
+            &ws_spec,
+            None,
+            &[],
+            1,
+        )
+        .unwrap();
+        let spec = SessionSpec {
+            runtime: RuntimeId::try_from("agy").unwrap(),
+            kind: SessionKind::Home {},
+            agent: AgentIdentity {
+                name: AgentName::try_from("worker-eu-agy").unwrap(),
+                description: "Worker".to_owned(),
+                prompt: "Worker".to_owned(),
+            },
+            model: None,
+            effort: None,
+            workspace: ws_spec,
+            read_only_dirs: ro_dirs,
+            instructions: String::new(),
+            permission_mode: preset_cfg.permission_mode,
+            policy: preset_cfg.policy,
+            sandbox: preset_cfg.sandbox,
+            mcp_servers: Default::default(),
+            tools: preset_cfg.allowed_tools,
+        };
+        let ctx = LaunchContext {
+            runtime_path: PathBuf::from("/usr/local/bin/agy"),
+            runtime_version: None,
+            runtime_dir: SpecPath::try_from(rt_dir.to_str().unwrap()).unwrap(),
+            tmpdir: SpecPath::try_from(tmp_dir.to_str().unwrap()).unwrap(),
+            office_env_names: office_env_names(),
+            new_session_id: None,
+            resume: None,
+            config_dir: None,
+        };
+        let (plan, _) = org_agent_runtime_agy::AgyRuntime::new()
+            .plan_session(&spec, &ctx)
+            .unwrap();
+        for expected in [
+            release_bin.to_str().unwrap(),
+            rustup_dir.to_str().unwrap(),
+            cargo_dir.join("bin").to_str().unwrap(),
+            cargo_dir.join("registry").to_str().unwrap(),
+        ] {
+            assert!(
+                plan.args.windows(2).any(|w| w == ["--add-dir", expected]),
+                "Agy LaunchPlan missing --add-dir {expected}: {:?}",
+                plan.args
+            );
+        }
+        assert!(
+            !plan
+                .args
+                .windows(2)
+                .any(|w| w == ["--add-dir", cargo_dir.to_str().unwrap()]),
+            "Agy LaunchPlan must NEVER emit --add-dir for host CARGO_HOME root: {:?}",
+            plan.args
+        );
+    }
+
+    #[test]
+    fn agent_git_identity_allows_plain_git_commit_without_global_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let helper_dir = root.join("helpers");
+        let home_dir = root.join("home");
+        let repo_dir = root.join("repo");
+        for d in [&helper_dir, &home_dir, &repo_dir] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let (git_name, git_email) = agent_git_identity("Worker EU\nAgy", "Worker_EU.Agy");
+        assert_eq!(git_name, "Worker EU Agy");
+        assert_eq!(git_email, "worker_eu-agy@agents.agentic-org.local");
+
+        let search = SearchPath::new(
+            &helper_dir,
+            std::ffi::OsStr::new("/usr/bin:/bin"),
+            &[home_dir.clone(), repo_dir.clone()],
+        )
+        .unwrap();
+        let git_context = [
+            (OsString::from("GIT_AUTHOR_NAME"), OsString::from(&git_name)),
+            (
+                OsString::from("GIT_AUTHOR_EMAIL"),
+                OsString::from(&git_email),
+            ),
+            (
+                OsString::from("GIT_COMMITTER_NAME"),
+                OsString::from(&git_name),
+            ),
+            (
+                OsString::from("GIT_COMMITTER_EMAIL"),
+                OsString::from(&git_email),
+            ),
+        ];
+        let env = Environment::new(
+            search,
+            &[(OsString::from("HOME"), home_dir.as_os_str().to_os_string())],
+        )
+        .unwrap()
+        .with_context(&git_context)
+        .unwrap();
+        let env_debug = format!("{env:?}");
+        let names = office_env_names();
+        for required in [
+            "GIT_AUTHOR_NAME",
+            "GIT_AUTHOR_EMAIL",
+            "GIT_COMMITTER_NAME",
+            "GIT_COMMITTER_EMAIL",
+        ] {
+            assert!(
+                names.iter().any(|n| n.as_str() == required),
+                "office_env_names missing {required}"
+            );
+            assert!(
+                env_debug.contains(required),
+                "Environment missing {required}: {env_debug}"
+            );
+        }
+
+        // Run a real plain `git commit` with global & system gitconfigs disabled and zero `-c user.*`.
+        let init = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&repo_dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap();
+        assert!(init.success());
+        std::fs::write(repo_dir.join("hello.txt"), b"hi\n").unwrap();
+        let add = std::process::Command::new("git")
+            .args(["add", "hello.txt"])
+            .current_dir(&repo_dir)
+            .status()
+            .unwrap();
+        assert!(add.success());
+
+        let mut commit_cmd = std::process::Command::new("git");
+        commit_cmd
+            .args(["commit", "-q", "-m", "plain commit"])
+            .current_dir(&repo_dir)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", &home_dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+        for (k, v) in &git_context {
+            commit_cmd.env(k, v);
+        }
+        let commit_out = commit_cmd.output().unwrap();
+        assert!(
+            commit_out.status.success(),
+            "plain git commit failed: {}",
+            String::from_utf8_lossy(&commit_out.stderr)
+        );
+        let log = std::process::Command::new("git")
+            .args(["log", "-1", "--format=%an|%ae|%cn|%ce"])
+            .current_dir(&repo_dir)
+            .output()
+            .unwrap();
+        assert!(log.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&log.stdout).trim(),
+            format!("{git_name}|{git_email}|{git_name}|{git_email}")
+        );
     }
 }

@@ -69,6 +69,54 @@ pub(super) fn create_owner_only_dir(_path: &Path) -> io::Result<()> {
     refused()
 }
 
+pub(super) fn create_owner_only_dir_all(_path: &Path) -> io::Result<()> {
+    refused()
+}
+
+pub(super) fn write_owner_only_file(_path: &Path, _bytes: &[u8]) -> io::Result<()> {
+    refused()
+}
+
+pub(super) fn open_nofollow_ro(_path: &Path) -> io::Result<File> {
+    refused()
+}
+
+pub(super) fn create_symlink(_original: &Path, _link: &Path) -> io::Result<()> {
+    refused()
+}
+
+pub(super) fn effective_uid() -> io::Result<u32> {
+    refused()
+}
+
+pub(super) fn verify_owner_only_dir(_path: &Path, _expected_uid: u32) -> io::Result<()> {
+    refused()
+}
+
+pub(super) fn verify_owner_only_ancestors(
+    _path: &Path,
+    _stop_at: &Path,
+    _expected_uid: u32,
+) -> io::Result<()> {
+    refused()
+}
+
+pub(super) fn verify_owner_only_file(
+    _path: &Path,
+    _expected_uid: u32,
+    _require_exec: bool,
+) -> io::Result<std::path::PathBuf> {
+    refused()
+}
+
+pub(super) fn paths_case_insensitive_by_default() -> bool {
+    false
+}
+
+pub(super) fn has_macos_private_root_aliases() -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs::{self, File};

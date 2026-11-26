@@ -323,8 +323,14 @@ impl SqliteEngine {
             return Err(EngineError::new("the projection's path must be absolute"));
         }
         let msg_path = messaging::messaging_db_path(path);
-        // What an interrupted `replace` left behind.
+        let protected_office_new = msg_path
+            .parent()
+            .expect("messaging.db sits inside protected/")
+            .join("office.db.new");
+        // What an interrupted `replace` left behind (both current `protected/office.db.new`
+        // and legacy sibling `office.db.new`).
         remove_database(&beside(path, ".new"))?;
+        remove_database(&protected_office_new)?;
         remove_database(&beside(&msg_path, ".new"))?;
         let (writer, office_recreated) = match Self::existing(path, &schema)? {
             Some(writer) => (writer, false),
@@ -574,7 +580,9 @@ impl SqliteEngine {
             .map_err(|error| refused("installing the replacement", error))
             .and_then(|()| messaging::protect_messaging_file(&self.msg_path));
         let new_office = connect_writer(&self.path)?;
+        let _ = receipts::cursor(&new_office)?;
         let new_msg = connect_writer(&self.msg_path)?;
+        let _ = messaging::read_messaging_cursor(&new_msg)?;
         *writer = Some((new_office, new_msg));
         drop(checkpointer);
         swapped
@@ -700,7 +708,14 @@ impl Engine for SqliteEngine {
         &self,
         build: &mut dyn FnMut(&mut SqliteTx) -> Result<Cursor, StoreError>,
     ) -> Result<(), StoreError> {
-        let new_path = beside(&self.path, ".new");
+        // Stage `office.db.new` (and its DELETE-mode rollback journal) inside the `0700`
+        // `protected/` directory so Linux `bwrap` directory masks always isolate rebuild files
+        // while keeping `fs::rename` atomic on the same filesystem (`TASK-166`).
+        let new_path = self
+            .msg_path
+            .parent()
+            .expect("messaging.db sits inside protected/")
+            .join("office.db.new");
         let new_msg_path = beside(&self.msg_path, ".new");
         remove_database(&new_path)?;
         remove_database(&new_msg_path)?;
