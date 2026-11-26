@@ -554,18 +554,136 @@ cli_refreshes_services() {
   [[ "$help" == *"--no-restart"* ]]
 }
 
-# One line per registered service from `release install --json` (compact in a pipe): the
-# instance, what the install did and whether it runs. Instance names are [a-z0-9-] only.
+# What `release install --json` (compact in a pipe) did to each registered service: one
+# line with the instance, the outcome and whether it runs, then its note (the steps an
+# operator takes for a refused, failed or stopped service), and the `services_warning` when
+# the services could not be read. JSON strings are read with their escapes undone; control
+# characters, and any `\uXXXX` escape, are shown as a space or `?`, never printed raw.
 report_services() {
-  awk '
-    { buf = buf $0 }
+  LC_ALL=C awk '
+    function clean(text) {
+      gsub(/[[:cntrl:]]/, " ", text)
+      return text
+    }
+    { buf = buf $0 "\n" }
     END {
-      while (match(buf, /"instance":"[a-z0-9-]+","outcome":"[a-z_]+","was_running":(true|false),"running":(true|false)/)) {
-        s = substr(buf, RSTART, RLENGTH)
-        buf = substr(buf, RSTART + RLENGTH)
-        split(s, parts, "\"")
-        state = (parts[13] == ":true") ? "running" : "not running"
-        printf "Service of instance \"%s\": %s (%s).\n", parts[4], parts[8], state
+      n = length(buf)
+      i = 1
+      count = 0
+      while (i <= n) {
+        c = substr(buf, i, 1)
+        if (c == "\"") {
+          text = ""
+          i++
+          while (i <= n) {
+            c = substr(buf, i, 1)
+            if (c == "\"") {
+              break
+            }
+            if (c == "\\") {
+              i++
+              c = substr(buf, i, 1)
+              if (c == "u") {
+                text = text "?"
+                i += 4
+              } else if (c == "\"" || c == "\\" || c == "/") {
+                text = text c
+              } else {
+                text = text " "
+              }
+            } else {
+              text = text c
+            }
+            i++
+          }
+          count++
+          kind[count] = "string"
+          token[count] = clean(text)
+          i++
+        } else if (index("{}[]:,", c) > 0) {
+          count++
+          kind[count] = "mark"
+          token[count] = c
+          i++
+        } else if (c ~ /[[:space:]]/) {
+          i++
+        } else {
+          word = ""
+          while (i <= n) {
+            c = substr(buf, i, 1)
+            if (index("{}[]:,\" \t\r\n", c) > 0) {
+              break
+            }
+            word = word c
+            i++
+          }
+          count++
+          kind[count] = "word"
+          token[count] = word
+        }
+      }
+      depth = 0
+      key = ""
+      listing = 0
+      services = 0
+      warning = ""
+      for (t = 1; t <= count; t++) {
+        if (kind[t] == "mark") {
+          if (token[t] == "{" || token[t] == "[") {
+            depth++
+            if (token[t] == "[" && depth == 2 && key == "services") {
+              listing = 1
+            } else if (token[t] == "{" && listing && depth == 3) {
+              services++
+              instance[services] = ""
+              outcome[services] = ""
+              running[services] = ""
+              note[services] = ""
+            }
+          } else if (token[t] == "}" || token[t] == "]") {
+            if (token[t] == "]" && depth == 2) {
+              listing = 0
+            }
+            depth--
+          }
+          continue
+        }
+        if (kind[t] != "string" || t + 1 > count || kind[t + 1] != "mark" || token[t + 1] != ":") {
+          continue
+        }
+        key = token[t]
+        t += 2
+        if (t > count) {
+          break
+        }
+        if (kind[t] == "mark") {
+          # An object or a list: its marks are counted above.
+          t--
+          continue
+        }
+        if (depth == 1 && key == "services_warning" && kind[t] == "string") {
+          warning = token[t]
+        } else if (listing && depth == 3) {
+          if (key == "instance") {
+            instance[services] = token[t]
+          } else if (key == "outcome") {
+            outcome[services] = token[t]
+          } else if (key == "running") {
+            running[services] = token[t]
+          } else if (key == "note" && kind[t] == "string") {
+            note[services] = token[t]
+          }
+        }
+      }
+      for (k = 1; k <= services; k++) {
+        state = (running[k] == "true") ? "running" : "not running"
+        printf "Service of instance \"%s\": %s (%s).\n", instance[k], outcome[k], state
+        if (note[k] != "") {
+          printf "  %s\n", note[k]
+        }
+      }
+      if (warning != "") {
+        printf "Warning: %s\n", warning
       }
     }
   ' <<< "$1" >&2

@@ -310,7 +310,7 @@ impl ServiceManager for Launchd {
             // review V-b). It is replaced, never edited: its job is booted out first.
             // Anything else is never taken over.
             Some(existing) if existing != bytes => {
-                if definition(&label, &existing).is_none() {
+                if definition(&label, &unit.instance_id, &existing).is_none() {
                     return Err(ServiceError::Conflict(format!(
                         "{} already defines {label} differently; it is left untouched",
                         file.display()
@@ -396,11 +396,8 @@ impl ServiceManager for Launchd {
         let file = self.file(&label);
         let loaded = self.print_ours(&label)?.is_some();
         match self.read_definition(&file)? {
-            Some(bytes) => match definition(&label, &bytes) {
-                Some(unit) => Ok(Some(Unit {
-                    instance_id: instance_id.to_owned(),
-                    ..unit
-                })),
+            Some(bytes) => match definition(&label, instance_id, &bytes) {
+                Some(unit) => Ok(Some(unit)),
                 None => Err(ServiceError::Conflict(format!(
                     "{} is not a definition this adapter wrote (it was changed by hand); it \
                      is left untouched",
@@ -431,7 +428,7 @@ impl ServiceManager for Launchd {
             // in register. Its job is booted out and not loaded again: launchd would start it
             // (RunAtLoad), and redefine never starts a service.
             Some(existing) => {
-                if definition(&label, &existing).is_none() {
+                if definition(&label, &unit.instance_id, &existing).is_none() {
                     return Err(ServiceError::Conflict(format!(
                         "{} already defines {label} differently; it is left untouched",
                         file.display()
@@ -506,11 +503,13 @@ fn escape(text: &str) -> String {
     out
 }
 
-/// What a definition this adapter wrote says: the unit it is a rendering of, or `None` when
-/// the bytes are not exactly the rendering of a unit under `label` (a file someone wrote or
-/// changed). The parse only has to find the values, one per line; re-rendering them and
-/// comparing the bytes is what makes it exact.
-fn definition(label: &str, bytes: &[u8]) -> Option<Unit> {
+/// What a definition this adapter wrote says: the unit of `instance_id` it is a rendering
+/// of, or `None` when the bytes are not exactly the rendering of a unit under `label` (a file
+/// someone wrote or changed), or when that unit is one [`validate`] refuses (a relative
+/// program, a loader variable such as `DYLD_INSERT_LIBRARIES`, a repeated variable): this
+/// adapter never writes one, so it was written by hand. The parse only has to find the
+/// values, one per line; re-rendering them and comparing the bytes is what makes it exact.
+fn definition(label: &str, instance_id: &str, bytes: &[u8]) -> Option<Unit> {
     let text = std::str::from_utf8(bytes).ok()?;
     let value = |line: &str, tag: &str| {
         line.strip_prefix(&format!("\t\t<{tag}>"))?
@@ -540,12 +539,12 @@ fn definition(label: &str, bytes: &[u8]) -> Option<Unit> {
     }
     let mut words = words.into_iter();
     let unit = Unit {
-        instance_id: String::new(),
+        instance_id: instance_id.to_owned(),
         program: words.next()?.into(),
         args: words.map(OsString::from).collect(),
         env,
     };
-    (render(label, &unit) == bytes).then_some(unit)
+    (render(label, &unit) == bytes && validate(&unit).is_ok()).then_some(unit)
 }
 
 /// The text [`escape`] wrote. Anything it does not write is left as it is, and the

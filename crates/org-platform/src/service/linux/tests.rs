@@ -41,6 +41,9 @@ struct State {
     no_runtime_dir: bool,
     /// What `show --property=Version` prints after `Version=` (`None`: 255).
     version: Option<&'static str>,
+    /// An `ActiveState` other than the one `pid` implies (`activating` with no main
+    /// process: a restart systemd has only scheduled).
+    active: Option<&'static str>,
     calls: Vec<Vec<String>>,
 }
 
@@ -119,11 +122,11 @@ impl State {
         format!(
             "LoadState={load}\nActiveState={}\nMainPID={}\nFragmentPath={fragment}\n\
              UnitFileState={}\nNeedDaemonReload={}\nDropInPaths={}\n{effective}",
-            if self.pid.is_some() {
+            self.active.unwrap_or(if self.pid.is_some() {
                 "active"
             } else {
                 "inactive"
-            },
+            }),
             self.pid.unwrap_or(0),
             match (&self.fragment, self.enabled) {
                 (None, _) => "",
@@ -1370,7 +1373,7 @@ fn what_systemd_reports_is_compared_with_the_definition_property_by_property() {
     let shown = parse_show(ODD_SHOWN).unwrap();
     assert_eq!(effective_differs(&unit, &shown), None);
     // The definition read back from the file is the unit, and so compares the same.
-    let defined = definition(NAME, &render(NAME, &unit)).unwrap();
+    let defined = definition(NAME, ID, &render(NAME, &unit)).unwrap();
     assert_eq!(
         (&defined.program, &defined.args, &defined.env),
         (&unit.program, &unit.args, &unit.env)
@@ -1523,7 +1526,7 @@ fn the_words_systemctl_prints_are_read_with_its_quotes() {
 fn a_definition_is_read_back_only_from_its_exact_rendering() {
     let unit = odd_unit();
     let bytes = render(NAME, &unit);
-    assert!(definition(NAME, &bytes).is_some());
+    assert!(definition(NAME, ID, &bytes).is_some());
     let text = String::from_utf8(bytes).unwrap();
     for changed in [
         text.replace("KillMode=mixed", "KillMode=process"),
@@ -1532,9 +1535,12 @@ fn a_definition_is_read_back_only_from_its_exact_rendering() {
         text.replace("%%h", "%h"),
         "[Service]\nExecStart=/bin/someone-elses\n".into(),
     ] {
-        assert!(definition(NAME, changed.as_bytes()).is_none(), "{changed}");
+        assert!(
+            definition(NAME, ID, changed.as_bytes()).is_none(),
+            "{changed}"
+        );
     }
-    assert!(definition("agentic-org-test-other.service", text.as_bytes()).is_none());
+    assert!(definition("agentic-org-test-other.service", ID, text.as_bytes()).is_none());
 }
 
 /// X5 review (third round), P2: the service resolves the instance's locations from what
@@ -2005,4 +2011,101 @@ fn an_upgrade_reads_the_unit_back_and_redefines_it_only_while_it_is_stopped() {
     ));
     assert_eq!(fs::read_to_string(&file).unwrap(), edited);
     assert!(!fake.verbs().contains(&"daemon-reload".to_string()));
+}
+
+/// TASK-155 review B4: a unit file that is an exact rendering of a unit this adapter would
+/// never write (a loader variable, a repeated variable, a relative program, a name that is
+/// not an identifier) was written by hand. It is read back as a conflict, and neither
+/// redefine nor register replaces it, so an upgrade never stops its service for nothing.
+#[test]
+fn an_exact_rendering_of_a_unit_the_adapter_refuses_is_a_hand_edit() {
+    let hostile = [
+        Unit {
+            env: vec![("LD_PRELOAD".into(), "/tmp/x.so".into())],
+            ..unit()
+        },
+        Unit {
+            env: vec![("GLIBC_TUNABLES".into(), "x".into())],
+            ..unit()
+        },
+        Unit {
+            env: vec![
+                ("HOME".into(), "/home/a".into()),
+                ("HOME".into(), "/x".into()),
+            ],
+            ..unit()
+        },
+        Unit {
+            program: "agentic-org".into(),
+            ..unit()
+        },
+        Unit {
+            env: vec![("NOT-AN-IDENTIFIER".into(), "x".into())],
+            ..unit()
+        },
+    ];
+    let upgraded = Unit {
+        program: "/opt/agentic org/releases/2/agentic-org".into(),
+        ..unit()
+    };
+    for edited in hostile {
+        assert!(
+            validate(&edited).is_err() || unit_file_safe(&edited).is_err(),
+            "{edited:?}"
+        );
+        let bytes = render(NAME, &edited);
+        assert!(definition(NAME, ID, &bytes).is_none(), "{edited:?}");
+
+        let temp = tempfile::tempdir().unwrap();
+        let (systemd, fake) = systemd(temp.path());
+        systemd.register(&unit()).unwrap();
+        systemd.stop(ID).unwrap();
+        let file = temp.path().join(format!("systemd/user/{NAME}"));
+        fs::write(&file, &bytes).unwrap();
+        fake.clear();
+        let error = systemd.definition(ID).unwrap_err();
+        assert!(
+            matches!(&error, ServiceError::Conflict(why) if why.contains("changed by hand")),
+            "{edited:?}: {error}"
+        );
+        for refused in [systemd.redefine(&upgraded), systemd.register(&upgraded)] {
+            assert!(
+                matches!(refused, Err(ServiceError::Conflict(_))),
+                "{edited:?}: {refused:?}"
+            );
+        }
+        assert_eq!(fs::read(&file).unwrap(), bytes, "the file was changed");
+        let verbs = fake.verbs();
+        for verb in ["daemon-reload", "stop", "disable", "enable", "start"] {
+            assert!(!verbs.iter().any(|v| v == verb), "{verb}: {verbs:?}");
+        }
+    }
+}
+
+/// TASK-155 review: a unit systemd is about to start again (`activating`, no main process:
+/// an automatic restart after a crash) is as live as a running one, as for stop, and its
+/// definition is not replaced underneath.
+#[test]
+fn a_unit_with_a_scheduled_restart_is_not_redefined() {
+    let temp = tempfile::tempdir().unwrap();
+    let (systemd, fake) = systemd(temp.path());
+    systemd.register(&unit()).unwrap();
+    systemd.stop(ID).unwrap();
+    fake.set(|s| s.active = Some("activating"));
+    let upgraded = Unit {
+        program: "/opt/agentic org/releases/2/agentic-org".into(),
+        ..unit()
+    };
+    let file = temp.path().join(format!("systemd/user/{NAME}"));
+    fake.clear();
+    assert!(matches!(
+        systemd.redefine(&upgraded),
+        Err(ServiceError::Conflict(why)) if why.contains("is running")
+    ));
+    assert_eq!(fs::read(&file).unwrap(), render(NAME, &unit()));
+    assert_eq!(fake.verbs(), ["show"]);
+    // Once it has settled (here as failed), the definition moves.
+    fake.set(|s| s.active = Some("failed"));
+    assert_eq!(systemd.redefine(&upgraded).unwrap(), Registration::Loaded);
+    assert_eq!(fs::read(&file).unwrap(), render(NAME, &upgraded));
 }

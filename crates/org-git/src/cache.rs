@@ -2,7 +2,7 @@
 //! (`doc-35` §The repository cache).
 
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -47,18 +47,15 @@ impl RepoLocks {
         let _proc_guard = mutex
             .lock()
             .map_err(|_| GitError::Conflict("repository mutex poisoned".into()))?;
+        // The office's repositories folder (and any above it this call makes) is owner-only
+        // whatever the mask, like the cache it holds; so is the lock file beside the cache.
         if let Some(parent) = cache_dir.parent() {
-            fs::create_dir_all(parent).map_err(|e| GitError::io(parent, e))?;
+            crate::create_git_dirs(parent, false)?;
         }
         let mut lock_os = cache_dir.as_os_str().to_os_string();
         lock_os.push(".lock");
         let lock_path = PathBuf::from(lock_os);
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&lock_path)
-            .map_err(|e| GitError::io(&lock_path, e))?;
+        let file = crate::open_lock_file(&lock_path)?;
         file.lock().map_err(|e| GitError::io(&lock_path, e))?;
         let res = f();
         drop(file);

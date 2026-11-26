@@ -32,9 +32,16 @@ pub(super) fn run(
             source.display()
         )));
     };
-    let (manager, mut services) = registered_services(&store_dir, ctx)?;
+    let mut found = registered_services(&store_dir)?;
+    if let Some(warning) = &found.warning {
+        // Under `--json` it is the output's `services_warning`: standard error holds only
+        // an error's envelope.
+        if !ctx.modes().json {
+            ctx.warn(warning);
+        }
+    }
     if ctx.modes().dry_run {
-        return preview(ctx, &store_dir, &source, kind, &services);
+        return preview(ctx, &store_dir, &source, kind, &found, restart);
     }
     // Only auto-create and restrict mode 0700 on our own default app directory; never chmod
     // an arbitrary user-supplied `--store` parent (such as `$HOME`). Either step failing
@@ -53,39 +60,52 @@ pub(super) fn run(
     }
     // A running release host holds the store: the services that run from it are stopped
     // only when the store is busy, and started again if the install fails.
-    let pin = services.install(&*manager, || install_once(&store_dir, &source, kind))?;
+    let manager = &*found.manager;
+    let pin = found
+        .services
+        .install(manager, || install_once(&store_dir, &source, kind))?;
     let program = store_dir
         .join("releases")
         .join(&pin.release_id)
         .join("agentic-org");
     let program = fs::canonicalize(&program)
         .map_err(|e| format!("locating the installed {}: {e}", program.display()))?;
-    let reports = services.refresh(&*manager, &program, restart);
-    render(ctx, &store_dir, &pin, reports)
+    let reports = std::mem::take(&mut found.services).refresh(manager, &program, restart);
+    render(ctx, &store_dir, &pin, reports, found.warning)
 }
 
-/// The service manager setup used and the account's registered services as it holds them.
-/// Where they cannot be read, the install goes on without them, with a warning.
-fn registered_services(
-    store_dir: &Path,
-    ctx: &mut ExecutionContext,
-) -> Result<(Box<dyn ServiceManager>, ServiceRefresh), CliError> {
-    let inspected = host::platform(false).and_then(|platform| {
-        let services = ServiceRefresh::inspect(&*platform.service, store_dir)?;
-        Ok((platform.service, services))
+/// The service manager setup registers with, and the account's registered services as it
+/// holds them.
+struct Registered {
+    manager: Box<dyn ServiceManager>,
+    services: ServiceRefresh,
+    /// Why they could not be read, when they could not: the install goes on without them.
+    warning: Option<String>,
+}
+
+/// Only the service manager is composed: a disk-encryption probe or credential folder that
+/// cannot be determined has nothing to do with moving services.
+fn registered_services(store_dir: &Path) -> Result<Registered, CliError> {
+    let inspected = host::service_manager().and_then(|manager| {
+        let services = ServiceRefresh::inspect(&*manager, store_dir)?;
+        Ok((manager, services))
     });
     match inspected {
-        Ok(found) => Ok(found),
-        Err(why) => {
-            ctx.warn(&format!(
+        Ok((manager, services)) => Ok(Registered {
+            manager,
+            services,
+            warning: None,
+        }),
+        Err(why) => Ok(Registered {
+            manager: org_platform::service::service(ServiceMode::Foreground, Path::new("/"))
+                .map_err(|e| e.to_string())?,
+            services: ServiceRefresh::default(),
+            warning: Some(format!(
                 "The instances' registered services were not checked ({why}); after the \
                  install, run `agentic-org setup` for each instance whose service should run \
                  the new release."
-            ));
-            let none = org_platform::service::service(ServiceMode::Foreground, Path::new("/"))
-                .map_err(|e| e.to_string())?;
-            Ok((none, ServiceRefresh::default()))
-        }
+            )),
+        }),
     }
 }
 
@@ -124,16 +144,20 @@ fn render(
     store_dir: &Path,
     pin: &ReleasePin,
     services: Vec<ServiceRefreshReport>,
+    services_warning: Option<String>,
 ) -> Result<(), CliError> {
     #[derive(Serialize)]
     struct Installed {
         #[serde(flatten)]
         pin: PinView,
         services: Vec<ServiceRefreshReport>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        services_warning: Option<String>,
     }
     let view = Installed {
         pin: PinView::new(store_dir, pin, "installed"),
         services,
+        services_warning,
     };
     if ctx.modes().json {
         return Ok(ctx.write_json(&view)?);
@@ -152,15 +176,19 @@ fn render(
 }
 
 /// What `--dry-run` shows: the bundle that would be verified, the store it would be pinned
-/// into, and what would happen to each registered service. Nothing is opened, extracted,
-/// locked, stopped or written.
+/// into, whether services stopped for the install would be started again (`restart`, off
+/// with `--no-restart`), and what would happen to each registered service. Nothing is
+/// opened, extracted, locked, stopped or written.
 #[derive(Serialize)]
 struct InstallPlan {
     action: &'static str,
     bundle: String,
     kind: &'static str,
     store: String,
+    restart: bool,
     services: Vec<PlannedService>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    services_warning: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -168,6 +196,8 @@ struct PlannedService {
     instance: String,
     action: &'static str,
     running: bool,
+    /// Whether the install would start it again on the new release.
+    restart: bool,
 }
 
 fn preview(
@@ -175,41 +205,47 @@ fn preview(
     store_dir: &Path,
     source: &Path,
     kind: &'static str,
-    services: &ServiceRefresh,
+    found: &Registered,
+    restart: bool,
 ) -> Result<(), CliError> {
     let plan = InstallPlan {
         action: "release_install",
         bundle: source.display().to_string(),
         kind,
         store: store_dir.display().to_string(),
-        services: services
+        restart,
+        services: found
+            .services
             .planned()
             .into_iter()
             .map(|(instance, action, running)| PlannedService {
+                restart: restart && running && action == "refresh",
                 instance,
                 action,
                 running,
             })
             .collect(),
+        services_warning: found.warning.clone(),
     };
     let mut summary = format!(
         "would verify the release {kind} {} and pin it into {}",
         plan.bundle, plan.store
     );
     for service in &plan.services {
-        summary.push_str(&match (service.action, service.running) {
-            ("refresh", true) => format!(
-                "; stop the service of instance \"{}\", move it to the new release and start it again",
-                service.instance
+        let instance = &service.instance;
+        summary.push_str(&match (service.action, service.running, service.restart) {
+            ("refresh", true, true) => format!(
+                "; stop the service of instance \"{instance}\", move it to the new release and start it again"
             ),
-            ("refresh", false) => format!(
-                "; move the stopped service of instance \"{}\" to the new release",
-                service.instance
+            ("refresh", true, false) => format!(
+                "; stop the service of instance \"{instance}\" and move it to the new release without starting it again (--no-restart)"
             ),
-            (left, _) => format!(
-                "; leave the service of instance \"{}\" as it is ({left})",
-                service.instance
+            ("refresh", false, _) => format!(
+                "; move the stopped service of instance \"{instance}\" to the new release"
             ),
+            (left, _, _) => {
+                format!("; leave the service of instance \"{instance}\" as it is ({left})")
+            }
         });
     }
     Ok(ctx.render_dry_run(&summary, &plan)?)

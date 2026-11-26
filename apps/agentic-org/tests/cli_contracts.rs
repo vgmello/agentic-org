@@ -1063,5 +1063,63 @@ fn release_install_dry_run_lists_the_registered_services_it_would_move() {
     assert_eq!(plan["action"], "release_install");
     assert_eq!(plan["kind"], "directory");
     assert_eq!(plan["services"], serde_json::json!([]));
+    assert_eq!(plan["restart"], false, "--no-restart is in the plan");
+    assert!(plan.get("services_warning").is_none(), "{plan}");
     assert!(!store.exists(), "a dry run makes no store");
+}
+
+/// TASK-155 review B3: when the registered services cannot be read, `release install
+/// --json` says so in its output (`services_warning`) and never as prose on standard
+/// error: nothing there on a success, only the error's envelope on a failure. A person
+/// still sees the warning.
+#[test]
+fn release_install_json_reports_unread_services_in_its_output_only() {
+    let sandbox = Sandbox::new();
+    let bundle = sandbox.root.join("bundle");
+    fs::create_dir(&bundle).unwrap();
+    let store = sandbox.root.join("store");
+    let install = |flags: &[&str]| {
+        let mut args = flags.to_vec();
+        args.extend([
+            "release",
+            "install",
+            bundle.to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
+        ]);
+        // A development service adapter that cannot be composed (it has no home to be
+        // placed in), so the services are not read.
+        sandbox
+            .command(&args)
+            .env("ORG_DEV_SERVICE_PROGRAMS", sandbox.root.join("programs"))
+            .env_remove("HOME")
+            .output()
+            .unwrap()
+    };
+
+    let preview = install(&["--dry-run", "--json"]);
+    assert_eq!(preview.status.code(), Some(0), "{}", text(&preview.stderr));
+    assert!(preview.stderr.is_empty(), "{}", text(&preview.stderr));
+    let plan: Value = serde_json::from_slice(&preview.stdout).unwrap();
+    let warning = plan["services_warning"].as_str().unwrap_or_default();
+    assert!(warning.contains("were not checked"), "{plan}");
+    assert!(warning.contains("HOME is not set"), "{plan}");
+    assert_eq!(plan["services"], serde_json::json!([]));
+    assert_eq!(plan["restart"], true);
+
+    // An empty folder is no release: the install fails after the services were inspected.
+    let failed = install(&["--json"]);
+    assert_eq!(failed.status.code(), Some(1), "{}", text(&failed.stderr));
+    assert!(failed.stdout.is_empty(), "{}", text(&failed.stdout));
+    let envelope = error_envelope(&failed);
+    assert!(envelope["error"]["code"].as_str().unwrap().contains("::"));
+
+    let human = install(&["--dry-run"]);
+    assert_eq!(human.status.code(), Some(0), "{}", text(&human.stderr));
+    let said = text(&human.stderr);
+    assert!(
+        said.contains("! The instances' registered services were not checked"),
+        "{said}"
+    );
+    assert!(said.contains("[DRY-RUN]"), "{said}");
 }

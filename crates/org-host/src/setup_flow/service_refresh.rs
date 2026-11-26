@@ -18,7 +18,7 @@
 //! than `agentic-org serve --name <instance>`, is left untouched with what the operator does
 //! instead; one that runs a program outside this store (a development build) is left too.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use org_platform::service::{ServiceError, ServiceManager, ServiceStatus, Unit};
@@ -96,11 +96,13 @@ enum Found {
         stopped: bool,
     },
     /// Not touched: changed by hand (`Refused`), elsewhere (`Skipped`) or unreadable
-    /// (`Failed`), with why and the program, when it was read.
+    /// (`Failed`), with why and the program, when it was read, and whether the manager
+    /// reported it running (asked only when its definition was read).
     Untouched {
         outcome: RefreshOutcome,
         why: String,
         program: Option<PathBuf>,
+        running: bool,
     },
 }
 
@@ -147,8 +149,8 @@ impl ServiceRefresh {
         Self { entries }
     }
 
-    /// What an install would do to each service, for `--dry-run`: `refresh` (with whether
-    /// it runs) or the outcome that leaves it untouched.
+    /// What an install would do to each service, for `--dry-run`: `refresh` or the outcome
+    /// that leaves it untouched, with whether it runs.
     pub fn planned(&self) -> Vec<(String, &'static str, bool)> {
         self.entries
             .iter()
@@ -156,7 +158,9 @@ impl ServiceRefresh {
                 Found::Managed { was_running, .. } => {
                     (entry.instance.clone(), "refresh", *was_running)
                 }
-                Found::Untouched { outcome, .. } => (entry.instance.clone(), outcome.wire(), false),
+                Found::Untouched {
+                    outcome, running, ..
+                } => (entry.instance.clone(), outcome.wire(), *running),
             })
             .collect()
     }
@@ -315,9 +319,10 @@ impl Entry {
                 outcome,
                 why,
                 program: found,
+                running,
             } => {
                 let note = untouched_note(outcome, &why, program, &flag);
-                report(&self.instance, outcome, found.as_deref(), note)
+                report(&self.instance, outcome, found.as_deref(), note).ran(running, running)
             }
         }
     }
@@ -502,6 +507,24 @@ fn untouched(outcome: RefreshOutcome, why: String, program: Option<PathBuf>) -> 
         outcome,
         why,
         program,
+        running: false,
+    }
+}
+
+/// An untouched service whose definition was read: whether it runs is asked too, so the
+/// report says so (a service an install leaves alone keeps running or stopped as it was).
+fn left_alone(
+    manager: &dyn ServiceManager,
+    id: &str,
+    outcome: RefreshOutcome,
+    why: String,
+    program: Option<PathBuf>,
+) -> Found {
+    Found::Untouched {
+        outcome,
+        why,
+        program,
+        running: matches!(manager.status(id), Ok(ServiceStatus::Running { .. })),
     }
 }
 
@@ -547,14 +570,14 @@ fn inspect_one(
     let program = Some(unit.program.clone());
     if unit.args != ["serve", "--name", name] {
         let why = "it runs other arguments than agentic-org serve --name <instance>".into();
-        return untouched(RefreshOutcome::Refused, why, program);
+        return left_alone(manager, id, RefreshOutcome::Refused, why, program);
     }
     if !releases.is_some_and(|releases| in_store(&unit.program, releases)) {
         let why = format!(
             "it runs {}, which is not a release in this store",
             unit.program.display()
         );
-        return untouched(RefreshOutcome::Skipped, why, program);
+        return left_alone(manager, id, RefreshOutcome::Skipped, why, program);
     }
     match manager.status(id) {
         Ok(status) => Found::Managed {
@@ -568,12 +591,25 @@ fn inspect_one(
 }
 
 /// Whether `program` is a release's `agentic-org` in the store whose `releases` folder is
-/// `releases` (canonical): `<releases>/<release-id>/agentic-org`.
+/// `releases` (canonical): `<releases>/<release-id>/agentic-org`, written plainly (absolute,
+/// with no `.`, `..` or empty component, and a release ID the store accepts).
 fn in_store(program: &Path, releases: &Path) -> bool {
-    if program.file_name().and_then(|n| n.to_str()) != Some("agentic-org") {
+    let plain = program.is_absolute()
+        && program
+            .components()
+            .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
+        && program.components().collect::<PathBuf>().as_os_str() == program.as_os_str();
+    if !plain || program.file_name().and_then(|n| n.to_str()) != Some("agentic-org") {
         return false;
     }
-    let Some(folder) = program.parent().and_then(Path::parent) else {
+    let Some(release) = program.parent() else {
+        return false;
+    };
+    let named = release.file_name().and_then(|n| n.to_str());
+    if !named.is_some_and(org_release::valid_release_id) {
+        return false;
+    }
+    let Some(folder) = release.parent() else {
         return false;
     };
     folder == releases || std::fs::canonicalize(folder).is_ok_and(|f| f == releases)

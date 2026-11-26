@@ -363,3 +363,38 @@ fn git_folders_are_created_owner_only() {
     ));
     assert_eq!(fs::read(tmp.path().join("file")).unwrap(), b"x");
 }
+
+/// TASK-155 review B1: the folders `RepoLocks::with_lock` makes above a cache (the office's
+/// `repositories` folder and the office's runtime folder) are owner-only (`0700`) like the
+/// cache itself, and its lock file is owner-only (`0600`), whatever the mask; an existing
+/// lock file is locked again as it is.
+#[test]
+fn repository_locks_make_owner_only_folders_and_lock_files() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let tmp = tempfile::tempdir().unwrap();
+    let runner = GitRunner::new(tmp.path().join("clean-home")).unwrap();
+    let cache_dir = tmp.path().join("runtime/office-1/repositories/repo-1.git");
+    let lock_file = tmp
+        .path()
+        .join("runtime/office-1/repositories/repo-1.git.lock");
+    let locks = RepoLocks::new();
+    locks
+        .with_lock(&cache_dir, || init_bare_cache(&runner, &cache_dir, false))
+        .unwrap();
+    for folder in [
+        cache_dir.clone(),
+        tmp.path().join("runtime/office-1/repositories"),
+        tmp.path().join("runtime/office-1"),
+        tmp.path().join("runtime"),
+    ] {
+        assert_eq!(mode(&folder), 0o700, "{}", folder.display());
+    }
+    assert!(fs::symlink_metadata(&lock_file).unwrap().is_file());
+    assert_eq!(mode(&lock_file), 0o600);
+    // Taken again: the same lock file, not truncated or replaced.
+    fs::write(&lock_file, b"kept").unwrap();
+    locks.with_lock(&cache_dir, || Ok(())).unwrap();
+    assert_eq!(fs::read(&lock_file).unwrap(), b"kept");
+    assert_eq!(mode(&lock_file), 0o600);
+}

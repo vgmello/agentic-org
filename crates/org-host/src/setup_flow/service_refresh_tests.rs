@@ -323,29 +323,69 @@ fn services_that_do_not_run_a_release_of_this_store_are_left_alone() {
         ..Account::unit("lab", LAB_ID, &account.program("r1"))
     };
     manager.register(&other).unwrap();
+    manager.stop(LAB_ID).unwrap();
+    let before = manager.calls().len();
 
+    // What runs is reported as running, though the install leaves it alone (review nit:
+    // a running development build was reported as not running).
     let refresh = account.inspect(&manager);
     assert_eq!(
         refresh.planned(),
         vec![
-            ("default".to_owned(), "skipped", false),
+            ("default".to_owned(), "skipped", true),
             ("lab".to_owned(), "refused", false),
         ]
     );
     let reports = refresh.refresh(&manager, &account.program("r2"), true);
     assert_eq!(reports[0].outcome, RefreshOutcome::Skipped);
     assert!(
+        reports[0].was_running && reports[0].running,
+        "{:?}",
+        reports[0]
+    );
+    assert!(
         reports[0].note.contains("not a release in this store"),
         "{}",
         reports[0].note
     );
     assert_eq!(reports[1].outcome, RefreshOutcome::Refused);
+    assert!(
+        !reports[1].was_running && !reports[1].running,
+        "{:?}",
+        reports[1]
+    );
     assert_eq!(manager.unit(DEFAULT_ID).unwrap(), dev);
     assert_eq!(manager.unit(LAB_ID).unwrap(), other);
-    assert!(!manager
-        .calls()
+    assert!(!manager.calls()[before..]
         .iter()
-        .any(|c| matches!(c, Call::Stop(_) | Call::Redefine(_))));
+        .any(|c| matches!(c, Call::Stop(_) | Call::Redefine(_) | Call::Start(_))));
+}
+
+/// A release's `agentic-org` in this store is only `<releases>/<release-id>/agentic-org`
+/// written plainly: a `.`, `..` or empty component, or a folder that is no release ID, is
+/// not one of the store's releases, whatever it resolves to.
+#[test]
+fn only_a_plainly_written_release_program_is_in_the_store() {
+    let account = Account::new();
+    let releases = account.store.join("releases").canonicalize().unwrap();
+    let r = releases.display();
+    assert!(in_store(&account.program("r1"), &releases));
+    for odd in [
+        format!("{r}/./agentic-org"),
+        format!("{r}/r1/./agentic-org"),
+        format!("{r}/./r1/agentic-org"),
+        format!("{r}//r1/agentic-org"),
+        format!("{r}/r1/agentic-org/"),
+        format!("{r}/../releases/r1/agentic-org"),
+        format!("{r}/r1/../r1/agentic-org"),
+        format!("{r}/.hidden/agentic-org"),
+        format!("{r}/r 1/agentic-org"),
+        format!("{r}/agentic-org"),
+        format!("{r}/r1/agentic-org-web"),
+        "releases/r1/agentic-org".to_owned(),
+    ] {
+        assert!(!in_store(Path::new(&odd), &releases), "{odd}");
+    }
 }
 
 /// A failed install starts again what it stopped, on the definition it had.
