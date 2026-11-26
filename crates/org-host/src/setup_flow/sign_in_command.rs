@@ -3,12 +3,11 @@
 
 use std::io::{BufReader, Write};
 use std::os::unix::net::UnixStream;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use org_host_control::ops::{
-    CliApprovalCreate, CliApprovalCreateParams, CliApprovalPoll, CliApprovalPollParams,
-    CliApprovalPollResult, FdsReceived, FdsReceivedParams, LinkedOrg, OfficeOpenChannel,
-    OfficeOpenChannelParams, SessionEnd, SessionGrant, SessionGrantParams, SessionParams,
+    FdsReceived, FdsReceivedParams, LinkedOrg, OfficeOpenChannel, OfficeOpenChannelParams,
+    SessionEnd, SessionGrant, SessionGrantParams, SessionParams,
 };
 use org_host_control::SessionHandle;
 use org_proto::{
@@ -17,8 +16,9 @@ use org_proto::{
 use serde_json::Value;
 
 use super::cli_context::{self, CliContext};
-use super::office_command::Target;
-use super::{registered, say};
+use super::cli_session::{approve_on_wire, Target};
+use super::output::say;
+use super::wire::registered;
 use crate::human::Wire;
 
 /// Help text for `agentic-org sign-in`.
@@ -130,68 +130,8 @@ pub(crate) fn approve_on_target(
     max_wait: Duration,
     out: &mut dyn Write,
 ) -> Result<(Wire, SessionHandle, String, Vec<LinkedOrg>), String> {
-    let wire = super::office_command::connect_local_peer(target)?;
+    let wire = super::cli_session::connect_local_peer(target)?;
     approve_on_wire(wire, poll_interval, max_wait, out)
-}
-
-/// Runs the browser-approved sign-in flow over an already-verified `host.sock` [`Wire`].
-pub(super) fn approve_on_wire(
-    mut wire: Wire,
-    poll_interval: Duration,
-    max_wait: Duration,
-    out: &mut dyn Write,
-) -> Result<(Wire, SessionHandle, String, Vec<LinkedOrg>), String> {
-    let created = match wire.call_answer::<CliApprovalCreate>(&CliApprovalCreateParams {}, None)? {
-        Ok(created) => created,
-        Err(ErrorCode::NotAuthorized) => {
-            return Err("the host refused terminal sign-in approval".into())
-        }
-        Err(code) => return Err(format!("could not start terminal sign-in ({code:?})")),
-    };
-    say(
-        out,
-        format!(
-            "Open this approval link in a signed-in browser (expires in 10 minutes):\n  {}",
-            created.url.expose()
-        ),
-    )?;
-    let _ = out.flush();
-
-    let deadline = Instant::now() + max_wait;
-    loop {
-        match wire.call_answer::<CliApprovalPoll>(
-            &CliApprovalPollParams {
-                approval_id: created.approval_id.clone(),
-            },
-            None,
-        )? {
-            Ok(CliApprovalPollResult::Pending) => {
-                if Instant::now() >= deadline {
-                    return Err(
-                        "approval link expired before it was approved; run the command again"
-                            .into(),
-                    );
-                }
-                std::thread::sleep(poll_interval);
-            }
-            Ok(CliApprovalPollResult::Approved {
-                session,
-                account,
-                orgs,
-                ..
-            }) => return Ok((wire, session, account, orgs)),
-            Ok(CliApprovalPollResult::Declined) => {
-                return Err("terminal sign-in was declined in the browser".into())
-            }
-            Ok(CliApprovalPollResult::Expired) => {
-                return Err("approval link expired; run the command again".into())
-            }
-            Err(ErrorCode::NotAuthorized) => {
-                return Err("terminal sign-in approval is not authorized".into())
-            }
-            Err(code) => return Err(format!("terminal sign-in poll failed ({code:?})")),
-        }
-    }
 }
 
 /// Opens an authenticated host-mediated channel to `office_id` on an already-approved
@@ -294,18 +234,14 @@ pub fn open_for_command(
         instance_id: &instance_id,
         name: instance_name.as_deref(),
     };
-    let (mut wire, session) = super::office_command::connect_cli_session(
-        &target,
-        None,
-        &mut crate::human::password,
-        out,
-    )?;
+    let (mut wire, session) =
+        super::cli_session::connect_cli_session(&target, None, &mut crate::human::password, out)?;
     let office_id = match selected_office {
         Some(id) => id,
         None => match resolve_default_office(&mut wire, &session) {
             Ok(id) => id,
             Err(err) => {
-                super::office_command::end_session(&mut wire, &session);
+                super::cli_session::end_session(&mut wire, &session);
                 return Err(err);
             }
         },

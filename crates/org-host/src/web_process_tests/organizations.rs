@@ -1624,7 +1624,8 @@ fn actual_browser_and_native_cli_list_offices_and_restart_contract() {
     // 3b. Exercise `setup_flow::office_command` (`agentic-org office list` & `office restart`)
     // directly against the live `host.sock` (text + JSON + error translation + SessionEnd).
     {
-        use crate::setup_flow::office_command::{list, restart, Target};
+        use crate::setup_flow::cli_session::Target;
+        use crate::setup_flow::office_command::{list, restart};
         let target = Target {
             socket: &socket,
             instance_id: &instance_id,
@@ -2031,7 +2032,7 @@ fn actual_browser_and_native_cli_projects_lifecycle_survives_restart_and_rebuild
     // 6. Exercise native `setup_flow::project_command` (`list`, `inspect`, `create`) over `host.sock`.
     let mut expected_count = 1usize;
     {
-        use crate::setup_flow::office_command::Target;
+        use crate::setup_flow::cli_session::Target;
         use crate::setup_flow::project_command::{create, inspect, list, ProjectCreateInput};
         let target = Target {
             socket: &socket,

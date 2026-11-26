@@ -16,9 +16,10 @@ use org_proto::providers::{
 };
 use org_proto::{ApiError, Call};
 
-use super::office_command::{connect_cli_session, end_session, Target};
+use super::cli_session::{connect_cli_session, end_session, Target};
+use super::output::say;
 use super::project_command::OfficeSession;
-use super::{registered, say};
+use super::wire::registered;
 
 /// Help text for `agentic-org provider`.
 pub const HELP: &str = "agentic-org provider <subcommand>\n\

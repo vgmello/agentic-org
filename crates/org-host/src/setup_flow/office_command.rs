@@ -11,23 +11,24 @@
 //!   sessionless `local-bootstrap` on fresh HTTPS satellites with zero administrator accounts.
 
 use std::io::Write;
-use std::os::unix::net::UnixStream;
-use std::path::Path;
-use std::time::Duration;
 
 use org_host_control::ops::{
-    AccountVerify, AccountVerifyParams, OfficeJoin, OfficeJoinParams, OfficeList, OfficeListParams,
-    OfficeReEnroll, OfficeReEnrollParams, OfficeRemovePending, OfficeRemovePendingParams,
-    OfficeRestart, OfficeRestartParams, SessionEnd, SessionLocal, SessionLocalParams,
-    SessionParams,
+    OfficeJoin, OfficeJoinParams, OfficeList, OfficeListParams, OfficeReEnroll,
+    OfficeReEnrollParams, OfficeRemovePending, OfficeRemovePendingParams, OfficeRestart,
+    OfficeRestartParams, SessionLocal, SessionLocalParams,
 };
 use org_host_control::{
     Administrator, HostOpResult, InstanceStatus, InstanceStatusParams, InvitationTokenSecret,
-    Password, SessionHandle,
+    SessionHandle,
 };
 use org_proto::{Call, ErrorCode, OfficeInfo};
 
-use super::{connect_verified, not_running, registered, say};
+use super::cli_session::{
+    connect_and_sign_in, connect_cli_session, connect_local_peer, end_session, AskPassword, Target,
+    APPROVAL_MAX_WAIT, APPROVAL_POLL_INTERVAL,
+};
+use super::output::say;
+use super::wire::registered;
 use crate::human::Wire;
 
 /// Help text for `agentic-org office`.
@@ -72,19 +73,6 @@ Re-enroll an existing satellite onto a replacement HQ after R1 import (D25)\n   
 Use when: reconnecting an existing satellite office to a replacement HQ after Git import.\n\n\
 When --login is omitted, uses the local authless session if authentication is disabled,\n\
 or prints a browser approval link to stderr when authentication is enabled.";
-
-/// What office commands need from the person: their password, asked once after the host is verified.
-pub(crate) type AskPassword<'a> = &'a mut dyn FnMut() -> Result<Password, String>;
-
-/// The instance an office command acts on.
-pub(crate) struct Target<'a> {
-    pub(crate) socket: &'a Path,
-    pub(crate) instance_id: &'a str,
-    pub(crate) name: Option<&'a str>,
-}
-
-const APPROVAL_POLL_INTERVAL: Duration = Duration::from_millis(250);
-const APPROVAL_MAX_WAIT: Duration = Duration::from_secs(10 * 60);
 
 /// `agentic-org office list` for registered instance `name`.
 pub fn office_list(
@@ -380,7 +368,7 @@ where
 
     // Host has an administrator and authentication is enabled: authenticate via browser approval
     // on the already-verified `host.sock` wire before transmitting any join secret.
-    let (mut wire, session, _, _) = super::sign_in_command::approve_on_wire(
+    let (mut wire, session, _, _) = super::cli_session::approve_on_wire(
         wire,
         APPROVAL_POLL_INTERVAL,
         APPROVAL_MAX_WAIT,
@@ -391,92 +379,6 @@ where
     let answer = wire.call_answer::<C>(&params, None);
     end_session(&mut wire, &session);
     answer
-}
-
-pub(super) fn connect_local_peer(target: &Target<'_>) -> Result<Wire, String> {
-    let refused = std::cell::RefCell::new(None);
-    connect_verified(target.socket, target.instance_id, |stream: &UnixStream| {
-        crate::human::verify_host(stream)
-            .map(|_| ())
-            .inspect_err(|why| *refused.borrow_mut() = Some(why.clone()))
-    })
-    .map_err(|why| {
-        refused
-            .borrow_mut()
-            .take()
-            .unwrap_or_else(|| not_running(target.name, why))
-    })
-}
-
-pub(super) fn end_session(wire: &mut Wire, session: &SessionHandle) {
-    let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
-    let _ = wire.call::<SessionEnd>(&SessionParams { session: handle }, None);
-}
-
-/// Establishes an authenticated `host.sock` session for a CLI command:
-/// - `--login <user>` -> verified-host password sign-in (`account.verify`).
-/// - no `--login` -> `session.local` (instant on local authless HTTP), falling back to
-///   browser-approved CLI sign-in (`cli.approval.*`) when authentication is enabled.
-pub(super) fn connect_cli_session(
-    target: &Target<'_>,
-    login: Option<&str>,
-    password: AskPassword<'_>,
-    prompt_out: &mut dyn Write,
-) -> Result<(Wire, SessionHandle), String> {
-    if let Some(user) = login {
-        return connect_and_sign_in(target, user, password);
-    }
-    let mut wire = connect_local_peer(target)?;
-    match wire.call_answer::<SessionLocal>(&SessionLocalParams {}, None)? {
-        Ok(signed) => Ok((wire, signed.session)),
-        Err(ErrorCode::NotAuthorized) => {
-            let (wire, session, _, _) = super::sign_in_command::approve_on_wire(
-                wire,
-                APPROVAL_POLL_INTERVAL,
-                APPROVAL_MAX_WAIT,
-                prompt_out,
-            )?;
-            Ok((wire, session))
-        }
-        Err(code) => Err(format!("the service refused local sign-in ({code:?})")),
-    }
-}
-
-pub(super) fn connect_and_sign_in(
-    target: &Target<'_>,
-    login: &str,
-    password: AskPassword<'_>,
-) -> Result<(Wire, SessionHandle), String> {
-    let refused = std::cell::RefCell::new(None);
-    let mut wire = connect_verified(target.socket, target.instance_id, |stream: &UnixStream| {
-        crate::human::verify_host(stream)
-            .and_then(|host| host.may_receive_secrets())
-            .inspect_err(|why| *refused.borrow_mut() = Some(why.clone()))
-    })
-    .map_err(|why| {
-        refused
-            .borrow_mut()
-            .take()
-            .unwrap_or_else(|| not_running(target.name, why))
-    })?;
-    let signed = match wire.call_answer::<AccountVerify>(
-        &AccountVerifyParams {
-            login: login.to_owned(),
-            password: password()?,
-        },
-        None,
-    )? {
-        Ok(signed) => signed,
-        Err(ErrorCode::RateLimited) => {
-            return Err("too many failed sign-ins; try again later".into())
-        }
-        Err(ErrorCode::Unavailable) => {
-            return Err("the service cannot sign anyone in now; try again".into())
-        }
-        Err(_) => return Err("invalid login or password".into()),
-    };
-    let session = SessionHandle::new(signed.session.expose().into()).expect("a live handle");
-    Ok((wire, session))
 }
 
 /// Lists offices visible to the signed-in account.

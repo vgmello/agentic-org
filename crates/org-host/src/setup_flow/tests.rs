@@ -1,4 +1,37 @@
+use super::account::{
+    account_by_id, account_by_name, account_name, become_account, in_child, plain_account_name,
+    service_account, user_name, Account, LOOKUP_WITHIN,
+};
+use super::adapters::{release_pin, CredentialDirectory, Platform};
+use super::address::{address_free, choose_port, loopback, port_free, port_held_elsewhere};
+use super::admin_reset::{
+    admin_reset, answer_reset, reset_for, reset_needs_root, reset_over, NOT_A_TERMINAL,
+};
+use super::credentials::{
+    check_mounted_store, credential_directory, development_folder, development_keys,
+    make_credential_directory, preflight, use_credential_directory,
+};
+use super::protection::{mode_exceptions, protection_report};
+use super::registration::refused_reservation;
+use super::report::{
+    lingering_report, no_service_manager, running_with_administrator, this_instances_link,
+    NOT_THIS_INSTANCES_LINK,
+};
+use super::request::{configuration, Configuration, Request, DEFAULT_PORT, NAMED_PORT_BASE};
+use super::wire::{connect_verified, wait_ready, within, HELD_FOR};
 use super::*;
+use crate::instance::registry::Registry;
+use crate::instance::setup::{FederationConfig, Input, Journal, Paths, Record, Service};
+use org_host_control::admin::AdminLinkResult;
+use org_host_control::listen::ListenConfig;
+use org_host_control::{InstanceStatusResult, WebState};
+use org_platform::disk::{EncryptionState, Wording};
+use org_platform::service::{Lingering, ServiceError, ServiceManager, ServiceStatus, Unit};
+use std::ffi::OsString;
+use std::os::fd::AsFd;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 #[test]
 fn ports_default_to_7420_and_named_instances_take_the_first_free_from_7421() {

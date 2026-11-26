@@ -19,8 +19,9 @@ use org_proto::{ApiError, ErrorCode, Request, Response};
 
 use super::authentication::Authentication;
 use super::listener::Connection;
-use super::office_ops::authorize_session_first;
-use super::{not_authorized, ok, secret_response, Service};
+use super::reply::{not_authorized, ok, secret_response};
+use super::session_office::authorize_session_first;
+use super::Service;
 
 pub(super) fn is_native_org_or_local_session(request: &Request) -> bool {
     request.is::<SessionLocal>()

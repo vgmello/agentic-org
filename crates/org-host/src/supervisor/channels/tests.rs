@@ -1,5 +1,18 @@
+use super::super::signal::Signal;
 use super::*;
+use crate::cloexec::SPAWN_LOCK;
+use crate::sync::lock;
 use org_office_launch::ServerEvent;
+use org_platform_host::admission::{Admission, Child};
+use org_proto::{frame, OfficeSecretsKey};
+use std::io;
+use std::io::{BufReader, Write};
+use std::os::fd::OwnedFd;
+use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// This test process stands in for a worker whose pid is `pid`: an admission that checks no
 /// image (a debug build's) and a child handle that is never signalled or waited for. A system

@@ -18,8 +18,9 @@ use org_proto::{
     Response,
 };
 
-use super::office_command::{connect_and_sign_in, AskPassword, Target};
-use super::{registered, say};
+use super::cli_session::{connect_and_sign_in, AskPassword, Target};
+use super::output::say;
+use super::wire::registered;
 use crate::human::Wire;
 
 /// Help text for `agentic-org project`.
