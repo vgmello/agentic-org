@@ -199,7 +199,12 @@ fn build_sandbox_network_json(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        append_linux_privileged_socket_denies, build_sandbox_network_json,
+        filter_linux_bwrap_deny_write, normalize_linux_bwrap_deny_read,
+    };
+    use org_agent_runtime::SpecPath;
+    use serde_json::json;
 
     #[test]
     fn build_sandbox_network_json_sets_allow_all_only_when_requested() {

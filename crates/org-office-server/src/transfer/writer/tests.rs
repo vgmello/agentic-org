@@ -133,19 +133,22 @@ impl Gate {
     const WAIT: Duration = Duration::from_secs(10);
 
     fn set_held(&self, held: bool) {
-        self.state.lock().unwrap().0 = held;
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).0 = held;
         self.changed.notify_all();
     }
 
     /// Waits until a confirmation is held here: a group flush is at the host.
     fn await_held_confirmation(&self) {
-        let state = self.state.lock().unwrap();
-        let (state, timeout) = self
-            .changed
-            .wait_timeout_while(state, Self::WAIT, |(_, waiting)| *waiting == 0)
-            .unwrap();
+        let (waiting, timed_out) = {
+            let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let (state, timeout) = self
+                .changed
+                .wait_timeout_while(state, Self::WAIT, |(_, waiting)| *waiting == 0)
+                .unwrap_or_else(|e| e.into_inner());
+            (state.1, timeout.timed_out())
+        };
         assert!(
-            !timeout.timed_out() && state.1 == 1,
+            !timed_out && waiting == 1,
             "no group flush reached the host"
         );
     }
@@ -163,10 +166,13 @@ impl WriterAuthority for Gate {
         after: &JournalHead,
     ) -> Result<(), CustodyError> {
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
             state.1 += 1;
             self.changed.notify_all();
-            state = self.changed.wait_while(state, |(held, _)| *held).unwrap();
+            state = self
+                .changed
+                .wait_while(state, |(held, _)| *held)
+                .unwrap_or_else(|e| e.into_inner());
             state.1 -= 1;
         }
         self.inner.confirm(identity, before, after)
@@ -243,7 +249,7 @@ fn the_adapter_confirms_per_flush_not_per_operation() {
     assert!(confirms < 3, "{confirms} confirmations for 3 operations");
     // Every confirmation was accepted: the host holds the office's flushed head.
     let head = world.writer.head().unwrap();
-    assert!(head.ordinal >= 4, "{head:?}");
+    assert!(head.ordinal >= 5, "{head:?}");
     let teams = office.org_snapshot().unwrap().teams.len();
     std::sync::Arc::try_unwrap(office).unwrap().close().unwrap();
     let reopened = world.open(Some(key())).unwrap();
