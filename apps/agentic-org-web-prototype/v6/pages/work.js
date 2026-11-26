@@ -207,7 +207,7 @@ function scopedWorkResults({ type, id, key, items }) {
 function scopedWorkWorkspace() {
   const currentRoute = route();
   const view = scopedWorkView(currentRoute, scopedWorkType(currentRoute));
-  return workWorkspace(scopedWorkResults(view), view.items, scopedWorkSearch().row);
+  return workWorkspace(scopedWorkResults(view), view.items, scopedWorkSearch().row, view.type);
 }
 
 
@@ -391,9 +391,9 @@ function findWorkItem(ref, items = W) {
   return { item, parent };
 }
 
-function workWorkspace(results, items = W, search = "") {
+function workWorkspace(results, items = W, search = "", scope = "") {
   const { item, parent } = findWorkItem(qs().get("item"), items);
-  return `${search}<div id="work-results">${results}</div>${item ? workDetail(item, parent) : ""}`;
+  return `${search}<div id="work-results"${scope ? ` data-scope="${esc(scope)}"` : ""}>${results}</div>${item ? workDetail(item, parent) : ""}`;
 }
 
 function workDetailFields(w, team, eta, priority) {

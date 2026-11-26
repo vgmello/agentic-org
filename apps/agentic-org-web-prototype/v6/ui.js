@@ -77,6 +77,11 @@ function queueHeadline(title, count, announce = false) {
   return `<div class="ph queue-headline"><div class="ph-t"><h1 tabindex="-1">${esc(title)}</h1>
     <span class="cnt queue-count"${announce ? ' role="status"' : ""}><i aria-hidden="true"></i>${esc(count)}</span></div></div>`;
 }
+/* Section header shared by Home, project Overview and other pages. repTitle swaps the label in Report themes. */
+function sectionHead({ id, title, repTitle = title, count = "", right = "", cls = "" }) {
+  const label = repTitle === title ? title : `<span class="lbl-std">${title}</span><span class="lbl-rep">${repTitle}</span>`;
+  return `<div class="sec-head${cls ? " " + cls : ""}"><div class="sec-head-l"><h2 id="${id}">${label}</h2>${count ? `<span class="sec-head-count">${count}</span>` : ""}</div>${right}</div>`;
+}
 /* Inline page search: a toolbar icon reveals a search row above the results ("/" opens it too). */
 const searchIsOpen = (inputId, value) => Boolean(S.searchOpen?.[inputId] || String(value ?? "").trim());
 const searchToggle = (inputId, label, value) => `<button class="btn ghost icon search-toggle${searchIsOpen(inputId, value) ? " is-active" : ""}" type="button" data-act="search-toggle" data-v="${inputId}" aria-label="${esc(label)}" title="${esc(label)} (/)" aria-expanded="${searchIsOpen(inputId, value)}" aria-controls="${inputId}-row" aria-keyshortcuts="/">${ic("search", "ic20")}</button>`;
@@ -187,10 +192,10 @@ function itemActionButtons(it, first) {
 }
 function itemActions(it, where) {
   if (it.handled) return `<p class="handled" id="handled-${esc(it.id)}">${esc(it.outcome)}</p>`;
-  const card = where === "card", first = card ? "outline" : "primary";
+  const card = where === "card", first = "primary";
   if (S.replying === it.id) return itemReplyComposer(it, first);
   const s = card ? null : sourceOf(it);
-  const open = card ? `<a class="btn outline sm" href="#/inbox/${it.id}">${ic("open", "ic16")}Open</a>` : `<a class="btn ghost sm" href="${s.href}">${ic("open", "ic16")}${esc(s.label)}</a>`;
+  const open = card ? `<a class="btn ghost sm" href="#/inbox/${it.id}">${ic("open", "ic16")}Open</a>` : `<a class="btn ghost sm" href="${s.href}">${ic("open", "ic16")}${esc(s.label)}</a>`;
   return `<div class="actions">${[...itemActionButtons(it, first), open].join("")}</div>`;
 }
 function recommendationCallout(it, headingTag = "p") {
@@ -203,13 +208,19 @@ function recommendationCallout(it, headingTag = "p") {
     </div>
   </div>`;
 }
-function needsCard(it) {
+/* Decision card used inside "Needs you" sections (project Overview, member pages).
+   The section already says it needs you, so only "Handled" is badged; hideProject drops the project link on project pages. */
+function needsCard(it, opts = {}) {
   return `<article class="card${it.handled ? " done" : ""}" aria-label="${esc(it.sub)} from ${esc(M[it.from].name)}">
-    <div class="top">${av(it.from, 24)}<span class="grow">${mlink(it.from)} <span class="muted">· ${esc(it.sub)} · ${esc(it.time)}</span></span>${it.handled ? pill("Handled", "gray", "check-circle") : pill("Needs you", "amber", "bell")}</div>
+    <div class="top">${av(it.from, 24)}<span class="grow">${mlink(it.from)} <span class="muted">· ${esc(it.sub)} · ${esc(it.time)}</span></span>${it.handled ? pill("Handled", "gray", "check-circle") : ""}</div>
     <h3>${esc(it.what)}</h3>
     <p class="why">${esc(it.why)}</p>
     ${it.rec && !it.handled ? recommendationCallout(it) : ""}
-    <div class="meta" style="margin-top:0">${plink(it.proj)}${it.task ? SEP + `<span>${esc(it.task)}</span>` : ""}${it.expires && !it.handled ? SEP + `<span class="pin wrap">${ic("clock", "ic14")}${esc(it.expires)}</span>` : ""}</div>
+    <div class="meta" style="margin-top:0">${joinSep([
+      opts.hideProject ? "" : plink(it.proj),
+      it.task ? `<span>${esc(it.task)}</span>` : "",
+      it.expires && !it.handled ? `<span class="pin wrap">${ic("clock", "ic14")}${esc(it.expires)}</span>` : "",
+    ])}</div>
     ${itemActions(it, "card")}
   </article>`;
 }
@@ -275,6 +286,7 @@ export {
   avStack,
   crumbs,
   searchRow,
+  sectionHead,
   searchToggle,
   displayCheckbox,
   effectiveHealth,

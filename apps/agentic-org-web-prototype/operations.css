@@ -3166,7 +3166,6 @@ html[data-theme="report"] .assembly-release {
   min-width: 0;
 }
 .assembly-release-label, .assembly-release-name {
-  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 .assembly-release-label { color: var(--gray-400); font-size: var(--fs-xs); }

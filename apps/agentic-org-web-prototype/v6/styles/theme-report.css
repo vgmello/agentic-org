@@ -1110,20 +1110,20 @@ html[data-theme="report-dark"] .split .list { background: var(--workspace-second
 
 /* Shared section headers inside the report stage */
 html[data-theme^="report"] .hb-stage.has-heads { row-gap: 14px; }
-html[data-theme^="report"] .hb-sec-hd h2 { font-size: var(--section-title-size); line-height: 1.24; font-weight: var(--fw-heading); color: #0B101B; }
-html[data-theme^="report"] .hb-stage > .hb-sec-hd.is-spot { padding-right: 38px; }
-html[data-theme^="report"] .hb-stage > .hb-sec-hd.is-brief { padding-left: 38px; border-left: 1px solid #EEF1F6; }
+html[data-theme^="report"] .sec-head h2 { font-size: var(--section-title-size); line-height: 1.24; font-weight: var(--fw-heading); color: #0B101B; }
+html[data-theme^="report"] .hb-stage > .sec-head.is-spot { padding-right: 38px; }
+html[data-theme^="report"] .hb-stage > .sec-head.is-brief { padding-left: 38px; border-left: 1px solid #EEF1F6; }
 html[data-theme^="report"] .hb-dg-item { border-top-color: #EEF1F6; }
 html[data-theme^="report"] .hb-dg-t, html[data-theme^="report"] .hb-dg-lead strong { color: #0B101B; }
 html[data-theme^="report"] .hb-dg-lead { color: #2C3646; }
 html[data-theme^="report"] .hb-dg-d { color: #64748B; }
-html[data-theme="report-dark"] .hb-sec-hd h2, html[data-theme="report-dark"] .hb-dg-t, html[data-theme="report-dark"] .hb-dg-lead strong { color: #ffffff; }
+html[data-theme="report-dark"] .sec-head h2, html[data-theme="report-dark"] .hb-dg-t, html[data-theme="report-dark"] .hb-dg-lead strong { color: #ffffff; }
 html[data-theme="report-dark"] .hb-dg-lead { color: #d1d5dc; }
 html[data-theme="report-dark"] .hb-dg-d { color: #99a1af; }
-html[data-theme="report-dark"] .hb-stage > .hb-sec-hd.is-brief, html[data-theme="report-dark"] .hb-dg-item { border-color: rgba(255, 255, 255, .08); }
+html[data-theme="report-dark"] .hb-stage > .sec-head.is-brief, html[data-theme="report-dark"] .hb-dg-item { border-color: rgba(255, 255, 255, .08); }
 @media (max-width: 1120px) {
-  html[data-theme^="report"] .hb-stage > .hb-sec-hd.is-spot { padding-right: 0; }
-  html[data-theme^="report"] .hb-stage > .hb-sec-hd.is-brief { padding-left: 0; border-left: 0; }
+  html[data-theme^="report"] .hb-stage > .sec-head.is-spot { padding-right: 0; }
+  html[data-theme^="report"] .hb-stage > .sec-head.is-brief { padding-left: 0; border-left: 0; }
 }
 
 /* Upcoming (calendar): open list, no card chrome */

@@ -1,6 +1,6 @@
 import { A, EVENTS, IN, KIND, M, OFFICES, OPEN, P, W } from "../data.js";
 import { S } from "../state.js";
-import { ATYPE, av, avStack, effectiveHealth, esc, ic, leadOf, leadTxt, memberIds, mlink, pill, plink, plural, presence, projMembers, projPill, skel, spotQueue, unhandled } from "../ui.js";
+import { ATYPE, av, avStack, sectionHead, effectiveHealth, esc, ic, leadOf, leadTxt, memberIds, mlink, pill, plink, plural, presence, projMembers, projPill, skel, spotQueue, unhandled } from "../ui.js";
 
 /* ---------------------------------------------------------------- pages */
 function v4PrimaryBtn(it, act, v, icon, label, tone = "win") {
@@ -711,10 +711,6 @@ function summarizeHomeFleet(st) {
   };
 }
 
-function secHeadHtml({ id, title, repTitle = title, count = "", right = "", cls = "" }) {
-  const label = repTitle === title ? title : `<span class="lbl-std">${title}</span><span class="lbl-rep">${repTitle}</span>`;
-  return `<div class="hb-sec-hd${cls ? " " + cls : ""}"><div class="hb-sec-hd-l"><h2 id="${id}">${label}</h2>${count ? `<span class="hb-sec-count">${count}</span>` : ""}</div>${right}</div>`;
-}
 
 function briefLensesHtml() {
   const lens = S.briefLens || "today";
@@ -725,8 +721,8 @@ function briefLensesHtml() {
 function stageHeadsHtml(st, open) {
   if (st !== "filled" && st !== "loading") return "";
   const pending = st === "loading" ? "" : `${open.length} pending`;
-  return secHeadHtml({ id: "hb-spot-h", title: "Needs your attention", repTitle: "Decision &amp; approval queue", count: pending, cls: "is-spot", right: `<a class="link" href="#/inbox">Open inbox${ic("chev-right", "ic16")}</a>` })
-    + secHeadHtml({ id: "hb-brief-h", title: "Executive digest", count: (S.briefLens || "today") === "board" ? "from Tess" : "from Tess · 2m ago", cls: "is-brief", right: briefLensesHtml() });
+  return sectionHead({ id: "hb-spot-h", title: "Needs your attention", repTitle: "Decision &amp; approval queue", count: pending, cls: "is-spot", right: `<a class="link" href="#/inbox">Open inbox${ic("chev-right", "ic16")}</a>` })
+    + sectionHead({ id: "hb-brief-h", title: "Executive digest", count: (S.briefLens || "today") === "board" ? "from Tess" : "from Tess · 2m ago", cls: "is-brief", right: briefLensesHtml() });
 }
 
 function homeProjectsSectionHtml(st, projs, queue, needsAttnProjs) {
@@ -734,7 +730,7 @@ function homeProjectsSectionHtml(st, projs, queue, needsAttnProjs) {
   const countTxt = st === "loading" ? "" : `${projs.length} active${needsAttnProjs ? ` · ${needsAttnProjs} need attention` : ""}`;
   const body = st === "loading" ? homeSkelCards(3, "Loading projects…") : `<div class="hb-bento">${projs.map((p) => renderProjBentoCard(p, queue)).join("")}</div>`;
   return `<div><section class="hb-proj-sec" id="hb-projects" aria-labelledby="hb-projs-h">
-        ${secHeadHtml({ id: "hb-projs-h", title: "Projects", repTitle: "Project delivery scorecard", count: countTxt, right: `<a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a>` })}
+        ${sectionHead({ id: "hb-projs-h", title: "Projects", repTitle: "Project delivery scorecard", count: countTxt, right: `<a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a>` })}
         ${body}
       </section></div>`;
 }
@@ -755,7 +751,7 @@ function homeUpcomingSectionHtml(st) {
   if (st === "error" || st === "empty") return "";
   const body = st === "loading" ? skel(2, "Loading upcoming meetings…") : `<ul class="hb-cal-list">${EVENTS.map(upcomingEventHtml).join("")}</ul>`;
   return `<section class="hb-cal-sec" aria-labelledby="hb-cal-h">
-        ${secHeadHtml({ id: "hb-cal-h", title: "Upcoming", count: st === "loading" ? "" : `${EVENTS.length} in the next 8 days`, right: `<button type="button" class="link" data-act="proto" data-v="Calendar (coming soon)">View calendar${ic("chev-right", "ic16")}</button>` })}
+        ${sectionHead({ id: "hb-cal-h", title: "Upcoming", count: st === "loading" ? "" : `${EVENTS.length} in the next 8 days`, right: `<button type="button" class="link" data-act="proto" data-v="Calendar (coming soon)">View calendar${ic("chev-right", "ic16")}</button>` })}
         <div class="hb-cal">${body}</div>
       </section>`;
 }

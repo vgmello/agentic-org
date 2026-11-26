@@ -6,14 +6,19 @@ import { notFound } from "./settings.js";
 import { scopedWorkToolbar, scopedWorkWorkspace } from "./work.js";
 import { render } from "../shell/router.js";
 import { S } from "../state.js";
-import { SEP, acts, av, avStack, crumbs, esc, feed, hdr, ic, kindWord, leadOf, leadTxt, linkTabs, menuItem, moreMenu, needsCard, pill, presPill, progress, projMembers, projPill, sectionTabs, showMenu, statusLine, toast } from "../ui.js";
+import { acts, av, avStack, crumbs, esc, feed, hdr, ic, kindWord, leadOf, leadTxt, linkTabs, menuItem, moreMenu, needsCard, pill, presPill, progress, projMembers, projPill, searchRow, searchToggle, sectionHead, sectionTabs, SEP, showMenu, statusLine, toast } from "../ui.js";
 
 function pageProjects() {
-  const ids = Object.keys(P).filter((p) => S.showArchived || !P[p].archived);
+  const q = S.projectQuery.trim().toLowerCase();
+  const matchesQuery = (p) => !q || [P[p].name, leadTxt(p), ...P[p].teams.map((t) => TEAMS[t].name)].join(" ").toLowerCase().includes(q);
+  const ids = Object.keys(P).filter((p) => (S.showArchived || !P[p].archived) && matchesQuery(p));
   const active = Object.keys(P).filter((p) => !P[p].archived).length;
   const filter = showMenu("pshow", [["showArchived", "Show", [[false, "Active", active], [true, "All, with archived", Object.keys(P).length]]]],
     { icon: "filter", label: "Filter projects", active: S.showArchived });
-  return hdr("Projects", `${active} active · ${Object.keys(P).length - active} archived`, filter) +
+  const search = searchToggle("projects-search", "Search projects", S.projectQuery);
+  const empty = ids.length ? "" : `<p class="empty-row">No projects match “${esc(S.projectQuery.trim())}”.</p>`;
+  return hdr("Projects", `${active} active · ${Object.keys(P).length - active} archived`, search + filter) +
+  searchRow("projects-search", "Search projects", S.projectQuery, "Search projects by name, lead or team… (Esc to close)", "work-search-row") + empty +
   `<ul class="rows" role="list">${ids.map((p) => {
     const pr = P[p], ws = W.filter((w) => w.proj === p), openN = ws.filter(OPEN).length;
     return `<li class="linked"><span class="chip-i" style="margin-left:0;width:32px;height:32px;font-size:12px" aria-hidden="true">${esc(pr.name[0])}</span>
@@ -47,12 +52,13 @@ function projectBody(id, tab) {
   const pr = P[id], ws = W.filter((w) => w.proj === id);
   if (tab === "overview") {
     const needs = IN.filter((i) => i.proj === id && (!i.handled || i.handledNow));
+    const pending = needs.filter((i) => !i.handled).length;
     return `<div class="grid2"><div>
-      <section class="section"><div class="sec-h"><h2>Goal</h2></div><p class="why" style="font-size:14px">${esc(pr.goal)}</p>
+      <section class="section project-sec" aria-labelledby="pj-goal-h">${sectionHead({ id: "pj-goal-h", title: "Goal" })}<p class="why">${esc(pr.goal)}</p>
         <div class="stats" style="margin-top:12px"><span><b>${ws.filter(OPEN).length}</b> open</span><span><b>${ws.filter((w) => w.status === "Blocked").length}</b> blocked</span></div>
         ${pr.risk ? `<div class="callout" style="margin-top:16px">${ic("warn", "ic20")}<span>${esc(pr.risk)}</span></div>` : ""}</section>
-      <section class="section"><div class="sec-h"><h2>${ic("bell", "ic20 c-amber")}Needs you for this project</h2></div>${needs.length ? `<div class="cards">${needs.map(needsCard).join("")}</div>` : `<p class="muted" style="padding-bottom:24px">Nothing needs you on this project.</p>`}</section>
-    </div><aside class="compact"><div class="sec-h"><h2 style="font-size:14px;font-weight:600">Recent activity</h2></div>${feed(acts().filter((a) => a.proj === id).slice(0, 5), { noProj: true })}</aside></div>`;
+      <section class="section project-sec" aria-labelledby="pj-needs-h">${sectionHead({ id: "pj-needs-h", title: "Needs your attention", count: pending ? `${pending} pending` : "", right: `<a class="link" href="#/inbox">Open inbox${ic("chev-right", "ic16")}</a>` })}${needs.length ? `<div class="cards">${needs.map((it) => needsCard(it, { hideProject: true })).join("")}</div>` : `<p class="muted" style="padding-bottom:24px">Nothing needs you on this project.</p>`}</section>
+    </div><aside class="compact project-sec" aria-labelledby="pj-act-h">${sectionHead({ id: "pj-act-h", title: "Recent activity", right: `<a class="link" href="#/projects/${esc(id)}/activity">All activity${ic("chev-right", "ic16")}</a>` })}${feed(acts().filter((a) => a.proj === id).slice(0, 5), { noProj: true })}</aside></div>`;
   }
   if (tab === "work") return scopedWorkToolbar("project", id, ws) + scopedWorkWorkspace();
   if (tab === "team") return projectTeams(id) + memberRows(projMembers(id), { emptyText: "No members yet." });

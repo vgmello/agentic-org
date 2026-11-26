@@ -878,6 +878,25 @@ body.nokeys .search kbd { display: none; }
 .ph-actions { display: flex; align-items: center; min-width: 0; gap: 8px; flex-wrap: wrap; }
 .back { display: inline-flex; align-items: center; gap: 4px; color: var(--gray-400); font-weight: 600; font-size: var(--fs-sm); padding: 12px var(--gutter) 0; }
 .back:hover { color: var(--white); }
+/* Shared section header (ui.js sectionHead): title + muted count, action on the right.
+   Inside Home (.hb) it picks up the Home ink tokens; elsewhere the theme gray scale. */
+.sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; min-height: 32px; }
+.sec-head-l { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.sec-head h2 {
+  font-family: var(--font-display);
+  font-size: 1.125rem; line-height: 1.3; font-weight: 600;
+  letter-spacing: var(--ls-display); color: var(--hb-ink, var(--white));
+}
+.sec-head-count { font-size: var(--fs-sm); color: var(--hb-muted, var(--gray-400)); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sec-head .link { display: inline-flex; align-items: center; gap: 2px; font-size: var(--fs-sm); font-weight: 500; color: var(--hb-muted, var(--gray-400)); transition: color .14s ease; }
+.sec-head .link:hover { color: var(--hb-ink, var(--white)); }
+/* Project pages: the project name on every work row is redundant */
+#work-results[data-scope="project"] .work-facts > a.alink[href^="#/projects/"] { display: none; }
+/* Project Overview sections use the shared section header */
+.project-sec > .sec-head { margin-bottom: 12px; }
+.project-sec .why { font-size: var(--fs-base); }
+/* Recommendations inside cards: body-size text so the card's title stays the focus */
+.card .recommendation { padding: 10px 12px; font-size: var(--fs-sm); }
 /* Inline page search row (Inbox, Work) revealed by the toolbar search icon */
 .search-toggle.is-active { color: var(--white); background: var(--tone-accent-soft); box-shadow: inset 0 0 0 1px var(--tone-accent-ring); }
 .inline-search { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
@@ -1034,7 +1053,7 @@ html[data-hide-work-subtasks] .work-subtasks { display: none; }
 }
 .work-criteria.is-complete { color: var(--tone-ok-ink); }
 /* Fixed-width counter column in list rows so every title starts at the same x */
-.work-markers .work-criteria { display: inline-block; min-width: 3.25ch; }
+.work-markers .work-criteria { display: inline-block; min-width: 3.25ch; text-align: center; }
 .work-criteria.is-empty { color: var(--gray-500); }
 .work-status, .work-priority-mark {
   position: relative; display: inline-flex; flex: none; align-items: center;

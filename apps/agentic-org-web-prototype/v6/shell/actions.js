@@ -489,6 +489,7 @@ function toggleInlineSearch(inputId) {
 
 const INPUT_BY_ID = {
   compose: (target) => { chatDrafts.set(target.form.dataset.id, target.value); fitTextarea(target); },
+  "projects-search": (target) => { S.projectQuery = target.value; render(false); },
   "triage-search": (target) => { S.inboxQuery = target.value; refreshInboxSearch(); },
   "triage-comment": handleDetailCommentInput,
   "work-comment": handleDetailCommentInput,
