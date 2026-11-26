@@ -8,6 +8,11 @@
 //! old list or the new one, never a torn write. Readers take no lock and never fail: a missing
 //! or corrupt list is empty. Names with control or bidirectional characters are dropped on
 //! the way in and out; help text is sanitized on the way out.
+//!
+//! The folders from `completion` down are the user's alone (`0700`, created so and tightened
+//! when they exist): the names they list are not for other users to read. The cache
+//! directory itself is the caller's: created owner-only when it is missing, left as it is
+//! otherwise.
 
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -76,9 +81,7 @@ impl CompletionCache {
     ) -> Result<(), ShellError> {
         let dir = self.partition_dir(partition);
         let kind = partition_key(kind);
-        fs::DirBuilder::new()
-            .recursive(true)
-            .create(&dir)
+        self.create_private(&dir)
             .map_err(|e| ShellError::io("creating the completion cache", e))?;
         let _lock = lock(&dir.join(format!("{kind}.lock")))?;
         let kept: Vec<&CachedCandidate> = candidates
@@ -94,6 +97,25 @@ impl CompletionCache {
         temporary
             .persist(dir.join(format!("{kind}.json")))
             .map_err(|e| write_error(e.error))?;
+        Ok(())
+    }
+
+    /// Creates `dir` (a folder below `<cache>/completion`) and every missing folder above it
+    /// owner-only, then tightens the folders from `dir` up to `completion` that already
+    /// existed. On a system without an adapter it fails closed (`org_platform::fs`).
+    fn create_private(&self, dir: &Path) -> io::Result<()> {
+        org_platform::fs::create_owner_only_dir_all(dir)?;
+        let completion = self.dir.join(COMPLETION_DIR);
+        let mut current = Some(dir);
+        while let Some(folder) = current {
+            org_platform::fs::set_owner_only_dir(folder)?;
+            if folder == completion {
+                break;
+            }
+            current = folder
+                .parent()
+                .filter(|parent| parent.starts_with(&completion));
+        }
         Ok(())
     }
 

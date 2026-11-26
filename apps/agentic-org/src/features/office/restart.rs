@@ -9,9 +9,9 @@ use crate::completers;
 use crate::error::CliError;
 use serde_json::json;
 
-use super::guard;
+use super::{guard, DONE};
 use crate::selection;
-use crate::view::{self, column, Column, Show};
+use crate::view;
 
 pub(super) const EXAMPLES: &str = "Examples:\n  agentic-org office restart <office-id>\n  agentic-org office restart <office-id> --yes";
 
@@ -27,12 +27,6 @@ pub(crate) struct RestartArgs {
     #[command(flatten)]
     pub(super) login: LoginArgs,
 }
-
-pub(super) const DONE: [Column; 3] = [
-    column("office_id", "office_id", Show::Id),
-    column("outcome", "outcome", Show::Status),
-    column("operation_id", "operation_id", Show::Dim),
-];
 
 pub(super) fn run(args: RestartArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let plan = json!({"action": "office_restart", "office_id": args.office_id});

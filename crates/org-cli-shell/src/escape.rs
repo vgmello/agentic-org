@@ -46,10 +46,11 @@ pub fn sanitize(s: &str) -> Cow<'_, str> {
 }
 
 /// Characters `serde_json` leaves raw inside strings that a terminal or a JavaScript
-/// consumer can still act on: DEL, the C1 controls (an 8-bit CSI is `U+009B`) and the line
-/// and paragraph separators.
+/// consumer can still act on: DEL, the C1 controls (an 8-bit CSI is `U+009B`), the line
+/// and paragraph separators, and the bidirectional marks, embeddings, overrides and isolates
+/// (a `U+202E` in a value reorders what a terminal shows of the line around it).
 fn needs_json_escape(c: char) -> bool {
-    matches!(c, '\u{7F}'..='\u{9F}' | '\u{2028}' | '\u{2029}')
+    matches!(c, '\u{7F}'..='\u{9F}') || breaks_or_reorders(c)
 }
 
 /// [`sanitize`] for text of several lines: each line is sanitized and the line breaks
@@ -61,10 +62,10 @@ pub fn sanitize_lines(text: &str) -> String {
         .join("\n")
 }
 
-/// Already-serialized JSON with DEL, C1 and `U+2028`/`U+2029` written as `\u00XX` /
-/// ` ` escapes. JSON whitespace is ASCII, so these characters can only occur inside
-/// strings and the document parses to the identical value. Returned unchanged (no copy) when
-/// there is nothing to escape.
+/// Already-serialized JSON with DEL, C1, `U+2028`/`U+2029` and the bidirectional controls
+/// written as `\uXXXX` escapes. JSON whitespace is ASCII, so these characters can only occur
+/// inside strings and the document parses to the identical value. Returned unchanged (no copy)
+/// when there is nothing to escape.
 pub fn escape_json_controls(json: String) -> String {
     if !json.contains(needs_json_escape) {
         return json;

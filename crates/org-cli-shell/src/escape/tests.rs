@@ -55,6 +55,30 @@ fn json_controls_are_escaped_and_round_trip() {
     assert_eq!(back, value);
 }
 
+/// B-07: a bidirectional override in a value never reaches a `--json` reader raw.
+#[test]
+fn json_bidi_controls_are_escaped_and_round_trip() {
+    let bidi = [
+        '\u{061C}', '\u{200E}', '\u{200F}', '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}',
+        '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+    ];
+    let hostile: String = bidi.iter().flat_map(|c| ['x', *c]).collect();
+    let value = serde_json::json!({ "name": hostile, hostile.clone(): "key" });
+    let escaped = escape_json_controls(serde_json::to_string(&value).unwrap());
+    for c in bidi {
+        assert!(!escaped.contains(c), "{c:?} is raw in {escaped}");
+        assert!(
+            escaped.contains(&format!("\\u{:04x}", u32::from(c))),
+            "{c:?} is not escaped in {escaped}"
+        );
+    }
+    let back: serde_json::Value = serde_json::from_str(&escaped).unwrap();
+    assert_eq!(back, value);
+    // Neighbours of the escaped ranges stay as they are.
+    let plain = String::from("{\"a\":\"\u{2027}\u{202F}\u{2065}\u{206A}\"}");
+    assert_eq!(escape_json_controls(plain.clone()), plain);
+}
+
 #[test]
 fn json_without_controls_is_unchanged() {
     let raw = String::from("{\"a\":\"é\"}");

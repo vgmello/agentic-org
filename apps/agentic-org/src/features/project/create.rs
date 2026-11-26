@@ -8,7 +8,7 @@ use crate::error::CliError;
 use org_host::setup_flow::ProjectCreateInput;
 use serde_json::json;
 
-use super::inspect::RECORD;
+use super::RECORD;
 use crate::selection;
 use crate::view;
 

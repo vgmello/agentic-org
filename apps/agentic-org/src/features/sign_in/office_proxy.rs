@@ -18,8 +18,8 @@ use org_host::setup_flow::{ApprovedOfficeChannel, HostCliErrorKind};
 use org_proto::ErrorCode;
 use serde_json::Value;
 
-use super::render;
-use super::selectors::{self, resource_and_verb, Selectors};
+use super::render::{self, print_answer};
+use super::selectors::{self, has_flag, resource_and_verb, Selectors};
 use crate::error::CliError;
 
 /// The office channel the sign-in opened.
@@ -91,17 +91,6 @@ pub(super) enum Shown {
     Rendered,
 }
 
-fn has_flag(forwarded: &[String], names: &[&str]) -> bool {
-    forwarded.iter().any(|word| {
-        names.iter().any(|name| {
-            word == name
-                || word
-                    .strip_prefix(name)
-                    .is_some_and(|rest| rest.starts_with('='))
-        })
-    })
-}
-
 pub(super) fn shown(forwarded: &[String], ctx: &ExecutionContext) -> Shown {
     let complete = forwarded.first().is_some_and(|first| first == "who") || forwarded.len() >= 2;
     if !complete
@@ -167,10 +156,11 @@ pub(super) fn execute(
     let shown = shown(&forwarded, ctx);
     let command = resource_and_verb(&forwarded)
         .and_then(|(resource, verb)| org_agent_cli::table::runtime_table().find(resource, verb));
-    if ctx.modes().dry_run
-        && command.is_some_and(|command| command.is_write())
-        && !has_flag(&forwarded, &["--dry-run"])
-    {
+    // The global `--dry-run` always reaches the table, which previews a write and refuses it
+    // (exit 2) for a command that changes nothing: `agentic-org --dry-run task list` never
+    // runs as if it had not been given. A `--dry-run` that is a flag's value or follows `--`
+    // is not the flag (`has_flag`).
+    if ctx.modes().dry_run && !has_flag(&forwarded, &["--dry-run"]) {
         forwarded.push("--dry-run".to_owned());
     }
     match shown {
@@ -191,25 +181,121 @@ pub(super) fn execute(
     }
 }
 
-/// Prints the table's answer. A reader that went away does not turn a refusal into a
-/// success: the table's own exit code stands (0 only when it succeeded).
-pub(super) fn print_answer(
-    ctx: &mut ExecutionContext,
-    text: &str,
-    code: u8,
-) -> Result<(), CliError> {
-    match ctx.out(text) {
-        Err(org_cli_shell::error::ShellError::OutputClosed) if code != 0 => exited(code),
-        Err(error) => Err(error.into()),
-        Ok(()) => exited(code),
-    }
-}
+#[cfg(test)]
+mod tests {
+    use org_cli_shell::context::testing::{captured, tty};
+    use org_cli_shell::context::Modes;
+    use org_cli_shell::terminal::Terminal;
+    use org_command::{Answer, Request};
 
-/// The table's exit code, its answer already printed.
-pub(super) fn exited(code: u8) -> Result<(), CliError> {
-    if code == 0 {
-        Ok(())
-    } else {
-        Err(CliError::Exited(code))
+    use super::*;
+
+    /// An office that records every request it is sent and refuses it: nothing is changed.
+    #[derive(Default)]
+    struct Recording(Vec<Request>);
+
+    impl Office for Recording {
+        fn call(&mut self, request: &Request) -> Result<Answer, Refusal> {
+            self.0.push(request.clone());
+            Err(Refusal::new(
+                ErrorCode::Unavailable,
+                "recorded",
+                "a test office",
+            ))
+        }
+    }
+
+    fn words(list: &[&str]) -> Vec<String> {
+        list.iter().map(|word| (*word).to_owned()).collect()
+    }
+
+    /// B-02: `agentic-org --dry-run msg send --to ada --body "--dry-run"` is still a dry run:
+    /// the body's text is not the flag, so the global `--dry-run` reaches the table and the
+    /// office is asked for a preview, never a live write.
+    #[test]
+    fn a_body_that_reads_dry_run_does_not_turn_a_dry_run_into_a_live_write() {
+        let modes = Modes {
+            dry_run: true,
+            ..Modes::default()
+        };
+        for terminal in [Terminal::piped(), tty(Some(80))] {
+            let (mut ctx, _streams) = captured(modes.clone(), terminal, &[]);
+            let mut office = Recording::default();
+            let forwarded = words(&["msg", "send", "--to", "ada", "--body", "--dry-run"]);
+            let _ = execute(forwarded, &mut ctx, &mut office);
+            assert_eq!(office.0.len(), 1, "the office was not asked");
+            let request = &office.0[0];
+            assert!(request.dry_run, "a live write was sent: {request:?}");
+            assert_eq!(request.idempotency_key, None, "{request:?}");
+            assert_eq!(request.input["body"], "--dry-run");
+        }
+    }
+
+    /// NB-03: the global `--dry-run` reaches a command that changes nothing too, where the
+    /// table refuses it (exit 2) before the office is asked: it never runs as a plain read.
+    #[test]
+    fn a_dry_run_of_a_read_is_refused_and_never_runs() {
+        let modes = Modes {
+            dry_run: true,
+            ..Modes::default()
+        };
+        for list in [&["task", "list"][..], &["who"], &["msg", "inbox"]] {
+            let (mut ctx, _streams) = captured(modes.clone(), Terminal::piped(), &[]);
+            let mut office = Recording::default();
+            let error = execute(words(list), &mut ctx, &mut office).unwrap_err();
+            use org_cli_shell::error::CliDiagnostic;
+            assert_eq!(error.exit_code(), 2, "{list:?}");
+            assert!(office.0.is_empty(), "{list:?} ran: {:?}", office.0);
+        }
+    }
+
+    /// B-02: a value that reads `-h` or `--help` is text, not a request for help: the answer
+    /// is shown as the run asked (`-q`, a table, compact), never the table's help as written.
+    #[test]
+    fn a_value_that_reads_help_is_sent_and_shown_as_asked() {
+        let quiet = Modes {
+            quiet: true,
+            ..Modes::default()
+        };
+        for (modes, terminal, list, field, value, expected) in [
+            (
+                Modes::default(),
+                Terminal::piped(),
+                &["msg", "send", "--to", "ada", "--body", "-h"][..],
+                "body",
+                "-h",
+                Shown::Compact,
+            ),
+            (
+                Modes::default(),
+                tty(Some(80)),
+                &["msg", "send", "--to", "ada", "--body", "-h"],
+                "body",
+                "-h",
+                Shown::Rendered,
+            ),
+            (
+                quiet,
+                tty(Some(80)),
+                &["task", "create", "--title", "--help"],
+                "title",
+                "--help",
+                Shown::Quiet,
+            ),
+        ] {
+            let (mut ctx, _streams) = captured(modes, terminal, &[]);
+            let forwarded = words(list);
+            assert_eq!(shown(&forwarded, &ctx), expected, "{list:?}");
+            let mut office = Recording::default();
+            let _ = execute(forwarded, &mut ctx, &mut office);
+            assert_eq!(office.0.len(), 1, "{list:?} was not sent");
+            assert_eq!(office.0[0].input[field], value, "{list:?}");
+        }
+        // A real `--help` is still the table's own answer.
+        let (ctx, _streams) = captured(Modes::default(), tty(Some(80)), &[]);
+        assert_eq!(
+            shown(&words(&["task", "create", "--title", "t", "--help"]), &ctx),
+            Shown::AsWritten
+        );
     }
 }

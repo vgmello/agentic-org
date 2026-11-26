@@ -7,6 +7,8 @@ mod stop;
 
 use clap::{Args, Subcommand};
 use org_cli_shell::context::ExecutionContext;
+use org_cli_shell::output::Cell;
+use org_cli_shell::terminal::{sanitize, sanitize_lines};
 use org_host::setup_flow::ServiceAction;
 use serde_json::json;
 
@@ -79,15 +81,18 @@ fn act(
     if ctx.modes().quiet {
         return Ok(ctx.out(&format!("{state}\n"))?);
     }
-    let mut text = host::service_summary(&report);
-    if ctx.is_tty_stdout() {
-        let glyph = org_cli_shell::output::glyph(crate::view::status_style(&state));
-        text = format!("{glyph}{text}");
-    }
+    let summary = host::service_summary(&report);
+    // On a terminal: the status glyph and its color, as `status` and `release status` show
+    // it (sanitized by the cell). In a pipe: the sentence alone (a tested contract).
+    let mut text = if ctx.is_tty_stdout() {
+        Cell::status(summary, crate::view::status_style(&state)).line(ctx.stdout_color())
+    } else {
+        sanitize(&summary).into_owned()
+    };
     text.push('\n');
     for note in &report.notes {
-        text.push_str(note);
+        text.push_str(&sanitize_lines(note));
         text.push('\n');
     }
-    Ok(ctx.out(&org_cli_shell::terminal::sanitize_lines(&text))?)
+    Ok(ctx.out(&text)?)
 }

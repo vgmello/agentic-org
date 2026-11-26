@@ -182,9 +182,11 @@ pub struct SelectionInput<'a> {
 }
 
 /// Selects the instance and the office (see the module documentation). Flag values are
-/// checked like manifest values ([`ShellError::InvalidArguments`]); environment values too
-/// ([`ShellError::InvalidConfig`]); neither error repeats the value. Saved and default values
-/// are the caller's and are taken as they are (an empty one is unset).
+/// checked like manifest values ([`ShellError::InvalidArguments`]); environment values and
+/// saved values too ([`ShellError::InvalidConfig`]: a saved context is a file anyone with the
+/// account's access may have edited, so a control, line-breaking or bidirectional character
+/// in it fails closed); no error repeats the value. The default is the caller's and is taken
+/// as it is. An empty value is unset.
 pub fn resolve_selection(
     input: &SelectionInput<'_>,
     env: &dyn Fn(&str) -> Option<OsString>,
@@ -199,23 +201,25 @@ pub fn resolve_selection(
         Some(path) => (load_manifest(&path)?, Some(path)),
         None => (Manifest::default(), None),
     };
-    let saved = |value: Option<&str>| value.filter(|value| !value.is_empty()).map(str::to_owned);
+    let saved_instance = saved_value(input.saved_instance, "instance")?;
+    let saved_office = saved_value(input.saved_office, "office")?;
+    let default = |value: Option<&str>| value.filter(|value| !value.is_empty()).map(str::to_owned);
     Ok(Selection {
         instance: pick(
             [
                 (flag_instance, Tier::Flag),
                 (env_instance, Tier::Env),
                 (manifest.instance, Tier::Manifest),
-                (saved(input.saved_instance), Tier::Saved),
+                (saved_instance, Tier::Saved),
             ],
-            saved(input.default_instance),
+            default(input.default_instance),
         ),
         office: pick(
             [
                 (flag_office, Tier::Flag),
                 (env_office, Tier::Env),
                 (manifest.office, Tier::Manifest),
-                (saved(input.saved_office), Tier::Saved),
+                (saved_office, Tier::Saved),
             ],
             None,
         ),
@@ -242,6 +246,21 @@ fn flag_value(value: Option<&str>, flag: &str) -> Result<Option<String>, ShellEr
     match value {
         Some(value) if !valid_value(value) => Err(ShellError::InvalidArguments {
             message: format!("the {flag} value {VALUE_RULE}"),
+        }),
+        other => Ok(other.map(str::to_owned)),
+    }
+}
+
+/// A value of the saved context: empty is unset; one that is not a usable value is
+/// [`ShellError::InvalidConfig`], never selected or shown.
+fn saved_value(value: Option<&str>, what: &str) -> Result<Option<String>, ShellError> {
+    match value.filter(|value| !value.is_empty()) {
+        Some(value) if !valid_value(value) => Err(ShellError::InvalidConfig {
+            message: format!("the saved context's {what} {VALUE_RULE}"),
+            help: Some(
+                "Clear the saved context (`agentic-org context clear`) and save it again."
+                    .to_owned(),
+            ),
         }),
         other => Ok(other.map(str::to_owned)),
     }

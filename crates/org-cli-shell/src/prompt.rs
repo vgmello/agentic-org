@@ -107,7 +107,8 @@ pub fn input(
     sync_colors(ctx);
     let mut prompt = cliclack::input(sanitize(message));
     if let Some(default) = default {
-        prompt = prompt.default_input(default);
+        // The default is shown on the terminal: escaped like every other value.
+        prompt = prompt.default_input(&sanitize(default));
     }
     restore_cursor(prompt.interact::<String>()).map_err(prompt_error)
 }

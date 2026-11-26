@@ -186,8 +186,8 @@ impl Node {
     ///
     /// A value is one cell on one line. Text prints as it is. It prints as a JSON string when it
     /// is empty (`""`), is the word `null`, starts with a double quote, reads as `meta:` (in any case, after white space or characters that do not show), or holds a tab, a new
-    /// line, another control character or a Unicode line or paragraph separator; those
-    /// characters are then written as escapes. `null` prints as `null`, so an empty cell is
+    /// line, another control character, a Unicode line or paragraph separator or a
+    /// bidirectional control; those characters are then written as escapes. `null` prints as `null`, so an empty cell is
     /// only ever a field the item does not have. A number, `true`, `false`, a list and an
     /// object print as JSON. A name that is not ASCII letters, digits, `_`, `-` and `.`, and the name
     /// `meta`, print as a JSON string too: a line that starts with a bare `meta:` is never data.
@@ -269,7 +269,7 @@ fn is_plain_cell(text: &str) -> bool {
         && !text.starts_with('"')
         // No value can pass for the call's own `meta:` line, which only the library prints.
         && !reads_as_meta(text)
-        && !text.chars().any(breaks_a_line)
+        && !text.chars().any(|c| breaks_a_line(c) || reorders(c))
 }
 
 /// Whether `text` begins with `meta:` in any case, after white space and the invisible or
@@ -299,9 +299,9 @@ fn compact_key(key: &str) -> String {
 }
 
 /// A JSON string literal. Beyond what JSON itself escapes (`U+0000..=U+001F`, `"` and `\\`),
-/// DEL, the C1 controls (the 8-bit CSI `U+009B` among them) and the Unicode line and paragraph
-/// separators are written as escapes: `serde_json` leaves them raw, a terminal acts on them
-/// (CVE-2021-25743) and some line readers split on them. They can only be inside the literal,
+/// DEL, the C1 controls (the 8-bit CSI `U+009B` among them), the Unicode line and paragraph
+/// separators and the bidirectional controls are written as escapes: `serde_json` leaves them
+/// raw, a terminal acts on them (CVE-2021-25743) and some line readers split on them. They can only be inside the literal,
 /// so escaping them in the serialized text reads back as the same string.
 fn json_string(text: &str) -> String {
     let json = Value::String(text.to_owned()).to_string();
@@ -319,14 +319,26 @@ fn json_string(text: &str) -> String {
     out
 }
 
-/// A character `serde_json` writes raw that no printed JSON may hold raw.
+/// A character `serde_json` writes raw that no printed JSON may hold raw: DEL, C1, the line
+/// and paragraph separators, and the bidirectional controls ([`reorders`]).
 fn json_leaves_raw(c: char) -> bool {
-    matches!(c, '\u{7f}'..='\u{9f}' | '\u{2028}' | '\u{2029}')
+    matches!(c, '\u{7f}'..='\u{9f}' | '\u{2028}' | '\u{2029}') || reorders(c)
+}
+
+/// The bidirectional marks, embeddings, overrides and isolates: a terminal reorders the text
+/// around them (CVE-2021-25743 class), so no printed form holds them raw. The same set the
+/// operator shell escapes (`org_cli_shell::terminal::sanitize`).
+fn reorders(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+    )
 }
 
 /// Characters YAML does not hold as they are, or holds as a line break.
 fn needs_escape(c: char) -> bool {
     c.is_control()
+        || reorders(c)
         || matches!(
             c,
             '\u{85}' | '\u{2028}' | '\u{2029}' | '\u{feff}' | '\u{fffe}' | '\u{ffff}'

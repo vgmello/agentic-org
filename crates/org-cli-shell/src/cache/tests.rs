@@ -52,6 +52,53 @@ fn round_trip() {
     );
 }
 
+/// B-05: the folders that list the names are the user's alone (`0700`): made so from the
+/// cache directory down when it is missing, and tightened when they exist more open. A
+/// cache directory that exists is the caller's and is left as it is.
+#[test]
+fn cache_folders_are_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let root = tempfile::tempdir().unwrap();
+    let fresh = root.path().join("new-cache");
+    let cache = CompletionCache::new(&fresh);
+    cache
+        .store(&["prod", "org_1"], "projects", &[candidate("a", None)])
+        .unwrap();
+    for dir in [
+        fresh.clone(),
+        fresh.join("completion"),
+        fresh.join("completion/prod"),
+        fresh.join("completion/prod/org_1"),
+    ] {
+        assert_eq!(mode(&dir), 0o700, "{}", dir.display());
+    }
+    // An existing, more open cache: its listing folders are tightened, the root is not.
+    let shared = root.path().join("shared");
+    fs::create_dir_all(shared.join("completion/prod")).unwrap();
+    for dir in [
+        &shared,
+        &shared.join("completion"),
+        &shared.join("completion/prod"),
+    ] {
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let cache = CompletionCache::new(&shared);
+    cache
+        .store(&["prod"], "orgs", &[candidate("a", None)])
+        .unwrap();
+    cache
+        .store(&[], "instances", &[candidate("prod", None)])
+        .unwrap();
+    assert_eq!(mode(&shared.join("completion")), 0o700);
+    assert_eq!(mode(&shared.join("completion/prod")), 0o700);
+    assert_eq!(
+        mode(&shared),
+        0o755,
+        "the caller's directory is left as it is"
+    );
+}
+
 #[test]
 fn keys_cannot_escape_the_cache() {
     assert_eq!(partition_key("prod-1.a_b"), "prod-1.a_b");

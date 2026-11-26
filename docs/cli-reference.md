@@ -97,14 +97,19 @@ Every command takes these flags (before or after the command):
 - `--json` — the result as JSON on `stdout` (indented on a terminal, one compact line in a pipe); an error as `{"error": {"code", "message", "help", "exit_code"}}` on `stderr`, with an empty `stdout`. Implies no color and no prompts.
 - `-q, --quiet` — only the primary IDs, one per line (nothing for an empty list or a `--dry-run`). Cannot be combined with `--json` (exit `2`).
 - `--no-input` (or `AGENTIC_ORG_NO_INPUT=1`) — never prompt; a missing value or confirmation fails instead.
-- `--dry-run` — show what would change (`[DRY-RUN] ...` on `stderr`, or `{"dry_run": true, ...}` under `--json`) and change nothing.
+- `--dry-run` — show what would change (`[DRY-RUN] ...` on `stderr`, or `{"dry_run": true, ...}` under `--json`) and change nothing. Office commands (`task`, `msg`, ...) always receive it: a write is previewed, and a command that changes nothing refuses it (exit `2`) instead of running as if it were not given. A `--dry-run` that is a flag's value (`--body --dry-run`) or follows `--` is text, not the flag.
 - `--color auto|always|never` — `auto` honours `NO_COLOR`, `FORCE_COLOR`/`CLICOLOR_FORCE`, `CLICOLOR=0`, `TERM=dumb` and whether the stream is a terminal.
 
-Output is shaped for the reader: on a terminal, lists are borderless tables and records aligned cards; in a pipe, lists are header-less tab-separated lines with bare values and no color; notices (empty lists, progress, approval links, `✓` confirmations) go to `stderr` only. Every value that came from a host, an office or a file is escaped before it reaches a terminal (control characters, `U+2028`/`U+2029` and bidirectional overrides are printed as `\u{..}`), and DEL, C1 controls and `U+2028`/`U+2029` are escaped inside every JSON document.
+Directories (each an absolute path; an empty variable is unset; a relative one is refused with exit `1`, `cli::config::invalid`, and never read against the working directory):
+
+- `AGENTIC_ORG_CONFIG_DIR` — where the context saved by `agentic-org context use` lives (`cli-context.json`, owner-only). Default: this account's own folder.
+- `AGENTIC_ORG_CACHE_DIR` — the completion cache (`completion/`, created owner-only `0700`). Default: an absolute `XDG_CACHE_HOME` joined with `agentic-org`, else `~/Library/Caches/agentic.org/cli-cache` on macOS and `~/.cache/agentic-org/cli-cache` on Linux — never a shared temporary folder.
+
+Output is shaped for the reader: on a terminal, lists are borderless tables and records aligned cards; in a pipe, lists are header-less tab-separated lines with bare values and no color; notices (empty lists, progress, approval links, `✓` confirmations) go to `stderr` only. Every value that came from a host, an office or a file is escaped before it reaches a terminal (control characters, `U+2028`/`U+2029` and bidirectional overrides are printed as `\u{..}`), and DEL, C1 controls, `U+2028`/`U+2029` and bidirectional controls are escaped (`\uXXXX`) inside every JSON document, the `--json` error envelope included.
 
 Exit codes: `0` success (also when the reader of `stdout` went away, e.g. `| head -1`); `1` a refusal or failure; `2` a command line that cannot be used, or a destructive command without `--yes` where no one can be asked; `4` not signed in or not allowed; `130` cancelled (Ctrl+C at a prompt, or a declined confirmation). Office commands (`task`, `msg`, ...) keep their own `0`/`1`/`2`.
 
-Destructive commands (`office restart|decline|cancel|remove|remove-pending|join|re-enroll`, `context clear`, `admin tls set`) ask for confirmation on a terminal and require `-y, --yes` when no terminal can be asked (a pipe, `--no-input`, `--json`, `-q`). `admin reset` shows its link on a terminal only and keeps its own local confirmation (Touch ID or the login password on a Mac, root on Linux); it also asks a person at the terminal, and needs `--yes` under `--no-input`, `--json` or `-q`. `serve`, `setup` and `recovery` refuse `--json`, `-q` and `--dry-run`, and `sign-in` refuses `--dry-run`, instead of ignoring them.
+Destructive commands (`office restart|decline|cancel|remove|remove-pending|join|re-enroll`, `context clear`, `admin tls set`) ask for confirmation on a terminal and require `-y, --yes` when no terminal can be asked (a pipe, `--no-input`, `--json`, `-q`). `admin reset` shows its link on a terminal only and keeps its own local confirmation (Touch ID or the login password on a Mac, root on Linux); it also asks a person at the terminal, and needs `--yes` under `--no-input`, `--json` or `-q`. `serve`, `setup` and `recovery` refuse `--json`, `-q` and `--dry-run` (exit `2`; `setup` also when they follow its own flags), and `sign-in` refuses `--dry-run`, instead of ignoring them. `setup` asks for its port only when someone can be asked: never under `--no-input` or `AGENTIC_ORG_NO_INPUT=1`, even on a terminal.
 
 ### Selecting the Instance and Office
 
@@ -115,7 +120,7 @@ instance = "lab"
 office = "0193a5c0-0000-7000-8000-000000000001"
 ```
 
-Any other key, a control character or an over-long value makes it invalid (exit `1`, `cli::config::invalid`); the error names the line and column and never repeats the file's text. `agentic-org status` shows what was chosen and where it came from.
+Any other key, a control character or an over-long value makes it invalid (exit `1`, `cli::config::invalid`); the error names the line and column and never repeats the file's text. A saved context whose instance name is not an instance name (or holds a control or bidirectional character), or whose office is not an ID, is refused the same way until `agentic-org context clear` removes it. `agentic-org status` shows what was chosen and where it came from.
 
 ### Shell Completion
 

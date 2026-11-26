@@ -29,6 +29,8 @@ const FIELDS: [Column; 3] = [
 ];
 
 pub(super) fn run(args: UseArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
+    // A relative `AGENTIC_ORG_CONFIG_DIR` is refused before anything, a preview too.
+    crate::selection::context_path()?;
     if ctx.modes().dry_run {
         let plan = json!({"action": "context_use", "office_id": args.office, "instance_name": args.instance.name});
         return Ok(ctx.render_dry_run("would save the default instance and office", &plan)?);

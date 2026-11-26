@@ -12,6 +12,8 @@ cliclack.workspace = true
 console.workspace = true
 # Cursor restore and exit 130 on Ctrl+C (`terminal::install_interrupt_handler`).
 ctrlc.workspace = true
+# Owner-only (0700) completion-cache folders (`cache`): no platform code here.
+org-platform = { path = "../org-platform" }
 owo-colors.workspace = true
 serde.workspace = true
 serde_json.workspace = true

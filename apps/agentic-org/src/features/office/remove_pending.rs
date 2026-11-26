@@ -10,7 +10,7 @@ use crate::error::CliError;
 use serde_json::json;
 
 use super::guard;
-use super::restart::DONE;
+use super::DONE;
 use crate::selection;
 use crate::view;
 

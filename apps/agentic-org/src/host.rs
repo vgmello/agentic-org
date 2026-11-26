@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::{self, Write};
 
+use org_cli_shell::error::ShellError;
 use org_host::setup_flow::{self, Platform, Request, ServiceReport, ServiceState};
 
 pub(crate) fn own_program() -> Result<std::path::PathBuf, String> {
@@ -298,27 +299,31 @@ impl<W: Write> Write for ReportOut<W> {
     }
 }
 
-/// The CLI's configuration and cache directories: `AGENTIC_ORG_CONFIG_DIR` /
-/// `AGENTIC_ORG_CACHE_DIR`, an absolute `XDG_*` folder, or this account's application base
-/// and temporary base (`org_platform::dirs`). `None` when none can be resolved (no home):
-/// the cache and the manifest's directories are then simply not used.
-pub(crate) fn cli_dirs() -> Option<org_cli_shell::paths::ShellDirs> {
-    let home = std::env::var_os("HOME")
-        .filter(|home| !home.is_empty())
-        .map(std::path::PathBuf::from);
+/// The CLI's configuration and cache directories ([`org_cli_shell::paths::resolve_dirs`]):
+/// `AGENTIC_ORG_CONFIG_DIR` / `AGENTIC_ORG_CACHE_DIR`, an absolute `XDG_CONFIG_HOME` /
+/// `XDG_CACHE_HOME`, or this account's own folders (`org_platform::dirs`: the application
+/// base's `cli`, and [`org_platform::dirs::cli_cache_dir`], never a shared temporary
+/// folder). A relative or otherwise unusable variable is [`ShellError::InvalidConfig`]
+/// (exit 1), never ignored. `Ok(None)` only when there is no home and neither
+/// `AGENTIC_ORG_*` variable is set: there is then nowhere to keep a cache.
+pub(crate) fn cli_dirs() -> Result<Option<org_cli_shell::paths::ShellDirs>, ShellError> {
+    use org_cli_shell::paths::{resolve_dirs, CACHE_DIR_ENV, CONFIG_DIR_ENV};
+    let env = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty());
+    let home = env("HOME").map(std::path::PathBuf::from);
+    let named = [CONFIG_DIR_ENV, CACHE_DIR_ENV]
+        .iter()
+        .any(|name| env(name).is_some());
+    if home.is_none() && !named {
+        return Ok(None);
+    }
     let config = || {
         let home = home.as_deref()?;
         org_platform::dirs::application_base(home)
             .ok()
             .map(|base| base.join("cli"))
     };
-    let cache = || {
-        let home = home.as_deref()?;
-        org_platform::dirs::user_temp_base(home)
-            .ok()
-            .and_then(|temp| temp.parent().map(|base| base.join("cli-cache")))
-    };
-    org_cli_shell::paths::resolve_dirs(&|name| std::env::var_os(name), &config, &cache).ok()
+    let cache = || org_platform::dirs::cli_cache_dir(home.as_deref()?).ok();
+    resolve_dirs(&env, &config, &cache).map(Some)
 }
 
 /// The line a person reads for a service report (also in a pipe: it is a tested contract):

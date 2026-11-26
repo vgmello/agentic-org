@@ -91,10 +91,14 @@ pub(super) fn run_as(
     serve_until_stopped(
         &stop,
         // The foreground mode: set the instance up from the file if it is not set up yet.
+        // Its report goes to standard output; a reader that went away (`| head`) does not
+        // fail the setup or the serve that follows (`ReportOut`).
         || match &setup {
-            Some(file) => {
-                crate::host::configured_foreground(file, name.as_deref(), &mut io::stdout())
-            }
+            Some(file) => crate::host::configured_foreground(
+                file,
+                name.as_deref(),
+                &mut crate::host::ReportOut::new(io::stdout()),
+            ),
             None => Ok(None),
         },
         |held| {

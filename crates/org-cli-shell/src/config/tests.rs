@@ -127,6 +127,46 @@ fn empty_env_and_saved_are_unset() {
     assert_eq!(chosen.office.tier, Tier::Default);
 }
 
+/// B-06: a saved context edited to carry control, line-breaking or bidirectional characters
+/// fails closed (exit 1) and the error never repeats it, whatever tier would decide.
+#[test]
+fn a_poisoned_saved_value_fails_closed_and_is_not_echoed() {
+    for bad in [
+        "lab\x1b[2J",
+        "lab\u{202e}gnp",
+        "lab\u{2066}x\u{2069}",
+        "lab\u{9b}31m",
+        "lab\u{2028}x",
+        &"lab".repeat(50),
+    ] {
+        for input in [
+            SelectionInput {
+                saved_instance: Some(bad),
+                ..SelectionInput::default()
+            },
+            SelectionInput {
+                saved_office: Some(bad),
+                ..SelectionInput::default()
+            },
+            SelectionInput {
+                flag_instance: Some("flagged"),
+                flag_office: Some("flagged-office"),
+                saved_instance: Some(bad),
+                ..SelectionInput::default()
+            },
+        ] {
+            let error = select(&input, &[]).unwrap_err();
+            assert!(
+                matches!(error, ShellError::InvalidConfig { .. }),
+                "{bad:?}: {error:?}"
+            );
+            assert_eq!(error.exit_code(), EXIT_FAILURE);
+            assert!(error.to_string().contains("saved context"), "{error}");
+            assert!(!error.to_string().contains("lab"), "echoed: {error}");
+        }
+    }
+}
+
 #[test]
 fn invalid_env_and_flags_are_not_echoed() {
     let input = SelectionInput::default();

@@ -125,8 +125,14 @@ pub fn run(args: Vec<OsString>) -> u8 {
     let mut ctx = ExecutionContext::detect(cli.modes());
     org_cli_shell::prompt::sync_colors(&ctx);
     let Some(top) = cli.command else {
-        // `agentic-org` alone: its help.
-        return write_or_closed(&mut ctx, &cli::command().render_help().to_string());
+        // `agentic-org` alone: its help, colored as standard output is (`--color always`).
+        let help = cli::command().render_help();
+        let text = if ctx.stdout_color() {
+            help.ansi().to_string()
+        } else {
+            help.to_string()
+        };
+        return write_or_closed(&mut ctx, &text);
     };
     // Ctrl+C restores the cursor and exits 130. Not for `serve`, which blocks its stop
     // signals itself, nor while the host may read a password or a recovery code: that

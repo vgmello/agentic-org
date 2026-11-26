@@ -24,6 +24,15 @@ use org_host::setup_flow::InvitationTokenSecret;
 use serde_json::Value;
 
 use crate::error::CliError;
+use crate::view::{column, Column, Show};
+
+/// The columns of an office operation's answer, as `office restart` and
+/// `office remove-pending` show it.
+const DONE: [Column; 3] = [
+    column("office_id", "office_id", Show::Id),
+    column("outcome", "outcome", Show::Status),
+    column("operation_id", "operation_id", Show::Dim),
+];
 
 const EXAMPLES: &str = "Examples:
   agentic-org office list

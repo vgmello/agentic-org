@@ -106,6 +106,37 @@ fn quiet_prints_sanitized_ids() {
     assert_eq!(streams.stderr.text(), "");
 }
 
+/// NB-04: under `-q` a row without an ID is left out, never printed as an empty line.
+#[test]
+fn quiet_skips_rows_without_an_id() {
+    let quiet = Modes {
+        quiet: true,
+        ..Modes::default()
+    };
+    let row = |id: &str| Row {
+        id: id.to_owned(),
+        cells: vec![Cell::new("x", Style::Plain)],
+    };
+    let table = Table {
+        headers: vec!["name".to_owned()],
+        rows: vec![row(""), row("off_1"), row("")],
+    };
+    let (mut context, streams) = captured(quiet.clone(), Terminal::piped(), &[]);
+    context
+        .render_table(&table, &json!([]), &ListView::default())
+        .unwrap();
+    assert_eq!(streams.stdout.text(), "off_1\n");
+    let only_empty = Table {
+        headers: vec!["name".to_owned()],
+        rows: vec![row("")],
+    };
+    let (mut context, streams) = captured(quiet, Terminal::piped(), &[]);
+    context
+        .render_table(&only_empty, &json!([]), &ListView::default())
+        .unwrap();
+    assert_eq!(streams.stdout.text(), "");
+}
+
 #[test]
 fn piped_is_headerless_tsv() {
     let streams = render(Modes::default(), Terminal::piped(), &ListView::default());
@@ -276,6 +307,20 @@ fn glyphs() {
     assert_eq!(glyph(Style::Id), "");
     assert_eq!(Cell::dim("x").style, Style::Dim);
     assert_eq!(Cell::plain("x").render(true, true), "x");
+}
+
+/// NB-05: a status on a line of its own has its glyph, its color only with color, and its
+/// text sanitized.
+#[test]
+fn a_status_line_has_its_glyph_and_color() {
+    let running = Cell::status("running (pid 42)", Style::Active);
+    assert_eq!(running.line(false), "● running (pid 42)");
+    let colored = running.line(true);
+    assert!(colored.starts_with("\u{1b}[32m● running"), "{colored:?}");
+    assert_eq!(
+        Cell::status("x\u{1b}[2J", Style::Error).line(false),
+        "× x\\u{1b}[2J"
+    );
 }
 
 #[test]

@@ -64,6 +64,34 @@ fn flag_takes_value(forwarded: &[String], flag_name: &str) -> bool {
         })
 }
 
+/// Whether one of `names` (`--dry-run`, `-h`, ...) is written as a flag in `forwarded`, as it
+/// is or as `--name=value`. The words are read as [`split`] and the table read them: the value
+/// of a flag that takes one is text, never a flag (`--body --dry-run` sends the text
+/// `--dry-run`), and nothing after `--` is a flag.
+pub(super) fn has_flag(forwarded: &[String], names: &[&str]) -> bool {
+    let mut words = forwarded.iter();
+    while let Some(word) = words.next() {
+        if word == "--" {
+            return false;
+        }
+        let named = names.iter().any(|name| {
+            word == name
+                || word
+                    .strip_prefix(name)
+                    .is_some_and(|rest| rest.starts_with('='))
+        });
+        if named {
+            return true;
+        }
+        if let Some(flag_name) = word.strip_prefix("--") {
+            if !flag_name.contains('=') && flag_takes_value(forwarded, flag_name) {
+                words.next();
+            }
+        }
+    }
+    false
+}
+
 fn command_accepts_flag(forwarded: &[String], flag_name: &str) -> bool {
     let Some((resource, verb)) = resource_and_verb(forwarded) else {
         return false;
@@ -208,5 +236,35 @@ mod tests {
         assert_eq!(scanned.instance.as_deref(), Some("lab"));
         assert!(split(&words(&["team", "list", "--office", "a", "--office", "b"])).is_err());
         assert!(split(&words(&["team", "list", "--office"])).is_err());
+    }
+
+    /// B-02: a flag's value and the words after `--` are never taken for a flag.
+    #[test]
+    fn a_flag_value_or_a_word_after_the_terminator_is_not_a_flag() {
+        let dry = ["--dry-run"];
+        let help = ["--format", "--help", "-h", "--schema", "--version"];
+        for (list, names, found) in [
+            (
+                &["msg", "send", "--to", "ada", "--body", "--dry-run"][..],
+                &dry[..],
+                false,
+            ),
+            (&["msg", "send", "--body", "x", "--dry-run"], &dry, true),
+            (&["msg", "send", "--body=--dry-run"], &dry, false),
+            (&["msg", "send", "--dry-run=x"], &dry, true),
+            (
+                &["msg", "send", "--to", "ada", "--body", "-h"],
+                &help,
+                false,
+            ),
+            (&["task", "create", "--title", "--help"], &help, false),
+            (&["task", "create", "--title", "t", "--help"], &help, true),
+            (&["task", "list", "--format", "yaml"], &help, true),
+            (&["task", "list", "-h"], &help, true),
+            (&["msg", "send", "--", "--dry-run"], &dry, false),
+            (&["msg", "send", "--", "-h"], &help, false),
+        ] {
+            assert_eq!(has_flag(&words(list), names), found, "{list:?}");
+        }
     }
 }

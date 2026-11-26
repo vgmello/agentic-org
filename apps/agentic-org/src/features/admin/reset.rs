@@ -4,6 +4,7 @@ use clap::Args;
 use org_cli_shell::context::ExecutionContext;
 use org_cli_shell::error::ShellError;
 use org_cli_shell::prompt::confirm;
+use org_cli_shell::terminal::sanitize;
 use org_host::setup_flow::{AdminLink, AdminResetLink};
 use serde_json::json;
 
@@ -90,7 +91,10 @@ fn show(ctx: &mut ExecutionContext, link: &AdminResetLink) -> Result<(), CliErro
             url,
             expires_at_ms,
         } => (
-            format!("Open this link in a browser to set a new password for {login}."),
+            format!(
+                "Open this link in a browser to set a new password for {}.",
+                sanitize(login)
+            ),
             url.expose(),
             *expires_at_ms,
         ),
@@ -98,21 +102,88 @@ fn show(ctx: &mut ExecutionContext, link: &AdminResetLink) -> Result<(), CliErro
             if ctx.modes().quiet {
                 return Ok(());
             }
-            return Ok(ctx.out(&format!("For a new link, run: {}\n", link.reset_command))?);
+            return Ok(ctx.out(&format!(
+                "For a new link, run: {}\n",
+                sanitize(&link.reset_command)
+            ))?);
         }
     };
     if ctx.modes().quiet {
-        return Ok(ctx.out(&format!("{url}\n"))?);
+        return Ok(ctx.out(&format!("{}\n", sanitize(url)))?);
     }
     // SIGN-33: root's reset names the Linux user whose instance it acted on, first.
+    // Every value is escaped on its own: a line break inside one cannot start a line.
     let whose = match &link.service_user {
-        Some(user) => format!("Instance {} of Linux user {user}.\n", link.instance),
+        Some(user) => format!(
+            "Instance {} of Linux user {}.\n",
+            sanitize(&link.instance),
+            sanitize(user)
+        ),
         None => String::new(),
     };
     let text = format!(
-        "{whose}\n{opening}\nIt works once and expires in 24 hours (at {}):\n  {url}\nIf it expires or is lost, run: {}\n",
+        "{whose}\n{opening}\nIt works once and expires in 24 hours (at {}):\n  {}\nIf it expires or is lost, run: {}\n",
         view::utc_time(expires),
-        link.reset_command
+        sanitize(url),
+        sanitize(&link.reset_command)
     );
     Ok(ctx.out(&org_cli_shell::terminal::sanitize_lines(&text))?)
+}
+
+#[cfg(test)]
+mod tests {
+    use org_cli_shell::context::testing::{captured, tty};
+    use org_cli_shell::context::Modes;
+    use org_host::setup_flow::{AdminLink, AdminResetLink, OneTimeLinkUrl};
+
+    use super::show;
+
+    /// Values the host relays: a name a service user chose, and the command to run again.
+    fn hostile(link: AdminLink) -> AdminResetLink {
+        AdminResetLink {
+            instance: "lab\u{1b}[2J".into(),
+            service_user: Some("svc\u{202e}gnp".into()),
+            link,
+            reset_command: "agentic-org admin reset\n\u{1b}]0;pwned\u{7}".into(),
+        }
+    }
+
+    fn registration() -> AdminLink {
+        AdminLink::Registration {
+            url: OneTimeLinkUrl::new("http://127.0.0.1:7420/register#abc".into()).unwrap(),
+            expires_at_ms: 0,
+        }
+    }
+
+    /// B-06: every value `admin reset` prints is escaped, in every form: no escape sequence,
+    /// bidirectional override or line break from a value reaches the terminal.
+    #[test]
+    fn every_relayed_value_is_escaped_in_every_form() {
+        for (quiet, link) in [
+            (false, registration()),
+            (true, registration()),
+            (false, AdminLink::AlreadyIssued),
+        ] {
+            let modes = Modes {
+                quiet,
+                ..Modes::default()
+            };
+            let (mut ctx, streams) = captured(modes, tty(Some(80)), &[]);
+            show(&mut ctx, &hostile(link)).unwrap();
+            let shown = streams.stdout.text();
+            for raw in ['\u{1b}', '\u{202e}', '\u{7}'] {
+                assert!(!shown.contains(raw), "{raw:?} is raw in {shown:?}");
+            }
+            assert!(
+                !shown.contains("\n\\u{1b}]0"),
+                "a value began a line: {shown:?}"
+            );
+            if !quiet {
+                assert!(
+                    shown.contains("admin reset\\u{a}\\u{1b}]0;pwned"),
+                    "{shown:?}"
+                );
+            }
+        }
+    }
 }

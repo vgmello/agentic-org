@@ -856,6 +856,42 @@ fn json_escapes_del_c1_and_line_separators_and_reads_back_the_same() {
     assert_eq!(json.lines().count(), 1);
 }
 
+/// B-07: the bidirectional marks, embeddings, overrides and isolates never reach a reader
+/// raw in any printed form (JSON, compact, YAML), and the JSON reads back the same.
+#[test]
+fn every_format_escapes_bidi_controls_and_json_reads_back_the_same() {
+    const BIDI: [char; 12] = [
+        '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}',
+        '\u{202e}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+    ];
+    let hostile: String = BIDI.iter().flat_map(|c| ['x', *c]).collect();
+    let node = Node::map([
+        ("office", Node::text(hostile.as_str())),
+        (
+            hostile.as_str(),
+            Node::List(vec![Node::text(hostile.as_str())]),
+        ),
+    ]);
+    let json = node.to_json();
+    let compact = node.to_compact(&[]);
+    let yaml = node.to_yaml();
+    for c in BIDI {
+        let escape = format!("\\u{:04x}", u32::from(c));
+        for (format, printed) in [("json", &json), ("compact", &compact), ("yaml", &yaml)] {
+            assert!(!printed.contains(c), "{c:?} is raw in {format}: {printed}");
+            assert!(
+                printed.contains(&escape),
+                "{escape} not in {format}: {printed}"
+            );
+        }
+    }
+    let back: Value = serde_json::from_str(&json).expect("valid JSON");
+    assert_eq!(back, node.to_value());
+    // Neighbours of the escaped ranges are ordinary text, printed as they are.
+    let plain = Node::text("\u{2027}\u{202f}\u{2065}\u{206a}");
+    assert!(plain.to_json().contains("\u{2027}\u{202f}\u{2065}\u{206a}"));
+}
+
 #[test]
 fn a_refusal_envelope_line_matches_the_envelope_schema_and_keeps_the_hint() {
     let mut refusal = Refusal::new(

@@ -8,7 +8,6 @@ use org_cli_shell::output::{Cell, ListView, Row, Style, Table};
 use org_command::{Command, Output};
 use serde_json::{Map, Value};
 
-use super::office_proxy::print_answer;
 use crate::error::CliError;
 
 /// Shows `output` (a `--format json` answer of `command`).
@@ -34,6 +33,29 @@ pub(super) fn answer(
             "{}\n",
             org_cli_shell::terminal::sanitize(&plain(other))
         ))?),
+    }
+}
+
+/// Prints the table's answer. A reader that went away does not turn a refusal into a
+/// success: the table's own exit code stands (0 only when it succeeded).
+pub(super) fn print_answer(
+    ctx: &mut ExecutionContext,
+    text: &str,
+    code: u8,
+) -> Result<(), CliError> {
+    match ctx.out(text) {
+        Err(org_cli_shell::error::ShellError::OutputClosed) if code != 0 => exited(code),
+        Err(error) => Err(error.into()),
+        Ok(()) => exited(code),
+    }
+}
+
+/// The table's exit code, its answer already printed.
+fn exited(code: u8) -> Result<(), CliError> {
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(CliError::Exited(code))
     }
 }
 
@@ -153,6 +175,10 @@ fn detail(
     );
     let id = primary_id(record, &keys);
     if quiet {
+        // A record without an ID prints nothing, never an empty line.
+        if id.is_empty() {
+            return Ok(());
+        }
         return Ok(ctx.out(&format!("{}\n", org_cli_shell::terminal::sanitize(&id)))?);
     }
     let fields: Vec<(&str, Cell)> = keys

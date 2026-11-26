@@ -23,8 +23,14 @@ pub(crate) fn partition(instance: Option<&str>) -> String {
     instance.unwrap_or("default").to_owned()
 }
 
+/// The completion cache, best effort by design: a `<TAB>` never prints an error into the
+/// shell, and a list command has already been refused (exit 1) for a relative or unusable
+/// directory variable when it selected its instance (`selection::select`).
 fn cache() -> Option<CompletionCache> {
-    host::cli_dirs().map(|dirs| CompletionCache::new(dirs.cache))
+    match host::cli_dirs() {
+        Ok(dirs) => dirs.map(|dirs| CompletionCache::new(dirs.cache)),
+        Err(_) => None,
+    }
 }
 
 /// The instance typed on the command line being completed (`--name X`, `--name=X`,

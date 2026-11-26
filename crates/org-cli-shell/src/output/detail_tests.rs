@@ -45,7 +45,16 @@ fn detail_modes() {
         render_detail(json_mode, Terminal::piped()).stdout.text(),
         "{\"id\":\"off_1\"}\n"
     );
-    assert_eq!(render_detail(quiet, tty(None)).stdout.text(), "off_1\n");
+    assert_eq!(
+        render_detail(quiet.clone(), tty(None)).stdout.text(),
+        "off_1\n"
+    );
+    // NB-04: a record without an ID prints nothing under `-q`, never an empty line.
+    let (mut context, streams) = captured(quiet, Terminal::piped(), &[]);
+    context
+        .render_detail("", &detail_fields(), &json!({}))
+        .unwrap();
+    assert_eq!(streams.stdout.text(), "");
     assert_eq!(
         render_detail(Modes::default(), Terminal::piped())
             .stdout

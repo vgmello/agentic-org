@@ -144,6 +144,28 @@ fn json_escapes_c1_and_separators() {
     assert_eq!(value["error"]["message"], "a\u{9b}31m\u{2028}b");
 }
 
+/// B-07: the `--json` error envelope on standard error escapes bidirectional controls too.
+#[test]
+fn json_envelope_escapes_bidi_controls() {
+    let error = ShellError::InvalidConfig {
+        message: "office \u{202e}evil\u{2066}x\u{2069}".into(),
+        help: Some("fix \u{200f}it".into()),
+    };
+    let text = rendered(&error, true, false, false);
+    for raw in ['\u{202e}', '\u{2066}', '\u{2069}', '\u{200f}'] {
+        assert!(!text.contains(raw), "{raw:?} is raw in {text}");
+    }
+    assert!(
+        text.contains("\\u202eevil\\u2066x\\u2069") && text.contains("\\u200fit"),
+        "{text}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        value["error"]["message"],
+        "office \u{202e}evil\u{2066}x\u{2069}"
+    );
+}
+
 #[test]
 fn human_form_plain_and_colored() {
     let error = ShellError::AuthRequired {

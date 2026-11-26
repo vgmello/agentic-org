@@ -10,6 +10,24 @@ use clap::{Args, Subcommand};
 use org_cli_shell::context::ExecutionContext;
 
 use crate::error::CliError;
+use crate::view::{column, Column, Show};
+
+/// The columns of one project, as `project inspect` and `project create` show it.
+const RECORD: [Column; 9] = [
+    column("id", "id", Show::Id),
+    column("key", "key", Show::Plain),
+    column("slug", "slug", Show::Plain),
+    column("name", "name", Show::Name),
+    column("owner_team_id", "owner_team_id", Show::Plain),
+    column(
+        "contributing_team_ids",
+        "contributing_team_ids",
+        Show::Plain,
+    ),
+    column("archived", "archived", Show::Plain),
+    column("revision", "revision", Show::Dim),
+    column("created_at", "created_at", Show::Dim),
+];
 
 const EXAMPLES: &str = "Examples:
   agentic-org project list

@@ -3,15 +3,23 @@
 //! Stores only non-secret selection identifiers (`instance_id`, optional `instance_name`,
 //! `office_id`) under the account configuration folder with owner-only `0o600` permissions.
 //! Never stores passwords, sessions, tokens, or keys.
+//!
+//! The folder is `AGENTIC_ORG_CONFIG_DIR` when it is set (an absolute path, else refused),
+//! then a development build's `ORG_DEV_ACCOUNT_BASE`, then the account's own folder.
 
+use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 const CONTEXT_FILE: &str = "cli-context.json";
+
+/// The operator command line's configuration folder (an absolute path), where the saved
+/// context lives: the same variable as `org_cli_shell::paths::CONFIG_DIR_ENV`.
+pub const CONFIG_DIR_ENV: &str = "AGENTIC_ORG_CONFIG_DIR";
 
 /// Non-secret saved selection binding a person's terminal commands to one instance and office.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +43,18 @@ impl CliContext {
         if !org_proto::is_uuid_v7(&office_id) {
             return Err("office_id must be a canonical UUIDv7".into());
         }
+        // A saved name is an instance's name (lowercase letters, digits, hyphens): no
+        // control, line-breaking or bidirectional character from an edited file ever reaches
+        // a terminal or a selection (B-06).
+        if let Some(name) = &instance_name {
+            if crate::instance::Name::parse(Some(name)).is_err() {
+                return Err(
+                    "instance_name must be an instance name: 1-32 lowercase ASCII \
+                     letters, digits or hyphens, starting with a letter or digit"
+                        .into(),
+                );
+            }
+        }
         Ok(Self {
             instance_id,
             instance_name,
@@ -43,11 +63,49 @@ impl CliContext {
     }
 }
 
+/// The saved context's file: under `AGENTIC_ORG_CONFIG_DIR` when it is set (an absolute
+/// path, else an error: never a file relative to the working directory), else under a
+/// development build's `ORG_DEV_ACCOUNT_BASE` (absolute; a release build refuses it), else
+/// in the account's folder. An empty variable is unset.
 pub fn default_context_path() -> Result<PathBuf, String> {
-    if let Some(base) = std::env::var_os(crate::human::DEV_ACCOUNT_BASE).filter(|b| !b.is_empty()) {
-        return Ok(PathBuf::from(base).join(CONTEXT_FILE));
+    context_path_in(
+        &|name| std::env::var_os(name),
+        cfg!(debug_assertions),
+        crate::home::account_dir,
+    )
+}
+
+fn context_path_in(
+    env: &dyn Fn(&str) -> Option<OsString>,
+    development: bool,
+    account_dir: impl FnOnce() -> Option<PathBuf>,
+) -> Result<PathBuf, String> {
+    let set = |name: &str| {
+        env(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    if let Some(dir) = set(CONFIG_DIR_ENV) {
+        if !dir.is_absolute() {
+            return Err(format!(
+                "{CONFIG_DIR_ENV} must be an absolute path; set it to one, or unset it"
+            ));
+        }
+        return Ok(dir.join(CONTEXT_FILE));
     }
-    let home = crate::home::account_dir().ok_or_else(|| "account home unavailable".to_owned())?;
+    let dev_base = crate::human::DEV_ACCOUNT_BASE;
+    if let Some(base) = set(dev_base) {
+        if !development {
+            return Err(format!(
+                "{dev_base} is a development setting; this release build refuses it"
+            ));
+        }
+        if !base.is_absolute() {
+            return Err(format!("{dev_base} must be an absolute path"));
+        }
+        return Ok(base.join(CONTEXT_FILE));
+    }
+    let home = account_dir().ok_or_else(|| "account home unavailable".to_owned())?;
     Ok(home.join(CONTEXT_FILE))
 }
 
@@ -69,7 +127,12 @@ pub fn save_to(path: &Path, context: &CliContext) -> Result<(), String> {
         context.office_id.clone(),
     )?;
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("could not create context folder: {e}"))?;
+        // A folder made here is the user's alone.
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent)
+            .map_err(|e| format!("could not create context folder: {e}"))?;
     }
     let bytes = serde_json::to_vec_pretty(context)
         .map_err(|_| "could not encode CLI context".to_owned())?;
@@ -173,5 +236,95 @@ mod tests {
 
         assert!(clear_at(&path).unwrap());
         assert!(!clear_at(&path).unwrap());
+    }
+
+    /// B-01: `AGENTIC_ORG_CONFIG_DIR` decides where the context lives, before the development
+    /// base and the account folder; a relative one is refused, never resolved against the
+    /// working directory; an empty one is unset.
+    #[test]
+    fn the_config_dir_variable_places_the_context_and_a_relative_one_is_refused() {
+        fn lookup<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
+            move |name| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| OsString::from(value))
+            }
+        }
+        let account = || Some(PathBuf::from("/home/a/acct"));
+        let dev = crate::human::DEV_ACCOUNT_BASE;
+        let path = |pairs: &[(&str, &str)], development| {
+            context_path_in(&lookup(pairs), development, account)
+        };
+        assert_eq!(
+            path(&[(CONFIG_DIR_ENV, "/cfg"), (dev, "/dev-base")], true),
+            Ok(PathBuf::from("/cfg/cli-context.json"))
+        );
+        // The variable is the user's, so a release build honours it too.
+        assert_eq!(
+            path(&[(CONFIG_DIR_ENV, "/cfg")], false),
+            Ok(PathBuf::from("/cfg/cli-context.json"))
+        );
+        for relative in ["cfg", "./cfg", "../cfg", "~/cfg"] {
+            let error = path(&[(CONFIG_DIR_ENV, relative)], true).unwrap_err();
+            assert!(error.contains(CONFIG_DIR_ENV), "{relative}: {error}");
+        }
+        // Empty is unset: the development base, then the account folder.
+        assert_eq!(
+            path(&[(CONFIG_DIR_ENV, ""), (dev, "/dev-base")], true),
+            Ok(PathBuf::from("/dev-base/cli-context.json"))
+        );
+        assert_eq!(
+            path(&[], true),
+            Ok(PathBuf::from("/home/a/acct/cli-context.json"))
+        );
+        // The development base: absolute, and a development build's only.
+        assert!(path(&[(dev, "rel")], true).is_err());
+        assert!(path(&[(dev, "/dev-base")], false)
+            .unwrap_err()
+            .contains("release build"));
+        assert!(context_path_in(&lookup(&[]), true, || None).is_err());
+    }
+
+    /// B-06: a context file edited to carry control, line-breaking or bidirectional
+    /// characters (or any name that is not an instance name) fails closed when it is read
+    /// and is never written.
+    #[test]
+    fn a_poisoned_instance_name_fails_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cli-context.json");
+        for name in [
+            "lab\u{1b}[2J",
+            "lab\u{202e}gnp",
+            "lab\u{2066}x",
+            "lab\u{9b}31m",
+            "lab\nnext",
+            "Lab",
+            "",
+            "-lab",
+            "a-very-long-instance-name-past-32-bytes",
+        ] {
+            assert!(
+                CliContext::new(INST.into(), Some(name.into()), OFF1.into()).is_err(),
+                "{name:?}"
+            );
+            let poisoned = serde_json::json!({
+                "instance_id": INST,
+                "instance_name": name,
+                "office_id": OFF1,
+            });
+            fs::write(&path, poisoned.to_string()).unwrap();
+            assert!(load_from(&path).is_err(), "{name:?} was loaded");
+            let unsaved = CliContext {
+                instance_id: INST.into(),
+                instance_name: Some(name.into()),
+                office_id: OFF1.into(),
+            };
+            assert!(save_to(&path, &unsaved).is_err(), "{name:?} was saved");
+        }
+        // A poisoned office ID fails closed the same way.
+        let poisoned = serde_json::json!({"instance_id": INST, "office_id": "x\u{202e}y"});
+        fs::write(&path, poisoned.to_string()).unwrap();
+        assert!(load_from(&path).is_err());
     }
 }

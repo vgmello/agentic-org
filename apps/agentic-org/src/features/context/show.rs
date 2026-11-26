@@ -3,7 +3,6 @@
 use clap::Args;
 use org_cli_shell::context::ExecutionContext;
 use org_cli_shell::output::{Cell, Style};
-use org_host::setup_flow::cli_context;
 use serde_json::json;
 
 use crate::error::CliError;
@@ -17,8 +16,7 @@ pub(crate) struct ShowArgs {}
 /// `-q`: the office ID; otherwise a card, or a notice on standard error when nothing is
 /// saved.
 pub(super) fn run(_args: ShowArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
-    let path = cli_context::default_context_path()?;
-    let Some(saved) = cli_context::load_from(&path)? else {
+    let Some(saved) = crate::selection::saved_context()? else {
         if ctx.modes().json {
             return Ok(ctx.write_json(&serde_json::Value::Null)?);
         }

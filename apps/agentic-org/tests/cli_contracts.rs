@@ -58,8 +58,9 @@ impl Sandbox {
         self.command(args).output().unwrap()
     }
 
+    /// The saved context: under `AGENTIC_ORG_CONFIG_DIR`, which wins over the account base.
     fn context_file(&self) -> PathBuf {
-        self.root.join("base/cli-context.json")
+        self.root.join("config/cli-context.json")
     }
 
     fn save_context(&self, instance: Option<&str>, office: &str) {
@@ -253,6 +254,133 @@ fn canary_destructive_commands_need_yes_without_a_terminal() {
     assert!(!sandbox.context_file().exists());
 }
 
+/// B-01 (REQ-CLI-06): `AGENTIC_ORG_CONFIG_DIR` alone decides where the saved context lives:
+/// `context show`, `context clear` and `status` read and clear it there without
+/// `ORG_DEV_ACCOUNT_BASE`, and a relative `AGENTIC_ORG_CONFIG_DIR` or `AGENTIC_ORG_CACHE_DIR`
+/// is refused (exit 1, `cli::config::invalid`) before anything is read or made.
+#[test]
+fn the_config_dir_variable_isolates_the_saved_context_without_a_dev_base() {
+    let sandbox = Sandbox::new();
+    // `status` also reports the instance's service, which opens the account's own instance
+    // folders. Where the system lets variables move them (Linux: XDG), they are moved into
+    // the sandbox and `status` runs without any development base too; where none can
+    // (macOS), `status` gets a decoy development base holding another context instead, which
+    // must not be the one it shows.
+    let moved = org_platform::dirs::location_variables().unwrap();
+    let decoy = sandbox.root.join("decoy");
+    fs::create_dir_all(&decoy).unwrap();
+    fs::write(
+        decoy.join("cli-context.json"),
+        serde_json::json!({"instance_id": INSTANCE_ID, "office_id": OTHER_OFFICE}).to_string(),
+    )
+    .unwrap();
+    let run = |args: &[&str], extra: &[(&str, &str)]| {
+        let mut command = sandbox.command(args);
+        command.env_remove("ORG_DEV_ACCOUNT_BASE");
+        for name in moved {
+            command.env(name, sandbox.root.join("xdg").join(name));
+        }
+        if moved.is_empty() && args.first() == Some(&"status") {
+            command.env("ORG_DEV_ACCOUNT_BASE", &decoy);
+        }
+        command.envs(extra.iter().copied());
+        command.output().unwrap()
+    };
+    let json = |output: &Output| -> Value {
+        assert_eq!(output.status.code(), Some(0), "{}", text(&output.stderr));
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    assert_eq!(json(&run(&["context", "show", "--json"], &[])), Value::Null);
+    sandbox.save_context(Some("lab"), OFFICE);
+    let shown = json(&run(&["context", "show", "--json"], &[]));
+    assert_eq!(
+        (shown["office_id"].as_str(), shown["instance_name"].as_str()),
+        (Some(OFFICE), Some("lab"))
+    );
+    let status = json(&run(&["status", "--json"], &[]));
+    assert_eq!(status["office"], OFFICE, "{status}");
+    assert_eq!(status["office_source"], "saved", "{status}");
+    assert_eq!(status["instance"], "lab", "{status}");
+    assert_eq!(status["saved_context"]["office_id"], OFFICE, "{status}");
+    let cleared = json(&run(&["context", "clear", "--yes", "--json"], &[]));
+    assert_eq!(cleared, serde_json::json!({"cleared": true}));
+    assert!(!sandbox.context_file().exists());
+    assert!(
+        decoy.join("cli-context.json").exists(),
+        "only the config dir is used"
+    );
+    assert!(!sandbox.root.join("base/cli-context.json").exists());
+    assert!(!sandbox.root.join("home/cli-context.json").exists());
+    // A relative directory variable is refused, never read against the working directory.
+    sandbox.save_context(Some("lab"), OFFICE);
+    for (variable, value) in [
+        ("AGENTIC_ORG_CONFIG_DIR", "relative/config"),
+        ("AGENTIC_ORG_CACHE_DIR", "relative/cache"),
+    ] {
+        for args in [
+            &["context", "show"][..],
+            &["context", "clear", "--yes"],
+            &["context", "use", "--office", OFFICE],
+            &["status"],
+        ] {
+            let refused = run(args, &[(variable, value)]);
+            let stderr = text(&refused.stderr);
+            assert_eq!(
+                refused.status.code(),
+                Some(1),
+                "{variable} {args:?}: {stderr}"
+            );
+            assert!(stderr.contains(variable), "{variable} {args:?}: {stderr}");
+            assert!(refused.stdout.is_empty(), "{variable} {args:?}");
+        }
+        let envelope = error_envelope(&run(&["--json", "status"], &[(variable, value)]));
+        assert_eq!(
+            envelope["error"]["code"], "cli::config::invalid",
+            "{envelope}"
+        );
+        assert_eq!(envelope["error"]["exit_code"], 1, "{envelope}");
+    }
+    assert!(
+        sandbox.context_file().exists(),
+        "a refused clear changed nothing"
+    );
+    assert!(
+        fs::read_dir(sandbox.root.join("work"))
+            .unwrap()
+            .next()
+            .is_none(),
+        "something was made relative to the working directory"
+    );
+}
+
+/// B-06: a saved context edited to carry a control or bidirectional character in its
+/// instance name fails closed (exit 1) for the commands that select by it, `context clear`
+/// still removes it, and the name is never printed.
+#[test]
+fn a_poisoned_saved_context_fails_closed_and_can_be_cleared() {
+    let sandbox = Sandbox::new();
+    for name in ["lab\u{1b}[2J", "lab\u{202e}gnp"] {
+        sandbox.save_context(Some(name), OFFICE);
+        for args in [
+            &["status"][..],
+            &["context", "show"],
+            &["service", "status"],
+        ] {
+            let refused = sandbox.run(args);
+            let stderr = text(&refused.stderr);
+            assert_eq!(refused.status.code(), Some(1), "{args:?}: {stderr}");
+            assert!(
+                !stderr.contains('\u{1b}') && !stderr.contains('\u{202e}'),
+                "{stderr:?}"
+            );
+            assert!(refused.stdout.is_empty(), "{args:?}");
+        }
+        let cleared = sandbox.run(&["context", "clear", "--yes"]);
+        assert_eq!(cleared.status.code(), Some(0), "{}", text(&cleared.stderr));
+        assert!(!sandbox.context_file().exists());
+    }
+}
+
 #[test]
 fn a_closed_standard_output_exits_0_quietly() {
     let sandbox = Sandbox::new();
@@ -369,6 +497,26 @@ fn the_color_matrix_decides_ansi_for_each_stream() {
             "{flags:?} {env:?}: {stderr:?}"
         );
         assert!(output.stdout.is_empty());
+    }
+    // NB-06: `agentic-org` alone prints its help on standard output, colored as standard
+    // output is (a pipe here: only `--color always` or a forcing variable colors it).
+    for (flags, env, colored) in [
+        (&["--color", "always"][..], &[][..], true),
+        (&[], &[("FORCE_COLOR", "1")], true),
+        (&[], &[], false),
+        (&["--color", "never"], &[("FORCE_COLOR", "1")], false),
+    ] {
+        let mut command = sandbox.command(flags);
+        command.envs(env.iter().copied());
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(0), "{flags:?} {env:?}");
+        let stdout = text(&output.stdout);
+        assert!(stdout.contains("Usage"), "{stdout:?}");
+        assert_eq!(
+            stdout.contains('\u{1b}'),
+            colored,
+            "{flags:?} {env:?}: {stdout:?}"
+        );
     }
 }
 

@@ -23,7 +23,7 @@ struct Cleared {
 }
 
 pub(super) fn run(_args: ClearArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
-    let path = cli_context::default_context_path()?;
+    let path = crate::selection::context_path()?;
     let saved = cli_context::load_from(&path).ok().flatten().is_some() || path.exists();
     if ctx.modes().dry_run {
         let summary = if saved {

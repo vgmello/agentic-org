@@ -8,20 +8,12 @@ use std::io;
 /// an executable that is not closed to its user's other processes ([`super::harden_self`]) but
 /// must never write its memory to disk (the office worker, first thing in `main`). The
 /// same call on every system.
-pub fn disable_core_dumps() -> io::Result<()> {
-    core_dumps_off()
-}
-
-#[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
-fn core_dumps_off() -> io::Result<()> {
-    super::no_core_dumps()
-}
-
+///
 /// A system without an adapter refuses, as [`super::harden_self`] does there: the caller
-/// does not go on.
-#[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
-fn core_dumps_off() -> io::Result<()> {
-    super::native::harden_self()
+/// does not go on. Each adapter (`macos.rs`, `linux.rs`, `refused.rs`) answers for its
+/// system; no platform predicate is written here.
+pub fn disable_core_dumps() -> io::Result<()> {
+    super::native::disable_core_dumps()
 }
 
 /// Sets this process's file mode creation mask to `077`, so that what it makes is its

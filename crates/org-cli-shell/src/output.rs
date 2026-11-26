@@ -89,6 +89,12 @@ impl Cell {
         Self::new(text, style)
     }
 
+    /// The text sanitized with its status glyph, colored when `color`: a status shown on a
+    /// line of its own on a terminal, styled as the cards and tables style it.
+    pub fn line(&self, color: bool) -> String {
+        self.render(true, color)
+    }
+
     /// The text sanitized, with the status glyph when `glyphs`, colored when `color`.
     pub(crate) fn render(&self, glyphs: bool, color: bool) -> String {
         let prefix = if glyphs { glyph(self.style) } else { "" };
@@ -193,9 +199,11 @@ impl ExecutionContext {
             return self.write_json(json);
         }
         if self.modes().quiet {
+            // A row without an ID prints nothing, never an empty line.
             let ids: String = table
                 .rows
                 .iter()
+                .filter(|row| !row.id.is_empty())
                 .map(|row| format!("{}\n", sanitize(&row.id)))
                 .collect();
             return if ids.is_empty() {
@@ -246,6 +254,10 @@ impl ExecutionContext {
             return self.write_json(json);
         }
         if self.modes().quiet {
+            // A record without an ID prints nothing, never an empty line.
+            if id.is_empty() {
+                return Ok(());
+            }
             return self.out(&format!("{}\n", sanitize(id)));
         }
         let text = if self.is_tty_stdout() {

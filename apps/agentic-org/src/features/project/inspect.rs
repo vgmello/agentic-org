@@ -4,11 +4,12 @@ use clap::Args;
 use clap_complete::engine::ArgValueCompleter;
 use org_cli_shell::context::ExecutionContext;
 
+use super::RECORD;
 use crate::args::{InstanceArgs, LoginArgs, OrgArg};
 use crate::completers;
 use crate::error::CliError;
 use crate::selection;
-use crate::view::{self, column, Column, Show};
+use crate::view;
 
 pub(super) const EXAMPLES: &str = "Examples:\n  agentic-org project inspect billing\n  agentic-org project view <project-id> --json";
 
@@ -24,22 +25,6 @@ pub(crate) struct InspectArgs {
     #[command(flatten)]
     pub(super) login: LoginArgs,
 }
-
-pub(super) const RECORD: [Column; 9] = [
-    column("id", "id", Show::Id),
-    column("key", "key", Show::Plain),
-    column("slug", "slug", Show::Plain),
-    column("name", "name", Show::Name),
-    column("owner_team_id", "owner_team_id", Show::Plain),
-    column(
-        "contributing_team_ids",
-        "contributing_team_ids",
-        Show::Plain,
-    ),
-    column("archived", "archived", Show::Plain),
-    column("revision", "revision", Show::Dim),
-    column("created_at", "created_at", Show::Dim),
-];
 
 pub(super) fn run(args: InspectArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let target = selection::select(args.instance.name.as_deref(), None)?;
