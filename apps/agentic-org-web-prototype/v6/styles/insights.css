@@ -40,13 +40,26 @@ html[data-theme="cozy"] :is(.project-insights, .team-overview, .org-insights, .o
 .insights-header h2 { font-size: 1.25rem; font-weight: 600; }
 .insights-header p,
 .insight-card-head p { margin-block-start: 3px; color: var(--insight-muted); font-size: var(--fs-sm); }
-.insights-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
-.insight-select { display: grid; gap: 3px; color: var(--gray-300); font-size: var(--fs-xs); font-weight: 600; }
-:is(.project-insights, .org-insights-page) :is(.insight-select .field, .insights-controls .btn, .insight-card-head .btn) {
+.insights-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.insight-select {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: var(--control-height);
+  padding-inline: 12px 30px; border-radius: var(--radius-md); background: var(--hover); box-shadow: inset 0 0 0 1px var(--line2);
+  font-size: var(--fs-sm); cursor: pointer;
+}
+.insight-select:hover { box-shadow: inset 0 0 0 1px var(--gray-500); }
+.insight-select:focus-within { box-shadow: inset 0 0 0 1px var(--gray-400); outline: 2px solid var(--tone-accent-ring); outline-offset: 1px; }
+.insight-select-lbl { color: var(--gray-400); font-weight: 500; white-space: nowrap; }
+.insight-select-lbl::after { content: "·"; margin-inline-start: 6px; color: var(--gray-500); }
+.insight-select select {
+  appearance: none; -webkit-appearance: none; border: 0; outline: 0; padding: 0; margin: 0; background: transparent; box-shadow: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none; font: inherit; font-weight: 600; color: var(--white); cursor: pointer; min-height: 0;
+}
+.insight-select select option { color: initial; }
+.insight-select-chev { position: absolute; right: 10px; top: 50%; translate: 0 -50%; color: var(--gray-400); pointer-events: none; }
+:is(.project-insights, .org-insights-page) :is(.insights-controls .btn, .insight-card-head .btn) {
   min-height: var(--control-height);
   color: var(--white);
 }
-:is(.project-insights, .org-insights-page) .insight-select .field { padding-inline: 10px; background: var(--hover); }
 .org-insights-page { --insight-muted: var(--gray-400); }
 .insight-kpis,
 .insights-grid { display: grid; gap: 12px; min-width: 0; }
@@ -316,3 +329,4 @@ html[data-theme="graphite-light"] .hb-spark i { background: linear-gradient(to b
 /* Home summary bars in Graphite: grey read as "disabled", so progress uses the chart indigo */
 html[data-theme="graphite"] .hb-pillar-bar :is(.seg-auto, .seg-spend) { background: linear-gradient(90deg, #6366f1, #818cf8); }
 html[data-theme="graphite-light"] .hb-pillar-bar :is(.seg-auto, .seg-spend) { background: linear-gradient(90deg, #4f46e5, #6366f1); }
+.insight-card-head .insight-select { width: auto; flex: none; justify-self: end; align-self: start; }

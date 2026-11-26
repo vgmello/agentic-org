@@ -180,9 +180,10 @@ function insightValidDate(value) {
 }
 
 function insightSelect(id, label, options, value) {
-  return `<label class="insight-select"><span>${label}</span><select class="field" id="${id}" data-insight-control aria-label="${label}">
+  /* One pill control: muted label inside on the left, borderless select, custom chevron */
+  return `<label class="insight-select"><span class="insight-select-lbl">${label}</span><select id="${id}" data-insight-control aria-label="${label}">
     ${Object.entries(options).map(([key, text]) => `<option value="${key}"${value === key ? " selected" : ""}>${esc(text)}</option>`).join("")}
-  </select></label>`;
+  </select>${ic("chev-down", "ic14 insight-select-chev")}</label>`;
 }
 /* Period, chart/table view and CSV export: the same controls on project and organization Insights. */
 function insightControls({ period, table, records, filename }) {
