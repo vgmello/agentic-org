@@ -1137,9 +1137,9 @@ html[data-theme="report"] .start-tess.is-active { background: #EEF2FF; border-co
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
+  width: calc(100% - 20px);
   padding: 8px 10px;
-  margin-bottom: 6px;
+  margin: 0 10px 6px;
   border-radius: 10px;
   border: 1px solid var(--line2);
   background: var(--hover);
@@ -1169,6 +1169,29 @@ html[data-theme="report"] .start-tess.is-active { background: #EEF2FF; border-co
   background: var(--tone-accent-soft, rgba(56, 189, 248, .14));
   border: 1px solid var(--tone-accent-ring, rgba(125, 211, 252, .30));
   color: var(--tone-accent-ink, #7DD3FC);
+}
+.tess-contact-letter {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+}
+.tess-contact-star {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #09111f;
+  color: var(--tone-accent-ink, #7DD3FC);
+}
+.tess-contact-star .ic {
+  width: 11px;
+  height: 11px;
 }
 .tess-contact-dot {
   position: absolute;
@@ -1239,6 +1262,10 @@ html[data-theme="graphite"] .tess-contact-av {
   border-color: #464c5a;
   color: #e2e6ef;
 }
+html[data-theme="graphite"] .tess-contact-star {
+  background: #191b20;
+  color: #e2e6ef;
+}
 html[data-theme="graphite"] .tess-contact-dot,
 html[data-theme="graphite"] .tess-contact-av .start-tess-busy { box-shadow: 0 0 0 2px #191b20; }
 html[data-theme="report"] .sidebar-tess-contact {
@@ -1257,6 +1284,10 @@ html[data-theme="report"] .sidebar-tess-contact.is-active {
 html[data-theme="report"] .tess-contact-name { color: #0B101B; }
 html[data-theme="report"] .tess-contact-role { color: #64748B; }
 html[data-theme="report"] .tess-contact-kbd { background: #F4F6F9; border-color: #DCE2EC; color: #475569; }
+html[data-theme="report"] .tess-contact-star {
+  background: #FFFFFF;
+  color: #1D4E89;
+}
 html[data-theme="report"] .tess-contact-dot,
 html[data-theme="report"] .tess-contact-av .start-tess-busy { box-shadow: 0 0 0 2px #FFFFFF; }
 
