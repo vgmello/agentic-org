@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { Tooltip } from 'bits-ui';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import AlertCircle from '@lucide/svelte/icons/alert-circle';
@@ -132,31 +133,49 @@
 
 {#if notifications}
 	<div class={['notif-wrap', className]}>
-		<button
-			bind:this={triggerEl}
-			type="button"
-			data-testid="notif-trigger"
-			onclick={() => void togglePopover()}
-			aria-label={ariaLabel}
-			aria-expanded={open}
-			aria-haspopup="dialog"
-			title={titleText}
-			class={[
-				'util-btn util-notif',
-				runningJobs.length > 0 && 'is-busy',
-				unreadCount > 0 && 'has-unread'
-			]}
-		>
-			{#if runningJobs.length > 0}
-				<span class="notif-ring" aria-hidden="true"></span>
-			{/if}
-			<Bell class="size-4 shrink-0" aria-hidden="true" />
-			{#if unreadCount > 0}
-				<span class="notif-badge tabular-nums" aria-hidden="true">
-					{unreadCount > 9 ? '9+' : unreadCount}
-				</span>
-			{/if}
-		</button>
+		<Tooltip.Provider delayDuration={150}>
+			<Tooltip.Root>
+				<Tooltip.Trigger>
+					{#snippet child({ props })}
+						<button
+							{...props}
+							bind:this={triggerEl}
+							type="button"
+							data-testid="notif-trigger"
+							onclick={() => void togglePopover()}
+							aria-label={ariaLabel}
+							aria-expanded={open}
+							aria-haspopup="dialog"
+							class={[
+								'util-btn util-notif',
+								runningJobs.length > 0 && 'is-busy',
+								unreadCount > 0 && 'has-unread'
+							]}
+						>
+							{#if runningJobs.length > 0}
+								<span class="notif-ring" aria-hidden="true"></span>
+							{/if}
+							<Bell class="size-4 shrink-0" aria-hidden="true" />
+							{#if unreadCount > 0}
+								<span class="notif-badge tabular-nums" aria-hidden="true">
+									{unreadCount > 9 ? '9+' : unreadCount}
+								</span>
+							{/if}
+						</button>
+					{/snippet}
+				</Tooltip.Trigger>
+				<Tooltip.Portal>
+					<Tooltip.Content
+						role="tooltip"
+						side="bottom"
+						sideOffset={6}
+						class="z-[100] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
+					>
+						{titleText}
+					</Tooltip.Content>
+				</Tooltip.Portal>
+			</Tooltip.Root>
+		</Tooltip.Provider>
 
 		{#if open}
 			<div
@@ -184,15 +203,34 @@
 								Mark all read
 							</button>
 						{/if}
-						<button
-							bind:this={closeBtnEl}
-							type="button"
-							class="notif-close-btn"
-							aria-label="Close notifications"
-							onclick={() => closePopover(true)}
-						>
-							<X class="size-3.5" aria-hidden="true" />
-						</button>
+						<Tooltip.Provider delayDuration={150}>
+							<Tooltip.Root>
+								<Tooltip.Trigger>
+									{#snippet child({ props })}
+										<button
+											{...props}
+											bind:this={closeBtnEl}
+											type="button"
+											class="notif-close-btn"
+											aria-label="Close notifications"
+											onclick={() => closePopover(true)}
+										>
+											<X class="size-3.5" aria-hidden="true" />
+										</button>
+									{/snippet}
+								</Tooltip.Trigger>
+								<Tooltip.Portal>
+									<Tooltip.Content
+										role="tooltip"
+										side="bottom"
+										sideOffset={6}
+										class="z-[110] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
+									>
+										Close notifications · Esc
+									</Tooltip.Content>
+								</Tooltip.Portal>
+							</Tooltip.Root>
+						</Tooltip.Provider>
 					</div>
 				</div>
 

@@ -64,7 +64,7 @@
 
 	{#if proposal.parameters.length > 0}
 		<dl class="tess-prop-params">
-			{#each proposal.parameters as param (param.label)}
+			{#each proposal.parameters as param, idx (`${param.label}-${idx}`)}
 				<div class="tess-prop-param">
 					<dt>{param.label}</dt>
 					<dd>{param.value}</dd>

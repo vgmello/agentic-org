@@ -1,7 +1,13 @@
 import type { createEventStreamClient, EventStreamHandlers, Subscription } from '../http/events';
 import { createEventStreamManager } from './event-stream-manager';
 import type { createAuthlessJsonHttp, createJsonHttp } from '../http/json-http';
-import { readJsonObject, readResponse, readSafeInteger, versionCompatible } from '../http/wire';
+import {
+	readJsonObject,
+	readResponse,
+	readSafeInteger,
+	SESSION_PROOF_HEADER,
+	versionCompatible
+} from '../http/wire';
 import {
 	SessionRequestError,
 	type AccessView,
@@ -654,6 +660,36 @@ export function createSessionController({
 		/** Opens a same-origin SSE event stream using the active session proof without exposing it. */
 		subscribeEvents: (subscriptions: readonly Subscription[], handlers: EventStreamHandlers) =>
 			streams.subscribe(subscriptions, handlers),
+		/** Opens a same-origin GET SSE stream with active proof + 401 rotation without exposing proof. */
+		openSseStream: (path: string, signal?: AbortSignal) =>
+			withCallerAuth(async (proof) => {
+				const headers = new Headers({ Accept: 'text/event-stream' });
+				if (proof) headers.set(SESSION_PROOF_HEADER, proof);
+				const res = await globalThis.fetch(path, {
+					method: 'GET',
+					headers,
+					mode: 'same-origin',
+					credentials: 'same-origin',
+					redirect: 'error',
+					cache: 'no-store',
+					signal
+				});
+				if (res.status === 401) {
+					let sessionReason: 'session_ended' | 'unknown' | undefined;
+					try {
+						const body = readResponse(await res.json(), readJsonObject);
+						if ('error' in body) sessionReason = body.error.session_reason;
+					} catch {
+						/* Untrusted error payload. */
+					}
+					throw new SessionRequestError(401, {
+						code: 'unauthenticated',
+						message: '',
+						session_reason: sessionReason
+					});
+				}
+				return res;
+			}),
 		dispose() {
 			disposed = true;
 			streams.closeAll();

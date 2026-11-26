@@ -18,6 +18,7 @@ export type { TessTurnMode } from './types';
 
 export interface TessTurn {
 	id: string;
+	organizationId?: string;
 	serverTurnId?: string;
 	query: string;
 	createdAt: number;
@@ -160,6 +161,8 @@ export class TessPanelState {
 
 	#domainContext: HomeDomainData | undefined = undefined;
 	#turnSeq = 0;
+	#sessionGen = 0;
+	#askGen = 0;
 	#api: TessApi;
 	#abortController: AbortController | undefined = undefined;
 	#activeOrgId: string | undefined = undefined;
@@ -211,15 +214,37 @@ export class TessPanelState {
 		this.mode = this.mode === 'expanded' ? 'open' : 'expanded';
 	}
 
+	setOrganization(organizationId: string | undefined): void {
+		if (organizationId === this.#activeOrgId) return;
+		this.#activeOrgId = organizationId;
+		this.#sessionGen++;
+		this.#askGen++;
+		this.#abortStream();
+		this.turns = [];
+		this.decisionContext = undefined;
+		this.contextDismissed = false;
+		this.runtimeStatus = 'offline';
+		this.unavailableReason = undefined;
+	}
+
+	dispose(): void {
+		this.#sessionGen++;
+		this.#askGen++;
+		this.#abortStream();
+	}
+
 	clear(): void {
+		this.#sessionGen++;
+		this.#askGen++;
 		this.#abortStream();
 		this.turns = [];
 	}
 
 	async resetSession(organizationId?: string): Promise<void> {
-		this.clear();
 		const orgId = organizationId ?? this.#activeOrgId;
-		if (orgId && this.runtimeStatus === 'ready') {
+		const wasReady = this.runtimeStatus === 'ready';
+		this.clear();
+		if (orgId && wasReady) {
 			await this.#api.resetSession(orgId);
 		}
 		this.liveAnnouncement = 'Started a fresh Tess conversation.';
@@ -247,7 +272,8 @@ export class TessPanelState {
 
 	async stopActiveTurn(): Promise<void> {
 		const active = this.turns.find((t) => t.streaming);
-		const orgId = this.#activeOrgId;
+		const orgId = active?.organizationId ?? this.#activeOrgId;
+		this.#askGen++;
 		this.#abortStream();
 		if (!active) return;
 		this.#patchTurn(active.id, (t) => ({ ...t, streaming: false }));
@@ -258,13 +284,22 @@ export class TessPanelState {
 	}
 
 	async applyProposal(turnId: string, proposalId: string): Promise<void> {
-		const orgId = this.#activeOrgId;
 		const turn = this.turns.find((t) => t.id === turnId);
+		const orgId = turn?.organizationId ?? this.#activeOrgId;
 		const block = turn?.blocks?.find(
 			(b): b is Extract<TessUiBlock, { kind: 'action_proposal' }> =>
 				b.kind === 'action_proposal' && b.proposal.id === proposalId
 		);
-		if (!orgId || !block) return;
+		if (
+			!orgId ||
+			!block ||
+			block.proposal.status === 'applying' ||
+			block.proposal.status === 'applied' ||
+			block.proposal.status === 'dismissed'
+		) {
+			return;
+		}
+		const sessionGen = this.#sessionGen;
 
 		this.#patchTurn(turnId, (t) => ({
 			...t,
@@ -276,6 +311,7 @@ export class TessPanelState {
 		}));
 
 		const res = await this.#api.applyProposal(orgId, proposalId, block.proposal.expectedRevision);
+		if (sessionGen !== this.#sessionGen) return;
 		if (res.ok) {
 			this.#patchTurn(turnId, (t) => ({
 				...t,
@@ -301,7 +337,24 @@ export class TessPanelState {
 	}
 
 	async dismissProposal(turnId: string, proposalId: string): Promise<void> {
-		const orgId = this.#activeOrgId;
+		const turn = this.turns.find((t) => t.id === turnId);
+		const orgId = turn?.organizationId ?? this.#activeOrgId;
+		const block = turn?.blocks?.find(
+			(b): b is Extract<TessUiBlock, { kind: 'action_proposal' }> =>
+				b.kind === 'action_proposal' && b.proposal.id === proposalId
+		);
+		if (
+			!block ||
+			block.proposal.status === 'applying' ||
+			block.proposal.status === 'applied' ||
+			block.proposal.status === 'dismissed'
+		) {
+			return;
+		}
+		const prevStatus = block.proposal.status;
+		const prevError = block.proposal.errorMessage;
+		const sessionGen = this.#sessionGen;
+
 		this.#patchTurn(turnId, (t) => ({
 			...t,
 			blocks: updateProposalInBlocks(t.blocks, proposalId, (p) => ({
@@ -310,7 +363,17 @@ export class TessPanelState {
 				errorMessage: undefined
 			}))
 		}));
-		if (orgId) await this.#api.dismissProposal(orgId, proposalId);
+		if (!orgId) return;
+		const ok = await this.#api.dismissProposal(orgId, proposalId);
+		if (sessionGen !== this.#sessionGen || ok) return;
+		this.#patchTurn(turnId, (t) => ({
+			...t,
+			blocks: updateProposalInBlocks(t.blocks, proposalId, (p) => ({
+				...p,
+				status: prevStatus === 'error' ? 'error' : 'pending',
+				errorMessage: prevError ?? 'Could not dismiss proposal. Try again.'
+			}))
+		}));
 	}
 
 	ask(prompt: string, ctx: TessContextSnapshot, opts?: ShellAiAskOptions): TessTurn | undefined {
@@ -322,6 +385,7 @@ export class TessPanelState {
 			this.contextDismissed = false;
 		}
 		this.openPanel();
+		this.#askGen++;
 		this.#abortStream();
 
 		const activeDecision =
@@ -351,6 +415,7 @@ export class TessPanelState {
 		const localId = `tess-turn-${++this.#turnSeq}`;
 		const turn: TessTurn = {
 			id: localId,
+			organizationId: ctx.organizationId,
 			query: trimmed,
 			createdAt: Date.now(),
 			mode: 'offline_summary',
@@ -370,7 +435,14 @@ export class TessPanelState {
 						decisionId: opts?.decisionId ?? activeDecision?.id,
 						decisionTitle: activeDecision?.title
 					};
-			void this.#runLiveTurn(ctx.organizationId, localId, trimmed, contextRef);
+			void this.#runLiveTurn(
+				ctx.organizationId,
+				localId,
+				trimmed,
+				this.#sessionGen,
+				this.#askGen,
+				contextRef
+			);
 		}
 		return turn;
 	}
@@ -379,12 +451,31 @@ export class TessPanelState {
 		organizationId: string,
 		localTurnId: string,
 		prompt: string,
+		sessionGen: number,
+		askGen: number,
 		contextRef?: TessContextRef
 	): Promise<void> {
-		const res = await this.#api.ask(organizationId, { prompt, context_ref: contextRef });
+		const controller = new AbortController();
+		this.#abortController = controller;
+		this.#activeLocalTurnId = localTurnId;
+
+		const isStale = () =>
+			sessionGen !== this.#sessionGen || askGen !== this.#askGen || controller.signal.aborted;
+
+		const res = await this.#api.ask(
+			organizationId,
+			{ prompt, context_ref: contextRef },
+			controller.signal
+		);
+		if (isStale()) return;
+
 		if (res.kind === 'unavailable') {
 			this.runtimeStatus = 'offline';
 			this.unavailableReason = res.reason;
+			if (this.#activeLocalTurnId === localTurnId) {
+				this.#abortController = undefined;
+				this.#activeLocalTurnId = undefined;
+			}
 			return;
 		}
 		if (res.kind === 'fallback') {
@@ -400,14 +491,15 @@ export class TessPanelState {
 					}
 				}));
 			}
+			if (this.#activeLocalTurnId === localTurnId) {
+				this.#abortController = undefined;
+				this.#activeLocalTurnId = undefined;
+			}
 			return;
 		}
 
 		this.runtimeStatus = 'ready';
 		this.unavailableReason = undefined;
-		const controller = new AbortController();
-		this.#abortController = controller;
-		this.#activeLocalTurnId = localTurnId;
 
 		this.#patchTurn(localTurnId, (t) => ({
 			...t,
@@ -425,12 +517,14 @@ export class TessPanelState {
 			res.streamUrl,
 			{
 				onEvent: (event) => {
+					if (isStale()) return;
 					this.#patchTurn(localTurnId, (t) => applyStreamEventToTurn(t, event));
 					if (event.type === 'turn.completed') {
 						this.liveAnnouncement = 'Tess finished responding.';
 					}
 				},
 				onError: (message) => {
+					if (isStale()) return;
 					this.#patchTurn(localTurnId, (t) => ({
 						...t,
 						streaming: false,
@@ -438,6 +532,7 @@ export class TessPanelState {
 					}));
 				},
 				onDone: () => {
+					if (sessionGen !== this.#sessionGen) return;
 					this.#patchTurn(localTurnId, (t) => ({ ...t, streaming: false }));
 					if (this.#activeLocalTurnId === localTurnId) {
 						this.#abortController = undefined;

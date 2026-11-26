@@ -141,11 +141,13 @@ describe('Tess HTTP + SSE API client (doc-97 §5.C)', () => {
 		});
 	});
 
-	it('auto-links canonical refs safely and rejects unsafe external edit_href values', () => {
-		expect(splitCanonicalRefSegments('Review T-12 and BUG-4 now.')).toEqual([
+	it('auto-links canonical refs safely (including office-prefixed T-B37) and rejects unsafe hrefs', () => {
+		expect(splitCanonicalRefSegments('Review T-12, T-B37, and BUG-4 now.')).toEqual([
 			{ text: 'Review ' },
 			{ text: 'T-12', href: '/work/T-12' },
-			{ text: ' and ' },
+			{ text: ', ' },
+			{ text: 'T-B37', href: '/work/T-B37' },
+			{ text: ', and ' },
 			{ text: 'BUG-4', href: '/work/BUG-4' },
 			{ text: ' now.' }
 		]);
@@ -157,6 +159,13 @@ describe('Tess HTTP + SSE API client (doc-97 §5.C)', () => {
 			edit_href: 'https://evil.example/phish'
 		});
 		expect(block?.kind === 'action_proposal' && block.proposal.editHref).toBeUndefined();
+		const ctrlBlock = decodeUiBlock({
+			kind: 'action_proposal',
+			id: 'sug-y',
+			title: 'Assign task',
+			edit_href: '/work/T-1\n/evil'
+		});
+		expect(ctrlBlock?.kind === 'action_proposal' && ctrlBlock.proposal.editHref).toBeUndefined();
 		expect(parseTessSseEvent('text.delta', '{"delta":"Hi"}')).toEqual({
 			type: 'text.delta',
 			delta: 'Hi'

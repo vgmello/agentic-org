@@ -134,6 +134,7 @@ describe('createHttpAgentSetupApi', () => {
 							enabled: true,
 							model_id: 'sonnet',
 							model_profile_id: 'prof-1',
+							effort: 'high',
 							revision: 2,
 							tools_config: ['shell'],
 							system_prompt_markdown: 'Be helpful'
@@ -204,6 +205,7 @@ describe('createHttpAgentSetupApi', () => {
 				employee_id: 'm-ada',
 				model_profile_id: 'prof-1',
 				model_id: 'claude-opus-4-6',
+				effort: 'high',
 				expected_version: 2,
 				tools_config: ['shell'],
 				system_prompt_markdown: 'Be helpful'

@@ -679,6 +679,7 @@ const memberReader = object({
 	owner: omittedFalse,
 	office_id: optional(text),
 	agent: optional(agentReader),
+	builtin_key: optional(text),
 	reports_to_member_id: optional(text),
 	created_at: optional(text),
 	version: readSafeInteger

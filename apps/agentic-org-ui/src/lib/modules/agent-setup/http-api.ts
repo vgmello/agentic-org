@@ -47,6 +47,7 @@ interface WireProfile {
 interface WireExecution {
 	modelProfileId: string;
 	modelId: string;
+	effort?: string;
 	enabled: boolean;
 	revision: number;
 	toolsConfig: string[];
@@ -143,6 +144,7 @@ function decodeExecution(raw: unknown): WireExecution | null {
 	return {
 		modelProfileId,
 		modelId,
+		effort: asStr(r.effort),
 		enabled: r.enabled !== false,
 		revision: asNum(r.revision) ?? 1,
 		toolsConfig: asStrList(r.tools_config),
@@ -659,6 +661,7 @@ export function createHttpAgentSetupApi(deps: {
 						...(existing ? { expected_version: edit.expectedRevision } : {}),
 						model_profile_id: edit.profileId,
 						model_id: edit.modelId,
+						...(existing?.effort ? { effort: existing.effort } : {}),
 						tools_config: existing?.toolsConfig ?? [],
 						...(existing?.permissionPreset ? { permission_preset: existing.permissionPreset } : {}),
 						enabled: existing?.enabled ?? true,

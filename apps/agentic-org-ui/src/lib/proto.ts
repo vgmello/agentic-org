@@ -220,6 +220,8 @@ export interface Member {
 	reports_to_member_id?: string;
 	/** Agents only. */
 	agent?: AgentProfile;
+	/** Built-in agent identifier ('hr' | 'chief_of_staff'), set by HQ when built-in. */
+	builtin_key?: string;
 	/** RFC 3339, set by HQ when the member was created; missing on older records. */
 	created_at?: string;
 	version: number;
@@ -231,13 +233,13 @@ export interface Member {
  */
 export function isBuiltInAgent(member: Member | undefined): boolean {
 	if (!member || member.kind !== 'agent') return false;
-	const builtinKey = (member as { builtin_key?: unknown }).builtin_key;
-	if (builtinKey === 'hr' || builtinKey === 'chief_of_staff') return true;
+	if (typeof member.builtin_key === 'string' && member.builtin_key.length > 0) {
+		return member.builtin_key === 'hr' || member.builtin_key === 'chief_of_staff';
+	}
 	const handle = (member.handle ?? member.agent?.messaging_name ?? '').trim().toLowerCase();
-	const name = member.name.trim().toLowerCase();
 	const role = (member.agent?.role ?? '').trim().toLowerCase();
-	if (handle === 'hr' || name === 'hr') return true;
-	if (handle === 'tess' || (name === 'tess' && role.includes('chief of staff'))) return true;
+	if (handle === 'hr') return true;
+	if (handle === 'tess' && role.includes('chief of staff')) return true;
 	return false;
 }
 

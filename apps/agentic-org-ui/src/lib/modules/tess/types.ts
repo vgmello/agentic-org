@@ -130,7 +130,11 @@ export type TessProposalApplyResult =
 	  };
 
 export interface TessApi {
-	ask(organizationId: string, request: TessAskRequest): Promise<TessAskResult>;
+	ask(
+		organizationId: string,
+		request: TessAskRequest,
+		signal?: AbortSignal
+	): Promise<TessAskResult>;
 	streamTurn(
 		organizationId: string,
 		turnId: string,

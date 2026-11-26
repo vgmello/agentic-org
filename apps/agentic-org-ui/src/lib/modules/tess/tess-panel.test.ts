@@ -186,6 +186,58 @@ describe('TessPanelState', () => {
 		expect(panel.open).toBe(true);
 		expect(panel.contextDismissed).toBe(false);
 	});
+
+	it('clears cross-org turns on setOrganization and rolls back failed dismissProposal', async () => {
+		const api = createStubApi({
+			ask: vi.fn(async () => ({
+				kind: 'streaming' as const,
+				turnId: 'srv-2',
+				streamUrl: '/api/v1/organizations/org-1/tess/turns/srv-2/stream'
+			})),
+			streamTurn: vi.fn(async (_org, _turnId, _url, handlers) => {
+				handlers.onEvent({
+					type: 'ui.block',
+					block: {
+						kind: 'action_proposal',
+						proposal: {
+							id: 'sug-fail',
+							kind: 'project.create',
+							title: 'Create project',
+							risk: 'reversible',
+							ctaLabel: 'Create project',
+							parameters: [],
+							status: 'pending'
+						}
+					}
+				});
+				handlers.onDone?.();
+			}),
+			dismissProposal: vi.fn(async () => false)
+		});
+
+		const panel = new TessPanelState(api);
+		panel.ask('Create project', {
+			organizationId: 'org-1',
+			snapshot: sampleOrg('hq'),
+			items: [],
+			offices,
+			ownerId: 'you',
+			routeLabel: 'Projects'
+		});
+		await new Promise((r) => setTimeout(r, 0));
+
+		const turnId = panel.turns[0].id;
+		await panel.dismissProposal(turnId, 'sug-fail');
+		const block = panel.turns[0].blocks?.[0];
+		expect(block?.kind === 'action_proposal' && block.proposal.status).toBe('pending');
+		expect(block?.kind === 'action_proposal' && block.proposal.errorMessage).toContain(
+			'Could not dismiss'
+		);
+
+		panel.setOrganization('org-2');
+		expect(panel.turns).toHaveLength(0);
+		expect(panel.runtimeStatus).toBe('offline');
+	});
 });
 
 describe('isBuiltInAgent', () => {
@@ -229,6 +281,8 @@ describe('isBuiltInAgent', () => {
 			} as Member)
 		).toBe(true);
 		expect(isBuiltInAgent(baseAgent({}))).toBe(false);
+		expect(isBuiltInAgent(baseAgent({ name: 'HR', handle: 'recruiter-bot' }))).toBe(false);
+		expect(isBuiltInAgent(baseAgent({ name: 'Tess', handle: 'tess' }))).toBe(false);
 		expect(
 			isBuiltInAgent({
 				id: 'p-1',

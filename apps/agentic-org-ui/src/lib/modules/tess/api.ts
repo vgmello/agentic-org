@@ -42,6 +42,10 @@ function readRisk(v: unknown): TessProposalRisk {
 function safeAppHref(raw: unknown): string | undefined {
 	const s = asStr(raw)?.trim();
 	if (!s || !s.startsWith('/') || s.startsWith('//') || s.startsWith('/\\')) return undefined;
+	for (let i = 0; i < s.length; i++) {
+		const code = s.charCodeAt(i);
+		if (code <= 0x1f || code === 0x7f) return undefined;
+	}
 	return s;
 }
 
@@ -135,9 +139,11 @@ export function decodeUiBlock(raw: unknown): TessUiBlock | undefined {
 	return undefined;
 }
 
+let fallbackToolSeq = 0;
+
 function decodeToolCall(raw: unknown): TessToolCall | undefined {
 	const r = asRec(raw);
-	const id = asStr(r?.id) ?? asStr(r?.call_id) ?? `tool-${Date.now()}`;
+	const id = asStr(r?.id) ?? asStr(r?.call_id) ?? `tool-${++fallbackToolSeq}`;
 	const label = asStr(r?.label) ?? asStr(r?.summary);
 	if (!label) return undefined;
 	const stateRaw = asStr(r?.state) ?? asStr(r?.status);
@@ -205,7 +211,7 @@ export interface TextRefSegment {
 	href?: string;
 }
 
-const CANONICAL_REF_RE = /\b(T-\d+|BUG-\d+|REQ-\d+|P-\d+|TEAM-\d+)\b/g;
+const CANONICAL_REF_RE = /\b(T-(?:[A-Z]+\d+|\d+)|BUG-\d+|REQ-\d+|P-\d+|TEAM-\d+)\b/g;
 
 function hrefForCanonicalRef(ref: string): string {
 	if (ref.startsWith('P-')) return `/projects`;
@@ -229,10 +235,23 @@ export function splitCanonicalRefSegments(text: string): TextRefSegment[] {
 	return segments;
 }
 
+export interface TessSessionTransport {
+	submit: (
+		path: string,
+		body: unknown,
+		signal?: AbortSignal
+	) => Promise<{ status: number; body: unknown }>;
+	openSseStream: (path: string, signal?: AbortSignal) => Promise<Response>;
+}
+
 export interface HttpTessApiOptions {
+	session?: TessSessionTransport;
 	fetch?: typeof fetch;
 	getProof?: () => string | undefined;
+	maxEventBytes?: number;
 }
+
+const DEFAULT_MAX_SSE_BYTES = 1024 * 1024;
 
 function buildHeaders(proof: string | undefined, contentType?: string): Record<string, string> {
 	const headers: Record<string, string> = {};
@@ -241,8 +260,7 @@ function buildHeaders(proof: string | undefined, contentType?: string): Record<s
 	return headers;
 }
 
-function normalizeStreamPath(orgId: string, turnId: string, streamUrl: string): string {
-	if (streamUrl.startsWith('/api/v1/')) return streamUrl;
+function canonicalStreamPath(orgId: string, turnId: string): string {
 	return `/api/v1/organizations/${encodeURIComponent(orgId)}/tess/turns/${encodeURIComponent(turnId)}/stream`;
 }
 
@@ -268,47 +286,133 @@ function dispatchSseBlock(rawBlock: string, onEvent: (ev: TessStreamEvent) => vo
 	for (const line of rawBlock.split('\n')) {
 		if (!line || line.startsWith(':')) continue;
 		if (line.startsWith('event:')) eventType = line.slice(6).trim();
-		else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+		else if (line.startsWith('data:')) {
+			dataLines.push(line.startsWith('data: ') ? line.slice(6) : line.slice(5));
+		}
 	}
 	const parsed = parseTessSseEvent(eventType, dataLines.join('\n'));
 	if (parsed) onEvent(parsed);
 }
 
-export function createHttpTessApi(options: HttpTessApiOptions = {}): TessApi {
+interface JsonReply {
+	status: number;
+	ok: boolean;
+	body: unknown;
+}
+
+function createPostJson(options: HttpTessApiOptions) {
+	if (options.session) {
+		const session = options.session;
+		return async (path: string, body: unknown, signal?: AbortSignal): Promise<JsonReply> => {
+			const res = await session.submit(path, body, signal);
+			return { status: res.status, ok: res.status >= 200 && res.status < 300, body: res.body };
+		};
+	}
 	const send = options.fetch ?? ((...args: Parameters<typeof fetch>) => globalThis.fetch(...args));
 	const proofOf = options.getProof ?? (() => undefined);
+	return async (path: string, body: unknown, signal?: AbortSignal): Promise<JsonReply> => {
+		const res = await send(path, {
+			method: 'POST',
+			mode: 'same-origin',
+			credentials: 'same-origin',
+			redirect: 'error',
+			cache: 'no-store',
+			headers: buildHeaders(proofOf(), 'application/json'),
+			body: JSON.stringify(body),
+			signal
+		});
+		const parsed: unknown = await res.json().catch(() => undefined);
+		return { status: res.status, ok: res.ok, body: parsed };
+	};
+}
+
+function createOpenStream(options: HttpTessApiOptions) {
+	if (options.session) {
+		const session = options.session;
+		return (path: string, signal?: AbortSignal) => session.openSseStream(path, signal);
+	}
+	const send = options.fetch ?? ((...args: Parameters<typeof fetch>) => globalThis.fetch(...args));
+	const proofOf = options.getProof ?? (() => undefined);
+	return (path: string, signal?: AbortSignal) =>
+		send(path, {
+			method: 'GET',
+			mode: 'same-origin',
+			credentials: 'same-origin',
+			redirect: 'error',
+			cache: 'no-store',
+			headers: { ...buildHeaders(proofOf()), Accept: 'text/event-stream' },
+			signal
+		});
+}
+
+async function consumeSseBody(
+	body: ReadableStream<Uint8Array>,
+	maxEventBytes: number,
+	onEvent: (ev: TessStreamEvent) => void
+): Promise<void> {
+	const reader = body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+	try {
+		while (true) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			buffer = (buffer + decoder.decode(value, { stream: true }))
+				.replace(/\r\n/g, '\n')
+				.replace(/\r/g, '\n');
+			if (buffer.length > maxEventBytes) {
+				throw new Error('Tess stream exceeded maximum event size.');
+			}
+			let splitAt = buffer.indexOf('\n\n');
+			while (splitAt !== -1) {
+				dispatchSseBlock(buffer.slice(0, splitAt), onEvent);
+				buffer = buffer.slice(splitAt + 2);
+				splitAt = buffer.indexOf('\n\n');
+			}
+		}
+		const tail = decoder.decode();
+		if (tail) buffer = (buffer + tail).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+		if (buffer.trim()) dispatchSseBlock(buffer, onEvent);
+	} finally {
+		await reader.cancel().catch(() => {});
+		reader.releaseLock();
+	}
+}
+
+export function createHttpTessApi(options: HttpTessApiOptions = {}): TessApi {
+	const postJson = createPostJson(options);
+	const openStream = createOpenStream(options);
+	const maxEventBytes = options.maxEventBytes ?? DEFAULT_MAX_SSE_BYTES;
 
 	return {
-		async ask(organizationId: string, request: TessAskRequest): Promise<TessAskResult> {
+		async ask(
+			organizationId: string,
+			request: TessAskRequest,
+			signal?: AbortSignal
+		): Promise<TessAskResult> {
 			const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/tess/ask`;
 			try {
-				const res = await send(path, {
-					method: 'POST',
-					credentials: 'same-origin',
-					headers: buildHeaders(proofOf(), 'application/json'),
-					body: JSON.stringify(request)
-				});
+				const res = await postJson(path, request, signal);
 				if (res.status === 404 || res.status === 501 || res.status === 503) {
 					return {
 						kind: 'unavailable',
 						reason: 'Live Tess runtime endpoint is not available yet.'
 					};
 				}
-				const json: unknown = await res.json().catch(() => undefined);
 				if (!res.ok) {
-					const err = asRec(asRec(json)?.error);
+					const err = asRec(asRec(res.body)?.error);
 					return {
 						kind: 'unavailable',
 						reason: asStr(err?.message) ?? `Tess request failed (${res.status}).`
 					};
 				}
-				const data = unwrapBodyResult(json);
+				const data = unwrapBodyResult(res.body);
 				if (data?.status === 'streaming' && asStr(data.turn_id)) {
 					const turnId = asStr(data.turn_id)!;
 					return {
 						kind: 'streaming',
 						turnId,
-						streamUrl: normalizeStreamPath(organizationId, turnId, asStr(data.stream_url) ?? '')
+						streamUrl: canonicalStreamPath(organizationId, turnId)
 					};
 				}
 				return {
@@ -325,37 +429,18 @@ export function createHttpTessApi(options: HttpTessApiOptions = {}): TessApi {
 		async streamTurn(
 			organizationId: string,
 			turnId: string,
-			streamUrl: string,
+			_streamUrl: string,
 			handlers: TessStreamHandlers,
 			signal?: AbortSignal
 		): Promise<void> {
-			const path = normalizeStreamPath(organizationId, turnId, streamUrl);
+			const path = canonicalStreamPath(organizationId, turnId);
 			try {
-				const res = await send(path, {
-					method: 'GET',
-					credentials: 'same-origin',
-					headers: { ...buildHeaders(proofOf()), Accept: 'text/event-stream' },
-					signal
-				});
+				const res = await openStream(path, signal);
 				if (!res.ok || !res.body) {
 					handlers.onError?.(`Stream unavailable (${res.status}).`);
 					return;
 				}
-				const reader = res.body.getReader();
-				const decoder = new TextDecoder();
-				let buffer = '';
-				while (true) {
-					const { value, done } = await reader.read();
-					if (done) break;
-					buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
-					let splitAt = buffer.indexOf('\n\n');
-					while (splitAt !== -1) {
-						dispatchSseBlock(buffer.slice(0, splitAt), handlers.onEvent);
-						buffer = buffer.slice(splitAt + 2);
-						splitAt = buffer.indexOf('\n\n');
-					}
-				}
-				if (buffer.trim()) dispatchSseBlock(buffer, handlers.onEvent);
+				await consumeSseBody(res.body, maxEventBytes, handlers.onEvent);
 				handlers.onDone?.();
 			} catch (err) {
 				if (signal?.aborted) {
@@ -369,12 +454,7 @@ export function createHttpTessApi(options: HttpTessApiOptions = {}): TessApi {
 		async cancelTurn(organizationId: string, turnId: string): Promise<boolean> {
 			const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/tess/turns/${encodeURIComponent(turnId)}/cancel`;
 			try {
-				const res = await send(path, {
-					method: 'POST',
-					credentials: 'same-origin',
-					headers: buildHeaders(proofOf(), 'application/json'),
-					body: '{}'
-				});
+				const res = await postJson(path, {});
 				return res.ok;
 			} catch {
 				return false;
@@ -388,22 +468,16 @@ export function createHttpTessApi(options: HttpTessApiOptions = {}): TessApi {
 		): Promise<TessProposalApplyResult> {
 			const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/tess/proposals/${encodeURIComponent(proposalId)}/apply`;
 			try {
-				const res = await send(path, {
-					method: 'POST',
-					credentials: 'same-origin',
-					headers: buildHeaders(proofOf(), 'application/json'),
-					body: JSON.stringify(ifMatch ? { if_match: ifMatch } : {})
-				});
-				const json: unknown = await res.json().catch(() => undefined);
+				const res = await postJson(path, ifMatch ? { if_match: ifMatch } : {});
 				if (!res.ok) {
-					const err = asRec(asRec(json)?.error);
+					const err = asRec(asRec(res.body)?.error);
 					return {
 						ok: false,
 						code: mapApplyErrorCode(res.status, asStr(err?.code)),
 						message: asStr(err?.message) ?? `Could not apply proposal (${res.status}).`
 					};
 				}
-				const data = unwrapBodyResult(json);
+				const data = unwrapBodyResult(res.body);
 				const rec = asRec(data?.receipt) ?? data;
 				return {
 					ok: true,
@@ -426,12 +500,7 @@ export function createHttpTessApi(options: HttpTessApiOptions = {}): TessApi {
 		async dismissProposal(organizationId: string, proposalId: string): Promise<boolean> {
 			const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/tess/proposals/${encodeURIComponent(proposalId)}/dismiss`;
 			try {
-				const res = await send(path, {
-					method: 'POST',
-					credentials: 'same-origin',
-					headers: buildHeaders(proofOf(), 'application/json'),
-					body: '{}'
-				});
+				const res = await postJson(path, {});
 				return res.ok;
 			} catch {
 				return false;
@@ -441,12 +510,7 @@ export function createHttpTessApi(options: HttpTessApiOptions = {}): TessApi {
 		async resetSession(organizationId: string): Promise<boolean> {
 			const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/tess/session/reset`;
 			try {
-				const res = await send(path, {
-					method: 'POST',
-					credentials: 'same-origin',
-					headers: buildHeaders(proofOf(), 'application/json'),
-					body: '{}'
-				});
+				const res = await postJson(path, {});
 				return res.ok;
 			} catch {
 				return false;

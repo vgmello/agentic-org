@@ -10,6 +10,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import type { Attachment } from 'svelte/attachments';
+	import { Tooltip } from 'bits-ui';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import ArrowUp from '@lucide/svelte/icons/arrow-up';
@@ -72,14 +73,18 @@
 			(page.url.searchParams.get('c')?.toLowerCase().includes('tess') ?? false)
 	);
 
-	$effect(() => {
-		panel.syncRestingVisibility(uiPrefs.showTessPill);
-	});
+	const effectiveMode = $derived(
+		panel.mode === 'hidden' && uiPrefs.showTessPill
+			? 'pill'
+			: panel.mode === 'pill' && !uiPrefs.showTessPill
+				? 'hidden'
+				: panel.mode
+	);
 
-	const visible = $derived(!isTessChatActive && panel.mode !== 'hidden');
-	const isPill = $derived(visible && panel.mode === 'pill');
-	const isOpen = $derived(visible && panel.mode === 'open');
-	const isExpanded = $derived(visible && panel.mode === 'expanded');
+	const visible = $derived(!isTessChatActive && effectiveMode !== 'hidden');
+	const isPill = $derived(visible && effectiveMode === 'pill');
+	const isOpen = $derived(visible && effectiveMode === 'open');
+	const isExpanded = $derived(visible && effectiveMode === 'expanded');
 	const isCompact = $derived(isOpen && panel.turns.length === 0);
 
 	$effect(() => {
@@ -127,6 +132,9 @@
 			? latestTurn.followUps.slice(0, 3)
 			: []
 	);
+	const scrollSignal = $derived(
+		`${panel.turns.length}:${latestTurn?.streamText?.length ?? 0}:${latestTurn?.toolCalls?.length ?? 0}:${latestTurn?.blocks?.length ?? 0}`
+	);
 
 	let pillBtnEl = $state<HTMLButtonElement | null>(null);
 
@@ -134,9 +142,14 @@
 		el.focus({ preventScroll: true });
 	};
 
-	function scrollOnTurns(count: number): Attachment<HTMLDivElement> {
+	function scrollOnTurns(signal: string, turnCount: number): Attachment<HTMLDivElement> {
 		return (el) => {
-			if (count > 0) el.scrollTop = el.scrollHeight;
+			void signal;
+			if (turnCount === 0) return;
+			const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+			if (distFromBottom < 120 || el.scrollTop === 0) {
+				el.scrollTop = el.scrollHeight;
+			}
 		};
 	}
 
@@ -282,29 +295,63 @@
 							<span>New thread</span>
 						</button>
 					{/if}
-					<button
-						type="button"
-						onclick={() => panel.toggleExpand()}
-						aria-label="{isExpanded ? 'Restore size' : 'Maximize'} · {expandShortcut}"
-						aria-keyshortcuts="Meta+Shift+E Control+Shift+E"
-						title="{isExpanded ? 'Restore size' : 'Maximize'} · {expandShortcut}"
-						class="cmp-icon-btn cmp-expand-btn"
-					>
-						{#if isExpanded}
-							<Minimize2 class="size-3.5" aria-hidden="true" />
-						{:else}
-							<Maximize2 class="size-3.5" aria-hidden="true" />
-						{/if}
-					</button>
-					<button
-						type="button"
-						onclick={() => closeCompanion(true)}
-						aria-label="{uiPrefs.showTessPill ? 'Minimize to bottom' : 'Close'} · Esc"
-						title="{uiPrefs.showTessPill ? 'Minimize to bottom' : 'Close'} · Esc"
-						class="cmp-icon-btn"
-					>
-						<X class="size-3.5" aria-hidden="true" />
-					</button>
+					<Tooltip.Provider delayDuration={150}>
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<button
+										{...props}
+										type="button"
+										onclick={() => panel.toggleExpand()}
+										aria-label="{isExpanded ? 'Restore size' : 'Maximize'} · {expandShortcut}"
+										aria-keyshortcuts="Meta+Shift+E Control+Shift+E"
+										class="cmp-icon-btn cmp-expand-btn"
+									>
+										{#if isExpanded}
+											<Minimize2 class="size-3.5" aria-hidden="true" />
+										{:else}
+											<Maximize2 class="size-3.5" aria-hidden="true" />
+										{/if}
+									</button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Portal>
+								<Tooltip.Content
+									role="tooltip"
+									side="bottom"
+									sideOffset={6}
+									class="z-[110] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
+								>
+									{isExpanded ? 'Restore size' : 'Maximize'} · {expandShortcut}
+								</Tooltip.Content>
+							</Tooltip.Portal>
+						</Tooltip.Root>
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<button
+										{...props}
+										type="button"
+										onclick={() => closeCompanion(true)}
+										aria-label="{uiPrefs.showTessPill ? 'Minimize to bottom' : 'Close'} · Esc"
+										class="cmp-icon-btn"
+									>
+										<X class="size-3.5" aria-hidden="true" />
+									</button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Portal>
+								<Tooltip.Content
+									role="tooltip"
+									side="bottom"
+									sideOffset={6}
+									class="z-[110] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
+								>
+									{uiPrefs.showTessPill ? 'Minimize to bottom' : 'Close'} · Esc
+								</Tooltip.Content>
+							</Tooltip.Portal>
+						</Tooltip.Root>
+					</Tooltip.Provider>
 				</div>
 			</header>
 
@@ -312,13 +359,32 @@
 				<div class="cmp-ctx-row">
 					<span class="cmp-ctx-pill">
 						<span class="cmp-ctx-lbl">Context: <strong>{ambientLabel}</strong></span>
-						<button
-							type="button"
-							onclick={() => panel.dismissContext()}
-							aria-label="Detach page context"
-						>
-							<X class="size-3" aria-hidden="true" />
-						</button>
+						<Tooltip.Provider delayDuration={150}>
+							<Tooltip.Root>
+								<Tooltip.Trigger>
+									{#snippet child({ props })}
+										<button
+											{...props}
+											type="button"
+											onclick={() => panel.dismissContext()}
+											aria-label="Detach page context"
+										>
+											<X class="size-3" aria-hidden="true" />
+										</button>
+									{/snippet}
+								</Tooltip.Trigger>
+								<Tooltip.Portal>
+									<Tooltip.Content
+										role="tooltip"
+										side="top"
+										sideOffset={6}
+										class="z-[110] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
+									>
+										Detach page context
+									</Tooltip.Content>
+								</Tooltip.Portal>
+							</Tooltip.Root>
+						</Tooltip.Provider>
 					</span>
 				</div>
 			{/if}
@@ -354,7 +420,7 @@
 
 			<span class="sr-only" aria-live="polite">{panel.liveAnnouncement}</span>
 
-			<div {@attach scrollOnTurns(panel.turns.length)} class="tess-body">
+			<div {@attach scrollOnTurns(scrollSignal, panel.turns.length)} class="tess-body">
 				{#if panel.turns.length > 0}
 					<div class="tess-thread">
 						{#each panel.turns as turn (turn.id)}
@@ -408,7 +474,7 @@
 											</p>
 											{#if turn.answer.bullets.length > 0}
 												<ul class="mt-1.5 flex flex-col gap-1">
-													{#each turn.answer.bullets as bullet (bullet.text)}
+													{#each turn.answer.bullets as bullet, idx (`${idx}-${bullet.text}`)}
 														<li class="flex flex-wrap items-baseline gap-x-2">
 															<span>• {bullet.text}</span>
 															{#if bullet.href && bullet.linkLabel}
@@ -458,7 +524,7 @@
 
 				{#if latestFollowUps.length > 0}
 					<div class="tess-chips" aria-label="Follow-up prompts">
-						{#each latestFollowUps as follow (follow)}
+						{#each latestFollowUps as follow, idx (`${idx}-${follow}`)}
 							<button type="button" class="tess-chip" onclick={() => submitPrompt(follow)}>
 								<Sparkles class="cmp-chip-ico size-3.5 shrink-0" aria-hidden="true" />
 								<span>{follow}</span>
@@ -492,25 +558,61 @@
 					aria-label="Ask Tess anything"
 					placeholder="Ask Tess anything…"
 				/>
-				{#if panel.isStreaming}
-					<button
-						type="button"
-						onclick={() => void panel.stopActiveTurn()}
-						aria-label="Stop Tess turn"
-						class="tess-send-btn is-stop"
-					>
-						<Square class="size-3.5 fill-current" aria-hidden="true" />
-					</button>
-				{:else}
-					<button
-						type="submit"
-						disabled={!panel.draft.trim()}
-						aria-label="Send to Tess"
-						class="tess-send-btn"
-					>
-						<ArrowUp class="size-4" aria-hidden="true" />
-					</button>
-				{/if}
+				<Tooltip.Provider delayDuration={150}>
+					{#if panel.isStreaming}
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<button
+										{...props}
+										type="button"
+										onclick={() => void panel.stopActiveTurn()}
+										aria-label="Stop Tess turn"
+										class="tess-send-btn is-stop"
+									>
+										<Square class="size-3.5 fill-current" aria-hidden="true" />
+									</button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Portal>
+								<Tooltip.Content
+									role="tooltip"
+									side="top"
+									sideOffset={6}
+									class="z-[110] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
+								>
+									Stop Tess turn
+								</Tooltip.Content>
+							</Tooltip.Portal>
+						</Tooltip.Root>
+					{:else}
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<button
+										{...props}
+										type="submit"
+										disabled={!panel.draft.trim()}
+										aria-label="Send to Tess"
+										class="tess-send-btn"
+									>
+										<ArrowUp class="size-4" aria-hidden="true" />
+									</button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Portal>
+								<Tooltip.Content
+									role="tooltip"
+									side="top"
+									sideOffset={6}
+									class="z-[110] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
+								>
+									Send to Tess
+								</Tooltip.Content>
+							</Tooltip.Portal>
+						</Tooltip.Root>
+					{/if}
+				</Tooltip.Provider>
 			</form>
 		{/if}
 	</aside>

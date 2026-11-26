@@ -98,6 +98,10 @@
 			let name = before.name;
 			if (isAgent) {
 				const change = agentIdentityChange(before, form);
+				if (isBuiltIn) {
+					delete change.name;
+					delete change.messagingName;
+				}
 				if (Object.keys(change).length === 0) return void (open = false);
 				await updateAgent(session, before.id, change, before.version);
 				name = change.name?.trim() ?? before.name;

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { Tooltip } from 'bits-ui';
 	import { resolve } from '$app/paths';
 	import { SvelteSet } from 'svelte/reactivity';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
@@ -189,11 +190,19 @@
 		return `M ${e.x1} ${e.y1} C ${e.x1} ${midY}, ${e.x2} ${midY}, ${e.x2} ${e.y2}`;
 	}
 
+	let hasFitted = false;
+
 	$effect(() => {
-		void layout.nodes.length;
+		if (hasFitted || layout.nodes.length === 0) return;
+		let cancelled = false;
 		void tick().then(() => {
-			if (viewportEl && panX === 24 && panY === 24 && zoom === 1) fitView();
+			if (cancelled || !viewportEl || hasFitted) return;
+			hasFitted = true;
+			fitView();
 		});
+		return () => {
+			cancelled = true;
+		};
 	});
 </script>
 
@@ -357,39 +366,114 @@
 				</div>
 			{/if}
 
-			<div class="org-zoom-dock" role="group" aria-label="Canvas zoom controls">
-				<button
-					type="button"
-					onclick={() => {
-						zoom = 1;
-						fitView();
-					}}
-					aria-label="Reset view"
-					class="org-zoom-btn"
-				>
-					<Home class="size-3.5" aria-hidden="true" />
-				</button>
-				<button
-					type="button"
-					onclick={() => (zoom = clampZoom(zoom - 0.15))}
-					aria-label="Zoom out"
-					class="org-zoom-btn"
-				>
-					<Minus class="size-3.5" aria-hidden="true" />
-				</button>
-				<span class="org-zoom-pct tabular-nums">{Math.round(zoom * 100)}%</span>
-				<button
-					type="button"
-					onclick={() => (zoom = clampZoom(zoom + 0.15))}
-					aria-label="Zoom in"
-					class="org-zoom-btn"
-				>
-					<Plus class="size-3.5" aria-hidden="true" />
-				</button>
-				<button type="button" onclick={fitView} aria-label="Fit chart" class="org-zoom-btn">
-					<Maximize2 class="size-3.5" aria-hidden="true" />
-				</button>
-			</div>
+			<Tooltip.Provider delayDuration={150}>
+				<div class="org-zoom-dock" role="group" aria-label="Canvas zoom controls">
+					<Tooltip.Root>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<button
+									{...props}
+									type="button"
+									onclick={() => {
+										zoom = 1;
+										fitView();
+									}}
+									aria-label="Reset view"
+									class="org-zoom-btn"
+								>
+									<Home class="size-3.5" aria-hidden="true" />
+								</button>
+							{/snippet}
+						</Tooltip.Trigger>
+						<Tooltip.Portal>
+							<Tooltip.Content
+								role="tooltip"
+								side="top"
+								sideOffset={6}
+								class="z-[100] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
+							>
+								Reset view
+							</Tooltip.Content>
+						</Tooltip.Portal>
+					</Tooltip.Root>
+					<Tooltip.Root>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<button
+									{...props}
+									type="button"
+									onclick={() => (zoom = clampZoom(zoom - 0.15))}
+									aria-label="Zoom out"
+									class="org-zoom-btn"
+								>
+									<Minus class="size-3.5" aria-hidden="true" />
+								</button>
+							{/snippet}
+						</Tooltip.Trigger>
+						<Tooltip.Portal>
+							<Tooltip.Content
+								role="tooltip"
+								side="top"
+								sideOffset={6}
+								class="z-[100] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
+							>
+								Zoom out
+							</Tooltip.Content>
+						</Tooltip.Portal>
+					</Tooltip.Root>
+					<span class="org-zoom-pct tabular-nums">{Math.round(zoom * 100)}%</span>
+					<Tooltip.Root>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<button
+									{...props}
+									type="button"
+									onclick={() => (zoom = clampZoom(zoom + 0.15))}
+									aria-label="Zoom in"
+									class="org-zoom-btn"
+								>
+									<Plus class="size-3.5" aria-hidden="true" />
+								</button>
+							{/snippet}
+						</Tooltip.Trigger>
+						<Tooltip.Portal>
+							<Tooltip.Content
+								role="tooltip"
+								side="top"
+								sideOffset={6}
+								class="z-[100] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
+							>
+								Zoom in
+							</Tooltip.Content>
+						</Tooltip.Portal>
+					</Tooltip.Root>
+					<Tooltip.Root>
+						<Tooltip.Trigger>
+							{#snippet child({ props })}
+								<button
+									{...props}
+									type="button"
+									onclick={fitView}
+									aria-label="Fit chart"
+									class="org-zoom-btn"
+								>
+									<Maximize2 class="size-3.5" aria-hidden="true" />
+								</button>
+							{/snippet}
+						</Tooltip.Trigger>
+						<Tooltip.Portal>
+							<Tooltip.Content
+								role="tooltip"
+								side="top"
+								sideOffset={6}
+								class="z-[100] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
+							>
+								Fit chart
+							</Tooltip.Content>
+						</Tooltip.Portal>
+					</Tooltip.Root>
+				</div>
+			</Tooltip.Provider>
 		</div>
 
 		{#if inspectorOpen && selectedData}
@@ -404,14 +488,33 @@
 							<p class="truncate text-xs text-[var(--exec-muted)]">{selectedData.subtitle}</p>
 						</div>
 					</div>
-					<button
-						type="button"
-						onclick={() => (inspectorOpen = false)}
-						aria-label="Close inspector"
-						class="org-zoom-btn"
-					>
-						<X class="size-4" aria-hidden="true" />
-					</button>
+					<Tooltip.Provider delayDuration={150}>
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<button
+										{...props}
+										type="button"
+										onclick={() => (inspectorOpen = false)}
+										aria-label="Close inspector"
+										class="org-zoom-btn"
+									>
+										<X class="size-4" aria-hidden="true" />
+									</button>
+								{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Portal>
+								<Tooltip.Content
+									role="tooltip"
+									side="left"
+									sideOffset={6}
+									class="z-[100] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
+								>
+									Close inspector
+								</Tooltip.Content>
+							</Tooltip.Portal>
+						</Tooltip.Root>
+					</Tooltip.Provider>
 				</div>
 
 				<div class="org-insp-body">

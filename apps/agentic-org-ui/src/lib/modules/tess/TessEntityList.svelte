@@ -28,7 +28,7 @@
 
 	{#if metrics.length > 0}
 		<dl class="tess-metrics-grid">
-			{#each metrics as m (m.label)}
+			{#each metrics as m, idx (`${m.label}-${idx}`)}
 				<div class="tess-metric-cell">
 					<dt class="tess-metric-lbl">{m.label}</dt>
 					<dd class={['tess-metric-val tabular-nums', m.tone && `tone-${m.tone}`]}>{m.value}</dd>

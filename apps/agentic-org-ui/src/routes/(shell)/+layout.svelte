@@ -6,7 +6,8 @@
 	import { provideNotifications } from '$lib/platform/shell/notifications.svelte';
 	import HomeScrollHint from '$lib/modules/home/features/HomeScrollHint.svelte';
 	import TessPanel from '$lib/modules/tess/TessPanel.svelte';
-	import { provideTessPanel } from '$lib/modules/tess/tess-panel.svelte';
+	import { createHttpTessApi } from '$lib/modules/tess/api';
+	import { provideTessPanel, TessPanelState } from '$lib/modules/tess/tess-panel.svelte';
 	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import LiveBanner from '$lib/components/LiveBanner.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
@@ -42,7 +43,20 @@
 	$effect.pre(() => chatDrafts.syncScope());
 	onDestroy(() => chatDrafts.dispose());
 
-	const tessPanel = provideTessPanel();
+	const tessPanel = provideTessPanel(
+		new TessPanelState(
+			createHttpTessApi({
+				session: {
+					submit: (path, body, signal) => appSession.controller().submit(path, body, signal),
+					openSseStream: (path, signal) => appSession.controller().openSseStream(path, signal)
+				}
+			})
+		)
+	);
+	$effect(() => {
+		tessPanel.setOrganization(organizationId);
+	});
+	onDestroy(() => tessPanel.dispose());
 	provideNotifications();
 	let shortcutsOpen = $state(false);
 	let commandBar = $state<ReturnType<typeof ExecutiveCommandBar> | undefined>();
