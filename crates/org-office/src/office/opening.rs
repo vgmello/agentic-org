@@ -333,6 +333,10 @@ impl Office {
             _test_root: None,
         };
         register_startup_journal_consumers(&office)?;
+        // An organization created before the built-in Chief of Staff existed gets her once, at
+        // the HQ (`TASK-80.1`). Best effort: a failure leaves the organization as it was, and
+        // the next open tries again.
+        let _ = office.ensure_chief_of_staff();
         Ok(office)
     }
 

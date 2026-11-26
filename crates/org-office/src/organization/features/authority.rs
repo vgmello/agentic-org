@@ -12,7 +12,9 @@ use super::{
 };
 use crate::organization::{
     ports::OrganizationRead,
-    records::{By, Employee, EmployeeKind, EmployeeStatus, OfficeRole, Organization, Team},
+    records::{
+        BuiltinKey, By, Employee, EmployeeKind, EmployeeStatus, OfficeRole, Organization, Team,
+    },
 };
 
 /// Exact ADR-0029 decision 3 refusal text for callers who may not hire.
@@ -72,10 +74,24 @@ pub(crate) fn is_owner(owner: &Id, actor: &Employee) -> bool {
         && actor.status == EmployeeStatus::Active
 }
 
+/// Whether `actor` is the active built-in Chief of Staff holding hiring power: the one agent
+/// whose `may_hire` reaches every team of the organization (`TASK-80.1`, `ADR-0029`). With
+/// `may_hire` revoked by the owner she hires nowhere.
+pub fn is_hiring_chief_of_staff(actor: &Employee) -> bool {
+    actor.builtin_key == Some(BuiltinKey::ChiefOfStaff)
+        && actor.kind == EmployeeKind::Agent
+        && actor.status == EmployeeStatus::Active
+        && actor.may_hire
+}
+
 /// Whether `actor` may hire into `team_id` (ADR-0029 decision 2):
 /// - the organization owner into any team, OR
+/// - the built-in Chief of Staff with `may_hire == true` into any active team of the
+///   organization ([`is_hiring_chief_of_staff`]), OR
 /// - an active employee (person or agent) with `may_hire == true` who leads `team_id` or an
 ///   ancestor team above `team_id`.
+///
+/// Every hire still runs the normal flow's provisioning, `max_members` and active-team checks.
 pub fn may_hire_into(
     view: &impl OrganizationRead,
     owner: &Id,
@@ -87,6 +103,9 @@ pub fn may_hire_into(
     }
     if actor.status != EmployeeStatus::Active || !actor.may_hire {
         return Ok(false);
+    }
+    if is_hiring_chief_of_staff(actor) {
+        return Ok(view.team(team_id)?.is_some_and(|team| team.is_active()));
     }
     let Some(chain) = view.team_chain(team_id)? else {
         return Ok(false);
@@ -115,6 +134,9 @@ pub fn may_hire_anywhere(
         return Ok(false);
     }
     let teams = view.teams()?;
+    if is_hiring_chief_of_staff(actor) {
+        return Ok(teams.iter().any(Team::is_active));
+    }
     Ok(teams
         .iter()
         .any(|t| t.is_active() && t.lead_employee_id.as_ref() == Some(&actor.id)))
@@ -168,7 +190,9 @@ pub fn is_person_above_employee(
     is_person_ancestor_lead(view, actor, &target.home_team_id, !target_is_own_lead)
 }
 
-/// Active member count of `team_id` (every non-inactive employee, people and agents).
+/// Active member count of `team_id` (every non-inactive employee, people and agents), less
+/// the built-in Chief of Staff: she was added to every organization after its teams were sized
+/// (`TASK-80.1`), so she never takes a slot a team's `max_members` was set for.
 pub fn team_active_member_count(
     view: &impl OrganizationRead,
     team_id: &Id,
@@ -177,6 +201,7 @@ pub fn team_active_member_count(
         .employees()?
         .iter()
         .filter(|e| e.home_team_id == *team_id && e.status != EmployeeStatus::Inactive)
+        .filter(|e| e.builtin_key != Some(BuiltinKey::ChiefOfStaff))
         .count();
     Ok(count as u64)
 }

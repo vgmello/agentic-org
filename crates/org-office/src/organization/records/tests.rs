@@ -278,12 +278,33 @@ fn a_team_takes_at_least_one_member_and_builtin_key_is_the_hr_agents_alone() {
     };
     let only = (
         "builtin_key".to_owned(),
-        "only an agent without may_hire".to_owned(),
+        "only an agent, and the HR lead without may_hire".to_owned(),
     );
     assert_eq!(refused("kind", "kind: \"person\"\n"), only);
     assert_eq!(refused("may_hire", "may_hire: true\n"), only);
     let other = refused("builtin_key", "builtin_key: \"ceo\"\n");
     assert_eq!(other.0, "builtin_key");
+
+    // The Chief of Staff is an agent that may hold may_hire, on or off; never a person.
+    for may_hire in [true, false] {
+        let tess = Employee {
+            kind: EmployeeKind::Agent,
+            may_hire,
+            builtin_key: Some(BuiltinKey::ChiefOfStaff),
+            ..employee()
+        };
+        let bytes = encode_employee(&tess);
+        assert!(String::from_utf8_lossy(&bytes).contains("builtin_key: \"chief_of_staff\""));
+        assert_eq!(decode_employee(&bytes), Ok(tess));
+        let error = decode_employee(&with_line(&bytes, "kind", "kind: \"person\"\n")).unwrap_err();
+        assert_eq!((error.field, error.reason), only.clone());
+    }
+    for text in ["Chief_Of_Staff", "chief-of-staff", "chief_of_staff ", ""] {
+        assert_eq!(BuiltinKey::parse(text), None, "{text:?}");
+    }
+    for key in BuiltinKey::ALL {
+        assert_eq!(BuiltinKey::parse(key.as_str()), Some(key));
+    }
 }
 
 #[test]

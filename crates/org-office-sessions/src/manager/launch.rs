@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-use org_office::organization_family::records::Employee;
+use org_office::organization_family::records::{Employee, PermissionPreset};
 use org_proto::sessions::{MemberSessionStartParams, SessionState, SessionView};
 use org_proto::{ApiError, ErrorCode};
 use org_supervise::SessionMark;
@@ -16,7 +16,8 @@ use crate::subagents::{build_general_subagent_definition, write_subagent_definit
 
 use super::bwrap_isolation::has_unmasked_bwrap_sibling_in_office;
 use super::environment::{
-    assemble_launch_env, resolve_workspace, write_owner_only_binding_file, SessionEnvInput,
+    assemble_launch_env, ensure_operator_home, resolve_workspace, write_owner_only_binding_file,
+    SessionEnvInput,
 };
 use super::registry_guards::{
     check_registry_startable, ensure_live_handle_not_recovery_required, ensure_not_stopped_since,
@@ -283,6 +284,7 @@ impl SessionManager {
             .ensure_private_home(&emp_id)
             .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not prepare agent home"))?;
         let workspace_real = resolve_workspace(&home, params.workspace.as_deref())?;
+        ensure_operator_home(employee, &home, &workspace_real)?;
         let workspace_spec = canonical_or_spec(&workspace_real)?;
 
         let admitted = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
@@ -318,7 +320,7 @@ impl SessionManager {
 
         let preset_cfg = self.build_employee_preset_cfg(
             &emp_id,
-            admitted.preset,
+            PermissionPreset::effective_for(employee.builtin_key, admitted.preset),
             admitted.sandbox_enabled,
             &workspace_spec,
             true,

@@ -1,0 +1,119 @@
+//! The built-in Chief of Staff (Tess, `TASK-80.1`) at the office: the idempotent bootstrap
+//! the HQ runs when it opens, and the live authority of the member she acts for, which the
+//! server intersects with hers on every call she makes while acting for them (`caller ∩ tess`).
+
+use org_store::{Actor, Id, Outcome, StoreError};
+
+use super::{storage, Office};
+use crate::error::OfficeError;
+use crate::organization::{
+    chief_of_staff::ensure_operation_id,
+    features::{authority, ChiefOfStaffEnsured, EnsureChiefOfStaff},
+    records::{BuiltinKey, Employee, EmployeeKind, EmployeeStatus},
+};
+use crate::store::open::{ReadOp, StructureOp};
+use crate::tasks::ports::TasksRead;
+
+/// What the member Tess acts for may do right now, read live from the organization on every
+/// call (never cached in the session): an offboarded, deactivated or demoted caller narrows
+/// her at once.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct CallerAuthority {
+    /// The caller is an employee of the organization and active.
+    pub active: bool,
+    /// The caller is a person (members ask Tess; agents never act through her).
+    pub is_person: bool,
+    /// The caller is the organization's live owner.
+    pub is_owner: bool,
+    /// The caller may hire into at least one team (`ADR-0029`).
+    pub may_hire: bool,
+}
+
+/// Reads [`CallerAuthority`] for `caller` against `owner`.
+struct ReadCallerAuthority {
+    owner: Id,
+    caller: Id,
+}
+
+impl ReadOp for ReadCallerAuthority {
+    type Out = CallerAuthority;
+
+    fn read<S: TasksRead>(self, read: &S) -> Result<CallerAuthority, StoreError> {
+        let Some(caller) = read.employee(&self.caller)? else {
+            return Ok(CallerAuthority::default());
+        };
+        let owner = crate::organization::owner::effective_owner_id(read, &self.owner)?;
+        let active = caller.status == EmployeeStatus::Active;
+        Ok(CallerAuthority {
+            active,
+            is_person: caller.kind == EmployeeKind::Person,
+            is_owner: active && authority::is_owner(&owner, &caller),
+            may_hire: active && authority::may_hire_anywhere(read, &owner, &caller)?,
+        })
+    }
+}
+
+impl Office {
+    /// The organization's built-in Chief of Staff, if she is on record.
+    pub fn chief_of_staff(&self) -> Result<Option<Employee>, OfficeError> {
+        Ok(self
+            .list_employees()?
+            .into_iter()
+            .find(|e| e.builtin_key == Some(BuiltinKey::ChiefOfStaff)))
+    }
+
+    /// Whether `employee_id` is the organization's built-in Chief of Staff.
+    pub fn is_chief_of_staff(&self, employee_id: &str) -> bool {
+        self.load_employee(employee_id)
+            .ok()
+            .flatten()
+            .is_some_and(|e| e.builtin_key == Some(BuiltinKey::ChiefOfStaff))
+    }
+
+    /// Provisions the Chief of Staff in an organization created before she existed, as the
+    /// system: answers `Ok(None)` when she is already on record (the usual case, including
+    /// after a projection is deleted and rebuilt from the durable files) or this office is not
+    /// the HQ, and who she now is otherwise. The operation's ID is derived from the
+    /// organization, so a retry after a crash is answered from its receipt.
+    pub fn ensure_chief_of_staff(&self) -> Result<Option<ChiefOfStaffEnsured>, OfficeError> {
+        if self.info.role != crate::model::OfficeRole::Hq || self.chief_of_staff()?.is_some() {
+            return Ok(None);
+        }
+        let organization = Id::parse(&self.info.org_id)
+            .map_err(|_| OfficeError::Invalid("organization id is not a UUIDv7"))?;
+        let op = StructureOp {
+            operation_id: ensure_operation_id(&organization),
+            here: self.identity.clone(),
+            owner: self.effective_owner_for_ops(),
+            by: Actor::System,
+            command: EnsureChiefOfStaff::default(),
+        };
+        let reply = match self.store.run(op) {
+            Ok(reply) => reply,
+            // Refused before admission (no organization yet, not HQ): nothing to provision.
+            Err(StoreError::Invalid(_)) => return Ok(None),
+            Err(err) => return Err(storage(err)),
+        };
+        if reply.outcome != Outcome::Completed {
+            // A recorded refusal: she appeared meanwhile, or the organization has no team
+            // to place her in. Nothing was written.
+            return Ok(None);
+        }
+        serde_json::from_slice(&reply.bytes)
+            .map(Some)
+            .map_err(|_| OfficeError::Invalid("unreadable Chief of Staff bootstrap reply"))
+    }
+
+    /// The live authority of `caller_id`, the member the Chief of Staff acts for. An unknown
+    /// or malformed ID has no authority at all.
+    pub fn caller_authority(&self, caller_id: &str) -> Result<CallerAuthority, OfficeError> {
+        let Ok(caller) = Id::parse(caller_id) else {
+            return Ok(CallerAuthority::default());
+        };
+        let op = ReadCallerAuthority {
+            owner: self.effective_owner_for_ops(),
+            caller,
+        };
+        Ok(self.store.read(op).map_err(storage)?.0)
+    }
+}

@@ -54,6 +54,11 @@ pub struct ActiveRunBinding {
     pub session_id: String,
     pub mode: BindingMode,
     pub accepted_commands: Vec<AcceptedCommandRecord>,
+    /// The member a Chief of Staff run acts for (`TASK-80.1`): set by the office alone, from
+    /// the verified caller that started the run (never from a flag or an RPC parameter), and
+    /// kept in RAM only. The server intersects that member's live authority with the run's on
+    /// every call ([`RunBindingRegistry::acting_for_caller_id`]). `None` for every other run.
+    pub acting_for_caller_id: Option<String>,
 }
 
 impl fmt::Debug for ActiveRunBinding {
@@ -65,6 +70,7 @@ impl fmt::Debug for ActiveRunBinding {
             .field("session_id", &self.session_id)
             .field("mode", &self.mode)
             .field("accepted_commands_len", &self.accepted_commands.len())
+            .field("acting_for_caller_id", &self.acting_for_caller_id)
             .finish()
     }
 }
@@ -106,6 +112,8 @@ pub enum BindingRejection {
 pub struct RunBindingRegistry {
     inner: Arc<Mutex<HashMap<String, ActiveRunBinding>>>,
     external: Arc<Mutex<HashMap<String, ActiveRunBinding>>>,
+    /// The caller the next managed run of an employee acts for, taken by [`Self::issue`].
+    delegations: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl RunBindingRegistry {
@@ -138,17 +146,45 @@ impl RunBindingRegistry {
         root_pid: libc::pid_t,
     ) -> Result<ActiveRunBinding, String> {
         let token = Self::mint_token()?;
+        let employee_id = employee_id.into();
+        // The delegation is taken atomically with the issue: the run acts for its caller from
+        // its first call, and a later run without one acts for nobody.
+        let acting_for_caller_id = self
+            .delegations
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&employee_id);
         let binding = ActiveRunBinding {
             token,
-            employee_id: employee_id.into(),
+            employee_id,
             run_id: run_id.into(),
             session_id: session_id.into(),
             mode: BindingMode::Managed { root_pid },
             accepted_commands: Vec::new(),
+            acting_for_caller_id,
         };
         let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         map.insert(binding.employee_id.clone(), binding.clone());
         Ok(binding)
+    }
+
+    /// Names the member the **next** managed run of `employee_id` acts for (`None`: nobody),
+    /// replacing any earlier delegation not yet taken. Only the office's session manager calls
+    /// it, with the verified caller of the run it is about to start.
+    pub fn delegate_next_run(&self, employee_id: &str, caller_id: Option<&str>) {
+        let mut map = self.delegations.lock().unwrap_or_else(|p| p.into_inner());
+        match caller_id {
+            Some(caller) => map.insert(employee_id.to_owned(), caller.to_owned()),
+            None => map.remove(employee_id),
+        };
+    }
+
+    /// The member `employee_id`'s live managed run acts for, if it holds a live binding that
+    /// acts for one (`caller ∩ tess`, `TASK-80.1`).
+    pub fn acting_for_caller_id(&self, employee_id: &str) -> Option<String> {
+        let map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        map.get(employee_id)
+            .and_then(|binding| binding.acting_for_caller_id.clone())
     }
 
     /// Updates the `root_pid` of an issued binding right after the child spawns.

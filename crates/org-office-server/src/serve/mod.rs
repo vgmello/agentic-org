@@ -13,6 +13,7 @@ mod auth;
 mod auth_limits;
 mod binding;
 mod connection;
+mod delegation;
 mod dispatch;
 mod external;
 mod held;
@@ -42,6 +43,7 @@ use org_work::{Caller, WorkCall};
 
 use self::dispatch::answer;
 
+pub use self::delegation::Delegation;
 #[cfg(test)]
 pub(crate) use self::external::close_after_approval;
 pub use self::external::ExternalAuthPort;
@@ -133,6 +135,10 @@ pub type RunBindingVerifyFn =
 /// Checks whether a bound managed agent still has an active run binding on this office.
 pub type RunBindingActiveFn = Box<dyn Fn(&str) -> bool + Send + Sync>;
 
+/// Who a bound member's run acts for, when the member is the built-in Chief of Staff
+/// (`caller ∩ tess`, `TASK-80.1`); `None` for every other member.
+pub type DelegationFn = Box<dyn Fn(&str) -> Option<Delegation> + Send + Sync>;
+
 /// Records an accepted `agent-os` command for a bound managed run (`ADR-0030` decision 8).
 pub type RecordCommandFn = Box<dyn Fn(&str, &str) + Send + Sync>;
 
@@ -179,6 +185,9 @@ pub struct OfficePorts {
     pub sessions: Option<SessionsFn>,
     pub run_binding_verify: Option<RunBindingVerifyFn>,
     pub run_binding_active: Option<RunBindingActiveFn>,
+    /// The Chief of Staff's delegation, intersected with her own authority on every call she
+    /// makes (`TASK-80.1`). `None`: no member is gated.
+    pub delegation: Option<DelegationFn>,
     /// External (BYOA) agent sign-in, leases and fast tokens (`TASK-137`). `None`: `auth.*`
     /// answers `unsupported` and only managed runs bind.
     pub external_auth: Option<Arc<dyn ExternalAuthPort>>,

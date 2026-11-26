@@ -1,9 +1,9 @@
 //! Creating the organization: the first entry of its acceptance journal (document 01,
 //! "Creating an organization"). One operation writes the organization, its repository
 //! registration, the HQ office and its code, one top-level team named after the
-//! organization, the creator's person record as that team's lead, the built-in HR lead,
-//! and the team's number with its counter and allocation. Every record is attributed to
-//! the creator.
+//! organization, the creator's person record as that team's lead, the built-in HR lead, the
+//! built-in Chief of Staff (Tess, `TASK-80.1`) reporting to the owner, and the team's
+//! number with its counter and allocation. Every record is attributed to the creator.
 
 use org_store::{
     Actor, Change, Engine, Id, OfficeIdentity, Operation, Refusal, Stream, UnitOfWork,
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{invalid, operation, reply, require, Op};
 use crate::organization::{
+    chief_of_staff::{self, chief_of_staff_record},
     ports::OrganizationRead,
     records::{
         self, BuiltinKey, By, Employee, EmployeeKind, EmployeeStatus, Meta, Office, OfficeCode,
@@ -219,6 +220,7 @@ where
             HR_BODY,
         )
     };
+    let tess = chief_of_staff_at_creation(command, &team.id, &meta)?;
     let counter = TeamCounter {
         organization_id: organization.id.clone(),
         last_number: team.number,
@@ -259,6 +261,7 @@ where
         .put(records::team_path(&chain)?, records::encode_team(&team))
         .put(profile(&creator)?, records::encode_employee(&creator))
         .put(profile(&hr)?, records::encode_employee(&hr))
+        .put(profile(&tess)?, records::encode_employee(&tess))
         .put(
             records::team_counter_path(&organization.id),
             records::encode_team_counter(&counter),
@@ -268,4 +271,37 @@ where
             records::encode_team_allocation(&allocation),
         )
         .reply(reply(&created)))
+}
+
+/// The built-in Chief of Staff of a new organization: the ID its organization derives, the
+/// first of her handles the creator and the HR lead don't hold, in the top-level team,
+/// reporting to the owner. Her ID can't be one the command names: it is derived
+/// from the organization ID, and the next derivation is taken in the unlikely case it is.
+fn chief_of_staff_at_creation(
+    command: &CreateOrganization,
+    team: &Id,
+    meta: &Meta,
+) -> Result<Employee, Refusal> {
+    let named = [
+        &command.organization_id,
+        &command.office_id,
+        &command.repository_id,
+        &command.team_id,
+        &command.creator.employee_id,
+        &command.hr_employee_id,
+    ];
+    let id = (0..=u8::MAX)
+        .map(|attempt| chief_of_staff::chief_of_staff_id(&command.organization_id, attempt))
+        .find(|id| !named.contains(&id));
+    let Some(id) = id else {
+        return invalid("no ID is free for the Chief of Staff");
+    };
+    let taken = [command.creator.handle.as_str(), HR_HANDLE];
+    let handle = chief_of_staff::free_handle::<()>(|h| Ok(taken.contains(&h)))
+        .ok()
+        .flatten();
+    let Some(handle) = handle else {
+        return invalid("no handle is free for the Chief of Staff");
+    };
+    Ok(chief_of_staff_record(id, handle, team, meta.clone()))
 }

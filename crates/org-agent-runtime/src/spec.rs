@@ -14,8 +14,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AgentName, Capabilities, EnvName, McpServerName, PathPattern, PlainId, RuntimeId, SessionId,
-    SpecPath, Token, ToolName,
+    AgentName, Capabilities, CommandPrefix, EnvName, McpServerName, PathPattern, PlainId,
+    RuntimeId, SessionId, SpecPath, Token, ToolName,
 };
 
 use canonical::{fnv1a_64, write_canonical};
@@ -107,6 +107,19 @@ pub struct SessionSpec {
     /// decode as "every tool".
     #[serde(deserialize_with = "present")]
     pub tools: Option<Vec<ToolName>>,
+    /// The command prefixes an **operator session**'s shell is confined to (the
+    /// `OperatorSandboxed` preset of the built-in Chief of Staff, `TASK-80.1`): the agent's
+    /// shell runs commands starting with one of them (`agent-os`) and nothing else, from a
+    /// repo-less private home, in a sandbox with no writable root and no MCP server. Empty
+    /// (the default) for every other session.
+    ///
+    /// A request an adapter must honour or refuse, never drop: each one checks the spec with
+    /// [`crate::validate_operator_shell`] before it plans, and a runtime whose shell can't be
+    /// confined to the prefixes (Codex's has no approval bridge for commands) confines it
+    /// natively or keeps the shell off. Added after v1, so optional: absent when empty, which
+    /// keeps every existing spec's [`canonical_json`](Self::canonical_json) and hash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operator_shell_prefixes: Vec<CommandPrefix>,
 }
 
 impl SessionSpec {

@@ -1,4 +1,5 @@
 mod effort;
+mod operator;
 mod paths;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -6,8 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use org_agent_runtime::{
     runtime_env_add, static_env_names, validate_plan_paths, validate_standard_session_kind,
     Capabilities, EnvName, FileLocation, LaunchContext, LaunchPlan, PermissionMode, PlanError,
-    PlannedFile, RelPath, RuleScope, SessionId, SessionKind, SessionSpec, SignalTarget, Stdio,
-    StopPlan, StopSignal, StopStep, ToolCapability,
+    PlannedDir, PlannedFile, RelPath, RuleScope, SessionId, SessionKind, SessionSpec, SignalTarget,
+    Stdio, StopPlan, StopSignal, StopStep, ToolCapability,
 };
 
 use self::effort::codex_reasoning_effort;
@@ -62,6 +63,10 @@ fn allows_unscoped_shell(spec: &SessionSpec) -> bool {
 }
 
 fn disables_shell_tool(spec: &SessionSpec) -> bool {
+    // An operator session's shell is on, confined natively (`operator`, `TASK-80.1`).
+    if operator::confines_shell(spec) {
+        return false;
+    }
     let disallowed_by_tools = spec.tools.as_ref().is_some_and(|tools| {
         !tools.iter().any(|t| {
             let s = t.as_str();
@@ -131,6 +136,7 @@ pub(crate) fn build_headless_plan(
     validate_deny_rules(spec)?;
     validate_tool_allowlist(spec)?;
     let sandbox_mode = effective_codex_sandbox_mode(spec, caps)?;
+    let operator = operator::check(spec, sandbox_mode)?;
     let uses_office_profile = spec.sandbox.enabled;
     let writable_roots = if sandbox_mode == "read-only" {
         Vec::new()
@@ -151,8 +157,7 @@ pub(crate) fn build_headless_plan(
         args.push(format!("sandbox_mode=\"{sandbox_mode}\""));
     }
     append_config_overrides(&mut args, spec, ctx, sandbox_mode, &writable_roots)?;
-
-    let mut files = Vec::new();
+    let (dirs, mut files) = operator_layer(&mut args, spec, operator);
     let combined_instructions = spec.standing_prompt();
     if !combined_instructions.is_empty() {
         files.push(PlannedFile {
@@ -179,7 +184,7 @@ pub(crate) fn build_headless_plan(
         args,
         cwd: spec.workspace.clone(),
         env_add: runtime_env_add(ENV_ADD, CONFIG_DIR_ENV, ctx),
-        dirs: Vec::new(),
+        dirs,
         files,
         stdio: Stdio::Piped,
         runtime_session_id: ctx.resume.clone(),
@@ -222,6 +227,7 @@ pub(crate) fn build_take_over_plan(
         ));
     };
     let sandbox_mode = effective_codex_sandbox_mode(spec, caps)?;
+    let operator = operator::check(spec, sandbox_mode)?;
     let uses_office_profile = spec.sandbox.enabled;
     let writable_roots = if sandbox_mode == "read-only" {
         Vec::new()
@@ -240,14 +246,15 @@ pub(crate) fn build_take_over_plan(
         args.push(format!("sandbox_mode=\"{sandbox_mode}\""));
     }
     append_config_overrides(&mut args, spec, ctx, sandbox_mode, &writable_roots)?;
+    let (dirs, files) = operator_layer(&mut args, spec, operator);
 
     Ok(LaunchPlan {
         program: ctx.runtime_path.clone(),
         args,
         cwd: spec.workspace.clone(),
         env_add: runtime_env_add(ENV_ADD, CONFIG_DIR_ENV, ctx),
-        dirs: Vec::new(),
-        files: Vec::new(),
+        dirs,
+        files,
         stdio: Stdio::Pty { cols, rows },
         runtime_session_id: Some(resume_id),
         stop: StopPlan {
@@ -261,6 +268,21 @@ pub(crate) fn build_take_over_plan(
         secret_env_names: secret_env_names(),
         auth_env_names: auth_env_names(),
     })
+}
+
+/// An operator session's project layer (its execpolicy) and the override that trusts it;
+/// nothing for any other session.
+fn operator_layer(
+    args: &mut Vec<String>,
+    spec: &SessionSpec,
+    operator: bool,
+) -> (Vec<PlannedDir>, Vec<PlannedFile>) {
+    if !operator {
+        return (Vec::new(), Vec::new());
+    }
+    args.push("-c".to_owned());
+    args.push(operator::trust_override(spec));
+    operator::layer(spec)
 }
 
 fn validate_deny_rules(spec: &SessionSpec) -> Result<(), PlanError> {

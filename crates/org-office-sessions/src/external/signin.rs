@@ -57,6 +57,16 @@ impl SessionManager {
         }
         let label = workspace_label(&params.workspace_label)?;
         let employee = self.require_active_agent(employee_id)?;
+        // The Chief of Staff runs only in the office's operator sandbox: an external workspace
+        // would run her outside it (`TASK-80.1`).
+        if employee.builtin_key
+            == Some(org_office::organization_family::records::BuiltinKey::ChiefOfStaff)
+        {
+            return Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "the Chief of Staff runs only inside the office",
+            ));
+        }
         let emp_id = employee.id.as_str();
         let (entry, code) = self
             .external

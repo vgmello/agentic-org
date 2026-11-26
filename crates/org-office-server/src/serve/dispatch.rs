@@ -71,6 +71,10 @@ fn answer_with_peer(
     binding: &mut Binding,
     peer_pid: Option<libc::pid_t>,
 ) -> Response {
+    // The Chief of Staff's `caller ∩ tess` gate, before any method runs (`TASK-80.1`).
+    if let Some(refused) = super::delegation::refusal(request, shared, binding) {
+        return refused;
+    }
     if let Some(response) = answer_operator(request, shared, binding) {
         return response;
     }

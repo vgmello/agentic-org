@@ -43,6 +43,7 @@ use crate::wake::{
 mod agent_os_sandbox_tests;
 mod auth_guards;
 mod bwrap_isolation;
+mod chief_of_staff;
 mod environment;
 mod failover;
 #[cfg(test)]
@@ -382,6 +383,8 @@ pub struct SessionManager {
     pub(crate) config: SessionManagerConfig,
     pub(crate) store: SessionStore,
     pub(crate) bindings: RunBindingRegistry,
+    /// The Chief of Staff's per-caller partitions (`TASK-80.1`).
+    pub(crate) partitions: crate::partition::PartitionLedger,
     /// External (BYOA) pending logins, nonces and the lease cache (`TASK-137`).
     pub(crate) external: crate::external::ExternalAuthState,
     enrollment: EnrollmentManager,
@@ -427,6 +430,7 @@ impl SessionManager {
             config,
             store,
             bindings: RunBindingRegistry::new(),
+            partitions: crate::partition::PartitionLedger::new(),
             external: crate::external::ExternalAuthState::default(),
             enrollment,
             registry: Arc::new(Mutex::new(SessionRegistry::default())),

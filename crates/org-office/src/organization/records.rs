@@ -93,25 +93,54 @@ text_enum!(
     /// One field of state: `paused` is for agents only.
     EmployeeStatus { Active => "active", Paused => "paused", Inactive => "inactive" }
 );
-/// What makes an employee part of the product (document 04): `hr` is the built-in HR
-/// lead, one agent per organization, never with hiring power.
+/// What makes an employee part of the product (document 04), one agent per organization
+/// for each key:
+///
+/// - `hr`: the built-in HR lead, never with hiring power.
+/// - `chief_of_staff`: the built-in Chief of Staff (Tess, `TASK-80.1`), the owner's operator
+///   agent. She may hold hiring power, which the owner turns off and on; with it she hires
+///   into any team (`ADR-0029`), and she is never offboarded while the organization exists.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum BuiltinKey {
     Hr,
+    ChiefOfStaff,
 }
 
 impl BuiltinKey {
+    /// Every key, in the order the data contract lists them.
+    pub const ALL: [Self; 2] = [Self::Hr, Self::ChiefOfStaff];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             BuiltinKey::Hr => "hr",
+            BuiltinKey::ChiefOfStaff => "chief_of_staff",
+        }
+    }
+
+    /// The key `text` names exactly, or `None`.
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|key| key.as_str() == text)
+    }
+
+    /// Whether an employee with this key may hold `may_hire` (the HR lead never does).
+    pub const fn may_hold_hiring(self) -> bool {
+        matches!(self, BuiltinKey::ChiefOfStaff)
+    }
+
+    /// How a refusal names the built-in employee with this key.
+    pub const fn described(self) -> &'static str {
+        match self {
+            BuiltinKey::Hr => "the built-in HR lead",
+            BuiltinKey::ChiefOfStaff => "the built-in Chief of Staff",
         }
     }
 
     fn read_optional(reader: &mut Reader, key: &str) -> Result<Option<Self>, RecordError> {
         match reader.optional_text(key)?.as_deref() {
             None => Ok(None),
-            Some("hr") => Ok(Some(BuiltinKey::Hr)),
-            Some(_) => Err(reader.error(key, "not one of: hr")),
+            Some(text) => Self::parse(text)
+                .map(Some)
+                .ok_or_else(|| reader.error(key, "not one of: hr chief_of_staff")),
         }
     }
 }

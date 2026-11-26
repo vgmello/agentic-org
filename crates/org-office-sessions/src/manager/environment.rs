@@ -31,10 +31,14 @@ impl SessionManager {
         let exec = self.office.load_agent_execution(employee_id).map_err(|_| {
             ApiError::new(ErrorCode::StorageError, "could not read execution config")
         })?;
-        Ok(match exec {
-            Some(cfg) => (cfg.permission_preset, true),
-            None => (PermissionPreset::SafeAsk, true),
-        })
+        let stored = exec.map_or(PermissionPreset::SafeAsk, |cfg| cfg.permission_preset);
+        let builtin_key = self
+            .office
+            .load_employee(employee_id)
+            .ok()
+            .flatten()
+            .and_then(|employee| employee.builtin_key);
+        Ok((PermissionPreset::effective_for(builtin_key, stored), true))
     }
 
     pub(super) fn prepare_run_dirs(
@@ -95,8 +99,14 @@ impl SessionManager {
             .ok()
             .flatten()
             .map(|cfg| cfg.system_prompt_markdown);
+        // The Chief of Staff's profile body is her charter for people to read; her duties are
+        // her guidance (Part 5), so the charter never reaches her prompt (`TASK-80.1`).
+        let profile_body = match employee.builtin_key {
+            Some(BuiltinKey::ChiefOfStaff) => "",
+            _ => employee.body.as_str(),
+        };
         let combined_agent_instructions =
-            combine_agent_instructions(&employee.body, exec_prompt.as_deref());
+            combine_agent_instructions(profile_body, exec_prompt.as_deref());
         let placement = self.placement_of(employee);
         let table = crate::instructions::command_table_or_empty(self.config.command_catalogue);
         let input = InstructionInput {
@@ -113,6 +123,7 @@ impl SessionManager {
             agent_instructions: &combined_agent_instructions,
             repository_instructions: None,
             is_hr_lead: employee.builtin_key == Some(BuiltinKey::Hr),
+            is_chief_of_staff: employee.builtin_key == Some(BuiltinKey::ChiefOfStaff),
             private_home: &home.display().to_string(),
             workspace: &workspace.display().to_string(),
             permission_preset: preset_cfg.preset.as_str(),
@@ -311,6 +322,27 @@ impl SessionManager {
             .and_then(|env| env.with_context(&context))
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "could not build session env"))
     }
+}
+
+/// The built-in Chief of Staff works from her empty, repo-less private home and nowhere else
+/// (`OperatorSandboxed`, `TASK-80.1`): a session of hers that names another workspace (a
+/// repository, a worktree) is refused before anything is planned.
+pub(super) fn ensure_operator_home(
+    employee: &Employee,
+    home: &Path,
+    workspace: &Path,
+) -> Result<(), ApiError> {
+    if employee.builtin_key != Some(BuiltinKey::ChiefOfStaff) {
+        return Ok(());
+    }
+    let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    if workspace != home {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "the Chief of Staff works only from her private home",
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn resolve_workspace(home: &Path, explicit: Option<&str>) -> Result<PathBuf, ApiError> {

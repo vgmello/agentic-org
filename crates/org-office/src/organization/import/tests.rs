@@ -95,9 +95,15 @@ fn validate_state_dir_accepts_valid_org_and_names_invalid_or_unknown_files() {
     assert_eq!(imported.summary.name, office.info().org_name);
     assert_eq!(imported.summary.teams_count, 1);
     assert_eq!(imported.summary.people.len(), 1);
-    assert_eq!(imported.summary.agents_count, 1);
+    // The HR lead and the Chief of Staff (`TASK-80.1`).
+    assert_eq!(imported.summary.agents_count, 2);
     assert!(imported.summary.has_active_root_team);
     assert!(imported.summary.reserved_handles.iter().any(|h| h == "hr"));
+    assert!(imported
+        .summary
+        .reserved_handles
+        .iter()
+        .any(|h| h == "tess"));
     assert!(!imported.local_only_not_restored.is_empty());
 
     // Copy to a scratch tree and inject an unrecognized file -> refused naming the exact path.

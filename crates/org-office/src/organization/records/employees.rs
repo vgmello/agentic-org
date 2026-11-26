@@ -32,7 +32,7 @@ pub struct Employee {
     pub offboarded_at: Option<String>,
     /// Hiring power: on for a person's new record, off for an agent's.
     pub may_hire: bool,
-    /// Set only on the built-in HR lead.
+    /// Set only on a built-in employee: the HR lead or the Chief of Staff.
     pub builtin_key: Option<BuiltinKey>,
     pub meta: Meta,
     /// The Markdown after the front matter.
@@ -99,10 +99,12 @@ pub fn decode_employee(bytes: &[u8]) -> Result<Employee, RecordError> {
         builtin_key: BuiltinKey::read_optional(&mut reader, "builtin_key")?,
         body,
     };
-    let builtin_ok =
-        record.builtin_key.is_none() || (record.kind == EmployeeKind::Agent && !record.may_hire);
+    let builtin_ok = record.builtin_key.is_none_or(|key| {
+        record.kind == EmployeeKind::Agent && (key.may_hold_hiring() || !record.may_hire)
+    });
     if !builtin_ok {
-        return Err(reader.error("builtin_key", "only an agent without may_hire"));
+        let reason = "only an agent, and the HR lead without may_hire";
+        return Err(reader.error("builtin_key", reason));
     }
     if record.status == EmployeeStatus::Paused && record.kind != EmployeeKind::Agent {
         return Err(reader.error("status", "only an agent is paused"));

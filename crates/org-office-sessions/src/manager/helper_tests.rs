@@ -140,6 +140,7 @@ fn prune_nonexistent_bwrap_denies_drops_absent_paths_and_preserves_policy_enforc
         sandbox: preset_cfg.sandbox.clone(),
         mcp_servers: Default::default(),
         tools: preset_cfg.allowed_tools.clone(),
+        operator_shell_prefixes: Vec::new(),
     };
     apply_linux_claude_bwrap_pruning(&mut spec);
     assert_eq!(spec.permission_mode, org_agent_runtime::PermissionMode::Ask);
@@ -558,6 +559,7 @@ fn agy_read_only_dirs_mounts_release_store_and_toolchain_subdirs_never_cargo_roo
         sandbox: preset_cfg.sandbox,
         mcp_servers: Default::default(),
         tools: preset_cfg.allowed_tools,
+        operator_shell_prefixes: Vec::new(),
     };
     let ctx = LaunchContext {
         runtime_path: PathBuf::from("/usr/local/bin/agy"),
@@ -811,6 +813,7 @@ fn bwrap_pruned_claude_plan_has_no_double_globstar_and_no_concrete_sibling_globs
         },
         mcp_servers: Default::default(),
         tools: None,
+        operator_shell_prefixes: Vec::new(),
     };
     let linux_bwrap = !org_platform::confinement::unix_socket_path_filter_supported();
     if linux_bwrap {

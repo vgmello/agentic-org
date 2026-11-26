@@ -55,6 +55,7 @@ use crate::subagents::{
 mod approval;
 mod approval_bridge;
 mod bwrap;
+mod chief_of_staff;
 mod effort;
 mod enrollment;
 mod instructions;

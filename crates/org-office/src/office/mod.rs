@@ -20,6 +20,7 @@ mod accounting;
 #[cfg(test)]
 mod accounting_budget_tests;
 mod budgets;
+mod chief_of_staff;
 mod companions;
 mod creation;
 mod folder;
@@ -59,6 +60,7 @@ use std::{
 
 use org_store::{Clock, Files, Id, OfficeIdentity, StoreError, SystemClock, WriterAuthority};
 
+pub use self::chief_of_staff::CallerAuthority;
 use self::companions::{open_companion_stores, CompanionOpenSpec};
 pub use self::invitations::{
     ack_message_relay_and_enqueue_receipt_checked, admit_relay_item_if_active, is_peer_revoked,

@@ -269,11 +269,9 @@ impl Feature for MoveAgent {
         if agent.status == EmployeeStatus::Inactive {
             return reject(RejectCode::InvalidRequest, "the agent is offboarded");
         }
-        if agent.builtin_key.is_some() {
-            return reject(
-                RejectCode::InvalidRequest,
-                "the built-in HR lead stays in the top-level team",
-            );
+        if let Some(key) = agent.builtin_key {
+            let reason = format!("{} stays in the top-level team", key.described());
+            return reject(RejectCode::InvalidRequest, reason);
         }
         if !team.is_active() {
             return reject(RejectCode::InvalidRequest, "the team is archived");
@@ -367,11 +365,9 @@ impl Feature for SetAgentStatus {
         if agent.status == EmployeeStatus::Inactive {
             return reject(RejectCode::InvalidRequest, "the agent is offboarded");
         }
-        if agent.builtin_key.is_some() {
-            return reject(
-                RejectCode::InvalidRequest,
-                "the built-in HR lead cannot be paused",
-            );
+        if let Some(key) = agent.builtin_key {
+            let reason = format!("{} cannot be paused", key.described());
+            return reject(RejectCode::InvalidRequest, reason);
         }
         check_revision(agent.meta.revision, self.expected_revision)?;
         let Some(chain) = view.team_chain(&agent.home_team_id)? else {
@@ -427,11 +423,9 @@ impl Feature for OffboardAgent {
         if agent.kind != EmployeeKind::Agent {
             return reject(RejectCode::InvalidRequest, "only agents can be offboarded");
         }
-        if agent.builtin_key.is_some() {
-            return reject(
-                RejectCode::InvalidRequest,
-                "the built-in HR lead cannot be offboarded",
-            );
+        if let Some(key) = agent.builtin_key {
+            let reason = format!("{} cannot be offboarded", key.described());
+            return reject(RejectCode::InvalidRequest, reason);
         }
         if agent.status == EmployeeStatus::Inactive {
             return reject(

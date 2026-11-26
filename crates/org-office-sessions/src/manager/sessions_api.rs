@@ -42,6 +42,8 @@ impl SessionManager {
         self.check_not_recovery_required(emp_id)?;
         self.clear_persisted_stall_only(emp_id);
 
+        // The Chief of Staff answers each caller in their own partition (`TASK-80.1`).
+        let partition = self.enter_partition(&employee, Some(actor_member_id))?;
         // Composed once, for a live session and a new one alike: an owner instruction the HQ
         // proxied (`hq_attested_owner`) is badged `owner` either way.
         let objective = params.instruction.as_deref().map(|text| {
@@ -64,20 +66,17 @@ impl SessionManager {
         let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
         let _ = self.store.append_history(
             emp_id,
-            &serde_json::json!({
-                "type": "turn_trigger",
-                "kind": "run",
-                "sender_id": actor_member_id,
-                "source_id": params.command_id,
-                "at": rfc3339_now(),
-            }),
+            &turn_trigger_entry(actor_member_id, &params.command_id, partition.as_ref()),
             &refs,
         );
+        let resume = partition
+            .as_ref()
+            .and_then(|turn| turn.resume_runtime_session_id.as_deref());
         let prepared = self.prepare_and_spawn_raw(
             &employee,
             params,
             objective.unwrap_or_default(),
-            None,
+            resume,
             None,
             reservation.start_stop_epoch,
         )?;
@@ -99,6 +98,12 @@ impl SessionManager {
     ) -> Result<SessionView, ApiError> {
         let emp_id = employee.id.as_str();
         self.check_not_blocked(emp_id)?;
+        // A Chief of Staff turn with no caller runs in her `tess:wake` partition, acting for
+        // nobody, never in a member's conversation (`TASK-80.1`).
+        let partition = self.enter_partition(employee, None)?;
+        let resume_runtime_session_id = resume_runtime_session_id.or(partition
+            .as_ref()
+            .and_then(|turn| turn.resume_runtime_session_id.as_deref()));
         let params = MemberSessionStartParams {
             command_id: format!("auto-{}", next_entropy_hex(8)?),
             employee_id: emp_id.to_owned(),
@@ -469,4 +474,27 @@ pub(super) fn parse_decision(
             "decision must be `allow_once`, `allow_always`, or `deny`",
         )),
     }
+}
+
+/// The history entry of a person's `Run`: who asked, and for the Chief of Staff the partition
+/// and the caller her turn acts for, so her turns are on record under her own employee ID with
+/// the member they were for (`TASK-80.1`).
+fn turn_trigger_entry(
+    actor_member_id: &str,
+    command_id: &str,
+    partition: Option<&crate::partition::PartitionTurn>,
+) -> serde_json::Value {
+    let mut entry = serde_json::json!({
+        "type": "turn_trigger",
+        "kind": "run",
+        "sender_id": actor_member_id,
+        "source_id": command_id,
+        "at": rfc3339_now(),
+    });
+    if let Some(turn) = partition {
+        entry["acting_for_caller_id"] = serde_json::json!(actor_member_id);
+        entry["partition"] = serde_json::json!(turn.key.as_str());
+        entry["partition_turn"] = serde_json::json!(turn.turn);
+    }
+    entry
 }

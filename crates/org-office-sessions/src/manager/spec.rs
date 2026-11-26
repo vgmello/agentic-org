@@ -152,6 +152,7 @@ pub(crate) fn build_session_spec(
         sandbox: preset_cfg.sandbox.clone(),
         mcp_servers: Default::default(),
         tools: preset_cfg.allowed_tools.clone(),
+        operator_shell_prefixes: preset_cfg.operator_shell_prefixes.clone(),
     })
 }
 
@@ -306,7 +307,7 @@ pub(crate) fn effective_approval_writable_roots_from(
     tmpdir: &Path,
 ) -> Vec<SpecPath> {
     let mut roots = sandbox_writable_roots.to_vec();
-    if preset == PermissionPreset::ReadOnly {
+    if preset.is_read_only_fs() {
         return roots;
     }
     let canon_tmp = canonicalize_with_tail(tmpdir);

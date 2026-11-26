@@ -798,7 +798,7 @@ fn operation_get_decodes_kind_and_id_before_dispatch_and_sanitizes_storage_error
 }
 
 /// The grant key the test offices launch with.
-fn launch_key() -> org_proto::GrantKey {
+pub(super) fn launch_key() -> org_proto::GrantKey {
     crate::test_support::grant_key()
 }
 
@@ -877,6 +877,7 @@ pub(super) fn ports(snapshot: SnapshotFn) -> OfficePorts {
         sessions: None,
         run_binding_verify: None,
         run_binding_active: None,
+        delegation: None,
         external_auth: None,
         record_agent_command: None,
         waiting_messages_counter: None,
@@ -1340,6 +1341,7 @@ fn serving(
             sessions: None,
             run_binding_verify: None,
             run_binding_active: None,
+            delegation: None,
             external_auth: None,
             record_agent_command: None,
             waiting_messages_counter: None,
@@ -1824,6 +1826,7 @@ fn following_with(
                 sessions: None,
                 run_binding_verify: None,
                 run_binding_active: None,
+                delegation: None,
                 external_auth: None,
                 record_agent_command: None,
                 waiting_messages_counter: None,
@@ -2329,6 +2332,7 @@ fn asking(
             sessions: None,
             run_binding_verify: None,
             run_binding_active: None,
+            delegation: None,
             external_auth: None,
             record_agent_command: None,
             waiting_messages_counter: None,

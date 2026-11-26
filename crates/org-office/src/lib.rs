@@ -100,14 +100,14 @@ pub use office::{
     promote_pending_removed_origin_withdrawals, publish_message_journal_relay_for_dest_checked,
     register_peer_session_stop, resolve_employee_office, run_if_peer_active,
     strip_org_core_employee_refs_typed, task_id_for_work_path, ApprovedSatelliteCert,
-    ConsistentStateSnapshot, CreateInvitationParams, CreateInvitationResult, Custody, DataRoots,
-    ExportedSnapshotPages, HqTlsIdentity, InvitationPollStatus, InvitationStatus,
-    InvitationSummaryView, JoinRequestAccepted, JoinRequestParams, Office, OfficePermitSpec,
-    OrgDeltaPayload, PeerSessionGuard, PendingMessageJournalBatch, PendingMessageJournalEntry,
-    RelayAdmission, RelayedAskAnswer, RelayedAskWithdrawal, RelayedMessageOutcome,
-    RelayedRecipientWake, ReplicatedFileBatch, SatelliteFederationConfig, SatelliteProvisionSpec,
-    SatelliteReEnrollSpec, SatelliteRemovalResult, SatelliteTlsIdentity, SnapshotExportProgress,
-    SnapshotPathClass, LOCK_WAIT,
+    CallerAuthority, ConsistentStateSnapshot, CreateInvitationParams, CreateInvitationResult,
+    Custody, DataRoots, ExportedSnapshotPages, HqTlsIdentity, InvitationPollStatus,
+    InvitationStatus, InvitationSummaryView, JoinRequestAccepted, JoinRequestParams, Office,
+    OfficePermitSpec, OrgDeltaPayload, PeerSessionGuard, PendingMessageJournalBatch,
+    PendingMessageJournalEntry, RelayAdmission, RelayedAskAnswer, RelayedAskWithdrawal,
+    RelayedMessageOutcome, RelayedRecipientWake, ReplicatedFileBatch, SatelliteFederationConfig,
+    SatelliteProvisionSpec, SatelliteReEnrollSpec, SatelliteRemovalResult, SatelliteTlsIdentity,
+    SnapshotExportProgress, SnapshotPathClass, LOCK_WAIT,
 };
 #[cfg(any(test, feature = "testkit"))]
 pub use office::{TestOffice, TestSatellite};
