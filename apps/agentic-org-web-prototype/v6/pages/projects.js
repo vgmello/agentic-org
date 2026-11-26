@@ -1,5 +1,6 @@
 import { CH, IN, KIND, M, OPEN, P, TEAMS, W, needsMe } from "../data.js";
 import { pageActivity, projectReleaseSummary } from "./activity.js";
+import { calendarHtml } from "./calendar.js";
 import { msgHtml } from "./chat.js";
 import { INSIGHT_DAY, INSIGHT_TODAY, insightCompletions, projectInsights } from "./insights.js";
 import { notFound } from "./settings.js";
@@ -37,6 +38,7 @@ function pageProject(id, tab) {
     ["", "Overview"],
     ["activity", "Activity"],
     ["work", "Work", ws.filter(OPEN).length],
+    ["calendar", "Calendar"],
     ["insights", "Insights"],
     ["conversations", "Conversations"],
     ["team", "Team", projMembers(id).length],
@@ -60,6 +62,7 @@ function projectBody(id, tab) {
     </div>`;
   }
   if (tab === "work") return scopedWorkToolbar("project", id, ws) + scopedWorkWorkspace();
+  if (tab === "calendar") return calendarHtml("project", id);
   if (tab === "team") return `<div class="pj-team">${projectTeams(id)}${memberRows(projMembers(id), { emptyText: "No members yet." })}</div>`;
   if (tab === "activity") return pageActivity(id);
   if (tab === "insights") return projectInsights(id);

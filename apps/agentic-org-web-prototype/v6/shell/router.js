@@ -2,6 +2,7 @@ import { CH, M, P, TEAMS } from "../data.js";
 import { activityPanelResize, pageActivity, projectActivityId, refreshActivityPanel, syncAssemblySimulationTimer, updateActivityPanelScroll } from "../pages/activity.js";
 import { mountAgentProfile, stopAgentOrb } from "../pages/agent-profile.js";
 import { mountOrgChart } from "../pages/org-chart.js";
+import { pageCalendar } from "../pages/calendar-page.js";
 import { pageChat } from "../pages/chat.js";
 import { pageHome } from "../pages/home.js";
 import { pageInbox } from "../pages/inbox.js";
@@ -19,7 +20,7 @@ import { esc, ic } from "../ui.js";
 /* ---------------------------------------------------------------- router */
 function route() { const h = location.hash.replace(/^#\/?/, "").split("?")[0] || "home"; return h.split("/").filter(Boolean).map((s) => { try { return decodeURIComponent(s); } catch (e) { return s; } }); }
 const own = (o, k) => k != null && Object.prototype.hasOwnProperty.call(o, k);
-const TITLES = { home: "Home", inbox: "Inbox", projects: "Projects", work: "Work", chat: "Chat", activity: "Activity", teams: "Teams", members: "Member", settings: "Organization settings", preferences: "Your preferences", search: "Search" };
+const TITLES = { home: "Home", inbox: "Inbox", projects: "Projects", work: "Work", chat: "Chat", activity: "Activity", calendar: "Calendar", teams: "Teams", members: "Member", settings: "Organization settings", preferences: "Your preferences", search: "Search" };
 const MEMBER_ALIASES = ["members", "people", "everyone"];
 const homeToolbar = document.getElementById("home-toolbar");
 const drawerButton = homeToolbar.querySelector(".menu-btn");
@@ -95,6 +96,7 @@ const ROUTE_RENDERERS = {
   work: () => pageWork(),
   chat: (r1) => pageChat(own(CH, r1) ? r1 : null),
   activity: () => pageActivity(),
+  calendar: () => pageCalendar(),
   teams: (r1, r2) => (MEMBER_ALIASES.includes(r1) ? pageMembersDir() : r1 === "org-chart" ? pageOrgChart() : !r1 ? pageTeams() : own(TEAMS, r1) ? pageTeam(r1, r2) : notFound()),
   members: (r1, r2) => (own(M, r1) ? pageMember(r1, r2) : notFound()),
   settings: (r1, r2) => (!r1 || SET.some(([k]) => k === r1) ? pageSettings(r1, own(M, r2) ? r2 : null) : notFound()),

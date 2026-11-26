@@ -95,6 +95,7 @@ function renderNav(route) {
       <ul class="nav-list" role="list">
         ${item("#/work", "Work", "clipboard", r0 === "work")}
         ${item("#/chat", "Chat", "chat", r0 === "chat")}
+        ${item("#/calendar", "Calendar", "calendar-check", r0 === "calendar")}
         ${item("#/activity", "Activity", "signal", r0 === "activity")}
         ${item("#/projects", "Projects", "folder", r0 === "projects" && !r1)}
       </ul>

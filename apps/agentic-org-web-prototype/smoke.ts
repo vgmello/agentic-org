@@ -14,7 +14,7 @@ const ALL_SUITE: Array<[string, string]> = [
 const SWEEP_ROUTES = [
   "home", "inbox", "projects", "projects/agency-v1", "projects/agency-v1/work",
   "projects/agency-v1/insights", "projects/office-federation/activity", "projects/office-federation/team",
-  "work", "chat", "chat/general", "activity",
+  "work", "chat", "chat/general", "activity", "calendar", "projects/agency-v1/calendar", "teams/platform/calendar",
   "teams", "teams/platform", "teams/members", "teams/org-chart",
   "members/ada", "members/ada/sessions", "members/ada/journal",
   "members/ada/memory", "members/ada/knowledge", "members/ada/settings",

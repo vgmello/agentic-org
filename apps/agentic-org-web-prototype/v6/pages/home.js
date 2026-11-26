@@ -1,4 +1,5 @@
-import { A, EVENTS, IN, KIND, M, OFFICES, OPEN, P, W } from "../data.js";
+import { A, CAL_TODAY, EVENTS, IN, KIND, M, OFFICES, OPEN, P, W } from "../data.js";
+import { eventContext, eventDate, eventTone, sortEvents } from "./calendar.js";
 import { S } from "../state.js";
 import { ATYPE, av, avStack, sectionHead, effectiveHealth, esc, ic, leadOf, leadTxt, memberIds, mlink, pill, plink, plural, presence, projMembers, projPill, skel, spotQueue, unhandled } from "../ui.js";
 
@@ -736,22 +737,26 @@ function homeProjectsSectionHtml(st, projs, queue, needsAttnProjs) {
 }
 
 function upcomingEventHtml(e) {
-  const proj = P[e.proj];
-  return `<li class="hb-cal-ev">
-          <span class="hb-cal-date" aria-hidden="true"><span>${esc(e.mon)}</span><strong>${esc(e.day)}</strong></span>
-          <a class="hb-cal-main" href="#/projects/${esc(e.proj)}">
-            <span class="hb-cal-t">${esc(e.title)}<span class="hb-cal-proj"> – ${esc(proj?.name ?? "")}</span></span>
-            <span class="hb-cal-meta"><span class="sr-only">${esc(e.mon)} ${Number(e.day)}, </span><span>${esc(e.when)}</span><span aria-hidden="true">·</span><span class="tnum">${esc(e.start)} – ${esc(e.end)}</span><span aria-hidden="true">·</span><span>${plural(e.attendees.length, "attendee", "attendees")}</span></span>
+  const d = eventDate(e), ctx = eventContext(e);
+  const ctxHtml = ctx.href ? `<span class="hb-cal-proj"> – ${esc(ctx.label)}</span>` : "";
+  return `<li class="hb-cal-ev" data-tone="${eventTone(e)}">
+          <span class="hb-cal-date" aria-hidden="true"><span>${esc(d.mon)}</span><strong>${esc(d.day)}</strong></span>
+          <a class="hb-cal-main" href="#/calendar?event=${encodeURIComponent(e.id)}">
+            <span class="hb-cal-t">${esc(e.title)}${ctxHtml}</span>
+            <span class="hb-cal-meta"><span class="sr-only">${esc(d.mon)} ${Number(d.day)}, </span><span>${esc(d.when)}</span><span aria-hidden="true">·</span><span class="tnum">${esc(e.start)} – ${esc(e.end)}</span><span aria-hidden="true">·</span><span>${plural(e.attendees.length, "attendee", "attendees")}</span></span>
           </a>
           ${avStack(e.attendees, 3)}
         </li>`;
 }
 
+/* Your next four meetings (today onward); the count covers the next 8 days. */
 function homeUpcomingSectionHtml(st) {
   if (st === "error" || st === "empty") return "";
-  const body = st === "loading" ? skel(2, "Loading upcoming meetings…") : `<ul class="hb-cal-list">${EVENTS.map(upcomingEventHtml).join("")}</ul>`;
+  const mine = sortEvents(EVENTS.filter((e) => e.attendees.includes("you") && e.date >= CAL_TODAY));
+  const soon = mine.filter((e) => eventDate(e).t < eventDate({ date: CAL_TODAY }).t + 8 * 86_400_000).length;
+  const body = st === "loading" ? skel(2, "Loading upcoming meetings…") : `<ul class="hb-cal-list">${mine.slice(0, 4).map(upcomingEventHtml).join("")}</ul>`;
   return `<section class="hb-cal-sec" aria-labelledby="hb-cal-h">
-        ${sectionHead({ id: "hb-cal-h", title: "Upcoming", count: st === "loading" ? "" : `${EVENTS.length} in the next 8 days`, right: `<button type="button" class="link" data-act="proto" data-v="Calendar (coming soon)">View calendar${ic("chev-right", "ic16")}</button>` })}
+        ${sectionHead({ id: "hb-cal-h", title: "Upcoming", count: st === "loading" ? "" : `${soon} in the next 8 days`, right: `<a class="link" href="#/calendar">View calendar${ic("chev-right", "ic16")}</a>` })}
         <div class="hb-cal">${body}</div>
       </section>`;
 }
