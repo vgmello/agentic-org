@@ -75,6 +75,15 @@ async function checkWorkBoard(page: Page) {
   const attention = board.locator(".bcard[data-attention]").first();
   await attention.locator(".board-status .pill").waitFor();
   assert.match((await attention.locator(".board-status .pill").textContent())!, /^Needs you · /, "Needs-you badge says what is needed");
+  assert.equal(await board.locator(".bcard[data-attention]").count(), Number(await page.locator('[data-work-count="needs-me"]').textContent()),
+    "Needs you count and amber cards come from the same pending owner actions");
+  const multi = board.locator("button.board-need").first();
+  const asked = Number((await multi.textContent())!.match(/(\d+) requests/)![1]);
+  await multi.click();
+  const requests = page.getByRole("menu", { name: /^Requests waiting on you for / }).getByRole("menuitem");
+  assert.equal(await requests.count(), asked, "A badge for several requests lists each of them");
+  await page.keyboard.press("Escape");
+  assert.match((await page.getByRole("button", { name: /^Work display/ }).getAttribute("aria-label"))!, /Stages columns/, "Display names the column mode");
   const trailingGutter = await board.evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
     const lastColumn = el.querySelector(".bcol:last-child")!;

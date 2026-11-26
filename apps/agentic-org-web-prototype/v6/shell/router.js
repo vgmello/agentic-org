@@ -10,7 +10,7 @@ import { pageInsights } from "../pages/org-insights.js";
 import { mountProjectQueue, pageProject, pageProjects } from "../pages/projects.js";
 import { SET, notFound, pagePreferences, pageSearch, pageSettings } from "../pages/settings.js";
 import { pageMember, pageMembersDir, pageOrgChart, pageTeam, pageTeams } from "../pages/teams.js";
-import { fitTextarea, mountBoard, pageWork, setWorkPanelExpanded, showSidePanel } from "../pages/work.js";
+import { boardPlace, fitTextarea, mountBoard, pageWork, restoreBoardPlace, setWorkPanelExpanded, showSidePanel } from "../pages/work.js";
 import { isMacPlatform } from "./cmdk.js";
 import { endNavigationKeys } from "./keyboard.js";
 import { mountHomeProjectHint, renderBanner, renderNav } from "./sidebar.js";
@@ -160,7 +160,7 @@ function restoreFocusAfterRender({ main, content, r0, r1, key, focus, workPanel,
 }
 
 function captureBeforeRender(main, content) {
-  const priorBoard = main.querySelector("#work-results .board");
+  const priorResults = main.querySelector("#work-results");
   const active = document.activeElement;
   const toolbarFocus = pageSearchTools.contains(active) || active?.classList?.contains("inline-search-input") ? active.id : "";
   const toolbarCaret = toolbarFocus && document.activeElement.type === "search" ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
@@ -169,7 +169,7 @@ function captureBeforeRender(main, content) {
     priorActivity: main.querySelector(".activity-main"),
     panelScroll: document.getElementById("activity-panel-scroll")?.scrollTop ?? 0,
     pageScroll: content.scrollTop,
-    workBoardScroll: priorBoard && { left: priorBoard.scrollLeft, top: priorBoard.scrollTop },
+    workBoardPlace: priorResults && boardPlace(priorResults),
     toolbarFocus,
     toolbarCaret,
   };
@@ -216,10 +216,10 @@ function render(focus = true) {
   renderBanner(r0);
   mountActivityAfterRender(main, sameActivity, snap.priorActivity, snap.panelScroll, projectId);
   document.title = pageTitle(r0, r1) + " · Agentic Org";
-  if (sameWorkPage) {
-    content.scrollTop = snap.pageScroll;
-    if (snap.workBoardScroll) main.querySelector("#work-results .board")?.scrollTo(snap.workBoardScroll);
-  }
+  if (sameWorkPage) content.scrollTop = snap.pageScroll;
+  /* An in-place re-render (search opened, Display changed, panel opened) keeps the board's lane and scroll */
+  const results = main.querySelector("#work-results");
+  if (results && snap.workBoardPlace && (sameWorkPage || key === S.lastRoute)) restoreBoardPlace(results, snap.workBoardPlace, "");
   restoreFocusAfterRender({ main, content, r0, r1, key, focus, workPanel, priorPanel: snap.priorPanel, sameWorkPage, toolbarFocus: snap.toolbarFocus, toolbarCaret: snap.toolbarCaret });
   S.lastRoute = key; S.focusAfter = null;
   mountHomeProjectHint();
