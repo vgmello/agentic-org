@@ -744,6 +744,30 @@ fn projectless_task_resolves_accountable_team_and_archived_team_refuses_writes()
         rendered.text
     );
 
+    // The turn naming the task carries only what the task's chain changes about the agent's
+    // standing (home team) set: the accountable team's rule applies, the home team's does not.
+    let delta = fx
+        .office
+        .render_agent_task_process_delta(&fx.contributing_agent, &task.id, 128 * 1024)
+        .unwrap()
+        .unwrap()
+        .expect("the task's chain differs from the home team chain");
+    assert!(
+        delta.contains("Platform Accountable Rule") && delta.contains("Follow Platform rules."),
+        "{delta}"
+    );
+    assert!(
+        delta.contains("do not apply to this task:\n- Design Ops Rule"),
+        "{delta}"
+    );
+    assert!(!delta.contains("Follow Design rules."), "{delta}");
+    let unknown = fx
+        .office
+        .render_agent_task_process_delta(&fx.contributing_agent, &next_uuid(), 128 * 1024)
+        .unwrap()
+        .expect_err("an unknown task fails closed");
+    assert_eq!(unknown.code, ErrorCode::NotFound);
+
     // Missing employee fails closed with NotFound rather than silently returning empty instructions.
     let missing = fx
         .office
@@ -1030,7 +1054,10 @@ fn agent_write_boundaries_idempotency_concurrency_and_skills() {
 
     // Built-in skills.
     let skills = fx.office.skill_list();
-    assert_eq!(skills.skills.len(), 5);
+    assert_eq!(
+        skills.skills.len(),
+        org_process::list_builtin_skills().len()
+    );
     assert!(fx
         .office
         .skill_read("agent-os-basics")

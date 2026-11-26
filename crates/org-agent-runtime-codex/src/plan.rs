@@ -153,7 +153,7 @@ pub(crate) fn build_headless_plan(
     append_config_overrides(&mut args, spec, ctx, sandbox_mode, &writable_roots)?;
 
     let mut files = Vec::new();
-    let combined_instructions = combine_instructions(spec);
+    let combined_instructions = spec.standing_prompt();
     if !combined_instructions.is_empty() {
         files.push(PlannedFile {
             location: FileLocation::RuntimeDir,
@@ -673,15 +673,6 @@ fn append_config_overrides(
         args.push(format!("mcp_servers.{key}.args={arr}"));
     }
     Ok(())
-}
-
-fn combine_instructions(spec: &SessionSpec) -> String {
-    match (spec.agent.prompt.trim(), spec.instructions.trim()) {
-        ("", "") => String::new(),
-        (p, "") => p.to_owned(),
-        ("", i) => i.to_owned(),
-        (p, i) => format!("{p}\n\n{i}"),
-    }
 }
 
 /// Codex's own switches, added to the office's environment.

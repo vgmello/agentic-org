@@ -13,7 +13,6 @@ use crate::credentials::rfc3339_now;
 use crate::preset::build_grants_summary;
 use crate::pump::PumpCommand;
 
-use super::environment::build_objective_text;
 use super::lifecycle_ops::reap_replaced_handle;
 use super::spec::canonical_or_spec;
 use super::views::overlay_durable_wake_state;
@@ -46,7 +45,7 @@ impl SessionManager {
         let initial_obj = params
             .instruction
             .as_deref()
-            .map(|text| build_objective_text(&employee, actor_member_id, text));
+            .map(|text| self.objective_text(&employee, actor_member_id, text));
         let reservation =
             self.reserve_start_or_send(&employee, initial_obj, None, params.workspace.as_deref())?;
         if let Some(view) = reservation.live_view {
@@ -91,6 +90,11 @@ impl SessionManager {
     ) -> Result<SessionView, ApiError> {
         let emp_id = employee.id.as_str();
         self.check_not_blocked(emp_id)?;
+        // A task's process delta is volatile turn input, after the objective (`doc-27` §1).
+        let objective = match self.task_process_context(emp_id, task_ref)? {
+            Some(delta) => format!("{objective}\n\n{delta}"),
+            None => objective,
+        };
         let params = MemberSessionStartParams {
             command_id: format!("auto-{}", next_entropy_hex(8)?),
             employee_id: emp_id.to_owned(),

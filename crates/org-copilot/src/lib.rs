@@ -28,6 +28,7 @@ mod fake;
 mod feature;
 mod limits;
 pub mod prompt;
+mod prompt_text;
 mod runtime;
 mod schema;
 mod secrets;

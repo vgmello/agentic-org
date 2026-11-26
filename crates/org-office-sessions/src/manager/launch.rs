@@ -16,8 +16,7 @@ use crate::subagents::{build_general_subagent_definition, write_subagent_definit
 
 use super::bwrap_isolation::has_unmasked_bwrap_sibling_in_office;
 use super::environment::{
-    assemble_launch_env, build_objective_text, resolve_workspace, write_owner_only_binding_file,
-    SessionEnvInput,
+    assemble_launch_env, resolve_workspace, write_owner_only_binding_file, SessionEnvInput,
 };
 use super::registry_guards::{
     check_registry_startable, ensure_live_handle_not_recovery_required, ensure_not_stopped_since,
@@ -242,7 +241,7 @@ impl SessionManager {
         let objective = params
             .instruction
             .as_deref()
-            .map(|text| build_objective_text(employee, actor_member_id, text))
+            .map(|text| self.objective_text(employee, actor_member_id, text))
             .unwrap_or_default();
         self.prepare_and_spawn_raw(
             employee,
@@ -342,7 +341,7 @@ impl SessionManager {
         let _ = write_subagent_definition(&runtime_dir, &subagent_def);
 
         let instructions =
-            self.build_instructions(employee, &home, &workspace_real, &preset_cfg, opts.task_ref)?;
+            self.build_instructions(employee, &home, &workspace_real, &preset_cfg)?;
         let read_only_dirs = self.collect_session_read_only_dirs(
             admitted.adapter.id(),
             &home,

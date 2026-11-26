@@ -102,6 +102,19 @@ pub struct SessionSpec {
 }
 
 impl SessionSpec {
+    /// The whole standing system prompt in static-to-volatile order (`doc-27` §1): the office's
+    /// [`instructions`](Self::instructions) first and the agent's own
+    /// [`prompt`](AgentIdentity::prompt) last, so the release-static start of the instructions
+    /// is byte 0 of what the runtime caches. Empty when both are.
+    pub fn standing_prompt(&self) -> String {
+        match (self.instructions.trim(), self.agent.prompt.trim()) {
+            ("", "") => String::new(),
+            (instructions, "") => instructions.to_owned(),
+            ("", prompt) => prompt.to_owned(),
+            (instructions, prompt) => format!("{instructions}\n\n{prompt}"),
+        }
+    }
+
     /// The spec's canonical JSON: the input to [`spec_hash`](Self::spec_hash), and a stable
     /// form to diff two specs by.
     ///
@@ -248,7 +261,9 @@ pub struct AgentIdentity {
     /// file: never a secret.
     pub description: String,
     /// The agent definition's own one-line prompt. The real instructions go in
-    /// [`SessionSpec::instructions`]. Free text that may reach argv or a file: never a secret.
+    /// [`SessionSpec::instructions`]; adapters place this after them
+    /// ([`SessionSpec::standing_prompt`]). Free text that may reach argv or a file: never a
+    /// secret.
     pub prompt: String,
 }
 

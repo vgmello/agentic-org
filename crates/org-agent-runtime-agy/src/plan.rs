@@ -187,7 +187,7 @@ pub(crate) fn build_headless_plan(
     let cfg = AgySessionConfig {
         agent_name: spec.agent.name.as_str().to_owned(),
         cwd: spec.workspace.as_str().to_owned(),
-        system_prompt_append: combine_system_prompt(&spec.agent.prompt, &spec.instructions),
+        system_prompt_append: Some(spec.standing_prompt()).filter(|p| !p.is_empty()),
         model: spec.model.as_ref().map(|m| m.as_str().to_owned()),
         mcp_servers: build_acp_mcp_servers(spec),
         resume_session_id: ctx.resume.clone(),
@@ -283,17 +283,6 @@ fn resolve_acp_gemini_dir(ctx: &LaunchContext) -> (String, Vec<PlannedDir>) {
         rel_path: RelPath::try_from(ISOLATED_GEMINI_DIR_REL).expect("static rel path"),
     }];
     (dir, planned)
-}
-
-fn combine_system_prompt(agent_prompt: &str, instructions: &str) -> Option<String> {
-    let p = agent_prompt.trim();
-    let i = instructions.trim();
-    match (p.is_empty(), i.is_empty()) {
-        (true, true) => None,
-        (false, true) => Some(p.to_owned()),
-        (true, false) => Some(i.to_owned()),
-        (false, false) => Some(format!("{p}\n\n{i}")),
-    }
 }
 
 fn build_acp_mcp_servers(spec: &SessionSpec) -> Vec<Value> {
@@ -426,7 +415,7 @@ mod plan_unit_tests {
         assert_eq!(plan.args[app_pos + 1], "antigravity-cli");
         assert_eq!(
             cfg.system_prompt_append.as_deref(),
-            Some("You are agent.\n\nStanding instructions.")
+            Some("Standing instructions.\n\nYou are agent.")
         );
         assert_eq!(cfg.model.as_deref(), Some("gemini-4-neon-high"));
         assert!(AGY_CONFIG_CREDENTIAL_FILES.contains(&"antigravity-cli/antigravity-oauth-token"));

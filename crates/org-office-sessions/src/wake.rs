@@ -12,7 +12,7 @@ use crate::credentials::rfc3339_now;
 mod sanitize;
 
 pub use sanitize::sanitize_untrusted_body;
-use sanitize::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
+pub(crate) use sanitize::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
 
 /// Default maximum agent-initiated turns per rolling hour per target agent (`ADR-0023` d5).
 pub const DEFAULT_HOURLY_WAKE_LIMIT: usize = 12;
@@ -47,8 +47,8 @@ pub const MAX_WAKE_ITEM_BODY_BYTES: usize = 2_048;
 /// Maximum UTF-8 byte budget for one mid-turn notice batch (`doc-101` §4C, under Claude 10k char cap).
 pub const MAX_MID_TURN_BATCH_BYTES: usize = 8_000;
 
-const UNTRUSTED_OPEN: &str = "<<<UNTRUSTED_MESSAGE";
-const UNTRUSTED_CLOSE: &str = "<<<END_UNTRUSTED_MESSAGE>>>";
+pub(crate) const UNTRUSTED_OPEN: &str = "<<<UNTRUSTED_MESSAGE";
+pub(crate) const UNTRUSTED_CLOSE: &str = "<<<END_UNTRUSTED_MESSAGE>>>";
 const MID_TURN_HEADER: &str = "=== OFFICE MID-TURN NOTICE (untrusted message data) ===";
 const MID_TURN_FOOTER: &str = "=== END OFFICE MID-TURN NOTICE ===";
 
@@ -530,6 +530,9 @@ fn format_action_hint(item: &PendingWakeItem) -> String {
     match item.kind {
         WakeKind::Ask => format!(
             "Reply/answer via `agent-os msg reply --id {sid} --answer '<json>'` or inspect with `agent-os msg read --id {sid}`.",
+        ),
+        WakeKind::Handoff => format!(
+            "Take it with `agent-os msg accept --id {sid}`, inspect with `agent-os msg read --id {sid}`, or reply via `agent-os msg reply --id {sid} --body '...'`.",
         ),
         WakeKind::TaskAssignment => format!("Inspect with `agent-os task inspect --task {sid}`."),
         WakeKind::Recovery => {

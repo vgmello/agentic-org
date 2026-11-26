@@ -350,8 +350,8 @@ Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os 
   Effective organization, team, and project processes and standards.
   **Use when:** checking mandatory or overridable rules for your scope (`process list`), reading full guidance or `--why` inheritance chains (`process inspect`), or authoring/updating a process or standard.
 - `agent-os skill list|read`
-  Built-in on-demand `agent-os` product skills.
-  **Use when:** discovering (`skill list`) or loading (`skill read`) built-in operational guides on demand.
+  Built-in on-demand `agent-os` product skills: `agent-os-basics`, `tasks-create`, `tasks-execute`, `tasks-finalize`, `messaging-and-asks`, `channels`, `code-and-worktrees`, `hiring-and-directory`, `processes-and-standards`, `budgets`, `errors-and-recovery` and `batch-and-attach` (bodies in `crates/org-process/skills/`, each checked flag by flag against the live command table).
+  **Use when:** discovering (`skill list`) or loading (`skill read --name <key>`) built-in operational guides on demand.
 - `agent-os session inspect|attach`
   Self-inspection and persistent JSON-line batching over one office socket.
   **Use when:** inspecting your live session/usage (`session inspect`) or pipelining multiple commands in one shell turn without rebinding (`session attach`).

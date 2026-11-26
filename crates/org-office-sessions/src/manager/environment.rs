@@ -5,18 +5,24 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use org_agent_runtime::EnvName;
-use org_office::organization_family::records::{BuiltinKey, Employee, PermissionPreset};
+use org_office::organization_family::records::{
+    BuiltinKey, Employee, EmployeeKind, PermissionPreset,
+};
 use org_proto::{ApiError, ErrorCode};
 use org_supervise::{Environment, SearchPath};
 
 use crate::instructions::{
-    assemble_standing_instructions, compose_turn_objective, InstructionInput, TurnTrigger,
+    assemble_standing_instructions, compose_turn_objective, resolve_placement, InstructionInput,
+    Placement, TurnSender, TurnTrigger,
 };
 use crate::preset::PresetConfig;
 use crate::runtime_registry::RuntimeRegistry;
 
 use super::rust_toolchain::append_rust_toolchain_env;
 use super::SessionManager;
+
+/// Bytes the organization's processes and standards may take in one prompt (`doc-34` §3.2).
+const PROCESS_BUDGET_BYTES: usize = 128 * 1024;
 
 impl SessionManager {
     pub(super) fn load_preset_and_sandbox(
@@ -58,43 +64,32 @@ impl SessionManager {
         Ok((runtime_dir, tmpdir))
     }
 
+    /// The agent's standing instructions (`doc-27` §1). They depend on no task: the processes
+    /// are those of the agent's home team chain, and a turn about a task carries what that task's
+    /// chain changes ([`Self::task_process_context`]), so the standing prefix stays cacheable
+    /// across turns and tasks.
     pub(super) fn build_instructions(
         &self,
         employee: &Employee,
         home: &Path,
         workspace: &Path,
         preset_cfg: &PresetConfig,
-        task_ref: Option<&str>,
     ) -> Result<String, ApiError> {
         let info = self.office.info();
         let role = employee
             .role_id
             .as_ref()
             .and_then(|id| self.office.load_role(id.as_str()).ok().flatten());
-        let rendered_processes = match self
+        let rendered_processes = self
             .office
             .render_agent_process_instructions(
                 employee.id.as_str(),
                 None,
-                task_ref,
+                None,
                 std::collections::BTreeMap::new(),
-                128 * 1024,
+                PROCESS_BUDGET_BYTES,
             )
-            .map_err(|e| ApiError::new(ErrorCode::StorageError, e.to_string()))?
-        {
-            Ok(rendered) => rendered,
-            Err(err) if task_ref.is_some() && err.code == ErrorCode::NotFound => self
-                .office
-                .render_agent_process_instructions(
-                    employee.id.as_str(),
-                    None,
-                    None,
-                    std::collections::BTreeMap::new(),
-                    128 * 1024,
-                )
-                .map_err(|e| ApiError::new(ErrorCode::StorageError, e.to_string()))??,
-            Err(err) => return Err(err),
-        };
+            .map_err(|e| ApiError::new(ErrorCode::StorageError, e.to_string()))??;
         let exec_prompt = self
             .office
             .load_agent_execution(employee.id.as_str())
@@ -103,6 +98,7 @@ impl SessionManager {
             .map(|cfg| cfg.system_prompt_markdown);
         let combined_agent_instructions =
             combine_agent_instructions(&employee.body, exec_prompt.as_deref());
+        let placement = self.placement_of(employee);
         let table = crate::instructions::command_table_or_empty(self.config.command_catalogue);
         let input = InstructionInput {
             organization_name: &info.org_name,
@@ -110,12 +106,13 @@ impl SessionManager {
             employee_id: employee.id.as_str(),
             employee_name: &employee.name,
             handle: &employee.handle,
-            team_name: employee.home_team_id.as_str(),
+            placement: &placement,
             role_name: role.as_ref().map(|r| r.name.as_str()),
             role_instructions: role.as_ref().map(|r| r.body.as_str()),
             process_instructions: (!rendered_processes.text.is_empty())
                 .then_some(rendered_processes.text.as_str()),
             agent_instructions: &combined_agent_instructions,
+            repository_instructions: None,
             is_hr_lead: employee.builtin_key == Some(BuiltinKey::Hr),
             private_home: &home.display().to_string(),
             workspace: &workspace.display().to_string(),
@@ -123,6 +120,98 @@ impl SessionManager {
             sandbox_enabled: preset_cfg.sandbox.enabled,
         };
         Ok(assemble_standing_instructions(&input, &table))
+    }
+
+    /// The agent's home team and leads by name. Without a readable snapshot the home team's ID
+    /// stands in for its name and no lead is listed.
+    fn placement_of(&self, employee: &Employee) -> Placement {
+        let reports_to = employee
+            .reports_to_employee_id
+            .as_ref()
+            .map(|id| id.as_str());
+        match self.office.org_snapshot() {
+            Ok(snapshot) => resolve_placement(
+                &snapshot,
+                employee.id.as_str(),
+                employee.home_team_id.as_str(),
+                reports_to,
+            ),
+            Err(_) => Placement {
+                home_team_name: employee.home_team_id.as_str().to_owned(),
+                ..Placement::default()
+            },
+        }
+    }
+
+    /// What the task `task_ref` changes about the agent's standing processes, for the turn that
+    /// names it; `None` when nothing or when the task is gone. Must-follow documents over budget
+    /// refuse the turn, as they refuse a launch (`doc-34` Decision 4).
+    pub(super) fn task_process_context(
+        &self,
+        employee_id: &str,
+        task_ref: Option<&str>,
+    ) -> Result<Option<String>, ApiError> {
+        let Some(task_ref) = task_ref.filter(|t| !t.is_empty()) else {
+            return Ok(None);
+        };
+        match self
+            .office
+            .render_agent_task_process_delta(employee_id, task_ref, PROCESS_BUDGET_BYTES)
+            .map_err(|e| ApiError::new(ErrorCode::StorageError, e.to_string()))?
+        {
+            Ok(delta) => Ok(delta),
+            Err(err) if err.code == ErrorCode::NotFound => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// The office-verified sender of a request made by `member_id`.
+    pub(super) fn turn_sender(&self, member_id: &str) -> TurnSender {
+        let record = self.office.load_employee(member_id).ok().flatten();
+        let relation = if member_id == self.office.owner_member_id() {
+            "owner"
+        } else if record
+            .as_ref()
+            .is_some_and(|e| e.kind == EmployeeKind::Agent)
+        {
+            "peer"
+        } else {
+            "person"
+        };
+        match record {
+            Some(employee) => TurnSender {
+                name: employee.name,
+                handle: Some(employee.handle).filter(|h| !h.is_empty()),
+                relation: relation.to_owned(),
+            },
+            None => TurnSender {
+                name: member_id.to_owned(),
+                handle: None,
+                relation: relation.to_owned(),
+            },
+        }
+    }
+
+    /// The turn input for an instruction `requester` sent to `employee`: a hiring request for
+    /// the built-in HR lead, a direct instruction otherwise. Both are fenced as data.
+    pub(super) fn objective_text(
+        &self,
+        employee: &Employee,
+        requester: &str,
+        text: &str,
+    ) -> String {
+        let sender = self.turn_sender(requester);
+        if employee.builtin_key == Some(BuiltinKey::Hr) {
+            compose_turn_objective(&TurnTrigger::HrProposalRequest {
+                requester: sender,
+                request: text.to_owned(),
+            })
+        } else {
+            compose_turn_objective(&TurnTrigger::DirectInstruction {
+                from: sender,
+                text: text.to_owned(),
+            })
+        }
     }
 
     pub(super) fn build_environment(
@@ -237,19 +326,6 @@ pub(crate) fn ensure_owner_only_dir(path: &Path) -> Result<(), ApiError> {
                 "could not create private session directory",
             )
         })
-}
-
-pub(super) fn build_objective_text(employee: &Employee, requester: &str, text: &str) -> String {
-    if employee.builtin_key == Some(BuiltinKey::Hr) {
-        compose_turn_objective(&TurnTrigger::HrProposalRequest {
-            requester: requester.to_owned(),
-            request: text.to_owned(),
-        })
-    } else {
-        compose_turn_objective(&TurnTrigger::DirectInstruction {
-            text: text.to_owned(),
-        })
-    }
 }
 
 pub(super) fn sanitize_agent_name(handle: &str) -> String {

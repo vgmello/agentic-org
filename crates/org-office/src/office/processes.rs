@@ -4,8 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use org_process::{
-    find_builtin_skill, list_builtin_skills, render_instructions, resolve_single_chain,
-    RenderInput, Rendered, SingleChainInputs, OVERRIDABLE_CAP_BYTES,
+    find_builtin_skill, list_builtin_skills, render_instructions, render_task_delta,
+    resolve_single_chain, task_delta, EffectiveSet, RenderInput, Rendered, SingleChainInputs,
+    OVERRIDABLE_CAP_BYTES,
 };
 use org_proto::processes::{
     ProcessWriteParams, ProcessWriteResult, SkillListResult, SkillReadResult, SkillSummaryWire,
@@ -91,6 +92,59 @@ impl Office {
         read_blobs: BTreeMap<String, BTreeSet<String>>,
         total_budget_bytes: usize,
     ) -> Result<Result<Rendered, ApiError>, OfficeError> {
+        let set = match self.resolve_agent_process_set(employee_id, project_ref, task_ref)? {
+            Ok(set) => set,
+            Err(e) => return Ok(Err(e)),
+        };
+        Ok(render_instructions(
+            &set,
+            &RenderInput {
+                read_blobs,
+                overridable_cap_bytes: OVERRIDABLE_CAP_BYTES,
+                total_budget_bytes,
+            },
+        )
+        .map_err(|err| ApiError::new(ErrorCode::InvalidRequest, err.to_string())))
+    }
+
+    /// What the task `task_ref` changes about the agent's standing set (its home team chain,
+    /// [`Self::render_agent_process_instructions`] without a task), rendered for the turn that
+    /// names the task (`doc-27` §1, `doc-34` §3.1). `Ok(None)` when the task's chain changes
+    /// nothing. Must-follow documents over `total_budget_bytes` refuse like a launch.
+    pub fn render_agent_task_process_delta(
+        &self,
+        employee_id: &str,
+        task_ref: &str,
+        total_budget_bytes: usize,
+    ) -> Result<Result<Option<String>, ApiError>, OfficeError> {
+        let standing = match self.resolve_agent_process_set(employee_id, None, None)? {
+            Ok(set) => set,
+            Err(e) => return Ok(Err(e)),
+        };
+        let task = match self.resolve_agent_process_set(employee_id, None, Some(task_ref))? {
+            Ok(set) => set,
+            Err(e) => return Ok(Err(e)),
+        };
+        let input = RenderInput {
+            read_blobs: BTreeMap::new(),
+            overridable_cap_bytes: OVERRIDABLE_CAP_BYTES,
+            total_budget_bytes,
+        };
+        Ok(
+            render_task_delta(&task_delta(&standing, &task), task_ref, &input)
+                .map(|text| (!text.is_empty()).then_some(text))
+                .map_err(|err| ApiError::new(ErrorCode::InvalidRequest, err.to_string())),
+        )
+    }
+
+    /// The single chain for an agent's work: the project's owning chain, else the task's
+    /// accountable team chain, else the agent's home team chain (`doc-34` §3.1).
+    fn resolve_agent_process_set(
+        &self,
+        employee_id: &str,
+        project_ref: Option<&str>,
+        task_ref: Option<&str>,
+    ) -> Result<Result<EffectiveSet, ApiError>, OfficeError> {
         let snap = match self
             .store
             .read(LaunchProcessSnapshotRead {
@@ -129,7 +183,7 @@ impl Office {
             (chain, None)
         };
 
-        let set = resolve_single_chain(&SingleChainInputs {
+        Ok(Ok(resolve_single_chain(&SingleChainInputs {
             team_chain,
             project_id,
             documents: snap
@@ -138,22 +192,7 @@ impl Office {
                 .map(|d| d.to_process_input(doc_path_str(d, &team_chains)))
                 .collect(),
             scope_names,
-        });
-
-        match render_instructions(
-            &set,
-            &RenderInput {
-                read_blobs,
-                overridable_cap_bytes: OVERRIDABLE_CAP_BYTES,
-                total_budget_bytes,
-            },
-        ) {
-            Ok(rendered) => Ok(Ok(rendered)),
-            Err(err) => Ok(Err(ApiError::new(
-                ErrorCode::InvalidRequest,
-                err.to_string(),
-            ))),
-        }
+        })))
     }
 
     /// `skill.list` (`doc-28` §3.5): lists built-in product skills.

@@ -16,6 +16,7 @@ org-command = { path = "../org-command" }
 org-office = { path = "../org-office" }
 org-pki = { path = "../org-pki" }
 org-platform = { path = "../org-platform" }
+org-process = { path = "../org-process" }
 org-proto = { path = "../org-proto" }
 org-supervise = { path = "../org-supervise" }
 ring = "=0.17.14"

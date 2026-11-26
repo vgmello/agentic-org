@@ -78,6 +78,27 @@ pub fn failure_envelope_json(refusal: &Refusal, dry_run: bool) -> String {
     envelope::failure(refusal, dry_run).to_one_line()
 }
 
+/// Reads one command line against `table` exactly as [`run`] does, and stops there: no key is
+/// made and no office is called. `Ok` when [`run`] would print help or a schema, or send the
+/// call; otherwise the `invalid_request` refusal (exit code 2) [`run`] would print. Text that
+/// cites command lines, such as an agent's standing instructions, is checked with it against
+/// the live table, so a cited flag that does not exist or a missing required option fails.
+pub fn check(
+    table: &CommandTable,
+    program: &str,
+    args: &[String],
+    sources: &mut dyn Sources,
+) -> Result<(), Refusal> {
+    match parse::parse(table, program, args, sources) {
+        Ok(_) => Ok(()),
+        Err(usage) => Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            usage.message,
+            usage.hint,
+        )),
+    }
+}
+
 /// Runs one command line. `program` is the executable's name, for help and hints; `args` are
 /// the arguments after it. The command line is read first: one that cannot be read is answered
 /// with `invalid_request` and exit code 2, and neither the key source nor the office is called.

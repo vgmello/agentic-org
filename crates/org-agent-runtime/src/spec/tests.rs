@@ -623,3 +623,20 @@ fn tool_capability_tokens_and_serde_round_trip() {
     assert_eq!(back, spec);
     assert_eq!(back.spec_hash(), spec.spec_hash());
 }
+
+#[test]
+fn the_standing_prompt_puts_the_instructions_first_and_the_agent_prompt_last() {
+    let mut spec = sample_spec();
+    spec.instructions = "  Static rules.\n\nIdentity.\n".to_owned();
+    spec.agent.prompt = "You are ada.".to_owned();
+    assert_eq!(
+        spec.standing_prompt(),
+        "Static rules.\n\nIdentity.\n\nYou are ada."
+    );
+    spec.agent.prompt = " ".to_owned();
+    assert_eq!(spec.standing_prompt(), "Static rules.\n\nIdentity.");
+    spec.instructions.clear();
+    assert_eq!(spec.standing_prompt(), "");
+    spec.agent.prompt = "You are ada.".to_owned();
+    assert_eq!(spec.standing_prompt(), "You are ada.");
+}
