@@ -17,7 +17,7 @@ use crate::messaging::{
 };
 
 use super::auto_channels::effective_auto_members;
-use super::catchup::{delta_start, is_top_level, sent_by, snippet, ThreadStats};
+use super::catchup::{delta_bounds, is_top_level, sent_by, snippet, ThreadStats};
 use super::conversations::{all_conversations_including_auto, find_channel};
 
 /// Resolves a conversation UUIDv7, `#channel` or channel name the caller may read.
@@ -91,13 +91,27 @@ fn check_read_shape(params: &ChatMessagesParams) -> Result<(), ApiError> {
     if params.since_read && params.conversation.is_none() {
         return invalid("since_read needs a conversation or channel");
     }
-    if let Some(anchor) = &params.after_id {
-        if !org_proto::is_uuid_v7(anchor) {
-            return invalid("after_id must be a canonical lowercase UUIDv7 message ID");
+    for (field, anchor) in [
+        ("after_id", &params.after_id),
+        ("page_after_id", &params.page_after_id),
+    ] {
+        if anchor
+            .as_deref()
+            .is_some_and(|id| !org_proto::is_uuid_v7(id))
+        {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                format!("{field} must be a canonical lowercase UUIDv7 message ID"),
+            ));
         }
     }
+    if params.page_after_id.is_some() && !params.is_delta() {
+        return invalid("page_after_id pages a delta read: pass since_read or after_id with it");
+    }
     if params.is_delta() && params.cursor.is_some() {
-        return invalid("a delta read pages forward with after_id = next_after_id, not cursor");
+        return invalid(
+            "a delta read pages forward with page_after_id = next_after_id, not cursor",
+        );
     }
     if params.top_level_only && params.thread_id.is_some() {
         return invalid("top_level_only lists thread roots; a thread read lists its replies");
@@ -229,20 +243,15 @@ pub fn list_chat_messages(
         .messages_in_conversation(&conv.id)
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to read messages"))?;
     let threads = ThreadStats::of(&raw_msgs);
-    let start = if params.is_delta() {
-        delta_start(
-            read,
-            &raw_msgs,
-            &conv.id,
-            caller,
-            params.since_read,
-            params.after_id.as_deref(),
-        )?
+    let (start, page_start) = if params.is_delta() {
+        delta_bounds(read, &raw_msgs, &conv.id, caller, params)?
     } else {
-        0
+        (0, 0)
     };
+    // A delta read counts every match from its anchor; earlier pages' matches are not kept.
+    let mut total = 0u64;
     let mut candidates = Vec::new();
-    for m in raw_msgs.into_iter().skip(start) {
+    for (index, m) in raw_msgs.into_iter().enumerate().skip(start) {
         let thread_id = m.thread_root_id.clone().unwrap_or_else(|| m.id.clone());
         let in_thread = params
             .thread_id
@@ -250,6 +259,10 @@ pub fn list_chat_messages(
             .is_none_or(|tid| *tid == thread_id);
         let shown = !params.top_level_only || is_top_level(&m);
         if !in_thread || !shown || (params.since_read && sent_by(&m, caller)) {
+            continue;
+        }
+        total += 1;
+        if index < page_start {
             continue;
         }
         let local_seq = match params.cursor {
@@ -268,7 +281,11 @@ pub fn list_chat_messages(
             local_seq,
         });
     }
-    let page = Page::of(candidates, limit as usize, params.is_delta());
+    let page = Page::of(
+        candidates,
+        limit as usize,
+        params.is_delta().then_some(total),
+    );
     let shape = ViewShape {
         headers_only: params.headers_only,
         threads: &threads,
@@ -301,8 +318,9 @@ pub fn list_chat_messages(
     })
 }
 
-/// One page of candidates: a delta read keeps the oldest `limit` and pages forward; a plain
-/// read keeps the newest `limit` and pages backward by `local_seq`.
+/// One page of candidates: a delta read (with its `total` matches across every page) keeps the
+/// oldest `limit` and pages forward; a plain read keeps the newest `limit` and pages backward
+/// by `local_seq`.
 struct Page {
     items: Vec<Candidate>,
     /// A plain read left older messages behind.
@@ -312,10 +330,9 @@ struct Page {
 }
 
 impl Page {
-    fn of(mut items: Vec<Candidate>, limit: usize, delta: bool) -> Self {
+    fn of(mut items: Vec<Candidate>, limit: usize, delta_total: Option<u64>) -> Self {
         let more = items.len() > limit;
-        if delta {
-            let total = items.len() as u64;
+        if let Some(total) = delta_total {
             items.truncate(limit);
             let next_after_id = more
                 .then(|| items.last().map(|c| c.msg.id.clone()))

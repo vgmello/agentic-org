@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use org_proto::chat::{ConversationKind, SNIPPET_MAX_CHARS};
+use org_proto::chat::{ChatMessagesParams, ConversationKind, SNIPPET_MAX_CHARS};
 use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
 
@@ -119,32 +119,46 @@ pub fn snippet(body: &str) -> String {
     chars.into_iter().collect()
 }
 
-/// The anchor a delta read starts after: the index of the first message it may answer.
-pub(crate) fn delta_start(
+/// A delta read's bounds in `msgs`, as indexes `(base, page)`. Matches are counted from
+/// `base`, which only the read's own anchor sets (the `since_read` marker and `after_id`), so
+/// `total` holds steady from page to page; the page starts at `page`, strictly after
+/// `page_after_id` but never before `base`, so an older cursor cannot reach behind the anchor.
+pub(crate) fn delta_bounds(
     read: &impl MessagingRead,
     msgs: &[MessageRecord],
     conv_id: &Id,
     caller: &Id,
-    since_read: bool,
-    after_id: Option<&str>,
-) -> Result<usize, ApiError> {
-    let mut start = 0;
-    if since_read {
+    params: &ChatMessagesParams,
+) -> Result<(usize, usize), ApiError> {
+    let mut base = 0;
+    if params.since_read {
         let marker = read.read_marker(conv_id, caller).map_err(|_| {
             ApiError::new(ErrorCode::StorageError, "failed to read the read marker")
         })?;
-        start = watermark_boundary(msgs, marker.as_ref());
+        base = watermark_boundary(msgs, marker.as_ref());
     }
-    if let Some(anchor) = after_id {
-        let index = msgs.iter().position(|m| m.id == anchor).ok_or_else(|| {
+    if let Some(anchor) = params.after_id.as_deref() {
+        base = base.max(just_after(msgs, anchor, "after_id")?);
+    }
+    let page = match params.page_after_id.as_deref() {
+        Some(cursor) => base.max(just_after(msgs, cursor, "page_after_id")?),
+        None => base,
+    };
+    Ok((base, page))
+}
+
+/// The index just past message `anchor` in `msgs`. A message this conversation does not hold,
+/// unknown or another conversation's, is refused alike, so the answer reveals nothing else.
+fn just_after(msgs: &[MessageRecord], anchor: &str, field: &str) -> Result<usize, ApiError> {
+    msgs.iter()
+        .position(|m| m.id == anchor)
+        .map(|index| index + 1)
+        .ok_or_else(|| {
             ApiError::new(
                 ErrorCode::NotFound,
-                "after_id names no message in this conversation",
+                format!("{field} names no message in this conversation"),
             )
-        })?;
-        start = start.max(index + 1);
-    }
-    Ok(start)
+        })
 }
 
 /// The caller's new channel messages for a `since_read` digest (`TASK-99` rung 3).

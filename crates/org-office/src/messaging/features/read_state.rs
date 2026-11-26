@@ -54,7 +54,7 @@ pub fn plan_mark_read(
         .read_marker(&conversation.id, caller)
         .map_err(|_| refusal(ErrorCode::StorageError, "failed to read marker"))?;
     let target = match &params.last_read_message_id {
-        Some(mid) => Some(position_in(view, &msgs, mid)?),
+        Some(mid) => Some(position_in(&msgs, mid)?),
         None => msgs.len().checked_sub(1),
     };
     let boundary = watermark_boundary(&msgs, marker.as_ref());
@@ -141,26 +141,15 @@ where
     ))
 }
 
-/// Where message `mid` sits in the conversation's canonical order.
-fn position_in(
-    view: &impl MessagingRead,
-    msgs: &[MessageRecord],
-    mid: &str,
-) -> Result<usize, Refusal> {
-    if let Some(index) = msgs.iter().position(|m| m.id == mid) {
-        return Ok(index);
-    }
-    let exists = view
-        .message(mid)
-        .map_err(|_| refusal(ErrorCode::StorageError, "failed to read message"))?
-        .is_some();
-    Err(if exists {
+/// Where message `mid` sits in the conversation's canonical order. An unknown message and
+/// another conversation's are refused alike, so the refusal reveals nothing about other
+/// conversations.
+fn position_in(msgs: &[MessageRecord], mid: &str) -> Result<usize, Refusal> {
+    msgs.iter().position(|m| m.id == mid).ok_or_else(|| {
         refusal(
-            ErrorCode::InvalidRequest,
-            "last_read_message_id does not belong to this conversation",
+            ErrorCode::NotFound,
+            "last_read_message_id names no message in this conversation",
         )
-    } else {
-        refusal(ErrorCode::NotFound, "last_read_message_id not found")
     })
 }
 

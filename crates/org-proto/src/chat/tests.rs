@@ -71,6 +71,19 @@ fn catchup_wire_fields_are_additive_and_compact() {
         ..params
     };
     assert!(delta.is_delta());
+    // The page cursor is a separate, additive field: absent unless a later page is read.
+    let wire = serde_json::to_value(&delta).unwrap();
+    assert!(wire.get("page_after_id").is_none(), "{wire}");
+    let paged: ChatMessagesParams = serde_json::from_value(serde_json::json!({
+        "conversation": "#ops", "after_id": "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a0",
+        "page_after_id": "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1"
+    }))
+    .unwrap();
+    assert_eq!(paged.after_id, delta.after_id, "the anchor is kept apart");
+    assert_eq!(
+        paged.page_after_id.as_deref(),
+        Some("0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1")
+    );
 
     // A headers-only view carries no body key; zero counts are left out entirely.
     let view: ChatMessageView = serde_json::from_value(serde_json::json!({

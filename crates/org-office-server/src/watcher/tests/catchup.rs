@@ -367,6 +367,7 @@ fn agent_os_catchup_ladder_lists_marks_pages_refuses_and_shrinks_payloads() {
     let cursor = env["meta"]["next_cursor"].as_str().unwrap().to_owned();
     let (_, env, _) = agent_os(&fx, &fx.ada, &[&page[..], &["--cursor", &cursor]].concat());
     assert_eq!(env["data"][0]["id"], posted[11].as_str());
+    assert_eq!(env["meta"]["total"], 2, "{env}: the total holds on page 2");
     assert!(env["meta"].get("next_cursor").is_none(), "{env}");
 
     // Refusals name what to do instead.

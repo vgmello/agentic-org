@@ -139,7 +139,7 @@ pub(super) fn read_msg_list<T: OfficeTransport + ?Sized>(
 
 /// A channel, conversation or thread read over `chat.messages`, plain (newest page, backward
 /// cursor) or delta (`--since-read` / `--after-id`: oldest first, `meta.next_cursor` is the
-/// next page's anchor message and `meta.total` counts every match).
+/// message the next page starts after and `meta.total` counts every match after the anchor).
 fn read_conversation_messages<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
@@ -161,15 +161,16 @@ fn read_conversation_messages<T: OfficeTransport + ?Sized>(
         }
     }
     if delta {
-        // A delta read's cursor is the message the next page starts after.
-        let anchor = match request.cursor.as_deref() {
-            Some(cursor) if org_proto::is_uuid_v7(cursor) => Some(cursor),
-            Some(_) => return Err(refuse_list(
+        // `--cursor` only picks the page (`page_after_id`); `--after-id` stays the read's anchor,
+        // so `meta.total` holds from page to page and no page reaches behind the anchor.
+        let page = request.cursor.as_deref();
+        if page.is_some_and(|cursor| !org_proto::is_uuid_v7(cursor)) {
+            return Err(refuse_list(
                 "In a --since-read or --after-id read, --cursor is the message ID `meta.next_cursor` gave.",
-            )),
-            None => after_id,
-        };
-        insert_opt(&mut params, "after_id", anchor);
+            ));
+        }
+        insert_opt(&mut params, "after_id", after_id);
+        insert_opt(&mut params, "page_after_id", page);
     } else if let Some(cursor) = parse_u64_cursor(request.cursor.as_deref())? {
         params.insert("cursor".into(), Value::from(cursor));
     }
@@ -235,7 +236,8 @@ fn refuse_list(message: &str) -> Refusal {
 /// would otherwise drop: `--conversation` with `--channel`; `--participant` or `--unread-only`
 /// with a conversation, a channel or a thread alone (only a DM history by `--participant`
 /// filters by participant and unread state); the catch-up flags (`--since-read`, `--after-id`,
-/// `--top-level-only`, `--headers-only`) on a DM history; and `--since-read` with `--after-id`.
+/// `--top-level-only`, `--headers-only`) on a DM history, whether named by `--participant` or
+/// read for want of a channel, conversation or thread; and `--since-read` with `--after-id`.
 fn list_conversation(request: &Request) -> Result<Option<&str>, Refusal> {
     let conversation = opt_str(request, "conversation");
     let channel = opt_str(request, "channel");
@@ -281,6 +283,9 @@ fn list_conversation(request: &Request) -> Result<Option<&str>, Refusal> {
         || after_id.is_some();
     if catchup && participant {
         return Err(refuse_list("--since-read, --after-id, --top-level-only and --headers-only read a channel or conversation, not a DM history by --participant."));
+    }
+    if catchup && target.is_none() && !by_thread_alone {
+        return Err(refuse_list("--after-id, --top-level-only and --headers-only need --channel, --conversation or --thread: without one, `msg list` reads your DM history, which they do not apply to."));
     }
     Ok(target)
 }

@@ -358,7 +358,7 @@ fn rung2_delta_reads_are_oldest_first_after_the_anchor_and_refuse_bad_shapes() {
             "{engine:?}"
         );
 
-        // Forward pages: `next_after_id` continues a since-read read where it stopped.
+        // Forward pages: `page_after_id = next_after_id` continues where the read stopped.
         let page1 = fx
             .list(
                 &ada,
@@ -377,14 +377,14 @@ fn rung2_delta_reads_are_oldest_first_after_the_anchor_and_refuse_bad_shapes() {
                 &ada,
                 ChatMessagesParams {
                     since_read: true,
-                    after_id: page1.next_after_id.clone(),
+                    page_after_id: page1.next_after_id.clone(),
                     limit: Some(2),
                     ..ops_params()
                 },
             )
             .unwrap();
         assert_eq!(ids(&page2), vec![&tie_a, &tie_b], "{engine:?}");
-        assert_eq!(page2.next_after_id, None);
+        assert_eq!((page2.total, page2.next_after_id), (Some(4), None));
 
         // A watermark moves the since-read anchor.
         fx.mark(&ada, "#ops", Some(&late), false, 50).unwrap();
@@ -438,6 +438,145 @@ fn rung2_delta_reads_are_oldest_first_after_the_anchor_and_refuse_bad_shapes() {
             5,
             "{engine:?}"
         );
+    }
+}
+
+/// A message in a DM between Ada and the owner: never part of `#ops`.
+fn dm_message(fx: &mut Fx, sec: u32) -> String {
+    let dm = fx
+        .store
+        .run(DmOpenOp {
+            here: identity(),
+            owner: fx.owner.clone(),
+            caller: fx.ada.clone(),
+            params: DmOpenParams {
+                participants: vec![fx.owner.as_str().to_owned()],
+                name: None,
+                conversation_id: None,
+            },
+            now_utc: at(sec),
+        })
+        .unwrap()
+        .unwrap();
+    let ada = fx.ada.clone();
+    fx.post(&ada, &dm.conversation.id, "dm", sec)
+}
+
+#[test]
+fn rung2_delta_pages_keep_their_total_and_never_reach_behind_the_anchor() {
+    for engine in ENGINES {
+        let place = Place::new();
+        let mut fx = Fx::new(&place, engine);
+        let (owner, ada) = (fx.owner.clone(), fx.ada.clone());
+        // Others' posts interleaved with Ada's own, which a since-read read never counts.
+        let m0 = fx.post(&owner, "#ops", "m0", 1);
+        let _a0 = fx.post(&ada, "#ops", "a0", 2);
+        let m1 = fx.post(&owner, "#ops", "m1", 3);
+        let m2 = fx.post(&owner, "#ops", "m2", 4);
+        let a1 = fx.post(&ada, "#ops", "a1", 5);
+        let m3 = fx.post(&owner, "#ops", "m3", 6);
+        let page = |fx: &Fx, base: &ChatMessagesParams, cursor: Option<&String>| {
+            let params = ChatMessagesParams {
+                limit: Some(2),
+                page_after_id: cursor.cloned(),
+                ..base.clone()
+            };
+            fx.list(&ada, params).unwrap()
+        };
+
+        // since_read: `total` counts from the read marker on every page, not from the cursor.
+        let since = ChatMessagesParams {
+            since_read: true,
+            ..ops_params()
+        };
+        let p1 = page(&fx, &since, None);
+        assert_eq!(ids(&p1), vec![&m0, &m1], "{engine:?}");
+        assert_eq!(
+            (p1.total, p1.next_after_id.as_deref()),
+            (Some(4), Some(m1.as_str())),
+            "{engine:?}"
+        );
+        let p2 = page(&fx, &since, p1.next_after_id.as_ref());
+        assert_eq!(ids(&p2), vec![&m2, &m3], "{engine:?}");
+        assert_eq!((p2.total, p2.next_after_id), (Some(4), None), "{engine:?}");
+
+        // Arrivals mid-read raise the total and land on later pages: none dropped or repeated.
+        let a2 = fx.post(&ada, "#ops", "a2", 7);
+        let m4 = fx.post(&owner, "#ops", "m4", 8);
+        let m5 = fx.post(&owner, "#ops", "m5", 9);
+        let p2 = page(&fx, &since, p1.next_after_id.as_ref());
+        assert_eq!(ids(&p2), vec![&m2, &m3], "{engine:?}");
+        assert_eq!(
+            (p2.total, p2.next_after_id.as_deref()),
+            (Some(6), Some(m3.as_str())),
+            "{engine:?}"
+        );
+        let p3 = page(&fx, &since, p2.next_after_id.as_ref());
+        assert_eq!(ids(&p3), vec![&m4, &m5], "{engine:?}");
+        assert_eq!((p3.total, p3.next_after_id), (Some(6), None), "{engine:?}");
+
+        // after_id stays the anchor (yours included); the cursor only picks the page.
+        let after_m1 = ChatMessagesParams {
+            after_id: Some(m1.clone()),
+            ..ops_params()
+        };
+        let q1 = page(&fx, &after_m1, None);
+        assert_eq!(ids(&q1), vec![&m2, &a1], "{engine:?}");
+        assert_eq!(q1.total, Some(6), "{engine:?}: m2 a1 m3 a2 m4 m5");
+        let q2 = page(&fx, &after_m1, Some(&m3));
+        assert_eq!(ids(&q2), vec![&a2, &m4], "{engine:?}");
+        assert_eq!(
+            (q2.total, q2.next_after_id.as_deref()),
+            (Some(6), Some(m4.as_str())),
+            "{engine:?}"
+        );
+
+        // A cursor older than the anchor never reaches behind it.
+        let after_m2 = ChatMessagesParams {
+            after_id: Some(m2.clone()),
+            ..ops_params()
+        };
+        let stale = page(&fx, &after_m2, Some(&m0));
+        assert_eq!(ids(&stale), vec![&a1, &m3], "{engine:?}");
+        assert_eq!(stale, page(&fx, &after_m2, None), "{engine:?}");
+        fx.mark(&ada, "#ops", Some(&m2), false, 20).unwrap();
+        let since_stale = page(&fx, &since, Some(&m0));
+        assert_eq!(ids(&since_stale), vec![&m3, &m4], "{engine:?}");
+        assert_eq!(since_stale.total, Some(3), "{engine:?}: m3 m4 m5");
+
+        // page_after_id pages a delta read only, as a UUIDv7 naming a message in this
+        // conversation; an unknown message and another conversation's are refused alike.
+        let dm_msg = dm_message(&mut fx, 21);
+        let refused = |params: ChatMessagesParams| fx.list(&ada, params).unwrap_err();
+        let plain = ChatMessagesParams {
+            page_after_id: Some(m1.clone()),
+            ..ops_params()
+        };
+        assert_eq!(refused(plain).code, ErrorCode::InvalidRequest);
+        let not_uuid = ChatMessagesParams {
+            page_after_id: Some("latest".into()),
+            ..since.clone()
+        };
+        assert_eq!(refused(not_uuid).code, ErrorCode::InvalidRequest);
+        let unknown = refused(ChatMessagesParams {
+            page_after_id: Some(id(9999).as_str().to_owned()),
+            ..since.clone()
+        });
+        let foreign = refused(ChatMessagesParams {
+            page_after_id: Some(dm_msg.clone()),
+            ..since.clone()
+        });
+        assert_eq!(unknown.code, ErrorCode::NotFound, "{engine:?}");
+        assert_eq!(
+            (foreign.code, foreign.message),
+            (unknown.code, unknown.message),
+            "{engine:?}"
+        );
+        let foreign_anchor = ChatMessagesParams {
+            after_id: Some(dm_msg),
+            ..ops_params()
+        };
+        assert_eq!(refused(foreign_anchor).code, ErrorCode::NotFound);
     }
 }
 
@@ -523,8 +662,13 @@ fn rung2_mark_read_defaults_to_latest_moves_only_forward_and_never_touches_the_i
             .unwrap()
             .unwrap();
         let dm_msg = fx.post(&ada, &dm.conversation.id, "dm", 11);
-        let foreign = fx.mark(&ada, "#ops", Some(&dm_msg), false, 12);
-        assert_eq!(foreign.unwrap_err().code, ErrorCode::InvalidRequest);
+        // Another conversation's message is refused exactly like an unknown one: no oracle.
+        let foreign = fx.mark(&ada, "#ops", Some(&dm_msg), false, 12).unwrap_err();
+        let unknown = fx
+            .mark(&ada, "#ops", Some(id(9999).as_str()), false, 12)
+            .unwrap_err();
+        assert_eq!(foreign.code, ErrorCode::NotFound, "{engine:?}");
+        assert_eq!(foreign.message, unknown.message, "{engine:?}");
         let nowhere = fx.mark(&ada, "#nowhere", None, false, 12);
         assert_eq!(nowhere.unwrap_err().code, ErrorCode::NotFound);
     }

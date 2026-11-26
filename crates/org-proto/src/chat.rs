@@ -491,10 +491,14 @@ pub struct ChatMessagesParams {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub since_read: bool,
     /// Delta read: the messages strictly after this message (canonical UUIDv7) in the
-    /// conversation's `(created_at, local_seq, id)` order, oldest first. With `since_read` it
-    /// continues a since-read read from that read's `next_after_id`.
+    /// conversation's `(created_at, local_seq, id)` order, oldest first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after_id: Option<String>,
+    /// Delta read paging: the page starts strictly after this message (the previous page's
+    /// `next_after_id`), never before the `since_read` / `after_id` anchor, and `total` still
+    /// counts every match after that anchor, so it holds steady from page to page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_after_id: Option<String>,
     /// Only thread roots and replies also posted to the channel; a thread's replies show in its
     /// root's `reply_count` and `latest_reply_at`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -517,10 +521,11 @@ pub struct ChatMessagesResult {
     pub messages: Vec<ChatMessageView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<u64>,
-    /// Delta reads with more to read: the `after_id` that reads the next page.
+    /// Delta reads with more to read: the `page_after_id` that reads the next page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_after_id: Option<String>,
-    /// Delta reads: how many messages match after the anchor, across every page.
+    /// Delta reads: how many messages match after the `since_read` / `after_id` anchor,
+    /// across every page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total: Option<u64>,
 }
