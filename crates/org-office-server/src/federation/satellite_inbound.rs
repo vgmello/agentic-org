@@ -13,12 +13,12 @@ use org_sync::messages::{acknowledge, Message, Receipt};
 use org_sync_proto::{write_sync_frame, Digest, FrameCodecError, OfficeId, SyncFrame};
 use rustls::{ClientConnection, StreamOwned};
 
-use super::org_events::apply_satellite_org_event_frame;
 use super::relay::deliver_inbound_message_checked;
 use super::{
     InboundCallbacks, InboundDeliveryNotifier, InboundMessage, RelayedWake, SatelliteSyncSession,
     StaticPeer, WakeRelayHandler, PARTIAL_FRAME_DEADLINE,
 };
+use crate::federation_link::org_events::apply_satellite_org_event_frame;
 
 fn dispatch_inbound_relay_frame(
     session: &mut SatelliteSyncSession,

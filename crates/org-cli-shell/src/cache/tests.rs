@@ -99,6 +99,253 @@ fn cache_folders_are_owner_only() {
     );
 }
 
+fn symlink(target: &Path, link: &Path) {
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+
+fn mkfifo(path: &Path) {
+    let status = std::process::Command::new("/usr/bin/mkfifo")
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(status.success(), "mkfifo {}", path.display());
+}
+
+/// P1-2: a symbolic link anywhere from the cache directory down (the directory itself,
+/// `completion`, a partition folder) is refused by the walk, and nothing is written through
+/// it; a trailing slash on the cache directory does not make the link followed.
+#[test]
+fn the_folder_walk_refuses_symbolic_links() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = root.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let list = [candidate("x", None)];
+
+    let linked_root = root.path().join("linked-cache");
+    symlink(&outside, &linked_root);
+    for dir in [
+        linked_root.clone(),
+        Path::new(&format!("{}/", linked_root.display())).to_path_buf(),
+        Path::new(&format!("{}/.", linked_root.display())).to_path_buf(),
+    ] {
+        assert!(
+            CompletionCache::new(&dir)
+                .store(&["p"], "orgs", &list)
+                .is_err(),
+            "{}",
+            dir.display()
+        );
+    }
+
+    let cache_dir = root.path().join("cache-a");
+    fs::create_dir(&cache_dir).unwrap();
+    symlink(&outside, &cache_dir.join(COMPLETION_DIR));
+    assert!(CompletionCache::new(&cache_dir)
+        .store(&["p"], "orgs", &list)
+        .is_err());
+
+    let cache_dir = root.path().join("cache-b");
+    fs::create_dir_all(cache_dir.join(COMPLETION_DIR)).unwrap();
+    symlink(&outside, &cache_dir.join(COMPLETION_DIR).join("p"));
+    assert!(CompletionCache::new(&cache_dir)
+        .store(&["p"], "orgs", &list)
+        .is_err());
+
+    // A more open caller's directory: a linked `completion` is still refused.
+    let shared = root.path().join("cache-c");
+    fs::create_dir(&shared).unwrap();
+    fs::set_permissions(&shared, fs::Permissions::from_mode(0o755)).unwrap();
+    symlink(&outside, &shared.join(COMPLETION_DIR));
+    assert!(CompletionCache::new(&shared)
+        .store(&["p"], "orgs", &list)
+        .is_err());
+
+    // A caller's directory that another account could write is refused outright.
+    let open_root = root.path().join("cache-d");
+    fs::create_dir(&open_root).unwrap();
+    fs::set_permissions(&open_root, fs::Permissions::from_mode(0o777)).unwrap();
+    assert!(CompletionCache::new(&open_root)
+        .store(&["p"], "orgs", &list)
+        .is_err());
+    assert!(
+        entries(&open_root).is_empty(),
+        "made something in an open root"
+    );
+
+    assert!(entries(&outside).is_empty(), "written through a link");
+}
+
+/// `open_completion` fails closed whenever `OwnerOnlyDir` refuses the cache directory: one it
+/// has just made that does not then open as the user's alone (a race, or not the account
+/// expected), and an existing one that is writable by anyone or another account's, checked on
+/// its opened handle. Nothing is made inside a refused directory.
+#[test]
+fn a_refused_cache_directory_is_never_written_in() {
+    let uid = org_platform::fs::effective_uid().unwrap();
+    let other = uid.wrapping_add(1);
+    let root = tempfile::tempdir().unwrap();
+    let refused = |dir: &Path, uid: u32, kind: io::ErrorKind| {
+        let error = CompletionCache::new(dir).open_completion(uid).unwrap_err();
+        assert_eq!(error.kind(), kind, "{}: {error}", dir.display());
+    };
+
+    // Made just now, yet refused when opened: never kept and written in.
+    let fresh = root.path().join("fresh");
+    refused(&fresh, other, io::ErrorKind::PermissionDenied);
+    assert!(fresh.is_dir());
+    assert!(
+        entries(&fresh).is_empty(),
+        "made `completion` in a cache directory that did not verify"
+    );
+
+    // Existing and writable by anyone (sticky or not), or another account's.
+    for (name, mode, uid) in [
+        ("open", 0o777, uid),
+        ("sticky", 0o1777, uid),
+        ("other-writable", 0o757, uid),
+        ("foreign", 0o755, other),
+    ] {
+        let dir = root.path().join(name);
+        fs::create_dir(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).unwrap();
+        refused(&dir, uid, io::ErrorKind::PermissionDenied);
+        assert!(entries(&dir).is_empty(), "made something in {name}");
+    }
+
+    // A FIFO where the cache directory should be: refused, without blocking.
+    let fifo = root.path().join("fifo");
+    mkfifo(&fifo);
+    refused(&fifo, uid, io::ErrorKind::InvalidInput);
+
+    // The user's own, more open but not writable by others: `completion` is made owner-only.
+    let shared = root.path().join("shared");
+    fs::create_dir(&shared).unwrap();
+    fs::set_permissions(&shared, fs::Permissions::from_mode(0o775)).unwrap();
+    CompletionCache::new(&shared).open_completion(uid).unwrap();
+    let mode = fs::symlink_metadata(shared.join(COMPLETION_DIR))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o700);
+}
+
+/// A reader never follows a linked `completion` or partition folder to planted candidates.
+#[test]
+fn a_reader_refuses_linked_folders() {
+    let root = tempfile::tempdir().unwrap();
+    let planted = root.path().join("planted");
+    fs::create_dir_all(planted.join("p")).unwrap();
+    fs::write(
+        planted.join("p").join("orgs.json"),
+        r#"[{"name":"evil","help":null}]"#,
+    )
+    .unwrap();
+    let cache_dir = root.path().join("cache");
+    fs::create_dir(&cache_dir).unwrap();
+    symlink(&planted, &cache_dir.join(COMPLETION_DIR));
+    let cache = CompletionCache::new(&cache_dir);
+    assert!(
+        cache.load(&["p"], "orgs").is_empty(),
+        "followed `completion`"
+    );
+    fs::remove_file(cache_dir.join(COMPLETION_DIR)).unwrap();
+    fs::create_dir(cache_dir.join(COMPLETION_DIR)).unwrap();
+    symlink(
+        &planted.join("p"),
+        &cache_dir.join(COMPLETION_DIR).join("p"),
+    );
+    assert!(
+        cache.load(&["p"], "orgs").is_empty(),
+        "followed a partition"
+    );
+
+    // A linked cache directory is read as `store` sees it: refused, trailing `/` or `/.` too.
+    let real = root.path().join("real-cache");
+    let list = [candidate("x", None)];
+    CompletionCache::new(&real)
+        .store(&["p"], "orgs", &list)
+        .unwrap();
+    assert_eq!(CompletionCache::new(&real).load(&["p"], "orgs"), list);
+    let linked = root.path().join("linked-cache");
+    symlink(&real, &linked);
+    for dir in [
+        linked.clone(),
+        PathBuf::from(format!("{}/", linked.display())),
+        PathBuf::from(format!("{}/.", linked.display())),
+    ] {
+        assert!(
+            CompletionCache::new(&dir).load(&["p"], "orgs").is_empty(),
+            "followed the linked cache directory {}",
+            dir.display()
+        );
+        assert!(CompletionCache::new(&dir)
+            .store(&["p"], "orgs", &list)
+            .is_err());
+    }
+}
+
+/// P1-2: a lock that is a symbolic link (live or dangling) or a FIFO is refused without
+/// following it, creating its target or blocking.
+#[test]
+fn a_linked_or_special_lock_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let cache = CompletionCache::new(root.path());
+    cache.store(&["p"], "orgs", &[]).unwrap();
+    let dir = root.path().join(COMPLETION_DIR).join("p");
+    let lock_path = dir.join("orgs.lock");
+    let elsewhere = root.path().join("elsewhere.lock");
+    fs::write(&elsewhere, b"").unwrap();
+    let dangling = root.path().join("never-created");
+    for target in [&elsewhere, &dangling] {
+        fs::remove_file(&lock_path).unwrap();
+        symlink(target, &lock_path);
+        let error = cache
+            .store(&["p"], "orgs", &[candidate("x", None)])
+            .unwrap_err();
+        assert!(matches!(error, ShellError::Io { .. }), "{error:?}");
+    }
+    assert!(!dangling.exists(), "the dangling link's target was created");
+    fs::remove_file(&lock_path).unwrap();
+    mkfifo(&lock_path);
+    let started = Instant::now();
+    assert!(lock(&lock_path).is_err());
+    assert!(started.elapsed() < LOCK_WAIT, "blocked on a FIFO");
+    assert!(
+        cache.load(&["p"], "orgs").is_empty(),
+        "the old list is intact"
+    );
+}
+
+/// P1-2: a list that is a symbolic link, a FIFO or larger than the bound reads as empty,
+/// without following the link or blocking.
+#[test]
+fn a_linked_special_or_oversized_list_reads_empty() {
+    let root = tempfile::tempdir().unwrap();
+    let cache = CompletionCache::new(root.path());
+    let list = vec![candidate("real", None)];
+    cache.store(&["p"], "orgs", &list).unwrap();
+    let dir = root.path().join(COMPLETION_DIR).join("p");
+    let elsewhere = root.path().join("elsewhere.json");
+    fs::write(&elsewhere, r#"[{"name":"planted","help":null}]"#).unwrap();
+    fs::remove_file(dir.join("orgs.json")).unwrap();
+    symlink(&elsewhere, &dir.join("orgs.json"));
+    assert!(cache.load(&["p"], "orgs").is_empty(), "a link was followed");
+    fs::remove_file(dir.join("orgs.json")).unwrap();
+    mkfifo(&dir.join("orgs.json"));
+    let started = Instant::now();
+    assert!(cache.load(&["p"], "orgs").is_empty());
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "blocked on a FIFO"
+    );
+    fs::remove_file(dir.join("orgs.json")).unwrap();
+    let mut big = String::from("[");
+    big.push_str(&" ".repeat(usize::try_from(MAX_LIST_BYTES).unwrap()));
+    big.push(']');
+    fs::write(dir.join("orgs.json"), big).unwrap();
+    assert!(cache.load(&["p"], "orgs").is_empty(), "an oversized list");
+}
+
 #[test]
 fn keys_cannot_escape_the_cache() {
     assert_eq!(partition_key("prod-1.a_b"), "prod-1.a_b");

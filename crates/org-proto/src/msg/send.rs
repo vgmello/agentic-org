@@ -5,7 +5,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
+use super::message::{Message, MessagePriority};
+use super::{BodySize, Meta, MetaSize};
 use crate::calls::Call;
 
 /// `msg.send`: send a message from the bound member, fire and forget. Agent-bound or

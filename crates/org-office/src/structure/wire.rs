@@ -20,12 +20,13 @@ pub const MAX_COMMAND_SKEW_MS: u64 = 300_000;
 /// Synthetic placeholder operation ID used solely inside dry-run checks (never stored).
 const DRY_RUN_PLACEHOLDER_ID: &str = "01900000-0000-7000-8000-000000000000";
 
-use super::{
+use super::snapshot;
+use crate::organization::{
     features::{
         AddPerson, ArchiveTeam, Changed, CreateTeam, DeactivatePerson, Edit, MovePerson, MoveTeam,
         OrgRejection, RejectCode, TeamCreated, UpdatePerson, UpdateTeam, NOT_AUTHORIZED,
     },
-    records, snapshot,
+    records,
 };
 use crate::{
     projects::features::{

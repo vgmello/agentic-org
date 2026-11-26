@@ -12,7 +12,7 @@ use super::{
     stable, Feature, Op, RejectCode,
 };
 use crate::organization::{
-    ports::OrganizationRead,
+    ports::{OrganizationRead, TeamDependents},
     records::{self, Employee, EmployeeKind, EmployeeStatus},
 };
 
@@ -33,7 +33,7 @@ impl Feature for DeactivatePerson {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         decide(uow, here, owner, by, self)
     }

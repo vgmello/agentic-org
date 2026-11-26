@@ -95,7 +95,7 @@ fn open_items() -> InboxListParams {
 fn inbox_list_reports_a_degraded_source_and_keeps_the_office_position() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let office = office();
-    let inbox = super::super::Hq::for_office(Arc::clone(&office)).unwrap();
+    let inbox = crate::office_runtime::hq_inbox(Arc::clone(&office)).unwrap();
     let before = inbox.list(open_items()).unwrap();
     assert!(before.degraded.is_empty());
     assert!(before.as_of.seq > 0);
@@ -122,7 +122,7 @@ fn inbox_list_reports_a_degraded_source_and_keeps_the_office_position() {
 fn inbox_list_position_advances_with_a_committed_organization_change() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let office = office();
-    let inbox = super::super::Hq::for_office(Arc::clone(&office)).unwrap();
+    let inbox = crate::office_runtime::hq_inbox(Arc::clone(&office)).unwrap();
     let list = || inbox.list(open_items()).unwrap();
     let before = list();
     create_team(&office, 1);

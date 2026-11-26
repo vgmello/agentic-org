@@ -93,6 +93,15 @@ struct PreparedOfficeRuntime {
     host_gone: Arc<AtomicBool>,
 }
 
+/// HQ's inbox over `office`, with every source registered here, in the composition root: the
+/// organization (the inbox's own), the mailbox and the budget. `inbox` imports neither
+/// `mailbox_store` nor `cost_calls`; both implement its `Source` contract.
+pub(crate) fn hq_inbox(office: Arc<Office>) -> std::io::Result<inbox::Hq> {
+    let mailbox = crate::mailbox_store::MailboxInboxSource::new(Arc::clone(&office));
+    let budget = crate::cost_calls::BudgetInboxSource::new(Arc::clone(&office));
+    inbox::Hq::new(office, vec![Arc::new(mailbox), Arc::new(budget)])
+}
+
 fn prepare_office_runtime(
     control: &mut Control,
     office: &Arc<Office>,
@@ -107,7 +116,7 @@ fn prepare_office_runtime(
         Box::new(move || live_wake.notify()),
         office.owner_member_id().to_owned(),
     ));
-    let inbox = match inbox::Hq::for_office(Arc::clone(office)) {
+    let inbox = match hq_inbox(Arc::clone(office)) {
         Ok(inbox) => inbox,
         Err(error) => {
             eprintln!("agentic-org-office: inbox clock initialization failed: {error}");

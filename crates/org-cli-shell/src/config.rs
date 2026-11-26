@@ -9,14 +9,14 @@
 //! any of its text, which may hold something secret pasted by mistake.
 
 use std::ffi::OsString;
-use std::fs::{self, File};
-use std::io::Read;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
 use crate::error::ShellError;
 use crate::escape::is_unsafe_char;
+use crate::files::{read_regular, ReadRefusal};
 
 /// Selects the instance (tier 2).
 pub const INSTANCE_ENV: &str = "AGENTIC_ORG_INSTANCE";
@@ -45,30 +45,35 @@ pub struct Manifest {
     pub office: Option<String>,
 }
 
-/// The nearest `agentic-org.toml` that is a file, in `start` or an ancestor.
+/// The nearest `agentic-org.toml` that is not a directory, in `start` or an ancestor. A
+/// symbolic link, a FIFO or a device is found, never followed or opened here:
+/// [`load_manifest`] refuses it, so it can neither redirect the selection nor be skipped for a
+/// manifest further up.
 pub fn find_manifest(start: &Path) -> Option<PathBuf> {
     start
         .ancestors()
         .map(|dir| dir.join(MANIFEST_FILE))
-        .find(|path| fs::metadata(path).is_ok_and(|metadata| metadata.is_file()))
+        .find(|path| fs::symlink_metadata(path).is_ok_and(|metadata| !metadata.is_dir()))
 }
 
-/// Reads and checks a manifest (at most [`MAX_MANIFEST_BYTES`]). A parse error is
-/// [`ShellError::InvalidConfig`] `"<path>: not a valid agentic-org.toml at line L, column C"`.
+/// Reads and checks a manifest (at most [`MAX_MANIFEST_BYTES`]): opened without following a
+/// symbolic link or blocking on a FIFO, a regular file on the opened handle, read bounded
+/// ([`crate::files::read_regular`]). A parse error is [`ShellError::InvalidConfig`]
+/// `"<path>: not a valid agentic-org.toml at line L, column C"`.
 pub fn load_manifest(path: &Path) -> Result<Manifest, ShellError> {
     let shown = path.display().to_string();
-    let read_error = |e| ShellError::io(format!("reading {shown}"), e);
-    let metadata = fs::metadata(path).map_err(read_error)?;
-    if !metadata.is_file() {
-        return Err(invalid_manifest(format!("{shown}: not a regular file")));
-    }
-    let mut bytes = Vec::new();
-    File::open(path)
-        .and_then(|file| file.take(MAX_MANIFEST_BYTES + 1).read_to_end(&mut bytes))
-        .map_err(read_error)?;
-    if bytes.len() as u64 > MAX_MANIFEST_BYTES {
-        return Err(invalid_manifest(format!("{shown}: larger than 64 KiB")));
-    }
+    let bytes = match read_regular(path, MAX_MANIFEST_BYTES) {
+        Ok(bytes) => bytes,
+        Err(ReadRefusal::NotRegular) => {
+            return Err(invalid_manifest(format!(
+                "{shown}: not a regular file (a symbolic link is refused)"
+            )))
+        }
+        Err(ReadRefusal::TooLarge { .. }) => {
+            return Err(invalid_manifest(format!("{shown}: larger than 64 KiB")))
+        }
+        Err(ReadRefusal::Io(e)) => return Err(ShellError::io(format!("reading {shown}"), e)),
+    };
     let text = match String::from_utf8(bytes) {
         Ok(text) => text,
         Err(e) => {

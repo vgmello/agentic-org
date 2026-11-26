@@ -14,7 +14,6 @@ use org_sync::work::{Origin, SourceKey};
 use org_sync_proto::{work_ack_proof_digest_v1, write_sync_frame, SyncFrame};
 
 use super::client::{read_client_frame, try_connect_hq_endpoint};
-use super::org_events::apply_satellite_org_event_frame;
 use super::relay::{
     apply_message_outbox_reply, expire_stale_non_close_head_messages, sync_native_message_relays,
 };
@@ -23,6 +22,7 @@ use super::{
     now_ms, HqPermitRequest, HqPermitResponse, InboundCallbacks, InboundDeliveryNotifier,
     RelayedWake, SatelliteSyncSession, StaticPeer, WakeRelayHandler, FIRST_FRAME_DEADLINE,
 };
+use crate::federation_link::org_events::apply_satellite_org_event_frame;
 
 impl SatelliteSyncSession {
     /// Connects to HQ using this satellite's persisted Org-CA-pinned mTLS credentials, verifies

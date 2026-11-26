@@ -1,6 +1,7 @@
 //! Field schemas, inputs and outputs the message, channel and status command rows use.
 
-use super::*;
+use org_command::{Field, Type};
+use org_proto::ErrorCode;
 
 pub(super) const READ_ERRORS: &[ErrorCode] = &[
     ErrorCode::InvalidRequest,

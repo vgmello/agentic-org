@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
+use super::message::{DeliveryFailedReason, MessageHeader, MessageLifecycleState};
 use crate::events::EventKind;
 
 /// `message.received`: a message was committed for a recipient at this office. Carries only

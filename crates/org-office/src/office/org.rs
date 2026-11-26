@@ -10,7 +10,7 @@ use org_store::{Actor, Id, StoreError};
 
 use crate::{
     error::OfficeError,
-    organization::{directory, records, wire},
+    organization::{directory, records},
     rules::OrgCommand,
     store::open::{
         AddPersonOp, AddProjectTeamOp, ArchiveTeamOp, CheckOp, CreateProjectOp, CreateTeamOp,
@@ -18,6 +18,7 @@ use crate::{
         ProjectInspectByRef, ProjectsList, ReceiptById, RemoveProjectTeamOp, TopTeamId,
         UpdatePersonOp, UpdateTeamOp,
     },
+    structure::wire,
     time,
 };
 

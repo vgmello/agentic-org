@@ -15,7 +15,7 @@ use super::{
     stable, Feature, Op, RejectCode,
 };
 use crate::organization::{
-    ports::OrganizationRead,
+    ports::{OrganizationRead, TeamDependents},
     records::{
         self, AgentExecutionConfig, By, Employee, EmployeeKind, EmployeeStatus, HireProposal,
         HireRequest, HireState, Meta, PermissionPreset,
@@ -148,7 +148,7 @@ impl Feature for DraftHire {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         stable(&self.id, "the hire request's ID")?;
         stable(&self.home_team, "the home team's ID")?;
@@ -226,7 +226,7 @@ impl Feature for ConfirmHire {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         stable(&self.request_id, "the hire request's ID")?;
         stable(&self.employee_id, "the new agent's ID")?;
@@ -341,7 +341,7 @@ impl Feature for HireAgent {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         stable(&self.request_id, "the hire request's ID")?;
         stable(&self.employee_id, "the new agent's ID")?;
@@ -428,7 +428,7 @@ impl Feature for WithdrawHire {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         stable(&self.request_id, "the hire request's ID")?;
         let admitted = admit_active_employee(uow, here, by)?;

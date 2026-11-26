@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Instant;
 
-use crate::federation::{hex_lower, write_sync_frame_if_peer_active, HqSessionPeer};
+use crate::federation_link::{hex_lower, write_sync_frame_if_peer_active, HqSessionPeer};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use org_office::{ExportedSnapshotPages, Office, OfficeError, SnapshotExportProgress};

@@ -11,8 +11,8 @@ use org_proto::git::{
 use org_proto::{Call, ErrorCode};
 use serde_json::{Map, Value};
 
-use crate::dispatch::OfficeTransport;
 use crate::keys::try_new_uuid_v7;
+use crate::transport::OfficeTransport;
 
 pub fn try_execute<T: OfficeTransport + ?Sized>(
     transport: &mut T,
@@ -53,14 +53,14 @@ fn cmd_id(request: &Request) -> Result<String, Refusal> {
         if org_proto::is_uuid_v7(key) {
             return Ok(key.to_owned());
         }
-        return Ok(crate::dispatch::derive_uuid_v7("git-command", key));
+        return Ok(crate::transport::derive_uuid_v7("git-command", key));
     }
     fresh_id()
 }
 
 fn entity_id(request: &Request, domain: &str) -> Result<String, Refusal> {
     if let Some(key) = request.idempotency_key.as_deref() {
-        return Ok(crate::dispatch::derive_uuid_v7(domain, key));
+        return Ok(crate::transport::derive_uuid_v7(domain, key));
     }
     fresh_id()
 }
@@ -270,7 +270,7 @@ fn write_worktree_prepare<T: OfficeTransport + ?Sized>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dispatch::TransportOffice;
+    use crate::transport::TransportOffice;
     use serde_json::json;
 
     struct FakeTransport {

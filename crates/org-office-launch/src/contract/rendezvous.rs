@@ -1,7 +1,13 @@
 //! Worker events and launch rendezvous events on the rendezvous connection, and the server's
 //! ready-for-secrets line.
 
-use super::*;
+use std::io::{BufRead, Write};
+
+use org_proto::frame;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use super::{check_version, Line, CHANNEL_PROFILE, LAUNCH_VERSION};
+use crate::{LaunchError, ServerEvent};
 
 /// Write a worker event on the rendezvous connection, as a launch line (`{"v": 1, "event": ...}`).
 /// [`ServerEvent::Unknown`] and a created office that [`crate::OfficeFile::to_vec`] would refuse

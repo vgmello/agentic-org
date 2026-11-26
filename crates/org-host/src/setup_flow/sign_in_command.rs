@@ -15,10 +15,10 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::cli_context::{self, CliContext};
-use super::cli_error::{refused_by, HostCliError};
 use super::cli_session::{approve_on_wire, Target};
 use super::project_command::office_hello;
 use super::wire::registered;
+use crate::cli_error::{refused_by, HostCliError};
 use crate::human::Wire;
 
 /// Help text for `agentic-org sign-in`.

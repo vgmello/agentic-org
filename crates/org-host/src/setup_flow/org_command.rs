@@ -21,9 +21,9 @@ use org_proto::web::organizations::{RepositoryRegistration, SelectedCreateParams
 use org_proto::ErrorCode;
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 
-use super::cli_error::{refused_by, wire_name, HostCliError};
 use super::cli_session::{connect_cli_session, end_session, AskPassword, Target};
 use super::wire::registered;
+use crate::cli_error::{refused_by, wire_name, HostCliError};
 
 /// Help text for `agentic-org org`.
 pub const HELP: &str = "agentic-org org <subcommand>\n\

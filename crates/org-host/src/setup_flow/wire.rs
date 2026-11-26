@@ -163,7 +163,9 @@ pub(crate) fn registered_with_origin(
         return Err("the instance is not the one setup recorded; run agentic-org setup".into());
     }
     let origin = browser
-        .filter(|active| crate::registered::browser_matches_setup(active, &record.input.listen))
+        .filter(|active| {
+            crate::browser_listener::browser_matches_setup(active, &record.input.listen)
+        })
         .map(|active| active.origin().clone())
         .unwrap_or_else(|| record.input.listen.origin().clone());
     Ok((record, id, temp.join("host.sock"), origin))

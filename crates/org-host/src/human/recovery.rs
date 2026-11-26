@@ -5,8 +5,8 @@
 //! panic. The recovery code itself is written only to `/dev/tty`. Invalid arguments are
 //! `Usage` errors whose help is the command's help.
 use super::{session, Wire};
+use crate::cli_error::{wire_name, HostCliError};
 use crate::host_log::untrusted;
-use crate::setup_flow::{wire_name, HostCliError};
 use org_host_control::{ops, recovery as dto, SessionHandle};
 use org_proto::{Hello, HelloParams, HelloResult};
 use std::{
@@ -505,7 +505,7 @@ pub fn recovery(arguments: &[String], out: &mut dyn Write) -> Result<(), HostCli
     {
         Ok(signed) => signed,
         Err(code) => {
-            return Err(crate::setup_flow::sign_in_refused(
+            return Err(crate::cli_error::sign_in_refused(
                 code,
                 "invalid login or password",
             ))

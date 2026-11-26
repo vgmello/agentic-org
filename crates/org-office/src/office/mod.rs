@@ -25,6 +25,7 @@ mod creation;
 mod folder;
 mod git;
 mod hiring;
+pub(crate) mod import;
 mod intent;
 mod invitations;
 mod messaging;

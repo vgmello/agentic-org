@@ -7,13 +7,12 @@ use org_proto::msg::{
 };
 use org_proto::{Member, MemberKind, Position};
 
+use super::{can_message, is_notice_for, lock, Mailbox, NoticeFailure};
 use crate::ids::{delivery_failed_fallback_id, delivery_failed_id};
 use crate::{
     content_hash, format_utc, past_deadline, CommitMessageOutcome, ExpiryProgress, HeaderQuery,
     HeaderScope, LocalStateTransition, MailboxError, MessageEvent, NewStoredMessage, StoreError,
 };
-
-use super::*;
 
 /// The `delivery_failed` notice's subject: fixed text, never the original's content.
 const EXPIRED_SUBJECT: &str = "Request expired";

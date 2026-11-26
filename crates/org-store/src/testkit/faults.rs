@@ -12,8 +12,9 @@ use std::{
 use super::HELD_BOUND;
 use crate::{
     disk::{Disk, DiskFile, RealDisk},
-    files::{Files, FilesError},
-    store::{Hooks, Site},
+    error::FilesError,
+    files::Files,
+    hooks::{Hooks, Site},
 };
 
 /// Where a flush error is injected.

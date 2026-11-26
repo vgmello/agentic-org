@@ -15,7 +15,18 @@ pub mod budgets;
 pub mod git;
 pub mod hq_creation;
 mod organization;
-pub use organization::{directory, import};
+pub use organization::directory;
+/// Opening an existing organization from Git repository files (`TASK-39` / R1): the
+/// organization's import rules and Entry 1, and their validation through the office store's
+/// production projectors.
+pub mod import {
+    pub use crate::office::import::{clone_and_validate_state, validate_state_dir};
+    pub use crate::organization::import::{
+        check_git_source, collect_state_files, decide_import, next_office_code, ImportError,
+        ImportOrganization, ImportedOrganization, ImportedPerson, ValidatedImport,
+        LOCAL_ONLY_NOT_RESTORED,
+    };
+}
 /// The organization family on the office store (`docs/design/office-store.md`): its
 /// operations, its records and codec, its two ports and its projector. With the `testkit`
 /// feature: its memory port and `organization_conformance_tests!`.
@@ -36,7 +47,7 @@ pub mod organization_family {
     pub use crate::organization::testkit;
     /// The native protocol's side: `org.snapshot` from the records and organization commands
     /// mapped onto the family and back.
-    pub use crate::organization::{snapshot, wire};
+    pub use crate::structure::{snapshot, wire};
 }
 mod error;
 mod key;
@@ -56,6 +67,7 @@ pub mod providers;
 pub mod replication;
 pub mod rules;
 mod store;
+mod structure;
 pub mod tasks;
 pub use store::open::messaging_ops::{
     LocalTransitionInput, MailboxCommitInput, MailboxCommitOut, MailboxStored, NotifyCandidateOut,

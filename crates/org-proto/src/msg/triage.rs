@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
+use super::message::{MessageLifecycleState, MessagePriority, NotifyReason, SnoozeTarget};
 use crate::calls::Call;
 
 /// `msg.defer`: snooze a message addressed to the bound member until a time or its next break.

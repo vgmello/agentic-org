@@ -2,16 +2,16 @@
 //! adapter owns reservations/custody and uses the existing admitted supervisor.
 #[cfg(test)]
 use crate::hostdb::accounts::Account;
+use crate::hostdb::pending_recovery::{unavailable, Pending};
 use crate::{
     broadcast::Broadcast,
-    host_secrets::{HostSecrets, Name},
+    host_secrets::HostSecrets,
     hostdb::{provisioning::Reservation, HostDb},
     keys::OfficeSecretsKeys,
     offices::Offices,
     writer::Writers,
 };
 use org_proto::{ApiError, ErrorCode, RecoveryCode};
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     os::unix::fs::{DirBuilderExt, MetadataExt},
@@ -54,50 +54,6 @@ pub(crate) struct Provisioning {
     #[cfg(test)]
     reservation_fault: std::sync::atomic::AtomicU8,
 }
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Pending {
-    version: u32,
-    reservation: Reservation,
-    code: RecoveryCode,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    import_source: Option<org_office_launch::ImportSourceV1>,
-}
-pub(crate) fn pending_recovery(
-    custody: &dyn HostSecrets,
-    r: &Reservation,
-) -> Result<RecoveryCode, ApiError> {
-    let bytes = custody
-        .load(&Name::parse(&r.recovery_handle).map_err(storage)?)
-        .map_err(storage)?
-        .ok_or_else(unavailable)?;
-    let p: Pending = serde_json::from_slice(bytes.expose()).map_err(storage)?;
-    if p.version != 1
-        || p.reservation.operation_id != r.operation_id
-        || p.reservation.account != r.account
-        || p.reservation.fingerprint != r.fingerprint
-        || p.reservation.prepared != r.prepared
-        || p.reservation.owner_member != r.owner_member
-        || p.reservation.recovery_handle != r.recovery_handle
-        || p.reservation.key_fingerprint.is_some()
-        || p.reservation.linked
-    {
-        return Err(unavailable());
-    }
-    let code = p.code.expose().as_bytes();
-    if code.len() != 49
-        || code.iter().enumerate().any(|(i, b)| {
-            if i % 5 == 4 {
-                *b != b'-'
-            } else {
-                !b.is_ascii_digit() && !(b'A'..=b'F').contains(b)
-            }
-        })
-    {
-        return Err(unavailable());
-    }
-    Ok(p.code)
-}
 fn generate_recovery_code() -> Result<RecoveryCode, ApiError> {
     use std::fmt::Write as _;
     let random = crate::secrets::generate_office_secrets_key().map_err(storage)?;
@@ -116,12 +72,6 @@ fn generate_recovery_code() -> Result<RecoveryCode, ApiError> {
     RecoveryCode::new(formatted).map_err(storage)
 }
 
-fn unavailable() -> ApiError {
-    ApiError::new(
-        ErrorCode::Unavailable,
-        "HQ preparation is unresolved; retry the original operation",
-    )
-}
 fn not_administrator() -> ApiError {
     ApiError::new(ErrorCode::NotAuthorized, "instance administrator required")
 }

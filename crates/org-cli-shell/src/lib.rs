@@ -17,11 +17,13 @@
 //! - [`config`]: the five-tier non-secret instance/office selection with the strict
 //!   `agentic-org.toml` manifest.
 //! - [`cache`]: the completion cache.
+//! - [`files`]: the one bounded, no-follow read of a small file the command line does not
+//!   write itself (completion lists, the manifest, an invitation file).
 //!
 //! The crate knows no socket, office, host or operating system: the composition root passes
 //! the platform directories and the environment in. Module graph (an arrow points at what a
 //! module uses): `terminal -> error -> escape`; `context -> terminal, error`;
-//! `output, prompt -> context`; `paths -> error`; `config, cache -> error, escape`.
+//! `output, prompt -> context`; `paths -> error`; `config, cache -> error, escape, files`.
 
 #![forbid(unsafe_code)]
 
@@ -30,6 +32,7 @@ pub mod config;
 pub mod context;
 pub mod error;
 mod escape;
+pub mod files;
 pub mod output;
 pub mod paths;
 pub mod prompt;

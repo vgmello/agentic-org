@@ -1,5 +1,14 @@
 //! Host-channel negotiation and per-request, grant-verified owner authority.
-use super::*;
+use std::os::unix::net::UnixStream;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+use org_proto::{frame, ApiError, ErrorCode, Hello, HelloResult, Request, Response};
+
+use super::auth::Binding;
+use super::shared::Shared;
+use super::wire::{internal, send};
+use crate::follow::Timing;
 mod authority;
 use crate::revocations::Revocations;
 

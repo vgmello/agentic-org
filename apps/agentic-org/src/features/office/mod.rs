@@ -19,6 +19,7 @@ use std::io::Read;
 
 use clap::{ArgGroup, Args, Subcommand};
 use org_cli_shell::context::ExecutionContext;
+use org_cli_shell::files::ReadRefusal;
 use org_cli_shell::prompt::require_confirmation;
 use org_host::setup_flow::InvitationTokenSecret;
 use serde_json::Value;
@@ -182,26 +183,24 @@ fn guard(ctx: &mut ExecutionContext, action: &str, plan: &Value) -> Result<bool,
     Ok(true)
 }
 
+/// The most of an invitation token that is read, from a file or standard input.
+const MAX_INVITATION_BYTES: u64 = 64 * 1024;
+
 impl InvitationArgs {
     /// The invitation token, from the file or standard input; never echoed.
     fn read(&self) -> Result<InvitationTokenSecret, CliError> {
-        let mut raw = match (&self.invitation_file, self.invitation_stdin) {
-            (Some(path), _) => std::fs::read(path).map_err(|e| {
-                CliError::failed(
-                    "cli::io",
-                    format!("cannot read invitation file `{path}`: {e}"),
-                )
-            })?,
-            (None, _) => {
-                let mut buf = Vec::new();
-                std::io::stdin().read_to_end(&mut buf).map_err(|e| {
-                    CliError::failed(
-                        "cli::io",
-                        format!("cannot read invitation token from stdin: {e}"),
-                    )
-                })?;
-                buf
-            }
+        self.read_from(&mut std::io::stdin().lock())
+    }
+
+    /// The invitation token from the file (a regular file opened without following a
+    /// symbolic link or blocking on a FIFO, `org_cli_shell::files::read_regular_into`) or
+    /// from `stdin`, at most [`MAX_INVITATION_BYTES`] either way, so an endless stream cannot
+    /// exhaust memory. The bytes are read into one buffer sized up front (never moved) and
+    /// zeroed before returning, on success and on refusal alike.
+    fn read_from(&self, stdin: &mut dyn Read) -> Result<InvitationTokenSecret, CliError> {
+        let mut raw = match &self.invitation_file {
+            Some(path) => read_invitation_file(path)?,
+            None => read_invitation_stdin(stdin)?,
         };
         let secret = std::str::from_utf8(&raw)
             .map_err(|_| CliError::usage("the invitation token must be valid UTF-8"))
@@ -213,3 +212,52 @@ impl InvitationArgs {
         secret
     }
 }
+
+fn read_invitation_file(path: &str) -> Result<Vec<u8>, CliError> {
+    let mut raw = Vec::new();
+    let read = org_cli_shell::files::read_regular_into(
+        std::path::Path::new(path),
+        MAX_INVITATION_BYTES,
+        &mut raw,
+    );
+    let Err(refusal) = read else {
+        return Ok(raw);
+    };
+    // A refused file's bytes (an oversized token, a read cut short) are zeroed too.
+    org_proto::zero_bytes(&mut raw);
+    Err(match refusal {
+        ReadRefusal::NotRegular => CliError::usage(format!(
+            "invitation file `{path}` is not a regular file (a symbolic link is refused; \
+                 use --invitation-stdin to pipe the token)"
+        )),
+        ReadRefusal::TooLarge { .. } => {
+            CliError::usage(format!("invitation file `{path}` is larger than 64 KiB"))
+        }
+        ReadRefusal::Io(e) => CliError::failed(
+            "cli::io",
+            format!("cannot read invitation file `{path}`: {e}"),
+        ),
+    })
+}
+
+fn read_invitation_stdin(stdin: &mut dyn Read) -> Result<Vec<u8>, CliError> {
+    let mut raw = Vec::new();
+    match org_cli_shell::files::read_bounded_into(stdin, MAX_INVITATION_BYTES, &mut raw) {
+        Ok(()) => Ok(raw),
+        Err(refusal) => {
+            org_proto::zero_bytes(&mut raw);
+            Err(match refusal {
+                ReadRefusal::TooLarge { .. } => {
+                    CliError::usage("the invitation token on standard input is larger than 64 KiB")
+                }
+                other => CliError::failed(
+                    "cli::io",
+                    format!("cannot read invitation token from stdin: {other}"),
+                ),
+            })
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

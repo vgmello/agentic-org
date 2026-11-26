@@ -254,6 +254,7 @@ impl TopCommand {
             Self::Office(args) => args.yes(),
             Self::Context(args) => args.yes(),
             Self::Admin(args) => args.yes(),
+            Self::Service(args) => args.yes(),
             _ => false,
         }
     }

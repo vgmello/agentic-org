@@ -114,6 +114,7 @@ pub mod tz;
 pub mod web;
 pub mod work;
 
+mod call;
 mod calls;
 mod error;
 mod events;

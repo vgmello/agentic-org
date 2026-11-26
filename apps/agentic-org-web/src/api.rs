@@ -13,6 +13,7 @@ mod chat_routes;
 mod cost_routes;
 mod git_routes;
 mod hiring_routes;
+mod hq_context;
 mod instance_routes;
 mod office_routes;
 mod open_routes;
@@ -25,49 +26,33 @@ mod task_routes;
 pub use instance_routes::{CallerAuth, TlsEnableInput};
 
 use crate::{
-    body::BusinessBody,
     host::{Failure, HostControl},
     office::OfficeBridge,
-    path::RequestPath,
-    service::{ApiBackend, ApiReply, AsyncDispatch, PreparedCall, WebReply},
-    session::{rfc3339_millis, BrowserPair, CookieName, PresentedPair, SessionCache},
-    sse::{self, EventHub},
-    transport::PeerAddress,
+    service::ApiReply,
+    session::{rfc3339_millis, CookieName, PresentedPair, SessionCache},
+    sse::EventHub,
 };
-use hyper::{header::SET_COOKIE, http::request::Parts, Method, StatusCode};
+use hyper::StatusCode;
 use org_host_control::{
-    browser::{
-        BrowserLocalSession, BrowserLocalSessionParams, BrowserOrigin, BrowserSession,
-        BrowserSessionEnd, BrowserSessionEndParams, InstanceView, InstanceViewResult, LinkRegister,
-        LinkRegisterParams, SessionSignIn, SessionSignInParams, SessionValidate,
-        SessionValidateParams,
-    },
+    browser::{BrowserOrigin, BrowserSession, InstanceViewResult},
     listen::ListenOrigin,
     ops::RecoveryState as HostRecoveryState,
-    organization::{self as host_org, BrowserAuth},
+    organization::{self as host_org},
     HostOpResult, LinkToken, Password, WebState,
 };
 use org_proto::selected_bootstrap::PlanV1;
 use org_proto::web::{
     self as gateway,
     org_mutations::{OrgMutation, OrgOperation},
-    organizations::{
-        self, CreatingOrganization, SelectedCreateRequest, SelectedOrganizationList,
-        SelectedOrganizationView,
-    },
-    AccountView, CreateState, ListenScheme, LookupQuery, Milliseconds, MutationOutcome, OfficeView,
-    OperationId, OperationKind, OperationLookup, OrganizationLink, ReadResponse, RecoveryState,
-    Scope, SessionEstablished, SessionProof, SessionView, StreamRequest, Version, WebError,
+    organizations::SelectedOrganizationView,
+    AccountView, ListenScheme, Milliseconds, MutationOutcome, OfficeView, OperationId,
+    OrganizationLink, ReadResponse, RecoveryState, SessionView, StreamRequest, WebError,
     WebErrorCode, WebStatus,
 };
 use serde::Deserialize;
 use std::{
-    collections::BTreeSet,
     net::IpAddr,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::{atomic::AtomicBool, Arc},
     time::{SystemTime, UNIX_EPOCH},
 };
 

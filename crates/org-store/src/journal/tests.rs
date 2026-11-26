@@ -1,4 +1,7 @@
+use std::fs;
+
 use super::*;
+use crate::sequences::MAX_POSITION;
 use crate::testkit::{id, identity, DiskOp, FakeCustody, Faults, Rng, Target};
 
 struct Fixture {

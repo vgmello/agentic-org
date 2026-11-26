@@ -1,5 +1,6 @@
 use super::*;
 use std::io::{BufRead, Write};
+use std::os::unix::net::UnixStream as StdUnixStream;
 
 #[test]
 fn multiplexed_office_channel_correlates_out_of_order_concurrent_replies() {

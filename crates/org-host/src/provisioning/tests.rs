@@ -532,7 +532,12 @@ fn pending_recovery_survives_registry_loss_before_writer_reservation() {
     assert!(actual.expose() == frozen);
     let original: Pending = serde_json::from_slice(&frozen).unwrap();
     assert_eq!(original.reservation.prepared, reservation.prepared);
-    assert!(pending_recovery(&custody, &reservation).unwrap().expose() == original.code.expose());
+    assert!(
+        crate::hostdb::pending_recovery::pending_recovery(&custody, &reservation)
+            .unwrap()
+            .expose()
+            == original.code.expose()
+    );
     assert_eq!(
         std::fs::read(root.join("retained-registry.db")).unwrap(),
         original_registry

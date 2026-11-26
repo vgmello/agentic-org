@@ -11,7 +11,7 @@ use super::{
     stable, Feature, Op, RejectCode,
 };
 use crate::organization::{
-    ports::OrganizationRead,
+    ports::{OrganizationRead, TeamDependents},
     records::{self, Meta, Team, TeamAllocation, TeamStatus},
 };
 
@@ -45,7 +45,7 @@ impl Feature for CreateTeam {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         decide(uow, here, owner, by, self)
     }
@@ -60,7 +60,7 @@ pub fn decide<E: Engine>(
     command: &CreateTeam,
 ) -> Result<Change, Refusal>
 where
-    E::Tx: crate::projects::ports::ProjectsRead,
+    E::Tx: TeamDependents,
 {
     stable(&command.id, "the team's ID")?;
     if let Some(parent) = &command.parent {

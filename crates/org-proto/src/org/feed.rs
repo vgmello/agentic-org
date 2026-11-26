@@ -3,8 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
-use crate::calls::{Call, Empty};
+use super::projects::{Area, Project, ProjectTeam};
+use super::structure::{Member, Position, Team};
+use crate::call::{Call, Empty};
 use crate::events::EventKind;
 
 /// Everything the org chart needs, as of `position`.

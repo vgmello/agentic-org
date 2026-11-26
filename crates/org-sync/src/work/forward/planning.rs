@@ -1,5 +1,8 @@
 //! Local stream policy only; candidates are neither encoded frames nor send permission.
-use super::*;
+use org_sync_proto::WORK_CREDIT_WINDOW;
+
+use super::{authorize, ready, LocalStreamOutput, LocalStreamStore, WorkStreamPeer};
+use crate::work::{validate_queue, Arc, Refusal, SyncError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ForwardTrigger {

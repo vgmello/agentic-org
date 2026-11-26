@@ -7,8 +7,8 @@ use org_office::Office;
 use org_sync_proto::SyncFrame;
 use rustls::{ServerConnection, StreamOwned};
 
-use super::hq_peer::{write_sync_frame_if_peer_active, HqSessionPeer};
 use super::{now_ms, HqPermitRequest, SatelliteSyncSession};
+use crate::federation_link::hq_peer::{write_sync_frame_if_peer_active, HqSessionPeer};
 
 pub(super) struct PermitSyncInput {
     pub(super) request_id: String,

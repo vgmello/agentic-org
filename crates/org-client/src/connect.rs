@@ -1,12 +1,18 @@
 //! Opening a connection, and closing it in tests.
 
+use std::collections::HashMap;
 use std::io::ErrorKind;
+use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+use std::sync::{mpsc, Arc, Mutex};
 
 use org_proto::OfficeInfo;
 
-use super::*;
+use super::error::ClientError;
+use super::helper::Helper;
+use super::paths::default_host_socket_path;
+use super::{Client, Shared, WRITE_QUEUE};
 use crate::paths::{
     check_socket_path, host_socket_in, office_socket, office_socket_by_id, selected_office_socket,
 };
@@ -115,7 +121,7 @@ impl Client {
     /// If a writer error leaves the reader unjoined, its diagnostic states that explicitly.
     /// Normal Drop remains bounded and may detach helpers in every build.
     #[cfg(any(test, feature = "testkit"))]
-    pub fn close_and_join(&mut self, deadline: Instant) -> std::io::Result<()> {
+    pub fn close_and_join(&mut self, deadline: std::time::Instant) -> std::io::Result<()> {
         self.shared.close();
         self.outbound.take();
         let writer = Helper::join_before(&mut self._writer, deadline);

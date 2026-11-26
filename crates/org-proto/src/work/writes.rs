@@ -3,8 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
-use crate::calls::{Call, Empty};
+use super::items::{LinkTarget, NewStep, Shortcut, WorkAccepted};
+use crate::call::{Call, Empty};
+use crate::{CommentKind, ItemStatus, LinkKind, Priority, Resolution, Severity, VerifyOutcome};
 
 macro_rules! write_call {
     ($(#[$doc:meta])* $call:ident, $method:literal, $params:ident { $($(#[$fattr:meta])* $field:ident : $ty:ty),* $(,)? }) => {

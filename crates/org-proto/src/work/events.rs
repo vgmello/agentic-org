@@ -2,9 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
+use super::items::{ChecklistStep, DoneAnyway, Link, WorkItemSummary, WorkPosition};
 use crate::events::EventKind;
 use crate::org::Position;
+use crate::{CommentKind, ItemStatus, Priority, Resolution, RoutedBy, Severity, VerifyOutcome};
 
 /// A reference to one event: the item (or feature) and the version the event made.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

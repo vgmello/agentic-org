@@ -1,6 +1,8 @@
 //! Recognizing `--help` requests and enriching their plain-text output with `Use when:` guidance.
 
-use super::*;
+use org_command::{Command, CommandTable, Output, Type};
+
+use super::{command_use_when, resource_use_when_for, COMMON_VALUE_OPTIONS, TOP_USE_WHEN};
 
 pub(super) enum HelpTarget<'a> {
     Top,

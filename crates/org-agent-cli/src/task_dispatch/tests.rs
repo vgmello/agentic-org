@@ -1,5 +1,5 @@
 use super::*;
-use crate::dispatch::TransportOffice;
+use crate::transport::TransportOffice;
 
 struct EchoTransport {
     seen: Vec<(String, Value)>,

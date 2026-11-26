@@ -5,7 +5,9 @@
 //! The ports hold no rule: an engine without constraints (the memory engine) is as valid
 //! as one with them. The rules are in the decisions and in the projector's `validate`.
 
-use org_store::{CoreRead, Engine, EngineError, Id};
+use std::collections::BTreeMap;
+
+use org_store::{CoreRead, DurablePath, Engine, EngineError, Id, StoreError};
 
 use super::records::{
     AgentExecutionConfig, Employee, HireRequest, ModelProfile, Office, OfficeCode, Organization,
@@ -132,6 +134,33 @@ pub trait OrganizationWrite: OrganizationRead {
     fn remove_team_counter(&mut self) -> Result<(), EngineError>;
     fn put_team_allocation(&mut self, record: &TeamAllocation) -> Result<(), EngineError>;
     fn remove_team_allocation(&mut self, number: u64) -> Result<(), EngineError>;
+}
+
+/// One file another family keeps homed in a team, moved with the team when its chain changes:
+/// its path under the old chain, its path under the new one (`None` when no path can hold the
+/// new chain) and its bytes, unchanged.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct TeamHomedMove {
+    pub from: Result<DurablePath, StoreError>,
+    pub to: Option<DurablePath>,
+    pub bytes: Vec<u8>,
+}
+
+/// What the organization's decisions must see of the families built on it: the projects (an
+/// ID in use, a team an active project still names) and the files they keep homed in a team.
+/// The organization declares this port and never reads those families itself; the projects
+/// family answers it for every engine view that reads projects (`crate::projects::ports`).
+pub trait TeamDependents: OrganizationRead {
+    /// Whether a project has this ID.
+    fn project_exists(&self, id: &Id) -> Result<bool, EngineError>;
+    /// Whether an active project names `team` as its owner or a contributing team.
+    fn team_in_active_project(&self, team: &Id) -> Result<bool, EngineError>;
+    /// Every file homed in a team of `chains` (team ID to its old and new chain), in the order
+    /// the family keeps them.
+    fn team_homed_moves(
+        &self,
+        chains: &BTreeMap<Id, (Vec<Id>, Vec<Id>)>,
+    ) -> Result<Vec<TeamHomedMove>, EngineError>;
 }
 
 /// An engine the organization family runs on: both ports, where the store needs them.

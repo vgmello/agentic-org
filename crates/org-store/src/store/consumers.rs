@@ -1,6 +1,8 @@
 //! Registered consumers and their durable watermarks, which cap journal release.
 
-use super::*;
+use super::Store;
+use crate::engine::Engine;
+use crate::error::StoreError;
 
 impl<E: Engine> Store<E> {
     /// Registers a durable journal consumer (such as multi-office replication, `ARCH-03` /

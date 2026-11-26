@@ -21,7 +21,7 @@ pub(crate) struct HqSessionPeer<'a> {
     pub(crate) server_stop: &'a AtomicBool,
 }
 
-pub(super) fn check_not_revoked_fail_closed(
+pub(crate) fn check_not_revoked_fail_closed(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,
     office: &Office,
     satellite_office_id: &str,
@@ -71,7 +71,7 @@ pub(crate) fn write_sync_frame_if_peer_active(
     )
 }
 
-pub(super) fn read_hq_frame_nonblocking(
+pub(crate) fn read_hq_frame_nonblocking(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,
     reader: &mut FrameReader,
 ) -> Result<Option<SyncFrame>, FrameCodecError> {
@@ -81,7 +81,7 @@ pub(super) fn read_hq_frame_nonblocking(
     res
 }
 
-pub(super) fn push_hq_org_events_if_behind(
+pub(crate) fn push_hq_org_events_if_behind(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,
     peer: &HqSessionPeer<'_>,
     peer_org_cursor: &mut Option<(u64, u64)>,
@@ -120,7 +120,7 @@ pub(super) fn push_hq_org_events_if_behind(
     true
 }
 
-pub(super) fn send_hq_org_events_after(
+pub(crate) fn send_hq_org_events_after(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,
     peer: &HqSessionPeer<'_>,
     epoch: u64,

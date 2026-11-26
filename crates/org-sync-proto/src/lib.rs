@@ -1,6 +1,6 @@
 //! Shared core/transport values. No framing, TLS, storage or I/O.
 //! Values validate at construction; transport decoding must use these constructors.
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 mod authority;
 mod digest;

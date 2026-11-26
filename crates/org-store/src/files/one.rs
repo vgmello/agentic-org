@@ -1,6 +1,14 @@
 //! Publishing and reading one file directly in a directory, outside the canonical tree.
 
-use super::*;
+use std::fs::OpenOptions;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::{fs, io};
+
+use super::read_limited;
+use crate::change::TEMP_PREFIX;
+use crate::error::FilesError;
 
 /// Temporary names of [`publish_one`] in this process: one each, never reused.
 pub(super) static ONE_TEMP: AtomicU64 = AtomicU64::new(0);

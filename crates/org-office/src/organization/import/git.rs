@@ -175,7 +175,7 @@ fn strip_url_credentials(text: &str) -> String {
     out
 }
 
-pub(super) fn run_git_capture(
+pub(crate) fn run_git_capture(
     args: &[&str],
     cwd: Option<&Path>,
     staging: &Path,

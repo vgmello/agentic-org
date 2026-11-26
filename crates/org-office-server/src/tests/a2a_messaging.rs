@@ -37,7 +37,7 @@ use crate::federation_runtime::{
 };
 use crate::federation_stream::SatSyncWake;
 use crate::office_ports::{build_messaging_ports, build_office_ports};
-use crate::{inbox, live, org_feed, serve};
+use crate::{live, org_feed, serve};
 
 const ECHO_RUNTIME_SCRIPT: &str = r#"#!/bin/sh
 echo '{"kind":"ready"}'
@@ -401,7 +401,7 @@ impl LiveOfficeNode {
             None
         };
 
-        let hq_inbox = inbox::Hq::for_office(Arc::clone(&office)).unwrap();
+        let hq_inbox = crate::office_runtime::hq_inbox(Arc::clone(&office)).unwrap();
         let ports = build_office_ports(
             Arc::clone(&office),
             Arc::clone(&sessions),

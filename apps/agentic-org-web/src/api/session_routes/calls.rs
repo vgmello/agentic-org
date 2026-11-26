@@ -1,6 +1,28 @@
 //! Preparing and executing agent-session and provider-connection calls against the HQ office.
 
-use super::*;
+use hyper::StatusCode;
+use org_proto::sessions::{
+    MemberSessionApprovalDecide, MemberSessionApprovalDecideParams, MemberSessionClearStall,
+    MemberSessionClearStallParams, MemberSessionGrants, MemberSessionGrantsParams,
+    MemberSessionInspect, MemberSessionInspectParams, MemberSessionList, MemberSessionStart,
+    MemberSessionStartParams, MemberSessionStop, MemberSessionStopParams, MemberSessionTranscript,
+    ProviderCredentialRevoke, ProviderCredentialRevokeParams, ProviderCredentialStatus,
+    ProviderCredentialStatusParams, ProviderEnrollmentCancel, ProviderEnrollmentCancelParams,
+    ProviderEnrollmentStart, ProviderEnrollmentStartParams, ProviderEnrollmentStatus,
+    ProviderEnrollmentStatusParams, ProviderEnrollmentSubmit, ProviderEnrollmentSubmitParams,
+};
+use org_proto::web::{ReadResponse, WebError, WebErrorCode};
+use serde_json::Value;
+
+use super::super::hq_context::{resolve_hq_office, revalidate_and_resolve_hq};
+use super::super::{failure, not_found, result, unavailable, Call, CallerAuth, SessionApi};
+use super::{
+    decode_mut, read_call, ApprovalBody, CommandOnlyBody, EnrollStartBody, EnrollSubmitBody,
+    SessionCall, SessionRoute, StartBody, StopBody,
+};
+use crate::host::Failure;
+use crate::office::OfficeFailure;
+use crate::service::{ApiReply, PreparedCall};
 
 pub(in crate::api) fn prepare(
     route: SessionRoute,
