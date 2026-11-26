@@ -55,6 +55,15 @@ impl fmt::Display for ContentHash {
     }
 }
 
+/// Where the blob `hash` is filed below `root`: `<root>/sha256/<aa>/<bb>/<sha256>`.
+pub(crate) fn blob_path(root: &Path, hash: &ContentHash) -> PathBuf {
+    let hex = hash.as_str();
+    root.join("sha256")
+        .join(&hex[0..2])
+        .join(&hex[2..4])
+        .join(hex)
+}
+
 /// Where attachment bytes are kept, whichever engine holds the projection.
 pub trait BlobStore: Send + Sync {
     /// Stores `bytes` once under their digest and returns it. Storing bytes already there
@@ -93,12 +102,21 @@ impl FsBlobStore {
     }
 
     fn path_of(&self, hash: &ContentHash) -> PathBuf {
-        let hex = hash.as_str();
-        self.root
-            .join("sha256")
-            .join(&hex[0..2])
-            .join(&hex[2..4])
-            .join(hex)
+        blob_path(&self.root, hash)
+    }
+
+    /// Removes the blob, if it is there; `true` when it was. Only the satellite's outbox and
+    /// cache ever call this: HQ's shared and private stores are write-once.
+    pub(crate) fn remove(&self, hash: &ContentHash) -> Result<bool, OfficeError> {
+        let path = self.path_of(hash);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(OfficeError::storage(error)),
+        }
+        let folder = path.parent().expect("a blob is in a folder");
+        crate::private_fs::sync_dir(folder).map_err(OfficeError::storage)?;
+        Ok(true)
     }
 
     /// Opens the blob without following a link or blocking on a FIFO, and checks the handle

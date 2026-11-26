@@ -15,6 +15,7 @@ use org_office::Office;
 use org_sync_proto::{FrameCodecError, FrameReader, OfficeId, OrgId, SyncFrame};
 use rustls::{ServerConnection, StreamOwned};
 
+use super::hq_blobs::{handle_hq_blob_frame, is_blob_frame, HqBlobUpload};
 use super::hq_dispatch::dispatch_hq_frame;
 use super::relay::sync_native_message_relays;
 use super::{now_ms, InboundCallbacks};
@@ -165,6 +166,8 @@ struct HqSessionState<'a> {
     inflight_rpcs: InflightRpcMap,
     hello_done: bool,
     callbacks: InboundCallbacks<'a>,
+    /// A satellite's shared-file upload in progress (`TASK-98.6`).
+    blob_upload: Option<HqBlobUpload>,
 }
 
 fn drain_hq_inbound_frames(
@@ -172,7 +175,7 @@ fn drain_hq_inbound_frames(
     peer: &HqSessionPeer<'_>,
     peer_handle: &crate::federation_stream::HqPeerHandle,
     snapshot_budget: &HqSnapshotTransferBudget,
-    peers: &HqPeerRegistry,
+    peers: &Arc<HqPeerRegistry>,
     state: &mut HqSessionState<'_>,
 ) -> bool {
     loop {
@@ -216,6 +219,11 @@ fn drain_hq_inbound_frames(
                         // once the session said Hello and its gap was answered.
                         if state.hello_done {
                             peer_handle.mark_persistent();
+                        }
+                    }
+                    blob if is_blob_frame(&blob) => {
+                        if !handle_hq_blob_frame(tls, peer, peers, &mut state.blob_upload, blob) {
+                            return false;
                         }
                     }
                     other => {
@@ -350,6 +358,7 @@ pub(super) fn handle_hq_satellite_session(
         inflight_rpcs: HashMap::new(),
         hello_done: false,
         callbacks,
+        blob_upload: None,
     };
     let mut buffered_flush_until: Option<Instant> = None;
     let mut last_wake_gen = peer_reg.handle().wake_generation();

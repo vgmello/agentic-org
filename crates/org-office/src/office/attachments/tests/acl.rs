@@ -498,13 +498,23 @@ fn the_private_space_is_its_persons_alone_and_never_an_agents() {
 }
 
 #[test]
-fn a_satellite_has_no_private_space_and_refuses_attachment_writes() {
+fn a_satellite_has_no_private_space_and_writes_shared_files_only_through_its_outbox() {
     let sat = crate::office::TestSatellite::new();
     let office = &sat.office;
     let durable = office.durable_root().to_path_buf();
     let anyone = next_uuid();
     let refused = list_private(office, &anyone, None).unwrap_err();
     assert_eq!(refused.code, ErrorCode::Unavailable);
+    // A private binding is refused before anything else, the same for every caller.
+    let mut params = attach_params(AttachmentTargetKind::UserPrivate, None);
+    params.upload_id = Some(next_uuid());
+    let refused = office
+        .attachment_attach(&anyone, params)
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refused.code, ErrorCode::Unavailable);
+    // Shared uploads and bindings are a satellite's own now (`TASK-98.6`): a stranger is
+    // refused as on HQ, never told the office cannot.
     let begin = office
         .attachment_upload_begin(
             &anyone,
@@ -516,24 +526,21 @@ fn a_satellite_has_no_private_space_and_refuses_attachment_writes() {
         )
         .unwrap()
         .unwrap_err();
-    assert_eq!(begin.code, ErrorCode::Unavailable);
-    for kind in [
-        AttachmentTargetKind::UserPrivate,
-        AttachmentTargetKind::Organization,
-    ] {
-        let mut params = attach_params(kind, None);
-        params.upload_id = Some(next_uuid());
-        let refused = office
-            .attachment_attach(&anyone, params)
-            .unwrap()
-            .unwrap_err();
-        assert_eq!(refused.code, ErrorCode::Unavailable, "{kind:?}");
-    }
+    assert_eq!(begin.code, ErrorCode::NotAuthorized);
+    let mut params = attach_params(AttachmentTargetKind::Organization, None);
+    params.upload_id = Some(next_uuid());
+    let refused = office
+        .attachment_attach(&anyone, params)
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refused.code, ErrorCode::NotAuthorized);
     assert!(
         !durable.join("private").exists(),
         "ARCH-02: a satellite never makes private/"
     );
     assert_eq!(office.attachment_blob_counts().unwrap(), (0, 0));
+    assert_eq!(office.attachment_outbox_len().unwrap(), 0);
+    assert!(office.attachment_outbox_pending().unwrap().is_empty());
 }
 
 #[test]

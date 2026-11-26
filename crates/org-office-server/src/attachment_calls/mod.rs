@@ -2,8 +2,15 @@
 //! [`Office`], for people on a host channel and agents on the office socket alike. Who may
 //! do what to which file is decided by the office's one `AuthorizationPolicy`; this module
 //! only parses, routes and answers. A human-private file is never served to an agent.
+//!
+//! On a satellite, `attachment.read_chunk` of a shared file whose bytes are not here pulls
+//! them from HQ over federation into the office's bounded cache (`TASK-98.6`), after the
+//! policy allowed the read; an unreachable HQ is `unavailable`, worth retrying.
 
-use org_office::{Office, OfficeError};
+use std::sync::Arc;
+
+use org_office::attachments::remote::BlobPull;
+use org_office::{Office, OfficeError, OfficeRole};
 use org_proto::attachments::{
     AttachmentAttach, AttachmentInspect, AttachmentList, AttachmentReadChunk, AttachmentUpdateMeta,
     AttachmentUploadAbort, AttachmentUploadBegin, AttachmentUploadChunk, AttachmentUploadCommit,
@@ -11,6 +18,7 @@ use org_proto::attachments::{
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
 use crate::failure::logged;
+use crate::federation::{blob_cache_max_bytes, HqBlobRemote};
 
 /// Whether `request` is one of the nine attachment calls.
 pub(crate) fn is_attachment_method(request: &Request) -> bool {
@@ -58,7 +66,7 @@ fn run<C: Call>(
 
 /// Answers one attachment call for the bound `member`, or `None` for any other method.
 pub(crate) fn dispatch_attachment_rpc(
-    office: &Office,
+    office: &Arc<Office>,
     member: Option<&str>,
     request: &Request,
 ) -> Option<Response> {
@@ -98,7 +106,24 @@ fn dispatch_uploads(office: &Office, caller: &str, request: &Request) -> Option<
     None
 }
 
-fn dispatch_files(office: &Office, caller: &str, request: &Request) -> Option<Response> {
+/// `attachment.read_chunk`, pulling a shared file's bytes from HQ on a satellite.
+fn read_chunk(
+    office: &Arc<Office>,
+    caller: &str,
+    params: org_proto::attachments::AttachmentReadChunkParams,
+) -> Result<Result<org_proto::attachments::AttachmentReadChunkResult, ApiError>, OfficeError> {
+    if office.info().role != OfficeRole::Satellite {
+        return office.attachment_read_chunk(caller, params);
+    }
+    let remote = HqBlobRemote::new(Arc::clone(office));
+    let pull = BlobPull {
+        remote: &remote,
+        cache_max_bytes: blob_cache_max_bytes(),
+    };
+    office.attachment_read_chunk_with(caller, params, Some(pull))
+}
+
+fn dispatch_files(office: &Arc<Office>, caller: &str, request: &Request) -> Option<Response> {
     if request.is::<AttachmentAttach>() {
         return Some(run::<AttachmentAttach>(request, |p| {
             office.attachment_attach(caller, p)
@@ -121,7 +146,7 @@ fn dispatch_files(office: &Office, caller: &str, request: &Request) -> Option<Re
     }
     if request.is::<AttachmentReadChunk>() {
         return Some(run::<AttachmentReadChunk>(request, |p| {
-            office.attachment_read_chunk(caller, p)
+            read_chunk(office, caller, p)
         }));
     }
     None

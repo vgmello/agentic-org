@@ -2,6 +2,7 @@
 //! bindings, the policy, the private space, and lossless rebuilds.
 
 mod acl;
+mod custody;
 mod flows;
 mod rebuild;
 mod update_meta;

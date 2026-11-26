@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use org_proto::attachments::{
-    ArtifactStatus, AttachmentAttachParams, AttachmentResult, AttachmentTargetKind,
-    AttachmentUpdateMetaParams, AttachmentView,
+    ArtifactStatus, AttachmentAttachParams, AttachmentResult, AttachmentScope,
+    AttachmentTargetKind, AttachmentUpdateMetaParams, AttachmentView,
 };
 use org_proto::{ApiError, ErrorCode};
 use org_store::{Id, Outcome};
@@ -16,6 +16,7 @@ use super::{hq_only, invalid, not_found, record_ref, Answer, Office};
 use crate::attachments::blobs::{BlobStore, ContentHash};
 use crate::attachments::media::MediaType;
 use crate::attachments::records::{is_description, is_title, AttachmentRecord, MetaPatch};
+use crate::attachments::remote::bytes_unavailable;
 use crate::attachments::user_space::{operation_reused, request_fingerprint, satellite_refusal};
 use crate::authz::{PrincipalContext, ResourceRef};
 use crate::error::OfficeError;
@@ -172,12 +173,11 @@ impl Office {
         }
         let media = MediaType::from_mime(&record.mime_type)
             .ok_or(OfficeError::Invalid("an attachment names an unknown type"))?;
-        let Some(blobs) = self.blobs_for(&record) else {
+        if record.scope() == AttachmentScope::UserPrivate && self.attachments.private.is_none() {
             return Ok(Err(satellite_refusal()));
-        };
-        let Some(bytes) = blobs.read_all(&record.content_sha256, media.max_bytes())? else {
-            return Ok(Err(ApiError::new(
-                ErrorCode::Unavailable,
+        }
+        let Some(bytes) = self.local_blob_all(&record, media.max_bytes())? else {
+            return Ok(Err(bytes_unavailable(
                 "the attachment's bytes are not on this office",
             )));
         };
@@ -257,13 +257,10 @@ impl Office {
         actor: &str,
         params: AttachmentAttachParams,
     ) -> Answer<AttachmentResult> {
-        // A satellite holds no private space and writes no shared file: refused before
-        // anything else, the same for every caller.
-        if self.is_satellite() {
-            return Ok(Err(match params.target_kind {
-                AttachmentTargetKind::UserPrivate => satellite_refusal(),
-                _ => hq_only(),
-            }));
+        // A satellite holds no private space: refused before anything else, the same for
+        // every caller. Its shared files wait in its outbox for HQ (`TASK-98.6`).
+        if self.is_satellite() && params.target_kind == AttachmentTargetKind::UserPrivate {
+            return Ok(Err(satellite_refusal()));
         }
         let caller = match self.attachment_caller(actor)? {
             Ok(caller) => caller,
@@ -313,6 +310,18 @@ impl Office {
         self.bind(&caller, &params, target, source, &fingerprint)
     }
 
+    /// Where a new binding's bytes go on this office: HQ's shared or private store, or (on a
+    /// satellite, for a shared file) nowhere yet: they wait in the outbox with the record.
+    fn binding_store(&self, private: bool) -> Result<Option<Arc<dyn BlobStore>>, ApiError> {
+        if private {
+            return match &self.attachments.private {
+                Some(store) => Ok(Some(Arc::clone(store))),
+                None => Err(satellite_refusal()),
+            };
+        }
+        Ok((!self.is_satellite()).then(|| Arc::clone(&self.attachments.shared)))
+    }
+
     /// Stores the bytes write-once where the target keeps them and records the binding.
     fn bind(
         &self,
@@ -323,18 +332,17 @@ impl Office {
         fingerprint: &[u8],
     ) -> Answer<AttachmentResult> {
         let private = target.kind == AttachmentTargetKind::UserPrivate;
-        let blobs: Arc<dyn BlobStore> = if private {
-            match &self.attachments.private {
-                Some(store) => Arc::clone(store),
-                None => return Ok(Err(satellite_refusal())),
-            }
-        } else {
-            Arc::clone(&self.attachments.shared)
+        let store = match self.binding_store(private) {
+            Ok(store) => store,
+            Err(refusal) => return Ok(Err(refusal)),
         };
         // The bytes are durable before any record names them. Should the record then be
         // refused (the project archived meanwhile, a reused command), the blob stays
         // unreferenced and unreadable: every read goes through a record and the policy.
-        let hash = blobs.put(&source.bytes)?;
+        let hash = match &store {
+            Some(blobs) => blobs.put(&source.bytes)?,
+            None => ContentHash::of(&source.bytes),
+        };
         let now = format_rfc3339_ms(self.attachment_now_ms());
         let record = AttachmentRecord {
             id: Id::parse(&self.mint_attachment_id())
@@ -359,6 +367,13 @@ impl Office {
             created_at: now.clone(),
             updated_at: now,
         };
+        // A satellite's shared file: bytes and record wait durably in the outbox, readable
+        // here at once and offline, until HQ verifies and acks them.
+        let outboxed = store.is_none() && record.scope() == AttachmentScope::Shared;
+        if outboxed {
+            self.outbox().enqueue(&record, &source.bytes)?;
+        }
+        let record_id = record.id.clone();
         let bound = if private {
             self.attachments
                 .user_space
@@ -384,6 +399,10 @@ impl Office {
                 })
                 .map_err(storage)?
         };
+        // A refused binding was never made: nothing of it ships.
+        if outboxed && bound.is_err() {
+            self.outbox().release(&record_id)?;
+        }
         // A refused binding (a reused command, an archived project) leaves the upload staged.
         if bound.is_ok() {
             if let Some(upload_id) = &source.upload_id {

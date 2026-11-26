@@ -132,6 +132,8 @@ pub(crate) struct HqPeerRegistry {
     sessions: Mutex<HashMap<String, PeerSessionList>>,
     next_conn_id: AtomicU64,
     next_rpc_id: AtomicU64,
+    /// Bytes of satellite blob uploads HQ holds in memory across all sessions (`TASK-98.6`).
+    blob_bytes_in_flight: AtomicU64,
 }
 
 pub(crate) struct HqPeerRegistration {
@@ -166,6 +168,24 @@ impl Drop for HqPeerRegistration {
 }
 
 impl HqPeerRegistry {
+    /// Reserves `bytes` of in-memory blob upload room if the total stays within `cap`.
+    pub(crate) fn try_reserve_blob_bytes(&self, bytes: u64, cap: u64) -> bool {
+        self.blob_bytes_in_flight
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |held| {
+                held.checked_add(bytes).filter(|total| *total <= cap)
+            })
+            .is_ok()
+    }
+
+    /// Returns room [`Self::try_reserve_blob_bytes`] reserved.
+    pub(crate) fn release_blob_bytes(&self, bytes: u64) {
+        let _ = self
+            .blob_bytes_in_flight
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |held| {
+                Some(held.saturating_sub(bytes))
+            });
+    }
+
     pub(crate) fn register(self: &Arc<Self>, office_id: &str) -> io::Result<HqPeerRegistration> {
         let handle = Arc::new(HqPeerHandle::new()?);
         let conn_id = self.next_conn_id.fetch_add(1, Ordering::Relaxed) + 1;
