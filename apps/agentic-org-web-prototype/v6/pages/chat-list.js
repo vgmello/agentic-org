@@ -94,20 +94,25 @@ function setPicker(root, on) {
   Object.assign(list, { picker: on, to: "" });
   rerenderList(root, on ? "chat-to" : "chat-new");
 }
-function startMessage(who) {
+/* Opens the DM with the composer focused. When that DM is already open the hash would not change, so the
+   caller closes the picker and drawer in place ("same-conversation"). */
+function startMessage(root, who) {
   Object.assign(list, { picker: false, to: "", q: "", focusAfter: "compose" });
+  const hash = openDirectMessage(who);
+  if (hash === "#/chat/" + root.dataset.ch) return "same-conversation";
   S.chatList = null;
-  location.hash = openDirectMessage(who);
+  location.hash = hash;
+  return "";
 }
 const LIST_CLICKS = {
   "chat-new": (root) => setPicker(root, true),
   "chat-new-cancel": (root) => setPicker(root, false),
-  "chat-to": (_root, id) => startMessage(id),
+  "chat-to": (root, id) => startMessage(root, id),
 };
 function onListClick(e, root) {
   if (e.target.closest("#chat-nav a")) list.q = "";
   const t = e.target.closest("[data-act]"), fn = t && LIST_CLICKS[t.dataset.act];
-  if (fn) fn(root, t.dataset.id);
+  return fn ? fn(root, t.dataset.id) : "";
 }
 function onListInput(e, root) {
   const t = e.target;

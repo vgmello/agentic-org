@@ -1,4 +1,5 @@
 import { receiptHtml } from "./ask-receipt.js";
+import { denyDraftKey, draftText, replyDraftKey } from "./ask-drafts.js";
 import { A, CAL_TODAY, EVENTS, IN, KIND, M, OFFICES, OPEN, P, W } from "../data.js";
 import { eventContext, eventDate, eventTone, sortEvents } from "./calendar.js";
 import { homeOrgFigures } from "./org-insights.js";
@@ -29,7 +30,8 @@ function v4ReplyBox(it) {
   const submitInner = deny
     ? `${ic("deny", "ic16")}Confirm deny`
     : `<span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl"><span class="h4-cta-ico">${ic("send", "ic16")}</span><span>${changes ? "Send changes" : answer ? "Send answer" : "Send reply"}</span></span></span>`;
-  return `<div class="reply"><label class="sr-only" for="r-${it.id}">${lbl}</label><textarea id="r-${it.id}" rows="2" placeholder="${lbl}"></textarea>
+  const draft = replyDraftKey(it.id, S.replyMode);
+  return `<div class="reply"><label class="sr-only" for="r-${it.id}">${lbl}</label><textarea id="r-${it.id}" rows="2" placeholder="${lbl}" data-draft="${esc(draft)}">${esc(draftText(draft))}</textarea>
       <div class="actions"><button class="btn ${deny ? "outline" : "primary h4-cta"} sm" ${deny ? "" : 'data-cta-tone="reply"'} type="button" data-act="send-reply" data-id="${it.id}">${submitInner}</button><button class="btn ghost sm" type="button" data-act="cancel-reply" data-id="${it.id}">Cancel</button></div></div>`;
 }
 
@@ -47,7 +49,7 @@ function v4DenySlot(it, label, outcome, icon = "deny") {
           </div>
         </div>
         <label class="sr-only" for="deny-msg-${it.id}">Optional message for ${who}</label>
-        <input class="field hb-deny-input" id="deny-msg-${it.id}" data-deny-id="${it.id}" data-deny-outcome="${esc(outcome)}" type="text" placeholder="Optional reason for ${who}…" autocomplete="off">
+        <input class="field hb-deny-input" id="deny-msg-${it.id}" data-deny-id="${it.id}" data-deny-outcome="${esc(outcome)}" data-draft="${esc(denyDraftKey(it.id))}" type="text" placeholder="Optional reason for ${who}…" value="${esc(draftText(denyDraftKey(it.id)))}" autocomplete="off">
       </div>`;
 }
 

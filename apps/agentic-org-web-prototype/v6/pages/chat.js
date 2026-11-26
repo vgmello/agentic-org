@@ -1,7 +1,7 @@
 import { CH, IN, M, OFFICES } from "../data.js";
 import { fitTextarea } from "./work.js";
 import { openSmartTaskComposer } from "./task-composer.js";
-import { applyPos, jumpToAsk, placeStream, replaceStream, savedPos, trackPos, watchAsks } from "./chat-scroll.js";
+import { applyPos, followThreadEnd, jumpToAsk, placeStream, placeThread, replaceStream, savedPos, trackPos, watchAsks } from "./chat-scroll.js";
 import { ASK_CLICKS, messageNeeds, onAskKeydown, resetAsks, saveAskDraft, workRef } from "./chat-asks.js";
 import { CHAT_VIEWS, chatViewHtml, isChatView } from "./chat-views.js";
 import { bindOverlays, syncOverlayHistory } from "./chat-overlays.js";
@@ -93,7 +93,7 @@ function messageHtml(m, prev, opts = {}) {
   /* A grouped message has no header, so its send status sits after the text, never in the narrow gutter. */
   const status = cont && m.pending ? sendingStatus() : "";
   const tools = opts.tools ? messageTools(m, opts.readOnly) : "";
-  const needs = messageNeeds(m, opts.tools && S.thread === m.id ? "in-thread" : opts.cards);
+  const needs = messageNeeds(m, opts.tools && S.thread === m.id ? "in-thread" : opts.cards, opts.ch);
   return `<div class="msg${cont ? " cont" : ""}${m.pending ? " is-pending" : ""}" data-mid="${esc(m.id)}">${gutter}<div class="body">${head}
     <p class="tx">${richText(m.text)}${status}</p>${tools}
     ${sourceLine(m)}${threadCopyLine(m)}${needs}${threadButton(m)}</div></div>`;
@@ -117,11 +117,13 @@ function streamHtml(id) {
   const list = q ? ch.msgs.filter((m) => matches(m, q)) : ch.msgs;
   if (!list.length) return noMatches(ch, q);
   const readOnly = ch.kind === "a2a";
-  const opts = { cards: readOnly ? "chip" : "card", tools: true, readOnly };
+  const opts = { cards: readOnly ? "chip" : "card", tools: true, readOnly, ch: id };
   let lastDay = "";
   return list.map((m, i) => {
     const [day] = splitTime(m.time);
-    const divider = day !== lastDay ? `<h2 class="chat-day"><span>${esc(day)}</span></h2>` : "";
+    /* A static rule marks where the day starts; its label sticks to the stream's top edge until the next day's
+       label replaces it, so the first visible message always has a date. */
+    const divider = day !== lastDay ? `<div class="chat-day-rule" aria-hidden="true"></div><h2 class="chat-day"><span>${esc(day)}</span></h2>` : "";
     lastDay = day;
     return divider + messageHtml(m, i ? list[i - 1] : null, opts);
   }).join("");
@@ -216,6 +218,7 @@ function sendThreadReply(form) {
   const reply = { who: "you", time: clock(), text };
   (root.thread ||= []).push(reply);
   threadDrafts.delete(root.id);
+  followThreadEnd();
   if (form.elements.also?.checked && ch.kind === "channel") ch.msgs.push({ id: "u" + Date.now(), ...reply, inThread: { id: root.id, who: root.who } });
   return true;
 }
@@ -227,26 +230,33 @@ function membersLink(ch) {
   const n = channelMembers(ch).length;
   return n ? `<button class="alink chat-members-btn" type="button" data-act="chat-members" aria-expanded="${local.members}" aria-controls="chat-members">${plural(n, "member", "members")}</button>` : "";
 }
+/* "and N more" opens a compact list of the agent's other requests, each going to its Inbox record. The list is a
+   top-layer popover, so the one-line context it sits in never clips it. `slot` keeps ids unique per place. */
+function moreRequests(rest, who, slot) {
+  const id = `chat-more-${slot}`;
+  const items = rest.map((it) => `<a role="menuitem" tabindex="-1" href="#/inbox/${esc(it.id)}"><span class="chat-pop-sub">${esc(it.sub)}</span><span class="chat-pop-what">${esc(it.what)}</span></a>`).join("");
+  return ` and <span class="menu-wrap chat-more-wrap"><button class="alink chat-more-btn" type="button" data-act="menu" data-id="${id}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${id}">${rest.length} more</button><span class="menu chat-pop-menu" id="menu-${id}" role="menu" aria-label="${esc(`Other requests from ${M[who].name}`)}" popover="manual" hidden>${items}</span></span>`;
+}
 /* "Waiting on you" in a DM names requests raised elsewhere as "Also waiting in Inbox"; the DM's own ask is on its card. */
-function dmWaiting(who, chId) {
+function dmWaiting(who, chId, slot) {
   const here = new Set(openAsks(CH[chId]));
   const elsewhere = IN.filter((i) => !i.handled && i.from === who && !here.has(i.id));
   if (!elsewhere.length) {
     const it = inboxItem([...here][0]), m = it && CH[chId].msgs.find((x) => x.needs === it.id);
     return it ? `Waiting on you: <a class="alink" href="#/chat/${esc(chId)}/${esc(m.id)}">${esc(it.what)}</a>` : "";
   }
-  const more = elsewhere.length > 1 ? ` and ${elsewhere.length - 1} more` : "";
+  const more = elsewhere.length > 1 ? moreRequests(elsewhere.slice(1), who, slot) : "";
   return `Also waiting in Inbox: <a class="alink" href="#/inbox/${esc(elsewhere[0].id)}">${esc(elsewhere[0].what)}</a>${more}`;
 }
-function dmStatus(who, chId) {
+function dmStatus(who, chId, slot) {
   const m = M[who];
   if (m.kind === "person") return esc(m.last || "");
-  return presence(who) === "needs" ? dmWaiting(who, chId) : statusLine(who);
+  return presence(who) === "needs" ? dmWaiting(who, chId, slot) : statusLine(who);
 }
 /* The parts of a conversation's context: a line under the title when wide, the Details panel when narrow. */
-function contextParts(ch, chId) {
+function contextParts(ch, chId, slot = "ctx") {
   if (ch.kind === "dm") {
-    const status = dmStatus(ch.with, chId);
+    const status = dmStatus(ch.with, chId, slot);
     return [["Role", esc(M[ch.with].role)], ["Kind", kindWord(ch.with)], ["Status", status ? `<span class="chat-status">${status}</span>` : ""]];
   }
   /* The owner's role leads the context; the footer offers the ways to weigh in. */
@@ -260,7 +270,7 @@ function contextParts(ch, chId) {
 const headerContext = (ch, chId) => joinSep(contextParts(ch, chId).map(([, v]) => (v ? `<span>${v}</span>` : "")));
 function detailsPanel(ch, chId) {
   if (!local.details) return "";
-  const rows = contextParts(ch, chId).filter(([, v]) => v).map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+  const rows = contextParts(ch, chId, "details").filter(([, v]) => v).map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
   return `<dl class="chat-details" id="chat-details" aria-label="Conversation details">${rows}</dl>`;
 }
 function headerLead(ch) {
@@ -315,9 +325,9 @@ function chatThreadHtml(id, root, title) {
   if (!root) return "";
   const replies = root.thread || [], readOnly = CH[id].kind === "a2a";
   const count = replies.length ? plural(replies.length, "reply", "replies") : "No replies yet";
-  const list = replies.map((r, i) => messageHtml(Object.assign({ id: root.id + "-r" + i }, r), i ? replies[i - 1] : null)).join("");
+  const list = replies.map((r, i) => messageHtml(Object.assign({ id: root.id + "-r" + i }, r), i ? replies[i - 1] : null, { ch: id })).join("");
   /* A writable thread carries the ask's own card, answerable here; the stream points to it while the thread is open. */
-  const head = messageHtml(Object.assign({}, root, { thread: null }), null, { cards: readOnly ? "chip" : "card" });
+  const head = messageHtml(Object.assign({}, root, { thread: null }), null, { cards: readOnly ? "chip" : "thread-card", ch: id });
   return `<div class="thread-scrim" data-act="thread-close" data-scrim aria-hidden="true"></div>
     <aside class="thread"${panelModal()} aria-labelledby="chat-thread-title"><header class="side-panel-header"><div class="thread-title"><h2 id="chat-thread-title" tabindex="-1">Thread</h2><span class="muted">${esc(title)}</span></div><button class="btn ghost icon" type="button" data-act="thread-close" aria-label="Close thread">${ic("x", "ic20")}</button></header>
       <div class="msgs">${head}<p class="chat-thread-count">${count}</p>${list}</div>
@@ -405,7 +415,10 @@ function inertOutside(el) {
     }
   }
 }
-const initialPos = (id) => (local.pendingLink ? { target: local.pendingLink } : savedPos(id) || { boundary: true });
+/* With no saved position the stream opens at its end, newest message fully visible (the sticky day label dates
+   the top); phones open on a message boundary so the first line is never the tail of a sentence. */
+const NARROW_STREAM = "(max-width: 639px)";
+const initialPos = (id) => (local.pendingLink ? { target: local.pendingLink } : savedPos(id) || (matchesMedia(NARROW_STREAM) ? { boundary: true } : { end: true }));
 function markLinked(s) {
   const target = route()[2], el = target && s.querySelector(`:scope > [data-mid="${CSS.escape(target)}"]`);
   el?.classList.add("is-linked");
@@ -451,7 +464,8 @@ function turnIntoTask(t, id, mid) {
   const ch = CH[id], m = ch.msgs.find((x) => x.id === mid);
   if (!m) return;
   const prompt = `${m.text}\n\nFrom ${M[m.who].name} in ${chatTitle(ch)} (${m.time}): #/chat/${id}/${m.id}`;
-  openSmartTaskComposer(t, { prompt });
+  /* The task starts in the channel's project (e.g. #platform -> Office federation). */
+  openSmartTaskComposer(t, { prompt, proj: ch.proj });
 }
 
 /* ---------------------------------------------------------------- overlays: open, close, focus return, Back */
@@ -545,8 +559,15 @@ const CLICKS = {
     document.getElementById("compose")?.focus();
   },
 };
+/* New message to the DM already open: no navigation happens, so close the picker (and drawer) here; the
+   composer takes focus on mount. */
+function stayInConversation() {
+  S.chatList = null;
+  render(false);
+  syncOverlayHistory();
+}
 function onChatClick(e) {
-  onListClick(e, e.currentTarget);
+  if (onListClick(e, e.currentTarget) === "same-conversation") { stayInConversation(); return; }
   const t = e.target.closest("[data-act]"), fn = t && CLICKS[t.dataset.act];
   if (fn) fn(t.dataset.id, t, e.currentTarget.dataset.ch);
 }
@@ -600,6 +621,7 @@ function mountChat() {
   root.addEventListener("input", onChatInput);
   root.addEventListener("keydown", onChatKeydown);
   mountStream(root);
+  if (S.thread) placeThread(root.querySelector("aside.thread"), S.thread);
   fitTextarea(document.getElementById("thread-compose"));
   mountOverlays(root);
   watchContext(root);

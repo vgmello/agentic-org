@@ -814,12 +814,138 @@ async function checkChatOverlays(page: Page) {
   assert.equal(await page.locator(".chat-search-row").count(), 0, "A source link opens the unfiltered stream");
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-mid")), "p2", "Focus moves to the linked message");
 }
+/* Follow-ups sent from a thread stay in that thread; chips name where an ask is settled; drafts and thread
+   positions survive closing; a reply sent in a thread is shown with focus kept in the composer. */
+async function checkChatThreads(page: Page) {
+  const nav = (h: string) => page.evaluate((x) => { location.hash = x; }, h);
+  const threadGap = () => page.evaluate(() => { const s = document.querySelector(".thread .msgs")!; return s.scrollHeight - s.clientHeight - s.scrollTop; });
+  await page.reload();
+  await nav("#/chat/agency-v1");
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  const chip = page.locator('.chmain .msg[data-mid="m2"] .chat-needs-chip a');
+  assert.equal(await chip.innerText(), "Needs you · Decide in Inbox", "A consequential ask's chip names its route");
+  assert.equal(await chip.getAttribute("href"), "#/inbox/in1");
+  await page.locator('.thread [data-act="chat-ask-reply"]').click();
+  assert.match(await page.locator(".thread .chat-ask-dest").innerText(), /^Posts in this thread and on the Inbox request\./);
+  const streamCount = await page.locator(".chmain .msgs > .msg").count();
+  await page.keyboard.type("Which fixtures did Tomas run?");
+  await page.keyboard.press("Control+Enter");
+  await page.locator(".thread .chat-needs-note").waitFor();
+  assert.match(await page.locator(".thread .msgs > .msg").last().innerText(), /Which fixtures did Tomas run\?/, "Follow-up posts in the thread");
+  assert.equal(await page.locator(".chmain .msgs > .msg").count(), streamCount, "Follow-up does not post in the channel");
+  await page.locator("#thread-compose").fill("Approving after the fixtures review.");
+  await page.locator("#thread-compose").press("Control+Enter");
+  await page.locator(".thread .msgs > .msg", { hasText: "Approving after the fixtures review." }).waitFor();
+  assert.ok(await threadGap() < 2, "A sent thread reply is scrolled into view");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "thread-compose", "Focus stays in the thread composer");
+  await page.evaluate(() => { document.querySelector(".thread .msgs")!.scrollTop = 40; });
+  await page.locator(".thread [data-act=thread-close]").click();
+  await page.locator('.msg[data-mid="m2"] .thr').click();
+  assert.equal(await page.evaluate(() => document.querySelector(".thread .msgs")!.scrollTop), 40, "Reopening a thread restores its position");
+  await page.locator(".thread [data-act=thread-close]").click();
+  await page.locator('.msg[data-mid="m3"]').hover();
+  await page.locator('.msg[data-mid="m3"] .msg-tool[data-act="thread"]').click();
+  await page.locator('.thread [data-act="deny-arm"]').click();
+  await page.keyboard.type("Not this week");
+  await page.locator(".thread [data-act=thread-close]").click();
+  assert.equal(await page.locator("#deny-msg-in5").inputValue(), "Not this week", "A denial note survives closing the thread");
+  await nav("#/chat/dm-eden");
+  await page.getByRole("button", { name: "Answer…" }).click();
+  await page.keyboard.type("One tree");
+  await nav("#/chat/general");
+  await nav("#/chat/dm-eden");
+  await page.getByRole("button", { name: "Answer…" }).click();
+  assert.equal(await page.locator("#r-in3").inputValue(), "One tree", "A written answer is kept per ask");
+  await nav("#/chat/a2a-kai-rowan");
+  const rowan = page.locator('.msg[data-mid="k2"] .chat-needs-chip a');
+  assert.equal(await rowan.innerText(), "Needs you · Answer in Rowan's DM");
+  assert.equal(await rowan.getAttribute("href"), "#/chat/dm-rowan/r1");
+  await nav("#/chat/dm-rowan/r1");
+  await page.locator('.msg.is-linked[data-mid="r1"] .chat-needs a[href="#/inbox/in7"]').waitFor();
+}
+/* Context and entry points: Ada's other requests, a task from #platform, New message to the open DM. */
+async function checkChatContext(page: Page) {
+  const nav = (h: string) => page.evaluate((x) => { location.hash = x; }, h);
+  await nav("#/chat/dm-ada");
+  await page.locator(".chat-context .chat-more-btn").click();
+  const more = page.locator("#menu-chat-more-ctx");
+  await more.waitFor();
+  assert.deepEqual(await more.getByRole("menuitem").evaluateAll((els) => els.map((e) => e.getAttribute("href"))), ["#/inbox/in4"], "Ada's other requests link to their Inbox records");
+  await page.keyboard.press("Escape");
+  await nav("#/chat/platform");
+  await page.locator('.msg[data-mid="p2"]').hover();
+  await page.locator('.msg[data-mid="p2"] .msg-tool[data-act="chat-task"]').click();
+  assert.match(await page.locator("#work-task-dialog").innerText(), /Office federation/, "A task from #platform starts in its project");
+  await page.evaluate(() => (document.getElementById("work-task-dialog") as HTMLDialogElement).close()); /* prefilled: Escape asks to discard */
+  await page.locator("#work-task-dialog").waitFor({ state: "detached" });
+  await nav("#/chat/dm-maya");
+  await page.getByRole("button", { name: "New message" }).click();
+  await page.keyboard.type("maya");
+  await page.keyboard.press("Enter");
+  await page.locator("#chat-picker").waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "compose", "Picking the open DM focuses its composer");
+}
+/* Opening position, sticky day label and the Tradeoff disclosure at 375. */
+async function checkChatLayout(page: Page) {
+  for (const width of [1440, 1024]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 768 });
+    await page.goto(page.url().split("#")[0] + "#/chat/general");
+    await page.goto(page.url().split("#")[0] + "#/chat/agency-v1");
+    await page.waitForTimeout(400);
+    const pos = await page.evaluate(() => {
+      const s = document.querySelector(".chmain .msgs[data-ch]")!, sr = s.getBoundingClientRect();
+      const last = [...s.querySelectorAll(":scope > .msg")].pop()!.getBoundingClientRect(), day = s.querySelector(".chat-day")!;
+      return { full: last.top >= sr.top && last.bottom <= sr.bottom, dayAtTop: Math.round(day.getBoundingClientRect().top - sr.top), stuck: day.classList.contains("is-stuck"), sticky: getComputedStyle(day).position };
+    });
+    assert.ok(pos.full, `Newest message fully visible at ${width}`);
+    assert.equal(pos.sticky, "sticky", "The day label is sticky");
+    if (pos.stuck) assert.equal(pos.dayAtTop, 0, "A stuck day label sits at the stream's top edge");
+  }
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.goto(page.url().split("#")[0] + "#/chat/platform");
+  const summary = page.locator(".chat-needs-why summary");
+  assert.ok((await summary.evaluate((e) => e.getBoundingClientRect().height)) >= 44, "Tradeoff is a 44px target at 375");
+  const chev = () => summary.locator(".chat-needs-chev").evaluate((e) => getComputedStyle(e).transform);
+  assert.equal(await chev(), "none");
+  await summary.click();
+  await page.waitForTimeout(250);
+  assert.notEqual(await chev(), "none", "The chevron turns when the Tradeoff opens");
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+/* Primary actions keep white text at 4.5:1 or more on hover and keyboard focus in every theme. */
+async function checkPrimaryContrast(page: Page) {
+  const base = page.url().split("?")[0];
+  for (const theme of ALL_THEMES) {
+    await page.goto(`${base}?theme=${theme}#/chat/dm-eden`);
+    const send = page.locator(".chat-compose .btn.primary");
+    const ratio = () => send.evaluate((e) => {
+      const rgb = (c: string) => c.match(/[\d.]+/g)!.map(Number);
+      const lum = ([r, g, b]: number[]) => [r, g, b].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }).reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0);
+      const cs = getComputedStyle(e);
+      if (cs.backgroundImage !== "none" || rgb(cs.backgroundColor)[3] === 0) return 99; /* gradient/glass fills are measured by the theme audit */
+      const [a, b] = [lum(rgb(cs.color)), lum(rgb(cs.backgroundColor))];
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    });
+    await send.hover();
+    await page.waitForTimeout(250);
+    assert.ok(await ratio() >= 4.5, `${theme}: primary hover text contrast`);
+    await page.mouse.move(0, 0);
+    await page.locator("#compose").focus();
+    await page.keyboard.press("Tab");
+    await page.waitForTimeout(250);
+    assert.ok(await ratio() >= 4.5, `${theme}: primary focus text contrast`);
+  }
+}
 async function checkChat(page: Page) {
   await checkChatAsks(page);
   await checkChatRecords(page);
   await checkChatOverlays(page);
   await checkChatEntryPoints(page);
   await checkChatNarrow(page);
+  await checkChatThreads(page);
+  await checkChatContext(page);
+  await checkChatLayout(page);
+  await checkPrimaryContrast(page);
 }
 
 const ROUTE_CHECKS: Record<string, (page: Page, href: string, theme: string) => Promise<void>> = {
