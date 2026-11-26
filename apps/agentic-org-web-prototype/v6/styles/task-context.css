@@ -1,0 +1,113 @@
+/* Task context (TASK-205): the composer's Context section and the task detail's Context list.
+   Tokens only (--stc-*, --tone-*, --gray-*, --white), so all 7 themes and cozy's .stc-dialog overrides apply.
+   Every rule is scoped under .stc-dialog or .work-panel (two classes or more), so it holds in any stylesheet order. */
+
+.stc-dialog .stc-ctx { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.stc-dialog .stc-ctx-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; }
+.stc-dialog .stc-ctx-head .stc-section-h { margin: 0; }
+.stc-dialog .stc-ctx-head .stc-head-link { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; }
+.stc-dialog .stc-ctx-n {
+  min-width: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--stc-chip-bg); color: var(--white);
+  font-size: var(--fs-2xs); font-variant-numeric: tabular-nums; text-align: center;
+}
+.stc-dialog .stc-ctx-note { margin: 0; color: var(--gray-400); font-size: var(--fs-xs); }
+
+.stc-dialog .stc-ctx-list {
+  display: flex; flex-direction: column; gap: 6px;
+  margin: 0; padding: 0; list-style: none;
+}
+.stc-dialog .stc-ctx-card {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 8px;
+  padding: 8px 8px 8px 10px;
+  border: 1px solid var(--stc-line); border-radius: calc(var(--stc-radius) - 4px);
+  background: var(--stc-chip-bg);
+}
+.stc-dialog .stc-ctx-ic { display: inline-flex; padding-top: 2px; color: var(--tone-accent-ink); }
+.stc-dialog .stc-ctx-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.stc-dialog .stc-ctx-title {
+  color: var(--white); font-size: var(--fs-sm); font-weight: 600;
+  text-decoration: none; overflow-wrap: anywhere;
+}
+.stc-dialog .stc-ctx-title:hover { text-decoration: underline; text-underline-offset: 2px; }
+.stc-dialog .stc-ctx-preview {
+  margin: 0; color: var(--gray-400); font-size: var(--fs-xs); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.stc-dialog .stc-ctx-rm {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: var(--radius-md); color: var(--gray-400);
+}
+.stc-dialog .stc-ctx-rm:hover { color: var(--white); background: var(--stc-chip-hover); }
+
+.stc-dialog .stc-ctx-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 2px; }
+.stc-dialog .stc-ctx-toggle {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 6px 0 2px;
+  border-radius: var(--radius-md); color: var(--tone-accent-ink); font-size: var(--fs-xs); font-weight: 500;
+}
+.stc-dialog .stc-ctx-toggle:hover { background: var(--stc-chip-hover); }
+.stc-dialog .stc-ctx-step { display: inline-flex; align-items: center; gap: 4px; color: var(--gray-400); font-size: var(--fs-xs); }
+.stc-dialog .stc-ctx-step-n { font-variant-numeric: tabular-nums; }
+.stc-dialog .stc-ctx-step-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border: 1px solid var(--stc-line); border-radius: var(--radius-md);
+  color: var(--white); font-size: var(--fs-base); line-height: 1;
+}
+.stc-dialog .stc-ctx-step-btn:hover { background: var(--stc-chip-hover); }
+.stc-dialog .stc-ctx-step-btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.stc-dialog .stc-ctx-step-btn[aria-disabled="true"]:hover { background: none; }
+
+.stc-dialog .stc-ctx-lines {
+  display: flex; flex-direction: column; gap: 6px;
+  margin: 4px 0 0; padding: 8px 10px; list-style: none;
+  border-radius: var(--radius-md); background: var(--stc-well);
+  max-height: 9rem; overflow-y: auto; overscroll-behavior: contain;
+}
+.stc-dialog .stc-ctx-lines p { margin: 0; color: var(--white); font-size: var(--fs-xs); line-height: 1.45; overflow-wrap: anywhere; }
+.stc-dialog .stc-ctx-lines .stc-ctx-line-h { display: flex; gap: 6px; color: var(--gray-400); }
+.stc-dialog .stc-ctx-lines .stc-ctx-line-h b { color: var(--white); font-weight: 600; }
+
+.stc-dialog .stc-ctx-offer {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-height: 36px; padding: 6px 10px;
+  border: 1px dashed var(--stc-border); border-radius: calc(var(--stc-radius) - 4px);
+  color: var(--gray-400); font-size: var(--fs-xs); text-align: start;
+}
+.stc-dialog .stc-ctx-offer b { color: var(--white); font-weight: 600; }
+.stc-dialog .stc-ctx-offer .ic { flex: none; color: var(--tone-accent-ink); }
+.stc-dialog .stc-ctx-offer:hover { background: var(--stc-chip-bg); border-style: solid; }
+
+.stc-dialog .stc-ctx-picker {
+  display: flex; flex-direction: column; gap: 4px; padding: 6px;
+  border: 1px solid var(--stc-border); border-radius: calc(var(--stc-radius) - 4px);
+  background: var(--stc-popover-bg);
+}
+.stc-dialog .stc-ctx-picker input {
+  width: 100%; min-height: 32px; padding: 4px 8px;
+  border: 1px solid var(--stc-line); border-radius: var(--radius-md);
+  background: var(--stc-well); color: var(--white); font: inherit; font-size: var(--fs-sm);
+}
+.stc-dialog .stc-ctx-picker input::placeholder { color: var(--gray-400); }
+.stc-dialog .stc-ctx-results { margin: 0; padding: 0; list-style: none; max-height: 13rem; overflow-y: auto; overscroll-behavior: contain; }
+.stc-dialog .stc-ctx-result {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; width: 100%;
+  padding: 6px 8px; border-radius: var(--radius-md); text-align: start; color: var(--white);
+}
+.stc-dialog .stc-ctx-result .ic { grid-row: span 2; margin-top: 2px; color: var(--gray-400); }
+.stc-dialog .stc-ctx-result:hover, .stc-dialog .stc-ctx-result:focus-visible { background: var(--stc-chip-hover); }
+.stc-dialog .stc-ctx-result-t { font-size: var(--fs-sm); font-weight: 500; overflow-wrap: anywhere; }
+.stc-dialog .stc-ctx-result-p { color: var(--gray-400); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stc-dialog .stc-ctx-none { padding: 6px 8px; color: var(--gray-400); font-size: var(--fs-xs); }
+
+/* Task detail */
+.work-panel .work-ctx .work-ctx-note { margin: 0; color: var(--gray-400); font-size: var(--fs-sm); }
+.work-panel .work-ctx .work-ctx-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.work-panel .work-ctx .work-ctx-item { display: grid; gap: 2px; min-width: 0; }
+.work-panel .work-ctx .work-ctx-links { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.work-panel .work-ctx .work-ctx-links > a:first-child { display: inline-flex; align-items: center; gap: 6px; }
+.work-panel .work-ctx .work-ctx-preview { margin: 0; color: var(--gray-400); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.work-panel .work-ctx .work-ctx-msgs summary { cursor: pointer; color: var(--tone-accent-ink); font-size: var(--fs-sm); width: fit-content; }
+.work-panel .work-ctx .work-ctx-msgs ol { display: grid; gap: 6px; margin: 6px 0 0; padding: 0 0 0 10px; list-style: none; border-inline-start: 2px solid var(--line2); }
+.work-panel .work-ctx .work-ctx-msgs li { padding: 0; }
+.work-panel .work-ctx .work-ctx-msgs p { margin: 0; font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.work-panel .work-ctx .work-ctx-line-h { display: flex; gap: 6px; color: var(--gray-400); }
+.work-panel .work-ctx .work-ctx-line-h b { color: var(--white); }

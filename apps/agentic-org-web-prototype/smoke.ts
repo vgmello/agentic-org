@@ -10,6 +10,7 @@ const ALL_SUITE: Array<[string, string]> = [
   ["projects/office-federation/activity", "report"],
   ["projects/agency-v1/insights", "report-dark"],
   ["chat", "classic"],
+  ["projects/agency-v1", "graphite-light"],
 ];
 
 const SWEEP_ROUTES = [
@@ -1374,6 +1375,79 @@ async function checkChatRound6(page: Page) {
   await checkCompactRequests(page);
   await checkShortScreens(page);
 }
+/* ---------------------------------------------------------------- task context (TASK-205) */
+const savedTaskWithContext = (page: Page) => page.evaluate(() => Object.keys(localStorage)
+  .filter((k) => k.startsWith("agentic-org.v6.task."))
+  .map((k) => JSON.parse(localStorage.getItem(k)!))
+  .find((t) => t.context?.length) ?? null);
+
+/* Chat's Turn into task attaches the message and the 5 before it (here 3 exist) by default, with ids, not prose. */
+async function checkTaskContextFromChat(page: Page) {
+  await navTo(page, "#/chat/agency-v1");
+  await page.locator('.msg[data-mid="m4"]').hover();
+  await page.locator('.msg[data-mid="m4"] .msg-tool[data-act="chat-task"]').click();
+  const dlg = page.locator("#work-task-dialog");
+  const card = dlg.locator(".stc-ctx-card");
+  assert.equal(await card.count(), 1, "Turn into task attaches one context item by default");
+  assert.equal((await card.locator(".stc-ctx-title").innerText()).replace(/\s*\(opens in a new tab\)/, ""), "Conversation excerpt · #agentic-org-v1 · 4 messages", "The excerpt is the message and the 3 earlier ones, not the whole chat");
+  assert.equal(await card.locator(".stc-ctx-title").getAttribute("href"), "#/chat/agency-v1/m4", "The excerpt deep-links to the message");
+  assert.doesNotMatch(await dlg.locator("#stc-prompt").inputValue(), /#\/chat\//, "The prompt carries no raw chat link");
+  assert.equal(await dlg.locator(".stc-ctx-offer").count(), 0, "Chat's default excerpt replaces the page offer");
+  assert.equal(await dlg.getByRole("button", { name: "Include one more earlier message" }).getAttribute("aria-disabled"), "true", "No earlier messages exist past the start");
+  await dlg.getByRole("button", { name: "Include one fewer earlier message" }).click();
+  assert.match(await card.locator(".stc-ctx-title").innerText(), /· 3 messages/, "Fewer earlier messages shrinks the excerpt");
+  assert.equal(await activeAttr(page, "data-stc"), "ctx-fewer", "Focus stays on the stepper");
+  await dlg.getByRole("button", { name: "Show 3 messages" }).click();
+  assert.equal(await dlg.locator(".stc-ctx-lines li").count(), 3, "The preview expands to the excerpt's messages");
+  await dlg.getByRole("button", { name: /^Remove context: Conversation excerpt · #agentic-org-v1/ }).waitFor();
+  await page.evaluate(() => (document.getElementById("work-task-dialog") as HTMLDialogElement).close());
+  await dlg.waitFor({ state: "detached" });
+}
+
+/* Elsewhere the page is offered, never attached; attaching and creating stores it; the task shows Context links. */
+async function checkTaskContextFromPage(page: Page) {
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press("n");
+  const dlg = page.locator("#work-task-dialog");
+  const offer = dlg.getByRole("button", { name: "Add this page as context: Agentic Org v1.0 · Overview" });
+  await offer.waitFor();
+  assert.equal(await dlg.locator(".stc-ctx-card").count(), 0, "A project page is offered as context, not attached");
+  await offer.click();
+  assert.equal(await dlg.locator(".stc-ctx-card").count(), 1, "One click attaches the page");
+  assert.equal(await activeAttr(page, "class"), "stc-ctx-title", "Focus moves to the attached item");
+  await dlg.getByRole("button", { name: "Add context…" }).click();
+  await page.keyboard.type("CSP gates");
+  await dlg.locator(".stc-ctx-result", { hasText: "T-A124" }).first().click();
+  assert.equal(await dlg.locator(".stc-ctx-card").count(), 2, "Add context… attaches a searched work item");
+  await dlg.locator("#stc-prompt").fill("Unblock the CSP gateway permission for the release");
+  await dlg.getByRole("button", { name: "Create as-is" }).click();
+  await dlg.waitFor({ state: "detached" });
+  const saved = await savedTaskWithContext(page);
+  assert.ok(saved, "The created task stores its context");
+  assert.deepEqual(saved.context.map((c: { kind: string }) => c.kind), ["project", "work"]);
+  assert.equal(saved.context[0].href, "#/projects/agency-v1");
+  await navTo(page, `#/work?item=${saved.ref}`);
+  const section = page.locator("#work-panel .work-ctx");
+  await section.waitFor();
+  assert.deepEqual(await section.locator(".work-ctx-links > a").evaluateAll((els) => els.map((e) => e.getAttribute("href"))), ["#/projects/agency-v1", "#/work?item=T-A124"], "The task detail links its context");
+}
+
+/* A chat excerpt stored on a task keeps its ids and opens the source message, as Inbox does. */
+async function checkTaskContextSourceLink(page: Page) {
+  await navTo(page, "#/chat/platform");
+  await page.locator('.msg[data-mid="p2"]').hover();
+  await page.locator('.msg[data-mid="p2"] .msg-tool[data-act="chat-task"]').click();
+  const dlg = page.locator("#work-task-dialog");
+  await dlg.getByRole("button", { name: "Create as-is" }).click();
+  await dlg.waitFor({ state: "detached" });
+  const saved = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("agentic-org.v6.task."))
+    .map((k) => JSON.parse(localStorage.getItem(k)!)).find((t) => t.context?.[0]?.source?.ch === "platform"));
+  assert.deepEqual(saved.context[0].source, { ch: "platform", msg: "p2" }, "The excerpt stores conversation and message ids");
+  assert.doesNotMatch(saved.description + saved.title, /#\/chat\//, "No raw chat link in the task text");
+  await navTo(page, `#/work?item=${saved.ref}`);
+  await page.locator("#work-panel").getByRole("link", { name: "Open source message" }).waitFor();
+  assert.equal(await page.locator("#work-panel").getByRole("link", { name: "Open source message" }).getAttribute("href"), "#/chat/platform/p2");
+}
 async function checkChat(page: Page) {
   await checkChatAsks(page);
   await checkChatRecords(page);
@@ -1386,6 +1460,8 @@ async function checkChat(page: Page) {
   await page.reload();
   await checkChatRound6(page);
   await checkPrimaryContrast(page);
+  await checkTaskContextFromChat(page);
+  await checkTaskContextSourceLink(page);
 }
 
 const ROUTE_CHECKS: Record<string, (page: Page, href: string, theme: string) => Promise<void>> = {
@@ -1395,6 +1471,7 @@ const ROUTE_CHECKS: Record<string, (page: Page, href: string, theme: string) => 
   "projects/office-federation/activity": (page) => checkProjectActivity(page),
   "projects/agency-v1/insights": (page) => checkProjectInsights(page),
   chat: (page) => checkChat(page),
+  "projects/agency-v1": (page) => checkTaskContextFromPage(page),
 };
 
 async function runRouteCheck(browser: Awaited<ReturnType<typeof chromium.launch>>, baseUrl: URL, pageRoute: string, theme: string) {
