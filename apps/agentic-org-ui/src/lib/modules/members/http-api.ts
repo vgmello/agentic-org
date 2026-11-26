@@ -6,7 +6,7 @@ import {
 	type GatewayHttpTransport,
 	type GatewayReply
 } from '$lib/platform/http/gateway-errors';
-import { readJsonObject, readResponse } from '$lib/platform/http/wire';
+import { readJsonObject, readOfficeList, readResponse } from '$lib/platform/http/wire';
 import { readOrganizationsList, type OrganizationView } from '$lib/platform/organizations/readers';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgApi } from '$lib/modules/organization/api';
@@ -28,8 +28,11 @@ import type {
 	MemberRow,
 	Placement,
 	RoleView,
+	RunNowResult,
 	SignInLink,
-	TeamRef
+	TeamRef,
+	Turn,
+	TurnState
 } from './types';
 
 export interface GatewayAccessEntry {
@@ -63,12 +66,16 @@ function memberStatus(m: Member): EmployeeStatus {
 
 function agentPlacement(
 	m: Member,
-	org: OrganizationView | undefined
+	org: OrganizationView | undefined,
+	officeNamesById?: ReadonlyMap<string, string>
 ): Placement | null | undefined {
 	if (m.kind !== 'agent') return undefined;
 	if (!m.office_id) return null;
-	const office = org?.offices.find((o) => o.id === m.office_id);
-	return { id: m.office_id, name: office?.name ?? m.office_id };
+	const name =
+		officeNamesById?.get(m.office_id) ??
+		org?.offices.find((o) => o.id === m.office_id)?.name ??
+		m.office_id;
+	return { id: m.office_id, name };
 }
 
 function parseLinkResult(reply: GatewayReply, fallback: string): SignInLink {
@@ -85,7 +92,8 @@ function mapMemberRow(
 	teamsById: ReadonlyMap<string, Team>,
 	membersById: ReadonlyMap<string, Member>,
 	accessById: ReadonlyMap<string, GatewayAccessEntry> | undefined,
-	org: OrganizationView | undefined
+	org: OrganizationView | undefined,
+	officeNamesById?: ReadonlyMap<string, string>
 ): MemberRow {
 	const status = memberStatus(m);
 	const homeTeam = m.home_team_id ? teamRef(teamsById.get(m.home_team_id)) : undefined;
@@ -108,10 +116,57 @@ function mapMemberRow(
 		owner: Boolean(m.owner),
 		canSignIn,
 		...(homeTeam ? { homeTeam } : {}),
-		...(m.kind === 'agent' ? { office: agentPlacement(m, org) } : {}),
+		...(m.kind === 'agent' ? { office: agentPlacement(m, org, officeNamesById) } : {}),
 		...(manager ? { reportsTo: { id: manager.id, name: manager.name } } : {}),
 		...(m.contact ? { contact: m.contact } : {}),
 		directReports
+	};
+}
+
+function decodeTurnState(raw: unknown): TurnState {
+	switch (typeof raw === 'string' ? raw.toLowerCase() : '') {
+		case 'running':
+		case 'active':
+			return 'running';
+		case 'succeeded':
+		case 'completed':
+		case 'idle':
+			return 'succeeded';
+		case 'failed':
+		case 'error':
+			return 'failed';
+		case 'cancelled':
+		case 'stopped':
+			return 'cancelled';
+		default:
+			return 'accepted';
+	}
+}
+
+function readOptString(value: unknown): string | undefined {
+	return typeof value === 'string' ? value : undefined;
+}
+
+function decodeSessionTurn(item: unknown): Turn | undefined {
+	if (!item || typeof item !== 'object') return undefined;
+	const r = item as Record<string, unknown>;
+	const id = readOptString(r.session_id) ?? readOptString(r.id);
+	if (!id) return undefined;
+	const startedAt =
+		readOptString(r.started_at) ?? readOptString(r.created_at) ?? new Date(0).toISOString();
+	const endedAt = readOptString(r.ended_at);
+	const summary = readOptString(r.summary);
+	const failure = readOptString(r.error);
+	return {
+		id,
+		startedAt,
+		...(endedAt ? { endedAt } : {}),
+		startedBy: { kind: 'run' },
+		state: decodeTurnState(r.state ?? r.status),
+		...(summary ? { summary } : {}),
+		...(failure ? { failure } : {}),
+		attempts: [],
+		hasLog: false
 	};
 }
 
@@ -128,7 +183,7 @@ export function createHttpMembersApi({
 }: {
 	http: GatewayHttpTransport;
 	orgApi: Pick<OrgApi, 'view' | 'command'>;
-	workItemsApi?: Pick<WorkItemsApi, 'queue'>;
+	workItemsApi?: Pick<WorkItemsApi, 'queue'> & Partial<Pick<WorkItemsApi, 'assign'>>;
 	session: () => MembersSessionInfo | undefined;
 	newEntityId?: () => string;
 }): MembersApi {
@@ -193,64 +248,92 @@ export function createHttpMembersApi({
 		}
 	}
 
+	async function readOfficeNames(organizationId: string): Promise<Map<string, string>> {
+		const map = new Map<string, string>();
+		try {
+			const reply = await http.read(
+				`/api/v1/organizations/${encodeURIComponent(organizationId)}/offices`
+			);
+			if (reply.status !== 200) return map;
+			const envelope = readResponse(reply.body, readOfficeList);
+			if ('result' in envelope) {
+				for (const o of envelope.result.offices) map.set(o.id, o.name);
+			}
+		} catch {
+			// Fall back to org.offices when offices endpoint is unavailable.
+		}
+		return map;
+	}
+
+	async function loadProfile(organizationId: string, memberId: string): Promise<MemberProfile> {
+		const [{ snapshot }, accessById, org, workRows, officeNames] = await Promise.all([
+			orgApi.view(organizationId),
+			readAccessMap(organizationId),
+			readOrgView(organizationId),
+			safeWorkRows(organizationId),
+			readOfficeNames(organizationId)
+		]);
+		const member = snapshot.members.find((m) => m.id === memberId);
+		if (!member) {
+			throw {
+				source: 'api',
+				code: 'not_found',
+				message: 'That member could not be found.'
+			} satisfies AppError;
+		}
+		const teamsById = new Map(snapshot.teams.map((t) => [t.id, t]));
+		const membersById = new Map(snapshot.members.map((m) => [m.id, m]));
+		const row = mapMemberRow(
+			member,
+			snapshot,
+			teamsById,
+			membersById,
+			accessById,
+			org,
+			officeNames
+		);
+		const leads = snapshot.teams
+			.filter((t) => t.lead_member_id === memberId)
+			.map((t) => teamRef(t)!);
+		const viewerMember = org?.employee_id ? membersById.get(org.employee_id) : undefined;
+		const isOwnerOrAdmin = Boolean(session()?.accountAdmin || viewerMember?.owner);
+		const access = accessById?.get(memberId);
+		const currentTask = row.status !== 'inactive' ? pickCurrentTask(workRows, memberId) : undefined;
+		return {
+			...row,
+			...(currentTask ? { workingOn: currentTask, currentTask } : {}),
+			...(member.agent?.title ? { title: member.agent.title } : {}),
+			...(member.agent?.focus ? { focus: member.agent.focus } : {}),
+			leads,
+			allowHiring: { on: false, canChange: isOwnerOrAdmin },
+			...(access?.pending_invite ? { invitePending: { expiresAt: '' } } : {}),
+			viewer: {
+				isSelf: org?.employee_id === memberId,
+				isOwnerOrAdmin,
+				costVisible: isOwnerOrAdmin
+			}
+		};
+	}
+
 	return Object.freeze({
 		async directory(organizationId: string): Promise<MemberRow[]> {
-			const [{ snapshot }, accessById, org, workRows] = await Promise.all([
+			const [{ snapshot }, accessById, org, workRows, officeNames] = await Promise.all([
 				orgApi.view(organizationId),
 				readAccessMap(organizationId),
 				readOrgView(organizationId),
-				safeWorkRows(organizationId)
+				safeWorkRows(organizationId),
+				readOfficeNames(organizationId)
 			]);
 			const teamsById = new Map(snapshot.teams.map((t) => [t.id, t]));
 			const membersById = new Map(snapshot.members.map((m) => [m.id, m]));
 			return snapshot.members.map((m) => {
-				const row = mapMemberRow(m, snapshot, teamsById, membersById, accessById, org);
+				const row = mapMemberRow(m, snapshot, teamsById, membersById, accessById, org, officeNames);
 				const workingOn = row.status !== 'inactive' ? pickCurrentTask(workRows, m.id) : undefined;
 				return workingOn ? { ...row, workingOn } : row;
 			});
 		},
 
-		async profile(organizationId: string, memberId: string): Promise<MemberProfile> {
-			const [{ snapshot }, accessById, org, workRows] = await Promise.all([
-				orgApi.view(organizationId),
-				readAccessMap(organizationId),
-				readOrgView(organizationId),
-				safeWorkRows(organizationId)
-			]);
-			const member = snapshot.members.find((m) => m.id === memberId);
-			if (!member) {
-				throw {
-					source: 'api',
-					code: 'not_found',
-					message: 'That member could not be found.'
-				} satisfies AppError;
-			}
-			const teamsById = new Map(snapshot.teams.map((t) => [t.id, t]));
-			const membersById = new Map(snapshot.members.map((m) => [m.id, m]));
-			const row = mapMemberRow(member, snapshot, teamsById, membersById, accessById, org);
-			const leads = snapshot.teams
-				.filter((t) => t.lead_member_id === memberId)
-				.map((t) => teamRef(t)!);
-			const viewerMember = org?.employee_id ? membersById.get(org.employee_id) : undefined;
-			const isOwnerOrAdmin = Boolean(session()?.accountAdmin || viewerMember?.owner);
-			const access = accessById?.get(memberId);
-			const currentTask =
-				row.status !== 'inactive' ? pickCurrentTask(workRows, memberId) : undefined;
-			return {
-				...row,
-				...(currentTask ? { workingOn: currentTask, currentTask } : {}),
-				...(member.agent?.title ? { title: member.agent.title } : {}),
-				...(member.agent?.focus ? { focus: member.agent.focus } : {}),
-				leads,
-				allowHiring: { on: false, canChange: false },
-				...(access?.pending_invite ? { invitePending: { expiresAt: '' } } : {}),
-				viewer: {
-					isSelf: org?.employee_id === memberId,
-					isOwnerOrAdmin,
-					costVisible: false
-				}
-			};
-		},
+		profile: loadProfile,
 
 		async work(organizationId: string, memberId: string) {
 			const rows = await safeWorkRows(organizationId);
@@ -263,7 +346,20 @@ export function createHttpMembersApi({
 			const rows = await safeWorkRows(organizationId);
 			return buildMemberActivity(rows, memberId);
 		},
-		runs: async () => [],
+		async runs(organizationId: string, memberId: string): Promise<Turn[]> {
+			let reply: GatewayReply;
+			try {
+				reply = await http.read(
+					`/api/v1/organizations/${encodeURIComponent(organizationId)}/agents/${encodeURIComponent(memberId)}/sessions`
+				);
+			} catch {
+				return [];
+			}
+			if (reply.status !== 200) return [];
+			const result = unwrapGatewayResult(reply, 'Agent sessions could not be loaded.');
+			const rawSessions = Array.isArray(result.sessions) ? result.sessions : [];
+			return rawSessions.map(decodeSessionTurn).filter((t): t is Turn => t !== undefined);
+		},
 		sessionFile: unavailableCall,
 
 		async role(organizationId: string, memberId: string): Promise<RoleView> {
@@ -301,8 +397,59 @@ export function createHttpMembersApi({
 			};
 		},
 
-		runNow: unavailableCall,
-		setAllowHiring: unavailableCall,
+		async runNow(organizationId: string, memberId: string, note: string): Promise<RunNowResult> {
+			const commandId = newEntityId();
+			const reply = await submitAccessPost(
+				`/api/v1/organizations/${encodeURIComponent(organizationId)}/agents/${encodeURIComponent(memberId)}/start`,
+				{
+					command_id: commandId,
+					...(note.trim() ? { instruction: note.trim() } : {})
+				},
+				'Could not start a run for this agent.'
+			);
+			const result = unwrapGatewayResult(reply, 'Could not start a run for this agent.');
+			const turnId =
+				typeof result.session_id === 'string'
+					? result.session_id
+					: typeof result.run_id === 'string'
+						? result.run_id
+						: commandId;
+			const startedAt = new Date().toISOString();
+			const turn: Turn = {
+				id: turnId,
+				startedAt,
+				startedBy: { kind: 'run', byViewer: true },
+				state: 'accepted',
+				...(note.trim() ? { summary: note.trim() } : {}),
+				attempts: [],
+				hasLog: false
+			};
+			const profile = await loadProfile(organizationId, memberId);
+			return { turn, profile };
+		},
+
+		async setAllowHiring(organizationId: string, memberId: string, on: boolean): Promise<void> {
+			const { snapshot } = await orgApi.view(organizationId);
+			const member = snapshot.members.find((m) => m.id === memberId);
+			if (!member) {
+				throw {
+					source: 'api',
+					code: 'not_found',
+					message: 'That member could not be found.'
+				} satisfies AppError;
+			}
+			const reply = await submitAccessPost(
+				`/api/v1/organizations/${encodeURIComponent(organizationId)}/members/set-may-hire`,
+				{
+					command_id: newEntityId(),
+					member_id: memberId,
+					expected_version: member.version,
+					may_hire: on
+				},
+				'Could not update hiring permission.'
+			);
+			unwrapGatewayResult(reply, 'Could not update hiring permission.');
+		},
 
 		async moveHomeTeam(organizationId: string, memberId: string, toTeamId: string): Promise<void> {
 			const { snapshot } = await orgApi.view(organizationId);
@@ -329,7 +476,30 @@ export function createHttpMembersApi({
 			const rows = await safeWorkRows(organizationId);
 			return buildAssignableTasks(rows);
 		},
-		assignTask: unavailableCall,
+
+		async assignTask(organizationId: string, memberId: string, ref: string): Promise<void> {
+			if (!workItemsApi?.assign) {
+				throw {
+					source: 'api',
+					code: 'unavailable',
+					message: 'Task assignment is not available right now.'
+				} satisfies AppError;
+			}
+			const rows = await safeWorkRows(organizationId);
+			const target = rows.find((r) => r.ref === ref || r.id === ref);
+			if (!target) {
+				throw {
+					source: 'api',
+					code: 'not_found',
+					message: `Task ${ref} was not found.`
+				} satisfies AppError;
+			}
+			await workItemsApi.assign(organizationId, target.id, {
+				assignedTeamId: target.assignedTeam?.id ?? target.team.id ?? null,
+				assigneeId: memberId,
+				expectedRevision: target.revision
+			});
+		},
 
 		async inviteToSignIn(organizationId: string, memberId: string): Promise<SignInLink> {
 			const reply = await submitAccessPost(

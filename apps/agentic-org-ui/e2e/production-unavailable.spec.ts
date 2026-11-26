@@ -4,9 +4,11 @@ import { shot } from './shot';
 
 // Each unbuilt path with the area the shell names for it (app-shell-ux §0): routes without a live
 // gateway adapter stay explicitly unavailable in production builds.
+const UNAVAILABLE_ROLE_PATH = '/settings/roles/update';
 const areas = [
-	['settings', 'Organization settings'],
-	['processes', 'Organization settings']
+	['projects/a-project/docs', 'Projects'],
+	['projects/a-project/features', 'Projects'],
+	['projects/a-project/releases', 'Projects']
 ] as const;
 const heading = (area?: string) =>
 	area ? `${area} isn't available yet` : "Agentic Org isn't ready in the browser yet";
@@ -25,8 +27,6 @@ test(
 		});
 		for (const [path, area] of [
 			...areas.map(([path, name]) => [`/${path}`, name] as const),
-			['/teams/hire', 'Teams'],
-			['/settings/costs', 'Organization settings'],
 			['/settings/roles/update', 'Organization settings']
 		] as const) {
 			await visit(page, path);
@@ -65,14 +65,24 @@ test('A3, A4, U1, B7: enabled session, live org, home, inbox, and chat routes re
 		'/chat',
 		'/activity',
 		'/insights',
+		'/search',
+		'/preferences',
 		'/teams',
+		'/teams/hire',
+		'/teams/hires',
 		'/teams/members',
 		'/teams/org-chart',
 		'/projects',
+		'/settings',
 		'/settings/offices',
+		'/settings/agents',
 		'/settings/roles',
 		'/settings/roles/0193a5c0-0000-7000-8000-000000000040',
-		'/settings/access'
+		'/settings/processes',
+		'/settings/access',
+		'/settings/security',
+		'/settings/costs',
+		'/settings/updates'
 	]) {
 		await visit(page, path);
 		await expect(page).toHaveURL(/\/sign-in(\?|$)/);
@@ -86,7 +96,7 @@ test('A3, A4, U1, B7: enabled session, live org, home, inbox, and chat routes re
 			page.getByRole('heading', { level: 1, name: 'This link has expired or was already used.' })
 		).toBeVisible();
 	}
-	await visit(page, '/processes');
+	await visit(page, UNAVAILABLE_ROLE_PATH);
 	await expect(page.getByTestId('area-unavailable')).toBeVisible();
 });
 
@@ -101,7 +111,7 @@ test(
 				JSON.stringify([{ organization: { id: 'forged', name: 'Forged sample' } }])
 			);
 		});
-		await visit(page, '/processes?org=empty&mock=healthy&copilot=on');
+		await visit(page, `${UNAVAILABLE_ROLE_PATH}?org=empty&mock=healthy&copilot=on`);
 		await expect(
 			page.getByRole('heading', { name: "Organization settings isn't available yet" })
 		).toBeVisible();
@@ -132,7 +142,7 @@ test('SRV-18 / BUG-53: unknown routes keep their error and a named browser tab',
 	await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
 });
 
-for (const [path, area] of [['/processes', 'Organization settings']] as const) {
+for (const [path, area] of [[UNAVAILABLE_ROLE_PATH, 'Organization settings']] as const) {
 	test(`BUG-53: ${path} keeps its wrapping navigation and readable copy at 320px`, async ({
 		page
 	}) => {
@@ -176,9 +186,7 @@ test('Step 6 routes stay unavailable in the static production release with zero 
 		['/projects/a-project/features', 'Projects'],
 		['/projects/a-project/features/feat-1', 'Projects'],
 		['/projects/a-project/releases', 'Projects'],
-		['/projects/a-project/releases/rel-1', 'Projects'],
-		['/members/sam/cost', 'Teams'],
-		['/search?q=Why+is+SQLite+used', undefined]
+		['/projects/a-project/releases/rel-1', 'Projects']
 	] as const) {
 		await visit(page, path);
 		await expect(page.getByTestId('area-unavailable')).toBeVisible();
@@ -193,7 +201,7 @@ test('Step 6 routes stay unavailable in the static production release with zero 
 test('BUG-53: the unavailable header home link has the design-system keyboard focus ring', async ({
 	page
 }) => {
-	await visit(page, '/processes');
+	await visit(page, UNAVAILABLE_ROLE_PATH);
 	await page.keyboard.press('Tab');
 	const home = page.getByRole('link', { name: 'Agentic Org', exact: true });
 	await expect(home).toBeFocused();

@@ -45,7 +45,11 @@ export default defineConfig(({ command, mode, isPreview }) => {
 			? buildLiveApiProxy(process.env.ORG_API_TARGET)
 			: undefined;
 	return {
-		cacheDir: csp ? 'node_modules/.vite-csp' : 'node_modules/.vite',
+		cacheDir: csp
+			? 'node_modules/.vite-csp'
+			: liveProxy
+				? 'node_modules/.vite-live'
+				: 'node_modules/.vite',
 		server: {
 			...(liveProxy ? { proxy: liveProxy } : {}),
 			watch: { ignored: ['**/test-results-csp/**', '**/test-results-csp-gateway/**'] }

@@ -31,23 +31,50 @@ function signedInSession() {
 function subscribeActivityFeeds(organizationId: string, onEvent: () => void): () => void {
 	const session = signedInSession();
 	if (!session) return () => {};
-	const scope = {
+	const orgScope = {
 		kind: 'organization' as const,
 		instance_id: session.instance_id,
 		org_id: organizationId
 	};
-	return appSession.controller().subscribeEvents(
-		[
-			{ scope, feed: 'organization' },
-			{ scope, feed: 'work' },
-			{ scope, feed: 'messaging' },
-			{ scope, feed: 'presence' }
-		],
-		{
-			onChange: () => onEvent(),
-			onResync: () => onEvent()
-		}
-	);
+	const officeId = session.organizations.find((o) => o.org_id === organizationId)?.office_ids[0];
+	const subscriptions = [
+		{ scope: orgScope, feed: 'organization' as const },
+		...(officeId
+			? ([
+					{
+						scope: {
+							kind: 'office' as const,
+							instance_id: session.instance_id,
+							org_id: organizationId,
+							office_id: officeId
+						},
+						feed: 'work' as const
+					},
+					{
+						scope: {
+							kind: 'office' as const,
+							instance_id: session.instance_id,
+							org_id: organizationId,
+							office_id: officeId
+						},
+						feed: 'messaging' as const
+					},
+					{
+						scope: {
+							kind: 'office' as const,
+							instance_id: session.instance_id,
+							org_id: organizationId,
+							office_id: officeId
+						},
+						feed: 'presence' as const
+					}
+				] as const)
+			: [])
+	];
+	return appSession.controller().subscribeEvents(subscriptions, {
+		onChange: () => onEvent(),
+		onResync: () => onEvent()
+	});
 }
 
 const gatewayActivityApi = createHttpActivityApi({

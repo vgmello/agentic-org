@@ -25,11 +25,24 @@ const EXACT_ENABLED_PAGES: ReadonlySet<string> = new Set([
 	'/chat',
 	'/activity',
 	'/insights',
+	'/search',
+	'/preferences',
+	'/settings',
 	'/settings/offices',
 	'/offices',
+	'/settings/agents',
 	'/settings/roles',
+	'/settings/processes',
+	'/settings/processes/development',
+	'/settings/processes/documents/new',
+	'/processes',
 	'/settings/access',
+	'/settings/security',
+	'/settings/costs',
+	'/settings/updates',
 	'/teams',
+	'/teams/hire',
+	'/teams/hires',
 	'/teams/members',
 	'/agents',
 	'/teams/org-chart',
@@ -46,8 +59,14 @@ const RESERVED_TEAM_SEGMENTS: ReadonlySet<string> = new Set([
 
 const ROLE_ROUTE =
 	/^\/settings\/roles\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const TEAM_ROUTE = /^\/teams\/([^/]+)(?:\/(?:members|work|projects|activity|conversations))?$/;
-const MEMBER_ROUTE = /^\/members\/([^/]+)(?:\/(?:work|conversations|activity|role))?$/;
+const AGENT_SETUP_ROUTE = /^\/settings\/agents\/[^/]+$/;
+const PROCESS_DOC_ROUTE = /^\/settings\/processes\/documents\/[^/]+$/;
+const DEV_PROCESS_ROUTE = /^\/settings\/processes\/development\/[^/]+$/;
+const TEAM_ROUTE =
+	/^\/teams\/([^/]+)(?:\/(?:members|work|projects|activity|conversations|processes))?$/;
+const MEMBER_ROUTE =
+	/^\/members\/([^/]+)(?:\/(?:work|conversations|activity|role|cost|processes|runs|notes))?$/;
+const MEMBER_RUN_ROUTE = /^\/members\/[^/]+\/runs\/[^/]+$/;
 const PROJECT_ROUTE =
 	/^\/projects\/([^/]+)(?:\/(?:work|activity|insights|conversations|team|settings))?$/;
 const WORK_ITEM_ROUTE = /^\/work\/[^/]+$/;
@@ -60,9 +79,13 @@ function isLiveRoute(pathname: string): boolean {
 	const normalized = normalizePathname(pathname);
 	if (EXACT_ENABLED_PAGES.has(normalized)) return true;
 	if (ROLE_ROUTE.test(normalized)) return true;
+	if (AGENT_SETUP_ROUTE.test(normalized)) return true;
+	if (PROCESS_DOC_ROUTE.test(normalized)) return true;
+	if (DEV_PROCESS_ROUTE.test(normalized)) return true;
 	const team = TEAM_ROUTE.exec(normalized);
 	if (team && !RESERVED_TEAM_SEGMENTS.has(team[1])) return true;
 	if (MEMBER_ROUTE.test(normalized)) return true;
+	if (MEMBER_RUN_ROUTE.test(normalized)) return true;
 	if (PROJECT_ROUTE.test(normalized)) return true;
 	if (WORK_ITEM_ROUTE.test(normalized)) return true;
 	return false;

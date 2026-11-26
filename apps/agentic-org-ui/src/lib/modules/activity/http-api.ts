@@ -58,8 +58,6 @@ export interface HttpActivityApiDeps {
 const asRec = (v: unknown): Rec | undefined =>
 	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
 const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
-const asStrList = (v: unknown): string[] =>
-	Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 
 function asIso(v: unknown): string {
 	if (typeof v === 'string' && v) return v;
@@ -91,6 +89,21 @@ function resolveActor(
 	return fallback ?? { id, name: id, kind: 'agent' };
 }
 
+function extractMemberIds(raw: unknown): string[] {
+	if (!Array.isArray(raw)) return [];
+	const out: string[] = [];
+	for (const entry of raw) {
+		if (typeof entry === 'string') {
+			if (entry) out.push(entry);
+			continue;
+		}
+		const rec = asRec(entry);
+		const id = asStr(rec?.employee_id) ?? asStr(rec?.id);
+		if (id && !asStr(rec?.left_at)) out.push(id);
+	}
+	return out;
+}
+
 function decodeConversation(raw: unknown): WireConversation | undefined {
 	const r = asRec(raw);
 	const id = asStr(r?.id);
@@ -99,11 +112,14 @@ function decodeConversation(raw: unknown): WireConversation | undefined {
 	const projectId =
 		asStr(r.project_id) ?? (auto?.type === 'project' ? asStr(auto.project_id) : undefined);
 	const teamId = asStr(r.team_id) ?? (auto?.type === 'team' ? asStr(auto.team_id) : undefined);
+	const members = Array.isArray(r.members)
+		? extractMemberIds(r.members)
+		: extractMemberIds(r.participants);
 	return {
 		id,
 		kind: asStr(r.kind) ?? 'dm',
 		name: asStr(r.name),
-		members: asStrList(r.members ?? r.participants),
+		members,
 		...(projectId ? { projectId } : {}),
 		...(teamId ? { teamId } : {})
 	};
@@ -114,12 +130,21 @@ function decodeMessage(raw: unknown, fallbackConvId: string): WireMessage | unde
 	const id = asStr(r?.id);
 	if (!r || !id) return undefined;
 	const senderRec = asRec(r.from) ?? asRec(r.sender);
-	const from = asStr(r.from) ?? asStr(r.sender_id) ?? asStr(senderRec?.id) ?? 'unknown';
-	const fromName = asStr(senderRec?.name) ?? asStr(r.sender_name);
+	const senderKind = asStr(r.sender_kind);
+	const from =
+		senderKind === 'office' || senderKind === 'system'
+			? 'office'
+			: (asStr(r.sender_employee_id) ??
+				asStr(r.from) ??
+				asStr(r.sender_id) ??
+				asStr(senderRec?.id) ??
+				asStr(r.sender_display_name) ??
+				'unknown');
+	const fromName = asStr(r.sender_display_name) ?? asStr(senderRec?.name) ?? asStr(r.sender_name);
 	const fromKind =
-		senderRec?.kind === 'person' || r.sender_kind === 'person'
+		senderRec?.kind === 'person' || senderKind === 'person'
 			? 'person'
-			: senderRec?.kind === 'agent' || r.sender_kind === 'agent'
+			: senderRec?.kind === 'agent' || senderKind === 'agent' || senderKind === 'employee'
 				? 'agent'
 				: undefined;
 	return {
@@ -138,7 +163,8 @@ function decodeMessage(raw: unknown, fallbackConvId: string): WireMessage | unde
 
 async function readChatFeed(
 	http: GatewayHttpTransport,
-	organizationId: string
+	organizationId: string,
+	viewerId?: string
 ): Promise<{ conversations: WireConversation[]; messages: WireMessage[] }> {
 	const base = `/api/v1/organizations/${encodeURIComponent(organizationId)}/chat`;
 	const convReply: GatewayReply = await http.read(`${base}/conversations`);
@@ -148,8 +174,14 @@ async function readChatFeed(
 		.map(decodeConversation)
 		.filter((c): c is WireConversation => c !== undefined);
 
+	// Only fetch messages for conversations the viewer belongs to (or when viewerId is unknown),
+	// avoiding unnecessary 403 responses from restricted/unjoined conversations.
+	const readable = viewerId
+		? conversations.filter((c) => c.members.length === 0 || c.members.includes(viewerId))
+		: conversations;
+
 	const lists = await Promise.all(
-		conversations.slice(0, 20).map(async (conv) => {
+		readable.slice(0, 20).map(async (conv) => {
 			try {
 				const reply = await http.submit(`${base}/messages/list`, {
 					conversation: conv.id,
@@ -282,10 +314,11 @@ export function createHttpActivityApi(deps: HttpActivityApiDeps): ActivityApi {
 		messaging: 'connected' | 'not-connected';
 	}> {
 		const { snapshot } = await deps.orgApi.view(organizationId);
+		const viewerId = deps.viewerId?.(organizationId) ?? snapshot.members.find((m) => m.owner)?.id;
 		const [workRes, inboxRes, chatRes] = await Promise.allSettled([
 			deps.workItemsApi.queue(organizationId, { kind: 'organization' }),
 			deps.inboxApi.list(organizationId),
-			readChatFeed(deps.http, organizationId)
+			readChatFeed(deps.http, organizationId, viewerId)
 		]);
 
 		const people = actorMap(snapshot);
@@ -330,10 +363,9 @@ export function createHttpActivityApi(deps: HttpActivityApiDeps): ActivityApi {
 		},
 
 		async thread(organizationId: string, threadId: string): Promise<ActivityThread> {
-			const [{ snapshot }, chat] = await Promise.all([
-				deps.orgApi.view(organizationId),
-				readChatFeed(deps.http, organizationId)
-			]);
+			const { snapshot } = await deps.orgApi.view(organizationId);
+			const viewerId = deps.viewerId?.(organizationId) ?? snapshot.members.find((m) => m.owner)?.id;
+			const chat = await readChatFeed(deps.http, organizationId, viewerId);
 			const conv = chat.conversations.find((c) => c.id === threadId);
 			if (!conv) {
 				throw {
