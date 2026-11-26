@@ -194,7 +194,7 @@
 					{onwithdraw}
 				/>
 				<p
-					class="flex items-center gap-2 px-2 pt-2 text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase"
+					class="flex items-center gap-2 px-2 pt-2 text-xs/5 font-semibold tracking-wider text-fg-muted uppercase"
 					aria-live="off"
 					data-testid="thread-count"
 				>

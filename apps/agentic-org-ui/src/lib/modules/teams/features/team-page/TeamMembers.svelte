@@ -74,7 +74,7 @@
 									></a
 								>
 								{#if m.lead}<span
-										class="inline-flex items-center rounded-full bg-brand/10 px-2 py-0.5 text-[11px]/4 font-medium text-brand-text ring-1 ring-brand/25 ring-inset"
+										class="inline-flex items-center rounded-full bg-brand/10 px-2 py-0.5 text-xs/4 font-medium text-brand-text ring-1 ring-brand/25 ring-inset"
 										>Lead</span
 									>{/if}
 							</p>

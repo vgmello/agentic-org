@@ -56,7 +56,7 @@
 	}
 
 	const kbdClass =
-		'inline-flex h-[22px] items-center justify-center rounded-md bg-[var(--exec-well)] px-[7px] text-[0.7rem] font-semibold text-[var(--exec-muted)] shadow-[inset_0_0_0_1px_var(--exec-border)]';
+		'inline-flex h-[22px] items-center justify-center rounded-md bg-[var(--exec-well)] px-[7px] text-xs font-semibold text-[var(--exec-muted)] shadow-[inset_0_0_0_1px_var(--exec-border)]';
 
 	const shellData = useShellData();
 	const scopedSearch = useScopedSearchContext();
@@ -831,7 +831,7 @@
 											{entry.sub}
 										</span>
 										<span
-											class="shrink-0 rounded-[5px] bg-[var(--exec-well)] px-[7px] py-[1px] text-[0.6875rem] font-medium text-[var(--exec-muted)]"
+											class="shrink-0 rounded-[5px] bg-[var(--exec-well)] px-[7px] py-[1px] text-xs font-medium text-[var(--exec-muted)]"
 										>
 											{entry.group}
 										</span>
@@ -842,7 +842,7 @@
 					{/if}
 				</div>
 				<div
-					class="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--exec-border)] bg-[var(--exec-well)] px-3.5 py-2 text-[11px] text-[var(--exec-dim)]"
+					class="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--exec-border)] bg-[var(--exec-well)] px-3.5 py-2 text-xs text-[var(--exec-dim)]"
 					aria-hidden="true"
 				>
 					<div class="flex items-center gap-3">
@@ -926,7 +926,7 @@
 			<Dialog.Close
 				class={cn(
 					kbdClass,
-					'exec-cmdk-close inline-flex min-h-9 min-w-9 items-center justify-center px-2.5 text-[11px]'
+					'exec-cmdk-close inline-flex min-h-9 min-w-9 items-center justify-center px-2.5 text-xs'
 				)}
 			>
 				ESC
@@ -1023,7 +1023,7 @@
 										>{entry.sub}</span
 									>
 									<span
-										class="shrink-0 rounded-[5px] bg-[var(--exec-well)] px-[7px] py-[1px] text-[0.6875rem] font-medium text-[var(--exec-muted)]"
+										class="shrink-0 rounded-[5px] bg-[var(--exec-well)] px-[7px] py-[1px] text-xs font-medium text-[var(--exec-muted)]"
 									>
 										{entry.group}
 									</span>
@@ -1048,7 +1048,7 @@
 								<button
 									type="button"
 									onclick={() => (aiHistory = [])}
-									class="rounded px-1.5 py-0.5 text-[11px] text-[var(--exec-muted)] hover:text-[var(--exec-ink)]"
+									class="rounded px-1.5 py-0.5 text-xs text-[var(--exec-muted)] hover:text-[var(--exec-ink)]"
 								>
 									Clear
 								</button>
@@ -1077,9 +1077,7 @@
 
 					{#if earlierAi.length > 0}
 						<div class="flex flex-wrap items-center gap-1.5">
-							<span
-								class="text-[11px] font-semibold tracking-wider text-[var(--exec-dim)] uppercase"
-							>
+							<span class="text-xs font-semibold tracking-wider text-[var(--exec-dim)] uppercase">
 								Earlier
 							</span>
 							{#each earlierAi as turn (turn.query)}
@@ -1098,7 +1096,7 @@
 					{#if followUps.length > 0}
 						<div>
 							<div
-								class="mb-2 text-[11px] font-semibold tracking-wider text-[var(--exec-dim)] uppercase"
+								class="mb-2 text-xs font-semibold tracking-wider text-[var(--exec-dim)] uppercase"
 							>
 								{aiHistory.length > 0 ? 'Ask a follow-up' : 'Suggested executive questions'}
 							</div>
@@ -1121,7 +1119,7 @@
 		</div>
 
 		<div
-			class="flex flex-wrap items-center gap-4 border-t border-[var(--exec-border)] bg-[var(--exec-well)] px-4 py-2 text-[11px] text-[var(--exec-dim)]"
+			class="flex flex-wrap items-center gap-4 border-t border-[var(--exec-border)] bg-[var(--exec-well)] px-4 py-2 text-xs text-[var(--exec-dim)]"
 			aria-hidden="true"
 		>
 			<span><kbd class={[kbdClass, 'mr-1']}>↵</kbd> Run / Ask</span>

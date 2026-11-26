@@ -291,9 +291,7 @@
 		</ul>
 
 		<div>
-			<h2 class="px-2 text-[11px]/6 font-semibold tracking-wider text-fg-muted uppercase">
-				Channels
-			</h2>
+			<h2 class="px-2 text-xs/6 font-semibold tracking-wider text-fg-muted uppercase">Channels</h2>
 			<ul class="mt-1 flex flex-col gap-0.5" data-testid="channels">
 				{#each bar.channels as r (r.conversation.id)}{@render row(r)}{/each}
 			</ul>
@@ -320,7 +318,7 @@
 		</div>
 
 		<div>
-			<h2 class="px-2 text-[11px]/6 font-semibold tracking-wider text-fg-muted uppercase">
+			<h2 class="px-2 text-xs/6 font-semibold tracking-wider text-fg-muted uppercase">
 				Direct messages
 			</h2>
 			<ul class="mt-1 flex flex-col gap-0.5" data-testid="dms">

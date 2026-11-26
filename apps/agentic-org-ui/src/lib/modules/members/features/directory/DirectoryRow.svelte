@@ -61,7 +61,7 @@
 			<span
 				aria-hidden="true"
 				class={[
-					'inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-semibold',
+					'inline-flex items-center rounded-full px-2 py-0.5 text-xs/4 font-semibold',
 					member.kind === 'agent'
 						? 'member-kind-agent'
 						: 'bg-surface-overlay text-fg-secondary ring-1 ring-line ring-inset'
@@ -112,7 +112,7 @@
 		>
 			<span class="@min-[56rem]:sr-only">Working on</span>
 			<span
-				class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[11px]/4 text-fg-muted tabular-nums ring-1 ring-line ring-inset"
+				class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs/4 text-fg-muted tabular-nums ring-1 ring-line ring-inset"
 				>{working.ref}</span
 			>
 			<span class="ml-1 text-fg-secondary">{working.title}</span>
