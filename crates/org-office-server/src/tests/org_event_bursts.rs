@@ -12,7 +12,7 @@ use base64::Engine as _;
 use org_office::{EngineChoice, Office, OrgDeltaPayload, TestOffice};
 use org_proto::tasks::{TasksCreateParams, TasksUpdateParams};
 use org_store::{DurablePath, Files, StoreError};
-use org_sync::organization::{OrgEvent, PeerIdentity, PeerRole};
+use org_sync::organization::{apply, OrgEvent, PeerIdentity, PeerRole, MAX_PAYLOAD_BYTES};
 use org_sync_proto::{Codec, Digest, Position, SyncFrame};
 
 use super::a2a_messaging::enroll_satellite;
@@ -20,6 +20,7 @@ use crate::federation::{HqFederationServer, SatelliteSyncSession};
 use crate::federation_link::org_events::{
     apply_satellite_org_event_frames, replicated_files_op_id,
 };
+use crate::federation_link::StaticPeer;
 
 struct Fixture {
     hq: Arc<Office>,
@@ -302,6 +303,66 @@ fn an_unsupported_codec_in_a_burst_applies_only_the_prefix_before_it() {
         f.sat.task_inspect(&task_c).unwrap().is_err(),
         "task C never reached the satellite"
     );
+    f.server.stop();
+}
+
+/// Review B-P2-1: `[valid, oversized org.native.changes, valid]`. The oversized event is a real
+/// task's changes (files `org-store` accepts) padded with JSON whitespace past `org-sync`'s
+/// `MAX_PAYLOAD_BYTES`, with its own digest. The satellite's pre-apply check runs `org-sync`'s
+/// own gates, so it is refused with the error a lone apply reports before its files, or any
+/// later frame's, are buffered: the prefix commits, and nothing of the oversized event or of
+/// the valid frame after it reaches `org-store`.
+#[test]
+fn an_oversized_event_in_a_burst_applies_only_the_prefix_before_it() {
+    let f = fixture("Burst Oversized", 44);
+    let start = sat_position(&f.sat);
+    let task_a = create_task(&f.hq, &f.owner, &f.hq_team, "Task A");
+    let a = hq_events_after(&f.hq, start);
+    let task_c = create_task(&f.hq, &f.owner, &f.hq_team, "Task C");
+    let c = hq_events_after(&f.hq, a.last().unwrap().position);
+    let task_d = create_task(&f.hq, &f.owner, &f.hq_team, "Task D");
+    let d = hq_events_after(&f.hq, c.last().unwrap().position);
+
+    let mut padded = c[0].payload.to_vec();
+    padded.resize(MAX_PAYLOAD_BYTES + 1, b' ');
+    let last_a = a.last().unwrap();
+    let oversized = event_at(
+        last_a,
+        Position {
+            epoch: last_a.position.epoch,
+            seq: last_a.position.seq + 1,
+        },
+        last_a.digest,
+        c[0].codec.clone(),
+        Arc::from(padded),
+    );
+    assert_eq!(oversized.codec.id(), "org.native.changes");
+    assert_eq!(
+        files_of(&oversized),
+        files_of(&c[0]),
+        "well-formed task files"
+    );
+    let after_oversized = rechained(&oversized, &d);
+    let mut later = vec![oversized.clone()];
+    later.extend(after_oversized.iter().cloned());
+    let mut frames: Vec<SyncFrame> = a.iter().map(frame).collect();
+    frames.push(frame(&oversized));
+    frames.extend(after_oversized.iter().map(frame));
+
+    let error = assert_only_prefix_applies(&f.sat, &f.hq_peer, frames, &a, &later);
+    assert!(f.sat.task_inspect(&task_a).unwrap().is_ok());
+    for task in [&task_c, &task_d] {
+        assert!(
+            f.sat.task_inspect(task).unwrap().is_err(),
+            "no task after the prefix reached the satellite"
+        );
+    }
+    // The very error a lone apply of the oversized event reports, and it commits nothing.
+    let peer = StaticPeer(f.hq_peer.clone());
+    let lone = apply(f.sat.replication().as_ref(), &peer, oversized).unwrap_err();
+    assert_eq!(error, format!("apply_org_event failed: {lone}"));
+    assert!(error.contains("invalid_request"), "{error}");
+    assert_eq!(sat_position(&f.sat), last_a.position);
     f.server.stop();
 }
 

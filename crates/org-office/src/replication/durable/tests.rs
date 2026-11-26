@@ -2,9 +2,10 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use org_sync::organization::{append_hq, OrgStore};
-use org_sync_proto::{Codec, Digest, Epoch, OfficeId, OrgId, OriginIncarnation};
+use org_sync::organization::{append_hq, OrgEvent, OrgStore};
+use org_sync_proto::{Codec, Digest, Epoch, OfficeId, OrgId, OriginIncarnation, Position};
 
+use super::state_file::stored_event;
 use super::{DurableReplicationParams, DurableReplicationStore, ReplicationProjection};
 use crate::error::OfficeError;
 use crate::replication::{memory::ReplicationCoreData, ReplicationStore};
@@ -501,4 +502,61 @@ fn stored_events_that_do_not_chain_within_an_epoch_fail_closed() {
     with_inline(our_lines.clone());
     let store = DurableReplicationStore::open_unprojected(params(ours.path())).unwrap();
     assert_eq!(payloads(&store), PAYLOADS[..3]);
+}
+
+/// Review N-P2-2: stored events each carrying their own valid digest, but at sequence zero, or
+/// with an epoch that goes back (interleaved epochs), fail closed with that reason.
+#[test]
+fn stored_events_at_sequence_zero_or_with_epochs_going_back_fail_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let store = DurableReplicationStore::open_unprojected(params(dir.path())).unwrap();
+        append(&store, PAYLOADS[0]).unwrap();
+    }
+    let org_id = params(dir.path()).org_id;
+    // A stored line for a well-formed event at (epoch, seq) after `previous`.
+    let line = |epoch: u64, seq: u64, previous: Digest| {
+        let position = Position {
+            epoch: Epoch::new(epoch).unwrap(),
+            seq,
+        };
+        let codec = Codec::new("org.native.changes", 1).unwrap();
+        let payload: Arc<[u8]> = Arc::from(&b"stored"[..]);
+        let digest =
+            org_sync_proto::event_digest_v1(&org_id, position, previous, &codec, &payload).unwrap();
+        let event = OrgEvent {
+            org_id: org_id.clone(),
+            position,
+            previous,
+            digest,
+            codec,
+            payload,
+        };
+        (serde_json::to_value(stored_event(&event)).unwrap(), digest)
+    };
+    let state_path = replication_dir(dir.path()).join("state.v1.json");
+    let committed = read_json(&state_path);
+    let open_inline = |events: Vec<serde_json::Value>| {
+        let mut state = committed.clone();
+        let object = state.as_object_mut().unwrap();
+        object.remove("events_log");
+        object.insert("events".into(), serde_json::Value::Array(events));
+        std::fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+        DurableReplicationStore::open_unprojected(params(dir.path())).map(|_| ())
+    };
+    let base = Digest::from_bytes([0; 32]);
+
+    let (zero, _) = line(1, 0, base);
+    let error = open_inline(vec![zero]).unwrap_err();
+    assert!(error.to_string().contains("sequence zero"), "{error}");
+
+    // Epoch 1, then epoch 2, then epoch 1 again: every digest checks out.
+    let (one, one_digest) = line(1, 1, base);
+    let (two, _) = line(2, 1, one_digest);
+    let (back, _) = line(1, 2, one_digest);
+    let error = open_inline(vec![one.clone(), two.clone(), back]).unwrap_err();
+    assert!(error.to_string().contains("epochs go back"), "{error}");
+
+    // The same events in epoch order open.
+    open_inline(vec![one, two]).unwrap();
 }

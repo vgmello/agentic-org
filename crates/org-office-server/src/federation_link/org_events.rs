@@ -9,8 +9,8 @@ use base64::Engine as _;
 use org_office::{Office, OrgDeltaPayload};
 use org_sync::error::{Refusal, SyncError};
 use org_sync::organization::{
-    apply as apply_org_event, apply_batch as apply_org_events, OrgCheckpoint, OrgEvent, OrgOutput,
-    PeerIdentity, PeerRole,
+    apply as apply_org_event, apply_batch as apply_org_events, verify_pre_apply, OrgCheckpoint,
+    OrgEvent, OrgOutput, PeerIdentity,
 };
 use org_sync_proto::{Codec, Digest, Epoch, OrgId, Position, SyncFrame};
 use sha2::{Digest as _, Sha256};
@@ -22,12 +22,24 @@ pub(crate) const ORG_EVENT_BATCH_MAX: usize = 64;
 
 /// Most replicated file bytes one batch's single files operation carries, far below
 /// `org_store::MAX_ENTRY_BYTES`: merging events never builds an entry a lone event could not.
+/// Counted with [`entry_bytes`], framing included.
 const ORG_EVENT_BATCH_FILE_BYTES: usize = 4 * 1024 * 1024;
+
+/// A generous bound on what one file of a files operation adds to its `org-store` entry beside
+/// its path and bytes (record framing, kind, lengths and digests), so thousands of tiny files
+/// cannot carry a batch past `org_store::MAX_ENTRY_BYTES` through framing alone.
+const ORG_EVENT_FILE_FRAMING_BYTES: usize = 256;
+
+/// The error a lone apply reports for an [`OrgOutput::Gap`].
+const GAP: &str = "org event gap detected; resync required";
+/// The error a lone apply reports for an [`OrgOutput::SnapshotRequired`].
+const SNAPSHOT_REQUIRED: &str = "snapshot required before applying org events";
 
 /// Applies consecutive HQ `OrgEvent` frames in order and returns how many were new
 /// (`TASK-140`). Every frame is decoded and verified first against the checkpoint the frames
-/// before it reach: `org-sync`'s gates on any apply (HQ authority and epoch, no restore
-/// fence, no initial snapshot owed), then organization, predecessor chain, digest and codec.
+/// before it reach: `org-sync`'s own pre-apply gates (`organization::verify_pre_apply`: HQ
+/// authority and epoch, payload size, digest, codec, no restore fence), no initial snapshot
+/// owed, then the predecessor chain.
 /// Verified events then apply in batches of up to [`ORG_EVENT_BATCH_MAX`]: one
 /// replicated-files operation and one replication transaction per batch instead of one
 /// durable sync each, so a 420-task burst costs a handful of commits. Three kinds of event
@@ -157,8 +169,15 @@ fn files_sha256_hex(files: &SnapshotFileBatch) -> String {
 fn file_bytes(files: &SnapshotFileBatch) -> usize {
     files
         .iter()
-        .map(|(_, content)| content.as_ref().map_or(0, Vec::len))
-        .sum()
+        .map(|(path, content)| entry_bytes(path, content.as_ref()))
+        .fold(0, usize::saturating_add)
+}
+
+/// What one file adds to a batch's files operation: its path, its bytes and its framing.
+fn entry_bytes(path: &str, content: Option<&Vec<u8>>) -> usize {
+    path.len()
+        .saturating_add(ORG_EVENT_FILE_FRAMING_BYTES)
+        .saturating_add(content.map_or(0, Vec::len))
 }
 
 /// Verified events waiting to apply together, with their files merged in event order: a path
@@ -183,7 +202,7 @@ impl Burst {
         for (path, content) in files.into_iter().flatten() {
             self.bytes = self
                 .bytes
-                .saturating_add(content.as_ref().map_or(0, Vec::len));
+                .saturating_add(entry_bytes(&path, content.as_ref()));
             if let Some(earlier) = self.index.insert(path.clone(), self.files.len()) {
                 self.files[earlier] = None;
             }
@@ -214,13 +233,20 @@ impl Burst {
         let peer = StaticPeer(hq_peer.clone());
         let store = office.replication();
         let batched = if events.len() > 1 {
-            apply_org_events(store.as_ref(), &peer, events.clone()).ok()
+            match apply_org_events(store.as_ref(), &peer, events.clone()) {
+                Ok(outputs) => Some(outputs),
+                // A refusal aborted the whole transaction: nothing of the batch committed.
+                Err(SyncError::Refused(_)) => None,
+                // A storage failure may come after a durable commit: replaying the events
+                // one at a time could take committed ones for duplicates. Report it.
+                Err(e) => return Err(format!("apply_org_event failed: {e}")),
+            }
         } else {
             None
         };
         let outputs = match batched {
             Some(outputs) => outputs,
-            // A lone event, or a batch that committed nothing: one `apply` per event, so the
+            // A lone event, or a batch a refusal rolled back: one `apply` per event, so the
             // events before a failing one commit and its error is the one a lone apply reports.
             None => {
                 let mut outputs = Vec::with_capacity(events.len());
@@ -245,12 +271,8 @@ impl Burst {
                 OrgOutput::Ack {
                     duplicate: true, ..
                 } => {}
-                OrgOutput::Gap { .. } => {
-                    return Err("org event gap detected; resync required".into());
-                }
-                OrgOutput::SnapshotRequired => {
-                    return Err("snapshot required before applying org events".into());
-                }
+                OrgOutput::Gap { .. } => return Err(GAP.into()),
+                OrgOutput::SnapshotRequired => return Err(SNAPSHOT_REQUIRED.into()),
                 other => return Err(format!("unexpected org apply outcome: {other:?}")),
             }
         }
@@ -307,54 +329,33 @@ pub(crate) fn collect_pending_work_paths_checked(
 }
 
 /// Verifies `ev` against the checkpoint `cur` before anything of it is buffered or applied,
-/// and returns the files of an `org.native.changes` v1 event. Refuses first what `org-sync`
-/// refuses for any event (`organization::apply`): another HQ office, role or authority epoch,
-/// an event outside the highest epoch, a restore fence, an initial snapshot still owed; with
-/// the error a lone apply reports. A duplicate is left to `org-sync` (`Ok(None)`).
+/// and returns the files of an `org.native.changes` v1 event. Refuses, in `organization::apply`'s
+/// order and with the error a lone apply reports: what `org-sync`'s own pre-apply gates refuse
+/// (`organization::verify_pre_apply`, the one implementation `apply` runs: checkpoint, HQ
+/// authority and epoch, sequence, payload size, digest, codec, restore fence); an initial
+/// snapshot still owed; then, for the event after the checkpoint, a gap or a broken chain.
+/// A repeat of the checkpoint or an earlier event is left to `org-sync`, which alone holds the
+/// retained history (`Ok(None)`).
 fn verify_org_event_before_apply(
     cur: &OrgCheckpoint,
     initial_snapshot_required: bool,
     hq_peer: &PeerIdentity,
     ev: &OrgEvent,
 ) -> Result<Option<SnapshotFileBatch>, String> {
-    if ev.org_id != cur.org_id || hq_peer.org_id != cur.org_id {
-        return Err("org event organization mismatch".into());
-    }
-    if hq_peer.office_id != cur.hq_office
-        || hq_peer.role != PeerRole::Hq
-        || hq_peer.authority != cur.highest_epoch
-        || ev.position.epoch != cur.highest_epoch
-    {
-        return Err(refused(Refusal::NotAuthorized));
-    }
-    if cur.restore_pending {
-        return Err(refused(Refusal::RestorePending));
-    }
+    verify_pre_apply(cur, hq_peer, ev).map_err(refused)?;
     if initial_snapshot_required {
-        return Err("snapshot required before applying org events".into());
-    }
-    if ev.position.epoch < cur.position.epoch {
-        return Err("stale org event epoch".into());
+        return Err(SNAPSHOT_REQUIRED.into());
     }
     if is_duplicate(cur, ev) {
         return Ok(None);
     }
-    if ev.position.epoch != cur.position.epoch
-        || ev.position.seq != cur.position.seq.saturating_add(1)
-        || ev.previous != cur.digest
-    {
-        return Err("org event gap or predecessor mismatch".into());
+    // Past the gates the event and the checkpoint share the highest epoch: `org-sync`'s order
+    // for an event past the checkpoint is a gap, a broken chain (divergence) or the next one.
+    if cur.position.seq.checked_add(1) != Some(ev.position.seq) {
+        return Err(GAP.into());
     }
-    let expected_digest = org_sync_proto::event_digest_v1(
-        &ev.org_id,
-        ev.position,
-        ev.previous,
-        &ev.codec,
-        &ev.payload,
-    )
-    .map_err(|_| "invalid org event digest parameters".to_owned())?;
-    if ev.digest != expected_digest {
-        return Err("org event digest verification failed".into());
+    if ev.previous != cur.digest {
+        return Err(refused(Refusal::Divergence));
     }
     if is_native_changes(&ev.codec) {
         let delta: OrgDeltaPayload = serde_json::from_slice(&ev.payload)

@@ -274,13 +274,23 @@ pub fn apply_batch(
     Ok(std::mem::take(&mut *outputs))
 }
 
-/// The body of [`apply`]: one event from `peer` inside an open transaction.
-fn apply_in(
-    tx: &mut dyn OrgTxn,
+/// The store-free gates [`apply`] runs first on every event, in its order: a valid checkpoint
+/// (`InvariantFailure`); this organization's HQ `peer` at the checkpoint's authority epoch,
+/// sending an event of this organization in that epoch (`NotAuthorized`); a well-formed event,
+/// with a nonzero sequence and a payload within [`MAX_PAYLOAD_BYTES`] (`InvalidInput`) and its
+/// own digest (`IntegrityFailure`); a codec the checkpoint's protocol level allows
+/// (`UnsupportedVersion`); no restore fence (`RestorePending`). [`apply`] then asks the store
+/// for protocol and codec support and any initial snapshot owed, and orders the event.
+///
+/// The one implementation of these gates: a caller that verifies events before staging their
+/// side effects (a satellite writing an event's files ahead of [`apply_batch`]) calls it to
+/// refuse, before anything is written, exactly what [`apply`] would refuse, with the same
+/// refusal.
+pub fn verify_pre_apply(
+    current: &OrgCheckpoint,
     peer: &PeerIdentity,
     event: &OrgEvent,
-) -> Result<OrgOutput, SyncError> {
-    let mut current = tx.checkpoint()?;
+) -> Result<(), Refusal> {
     current.validate()?;
     if event.org_id != current.org_id
         || peer.org_id != current.org_id
@@ -289,16 +299,30 @@ fn apply_in(
         || peer.authority != current.highest_epoch
         || event.position.epoch != current.highest_epoch
     {
-        return Err(Refusal::NotAuthorized.into());
+        return Err(Refusal::NotAuthorized);
     }
     event.validate()?;
-    if !tx.supports_protocol(current.protocol_level)?
-        || !versions::codec_supported(current.protocol_level, &event.codec)
-        || !tx.supports_codec(&event.codec)?
-    {
+    if !versions::codec_supported(current.protocol_level, &event.codec) {
+        return Err(Refusal::UnsupportedVersion);
+    }
+    if current.restore_pending {
+        return Err(Refusal::RestorePending);
+    }
+    Ok(())
+}
+
+/// The body of [`apply`]: one event from `peer` inside an open transaction.
+fn apply_in(
+    tx: &mut dyn OrgTxn,
+    peer: &PeerIdentity,
+    event: &OrgEvent,
+) -> Result<OrgOutput, SyncError> {
+    let mut current = tx.checkpoint()?;
+    verify_pre_apply(&current, peer, event)?;
+    if !tx.supports_protocol(current.protocol_level)? || !tx.supports_codec(&event.codec)? {
         return Err(Refusal::UnsupportedVersion.into());
     }
-    if !current.restore_pending && tx.requires_initial_snapshot()? {
+    if tx.requires_initial_snapshot()? {
         return Ok(OrgOutput::SnapshotRequired);
     }
     let retained = if event.position.epoch == current.position.epoch

@@ -185,9 +185,16 @@ pub(super) fn core_from_file(
         if expected != event.digest {
             return Err(OfficeError::Invalid("stored event digest mismatch"));
         }
-        // Within an epoch the stored events are one unbroken chain, each the successor of the
-        // one stored before it: a repeated, reordered or spliced history fails closed.
+        // No event sits at sequence zero, epochs never go back (no interleaving), and within
+        // an epoch the stored events are one unbroken chain, each the successor of the one
+        // stored before it: a repeated, reordered or spliced history fails closed.
+        if event.position.seq == 0 {
+            return Err(OfficeError::Invalid("stored event at sequence zero"));
+        }
         if let Some((position, digest)) = previous {
+            if event.position.epoch < position.epoch {
+                return Err(OfficeError::Invalid("stored event epochs go back"));
+            }
             if position.epoch == event.position.epoch
                 && (position.seq.checked_add(1) != Some(event.position.seq)
                     || event.previous != digest)

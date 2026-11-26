@@ -250,3 +250,86 @@ fn apply_batch_applies_consecutive_events_in_one_transaction_like_apply() {
     assert_eq!(satellite.checkpoint().position, events[5].position);
     assert_eq!(satellite.applied().len(), 6);
 }
+
+/// Review B-P2-1: [`verify_pre_apply`] is the very gate [`apply`] runs before it consults the
+/// store, so a caller that pre-verifies events (a satellite staging their files) refuses each
+/// one with the refusal a lone `apply` reports, and `apply` commits nothing for it: an invalid
+/// checkpoint, another HQ, an oversized payload with its own digest, a codec the protocol
+/// level does not allow, and a restore fence.
+#[test]
+fn verify_pre_apply_refuses_exactly_what_apply_refuses() {
+    let (hq, satellite, peer) = offices();
+    let one = hq.publish(b"one").unwrap();
+    let event = |codec: Codec, payload: Vec<u8>| {
+        let payload: Arc<[u8]> = Arc::from(payload);
+        let digest = org_sync_proto::event_digest_v1(
+            &one.org_id,
+            one.position,
+            one.previous,
+            &codec,
+            &payload,
+        )
+        .unwrap();
+        OrgEvent {
+            digest,
+            codec,
+            payload,
+            ..one.clone()
+        }
+    };
+    let oversized = event(one.codec.clone(), vec![b'x'; MAX_PAYLOAD_BYTES + 1]);
+    let unsupported = event(Codec::new("org.unknown", 1).unwrap(), b"one".to_vec());
+    let mut other_hq = peer.0.clone();
+    other_hq.office_id = OfficeId::new("SAT1").unwrap();
+    let committed = satellite.checkpoint();
+    let mut invalid = committed.clone();
+    invalid.protocol_level = 0;
+    let mut fenced = committed.clone();
+    fenced.restore_pending = true;
+    let cases = [
+        (
+            invalid,
+            peer.0.clone(),
+            one.clone(),
+            Refusal::InvariantFailure,
+        ),
+        (
+            committed.clone(),
+            other_hq,
+            one.clone(),
+            Refusal::NotAuthorized,
+        ),
+        (
+            committed.clone(),
+            peer.0.clone(),
+            oversized,
+            Refusal::InvalidInput,
+        ),
+        (
+            committed.clone(),
+            peer.0.clone(),
+            unsupported,
+            Refusal::UnsupportedVersion,
+        ),
+        (fenced, peer.0.clone(), one.clone(), Refusal::RestorePending),
+    ];
+    for (checkpoint, identity, ev, expected) in cases {
+        assert_eq!(
+            verify_pre_apply(&checkpoint, &identity, &ev),
+            Err(expected),
+            "{expected:?}"
+        );
+        satellite.data.borrow_mut().checkpoint = checkpoint.clone();
+        let error = apply(&satellite, &MemoryPeer(identity), ev).unwrap_err();
+        assert!(
+            matches!(error, SyncError::Refused(actual) if actual == expected),
+            "a lone apply refuses with {expected:?}, got {error}"
+        );
+        assert_eq!(satellite.checkpoint(), checkpoint);
+        assert!(satellite.applied().is_empty());
+    }
+    satellite.data.borrow_mut().checkpoint = committed.clone();
+    assert_eq!(verify_pre_apply(&committed, &peer.0, &one), Ok(()));
+    apply(&satellite, &peer, one.clone()).unwrap();
+    assert_eq!(satellite.checkpoint().position, one.position);
+}
