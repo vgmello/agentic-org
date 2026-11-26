@@ -97,7 +97,8 @@ pub(super) fn require_disk(_dir: &File, _path: &Path) -> Result<(), FilesystemRe
 
 pub(super) use super::shared::{
     create_owner_only_dir, create_owner_only_dir_all, create_symlink, effective_uid,
-    open_nofollow_ro, set_owner_only_dir, verify_owner_only_ancestors, verify_owner_only_dir,
+    ensure_symlink_at, open_nofollow_ro, open_or_create_owner_only_child, open_owner_only_dir,
+    remove_symlink_at, set_owner_only_dir, verify_owner_only_ancestors, verify_owner_only_dir,
     verify_owner_only_file, write_owner_only_file,
 };
 

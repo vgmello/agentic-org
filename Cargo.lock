@@ -45,10 +45,12 @@ version = "0.0.0"
 dependencies = [
  "hmac",
  "libc",
+ "org-agent-cli",
  "org-client",
  "org-office",
  "org-office-launch",
  "org-office-server",
+ "org-office-sessions",
  "org-platform",
  "org-proto",
  "org-socket",

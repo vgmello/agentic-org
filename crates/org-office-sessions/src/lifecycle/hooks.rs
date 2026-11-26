@@ -1,0 +1,459 @@
+//! Pump hook wiring: suspension, turn-end drain, mid-turn staging and delivery commit, usage,
+//! permits, rate limits, and failover (`TASK-115`, `doc-101` §4).
+
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use org_office::organization_family::records::EmployeeStatus;
+use org_office::Office;
+
+use crate::binding::RunBindingRegistry;
+use crate::credentials::{now_ms, rfc3339_now};
+use crate::employee_locks::EmployeeLockMap;
+use crate::manager::{set_waiting_messages_count, SessionManager};
+use crate::pump::{
+    FailoverHook, MidTurnDeliveredHook, MidTurnStageOutcome, OpenRequiredAsksHook,
+    PermitAcquireHook, PermitReleaseHook, PermitReleasePendingHook, PermitRenewHook, PumpHooks,
+    RateLimitHook, StageMidTurnWakesHook, StagedMidTurnBatch, SuspendedHook, TurnEndedHook,
+};
+use crate::recovery::SessionStore;
+use crate::wake::{
+    compose_mid_turn_notice_batch, sender_conv_key, MidTurnLimits, MidTurnRateTracker,
+    MidTurnSelection,
+};
+
+use super::asks::{persist_suspended_record, take_open_required_asks};
+use super::drain::drain_pending_wakes_into_live_pump;
+use super::usage::{flush_pending_usage, record_session_usage};
+
+impl SessionManager {
+    pub(crate) fn build_pump_hooks(
+        &self,
+        employee_id: &str,
+        route_digest: String,
+        oauth_expires_at_ms: Option<u64>,
+        bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+    ) -> PumpHooks {
+        let open_asks_check = Arc::clone(&self.open_required_asks);
+        let has_open: OpenRequiredAsksHook = Arc::new(move |emp_id: &str| {
+            open_asks_check
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(emp_id)
+                .is_some_and(|list| !list.is_empty())
+        });
+
+        let store_s = self.store.clone();
+        let asks_s = Arc::clone(&self.open_required_asks);
+        let last_s = Arc::clone(&self.last_states);
+        let locks_s = Arc::clone(&self.employee_locks);
+        let bindings_s = self.bindings.clone();
+        let on_suspended: SuspendedHook = Arc::new(
+            move |emp_id: &str,
+                  reaped_bg: Vec<String>,
+                  session_id: Option<String>,
+                  rsid: Option<String>| {
+                let _guard = locks_s.lock(emp_id);
+                let asks = take_open_required_asks(&asks_s, emp_id);
+                if asks.is_empty() {
+                    return false;
+                }
+                let sid = session_id.unwrap_or_else(|| format!("sess-{emp_id}"));
+                let tokens = bindings_s.active_tokens();
+                let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+                persist_suspended_record(&store_s, emp_id, asks, reaped_bg, sid, rsid, &refs);
+                last_s
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(emp_id);
+                true
+            },
+        );
+
+        let drain_ctx = self.turn_end_drain_ctx();
+        let on_turn_ended: TurnEndedHook = Arc::new(move |emp_id: &str| {
+            let _ = flush_pending_usage(&drain_ctx.office, &drain_ctx.store, emp_id);
+            let _ = drain_ctx.office.mark_budget_holds_stopped(emp_id);
+            drain_pending_wakes_into_live_pump(emp_id, &drain_ctx);
+        });
+
+        let (stage_mid_turn_wakes, on_mid_turn_delivered) = build_mid_turn_hooks(self);
+
+        let usage_office = Arc::clone(&self.office);
+        let usage_store = self.store.clone();
+        let usage_seq = Arc::new(AtomicU64::new(1));
+        let on_usage: crate::pump::UsageHook = Arc::new(move |emp_id, run_id, usage| {
+            let seq = usage_seq.fetch_add(1, Ordering::Relaxed);
+            record_session_usage(&usage_office, &usage_store, emp_id, run_id, seq, usage);
+        });
+
+        let (on_permit_acquire, on_permit_renew, on_permit_release, on_permit_release_pending) =
+            build_permit_hooks(self, employee_id, route_digest, oauth_expires_at_ms);
+
+        let rl_office = Arc::clone(&self.office);
+        let rl_hq_permits = self.config.hq_permits.clone();
+        let on_rate_limit: RateLimitHook = Arc::new(move |conn_id, resets_at| {
+            let _ = rl_office.record_connection_cooldown_internal(conn_id, None, resets_at, None);
+            crate::router::report_cooldown_any(
+                &rl_office,
+                rl_hq_permits.as_deref(),
+                conn_id,
+                resets_at,
+                Some("rate_limited"),
+            );
+        });
+
+        let failover_weak = self.weak_self();
+        let on_failover: FailoverHook = Arc::new(move |req| {
+            if let Some(mgr) = failover_weak.as_ref().and_then(|w| w.upgrade()) {
+                crate::manager::spawn_bg_worker(&mgr, "org-pool-failover", move |m| {
+                    m.failover_relaunch(req)
+                });
+            }
+        });
+
+        let is_bwrap_topology_stale: Option<crate::pump::BwrapTopologyStaleHook> =
+            bwrap_masked_siblings.map(|masked| {
+                let office = Arc::clone(&self.office);
+                let emp = employee_id.to_owned();
+                Arc::new(move || {
+                    crate::bwrap_isolation::has_unmasked_bwrap_sibling_in_office(
+                        &office, &emp, &masked,
+                    )
+                }) as crate::pump::BwrapTopologyStaleHook
+            });
+
+        PumpHooks {
+            has_open_required_asks: Some(has_open),
+            on_turn_ended: Some(on_turn_ended),
+            on_suspended: Some(on_suspended),
+            on_usage: Some(on_usage),
+            on_permit_acquire: Some(on_permit_acquire),
+            on_permit_renew: Some(on_permit_renew),
+            on_permit_release: Some(on_permit_release),
+            on_permit_release_pending: Some(on_permit_release_pending),
+            on_rate_limit: Some(on_rate_limit),
+            on_failover: Some(on_failover),
+            stage_mid_turn_wakes: Some(stage_mid_turn_wakes),
+            on_mid_turn_delivered: Some(on_mid_turn_delivered),
+            is_bwrap_topology_stale,
+        }
+    }
+}
+
+pub(super) fn build_mid_turn_hooks(
+    mgr: &SessionManager,
+) -> (StageMidTurnWakesHook, MidTurnDeliveredHook) {
+    let stage_store = mgr.store.clone();
+    let stage_office = Arc::clone(&mgr.office);
+    let stage_budget = Arc::clone(&mgr.budget_hold);
+    let stage_locks = Arc::clone(&mgr.employee_locks);
+    let stage_dispatching = Arc::clone(&mgr.dispatching_wakes);
+    let stage_rates = Arc::clone(&mgr.mid_turn_rates);
+    let stage_limits: MidTurnLimits = mgr.config.mid_turn_limits;
+    let delivery_seq = Arc::new(AtomicU64::new(1));
+
+    let stage_hook: StageMidTurnWakesHook =
+        Arc::new(move |emp_id, task_ref, turn_total, turn_agent| {
+            stage_mid_turn_batch(
+                &stage_office,
+                &stage_store,
+                &stage_budget,
+                &stage_locks,
+                &stage_dispatching,
+                &stage_rates,
+                &delivery_seq,
+                stage_limits,
+                emp_id,
+                task_ref,
+                turn_total,
+                turn_agent,
+            )
+        });
+
+    let commit_store = mgr.store.clone();
+    let commit_locks = Arc::clone(&mgr.employee_locks);
+    let commit_rates = Arc::clone(&mgr.mid_turn_rates);
+    let commit_waiting = Arc::clone(&mgr.waiting_messages);
+    let commit_bindings = mgr.bindings.clone();
+    let hourly_window_ms = mgr.config.mid_turn_limits.hourly_window_ms;
+
+    let delivered_hook: MidTurnDeliveredHook = Arc::new(move |emp_id, batch| {
+        commit_mid_turn_delivered(
+            &commit_store,
+            &commit_locks,
+            &commit_rates,
+            &commit_waiting,
+            &commit_bindings,
+            hourly_window_ms,
+            emp_id,
+            batch,
+        );
+    });
+
+    (stage_hook, delivered_hook)
+}
+
+pub(super) fn employee_allows_mid_turn_staging(
+    office: &Office,
+    store: &SessionStore,
+    budget_hold: &Mutex<Option<String>>,
+    emp_id: &str,
+    task_ref: Option<&str>,
+) -> bool {
+    let Some(emp) = office.load_employee(emp_id).ok().flatten() else {
+        return false;
+    };
+    if emp.status != EmployeeStatus::Active {
+        return false;
+    }
+    if store.read_suspended_state(emp_id).ok().flatten().is_some() {
+        return false;
+    }
+    if store
+        .read_active_turn(emp_id)
+        .ok()
+        .flatten()
+        .is_some_and(|rec| rec.stall_locked || rec.recovery_required)
+    {
+        return false;
+    }
+    let has_mem_hold = budget_hold
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .is_some();
+    let has_db_hold = office
+        .active_budget_holds(Some(emp_id), task_ref)
+        .is_ok_and(|h| !h.is_empty());
+    !has_mem_hold && !has_db_hold
+}
+
+pub(super) fn build_staged_mid_turn_batch(
+    eligible: &[crate::wake::PendingWakeItem],
+    delivery_seq: &AtomicU64,
+    ts: u64,
+) -> MidTurnStageOutcome {
+    let (text, item_ids) = compose_mid_turn_notice_batch(eligible);
+    if item_ids.is_empty() {
+        return MidTurnStageOutcome::None;
+    }
+    let id_set: HashSet<&str> = item_ids.iter().map(String::as_str).collect();
+    let mut has_agent_item = false;
+    let mut agent_sender_convs = Vec::new();
+    for item in eligible
+        .iter()
+        .filter(|item| id_set.contains(item.item_id.as_str()) && !item.sender_is_person)
+    {
+        has_agent_item = true;
+        let key = sender_conv_key(item);
+        if !agent_sender_convs.contains(&key) {
+            agent_sender_convs.push(key);
+        }
+    }
+    let seq = delivery_seq.fetch_add(1, Ordering::Relaxed);
+    MidTurnStageOutcome::Ready(StagedMidTurnBatch {
+        delivery_id: format!("mt-{ts}-{seq}"),
+        item_ids,
+        text,
+        has_agent_item,
+        agent_sender_convs,
+    })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal helper separates read-only staging from PumpHooks wiring"
+)]
+pub(super) fn stage_mid_turn_batch(
+    office: &Office,
+    store: &SessionStore,
+    budget_hold: &Mutex<Option<String>>,
+    employee_locks: &EmployeeLockMap,
+    dispatching_wakes: &Mutex<HashSet<String>>,
+    mid_turn_rates: &Mutex<HashMap<String, MidTurnRateTracker>>,
+    delivery_seq: &AtomicU64,
+    limits: MidTurnLimits,
+    emp_id: &str,
+    task_ref: Option<&str>,
+    turn_total: u32,
+    turn_agent: u32,
+) -> MidTurnStageOutcome {
+    // Wait briefly if a turn-start dispatch is currently removing its claimed wakes so the warm
+    // pump cannot re-stage those same items mid-turn (`TASK-115` zero-duplicate invariant).
+    if dispatching_wakes
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .contains(emp_id)
+    {
+        return MidTurnStageOutcome::Wait(Duration::from_millis(50));
+    }
+    if !employee_allows_mid_turn_staging(office, store, budget_hold, emp_id, task_ref) {
+        return MidTurnStageOutcome::None;
+    }
+    // Phase 2A: read pending-wakes.v1.json WITHOUT mutating disk so a crash or failed delivery
+    // preserves every queued item for the next turn (`TASK-115` / `doc-101` §4B).
+    let items = {
+        let _guard = employee_locks.lock(emp_id);
+        match store.read_pending_wakes(emp_id) {
+            Ok(Some(queue)) if !queue.items.is_empty() => queue.items,
+            _ => return MidTurnStageOutcome::None,
+        }
+    };
+    let ts = now_ms();
+    let selection = {
+        let mut rates = mid_turn_rates.lock().unwrap_or_else(|p| p.into_inner());
+        let tracker = rates.entry(emp_id.to_owned()).or_default();
+        tracker.select_batch(&items, ts, turn_total, turn_agent, limits)
+    };
+    match selection {
+        MidTurnSelection::None => MidTurnStageOutcome::None,
+        MidTurnSelection::WaitMs(ms) => MidTurnStageOutcome::Wait(Duration::from_millis(ms.max(1))),
+        MidTurnSelection::Ready(eligible) => {
+            build_staged_mid_turn_batch(&eligible, delivery_seq, ts)
+        }
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal helper commits only runtime-acked item_ids under the employee lock"
+)]
+pub(super) fn commit_mid_turn_delivered(
+    store: &SessionStore,
+    employee_locks: &EmployeeLockMap,
+    mid_turn_rates: &Mutex<HashMap<String, MidTurnRateTracker>>,
+    waiting_messages: &Mutex<HashMap<String, Arc<AtomicU32>>>,
+    bindings: &RunBindingRegistry,
+    hourly_window_ms: u64,
+    emp_id: &str,
+    batch: &StagedMidTurnBatch,
+) {
+    let claimed: HashSet<&str> = batch.item_ids.iter().map(String::as_str).collect();
+    let tokens = bindings.active_tokens();
+    let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    {
+        let _guard = employee_locks.lock(emp_id);
+        if let Ok(Some(mut queue)) = store.read_pending_wakes(emp_id) {
+            queue
+                .items
+                .retain(|i| !claimed.contains(i.item_id.as_str()));
+            if queue.items.is_empty() && queue.seen_item_ids.is_empty() {
+                if store.clear_pending_wakes(emp_id).is_ok() {
+                    set_waiting_messages_count(waiting_messages, emp_id, 0);
+                }
+            } else {
+                if queue.items.is_empty() {
+                    // Retain `seen_item_ids` across mid-turn drain for `TASK-52` P7-#12 idempotency.
+                    queue.hold_reason = None;
+                    queue.held_since_ms = None;
+                    queue.retry_after_ms = None;
+                }
+                queue.updated_at = rfc3339_now();
+                if store.write_pending_wakes_redacted(&queue, &refs).is_ok() {
+                    set_waiting_messages_count(waiting_messages, emp_id, queue.items.len());
+                }
+            }
+        }
+    }
+    {
+        let mut rates = mid_turn_rates.lock().unwrap_or_else(|p| p.into_inner());
+        rates
+            .entry(emp_id.to_owned())
+            .or_default()
+            .record_delivered(
+                now_ms(),
+                batch.has_agent_item,
+                &batch.agent_sender_convs,
+                hourly_window_ms,
+            );
+    }
+    let _ = store.append_history(
+        emp_id,
+        &serde_json::json!({
+            "type": "mid_turn_delivered",
+            "delivery_id": batch.delivery_id,
+            "item_ids": batch.item_ids,
+            "count": batch.item_ids.len(),
+            "at": rfc3339_now(),
+        }),
+        &refs,
+    );
+}
+
+pub(super) fn build_permit_hooks(
+    mgr: &SessionManager,
+    employee_id: &str,
+    route_digest: String,
+    oauth_expires_at_ms: Option<u64>,
+) -> (
+    PermitAcquireHook,
+    PermitRenewHook,
+    PermitReleaseHook,
+    PermitReleasePendingHook,
+) {
+    let acq_office = Arc::clone(&mgr.office);
+    let acq_hq_permits = mgr.config.hq_permits.clone();
+    let acq_emp = employee_id.to_owned();
+    let on_permit_acquire: PermitAcquireHook = Arc::new(move |conn_id, task_id| {
+        if crate::host_auth::is_oauth_expiring(oauth_expires_at_ms, now_ms()) {
+            return Err("WARM_ROUTE_STALE: oauth token expiring".into());
+        }
+        let digest = (!route_digest.is_empty()).then_some(route_digest.as_str());
+        match crate::router::acquire_warm_permit_for_office(
+            &acq_office,
+            acq_hq_permits.as_deref(),
+            conn_id,
+            &acq_emp,
+            task_id,
+            digest,
+        ) {
+            crate::router::WarmPermitOutcome::Granted(p) => Ok(p),
+            crate::router::WarmPermitOutcome::StaleWarm => {
+                Err("WARM_ROUTE_STALE: session configuration changed".into())
+            }
+            crate::router::WarmPermitOutcome::Unavailable { reason, .. } => {
+                Err(format!("POOL_EXHAUSTED: [{reason}]"))
+            }
+            crate::router::WarmPermitOutcome::Refused(err) => Err(err.message),
+        }
+    });
+
+    let renew_office = Arc::clone(&mgr.office);
+    let renew_hq_permits = mgr.config.hq_permits.clone();
+    let on_permit_renew: PermitRenewHook = Arc::new(move |permit_id, generation| {
+        crate::router::renew_turn_permit_any(
+            &renew_office,
+            renew_hq_permits.as_deref(),
+            permit_id,
+            generation,
+        )
+    });
+
+    let release_office = Arc::clone(&mgr.office);
+    let release_hq_permits = mgr.config.hq_permits.clone();
+    let release_weak = mgr.weak_self();
+    let on_permit_release: PermitReleaseHook = Arc::new(move |permit_id| {
+        crate::router::release_turn_permit_any(
+            &release_office,
+            release_hq_permits.as_deref(),
+            permit_id,
+        );
+        if let Some(m) = release_weak.as_ref().and_then(|w| w.upgrade()) {
+            crate::manager::spawn_bg_worker(&m, "org-permit-wake", |m| m.process_due_wakes());
+        }
+    });
+
+    let pending_office = Arc::clone(&mgr.office);
+    let on_permit_release_pending: PermitReleasePendingHook = Arc::new(move |permit_id| {
+        let _ = pending_office.mark_turn_permit_release_pending(permit_id);
+    });
+
+    (
+        on_permit_acquire,
+        on_permit_renew,
+        on_permit_release,
+        on_permit_release_pending,
+    )
+}

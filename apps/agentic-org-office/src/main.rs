@@ -1,7 +1,8 @@
 //! # agentic-org-office: the office daemon
 //!
-//! A thin binary: it moves its control pipe out of the way, installs a panic hook, and runs
-//! `org_office_server::run`. All logic lives in library crates.
+//! A thin binary: it moves its control pipe out of the way, installs a panic hook, wires the
+//! `agent-os` command catalogue into the session manager, and runs `org_office_server::run`.
+//! All logic lives in library crates.
 
 fn main() {
     // Before startup concurrency or key material: inherited by all threads and children.
@@ -27,6 +28,8 @@ fn main() {
         }
     };
     org_office_server::install_panic_hook();
+    // Composition root: agents' standing instructions list the live `agent-os` commands.
+    org_office_sessions::install_command_catalogue(org_agent_cli::table::table);
     let args: Vec<String> = std::env::args().skip(1).collect();
     std::process::exit(org_office_server::run(&args, control));
 }

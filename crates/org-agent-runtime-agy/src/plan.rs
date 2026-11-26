@@ -1,9 +1,10 @@
 use serde_json::{json, Value};
 
 use org_agent_runtime::{
-    Capabilities, EnvName, FileLocation, LaunchContext, LaunchPlan, PermissionMode, PlanError,
-    PlannedDir, RelPath, Rule, RuleScope, SessionId, SessionKind, SessionSpec, SignalTarget,
-    SpecPath, Stdio, StopPlan, StopSignal, StopStep, ToolCapability, ToolName,
+    expand_capability_allowlist, runtime_env_add, static_env_names, validate_plan_paths,
+    validate_standard_session_kind, Capabilities, EnvName, FileLocation, LaunchContext, LaunchPlan,
+    PermissionMode, PlanError, PlannedDir, RelPath, Rule, RuleScope, SessionId, SessionKind,
+    SessionSpec, SignalTarget, Stdio, StopPlan, StopSignal, StopStep, ToolCapability,
 };
 
 const APP_DATA_DIR_REL: &str = "antigravity-cli";
@@ -55,13 +56,6 @@ pub(crate) fn map_permission_mode(mode: PermissionMode) -> Result<ExpectedMode, 
     }
 }
 
-pub(crate) fn validate_session_kind(kind: &SessionKind) -> Result<(), PlanError> {
-    match kind {
-        SessionKind::Home {} | SessionKind::Task { .. } | SessionKind::OneOff { .. } => Ok(()),
-        _ => Err(PlanError::Unsupported("session kind")),
-    }
-}
-
 const CAP_READ_TOOLS: &[&str] = &["read_file", "view_file"];
 const CAP_SEARCH_TOOLS: &[&str] = &["list_dir", "find_by_name", "grep_search"];
 const CAP_EDIT_TOOLS: &[&str] = &[
@@ -83,30 +77,6 @@ fn capability_tools(cap: ToolCapability) -> Option<&'static [&'static str]> {
         ToolCapability::Subagent => Some(CAP_SUBAGENT_TOOLS),
         _ => None,
     }
-}
-
-/// Expands a `SessionSpec::tools` allowlist by translating runtime-neutral `cap:*` capability
-/// tokens into Antigravity's concrete tool names while passing concrete tool names through.
-/// Fails closed on any unrecognized `cap:*` token.
-pub(crate) fn expand_tool_allowlist(tools: &[ToolName]) -> Result<Vec<String>, PlanError> {
-    let mut expanded = Vec::new();
-    for tool in tools {
-        let raw = tool.as_str();
-        if ToolCapability::is_capability_token(raw) {
-            let cap = ToolCapability::parse_rule_token(raw)
-                .ok_or(PlanError::Unsupported("tool capability"))?;
-            let concrete =
-                capability_tools(cap).ok_or(PlanError::Unsupported("tool capability"))?;
-            for &name in concrete {
-                if !expanded.iter().any(|existing| existing == name) {
-                    expanded.push(name.to_owned());
-                }
-            }
-        } else if !expanded.iter().any(|existing| existing == raw) {
-            expanded.push(raw.to_owned());
-        }
-    }
-    Ok(expanded)
 }
 
 fn validate_deny_rules(rules: &[Rule]) -> Result<(), PlanError> {
@@ -157,8 +127,8 @@ pub(crate) fn build_headless_plan(
     ctx: &LaunchContext,
     caps: &Capabilities,
 ) -> Result<(LaunchPlan, AgySessionConfig), PlanError> {
-    validate_session_kind(&spec.kind)?;
-    validate_paths(spec, ctx)?;
+    validate_standard_session_kind(&spec.kind)?;
+    validate_plan_paths(spec, ctx)?;
     validate_deny_rules(&spec.policy.deny)?;
     if spec.effort.is_some() {
         return Err(PlanError::Unsupported("effort"));
@@ -168,7 +138,7 @@ pub(crate) fn build_headless_plan(
     let _ = spec
         .tools
         .as_deref()
-        .map(expand_tool_allowlist)
+        .map(|tools| expand_capability_allowlist(tools, capability_tools))
         .transpose()?;
 
     let (gemini_dir, dirs) = resolve_acp_gemini_dir(ctx);
@@ -194,7 +164,7 @@ pub(crate) fn build_headless_plan(
         program: ctx.runtime_path.clone(),
         args,
         cwd: spec.workspace.clone(),
-        env_add: build_env_add(ctx),
+        env_add: runtime_env_add(ENV_ADD, CONFIG_DIR_ENV, ctx),
         dirs,
         files: Vec::new(),
         stdio: Stdio::Piped,
@@ -235,13 +205,13 @@ pub(crate) fn build_take_over_plan(
     cols: u16,
     rows: u16,
 ) -> Result<LaunchPlan, PlanError> {
-    validate_session_kind(&spec.kind)?;
+    validate_standard_session_kind(&spec.kind)?;
     if matches!(spec.kind, SessionKind::OneOff { .. }) {
         return Err(PlanError::InvalidSpec(
             "one-off sessions cannot be taken over".to_owned(),
         ));
     }
-    validate_paths(spec, ctx)?;
+    validate_plan_paths(spec, ctx)?;
     validate_deny_rules(&spec.policy.deny)?;
     if spec.effort.is_some() {
         return Err(PlanError::Unsupported("effort"));
@@ -256,7 +226,7 @@ pub(crate) fn build_take_over_plan(
     let _ = spec
         .tools
         .as_deref()
-        .map(expand_tool_allowlist)
+        .map(|tools| expand_capability_allowlist(tools, capability_tools))
         .transpose()?;
 
     let mut args = vec![
@@ -278,7 +248,7 @@ pub(crate) fn build_take_over_plan(
         program: ctx.runtime_path.clone(),
         args,
         cwd: spec.workspace.clone(),
-        env_add: build_env_add(ctx),
+        env_add: runtime_env_add(ENV_ADD, CONFIG_DIR_ENV, ctx),
         dirs: Vec::new(),
         files: Vec::new(),
         stdio: Stdio::Pty { cols, rows },
@@ -340,33 +310,6 @@ fn build_acp_mcp_servers(spec: &SessionSpec) -> Vec<Value> {
         .collect()
 }
 
-fn validate_paths(spec: &SessionSpec, ctx: &LaunchContext) -> Result<(), PlanError> {
-    if spec.workspace.is_root() {
-        return Err(PlanError::InvalidSpec(
-            "workspace must not be `/`".to_owned(),
-        ));
-    }
-    if ctx.tmpdir.is_root() {
-        return Err(PlanError::InvalidSpec("tmpdir must not be `/`".to_owned()));
-    }
-    if ctx.runtime_dir.is_root() {
-        return Err(PlanError::InvalidSpec(
-            "runtime_dir must not be `/`".to_owned(),
-        ));
-    }
-    if ctx.config_dir.as_ref().is_some_and(SpecPath::is_root) {
-        return Err(PlanError::InvalidSpec(
-            "config_dir must not be `/`".to_owned(),
-        ));
-    }
-    if spec.sandbox.writable_roots.iter().any(SpecPath::is_root) {
-        return Err(PlanError::InvalidSpec(
-            "sandbox writable_roots must not include `/`".to_owned(),
-        ));
-    }
-    Ok(())
-}
-
 fn append_take_over_options(args: &mut Vec<String>, spec: &SessionSpec) {
     if let Some(model) = &spec.model {
         args.push("--model".to_owned());
@@ -378,58 +321,41 @@ fn append_take_over_options(args: &mut Vec<String>, spec: &SessionSpec) {
     }
 }
 
-fn build_env_add(ctx: &LaunchContext) -> Vec<(EnvName, String)> {
-    let mut env = vec![
-        (
-            EnvName::try_from("AGY_DISABLE_AUTOUPDATE").expect("static env"),
-            "1".to_owned(),
-        ),
-        (
-            EnvName::try_from("AGY_SUBPROCESS_ENV_SCRUB").expect("static env"),
-            "1".to_owned(),
-        ),
-    ];
-    if let Some(cfg_dir) = &ctx.config_dir {
-        env.push((
-            EnvName::try_from("AGY_CONFIG_DIR").expect("static env"),
-            cfg_dir.as_str().to_owned(),
-        ));
-    }
-    env
-}
+/// Antigravity's own switches, added to the office's environment.
+const ENV_ADD: &[(&str, &str)] = &[
+    ("AGY_DISABLE_AUTOUPDATE", "1"),
+    ("AGY_SUBPROCESS_ENV_SCRUB", "1"),
+];
+
+/// Where Antigravity keeps its config, set to `LaunchContext::config_dir` when given.
+const CONFIG_DIR_ENV: &str = "AGY_CONFIG_DIR";
 
 pub(crate) fn auth_env_names() -> Vec<EnvName> {
-    [
+    static_env_names(&[
         "GEMINI_API_KEY",
         "GOOGLE_API_KEY",
         "ANTIGRAVITY_API_KEY",
         "AGY_AUTH_TOKEN",
         "GOOGLE_GEMINI_BASE_URL",
-    ]
-    .into_iter()
-    .map(|name| EnvName::try_from(name).expect("static auth env"))
-    .collect()
+    ])
 }
 
 fn secret_env_names() -> Vec<EnvName> {
-    [
+    static_env_names(&[
         "GEMINI_API_KEY",
         "GOOGLE_API_KEY",
         "ANTIGRAVITY_API_KEY",
         "AGY_AUTH_TOKEN",
         "GOOGLE_APPLICATION_CREDENTIALS",
         "AGY_SESSION_TOKEN",
-    ]
-    .into_iter()
-    .map(|name| EnvName::try_from(name).expect("static secret env"))
-    .collect()
+    ])
 }
 
 #[cfg(test)]
 mod plan_unit_tests {
     use super::*;
     use org_agent_runtime::{
-        AgentIdentity, AgentName, AgentRuntime, PermissionPolicy, RuntimeId, SandboxSpec,
+        AgentIdentity, AgentName, AgentRuntime, PermissionPolicy, RuntimeId, SandboxSpec, SpecPath,
     };
     use std::path::PathBuf;
 
