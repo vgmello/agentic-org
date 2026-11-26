@@ -185,7 +185,7 @@ function problemActionButtons(it, first, btn) {
 function itemActionButtons(it, first) {
   const btn = (style, act, v, icon, label) => `<button class="btn ${style} sm" type="button" data-act="${act}" data-id="${it.id}"${v ? ` data-v="${esc(v)}"` : ""}>${icon ? ic(icon, "ic16") : ""}${esc(label)}</button>`;
   if (it.acts) return it.acts.map(([label, outcome, icon, mode], i) => mode === "changes" ? btn(i ? "outline" : first, "reply", "changes", icon, label) : btn(i ? "outline" : first, "handle", outcome, icon, label));
-  if (it.kind === "approval") return [btn(first, "handle", "Approved", "check", "Approve"), btn("outline", "handle", "Denied", "deny", "Deny")];
+  if (it.kind === "approval") return [btn(first, "handle", "Approved", "check", "Approve"), btn("danger-outline", "handle", "Denied", "deny", "Deny")];
   if (it.kind === "question") return [btn(first, "reply", "", "reply", "Reply")];
   if (it.kind === "decision") return it.opts.map((o, i) => btn(i ? "outline" : first, "handle", "Chose: " + o, null, o));
   return it.kind === "problem" ? problemActionButtons(it, first, btn) : [];
@@ -195,7 +195,8 @@ function itemActions(it, where) {
   const card = where === "card", first = "primary";
   if (S.replying === it.id) return itemReplyComposer(it, first);
   const s = card ? null : sourceOf(it);
-  const open = card ? `<a class="btn ghost sm" href="#/inbox/${it.id}">${ic("open", "ic16")}Open</a>` : `<a class="btn ghost sm" href="${s.href}">${ic("open", "ic16")}${esc(s.label)}</a>`;
+  /* Cards open through their title link, so the action row is just the decision (one line). */
+  const open = card ? "" : `<a class="btn ghost sm" href="${s.href}">${ic("open", "ic16")}${esc(s.label)}</a>`;
   return `<div class="actions">${[...itemActionButtons(it, first), open].join("")}</div>`;
 }
 function recommendationCallout(it, headingTag = "p") {
@@ -213,7 +214,7 @@ function recommendationCallout(it, headingTag = "p") {
 function needsCard(it, opts = {}) {
   return `<article class="card${it.handled ? " done" : ""}" aria-label="${esc(it.sub)} from ${esc(M[it.from].name)}">
     <div class="top">${av(it.from, 24)}<span class="grow">${mlink(it.from)} <span class="muted">· ${esc(it.sub)} · ${esc(it.time)}</span></span>${it.handled ? pill("Handled", "gray", "check-circle") : ""}</div>
-    <h3>${esc(it.what)}</h3>
+    <h3><a class="needs-title" href="#/inbox/${esc(it.id)}">${esc(it.what)}</a></h3>
     <p class="why">${esc(it.why)}</p>
     ${it.rec && !it.handled ? recommendationCallout(it) : ""}
     <div class="meta" style="margin-top:0">${joinSep([

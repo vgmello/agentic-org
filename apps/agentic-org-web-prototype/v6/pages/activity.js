@@ -674,7 +674,9 @@ function pageActivity(projectId = null) {
   const view = S[activityViewKey(projectId)], isFeed = view === "feed";
   const panels = projectId && P[projectId].archived ? [["release", ACTIVITY_PANELS.release]] : Object.entries(ACTIVITY_PANELS);
   const count = `${plural(all.length, "event", "events")} · ${plural(all.filter((event) => event.type === "run").length, "run", "runs")}`;
-  const header = projectId ? projectReleaseSummary(projectId) : `<header class="activity-header queue-header">
+  /* Project scope: the release strip (shown on every project tab), then the view switch in its own toolbar row. */
+  const projectToolbar = `<div class="work-subbar-header"><div class="work-toolbar queue-toolbar project-subbar"><div class="queue-controls project-activity-controls">${activityViewControls(projectId)}</div></div></div>`;
+  const header = projectId ? projectReleaseSummary(projectId) + projectToolbar : `<header class="activity-header queue-header">
       ${queueHeadline("Activity", count, true)}
       <div class="activity-toolbar queue-toolbar">${activityViewControls(null, waiting.length)}</div>
     </header>`;

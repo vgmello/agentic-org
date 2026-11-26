@@ -3378,7 +3378,9 @@ html[data-theme="report"] .assembly-release {
 .insight-kpis,
 .insights-grid { display: grid; gap: 12px; min-width: 0; }
 .insight-kpis { grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr)); }
-.insights-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.insights-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+/* An odd last card spans the row so the grid never leaves a hole */
+.insights-grid > :last-child:nth-child(odd) { grid-column: 1 / -1; }
 .insight-kpis > div,
 .insight-card,
 .insight-actions > a {

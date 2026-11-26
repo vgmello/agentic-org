@@ -19,7 +19,9 @@ function openHealth(pid, trigger) {
     cancelBtn + `<button class="btn primary" type="button" data-act="health-save" data-id="${pid}">Set health</button>`);
 }
 function openConfirmRemove(pid, t, trigger) {
-  openDialog(trigger, `Remove ${TEAMS[t].name} from ${P[pid].name}?`, `${P[pid].name} will have no team.`, "",
+  const last = P[pid].teams.length === 1, n = TEAMS[t].members.length;
+  const effect = `${n} ${n === 1 ? "member" : "members"} of ${TEAMS[t].name} will lose access to ${P[pid].name}${last ? ", and the project will have no team" : ""}.`;
+  openDialog(trigger, `Remove ${TEAMS[t].name} from ${P[pid].name}?`, effect, "",
     cancelBtn + `<button class="btn danger" type="button" data-act="team-rm-confirm" data-id="${pid}" data-v="${t}">Remove ${esc(TEAMS[t].name)}</button>`);
 }
 function openConfirmOffboard(id, trigger) {

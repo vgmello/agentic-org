@@ -900,6 +900,30 @@ body.nokeys .search kbd { display: none; }
 /* A header whose menu is open must sit above later page regions (e.g. the agent side rail),
    since the header's own z-index otherwise traps the menu's stacking level. */
 :is(.section-header, .ph, .section-toolbar, .queue-header):has(.menu:not([hidden])) { position: relative; z-index: 40; }
+/* Destructive secondary action (Deny), same treatment as Home and Inbox */
+.btn.danger-outline { background: transparent; color: var(--tone-bad-ink); box-shadow: inset 0 0 0 1px var(--tone-bad-ring); }
+.btn.danger-outline:hover { background: var(--tone-bad-soft); box-shadow: inset 0 0 0 1px var(--tone-bad); color: var(--tone-bad-hover, var(--tone-bad-ink)); }
+/* Decision cards open from their title; actions stay on one line */
+.card .needs-title { color: inherit; }
+.card .needs-title:hover { text-decoration: underline; text-underline-offset: 3px; }
+.card .actions { flex-wrap: nowrap; }
+/* Project Overview: one focused decision, then Inbox-style rows */
+.pj-decisions { display: flex; flex-direction: column; gap: 12px; padding-bottom: 24px; }
+.pj-decisions > .card { max-width: 760px; }
+.pj-queue-h { display: flex; align-items: baseline; gap: 8px; margin-top: 8px; font-size: var(--fs-sm); font-weight: 600; color: var(--gray-300); }
+.pj-queue { border-top: 1px solid var(--line); }
+.pj-queue > li { padding-inline: 0; }
+.pj-queue-go { display: inline-flex; align-items: center; gap: 2px; flex: none; font-size: var(--fs-sm); font-weight: 500; color: var(--gray-400); }
+.pj-queue > li:hover .pj-queue-go { color: var(--white); }
+/* Activity view switch row matches Work's toolbar row */
+.project-subbar { padding-block: 6px; border-bottom: 1px solid var(--line); }
+/* Phone: tabs scroll sideways and the overflow menu stays on the same row */
+@media (max-width: 639px) {
+  .section-toolbar { flex-wrap: nowrap; }
+  .section-toolbar > .primary-tab-row { flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; -webkit-mask-image: linear-gradient(to right, #000 85%, transparent); mask-image: linear-gradient(to right, #000 85%, transparent); }
+  .section-toolbar > .primary-tab-row::-webkit-scrollbar { display: none; }
+  .section-toolbar > .section-actions { flex: none; }
+}
 /* Inline page search row (Inbox, Work) revealed by the toolbar search icon */
 .search-toggle.is-active { color: var(--white); background: var(--tone-accent-soft); box-shadow: inset 0 0 0 1px var(--tone-accent-ring); }
 .inline-search { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); }

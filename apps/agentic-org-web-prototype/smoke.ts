@@ -267,7 +267,8 @@ async function checkProjectActivity(page: Page) {
   assert.equal(await projectHeader.getByRole("progressbar").count(), 0);
   assert.doesNotMatch((await projectHeader.textContent())!, /\bDue\b|\d+ of \d+ done/);
   assert.equal(await assembly.getAttribute("aria-selected"), "true");
-  const viewControls = projectHeader.locator(".project-activity-controls");
+  assert.equal(await projectHeader.locator(".project-activity-controls").count(), 0, "View switch lives in its own toolbar row, not the tab row");
+  const viewControls = page.locator(".activity-workspace .project-activity-controls");
   const viewSettings = viewControls.getByRole("group", { name: "Activity view settings" });
   await viewControls.getByRole("tab", { name: "Assembly line", selected: true }).waitFor();
   await viewSettings.getByRole("button", { name: "Assembly line display" }).waitFor();

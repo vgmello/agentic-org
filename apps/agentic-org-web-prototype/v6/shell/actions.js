@@ -332,7 +332,7 @@ const CLICK_ACTIONS = {
     document.querySelector('[aria-controls="menu-pmore"]')?.focus();
     toast(pr.health ? `${pr.name} health set to ${pr.health}.` : `${pr.name} health cleared.`, "check-circle");
   },
-  "team-rm": (_e, t, id, v) => { if (P[id].teams.length === 1) openConfirmRemove(id, v, t); else removeTeam(id, v); },
+  "team-rm": (_e, t, id, v) => openConfirmRemove(id, v, t),
   "team-rm-confirm": (_e, _t, id, v) => { setSheetReturn(null); closeSheet(); removeTeam(id, v); },
   "team-add": (_e, t, id) => openAddTeam(id, t),
   assign: (_e, t, id) => openAssign(id, t),

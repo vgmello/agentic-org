@@ -1,5 +1,5 @@
 import { CH, IN, M, OPEN, P, TEAMS, W } from "../data.js";
-import { activityViewControls, pageActivity, projectReleaseSummary } from "./activity.js";
+import { pageActivity, projectReleaseSummary } from "./activity.js";
 import { msgHtml } from "./chat.js";
 import { projectInsights } from "./insights.js";
 import { notFound } from "./settings.js";
@@ -42,11 +42,10 @@ function pageProject(id, tab) {
     ["team", "Team", projMembers(id).length],
   ];
   const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit"), "ghost");
-  const activityControls = tab === "activity" ? `<div class="queue-controls project-activity-controls">${activityViewControls(id)}</div>` : "";
   return crumbs([["#/projects", "Projects"], [null, pr.name]]) + `<div class="section-header project-header">
     ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id))}
-    ${sectionTabs(linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab), activityControls + more)}
-  </div>` + (tab === "overview" ? projectReleaseSummary(id) : "") + projectBody(id, tab);
+    ${sectionTabs(linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab), more)}
+  </div>` + (tab === "activity" ? "" : projectReleaseSummary(id)) + projectBody(id, tab);
 }
 function projectBody(id, tab) {
   const pr = P[id], ws = W.filter((w) => w.proj === id);
@@ -57,7 +56,7 @@ function projectBody(id, tab) {
       <section class="section project-sec" aria-labelledby="pj-goal-h">${sectionHead({ id: "pj-goal-h", title: "Goal" })}<p class="why">${esc(pr.goal)}</p>
         <div class="stats" style="margin-top:12px"><span><b>${ws.filter(OPEN).length}</b> open</span><span><b>${ws.filter((w) => w.status === "Blocked").length}</b> blocked</span></div>
         ${pr.risk ? `<div class="callout" style="margin-top:16px">${ic("warn", "ic20")}<span>${esc(pr.risk)}</span></div>` : ""}</section>
-      <section class="section project-sec" aria-labelledby="pj-needs-h">${sectionHead({ id: "pj-needs-h", title: "Needs your attention", count: pending ? `${pending} pending` : "", right: `<a class="link" href="#/inbox">Open inbox${ic("chev-right", "ic16")}</a>` })}${needs.length ? `<div class="cards">${needs.map((it) => needsCard(it, { hideProject: true })).join("")}</div>` : `<p class="muted" style="padding-bottom:24px">Nothing needs you on this project.</p>`}</section>
+      <section class="section project-sec" aria-labelledby="pj-needs-h">${sectionHead({ id: "pj-needs-h", title: "Needs your attention", count: pending ? `${pending} pending` : "", right: `<a class="link" href="#/inbox">Open inbox${ic("chev-right", "ic16")}</a>` })}${needs.length ? projectDecisionsHtml(needs) : `<p class="muted" style="padding-bottom:24px">Nothing needs you on this project.</p>`}</section>
     </div><aside class="compact project-sec" aria-labelledby="pj-act-h">${sectionHead({ id: "pj-act-h", title: "Recent activity", right: `<a class="link" href="#/projects/${esc(id)}/activity">All activity${ic("chev-right", "ic16")}</a>` })}${feed(acts().filter((a) => a.proj === id).slice(0, 5), { noProj: true })}</aside></div>`;
   }
   if (tab === "work") return scopedWorkToolbar("project", id, ws) + scopedWorkWorkspace();
@@ -68,12 +67,22 @@ function projectBody(id, tab) {
   return notFound();
 }
 
+/* One focused decision (the most urgent) with its actions; the rest are Inbox-style rows that open the item. */
+function projectDecisionsHtml(needs) {
+  const [first, ...rest] = needs;
+  const row = (it) => `<li class="linked pj-queue-row">${av(it.from, 24)}<div class="grow"><p class="rt"><a class="stretch" href="#/inbox/${esc(it.id)}">${esc(it.what)}</a></p>
+      <p class="meta">${esc(M[it.from].name)} · ${esc(it.sub)} · ${esc(it.time)}${it.expires && !it.handled ? ` · <span class="pin wrap">${ic("clock", "ic14")}${esc(it.expires)}</span>` : ""}${it.handled ? ` · ${esc(it.outcome || "Handled")}` : ""}</p></div>
+      <span class="pj-queue-go">Review${ic("chev-right", "ic16")}</span></li>`;
+  const more = rest.length ? `<h3 class="pj-queue-h">Up next <span class="sec-head-count">${rest.length}</span></h3><ul class="rows pj-queue" role="list">${rest.map(row).join("")}</ul>` : "";
+  return `<div class="pj-decisions">${needsCard(first, { hideProject: true })}${more}</div>`;
+}
+
 function projectTeams(id) {
   const pr = P[id], ts = pr.teams;
   const chips = ts.map((t) => `<span class="tchip"><a href="#/teams/${t}">${esc(TEAMS[t].name)}</a><button class="rm" type="button" data-act="team-rm" data-id="${id}" data-v="${t}" aria-label="Remove ${esc(TEAMS[t].name)} from ${esc(pr.name)}" title="Remove ${esc(TEAMS[t].name)}">${ic("x", "ic16")}</button></span>`).join("");
   const addLbl = ts.length ? "Add team…" : "Assign team…", addName = (ts.length ? "Add team to " : "Assign team to ") + pr.name;
   const canAdd = Object.keys(TEAMS).some((t) => !ts.includes(t));
-  return `<div class="tchips" role="group" aria-label="Teams on ${esc(pr.name)}">${ts.length ? chips : `<span class="muted">No team</span>`}${ts.length >= 2 ? pill("Shared", "gray") : ""}${canAdd ? `<button class="btn outline xs" id="team-add" type="button" data-act="team-add" data-id="${id}" aria-label="${esc(addName)}">${ic("plus", "ic16")}${addLbl}</button>` : ""}</div>`;
+  return `<div class="tchips" role="group" aria-label="Teams on ${esc(pr.name)}">${ts.length ? chips : `<span class="muted">No team</span>`}${ts.length >= 2 ? `<span title="More than one team works on this project">${pill(`Shared by ${ts.length} teams`, "gray")}</span>` : ""}${canAdd ? `<button class="btn outline xs" id="team-add" type="button" data-act="team-add" data-id="${id}" aria-label="${esc(addName)}">${ic("plus", "ic16")}${addLbl}</button>` : ""}</div>`;
 }
 function removeTeam(pid, t) {
   const ts = P[pid].teams, i = ts.indexOf(t); if (i < 0) return;
