@@ -85,6 +85,7 @@ async function checkWorkBoard(page: Page) {
   assert.equal(await requests.count(), asked, "A badge for several requests lists each of them");
   await page.keyboard.press("Escape");
   await checkBoardRequestMenus(page, board);
+  await checkAttentionFirst(page, board);
   assert.match((await page.getByRole("button", { name: /^Work display/ }).getAttribute("aria-label"))!, /Stages columns/, "Display names the column mode");
   const trailingGutter = await board.evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
@@ -101,6 +102,8 @@ async function checkWorkBoard(page: Page) {
   await page.getByRole("menuitemradio", { name: "Stages", exact: true }).click();
   assert.equal(await columns.count(), 4);
   await checkDoneHistory(page, board);
+  await checkArchivedOnlyMatches(page, board);
+  await checkBoardSubtaskSearch(page, board);
   await checkBoardClearFilters(page, board);
   await checkBoardReturnFromInbox(page, board);
   await checkPhoneLaneJump(page);
@@ -135,35 +138,112 @@ async function checkBoardRequestMenus(page: Page, board: ReturnType<Page["locato
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
-/* A chip jump makes its lane current even when the board cannot scroll it to the start edge */
+/* Text contrast of an element against its composited background (solid colours only) */
+function textContrast(el: Element) {
+  const parse = (c: string) => {
+    const m = c.match(/[\d.]+/g)!.map(Number);
+    return c.startsWith("color(srgb") ? [m[0] * 255, m[1] * 255, m[2] * 255, m[3] ?? 1] : [m[0], m[1], m[2], m[3] ?? 1];
+  };
+  const layers: number[][] = [];
+  for (let n: Element | null = el; n; n = n.parentElement) {
+    const bg = getComputedStyle(n).backgroundColor;
+    if (bg !== "rgba(0, 0, 0, 0)") layers.push(parse(bg));
+  }
+  const base = layers.findIndex((l) => l[3] >= 1);
+  let acc = base < 0 ? [255, 255, 255] : layers[base].slice(0, 3);
+  for (let i = (base < 0 ? layers.length : base) - 1; i >= 0; i--) {
+    const [r, g, b, a] = layers[i];
+    acc = [r * a + acc[0] * (1 - a), g * a + acc[1] * (1 - a), b * a + acc[2] * (1 - a)];
+  }
+  const channel = (v: number) => (v / 255 <= 0.03928 ? v / 255 / 12.92 : ((v / 255 + 0.055) / 1.055) ** 2.4);
+  const lum = (c: number[]) => 0.2126 * channel(c[0]) + 0.7152 * channel(c[1]) + 0.0722 * channel(c[2]);
+  const [a, b] = [lum(parse(getComputedStyle(el).color)), lum(acc)];
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
+/* Attention first: an expiring owner ask leads its lane, soonest deadline first, ahead of other asks and priority.
+   The request badge keeps its fill and text on hover (no brightness filter), so its contrast holds. */
+async function checkAttentionFirst(page: Page, board: ReturnType<Page["locator"]>) {
+  const first = (lane: string) => board.locator(`#${lane} .bcard`).first().getAttribute("data-work-id");
+  assert.equal(await first("bcol-in-progress"), "T-A121", "The ask that expires in 4 hours leads In progress");
+  assert.equal(await first("bcol-blocked"), "T-A124", "The ask that expires tomorrow leads Blocked");
+  const display = page.getByRole("button", { name: /^Work display/ });
+  await display.click();
+  const sorts = page.getByRole("group", { name: "Sort by" });
+  assert.equal(await sorts.getByRole("menuitemradio", { name: "Attention first" }).getAttribute("aria-checked"), "true", "Attention first is the default");
+  assert.equal(await sorts.getByRole("menuitemradio", { name: "Priority", exact: true }).count(), 1, "Priority stays as an explicit sort");
+  assert.equal(await page.getByRole("group", { name: "Direction" }).count(), 0, "Attention first has no direction");
+  await page.keyboard.press("Escape");
+  const badge = board.locator('.bcard[data-work-id="T-A124"] a.board-need');
+  await badge.hover();
+  assert.equal(await badge.evaluate((el) => getComputedStyle(el).filter), "none", "The request badge hover has no brightness filter");
+  const ratio = await badge.evaluate(textContrast);
+  assert.ok(ratio >= 4.5, `Request badge text keeps 4.5:1 on hover (${ratio.toFixed(2)})`);
+  await page.mouse.move(0, 0);
+}
+
+/* A committed chip jump makes its lane current, even when the board cannot scroll it to the start edge, and moves
+   focus to that lane's heading */
 async function checkStatusLaneJump(page: Page) {
   const chips = page.locator(".board-lane-chips button");
   const last = chips.last();
-  await last.click();
+  await last.focus();
+  await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.querySelector(".board-lane-chips button:last-child")?.getAttribute("aria-current") === "true");
   assert.equal(await page.locator('.board-lane-chips button[aria-current="true"]').count(), 1, "Only the jump target is current");
+  assert.ok(await focusedIs(page.locator(".board .bcol").last().locator(".bcol-title")), "A keyboard jump moves focus to the lane heading");
+  assert.equal(await page.locator(".board .bcol-title").first().getAttribute("tabindex"), "-1");
+  assert.equal(await page.locator(".bcol-older, .bcol-history").count(), 0, "Status lanes have no per-lane history menus");
 }
 
-/* One Done history control replaces Show older and Show archived on the board */
+/* One board-level Done history control, in Display; a toolbar chip says when it is not the default */
 async function checkDoneHistory(page: Page, board: ReturnType<Page["locator"]>) {
   const done = board.locator("#bcol-done");
-  const trigger = done.getByRole("button", { name: /^Done history: / });
-  assert.equal(await trigger.textContent(), "Last 7 days");
+  const display = page.getByRole("button", { name: /^Work display/ });
   assert.equal(await page.getByText("Show older").count(), 0);
-  await page.getByRole("button", { name: /^Work display/ }).click();
+  await display.click();
+  const history = page.getByRole("group", { name: "Done history" });
+  assert.equal(await history.getByRole("menuitemradio", { name: "Last 7 days" }).getAttribute("aria-checked"), "true");
   assert.equal(await page.getByRole("menuitemcheckbox", { name: "Show archived" }).count(), 0, "The board's Display has no second archive control");
-  await page.keyboard.press("Escape");
   const before = await done.locator(".bcard").count();
-  await trigger.click();
-  await page.getByRole("menu", { name: "Done history" }).getByRole("menuitemradio", { name: /Include archived/ }).click();
+  await history.getByRole("menuitemradio", { name: "Include archived" }).click();
   assert.ok(await done.locator(".bcard").count() > before, "Include archived reaches back past the last week");
-  assert.ok(await focusedIs(done.locator(".bcol-older")), "Focus returns to the Done history control");
-  await done.locator(".bcol-older").press("Enter");
-  await page.keyboard.press("ArrowUp");
-  await page.keyboard.press("ArrowUp");
-  await page.keyboard.press("Enter");
-  assert.equal(await done.locator(".bcol-older").textContent(), "Last 7 days");
+  assert.ok(await focusedIs(display), "Focus returns to Display");
+  const chip = page.locator(".work-archived-chip");
+  assert.match((await chip.textContent())!, /Done: with archived/, "The toolbar says history is widened");
+  await chip.click();
   assert.equal(await done.locator(".bcard").count(), before);
+  assert.equal(await chip.count(), 0);
+  assert.ok(await focusedIs(display), "Resetting history returns focus to Display");
+}
+
+/* Filtering to a status whose only matches are archived offers to show them instead of a dead end */
+async function checkArchivedOnlyMatches(page: Page, board: ReturnType<Page["locator"]>) {
+  await page.getByRole("button", { name: /^Filter work/ }).click();
+  await page.getByRole("group", { name: "Status" }).getByRole("menuitemradio", { name: "Fixed", exact: true }).click();
+  const reveal = page.locator("#work-results").getByRole("button", { name: /^Show \d+ archived match/ });
+  await reveal.waitFor();
+  const n = Number((await reveal.textContent())!.match(/\d+/)![0]);
+  assert.ok(n > 0);
+  await reveal.click();
+  assert.equal(await board.locator(".bcard").count(), n, "Show archived matches reveals each of them");
+  assert.ok(await page.evaluate(() => Boolean(document.activeElement?.matches(".bcard .work-item-link"))), "Focus lands on the first revealed item");
+  await page.locator(".work-archived-chip").click();
+  await page.locator("#work-results").getByRole("button", { name: "Clear filters" }).click();
+}
+
+/* Board search that matches a subtask names the subtask on its parent card, with a link */
+async function checkBoardSubtaskSearch(page: Page, board: ReturnType<Page["locator"]>) {
+  await page.getByRole("button", { name: "Search work" }).first().click();
+  await page.keyboard.type("Inventory CSP");
+  const hit = board.locator(".bcard .board-subhits a");
+  await hit.first().waitFor();
+  assert.match((await hit.first().textContent())!, /Inventory CSP fixtures/, "The matching subtask is named on its parent card");
+  assert.match((await hit.first().getAttribute("href"))!, /item=/, "The subtask line links to the subtask");
+  const search = page.getByRole("searchbox", { name: "Search work" });
+  await search.fill("");
+  await search.press("Escape");
+  await search.waitFor({ state: "detached" });
 }
 
 async function checkBoardClearFilters(page: Page, board: ReturnType<Page["locator"]>) {
@@ -196,16 +276,47 @@ async function checkBoardReturnFromInbox(page: Page, board: ReturnType<Page["loc
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
-/* Phones: the Display trigger keeps the column mode, and a picker jump lands at the top of the lane */
+/* Phones: Filter and Display keep their labels; the selected lane takes the full width with no peek of the next;
+   the picker browses with arrow keys and jumps (to the top of the lane, focus on its heading) only on commit */
 async function checkPhoneLaneJump(page: Page) {
   await page.setViewportSize({ width: 375, height: 812 });
   const display = page.getByRole("button", { name: /^Work display/ });
-  assert.match((await display.innerText()).trim(), /^Stages/, "Phones keep a compact Stages trigger");
+  assert.match((await display.innerText()).trim(), /^Display/, "Phones label the combined menu Display");
+  assert.match((await page.getByRole("button", { name: /^Filter work/ }).innerText()).trim(), /^Filter/, "Phones keep the Filter label");
   const board = page.locator(".board");
+  const [peek, chipsShown] = await board.evaluate((el) => {
+    const view = el.getBoundingClientRect(), next = el.querySelectorAll(".bcol")[1].getBoundingClientRect();
+    return [view.right - next.left, Boolean(document.querySelector(".board-lane-chips")!.getClientRects().length)];
+  });
+  assert.ok(peek <= 0, `The next lane does not peek in (${peek}px)`);
+  assert.equal(chipsShown, false, "Phones navigate lanes with the picker");
   await board.evaluate((el) => { el.scrollTop = el.scrollHeight; });
-  await page.locator("select[data-board-lane]").selectOption("3");
+  const picker = page.locator("select[data-board-lane]");
+  await picker.focus();
+  /* Closed-picker browsing as Windows and Linux do it: the value changes during the arrow key's default action
+     (macOS opens the native list instead, which a headless run cannot drive) */
+  await picker.evaluate((el: HTMLSelectElement) => {
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    el.value = "1";
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  assert.equal(await board.evaluate((el) => "jump" in el.dataset), false, "Arrow keys browse the picker without jumping");
+  assert.ok(await focusedIs(picker));
+  await page.keyboard.press("Enter");
+  assert.ok(await focusedIs(page.locator(".board .bcol").nth(1).locator(".bcol-title")), "Enter commits and focuses the lane heading");
+  await picker.selectOption("3");
   await page.waitForFunction(() => document.querySelector(".board")!.scrollTop === 0);
-  assert.equal(await page.locator("select[data-board-lane]").inputValue(), "3", "The picked lane stays current");
+  assert.equal(await picker.inputValue(), "3", "The picked lane stays current");
+  await page.setViewportSize({ width: 320, height: 812 });
+  const rows = await page.locator(".work-toolbar > *").evaluateAll((els) => els.map((el) => el.getBoundingClientRect().top).sort((a, b) => a - b)
+    .filter((top, i, tops) => i === 0 || top - tops[i - 1] > 20).length);
+  assert.ok(rows <= 2, `The 320px toolbar keeps two rows (${rows})`);
+  await page.getByRole("button", { name: /^Work display/ }).click();
+  const calendar = page.getByRole("menuitem", { name: "Calendar" });
+  assert.ok(await calendar.isVisible(), "At 320px Calendar is in the Display overflow");
+  await page.keyboard.press("End");
+  assert.ok(await focusedIs(calendar), "Keyboard reaches the overflow Calendar link");
+  await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
