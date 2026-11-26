@@ -15,6 +15,7 @@ use rusqlite::Connection;
 use crate::budgets::BudgetAggregate;
 use crate::error::OfficeError;
 use crate::private_fs::{absolute, private_dir, private_dir_synced, sync_dir, tighten_dir};
+use crate::store::layout;
 
 use super::companion::open_and_reconcile_companion_db;
 
@@ -65,7 +66,7 @@ impl SqliteBudgetStore {
         office_id: &str,
         org_id: &str,
     ) -> Result<Self, OfficeError> {
-        let durable_budgets = durable_root.join("budgets");
+        let durable_budgets = layout::budgets(durable_root);
         private_dir_synced(durable_root, &durable_budgets).map_err(OfficeError::storage)?;
         let office_dir = runtime_root.join(office_id);
         private_dir(&office_dir).map_err(OfficeError::storage)?;

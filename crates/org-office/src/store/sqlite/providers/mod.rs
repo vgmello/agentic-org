@@ -15,6 +15,7 @@ use rusqlite::Connection;
 use crate::error::OfficeError;
 use crate::private_fs::{absolute, private_dir_synced};
 use crate::providers::{ConnectionQuotaState, TurnPermitRecord};
+use crate::store::layout;
 
 use super::companion::open_and_reconcile_companion_db;
 
@@ -62,23 +63,11 @@ impl SqliteProviderPoolStore {
         org_id: &str,
         is_hq: bool,
     ) -> Result<Self, OfficeError> {
-        let bindings_dir = durable_root
-            .join("local")
-            .join("offices")
-            .join(office_id)
-            .join("connections");
+        let bindings_dir = layout::provider_bindings(durable_root, office_id);
         // Only HQ owns `<durable>/authority/agent-execution/`; satellites persist local offline
         // permits and replicated cooldown caches strictly under their own office-local subtree
         // (`TASK-52` / `ARCH-02`).
-        let authority_dir = if is_hq {
-            durable_root.join("authority").join("agent-execution")
-        } else {
-            durable_root
-                .join("local")
-                .join("offices")
-                .join(office_id)
-                .join("local-execution")
-        };
+        let authority_dir = layout::execution_authority(durable_root, office_id, is_hq);
         let protected_dir = runtime_root.join(office_id).join("protected");
         private_dir_synced(durable_root, &bindings_dir).map_err(OfficeError::storage)?;
         private_dir_synced(durable_root, &authority_dir).map_err(OfficeError::storage)?;

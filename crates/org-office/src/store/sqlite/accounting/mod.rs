@@ -23,6 +23,7 @@ use crate::error::OfficeError;
 use crate::private_fs::{
     absolute, full_sync, private_dir, private_dir_synced, sync_dir, tighten_dir, tighten_file,
 };
+use crate::store::layout;
 
 use super::companion::open_and_reconcile_companion_db;
 
@@ -129,7 +130,7 @@ impl SqliteAccountingStore {
         office_id: &str,
         org_id: &str,
     ) -> Result<Self, OfficeError> {
-        let durable_acc = durable_root.join("accounting");
+        let durable_acc = layout::accounting(durable_root);
         private_dir_synced(durable_root, &durable_acc).map_err(OfficeError::storage)?;
         let local_usage_dir = durable_root
             .join("local")

@@ -1,24 +1,36 @@
 //! Openers for the office's isolated companion stores (private task notes, `L2`
 //! accounting, `L3` budgets, `L4` provider pools and replication) on the chosen engine.
+//!
+//! Each opener first lays out its store's durable folders, whatever the engine
+//! (`TASK-172`): the folders are the office's, the same on every engine (see
+//! `store/layout.rs` for what their contents may still differ in).
 
 use std::{path::Path, sync::Arc};
 
+use super::super::layout;
 use super::super::sqlite::{
-    accounting::SqliteAccountingStore,
-    budgets::SqliteBudgetStore,
-    private_notes::SqlitePrivateNotesStore,
-    providers::SqliteProviderPoolStore,
-    replication::{OpenReplicationParams, SqliteReplicationStore},
+    accounting::SqliteAccountingStore, budgets::SqliteBudgetStore,
+    private_notes::SqlitePrivateNotesStore, providers::SqliteProviderPoolStore,
+    replication::SqliteReplicationProjection,
 };
 use super::EngineChoice;
 use crate::{
     accounting::AccountingStore,
     budgets::BudgetStore,
     error::OfficeError,
+    private_fs::private_dir_synced,
     private_notes::{PrivateNotesStore, SatelliteRefusedPrivateNotesStore},
     providers::ProviderPoolStore,
-    replication::ReplicationStore,
+    replication::{
+        durable::{DurableReplicationParams, DurableReplicationStore},
+        ReplicationStore,
+    },
 };
+
+/// Creates `folder`, one of the office's durable folders, below `durable_root`.
+fn lay_out(durable_root: &Path, folder: &Path) -> Result<(), OfficeError> {
+    private_dir_synced(durable_root, folder).map_err(OfficeError::storage)
+}
 
 /// Opens the isolated HQ-authoritative per-author private task notes store (`TASK-50`, `L8`,
 /// `ADR-0016`, `doc-79`, `TASK-97` ARCH-01, `TASK-52` ARCH-02). On satellites (`is_hq == false`),
@@ -31,6 +43,7 @@ pub(crate) fn open_private_notes(
     if !is_hq {
         return Ok(Arc::new(SatelliteRefusedPrivateNotesStore));
     }
+    lay_out(durable_root, &layout::private_notes(durable_root))?;
     match engine {
         EngineChoice::Sqlite => Ok(Arc::new(SqlitePrivateNotesStore::open(durable_root)?)),
         #[cfg(any(test, feature = "testkit"))]
@@ -49,6 +62,7 @@ pub(crate) fn open_accounting(
     office_id: &str,
     org_id: &str,
 ) -> Result<Arc<dyn AccountingStore>, OfficeError> {
+    lay_out(durable_root, &layout::accounting(durable_root))?;
     match engine {
         EngineChoice::Sqlite => Ok(Arc::new(SqliteAccountingStore::open(
             durable_root,
@@ -74,6 +88,7 @@ pub(crate) fn open_budgets(
     org_id: &str,
     is_hq: bool,
 ) -> Result<Arc<dyn BudgetStore>, OfficeError> {
+    lay_out(durable_root, &layout::budgets(durable_root))?;
     match engine {
         EngineChoice::Sqlite => {
             let store = SqliteBudgetStore::open(durable_root, runtime_root, office_id, org_id)?;
@@ -109,6 +124,14 @@ pub(crate) fn open_providers(
     org_id: &str,
     is_hq: bool,
 ) -> Result<Arc<dyn ProviderPoolStore>, OfficeError> {
+    lay_out(
+        durable_root,
+        &layout::provider_bindings(durable_root, office_id),
+    )?;
+    lay_out(
+        durable_root,
+        &layout::execution_authority(durable_root, office_id, is_hq),
+    )?;
     match engine {
         EngineChoice::Sqlite => Ok(Arc::new(SqliteProviderPoolStore::open(
             durable_root,
@@ -137,7 +160,8 @@ pub(crate) struct ReplicationOpenSpec<'a> {
     pub initial_snapshot_required: bool,
 }
 
-/// Opens the engine-independent replication store (`TASK-52`, `FC-145`, `ADR-0018` `ENG-3`).
+/// Opens the engine-independent replication store (`TASK-52`, `FC-145`, `ADR-0018` `ENG-3`):
+/// the same durable state for every engine (`TASK-172`), with the engine's projection.
 pub(crate) fn open_replication(
     spec: ReplicationOpenSpec<'_>,
 ) -> Result<Arc<dyn ReplicationStore>, OfficeError> {
@@ -151,31 +175,22 @@ pub(crate) fn open_replication(
         org_sync_proto::Epoch::new(spec.epoch.max(1)).map_err(|_| OfficeError::Invalid("epoch"))?;
     let incarnation = org_sync_proto::OriginIncarnation::new(spec.incarnation)
         .map_err(|_| OfficeError::Invalid("incarnation"))?;
-    match spec.engine {
-        EngineChoice::Sqlite => Ok(Arc::new(SqliteReplicationStore::open(
-            OpenReplicationParams {
-                durable_root: spec.durable_root,
-                runtime_root: spec.runtime_root,
-                org_id,
-                local_office,
-                hq_office,
-                ca: spec.ca_digest,
-                epoch,
-                incarnation,
-                initial_snapshot_required: spec.initial_snapshot_required,
-            },
-        )?)),
+    let durable = DurableReplicationParams {
+        durable_root: spec.durable_root,
+        org_id,
+        local_office: local_office.clone(),
+        hq_office,
+        ca: spec.ca_digest,
+        epoch,
+        incarnation,
+        initial_snapshot_required: spec.initial_snapshot_required,
+    };
+    let store = match spec.engine {
+        EngineChoice::Sqlite => DurableReplicationStore::open(durable, |data| {
+            SqliteReplicationProjection::open(spec.runtime_root, &local_office, data)
+        })?,
         #[cfg(any(test, feature = "testkit"))]
-        EngineChoice::Memory => Ok(Arc::new(
-            crate::replication::memory::MemoryReplicationStore::new(
-                org_id,
-                local_office,
-                hq_office,
-                spec.ca_digest,
-                epoch,
-                incarnation,
-                spec.initial_snapshot_required,
-            ),
-        )),
-    }
+        EngineChoice::Memory => DurableReplicationStore::open_unprojected(durable)?,
+    };
+    Ok(Arc::new(store))
 }

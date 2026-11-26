@@ -1,4 +1,4 @@
-//! [`OrgStore`], [`MessageStore`] and [`ReplicationStore`] for [`SqliteReplicationStore`].
+//! [`OrgStore`], [`MessageStore`] and [`ReplicationStore`] for [`DurableReplicationStore`].
 
 use std::sync::Arc;
 
@@ -10,14 +10,14 @@ use org_sync::{
 };
 use org_sync_proto::{Codec, Digest, Epoch, OfficeId, SourceSeq};
 
-use super::SqliteReplicationStore;
+use super::DurableReplicationStore;
 use crate::error::OfficeError;
 use crate::replication::{
     memory::{CoreMessageTxn, CoreOrgTxn},
     ReplicationStore, StoredRelayItem, SyncStatusSnapshot,
 };
 
-impl OrgStore for SqliteReplicationStore {
+impl OrgStore for DurableReplicationStore {
     fn transact(&self, attempt: Arc<OrgAttempt>) -> Result<OrgOutput, SyncError> {
         let mut guard = self.lock();
         let mut candidate = guard.data.clone();
@@ -30,7 +30,7 @@ impl OrgStore for SqliteReplicationStore {
     }
 }
 
-impl MessageStore for SqliteReplicationStore {
+impl MessageStore for DurableReplicationStore {
     fn transact(&self, attempt: Arc<MessageAttempt>) -> Result<MessageOutput, SyncError> {
         let mut guard = self.lock();
         let mut candidate = guard.data.clone();
@@ -43,7 +43,7 @@ impl MessageStore for SqliteReplicationStore {
     }
 }
 
-impl ReplicationStore for SqliteReplicationStore {
+impl ReplicationStore for DurableReplicationStore {
     fn org_checkpoint(&self) -> Result<OrgCheckpoint, OfficeError> {
         Ok(self.lock().data.checkpoint.clone())
     }

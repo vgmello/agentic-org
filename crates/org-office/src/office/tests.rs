@@ -3,7 +3,7 @@
 
 use std::{
     cell::Cell,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -154,6 +154,23 @@ fn tree(root: &Path) -> BTreeMap<String, Vec<u8>> {
     files
 }
 
+/// Every folder under `root`, by its path under it.
+fn folders(root: &Path) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    let mut pending = vec![root.to_owned()];
+    while let Some(folder) = pending.pop() {
+        for entry in std::fs::read_dir(&folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                let name = path.strip_prefix(root).unwrap().to_str().unwrap();
+                found.insert(name.to_owned());
+                pending.push(path);
+            }
+        }
+    }
+    found
+}
+
 fn names(folder: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(folder)
         .unwrap()
@@ -174,6 +191,19 @@ fn team_create(n: u64, team: &str, parent: &str) -> OrgCommand {
         name: format!("Team {n}"),
         owner_team_id: Some(parent.into()),
     })
+}
+
+/// TASK-172: the durable folders a creation lays out are the office's, not the engine's;
+/// an engine adds only its rebuildable projection under `runtime/`.
+#[test]
+fn creation_lays_out_the_same_durable_folders_on_every_engine() {
+    let [sqlite, memory] = ENGINES.map(|engine| {
+        let site = Site::new();
+        site.provision(engine).unwrap().close().unwrap();
+        folders(&site.roots.durable)
+    });
+    assert!(sqlite.contains("authority/agent-execution"), "{sqlite:?}");
+    assert_eq!(sqlite, memory);
 }
 
 /// STORE-6 on the production path: the creation's files under `durable/` are exactly the
@@ -200,26 +230,27 @@ fn creation_writes_exactly_the_golden_files_and_the_ca_records() {
         let key_path = key_path.as_str().strip_prefix("local/").unwrap().to_owned();
         let expected_local = BTreeMap::from([(key_path, local::encode_ca_key(&key))]);
         let mut local_tree = tree(&site.durable("local"));
-        // The Sqlite engine alone also keeps the canonical replication state (TASK-52); the
-        // memory engine writes nothing there. Nothing else may appear beside the CA key.
+        // Every engine keeps the canonical replication state (TASK-52, TASK-172). Nothing
+        // else may appear beside the CA key.
         let replication_path =
             format!("offices/{}/replication/state.v1.json", identity().office_id);
-        let replication = local_tree.remove(&replication_path);
-        match engine {
-            EngineChoice::Sqlite => {
-                let bytes = replication.expect("the sqlite creation writes the replication state");
-                let state: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-                assert_eq!(state["version"], 1);
-                assert_eq!(state["local_office"], identity().office_id.to_string());
-                assert_eq!(state["seq"], 0);
-            }
-            EngineChoice::Memory => assert!(replication.is_none(), "{engine:?}"),
-        }
+        let bytes = local_tree
+            .remove(&replication_path)
+            .expect("the creation writes the replication state");
+        let replication: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(replication["version"], 1, "{engine:?}");
+        assert_eq!(
+            replication["local_office"],
+            identity().office_id.to_string(),
+            "{engine:?}"
+        );
+        assert_eq!(replication["seq"], 0, "{engine:?}");
         assert_eq!(local_tree, expected_local, "{engine:?}");
-        // Under durable/ only the files, the journal and the receipt; the Sqlite engine
-        // alone adds the companion stores' folders (TASK-52 and the stores before it).
-        let top: &[&str] = match engine {
-            EngineChoice::Sqlite => &[
+        // Under durable/ only the files, the journal, the receipt and the companion stores'
+        // folders, the same for every engine (TASK-52, TASK-172).
+        assert_eq!(
+            names(&site.roots.durable),
+            [
                 "accounting",
                 "authority",
                 "budgets",
@@ -228,9 +259,8 @@ fn creation_writes_exactly_the_golden_files_and_the_ca_records() {
                 "recovery",
                 "state",
             ],
-            EngineChoice::Memory => &["local", "recovery", "state"],
-        };
-        assert_eq!(names(&site.roots.durable), top, "{engine:?}");
+            "{engine:?}"
+        );
         let receipts = tree(&site.durable("recovery/commands"));
         let receipts: Vec<&String> = receipts.keys().collect();
         assert_eq!(receipts, [&format!("{}.json", creation_id())], "{engine:?}");

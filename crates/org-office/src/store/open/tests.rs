@@ -23,6 +23,7 @@ use crate::organization::{
 use crate::store::sqlite::SqliteEngine;
 
 mod ack;
+mod companions;
 mod crashes;
 mod local;
 mod messaging;
