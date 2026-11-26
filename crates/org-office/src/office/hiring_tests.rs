@@ -1319,6 +1319,7 @@ fn agent_execution_effort_round_trips_on_every_engine_and_unknown_levels_are_ref
         call_c2::<AgentExecutionSet>(&office, CREATOR, &effort_set(403, Some(1), Some("xhigh")))
             .unwrap();
         assert_eq!(effort_of(&office), (Some("xhigh".into()), 2));
+        office.sync_store().unwrap();
         assert!(
             execution_file(&site).contains("\neffort: \"xhigh\"\n"),
             "{}",
@@ -1351,6 +1352,7 @@ fn agent_execution_effort_round_trips_on_every_engine_and_unknown_levels_are_ref
         // A full replacement without an effort clears it: no key in the file any more.
         call_c2::<AgentExecutionSet>(&office, CREATOR, &effort_set(412, Some(6), None)).unwrap();
         assert_eq!(effort_of(&office), (None, 7));
+        office.sync_store().unwrap();
         assert!(!execution_file(&site).contains("effort"));
         drop(office);
         let _ = std::fs::remove_dir_all(site.runtime_folder());
