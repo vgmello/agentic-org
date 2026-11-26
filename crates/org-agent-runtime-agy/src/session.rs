@@ -630,12 +630,18 @@ fn handle_current_mode_update(
     let mut out = vec![Output::Event(SessionEvent::ModeChanged {
         mode: Some(mode.to_owned()),
     })];
-    if is_banned_mode(mode) && !matches!(s.phase, Phase::Closing | Phase::Failed | Phase::Ended) {
+    // Fail closed on any runtime mode drift outside the requested mode (allowing at most strict
+    // narrowing to `plan`, matching opening validation semantics).
+    let mode_disallowed =
+        is_banned_mode(mode) || (mode != s.cfg.expected_mode.reported_name && mode != "plan");
+    if mode_disallowed && !matches!(s.phase, Phase::Closing | Phase::Failed | Phase::Ended) {
         s.phase = Phase::Closing;
         s.handshake_deadline = None;
         out.push(Output::Event(SessionEvent::Notice {
             kind: NoticeKind::Warning,
-            text: format!("Agy ACP switched to banned permission mode `{mode}`; stopping session"),
+            text: format!(
+                "Agy ACP switched to disallowed permission mode `{mode}`; stopping session"
+            ),
         }));
         if let Some(sid) = s.session_id.as_ref() {
             out.push(encode_session_cancel(sid.as_str()));

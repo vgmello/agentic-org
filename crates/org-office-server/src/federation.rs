@@ -2933,7 +2933,9 @@ fn emit_local_wakes_for_delivered_message(
             destination_office: destination_office.to_owned(),
             employee_id: wake.employee_id.clone(),
             kind: wake.kind.clone(),
-            source_id: format!("{}:{}", outcome.message_id, wake.employee_id),
+            // Carry the clean replyable message UUIDv7 here (`TASK-157`); per-recipient
+            // deduplication already appends `wake.employee_id` to `PendingWakeItem::item_id`.
+            source_id: outcome.message_id.clone(),
             sender_id: outcome.sender_id.clone(),
             sender_name: outcome.sender_name.clone(),
             sender_is_person: outcome.sender_is_person,

@@ -508,10 +508,11 @@ fn resolve_remote_spec(office: &Office, repo: &Repository) -> Result<RemoteSpec,
                 )
             })?;
             let protocol = validate_remote_url(url).map_err(map_git_error)?;
+            let credential = resolve_office_git_credential(office, url, protocol)?;
             Ok(RemoteSpec {
                 url: url.to_owned(),
                 protocol,
-                credential: GitCredential::None,
+                credential,
             })
         }
         RepositoryKind::Local => {
@@ -531,6 +532,288 @@ fn resolve_remote_spec(office: &Office, repo: &Repository) -> Result<RemoteSpec,
                 credential: GitCredential::None,
             })
         }
+    }
+}
+
+fn is_valid_https_host(host: &str) -> bool {
+    if host.is_empty() {
+        return false;
+    }
+    if let Some(inner) = host.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        return inner.parse::<std::net::Ipv6Addr>().is_ok();
+    }
+    host.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.'))
+        && !host.starts_with('.')
+        && !host.ends_with('.')
+        && !host.contains("..")
+}
+
+fn split_https_host_port(authority: &str) -> Result<(&str, Option<&str>), ApiError> {
+    if authority.starts_with('[') {
+        let end = authority.find(']').ok_or_else(|| {
+            ApiError::new(
+                ErrorCode::InvalidRequest,
+                "HTTPS remote URL has malformed IPv6 host",
+            )
+        })?;
+        let host = &authority[..=end];
+        let tail = &authority[end + 1..];
+        if tail.is_empty() {
+            Ok((host, None))
+        } else if let Some(port) = tail.strip_prefix(':') {
+            Ok((host, Some(port)))
+        } else {
+            Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "HTTPS remote URL has invalid IPv6 port suffix",
+            ))
+        }
+    } else if let Some((h, p)) = authority.rsplit_once(':') {
+        Ok((h, Some(p)))
+    } else {
+        Ok((authority, None))
+    }
+}
+
+/// Extracts a strictly validated `https://<host>[:<port>]` origin scope from an HTTPS remote URL
+/// so `git -c credential.<scope>.helper=...` can never be split (`=`) or wildcarded (`*`) across
+/// unrelated hosts (`TASK-161`, `doc-35`).
+fn https_origin_scope(url: &str) -> Result<String, ApiError> {
+    let rest = url.trim().strip_prefix("https://").ok_or_else(|| {
+        ApiError::new(
+            ErrorCode::InvalidRequest,
+            "HTTPS remote URL must start with https://",
+        )
+    })?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let bad_char = |b: u8| {
+        b.is_ascii_control()
+            || b.is_ascii_whitespace()
+            || matches!(b, b'@' | b'=' | b'*' | b'\\' | b'"' | b'\'' | b';')
+    };
+    if authority.is_empty() || authority.bytes().any(bad_char) {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "HTTPS remote URL has invalid authority",
+        ));
+    }
+    let (host, port_opt) = split_https_host_port(authority)?;
+    if !is_valid_https_host(host) {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "HTTPS remote URL has invalid host",
+        ));
+    }
+    if let Some(port_str) = port_opt {
+        let port: u16 = port_str.parse().map_err(|_| {
+            ApiError::new(
+                ErrorCode::InvalidRequest,
+                "HTTPS remote URL has invalid port",
+            )
+        })?;
+        if port == 0 || !port_str.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "HTTPS remote URL has invalid port",
+            ));
+        }
+    }
+    Ok(format!("https://{authority}"))
+}
+
+#[cfg(unix)]
+fn expected_office_uid(office: &Office) -> Result<u32, ApiError> {
+    use std::os::unix::fs::MetadataExt as _;
+    std::fs::metadata(office.durable_root())
+        .map(|m| m.uid())
+        .map_err(|_| {
+            ApiError::new(
+                ErrorCode::StorageError,
+                "could not inspect office durable root ownership",
+            )
+        })
+}
+
+fn verify_owner_only_dir(path: &Path, expected_uid: u32, label: &str) -> Result<(), ApiError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+        let meta = std::fs::symlink_metadata(path).map_err(|_| {
+            ApiError::new(
+                ErrorCode::StorageError,
+                format!("could not inspect office {label}"),
+            )
+        })?;
+        if !meta.file_type().is_dir() {
+            return Err(ApiError::new(
+                ErrorCode::StorageError,
+                format!("office {label} must be a real directory (never a symlink)"),
+            ));
+        }
+        if meta.uid() != expected_uid {
+            return Err(ApiError::new(
+                ErrorCode::StorageError,
+                format!("office {label} is not owned by the office account"),
+            ));
+        }
+        if (meta.permissions().mode() & 0o7077) != 0 {
+            return Err(ApiError::new(
+                ErrorCode::StorageError,
+                format!("office {label} permissions are too permissive (require 0700)"),
+            ));
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, expected_uid, label);
+        Err(ApiError::new(
+            ErrorCode::StorageError,
+            "office git credentials are unsupported on this platform",
+        ))
+    }
+}
+
+fn verify_owner_only_file(
+    path: &Path,
+    expected_uid: u32,
+    require_exec: bool,
+    label: &str,
+) -> Result<PathBuf, ApiError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+        let meta = std::fs::symlink_metadata(path).map_err(|_| {
+            ApiError::new(
+                ErrorCode::StorageError,
+                format!("could not inspect office {label}"),
+            )
+        })?;
+        if !meta.file_type().is_file() {
+            return Err(ApiError::new(
+                ErrorCode::StorageError,
+                format!("office {label} must be a regular file (never a symlink)"),
+            ));
+        }
+        if meta.uid() != expected_uid {
+            return Err(ApiError::new(
+                ErrorCode::StorageError,
+                format!("office {label} is not owned by the office account"),
+            ));
+        }
+        let mode = meta.permissions().mode();
+        if (mode & 0o7077) != 0 {
+            return Err(ApiError::new(
+                ErrorCode::StorageError,
+                format!("office {label} permissions are too permissive (require owner-only without special bits)"),
+            ));
+        }
+        if require_exec && (mode & 0o100) == 0 {
+            return Err(ApiError::new(
+                ErrorCode::StorageError,
+                format!("office {label} must be executable by owner"),
+            ));
+        }
+        path.canonicalize().map_err(|_| {
+            ApiError::new(
+                ErrorCode::StorageError,
+                format!("could not canonicalize office {label}"),
+            )
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, expected_uid, require_exec, label);
+        Err(ApiError::new(
+            ErrorCode::StorageError,
+            "office git credentials are unsupported on this platform",
+        ))
+    }
+}
+
+fn check_optional_cred_entry(path: &Path, label: &str) -> Result<bool, ApiError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err(ApiError::new(
+            ErrorCode::StorageError,
+            format!("could not inspect office {label}"),
+        )),
+    }
+}
+
+/// Resolves an office-local Git remote credential from `<durable>/local/offices/<id>/security/`
+/// (`doc-35`, `TASK-161`). Credentials stay strictly inside the office's `0700` local security
+/// directory (denied to all agents, never in caches, worktrees, org Git, or `office.db`).
+fn resolve_office_git_credential(
+    office: &Office,
+    url: &str,
+    protocol: AllowedProtocol,
+) -> Result<GitCredential, ApiError> {
+    if matches!(protocol, AllowedProtocol::File | AllowedProtocol::None) {
+        return Ok(GitCredential::None);
+    }
+    let sec_dir = office
+        .durable_root()
+        .join("local")
+        .join("offices")
+        .join(&office.info().office_id)
+        .join("security");
+    match std::fs::symlink_metadata(&sec_dir) {
+        Ok(meta) if meta.file_type().is_dir() => {}
+        Ok(_) => {
+            return Err(ApiError::new(
+                ErrorCode::StorageError,
+                "office security directory must be a real directory (never a symlink)",
+            ));
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(GitCredential::None);
+        }
+        Err(_) => {
+            return Err(ApiError::new(
+                ErrorCode::StorageError,
+                "could not inspect office security directory",
+            ));
+        }
+    }
+    #[cfg(unix)]
+    let expected_uid = expected_office_uid(office)?;
+    #[cfg(not(unix))]
+    let expected_uid = 0u32;
+
+    match protocol {
+        AllowedProtocol::Https => {
+            let helper = sec_dir.join("git-https-helper");
+            if !check_optional_cred_entry(&helper, "git-https-helper")? {
+                return Ok(GitCredential::None);
+            }
+            verify_owner_only_dir(&sec_dir, expected_uid, "security directory")?;
+            let helper_program =
+                verify_owner_only_file(&helper, expected_uid, true, "git-https-helper")?;
+            let scope_url = https_origin_scope(url)?;
+            Ok(GitCredential::HttpsHelper {
+                helper_program,
+                scope_url,
+            })
+        }
+        AllowedProtocol::Ssh => {
+            let key = sec_dir.join("git-ssh-key");
+            if !check_optional_cred_entry(&key, "git-ssh-key")? {
+                return Ok(GitCredential::None);
+            }
+            verify_owner_only_dir(&sec_dir, expected_uid, "security directory")?;
+            let identity_file = verify_owner_only_file(&key, expected_uid, false, "git-ssh-key")?;
+            let known_hosts = sec_dir.join("git-known-hosts");
+            let known_hosts_file =
+                verify_owner_only_file(&known_hosts, expected_uid, false, "git-known-hosts")?;
+            Ok(GitCredential::Ssh {
+                identity_file,
+                known_hosts_file,
+            })
+        }
+        AllowedProtocol::File | AllowedProtocol::None => Ok(GitCredential::None),
     }
 }
 
@@ -1461,6 +1744,124 @@ mod tests {
             .unwrap()
             .state,
             CacheStateWire::Ready
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_office_git_credential_enforces_owner_only_helpers_and_origin_scoping() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let office = Office::for_test(TestOffice::default());
+        let url = "https://github.com/vgmello/agentic-org.git";
+        assert!(matches!(
+            resolve_office_git_credential(&office, url, AllowedProtocol::Https).unwrap(),
+            GitCredential::None
+        ));
+
+        let sec_dir = office
+            .durable_root()
+            .join("local")
+            .join("offices")
+            .join(&office.info().office_id)
+            .join("security");
+        std::fs::create_dir_all(&sec_dir).unwrap();
+        let helper = sec_dir.join("git-https-helper");
+        std::fs::write(&helper, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        // Loose security directory permissions (0755) must fail closed even when helper is 0700.
+        std::fs::set_permissions(&sec_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(resolve_office_git_credential(&office, url, AllowedProtocol::Https).is_err());
+
+        std::fs::set_permissions(&sec_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        // Loose helper permissions (0755) must fail closed.
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(resolve_office_git_credential(&office, url, AllowedProtocol::Https).is_err());
+
+        // Non-executable (0600) must fail closed.
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(resolve_office_git_credential(&office, url, AllowedProtocol::Https).is_err());
+
+        // Strict owner-only executable (0700) resolves scoped to exact origin.
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        match resolve_office_git_credential(&office, url, AllowedProtocol::Https).unwrap() {
+            GitCredential::HttpsHelper {
+                helper_program,
+                scope_url,
+            } => {
+                assert_eq!(helper_program, helper.canonicalize().unwrap());
+                assert_eq!(scope_url, "https://github.com");
+            }
+            other => panic!("expected HttpsHelper, got {other:?}"),
+        }
+
+        // Symlink helper must fail closed.
+        std::fs::remove_file(&helper).unwrap();
+        let target = sec_dir.join("real-helper");
+        std::fs::write(&target, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::os::unix::fs::symlink(&target, &helper).unwrap();
+        assert!(resolve_office_git_credential(&office, url, AllowedProtocol::Https).is_err());
+
+        // SSH key without known_hosts fails closed; with owner-only known_hosts resolves Ssh.
+        let key = sec_dir.join("git-ssh-key");
+        std::fs::write(&key, "PRIVATE").unwrap();
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let ssh_url = "ssh://git@github.com/vgmello/agentic-org.git";
+        assert!(resolve_office_git_credential(&office, ssh_url, AllowedProtocol::Ssh).is_err());
+        let kh = sec_dir.join("git-known-hosts");
+        std::fs::write(&kh, "github.com ssh-ed25519 AAAA\n").unwrap();
+        std::fs::set_permissions(&kh, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(matches!(
+            resolve_office_git_credential(&office, ssh_url, AllowedProtocol::Ssh).unwrap(),
+            GitCredential::Ssh { .. }
+        ));
+
+        // B3: https_origin_scope rejects `=`, `*`, bad ports, and trims whitespace cleanly; accepts IPv6.
+        assert_eq!(
+            https_origin_scope("  https://github.com/vgmello/agentic-org.git  ").unwrap(),
+            "https://github.com"
+        );
+        assert_eq!(
+            https_origin_scope("https://[::1]:8443/org/repo.git").unwrap(),
+            "https://[::1]:8443"
+        );
+        for bad_url in [
+            "https://github.com=evil/org/repo.git",
+            "https://*.github.com/org/repo.git",
+            "https://github.com:0/org/repo.git",
+            "https://github.com:abc/org/repo.git",
+            "https://[::::]/org/repo.git",
+            "https://user@github.com/org/repo.git",
+        ] {
+            assert!(
+                https_origin_scope(bad_url).is_err(),
+                "expected invalid https_origin_scope for `{bad_url}`"
+            );
+        }
+
+        // B4: setgid/setuid bits (02700 / 04700), EACCES on 0000 sec_dir, and symlink sec_dir fail closed.
+        let _ = std::fs::remove_file(&helper);
+        std::fs::write(&helper, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o4700)).unwrap();
+        assert!(resolve_office_git_credential(&office, url, AllowedProtocol::Https).is_err());
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(&sec_dir, std::fs::Permissions::from_mode(0o2700)).unwrap();
+        assert!(resolve_office_git_credential(&office, url, AllowedProtocol::Https).is_err());
+        std::fs::set_permissions(&sec_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let eacces = resolve_office_git_credential(&office, url, AllowedProtocol::Https);
+        std::fs::set_permissions(&sec_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(eacces.is_err(), "EACCES on sec_dir must fail closed");
+
+        std::fs::remove_dir_all(&sec_dir).unwrap();
+        let alt_sec = office.durable_root().join("alt-sec");
+        std::fs::create_dir_all(&alt_sec).unwrap();
+        std::os::unix::fs::symlink(&alt_sec, &sec_dir).unwrap();
+        assert!(
+            resolve_office_git_credential(&office, url, AllowedProtocol::Https).is_err(),
+            "symlink sec_dir must fail closed"
         );
     }
 }

@@ -294,6 +294,45 @@ fn an_unowned_file_in_the_offices_local_folder_fails_the_rebuild_and_is_named() 
     }
 }
 
+/// Office-local Git credential files under `security/` (`TASK-161`, `doc-35`) are excluded from
+/// store rebuilds (never read into memory or rejected as unowned), while stray files beside them
+/// remain refused.
+#[test]
+fn office_git_credential_files_survive_store_rebuild_while_stray_security_files_fail() {
+    for engine in ENGINES {
+        let place = Place::new();
+        let store = place.create(engine);
+        create_organization(&store, 1).unwrap();
+        store.close().unwrap();
+        let material = ca_material(&identity().organization_id, CA);
+        let record = material.record(&identity(), &id(1));
+        crate::office_local::write_ca_key(&place.durable(), &identity().office_id, &record)
+            .unwrap();
+        let sec = local_folder(&place).join("security");
+        std::fs::write(sec.join("git-https-helper"), "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::write(sec.join("git-ssh-key"), "PRIVATE KEY BYTES").unwrap();
+        std::fs::write(sec.join("git-known-hosts"), "github.com ssh-ed25519 AAAA\n").unwrap();
+        if engine == EngineChoice::Sqlite {
+            std::fs::remove_dir_all(runtime_folder(&place)).unwrap();
+        }
+        let reopened = open_store(&place.config(engine, Opening::Existing))
+            .expect("rebuild must exclude office Git credential files");
+        reopened.close().unwrap();
+
+        // Stray sibling under security/ must still fail the rebuild.
+        let stray = sec.join("ca-key.v2.json");
+        std::fs::write(&stray, b"{}\n").unwrap();
+        if engine == EngineChoice::Sqlite {
+            std::fs::remove_dir_all(runtime_folder(&place)).unwrap();
+        }
+        let err = open_store(&place.config(engine, Opening::Existing))
+            .err()
+            .expect("stray security file must still be refused")
+            .to_string();
+        assert!(err.contains("security/ca-key.v2.json"), "{engine:?}: {err}");
+    }
+}
+
 /// The marker: written by an orderly close with the journal it closed, reported once by
 /// the next opening and removed by it; absent after a drop, a kill or a failed close.
 #[test]
