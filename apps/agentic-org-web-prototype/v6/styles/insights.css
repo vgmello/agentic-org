@@ -24,6 +24,8 @@ html[data-theme="report"] :is(.project-insights, .team-overview, .org-insights) 
 html[data-theme="graphite-light"] :is(.project-insights, .team-overview, .org-insights) { --chart-ring: var(--graphite-panel); --chart-tip-bg: #FFFFFF; --chart-tint: color-mix(in srgb, var(--chart-accent) 62%, transparent); }
 html[data-theme="graphite"] :is(.project-insights, .team-overview, .org-insights) { --chart-ring: var(--hover); --chart-tip-bg: var(--graphite-canvas); }
 html:is([data-theme="classic"], [data-theme="report-dark"]) :is(.project-insights, .team-overview, .org-insights) { --chart-ring: var(--gray-800); --chart-tip-bg: var(--gray-900); --chart-accent: var(--tone-accent-ink); }
+/* Classic charts use Graphite's data blue: main series steel blue, second series cool silver */
+html[data-theme="classic"] :is(.project-insights, .team-overview, .org-insights) { --chart-accent: var(--classic-blue); --chart-tint: var(--classic-blue-2); }
 html[data-theme="cozy"] :is(.project-insights, .team-overview, .org-insights) { --chart-ring: #2d241c; --chart-tip-bg: #352b22; --chart-bad: var(--tone-bad-ink); --chart-tint: color-mix(in srgb, var(--chart-accent) 76%, transparent); }
 /* Cozy's secondary gray sits near 3.4:1 on its glass cards; a step toward its primary gray reaches AA */
 html[data-theme="cozy"] :is(.project-insights, .team-overview, .org-insights, .org-insights-page) { --insight-muted: color-mix(in srgb, var(--gray-400) 30%, var(--gray-300)); }
