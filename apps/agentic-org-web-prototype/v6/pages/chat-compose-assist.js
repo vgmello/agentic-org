@@ -1,13 +1,14 @@
 /* Composer assists (doc-40 §1 "Composer"): `@` mentions with autocomplete in the main and thread composers, and
    `/` commands at the start of the main composer. One listbox under the field's control: the textarea keeps focus and
-   points at the highlighted option with aria-activedescendant; ↑/↓ move, Enter or Tab choose, Esc closes. */
+   points at the highlighted option with aria-activedescendant; ↑/↓ move, Enter chooses, Esc closes. Tab is never
+   taken: it closes the list and moves focus on as usual, so only Enter inserts. */
 import { CH, M } from "../data.js";
 import { av, esc, kindWord, memberIds } from "../ui.js";
 
 const assist = { field: null, kind: "", from: 0, items: [], active: 0 };
 
 const COMMANDS = [
-  { name: "task", hint: "Turn this conversation into a task, with its latest messages as context", insert: "" },
+  { name: "task", hint: "Turn this conversation into a task: /task what to do (its latest messages go as context)", insert: "" },
   { name: "ask", hint: "Ask an agent a structured question: /ask @agent your question", insert: "/ask @" },
   { name: "assign", hint: "Assign a work item: /assign @agent T-A…", insert: "/assign @" },
   { name: "files", hint: "Show this conversation's files", insert: "" },
@@ -103,10 +104,12 @@ function choose(i) {
   if (kind === "mention") { closeAssist(); replaceTrigger(field, `@${it.value} `); return; }
   const cmd = COMMANDS.find((c) => c.name === it.value);
   closeAssist();
-  if (cmd.insert) { assist.from = 0; replaceTrigger(field, cmd.insert); return; }
-  field.value = "";
-  field.dispatchEvent(new Event("input", { bubbles: true }));
-  field.dispatchEvent(new CustomEvent("chat-command", { bubbles: true, detail: { name: cmd.name } }));
+  assist.from = 0;
+  /* Words already in the field (after the caret) stay: the command is written in front of them, and runs only
+     when the field held nothing else, so choosing a command never discards the owner's text. */
+  const after = field.value.slice(field.selectionStart), rest = after.trim();
+  if (cmd.insert || rest) { replaceTrigger(field, cmd.insert || `/${cmd.name}${/^\s/.test(after) ? "" : " "}`); return; }
+  field.dispatchEvent(new CustomEvent("chat-command", { bubbles: true, detail: { name: cmd.name, text: "" } }));
 }
 function onOptionPointer(e) {
   const li = e.target.closest('[role="option"]');
@@ -120,8 +123,9 @@ function onAssistKeydown(e) {
   if (!assist.field || e.target !== assist.field || e.isComposing) return false;
   const n = assist.items.length;
   if (MOVES[e.key]) assist.active = (assist.active + MOVES[e.key] + n) % n;
-  else if ((e.key === "Enter" && !e.ctrlKey && !e.metaKey) || e.key === "Tab") choose(assist.active);
+  else if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) choose(assist.active);
   else if (e.key === "Escape") closeAssist();
+  else if (e.key === "Tab") { closeAssist(); return false; }
   else return false;
   e.preventDefault();
   e.stopPropagation();
@@ -140,14 +144,26 @@ function mentionsIn(text, chId) {
   }
   return [...keys];
 }
-/* `/ask @agent question` and `/assign @agent T-A…`, parsed; null when the text is not a command. */
+/* A command is a complete first token: "/" and a word, then a space or the end. "/files.txt" or "/etc/hosts is
+   missing" is prose. Returns { name, args, known } or null when the text is not a command. */
+function commandToken(text) {
+  const t = /^\/([A-Za-z]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  if (!t) return null;
+  const name = t[1].toLowerCase();
+  return { name, args: (t[2] || "").trim(), known: COMMANDS.some((c) => c.name === name) };
+}
+/* `/ask @agent question` and `/assign @agent T-A…`, parsed; `invalid` when a known command is unfinished,
+   `unknown` for a slash word that is no command (offered to send as an ordinary message). */
 function parseCommand(text) {
-  const ask = /^\/ask\s+@(\w+)\s+([\s\S]+)$/.exec(text.trim());
+  const tok = commandToken(text);
+  if (!tok) return null;
+  if (!tok.known) return { name: tok.name, unknown: true };
+  if (tok.name === "task" || tok.name === "files") return { name: tok.name, text: tok.args };
+  const ask = tok.name === "ask" && /^@(\w+)\s+([\s\S]+)$/.exec(tok.args);
   if (ask) return { name: "ask", who: ask[1].toLowerCase(), question: ask[2].trim() };
-  const assign = /^\/assign\s+@(\w+)\s+(T-[A-Z]\d+)\s*$/i.exec(text.trim());
+  const assign = tok.name === "assign" && /^@(\w+)\s+(T-[A-Z]\d+)$/i.exec(tok.args);
   if (assign) return { name: "assign", who: assign[1].toLowerCase(), item: assign[2].toUpperCase() };
-  const other = /^\/(\w+)/.exec(text.trim());
-  return other ? { name: other[1].toLowerCase(), invalid: true } : null;
+  return { name: tok.name, invalid: true };
 }
 
 export { closeAssist, mentionsIn, onAssistKeydown, parseCommand, updateAssist };
