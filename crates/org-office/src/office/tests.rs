@@ -197,9 +197,38 @@ fn creation_writes_exactly_the_golden_files_and_the_ca_records() {
         let key_path = local::ca_key_path(&identity().office_id);
         let key_path = key_path.as_str().strip_prefix("local/").unwrap().to_owned();
         let expected_local = BTreeMap::from([(key_path, local::encode_ca_key(&key))]);
-        assert_eq!(tree(&site.durable("local")), expected_local, "{engine:?}");
-        // Under durable/ only the files, the journal and the receipt.
-        assert_eq!(names(&site.roots.durable), ["local", "recovery", "state"]);
+        let mut local_tree = tree(&site.durable("local"));
+        // The Sqlite engine alone also keeps the canonical replication state (TASK-52); the
+        // memory engine writes nothing there. Nothing else may appear beside the CA key.
+        let replication_path =
+            format!("offices/{}/replication/state.v1.json", identity().office_id);
+        let replication = local_tree.remove(&replication_path);
+        match engine {
+            EngineChoice::Sqlite => {
+                let bytes = replication.expect("the sqlite creation writes the replication state");
+                let state: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(state["version"], 1);
+                assert_eq!(state["local_office"], identity().office_id.to_string());
+                assert_eq!(state["seq"], 0);
+            }
+            EngineChoice::Memory => assert!(replication.is_none(), "{engine:?}"),
+        }
+        assert_eq!(local_tree, expected_local, "{engine:?}");
+        // Under durable/ only the files, the journal and the receipt; the Sqlite engine
+        // alone adds the companion stores' folders (TASK-52 and the stores before it).
+        let top: &[&str] = match engine {
+            EngineChoice::Sqlite => &[
+                "accounting",
+                "authority",
+                "budgets",
+                "local",
+                "private",
+                "recovery",
+                "state",
+            ],
+            EngineChoice::Memory => &["local", "recovery", "state"],
+        };
+        assert_eq!(names(&site.roots.durable), top, "{engine:?}");
         let receipts = tree(&site.durable("recovery/commands"));
         let receipts: Vec<&String> = receipts.keys().collect();
         assert_eq!(receipts, [&format!("{}.json", creation_id())], "{engine:?}");
