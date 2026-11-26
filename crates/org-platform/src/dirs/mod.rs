@@ -1,7 +1,7 @@
 //! Where an instance's per-user state lives by default.
 //!
 //! The consumer composes the rest (`instances/<name>`, `setup/<name>`, `locator`,
-//! `host.sock`, `run/o/<handle>.sock`).
+//! `host.sock`, `run/o/<handle>/s.sock`).
 //!
 //! # Systems
 //!

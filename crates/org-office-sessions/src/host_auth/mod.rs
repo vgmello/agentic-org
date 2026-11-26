@@ -63,7 +63,7 @@ pub(crate) fn is_oauth_expiring(expires_at_ms: Option<u64>, now_ms: u64) -> bool
 
 /// The runtime folder that holds the office's privileged entries (`host.sock`, the launch
 /// rendezvous `r/`, per-agent temporary folders `t/`) beside the office sockets folder: `<run>`
-/// for an office socket at `<run>/o/<handle>.sock` (`org_proto::location`), else the socket's own
+/// for an office socket at `<run>/o/<handle>/s.sock` (`org_proto::location`), else the socket's own
 /// folder (a socket configured outside the `o/` layout, as tests and older callers do). Every
 /// derivation of those entries from the office socket goes through here.
 pub(crate) fn office_runtime_dir(office_socket: &Path) -> Option<&Path> {
@@ -86,7 +86,7 @@ pub(crate) fn agent_tmpdir_slug(office_id: &str, employee_id: &str) -> String {
 }
 
 /// Chooses an owner-only per-agent `TMPDIR` inside the office's short runtime socket directory
-/// (`<runtime>/t/<8-hex>`, [`office_runtime_dir`]; never inside the office sockets folder `o/`)
+/// (`<runtime>/t/<8-hex>`, [`office_runtime_dir`]; never inside the office socket folders `o/`)
 /// whenever that stays within [`MAX_SHORT_TMPDIR_BYTES`] and shorter than `durable_fallback`,
 /// avoiding Linux `ENAMETOOLONG` (`sun_path` > 108 bytes) in Claude's `bubblewrap`/`socat`
 /// sandbox while keeping `TMPDIR` out of shared `/tmp`.

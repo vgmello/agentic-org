@@ -280,7 +280,7 @@ fn selected_office_uuid_addressing_and_unknown_office_or_agent_refusals() {
     let env: Value = serde_json::from_slice(&malformed.stdout).unwrap();
     assert_eq!(env["error"]["code"], "invalid_request");
 
-    // 3. Valid selected office UUIDv7 connects via `<runtime>/o/<last-12-hex>.sock`, verifies
+    // 3. Valid selected office UUIDv7 connects via `<runtime>/o/<last-12-hex>/s.sock`, verifies
     //    `hello.office.office.id == office_id`, and refuses unknown agent bind with details.
     let server = thread::spawn(move || {
         for call_idx in 0..2 {

@@ -18,7 +18,7 @@ use super::sandbox_rules::{
     append_agy_credential_denies, append_bare_cache_sandbox_rules, append_cargo_credential_denies,
     append_privileged_socket_patterns, collect_agy_read_only_dirs, collect_existing_worktree_dirs,
     collect_non_self_admin_names, collect_self_active_admins, push_exact_pattern,
-    push_glob_pattern, PRIVILEGED_RUNTIME_ENTRIES,
+    push_glob_pattern,
 };
 use super::SessionManager;
 
@@ -34,19 +34,15 @@ impl SessionManager {
             return Vec::new();
         }
         let helper_dir = RuntimeRegistry::resolve_helper_dir(self.config.helper_dir.as_deref());
-        let mut forbidden = vec![
+        // The runtime folder holding the office socket (`host.sock`, `r/`, `t/`, every office's
+        // socket folder) is forbidden by `collect_agy_read_only_dirs` itself (`TASK-164`).
+        let forbidden = [
             home.to_path_buf(),
             workspace.to_path_buf(),
             self.office.folder().to_path_buf(),
             self.office.durable_root().to_path_buf(),
             self.office.runtime_root().to_path_buf(),
         ];
-        // No mount may hold or sit in the runtime folder's privileged entries (`TASK-164`).
-        if let Some(runtime) = crate::host_auth::office_runtime_dir(&self.config.office_socket) {
-            for entry in PRIVILEGED_RUNTIME_ENTRIES {
-                forbidden.push(runtime.join(entry));
-            }
-        }
         collect_agy_read_only_dirs(
             &helper_dir,
             Some(&self.config.office_socket),

@@ -52,13 +52,13 @@ fn explicit_runtime_is_required_in_release_and_invalid_values_never_fall_back() 
         let runtime = runtime_dir_from(home, Some("/short/runtime".into()), debug).unwrap();
         assert_eq!(
             socket_path(&runtime, "OFFICE1").unwrap(),
-            Path::new("/short/runtime/o/OFFICE1.sock")
+            Path::new("/short/runtime/o/OFFICE1/s.sock")
         );
     }
 }
 
 #[test]
-fn the_office_sockets_folder_is_made_owner_only_and_never_followed() {
+fn the_office_socket_folders_are_made_owner_only_and_never_followed() {
     use std::os::unix::fs::PermissionsExt as _;
     let _spawn = crate::transfer::tests::without_process_spawn();
     let dir = tempfile::tempdir().unwrap();
@@ -66,26 +66,36 @@ fn the_office_sockets_folder_is_made_owner_only_and_never_followed() {
     std::fs::create_dir(&runtime).unwrap();
     let socket = socket_path(&runtime, "OFFICE1").unwrap();
     let sockets = runtime.join("o");
-    assert_eq!(socket.parent(), Some(sockets.as_path()));
+    let own = sockets.join("OFFICE1");
+    assert_eq!(socket.parent(), Some(own.as_path()));
     let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o7777;
 
-    // Missing (a standalone or test runtime): created owner-only, and a bind then succeeds.
+    // Missing (a standalone or test runtime): both created owner-only, and a bind then succeeds.
     crate::office_runtime::prepare_socket_dir(&socket).unwrap();
-    assert_eq!(mode(&sockets), 0o700);
+    assert_eq!((mode(&sockets), mode(&own)), (0o700, 0o700));
     drop(crate::serve::bind(&socket).unwrap());
-    // Present but loose: tightened.
+    // Present but loose, or with a special bit: tightened to exactly 0700.
     std::fs::set_permissions(&sockets, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(&own, std::fs::Permissions::from_mode(0o1777)).unwrap();
     crate::office_runtime::prepare_socket_dir(&socket).unwrap();
-    assert_eq!(mode(&sockets), 0o700);
+    assert_eq!((mode(&sockets), mode(&own)), (0o700, 0o700));
 
-    // A link where the folder belongs, or a missing runtime folder, is refused.
-    std::fs::remove_dir_all(&sockets).unwrap();
+    // A link where either folder belongs, or a missing runtime folder, is refused.
     let elsewhere = dir.path().join("elsewhere");
     std::fs::create_dir(&elsewhere).unwrap();
     std::fs::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::remove_dir_all(&own).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &own).unwrap();
+    assert!(crate::office_runtime::prepare_socket_dir(&socket).is_err());
+    assert_eq!(mode(&elsewhere), 0o755, "the link's target was touched");
+    std::fs::remove_dir_all(&sockets).unwrap();
     std::os::unix::fs::symlink(&elsewhere, &sockets).unwrap();
     assert!(crate::office_runtime::prepare_socket_dir(&socket).is_err());
     assert_eq!(mode(&elsewhere), 0o755, "the link's target was touched");
+    assert!(
+        !elsewhere.join("OFFICE1").exists(),
+        "created through the link"
+    );
     let orphan = socket_path(&dir.path().join("missing"), "OFFICE1").unwrap();
     assert!(crate::office_runtime::prepare_socket_dir(&orphan).is_err());
     assert!(!dir.path().join("missing").exists());

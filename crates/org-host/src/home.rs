@@ -57,7 +57,7 @@ impl Layout {
             source,
         })?;
         // A spawn's rendezvous, `<run>/r/<16 hex>` (`supervisor::channels::Broker::bind`), is
-        // one byte shorter than an office socket (`<run>/o/<12>.sock`).
+        // three bytes shorter than an office socket (`<run>/o/<12>/s.sock`).
         let rendezvous = self.run.join("r").join("0".repeat(16));
         for path in [&self.host_socket, &sample, &rendezvous] {
             location::check_socket_path(path, limit).map_err(|e| HostError::SocketPathTooLong {
@@ -72,7 +72,8 @@ impl Layout {
     /// Creates the home and its `run/` (with its office sockets folder, `run/o/`), `logs/` and
     /// `offices/` folders owner-only (0700), and tightens them if they already exist. Refuses a
     /// home or folder that isn't a real directory owned by this user (e.g. a symlink planted by
-    /// someone else).
+    /// someone else). Each office's own socket folder, `run/o/<handle>/`, is made by its server
+    /// just before it binds (`org_proto::location`).
     pub(crate) fn prepare(&self) -> Result<(), HostError> {
         let io = |context| move |source| HostError::Io { context, source };
         DirBuilder::new()
@@ -94,7 +95,8 @@ impl Layout {
     }
 }
 
-/// Checks `dir` is a directory (not a symlink) owned by us, and sets it to 0700.
+/// Checks `dir` is a directory (not a symlink) owned by us, and sets it to exactly 0700,
+/// clearing any setuid, setgid or sticky bit too.
 pub(crate) fn owner_only_dir(dir: &Path) -> Result<(), HostError> {
     let meta = fs::symlink_metadata(dir).map_err(|source| HostError::Io {
         context: "reading the office home",
@@ -103,7 +105,7 @@ pub(crate) fn owner_only_dir(dir: &Path) -> Result<(), HostError> {
     if !meta.file_type().is_dir() || meta.uid() != euid() {
         return Err(HostError::UnsafeHome { path: dir.into() });
     }
-    if meta.mode() & 0o777 != 0o700 {
+    if meta.mode() & 0o7777 != 0o700 {
         fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).map_err(|source| {
             HostError::Io {
                 context: "making the office home owner-only",
@@ -562,6 +564,10 @@ mod tests {
         fs::create_dir(&layout.run).unwrap();
         fs::create_dir(layout.run.join("o")).unwrap();
         fs::set_permissions(layout.run.join("o"), fs::Permissions::from_mode(0o755)).unwrap();
+        // A special bit alone (here sticky) on an otherwise owner-only folder is cleared too.
+        fs::create_dir(&layout.logs).unwrap();
+        fs::set_permissions(&layout.logs, fs::Permissions::from_mode(0o1700)).unwrap();
+        assert_eq!(fs::metadata(&layout.logs).unwrap().mode() & 0o7777, 0o1700);
         layout.prepare().unwrap();
         let sockets = location::office_sockets_dir(&layout.run);
         assert_eq!(sockets, home.join("run").join("o"));
@@ -573,7 +579,7 @@ mod tests {
             &layout.offices,
         ] {
             let mode = fs::metadata(d).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o700, "{}", d.display());
+            assert_eq!(mode & 0o7777, 0o700, "{}", d.display());
         }
     }
 
@@ -677,12 +683,14 @@ mod tests {
 
     #[test]
     fn socket_paths_are_checked_against_the_systems_limit() {
-        // The limit is 103 bytes on macOS and 107 on Linux; run/o/<12>.sock, the longest,
-        // adds 24 bytes to the home (run/r/<16 hex> 23).
+        // The limit is 103 bytes on macOS and 107 on Linux; run/o/<12>/s.sock, the longest,
+        // adds 26 bytes to the home (run/r/<16 hex> 23): a home of `limit - 26` bytes is the
+        // longest that fits, one byte more is refused.
         let limit = socket_path_limit().unwrap();
-        let ok = PathBuf::from(format!("/{}", "a".repeat(limit - 25)));
+        let ok = PathBuf::from(format!("/{}", "a".repeat(limit - 27)));
+        assert_eq!(ok.as_os_str().len() + 26, limit);
         assert!(Layout::new(&ok).check_socket_paths().is_ok());
-        let long = PathBuf::from(format!("/{}", "a".repeat(limit - 24)));
+        let long = PathBuf::from(format!("/{}", "a".repeat(limit - 26)));
         match Layout::new(&long).check_socket_paths() {
             Err(HostError::SocketPathTooLong {
                 len, limit: told, ..

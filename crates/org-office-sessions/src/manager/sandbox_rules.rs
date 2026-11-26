@@ -41,63 +41,76 @@ pub(super) fn push_safe_ro_dir(
 }
 
 /// Privileged runtime-folder entries (`org_proto::location`): `host.sock`, the launch rendezvous
-/// `r/` and per-agent temporary folders `t/`. No Agy mount may hold or sit inside one, and the
-/// office sockets folder must never hold one.
-pub(super) const PRIVILEGED_RUNTIME_ENTRIES: [&str; 3] =
+/// `r/` and per-agent temporary folders `t/`. No Agy mount may hold or sit inside one.
+const PRIVILEGED_RUNTIME_ENTRIES: [&str; 3] =
     [org_proto::location::HOST_SOCKET_FILE_NAME, "r", "t"];
 
-/// Mounts the office sockets folder holding `office_socket` (`<run>/o`, `org_proto::location`)
-/// for Agy `--sandbox`, so `agent-os` can `connect()` to `AGENT_OS_SOCKET`: connecting to a Unix
-/// socket needs search permission on its folders and write permission on the socket inode, never
-/// a writable mount (`TASK-164`). Fails closed (mounts nothing) unless the socket is
-/// `<run>/o/<name>.sock` with `<run>` not `/`, `o` is a real owner-only folder of this account
-/// (never a link) that holds sockets only and none of the runtime folder's privileged entries
-/// (`host.sock`, `r`, `t`), and it overlaps no forbidden folder ([`push_safe_ro_dir`]). The
-/// runtime folder itself is never a candidate, so `host.sock`, `r/` and `t/` stay unmounted.
-fn push_office_sockets_dir(
+/// Mounts this office's own socket folder, `<run>/o/<handle>` (the parent of `office_socket`,
+/// `org_proto::location`), for Agy `--sandbox`, so `agent-os` can `connect()` to
+/// `AGENT_OS_SOCKET`: connecting to a Unix socket needs search permission on its folders and
+/// write permission on the socket inode, never a writable mount (`TASK-164`). Never the shared
+/// `<run>/o` or the runtime folder `<run>`, so another office's socket stays invisible even if Agy
+/// mounted the folder writable. Fails closed (mounts nothing) unless:
+/// - `office_socket` is `<run>/o/<handle>/s.sock` with a plain handle and `<run>` not `/`
+///   ([`org_proto::location::runtime_dir_of_office_socket`]), and still is once resolved;
+/// - both `<run>/o` and `<run>/o/<handle>` are real folders (never links) of this account with
+///   mode exactly 0700 (no special bits);
+/// - `<run>/o/<handle>` holds nothing but the socket `s.sock` ([`holds_own_socket_only`]);
+/// - it overlaps no forbidden folder ([`push_safe_ro_dir`]).
+fn push_office_socket_dir(
     out: &mut Vec<SpecPath>,
     office_socket: &Path,
     forbidden_canon: &[PathBuf],
     host_home_canon: Option<&Path>,
 ) {
-    if org_proto::location::runtime_dir_of_office_socket(office_socket).is_none() {
+    use org_proto::location::{runtime_dir_of_office_socket, OFFICE_SOCKET_FILE_NAME};
+    if runtime_dir_of_office_socket(office_socket).is_none() {
         return;
     }
-    let Some(dir) = office_socket.parent() else {
+    let Some(socket_dir) = office_socket.parent() else {
         return;
     };
-    // The leaf is checked unresolved (a link is refused, not followed), then resolved: ancestors
-    // may be system links (macOS `/var`), but the folder must still be an `o` below a non-root
-    // runtime folder.
-    if !holds_office_sockets_only(dir) {
+    let Some(sockets_dir) = socket_dir.parent() else {
+        return;
+    };
+    // The two leaves are checked unresolved (a link is refused, not followed), then resolved:
+    // ancestors may be system links (macOS `/var`), but the shape must hold on the real path.
+    let Ok(uid) = org_platform::fs::effective_uid() else {
+        return;
+    };
+    if !is_private_dir(sockets_dir, uid)
+        || !is_private_dir(socket_dir, uid)
+        || !holds_own_socket_only(socket_dir)
+    {
         return;
     }
-    let Ok(resolved) = dir.canonicalize() else {
+    let Ok(resolved) = socket_dir.canonicalize() else {
         return;
     };
-    let sockets_dir_name = std::ffi::OsStr::new(org_proto::location::OFFICE_SOCKETS_DIR_NAME);
-    if resolved.file_name() != Some(sockets_dir_name)
-        || resolved.parent().and_then(Path::parent).is_none()
+    if resolved.file_name() != socket_dir.file_name()
+        || runtime_dir_of_office_socket(&resolved.join(OFFICE_SOCKET_FILE_NAME)).is_none()
     {
         return;
     }
     push_safe_ro_dir(out, &resolved, forbidden_canon, host_home_canon, &[]);
 }
 
-/// Whether `dir` is a real folder (not a link) owned by this account, owner-only, holding only
-/// sockets and none of [`PRIVILEGED_RUNTIME_ENTRIES`]. Any unreadable entry fails closed.
-fn holds_office_sockets_only(dir: &Path) -> bool {
-    let Ok(uid) = org_platform::fs::effective_uid() else {
-        return false;
-    };
-    if org_platform::fs::verify_owner_only_dir(dir, uid).is_err() {
-        return false;
-    }
+/// Whether `dir` is a real folder (`lstat`, never a link) owned by `uid` with mode exactly 0700:
+/// no group or other access and no setuid, setgid or sticky bit.
+fn is_private_dir(dir: &Path, uid: u32) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    org_platform::fs::verify_owner_only_dir(dir, uid).is_ok()
+        && std::fs::symlink_metadata(dir)
+            .is_ok_and(|meta| meta.is_dir() && meta.permissions().mode() & 0o7777 == 0o700)
+}
+
+/// Whether `dir` holds nothing but the office socket: every entry is a Unix socket (not a link)
+/// named `s.sock`, so no other socket, file, folder or link. Any unreadable entry fails closed.
+fn holds_own_socket_only(dir: &Path) -> bool {
     std::fs::read_dir(dir).is_ok_and(|mut entries| {
         entries.all(|entry| {
             entry.is_ok_and(|entry| {
-                let name = entry.file_name();
-                !PRIVILEGED_RUNTIME_ENTRIES.iter().any(|p| name == *p)
+                entry.file_name() == org_proto::location::OFFICE_SOCKET_FILE_NAME
                     && entry.file_type().is_ok_and(|ft| ft.is_socket())
             })
         })
@@ -106,10 +119,16 @@ fn holds_office_sockets_only(dir: &Path) -> bool {
 
 /// Collects safe read-only directories for Agy `--sandbox` (`--add-dir`) so `agent-os`, its
 /// office socket and the host Rust toolchain work without `BypassSandbox` (`TASK-164`). Mounts
-/// only individual safe Cargo subdirs (`bin`, `registry`, `git`) and the office sockets folder
-/// `<run>/o` ([`push_office_sockets_dir`]) — NEVER host `~/.cargo` root, `$HOME`, the runtime
-/// folder `<run>` (its `host.sock`, `r/`, `t/`), or any ancestor of a forbidden office/workspace
-/// directory, so secrets stay inaccessible.
+/// only individual safe Cargo subdirs (`bin`, `registry`, `git`) and this office's own socket
+/// folder `<run>/o/<handle>` ([`push_office_socket_dir`]) — NEVER host `~/.cargo` root, `$HOME`,
+/// the shared `<run>/o`, or any ancestor of a forbidden office/workspace directory, so secrets
+/// stay inaccessible.
+///
+/// The runtime folder `<run>` is derived here from `office_socket`
+/// ([`crate::host_auth::office_runtime_dir`]), never left to the caller's `forbidden`: no helper,
+/// `agent-os` release, `RUSTUP_HOME` or Cargo mount may hold or sit anywhere inside `<run>` (its
+/// `host.sock`, `r/`, `t/`, sibling temporary folders and every office's socket folder), and the
+/// office socket folder, the one mount inside it, may hold none of `<run>`'s privileged entries.
 pub(crate) fn collect_agy_read_only_dirs(
     helper_dir: &Path,
     office_socket: Option<&Path>,
@@ -118,21 +137,40 @@ pub(crate) fn collect_agy_read_only_dirs(
     host_home: Option<OsString>,
     forbidden: &[PathBuf],
 ) -> Vec<SpecPath> {
-    let forbidden_canon: Vec<PathBuf> = forbidden
+    let canonical = |paths: &[PathBuf]| -> Vec<PathBuf> {
+        paths.iter().map(|p| canonicalize_with_tail(p)).collect()
+    };
+    let runtime = office_socket.and_then(crate::host_auth::office_runtime_dir);
+    let privileged: Vec<PathBuf> = runtime
         .iter()
-        .map(|p| canonicalize_with_tail(p))
+        .flat_map(|run| {
+            PRIVILEGED_RUNTIME_ENTRIES
+                .iter()
+                .map(|entry| run.join(entry))
+        })
         .collect();
+    // Raw for the toolchain lookups (they resolve it themselves), canonical for the mounts.
+    let non_socket_raw: Vec<PathBuf> = forbidden
+        .iter()
+        .cloned()
+        .chain(runtime.map(Path::to_path_buf))
+        .chain(privileged.iter().cloned())
+        .collect();
+    let non_socket_forbidden = canonical(&non_socket_raw);
+    let mut socket_forbidden = canonical(forbidden);
+    socket_forbidden.extend(canonical(&privileged));
     let host_home_canon = host_home
         .as_deref()
         .map(Path::new)
         .filter(|p| p.is_absolute())
         .and_then(|p| p.canonicalize().ok());
+    let host_home_canon = host_home_canon.as_deref();
     let mut out = Vec::new();
     push_safe_ro_dir(
         &mut out,
         helper_dir,
-        &forbidden_canon,
-        host_home_canon.as_deref(),
+        &non_socket_forbidden,
+        host_home_canon,
         &[],
     );
     // If `<helper_dir>/agent-os` is a symlink into a release-store directory, also mount the
@@ -142,40 +180,40 @@ pub(crate) fn collect_agy_read_only_dirs(
             push_safe_ro_dir(
                 &mut out,
                 parent,
-                &forbidden_canon,
-                host_home_canon.as_deref(),
+                &non_socket_forbidden,
+                host_home_canon,
                 &[],
             );
         }
     }
-    if let Some(rustup) =
-        host_rust_dir_env_from(rustup_explicit, host_home.clone(), ".rustup", forbidden)
-    {
+    if let Some(rustup) = host_rust_dir_env_from(
+        rustup_explicit,
+        host_home.clone(),
+        ".rustup",
+        &non_socket_raw,
+    ) {
         push_safe_ro_dir(
             &mut out,
             Path::new(&rustup),
-            &forbidden_canon,
-            host_home_canon.as_deref(),
+            &non_socket_forbidden,
+            host_home_canon,
             &[],
         );
     }
     if let Some(socket) = office_socket {
-        push_office_sockets_dir(
-            &mut out,
-            socket,
-            &forbidden_canon,
-            host_home_canon.as_deref(),
-        );
+        push_office_socket_dir(&mut out, socket, &socket_forbidden, host_home_canon);
     }
-    if let Some(cargo) = host_rust_dir_env_from(cargo_explicit, host_home, ".cargo", forbidden) {
+    if let Some(cargo) =
+        host_rust_dir_env_from(cargo_explicit, host_home, ".cargo", &non_socket_raw)
+    {
         let cargo_path = Path::new(&cargo);
         let cargo_canon = canonicalize_with_tail(cargo_path);
         for sub in ["bin", "registry", "git"] {
             push_safe_ro_dir(
                 &mut out,
                 &cargo_path.join(sub),
-                &forbidden_canon,
-                host_home_canon.as_deref(),
+                &non_socket_forbidden,
+                host_home_canon,
                 std::slice::from_ref(&cargo_canon),
             );
         }

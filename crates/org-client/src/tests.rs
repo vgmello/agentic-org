@@ -546,6 +546,41 @@ fn connect_selected_office_fails_closed_on_missing_or_mismatched_office_hello() 
 }
 
 #[test]
+fn a_selected_runtime_dir_that_is_a_link_is_refused_even_with_a_trailing_slash() {
+    let dir = tempfile::Builder::new()
+        .prefix("ocl-slash")
+        .tempdir()
+        .unwrap();
+    let office_id = "0193a5c0-0000-7000-8000-0000000000aa";
+    let real = dir.path().join("real");
+    let sock = location::selected_office_socket_in(&real, office_id).unwrap();
+    std::fs::create_dir_all(sock.parent().unwrap()).unwrap();
+    let listener = UnixListener::bind(&sock).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    // `lstat("link/")` would follow the link: every spelling is normalized first.
+    for runtime in [
+        link.clone(),
+        std::path::PathBuf::from(format!("{}/", link.display())),
+        std::path::PathBuf::from(format!("{}/.", link.display())),
+        std::path::PathBuf::from(format!("{}//", link.display())),
+    ] {
+        assert!(
+            matches!(
+                Client::connect_selected_office(office_id, &runtime),
+                Err(ClientError::OfficeNotReachable)
+            ),
+            "{runtime:?}"
+        );
+    }
+    assert!(
+        listener.accept().is_err(),
+        "something connected through the linked runtime folder"
+    );
+}
+
+#[test]
 fn concurrent_calls_receive_their_own_waiting_messages_metadata() {
     let dir = tempfile::Builder::new()
         .prefix("ocl-meta")
