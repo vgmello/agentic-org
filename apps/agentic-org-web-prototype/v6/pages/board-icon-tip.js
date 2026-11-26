@@ -1,4 +1,4 @@
-/* Tooltips for the board's small icons and compact controls ([data-icon-tip]: footer icons, the Needs you bell, the
+/* Tooltips for the board's small icons and compact controls ([data-icon-tip]: card icons, the kind icon, the team dot, the Needs you bell, the
    priority pill, a Done lane's ⋯). Hover (after a short pause) or keyboard focus shows the full text above the icon; a
    tap focuses the icon, so touch shows it too. The same text is the icon's accessible name, so the tooltip is hidden
    from assistive technology. It lives in the top layer, so the board's scroller never clips it. */
@@ -26,9 +26,17 @@ function place(el, target) {
   el.style.left = `${Math.round(left)}px`;
 }
 
+/* A target marked [data-tip-when-clipped] (the team dot) shows its tooltip only while its own text is hidden or cut
+   short; once the name shows in full beside the dot, the tooltip would only repeat it */
+function textShown(target) {
+  const text = target.firstElementChild;
+  return Boolean(text) && text.getBoundingClientRect().width > 1 && text.scrollWidth <= text.clientWidth;
+}
+const tipNeeded = (target) => !target.hasAttribute("data-tip-when-clipped") || !textShown(target);
+
 function show(target) {
   clearTimeout(timer);
-  if (!target.isConnected) return;
+  if (!target.isConnected || !tipNeeded(target)) return;
   const el = tipElement();
   owner = target;
   el.textContent = target.dataset.iconTip;
