@@ -926,8 +926,24 @@ body.nokeys .search kbd { display: none; }
 /* Decision split: priority queue (Inbox rows) | selected decision (Inbox fields), panes top-aligned */
 .pj-split { display: grid; grid-template-columns: minmax(260px, 360px) minmax(0, 1fr); align-items: start; border-radius: var(--radius-lg); background: var(--gray-900); box-shadow: inset 0 0 0 1px var(--line2); overflow: hidden; }
 .pj-queue-pane { --triage-queue-gutter: 16px; --triage-row-inset: 8px; display: flex; flex-direction: column; align-self: stretch; border-inline-end: 1px solid var(--line2); min-width: 0; }
-.pj-queue-pane ul { list-style: none; margin: 0; padding: 8px; flex: 1; max-height: 24rem; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.pj-queue-pane ul { list-style: none; margin: 0; padding: 8px; max-height: 24rem; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.pj-queue-pane ul.is-scrolling { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+/* Queue rows follow the Inbox row layout: avatar | title over sender · kind | time and state on the right */
+.pj-q-item { display: grid; grid-template-columns: 30px minmax(0, 1fr) max-content; column-gap: 10px; row-gap: 2px; padding-block: 10px; }
+.pj-q-item .triage-person { display: contents; }
+.pj-q-item .triage-person > .av { grid-area: 1 / 1 / span 2; align-self: center; width: 30px; height: 30px; }
+.pj-q-item .triage-title { grid-area: 1 / 2; padding-inline-start: 0; line-height: 1.35; font-weight: 600; }
+.pj-q-item .triage-sender { grid-area: 2 / 2; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; font-size: var(--fs-sm); color: var(--gray-400); }
+.pj-q-item .triage-sender strong { font-weight: 500; color: var(--gray-300); }
+.pj-q-item .triage-kind .ic { display: none; }
+.pj-q-item .triage-kind::before { content: "·"; margin-inline-end: 6px; }
+.pj-q-item .triage-stamp { grid-area: 1 / 3 / span 2; display: grid; align-content: start; justify-items: end; gap: 3px; color: var(--gray-400); font-size: var(--fs-xs); }
+.pj-q-item .triage-state-icon[data-state="urgent"] { color: var(--tone-warn-ink); }
+.pj-q-item .triage-state-icon[data-state="handled"] { color: var(--tone-ok-ink); }
+.pj-q-item .triage-meta { grid-column: 2 / -1; padding-inline-start: 0; }
 .pj-q-item { width: 100%; text-align: left; }
+.pj-detail-title a { color: inherit; }
+.pj-detail-title a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .pj-q-item + * { margin-top: 0; }
 .pj-queue-all { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-top: 1px solid var(--line2); font-size: var(--fs-sm); color: var(--gray-400); }
 .pj-queue-all:hover { color: var(--white); background: var(--hover); }
@@ -945,7 +961,15 @@ body.nokeys .search kbd { display: none; }
 .pj-goal { display: flex; align-items: baseline; gap: 10px; font-size: var(--fs-base); color: var(--gray-300); }
 .pj-goal > span { flex: none; font-size: var(--fs-sm); font-weight: 600; color: var(--gray-500); }
 .pj-overview .feed > li { padding-inline: 0; }
-.tchip { background: var(--hover); border-radius: 999px; box-shadow: none; }
+.pj-team > .tchips { padding: 16px var(--gutter) 8px; }
+.pj-team > .rows { margin-inline: var(--gutter); }
+.pj-team > .rows > li { padding-inline: 0; }
+/* Cards on the project Overview use the theme's card surface (white in light themes) */
+.pj-kpi, .pj-split { background: var(--card-surface, var(--gray-900)); }
+html[data-theme="report"] { --card-surface: #FFFFFF; }
+html[data-theme="report-dark"] { --card-surface: #1e2939; }
+/* Phone: an odd last summary card spans the row */
+@media (max-width: 639px) { .pj-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pj-kpis > :last-child:nth-child(odd) { grid-column: 1 / -1; } }
 @media (max-width: 900px) {
   .pj-split { grid-template-columns: minmax(0, 1fr); }
   .pj-queue-pane { border-inline-end: 0; border-bottom: 1px solid var(--line2); }
@@ -956,10 +980,9 @@ body.nokeys .search kbd { display: none; }
 #project-release-summary .assembly-release-readiness { max-width: 480px; }
 #project-release-summary .assembly-progress-bar { height: 4px; }
 #project-release-summary .gate-chev { margin-inline-start: 2px; opacity: .7; }
-/* Team chips: removal appears on hover/focus only; "Shared by" is plain text */
-.tchip .rm { opacity: 0; transition: opacity .12s ease; }
+/* Team chips: soft pills; the remove control stays quiet until hover/focus (removal confirms and can be undone) */
+.tchip .rm { opacity: .45; transition: opacity .12s ease; }
 .tchip:hover .rm, .tchip:focus-within .rm { opacity: 1; }
-@media (pointer: coarse) { .tchip .rm { opacity: 1; } }
 .tchips-note { font-size: var(--fs-sm); color: var(--gray-500); }
 /* Activity view switch row matches Work's toolbar row */
 .project-subbar { padding-block: 6px; border-bottom: 1px solid var(--line); }
@@ -1230,7 +1253,7 @@ html[data-hide-work-subtasks] .work-subtasks { display: none; }
 
 /* Project team chips */
 .tchips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 16px var(--gutter); border-bottom: 1px solid var(--line); }
-.tchip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 10px; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--line2); background: var(--hover); font-size: var(--fs-sm); font-weight: 600; }
+.tchip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 10px; border-radius: 999px; box-shadow: none; background: var(--hover); font-size: var(--fs-sm); font-weight: 600; }
 .tchip a:hover { text-decoration: underline; }
 .tchip .rm { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 4px; color: var(--gray-400); }
 .tchip .rm:hover { background: var(--line2); color: var(--white); }

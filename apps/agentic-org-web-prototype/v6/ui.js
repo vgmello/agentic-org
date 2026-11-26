@@ -185,7 +185,7 @@ function problemActionButtons(it, first, btn) {
 function itemActionButtons(it, first) {
   const btn = (style, act, v, icon, label) => `<button class="btn ${style} sm" type="button" data-act="${act}" data-id="${it.id}"${v ? ` data-v="${esc(v)}"` : ""}>${icon ? ic(icon, "ic16") : ""}${esc(label)}</button>`;
   if (it.acts) return it.acts.map(([label, outcome, icon, mode], i) => mode === "changes" ? btn(i ? "outline" : first, "reply", "changes", icon, label) : btn(i ? "outline" : first, "handle", outcome, icon, label));
-  if (it.kind === "approval") return [btn(first, "handle", "Approved", "check", "Approve"), btn("danger-outline", "handle", "Denied", "deny", "Deny")];
+  if (it.kind === "approval") return [btn(first, "handle", "Approved", "check", it.cta || "Approve"), btn("danger-outline", "handle", "Denied", "deny", "Deny")];
   if (it.kind === "question") return [btn(first, "reply", "", "reply", "Reply")];
   if (it.kind === "decision") return it.opts.map((o, i) => btn(i ? "outline" : first, "handle", "Chose: " + o, null, o));
   return it.kind === "problem" ? problemActionButtons(it, first, btn) : [];

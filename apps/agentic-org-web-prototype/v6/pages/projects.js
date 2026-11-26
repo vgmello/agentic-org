@@ -6,7 +6,7 @@ import { notFound } from "./settings.js";
 import { scopedWorkToolbar, scopedWorkWorkspace } from "./work.js";
 import { render } from "../shell/router.js";
 import { S } from "../state.js";
-import { acts, av, avStack, crumbs, esc, feed, hdr, ic, itemActions, kindWord, leadOf, leadTxt, linkTabs, menuItem, moreMenu, needsCard, pill, presPill, progress, projMembers, projPill, recommendationCallout, searchRow, searchToggle, sectionHead, sectionTabs, SEP, showMenu, statusLine, toast } from "../ui.js";
+import { acts, av, avStack, crumbs, esc, feed, hdr, ic, itemActions, kindWord, leadOf, leadTxt, linkTabs, menuItem, moreMenu, needsCard, pill, plural, presPill, progress, projMembers, projPill, recommendationCallout, searchRow, searchToggle, sectionHead, sectionTabs, SEP, showMenu, statusLine, toast } from "../ui.js";
 
 function pageProjects() {
   const q = S.projectQuery.trim().toLowerCase();
@@ -55,12 +55,12 @@ function projectBody(id, tab) {
     return `<div class="pj-overview">
       <p class="pj-goal"><span>Goal</span>${esc(pr.goal)}</p>
       ${projectSummaryHtml(id, ws)}
-      <section class="project-sec" aria-labelledby="pj-needs-h">${sectionHead({ id: "pj-needs-h", title: "Needs your attention", count: pending ? `${pending} pending` : "" })}${needs.length ? projectDecisionsHtml(needs) : `<p class="muted">Nothing needs you on this project.</p>`}</section>
+      <section class="project-sec" aria-labelledby="pj-needs-h">${sectionHead({ id: "pj-needs-h", title: "Needs your attention", count: pending ? `${pending} pending` : "", right: `<a class="link" href="#/inbox">Open inbox${ic("chev-right", "ic16")}</a>` })}${needs.length ? projectDecisionsHtml(needs) : `<p class="muted">Nothing needs you on this project.</p>`}</section>
       <section class="project-sec" aria-labelledby="pj-act-h">${sectionHead({ id: "pj-act-h", title: "Recent activity", right: `<a class="link" href="#/projects/${esc(id)}/activity">All activity${ic("chev-right", "ic16")}</a>` })}${feed(acts().filter((a) => a.proj === id).slice(0, 6), { noProj: true })}</section>
     </div>`;
   }
   if (tab === "work") return scopedWorkToolbar("project", id, ws) + scopedWorkWorkspace();
-  if (tab === "team") return projectTeams(id) + memberRows(projMembers(id), { emptyText: "No members yet." });
+  if (tab === "team") return `<div class="pj-team">${projectTeams(id)}${memberRows(projMembers(id), { emptyText: "No members yet." })}</div>`;
   if (tab === "activity") return pageActivity(id);
   if (tab === "insights") return projectInsights(id);
   if (tab === "conversations") return `<div class="section">${conversationPreview(pr.channel)}</div>`;
@@ -73,7 +73,10 @@ function projectCycle(id) {
   const done = insightCompletions(id), since = (days) => INSIGHT_TODAY - days * INSIGHT_DAY;
   const week = done.filter((c) => c.day > since(7)), prior = done.filter((c) => c.day > since(14) && c.day <= since(7));
   const perDay = week.length / 7, priorPerDay = prior.length / 7;
-  const cycles = week.length ? week.map((c) => c.cycle) : done.map((c) => c.cycle);
+  /* Median cycle uses the same scope as Insights' default period (this month), so both show one number. */
+  const today = new Date(INSIGHT_TODAY), monthStart = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1);
+  const month = done.filter((c) => c.day >= monthStart);
+  const cycles = (month.length ? month : done).map((c) => c.cycle);
   const sorted = [...cycles].sort((a, b) => a - b), median = sorted.length ? sorted[Math.ceil(sorted.length / 2) - 1] : null;
   const delta = priorPerDay ? Math.round(100 * (perDay - priorPerDay) / priorPerDay) : null;
   const rate = perDay >= 24 ? { value: (perDay / 24).toFixed(1), unit: "closed / hour" } : { value: perDay.toFixed(1), unit: "closed / day" };
@@ -84,7 +87,7 @@ function cycleCard(id, card) {
   if (!c.closed && c.median == null) return card("Cycle time", "clock", "—", "no closed tasks yet", "Shows once work closes", `#/projects/${id}/insights`);
   const trend = c.delta == null ? "" : c.delta === 0 ? `<span>Steady vs last week</span>`
     : `<span class="pj-pace ${c.delta > 0 ? "is-ok" : "is-warn"}">${c.delta > 0 ? "+" : ""}${c.delta}% vs last week</span>`;
-  return card("Cycle time", "clock", c.value, c.unit, `<span>Median ${fmtHours(c.median)} to close</span>${trend}`, `#/projects/${id}/insights`);
+  return card("Cycle time", "clock", c.value, c.unit, `<span>Median cycle ${fmtHours(c.median)}</span>${trend}`, `#/projects/${id}/insights`);
 }
 const fmtHours = (h) => (h == null ? "—" : h >= 48 ? `${(h / 24).toFixed(1)} d` : `${Math.round(h)} h`);
 
@@ -101,7 +104,7 @@ function projectSummaryHtml(id, ws) {
   return `<section class="pj-kpis" aria-label="Project at a glance">
       ${card("All work", "check-circle", `${done}/${total}`, "tasks done", `<span class="pj-kpi-bar" aria-hidden="true"><i style="width:${pct}%"></i></span>`, `#/projects/${id}/work`)}
       ${card("Schedule", "calendar-check", pr.due ? esc(pr.due) : "—", pr.due ? "due" : "no due date", pr.pace ? `<span class="pj-pace${tone ? " is-" + tone : ""}">${esc(pr.pace)}</span>${pr.release ? ` · ${esc(pr.release)}` : ""}` : "", `#/projects/${id}/activity`)}
-      ${card("Open work", "clipboard", String(open), "open", `${blocked} blocked · ${mine} need you`, `#/projects/${id}/work`)}
+      ${card("Open work", "clipboard", String(open), "open", `${blocked} blocked · ${plural(mine, "task", "tasks")} waiting on you`, `#/projects/${id}/work`)}
       ${cycleCard(id, card)}
       ${card("Team", "user-group", String(members.length), members.length === 1 ? "member" : "members", `${avStack(members, 5)}<span class="pj-kpi-teams">${pr.teams.map((t) => esc(TEAMS[t].name)).join(", ")}</span>`, `#/projects/${id}/team`)}
     </section>`;
@@ -109,39 +112,47 @@ function projectSummaryHtml(id, ws) {
 
 /* Inbox-style split: a priority queue on the left, the selected decision on the right.
    Narrow containers stack the decision above the queue. */
-function decisionDetailHtml(it) {
-  const k = KIND[it.kind] || {};
+/* Kind reads "Approval · Release sign-off", but never repeats itself ("Suggestion", not "Suggestion · Tess suggestion"). */
+function decisionKind(it) {
+  const label = KIND[it.kind]?.label || "Request", sub = it.sub || "";
+  return sub && !sub.toLowerCase().includes(label.toLowerCase()) ? `${label} · ${sub}` : label;
+}
+function decisionFields(it) {
   const field = (dt, dd, cls = "") => `<div><dt>${dt}</dt><dd${cls ? ` class="${cls}"` : ""}>${dd}</dd></div>`;
+  const work = it.task ? field("Work item", `<a class="alink" href="#/projects/${esc(it.proj)}/work?item=${encodeURIComponent(it.task)}">${esc(it.task)}</a>`) : "";
+  const expires = it.expires ? field("Expires", esc(it.expires), it.handled ? "" : "triage-expiry") : "";
+  const clears = it.clears || KIND[it.kind]?.clears || "When handled";
+  return `<dl class="triage-fields pj-fields">${field("Kind", esc(decisionKind(it)))}${work}${expires}${field("Clears", esc(clears))}</dl>`;
+}
+function decisionDetailHtml(it) {
+  const rec = it.rec && !it.handled ? recommendationCallout(it) : "";
   return `<article class="pj-detail" aria-labelledby="pj-detail-t">
-      <div class="pj-detail-top">${av(it.from, 24)}<span class="grow"><b>${esc(M[it.from].name)}</b> · ${esc(it.sub)} · ${esc(it.time)}</span></div>
-      <h3 id="pj-detail-t" class="pj-detail-title">${esc(it.what)}</h3>
+      <div class="pj-detail-top">${av(it.from, 24)}<span class="grow"><b>${esc(M[it.from].name)}</b> · ${esc(it.time)}</span></div>
+      <h3 id="pj-detail-t" class="pj-detail-title"><a href="#/inbox/${esc(it.id)}" title="Open in Inbox">${esc(it.what)}</a></h3>
       ${it.why ? `<p class="why">${esc(it.why)}</p>` : ""}
-      <dl class="triage-fields pj-fields">
-        ${field("Kind", `${esc(k.label || "Request")} · ${esc(it.sub)}`)}
-        ${it.task ? field("Work item", `<a class="alink" href="#/projects/${esc(it.proj)}/work?item=${encodeURIComponent(it.task)}">${esc(it.task)}</a>`) : ""}
-        ${it.expires ? field("Expires", esc(it.expires), it.handled ? "" : "triage-expiry") : ""}
-        ${field("Clears", esc(it.clears || k.clears || "When handled"))}
-      </dl>
-      ${it.rec && !it.handled ? recommendationCallout(it) : ""}
+      ${decisionFields(it)}
+      ${rec}
       ${itemActions(it, "card")}
-      <div class="pj-detail-foot"><a class="link" href="#/inbox/${esc(it.id)}">Open in Inbox${ic("open", "ic16")}</a></div>
     </article>`;
 }
+/* Queue row state, as in the Inbox: handled, urgent (has a deadline) or pending. */
+function queueState(it) {
+  if (it.handled) return { state: "handled", icon: "check-circle", meta: `<span>${esc(it.outcome || "Handled")}</span>` };
+  if (it.expires) return { state: "urgent", icon: "bell", meta: `<span class="triage-expiry">${ic("clock", "ic14")}${esc(it.expires)}</span>` };
+  return { state: "pending", icon: KIND[it.kind]?.icon || "inbox", meta: "" };
+}
 /* Rows reuse the Inbox queue row markup (.triage-item) so both lists read as one component. */
+function queueRowHtml(it, sel) {
+  const { state, icon, meta } = queueState(it), current = it === sel;
+  return `<li><button type="button" class="triage-item pj-q-item" data-act="set" data-k="pjDecision" data-v="${esc(it.id)}" aria-pressed="${current}"${current ? ' aria-current="true"' : ""}>
+        <span class="triage-person">${av(it.from, 24)}<span class="triage-sender"><strong>${esc(M[it.from].name)}</strong><span class="triage-kind">${esc(it.sub)}</span></span><span class="triage-stamp"><span class="triage-state-icon" data-state="${state}">${ic(icon, "ic14")}</span><time>${esc(it.time)}</time></span></span>
+        <span class="triage-title">${esc(it.what)}</span>${meta ? `<span class="triage-meta">${meta}</span>` : ""}</button></li>`;
+}
 function projectDecisionsHtml(needs) {
   const sel = needs.find((it) => it.id === S.pjDecision) || needs[0];
-  const item = (it) => {
-    const k = KIND[it.kind] || {};
-    const meta = it.handled ? `<span class="triage-meta"><span>${esc(it.outcome || "Handled")}</span></span>`
-      : it.expires ? `<span class="triage-meta"><span class="triage-expiry">${ic("clock", "ic14")}${esc(it.expires)}</span></span>` : "";
-    return `<li><button type="button" class="triage-item pj-q-item" data-act="set" data-k="pjDecision" data-v="${esc(it.id)}" aria-pressed="${it === sel}"${it === sel ? ' aria-current="true"' : ""}>
-        <span class="triage-person">${av(it.from, 24)}<span class="triage-sender"><strong>${esc(M[it.from].name)}</strong><span class="triage-kind">${ic(k.icon || "bell", "ic14")}${esc(it.sub)}</span></span><span class="triage-stamp"><time>${esc(it.time)}</time></span></span>
-        <span class="triage-title">${esc(it.what)}</span>${meta}</button></li>`;
-  };
   return `<div class="pj-split">
       <nav class="pj-queue-pane" aria-label="Priority queue">
-        <ul role="list" class="pj-q-list" tabindex="-1">${needs.map(item).join("")}</ul>
-        <a class="pj-queue-all" href="#/inbox">View all in Inbox${ic("chev-right", "ic16")}</a></nav>
+        <ul role="list" class="pj-q-list" tabindex="-1">${needs.map((it) => queueRowHtml(it, sel)).join("")}</ul></nav>
       ${decisionDetailHtml(sel)}
     </div>`;
 }
@@ -186,6 +197,13 @@ function memberRows(ids, opts = {}) {
 function mountProjectQueue(main) {
   const list = main.querySelector(".pj-q-list"), cur = list?.querySelector('[aria-current="true"]');
   if (!list || !cur) return;
+  /* Show exactly four whole rows; more scroll, with a fade at the bottom edge as the cue. */
+  const rows = [...list.children];
+  if (rows.length > 4) {
+    const pad = parseFloat(getComputedStyle(list).paddingTop) || 0;
+    list.style.maxHeight = `${rows[3].offsetTop - list.offsetTop + rows[3].offsetHeight + pad}px`;
+    list.classList.add("is-scrolling");
+  }
   const top = cur.offsetTop - list.offsetTop, bottom = top + cur.offsetHeight;
   if (top < list.scrollTop) list.scrollTop = top;
   else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
