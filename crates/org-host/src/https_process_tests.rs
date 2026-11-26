@@ -111,7 +111,7 @@ fn start(base: &Path, address: SocketAddr, first: bool) -> (Host, PathBuf, Vec<S
     });
     // As the registered start installs it: the administrator calls' admission (this test's
     // executable is the development `agentic-org` peer of `fixture_config`).
-    let policy = crate::startup_app_policy(&fixture_config(base), true).unwrap();
+    let policy = crate::startup::startup_app_policy(&fixture_config(base), true).unwrap();
     let db = host
         .service
         .authentication

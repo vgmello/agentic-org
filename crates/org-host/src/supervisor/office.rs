@@ -20,7 +20,8 @@ use std::time::{Duration, Instant, SystemTime};
 use org_office_launch::{FailCode, ServerEvent};
 use org_proto::OfficeStatusReason;
 
-use super::child::{Mode, RunningChild, Signal, SpawnError, Spawner};
+use super::child::{Mode, RunningChild, SpawnError, Spawner};
+use super::signal::Signal;
 use super::state::{OfficeState, SharedState};
 use crate::host_log;
 use crate::keys::OfficeSecretsKeys;

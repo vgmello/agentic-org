@@ -28,7 +28,9 @@ use org_host_control::ops::{
 use org_host_control::{HostOpResult, Password, SessionHandle, TlsPrivateKey};
 use org_proto::ErrorCode;
 
-use super::{connect_verified, not_running, registered_with_origin, say};
+use super::admin_reset::not_running;
+use super::output::say;
+use super::wire::{connect_verified, registered_with_origin};
 
 /// The command's help.
 pub const HELP: &str = "agentic-org admin tls set --cert <file> --key <file> --login <login> \

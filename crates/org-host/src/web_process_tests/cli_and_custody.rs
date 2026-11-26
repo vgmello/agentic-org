@@ -38,7 +38,7 @@ use super::{
 };
 use crate::{
     setup_flow::{
-        office_command::Target,
+        cli_session::Target,
         sign_in_command::{approve_on_target, open_approved_office, ApprovedOfficeChannel},
     },
     Host,

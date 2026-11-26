@@ -16,7 +16,8 @@ use crate::home::{HostLock, Layout};
 use crate::hostdb::{HostDb, HostDbInit};
 use crate::instance::registry::Registry;
 use crate::instance::setup::{Journal, Paths};
-use crate::{host_log, startup_app_policy, Config, Host, HostError};
+use crate::startup::startup_app_policy;
+use crate::{host_log, Config, Host, HostError};
 
 fn refused(context: &'static str, why: impl std::fmt::Display) -> HostError {
     HostError::Io {
@@ -42,7 +43,7 @@ impl Host {
     ) -> Result<Self, HostError> {
         // Before any key or custody is read (this path opens custody before the ordinary
         // composition is reached).
-        crate::harden()?;
+        crate::config::harden()?;
         let record = Journal::snapshot(&paths.base, name)
             .map_err(|e| refused("reading the setup record", e))?;
         // Before anything is touched on disk (the record was only read): a release build

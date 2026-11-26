@@ -12,9 +12,10 @@ use org_proto::federation::{
 };
 use org_proto::{ApiError, Call};
 
-use super::office_command::{connect_cli_session, end_session, Target};
+use super::cli_session::{connect_cli_session, end_session, Target};
+use super::output::say;
 use super::project_command::OfficeSession;
-use super::{registered, say};
+use super::wire::registered;
 
 /// Input for `agentic-org office invite`.
 #[derive(Debug, Clone)]

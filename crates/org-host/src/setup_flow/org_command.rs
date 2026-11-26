@@ -20,8 +20,9 @@ use org_proto::selected_bootstrap::PlanV1;
 use org_proto::web::organizations::{RepositoryRegistration, SelectedCreateParams};
 use org_proto::{ErrorCode, OfficeRole};
 
-use super::office_command::{connect_cli_session, end_session, AskPassword, Target};
-use super::{registered, say};
+use super::cli_session::{connect_cli_session, end_session, AskPassword, Target};
+use super::output::say;
+use super::wire::registered;
 
 /// Help text for `agentic-org org`.
 pub const HELP: &str = "agentic-org org <subcommand>\n\
