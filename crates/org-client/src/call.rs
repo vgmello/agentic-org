@@ -7,11 +7,42 @@ use org_proto::{Call, CallError, Request};
 use super::*;
 use crate::transport::{await_response, encode_request, enqueue_request, finish_outcome};
 
+/// Per-response metadata carried alongside an RPC result (`TASK-115` / `doc-101`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CallMeta {
+    /// Non-zero pending wakes/messages hint reported on this response, if any.
+    pub waiting_messages: Option<u32>,
+}
+
+impl CallMeta {
+    fn from_response(response: &Response) -> Self {
+        Self {
+            waiting_messages: response.waiting_messages.filter(|&n| n > 0),
+        }
+    }
+}
+
+/// An RPC call's decoded value paired with the metadata from that exact response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallOutcome<T> {
+    pub value: T,
+    pub meta: CallMeta,
+}
+
 impl Client {
     /// Calls `C` and waits for the answer up to [`default_timeout`] for its method
     /// ([`DEFAULT_TIMEOUT`], or longer for the calls that are slow by nature).
     pub fn call<C: Call>(&self, params: &C::Params) -> Result<C::Result, ClientError> {
-        self.call_with_timeout::<C>(params, default_timeout(C::METHOD))
+        self.call_with_meta::<C>(params)
+            .map(|outcome| outcome.value)
+    }
+
+    /// Calls `C` and returns both the decoded result and per-response [`CallMeta`].
+    pub fn call_with_meta<C: Call>(
+        &self,
+        params: &C::Params,
+    ) -> Result<CallOutcome<C::Result>, ClientError> {
+        self.call_with_timeout_and_meta::<C>(params, default_timeout(C::METHOD))
     }
 
     /// Calls `C`. `timeout` bounds the whole call, sending the request and then waiting for
@@ -22,6 +53,17 @@ impl Client {
         params: &C::Params,
         timeout: Duration,
     ) -> Result<C::Result, ClientError> {
+        self.call_with_timeout_and_meta::<C>(params, timeout)
+            .map(|outcome| outcome.value)
+    }
+
+    /// Calls `C` with an explicit timeout and returns both the decoded result and per-response
+    /// [`CallMeta`].
+    pub fn call_with_timeout_and_meta<C: Call>(
+        &self,
+        params: &C::Params,
+        timeout: Duration,
+    ) -> Result<CallOutcome<C::Result>, ClientError> {
         self.call_tracked::<C>(params, timeout, &mut false)
     }
 
@@ -32,7 +74,17 @@ impl Client {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, ClientError> {
-        self.call_raw_with_timeout(method, params, default_timeout(method))
+        self.call_raw_with_meta(method, params)
+            .map(|outcome| outcome.value)
+    }
+
+    /// Like [`Client::call_raw`], returning the JSON `result` alongside per-response [`CallMeta`].
+    pub fn call_raw_with_meta(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<CallOutcome<serde_json::Value>, ClientError> {
+        self.call_raw_with_timeout_and_meta(method, params, default_timeout(method))
     }
 
     /// Sends one raw JSON-RPC method and params object with an explicit timeout budget (used for
@@ -43,6 +95,18 @@ impl Client {
         params: serde_json::Value,
         timeout: Duration,
     ) -> Result<serde_json::Value, ClientError> {
+        self.call_raw_with_timeout_and_meta(method, params, timeout)
+            .map(|outcome| outcome.value)
+    }
+
+    /// Like [`Client::call_raw_with_timeout`], returning the JSON `result` alongside per-response
+    /// [`CallMeta`].
+    pub fn call_raw_with_timeout_and_meta(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<CallOutcome<serde_json::Value>, ClientError> {
         let id = self.next_request_id()?;
         let request = Request {
             id,
@@ -51,8 +115,9 @@ impl Client {
             principal: None,
         };
         let response = self.send_request(request, timeout, &mut false)?;
+        let meta = CallMeta::from_response(&response);
         match response.outcome {
-            org_proto::Outcome::Result(value) => Ok(value),
+            org_proto::Outcome::Result(value) => Ok(CallOutcome { value, meta }),
             org_proto::Outcome::Error(error) => Err(ClientError::Api(error)),
         }
     }
@@ -67,39 +132,26 @@ impl Client {
         Ok(id)
     }
 
-    /// [`Client::call_with_timeout`], also saying whether the request was handed to the writer
-    /// and not withdrawn again (`sent`), i.e. whether the server may have seen any of it.
+    /// [`Client::call_with_timeout_and_meta`], also saying whether the request was handed to the
+    /// writer and not withdrawn again (`sent`), i.e. whether the server may have seen any of it.
     pub(crate) fn call_tracked<C: Call>(
         &self,
         params: &C::Params,
         timeout: Duration,
         sent: &mut bool,
-    ) -> Result<C::Result, ClientError> {
+    ) -> Result<CallOutcome<C::Result>, ClientError> {
         let id = self.next_request_id()?;
         let request =
             Request::new::<C>(id, params).map_err(|e| ClientError::Protocol(e.to_string()))?;
         let response = self.send_request(request, timeout, sent)?;
-        response.into_result::<C>().map_err(|error| match error {
+        let meta = CallMeta::from_response(&response);
+        let value = response.into_result::<C>().map_err(|error| match error {
             CallError::Api(error) => ClientError::Api(error),
             CallError::Decode(_) => {
                 ClientError::undecodable(&format!("the result of `{}`", C::METHOD))
             }
-        })
-    }
-
-    /// Returns the non-zero `waiting_messages` hint reported on the most recent office response,
-    /// if any (`TASK-115` / `doc-101`).
-    pub fn last_waiting_messages(&self) -> Option<u32> {
-        let count = self.shared.last_waiting_messages.load(Ordering::Relaxed);
-        (count > 0).then_some(count)
-    }
-
-    /// Resets the cached `waiting_messages` hint before executing a new command so a non-RPC
-    /// dispatch path can never inherit a stale count from an earlier request.
-    pub fn clear_last_waiting_messages(&self) {
-        self.shared
-            .last_waiting_messages
-            .store(0, Ordering::Relaxed);
+        })?;
+        Ok(CallOutcome { value, meta })
     }
 
     fn send_request(
@@ -140,11 +192,7 @@ impl Client {
         if !matches!(outcome, Ok(Ok(_))) && self.settle(&state) {
             *sent = false;
         }
-        let response = finish_outcome(outcome, deadline)?;
-        self.shared
-            .last_waiting_messages
-            .store(response.waiting_messages.unwrap_or(0), Ordering::Relaxed);
-        Ok(response)
+        finish_outcome(outcome, deadline)
     }
 
     /// This call is out of time (or the connection is going away). What happens to its request

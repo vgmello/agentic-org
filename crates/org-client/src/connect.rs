@@ -74,7 +74,6 @@ impl Client {
             events: Arc::new(Mutex::new(None)),
             next_subscription: AtomicU64::new(1),
             queued_bytes: AtomicUsize::new(0),
-            last_waiting_messages: AtomicU32::new(0),
             stream,
         });
         let (outbound, queue) = mpsc::sync_channel(WRITE_QUEUE);
