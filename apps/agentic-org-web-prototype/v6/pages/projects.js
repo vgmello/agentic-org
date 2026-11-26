@@ -53,10 +53,9 @@ function projectBody(id, tab) {
     const needs = IN.filter((i) => i.proj === id && (!i.handled || i.handledNow));
     const pending = needs.filter((i) => !i.handled).length;
     return `<div class="pj-overview">
+      <p class="pj-goal"><span>Goal</span>${esc(pr.goal)}</p>
       ${projectSummaryHtml(id, ws)}
-      <section class="project-sec" aria-labelledby="pj-goal-h">${sectionHead({ id: "pj-goal-h", title: "Goal" })}<p class="why">${esc(pr.goal)}</p>
-        ${pr.risk ? `<div class="callout" style="margin-top:12px">${ic("warn", "ic20")}<span>${esc(pr.risk)}</span></div>` : ""}</section>
-      <section class="project-sec" aria-labelledby="pj-needs-h">${sectionHead({ id: "pj-needs-h", title: "Needs your attention", count: pending ? `${pending} pending` : "", right: `<a class="link" href="#/inbox">Open inbox${ic("chev-right", "ic16")}</a>` })}${needs.length ? projectDecisionsHtml(needs) : `<p class="muted">Nothing needs you on this project.</p>`}</section>
+      <section class="project-sec" aria-labelledby="pj-needs-h">${sectionHead({ id: "pj-needs-h", title: "Needs your attention", count: pending ? `${pending} pending` : "" })}${needs.length ? projectDecisionsHtml(needs) : `<p class="muted">Nothing needs you on this project.</p>`}</section>
       <section class="project-sec" aria-labelledby="pj-act-h">${sectionHead({ id: "pj-act-h", title: "Recent activity", right: `<a class="link" href="#/projects/${esc(id)}/activity">All activity${ic("chev-right", "ic16")}</a>` })}${feed(acts().filter((a) => a.proj === id).slice(0, 6), { noProj: true })}</section>
     </div>`;
   }
@@ -79,7 +78,7 @@ function projectSummaryHtml(id, ws) {
       <span class="pj-kpi-v"><b>${value}</b>${unit ? `<span>${unit}</span>` : ""}</span>
       <span class="pj-kpi-f">${foot}</span></a>`;
   return `<section class="pj-kpis" aria-label="Project at a glance">
-      ${card("Progress", "check-circle", `${done}/${total}`, "tasks done", `<span class="pj-kpi-bar" aria-hidden="true"><i style="width:${pct}%"></i></span>`, `#/projects/${id}/work`)}
+      ${card("All work", "check-circle", `${done}/${total}`, "tasks done", `<span class="pj-kpi-bar" aria-hidden="true"><i style="width:${pct}%"></i></span>`, `#/projects/${id}/work`)}
       ${card("Schedule", "calendar-check", pr.due ? esc(pr.due) : "—", pr.due ? "due" : "no due date", pr.pace ? `<span class="pj-pace${tone ? " is-" + tone : ""}">${esc(pr.pace)}</span>${pr.release ? ` · ${esc(pr.release)}` : ""}` : "", `#/projects/${id}/activity`)}
       ${card("Open work", "clipboard", String(open), "open", `${blocked} blocked · ${mine} need you`, `#/projects/${id}/work`)}
       ${card("Team", "user-group", String(members.length), members.length === 1 ? "member" : "members", `${avStack(members, 5)}<span class="pj-kpi-teams">${pr.teams.map((t) => esc(TEAMS[t].name)).join(", ")}</span>`, `#/projects/${id}/team`)}
@@ -89,23 +88,36 @@ function projectSummaryHtml(id, ws) {
 /* Inbox-style split: a priority queue on the left, the selected decision on the right.
    Narrow containers stack the decision above the queue. */
 function decisionDetailHtml(it) {
-  const exp = it.expires && !it.handled ? `<span class="pin pj-detail-exp">${ic("clock", "ic14")}${esc(it.expires)}</span>` : "";
+  const k = KIND[it.kind] || {};
+  const field = (dt, dd, cls = "") => `<div><dt>${dt}</dt><dd${cls ? ` class="${cls}"` : ""}>${dd}</dd></div>`;
   return `<article class="pj-detail" aria-labelledby="pj-detail-t">
-      <div class="pj-detail-top">${av(it.from, 24)}<span class="grow"><b>${esc(M[it.from].name)}</b> · ${esc(it.sub)} · ${esc(it.time)}</span>${exp}</div>
+      <div class="pj-detail-top">${av(it.from, 24)}<span class="grow"><b>${esc(M[it.from].name)}</b> · ${esc(it.sub)} · ${esc(it.time)}</span></div>
       <h3 id="pj-detail-t" class="pj-detail-title">${esc(it.what)}</h3>
-      <p class="why">${esc(it.why)}</p>
+      ${it.why ? `<p class="why">${esc(it.why)}</p>` : ""}
+      <dl class="triage-fields pj-fields">
+        ${field("Kind", `${esc(k.label || "Request")} · ${esc(it.sub)}`)}
+        ${it.task ? field("Work item", `<a class="alink" href="#/projects/${esc(it.proj)}/work?item=${encodeURIComponent(it.task)}">${esc(it.task)}</a>`) : ""}
+        ${it.expires ? field("Expires", esc(it.expires), it.handled ? "" : "triage-expiry") : ""}
+        ${field("Clears", esc(it.clears || k.clears || "When handled"))}
+      </dl>
       ${it.rec && !it.handled ? recommendationCallout(it) : ""}
       ${itemActions(it, "card")}
-      <div class="pj-detail-foot">${it.task ? `<span class="work-ref">${esc(it.task)}</span>` : "<span></span>"}<a class="link" href="#/inbox/${esc(it.id)}">Details${ic("open", "ic16")}</a></div>
+      <div class="pj-detail-foot"><a class="link" href="#/inbox/${esc(it.id)}">Open in Inbox${ic("open", "ic16")}</a></div>
     </article>`;
 }
+/* Rows reuse the Inbox queue row markup (.triage-item) so both lists read as one component. */
 function projectDecisionsHtml(needs) {
   const sel = needs.find((it) => it.id === S.pjDecision) || needs[0];
-  const item = (it) => `<li><button type="button" class="pj-q-item${it === sel ? " is-current" : ""}" data-act="set" data-k="pjDecision" data-v="${esc(it.id)}" aria-pressed="${it === sel}">
-        <span class="pj-q-kind">${ic(KIND[it.kind]?.icon || "bell", "ic14")}<span class="grow">${esc(it.sub)}</span><time>${esc(it.time)}</time></span>
-        <span class="pj-q-title">${esc(it.what)}</span>${it.handled ? `<span class="pj-q-done">${esc(it.outcome || "Handled")}</span>` : ""}</button></li>`;
+  const item = (it) => {
+    const k = KIND[it.kind] || {};
+    const meta = it.handled ? `<span class="triage-meta"><span>${esc(it.outcome || "Handled")}</span></span>`
+      : it.expires ? `<span class="triage-meta"><span class="triage-expiry">${ic("clock", "ic14")}${esc(it.expires)}</span></span>` : "";
+    return `<li><button type="button" class="triage-item pj-q-item" data-act="set" data-k="pjDecision" data-v="${esc(it.id)}" aria-pressed="${it === sel}"${it === sel ? ' aria-current="true"' : ""}>
+        <span class="triage-person">${av(it.from, 24)}<span class="triage-sender"><strong>${esc(M[it.from].name)}</strong><span class="triage-kind">${ic(k.icon || "bell", "ic14")}${esc(it.sub)}</span></span><span class="triage-stamp"><time>${esc(it.time)}</time></span></span>
+        <span class="triage-title">${esc(it.what)}</span>${meta}</button></li>`;
+  };
   return `<div class="pj-split">
-      <nav class="pj-queue-pane" aria-label="Priority queue"><p class="pj-queue-h">Priority queue <span class="sec-head-count">${needs.length}</span></p>
+      <nav class="pj-queue-pane" aria-label="Priority queue">
         <ul role="list" class="pj-q-list" tabindex="-1">${needs.map(item).join("")}</ul>
         <a class="pj-queue-all" href="#/inbox">View all in Inbox${ic("chev-right", "ic16")}</a></nav>
       ${decisionDetailHtml(sel)}
@@ -150,7 +162,7 @@ function memberRows(ids, opts = {}) {
 
 /* Keep the selected queue item visible inside the scrolling queue after a re-render. */
 function mountProjectQueue(main) {
-  const list = main.querySelector(".pj-q-list"), cur = list?.querySelector(".is-current");
+  const list = main.querySelector(".pj-q-list"), cur = list?.querySelector('[aria-current="true"]');
   if (!list || !cur) return;
   const top = cur.offsetTop - list.offsetTop, bottom = top + cur.offsetHeight;
   if (top < list.scrollTop) list.scrollTop = top;

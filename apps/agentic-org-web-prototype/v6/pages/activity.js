@@ -169,7 +169,7 @@ function releaseGateState(item) {
   if (!item.handled) return "pending";
   return releaseGateBlocked(item.outcome) ? "blocked" : "cleared";
 }
-const releaseReadinessLabel = (entries, merged) => `Readiness ${assemblyPct(entries)}% · ${merged}/${entries.length} tasks merged`;
+const releaseReadinessLabel = (entries, merged) => `Release readiness ${assemblyPct(entries)}% · ${merged}/${entries.length} release tasks merged`;
 function projectReleaseSummary(id) {
   const release = P[id].release;
   if (!release) return "";
