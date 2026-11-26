@@ -170,8 +170,40 @@ CREATE TABLE message_attachments (
   media_type TEXT NOT NULL,
   byte_count INTEGER NOT NULL CHECK (byte_count>=0),
   content_sha256 TEXT NOT NULL CHECK (length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+  filename TEXT CHECK (filename IS NULL OR length(filename) BETWEEN 1 AND 255),
+  title TEXT CHECK (title IS NULL OR length(title) BETWEEN 1 AND 160),
+  description TEXT CHECK (description IS NULL OR length(description)<=280),
+  artifact_status TEXT NOT NULL DEFAULT 'final' CHECK (artifact_status IN ('draft','review','final','superseded','archived')),
+  width INTEGER CHECK (width IS NULL OR width>0),
+  height INTEGER CHECK (height IS NULL OR height>0),
+  page_count INTEGER CHECK (page_count IS NULL OR page_count>0),
+  uploaded_by_employee_id TEXT,
   PRIMARY KEY (organization_id,message_id,id),
   FOREIGN KEY (organization_id,message_id) REFERENCES messages(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+-- Files attached to one participant's answer to an ask (TASK-98.1, ADR-0037): readable by the
+-- ask's conversation members only; bytes content-addressed in <durable>/blobs/.
+CREATE TABLE message_answer_attachments (
+  organization_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  employee_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  media_type TEXT NOT NULL,
+  byte_count INTEGER NOT NULL CHECK (byte_count>=0),
+  content_sha256 TEXT NOT NULL CHECK (length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+  filename TEXT CHECK (filename IS NULL OR length(filename) BETWEEN 1 AND 255),
+  title TEXT CHECK (title IS NULL OR length(title) BETWEEN 1 AND 160),
+  description TEXT CHECK (description IS NULL OR length(description)<=280),
+  artifact_status TEXT NOT NULL DEFAULT 'final' CHECK (artifact_status IN ('draft','review','final','superseded','archived')),
+  width INTEGER CHECK (width IS NULL OR width>0),
+  height INTEGER CHECK (height IS NULL OR height>0),
+  page_count INTEGER CHECK (page_count IS NULL OR page_count>0),
+  uploaded_by_employee_id TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id,message_id,employee_id,id),
+  FOREIGN KEY (organization_id,message_id) REFERENCES messages(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,employee_id) REFERENCES messaging_employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE message_reactions (

@@ -130,6 +130,12 @@ owo-colors = "=4.4.0"
 tabled = { version = "=0.22.0", default-features = false, features = ["std", "ansi"] }
 terminal_size = "=0.4.4"
 thiserror = "=2.0.21"
+# Attachment image sanitization (`crates/org-office` only; TASK-98.1, ADR-0037): pure-Rust
+# decoders and encoders for exactly PNG, JPEG, WebP and GIF. No default features: no C codecs,
+# no threads (rayon), no other formats.
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+# Bounded inflate for attachment validation (PDF object streams, OOXML `[Content_Types].xml`).
+flate2 = { version = "=1.1.11", default-features = false, features = ["rust_backend"] }
 toml = { version = "=1.2.3", default-features = false, features = ["std", "serde", "parse"] }
 
 # Debug builds keep line tables only: panics and backtraces still name every function, file

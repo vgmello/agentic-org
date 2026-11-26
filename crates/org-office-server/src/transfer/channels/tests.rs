@@ -148,6 +148,7 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
             mailbox: Some(mailbox),
             chat: None,
             tasks: None,
+            attachments: None,
             git: None,
             processes: None,
             costs: None,

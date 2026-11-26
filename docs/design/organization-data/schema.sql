@@ -1942,6 +1942,43 @@ CREATE TABLE task_details (
   FOREIGN KEY (organization_id,suggested_verifier_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
+-- Attachments (TASK-98.1, ADR-0037): one row per binding of a file to one target, each with
+-- its own id and ACL (two bindings of the same bytes are two rows). Bytes are never stored in
+-- a database: they live content-addressed in <durable>/blobs/sha256/<aa>/<bb>/<sha256>. A
+-- standalone file's canonical source is state/projects/<project-id>/files/<id>.yaml or
+-- state/files/<id>.yaml, so the rows rebuild losslessly. A person's private files are never
+-- here (HQ's private/user-space.db). The uploader is not a foreign key: a replicated file
+-- never waits on its uploader's profile.
+CREATE TABLE attachments (
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  id TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK (target_kind IN (
+    'task', 'task_comment', 'review_finding', 'review_finding_reply', 'project', 'organization')),
+  target_id TEXT,
+  content_sha256 TEXT NOT NULL CHECK (length(content_sha256) = 64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+  mime_type TEXT NOT NULL CHECK (mime_type IN (
+    'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'text/markdown', 'text/plain', 'text/csv', 'application/json')),
+  byte_count INTEGER NOT NULL CHECK (byte_count >= 0),
+  filename TEXT NOT NULL CHECK (length(filename) BETWEEN 1 AND 255),
+  title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 160),
+  description TEXT CHECK (description IS NULL OR length(description) <= 280),
+  artifact_status TEXT NOT NULL DEFAULT 'final' CHECK (artifact_status IN ('draft', 'review', 'final', 'superseded', 'archived')),
+  width INTEGER CHECK (width IS NULL OR width > 0),
+  height INTEGER CHECK (height IS NULL OR height > 0),
+  page_count INTEGER CHECK (page_count IS NULL OR page_count > 0),
+  uploaded_by_employee_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (organization_id, id),
+  CHECK ((target_kind = 'organization') = (target_id IS NULL))
+) STRICT;
+CREATE INDEX attachments_by_target ON attachments(organization_id, target_kind, target_id, id);
+CREATE INDEX attachments_by_uploader ON attachments(organization_id, uploaded_by_employee_id, created_at);
+CREATE INDEX attachments_by_content ON attachments(organization_id, content_sha256);
+
 -- Protected messaging tables (conversations, messages, recipient states, preferences,
 -- read markers, attachments, reactions) live exclusively in messaging-schema.sql
 -- (runtime/<office-id>/protected/messaging.db), never in shared office.db (TASK-10 / H-05).

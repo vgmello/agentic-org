@@ -13,6 +13,7 @@
 //!   (`open/office_store.rs`).
 //! - Adding an engine: one arm of [`EngineChoice`] and of [`OfficeStore`].
 
+pub(crate) mod attachment_ops;
 mod companions;
 pub(crate) mod git_ops;
 mod import_validation;
@@ -29,8 +30,8 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use org_store::{Clock, OfficeIdentity, Opening, Store, StoreError, WriterAuthority};
 
 pub(crate) use companions::{
-    open_accounting, open_budgets, open_private_notes, open_providers, open_replication,
-    ReplicationOpenSpec,
+    open_accounting, open_attachments, open_budgets, open_private_notes, open_providers,
+    open_replication, ReplicationOpenSpec,
 };
 pub use git_ops::{
     AttachProjectRepositoryOp, RecordTaskRepoBranchOp, RegisterRepositoryOp, RepositoriesList,
@@ -60,6 +61,7 @@ pub use operations::{
     WatchingModelRead,
 };
 
+use crate::attachments::ports::{AttachmentsEngine, AttachmentsRead};
 use crate::tasks::ports::{TasksEngine, TasksRead};
 
 /// The file of an office's projection, under `<runtime-root>/<office-id>/`.
@@ -152,9 +154,9 @@ impl StoreConfig {
 }
 
 /// An engine every family of the office runs on. It grows by one bound per family.
-pub trait OfficeEngine: TasksEngine {}
+pub trait OfficeEngine: TasksEngine + AttachmentsEngine {}
 
-impl<E: TasksEngine> OfficeEngine for E {}
+impl<E: TasksEngine + AttachmentsEngine> OfficeEngine for E {}
 
 /// One operation on the store, whichever engine holds the projection.
 pub trait StoreOp {
@@ -165,5 +167,5 @@ pub trait StoreOp {
 /// One read of a consistent snapshot, whichever engine holds the projection.
 pub trait ReadOp {
     type Out;
-    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError>;
+    fn read<S: TasksRead + AttachmentsRead>(self, snapshot: &S) -> Result<Self::Out, StoreError>;
 }

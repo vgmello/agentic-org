@@ -1,21 +1,23 @@
 //! `restore --verify`: proving an archive restores. It is read and extracted into an
 //! owner-only disposable folder, never in the shared temporary folder (every member checked
-//! against the manifest), the private task notes
-//! copy passes SQLite's integrity check, the journal verifies to the head the manifest
+//! against the manifest), each private database copy
+//! (task notes, the private file space) passes SQLite's integrity check, the journal verifies to the head the manifest
 //! records, and the office's projections are rebuilt from it on a disposable runtime root.
 //! With `--to`, the archive is then extracted once more, untouched by the rebuild, into a
 //! new folder of the caller's.
 
 use std::path::{Path, PathBuf};
 
-use org_office::backup::{check_task_notes, rebuild_disposable, DisposableRebuild};
+use org_office::backup::{
+    check_task_notes, check_user_space, rebuild_disposable, DisposableRebuild,
+};
 
 use crate::envelope::{ArchiveKind, Passphrase};
 use crate::error::BackupError;
 use crate::journal::check_restored;
 use crate::manifest::{Limits, Manifest};
 use crate::output::{private_tempdir_in, sync_dir};
-use crate::paths::{RelPath, NOTES_DB};
+use crate::paths::{PrivateDb, RelPath};
 use crate::read::{archive_kind, extract, Destination};
 
 /// What to verify.
@@ -47,6 +49,8 @@ pub struct VerifyReport {
     pub encrypted: bool,
     pub manifest: Manifest,
     pub private_notes_checked: bool,
+    /// Whether the archive held HQ's private file space, which passed its integrity check.
+    pub private_user_space_checked: bool,
     pub rebuilt: Rebuilt,
     pub extracted_to: Option<PathBuf>,
 }
@@ -63,7 +67,7 @@ pub fn verify(request: &VerifyRequest<'_>) -> Result<VerifyReport, BackupError> 
         check_new_folder(to)?;
     }
     let work = work_folder(request)?;
-    let (manifest, notes, rebuilt) = verify_in(
+    let (manifest, checked, rebuilt) = verify_in(
         request.archive,
         request.passphrase,
         &request.limits,
@@ -84,7 +88,8 @@ pub fn verify(request: &VerifyRequest<'_>) -> Result<VerifyReport, BackupError> 
     Ok(VerifyReport {
         encrypted,
         manifest,
-        private_notes_checked: notes,
+        private_notes_checked: checked.contains(&PrivateDb::TaskNotes),
+        private_user_space_checked: checked.contains(&PrivateDb::UserSpace),
         rebuilt,
         extracted_to: to,
     })
@@ -153,7 +158,7 @@ pub(crate) fn verify_in(
     passphrase: Option<&Passphrase>,
     limits: &Limits,
     work: &Path,
-) -> Result<(Manifest, bool, Rebuilt), BackupError> {
+) -> Result<(Manifest, Vec<PrivateDb>, Rebuilt), BackupError> {
     let durable = work.join("durable");
     let runtime = work.join("runtime");
     let manifest = extract(
@@ -165,12 +170,7 @@ pub(crate) fn verify_in(
             flush: false,
         },
     )?;
-    let notes = RelPath::parse(NOTES_DB).map_err(BackupError::Refused)?;
-    let has_notes = manifest.files.iter().any(|f| f.path == notes);
-    if has_notes {
-        check_task_notes(&notes.under(&durable))
-            .map_err(|e| BackupError::invalid(format!("its private task notes database: {e}")))?;
-    }
+    let checked = check_private_databases(&durable, &manifest)?;
     let (identity, head) = check_restored(&durable, &manifest)?;
     org_platform::fs::create_owner_only_dir(&runtime)
         .map_err(BackupError::io(format!("making {}", runtime.display())))?;
@@ -190,7 +190,30 @@ pub(crate) fn verify_in(
         employees: report.employees,
         projects: report.projects,
     };
-    Ok((manifest, has_notes, rebuilt))
+    Ok((manifest, checked, rebuilt))
+}
+
+/// Runs SQLite's integrity check on every private database the archive holds (only ever under
+/// its canonical name: the manifest refuses any other spelling), and says which it held.
+fn check_private_databases(
+    durable: &Path,
+    manifest: &Manifest,
+) -> Result<Vec<PrivateDb>, BackupError> {
+    let mut checked = Vec::new();
+    for db in PrivateDb::ALL {
+        let path = RelPath::parse(db.path()).map_err(BackupError::Refused)?;
+        if !manifest.files.iter().any(|f| f.path == path) {
+            continue;
+        }
+        let check = match db {
+            PrivateDb::TaskNotes => check_task_notes,
+            PrivateDb::UserSpace => check_user_space,
+        };
+        check(&path.under(durable))
+            .map_err(|e| BackupError::invalid(format!("its {}: {e}", db.what())))?;
+        checked.push(db);
+    }
+    Ok(checked)
 }
 
 /// Refuses a `--to` that is not a new or empty folder.

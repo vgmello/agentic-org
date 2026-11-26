@@ -17,7 +17,7 @@ use crate::journal::journal_mark;
 use crate::locate::{locate, take_locks, OfficeTarget};
 use crate::manifest::{FileMark, Limits, Manifest, FORMAT, VERSION};
 use crate::output::AtomicFile;
-use crate::paths::{RelPath, MANIFEST_MEMBER};
+use crate::paths::{PrivateDb, RelPath, MANIFEST_MEMBER};
 use crate::tarfmt::member_headers;
 
 /// What to back up and where.
@@ -171,7 +171,7 @@ pub(crate) fn scratch_dir(runtime: &Path) -> Result<tempfile::TempDir, BackupErr
 /// Each member's path and, for a file, where its bytes are read from.
 type Members = Vec<(RelPath, Option<PathBuf>)>;
 
-/// Resolves the notes database to its consistent copy, hashes every file and builds the
+/// Resolves each private database to its consistent copy, hashes every file and builds the
 /// manifest.
 fn describe(
     target: &OfficeTarget,
@@ -190,11 +190,19 @@ fn describe(
             Item::File(path, source) => {
                 let file = match source {
                     Source::Live(file) => file,
-                    Source::Notes(live) => {
-                        let copy = scratch.join("task-notes.db");
-                        org_office::backup::snapshot_task_notes(&live, &copy).map_err(
-                            BackupError::office("copying the private task notes database"),
-                        )?;
+                    Source::Private(db, live) => {
+                        let copy = scratch.join(db.file_name());
+                        let (snapshot, context): (fn(&Path, &Path) -> _, _) = match db {
+                            PrivateDb::TaskNotes => (
+                                org_office::backup::snapshot_task_notes,
+                                "copying the private task notes database",
+                            ),
+                            PrivateDb::UserSpace => (
+                                org_office::backup::snapshot_user_space,
+                                "copying the private file space database",
+                            ),
+                        };
+                        snapshot(&live, &copy).map_err(BackupError::office(context))?;
                         copy
                     }
                 };

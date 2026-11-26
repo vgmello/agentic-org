@@ -1,7 +1,8 @@
 //! The office's side of an organization backup and restore (`TASK-104`, `doc-91` loss
-//! boundaries): where an office folder says its data lives ([`recorded_office`]), a consistent
-//! copy and integrity check of the private task notes database ([`snapshot_task_notes`],
-//! [`check_task_notes`]), and the proof that a restored durable root opens
+//! boundaries): where an office folder says its data lives ([`recorded_office`]), consistent
+//! copies and integrity checks of the private task notes database ([`snapshot_task_notes`],
+//! [`check_task_notes`]) and of HQ's private file space ([`snapshot_user_space`],
+//! [`check_user_space`]), and the proof that a restored durable root opens
 //! ([`rebuild_disposable`]).
 //!
 //! A disposable rebuild opens the office's store, its `L2` accounting and `L3` budgets
@@ -22,7 +23,9 @@ pub use crate::office::recorded::{recorded_office, RecordedOffice};
 /// check and keeps the durable root it replaced (`before-<suffix>`). It holds a full copy of
 /// office secrets, so agent sandboxes mask it like the durable root itself.
 pub const RESTORE_BACKUPS_DIR_NAME: &str = "restore-backups";
-pub use crate::store::sqlite::private_notes_copy::{check_task_notes, snapshot_task_notes};
+pub use crate::store::sqlite::private_notes_copy::{
+    check_task_notes, check_user_space, snapshot_task_notes, snapshot_user_space,
+};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

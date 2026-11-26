@@ -35,8 +35,13 @@ const DURABLE_COMPANIONS: [(&str, CompanionKind); 3] = [
     ("budgets", CompanionKind::Folder),
 ];
 
+/// The folder below `durable/local/offices/<office-id>/` that holds unattached uploads
+/// (`TASK-98.1`): each uploader's bytes before they are bound, never journaled, masked from
+/// every agent session.
+pub const ATTACHMENT_STAGING_DIR_NAME: &str = "attachment-staging";
+
 /// Companion stores below `durable/local/offices/<office-id>/`.
-const OFFICE_LOCAL_COMPANIONS: [(&str, CompanionKind); 17] = [
+const OFFICE_LOCAL_COMPANIONS: [(&str, CompanionKind); 18] = [
     ("connections", CompanionKind::Folder),
     ("auth", CompanionKind::Folder),
     ("subscription-usage", CompanionKind::Folder),
@@ -54,6 +59,7 @@ const OFFICE_LOCAL_COMPANIONS: [(&str, CompanionKind); 17] = [
     ("security/git-https-helper", CompanionKind::File),
     ("security/git-ssh-key", CompanionKind::File),
     ("security/git-known-hosts", CompanionKind::File),
+    (ATTACHMENT_STAGING_DIR_NAME, CompanionKind::Folder),
 ];
 
 /// Every companion store of office `office_id`, in a fixed order.

@@ -8,8 +8,9 @@ use crate::failure::{logged, unsupported};
 use crate::federation_runtime::HqFederationSlot;
 use crate::session_proxy::build_session_hooks;
 use crate::{
-    chat_calls, cost_calls, directory, federation_calls, follow, git_calls, live, mailbox_store,
-    org_feed, process_calls, provider_calls, serve, task_calls, wake_bridge, watcher,
+    attachment_calls, chat_calls, cost_calls, directory, federation_calls, follow, git_calls, live,
+    mailbox_store, org_feed, process_calls, provider_calls, serve, task_calls, wake_bridge,
+    watcher,
 };
 use org_office::{Office, OfficeError};
 
@@ -388,6 +389,12 @@ pub(crate) fn build_office_ports(
         tasks: Some(Box::new(move |member, request| {
             task_svc.dispatch(member, request)
         })),
+        attachments: {
+            let o = Arc::clone(&office);
+            Some(gate_rpc_port(&office, move |member, request| {
+                attachment_calls::dispatch_attachment_rpc(&o, member, request)
+            }))
+        },
         git: Some(gate_rpc_port(&office, move |member, request| {
             git_svc.dispatch(member, request)
         })),

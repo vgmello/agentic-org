@@ -60,3 +60,51 @@ fn a_damaged_copy_or_another_database_fails_the_check() {
     assert!(check_task_notes(&other).is_err());
     assert!(check_task_notes(std::path::Path::new("relative.db")).is_err());
 }
+
+fn user_space_db() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let durable = dir.path().canonicalize().unwrap().join("durable");
+    std::fs::create_dir(&durable).unwrap();
+    drop(crate::store::sqlite::user_space::SqliteUserSpaceStore::open(&durable).unwrap());
+    (dir, durable.join("private/user-space.db"))
+}
+
+#[test]
+fn a_user_space_copy_carries_rows_still_in_the_wal_and_passes_only_its_own_check() {
+    let (dir, db) = user_space_db();
+    let writer = Connection::open(&db).unwrap();
+    writer
+        .execute_batch(
+            "PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;
+             CREATE TABLE probe (v TEXT); INSERT INTO probe VALUES ('only in the wal');",
+        )
+        .unwrap();
+    assert!(
+        std::fs::metadata(db.with_extension("db-wal"))
+            .unwrap()
+            .len()
+            > 0
+    );
+    let root = dir.path().canonicalize().unwrap();
+    let copy = root.join("user-space.db");
+    snapshot_user_space(&db, &copy).unwrap();
+    drop(writer);
+    assert_eq!(
+        std::fs::metadata(&copy).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let read = Connection::open_with_flags(&copy, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let value: String = read
+        .query_row("SELECT v FROM probe", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(value, "only in the wal");
+    check_user_space(&copy).unwrap();
+    // Each database is checked for its own schema: the two never stand in for each other.
+    assert!(check_task_notes(&copy).is_err());
+    let (_notes_dir, notes) = notes_db();
+    assert!(check_user_space(&notes).is_err());
+    assert!(
+        snapshot_user_space(&db, &copy).is_err(),
+        "never replaces a file"
+    );
+}

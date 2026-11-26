@@ -4,16 +4,17 @@
 //! one stopped office's non-rebuildable `<data-root>/<organization-id>/durable/` root: Org
 //! Git `state/`, `messaging/`, `recovery/` (the acceptance journal), `authority/`,
 //! `accounting/`, `budgets/`, `checkpoints/`, `blobs/` when present, and
-//! `local/offices/<office-id>/`, less what is disposable there (`enroll-tmp/`, each agent's
-//! `runtime/` and `tmp/`, and the host toolchain caches the office links into an agent's
-//! `home/` again: `.cargo/registry`, `.cargo/git`, a legacy `.rustup`);
-//! `private/task-notes.db`, a WAL-mode SQLite database, is carried as a transactionally
-//! consistent `VACUUM INTO` copy. The disposable `runtime/` root is never carried. Every
+//! `local/offices/<office-id>/`, less what is disposable there (`enroll-tmp/`, the unattached
+//! uploads in `attachment-staging/`, each agent's `runtime/` and `tmp/`, and the host toolchain
+//! caches the office links into an agent's `home/` again: `.cargo/registry`, `.cargo/git`, a
+//! legacy `.rustup`); `private/task-notes.db` and HQ's `private/user-space.db`, WAL-mode
+//! SQLite databases, are each carried as a transactionally consistent `VACUUM INTO` copy
+//! (never their `-wal`, `-shm` or `-journal` files). The disposable `runtime/` root is never carried. Every
 //! other tree under `durable/` is carried as it is: a link, a socket, a FIFO or a device
 //! there fails the backup rather than being skipped, except inside an agent's own `home/`,
 //! which its runtime writes, where such an entry is left out (never followed). An archive
 //! listing a path a backup never carries (in any letter case: macOS's default file system
-//! ignores case), two paths that differ only in letter case, or the notes database under
+//! ignores case), two paths that differ only in letter case, or a private database under
 //! another spelling is refused.
 //!
 //! The archive is a deterministic `.tar.gz` (sorted members, normalized metadata) whose first
@@ -25,9 +26,9 @@
 //! - [`backup`] refuses while the host or the office holds its lock, and holds both locks
 //!   until the archive is atomically in place.
 //! - [`verify`] checks every member against the manifest under a byte budget, refuses links,
-//!   special members, `..` and absolute paths, runs SQLite's integrity check on the notes copy,
-//!   verifies the journal to the recorded head, and rebuilds the office's projections from the
-//!   copy on a disposable runtime root.
+//!   special members, `..` and absolute paths, runs SQLite's integrity check on each private
+//!   database copy, verifies the journal to the recorded head, and rebuilds the office's
+//!   projections from the copy on a disposable runtime root.
 //! - [`restore_in_place`] does all of that, then refuses an archive the host's writer custody
 //!   would have to be reset for (a journal bound to another writer than the host reserved, or
 //!   behind or off the live chain), discards the rebuildable projections and swaps a pristine
