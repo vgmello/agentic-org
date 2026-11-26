@@ -13,13 +13,13 @@ import {
 import { endVisit, markAllRead, newFromId, startVisit, watchUnread } from "./chat-read.js";
 import { listIsOverlay, watchListMode } from "./chat-layout.js";
 import { bindPanelResize, panelWidthStyle } from "./chat-panel-width.js";
-import { closeAssist, mentionsIn, onAssistKeydown, parseCommand, updateAssist } from "./chat-compose-assist.js";
+import { closeAssist, mentionsIn, onAssistKeydown, parseCommand, recheckAssist, updateAssist } from "./chat-compose-assist.js";
 import {
   DEFAULT_CHAT, chatTitle, dmSources, inboxItem, openAsks, openDirectMessage, resolveChatId, sentAt, sourceHref, sourceLabel, splitTime,
 } from "./chat-model.js";
 import "./chat-attach-seed.js";
 import { ATTACH_CLICKS, attachButton, attachmentsForSend, bindAttachments, clearAttachments, trayHtml } from "./chat-attachments.js";
-import { VIEW_CLICKS, attachmentNameHit, filesButton, filesPanelHtml, messageAttachmentsHtml } from "./chat-attach-view.js";
+import { VIEW_CLICKS, attachmentNameHit, closeViewer, filesButton, filesPanelHtml, messageAttachmentsHtml, viewerOpen } from "./chat-attach-view.js";
 import { render, route } from "../shell/router.js";
 import { CHAT_SEND_SHORTCUTS, S } from "../state.js";
 import {
@@ -229,12 +229,17 @@ const threadComposer = (id, root) => composerHtml({
   form: "thread-send", id: root.id, ch: id, cls: " thread-compose", field: "thread-compose", label: "Reply in thread",
   draft: threadDraft(root.id).text, button: "outline", submit: "Reply", attach: `t:${id}:${root.id}`, after: alsoSendBox(id, root.id),
 });
+function resetHint(form) {
+  const hint = form.querySelector(".chat-compose-hint");
+  hint.classList.remove("is-error", "is-confirm");
+  hint.innerHTML = shortcutHint();
+}
 function showEmptySendHint(form, field, text = "Write a message or attach a file first.") {
   const hint = form.querySelector(".chat-compose-hint");
   hint.classList.add("is-error");
   hint.innerHTML = `${ic("info", "ic14")}<span>${esc(text)}</span>`;
   field.focus();
-  field.addEventListener("input", () => { hint.classList.remove("is-error"); hint.innerHTML = shortcutHint(); }, { once: true });
+  field.addEventListener("input", () => resetHint(form), { once: true });
 }
 const streamFor = (id) => document.querySelector(`.chat .chmain .msgs[data-ch="${CSS.escape(id)}"]`);
 function confirmSent(id, message) {
@@ -284,12 +289,39 @@ function postQuestion(form, field, cmd) {
   replaceStream(streamFor(id), streamHtml(id), true);
   field.focus();
 }
-/* /assign @agent T-A…: the work item's assignee changes (prototype: in memory) and a toast confirms it. */
-function assignItem(form, field, cmd) {
+/* /assign @agent T-A…: nothing changes on send. The hint names the change (item, from whom, to whom) and waits for
+   an explicit Assign; editing the command or Cancel withdraws it. Assign re-reads the composer first. */
+const pendingAssign = { text: "" };
+function assignTarget(cmd) {
   const w = W.find((x) => x.id === cmd.item);
-  if (!w || M[cmd.who]?.kind !== "agent") { showEmptySendHint(form, field, "Use /assign @agent T-A…, naming an agent and an existing work item."); return; }
+  return w && M[cmd.who]?.kind === "agent" ? w : null;
+}
+function assignItem(form, field, cmd) {
+  const w = assignTarget(cmd);
+  if (!w) { showEmptySendHint(form, field, "Use /assign @agent T-A…, naming an agent and an existing work item."); return; }
+  if (w.who === cmd.who) { showEmptySendHint(form, field, `${w.id} is already assigned to ${M[cmd.who].name}.`); return; }
+  pendingAssign.text = field.value;
+  const from = w.who && M[w.who] ? ` from ${esc(M[w.who].name)}` : "";
+  const hint = form.querySelector(".chat-compose-hint");
+  hint.classList.remove("is-error");
+  hint.classList.add("is-confirm");
+  hint.innerHTML = `<span class="chat-assign-ask" role="group" aria-label="Confirm assignment">${ic("user-plus", "ic14")}<span>Assign <b>${esc(w.id)}</b> ${esc(w.title)}${from} to <b>${esc(M[cmd.who].name)}</b>?</span>
+    <button class="btn primary sm" type="button" data-act="chat-assign-confirm">Assign</button><button class="btn ghost sm" type="button" data-act="chat-assign-cancel">Cancel</button></span>`;
+  hint.querySelector('[data-act="chat-assign-confirm"]').focus();
+  field.addEventListener("input", () => { pendingAssign.text = ""; resetHint(form); }, { once: true });
+}
+function cancelAssign(form) {
+  pendingAssign.text = "";
+  resetHint(form);
+  form.elements.message.focus();
+}
+function confirmAssign(form) {
+  const field = form.elements.message, cmd = parseCommand(field.value), w = cmd?.name === "assign" && assignTarget(cmd);
+  if (!w || field.value !== pendingAssign.text) { cancelAssign(form); return; }
+  pendingAssign.text = "";
   w.who = cmd.who;
   clearComposer(form.dataset.id, field);
+  resetHint(form);
   toast(`Assigned ${w.id} to ${M[cmd.who].name}.`, "check-circle");
   field.focus();
 }
@@ -374,23 +406,19 @@ function requestsMenu(items, who, slot, label) {
   const rows = items.map((it) => `<a role="menuitem" tabindex="-1" href="#/inbox/${esc(it.id)}"><span class="chat-pop-sub">${esc(it.sub)}</span><span class="chat-pop-what">${esc(it.what)}</span></a>`).join("");
   return `<span class="menu-wrap chat-more-wrap"><button class="alink chat-more-btn" type="button" data-act="menu" data-id="${id}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${id}">${label}</button><span class="menu chat-pop-menu" id="menu-${id}" role="menu" aria-label="${esc(`Other requests from ${M[who].name}`)}" popover="manual" hidden>${rows}</span></span>`;
 }
-/* Wide: the first request by name, then "and N more". At constrained widths the line shows one "N other requests"
-   control opening the full list instead, so it never cuts a title off mid-word. Details keeps the full wording. */
-function waitingElsewhere(elsewhere, who, slot) {
-  const more = elsewhere.length > 1 ? ` and ${requestsMenu(elsewhere.slice(1), who, slot, `${elsewhere.length - 1} more`)}` : "";
-  const full = `Also waiting in Inbox: <a class="alink" href="#/inbox/${esc(elsewhere[0].id)}">${esc(elsewhere[0].what)}</a>${more}`;
-  if (slot !== "ctx") return full;
-  const count = plural(elsewhere.length, "other request", "other requests");
-  const compact = `Also waiting: ${requestsMenu(elsewhere, who, slot + "-compact", count)}`;
-  return `<span class="chat-wait-full">${full}</span><span class="chat-wait-compact">${compact}</span>`;
+/* An agent's open requests, split by where they are answered: here (cards in this DM) and elsewhere (Inbox). */
+function dmRequests(who, chId) {
+  const here = openAsks(CH[chId]);
+  return { here, elsewhere: IN.filter((i) => !i.handled && i.from === who && !here.includes(i.id)) };
 }
-/* "Waiting on you" in a DM names requests raised elsewhere as "Also waiting in Inbox"; the DM's own ask is on its card. */
+/* A DM whose agent waits on you leads with what can be answered here, linked to its card, then "N in Inbox" opening
+   the list of the agent's other requests. The header summary and Details say exactly the same, in the same order. */
 function dmWaiting(who, chId, slot) {
-  const here = new Set(openAsks(CH[chId]));
-  const elsewhere = IN.filter((i) => !i.handled && i.from === who && !here.has(i.id));
-  if (elsewhere.length) return waitingElsewhere(elsewhere, who, slot);
-  const it = inboxItem([...here][0]), m = it && CH[chId].msgs.find((x) => x.needs === it.id);
-  return it ? `Waiting on you: <a class="alink" href="#/chat/${esc(chId)}/${esc(m.id)}">${esc(it.what)}</a>` : "";
+  const { here, elsewhere } = dmRequests(who, chId), parts = [];
+  const card = here.length && CH[chId].msgs.find((x) => x.needs === here[0]);
+  if (card) parts.push(`<a class="alink chat-here-link" href="#/chat/${esc(chId)}/${esc(card.id)}">${plural(here.length, "request", "requests")} here</a>`);
+  if (elsewhere.length) parts.push(requestsMenu(elsewhere, who, slot, `${elsewhere.length} in Inbox`));
+  return parts.join(" · ");
 }
 function dmStatus(who, chId, slot) {
   const m = M[who];
@@ -421,8 +449,9 @@ function dmSummary(who) {
   if (m.kind === "person") return [m.role, m.last];
   const word = PRESENCE_WORD[presence(who)];
   if (presence(who) !== "needs") return [word, m.role];
-  const open = IN.filter((i) => !i.handled && i.from === who).length;
-  return [word, open ? String(open) : ""];
+  const { here, elsewhere } = dmRequests(who, `dm-${who}`);
+  if (!here.length && !elsewhere.length) return [word, m.role];
+  return [here.length ? plural(here.length, "request", "requests") + " here" : "", elsewhere.length ? `${elsewhere.length} in Inbox` : ""];
 }
 function summaryParts(ch) {
   if (ch.kind === "dm") return dmSummary(ch.with);
@@ -444,7 +473,7 @@ function headerActions(id, title) {
   const open = local.search?.id === id;
   return `<div class="ph-actions chat-actions">
       ${filesButton(local.files, title)}
-      <button class="btn ghost sm chat-details-btn" type="button" data-act="chat-details" aria-expanded="${local.details}" aria-controls="chat-details">${ic("info", "ic16")}Details</button>
+      <button class="btn ghost sm chat-details-btn" type="button" data-act="chat-details" aria-expanded="${local.details}" aria-controls="chat-details" title="Details">${ic("info", "ic16")}<span class="chat-details-word">Details</span></button>
       <button class="btn ghost icon chat-search" type="button" data-act="chat-search" aria-expanded="${open}" aria-controls="chat-search-row" aria-label="Search in ${esc(title)}" title="Search in ${esc(title)}">${ic("search", "ic20")}</button>
     </div>`;
 }
@@ -758,10 +787,11 @@ function onListModeCross(root, overlay) {
   root.classList.toggle("list-overlay", overlay);
   if (overlay && inList) root.querySelector(".chat-list-btn")?.focus();
 }
-const anyOverlay = () => route()[0] === "chat" && Boolean(S.thread || local.members || local.files || S.chatList || local.details);
-/* Back closes the topmost overlay first: a side panel, then the drawer, then Details. */
+const anyOverlay = () => route()[0] === "chat" && Boolean(viewerOpen() || S.thread || local.members || local.files || S.chatList || local.details);
+/* Back closes the topmost overlay first: the image viewer, a side panel, then the drawer, then Details. */
 function closeTopOverlay() {
-  if (S.thread) closeThread();
+  if (viewerOpen()) closeViewer();
+  else if (S.thread) closeThread();
   else if (local.members) toggleMembers();
   else if (local.files) toggleFiles();
   else if (S.chatList) toggleChatList(S.chatList);
@@ -793,6 +823,8 @@ const CLICKS = {
   "chat-task": (id, t, chId) => turnIntoTask(t, chId, id),
   "chat-asks-jump": () => jumpToAsk(),
   "chat-send-plain": (_id, t) => sendChatMessage(t.closest("form"), true),
+  "chat-assign-confirm": (_id, t) => confirmAssign(t.closest("form")),
+  "chat-assign-cancel": (_id, t) => cancelAssign(t.closest("form")),
   "chat-latest-jump": () => jumpToLatest(),
   "chat-dm-msg": (id, _t, chId) => {
     const m = CH[chId].msgs.find((x) => x.id === id);
@@ -818,6 +850,7 @@ function stayInConversation(fromRow) {
   syncOverlayHistory();
 }
 function onChatClick(e) {
+  if (e.target.id === "compose" || e.target.id === "thread-compose") recheckAssist();
   const listed = onListClick(e, e.currentTarget);
   if (listed === "handled") return;
   if (listed === "same-conversation") { stayInConversation(Boolean(e.target.closest("#chat-nav a"))); return; }
@@ -837,6 +870,7 @@ function onChatKeydown(e) {
   const t = e.target;
   if (onAssistKeydown(e)) return;
   if (t.id === "chat-search-input" && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); toggleSearch(local.search.id); return; }
+  if (e.key === "Escape" && t.closest(".chat-assign-ask")) { e.preventDefault(); e.stopPropagation(); cancelAssign(t.closest("form")); return; }
   if (e.key === "Escape" && t.closest(".chat-members-panel")) { e.preventDefault(); e.stopPropagation(); toggleMembers(); return; }
   if (e.key === "Escape" && t.closest(".chat-files-panel")) { e.preventDefault(); e.stopPropagation(); toggleFiles(); return; }
   onListKeydown(e, e.currentTarget);

@@ -5,7 +5,7 @@
 import { CH, M } from "../data.js";
 import { av, esc, kindWord, memberIds } from "../ui.js";
 
-const assist = { field: null, kind: "", from: 0, items: [], active: 0 };
+const assist = { field: null, kind: "", from: 0, items: [], active: 0, chId: "", allowCommands: false };
 
 const COMMANDS = [
   { name: "task", hint: "Turn this conversation into a task: /task what to do (its latest messages go as context)", insert: "" },
@@ -85,13 +85,28 @@ function updateAssist(field, chId, allowCommands) {
   const items = !t ? [] : t.kind === "command" ? commandItems(t.q) : mentionItems(chId, t.q, t.agentsOnly);
   if (!items.length) { closeAssist(); return; }
   if (assist.field && assist.field !== field) closeAssist();
-  Object.assign(assist, { field, kind: t.kind, from: t.from, items, active: Math.min(assist.active, items.length - 1) });
+  Object.assign(assist, { field, kind: t.kind, from: t.from, items, active: Math.min(assist.active, items.length - 1), chId, allowCommands });
   paint();
 }
 
 /* ---------------------------------------------------------------- choosing */
-function replaceTrigger(field, text) {
-  const to = field.selectionStart;
+/* The caret can leave the token while the list is open (a click, arrow keys, Home). The list then re-reads what the
+   caret is in: it closes, or re-anchors on the token the caret is now in. */
+const CARET_KEYS = new Set(["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
+function recheckAssist() {
+  const { field, chId, allowCommands } = assist;
+  if (field?.isConnected && document.activeElement === field) updateAssist(field, chId, allowCommands);
+  else closeAssist();
+}
+/* The mention token the list was opened for, if the caret is still in it: from its "@" to the end of its word
+   (so completing "@ma|ya" leaves no "ya" behind). Null once the caret has left it. */
+function mentionRange(field) {
+  const t = triggerAt(field, assist.allowCommands);
+  if (!t || t.kind !== "mention" || t.from !== assist.from) return null;
+  const caret = field.selectionStart, tail = /^[\w.-]*/.exec(field.value.slice(caret))[0];
+  return { from: t.from, to: caret + tail.length };
+}
+function replaceTrigger(field, text, to = field.selectionStart) {
   field.value = field.value.slice(0, assist.from) + text + field.value.slice(to);
   const caret = assist.from + text.length;
   field.setSelectionRange(caret, caret);
@@ -101,7 +116,13 @@ function replaceTrigger(field, text) {
 function choose(i) {
   const { field, items, kind } = assist, it = items[i];
   if (!it) return;
-  if (kind === "mention") { closeAssist(); replaceTrigger(field, `@${it.value} `); return; }
+  if (kind === "mention") {
+    const range = mentionRange(field);
+    closeAssist();
+    /* Never write over words the caret has moved to: a stale list only closes. */
+    if (range) replaceTrigger(field, `@${it.value}${/^\s/.test(field.value.slice(range.to)) ? "" : " "}`, range.to);
+    return;
+  }
   const cmd = COMMANDS.find((c) => c.name === it.value);
   closeAssist();
   assist.from = 0;
@@ -118,15 +139,20 @@ function onOptionPointer(e) {
   choose(Number(li.dataset.i));
 }
 const MOVES = { ArrowDown: 1, ArrowUp: -1 };
-/* Returns true when the key belonged to the open list. */
-function onAssistKeydown(e) {
-  if (!assist.field || e.target !== assist.field || e.isComposing) return false;
+/* The list's own keys; true when the key was used here. Tab closes the list but is never taken. */
+function listKey(e) {
   const n = assist.items.length;
   if (MOVES[e.key]) assist.active = (assist.active + MOVES[e.key] + n) % n;
   else if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) choose(assist.active);
   else if (e.key === "Escape") closeAssist();
-  else if (e.key === "Tab") { closeAssist(); return false; }
-  else return false;
+  else { if (e.key === "Tab") closeAssist(); return false; }
+  return true;
+}
+/* Returns true when the key belonged to the open list. Caret keys move the caret as usual, then re-read the token. */
+function onAssistKeydown(e) {
+  if (!assist.field || e.target !== assist.field || e.isComposing) return false;
+  if (CARET_KEYS.has(e.key)) { setTimeout(recheckAssist); return false; }
+  if (!listKey(e)) return false;
   e.preventDefault();
   e.stopPropagation();
   if (assist.field) paint();
@@ -146,8 +172,9 @@ function mentionsIn(text, chId) {
 }
 /* A command is a complete first token: "/" and a word, then a space or the end. "/files.txt" or "/etc/hosts is
    missing" is prose. Returns { name, args, known } or null when the text is not a command. */
+/* The token is read from the very first character: " /assign …" (indented) is prose and sends as written. */
 function commandToken(text) {
-  const t = /^\/([A-Za-z]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  const t = /^\/([A-Za-z]+)(?:\s+([\s\S]*))?$/.exec(text.trimEnd());
   if (!t) return null;
   const name = t[1].toLowerCase();
   return { name, args: (t[2] || "").trim(), known: COMMANDS.some((c) => c.name === name) };
@@ -166,4 +193,4 @@ function parseCommand(text) {
   return { name: tok.name, invalid: true };
 }
 
-export { closeAssist, mentionsIn, onAssistKeydown, parseCommand, updateAssist };
+export { closeAssist, mentionsIn, onAssistKeydown, parseCommand, recheckAssist, updateAssist };

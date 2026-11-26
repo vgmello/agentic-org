@@ -104,6 +104,10 @@
 .work-panel .work-ctx .work-ctx-item { display: grid; gap: 2px; min-width: 0; }
 .work-panel .work-ctx .work-ctx-links { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 .work-panel .work-ctx .work-ctx-links > a:first-child { display: inline-flex; align-items: center; gap: 6px; }
+/* A saved source that no longer opens says so, in words, where its link would be. */
+.work-panel .work-ctx .work-ctx-title { display: inline-flex; align-items: center; gap: 6px; color: var(--gray-300); }
+.work-panel .work-ctx .work-ctx-gone { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--tone-warn-ink); }
+.work-panel .work-ctx .work-ctx-gone .ic14 { flex: none; }
 .work-panel .work-ctx .work-ctx-preview { margin: 0; color: var(--gray-400); font-size: var(--fs-sm); overflow-wrap: anywhere; }
 .work-panel .work-ctx .work-ctx-msgs summary { cursor: pointer; color: var(--tone-accent-ink); font-size: var(--fs-sm); width: fit-content; }
 .work-panel .work-ctx .work-ctx-msgs ol { display: grid; gap: 6px; margin: 6px 0 0; padding: 0 0 0 10px; list-style: none; border-inline-start: 2px solid var(--line2); }
