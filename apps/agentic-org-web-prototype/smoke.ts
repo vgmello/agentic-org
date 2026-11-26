@@ -14,7 +14,7 @@ const ALL_SUITE: Array<[string, string]> = [
 const SWEEP_ROUTES = [
   "home", "inbox", "projects", "projects/agency-v1", "projects/agency-v1/work",
   "projects/agency-v1/insights", "projects/office-federation/activity", "projects/office-federation/team",
-  "work", "chat", "chat/general", "activity", "calendar", "projects/agency-v1/calendar", "teams/platform/calendar",
+  "work", "chat", "chat/general", "activity", "insights", "calendar", "projects/agency-v1/calendar", "teams/platform/calendar",
   "teams", "teams/platform", "teams/members", "teams/org-chart",
   "members/ada", "members/ada/sessions", "members/ada/journal",
   "members/ada/memory", "members/ada/knowledge", "members/ada/settings",
@@ -70,20 +70,24 @@ async function checkWorkBoard(page: Page) {
   const columns = board.locator(".bcol");
   const cards = board.locator(".bcard");
   const cardIds = () => cards.evaluateAll((items) => items.map((item) => item.getAttribute("data-work-id")).sort());
-  assert.equal(await columns.count(), 6);
-  const detailedIds = await cardIds();
+  assert.equal(await columns.count(), 4, "Stages board has 4 columns");
+  const stageIds = await cardIds();
   const attention = board.locator(".bcard[data-attention]").first();
-  await attention.locator(".board-card-footer .pill").waitFor();
-  assert.equal(await attention.locator(":scope > *").count(), 3);
+  await attention.locator(".board-status .pill").waitFor();
+  assert.match((await attention.locator(".board-status .pill").textContent())!, /^Needs you · /, "Needs-you badge says what is needed");
   const trailingGutter = await board.evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
     const lastColumn = el.querySelector(".bcol:last-child")!;
     return el.getBoundingClientRect().left + el.clientWidth - lastColumn.getBoundingClientRect().right;
   });
   assert.ok(trailingGutter >= 15, "The final board column scrolls clear of the right edge");
-  await page.getByRole("button", { name: "4-Stage Unified" }).press("Enter");
+  await page.getByRole("button", { name: "Work display" }).click();
+  await page.getByRole("menuitemradio", { name: "Status", exact: true }).click();
+  assert.ok(await columns.count() > 4, "Status columns split the stages");
+  assert.deepEqual(await cardIds(), stageIds, "Status columns keep every card");
+  await page.getByRole("button", { name: "Work display" }).click();
+  await page.getByRole("menuitemradio", { name: "Stages", exact: true }).click();
   assert.equal(await columns.count(), 4);
-  assert.deepEqual(await cardIds(), detailedIds, "Unified stages keep every card");
   await layout.getByRole("button", { name: "List" }).press("Enter");
 }
 

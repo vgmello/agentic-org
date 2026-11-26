@@ -1,9 +1,9 @@
 import { P, TEAMS } from "../data.js";
 import { fitTextarea } from "../pages/work.js";
 import { CMDK, closeCmdk } from "./cmdk.js";
-import { own } from "./router.js";
+import { own, render } from "./router.js";
 import { getRunningJobs, unreadNotificationsCount } from "./topbar-utils.js";
-import { FONT_OPTIONS, S, THEME_OPTIONS, applyNavCollapsed, sidebarHasOpenMenu } from "../state.js";
+import { FONT_OPTIONS, S, THEME_OPTIONS, applyNavCollapsed, saveNavWorkspace, sidebarHasOpenMenu } from "../state.js";
 import { effectiveHealth, esc, ic, seg, unhandled } from "../ui.js";
 
 /* ---------------------------------------------------------------- sidebar */
@@ -75,21 +75,90 @@ const WORKSPACE_ITEMS = [
   ["work", "#/work", "Work", "clipboard"],
   ["chat", "#/chat", "Chat", "chat"],
   ["activity", "#/activity", "Activity", "signal"],
+  ["insights", "#/insights", "Insights", "chart", " for the organization"],
   ["projects", "#/projects", "Projects", "folder"],
   ["calendar", "#/calendar", "Calendar", "calendar-check"],
 ];
-function workspaceItemHtml([key, href, label, icon], cur, pinned) {
+function workspaceItemHtml([key, href, label, icon, srSuffix = ""], cur, pinned) {
+  const drag = ` draggable="true" data-ws-key="${key}" data-ws-zone="${pinned ? "pinned" : "more"}"`;
   const pin = `<button class="nav-pin" type="button" data-act="nav-pin" data-v="${key}" aria-label="${pinned ? "Move" : "Pin"} ${esc(label)} ${pinned ? "to More" : "to the sidebar"}" title="${pinned ? "Move to More" : "Pin to sidebar"}">${ic(pinned ? "minimize" : "plus", "ic14")}</button>`;
-  return `<li class="nav-org-item"><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon)}<span class="lbl">${esc(label)}</span></a>${pin}</li>`;
+  return `<li class="nav-org-item"${drag}><a class="nav-item" href="${href}" title="${esc(label)} (drag or Alt+Up/Down to reorder)" ${cur ? 'aria-current="page"' : ""}>${ic(icon)}<span class="lbl">${esc(label)}</span>${srSuffix ? `<span class="sr-only">${esc(srSuffix)}</span>` : ""}</a>${pin}</li>`;
 }
 function workspaceNavHtml(r0, r1) {
   const isCur = (key) => r0 === key && (key !== "projects" || !r1);
-  const pinned = WORKSPACE_ITEMS.filter(([k]) => S.navWorkspace.includes(k)), extra = WORKSPACE_ITEMS.filter(([k]) => !S.navWorkspace.includes(k));
+  const byKey = Object.fromEntries(WORKSPACE_ITEMS.map((it) => [it[0], it]));
+  const pinned = S.navWorkspace.map((k) => byKey[k]).filter(Boolean), extra = WORKSPACE_ITEMS.filter(([k]) => !S.navWorkspace.includes(k));
   if (!extra.length) return pinned.map((it) => workspaceItemHtml(it, isCur(it[0]), true)).join("");
   const open = S.v4Open["nav-more"] ?? extra.some(([k]) => isCur(k));
   const moreBtn = `<li><button class="nav-item nav-more-btn" type="button" data-act="v4-acc" data-id="nav-more" aria-expanded="${!!open}" aria-controls="nav-more-list" title="More">${ic("ellipsis")}<span class="lbl">More</span>${ic("chev-down", "ic14 nav-more-chev")}</button></li>`;
-  const list = open ? `<li><ul class="nav-list nav-more-list" id="nav-more-list" role="list" aria-label="More workspace items">${extra.map((it) => workspaceItemHtml(it, isCur(it[0]), false)).join("")}</ul></li>` : "";
+  const list = open ? `<li><ul class="nav-list nav-more-list" id="nav-more-list" role="list" aria-label="More workspace items" data-ws-zone="more">${extra.map((it) => workspaceItemHtml(it, isCur(it[0]), false)).join("")}</ul></li>` : "";
   return pinned.map((it) => workspaceItemHtml(it, isCur(it[0]), true)).join("") + moreBtn + list;
+}
+
+/* Drag to reorder pinned items; drag between the list and More to pin or unpin. Alt+Up/Down on a
+   focused item moves it. Bound once on #nav, since the nav's contents re-render. */
+function moveWorkspaceItem(key, beforeKey, zone) {
+  const list = S.navWorkspace.filter((k) => k !== key);
+  if (zone !== "more") list.splice(beforeKey ? Math.max(0, list.indexOf(beforeKey)) : list.length, 0, key);
+  if (!list.length) return;
+  S.navWorkspace = list; saveNavWorkspace(); render(false);
+  document.querySelector(`.nav-org-item[data-ws-key="${CSS.escape(key)}"] > .nav-item`)?.focus({ preventScroll: true });
+}
+let wsDrag = null;
+function dropTarget(e) {
+  const li = e.target.closest?.(".nav-org-item"), zone = e.target.closest?.("[data-ws-zone]")?.dataset.wsZone;
+  if (!li) return { zone: zone || "pinned", before: null };
+  const r = li.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
+  if (li.dataset.wsZone === "more") return { zone: "more", before: null, li, after };
+  const next = after ? li.nextElementSibling?.dataset.wsKey ?? null : li.dataset.wsKey;
+  return { zone: "pinned", before: next, li, after };
+}
+function clearDropMarks(nav) { nav.querySelectorAll(".drop-before, .drop-after").forEach((el) => el.classList.remove("drop-before", "drop-after")); }
+function onWsDragStart(e) {
+  const li = e.target.closest?.(".nav-org-item");
+  if (!li) return;
+  wsDrag = li.dataset.wsKey;
+  li.classList.add("is-dragging");
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", wsDrag);
+}
+function onWsDragOver(nav, e) {
+  if (!wsDrag) return;
+  e.preventDefault();
+  clearDropMarks(nav);
+  const t = dropTarget(e);
+  t.li?.classList.add(t.after ? "drop-after" : "drop-before");
+}
+function onWsDrop(nav, e) {
+  if (!wsDrag) return;
+  e.preventDefault();
+  const t = dropTarget(e), key = wsDrag;
+  wsDrag = null;
+  clearDropMarks(nav);
+  moveWorkspaceItem(key, t.before === key ? null : t.before, t.zone);
+}
+function onWsDragEnd(nav) {
+  wsDrag = null;
+  clearDropMarks(nav);
+  nav.querySelectorAll(".is-dragging").forEach((el) => el.classList.remove("is-dragging"));
+}
+function onWsKeydown(e) {
+  const li = e.target.closest?.('.nav-org-item[data-ws-zone="pinned"]');
+  const dir = { ArrowUp: -1, ArrowDown: 1 }[e.key];
+  if (!li || !e.altKey || !dir) return;
+  e.preventDefault();
+  const list = S.navWorkspace, key = li.dataset.wsKey, j = list.indexOf(key) + dir;
+  if (j < 0 || j >= list.length) return;
+  moveWorkspaceItem(key, dir < 0 ? list[j] : list[j + 1] ?? null, "pinned");
+}
+function bindWorkspaceDrag(nav) {
+  if (nav.dataset.wsBound) return;
+  nav.dataset.wsBound = "1";
+  nav.addEventListener("dragstart", onWsDragStart);
+  nav.addEventListener("dragover", (e) => onWsDragOver(nav, e));
+  nav.addEventListener("drop", (e) => onWsDrop(nav, e));
+  nav.addEventListener("dragend", () => onWsDragEnd(nav));
+  nav.addEventListener("keydown", onWsKeydown);
 }
 
 function renderNav(route) {
@@ -105,6 +174,7 @@ function renderNav(route) {
   const favsOpen = S.v4Open["nav-favs"] !== false;
   const teamsOpen = S.v4Open["nav-teams"] ?? inTeamChild;
   const nav = document.getElementById("nav"); if (!nav) return;
+  bindWorkspaceDrag(nav);
   nav.innerHTML = `<ul class="nav-scroll" role="list">
     <li>
       <div class="nav-label">Focus</div>

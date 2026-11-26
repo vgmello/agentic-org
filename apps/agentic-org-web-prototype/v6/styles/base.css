@@ -1175,7 +1175,7 @@ html[data-hide-work-subtasks] .work-subtasks { display: none; }
   border-radius: 0 100% 100% 0; border-inline-end: .24rem solid currentColor;
   transform: translateX(50%);
 }
-.work-priority-mark { align-items: flex-end; gap: 2px; padding-bottom: 3px; color: var(--work-team-color, var(--gray-400)); }
+.work-priority-mark { align-items: flex-end; gap: 2px; padding-bottom: 3px; color: var(--gray-300); }
 .work-priority-mark span { width: .15rem; height: .28rem; border-radius: 1px; background: currentColor; }
 .work-priority-mark span:nth-child(2) { height: .44rem; }
 .work-priority-mark span:nth-child(3) { height: .6rem; }
