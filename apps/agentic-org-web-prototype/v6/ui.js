@@ -321,6 +321,7 @@ export {
   projMembers,
   projPill,
   queueHeadline,
+  itemActions,
   recommendationCallout,
   sectionTabs,
   seg,

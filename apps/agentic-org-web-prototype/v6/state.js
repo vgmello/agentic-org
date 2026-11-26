@@ -3,7 +3,7 @@ const S = { theme: "ocean", fontStyle: "inter", homeState: "filled", inboxKind: 
   scopedWorkView: "all", scopedWorkLayout: "list", scopedWorkStatus: "all", scopedWorkProject: "all", scopedWorkTeam: "all", scopedWorkGroup: "status", scopedWorkSubgroup: "none", scopedWorkSort: "default", scopedWorkOrder: "asc",
   actView: "assembly", actProject: "all", actFilter: "all", actPanel: null,
   projectActView: "assembly", projectActFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
-  consoleView: "activity", consoleScope: "all", consoleTools: false, agentFocusTools: false, openTraces: {}, openKnow: {}, openIdeation: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefView: "highlights", searchOpen: {}, projectQuery: "", briefExpanded: false, confirmDeny: null, briefCopied: false };
+  consoleView: "activity", consoleScope: "all", consoleTools: false, agentFocusTools: false, openTraces: {}, openKnow: {}, openIdeation: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefView: "highlights", searchOpen: {}, projectQuery: "", pjDecision: null, briefExpanded: false, confirmDeny: null, briefCopied: false };
 const ORG_NAME_STORE = "agentic-org.v6.organizationName";
 let orgName = "Agentic Org";
 try { orgName = localStorage.getItem(ORG_NAME_STORE)?.trim().slice(0, 80) || orgName; } catch (e) {}

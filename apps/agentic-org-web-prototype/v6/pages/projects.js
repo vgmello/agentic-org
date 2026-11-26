@@ -1,4 +1,4 @@
-import { CH, IN, M, OPEN, P, TEAMS, W } from "../data.js";
+import { CH, IN, KIND, M, OPEN, P, TEAMS, W, needsMe } from "../data.js";
 import { pageActivity, projectReleaseSummary } from "./activity.js";
 import { msgHtml } from "./chat.js";
 import { projectInsights } from "./insights.js";
@@ -6,7 +6,7 @@ import { notFound } from "./settings.js";
 import { scopedWorkToolbar, scopedWorkWorkspace } from "./work.js";
 import { render } from "../shell/router.js";
 import { S } from "../state.js";
-import { acts, av, avStack, crumbs, esc, feed, hdr, ic, kindWord, leadOf, leadTxt, linkTabs, menuItem, moreMenu, needsCard, pill, presPill, progress, projMembers, projPill, searchRow, searchToggle, sectionHead, sectionTabs, SEP, showMenu, statusLine, toast } from "../ui.js";
+import { acts, av, avStack, crumbs, esc, feed, hdr, ic, itemActions, kindWord, leadOf, leadTxt, linkTabs, menuItem, moreMenu, needsCard, pill, presPill, progress, projMembers, projPill, recommendationCallout, searchRow, searchToggle, sectionHead, sectionTabs, SEP, showMenu, statusLine, toast } from "../ui.js";
 
 function pageProjects() {
   const q = S.projectQuery.trim().toLowerCase();
@@ -52,12 +52,13 @@ function projectBody(id, tab) {
   if (tab === "overview") {
     const needs = IN.filter((i) => i.proj === id && (!i.handled || i.handledNow));
     const pending = needs.filter((i) => !i.handled).length;
-    return `<div class="grid2"><div>
-      <section class="section project-sec" aria-labelledby="pj-goal-h">${sectionHead({ id: "pj-goal-h", title: "Goal" })}<p class="why">${esc(pr.goal)}</p>
-        <div class="stats" style="margin-top:12px"><span><b>${ws.filter(OPEN).length}</b> open</span><span><b>${ws.filter((w) => w.status === "Blocked").length}</b> blocked</span></div>
-        ${pr.risk ? `<div class="callout" style="margin-top:16px">${ic("warn", "ic20")}<span>${esc(pr.risk)}</span></div>` : ""}</section>
-      <section class="section project-sec" aria-labelledby="pj-needs-h">${sectionHead({ id: "pj-needs-h", title: "Needs your attention", count: pending ? `${pending} pending` : "", right: `<a class="link" href="#/inbox">Open inbox${ic("chev-right", "ic16")}</a>` })}${needs.length ? projectDecisionsHtml(needs) : `<p class="muted" style="padding-bottom:24px">Nothing needs you on this project.</p>`}</section>
-    </div><aside class="compact project-sec" aria-labelledby="pj-act-h">${sectionHead({ id: "pj-act-h", title: "Recent activity", right: `<a class="link" href="#/projects/${esc(id)}/activity">All activity${ic("chev-right", "ic16")}</a>` })}${feed(acts().filter((a) => a.proj === id).slice(0, 5), { noProj: true })}</aside></div>`;
+    return `<div class="pj-overview">
+      ${projectSummaryHtml(id, ws)}
+      <section class="project-sec" aria-labelledby="pj-goal-h">${sectionHead({ id: "pj-goal-h", title: "Goal" })}<p class="why">${esc(pr.goal)}</p>
+        ${pr.risk ? `<div class="callout" style="margin-top:12px">${ic("warn", "ic20")}<span>${esc(pr.risk)}</span></div>` : ""}</section>
+      <section class="project-sec" aria-labelledby="pj-needs-h">${sectionHead({ id: "pj-needs-h", title: "Needs your attention", count: pending ? `${pending} pending` : "", right: `<a class="link" href="#/inbox">Open inbox${ic("chev-right", "ic16")}</a>` })}${needs.length ? projectDecisionsHtml(needs) : `<p class="muted">Nothing needs you on this project.</p>`}</section>
+      <section class="project-sec" aria-labelledby="pj-act-h">${sectionHead({ id: "pj-act-h", title: "Recent activity", right: `<a class="link" href="#/projects/${esc(id)}/activity">All activity${ic("chev-right", "ic16")}</a>` })}${feed(acts().filter((a) => a.proj === id).slice(0, 6), { noProj: true })}</section>
+    </div>`;
   }
   if (tab === "work") return scopedWorkToolbar("project", id, ws) + scopedWorkWorkspace();
   if (tab === "team") return projectTeams(id) + memberRows(projMembers(id), { emptyText: "No members yet." });
@@ -67,14 +68,48 @@ function projectBody(id, tab) {
   return notFound();
 }
 
-/* One focused decision (the most urgent) with its actions; the rest are Inbox-style rows that open the item. */
+/* Project at a glance, in the style of Home's summary cards: progress, schedule, open work, team. */
+function projectSummaryHtml(id, ws) {
+  const pr = P[id], done = ws.filter((w) => !OPEN(w)).length, total = ws.length, open = total - done;
+  const blocked = ws.filter((w) => w.status === "Blocked").length, mine = ws.filter(needsMe).length;
+  const members = projMembers(id), pct = total ? Math.round((done * 100) / total) : 0;
+  const tone = { ok: "ok", warn: "warn", bad: "bad" }[pr.paceTone] || "";
+  const card = (label, icon, value, unit, foot, href) => `<a class="pj-kpi" href="${href}">
+      <span class="pj-kpi-l">${ic(icon, "ic14")}${label}</span>
+      <span class="pj-kpi-v"><b>${value}</b>${unit ? `<span>${unit}</span>` : ""}</span>
+      <span class="pj-kpi-f">${foot}</span></a>`;
+  return `<section class="pj-kpis" aria-label="Project at a glance">
+      ${card("Progress", "check-circle", `${done}/${total}`, "tasks done", `<span class="pj-kpi-bar" aria-hidden="true"><i style="width:${pct}%"></i></span>`, `#/projects/${id}/work`)}
+      ${card("Schedule", "calendar-check", pr.due ? esc(pr.due) : "—", pr.due ? "due" : "no due date", pr.pace ? `<span class="pj-pace${tone ? " is-" + tone : ""}">${esc(pr.pace)}</span>${pr.release ? ` · ${esc(pr.release)}` : ""}` : "", `#/projects/${id}/activity`)}
+      ${card("Open work", "clipboard", String(open), "open", `${blocked} blocked · ${mine} need you`, `#/projects/${id}/work`)}
+      ${card("Team", "user-group", String(members.length), members.length === 1 ? "member" : "members", `${avStack(members, 5)}<span class="pj-kpi-teams">${pr.teams.map((t) => esc(TEAMS[t].name)).join(", ")}</span>`, `#/projects/${id}/team`)}
+    </section>`;
+}
+
+/* Inbox-style split: a priority queue on the left, the selected decision on the right.
+   Narrow containers stack the decision above the queue. */
+function decisionDetailHtml(it) {
+  const exp = it.expires && !it.handled ? `<span class="pin pj-detail-exp">${ic("clock", "ic14")}${esc(it.expires)}</span>` : "";
+  return `<article class="pj-detail" aria-labelledby="pj-detail-t">
+      <div class="pj-detail-top">${av(it.from, 24)}<span class="grow"><b>${esc(M[it.from].name)}</b> · ${esc(it.sub)} · ${esc(it.time)}</span>${exp}</div>
+      <h3 id="pj-detail-t" class="pj-detail-title">${esc(it.what)}</h3>
+      <p class="why">${esc(it.why)}</p>
+      ${it.rec && !it.handled ? recommendationCallout(it) : ""}
+      ${itemActions(it, "card")}
+      <div class="pj-detail-foot">${it.task ? `<span class="work-ref">${esc(it.task)}</span>` : "<span></span>"}<a class="link" href="#/inbox/${esc(it.id)}">Details${ic("open", "ic16")}</a></div>
+    </article>`;
+}
 function projectDecisionsHtml(needs) {
-  const [first, ...rest] = needs;
-  const row = (it) => `<li class="linked pj-queue-row">${av(it.from, 24)}<div class="grow"><p class="rt"><a class="stretch" href="#/inbox/${esc(it.id)}">${esc(it.what)}</a></p>
-      <p class="meta">${esc(M[it.from].name)} · ${esc(it.sub)} · ${esc(it.time)}${it.expires && !it.handled ? ` · <span class="pin wrap">${ic("clock", "ic14")}${esc(it.expires)}</span>` : ""}${it.handled ? ` · ${esc(it.outcome || "Handled")}` : ""}</p></div>
-      <span class="pj-queue-go">Review${ic("chev-right", "ic16")}</span></li>`;
-  const more = rest.length ? `<h3 class="pj-queue-h">Up next <span class="sec-head-count">${rest.length}</span></h3><ul class="rows pj-queue" role="list">${rest.map(row).join("")}</ul>` : "";
-  return `<div class="pj-decisions">${needsCard(first, { hideProject: true })}${more}</div>`;
+  const sel = needs.find((it) => it.id === S.pjDecision) || needs[0];
+  const item = (it) => `<li><button type="button" class="pj-q-item${it === sel ? " is-current" : ""}" data-act="set" data-k="pjDecision" data-v="${esc(it.id)}" aria-pressed="${it === sel}">
+        <span class="pj-q-kind">${ic(KIND[it.kind]?.icon || "bell", "ic14")}<span class="grow">${esc(it.sub)}</span><time>${esc(it.time)}</time></span>
+        <span class="pj-q-title">${esc(it.what)}</span>${it.handled ? `<span class="pj-q-done">${esc(it.outcome || "Handled")}</span>` : ""}</button></li>`;
+  return `<div class="pj-split">
+      <nav class="pj-queue-pane" aria-label="Priority queue"><p class="pj-queue-h">Priority queue <span class="sec-head-count">${needs.length}</span></p>
+        <ul role="list">${needs.map(item).join("")}</ul>
+        <a class="pj-queue-all" href="#/inbox">View all in Inbox${ic("chev-right", "ic16")}</a></nav>
+      ${decisionDetailHtml(sel)}
+    </div>`;
 }
 
 function projectTeams(id) {
@@ -82,7 +117,7 @@ function projectTeams(id) {
   const chips = ts.map((t) => `<span class="tchip"><a href="#/teams/${t}">${esc(TEAMS[t].name)}</a><button class="rm" type="button" data-act="team-rm" data-id="${id}" data-v="${t}" aria-label="Remove ${esc(TEAMS[t].name)} from ${esc(pr.name)}" title="Remove ${esc(TEAMS[t].name)}">${ic("x", "ic16")}</button></span>`).join("");
   const addLbl = ts.length ? "Add team…" : "Assign team…", addName = (ts.length ? "Add team to " : "Assign team to ") + pr.name;
   const canAdd = Object.keys(TEAMS).some((t) => !ts.includes(t));
-  return `<div class="tchips" role="group" aria-label="Teams on ${esc(pr.name)}">${ts.length ? chips : `<span class="muted">No team</span>`}${ts.length >= 2 ? `<span title="More than one team works on this project">${pill(`Shared by ${ts.length} teams`, "gray")}</span>` : ""}${canAdd ? `<button class="btn outline xs" id="team-add" type="button" data-act="team-add" data-id="${id}" aria-label="${esc(addName)}">${ic("plus", "ic16")}${addLbl}</button>` : ""}</div>`;
+  return `<div class="tchips" role="group" aria-label="Teams on ${esc(pr.name)}">${ts.length ? chips : `<span class="muted">No team</span>`}${ts.length >= 2 ? `<span class="tchips-note" title="More than one team works on this project">Shared by ${ts.length} teams</span>` : ""}${canAdd ? `<button class="btn outline xs" id="team-add" type="button" data-act="team-add" data-id="${id}" aria-label="${esc(addName)}">${ic("plus", "ic16")}${addLbl}</button>` : ""}</div>`;
 }
 function removeTeam(pid, t) {
   const ts = P[pid].teams, i = ts.indexOf(t); if (i < 0) return;
@@ -90,7 +125,7 @@ function removeTeam(pid, t) {
   ts.splice(i, 1); render(false);
   const rms = [...document.querySelectorAll('.tchip .rm')];
   const to = rms[i] || rms[i - 1] || document.getElementById("team-add"); if (to) to.focus();
-  toast(`${name} removed from ${P[pid].name}.`, "check-circle");
+  toast(`${name} removed from ${P[pid].name}.`, "check-circle", () => { if (!ts.includes(t)) { ts.splice(i, 0, t); render(false); } });
 }
 
 function conversationPreview(chId) {

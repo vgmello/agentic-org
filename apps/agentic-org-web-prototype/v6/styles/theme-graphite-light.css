@@ -185,4 +185,7 @@ html:root[data-theme="graphite-light"] {
   & .cmdk-opt-sub { color: var(--gray-500); }
   & .cmdk-opt-tag { background: var(--graphite-rail); color: var(--gray-400); box-shadow: inset 0 0 0 1px var(--line); }
   & .cmdk-empty { color: var(--gray-500); }
+
+  /* Insights cards share the white card surface used on Overview */
+  & :is(.insight-kpis > div, .insight-card, .insight-actions > a) { background: var(--graphite-panel); }
 }

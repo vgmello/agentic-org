@@ -188,7 +188,7 @@ function projectReleaseSummary(id) {
       const state = releaseGateState(item);
       const [icon, status] = gateStates[state];
       return `<li><a href="#/inbox/${item.id}" data-gate-state="${state}" title="${status}">
-        ${ic(icon, "ic14")}${esc(RELEASE_GATES[item.id])}<span class="sr-only"> · ${status}</span>
+        ${ic(icon, "ic14")}${esc(RELEASE_GATES[item.id])}<span class="sr-only"> · ${status}</span>${ic("chev-right", "ic14 gate-chev")}
       </a></li>`;
     }).join("")}</ul>` : ""}
   </section>`;
@@ -221,8 +221,8 @@ function assemblyMatrix(projects, entries, counts) {
   return `<section class="assembly-view" aria-label="Assembly line">
     <div class="assembly-summary">
       <div>${scopeLabel ? `<p class="assembly-eyebrow">${esc(scopeLabel)}</p>` : ""}<h2>${esc(title)}</h2></div>
-      <dl class="assembly-metrics"><div><dt>Readiness</dt><dd>${assemblyPct(entries)}%${assemblyProgressBar(counts.merged, entries.length, projectId ? "Project readiness" : "Portfolio readiness")}</dd></div>
-      <div><dt>Merged</dt><dd>${counts.merged} / ${entries.length}</dd></div>
+      <dl class="assembly-metrics">${projectId ? "" : `<div><dt>Readiness</dt><dd>${assemblyPct(entries)}%${assemblyProgressBar(counts.merged, entries.length, "Portfolio readiness")}</dd></div>
+      <div><dt>Merged</dt><dd>${counts.merged} / ${entries.length}</dd></div>`}
       <div><dt>Agents busy</dt><dd>${busyAgents}</dd></div>
       <div><dt>Needs review</dt><dd class="assembly-review-text">${counts.review}</dd></div>
       ${cycleMetric}</dl>
@@ -280,7 +280,7 @@ function projectThroughput(id, events, waiting, gates) {
   const mergeTimes = merges.map(({ hour }) => hour).concat(signOffs);
   const days = Array.from({ length: day - first + 1 }, (_, index) => {
     const offset = first + index;
-    const label = offset < 0 ? `${Math.abs(offset)}d ago` : `D${offset + 1}`;
+    const label = offset < 0 ? `${Math.abs(offset)}d ago` : offset === 0 ? "Today" : `In ${offset}d`;
     const count = (history[history.length - 1 + offset] ?? 0) + mergeTimes.filter((hour) => assemblyDay(hour) === offset).length;
     return { label, count };
   });
@@ -380,9 +380,6 @@ function projectReleaseOperations({ id, project, features, entries }, counts, ga
         ${stage === "agents" ? `<span class="project-station-slots" aria-hidden="true">${agents.map((member) => `<i${busy.has(member) ? " data-busy" : ""}></i>`).join("")}</span>` : ""}
         <span>${stationCounts[stage]}</span>
       </dd></div>`).join("")}</dl>
-    </section>
-    <section aria-labelledby="project-milestones-title"><h3 id="project-milestones-title">Milestones</h3>
-      ${project.milestoneTitle ? `<p class="project-milestone-name">${esc(project.milestoneTitle)}</p>${assemblyProgress(entries, project.milestoneTitle + " progress", features)}` : '<p class="activity-rail-note">No release milestone.</p>'}
     </section>
     <section aria-labelledby="project-human-title"><h3 id="project-human-title">Needs a human <span>${waiting.length}</span></h3>
       ${waiting.length ? `<ul>${waiting.map(({ work, review }) => `<li><a href="${review && !review.handled ? "#/inbox/" + review.id : "#/projects/" + id + "/work?item=" + encodeURIComponent(work.id)}">${esc(work.title)}</a></li>`).join("")}</ul>`
