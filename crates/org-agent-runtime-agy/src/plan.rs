@@ -243,6 +243,9 @@ pub(crate) fn build_take_over_plan(
     }
     validate_paths(spec, ctx)?;
     validate_deny_rules(&spec.policy.deny)?;
+    if spec.effort.is_some() {
+        return Err(PlanError::Unsupported("effort"));
+    }
     let Some(resume_id) = ctx.resume.clone() else {
         return Err(PlanError::InvalidSpec(
             "take-over requires LaunchContext::resume to be set".to_owned(),
@@ -368,10 +371,6 @@ fn append_take_over_options(args: &mut Vec<String>, spec: &SessionSpec) {
     if let Some(model) = &spec.model {
         args.push("--model".to_owned());
         args.push(model.as_str().to_owned());
-    }
-    if let Some(effort) = &spec.effort {
-        args.push("--effort".to_owned());
-        args.push(effort.as_str().to_owned());
     }
     for dir in &spec.read_only_dirs {
         args.push("--add-dir".to_owned());

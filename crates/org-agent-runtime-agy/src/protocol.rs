@@ -135,6 +135,20 @@ pub(crate) fn encode_session_open(
     Output::Write(line)
 }
 
+pub(crate) fn encode_set_mode(req_id: u64, session_id: &str, mode_id: &str) -> Output {
+    let line = encode_line(&json!({
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "method": "session/set_mode",
+        "params": {
+            "sessionId": session_id,
+            "modeId": mode_id,
+        },
+    }))
+    .expect("session/set_mode JSON-RPC encodes");
+    Output::Write(line)
+}
+
 pub(crate) fn encode_set_model(req_id: u64, session_id: &str, model_id: &str) -> Output {
     let line = encode_line(&json!({
         "jsonrpc": "2.0",
@@ -275,6 +289,21 @@ pub(crate) fn classify_tool_kind(tool: &str) -> ApprovalKind {
     }
 }
 
+pub(crate) fn classify_acp_kind_str(kind: Option<&str>) -> Option<ToolCapability> {
+    match kind.map(str::to_ascii_lowercase).as_deref() {
+        Some("read") => Some(ToolCapability::Read),
+        Some("search") => Some(ToolCapability::Search),
+        Some("edit" | "delete" | "move") => Some(ToolCapability::Edit),
+        Some("execute") => Some(ToolCapability::Shell),
+        Some("subagent") => Some(ToolCapability::Subagent),
+        _ => None,
+    }
+}
+
+pub(crate) fn classify_acp_tool_call_capability(tc: &Value) -> Option<ToolCapability> {
+    classify_acp_kind_str(tc.get("kind").and_then(Value::as_str))
+}
+
 fn classify_acp_tool_call_kind(tc: &Value) -> ApprovalKind {
     match tc
         .get("kind")
@@ -303,6 +332,9 @@ pub(crate) fn classify_escalation(tool: &str, kind: ApprovalKind, input: &Value)
     if tool.eq_ignore_ascii_case("SandboxNetworkAccess")
         || is_bypass_flag_triggered(input.get("dangerouslyDisableSandbox"))
         || is_bypass_flag_triggered(input.get("unsandboxed"))
+        || is_bypass_flag_triggered(input.get("BypassSandbox"))
+        || is_bypass_flag_triggered(input.get("bypassSandbox"))
+        || is_bypass_flag_triggered(input.get("bypass_sandbox"))
     {
         return Escalation::SandboxBypass;
     }
@@ -341,7 +373,8 @@ pub(crate) fn parse_permission_request(
     };
     let escalation = classify_escalation(tool, kind, &input);
     let mut request = ApprovalRequest::new(approval_id, kind, escalation, tool, input.clone());
-    request.capability = classify_tool_capability(tool);
+    request.capability =
+        classify_tool_capability(tool).or_else(|| classify_acp_tool_call_capability(tc));
     request.display_name = tc
         .get("title")
         .and_then(Value::as_str)

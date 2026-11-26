@@ -10,12 +10,12 @@ use org_agent_runtime::{
 
 use crate::plan::AgySessionConfig;
 use crate::protocol::{
-    classify_rpc_error_outcome, classify_stop_reason, classify_tool_capability, encode_initialize,
-    encode_jsonrpc_error, encode_permission_cancelled, encode_permission_selected,
-    encode_session_cancel, encode_session_close, encode_session_open, encode_session_prompt,
-    encode_set_model, extract_rpc_error_message, first_str, is_auth_rpc_error, is_banned_mode,
-    parse_acp_usage, parse_permission_request, parse_stderr_line, rpc_error, rpc_id_key,
-    rpc_result, AcpUsage,
+    classify_acp_kind_str, classify_rpc_error_outcome, classify_stop_reason,
+    classify_tool_capability, encode_initialize, encode_jsonrpc_error, encode_permission_cancelled,
+    encode_permission_selected, encode_session_cancel, encode_session_close, encode_session_open,
+    encode_session_prompt, encode_set_mode, encode_set_model, extract_rpc_error_message, first_str,
+    is_auth_rpc_error, is_banned_mode, parse_acp_usage, parse_permission_request,
+    parse_stderr_line, rpc_error, rpc_id_key, rpc_result, AcpUsage,
 };
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -24,6 +24,7 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 enum Phase {
     OpeningInit,
     OpeningSession,
+    OpeningMode,
     OpeningModel,
     Idle,
     Busy,
@@ -56,6 +57,7 @@ pub(crate) struct AgySession {
     next_id: u64,
     init_req_id: Option<u64>,
     session_req_id: Option<u64>,
+    mode_req_id: Option<u64>,
     model_req_id: Option<u64>,
     handshake_deadline: Option<Instant>,
     session_id: Option<SessionId>,
@@ -84,6 +86,7 @@ impl AgySession {
             next_id: 1,
             init_req_id: None,
             session_req_id: None,
+            mode_req_id: None,
             model_req_id: None,
             handshake_deadline: None,
             session_id: None,
@@ -169,8 +172,41 @@ impl AgySession {
 fn is_opening(phase: Phase) -> bool {
     matches!(
         phase,
-        Phase::OpeningInit | Phase::OpeningSession | Phase::OpeningModel
+        Phase::OpeningInit | Phase::OpeningSession | Phase::OpeningMode | Phase::OpeningModel
     )
+}
+
+fn fail_opening_mode_mismatch(
+    s: &mut AgySession,
+    reported: &str,
+    close_stdin: bool,
+) -> Vec<Output> {
+    s.handshake_deadline = None;
+    s.phase = Phase::Failed;
+    let mut out = vec![Output::Event(SessionEvent::StartFailed {
+        reason: StartFailure::ModeMismatch {
+            requested: s.cfg.expected_mode.reported_name.to_owned(),
+            reported: reported.to_owned(),
+        },
+    })];
+    if close_stdin {
+        out.push(Output::CloseStdin);
+    }
+    out
+}
+
+fn continue_opening_model_or_ready(s: &mut AgySession) -> Vec<Output> {
+    if let Some(requested) = s.cfg.model.clone() {
+        if s.active_model.as_deref() != Some(requested.as_str()) {
+            if let Some(sid) = s.session_id.clone() {
+                let model_id = s.alloc_id();
+                s.model_req_id = Some(model_id);
+                s.phase = Phase::OpeningModel;
+                return vec![encode_set_model(model_id, sid.as_str(), &requested)];
+            }
+        }
+    }
+    finish_opening_ready(s)
 }
 
 fn finish_opening_ready(s: &mut AgySession) -> Vec<Output> {
@@ -228,6 +264,9 @@ fn handle_rpc_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
     if s.session_req_id == Some(req_id) {
         return handle_session_open_response(s, val);
     }
+    if s.mode_req_id == Some(req_id) {
+        return handle_set_mode_response(s, val);
+    }
     if s.model_req_id == Some(req_id) {
         return handle_set_model_response(s, val);
     }
@@ -283,26 +322,21 @@ fn handle_init_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
     )]
 }
 
-fn validate_session_open_mode(s: &mut AgySession, result: &Value) -> Result<(), Vec<Output>> {
-    let reported = result
+fn validate_session_open_mode<'a>(
+    s: &mut AgySession,
+    result: &'a Value,
+) -> Result<&'a str, Vec<Output>> {
+    let Some(mode) = result
         .pointer("/modes/currentModeId")
-        .and_then(Value::as_str);
-    let Some(mode) = reported else {
-        s.reported_mode = None;
-        return Ok(());
+        .and_then(Value::as_str)
+        .filter(|m| !m.trim().is_empty())
+    else {
+        return Err(fail_opening_mode_mismatch(s, "<missing>", false));
     };
-    if is_banned_mode(mode) || mode != s.cfg.expected_mode.reported_name {
-        s.handshake_deadline = None;
-        s.phase = Phase::Failed;
-        return Err(vec![Output::Event(SessionEvent::StartFailed {
-            reason: StartFailure::ModeMismatch {
-                requested: s.cfg.expected_mode.reported_name.to_owned(),
-                reported: mode.to_owned(),
-            },
-        })]);
+    if is_banned_mode(mode) {
+        return Err(fail_opening_mode_mismatch(s, mode, true));
     }
-    s.reported_mode = Some(mode.to_owned());
-    Ok(())
+    Ok(mode)
 }
 
 fn handle_session_open_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
@@ -327,9 +361,10 @@ fn handle_session_open_response(s: &mut AgySession, val: &Value) -> Vec<Output> 
             None,
         );
     };
-    if let Err(mismatch) = validate_session_open_mode(s, result) {
-        return mismatch;
-    }
+    let mode = match validate_session_open_mode(s, result) {
+        Ok(m) => m,
+        Err(mismatch) => return mismatch,
+    };
     let sid = match result
         .get("sessionId")
         .and_then(Value::as_str)
@@ -358,18 +393,38 @@ fn handle_session_open_response(s: &mut AgySession, val: &Value) -> Vec<Output> 
         .pointer("/models/currentModelId")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    s.active_model = current_model.clone();
+    s.active_model = current_model;
     s.session_id = Some(sid.clone());
+    s.reported_mode = Some(mode.to_owned());
 
-    if let Some(requested) = s.cfg.model.clone() {
-        if current_model.as_deref() != Some(requested.as_str()) {
-            let model_id = s.alloc_id();
-            s.model_req_id = Some(model_id);
-            s.phase = Phase::OpeningModel;
-            return vec![encode_set_model(model_id, sid.as_str(), &requested)];
-        }
+    if mode != s.cfg.expected_mode.reported_name {
+        let mode_id = s.alloc_id();
+        s.mode_req_id = Some(mode_id);
+        s.phase = Phase::OpeningMode;
+        return vec![encode_set_mode(
+            mode_id,
+            sid.as_str(),
+            s.cfg.expected_mode.reported_name,
+        )];
     }
-    finish_opening_ready(s)
+    continue_opening_model_or_ready(s)
+}
+
+fn handle_set_mode_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
+    s.mode_req_id = None;
+    if s.phase != Phase::OpeningMode {
+        return Vec::new();
+    }
+    let err = rpc_error(val);
+    if err.is_some() || rpc_result(val).is_none() {
+        let reported = s
+            .reported_mode
+            .clone()
+            .unwrap_or_else(|| "<rejected>".to_owned());
+        return fail_opening_mode_mismatch(s, &reported, err.is_some_and(is_auth_rpc_error));
+    }
+    s.reported_mode = Some(s.cfg.expected_mode.reported_name.to_owned());
+    continue_opening_model_or_ready(s)
 }
 
 fn handle_set_model_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
@@ -609,22 +664,17 @@ fn handle_current_mode_update(
         return Vec::new();
     };
     if is_opening(s.phase) {
-        if is_banned_mode(mode) || mode != s.cfg.expected_mode.reported_name {
-            s.handshake_deadline = None;
-            s.phase = Phase::Failed;
-            let mut out = vec![Output::Event(SessionEvent::StartFailed {
-                reason: StartFailure::ModeMismatch {
-                    requested: s.cfg.expected_mode.reported_name.to_owned(),
-                    reported: mode.to_owned(),
-                },
-            })];
-            if is_banned_mode(mode) {
-                out.push(Output::CloseStdin);
-            }
-            return out;
+        if is_banned_mode(mode) {
+            return fail_opening_mode_mismatch(s, mode, true);
         }
-        s.reported_mode = Some(mode.to_owned());
-        return Vec::new();
+        if mode == s.cfg.expected_mode.reported_name {
+            s.reported_mode = Some(mode.to_owned());
+            return Vec::new();
+        }
+        if s.phase == Phase::OpeningMode && s.reported_mode.as_deref() == Some(mode) {
+            return Vec::new();
+        }
+        return fail_opening_mode_mismatch(s, mode, false);
     }
     s.reported_mode = Some(mode.to_owned());
     let mut out = vec![Output::Event(SessionEvent::ModeChanged {
@@ -673,7 +723,8 @@ fn handle_tool_call_update_start(update: &serde_json::Map<String, Value>) -> Vec
     let name = first_str(&[update.get("name"), update.get("title")])
         .unwrap_or("unknown")
         .to_owned();
-    let capability = classify_tool_capability(&name);
+    let capability = classify_tool_capability(&name)
+        .or_else(|| classify_acp_kind_str(update.get("kind").and_then(Value::as_str)));
     let input = update
         .get("rawInput")
         .filter(|v| !v.is_null())

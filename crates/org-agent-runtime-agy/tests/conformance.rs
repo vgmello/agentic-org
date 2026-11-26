@@ -92,7 +92,7 @@ fn agy_acp_script() -> Script {
     let init_ok = br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"antigravity","version":"1.5.17"},"agentCapabilities":{"sessionCapabilities":{"resume":{},"close":{},"load":{},"list":{},"additionalDirectories":{}}},"_meta":{"antigravity":{"tier":true,"systemPrompt":{"append":true}}}}}"#.to_vec();
     // Server already reports `currentModelId: "gemini-4-neon-high"` matching `sample_spec()`,
     // so `session/new` (id=2) transitions directly to Idle and the first turn prompt gets id=3.
-    let session_ok = br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"11111111-1111-4111-8111-111111111111","models":{"currentModelId":"gemini-4-neon-high","availableModels":[{"modelId":"gemini-4-neon-high","name":"Neon High"}]}}}"#.to_vec();
+    let session_ok = br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"11111111-1111-4111-8111-111111111111","models":{"currentModelId":"gemini-4-neon-high","availableModels":[{"modelId":"gemini-4-neon-high","name":"Neon High"}]},"modes":{"currentModeId":"default"}}}"#.to_vec();
     let chunk = br#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"11111111-1111-4111-8111-111111111111","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Working."}}}}"#.to_vec();
     let approval_req = br#"{"jsonrpc":"2.0","id":"perm-1","method":"session/request_permission","params":{"sessionId":"11111111-1111-4111-8111-111111111111","toolCall":{"toolCallId":"tc-1","name":"run_command","title":"Run echo hi","rawInput":{"CommandLine":"echo hi"}},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"},{"optionId":"deny","name":"Deny","kind":"reject_once"}]}}"#.to_vec();
     let approval_cancel =
@@ -233,7 +233,7 @@ fn handshake_injects_system_prompt_selects_model_and_supports_resume_and_timeout
 
     // Server defaults to neon-high; adapter must emit `session/set_model` for neon-xhigh before Ready.
     let set_model_writes = session.on_line(
-        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-xhigh","models":{"currentModelId":"gemini-4-neon-high"}}}"#,
+        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-xhigh","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":"default"}}}"#,
         now,
     );
     assert!(!set_model_writes
@@ -889,7 +889,7 @@ fn modes_jsonrpc_nulls_auth_error_option_selection_and_idle_interrupt_hardening(
     let spec = sample_spec();
     let now = Instant::now();
 
-    // 1. Omitted `modes` -> Ready { permission_mode: None } (never fabricated).
+    // 1. JSON-RPC `"error": null` with realistic `modes.currentModeId` reaches Ready cleanly.
     let (_, mut s_none) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
     let _ = s_none.start(now);
     let _ = s_none.on_line(
@@ -897,15 +897,15 @@ fn modes_jsonrpc_nulls_auth_error_option_selection_and_idle_interrupt_hardening(
         now,
     );
     let ready_none = s_none.on_line(
-        br#"{"jsonrpc":"2.0","id":2,"error":null,"result":{"sessionId":"sid-none","models":{"currentModelId":"gemini-4-neon-high"}}}"#,
+        br#"{"jsonrpc":"2.0","id":2,"error":null,"result":{"sessionId":"sid-none","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":"default"}}}"#,
         now,
     );
     assert!(ready_none.iter().any(|o| matches!(
         o,
         Output::Event(SessionEvent::Ready {
-            permission_mode: None,
+            permission_mode: Some(m),
             ..
-        })
+        }) if m == "default"
     )));
     // Idle Interrupt emits zero frames.
     assert!(s_none.control(Control::Interrupt, now).unwrap().is_empty());
@@ -1057,8 +1057,8 @@ fn opening_mode_mismatch_auth_error_and_resume_failure_scoping() {
         );
     }
 
-    // Banned or mismatched `modes.currentModeId` in `session/new` fails closed with ModeMismatch.
-    for bad_mode in ["yolo", "auto", "accept-edits", "ask"] {
+    // Banned `modes.currentModeId` in `session/new` fails immediately with ModeMismatch + CloseStdin.
+    for banned_mode in ["yolo", "auto"] {
         let (_, mut s_bad) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
         let _ = s_bad.start(now);
         let _ = s_bad.on_line(
@@ -1066,14 +1066,53 @@ fn opening_mode_mismatch_auth_error_and_resume_failure_scoping() {
             now,
         );
         let frame = format!(
-            r#"{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"sid-m","modes":{{"currentModeId":"{bad_mode}"}}}}}}"#
+            r#"{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"sid-m","modes":{{"currentModeId":"{banned_mode}"}}}}}}"#
         );
         let res = s_bad.on_line(frame.as_bytes(), now);
         assert!(res.iter().any(|o| matches!(
             o,
             Output::Event(SessionEvent::StartFailed {
                 reason: StartFailure::ModeMismatch { reported, .. }
-            }) if reported == bad_mode
+            }) if reported == banned_mode
+        )));
+        assert!(res.iter().any(|o| matches!(o, Output::CloseStdin)));
+    }
+
+    // Non-banned mismatched `modes.currentModeId` in `session/new` enters OpeningMode, emits
+    // `session/set_mode`, and fails closed with ModeMismatch if `session/set_mode` returns an error.
+    for mismatch_mode in ["accept-edits", "ask"] {
+        let (_, mut s_mis) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+        let _ = s_mis.start(now);
+        let _ = s_mis.on_line(
+            br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}"#,
+            now,
+        );
+        let frame = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"sid-m","modes":{{"currentModeId":"{mismatch_mode}"}}}}}}"#
+        );
+        let switch_out = s_mis.on_line(frame.as_bytes(), now);
+        assert!(!switch_out.iter().any(|o| matches!(
+            o,
+            Output::Event(SessionEvent::Ready { .. } | SessionEvent::StartFailed { .. })
+        )));
+        let set_mode_json: serde_json::Value = match &switch_out[0] {
+            Output::Write(line) => serde_json::from_slice(line.as_bytes()).unwrap(),
+            other => panic!("expected session/set_mode Write, got {other:?}"),
+        };
+        assert_eq!(set_mode_json["method"], "session/set_mode");
+        assert_eq!(set_mode_json["id"], 3);
+        assert_eq!(set_mode_json["params"]["sessionId"], "sid-m");
+        assert_eq!(set_mode_json["params"]["modeId"], "default");
+
+        let err_out = s_mis.on_line(
+            br#"{"jsonrpc":"2.0","id":3,"error":{"code":-32602,"message":"mode switch rejected"}}"#,
+            now,
+        );
+        assert!(err_out.iter().any(|o| matches!(
+            o,
+            Output::Event(SessionEvent::StartFailed {
+                reason: StartFailure::ModeMismatch { requested, reported }
+            }) if requested == "default" && reported == mismatch_mode
         )));
     }
 
@@ -1124,7 +1163,7 @@ fn pass2_allow_always_fail_closed_opening_mode_update_and_null_fallbacks() {
             now,
         );
         let _ = s_open.on_line(
-            br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-om","models":{"currentModelId":"gemini-4-neon-high"}}}"#,
+            br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-om","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":"default"}}}"#,
             now,
         );
         let frame = format!(
@@ -1202,4 +1241,266 @@ fn pass2_allow_always_fail_closed_opening_mode_update_and_null_fallbacks() {
         o,
         Output::Event(SessionEvent::Usage(u)) if u.input == 55 && u.output == 11
     )));
+}
+
+#[test]
+fn opening_set_mode_switches_from_default_to_plan_then_sets_model_and_ready() {
+    let runtime = AgyRuntime::new();
+    let mut spec = sample_spec();
+    spec.permission_mode = PermissionMode::Plan;
+    spec.model = Some(Token::try_from("gemini-4-neon-xhigh").unwrap());
+    let now = Instant::now();
+
+    let (_, mut session) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    let _ = session.start(now);
+    let _ = session.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"antigravity","version":"1.5.17"}}}"#,
+        now,
+    );
+
+    // Realistic `agy 1.5.17` opens in `"default"` even when ReadOnly/Plan requested `"plan"`.
+    let mode_writes = session.on_line(
+        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-plan","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":"default","availableModes":[{"id":"default"},{"id":"plan"},{"id":"accept-edits"}]}}}"#,
+        now,
+    );
+    assert!(!mode_writes
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::Ready { .. }))));
+    let mode_json: serde_json::Value = match &mode_writes[0] {
+        Output::Write(line) => serde_json::from_slice(line.as_bytes()).unwrap(),
+        other => panic!("expected session/set_mode Write, got {other:?}"),
+    };
+    assert_eq!(mode_json["method"], "session/set_mode");
+    assert_eq!(mode_json["id"], 3);
+    assert_eq!(mode_json["params"]["sessionId"], "sid-plan");
+    assert_eq!(mode_json["params"]["modeId"], "plan");
+
+    // Pre-switch echo of starting mode `"default"` is tolerated during OpeningMode,
+    // and `current_mode_update` for `"plan"` updates reported_mode without emitting ModeChanged.
+    let echo = session.on_line(
+        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"current_mode_update","currentModeId":"default"}}}"#,
+        now,
+    );
+    assert!(echo.is_empty());
+    let switched = session.on_line(
+        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"current_mode_update","currentModeId":"plan"}}}"#,
+        now,
+    );
+    assert!(switched.is_empty());
+
+    // `session/set_mode` result proceeds to `session/set_model` (id=4).
+    let model_writes = session.on_line(br#"{"jsonrpc":"2.0","id":3,"result":{}}"#, now);
+    assert!(!model_writes
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::Ready { .. }))));
+    let model_json: serde_json::Value = match &model_writes[0] {
+        Output::Write(line) => serde_json::from_slice(line.as_bytes()).unwrap(),
+        other => panic!("expected session/set_model Write, got {other:?}"),
+    };
+    assert_eq!(model_json["method"], "session/set_model");
+    assert_eq!(model_json["id"], 4);
+    assert_eq!(model_json["params"]["sessionId"], "sid-plan");
+    assert_eq!(model_json["params"]["modelId"], "gemini-4-neon-xhigh");
+
+    // `session/set_model` result finishes opening with Ready { permission_mode: Some("plan") }.
+    let ready = session.on_line(br#"{"jsonrpc":"2.0","id":4,"result":{}}"#, now);
+    assert!(ready.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::SessionStarted { runtime_session_id })
+            if runtime_session_id.as_str() == "sid-plan"
+    )));
+    assert!(ready.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::Ready {
+            permission_mode: Some(m),
+            ..
+        }) if m == "plan"
+    )));
+
+    // OpeningMode fails closed on banned mode update (with CloseStdin) and on auth error.
+    let (_, mut s_banned) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    let _ = s_banned.start(now);
+    let _ = s_banned.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}"#,
+        now,
+    );
+    let _ = s_banned.on_line(
+        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-p2","modes":{"currentModeId":"default"}}}"#,
+        now,
+    );
+    let banned_upd = s_banned.on_line(
+        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"current_mode_update","currentModeId":"yolo"}}}"#,
+        now,
+    );
+    assert!(banned_upd.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::StartFailed {
+            reason: StartFailure::ModeMismatch { requested, reported }
+        }) if requested == "plan" && reported == "yolo"
+    )));
+    assert!(banned_upd.iter().any(|o| matches!(o, Output::CloseStdin)));
+
+    let (_, mut s_auth) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    let _ = s_auth.start(now);
+    let _ = s_auth.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}"#,
+        now,
+    );
+    let _ = s_auth.on_line(
+        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-p3","modes":{"currentModeId":"default"}}}"#,
+        now,
+    );
+    let auth_err = s_auth.on_line(
+        br#"{"jsonrpc":"2.0","id":3,"error":{"code":-32000,"message":"Authentication required"}}"#,
+        now,
+    );
+    assert!(auth_err.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::StartFailed {
+            reason: StartFailure::ModeMismatch { requested, reported }
+        }) if requested == "plan" && reported == "default"
+    )));
+    assert!(auth_err.iter().any(|o| matches!(o, Output::CloseStdin)));
+}
+
+#[test]
+fn missing_modes_current_mode_id_fails_closed() {
+    let runtime = AgyRuntime::new();
+    let spec = sample_spec();
+    let now = Instant::now();
+
+    let payloads: &[&[u8]] = &[
+        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-1","models":{"currentModelId":"gemini-4-neon-high"}}}"#,
+        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-2","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":null}}}"#,
+        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-3","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":""}}}"#,
+    ];
+    for payload in payloads {
+        let (_, mut session) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+        let _ = session.start(now);
+        let _ = session.on_line(
+            br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"version":"1.5.17"}}}"#,
+            now,
+        );
+        let res = session.on_line(payload, now);
+        assert!(res.iter().any(|o| matches!(
+            o,
+            Output::Event(SessionEvent::StartFailed {
+                reason: StartFailure::ModeMismatch { requested, reported }
+            }) if requested == "default" && reported == "<missing>"
+        )));
+        assert!(!res
+            .iter()
+            .any(|o| matches!(o, Output::Event(SessionEvent::Ready { .. }))));
+    }
+}
+
+#[test]
+fn bypass_sandbox_variants_and_acp_kind_tool_capability_fallback() {
+    let runtime = AgyRuntime::new();
+    let spec = sample_spec();
+    let now = Instant::now();
+    let (_, mut session) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    let _ = session.start(now);
+    for line in &agy_acp_script().opening {
+        let _ = session.on_line(line, now);
+    }
+
+    // BypassSandbox variants fail closed as Escalation::SandboxBypass; explicit false stays None.
+    let escalation_cases = [
+        (
+            "esc-1",
+            r#"{"BypassSandbox":true}"#,
+            Escalation::SandboxBypass,
+        ),
+        (
+            "esc-2",
+            r#"{"bypassSandbox":true}"#,
+            Escalation::SandboxBypass,
+        ),
+        (
+            "esc-3",
+            r#"{"bypass_sandbox":true}"#,
+            Escalation::SandboxBypass,
+        ),
+        (
+            "esc-4",
+            r#"{"BypassSandbox":"yes"}"#,
+            Escalation::SandboxBypass,
+        ),
+        ("esc-5", r#"{"BypassSandbox":false}"#, Escalation::None),
+    ];
+    for (id, raw_input, expected) in escalation_cases {
+        let frame = format!(
+            r#"{{"jsonrpc":"2.0","id":"{id}","method":"session/request_permission","params":{{"toolCall":{{"toolCallId":"tc-{id}","name":"run_command","rawInput":{raw_input}}}}}}}"#
+        );
+        let out = session.on_line(frame.as_bytes(), now);
+        let req = out
+            .iter()
+            .find_map(|o| match o {
+                Output::Event(SessionEvent::ApprovalRequested(r)) => Some(r),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(req.escalation, expected, "case {id} ({raw_input})");
+    }
+
+    // Missing `toolCall.name` derives ToolCapability from ACP `kind` in ApprovalRequested and ToolStarted.
+    let cap_cases = [
+        ("read", ToolCapability::Read),
+        ("search", ToolCapability::Search),
+        ("edit", ToolCapability::Edit),
+        ("delete", ToolCapability::Edit),
+        ("move", ToolCapability::Edit),
+        ("execute", ToolCapability::Shell),
+        ("subagent", ToolCapability::Subagent),
+    ];
+    for (idx, (kind, expected_cap)) in cap_cases.into_iter().enumerate() {
+        let perm_frame = format!(
+            r#"{{"jsonrpc":"2.0","id":"cap-{idx}","method":"session/request_permission","params":{{"toolCall":{{"toolCallId":"tc-cap-{idx}","title":"ACP {kind} action","kind":"{kind}"}}}}}}"#
+        );
+        let perm_out = session.on_line(perm_frame.as_bytes(), now);
+        let req = perm_out
+            .iter()
+            .find_map(|o| match o {
+                Output::Event(SessionEvent::ApprovalRequested(r)) => Some(r),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            req.capability,
+            Some(expected_cap),
+            "ApprovalRequested capability for kind={kind}"
+        );
+
+        let tool_frame = format!(
+            r#"{{"jsonrpc":"2.0","method":"session/update","params":{{"update":{{"sessionUpdate":"tool_call","toolCallId":"tc-start-{idx}","title":"ACP {kind} action","kind":"{kind}"}}}}}}"#
+        );
+        let tool_out = session.on_line(tool_frame.as_bytes(), now);
+        assert!(
+            tool_out.iter().any(|o| matches!(
+                o,
+                Output::Event(SessionEvent::ToolStarted { capability, .. })
+                    if *capability == Some(expected_cap)
+            )),
+            "ToolStarted capability for kind={kind}"
+        );
+    }
+}
+
+#[test]
+fn plan_session_and_take_over_both_reject_effort() {
+    let runtime = AgyRuntime::new();
+    let mut effort_spec = sample_spec();
+    effort_spec.effort = Some(Token::try_from("high").unwrap());
+    let mut resume_ctx = sample_ctx();
+    resume_ctx.resume = Some(SessionId::try_from("agy-conv-9").unwrap());
+
+    assert!(matches!(
+        runtime.plan_session(&effort_spec, &sample_ctx()),
+        Err(PlanError::Unsupported("effort"))
+    ));
+    assert!(matches!(
+        runtime.plan_take_over(&effort_spec, &resume_ctx, 120, 40),
+        Err(PlanError::Unsupported("effort"))
+    ));
 }
