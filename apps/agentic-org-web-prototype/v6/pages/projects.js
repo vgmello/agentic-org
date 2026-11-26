@@ -152,7 +152,8 @@ function projectDecisionsHtml(needs) {
   const sel = needs.find((it) => it.id === S.pjDecision) || needs[0];
   return `<div class="pj-split">
       <nav class="pj-queue-pane" aria-label="Priority queue">
-        <ul role="list" class="pj-q-list" tabindex="-1">${needs.map((it) => queueRowHtml(it, sel)).join("")}</ul></nav>
+        <ul role="list" class="pj-q-list" tabindex="-1">${needs.map((it) => queueRowHtml(it, sel)).join("")}</ul>
+        <button type="button" class="pj-q-more" hidden>${ic("chev-down", "ic16")}<span></span></button></nav>
       ${decisionDetailHtml(sel)}
     </div>`;
 }
@@ -193,6 +194,25 @@ function memberRows(ids, opts = {}) {
   }).join("")}</ul>`;
 }
 
+/* "↓ N more" under the queue: counts rows below the visible area, scrolls to them, hides at the end. */
+function bindQueueMore(list) {
+  const more = list.parentElement.querySelector(".pj-q-more");
+  if (!more) return;
+  const hiddenBelow = () => [...list.children].filter((li) => li.offsetTop - list.offsetTop + li.offsetHeight > list.scrollTop + list.clientHeight + 2);
+  const sync = () => {
+    const n = hiddenBelow().length;
+    more.hidden = n === 0;
+    list.classList.toggle("is-scrolling", n > 0);
+    more.querySelector("span").textContent = `${n} more`;
+    more.setAttribute("aria-label", `Show ${n} more ${n === 1 ? "item" : "items"}`);
+  };
+  list.addEventListener("scroll", sync, { passive: true });
+  more.addEventListener("click", () => {
+    const next = hiddenBelow()[0];
+    if (next) list.scrollTo({ top: next.offsetTop - list.offsetTop - 8, behavior: "smooth" });
+  });
+  sync();
+}
 /* Keep the selected queue item visible inside the scrolling queue after a re-render. */
 function mountProjectQueue(main) {
   const list = main.querySelector(".pj-q-list"), cur = list?.querySelector('[aria-current="true"]');
@@ -207,6 +227,7 @@ function mountProjectQueue(main) {
   const top = cur.offsetTop - list.offsetTop, bottom = top + cur.offsetHeight;
   if (top < list.scrollTop) list.scrollTop = top;
   else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+  bindQueueMore(list);
 }
 
 export {

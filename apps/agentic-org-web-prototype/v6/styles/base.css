@@ -942,6 +942,9 @@ body.nokeys .search kbd { display: none; }
 .pj-q-item .triage-state-icon[data-state="handled"] { color: var(--tone-ok-ink); }
 .pj-q-item .triage-meta { grid-column: 2 / -1; padding-inline-start: 0; }
 .pj-q-item { width: 100%; text-align: left; }
+.pj-q-more { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 8px 16px; border-top: 1px solid var(--line); font-size: var(--fs-sm); font-weight: 500; color: var(--gray-400); }
+.pj-q-more:hover { color: var(--white); background: var(--hover); }
+.pj-q-more[hidden] { display: none; }
 .pj-detail-title a { color: inherit; }
 .pj-detail-title a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .pj-q-item + * { margin-top: 0; }
