@@ -332,4 +332,10 @@ html[data-theme^="graphite"] .hb-spark i { background: linear-gradient(to bottom
 html[data-theme^="graphite"] :is(.hb-pillar-bar .seg-auto, .hb-pillar-bar .seg-spend, .hb-tseg.agents) { background: linear-gradient(90deg, var(--graphite-data-deep), var(--graphite-data)); }
 html[data-theme^="graphite"] .hb-tleg.agents .hb-tleg-dot { background: var(--graphite-data); }
 html[data-theme^="graphite"] .hb-tleg.agents strong { color: var(--graphite-data); }
+/* Same blue for every progress bar in Graphite: project list, assembly line, release readiness, activity stages */
+html[data-theme^="graphite"] .progress:not(.done) > span { background: linear-gradient(90deg, var(--graphite-data-deep), var(--graphite-data)); }
+html[data-theme^="graphite"] .assembly-progress-bar::-webkit-progress-value { background: linear-gradient(90deg, var(--graphite-data-deep), var(--graphite-data)); }
+html[data-theme^="graphite"] .assembly-progress-bar::-moz-progress-bar { background: linear-gradient(90deg, var(--graphite-data-deep), var(--graphite-data)); }
+html[data-theme^="graphite"] :is(.assembly-chip, .assembly-legend span, .activity-stage-bar i)[data-stage="agents"] { --stage-color: var(--graphite-data); --stage-soft: color-mix(in srgb, var(--graphite-data) 14%, transparent); }
 .insight-card-head .insight-select { width: auto; flex: none; justify-self: end; align-self: start; }
+html[data-theme^="graphite"] :is(.project-throughput-plot > div, .activity-throughput i) { background: linear-gradient(to bottom, var(--graphite-data), var(--graphite-data-deep)); }
