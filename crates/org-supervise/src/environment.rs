@@ -99,7 +99,13 @@ impl Environment {
                 .ok_or_else(|| invalid("invalid context variable name"))?;
             let git = matches!(
                 name_text,
-                "GIT_CONFIG_NOSYSTEM" | "GIT_CONFIG_GLOBAL" | "GIT_CONFIG_COUNT"
+                "GIT_CONFIG_NOSYSTEM"
+                    | "GIT_CONFIG_GLOBAL"
+                    | "GIT_CONFIG_COUNT"
+                    | "GIT_AUTHOR_NAME"
+                    | "GIT_AUTHOR_EMAIL"
+                    | "GIT_COMMITTER_NAME"
+                    | "GIT_COMMITTER_EMAIL"
             ) || indexed(name_text, "GIT_CONFIG_KEY_")
                 || indexed(name_text, "GIT_CONFIG_VALUE_");
             let agent_os = matches!(
@@ -117,7 +123,7 @@ impl Environment {
             if !is_context_name(name)
                 || name_text == "ORG_SESSION_MARK"
                 || (name_text.starts_with("AGENT_OS_") && !agent_os)
-                || (name_text.starts_with("GIT_CONFIG_") && !git)
+                || (name_text.starts_with("GIT_") && !git)
             {
                 return Err(invalid("name is not in the context environment allowlist"));
             }
@@ -194,7 +200,14 @@ fn is_context_name(name: &OsStr) -> bool {
     name.starts_with(b"ORG_")
         || name.starts_with(b"AGENT_OS_")
         || name.starts_with(b"GIT_CONFIG_")
-        || name == b"GH_CONFIG_DIR"
+        || matches!(
+            name,
+            b"GIT_AUTHOR_NAME"
+                | b"GIT_AUTHOR_EMAIL"
+                | b"GIT_COMMITTER_NAME"
+                | b"GIT_COMMITTER_EMAIL"
+                | b"GH_CONFIG_DIR"
+        )
 }
 
 fn is_forbidden_auth_name(raw: &OsStr, name: &str) -> bool {

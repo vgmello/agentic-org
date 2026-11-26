@@ -1728,16 +1728,7 @@ pub struct ExportedSnapshotPages {
 }
 
 fn write_ephemeral_private_file(path: &Path, buf: &[u8]) -> std::io::Result<()> {
-    use std::io::Write as _;
-    let mut opts = std::fs::OpenOptions::new();
-    opts.create(true).truncate(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        opts.mode(0o600);
-    }
-    let mut file = opts.open(path)?;
-    file.write_all(buf)
+    org_platform::fs::write_owner_only_file(path, buf)
 }
 
 fn flush_exported_snapshot_page(

@@ -294,7 +294,7 @@ fn plan_pins_shell_env_policy_clears_mcp_and_enforces_paths_and_take_over() {
         .push(sp("/var/nested"));
     let mut non_private_tmp_ctx = sample_ctx();
     non_private_tmp_ctx.tmpdir = sp("/work/tmp-run-2");
-    if cfg!(target_os = "macos") {
+    if org_platform::fs::has_macos_private_root_aliases() {
         assert!(matches!(
             runtime.plan_session(&alias_spec, &ctx),
             Err(PlanError::InvalidSpec(_))

@@ -103,14 +103,18 @@ pub(super) fn require_disk(dir: &File, path: &Path) -> Result<(), FilesystemRefu
     Ok(())
 }
 
-pub(super) fn set_owner_only_dir(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+pub(super) use super::shared::{
+    create_owner_only_dir, create_owner_only_dir_all, create_symlink, effective_uid,
+    open_nofollow_ro, set_owner_only_dir, verify_owner_only_ancestors, verify_owner_only_dir,
+    verify_owner_only_file, write_owner_only_file,
+};
+
+pub(super) fn paths_case_insensitive_by_default() -> bool {
+    false
 }
 
-pub(super) fn create_owner_only_dir(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new().mode(0o700).create(path)
+pub(super) fn has_macos_private_root_aliases() -> bool {
+    false
 }
 
 /// What the instance-root rules ask of the kernel, so tests can answer for it.

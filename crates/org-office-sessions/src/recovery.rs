@@ -582,6 +582,51 @@ impl SessionStore {
         Ok(true)
     }
 
+    /// Atomically upserts `active-turn.v1.json` with `active = false` and `recovery_required = true`
+    /// under the store lock so an unverified teardown cannot disappear across restarts even when
+    /// no active-turn record was previously written (`AE-07`, `TASK-166`).
+    pub fn persist_recovery_required(
+        &self,
+        employee_id: &str,
+        run_id: Option<&str>,
+        session_id: Option<&str>,
+        runtime_session_id: Option<&str>,
+    ) -> io::Result<()> {
+        let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let dir = self.employee_dir(employee_id)?;
+        ensure_owner_dirs(&dir)?;
+        let path = self.active_turn_path(employee_id)?;
+        let record = match read_optional_json::<ActiveTurnRecord>(&path)? {
+            Some(mut rec) => {
+                rec.active = false;
+                rec.recovery_required = true;
+                rec.updated_at = rfc3339_now();
+                rec
+            }
+            None => ActiveTurnRecord {
+                version: 1,
+                employee_id: employee_id.to_owned(),
+                run_id: run_id.unwrap_or_default().to_owned(),
+                session_id: session_id.unwrap_or_default().to_owned(),
+                runtime_session_id: runtime_session_id.map(str::to_owned),
+                mark: String::new(),
+                pid: None,
+                pgid: None,
+                started_identity: None,
+                boot_identity: None,
+                objective: String::new(),
+                accepted_commands: Vec::new(),
+                resume_attempts: 0,
+                consecutive_stalls: 0,
+                stall_locked: false,
+                recovery_required: true,
+                active: false,
+                updated_at: rfc3339_now(),
+            },
+        };
+        write_atomic_json(&path, &record)
+    }
+
     pub fn read_active_turn(&self, employee_id: &str) -> io::Result<Option<ActiveTurnRecord>> {
         let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         read_optional_json(&self.active_turn_path(employee_id)?)

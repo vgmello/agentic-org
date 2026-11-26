@@ -13,6 +13,7 @@
 #![deny(unsafe_code)]
 
 pub mod binding;
+pub(crate) mod bwrap_isolation;
 pub mod credentials;
 mod host_auth;
 pub mod instructions;

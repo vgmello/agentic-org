@@ -100,6 +100,9 @@ pub(crate) struct FailoverRequest {
     pub rate_limit_resets_at: Option<String>,
 }
 pub(crate) type FailoverHook = Arc<dyn Fn(FailoverRequest) + Send + Sync>;
+/// Returns `true` when this Linux `bwrap` session's masked sibling set is stale because a new
+/// sibling employee appeared after launch (`TASK-166`).
+pub(crate) type BwrapTopologyStaleHook = Arc<dyn Fn() -> bool + Send + Sync>;
 /// Returns `true` when durable suspension was recorded (non-empty required asks), `false` if
 /// all required asks were answered/withdrawn before suspension took effect (`High #3`).
 pub(crate) type SuspendedHook =
@@ -118,6 +121,7 @@ pub(crate) struct PumpHooks {
     pub on_failover: Option<FailoverHook>,
     pub stage_mid_turn_wakes: Option<StageMidTurnWakesHook>,
     pub on_mid_turn_delivered: Option<MidTurnDeliveredHook>,
+    pub is_bwrap_topology_stale: Option<BwrapTopologyStaleHook>,
 }
 
 pub(crate) struct SessionRuntimeState {
@@ -562,7 +566,11 @@ fn merge_stop_preserve(current: Option<bool>, reason: &str) -> Option<bool> {
     }
     Some(matches!(
         reason,
-        "warm_route_stale" | "oauth_token_expiring" | "pool_reroute"
+        "warm_route_stale"
+            | "oauth_token_expiring"
+            | "pool_reroute"
+            | "bwrap_sibling_isolation_refresh"
+            | "bwrap_sibling_topology_changed"
     ))
 }
 
@@ -610,6 +618,15 @@ fn ensure_permit_for_turn(ctx: &PumpContext, loop_state: &mut PumpLoopState) -> 
     // surfaces bounded `auth_expired` failover instead of an infinite cold-start loop.
     if loop_state.turns_dispatched > 0
         && crate::host_auth::is_oauth_expiring(ctx.oauth_expires_at_ms, now_ms())
+    {
+        return PermitCheck::StaleWarm;
+    }
+    if loop_state.turns_dispatched > 0
+        && ctx
+            .hooks
+            .is_bwrap_topology_stale
+            .as_ref()
+            .is_some_and(|check| check())
     {
         return PermitCheck::StaleWarm;
     }
@@ -1526,6 +1543,7 @@ mod pump_tests {
                 on_failover: None,
                 stage_mid_turn_wakes: None,
                 on_mid_turn_delivered: None,
+                is_bwrap_topology_stale: None,
             },
         }
     }

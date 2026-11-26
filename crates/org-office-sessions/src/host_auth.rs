@@ -322,16 +322,15 @@ struct PrivateRefreshScratch {
 
 impl PrivateRefreshScratch {
     fn create() -> Option<Self> {
-        use std::os::unix::fs::DirBuilderExt as _;
         let base = std::env::temp_dir();
         for _ in 0..8 {
             let suffix = crate::credentials::random_hex(8).ok()?;
             let dir = base.join(format!("org-oauth-refresh-{suffix}"));
-            let mut builder = std::fs::DirBuilder::new();
-            builder.mode(0o700);
-            if builder.create(&dir).is_ok() {
+            if org_platform::fs::create_owner_only_dir(&dir).is_ok() {
                 let empty_mcp = dir.join("empty-mcp.json");
-                if std::fs::write(&empty_mcp, b"{\"mcpServers\":{}}\n").is_ok() {
+                if org_platform::fs::write_owner_only_file(&empty_mcp, b"{\"mcpServers\":{}}\n")
+                    .is_ok()
+                {
                     return Some(Self { dir, empty_mcp });
                 }
                 let _ = std::fs::remove_dir_all(&dir);
@@ -399,16 +398,7 @@ fn read_claude_credentials_file() -> Option<ClaudeOAuthToken> {
 }
 
 fn read_claude_credentials_from_path(cred_path: &Path) -> Option<ClaudeOAuthToken> {
-    use std::os::unix::fs::OpenOptionsExt as _;
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(
-            org_platform::fs::O_NOFOLLOW
-                | org_platform::fs::O_NONBLOCK
-                | org_platform::fs::O_CLOEXEC,
-        )
-        .open(cred_path)
-        .ok()?;
+    let file = org_platform::fs::open_nofollow_ro(cred_path).ok()?;
     let meta = file.metadata().ok()?;
     if !meta.is_file() || meta.len() > MAX_HOST_CLAUDE_CRED_BYTES as u64 {
         return None;
