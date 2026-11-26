@@ -6,10 +6,12 @@
 //! # Systems
 //!
 //! - macOS: `~/Library/Application Support/agentic.org`, the per-user temporary
-//!   directory the system names (`_CS_DARWIN_USER_TEMP_DIR`), socket paths of at most
-//!   103 bytes.
+//!   directory the system names (`_CS_DARWIN_USER_TEMP_DIR`),
+//!   `~/Library/Caches/agentic.org/cli-cache` for the command line's cache, socket paths
+//!   of at most 103 bytes.
 //! - GNU/Linux: `${XDG_DATA_HOME:-~/.local/share}/agentic-org`,
 //!   `${XDG_CACHE_HOME:-~/.cache}/agentic-org/tmp`,
+//!   `${XDG_CACHE_HOME:-~/.cache}/agentic-org/cli-cache` for the command line's cache,
 //!   `${XDG_STATE_HOME:-~/.local/state}/agentic-org/credentials` for a release host's
 //!   secrets, socket paths of at most 107 bytes.
 //!   The XDG variables are read from the process environment here, because they are
@@ -95,6 +97,18 @@ pub fn location_overrides(home: &Path) -> Result<Vec<(&'static str, OsString)>, 
 /// as every other system does.
 pub fn credential_directory_base(home: &Path) -> Result<PathBuf, Refused> {
     native::credential_directory_base(home)
+}
+
+/// The command line's cache folder (completion candidates) of the account whose home is
+/// `home`: a folder of this user's own, never a shared or system temporary one, so what it
+/// lists (instance names, organizations, offices) is not readable by other users.
+///
+/// macOS: `<home>/Library/Caches/agentic.org/cli-cache`. GNU/Linux:
+/// `<XDG_CACHE_HOME>/agentic-org/cli-cache`, or `<home>/.cache/agentic-org/cli-cache` (a
+/// relative `XDG_CACHE_HOME` is ignored). Nothing is created here: the consumer creates it
+/// owner-only ([`crate::fs::create_owner_only_dir_all`]). Every other system refuses.
+pub fn cli_cache_dir(home: &Path) -> Result<PathBuf, Refused> {
+    native::cli_cache_dir(home)
 }
 
 /// Why [`user_temp_base`] named no directory.

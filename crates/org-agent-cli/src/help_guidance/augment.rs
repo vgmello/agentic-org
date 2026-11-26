@@ -8,11 +8,16 @@ pub(super) enum HelpTarget<'a> {
     Command(&'static Command),
 }
 
+/// `--help`, or its short form `-h` (as `org-command` reads them).
+fn is_help(arg: &str) -> bool {
+    arg == "--help" || arg == "-h"
+}
+
 pub(super) fn asks_for_help(command: &Command, rest: &[String]) -> bool {
     let mut at = 0;
     while let Some(arg) = rest.get(at) {
         at += 1;
-        if arg == "--help" {
+        if is_help(arg) {
             return true;
         }
         let Some(name) = arg.strip_prefix("--") else {
@@ -35,14 +40,14 @@ pub(super) fn help_target<'a>(
     effective_args: &'a [String],
 ) -> Option<HelpTarget<'a>> {
     let first = effective_args.first()?;
-    if first == "--help" {
+    if is_help(first) {
         return Some(HelpTarget::Top);
     }
     if table.verbs(first).is_empty() {
         return None;
     }
     let second = effective_args.get(1)?;
-    if second == "--help" {
+    if is_help(second) {
         return Some(HelpTarget::Resource(first));
     }
     let command = table.find(first, second)?;

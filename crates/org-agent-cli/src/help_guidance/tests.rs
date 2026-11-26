@@ -326,3 +326,41 @@ fn literal_help_flag_value_is_not_mistaken_for_help_request() {
         real_help.stdout
     );
 }
+
+#[test]
+fn short_help_matches_long_help_and_command_help_shows_a_runnable_example() {
+    let words = |line: &[&str]| line.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+    let mut office = PanicOffice;
+    for (short, long) in [
+        (&["-h"][..], &["--help"][..]),
+        (&["msg", "-h"], &["msg", "--help"]),
+        (&["msg", "send", "-h"], &["msg", "send", "--help"]),
+        (&["who", "-h"], &["who", "--help"]),
+    ] {
+        let short_out = execute_with_office("agent-os", &words(short), &mut office);
+        let long_out = execute_with_office("agent-os", &words(long), &mut office);
+        assert_eq!(short_out, long_out, "{short:?}");
+        assert_eq!(short_out.exit_code, 0, "{short:?}");
+        assert!(short_out.stdout.contains("Use when:"), "{short:?}");
+    }
+    // Every command's help ends with its example (AX-7), after the `Use when:` cue.
+    let table = table::table();
+    for row in table.rows() {
+        let help = execute_with_office(
+            "agent-os",
+            &words(&[row.resource, row.verb, "-h"]),
+            &mut office,
+        );
+        let example = help
+            .stdout
+            .rsplit_once("\nExample:\n  ")
+            .map(|(_, line)| line)
+            .unwrap_or_else(|| panic!("{}: no example in {}", row.name(), help.stdout));
+        assert!(
+            example.starts_with(&format!("agent-os {} {}", row.resource, row.verb))
+                && example.lines().count() == 1,
+            "{}: {example}",
+            row.name()
+        );
+    }
+}

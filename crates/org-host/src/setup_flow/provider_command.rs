@@ -2,24 +2,21 @@
 //! (`TASK-120`): `provider create|list|bind|bindings|models` over grant-bound `host.sock` office
 //! channels.
 
-use std::io::Write;
-
 use org_proto::hiring::{
-    ModelProfileList, ModelProfileListParams, ProviderConnectionCreate,
+    ModelProfileList, ModelProfileListParams, ModelProfileListResult, ProviderConnectionCreate,
     ProviderConnectionCreateParams,
 };
 use org_proto::providers::{
     DiscoveredModelEntitlement, DiscoveredModelInput, ProviderBindingList,
-    ProviderBindingListParams, ProviderBindingSet, ProviderBindingSetParams,
-    ProviderConnectionList, ProviderConnectionListParams, ProviderConnectionRefresh,
-    ProviderConnectionRefreshParams,
+    ProviderBindingListParams, ProviderBindingListResult, ProviderBindingSet,
+    ProviderBindingSetParams, ProviderBindingSetResult, ProviderConnectionList,
+    ProviderConnectionListParams, ProviderConnectionListResult, ProviderConnectionRefresh,
+    ProviderConnectionRefreshParams, ProviderConnectionRefreshResult,
 };
-use org_proto::{ApiError, Call};
+use serde::Serialize;
 
-use super::cli_session::{connect_cli_session, end_session, Target};
-use super::output::say;
-use super::project_command::OfficeSession;
-use super::wire::registered;
+use super::cli_error::{office_refused, HostCliError};
+use super::project_command::call_office;
 
 /// Help text for `agentic-org provider`.
 pub const HELP: &str = "agentic-org provider <subcommand>\n\
@@ -57,7 +54,6 @@ pub struct ProviderCreateInput<'a> {
     pub auth_mode: &'a str,
     pub subscription_identity: Option<&'a str>,
     pub max_concurrent_turns: u64,
-    pub json: bool,
 }
 
 /// Input for `agentic-org provider bind`.
@@ -69,7 +65,6 @@ pub struct ProviderBindInput<'a> {
     pub auth_context_ref: &'a str,
     pub runtime_binary_path: Option<&'a str>,
     pub account_identity_ref: Option<&'a str>,
-    pub json: bool,
 }
 
 /// Input for `agentic-org provider refresh`.
@@ -82,43 +77,21 @@ pub struct ProviderRefreshInput<'a> {
     pub models: Vec<(String, String)>,
     pub account_identity_ref: Option<&'a str>,
     pub ttl_seconds: Option<u64>,
-    pub json: bool,
 }
 
-fn run_provider_rpc<C: Call>(
-    instance_name: Option<&str>,
-    login: Option<&str>,
-    org_id: Option<&str>,
-    office_id: Option<&str>,
-    require_hq: bool,
-    params: &C::Params,
-) -> Result<Result<C::Result, ApiError>, String> {
-    let (_, id, socket) = registered(&crate::human::paths(instance_name)?, instance_name)?;
-    let target = Target {
-        socket: &socket,
-        instance_id: &id,
-        name: instance_name,
-    };
-    let mut err_out = std::io::stderr().lock();
-    let (mut wire, session) =
-        connect_cli_session(&target, login, &mut crate::human::password, &mut err_out)?;
-    let answer = (|| {
-        let mut office = if require_hq {
-            OfficeSession::open_hq(&mut wire, &session, org_id)?
-        } else {
-            OfficeSession::open_for_office(&mut wire, &session, org_id, office_id)?
-        };
-        office.call::<C>(&mut wire, &session, params)
-    })();
-    end_session(&mut wire, &session);
-    answer
-}
-
-fn office_error(action: &str, error: ApiError) -> String {
-    format!(
-        "the office refused {action} ({:?}): {}",
-        error.code, error.message
-    )
+/// What `agentic-org provider create` made. Serializes as the command's earlier JSON (its
+/// `json!` map's key order); `name` and `key` are the trimmed input, for the summary, and
+/// are not serialized.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProviderCreated {
+    pub connection_id: String,
+    pub default_profile_id: String,
+    pub generation: u64,
+    pub revision: u64,
+    #[serde(skip)]
+    pub name: String,
+    #[serde(skip)]
+    pub key: String,
 }
 
 /// `agentic-org provider create`
@@ -126,8 +99,7 @@ pub fn provider_create(
     instance_name: Option<&str>,
     login: Option<&str>,
     input: &ProviderCreateInput<'_>,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<ProviderCreated, HostCliError> {
     let command_id = crate::ids::uuid_v7().map_err(|_| "could not generate command ID")?;
     let connection_id = crate::ids::uuid_v7().map_err(|_| "could not generate connection ID")?;
     let default_profile_id =
@@ -151,37 +123,23 @@ pub fn provider_create(
         endpoint_url: None,
         max_concurrent_turns: input.max_concurrent_turns.max(1),
     };
-    let created = match run_provider_rpc::<ProviderConnectionCreate>(
+    let created = call_office::<ProviderConnectionCreate>(
         instance_name,
         login,
         input.org_id,
         None,
         true,
         &params,
-    )? {
-        Ok(res) => res,
-        Err(err) => return Err(office_error("creating provider connection", err)),
-    };
-    if input.json {
-        let body = serde_json::json!({
-            "connection_id": connection_id,
-            "default_profile_id": default_profile_id,
-            "revision": created.revision,
-            "generation": created.generation,
-        });
-        let encoded = serde_json::to_string_pretty(&body)
-            .map_err(|_| "could not encode provider create response".to_owned())?;
-        return say(out, encoded);
-    }
-    say(
-        out,
-        format!(
-            "Created provider connection \"{}\" (key={})\n  connection_id:      {connection_id}\n  default_profile_id: {default_profile_id}\n  revision:           {}",
-            input.name.trim(),
-            input.key.trim(),
-            created.revision
-        ),
-    )
+    )?
+    .map_err(|err| office_refused("creating provider connection", &err))?;
+    Ok(ProviderCreated {
+        connection_id,
+        default_profile_id,
+        generation: created.generation,
+        revision: created.revision,
+        name: params.name,
+        key: params.key,
+    })
 }
 
 /// `agentic-org provider list`
@@ -190,38 +148,16 @@ pub fn provider_list(
     login: Option<&str>,
     org_id: Option<&str>,
     include_archived: bool,
-    json: bool,
-    out: &mut dyn Write,
-) -> Result<(), String> {
-    let listed = match run_provider_rpc::<ProviderConnectionList>(
+) -> Result<ProviderConnectionListResult, HostCliError> {
+    call_office::<ProviderConnectionList>(
         instance_name,
         login,
         org_id,
         None,
         false,
         &ProviderConnectionListParams { include_archived },
-    )? {
-        Ok(res) => res,
-        Err(err) => return Err(office_error("listing provider connections", err)),
-    };
-    if json {
-        let encoded = serde_json::to_string_pretty(&listed)
-            .map_err(|_| "could not encode provider list".to_owned())?;
-        return say(out, encoded);
-    }
-    if listed.connections.is_empty() {
-        return say(out, "No provider connections.");
-    }
-    for conn in &listed.connections {
-        say(
-            out,
-            format!(
-                "{}\tkey={}\truntime={}\tprovider={}\tenabled={}\tname={}",
-                conn.id, conn.key, conn.runtime_driver, conn.provider_type, conn.enabled, conn.name
-            ),
-        )?;
-    }
-    Ok(())
+    )?
+    .map_err(|err| office_refused("listing provider connections", &err))
 }
 
 /// `agentic-org provider bind`
@@ -229,8 +165,7 @@ pub fn provider_bind(
     instance_name: Option<&str>,
     login: Option<&str>,
     input: &ProviderBindInput<'_>,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<ProviderBindingSetResult, HostCliError> {
     let operation_id = crate::ids::uuid_v7().map_err(|_| "could not generate operation ID")?;
     let params = ProviderBindingSetParams {
         operation_id,
@@ -240,32 +175,15 @@ pub fn provider_bind(
         runtime_binary_path: input.runtime_binary_path.map(|s| s.trim().to_owned()),
         account_identity_ref: input.account_identity_ref.map(|s| s.trim().to_owned()),
     };
-    let bound = match run_provider_rpc::<ProviderBindingSet>(
+    call_office::<ProviderBindingSet>(
         instance_name,
         login,
         input.org_id,
         input.office_id,
         false,
         &params,
-    )? {
-        Ok(res) => res,
-        Err(err) => return Err(office_error("binding provider connection", err)),
-    };
-    if input.json {
-        let encoded = serde_json::to_string_pretty(&bound)
-            .map_err(|_| "could not encode provider binding response".to_owned())?;
-        return say(out, encoded);
-    }
-    say(
-        out,
-        format!(
-            "Bound connection {} on office {} (revision={}, auth_ref={}).",
-            bound.binding.connection_id,
-            bound.binding.office_id,
-            bound.binding.revision,
-            bound.binding.auth_context_ref
-        ),
-    )
+    )?
+    .map_err(|err| office_refused("binding provider connection", &err))
 }
 
 /// `agentic-org provider refresh`
@@ -273,8 +191,7 @@ pub fn provider_refresh(
     instance_name: Option<&str>,
     login: Option<&str>,
     input: &ProviderRefreshInput<'_>,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<ProviderConnectionRefreshResult, HostCliError> {
     let models = input
         .models
         .iter()
@@ -295,32 +212,15 @@ pub fn provider_refresh(
         issue_code: None,
         ttl_seconds: input.ttl_seconds,
     };
-    let refreshed = match run_provider_rpc::<ProviderConnectionRefresh>(
+    call_office::<ProviderConnectionRefresh>(
         instance_name,
         login,
         input.org_id,
         input.office_id,
         false,
         &params,
-    )? {
-        Ok(res) => res,
-        Err(err) => return Err(office_error("refreshing provider connection", err)),
-    };
-    if input.json {
-        let encoded = serde_json::to_string_pretty(&refreshed)
-            .map_err(|_| "could not encode provider refresh response".to_owned())?;
-        return say(out, encoded);
-    }
-    say(
-        out,
-        format!(
-            "Refreshed connection {} on office {}: status={} models={}",
-            refreshed.state.connection_id,
-            refreshed.state.office_id,
-            refreshed.state.status.as_str(),
-            refreshed.models.len()
-        ),
-    )
+    )?
+    .map_err(|err| office_refused("refreshing provider connection", &err))
 }
 
 /// `agentic-org provider bindings`
@@ -330,10 +230,8 @@ pub fn provider_bindings(
     org_id: Option<&str>,
     office_id: Option<&str>,
     connection_id: Option<&str>,
-    json: bool,
-    out: &mut dyn Write,
-) -> Result<(), String> {
-    let listed = match run_provider_rpc::<ProviderBindingList>(
+) -> Result<ProviderBindingListResult, HostCliError> {
+    call_office::<ProviderBindingList>(
         instance_name,
         login,
         org_id,
@@ -342,36 +240,8 @@ pub fn provider_bindings(
         &ProviderBindingListParams {
             connection_id: connection_id.map(str::to_owned),
         },
-    )? {
-        Ok(res) => res,
-        Err(err) => return Err(office_error("listing office provider bindings", err)),
-    };
-    if json {
-        let encoded = serde_json::to_string_pretty(&listed)
-            .map_err(|_| "could not encode provider bindings".to_owned())?;
-        return say(out, encoded);
-    }
-    if listed.bindings.is_empty() {
-        return say(out, "No local provider bindings.");
-    }
-    for entry in &listed.bindings {
-        let status = entry
-            .state
-            .as_ref()
-            .map(|s| s.status.as_str())
-            .unwrap_or("unknown");
-        say(
-            out,
-            format!(
-                "office={}\tconnection={}\trev={}\tstatus={status}\tauth_ref={}",
-                entry.binding.office_id,
-                entry.binding.connection_id,
-                entry.binding.revision,
-                entry.binding.auth_context_ref
-            ),
-        )?;
-    }
-    Ok(())
+    )?
+    .map_err(|err| office_refused("listing office provider bindings", &err))
 }
 
 /// `agentic-org provider models`
@@ -380,41 +250,16 @@ pub fn provider_models(
     login: Option<&str>,
     org_id: Option<&str>,
     office_id: Option<&str>,
-    json: bool,
-    out: &mut dyn Write,
-) -> Result<(), String> {
-    let listed = match run_provider_rpc::<ModelProfileList>(
+) -> Result<ModelProfileListResult, HostCliError> {
+    call_office::<ModelProfileList>(
         instance_name,
         login,
         org_id,
         office_id,
         false,
         &ModelProfileListParams {},
-    )? {
-        Ok(res) => res,
-        Err(err) => return Err(office_error("listing model profiles", err)),
-    };
-    if json {
-        let encoded = serde_json::to_string_pretty(&listed)
-            .map_err(|_| "could not encode model profiles".to_owned())?;
-        return say(out, encoded);
-    }
-    if listed.profiles.is_empty() {
-        return say(out, "No model profiles.");
-    }
-    for profile in &listed.profiles {
-        say(
-            out,
-            format!(
-                "{}\tkey={}\tconnections={}\tname={}",
-                profile.id,
-                profile.key,
-                profile.connection_ids.join(","),
-                profile.name
-            ),
-        )?;
-    }
-    Ok(())
+    )?
+    .map_err(|err| office_refused("listing model profiles", &err))
 }
 
 #[cfg(test)]

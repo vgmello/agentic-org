@@ -1,5 +1,7 @@
 //! The shared B2.4 / B3 organization and project command table (`org-command` rows, `doc-28` §3.2).
 
+use std::sync::OnceLock;
+
 use org_command::{Ack, Command, CommandTable, Example, Field, IfMatch, Kind, Type};
 use org_proto::ErrorCode;
 
@@ -537,158 +539,32 @@ pub const COMMANDS: &[Command] = &[
     },
 ];
 
-/// Builds and validates the shared organization/project/HR/session/messaging command table.
+/// Every domain's rows: the one list both tables below are built from.
+const DOMAINS: &[&[Command]] = &[
+    COMMANDS,
+    crate::hiring_table::HIRING_COMMANDS,
+    crate::session_table::SESSION_COMMANDS,
+    crate::msg_table::MSG_COMMANDS,
+    crate::task_table::TASK_COMMANDS,
+    crate::git_table::GIT_COMMANDS,
+    crate::process_table::PROCESS_COMMANDS,
+    crate::budget_table::BUDGET_COMMANDS,
+];
+
+/// Builds and validates the shared organization/project/HR/session/messaging command table:
+/// every row's names, fields and example are checked. For the contract tests; a running
+/// command uses [`runtime_table`].
 pub fn table() -> CommandTable {
-    CommandTable::new(&[
-        COMMANDS,
-        crate::hiring_table::HIRING_COMMANDS,
-        crate::session_table::SESSION_COMMANDS,
-        crate::msg_table::MSG_COMMANDS,
-        crate::task_table::TASK_COMMANDS,
-        crate::git_table::GIT_COMMANDS,
-        crate::process_table::PROCESS_COMMANDS,
-        crate::budget_table::BUDGET_COMMANDS,
-    ])
-    .expect("agent-os command table is valid")
+    CommandTable::new(DOMAINS).expect("agent-os command table is valid")
+}
+
+/// The same rows for a running command, built once per process and without the checks:
+/// `agent-os` does nothing before its call that the call does not need (`doc-28` §2.11,
+/// `doc-7` #18), and [`table`]'s contract tests are what make skipping the checks safe.
+pub fn runtime_table() -> &'static CommandTable {
+    static TABLE: OnceLock<CommandTable> = OnceLock::new();
+    TABLE.get_or_init(|| CommandTable::unchecked(DOMAINS))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::dispatch::{OfficeTransport, TransportOffice};
-    use serde_json::{json, Value};
-
-    struct DryRunAuditTransport {
-        calls: Vec<(String, Value)>,
-    }
-
-    impl OfficeTransport for DryRunAuditTransport {
-        fn call_method(
-            &mut self,
-            method: &str,
-            params: Value,
-        ) -> Result<Value, org_command::Refusal> {
-            self.calls.push((method.to_owned(), params));
-            Ok(json!({ "status": "checked" }))
-        }
-    }
-
-    #[test]
-    fn command_table_passes_all_org_command_contract_checks() {
-        let table = table();
-        org_command::testkit::check_rows(&table);
-    }
-
-    #[test]
-    fn every_write_command_honors_dry_run_without_live_side_effects() {
-        let table = table();
-        let mut checked = 0usize;
-        for cmd in table.rows().iter().copied().filter(|c| c.is_write()) {
-            checked += 1;
-            let mut args = vec![cmd.resource.to_owned(), cmd.verb.to_owned()];
-            if !cmd.input.is_empty() {
-                args.push("--json".to_owned());
-                args.push(cmd.example.input.to_owned());
-            }
-            args.push("--dry-run".to_owned());
-            if matches!(
-                cmd.kind,
-                Kind::Write {
-                    if_match: IfMatch::Required,
-                    ..
-                }
-            ) {
-                args.push("--if-match".to_owned());
-                args.push("1".to_owned());
-            }
-            let mut office = TransportOffice(DryRunAuditTransport { calls: vec![] });
-            let out = crate::execute_with_office("agent-os", &args, &mut office);
-            let env: Value = serde_json::from_str(&out.stdout).unwrap_or_else(|e| {
-                panic!(
-                    "command `{} {}` returned non-JSON stdout: {e}: {}",
-                    cmd.resource, cmd.verb, out.stdout
-                )
-            });
-            assert_eq!(
-                env["meta"]["dry_run"],
-                Value::Bool(true),
-                "`{} {} --dry-run` must stamp meta.dry_run=true: {}",
-                cmd.resource,
-                cmd.verb,
-                out.stdout
-            );
-            if office.0.calls.is_empty() {
-                assert_eq!(
-                    out.exit_code, 1,
-                    "`{} {} --dry-run` refused with unexpected exit code: {}",
-                    cmd.resource, cmd.verb, out.stdout
-                );
-                assert_eq!(env["ok"], Value::Bool(false));
-                assert_eq!(
-                    env["error"]["code"], "unsupported",
-                    "`{} {} --dry-run` with zero RPC calls must fail closed with `unsupported`: {}",
-                    cmd.resource, cmd.verb, out.stdout
-                );
-            } else {
-                for (method, params) in &office.0.calls {
-                    assert_eq!(
-                        params.get("dry_run"),
-                        Some(&Value::Bool(true)),
-                        "`{} {} --dry-run` invoked `{method}` without dry_run=true! params={params}",
-                        cmd.resource,
-                        cmd.verb
-                    );
-                }
-                assert_eq!(
-                    out.exit_code, 0,
-                    "`{} {} --dry-run` failed despite forwarding dry_run=true: {}",
-                    cmd.resource, cmd.verb, out.stdout
-                );
-                assert_eq!(env["ok"], Value::Bool(true));
-            }
-        }
-        assert!(
-            checked >= 40,
-            "expected at least 40 write commands, checked {checked}"
-        );
-    }
-
-    #[test]
-    fn directory_card_presence_enum_covers_all_member_presence_variants() {
-        let presence_field = DIRECTORY_CARD_FIELDS
-            .iter()
-            .find(|f| f.name == "presence")
-            .expect("presence field in DIRECTORY_CARD_FIELDS");
-        let allowed = match presence_field.ty {
-            Type::Enum(values) => values,
-            other => panic!("expected Type::Enum for presence, got {other:?}"),
-        };
-        let variants = [
-            org_proto::directory::MemberPresence::Online,
-            org_proto::directory::MemberPresence::Available,
-            org_proto::directory::MemberPresence::Busy,
-            org_proto::directory::MemberPresence::Idle,
-            org_proto::directory::MemberPresence::NeedsYou,
-            org_proto::directory::MemberPresence::WaitingForAnswer,
-            org_proto::directory::MemberPresence::Paused,
-            org_proto::directory::MemberPresence::UnableToRun,
-            org_proto::directory::MemberPresence::WithYou,
-            org_proto::directory::MemberPresence::Asleep,
-            org_proto::directory::MemberPresence::Offline,
-            org_proto::directory::MemberPresence::Unknown,
-        ];
-        assert_eq!(
-            allowed.len(),
-            variants.len(),
-            "DIRECTORY_CARD_FIELDS presence enum must match MemberPresence variants 1:1"
-        );
-        for variant in variants {
-            let wire = serde_json::to_value(variant).unwrap();
-            let wire_str = wire.as_str().unwrap();
-            assert!(
-                allowed.contains(&wire_str),
-                "DIRECTORY_CARD_FIELDS presence enum missing `{wire_str}`"
-            );
-        }
-    }
-}
+mod tests;

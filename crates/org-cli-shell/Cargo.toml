@@ -1,0 +1,29 @@
+[package]
+name = "org-cli-shell"
+description = "The shell of the operator command line `agentic-org`: output modes (table, TSV, JSON, IDs), terminal sanitizing, colors, errors and exit codes, prompts, base directories, the non-secret instance/office selection and the completion cache. No socket, office or host code."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Prompts on the terminal; used by `prompt` only (with `console` for its color switch).
+cliclack.workspace = true
+console.workspace = true
+# Cursor restore and exit 130 on Ctrl+C (`terminal::install_interrupt_handler`).
+ctrlc.workspace = true
+# Owner-only (0700) completion-cache folders (`cache`): no platform code here.
+org-platform = { path = "../org-platform" }
+owo-colors.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tabled.workspace = true
+# Atomic completion-cache writes (`cache`).
+tempfile.workspace = true
+terminal_size.workspace = true
+thiserror.workspace = true
+# The strict `agentic-org.toml` reader (`config`).
+toml.workspace = true
+
+[lints]
+workspace = true

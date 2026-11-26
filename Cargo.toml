@@ -34,6 +34,7 @@ members = [
   "apps/agentic-org",
   "apps/agent-os",
   "apps/agentic-org-web",
+  "crates/org-cli-shell",
 ]
 # Root checks cover every retained server, CLI and domain member.
 default-members = [
@@ -70,6 +71,7 @@ default-members = [
   "apps/agentic-org",
   "apps/agent-os",
   "apps/agentic-org-web",
+  "crates/org-cli-shell",
 ]
 
 [workspace.package]
@@ -87,6 +89,9 @@ undocumented_unsafe_blocks = "warn"
 unimplemented = "warn"
 
 [workspace.dependencies]
+# The operator CLI's grammar, help and completion (apps/agentic-org only; vetted 2026-11-26).
+clap = { version = "=4.6.10", features = ["derive", "wrap_help"] }
+clap_complete = { version = "=4.6.12", features = ["unstable-dynamic"] }
 argon2 = { version = "=0.5.3", default-features = false, features = ["password-hash", "alloc", "zeroize"] }
 # Pin exact versions here; crates opt in with `x.workspace = true`.
 serde = { version = "=1.0.229", features = ["derive"] }
@@ -113,6 +118,17 @@ security-framework = { version = "=3.7.0", features = ["OSX_10_15"] }
 security-framework-sys = { version = "=2.17.0", features = ["OSX_10_15"] }
 # security-framework's code-signing API takes Core Foundation types (the peer's audit token).
 core-foundation = "=0.10.1"
+# The operator command line's shell (`crates/org-cli-shell` only; TASK-188): tables, colors,
+# prompts, terminal width, Ctrl+C, the error enum and the strict `agentic-org.toml` reader.
+# No `preserve_order` on `toml` or `serde_json`: key order elsewhere stays as it is.
+cliclack = "=0.5.7"
+console = "=0.16.6"
+ctrlc = "=3.5.3"
+owo-colors = "=4.4.0"
+tabled = { version = "=0.22.0", default-features = false, features = ["std", "ansi"] }
+terminal_size = "=0.4.4"
+thiserror = "=2.0.21"
+toml = { version = "=1.2.3", default-features = false, features = ["std", "serde", "parse"] }
 
 # Password hashing is Argon2id at 64 MiB: unoptimized it takes seconds per hash, more under
 # load, and a sign-in then overruns the web process's 5 s host-call deadline (a 503). Only

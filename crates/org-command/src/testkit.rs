@@ -98,6 +98,10 @@ impl KeySource for StubKeys {
     }
 }
 
+mod example;
+
+pub use example::shell_words;
+
 const PROGRAM: &str = "agent-os";
 
 /// Runs one command line against a fresh stub office, with fresh [`StubKeys`].
@@ -470,6 +474,7 @@ pub fn check_answers(table: &CommandTable, make: OfficeFactory) {
             );
         }
         assert!(office.calls.is_empty(), "{name}: --help called the office");
+        example::assert_help_ends_with_example(row, &name, &output.stdout);
     }
 }
 
@@ -534,6 +539,7 @@ pub fn check_schemas(table: &CommandTable, make: OfficeFactory) {
             Some(&input),
             "{name}: the parser fills the example"
         );
+        example::assert_example_parses(table, row, &name, &input, make);
         let recorded = json_envelope(&output, &format!("{name}: the recorded output"));
         if let Err(problem) = validate_schema(&data["output"], &recorded["data"]) {
             panic!("{name}: the recorded output does not validate against the output schema: {problem}");

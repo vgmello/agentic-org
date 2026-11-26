@@ -63,8 +63,11 @@ mod refused;
 #[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
 use refused as native;
 
+mod limits;
 #[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
 mod shared;
+
+pub use limits::{disable_core_dumps, owner_only_umask};
 #[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
 use shared::{check_time, native_mark, no_core_dumps, valid_pid};
 
