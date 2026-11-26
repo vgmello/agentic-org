@@ -281,9 +281,8 @@ pub(super) fn handle_turn_ended(
         state.last_error = Some(errors.join("; "));
     }
     let failover_blocked_recovery = evaluate_turn_failover(state, loop_state, ctx, outcome, errors);
-    if state.state == SessionState::Running {
-        state.state = SessionState::Idle;
-    }
+    // A turn queued behind this one keeps the session busy until it is dispatched.
+    state.settle_idle();
     persist_turn_update(ctx, |rec| {
         rec.active = false;
         rec.consecutive_stalls = 0;
@@ -369,7 +368,9 @@ pub(super) fn evaluate_turn_failover(
     }
     let mut objective = loop_state.current_objective.clone();
     if !loop_state.pending_turns.is_empty() {
-        let queued = std::mem::take(&mut loop_state.pending_turns).join("\n\n");
+        let queued = std::mem::take(&mut loop_state.pending_turns);
+        state.dequeue_turns(queued.len());
+        let queued = queued.join("\n\n");
         if objective.is_empty() {
             objective = queued;
         } else {

@@ -294,6 +294,7 @@ impl SessionManager {
             susp.runtime_session_id.as_deref(),
             None,
             trigger,
+            None,
         ) {
             Ok(_) => {
                 let _lock = self.employee_locks.lock(emp_id);

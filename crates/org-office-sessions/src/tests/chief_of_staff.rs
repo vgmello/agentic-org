@@ -9,6 +9,7 @@ use org_agent_runtime::{
     validate_operator_shell, AgentIdentity, AgentName, PathPattern, SessionKind, ToolCapability,
 };
 use org_office::organization_family::records::BuiltinKey;
+use org_proto::ErrorCode;
 
 use super::*;
 use crate::partition::PartitionKey;
@@ -347,4 +348,128 @@ fn she_never_signs_in_from_an_external_workspace() {
         .unwrap_err();
     assert!(only_inside(approve));
     assert!(f.manager.external_lease(&f.tess).is_none());
+}
+
+fn add_person(office: &Office, owner: &str, name: &str) -> String {
+    use org_office::rules::OrgCommand;
+    use org_proto::org::MemberAddPersonParams;
+
+    let id = new_uuid_v7();
+    let team = office.org_snapshot().unwrap().teams[0].id.clone();
+    office
+        .submit_org(
+            owner,
+            OrgCommand::MemberAddPerson(MemberAddPersonParams {
+                command_id: new_uuid_v7(),
+                member_id: id.clone(),
+                name: name.to_owned(),
+                handle: Some(name.to_lowercase()),
+                home_team_id: Some(team),
+                contact: None,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    id
+}
+
+/// Inspect, list, transcript and stop RPCs naming `target`, each with a fresh `command_id`.
+fn session_rpcs(target: &str) -> Vec<Request> {
+    use org_proto::sessions::{
+        MemberSessionInspect, MemberSessionInspectParams, MemberSessionList,
+        MemberSessionListParams, MemberSessionStop, MemberSessionStopParams,
+        MemberSessionTranscript, MemberSessionTranscriptParams,
+    };
+
+    let employee_id = Some(target.to_owned());
+    vec![
+        Request::new::<MemberSessionInspect>(
+            1,
+            &MemberSessionInspectParams {
+                employee_id: employee_id.clone(),
+            },
+        )
+        .unwrap(),
+        Request::new::<MemberSessionList>(
+            2,
+            &MemberSessionListParams {
+                employee_id: employee_id.clone(),
+                limit: None,
+            },
+        )
+        .unwrap(),
+        Request::new::<MemberSessionTranscript>(
+            3,
+            &MemberSessionTranscriptParams {
+                employee_id,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+        Request::new::<MemberSessionStop>(
+            4,
+            &MemberSessionStopParams {
+                command_id: new_uuid_v7(),
+                employee_id: target.to_owned(),
+                reason: None,
+            },
+        )
+        .unwrap(),
+    ]
+}
+
+fn rpc_error(manager: &SessionManager, caller: &str, request: &Request) -> Option<ErrorCode> {
+    let response = manager
+        .dispatch_rpc(Some(caller), request)
+        .expect("a session RPC");
+    match response.outcome {
+        org_proto::Outcome::Error(err) => Some(err.code),
+        org_proto::Outcome::Result(_) => None,
+    }
+}
+
+/// Another active person may manage ordinary agents' sessions, but never Tess's: inspecting,
+/// listing, reading or stopping them would show the owner's replies and transcripts or end the
+/// owner's turn. The owner keeps all four (`TASK-80.1`).
+#[test]
+fn only_the_owner_may_inspect_list_read_or_stop_her_sessions() {
+    let f = fixture();
+    let bob = add_person(&f.office, &f.owner, "Bob");
+    for request in session_rpcs(&f.tess) {
+        assert_eq!(
+            rpc_error(&f.manager, &bob, &request),
+            Some(ErrorCode::NotAuthorized),
+            "a non-owner person is refused `{}` on Tess",
+            request.method
+        );
+    }
+    for request in session_rpcs(&f.tess) {
+        // The owner passes authorization (her idle session has no transcript yet).
+        let owner = rpc_error(&f.manager, &f.owner, &request);
+        assert!(
+            owner.is_none() || owner == Some(ErrorCode::NotFound),
+            "the owner may `{}` on Tess: {owner:?}",
+            request.method
+        );
+    }
+
+    // An ordinary agent's sessions stay open to every active person.
+    let root = f.office.org_snapshot().unwrap().teams[0].id.clone();
+    let (agent, _) = hire_agent_with_runtime(
+        &f.office,
+        &f.owner,
+        &root,
+        "anthropic",
+        "claude",
+        "ada",
+        "claude-sonnet-4",
+    );
+    for request in session_rpcs(&agent) {
+        let bob_call = rpc_error(&f.manager, &bob, &request);
+        assert!(
+            bob_call.is_none() || bob_call == Some(ErrorCode::NotFound),
+            "a person may `{}` on an ordinary agent: {bob_call:?}",
+            request.method
+        );
+    }
 }

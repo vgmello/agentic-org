@@ -147,6 +147,7 @@ impl SessionManager {
         ts: u64,
     ) -> WakeOutcome {
         let emp_id = employee.id.as_str();
+        let (matching, partition) = Self::claim_one_partition(employee, matching);
         let person_triggered = matching.iter().any(|i| i.sender_is_person);
         let Ok(objective) = compose_wake_turn(&self.office, emp_id, &matching, &susp.asks) else {
             return self.hold_refused_batch(emp_id, ts);
@@ -174,6 +175,7 @@ impl SessionManager {
             susp.runtime_session_id.as_deref(),
             task_ref,
             trigger,
+            partition,
         ) {
             Ok(_) => {
                 let notify_remaining = {
@@ -257,13 +259,20 @@ impl SessionManager {
         self.launch_claimed_wakes(employee, queue, ts)
     }
 
+    /// Launches one turn of the queue's wakes. The Chief of Staff's turn claims only the wakes
+    /// of the first one's partition ([`SessionManager::claim_one_partition`]): the rest stay
+    /// queued for their own partition's turn, so no sender's private message ever shares a
+    /// turn, or a conversation, with another caller's (`TASK-80.1`).
     pub(super) fn launch_claimed_wakes(
         &self,
         employee: &Employee,
-        queue: PendingWakeQueueRecord,
+        mut queue: PendingWakeQueueRecord,
         ts: u64,
     ) -> WakeOutcome {
         let emp_id = employee.id.as_str();
+        let (claimed, partition) =
+            Self::claim_one_partition(employee, std::mem::take(&mut queue.items));
+        queue.items = claimed;
         let person_triggered = queue.has_person_item();
         let Ok(objective) = compose_wake_turn(&self.office, emp_id, &queue.items, &[]) else {
             return self.hold_refused_batch(emp_id, ts);
@@ -300,6 +309,7 @@ impl SessionManager {
             resume_rsid.as_deref(),
             task_ref,
             trigger,
+            partition,
         ) {
             Ok(_) => {
                 let notify_remaining = {

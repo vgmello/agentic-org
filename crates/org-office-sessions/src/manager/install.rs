@@ -107,7 +107,7 @@ impl SessionManager {
         // Enqueue the initial turn BEFORE starting the pump thread so `run_pump` always sees
         // Turn 1 immediately upon `Ready` without transitioning `Starting -> Idle` prematurely.
         if !objective.is_empty() {
-            let _ = tx.send(PumpCommand::SendTurn(objective));
+            let _ = crate::pump::queue_turn(&runtime_state, &tx, objective);
         }
         let thread = spawn_pump_thread(
             self,

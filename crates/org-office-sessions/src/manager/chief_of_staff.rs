@@ -27,6 +27,7 @@ use org_proto::{ApiError, ErrorCode};
 use super::{LiveSessionHandle, SessionManager};
 use crate::partition::{PartitionKey, PartitionLedger};
 use crate::pump::SessionRuntimeState;
+use crate::wake::{PendingWakeItem, WakeKind};
 
 /// The reason a partition switch gives the process it stops.
 pub(super) const SWITCH_REASON: &str = "chief_of_staff_partition_switch";
@@ -40,6 +41,49 @@ impl SessionManager {
     ) -> Option<PartitionKey> {
         (employee.builtin_key == Some(BuiltinKey::ChiefOfStaff))
             .then(|| PartitionKey::for_caller(caller_id))
+    }
+
+    /// The partition a queued wake `item` of `employee` runs in; `None` for anyone but the
+    /// Chief of Staff. What one sender addressed to her (a DM, a hand-off, an ask) runs in that
+    /// sender's own partition: a person's `tess:ask:<id>`, acting for them, or anyone else's
+    /// `tess:dm:<id>`, acting for nobody. Everything else (mentions, assignments, answers,
+    /// recovery) runs in `tess:wake`, which so never holds a sender's private message.
+    pub(crate) fn wake_partition(
+        employee: &Employee,
+        item: &PendingWakeItem,
+    ) -> Option<PartitionKey> {
+        Self::turn_partition(employee, None)?;
+        Some(match item.kind {
+            WakeKind::DirectMessage | WakeKind::Handoff | WakeKind::Ask
+                if item.sender_is_person =>
+            {
+                PartitionKey::tess_ask(&item.sender_id)
+            }
+            WakeKind::DirectMessage | WakeKind::Handoff | WakeKind::Ask => {
+                PartitionKey::tess_dm(&item.sender_id)
+            }
+            _ => PartitionKey::tess_wake(),
+        })
+    }
+
+    /// Claims of `items` only those of the first item's partition, and names it: items of
+    /// different partitions never share a turn, and the rest stay queued for their own. Anyone
+    /// but the Chief of Staff claims them all.
+    pub(crate) fn claim_one_partition(
+        employee: &Employee,
+        items: Vec<PendingWakeItem>,
+    ) -> (Vec<PendingWakeItem>, Option<PartitionKey>) {
+        let Some(partition) = items
+            .first()
+            .and_then(|first| Self::wake_partition(employee, first))
+        else {
+            return (items, None);
+        };
+        let claimed = items
+            .into_iter()
+            .filter(|item| Self::wake_partition(employee, item).as_ref() == Some(&partition))
+            .collect();
+        (claimed, Some(partition))
     }
 }
 

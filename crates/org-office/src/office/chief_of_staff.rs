@@ -99,6 +99,21 @@ impl ReadOp for ReadHireScope {
     }
 }
 
+/// Reads the conversation one message (a chat or mailbox message, or an ask) is in.
+struct ReadMessageConversation {
+    message: String,
+}
+
+impl ReadOp for ReadMessageConversation {
+    type Out = Option<String>;
+
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read
+            .message(&self.message)?
+            .map(|message| message.conversation_id.as_str().to_owned()))
+    }
+}
+
 impl Office {
     /// The organization's built-in Chief of Staff, if she is on record.
     pub fn chief_of_staff(&self) -> Result<Option<Employee>, OfficeError> {
@@ -182,6 +197,16 @@ impl Office {
             .read(ReadHireScope { request })
             .map_err(storage)?
             .0)
+    }
+
+    /// The conversation message `message_id` (a chat or mailbox message, or an ask) is in, so
+    /// the `caller ∩ tess` gate can check a call that acts on it against the member she acts
+    /// for; `None` for an unknown message.
+    pub fn message_conversation_id(&self, message_id: &str) -> Result<Option<String>, OfficeError> {
+        let op = ReadMessageConversation {
+            message: message_id.to_owned(),
+        };
+        Ok(self.store.read(op).map_err(storage)?.0)
     }
 
     /// The live authority of `caller_id`, the member the Chief of Staff acts for. An unknown

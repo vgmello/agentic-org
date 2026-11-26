@@ -54,6 +54,7 @@ pub(super) fn stub_live_handle(
         suspended_since: None,
         pending_wake_count: 0,
         pending_wake_reason: None,
+        queued_turns: 0,
     }));
     let handle = LiveSessionHandle {
         state: runtime_state,

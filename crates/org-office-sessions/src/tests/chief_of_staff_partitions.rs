@@ -221,6 +221,7 @@ fn stub_handle(
         suspended_since: None,
         pending_wake_count: 0,
         pending_wake_reason: None,
+        queued_turns: 0,
     }));
     let handle = LiveSessionHandle {
         state: runtime_state,
@@ -494,7 +495,7 @@ fn a_wake_never_drains_into_or_joins_a_members_live_turn() {
 }
 
 #[test]
-fn her_turn_end_starts_queued_wakes_in_tess_wake_never_in_the_members_process() {
+fn her_turn_end_starts_a_queued_dm_in_its_senders_partition_never_in_the_owners_process() {
     let f = Fixture::new();
     let rx = f.install(SessionState::Idle, Some(f.owner_key()), Some("conv-owner"));
     let mut queue = PendingWakeQueueRecord::empty(&f.tess);
@@ -516,7 +517,7 @@ fn her_turn_end_starts_queued_wakes_in_tess_wake_never_in_the_members_process() 
     }
     assert_eq!(stop_reasons(&cmds), [SWITCH]);
     assert_eq!(sent_turns(&cmds), 0);
-    // The wake turn ran (or was refused) in `tess:wake`, acting for nobody: no runtime is
+    // Bea's DM ran (or was refused) in her own partition, never in `tess:wake`: no runtime is
     // installed here, so it stays queued for a retry, and the owner's conversation is kept.
     let wait = Instant::now() + Duration::from_secs(10);
     while Instant::now() < wait
@@ -532,8 +533,13 @@ fn her_turn_end_starts_queued_wakes_in_tess_wake_never_in_the_members_process() 
     assert!(f
         .manager
         .partitions
-        .state(&f.tess, &PartitionKey::tess_wake())
+        .state(&f.tess, &f.member_key())
         .is_some());
+    assert!(f
+        .manager
+        .partitions
+        .state(&f.tess, &PartitionKey::tess_wake())
+        .is_none());
     assert_eq!(f.queued(), ["w-2"]);
     assert_eq!(f.manager.bindings.acting_for_caller_id(&f.tess), None);
     let owner = f.manager.partitions.state(&f.tess, &f.owner_key()).unwrap();
@@ -594,6 +600,17 @@ fn a_failover_serves_the_failed_runs_partition_and_never_queues_a_members_turn()
         .insert(f.tess.clone());
     crate::manager::run_failover_relaunch(&f.manager, req);
     assert!(f.queued().is_empty(), "{:?}", f.queued());
+    // Nor is what an agent addressed to her: `tess:wake` never receives a sender's message.
+    crate::manager::run_failover_relaunch(
+        &f.manager,
+        failover(&f, Some(PartitionKey::tess_dm("agent-ada"))),
+    );
+    assert!(f.queued().is_empty(), "{:?}", f.queued());
+    // Neither is logged as requeued: only as deliberately not requeued.
+    let history =
+        std::fs::read_to_string(f.manager.store.history_path(&f.tess).unwrap()).unwrap_or_default();
+    assert_eq!(history.matches("pool_failover_not_requeued").count(), 2);
+    assert!(!history.contains("\"pool_failover_requeued\""), "{history}");
     // A `tess:wake` turn came from the shared queue and goes back to it.
     crate::manager::run_failover_relaunch(
         &f.manager,
@@ -667,4 +684,144 @@ fn only_the_chief_of_staff_is_partitioned() {
         SessionManager::turn_partition(&f.tess(), None),
         Some(PartitionKey::tess_wake())
     );
+}
+
+fn wake_item(
+    id: &str,
+    kind: WakeKind,
+    sender: &str,
+    sender_is_person: bool,
+    summary: &str,
+) -> PendingWakeItem {
+    PendingWakeItem {
+        item_id: id.into(),
+        kind,
+        sender_id: sender.into(),
+        sender_name: sender.into(),
+        sender_handle: None,
+        sender_relation: None,
+        sender_is_person,
+        conversation_id: Some(format!("conv-of-{id}")),
+        source_id: format!("msg-{id}"),
+        summary: summary.into(),
+        enqueued_at_ms: now_ms(),
+    }
+}
+
+/// What one sender addressed to her runs in that sender's partition: a person's acting for
+/// them, an agent's in its own `tess:dm:` partition acting for nobody; everything else in
+/// `tess:wake`. Anyone else's wakes are not partitioned.
+#[test]
+fn each_wake_runs_in_the_partition_of_who_addressed_her() {
+    let f = Fixture::new();
+    let tess = f.tess();
+    let partition = |item: &PendingWakeItem| SessionManager::wake_partition(&tess, item);
+    for kind in [WakeKind::DirectMessage, WakeKind::Handoff, WakeKind::Ask] {
+        let from_owner = wake_item("w", kind, &f.owner, true, "hi");
+        assert_eq!(partition(&from_owner), Some(f.owner_key()), "{kind:?}");
+        let from_agent = wake_item("w", kind, "agent-ada", false, "hi");
+        let agent_key = partition(&from_agent).unwrap();
+        assert_eq!(agent_key, PartitionKey::tess_dm("agent-ada"), "{kind:?}");
+        assert_eq!(agent_key.caller_id(), None, "an agent's DM acts for nobody");
+    }
+    for kind in [
+        WakeKind::Mention,
+        WakeKind::TaskAssignment,
+        WakeKind::AskAnswer,
+        WakeKind::Recovery,
+    ] {
+        let item = wake_item("w", kind, &f.owner, true, "hi");
+        assert_eq!(
+            partition(&item),
+            Some(PartitionKey::tess_wake()),
+            "{kind:?}"
+        );
+    }
+    let hr = f
+        .office
+        .list_employees()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.builtin_key == Some(BuiltinKey::Hr))
+        .expect("HR");
+    let dm = wake_item("w", WakeKind::DirectMessage, &f.owner, true, "hi");
+    assert_eq!(SessionManager::wake_partition(&hr, &dm), None);
+    let (claimed, none) = SessionManager::claim_one_partition(&hr, vec![dm.clone(), dm]);
+    assert_eq!((claimed.len(), none), (2, None));
+}
+
+/// The owner's DM, Bea's DM and a `#general` mention queued together are three turns, each in
+/// its own partition and conversation: the owner's DM never reaches `tess:wake`, and no turn
+/// carries another caller's message.
+#[test]
+fn queued_dms_of_different_senders_never_share_a_turn_or_a_conversation() {
+    const OWNER_SECRET: &str = "OWNER-SECRET: the acquisition closes on Friday";
+    const BEA_ASK: &str = "BEA: can you help with my review?";
+    const MENTION: &str = "@tess in #general: where are the standup notes?";
+    let f = Fixture::new();
+    let mut queue = PendingWakeQueueRecord::empty(&f.tess);
+    queue.push_dedup(wake_item(
+        "w-owner",
+        WakeKind::DirectMessage,
+        &f.owner,
+        true,
+        OWNER_SECRET,
+    ));
+    queue.push_dedup(wake_item(
+        "w-bea",
+        WakeKind::DirectMessage,
+        &f.member,
+        true,
+        BEA_ASK,
+    ));
+    queue.push_dedup(wake_item(
+        "w-general",
+        WakeKind::Mention,
+        &f.member,
+        true,
+        MENTION,
+    ));
+    f.manager.store.write_pending_wakes(&queue).unwrap();
+
+    // One turn per partition, each sent to the idle process serving that partition alone.
+    let turn_in = |partition: PartitionKey, conversation: &str| -> String {
+        let rx = f.install(SessionState::Idle, Some(partition), Some(conversation));
+        let outcome = f.manager.process_due_wakes_for(&f.tess);
+        assert_eq!(outcome, crate::wake::WakeOutcome::Started, "{conversation}");
+        let cmds = drained(&rx);
+        assert!(
+            stop_reasons(&cmds).is_empty(),
+            "{conversation}: never switched"
+        );
+        let turns: Vec<String> = cmds
+            .into_iter()
+            .filter_map(|c| match c {
+                PumpCommand::SendTurn(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(turns.len(), 1, "{conversation}: one turn");
+        turns.into_iter().next().unwrap()
+    };
+
+    let owner_turn = turn_in(f.owner_key(), "conv-owner");
+    assert!(owner_turn.contains(OWNER_SECRET));
+    assert!(!owner_turn.contains(BEA_ASK) && !owner_turn.contains(MENTION));
+    assert_eq!(f.queued(), ["w-bea", "w-general"]);
+
+    let bea_turn = turn_in(f.member_key(), "conv-bea");
+    assert!(bea_turn.contains(BEA_ASK));
+    assert!(!bea_turn.contains(OWNER_SECRET) && !bea_turn.contains(MENTION));
+    assert_eq!(f.queued(), ["w-general"]);
+
+    let wake_turn = turn_in(PartitionKey::tess_wake(), "conv-wake");
+    assert!(wake_turn.contains(MENTION));
+    assert!(!wake_turn.contains(OWNER_SECRET) && !wake_turn.contains(BEA_ASK));
+    assert!(f.queued().is_empty());
+
+    // Each partition ran exactly one turn; `tess:wake` never saw the owner's DM.
+    for key in [f.owner_key(), f.member_key(), PartitionKey::tess_wake()] {
+        let state = f.manager.partitions.state(&f.tess, &key).unwrap();
+        assert_eq!(state.turns, 1, "{key}");
+    }
 }

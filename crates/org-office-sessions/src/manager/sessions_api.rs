@@ -10,6 +10,7 @@ use org_proto::sessions::{
 use org_proto::{ApiError, ErrorCode};
 
 use crate::credentials::rfc3339_now;
+use crate::partition::PartitionKey;
 use crate::preset::build_grants_summary;
 use crate::pump::PumpCommand;
 
@@ -85,10 +86,12 @@ impl SessionManager {
     /// included, through `lifecycle::wake_turn`; `task_ref` only scopes route admission and the
     /// turn permit.
     ///
-    /// The Chief of Staff's autonomous turns act for nobody, in her `tess:wake` partition
-    /// (`TASK-80.1`): they resume only that partition's own conversation, never the one
-    /// `resume_runtime_session_id` names (the last run's or a suspended run's, which may be a
-    /// member's), and never reuse a process serving a member's partition.
+    /// The Chief of Staff's autonomous turns run in `wake_partition`, the one partition the
+    /// claimed wakes belong to ([`Self::wake_partition`]), or in `tess:wake`, acting for nobody,
+    /// when it is `None` (`TASK-80.1`): they resume only that partition's own conversation,
+    /// never the one `resume_runtime_session_id` names (the last run's or a suspended run's,
+    /// which may be another caller's), and never reuse a process serving another partition.
+    /// Anyone else ignores `wake_partition`.
     pub(crate) fn spawn_or_send_autonomous(
         &self,
         employee: &Employee,
@@ -96,10 +99,12 @@ impl SessionManager {
         resume_runtime_session_id: Option<&str>,
         task_ref: Option<&str>,
         trigger_entry: serde_json::Value,
+        wake_partition: Option<PartitionKey>,
     ) -> Result<SessionView, ApiError> {
         let emp_id = employee.id.as_str();
         self.check_not_blocked(emp_id)?;
-        let partition = Self::turn_partition(employee, None);
+        let partition =
+            Self::turn_partition(employee, None).map(|wake| wake_partition.unwrap_or(wake));
         let params = MemberSessionStartParams {
             command_id: format!("auto-{}", next_entropy_hex(8)?),
             employee_id: emp_id.to_owned(),
@@ -154,6 +159,7 @@ impl SessionManager {
         let target = employee_id.unwrap_or(caller_id);
         if target != caller_id {
             self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
+            self.authorize_chief_of_staff_target_inner(caller_id, hq_attested_owner, target)?;
         }
         let employee = self.require_agent(target)?;
         let accepted = self.bindings.accepted_commands(target).len() as u64;
@@ -202,6 +208,7 @@ impl SessionManager {
         let target = params.employee_id.as_deref().unwrap_or(caller_id);
         if target != caller_id {
             self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
+            self.authorize_chief_of_staff_target_inner(caller_id, hq_attested_owner, target)?;
         }
         if params.limit == Some(0) {
             return Err(ApiError::new(
@@ -242,6 +249,7 @@ impl SessionManager {
         let target = params.employee_id.as_deref().unwrap_or(caller_id);
         if target != caller_id {
             self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
+            self.authorize_chief_of_staff_target_inner(caller_id, hq_attested_owner, target)?;
         }
         if params.limit == Some(0) {
             return Err(ApiError::new(

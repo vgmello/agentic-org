@@ -9,8 +9,9 @@
 //! - **never**: host secrets, provider credentials and enrollment, invitations, office removal,
 //!   external leases, answering approvals, changing her own execution or hiring power, reading
 //!   chats as the owner, her private task notes (one bucket every caller's turns would share),
-//!   and the mailbox reads that consume or summarise every message at once (`msg.read`,
-//!   `msg.wait`, `msg.notify`, `chat.events_poll`). Refused even when she acts for the owner.
+//!   the mailbox reads that consume or summarise every message at once (`msg.read`,
+//!   `msg.wait`, `msg.notify`, `chat.events_poll`), and long-polling an ask (`chat.wait_ask`).
+//!   Refused even when she acts for the owner.
 //! - **the caller is the owner**: organization-wide spend and budgets, structure changes,
 //!   starting, stopping and reading other sessions (hers included), and any method not named
 //!   below (fail closed).
@@ -18,10 +19,12 @@
 //!   ([`scope`]): her organization-wide reach never widens the caller's.
 //! - **open**: reads and messages any active member may make; still checked against her own
 //!   authority by the method itself, and what a read answers is narrowed to what the caller
-//!   may also see ([`scope`]): a DM is shown only to a participant of it.
+//!   may also see ([`scope`]): a DM is shown only to a participant of it. A call that acts on
+//!   one conversation or message (`dm.open`, marking read, muting, reacting, answering,
+//!   triage) is refused when the caller is not in it.
 //!
 //! A run acting for a member who is no longer an active person may do nothing at all. A run
-//! acting for nobody (a wake) gets only the open class, and no DM's history. When the office
+//! acting for nobody (a wake) gets only the open class, and no DM at all. When the office
 //! cannot read what the gate needs, every bound member is refused (fail closed).
 
 use org_proto::chat::ConversationSummary;
@@ -46,8 +49,15 @@ pub trait ChiefOfStaffPort: Send + Sync {
     fn caller_may_hire_into(&self, caller: &str, team_id: &str) -> Result<bool, ApiError>;
     /// The team hire request `request_id` hires into; `None` for an unknown request.
     fn hire_team(&self, request_id: &str) -> Result<Option<String>, ApiError>;
-    /// Every conversation `member` may see: channels they reach and DMs they are in.
+    /// Every conversation `member` may see: channels they reach and DMs they are in (for the
+    /// owner, every DM in the organization).
     fn visible_conversations(&self, member: &str) -> Result<Vec<ConversationSummary>, ApiError>;
+    /// The conversation message `message_id` (a chat or mailbox message, or an ask) is in;
+    /// `None` for an unknown message.
+    fn message_conversation(&self, message_id: &str) -> Result<Option<String>, ApiError>;
+    /// Whether `member` is the Chief of Staff; `true` when her identity cannot be read (fail
+    /// closed), and only ever used to withhold something from her.
+    fn is_chief_of_staff(&self, member: &str) -> bool;
     /// Records that the Chief of Staff drafted hire `request_id` acting for `caller` (RAM only).
     fn record_draft(&self, request_id: &str, caller: &str);
     /// The member the Chief of Staff drafted hire `request_id` for, while this office runs.
@@ -75,6 +85,7 @@ pub(super) enum Access {
 const NEVER: &[&str] = &[
     "chat.events_poll",
     "chat.read_as_owner",
+    "chat.wait_ask",
     "chat.watching_model_set",
     "cost.price.set",
     "cost.usage.correct",
@@ -190,7 +201,7 @@ pub(super) fn gate(
     if !allowed(access(&request.method), &delegation) {
         return Err(denied(request.id));
     }
-    scope::admit(request, port, &delegation)?;
+    scope::admit(request, port, member, &delegation)?;
     Ok(Some(delegation))
 }
 
@@ -217,5 +228,7 @@ pub(super) fn denied(id: u64) -> Response {
     )
 }
 
+#[cfg(test)]
+mod office_tests;
 #[cfg(test)]
 pub(super) mod tests;

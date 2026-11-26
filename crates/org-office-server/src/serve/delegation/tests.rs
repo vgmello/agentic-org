@@ -21,6 +21,8 @@ pub(in crate::serve) struct FakePort {
     hires: Vec<(&'static str, &'static str)>,
     /// `(member, conversations)` each member may see.
     visible: Vec<(String, Vec<ConversationSummary>)>,
+    /// `(message, conversation)` of every message on record.
+    messages: Vec<(String, String)>,
     drafts: Mutex<Vec<(String, String)>>,
 }
 
@@ -33,6 +35,7 @@ impl FakePort {
             hire_into: Vec::new(),
             hires: Vec::new(),
             visible: Vec::new(),
+            messages: Vec::new(),
             drafts: Mutex::new(Vec::new()),
         }
     }
@@ -73,6 +76,19 @@ impl ChiefOfStaffPort for FakePort {
             .find(|(m, _)| m == member)
             .map(|(_, all)| all.clone())
             .unwrap_or_default())
+    }
+
+    fn message_conversation(&self, message_id: &str) -> Result<Option<String>, ApiError> {
+        self.fails()?;
+        Ok(self
+            .messages
+            .iter()
+            .find(|(id, _)| id == message_id)
+            .map(|(_, conversation)| conversation.clone()))
+    }
+
+    fn is_chief_of_staff(&self, member: &str) -> bool {
+        member == self.tess
     }
 
     fn record_draft(&self, request_id: &str, caller: &str) {
@@ -403,22 +419,23 @@ fn a_team_lead_hires_through_her_only_into_teams_they_may_hire_into() {
     for method in ["hr.hire", "hr.hire.draft"] {
         let lead = lead_of_team_a();
         assert!(
-            scope::admit(&hire(method, "team-a"), &port, &lead).is_ok(),
+            scope::admit(&hire(method, "team-a"), &port, TESS, &lead).is_ok(),
             "{method}"
         );
         // Her organization-wide reach never widens the lead's: not team B, not the root team.
         for team in ["team-b", "root"] {
             assert!(
-                is_denied(&scope::admit(&hire(method, team), &port, &lead)),
+                is_denied(&scope::admit(&hire(method, team), &port, TESS, &lead)),
                 "{method} {team}"
             );
         }
         // The owner hires anywhere through her.
-        assert!(scope::admit(&hire(method, "team-b"), &port, &the_owner()).is_ok());
+        assert!(scope::admit(&hire(method, "team-b"), &port, TESS, &the_owner()).is_ok());
         // Acting for nobody, nowhere.
         assert!(is_denied(&scope::admit(
             &hire(method, "team-a"),
             &port,
+            TESS,
             &Delegation::default()
         )));
     }
@@ -427,12 +444,13 @@ fn a_team_lead_hires_through_her_only_into_teams_they_may_hire_into() {
     assert!(is_denied(&scope::admit(
         &inspect("req-owner-b"),
         &port,
+        TESS,
         &lead_of_team_a()
     )));
-    assert!(scope::admit(&inspect("req-lead-a"), &port, &lead_of_team_a()).is_ok());
+    assert!(scope::admit(&inspect("req-lead-a"), &port, TESS, &lead_of_team_a()).is_ok());
     // An office that cannot answer refuses.
     port.broken.store(true, Ordering::SeqCst);
-    assert!(scope::admit(&hire("hr.hire", "team-a"), &port, &lead_of_team_a()).is_err());
+    assert!(scope::admit(&hire("hr.hire", "team-a"), &port, TESS, &lead_of_team_a()).is_err());
 }
 
 #[test]
@@ -459,14 +477,21 @@ fn a_draft_is_confirmed_or_withdrawn_only_by_the_owner_or_the_member_it_was_draf
             is_denied(&scope::admit(
                 &decide("req-owner-b", method),
                 &port,
+                TESS,
                 &lead_of_team_a()
             )),
             "{method}"
         );
         // The owner decides any draft.
-        assert!(scope::admit(&decide("req-owner-b", method), &port, &the_owner()).is_ok());
+        assert!(scope::admit(&decide("req-owner-b", method), &port, TESS, &the_owner()).is_ok());
         // The lead decides the draft made for them.
-        assert!(scope::admit(&decide("req-lead-a", method), &port, &lead_of_team_a()).is_ok());
+        assert!(scope::admit(
+            &decide("req-lead-a", method),
+            &port,
+            TESS,
+            &lead_of_team_a()
+        )
+        .is_ok());
         // Another member who may hire into team A did not ask for it.
         let other = Delegation {
             caller_id: Some("lead-a2".into()),
@@ -475,16 +500,24 @@ fn a_draft_is_confirmed_or_withdrawn_only_by_the_owner_or_the_member_it_was_draf
         assert!(is_denied(&scope::admit(
             &decide("req-lead-a", method),
             &port,
+            TESS,
             &other
         )));
         // Acting for nobody, never.
         assert!(is_denied(&scope::admit(
             &decide("req-lead-a", method),
             &port,
+            TESS,
             &Delegation::default()
         )));
         // An unknown request is the method's to refuse.
-        assert!(scope::admit(&decide("req-unknown", method), &port, &lead_of_team_a()).is_ok());
+        assert!(scope::admit(
+            &decide("req-unknown", method),
+            &port,
+            TESS,
+            &lead_of_team_a()
+        )
+        .is_ok());
     }
     // The lead lost hiring power over team A since: no longer theirs to decide.
     let mut demoted = hiring_port();
@@ -493,6 +526,7 @@ fn a_draft_is_confirmed_or_withdrawn_only_by_the_owner_or_the_member_it_was_draf
     assert!(is_denied(&scope::admit(
         &decide("req-lead-a", "hr.hire.confirm"),
         &demoted,
+        TESS,
         &lead_of_team_a()
     )));
 }
@@ -756,4 +790,45 @@ fn her_mailbox_shows_a_member_only_their_own_messages_with_her() {
         panic!()
     };
     assert_eq!(value["total_urgent_unread"], json!(0));
+}
+
+#[test]
+fn she_never_long_polls_an_ask_even_for_the_owner() {
+    assert_eq!(access("chat.wait_ask"), Access::Never);
+    assert!(!allowed(access("chat.wait_ask"), &acting_for(owner())));
+}
+
+/// Her aggregate unread count spans every caller's messages: it is never attached to her
+/// answers, while every other member keeps theirs.
+#[test]
+fn her_answers_never_carry_the_waiting_messages_hint() {
+    use std::sync::atomic::AtomicU32;
+
+    use crate::serve::auth::Binding;
+    use crate::serve::messaging::attach_waiting_messages_hint;
+    use crate::serve::tests::{launch_key, ports, test_info};
+    use crate::serve::SnapshotFailure;
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let port = Arc::new(FakePort::new(TESS, acting_for(owner())));
+    let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+    ports.delegation = Some(Arc::clone(&port) as Arc<dyn ChiefOfStaffPort>);
+    ports.waiting_messages_counter = Some(Box::new(|_| Arc::new(AtomicU32::new(3))));
+    let shared = Shared::new(
+        &test_info(),
+        &dir.path().join("d.sock"),
+        ports,
+        launch_key(),
+    );
+    let hint = |member: &str| {
+        let binding = Binding::Member {
+            id: member.to_owned(),
+            via_grant: false,
+        };
+        let mut response = answer(json!({}));
+        attach_waiting_messages_hint(&shared, &binding, &mut None, &mut response);
+        response.waiting_messages
+    };
+    assert_eq!(hint(TESS), None);
+    assert_eq!(hint("ada"), Some(3));
 }

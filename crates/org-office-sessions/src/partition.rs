@@ -4,8 +4,11 @@
 //! Every member who asks Tess talks to their own conversation: the owner's context never
 //! reaches another member's answers. A partition is keyed by the caller and holds its own
 //! runtime conversation ID, so a switch between callers resumes the next caller's conversation
-//! rather than continuing the last one. Turns with no caller (a wake from a message, a resumed
-//! ask) run in the separate `tess:wake` partition.
+//! rather than continuing the last one. A wake with what one sender addressed to her (a DM, a
+//! hand-off, an ask) runs in that sender's partition: a person's `tess:ask:<id>`, acting for
+//! them, or anyone else's `tess:dm:<id>`, acting for nobody. Other turns with no caller (a
+//! mention, an assignment, a resumed ask) run in the separate `tess:wake` partition, which
+//! never receives a sender's private message.
 //!
 //! A partition **rotates** to a fresh conversation once it has run [`ROTATE_AFTER_TURNS`]
 //! turns or filled [`ROTATE_AT_CONTEXT_PERCENT`] of its context window, so a long-lived
@@ -22,6 +25,8 @@ use std::sync::{Arc, Mutex};
 pub const TESS_ASK_PREFIX: &str = "tess:ask:";
 /// The key of the partition for turns that act for nobody.
 pub const TESS_WAKE_PARTITION: &str = "tess:wake";
+/// The prefix of the partition of what one sender who is not a person addressed to her.
+pub const TESS_DM_PREFIX: &str = "tess:dm:";
 /// Turns a partition runs before it rotates to a fresh conversation.
 pub const ROTATE_AFTER_TURNS: u32 = 20;
 /// The share of the context window, in percent, at which a partition rotates.
@@ -44,6 +49,12 @@ impl PartitionKey {
     /// The partition of turns that act for nobody: `tess:wake`.
     pub fn tess_wake() -> Self {
         Self(TESS_WAKE_PARTITION.to_owned())
+    }
+
+    /// The partition of what `sender_id`, who is not a person, addressed to her:
+    /// `tess:dm:<sender_id>`. It acts for nobody, and no other sender's message joins it.
+    pub fn tess_dm(sender_id: &str) -> Self {
+        Self(format!("{TESS_DM_PREFIX}{sender_id}"))
     }
 
     /// The partition of a run acting for `caller_id`, or for nobody.
@@ -171,7 +182,9 @@ impl PartitionLedger {
     ) {
         let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(state) = map.get_mut(&(employee_id.to_owned(), key.clone())) {
-            state.context_tokens = context_tokens;
+            // The fullest the conversation has been: a smaller report (one turn's share, say)
+            // never postpones its rotation.
+            state.context_tokens = state.context_tokens.max(context_tokens);
             state.context_window_tokens = context_window_tokens.or(state.context_window_tokens);
         }
     }

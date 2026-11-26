@@ -9,26 +9,50 @@
 //!   succeeds, [`super::ChiefOfStaffPort::record_draft`]) while that member may still hire
 //!   into its team; after an office restart only the owner may.
 //! - **Conversations** ([`narrow`]): she is a participant of every member's DM with her, so a
-//!   conversation is shown only when the caller may see it too (a channel they reach, a DM they
-//!   are in). Acting for nobody (a wake), she sees channels only, never a DM's history.
+//!   conversation is shown only when the caller may see it too: a channel they reach, or a
+//!   conversation they are an active member of (the owner's own list holds every DM in the
+//!   organization, so membership, not that list, decides a DM). Acting for nobody (a wake),
+//!   she sees channels only, never a DM.
+//! - **One conversation or message** ([`admit`]): marking read, muting, reacting, answering or
+//!   withdrawing an ask and triaging a message act only on a conversation the caller sees by
+//!   the same rule. `dm.open` needs a caller and answers only a DM the caller is in.
 //! - **Her mailbox**: a message is shown only when the caller sent it or received it. Acting
 //!   for nobody, none is.
 //!
 //! A read the gate cannot narrow (its answer does not decode, or the office cannot say what
 //! the caller sees) is refused, never passed through.
 
-use org_proto::chat::{ChatChannelSummarize, ChatConversations, ChatInbox, ChatMessages};
+use org_proto::ask::{ChatAnswer, MsgWithdraw};
+use org_proto::chat::{
+    ChatChannelSummarize, ChatConversations, ChatInbox, ChatMarkRead, ChatMessages, ChatMute,
+    ChatReact, ConversationKind, ConversationSummary, DmOpen, MsgAccept,
+};
 use org_proto::hiring::{
     HrHire, HrHireConfirm, HrHireDraft, HrHireInspect, HrHireList, HrHireWithdraw,
 };
-use org_proto::msg::{MessageHeader, MsgGet, MsgHumanNeedsYou, MsgInbox, MsgList, MsgThreads};
+use org_proto::msg::{
+    MessageHeader, MsgDefer, MsgDone, MsgGet, MsgHumanNeedsYou, MsgInbox, MsgList, MsgThreads,
+    MsgUnsnooze,
+};
 use org_proto::{ApiError, Call, ErrorCode, Outcome, Request, Response};
 
 use super::{denied, ChiefOfStaffPort, Delegation};
 
 /// Refuses a call the parameters of which put it outside what the caller may do; everything
-/// else is admitted (a malformed call is left to the method, which refuses it).
+/// else is admitted (a malformed call, or one naming an unknown message, is left to the
+/// method, which refuses it).
 pub(super) fn admit(
+    request: &Request,
+    port: &dyn ChiefOfStaffPort,
+    member: &str,
+    delegation: &Delegation,
+) -> Result<(), Response> {
+    admit_hire(request, port, delegation)?;
+    admit_conversation(request, port, member, delegation)
+}
+
+/// The hire flow, per team.
+fn admit_hire(
     request: &Request,
     port: &dyn ChiefOfStaffPort,
     delegation: &Delegation,
@@ -50,6 +74,51 @@ pub(super) fn admit(
             .map_or(Ok(()), |p| own_draft(id, port, delegation, &p.request_id)),
         HrHireWithdraw::METHOD => params::<HrHireWithdraw>(request)
             .map_or(Ok(()), |p| own_draft(id, port, delegation, &p.request_id)),
+        _ => Ok(()),
+    }
+}
+
+/// Calls that act on one conversation or message: only one the caller sees ([`visible_ids`]).
+fn admit_conversation(
+    request: &Request,
+    port: &dyn ChiefOfStaffPort,
+    member: &str,
+    delegation: &Delegation,
+) -> Result<(), Response> {
+    let id = request.id;
+    let in_view = |conversation: &str| {
+        let visible = visible_ids(port, member, delegation.caller_id.as_deref())
+            .map_err(|err| Response::error(id, err))?;
+        require(id, visible.iter().any(|v| v == conversation))
+    };
+    let on_message = |message: &str| match port.message_conversation(message) {
+        Ok(Some(conversation)) => in_view(&conversation),
+        Ok(None) => Ok(()),
+        Err(err) => Err(Response::error(id, err)),
+    };
+    match request.method.as_str() {
+        // She opens or resumes a DM only for a caller, and shows only one they are in
+        // ([`narrow`]).
+        DmOpen::METHOD => require(id, delegation.caller_id.is_some()),
+        ChatMarkRead::METHOD => {
+            params::<ChatMarkRead>(request).map_or(Ok(()), |p| in_view(&p.conversation_id))
+        }
+        ChatMute::METHOD => {
+            params::<ChatMute>(request).map_or(Ok(()), |p| in_view(&p.conversation_id))
+        }
+        ChatReact::METHOD => {
+            params::<ChatReact>(request).map_or(Ok(()), |p| on_message(&p.message_id))
+        }
+        ChatAnswer::METHOD => {
+            params::<ChatAnswer>(request).map_or(Ok(()), |p| on_message(&p.ask_id))
+        }
+        MsgWithdraw::METHOD => {
+            params::<MsgWithdraw>(request).map_or(Ok(()), |p| on_message(&p.ask_id))
+        }
+        MsgAccept::METHOD => params::<MsgAccept>(request).map_or(Ok(()), |p| on_message(&p.id)),
+        MsgDefer::METHOD => params::<MsgDefer>(request).map_or(Ok(()), |p| on_message(&p.id)),
+        MsgDone::METHOD => params::<MsgDone>(request).map_or(Ok(()), |p| on_message(&p.id)),
+        MsgUnsnooze::METHOD => params::<MsgUnsnooze>(request).map_or(Ok(()), |p| on_message(&p.id)),
         _ => Ok(()),
     }
 }
@@ -115,7 +184,22 @@ pub(super) fn narrow(
             needs.total_urgent_unread = u32::try_from(urgent).unwrap_or(u32::MAX);
             Some(true)
         }),
+        DmOpen::METHOD => narrow_dm_open(caller, response),
         _ => response,
+    }
+}
+
+/// `dm.open`: the DM she opened or resumed is answered only when the caller is an active
+/// member of it; any other (her DM with another member, say) is refused.
+fn narrow_dm_open(caller: Option<&str>, response: Response) -> Response {
+    let id = response.id;
+    let Outcome::Result(value) = &response.outcome else {
+        return response;
+    };
+    match serde_json::from_value::<<DmOpen as Call>::Result>(value.clone()) {
+        Ok(opened) if caller.is_some_and(|c| is_active_member(&opened.conversation, c)) => response,
+        Ok(_) => denied(id),
+        Err(_) => unavailable(id),
     }
 }
 
@@ -128,13 +212,7 @@ fn narrow_conversations(
     caller: Option<&str>,
     response: Response,
 ) -> Response {
-    let visible = match caller {
-        Some(caller) => port
-            .visible_conversations(caller)
-            .map(|all| ids(all, false)),
-        None => port.visible_conversations(member).map(|all| ids(all, true)),
-    };
-    let visible = match visible {
+    let visible = match visible_ids(port, member, caller) {
         Ok(visible) => visible,
         Err(err) => return Response::error(response.id, err),
     };
@@ -158,16 +236,31 @@ fn narrow_conversations(
     }
 }
 
-/// The IDs of `conversations`, channels only when `channels_only`.
-fn ids(
-    conversations: Vec<org_proto::chat::ConversationSummary>,
-    channels_only: bool,
-) -> Vec<String> {
-    conversations
+/// The conversations she may show or act on for `caller`: the channels the caller reaches and
+/// the conversations the caller is an active member of. The owner's list holds every DM in the
+/// organization, so for a DM membership decides, never that list. Acting for nobody (`None`, a
+/// wake), the channels she reaches and never a DM.
+fn visible_ids(
+    port: &dyn ChiefOfStaffPort,
+    member: &str,
+    caller: Option<&str>,
+) -> Result<Vec<String>, ApiError> {
+    let listed = port.visible_conversations(caller.unwrap_or(member))?;
+    Ok(listed
         .into_iter()
-        .filter(|c| !channels_only || c.kind == org_proto::chat::ConversationKind::Channel)
+        .filter(|c| {
+            c.kind == ConversationKind::Channel || caller.is_some_and(|v| is_active_member(c, v))
+        })
         .map(|c| c.id)
-        .collect()
+        .collect())
+}
+
+/// Whether `member` is in `conversation` and has not left it.
+fn is_active_member(conversation: &ConversationSummary, member: &str) -> bool {
+    conversation
+        .members
+        .iter()
+        .any(|m| m.employee_id == member && m.left_at.is_none())
 }
 
 /// Decodes `response`'s result as `C`'s, lets `keep` narrow it, and re-encodes it. `keep`

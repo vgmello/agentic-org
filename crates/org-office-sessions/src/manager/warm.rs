@@ -170,6 +170,7 @@ pub(super) fn dispatch_warm_handle_turn(
         mgr,
         turn.emp_id,
         &turn.tx,
+        &turn.state,
         turn.start_stop_epoch,
         text,
         slot_guard,
@@ -211,14 +212,16 @@ pub(super) fn dispatch_warm_handle_turn(
 /// child) or finds no start in flight and stops the session itself. `Sender::send` on the pump's unbounded channel never
 /// blocks, so no slow work runs under the lock (rules §3.4).
 ///
-/// A delivered turn marks the idle session busy in the same critical section
-/// ([`mark_turn_queued`]), before the slot is released: from then on nothing that reads the
-/// registry (a partition switch, a stale-handle recycle, a wake dispatch) mistakes the
-/// session for idle and stops the turn the pump has not picked up yet.
+/// The turn is counted and the idle session marked busy before it is sent, in the same
+/// critical section ([`crate::pump::queue_turn`]) and before the slot is released: from then on
+/// nothing that reads the registry (a partition switch, a stale-handle recycle, a wake
+/// dispatch) mistakes the session for idle and stops the turn the pump has not picked up yet,
+/// and a pump that refuses or finishes the turn at once can never be overwritten back to busy.
 fn send_turn_fenced<'a>(
     mgr: &'a SessionManager,
     emp_id: &str,
     tx: &Sender<PumpCommand>,
+    state: &Mutex<SessionRuntimeState>,
     start_stop_epoch: u64,
     text: String,
     slot_guard: StartSlotGuard<'a>,
@@ -232,26 +235,13 @@ fn send_turn_fenced<'a>(
         drop(reg);
         return FencedSend::Draining(slot_guard);
     }
-    if tx.send(PumpCommand::SendTurn(text)).is_ok() {
-        if let Some(handle) = reg.live.get(emp_id) {
-            mark_turn_queued(&handle.state);
-        }
+    if crate::pump::queue_turn(state, tx, text) {
         slot_guard.release_locked(&mut reg);
         return FencedSend::Delivered;
     }
     let old = reg.live.remove(emp_id);
     slot_guard.keep_reserved();
     FencedSend::PumpGone(old)
-}
-
-/// Marks an idle session busy the moment a turn is queued on its pump: the pump moves it back
-/// to idle if the turn never starts (a refused permit, a failed send), and through `Running`
-/// to idle when it ends. A session that is starting, busy or ending keeps its state.
-pub(crate) fn mark_turn_queued(state: &Mutex<SessionRuntimeState>) {
-    let mut state = state.lock().unwrap_or_else(|p| p.into_inner());
-    if state.state == SessionState::Idle {
-        state.state = SessionState::Running;
-    }
 }
 
 /// Installs a granted warm-route permit as the handle's active permit, or returns it to the

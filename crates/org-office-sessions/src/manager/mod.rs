@@ -88,7 +88,6 @@ pub(crate) use sessions_api::autonomous_resume;
 pub(crate) use spec::effective_approval_writable_roots_from;
 #[cfg(test)]
 pub(crate) use spec::{build_session_spec, ModelChoice};
-pub(crate) use warm::mark_turn_queued;
 #[cfg(test)]
 pub(crate) use warm::StartReservation;
 

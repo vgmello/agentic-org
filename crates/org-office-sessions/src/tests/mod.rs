@@ -705,6 +705,7 @@ fn spawn_stub_bwrap_handle(
         suspended_since: None,
         pending_wake_count: 0,
         pending_wake_reason: None,
+        queued_turns: 0,
     }));
     (
         crate::manager::LiveSessionHandle {

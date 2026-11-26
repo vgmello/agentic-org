@@ -425,6 +425,7 @@ fn task126_recycle_stale_warm_handle_atomicity_and_stale_failover_non_drop() {
         suspended_since: None,
         pending_wake_count: 0,
         pending_wake_reason: None,
+        queued_turns: 0,
     }));
     let permit = Arc::new(Mutex::new(None));
     {

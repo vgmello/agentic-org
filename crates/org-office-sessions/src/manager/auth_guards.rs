@@ -1,6 +1,8 @@
 //! Caller authorization and agent admission guards shared by every session operation.
 
-use org_office::organization_family::records::{Employee, EmployeeKind, EmployeeStatus};
+use org_office::organization_family::records::{
+    BuiltinKey, Employee, EmployeeKind, EmployeeStatus,
+};
 use org_proto::{ApiError, ErrorCode};
 
 use crate::credentials::rfc3339_now;
@@ -47,6 +49,30 @@ impl SessionManager {
             ErrorCode::NotAuthorized,
             "only an active person or the owner may manage sessions",
         ))
+    }
+
+    /// Tess (the Chief of Staff) serves every caller in partitions of her own, so anyone but
+    /// Tess herself may inspect, list, read or stop her sessions only as the owner: any other
+    /// active person would see the owner's replies and transcripts, or stop the owner's turn
+    /// (`TASK-80.1`). Every other target is left to the caller's other checks.
+    pub(crate) fn authorize_chief_of_staff_target_inner(
+        &self,
+        member_id: &str,
+        hq_attested_owner: bool,
+        target_id: &str,
+    ) -> Result<(), ApiError> {
+        if target_id == member_id {
+            return Ok(());
+        }
+        let is_chief_of_staff = self
+            .office
+            .load_employee(target_id)
+            .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not read employee"))?
+            .is_some_and(|e| e.builtin_key == Some(BuiltinKey::ChiefOfStaff));
+        if is_chief_of_staff {
+            return self.authorize_owner_only_inner(member_id, hq_attested_owner);
+        }
+        Ok(())
     }
 
     pub(crate) fn require_agent(&self, employee_id: &str) -> Result<Employee, ApiError> {

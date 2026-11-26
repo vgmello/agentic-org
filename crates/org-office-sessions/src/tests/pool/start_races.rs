@@ -43,7 +43,7 @@ fn gate_watch_notices(mgr: &SessionManager, employee_id: &str) -> NoticeGate {
     NoticeGate { entered, release }
 }
 
-fn pool_agent(office: &Office, owner: &str, handle: &str) -> String {
+pub(super) fn pool_agent(office: &Office, owner: &str, handle: &str) -> String {
     let conn = create_connection_and_bind(
         office,
         owner,
@@ -70,7 +70,7 @@ fn pool_agent(office: &Office, owner: &str, handle: &str) -> String {
     hire_agent(office, owner, handle, &profile_id, "claude-sonnet-4")
 }
 
-fn start_params(agent: &str, instruction: &str) -> MemberSessionStartParams {
+pub(super) fn start_params(agent: &str, instruction: &str) -> MemberSessionStartParams {
     MemberSessionStartParams {
         command_id: next_id(),
         employee_id: agent.to_owned(),
@@ -81,7 +81,12 @@ fn start_params(agent: &str, instruction: &str) -> MemberSessionStartParams {
 
 /// Runs a first turn to completion so the agent's next start takes the warm path, and returns
 /// the number of turns the child has received.
-fn warm_up(mgr: &SessionManager, owner: &str, agent: &str, recorded: &PoolRecorded) -> usize {
+pub(super) fn warm_up(
+    mgr: &SessionManager,
+    owner: &str,
+    agent: &str,
+    recorded: &PoolRecorded,
+) -> usize {
     mgr.start_session(owner, &start_params(agent, "first turn"))
         .unwrap();
     assert!(
@@ -559,6 +564,7 @@ fn a_drain_during_an_autonomous_warm_send_refuses_it_with_unavailable() {
                 None,
                 None,
                 serde_json::json!({ "type": "turn_trigger" }),
+                None,
             )
         })
         .expect_err("a warm send overtaken by a drain is refused");

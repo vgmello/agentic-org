@@ -108,9 +108,27 @@ impl ChiefOfStaffPort for ChiefOfStaffGate {
         }
     }
 
+    fn message_conversation(&self, message_id: &str) -> Result<Option<String>, ApiError> {
+        self.office
+            .message_conversation_id(message_id)
+            .map_err(|error| {
+                crate::logged("chief_of_staff.message_conversation", &error);
+                unavailable()
+            })
+    }
+
+    fn is_chief_of_staff(&self, member: &str) -> bool {
+        self.chief_of_staff_id()
+            .map_or(true, |tess| tess == Some(member))
+    }
+
     fn record_draft(&self, request_id: &str, caller: &str) {
         let mut drafts = self.drafts.lock().unwrap_or_else(|p| p.into_inner());
-        drafts.retain(|(id, _)| id != request_id);
+        // The member a draft was first made for keeps it: a replayed or repeated draft of the
+        // same request for another member never takes it over.
+        if drafts.iter().any(|(id, _)| id == request_id) {
+            return;
+        }
         if drafts.len() >= REMEMBERED_DRAFTS {
             drafts.pop_front();
         }

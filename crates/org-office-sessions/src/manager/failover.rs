@@ -233,6 +233,10 @@ pub(crate) fn requeue_contended_failover(mgr: &SessionManager, req: &FailoverReq
     if is_failover_abandoned(mgr, req) || is_retired_agent(mgr, &req.employee_id) {
         return;
     }
+    if !is_requeueable(req) {
+        record_not_requeued(mgr, req);
+        return;
+    }
     let note = serde_json::json!({
         "type": "pool_failover_requeued",
         "failed_connection_id": req.failed_connection_id,
@@ -241,6 +245,33 @@ pub(crate) fn requeue_contended_failover(mgr: &SessionManager, req: &FailoverReq
     });
     let _ = mgr.store.append_history(&req.employee_id, &note, &[]);
     enqueue_recovery_wake(mgr, req, None);
+}
+
+/// Whether the shared wake queue may take a failed turn. A Chief of Staff turn of any partition
+/// but `tess:wake` carries one sender's request or private message (a member's, acting for
+/// them, or what an agent addressed to her): the queue would run it as a recovery wake in
+/// `tess:wake`, so it never takes the turn, and the sender sees the failure and asks again
+/// (`TASK-80.1`).
+fn is_requeueable(req: &FailoverRequest) -> bool {
+    req.partition
+        .as_ref()
+        .is_none_or(|key| *key == crate::partition::PartitionKey::tess_wake())
+}
+
+/// Records that a failed Chief of Staff turn was deliberately not requeued ([`is_requeueable`]).
+fn record_not_requeued(mgr: &SessionManager, req: &FailoverRequest) {
+    let reason = if req.acting_for_caller_id().is_some() {
+        "delegated_chief_of_staff_turn"
+    } else {
+        "chief_of_staff_sender_partition_turn"
+    };
+    let note = serde_json::json!({
+        "type": "pool_failover_not_requeued",
+        "reason": reason,
+        "failed_connection_id": req.failed_connection_id,
+        "at": rfc3339_now(),
+    });
+    let _ = mgr.store.append_history(&req.employee_id, &note, &[]);
 }
 
 /// `true` once admissions closed or an explicit stop moved the employee's stop epoch past the
@@ -304,17 +335,8 @@ pub(super) fn enqueue_recovery_wake(
     req: &FailoverRequest,
     hold: Option<crate::wake::WakeHoldReason>,
 ) {
-    // A Chief of Staff turn acting for a member carries that member's request: the shared wake
-    // queue runs in her `tess:wake` partition for nobody, so it never takes the turn. The member
-    // sees the failure on the session and asks again (`TASK-80.1`).
-    if req.acting_for_caller_id().is_some() {
-        let note = serde_json::json!({
-            "type": "pool_failover_not_requeued",
-            "reason": "delegated_chief_of_staff_turn",
-            "failed_connection_id": req.failed_connection_id,
-            "at": rfc3339_now(),
-        });
-        let _ = mgr.store.append_history(&req.employee_id, &note, &[]);
+    if !is_requeueable(req) {
+        record_not_requeued(mgr, req);
         return;
     }
     let ts = crate::credentials::now_ms();

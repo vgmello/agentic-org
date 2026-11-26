@@ -5,8 +5,9 @@
 
 use org_proto::chat::DmOpenParams;
 use org_proto::hiring::{
-    AgentExecutionSet, AgentExecutionSetParams, AgentUpdate, AgentUpdateParams, HireProposalWire,
-    HrHireDraft, HrHireDraftParams, MemberSetMayHire, MemberSetMayHireParams,
+    AgentExecutionSet, AgentExecutionSetParams, AgentMove, AgentMoveParams, AgentOffboard,
+    AgentOffboardParams, AgentSetStatus, AgentSetStatusParams, AgentUpdate, AgentUpdateParams,
+    HireProposalWire, HrHireDraft, HrHireDraftParams, MemberSetMayHire, MemberSetMayHireParams,
 };
 use org_proto::org::{MemberAddPersonParams, OrgChange, TeamCreateParams, TeamSetLeadParams};
 use org_proto::{ApiError, Call, CallError, ErrorCode, Request};
@@ -213,6 +214,51 @@ fn only_the_owner_manages_a_built_in_member_not_even_the_lead_of_her_team() {
         )
         .unwrap_err();
         assert_eq!(reconfigured.code, ErrorCode::NotAuthorized);
+        // Moving, pausing and offboarding a built-in member are refused as not hers to do
+        // before any rule about built-ins is weighed, like every other management call.
+        add_team(&office, 17, TEAM_A, "Platform");
+        for (n, target) in [(20, tess.as_str()), (30, HR)] {
+            let version = revision(&office, target);
+            let moved = call_c2::<AgentMove>(
+                &office,
+                LEAD,
+                &AgentMoveParams {
+                    command_id: cmd_id(n),
+                    member_id: target.into(),
+                    expected_version: version,
+                    to_team_id: TEAM_A.into(),
+                },
+            )
+            .unwrap_err();
+            assert_eq!(moved.code, ErrorCode::NotAuthorized, "move {target}");
+            let paused = call_c2::<AgentSetStatus>(
+                &office,
+                LEAD,
+                &AgentSetStatusParams {
+                    command_id: cmd_id(n + 1),
+                    member_id: target.into(),
+                    expected_version: version,
+                    paused: true,
+                },
+            )
+            .unwrap_err();
+            assert_eq!(paused.code, ErrorCode::NotAuthorized, "pause {target}");
+            let offboarded = call_c2::<AgentOffboard>(
+                &office,
+                LEAD,
+                &AgentOffboardParams {
+                    command_id: cmd_id(n + 2),
+                    member_id: target.into(),
+                    expected_version: version,
+                },
+            )
+            .unwrap_err();
+            assert_eq!(
+                offboarded.code,
+                ErrorCode::NotAuthorized,
+                "offboard {target}"
+            );
+        }
         let after = office.load_employee(&tess).unwrap().unwrap();
         assert!(after.may_hire && !after.body.contains("Ignore"));
         assert!(office.load_agent_execution(&tess).unwrap().is_none());

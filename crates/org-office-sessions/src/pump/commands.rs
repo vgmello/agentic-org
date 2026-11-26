@@ -4,6 +4,7 @@ use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
 use org_agent_runtime::{ApprovalId, Control};
+use org_proto::sessions::SessionState;
 
 use crate::instructions::{compose_turn_objective, TurnTrigger};
 
@@ -134,7 +135,7 @@ pub(super) fn finalize_drained_stop(
 ) {
     match stop_preserve {
         Some(true) if !loop_state.pending_turns.is_empty() => {
-            let objective = std::mem::take(&mut loop_state.pending_turns).join("\n\n");
+            let objective = take_pending_turns(ctx, loop_state).join("\n\n");
             loop_state.failover_pending = Some(build_stale_failover_request(ctx, objective));
         }
         Some(_) => {
@@ -144,10 +145,29 @@ pub(super) fn finalize_drained_stop(
     }
 }
 
+/// Takes every queued turn out of the pump's queue and forgets it in
+/// [`SessionRuntimeState::queued_turns`](super::SessionRuntimeState::queued_turns).
+pub(super) fn take_pending_turns(ctx: &PumpContext, loop_state: &mut PumpLoopState) -> Vec<String> {
+    let taken = std::mem::take(&mut loop_state.pending_turns);
+    ctx.state
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .dequeue_turns(taken.len());
+    taken
+}
+
 pub(super) fn enqueue_background_wakes(ctx: &PumpContext, loop_state: &mut PumpLoopState) {
     let wakes = {
         let mut guard = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
-        guard.backgrounds.drain_wakes()
+        let wakes = guard.backgrounds.drain_wakes();
+        // A background wake is a queued turn like any other: the session is busy until it ends.
+        if !wakes.is_empty() {
+            guard.queued_turns = guard.queued_turns.saturating_add(wakes.len());
+            if guard.state == SessionState::Idle {
+                guard.state = SessionState::Running;
+            }
+        }
+        wakes
     };
     for wake in wakes {
         let text = compose_turn_objective(&TurnTrigger::BackgroundWake {
