@@ -381,9 +381,8 @@ fn verify_d25_reenroll_and_revocation(
     )
     .unwrap();
     let new_hq_id = "0195a000-0000-7000-8000-000000000088";
-    // Record a replicated HQ owner before D25 re-enrollment and verify it survives a full
-    // `runtime/` delete + `org-store::rebuild()` (`hq-owner.v1.json` must be in
-    // `companion_store_exclusions`), and that D25 re-enrollment durably removes it (`TASK-141`).
+    // Verify D25 re-enrollment durably removes `hq-owner.v1.json` (persisted and rebuilt in
+    // step 6 above) and clears in-memory state (`TASK-141`).
     sat_reopened
         .record_replicated_hq_owner(&hq.info().office_id, owner)
         .unwrap();
