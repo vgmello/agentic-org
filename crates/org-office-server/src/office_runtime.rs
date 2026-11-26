@@ -134,7 +134,8 @@ fn prepare_office_runtime(
     let channel_watcher = start_channel_watcher(Arc::clone(office), &session_manager);
     let sat_sync_wake = Arc::new(SatSyncWake::default());
     let hq_fed_slot: HqFederationSlot = Arc::default();
-    let sync_wake_fn = build_sync_wake_fn(Arc::clone(&sat_sync_wake), Arc::clone(&hq_fed_slot));
+    let sync_wake_fn =
+        build_sync_wake_fn(office, Arc::clone(&sat_sync_wake), Arc::clone(&hq_fed_slot));
     let messaging = build_messaging_ports(
         office,
         &live,
