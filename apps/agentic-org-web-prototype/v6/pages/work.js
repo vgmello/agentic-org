@@ -1,12 +1,13 @@
-import { ALL_STATUSES, IN, KIND, M, OPEN, P, STATUSES, TEAMS, W, WORK_DISCUSSIONS, needsMe, ownerAsks } from "../data.js";
+import { ALL_STATUSES, IN, KIND, M, OPEN, P, STATUSES, TEAMS, W, WORK_DISCUSSIONS, executionHold, needsMe, ownerAsks } from "../data.js";
 import { detailCommentDrafts, detailEvent, inboxActivityTime, localDetailRecords, workCommentsHtml } from "./inbox.js";
 import { closeMenus } from "../shell/actions.js";
 import { own, route } from "../shell/router.js";
 import { S, WORK_ARCHIVED_STORE, qs } from "../state.js";
 import { SEP, av, displayCheckbox, esc, ic, iconWithTooltip, kindWord, memberIds, mlink, pill, plink, queueHeadline, searchRow, searchToggle, showMenu, toast } from "../ui.js";
 
+/* Work with a pending owner ask (a fix waiting for your approval) is never archived out of sight */
 function isArchivedWork(w) {
-  return !OPEN(w) && S.archiveAfterDays > 0 && w.closedDaysAgo != null && w.closedDaysAgo >= S.archiveAfterDays;
+  return !OPEN(w) && !needsMe(w) && S.archiveAfterDays > 0 && w.closedDaysAgo != null && w.closedDaysAgo >= S.archiveAfterDays;
 }
 function visibleWorkItems(items) {
   return S.workShowArchived ? items : items.filter((w) => !isArchivedWork(w));
@@ -258,14 +259,14 @@ function scopedWorkResults({ type, id, key, items }) {
   const presets = scopedWorkPresets(type, id);
   const view = presets.some(([v]) => v === S.scopedWorkView) ? S.scopedWorkView : "all";
   const base = scopedWorkBaseItems(type, items, query);
-  const filtered = sortWorkItems(scopedWorkPresetItems(base, view, type, id), S.scopedWorkSort, workSortOrder(S.scopedWorkLayout, S.scopedWorkSort, S.scopedWorkOrder), S.scopedWorkLayout);
+  const filtered = sortWorkItems(scopedWorkPresetItems(base, view, type, id), S.scopedWorkSort, workSortOrder(S.scopedWorkLayout, S.scopedWorkSort, S.scopedWorkOrder));
   const isFiltered = Boolean(query) || scopedWorkHasFilters(type);
   const archived = S.workShowArchived ? 0 : scopedWorkPresetItems(scopedWorkBaseItems(type, items, query, true), view, type, id).length;
   if (!filtered.length) return workEmpty(scopedWorkEmptyText(type, id, view, query), isFiltered, { archived });
   const hideOwner = type === "agent" || type === "person";
   if (S.scopedWorkLayout === "board") {
     const summary = filterParts(scopedWorkQueries.get(key)?.trim(), scopedWorkFilterValues(type));
-    return board(filtered, { hideOwner, hideProject: type === "project", needsYouView: view === "needs-me", sortKey: S.scopedWorkSort, filtered: isFiltered, summary, query, archived, emptyText: scopedWorkEmptyText(type, id, view, query) });
+    return board(filtered, { hideOwner, hideProject: type === "project", needsYouView: view === "needs-me", sortKey: S.scopedWorkSort, order: S.scopedWorkOrder, filtered: isFiltered, summary, query, archived, emptyText: scopedWorkEmptyText(type, id, view, query) });
   }
   const { group, subgroup } = scopedWorkGrouping(type);
   return workList(filtered, {
@@ -302,10 +303,12 @@ const WORK_PRIORITY_RANKS = { Low: 1, Minor: 1, Medium: 2, Normal: 2, High: 3, M
 const workPriorityRank = (priority) => typeof priority === "string" && own(WORK_PRIORITY_RANKS, priority)
   ? WORK_PRIORITY_RANKS[priority] : undefined;
 
-function workPriority(priority) {
-  const rank = workPriorityRank(priority);
-  const label = rank ? esc(`${priority} priority`) : "No priority";
-  return `<span class="work-priority-mark" data-level="${Math.min(rank ?? 0, 3)}" role="img" aria-label="${label}" title="${label}"><span></span><span></span><span></span></span>`;
+/* The List's priority bars: the same displayed priority as the Board (set, else inferred), with the same wording in
+   the accessible name and tooltip; inferred bars are fainter */
+function workPriority(w) {
+  const { word, inferred } = displayedPriority(w);
+  const label = esc(priorityLabel(word, inferred));
+  return `<span class="work-priority-mark${inferred ? " is-inferred" : ""}" data-level="${Math.min(WORK_PRIORITY_RANKS[word], 3)}" role="img" aria-label="${label}" title="${label}"><span></span><span></span><span></span></span>`;
 }
 
 function workCriteria(criteria, id, placeholder = false) {
@@ -342,26 +345,31 @@ function workTeam(w) {
 }
 
 function workRowBadges(w) {
-  const eta = workEta(w);
-  return `${eta ? ` <span class="work-eta">ETA ${esc(eta)}</span>` : ""}${w.status === "Draft" ? '<span class="work-draft-tag">Draft · Ideation</span>' : ""}${isArchivedWork(w) ? '<span class="work-archived-tag">Archived</span>' : ""}`;
+  const eta = workEta(w), hold = executionHold(w);
+  return `${eta ? ` <span class="work-eta">ETA ${esc(eta)}</span>` : ""}${w.status === "Draft" ? '<span class="work-draft-tag">Draft · Ideation</span>' : ""}${hold ? `<span class="work-hold-tag" title="${esc(holdText(hold))}">${ic("offline", "ic14")}Waiting for office</span>` : ""}${isArchivedWork(w) ? '<span class="work-archived-tag">Archived</span>' : ""}`;
+}
+/* Bug severity is its own labelled fact in both layouts; a request's pri is request metadata ("Sent Nov 9") */
+function workRowSeverity(w) {
+  const sev = bugSeverity(w);
+  if (sev) {
+    const strong = sev === "Critical" || sev === "Major";
+    return `<span class="work-priority work-severity">${strong ? `<span class="pin ${sev === "Critical" ? "c-red" : "c-gray"}">${ic(sev === "Critical" ? "warn" : "exclaim", "ic14")}${esc(sev)} severity</span>` : `${esc(sev)} severity`}</span>`;
+  }
+  return w.kind === "request" && w.pri ? `<span class="work-priority">${esc(w.pri)}</span>` : "";
 }
 
 function workRow(w, isSubtask = false, hideOwner = false) {
-  const sev = ["Critical", "Major"].includes(w.pri)
-    ? `<span class="pin ${w.pri === "Critical" ? "c-red" : "c-gray"}">${ic(w.pri === "Critical" ? "warn" : "exclaim", "ic14")}${esc(w.pri)}</span>`
-    : esc(w.pri);
   const team = workTeam(w);
-  const task = w.kind === "task";
   return `<li class="${isSubtask ? "work-subtask" : "work-item"}"><div class="work-row" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}>
     <div class="work-summary">
-      <span class="work-ident">${workPriority(w.pri)}<span class="work-ref">${esc(w.id)}</span></span>
+      <span class="work-ident">${workPriority(w)}<span class="work-ref">${esc(w.id)}</span></span>
       <span class="work-heading">
         <span class="work-markers">${workStatus(w.status, showsNeedsYou(w))}${workCriteria(w.criteria, w.id, true)}</span>
         <span>${workTitle(w, "work-title")}${workRowBadges(w)}</span>
       </span>
     </div>
     <div class="work-facts">
-      ${!task && sev && !workPriorityRank(w.pri) ? `<span class="work-priority">${sev}</span>` : ""}
+      ${workRowSeverity(w)}
       ${plink(w.proj)}
       <span class="work-team">${team ? esc(TEAMS[team].name) : "No team"}</span>
       ${isSubtask || hideOwner ? "" : `<span class="work-owner">${av(w.who, 24)}${mlink(w.who)}</span>`}
@@ -414,14 +422,20 @@ const BUG_SEVERITIES = ["Minor", "Normal", "Major", "Critical"];
 const bugSeverity = (w) => (w.kind === "bug" && BUG_SEVERITIES.includes(w.pri) ? w.pri : "");
 const inferredPriority = (w) => (showsNeedsYou(w) || w.status === "Blocked" || ["Major", "Critical"].includes(bugSeverity(w)) ? "High" : "Medium");
 const setPriority = (w) => (w.kind !== "request" && !bugSeverity(w) && workPriorityRank(w.pri) ? w.pri : "");
+/* One displayed priority for List and Board labels, bars and Priority sorts: the set priority, else the inferred one */
+const displayedPriority = (w) => {
+  const set = setPriority(w);
+  return set ? { word: set, inferred: false } : { word: inferredPriority(w), inferred: true };
+};
+const priorityLabel = (word, inferred) => (inferred ? `No priority set, inferred ${word}` : `${word} priority`);
 const priorityBars = (level, inferred) => `<span class="work-priority-mark${inferred ? " is-inferred" : ""}" data-level="${Math.min(level, 3)}" aria-hidden="true"><span></span><span></span><span></span></span>`;
 function boardPriorityMark(w) {
-  const set = setPriority(w);
-  if (set) {
-    const label = esc(`${set} priority`);
-    return `<span class="bpri" data-priority="${esc(set.toLowerCase())}" role="img" aria-label="${label}" title="${label}">${priorityBars(WORK_PRIORITY_RANKS[set], false)}<span class="bpri-word">${esc(set)}</span></span>`;
+  const { word, inferred } = displayedPriority(w);
+  if (!inferred) {
+    const label = esc(priorityLabel(word, false));
+    return `<span class="bpri" data-priority="${esc(word.toLowerCase())}" role="img" aria-label="${label}" title="${label}">${priorityBars(WORK_PRIORITY_RANKS[word], false)}<span class="bpri-word">${esc(word)}</span></span>`;
   }
-  const guess = inferredPriority(w), label = esc(`No priority set, inferred ${guess}`);
+  const guess = word, label = esc(priorityLabel(word, true));
   return `<span class="bpri is-inferred" role="img" aria-label="${label}" title="${label}">${priorityBars(WORK_PRIORITY_RANKS[guess], true)}<span class="bpri-word"><span class="bpri-tilde">~</span>${guess}<span class="bpri-inf"> · inferred</span></span></span>`;
 }
 /* Bug severity is its own fact, never read as priority */
@@ -441,6 +455,14 @@ function boardReason(w) {
   }
   if (w.status === "Blocked") return { line: w.waitsOn && w.waitsOn !== "you" && M[w.waitsOn] ? `Waiting on ${M[w.waitsOn].name}` : "Blocked" };
   return {};
+}
+/* A known execution hold (the office that runs it is offline) is its own cue, apart from Needs you and Blocked.
+   It links to the Inbox item that explains it. */
+const holdText = (hold) => `${hold.office?.name ?? "The office"} is ${(hold.office?.status ?? "offline").toLowerCase()}`;
+function boardHold(w) {
+  const hold = executionHold(w);
+  if (!hold) return "";
+  return `<p class="board-hold">${ic("offline", "ic14")}<a href="#/inbox/${esc(hold.item.id)}" title="Open in Inbox"><span class="board-hold-word">Waiting for office</span><span class="board-hold-why"> · ${esc(holdText(hold))}</span></a></p>`;
 }
 /* Expiring asks come first, and the soonest expiry is said on the card, next to the badge */
 const expiryRank = (ask) => ask.expiresInHours ?? (ask.expires ? 1e6 : 1e7);
@@ -476,9 +498,9 @@ function boardMeta(w) {
    then the team and Archived as the List shows them. Counts always keep their full word ("0/2 criteria"), at every
    lane width, so "criteria" never reads as "Critical". */
 function boardCountTags(w) {
-  const crit = w.criteria?.length ? `<span class="btag">${ic("check-circle", "ic14")}${workCriteria(w.criteria, w.id)}<span class="btag-word" aria-hidden="true">criteria</span></span>` : "";
+  const crit = w.criteria?.length ? `<span class="btag btag-count">${ic("check-circle", "ic14")}${workCriteria(w.criteria, w.id)}<span class="btag-word" aria-hidden="true">criteria</span></span>` : "";
   const n = w.subtasks?.length ?? 0, word = n === 1 ? "subtask" : "subtasks";
-  const subs = n ? `<span class="btag" title="${n} ${word}">${ic("list", "ic14")}<span aria-hidden="true">${n}</span><span class="btag-word" aria-hidden="true">${word}</span><span class="sr-only">${n} ${word}</span></span>` : "";
+  const subs = n ? `<span class="btag btag-count" title="${n} ${word}">${ic("list", "ic14")}<span aria-hidden="true">${n}</span><span class="btag-word" aria-hidden="true">${word}</span><span class="sr-only">${n} ${word}</span></span>` : "";
   return crit + subs;
 }
 function boardTags(w, sortKey) {
@@ -500,14 +522,14 @@ function boardOwner(w) {
   if (!w.who || !M[w.who]) return `<span class="board-assignee">${av(null, 24)}<span class="board-owner-label">Unassigned</span></span>`;
   return `<span class="board-assignee">${av(w.who, 24)}<span class="board-owner-label">${mlink(w.who)}</span><span class="board-kind">${esc(kindWord(w.who))}</span></span>`;
 }
-/* Context row: the project and the assignee, the card's two links, side by side; it wraps for long names */
+/* Context row: the assignee first, then the project; it wraps for long names, so the assignee always starts the row */
 function boardContext(w, hideOwner, hideProject) {
   const project = hideProject ? "" : `<span class="board-project">${plink(w.proj)}</span>`;
   if (hideOwner && !project) return "";
-  return `<div class="board-card-context">${project}${hideOwner ? "" : boardOwner(w)}</div>`;
+  return `<div class="board-card-context">${hideOwner ? "" : boardOwner(w)}${project}</div>`;
 }
-/* What the card asks of you comes straight after its title: the request badge (or why it is blocked), then the
-   supporting facts, then who and where */
+/* What the card asks of you comes straight after its title: the request badge (or why it is blocked) and any
+   execution hold; then who has it and where, in a predictable place; then the supporting facts */
 function boardCard(w, { hideOwner, hideProject, selected, sortKey, query }) {
   const attention = showsNeedsYou(w), reason = boardReason(w);
   const badge = reason.badge ? boardNeedBadge(w, reason) : "";
@@ -515,15 +537,15 @@ function boardCard(w, { hideOwner, hideProject, selected, sortKey, query }) {
   const team = workTeam(w);
   return `<li class="bcard" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}${attention ? " data-attention" : ""}${selected ? ' aria-current="true"' : ""}>
     <a class="work-item-link t" data-item="${esc(w.id)}" href="${esc(workItemHref(w.id))}" aria-haspopup="dialog" title="${esc(w.title)}">${esc(w.title)}</a>
-    ${status}
+    ${status}${boardHold(w)}
+    ${boardContext(w, hideOwner, hideProject)}
     <div class="board-facts">${boardMeta(w)}${boardTags(w, sortKey)}</div>
     ${boardSubtaskHits(w, query)}
-    ${boardContext(w, hideOwner, hideProject)}
   </li>`;
 }
 /* Attention first (the board's default): owner asks that expire, soonest deadline first; then other cards that
    need you; then everything else. Priority (set or inferred) breaks ties at every tier. */
-const boardRank = (w) => workPriorityRank(setPriority(w)) ?? WORK_PRIORITY_RANKS[inferredPriority(w)];
+const boardRank = (w) => WORK_PRIORITY_RANKS[displayedPriority(w).word];
 function attentionKey(w) {
   if (!showsNeedsYou(w)) return [2, 0];
   const soonest = Math.min(...ownerAsks(w).filter((ask) => ask.expires).map(expiryRank));
@@ -546,7 +568,8 @@ function boardColumns(items, needsYouView, sortKey) {
   const order = status ? [...columns.keys()].sort((a, b) => (BOARD_STATUS_ORDER.indexOf(a) + 99) % 99 - (BOARD_STATUS_ORDER.indexOf(b) + 99) % 99) : BOARD_STAGES;
   /* The default order is Attention first; an explicit Sort by is kept as chosen */
   const attention = sortKey === "default";
-  return order.filter((key) => !(needsYouView && isDoneStage(key))).map((key) => [key,
+  /* Needs you keeps a Done lane only while it holds a pending owner approval (a fix to verify) */
+  return order.filter((key) => !(needsYouView && isDoneStage(key) && !columns.get(key).length)).map((key) => [key,
     attention ? columns.get(key).sort(byAttention) : columns.get(key)]);
 }
 const isDoneStage = (stage) => stage === "Done" || BOARD_STAGE_OF[stage] === "Done";
@@ -566,18 +589,18 @@ function doneHistoryOption(listLayout) {
   if (listLayout) return [];
   return [["workDoneHistory", "Done history", DONE_HISTORY.filter(([v]) => v !== "archived" || S.archiveAfterDays > 0)]];
 }
-/* Work closed before the Done history window: kept out of Done lanes, and out of the Board's preset counts */
-const olderThanDoneWindow = (w) => doneHistory() === "recent" && isClosed(w) && (w.closedDaysAgo ?? 0) > DONE_WINDOW_DAYS;
+/* Work closed before the Done history window: kept out of Done lanes, and out of the Board's preset counts. A pending
+   owner approval keeps its card in view until it is answered. */
+const olderThanDoneWindow = (w) => doneHistory() === "recent" && isClosed(w) && !needsMe(w) && (w.closedDaysAgo ?? 0) > DONE_WINDOW_DAYS;
 function doneWindow(stage, tasks) {
   if (!isDoneStage(stage) || doneHistory() !== "recent") return { recent: tasks, older: 0 };
   const recent = tasks.filter((w) => !olderThanDoneWindow(w));
   return { recent, older: tasks.length - recent.length };
 }
-/* A preset's count is the number of cards it shows: on the Board that leaves out Done history outside the window,
-   and the Done lanes that Needs you hides */
-function visibleCount(items, view, layout) {
+/* A preset's count is the number of cards it shows: on the Board that leaves out Done history outside the window */
+function visibleCount(items, _view, layout) {
   if (layout !== "board") return items.length;
-  return items.filter((w) => !olderThanDoneWindow(w) && !(view === "needs-me" && isDoneStage(boardColumnKey(w)))).length;
+  return items.filter((w) => !olderThanDoneWindow(w)).length;
 }
 /* The Done lanes name the history window they show */
 const DONE_WINDOW_LABEL = { recent: `Last ${DONE_WINDOW_DAYS} days`, all: "All unarchived", archived: "With archived" };
@@ -586,10 +609,12 @@ function laneCount(stage, tasks) {
   const { recent, older } = doneWindow(stage, tasks);
   return { recent, older, text: older ? `${recent.length} shown · ${older} older` : String(tasks.length) };
 }
-/* The lane heading is where a column jump lands, so it takes focus (tabindex=-1) */
+/* The lane heading is where a column jump lands, so it takes focus (tabindex=-1). Every terminal lane names its
+   history window with a button that opens the one Done history control in Display. */
 function boardColumnHead(stage, count) {
-  const history = isDoneStage(stage) ? `<span class="bcol-window">${ic("clock", "ic14")}${esc(DONE_WINDOW_LABEL[doneHistory()])}</span>` : "";
-  return `<div class="bcol-h"><h3 class="bcol-title" tabindex="-1"><span class="bcol-ic" aria-hidden="true">${workStatus(BOARD_STAGE_STATUS[stage] || stage)}</span><span class="bcol-name">${esc(stage)}</span><span class="cnt">${esc(count.text)}</span></h3>${history}</div>`;
+  const range = esc(DONE_WINDOW_LABEL[doneHistory()]);
+  const history = isDoneStage(stage) ? `<button class="bcol-window" type="button" data-act="board-history" aria-haspopup="menu" aria-label="Done history: ${range}. Change" title="Change Done history">${ic("clock", "ic14")}${range}${ic("chev-down", "ic14")}</button>` : "";
+  return `<div class="bcol-h" data-popover-inset><h3 class="bcol-title" tabindex="-1"><span class="bcol-ic" aria-hidden="true">${workStatus(BOARD_STAGE_STATUS[stage] || stage)}</span><span class="bcol-name">${esc(stage)}</span><span class="cnt">${esc(count.text)}</span></h3>${history}</div>`;
 }
 function boardColumnHtml(stage, tasks, opts) {
   const count = laneCount(stage, tasks), { recent, older } = count;
@@ -720,7 +745,9 @@ function mountBoard(main) {
   const select = nav?.querySelector("select");
   if (select) bindLanePicker(select, main);
   if (typeof ResizeObserver === "function") {
-    boardResize = new ResizeObserver(sync);
+    /* Showing or hiding the column jump changes the board's own size, so sync in the next frame, not inside the
+       observer's callback (which would loop) */
+    boardResize = new ResizeObserver(() => requestAnimationFrame(sync));
     boardResize.observe(board);
   }
   sync();
@@ -756,6 +783,7 @@ const CARD_CONTROLS = [
   [".board-project a", " .board-project a"],
   [".board-owner-label a", " .board-owner-label a"],
   [".board-subhits a", " .board-subhits a"],
+  [".board-hold a", " .board-hold a"],
 ];
 function boardControlSelector(el) {
   const card = el?.closest?.(".bcard"), lane = el?.closest?.(".bcol");
@@ -764,7 +792,7 @@ function boardControlSelector(el) {
     const hit = CARD_CONTROLS.find(([match]) => el.matches(match));
     return hit ? `.bcard[data-work-id="${CSS.escape(card.dataset.workId)}"]${hit[1]}` : "";
   }
-  if (lane && el.matches(".bcol-title")) return `#${CSS.escape(lane.id)} .bcol-title`;
+  if (lane && el.matches(".bcol-title, .bcol-window")) return `#${CSS.escape(lane.id)} .${el.matches(".bcol-title") ? "bcol-title" : "bcol-window"}`;
   return el.matches("[data-board-lane]") ? "[data-board-lane]" : "";
 }
 /* Re-rendering results keeps the owner's place: the lane at the start edge, both scroll axes and focus. A control
@@ -901,6 +929,31 @@ function refreshScopedWorkResults(view) {
   replaceWorkResults(scopedWorkResults(view));
   refreshScopedWorkCounts(view);
 }
+/* "Show N archived/older matches": focus goes to the first card (or row) the reveal added, found by work item, and the
+   added count is announced. Nothing new (an unexpected re-render) leaves focus on the results. */
+const shownWorkIds = () => new Set([...document.querySelectorAll("#work-results [data-work-id]")].map((el) => el.dataset.workId));
+function focusRevealedWork(before) {
+  const results = document.getElementById("work-results");
+  if (!results) return;
+  const added = [...results.querySelectorAll(".bcard[data-work-id], .work-row[data-work-id]")].filter((el) => !before.has(el.dataset.workId));
+  const link = added[0]?.querySelector(":scope > .work-item-link, .work-item-link");
+  if (!link) { (results.querySelector(".work-item-link") ?? results).focus(); return; }
+  revealBoardControl(results, link);
+  link.focus({ preventScroll: true });
+  const noun = added[0].matches(".bcard") ? "card" : "item";
+  announceWorkStatus(`${added.length} more ${noun}${added.length === 1 ? "" : "s"} shown`);
+}
+/* A Done lane's history button opens Display with focus on the current Done history choice */
+function openDoneHistory() {
+  const trigger = document.querySelector('[aria-controls="menu-work-display"], [aria-controls="menu-scoped-work-display"]');
+  if (!trigger) return;
+  if (trigger.getAttribute("aria-expanded") !== "true") trigger.click();
+  const menu = document.getElementById(trigger.getAttribute("aria-controls"));
+  const group = [...(menu?.querySelectorAll('[role="group"]') ?? [])].find((g) => document.getElementById(g.getAttribute("aria-labelledby"))?.textContent === "Done history");
+  const choice = group?.querySelector('[aria-checked="true"]') ?? group?.querySelector("button");
+  choice?.focus();
+  choice?.scrollIntoView({ block: "nearest" });
+}
 /* When every match is hidden history, show the empty state with the way to reveal it, not a board of empty lanes */
 function boardHiddenEmpty(columns, { filtered, archived = 0, emptyText }) {
   const counts = columns.map(([stage, tasks]) => laneCount(stage, tasks));
@@ -908,32 +961,39 @@ function boardHiddenEmpty(columns, { filtered, archived = 0, emptyText }) {
   const older = counts.reduce((sum, count) => sum + count.older, 0);
   return workEmpty(emptyText || "No work matches these filters.", filtered, { older, archived });
 }
-/* The board's results summary, above the lanes: how many cards show, the column mode, a chosen sort and every
-   active filter, in words. Filtered results also count the matches that Done history hides ("2 shown · 1 archived
-   match") with the way to reveal them, and the one Clear filters. Compact toolbars rely on this row for the values. */
-const BOARD_SORT_WORD = { priority: "Priority", eta: "ETA", title: "Title" };
-function boardSummaryParts(columns, { filtered, archived, sortKey, summary }) {
-  const counts = columns.map(([stage, tasks]) => laneCount(stage, tasks));
-  const shown = counts.reduce((sum, count) => sum + count.recent.length, 0);
-  const older = filtered ? counts.reduce((sum, count) => sum + count.older, 0) : 0;
+/* The board's results summary, above the lanes. It never repeats what the toolbar already says: no card count (the
+   active preset shows it) unless history hides matches ("2 shown · 1 archived match"), the chosen sort as a phrase
+   ("Highest priority first"), every active filter in words, and the column mode only while the toolbar hides it.
+   With nothing to say beyond a hidden mode, the row shows only when the toolbar hides the mode. */
+const BOARD_SORT_PHRASES = {
+  priority: ["Highest priority first", "Lowest priority first"], eta: ["Soonest ETA first", "Latest ETA first"],
+  title: ["Title A to Z", "Title Z to A"],
+};
+const boardSortPhrase = (sortKey, order) => BOARD_SORT_PHRASES[sortKey]?.[order === "desc" ? 1 : 0];
+function boardHiddenMatches(columns, { filtered, archived }) {
+  const older = filtered ? columns.reduce((sum, [stage, tasks]) => sum + laneCount(stage, tasks).older, 0) : 0;
   const hiddenArchived = filtered ? archived : 0;
-  const lead = older || hiddenArchived ? `${shown} shown` : `${shown} ${shown === 1 ? "card" : "cards"}`;
-  const hidden = [...(older ? [`${older} older ${matchWord(older)}`] : []), ...(hiddenArchived ? [`${hiddenArchived} archived ${matchWord(hiddenArchived)}`] : [])];
-  const view = [`${S.workBoardStages === "detailed" ? "Status" : "Stages"} columns`, ...(BOARD_SORT_WORD[sortKey] ? [`Sorted by ${BOARD_SORT_WORD[sortKey]}`] : [])];
-  return { lead, hidden, view, reveal: revealButtons({ older, archived: hiddenArchived }) };
+  const shown = columns.reduce((sum, [stage, tasks]) => sum + laneCount(stage, tasks).recent.length, 0);
+  const parts = [...(older ? [`${older} older ${matchWord(older)}`] : []), ...(hiddenArchived ? [`${hiddenArchived} archived ${matchWord(hiddenArchived)}`] : [])];
+  return { lead: parts.length ? `${shown} shown` : "", parts, reveal: revealButtons({ older, archived: hiddenArchived }) };
 }
 function boardSummary(columns, opts) {
-  const { lead, hidden, view, reveal } = boardSummaryParts(columns, opts);
-  const parts = [...hidden, ...view, ...opts.summary].map((part) => `${SEP}<span>${esc(part)}</span>`).join("");
+  const { lead, parts: hidden, reveal } = boardHiddenMatches(columns, opts);
+  const sort = boardSortPhrase(opts.sortKey, opts.order);
+  const parts = [...hidden, ...(sort ? [sort] : []), ...opts.summary];
+  const mode = `${S.workBoardStages === "detailed" ? "Status" : "Stages"} columns`;
+  const items = [...(lead ? [`<strong class="bsum-part">${esc(lead)}</strong>`] : []), ...parts.map((part) => `<span class="bsum-part">${esc(part)}</span>`),
+    `<span class="bsum-part bsum-mode">${esc(mode)}</span>`].join("");
   const actions = reveal || opts.filtered ? `<div class="board-summary-actions">${reveal}${opts.filtered ? clearFiltersButton() : ""}</div>` : "";
-  return `<div class="board-filterbar"${opts.filtered ? " data-filtered" : ""}><p><strong>${esc(lead)}</strong>${parts}</p>${actions}</div>`;
+  const modeOnly = !lead && !parts.length && !actions;
+  return `<div class="board-filterbar"${opts.filtered ? " data-filtered" : ""}${modeOnly ? " data-mode-only" : ""}><p>${items}</p>${actions}</div>`;
 }
-function board(items, { hideOwner = false, hideProject = false, needsYouView = false, sortKey = "default", filtered = false, summary = [], query = "", archived = 0, emptyText = "" } = {}) {
+function board(items, { hideOwner = false, hideProject = false, needsYouView = false, sortKey = "default", order = "asc", filtered = false, summary = [], query = "", archived = 0, emptyText = "" } = {}) {
   if (!items.length) return `<p class="empty-row">No work here yet.</p>`;
   const columns = boardColumns(items, needsYouView, sortKey), selectedId = qs().get("item");
   const hidden = boardHiddenEmpty(columns, { filtered, archived, emptyText });
   if (hidden) return hidden;
-  return `${boardSummary(columns, { filtered, archived, sortKey, summary })}${boardLaneNav(columns)}<div class="board" role="region" aria-label="Work board" tabindex="0" data-mode="${S.workBoardStages === "detailed" ? "status" : "stages"}"${filtered ? " data-filtered" : ""}>
+  return `${boardSummary(columns, { filtered, archived, sortKey, order, summary })}${boardLaneNav(columns)}<div class="board" role="region" aria-label="Work board" tabindex="0" data-popover-scroller data-mode="${S.workBoardStages === "detailed" ? "status" : "stages"}"${filtered ? " data-filtered" : ""}>
     <div class="board-columns" style="--board-column-count:${columns.length}">${columns.map(([stage, tasks]) => boardColumnHtml(stage, tasks, { hideOwner, hideProject, selectedId, filtered, sortKey, query })).join("")}</div>
   </div>`;
 }
@@ -991,7 +1051,7 @@ function workWorkspace(results, items = W, search = "", scope = "") {
 
 function workDetailFields(w, team, eta, priority) {
   const attention = showsNeedsYou(w) ? '<span class="work-detail-attention">· Needs you</span>' : "";
-  const severity = w.kind === "bug" && w.pri && !priority ? `<div><dt>Severity</dt><dd>${esc(w.pri)}</dd></div>` : "";
+  const severity = bugSeverity(w) ? `<div><dt>Severity</dt><dd>${esc(bugSeverity(w))}</dd></div>` : "";
   const teamRow = team ? `<div><dt>Team</dt><dd><a class="alink" href="#/teams/${esc(team)}">${esc(TEAMS[team].name)}</a></dd></div>` : "";
   const etaRow = eta ? `<div><dt>ETA</dt><dd>${esc(eta)}</dd></div>` : "";
   return `<dl class="triage-fields">
@@ -1021,7 +1081,7 @@ function workDetailSubtasks(w) {
   return `<section class="work-detail-section" aria-labelledby="work-detail-subtasks">
         <h3 id="work-detail-subtasks">Subtasks</h3>
         <ul class="work-detail-links" role="list">${w.subtasks.map((subtask) => `<li>
-          <a class="alink" href="${esc(workItemHref(subtask.id))}">${workPriority(subtask.pri)}<span class="work-ref">${esc(subtask.id)}</span>${workStatus(subtask.status)}<span>${esc(subtask.title)}</span>${workCriteria(subtask.criteria, subtask.id)}</a>
+          <a class="alink" href="${esc(workItemHref(subtask.id))}">${workPriority({ ...subtask, kind: "task" })}<span class="work-ref">${esc(subtask.id)}</span>${workStatus(subtask.status)}<span>${esc(subtask.title)}</span>${workCriteria(subtask.criteria, subtask.id)}</a>
         </li>`).join("")}</ul>
       </section>`;
 }
@@ -1083,12 +1143,13 @@ function workDetailIdeation(w) {
 
 function workDetail(w, parent) {
   const team = workTeam(w), eta = workEta(w);
-  const priority = esc(setPriority(w));
+  const shown = displayedPriority(w);
+  const priority = esc(shown.inferred ? `${shown.word} · inferred` : shown.word);
   const expandLabel = "Expand task to full page";
   return `<dialog class="side-panel work-panel" id="work-panel" aria-labelledby="work-detail-title" data-item="${esc(w.id)}">
     <section class="triage-reading work-reading"${team ? ` data-team="${esc(team)}"` : ""}>
       <div class="side-panel-header work-detail-bar">
-        <p class="work-detail-id">${workPriority(setPriority(w))}${esc(w.id)}${workStatus(w.status, showsNeedsYou(w))}<span class="work-kind">${{ task: "Task", bug: "Bug", request: "Request" }[w.kind]}</span></p>
+        <p class="work-detail-id">${workPriority(w)}${esc(w.id)}${workStatus(w.status, showsNeedsYou(w))}<span class="work-kind">${{ task: "Task", bug: "Bug", request: "Request" }[w.kind]}</span></p>
         <div class="work-detail-actions">
           <button class="btn ghost icon sm icon-with-tooltip" type="button" data-act="work-comment-focus" aria-label="Leave a comment">${iconWithTooltip("Leave a comment", "chat")}</button>
           <button class="btn ghost icon sm icon-with-tooltip" type="button" data-act="work-copy-link" data-id="${esc(w.id)}" aria-label="Copy task link">${iconWithTooltip("Copy task link", "copy")}</button>
@@ -1286,12 +1347,11 @@ function workFilteredItems(archivedOnly = false) {
   });
 }
 
-/* Ascending priority is highest first, so the default direction puts the most important work on top. The Board sorts
-   by the priority each card shows (set, else inferred); bug severity stays its own fact and never ranks priority. */
-const priorityReaders = { list: (w) => -workPriorityRank(w.pri) || undefined, board: (w) => -boardRank(w) };
-function sortWorkItems(items, sortKey = S.workSort, order = S.workOrder, layout = "list") {
+/* Ascending priority is highest first, so the default direction puts the most important work on top. List and Board
+   both sort by the priority each item shows (set, else inferred); bug severity stays its own fact and never ranks priority. */
+function sortWorkItems(items, sortKey = S.workSort, order = S.workOrder) {
   const descending = order === "desc";
-  const read = { title: (w) => w.title, priority: priorityReaders[layout] ?? priorityReaders.list, eta: (w) => w.etaHours }[sortKey];
+  const read = { title: (w) => w.title, priority: (w) => -boardRank(w), eta: (w) => w.etaHours }[sortKey];
   if (!read) return descending ? [...items].reverse() : items;
   return [...items].sort((left, right) => {
     const a = read(left), b = read(right);
@@ -1302,7 +1362,7 @@ function sortWorkItems(items, sortKey = S.workSort, order = S.workOrder, layout 
 }
 
 function workResults(filtered, { view, group, subgroup }) {
-  const items = sortWorkItems(workPresetItems(filtered, view), S.workSort, workSortOrder(S.workLayout, S.workSort, S.workOrder), S.workLayout);
+  const items = sortWorkItems(workPresetItems(filtered, view), S.workSort, workSortOrder(S.workLayout, S.workSort, S.workOrder));
   const isFiltered = Boolean(S.workQuery.trim()) || workHasFilters();
   const text = isFiltered ? "No work matches these filters."
     : view === "needs-me" ? "Nothing needs you in Work."
@@ -1311,7 +1371,7 @@ function workResults(filtered, { view, group, subgroup }) {
   if (!items.length) return workEmpty(text, isFiltered, { archived });
   const query = canonicalWorkRef(S.workQuery).toLowerCase();
   const summary = filterParts(S.workQuery.trim(), workFilterValues());
-  return S.workLayout === "board" ? board(items, { needsYouView: view === "needs-me", sortKey: S.workSort, filtered: isFiltered, summary, query, archived, emptyText: text }) : workList(items, {
+  return S.workLayout === "board" ? board(items, { needsYouView: view === "needs-me", sortKey: S.workSort, order: S.workOrder, filtered: isFiltered, summary, query, archived, emptyText: text }) : workList(items, {
     groupBy: WORK_GROUP_FIELDS[group], subgroupBy: WORK_GROUP_FIELDS[subgroup], filtered: isFiltered,
   });
 }
@@ -1595,6 +1655,9 @@ async function createWorkTask(form) {
 
 export {
   boardItemHref,
+  focusRevealedWork,
+  openDoneHistory,
+  shownWorkIds,
   mountWorkToolbar,
   settleWorkResults,
   workPanelOpener,

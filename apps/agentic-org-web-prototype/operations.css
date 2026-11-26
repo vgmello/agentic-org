@@ -3676,3 +3676,88 @@ html[data-theme="report"] .assembly-release {
   content: ""; position: absolute; inset: -1px; z-index: 0; pointer-events: none;
   border-inline-start: 3px solid var(--tone-warn); border-radius: inherit;
 }
+
+
+/* ── Work board, review round 9 ───────────────────────────────────────────
+   Scoped to the board, list rows and toolbar so they win whatever order the stylesheets are bundled in. */
+
+/* Intermediate widths: lanes keep a readable width (about 260px) and overflow sooner, with the column jump.
+   Phones keep their own full-width lanes. */
+@media (min-width: 640px) {
+  .board .board-columns { --board-column-width: 16.25rem; }
+}
+
+/* Compact lanes leave criteria and subtask totals to the task's detail; severity stays */
+@container board-lane (max-width: 17.5rem) {
+  .board .bcard .btag-count { display: none; }
+}
+
+/* Context row sits under the title and request: the assignee always starts it */
+.board .bcard > .board-card-context { column-gap: 12px; }
+
+/* Waiting for office: a known execution hold, its own neutral cue (not amber Needs you, not Blocked) */
+.board .bcard .board-hold { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; font-size: var(--fs-sm); color: var(--gray-300); }
+.board .bcard .board-hold > .ic { flex: none; color: var(--gray-400); }
+.board .bcard .board-hold a {
+  position: relative; z-index: 1; min-width: 0; color: inherit;
+  text-decoration: underline; text-decoration-thickness: 1px; text-decoration-color: var(--gray-500); text-underline-offset: 3px;
+}
+.board .bcard .board-hold a:hover { color: var(--white); text-decoration-color: currentColor; }
+.board .bcard .board-hold a:focus-visible { outline: 2px solid var(--tone-accent-ink); outline-offset: 1px; border-radius: 3px; background: var(--tone-accent-soft); }
+.board .bcard .board-hold-word { font-weight: 600; color: var(--white); }
+@media (max-width: 639px), (pointer: coarse) {
+  .board .bcard .board-hold a { display: inline-flex; align-items: center; min-height: 44px; }
+}
+.work-row .work-hold-tag {
+  display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 6px; padding: 1px 7px;
+  border-radius: 999px; border: 1px solid var(--line2); color: var(--gray-300);
+  font-size: var(--fs-xs); font-weight: 600; line-height: 1.2; vertical-align: middle;
+}
+/* The List's inferred priority bars are fainter, as on the Board */
+.work-row .work-priority-mark.is-inferred, .work-panel .work-priority-mark.is-inferred, .work-detail-links .work-priority-mark.is-inferred { opacity: .55; }
+.work-row .work-severity { color: var(--gray-300); }
+
+/* Done lanes: the history window is a button that opens Done history in Display */
+.board .bcol > .bcol-h > button.bcol-window {
+  position: relative; padding: 0 4px; margin-block: -2px; margin-inline-start: -2px; border-radius: var(--radius-md); line-height: 1.6;
+  color: var(--gray-300); text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 3px;
+}
+.board .bcol > .bcol-h > button.bcol-window:hover { color: var(--white); background: var(--hover); text-decoration-color: currentColor; }
+.board .bcol > .bcol-h > button.bcol-window:focus-visible { outline: 2px solid var(--tone-accent-ink); outline-offset: 1px; }
+/* Touch and phones: a 44px hit area that does not make the lane header taller than its neighbours */
+@media (max-width: 639px), (pointer: coarse) {
+  .board .bcol > .bcol-h > button.bcol-window::after { content: ""; position: absolute; inset: -12px -4px; }
+}
+
+/* Results summary: parts separated by a small dot; the column mode shows only while the toolbar hides it */
+#work-results > .board-filterbar .bsum-part:not(:first-child)::before {
+  content: ""; display: inline-block; width: 2px; height: 2px; margin-inline-end: 8px; border-radius: 99px;
+  background: var(--gray-400); vertical-align: middle;
+}
+#work-results > .board-filterbar .bsum-mode { display: none; }
+#work-results > .board-filterbar[data-mode-only] { display: none; }
+body:has(.work-toolbar[data-values="hidden"]) #work-results > .board-filterbar .bsum-mode { display: inline; }
+body:has(.work-toolbar[data-values="hidden"]) #work-results > .board-filterbar[data-mode-only] { display: flex; }
+
+/* 320px: two toolbar rows. The views and New share the first; layout, search, Filter and Display take the second.
+   A zero-height break item ends the first row. Tab order stays views, layout, search, Filter, Display, New. */
+@container queue-header (max-width: 23.5rem) {
+  .work-toolbar::before { content: ""; order: 2; flex-basis: 100%; height: 0; }
+  .work-toolbar > .primary-tab-row { order: 0; }
+  .work-toolbar > .work-tb-end { order: 1; }
+  .work-toolbar > :not(.primary-tab-row, .work-tb-end) { order: 3; }
+  .work-toolbar #work-new-task { padding-inline: 10px; gap: 4px; }
+}
+@container work-subbar (max-width: 23.5rem) {
+  .work-toolbar::before { content: ""; order: 2; flex-basis: 100%; height: 0; }
+  .work-toolbar > .primary-tab-row { order: 0; }
+  .work-toolbar > #work-new-task { order: 1; }
+  .work-toolbar > :not(.primary-tab-row, #work-new-task) { order: 3; }
+  .work-toolbar #work-new-task { padding-inline: 10px; gap: 4px; }
+  /* Same compact controls as the Work page: tighter views and layout, text triggers without their icons */
+  .work-subbar-header .work-toolbar { column-gap: 6px; }
+  .project-header ~ .work-subbar-header .work-toolbar .primary-tab-row > .queue-tabs .queue-tab,
+  .work-subbar-header .work-toolbar .primary-tab-row > .queue-tabs .queue-tab { padding-inline: 5px; min-width: 44px; justify-content: center; }
+  .work-subbar-header .work-toolbar .work-layout-toggle .queue-tab { padding-inline: 8px; }
+  .work-subbar-header .work-toolbar .queue-controls .menu-textbtn > .ic:first-child { display: none; }
+}
