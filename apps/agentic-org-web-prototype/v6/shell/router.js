@@ -5,7 +5,7 @@ import { mountOrgChart } from "../pages/org-chart.js";
 import { pageChat } from "../pages/chat.js";
 import { pageHome } from "../pages/home.js";
 import { pageInbox } from "../pages/inbox.js";
-import { pageProject, pageProjects } from "../pages/projects.js";
+import { mountProjectQueue, pageProject, pageProjects } from "../pages/projects.js";
 import { SET, notFound, pagePreferences, pageSearch, pageSettings } from "../pages/settings.js";
 import { pageMember, pageMembersDir, pageOrgChart, pageTeam, pageTeams } from "../pages/teams.js";
 import { fitTextarea, pageWork, setWorkPanelExpanded, showSidePanel } from "../pages/work.js";
@@ -197,6 +197,7 @@ function render(focus = true) {
   const shell = document.getElementById("agent-shell");
   if (shell) mountAgentProfile(shell.dataset.agent, shell.dataset.tab);
   mountOrgChart(main);
+  mountProjectQueue(main);
   placeSearchToolbar(main, r);
   if (S.singleKey) main.querySelector("[data-page-menu]")?.setAttribute("aria-keyshortcuts", "M");
   scrollCurrentTabsIntoView(main);

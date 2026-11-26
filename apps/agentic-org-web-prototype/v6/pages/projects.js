@@ -106,7 +106,7 @@ function projectDecisionsHtml(needs) {
         <span class="pj-q-title">${esc(it.what)}</span>${it.handled ? `<span class="pj-q-done">${esc(it.outcome || "Handled")}</span>` : ""}</button></li>`;
   return `<div class="pj-split">
       <nav class="pj-queue-pane" aria-label="Priority queue"><p class="pj-queue-h">Priority queue <span class="sec-head-count">${needs.length}</span></p>
-        <ul role="list">${needs.map(item).join("")}</ul>
+        <ul role="list" class="pj-q-list" tabindex="-1">${needs.map(item).join("")}</ul>
         <a class="pj-queue-all" href="#/inbox">View all in Inbox${ic("chev-right", "ic16")}</a></nav>
       ${decisionDetailHtml(sel)}
     </div>`;
@@ -148,7 +148,17 @@ function memberRows(ids, opts = {}) {
   }).join("")}</ul>`;
 }
 
+/* Keep the selected queue item visible inside the scrolling queue after a re-render. */
+function mountProjectQueue(main) {
+  const list = main.querySelector(".pj-q-list"), cur = list?.querySelector(".is-current");
+  if (!list || !cur) return;
+  const top = cur.offsetTop - list.offsetTop, bottom = top + cur.offsetHeight;
+  if (top < list.scrollTop) list.scrollTop = top;
+  else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+}
+
 export {
+  mountProjectQueue,
   conversationPreview,
   memberRows,
   pageProject,
