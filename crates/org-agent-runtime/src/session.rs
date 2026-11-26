@@ -40,8 +40,8 @@ use crate::{ApprovalId, ExitInfo, Line, SessionEvent};
 ///
 /// # Contract rules
 /// Every implementation must keep these; the office relies on them.
-/// 1. **Normal input waits for the turn.** A [`Control::Send`] with `urgent: false` while a
-///    turn is running returns [`ControlError::Busy`], and the office queues it.
+/// 1. **Normal input waits for the turn.** A [`Control::Send`] while a turn is running returns
+///    [`ControlError::Busy`], and the office queues it.
 /// 2. **An error changes nothing.** When [`control`](Self::control) returns `Err`, nothing was
 ///    emitted (no write, no event) and the session's state is exactly as before, so the office
 ///    can act on the error and retry.
@@ -116,22 +116,32 @@ pub enum Output {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Control {
-    /// Send the agent a message.
+    /// Start a new turn while the session is idle.
     ///
-    /// Normal input is sent only between turns: while a turn runs the session answers
-    /// [`ControlError::Busy`] and the office queues it ([`Session`] contract rule 1).
-    /// `urgent` input steers the running turn where the runtime can
-    /// ([`crate::Capabilities::steer`]); where it can't, the session answers
-    /// [`ControlError::NeedsInterrupt`], and the office interrupts, then sends.
+    /// Idle-only: while a turn runs the session always answers [`ControlError::Busy`] and the
+    /// office queues it ([`Session`] contract rule 1).
     Send {
-        /// The message.
+        /// The turn input text.
         text: String,
-        /// Whether it should reach the agent during a running turn.
-        urgent: bool,
     },
-    /// Stop the running turn; the process lives on. While idle it's accepted and does
-    /// nothing visible on runtimes where [`crate::Capabilities::idle_interrupt_ends_turn`]
-    /// is false.
+    /// Deliver an addressed message non-destructively into a running turn (`doc-101`, `ADR-0035`).
+    ///
+    /// Busy-only and strictly non-destructive: **never** emits an interrupt or aborts running
+    /// tools. Returns [`ControlError::Unsupported`] when
+    /// [`crate::Capabilities::mid_turn_delivery`] is [`crate::MidTurnDelivery::None`],
+    /// [`ControlError::NotReady`] while opening, waiting for a runtime turn id, or when a
+    /// `StepHook` payload is already staged, and [`ControlError::InvalidState`] when idle.
+    /// Completion is confirmed asynchronously via [`SessionEvent::MidTurnDelivered`] or
+    /// [`SessionEvent::MidTurnDeliveryFailed`].
+    DeliverMidTurn {
+        /// Office-assigned correlation id echoed in delivery confirmation/failure events.
+        delivery_id: String,
+        /// The fenced mid-turn message payload.
+        text: String,
+    },
+    /// Destructively stop the running turn (explicit authorized Stop/Interrupt, security fast-stop,
+    /// or offboard); the process lives on. While idle it's accepted and does nothing visible on
+    /// runtimes where [`crate::Capabilities::idle_interrupt_ends_turn`] is false.
     Interrupt,
     /// Answer an approval the session raised with [`SessionEvent::ApprovalRequested`].
     Answer {
@@ -169,12 +179,13 @@ pub enum Decision {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ControlError {
-    /// The session hasn't finished its opening yet ([`SessionEvent::Ready`] not emitted).
+    /// The session hasn't finished its opening yet ([`SessionEvent::Ready`] not emitted),
+    /// is awaiting a runtime turn id, or already has a staged mid-turn delivery in flight.
     NotReady,
     /// A turn is running: queue the input until it ends.
     Busy,
-    /// Urgent input needs the turn interrupted first on this runtime.
-    NeedsInterrupt,
+    /// The session is not in a valid state for this control (e.g. [`Control::DeliverMidTurn`] while idle).
+    InvalidState,
     /// No pending approval has this id (never raised, already answered, or cancelled).
     UnknownApproval,
     /// The session is closing or has ended.
@@ -188,7 +199,7 @@ impl fmt::Display for ControlError {
         f.write_str(match self {
             ControlError::NotReady => "the session isn't ready yet",
             ControlError::Busy => "a turn is running",
-            ControlError::NeedsInterrupt => "the running turn must be interrupted first",
+            ControlError::InvalidState => "the session is not in a valid state for this control",
             ControlError::UnknownApproval => "no pending approval has this id",
             ControlError::Closed => "the session is closed",
             ControlError::Unsupported => "not supported by this runtime",

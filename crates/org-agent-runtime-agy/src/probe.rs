@@ -3,11 +3,11 @@ use org_agent_runtime::{
     Unavailable,
 };
 
-pub(crate) const TESTED_VERSION_MIN: &str = "1.5.14";
-pub(crate) const TESTED_VERSION_MAX: &str = "1.5.14";
+pub(crate) const TESTED_VERSION_MIN: &str = "1.5.16";
+pub(crate) const TESTED_VERSION_MAX: &str = "1.5.17";
 
-const MIN_SEMVER: (u64, u64, u64) = (1, 5, 14);
-const MAX_SEMVER: (u64, u64, u64) = (1, 5, 14);
+const MIN_SEMVER: (u64, u64, u64) = (1, 5, 16);
+const MAX_SEMVER: (u64, u64, u64) = (1, 5, 17);
 
 pub(crate) fn plan_probe(probe: Probe, ctx: &ProbeContext) -> Option<ProbeRun> {
     if ctx.config_dir.as_ref().is_some_and(SpecPath::is_root)

@@ -170,3 +170,69 @@ fn owner_only_dir_tightens_mode_to_0700() {
     let mode = fs::symlink_metadata(&child).unwrap().mode() & 0o7777;
     assert_eq!(mode, 0o700);
 }
+
+#[test]
+fn owner_only_ancestors_and_files_enforce_uid_mode_and_no_symlinks() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("office");
+    let host_dir = root.join("git-credentials/hosts/github.com");
+    super::create_owner_only_dir_all(&host_dir).unwrap();
+    let uid = super::effective_uid().unwrap();
+    super::verify_owner_only_ancestors(&host_dir, &root, uid).unwrap();
+
+    // Loose intermediate ancestor fails closed.
+    let mid = root.join("git-credentials");
+    fs::set_permissions(&mid, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(super::verify_owner_only_ancestors(&host_dir, &root, uid).is_err());
+    set_owner_only_dir(&mid).unwrap();
+
+    // Wrong UID fails closed.
+    assert!(super::verify_owner_only_ancestors(&host_dir, &root, uid.wrapping_add(1)).is_err());
+
+    // Owner-only file write + exec check + symlink refusal.
+    let helper = host_dir.join("https-helper");
+    super::write_owner_only_file(&helper, b"#!/bin/sh\nexit 0\n").unwrap();
+    assert!(super::verify_owner_only_file(&helper, uid, false).is_ok());
+    assert!(super::verify_owner_only_file(&helper, uid, true).is_err());
+    fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(super::verify_owner_only_file(&helper, uid, true).is_ok());
+    fs::set_permissions(&helper, fs::Permissions::from_mode(0o4700)).unwrap();
+    assert!(super::verify_owner_only_file(&helper, uid, true).is_err());
+
+    let link = host_dir.join("link-helper");
+    super::create_symlink(&helper, &link).unwrap();
+    assert!(super::verify_owner_only_file(&link, uid, false).is_err());
+    assert!(super::write_owner_only_file(&link, b"nope").is_err());
+    assert!(super::open_nofollow_ro(&link).is_err());
+
+    // `write_owner_only_file` tightens looser existing permissions to 0600, and `open_nofollow_ro`
+    // opens regular files without blocking or following symlinks.
+    let secret = host_dir.join("token");
+    fs::write(&secret, b"old").unwrap();
+    fs::set_permissions(&secret, fs::Permissions::from_mode(0o644)).unwrap();
+    super::write_owner_only_file(&secret, b"fresh").unwrap();
+    assert_eq!(
+        fs::symlink_metadata(&secret).unwrap().mode() & 0o7777,
+        0o600
+    );
+    assert!(super::open_nofollow_ro(&secret).is_ok());
+    assert!(super::open_nofollow_ro(&host_dir).is_err());
+
+    // `..` traversal outside `stop_at`, mismatched `stop_at`, and trailing `/` or `/.` on
+    // symlinked directories MUST all fail closed (`TASK-167`, `TASK-168`).
+    let outside = directory.path().join("outside-0700");
+    super::create_owner_only_dir_all(&outside).unwrap();
+    let escape = host_dir.join("../../../../outside-0700");
+    assert!(super::verify_owner_only_ancestors(&escape, &root, uid).is_err());
+    assert!(super::verify_owner_only_ancestors(&host_dir, &outside, uid).is_err());
+    let dir_link = root.join("dir-link");
+    super::create_symlink(&outside, &dir_link).unwrap();
+    let dir_link_slash = std::path::PathBuf::from(format!("{}/", dir_link.display()));
+    let dir_link_dot = std::path::PathBuf::from(format!("{}/.", dir_link.display()));
+    for evasive in [&dir_link, &dir_link_slash, &dir_link_dot] {
+        assert!(super::verify_owner_only_dir(evasive, uid).is_err());
+        assert!(super::verify_owner_only_ancestors(evasive, &root, uid).is_err());
+        assert!(super::create_owner_only_dir_all(evasive).is_err());
+    }
+}

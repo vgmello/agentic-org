@@ -412,14 +412,15 @@ fn who_lists_the_directory_with_cards_for_the_owner_and_not_for_an_unbound_conne
     assert_eq!(api_code(unbound), org_proto::ErrorCode::NotBound);
     let mut owner = live.caller(Some(&owner_id));
 
-    // The owner, whose handle is `owner`, and the HR lead; everyone offline, no status line.
+    // The owner, whose handle is `owner` (offline until connected), and the HR lead
+    // (ADR-0028 AVAIL-4: active idle agents report `Available`, no status line).
     let everyone = owner.call::<Who>(&WhoParams::default()).unwrap();
     let card = everyone.members.iter().find(|c| c.owner).unwrap();
     assert_eq!(card.id, owner_id);
     assert_eq!(card.handle.as_deref(), Some("owner"));
     let lead = everyone.members.iter().find(|c| c.id == hr()).unwrap();
     assert_eq!(lead.kind, MemberKind::Agent);
-    assert_eq!(lead.presence, MemberPresence::Offline);
+    assert_eq!(lead.presence, MemberPresence::Available);
     assert_eq!(lead.status, None);
     // Filters: by team name, by kind, by member.
     team(&mut owner, &command_id(1), "Platform").unwrap();
@@ -622,7 +623,7 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
         .unwrap();
     assert_eq!(renamed.status, org_proto::org::CommandStatus::Committed);
 
-    // The directory read still answers: no status line, everyone offline.
+    // The directory read still answers: no status line, active idle HR lead is Available (AVAIL-4).
     let who = owner
         .call::<Who>(&WhoParams {
             member: Some(hr()),
@@ -633,7 +634,10 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
         panic!("{:?}", who.members)
     };
     assert_eq!(lead.status, None);
-    assert_eq!(lead.presence, org_proto::directory::MemberPresence::Offline);
+    assert_eq!(
+        lead.presence,
+        org_proto::directory::MemberPresence::Available
+    );
     drop((unbound, owner));
     live.stop();
 }

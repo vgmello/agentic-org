@@ -1,8 +1,6 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
-	import { resolve } from '$app/paths';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
-	import Plus from '@lucide/svelte/icons/plus';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import CapacityBreakdown from '$lib/modules/home/features/CapacityBreakdown.svelte';
 	import DecisionSpotlight from '$lib/modules/home/features/DecisionSpotlight.svelte';
@@ -207,16 +205,6 @@
 				{/if}
 			</h1>
 		</div>
-		{#if !liveLoadError && !isDayOne}
-			<a href={resolve('/work?new=1' as '/work')} class="exec-cta exec-cta-glass">
-				<span class="exec-cta-fill" aria-hidden="true"></span>
-				<span class="exec-cta-sheen" aria-hidden="true"></span>
-				<span class="exec-cta-inner">
-					<Plus class="exec-cta-ico size-4" aria-hidden="true" />
-					<span>New task</span>
-				</span>
-			</a>
-		{/if}
 	</section>
 
 	{#if liveLoadError}

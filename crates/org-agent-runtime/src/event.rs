@@ -122,6 +122,21 @@ pub enum SessionEvent {
         /// The runtime's error messages for the turn, if any.
         errors: Vec<String>,
     },
+    /// A non-destructive mid-turn message (`Control::DeliverMidTurn`) was confirmed delivered
+    /// by the runtime (`doc-101`, `ADR-0035`).
+    MidTurnDelivered {
+        /// Office-assigned correlation id echoed from [`crate::Control::DeliverMidTurn`].
+        delivery_id: String,
+    },
+    /// A non-destructive mid-turn message (`Control::DeliverMidTurn`) was rejected or went
+    /// unconsumed before the turn ended (`doc-101`, `ADR-0035`). The office keeps its items
+    /// queued for the next turn boundary.
+    MidTurnDeliveryFailed {
+        /// Office-assigned correlation id echoed from [`crate::Control::DeliverMidTurn`].
+        delivery_id: String,
+        /// Human-readable runtime rejection or turn-end race explanation (redacted).
+        reason: String,
+    },
     /// Something worth showing that doesn't change the session's state (a retry, a warning).
     Notice {
         /// What kind.
@@ -182,6 +197,8 @@ const KNOWN_EVENT_TYPES: &[&str] = &[
     "usage",
     "rate_limit",
     "turn_ended",
+    "mid_turn_delivered",
+    "mid_turn_delivery_failed",
     "notice",
     "protocol_error",
     "truncated",
@@ -252,6 +269,13 @@ enum KnownSessionEvent {
     TurnEnded {
         outcome: TurnOutcome,
         errors: Vec<String>,
+    },
+    MidTurnDelivered {
+        delivery_id: String,
+    },
+    MidTurnDeliveryFailed {
+        delivery_id: String,
+        reason: String,
     },
     Notice {
         kind: NoticeKind,
@@ -359,6 +383,11 @@ impl SessionEvent {
                     f(item);
                 }
             }
+            SessionEvent::MidTurnDelivered { delivery_id: _ } => {}
+            SessionEvent::MidTurnDeliveryFailed {
+                delivery_id: _,
+                reason,
+            } => f(reason),
             SessionEvent::Notice { kind: _, text } => f(text),
             SessionEvent::ProtocolError { detail } => f(detail),
             SessionEvent::Truncated { len: _ } => {}
@@ -855,6 +884,13 @@ pub(crate) mod tests {
                 outcome: TurnOutcome::SignedOut,
                 errors: vec![],
             },
+            SessionEvent::MidTurnDelivered {
+                delivery_id: "mid-1".into(),
+            },
+            SessionEvent::MidTurnDeliveryFailed {
+                delivery_id: "mid-2".into(),
+                reason: "s:mid_fail".into(),
+            },
             SessionEvent::Notice {
                 kind: NoticeKind::Retry,
                 text: "s:notice".into(),
@@ -893,6 +929,8 @@ pub(crate) mod tests {
                 | SessionEvent::Usage(_)
                 | SessionEvent::RateLimit(_)
                 | SessionEvent::TurnEnded { .. }
+                | SessionEvent::MidTurnDelivered { .. }
+                | SessionEvent::MidTurnDeliveryFailed { .. }
                 | SessionEvent::Notice { .. }
                 | SessionEvent::ProtocolError { .. }
                 | SessionEvent::Truncated { .. }

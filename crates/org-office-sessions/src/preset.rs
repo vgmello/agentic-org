@@ -1524,12 +1524,9 @@ fn matches_any_allow(rules: &[Rule], request: &ApprovalRequest, strings: &[Strin
 }
 
 fn path_matches_glob_deny(candidate: &str, pattern: &str) -> bool {
-    #[cfg(target_os = "macos")]
-    {
+    if org_platform::fs::paths_case_insensitive_by_default() {
         path_matches_glob(&candidate.to_lowercase(), &pattern.to_lowercase())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
+    } else {
         path_matches_glob(candidate, pattern)
     }
 }

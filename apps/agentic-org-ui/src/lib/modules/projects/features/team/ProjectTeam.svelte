@@ -34,14 +34,14 @@
 				><span class="absolute inset-0" aria-hidden="true"></span>{t.name}</a
 			>
 			{#if t.ref}<span
-					class="ml-2 rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[11px]/4 text-fg-muted ring-1 ring-line ring-inset"
+					class="ml-2 rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs/4 text-fg-muted ring-1 ring-line ring-inset"
 					>{t.ref}</span
 				>{/if}
 		</p>
 		<p class="flex flex-wrap items-center gap-2 text-xs/5 text-fg-muted">
 			<span
 				class={[
-					'inline-flex items-center rounded-full px-2 py-0.5 text-[11px]/4 font-medium',
+					'inline-flex items-center rounded-full px-2 py-0.5 text-xs/4 font-medium',
 					role === 'Accountable'
 						? 'proj-role-owner'
 						: 'bg-surface-raised text-fg-secondary ring-1 ring-line ring-inset'

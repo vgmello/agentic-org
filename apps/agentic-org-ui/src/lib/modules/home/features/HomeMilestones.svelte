@@ -37,7 +37,7 @@
 								<span class="hor-name inline-flex items-center gap-1.5">
 									<span class="truncate">{m.title}</span>
 									{#if m.releaseTag}
-										<span class="rel-tag shrink-0 font-mono text-[11px]">{m.releaseTag}</span>
+										<span class="rel-tag shrink-0 font-mono text-xs">{m.releaseTag}</span>
 									{/if}
 								</span>
 								<span class="hor-note truncate">{m.note}</span>
@@ -59,7 +59,7 @@
 								<span class="hor-name inline-flex items-center gap-1.5">
 									<span class="truncate">{m.title}</span>
 									{#if m.releaseTag}
-										<span class="rel-tag shrink-0 font-mono text-[11px]">{m.releaseTag}</span>
+										<span class="rel-tag shrink-0 font-mono text-xs">{m.releaseTag}</span>
 									{/if}
 								</span>
 								<span class="hor-note truncate">{m.note}</span>

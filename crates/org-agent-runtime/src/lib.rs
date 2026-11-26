@@ -168,7 +168,7 @@ mod usage;
 #[cfg(feature = "testkit")]
 pub mod testkit;
 
-pub use caps::{Capabilities, VersionRange};
+pub use caps::{Capabilities, MidTurnDelivery, VersionRange};
 pub use event::{
     Activity, ApprovalId, ApprovalKind, ApprovalRequest, Escalation, ExitInfo, LimitKind,
     NoticeKind, SessionEvent, StartFailure, TurnOutcome,

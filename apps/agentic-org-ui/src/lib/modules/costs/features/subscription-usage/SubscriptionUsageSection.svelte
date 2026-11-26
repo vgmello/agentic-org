@@ -61,7 +61,7 @@
 		class="min-w-0 rounded-md bg-surface-raised/50 px-2.5 py-2 ring-1 ring-line-subtle"
 		data-window={testKey}
 	>
-		<p class="text-[11px]/4 font-medium text-fg-muted [overflow-wrap:anywhere]">
+		<p class="text-xs/4 font-medium text-fg-muted [overflow-wrap:anywhere]">
 			{summary.durationLabel ? `${title} (${summary.durationLabel})` : title}
 		</p>
 		<p class="mt-0.5 text-sm/5 font-semibold text-fg tabular-nums" data-testid="window-utilization">
@@ -74,7 +74,7 @@
 		</p>
 		{#if summary.tokenBreakdown}
 			<p
-				class="mt-0.5 text-[11px]/4 text-fg-muted tabular-nums [overflow-wrap:anywhere]"
+				class="mt-0.5 text-xs/4 text-fg-muted tabular-nums [overflow-wrap:anywhere]"
 				data-testid="window-token-breakdown"
 			>
 				{summary.tokenBreakdown}

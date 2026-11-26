@@ -1,26 +1,47 @@
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 use org_agent_runtime::{
     Capabilities, EnvName, FileLocation, LaunchContext, LaunchPlan, PermissionMode, PlanError,
-    PlannedFile, RelPath, Rule, RuleScope, SessionKind, SessionSpec, SignalTarget, SpecPath, Stdio,
-    StopPlan, StopSignal, StopStep, ToolCapability, ToolName,
+    PlannedDir, RelPath, Rule, RuleScope, SessionId, SessionKind, SessionSpec, SignalTarget,
+    SpecPath, Stdio, StopPlan, StopSignal, StopStep, ToolCapability, ToolName,
 };
 
-const SETTINGS_FILE: &str = "agy-settings.json";
-const INSTRUCTIONS_FILE: &str = "agy-instructions.md";
+const APP_DATA_DIR_REL: &str = "antigravity-cli";
+const ISOLATED_GEMINI_DIR_REL: &str = "gemini";
 
-/// Expected Antigravity execution mode name (never `yolo` or bypass).
+/// Host credential paths inside `<gemini-dir>` that must remain denied to tools (`S2`).
+pub const AGY_CONFIG_CREDENTIAL_FILES: &[&str] = &[
+    "antigravity-cli/antigravity-oauth-token",
+    "oauth_creds.json",
+    "google_accounts.json",
+];
+
+/// Expected Antigravity execution mode (never `yolo` or bypass).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ExpectedMode {
     pub(crate) cli_flag: Option<&'static str>,
     pub(crate) reported_name: &'static str,
 }
 
+/// Pure ACP session launch parameters carried from `plan_session` into [`crate::session::AgySession`].
+#[derive(Debug, Clone)]
+pub(crate) struct AgySessionConfig {
+    pub(crate) agent_name: String,
+    pub(crate) cwd: String,
+    pub(crate) system_prompt_append: Option<String>,
+    pub(crate) model: Option<String>,
+    pub(crate) mcp_servers: Vec<Value>,
+    pub(crate) resume_session_id: Option<SessionId>,
+    pub(crate) expected_mode: ExpectedMode,
+}
+
 pub(crate) fn map_permission_mode(mode: PermissionMode) -> Result<ExpectedMode, PlanError> {
     match mode {
+        // Real `agy 1.5.17` ACP reports `modes.currentModeId = "default"`
+        // ("Ask before edits and commands, per your permission settings.").
         PermissionMode::Ask => Ok(ExpectedMode {
             cli_flag: None,
-            reported_name: "ask",
+            reported_name: "default",
         }),
         PermissionMode::AcceptEdits => Ok(ExpectedMode {
             cli_flag: Some("accept-edits"),
@@ -88,58 +109,94 @@ pub(crate) fn expand_tool_allowlist(tools: &[ToolName]) -> Result<Vec<String>, P
     Ok(expanded)
 }
 
+fn validate_deny_rules(rules: &[Rule]) -> Result<(), PlanError> {
+    for rule in rules {
+        let tool = rule.tool.as_str();
+        if ToolCapability::is_capability_token(tool) {
+            let cap = ToolCapability::parse_rule_token(tool)
+                .ok_or(PlanError::Unsupported("deny rule capability"))?;
+            if capability_tools(cap).is_none() {
+                return Err(PlanError::Unsupported("deny rule capability"));
+            }
+            validate_capability_scope(cap, &rule.scope)?;
+            continue;
+        }
+        match &rule.scope {
+            RuleScope::Any if tool == "*" => {
+                return Err(PlanError::Unsupported("deny rule scope"));
+            }
+            RuleScope::Any
+            | RuleScope::Path(_)
+            | RuleScope::CommandPrefix(_)
+            | RuleScope::McpServer(_) => {}
+            _ => return Err(PlanError::Unsupported("deny rule scope")),
+        }
+    }
+    Ok(())
+}
+
+fn validate_capability_scope(cap: ToolCapability, scope: &RuleScope) -> Result<(), PlanError> {
+    match scope {
+        RuleScope::Any => Ok(()),
+        RuleScope::Path(_)
+            if matches!(
+                cap,
+                ToolCapability::Read | ToolCapability::Search | ToolCapability::Edit
+            ) =>
+        {
+            Ok(())
+        }
+        RuleScope::CommandPrefix(_) if cap == ToolCapability::Shell => Ok(()),
+        _ => Err(PlanError::Unsupported("deny rule scope")),
+    }
+}
+
+/// Builds an ACP `agy acp --stdio` headless [`LaunchPlan`] and [`AgySessionConfig`].
 pub(crate) fn build_headless_plan(
     spec: &SessionSpec,
     ctx: &LaunchContext,
     caps: &Capabilities,
-) -> Result<(LaunchPlan, ExpectedMode, Option<Vec<String>>), PlanError> {
+) -> Result<(LaunchPlan, AgySessionConfig), PlanError> {
     validate_session_kind(&spec.kind)?;
     validate_paths(spec, ctx)?;
+    validate_deny_rules(&spec.policy.deny)?;
+    if spec.effort.is_some() {
+        return Err(PlanError::Unsupported("effort"));
+    }
     let effective_mode = spec.effective_permission_mode(caps);
     let expected_mode = map_permission_mode(effective_mode)?;
-    let expanded_tools = spec
+    let _ = spec
         .tools
         .as_deref()
         .map(expand_tool_allowlist)
         .transpose()?;
 
-    let settings_bytes =
-        build_settings_json(spec, ctx, caps, &expected_mode, expanded_tools.as_deref())?;
-    let settings_path = format!("{}/{SETTINGS_FILE}", ctx.runtime_dir.as_str());
-
+    let (gemini_dir, dirs) = resolve_acp_gemini_dir(ctx);
     let mut args = vec![
-        "-p".to_owned(),
-        "--input-format".to_owned(),
-        "stream-json".to_owned(),
-        "--output-format".to_owned(),
-        "stream-json".to_owned(),
-        "--disable-slash-commands".to_owned(),
-        "--settings".to_owned(),
-        settings_path,
-        "--agent".to_owned(),
-        spec.agent.name.as_str().to_owned(),
+        "acp".to_owned(),
+        "--stdio".to_owned(),
+        "--include-default-customizations=false".to_owned(),
+        "--disable-telemetry".to_owned(),
     ];
-    if let Some(flag) = expected_mode.cli_flag {
-        args.push("--mode".to_owned());
-        args.push(flag.to_owned());
-    }
     if spec.sandbox.enabled {
         args.push("--sandbox".to_owned());
     }
-    if let Some(resume_id) = &ctx.resume {
-        args.push("--conversation".to_owned());
-        args.push(resume_id.as_str().to_owned());
+    args.push("--gemini-dir".to_owned());
+    args.push(gemini_dir);
+    args.push("--app-data-dir".to_owned());
+    args.push(APP_DATA_DIR_REL.to_owned());
+    for dir in &spec.read_only_dirs {
+        args.push("--add-dir".to_owned());
+        args.push(dir.as_str().to_owned());
     }
-    append_common_options(&mut args, spec);
 
-    let files = build_planned_files(spec, settings_bytes);
     let plan = LaunchPlan {
         program: ctx.runtime_path.clone(),
         args,
         cwd: spec.workspace.clone(),
         env_add: build_env_add(ctx),
-        dirs: Vec::new(),
-        files,
+        dirs,
+        files: Vec::new(),
         stdio: Stdio::Piped,
         runtime_session_id: ctx.resume.clone(),
         stop: StopPlan {
@@ -156,9 +213,21 @@ pub(crate) fn build_headless_plan(
         secret_env_names: secret_env_names(),
         auth_env_names: auth_env_names(),
     };
-    Ok((plan, expected_mode, expanded_tools))
+
+    let cfg = AgySessionConfig {
+        agent_name: spec.agent.name.as_str().to_owned(),
+        cwd: spec.workspace.as_str().to_owned(),
+        system_prompt_append: combine_system_prompt(&spec.agent.prompt, &spec.instructions),
+        model: spec.model.as_ref().map(|m| m.as_str().to_owned()),
+        mcp_servers: build_acp_mcp_servers(spec),
+        resume_session_id: ctx.resume.clone(),
+        expected_mode,
+    };
+
+    Ok((plan, cfg))
 }
 
+/// Builds an interactive PTY take-over [`LaunchPlan`] resuming an existing Agy conversation.
 pub(crate) fn build_take_over_plan(
     spec: &SessionSpec,
     ctx: &LaunchContext,
@@ -173,6 +242,10 @@ pub(crate) fn build_take_over_plan(
         ));
     }
     validate_paths(spec, ctx)?;
+    validate_deny_rules(&spec.policy.deny)?;
+    if spec.effort.is_some() {
+        return Err(PlanError::Unsupported("effort"));
+    }
     let Some(resume_id) = ctx.resume.clone() else {
         return Err(PlanError::InvalidSpec(
             "take-over requires LaunchContext::resume to be set".to_owned(),
@@ -180,20 +253,15 @@ pub(crate) fn build_take_over_plan(
     };
     let effective_mode = spec.effective_permission_mode(caps);
     let expected_mode = map_permission_mode(effective_mode)?;
-    let expanded_tools = spec
+    let _ = spec
         .tools
         .as_deref()
         .map(expand_tool_allowlist)
         .transpose()?;
-    let settings_bytes =
-        build_settings_json(spec, ctx, caps, &expected_mode, expanded_tools.as_deref())?;
-    let settings_path = format!("{}/{SETTINGS_FILE}", ctx.runtime_dir.as_str());
 
     let mut args = vec![
         "--conversation".to_owned(),
         resume_id.as_str().to_owned(),
-        "--settings".to_owned(),
-        settings_path,
         "--agent".to_owned(),
         spec.agent.name.as_str().to_owned(),
     ];
@@ -204,7 +272,7 @@ pub(crate) fn build_take_over_plan(
     if spec.sandbox.enabled {
         args.push("--sandbox".to_owned());
     }
-    append_common_options(&mut args, spec);
+    append_take_over_options(&mut args, spec);
 
     Ok(LaunchPlan {
         program: ctx.runtime_path.clone(),
@@ -212,7 +280,7 @@ pub(crate) fn build_take_over_plan(
         cwd: spec.workspace.clone(),
         env_add: build_env_add(ctx),
         dirs: Vec::new(),
-        files: build_planned_files(spec, settings_bytes),
+        files: Vec::new(),
         stdio: Stdio::Pty { cols, rows },
         runtime_session_id: Some(resume_id),
         stop: StopPlan {
@@ -226,6 +294,50 @@ pub(crate) fn build_take_over_plan(
         secret_env_names: secret_env_names(),
         auth_env_names: auth_env_names(),
     })
+}
+
+/// Resolves `--gemini-dir` for `agy acp --stdio`.
+/// When `ctx.config_dir` is set (host subscription OAuth via `host_auth`), points `--gemini-dir`
+/// at it while `--app-data-dir antigravity-cli` stays relative (required by `agy 1.5.17`).
+/// Otherwise isolates state inside `<runtime_dir>/gemini`.
+fn resolve_acp_gemini_dir(ctx: &LaunchContext) -> (String, Vec<PlannedDir>) {
+    if let Some(cfg_dir) = &ctx.config_dir {
+        return (cfg_dir.as_str().to_owned(), Vec::new());
+    }
+    let dir = format!(
+        "{}/{ISOLATED_GEMINI_DIR_REL}",
+        ctx.runtime_dir.as_str().trim_end_matches('/')
+    );
+    let planned = vec![PlannedDir {
+        location: FileLocation::RuntimeDir,
+        rel_path: RelPath::try_from(ISOLATED_GEMINI_DIR_REL).expect("static rel path"),
+    }];
+    (dir, planned)
+}
+
+fn combine_system_prompt(agent_prompt: &str, instructions: &str) -> Option<String> {
+    let p = agent_prompt.trim();
+    let i = instructions.trim();
+    match (p.is_empty(), i.is_empty()) {
+        (true, true) => None,
+        (false, true) => Some(p.to_owned()),
+        (true, false) => Some(i.to_owned()),
+        (false, false) => Some(format!("{p}\n\n{i}")),
+    }
+}
+
+fn build_acp_mcp_servers(spec: &SessionSpec) -> Vec<Value> {
+    spec.mcp_servers
+        .iter()
+        .map(|(name, server)| {
+            json!({
+                "name": name.as_str(),
+                "command": server.command.as_str(),
+                "args": server.args,
+                "env": [],
+            })
+        })
+        .collect()
 }
 
 fn validate_paths(spec: &SessionSpec, ctx: &LaunchContext) -> Result<(), PlanError> {
@@ -255,257 +367,14 @@ fn validate_paths(spec: &SessionSpec, ctx: &LaunchContext) -> Result<(), PlanErr
     Ok(())
 }
 
-fn append_common_options(args: &mut Vec<String>, spec: &SessionSpec) {
+fn append_take_over_options(args: &mut Vec<String>, spec: &SessionSpec) {
     if let Some(model) = &spec.model {
         args.push("--model".to_owned());
         args.push(model.as_str().to_owned());
     }
-    if let Some(effort) = &spec.effort {
-        args.push("--effort".to_owned());
-        args.push(effort.as_str().to_owned());
-    }
     for dir in &spec.read_only_dirs {
         args.push("--add-dir".to_owned());
         args.push(dir.as_str().to_owned());
-    }
-}
-
-fn build_planned_files(spec: &SessionSpec, settings_bytes: Vec<u8>) -> Vec<PlannedFile> {
-    let mut files = vec![PlannedFile {
-        location: FileLocation::RuntimeDir,
-        rel_path: RelPath::try_from(SETTINGS_FILE).expect("static rel path"),
-        contents: settings_bytes,
-        git_exclude: false,
-    }];
-    if !spec.instructions.is_empty() {
-        files.push(PlannedFile {
-            location: FileLocation::RuntimeDir,
-            rel_path: RelPath::try_from(INSTRUCTIONS_FILE).expect("static rel path"),
-            contents: spec.instructions.as_bytes().to_vec(),
-            git_exclude: false,
-        });
-    }
-    files
-}
-
-fn build_settings_json(
-    spec: &SessionSpec,
-    ctx: &LaunchContext,
-    caps: &Capabilities,
-    expected_mode: &ExpectedMode,
-    expanded_tools: Option<&[String]>,
-) -> Result<Vec<u8>, PlanError> {
-    let mut root = Map::new();
-    root.insert("disableRemoteControl".to_owned(), Value::Bool(true));
-    root.insert("disableAutoUpdate".to_owned(), Value::Bool(true));
-    root.insert(
-        "permissions".to_owned(),
-        build_permissions_value(spec, ctx, caps, expected_mode)?,
-    );
-    root.insert("sandbox".to_owned(), build_sandbox_value(spec, ctx));
-    root.insert("mcpServers".to_owned(), build_mcp_value(spec));
-    root.insert("agent".to_owned(), build_agent_value(spec, ctx));
-    if let Some(tools) = expanded_tools {
-        root.insert(
-            "allowedTools".to_owned(),
-            Value::Array(tools.iter().map(|t| Value::String(t.clone())).collect()),
-        );
-    }
-    Ok(serde_json::to_vec(&Value::Object(root)).expect("settings JSON serializes"))
-}
-
-fn build_permissions_value(
-    spec: &SessionSpec,
-    ctx: &LaunchContext,
-    caps: &Capabilities,
-    expected_mode: &ExpectedMode,
-) -> Result<Value, PlanError> {
-    let mut deny_rules = Vec::new();
-    for rule in &spec.policy.deny {
-        let formatted = format_rule(rule).ok_or(PlanError::Unsupported("deny rule scope"))?;
-        deny_rules.extend(formatted);
-    }
-    for path in &spec.sandbox.deny_read {
-        for &tool in CAP_READ_TOOLS {
-            deny_rules.push(json!({ "tool": tool, "path": path.as_str() }));
-        }
-    }
-    for path in &spec.sandbox.deny_write {
-        for &tool in CAP_EDIT_TOOLS {
-            deny_rules.push(json!({ "tool": tool, "path": path.as_str() }));
-        }
-    }
-    for dir in &spec.read_only_dirs {
-        let glob = format!("{}/**", dir.as_str());
-        for &tool in CAP_EDIT_TOOLS {
-            deny_rules.push(json!({ "tool": tool, "path": glob }));
-        }
-    }
-    if let Some(cfg_dir) = &ctx.config_dir {
-        append_config_dir_permission_denies(&mut deny_rules, cfg_dir);
-    }
-
-    let mut allow_rules = Vec::new();
-    if spec.keeps_allow_rules(caps) {
-        for rule in &spec.policy.allow {
-            if let Some(formatted) = format_rule(rule) {
-                allow_rules.extend(formatted);
-            }
-        }
-    }
-
-    Ok(json!({
-        "mode": expected_mode.reported_name,
-        "disableBypassMode": true,
-        "deny": deny_rules,
-        "allow": allow_rules,
-    }))
-}
-
-fn build_sandbox_value(spec: &SessionSpec, ctx: &LaunchContext) -> Value {
-    if !spec.sandbox.enabled {
-        return json!({ "enabled": false });
-    }
-    let mut writable: Vec<String> = spec
-        .sandbox
-        .writable_roots
-        .iter()
-        .map(|p| p.as_str().to_owned())
-        .collect();
-    if !writable.iter().any(|p| p == ctx.tmpdir.as_str()) {
-        writable.push(ctx.tmpdir.as_str().to_owned());
-    }
-    if let Some(cfg_dir) = &ctx.config_dir {
-        let cfg = cfg_dir.as_str().trim_end_matches('/');
-        let prefix = format!("{cfg}/");
-        writable.retain(|p| p != cfg && !p.starts_with(&prefix));
-    }
-    let mut deny_write: Vec<String> = spec
-        .sandbox
-        .deny_write
-        .iter()
-        .map(|p| p.as_str().to_owned())
-        .collect();
-    if let Some(cfg_dir) = &ctx.config_dir {
-        if !deny_write.iter().any(|p| p == cfg_dir.as_str()) {
-            deny_write.push(cfg_dir.as_str().to_owned());
-        }
-    }
-    let mut deny_read: Vec<String> = spec
-        .sandbox
-        .deny_read
-        .iter()
-        .map(|p| p.as_str().to_owned())
-        .collect();
-    if let Some(cfg_dir) = &ctx.config_dir {
-        let trimmed = cfg_dir.as_str().trim_end_matches('/');
-        for cred_name in AGY_CONFIG_CREDENTIAL_FILES {
-            let cred_path = format!("{trimmed}/{cred_name}");
-            if !deny_read.iter().any(|p| p == &cred_path) {
-                deny_read.push(cred_path);
-            }
-        }
-    }
-    let sockets: Vec<String> = spec
-        .sandbox
-        .allowed_unix_sockets
-        .iter()
-        .map(|p| p.as_str().to_owned())
-        .collect();
-    json!({
-        "enabled": true,
-        "allowUnsandboxedCommands": false,
-        "filesystem": {
-            "allowWrite": writable,
-            "denyWrite": deny_write,
-            "denyRead": deny_read,
-        },
-        "network": {
-            "allowUnixSockets": sockets,
-        }
-    })
-}
-
-fn build_mcp_value(spec: &SessionSpec) -> Value {
-    let mut servers = Map::new();
-    for (name, server) in &spec.mcp_servers {
-        servers.insert(
-            name.as_str().to_owned(),
-            json!({
-                "command": server.command.as_str(),
-                "args": server.args,
-            }),
-        );
-    }
-    Value::Object(servers)
-}
-
-fn build_agent_value(spec: &SessionSpec, ctx: &LaunchContext) -> Value {
-    let mut obj = Map::new();
-    obj.insert(
-        "name".to_owned(),
-        Value::String(spec.agent.name.as_str().to_owned()),
-    );
-    obj.insert(
-        "description".to_owned(),
-        Value::String(spec.agent.description.clone()),
-    );
-    obj.insert(
-        "prompt".to_owned(),
-        Value::String(spec.agent.prompt.clone()),
-    );
-    if !spec.instructions.is_empty() {
-        obj.insert(
-            "instructionsFile".to_owned(),
-            Value::String(format!("{}/{INSTRUCTIONS_FILE}", ctx.runtime_dir.as_str())),
-        );
-    }
-    Value::Object(obj)
-}
-
-fn format_rule(rule: &Rule) -> Option<Vec<Value>> {
-    let tool = rule.tool.as_str();
-    if ToolCapability::is_capability_token(tool) {
-        let cap = ToolCapability::parse_rule_token(tool)?;
-        return format_capability_rule(cap, &rule.scope);
-    }
-    match &rule.scope {
-        RuleScope::Any if tool == "*" => None,
-        RuleScope::Any => Some(vec![json!({ "tool": tool })]),
-        RuleScope::Path(p) => Some(vec![json!({ "tool": tool, "path": p.as_str() })]),
-        RuleScope::CommandPrefix(prefix) => Some(vec![
-            json!({ "tool": tool, "commandPrefix": prefix.as_str() }),
-        ]),
-        RuleScope::McpServer(server) => {
-            Some(vec![json!({ "tool": tool, "mcpServer": server.as_str() })])
-        }
-        _ => None,
-    }
-}
-
-fn format_capability_rule(cap: ToolCapability, scope: &RuleScope) -> Option<Vec<Value>> {
-    match scope {
-        RuleScope::Any => capability_tools(cap)
-            .map(|tools| tools.iter().map(|&tool| json!({ "tool": tool })).collect()),
-        RuleScope::Path(p) => match cap {
-            ToolCapability::Read | ToolCapability::Search | ToolCapability::Edit => {
-                capability_tools(cap).map(|tools| {
-                    tools
-                        .iter()
-                        .map(|&tool| json!({ "tool": tool, "path": p.as_str() }))
-                        .collect()
-                })
-            }
-            _ => None,
-        },
-        RuleScope::CommandPrefix(prefix) if cap == ToolCapability::Shell => Some(
-            CAP_SHELL_TOOLS
-                .iter()
-                .map(|&tool| json!({ "tool": tool, "commandPrefix": prefix.as_str() }))
-                .collect(),
-        ),
-        RuleScope::CommandPrefix(_) | RuleScope::McpServer(_) => None,
-        _ => None,
     }
 }
 
@@ -542,22 +411,6 @@ pub(crate) fn auth_env_names() -> Vec<EnvName> {
     .collect()
 }
 
-const AGY_CONFIG_CREDENTIAL_FILES: &[&str] = &["oauth_creds.json", "google_accounts.json"];
-
-fn append_config_dir_permission_denies(deny_rules: &mut Vec<Value>, cfg_dir: &SpecPath) {
-    let trimmed = cfg_dir.as_str().trim_end_matches('/');
-    let glob = format!("{trimmed}/**");
-    for &tool in CAP_EDIT_TOOLS {
-        deny_rules.push(json!({ "tool": tool, "path": glob }));
-    }
-    for cred_name in AGY_CONFIG_CREDENTIAL_FILES {
-        let cred_path = format!("{trimmed}/{cred_name}");
-        for &tool in CAP_READ_TOOLS {
-            deny_rules.push(json!({ "tool": tool, "path": cred_path }));
-        }
-    }
-}
-
 fn secret_env_names() -> Vec<EnvName> {
     [
         "GEMINI_API_KEY",
@@ -573,29 +426,27 @@ fn secret_env_names() -> Vec<EnvName> {
 }
 
 #[cfg(test)]
-mod config_dir_tests {
+mod plan_unit_tests {
     use super::*;
     use org_agent_runtime::{
-        AgentIdentity, AgentName, PermissionMode, PermissionPolicy, RuntimeId, SandboxSpec,
-        SessionKind,
+        AgentIdentity, AgentName, AgentRuntime, PermissionPolicy, RuntimeId, SandboxSpec,
     };
     use std::path::PathBuf;
 
-    #[test]
-    fn config_dir_denies_agy_credential_reads() {
-        let spec = SessionSpec {
+    fn minimal_spec() -> SessionSpec {
+        SessionSpec {
             runtime: RuntimeId::try_from("agy").unwrap(),
             kind: SessionKind::Home {},
             agent: AgentIdentity {
                 name: AgentName::try_from("agent").unwrap(),
                 description: "Agent".into(),
-                prompt: "Prompt".into(),
+                prompt: "You are agent.".into(),
             },
-            model: None,
+            model: Some(org_agent_runtime::Token::try_from("gemini-4-neon-high").unwrap()),
             effort: None,
             workspace: SpecPath::try_from("/workspace").unwrap(),
-            read_only_dirs: Vec::new(),
-            instructions: "Instructions".into(),
+            read_only_dirs: vec![SpecPath::try_from("/readonly").unwrap()],
+            instructions: "Standing instructions.".into(),
             permission_mode: PermissionMode::AcceptEdits,
             policy: PermissionPolicy {
                 version: 1,
@@ -611,20 +462,47 @@ mod config_dir_tests {
             },
             mcp_servers: Default::default(),
             tools: None,
-        };
+        }
+    }
+
+    #[test]
+    fn acp_plan_uses_isolated_gemini_dir_when_config_dir_absent() {
+        let spec = minimal_spec();
         let ctx = LaunchContext {
             runtime_path: PathBuf::from("/usr/local/bin/agy"),
             runtime_version: None,
-            runtime_dir: SpecPath::try_from("/runtime").unwrap(),
+            runtime_dir: SpecPath::try_from("/runtime/agent-1").unwrap(),
             tmpdir: SpecPath::try_from("/tmp/agent").unwrap(),
             office_env_names: Vec::new(),
             new_session_id: None,
             resume: None,
-            config_dir: Some(SpecPath::try_from("/home/u/.gemini").unwrap()),
+            config_dir: None,
         };
-        let sandbox = build_sandbox_value(&spec, &ctx);
-        let deny_read = sandbox["filesystem"]["denyRead"].as_array().unwrap();
-        assert!(deny_read.contains(&json!("/home/u/.gemini/oauth_creds.json")));
-        assert!(deny_read.contains(&json!("/home/u/.gemini/google_accounts.json")));
+        let caps = crate::AgyRuntime::new().capabilities();
+        let (plan, cfg) = build_headless_plan(&spec, &ctx, &caps).unwrap();
+        assert_eq!(plan.args[0], "acp");
+        assert_eq!(plan.args[1], "--stdio");
+        assert!(plan
+            .args
+            .contains(&"--include-default-customizations=false".to_owned()));
+        assert!(plan.args.contains(&"--disable-telemetry".to_owned()));
+        assert!(plan.args.contains(&"--sandbox".to_owned()));
+        assert!(!plan.args.contains(&"--model".to_owned()));
+        assert_eq!(plan.dirs.len(), 1);
+        assert_eq!(plan.dirs[0].rel_path.as_str(), "gemini");
+        let gemini_pos = plan.args.iter().position(|a| a == "--gemini-dir").unwrap();
+        assert_eq!(plan.args[gemini_pos + 1], "/runtime/agent-1/gemini");
+        let app_pos = plan
+            .args
+            .iter()
+            .position(|a| a == "--app-data-dir")
+            .unwrap();
+        assert_eq!(plan.args[app_pos + 1], "antigravity-cli");
+        assert_eq!(
+            cfg.system_prompt_append.as_deref(),
+            Some("You are agent.\n\nStanding instructions.")
+        );
+        assert_eq!(cfg.model.as_deref(), Some("gemini-4-neon-high"));
+        assert!(AGY_CONFIG_CREDENTIAL_FILES.contains(&"antigravity-cli/antigravity-oauth-token"));
     }
 }

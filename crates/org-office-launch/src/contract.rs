@@ -53,10 +53,10 @@ pub const LAUNCH_VERSION: u32 = 1;
 
 /// Matched host/worker channel ownership and closure contract (CH-LIFE-1).
 pub const CHANNEL_PROFILE: &str = "office-channels/1";
-/// Maximum ordinary physical channels, including pending transfers and public recovery.
-pub const MAX_CHANNELS: usize = 8;
-/// The web process's allowance leaves one ordinary slot available for a local caller.
-pub const MAX_WEB_CHANNELS: usize = 7;
+/// Maximum ordinary physical channels, including pending transfers and public recovery (`TASK-140`).
+pub const MAX_CHANNELS: usize = 32;
+/// The web process's allowance leaves dedicated ordinary slots available for local callers.
+pub const MAX_WEB_CHANNELS: usize = 24;
 
 /// The largest transfer-record header, in bytes (a contract choice, X-02 §5.2).
 pub const TRANSFER_HEADER_MAX_BYTES: usize = 1024;

@@ -114,7 +114,7 @@
 				<span class="text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
 					{#if kpis.budgetRemainingPct !== null}
 						{kpis.budgetRemainingPct}%
-						<span class="ml-1 text-[11px] font-semibold text-[var(--exec-ok)]">left</span>
+						<span class="ml-1 text-xs font-semibold text-[var(--exec-ok)]">left</span>
 					{:else if kpis.financials.available}
 						No cap set
 					{:else}
@@ -181,19 +181,19 @@
 				<span class="truncate text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
 					{#if kpis.totalAgents === 0}
 						0 agents
-						<span class="ml-1 text-[11px] font-medium text-[var(--exec-muted)]">
+						<span class="ml-1 text-xs font-medium text-[var(--exec-muted)]">
 							· {kpis.peopleCount}
 							{kpis.peopleCount === 1 ? 'person' : 'people'}
 						</span>
 					{:else}
 						{kpis.activeAgents} active
 						{#if kpis.pausedAgents > 0}
-							<span class="ml-1 text-[11px] text-[var(--exec-warn)]">
+							<span class="ml-1 text-xs text-[var(--exec-warn)]">
 								· {kpis.pausedAgents} idle
 							</span>
 						{/if}
 						{#if kpis.unplacedAgents > 0}
-							<span class="ml-1 text-[11px] text-[var(--exec-bad)]">
+							<span class="ml-1 text-xs text-[var(--exec-bad)]">
 								· {kpis.unplacedAgents} off
 							</span>
 						{/if}
@@ -269,7 +269,7 @@
 				<span class="text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
 					{kpis.doneCount}
 					{kpis.doneCount === 1 ? 'task' : 'tasks'}
-					<span class="ml-1 text-[11px] font-semibold text-[var(--exec-ok)]">
+					<span class="ml-1 text-xs font-semibold text-[var(--exec-ok)]">
 						{kpis.completionPct}%
 					</span>
 				</span>
@@ -280,7 +280,7 @@
 					{kpis.blockedCount}
 					<span
 						class={[
-							'ml-1 text-[11px] font-semibold',
+							'ml-1 text-xs font-semibold',
 							kpis.blockedCount > 0 ? 'text-[var(--exec-bad)]' : 'text-[var(--exec-ok)]'
 						]}
 					>

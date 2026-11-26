@@ -79,6 +79,8 @@ pub struct Answer {
     pub revision: Option<u64>,
     /// For a list with more to read.
     pub next_cursor: Option<String>,
+    /// Optional non-zero waiting messages/wakes hint for bound agents (`TASK-115` / `doc-28` §2.3).
+    pub waiting_messages: Option<u32>,
 }
 
 impl Answer {
@@ -91,6 +93,7 @@ impl Answer {
             ack: None,
             revision: None,
             next_cursor: None,
+            waiting_messages: None,
         }
     }
 }

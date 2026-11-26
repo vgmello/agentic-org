@@ -42,6 +42,9 @@ mod refused;
 #[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
 use refused as native;
 
+#[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
+mod shared;
+
 #[cfg(all(
     test,
     any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))
@@ -198,4 +201,73 @@ pub fn set_owner_only_dir(path: &Path) -> io::Result<()> {
 /// macOS and GNU/Linux, with no `0755` window). Every unsupported target fails closed.
 pub fn create_owner_only_dir(path: &Path) -> io::Result<()> {
     native::create_owner_only_dir(path)
+}
+
+/// Recursively create missing directory components of `path` with mode `0700`, refusing any
+/// symlink or non-directory at the leaf or newly created branch (while tolerating existing live
+/// system ancestor symlinks such as macOS `/var -> /private/var`). Every unsupported target fails
+/// closed.
+pub fn create_owner_only_dir_all(path: &Path) -> io::Result<()> {
+    native::create_owner_only_dir_all(path)
+}
+
+/// Create or truncate a regular file at `path` with owner-only mode `0600` (`O_NOFOLLOW` +
+/// `O_CLOEXEC`) and write `bytes`. Every unsupported target fails closed.
+pub fn write_owner_only_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    native::write_owner_only_file(path, bytes)
+}
+
+/// Open an existing regular file read-only without following symlinks or blocking on FIFOs
+/// (`O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`). Every unsupported target fails closed.
+pub fn open_nofollow_ro(path: &Path) -> io::Result<File> {
+    native::open_nofollow_ro(path)
+}
+
+/// Create a symbolic link at `link` pointing to `original`. Every unsupported target fails closed.
+pub fn create_symlink(original: &Path, link: &Path) -> io::Result<()> {
+    native::create_symlink(original, link)
+}
+
+/// Effective user ID of the calling process. Every unsupported target fails closed.
+pub fn effective_uid() -> io::Result<u32> {
+    native::effective_uid()
+}
+
+/// Verify via `lstat` that `path` is a real directory (never a symlink) owned by `expected_uid`
+/// with owner-only permissions (no group/other/setuid/setgid/sticky bits).
+pub fn verify_owner_only_dir(path: &Path, expected_uid: u32) -> io::Result<()> {
+    native::verify_owner_only_dir(path, expected_uid)
+}
+
+/// Verify via `lstat` that `stop_at` and every ancestor directory down to and including `path`
+/// is a real directory (never a symlink) owned by `expected_uid` with owner-only permissions.
+pub fn verify_owner_only_ancestors(
+    path: &Path,
+    stop_at: &Path,
+    expected_uid: u32,
+) -> io::Result<()> {
+    native::verify_owner_only_ancestors(path, stop_at, expected_uid)
+}
+
+/// Verify via `lstat` that `path` is a regular file (never a symlink) owned by `expected_uid`
+/// with owner-only permissions (and owner-executable when `require_exec` is true), returning its
+/// canonicalized path.
+pub fn verify_owner_only_file(
+    path: &Path,
+    expected_uid: u32,
+    require_exec: bool,
+) -> io::Result<PathBuf> {
+    native::verify_owner_only_file(path, expected_uid, require_exec)
+}
+
+/// Whether the build target's default filesystem folds case when matching deny patterns
+/// (true on macOS APFS/HFS+, false on GNU/Linux and unsupported targets).
+pub fn paths_case_insensitive_by_default() -> bool {
+    native::paths_case_insensitive_by_default()
+}
+
+/// Whether the build target exposes macOS `/var` -> `/private/var`, `/tmp` -> `/private/tmp`,
+/// and `/etc` -> `/private/etc` root aliases.
+pub fn has_macos_private_root_aliases() -> bool {
+    native::has_macos_private_root_aliases()
 }
