@@ -661,8 +661,12 @@ export function createSessionController({
 		subscribeEvents: (subscriptions: readonly Subscription[], handlers: EventStreamHandlers) =>
 			streams.subscribe(subscriptions, handlers),
 		/** Opens a same-origin GET SSE stream with active proof + 401 rotation without exposing proof. */
-		openSseStream: (path: string, signal?: AbortSignal) =>
-			withCallerAuth(async (proof) => {
+		openSseStream: (path: string, signal?: AbortSignal) => {
+			if (!path.startsWith('/api/v1/') || path.includes('..') || path.includes('\\')) {
+				return Promise.reject(new Error('Invalid API stream path'));
+			}
+			const token = generation;
+			return withCallerAuth(async (proof) => {
 				const headers = new Headers({ Accept: 'text/event-stream' });
 				if (proof) headers.set(SESSION_PROOF_HEADER, proof);
 				const res = await globalThis.fetch(path, {
@@ -674,6 +678,10 @@ export function createSessionController({
 					cache: 'no-store',
 					signal
 				});
+				if (!active(token)) {
+					await res.body?.cancel().catch(() => {});
+					throw new Error('Session changed');
+				}
 				if (res.status === 401) {
 					let sessionReason: 'session_ended' | 'unknown' | undefined;
 					try {
@@ -689,7 +697,8 @@ export function createSessionController({
 					});
 				}
 				return res;
-			}),
+			});
+		},
 		dispose() {
 			disposed = true;
 			streams.closeAll();

@@ -171,4 +171,30 @@ describe('Tess HTTP + SSE API client (doc-97 §5.C)', () => {
 			delta: 'Hi'
 		});
 	});
+
+	it('preserves SSE events when CRLF splits across chunks and keeps indented data whitespace', async () => {
+		const encoder = new TextEncoder();
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(encoder.encode('event: text.delta\r'));
+				controller.enqueue(encoder.encode('\ndata:  {"delta":"  indented"}\r\n\r\n'));
+				controller.close();
+			}
+		});
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+			);
+		const api = createHttpTessApi({ fetch: fetchMock });
+		const events: TessStreamEvent[] = [];
+		await api.streamTurn('org-1', 'turn-crlf', '/ignored/evil/path', {
+			onEvent: (ev) => events.push(ev)
+		});
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/v1/organizations/org-1/tess/turns/turn-crlf/stream',
+			expect.objectContaining({ mode: 'same-origin', redirect: 'error', cache: 'no-store' })
+		);
+		expect(events).toEqual([{ type: 'text.delta', delta: '  indented' }]);
+	});
 });

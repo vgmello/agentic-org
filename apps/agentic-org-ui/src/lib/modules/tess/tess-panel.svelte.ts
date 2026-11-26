@@ -261,9 +261,13 @@ export class TessPanelState {
 	}
 
 	#abortStream(): void {
+		const prevTurnId = this.#activeLocalTurnId;
 		this.#abortController?.abort();
 		this.#abortController = undefined;
 		this.#activeLocalTurnId = undefined;
+		if (prevTurnId) {
+			this.#patchTurn(prevTurnId, (t) => (t.streaming ? { ...t, streaming: false } : t));
+		}
 	}
 
 	#patchTurn(turnId: string, updater: (turn: TessTurn) => TessTurn): void {

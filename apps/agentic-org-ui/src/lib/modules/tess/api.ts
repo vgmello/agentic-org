@@ -353,13 +353,18 @@ async function consumeSseBody(
 	const reader = body.getReader();
 	const decoder = new TextDecoder();
 	let buffer = '';
+	let sawTrailingCr = false;
+	const appendChunk = (chunk: string) => {
+		if (!chunk) return;
+		const trimmed = sawTrailingCr && chunk.startsWith('\n') ? chunk.slice(1) : chunk;
+		sawTrailingCr = trimmed.endsWith('\r');
+		buffer += trimmed.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+	};
 	try {
 		while (true) {
 			const { value, done } = await reader.read();
 			if (done) break;
-			buffer = (buffer + decoder.decode(value, { stream: true }))
-				.replace(/\r\n/g, '\n')
-				.replace(/\r/g, '\n');
+			appendChunk(decoder.decode(value, { stream: true }));
 			if (buffer.length > maxEventBytes) {
 				throw new Error('Tess stream exceeded maximum event size.');
 			}
@@ -370,8 +375,7 @@ async function consumeSseBody(
 				splitAt = buffer.indexOf('\n\n');
 			}
 		}
-		const tail = decoder.decode();
-		if (tail) buffer = (buffer + tail).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+		appendChunk(decoder.decode());
 		if (buffer.trim()) dispatchSseBlock(buffer, onEvent);
 	} finally {
 		await reader.cancel().catch(() => {});

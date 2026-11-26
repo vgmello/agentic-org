@@ -190,7 +190,7 @@
 	function handleWindowKeydown(event: KeyboardEvent) {
 		if (!isOpen && !isExpanded) return;
 		if (event.key !== 'Escape') return;
-		if (document.querySelector('[role="alertdialog"], [role="menu"]')) return;
+		if (document.querySelector('[role="alertdialog"], [role="menu"], [role="tooltip"]')) return;
 		if (!isExpanded && document.querySelector('[role="dialog"]:not([data-testid="tess-panel"])')) {
 			return;
 		}
