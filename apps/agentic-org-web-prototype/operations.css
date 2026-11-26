@@ -2508,6 +2508,7 @@ html[data-theme^="report"] .triage-queue {
   line-height: 1.6;
 }
 .triage-document .triage-back { display: none; }
+.triage-document .triage-board-return { align-self: start; }
 .triage-intro { display: grid; gap: 8px; }
 .triage-from {
   display: flex;
@@ -3457,11 +3458,21 @@ html[data-theme="report"] .assembly-release {
 .menu-textbtn { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 600; color: var(--gray-300); }
 .menu-textbtn:hover, .menu-textbtn[aria-expanded="true"] { color: var(--white); }
 .menu-textbtn[data-active] { color: var(--white); }
+.menu-textbtn-short { display: none; }
+@media (max-width: 639px) {
+  /* Phones keep the board's column mode on the Display trigger ("Stages ▾") */
+  .work-toolbar .menu-textbtn > span.menu-textbtn-short { display: inline-flex; align-items: center; gap: 2px; }
+}
 .menu-textbtn-count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--tone-accent-soft); color: var(--tone-accent-ink); font-size: var(--fs-xs); display: inline-grid; place-items: center; }
 
 .bstatus { padding: 0 6px; border-radius: 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--gray-300); box-shadow: inset 0 0 0 1px var(--line2); white-space: nowrap; }
-.bcol-older { margin-inline-start: auto; padding: 2px 8px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; color: var(--gray-400); box-shadow: inset 0 0 0 1px var(--line2); }
-.bcol-older:hover { color: var(--white); background: var(--hover); }
+/* Done history: one menu in the Done lane header (Last 7 days / All unarchived / Include archived) */
+.bcol-history { margin-inline-start: auto; }
+.bcol-older { position: relative; display: inline-flex; align-items: center; gap: 2px; padding: 2px 6px 2px 8px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; color: var(--gray-300); box-shadow: inset 0 0 0 1px var(--line2); }
+.bcol-older:hover, .bcol-older[aria-expanded="true"] { color: var(--white); background: var(--hover); }
+.bcol-history-menu { min-width: 13rem; }
+.bcol-history-label { display: grid; gap: 1px; flex: 1; }
+.bcol-history-label .muted { font-size: var(--fs-xs); }
 .board-card-meta .board-project a { color: inherit; position: relative; z-index: 1; }
 .board-card-meta .board-project a:hover { color: var(--white); text-decoration: underline; }
 .board-owner-label a { text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 3px; }
@@ -3474,17 +3485,24 @@ html[data-theme="report"] .assembly-release {
 .btag > .btag-word { margin-inline-start: 2px; }
 .board-lane-chips button[aria-current="true"] { color: var(--white); background: var(--tone-accent-soft); box-shadow: inset 0 0 0 1px var(--tone-accent-ring); }
 
-/* Several requests on one card: the badge opens a menu that lists each of them */
+/* Board menus (several requests, Done history) open in the top layer, placed and clamped by popover-menu.js,
+   so the board's scroller and the cards' stacking contexts never clip them */
+.menu.board-pop-menu { position: fixed; inset: auto; margin: 0; border: 0; overflow-y: auto; color: inherit; }
+/* Several requests on one card: the badge opens a menu that lists each of them, soonest expiry first */
 .board-need-wrap { position: relative; z-index: 1; display: inline-block; max-width: 100%; }
-/* Cards (frosted) and lanes (size containers) are stacking contexts, so lift the open menu's card and lane */
-:is(.bcol, .bcard):has(.board-need-menu:not([hidden])) { z-index: 3; }
-.board-need-wrap:has(> .menu:not([hidden])) { z-index: 2; }
 .board-need-wrap > .board-need { cursor: pointer; }
-.board-need-menu { min-width: 0; width: max-content; max-width: min(20rem, calc(100vw - 2 * var(--gutter))); }
+.board-need-menu { min-width: 0; width: max-content; max-width: min(22rem, calc(100vw - 16px)); }
 .board-need-menu a { display: grid; gap: 2px; padding: 8px 12px; color: var(--white); text-decoration: none; white-space: normal; }
 .board-need-menu a:hover, .board-need-menu a:focus-visible { background: var(--hover); outline-offset: -2px; }
-.board-need-sub { font-size: var(--fs-xs); font-weight: 600; color: var(--tone-warn-ink); }
+.board-need-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: var(--fs-xs); font-weight: 600; color: var(--tone-warn-ink); }
+.board-need-exp { display: inline-flex; align-items: center; gap: 3px; font-weight: 500; color: var(--gray-300); }
 .board-need-what { font-size: var(--fs-sm); line-height: 1.35; }
+.board-status { flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.board-need-due { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--tone-warn-ink); }
+/* Empty lanes and zero results say why and offer the way back */
+.bcol-empty { display: grid; justify-items: start; gap: 8px; }
+.bcol-empty > p, .work-empty > p { margin: 0; }
+.work-empty { display: grid; justify-items: center; gap: 12px; }
 
 /* Focus: the card's main link rings the whole card; secondary links get their own local ring */
 .board .bcard > .work-item-link:focus-visible::after { outline: none; }
@@ -3498,13 +3516,19 @@ html[data-theme="report"] .assembly-release {
 .bcol { container: board-lane / inline-size; }
 @container board-lane (max-width: 15.5rem) {
   .bcard { padding: 10px 12px; gap: 5px; }
-  .board-card-meta { flex-wrap: nowrap; overflow: hidden; }
-  .board-card-meta > .board-project { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
-  .board-card-meta .board-project a { text-decoration-line: none; }
+  /* The project takes its own line under the ID instead of clipping; it keeps its dotted underline */
+  .board-card-meta > .sep:has(+ .board-project) { display: none; }
+  .board-card-meta > .board-project { flex: 1 0 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .board-tags { column-gap: 8px; }
-  .btag > .btag-word { display: none; }
 }
 @media (max-width: 639px) {
-  .board-status .board-need { min-height: 36px; padding-block: 8px; }
   .board-owner-label a { padding-block: 10px; margin-block: -10px; }
+}
+/* Touch and phones: request and Done history controls keep their look and get a 44px hit area */
+@media (max-width: 639px), (pointer: coarse) {
+  .board-status .board-need { min-height: 36px; padding-block: 8px; }
+  .board-status .board-need::after { content: ""; position: absolute; inset: -4px 0; }
+  .bcol-older { min-height: 32px; }
+  .bcol-older::after { content: ""; position: absolute; inset: -6px 0; }
+  .board-pop-menu :is(a, button) { min-height: 44px; }
 }

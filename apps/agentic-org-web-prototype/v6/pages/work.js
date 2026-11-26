@@ -2,7 +2,7 @@ import { ALL_STATUSES, IN, KIND, M, OPEN, P, STATUSES, TEAMS, W, WORK_DISCUSSION
 import { detailCommentDrafts, detailEvent, inboxActivityTime, localDetailRecords, workCommentsHtml } from "./inbox.js";
 import { closeMenus } from "../shell/actions.js";
 import { own, route } from "../shell/router.js";
-import { S, qs } from "../state.js";
+import { S, WORK_ARCHIVED_STORE, qs } from "../state.js";
 import { SEP, av, displayCheckbox, esc, ic, iconWithTooltip, kindWord, memberIds, mlink, pill, plink, queueHeadline, searchRow, searchToggle, showMenu, toast } from "../ui.js";
 
 function isArchivedWork(w) {
@@ -14,13 +14,15 @@ function visibleWorkItems(items) {
 function workListDisplayOptions() {
   return `${displayCheckbox("work-subtasks", "Show subtasks", S.workSubtasks)}${displayCheckbox("work-dividers", "Row dividers", S.workDividers)}`;
 }
+/* The board's Done lane owns its history control (Last 7 days / All unarchived / Include archived);
+   the list keeps Show archived in Display. Both read and write the same state. */
 function workDisplayFooter(listLayout) {
-  return `<hr><p class="menu-h">Options</p>${listLayout ? workListDisplayOptions() : ""}${displayCheckbox("work-archived", "Show archived", S.workShowArchived)}`;
+  if (!listLayout) return "";
+  return `<hr><p class="menu-h">Options</p>${workListDisplayOptions()}${displayCheckbox("work-archived", "Show archived", S.workShowArchived)}`;
 }
 function isWorkDisplayActive(listLayout, group, subgroup, sort, order) {
-  return (listLayout && (group !== WORK_DEFAULT_GROUP || subgroup !== "none"))
-    || sort !== "default" || order !== "asc"
-    || S.workShowArchived || !S.workSubtasks || S.workDividers;
+  return (listLayout && (group !== WORK_DEFAULT_GROUP || subgroup !== "none" || S.workShowArchived || !S.workSubtasks || S.workDividers))
+    || sort !== "default" || order !== "asc";
 }
 function workLayoutToggle(key) {
   return `<div class="work-layout-toggle" role="group" aria-label="Work layout">
@@ -39,7 +41,8 @@ function workDirectionOption(key, layout, sort) {
 function workDisplayTrigger(listLayout) {
   if (listLayout) return { icon: "adjustments", label: "Work display", text: "Display" };
   const mode = S.workBoardStages === "detailed" ? "Status" : "Stages";
-  return { icon: "adjustments", label: `Work display, ${mode} columns`, text: `Display · ${mode}` };
+  /* Phones keep the column mode visible as a compact "Stages ▾" */
+  return { icon: "adjustments", label: `Work display, ${mode} columns`, text: `Display · ${mode}`, short: mode };
 }
 const workCalendarLink = () => `<a class="btn ghost menu-textbtn work-cal-btn" href="#/calendar" aria-label="Calendar" title="Calendar">${ic("calendar-check", "ic16")}<span>Calendar</span></a>`;
 const scopedWorkQueries = new Map();
@@ -78,8 +81,8 @@ function scopedWorkPresets(type, id) {
   return [["all", "All"], ["needs-me", "Needs you"], ["mine", mineLabel]];
 }
 
-function workArchivedChip() {
-  if (!S.workShowArchived) return "";
+function workArchivedChip(layout) {
+  if (!S.workShowArchived || layout === "board") return "";
   return `<button class="work-archived-chip" type="button" data-act="work-archived" aria-label="Hide archived tasks" title="Click to hide archived tasks">Showing archived${ic("x", "ic14")}</button>`;
 }
 
@@ -125,6 +128,12 @@ function scopedWorkGrouping(type) {
   const group = S.scopedWorkGroup === "none" || has(S.scopedWorkGroup) ? S.scopedWorkGroup : WORK_DEFAULT_GROUP;
   const subgroup = group !== "none" && S.scopedWorkSubgroup !== group && has(S.scopedWorkSubgroup) ? S.scopedWorkSubgroup : "none";
   return { allowed, group, subgroup };
+}
+
+/* Zero results from filters or search always offer the way back */
+const clearFiltersButton = () => `<button class="btn outline sm" type="button" data-act="work-clear-filters">${ic("x", "ic14")}Clear filters</button>`;
+function workEmpty(text, filtered) {
+  return `<div class="empty-row work-empty"><p>${esc(text)}</p>${filtered ? clearFiltersButton() : ""}</div>`;
 }
 
 function scopedWorkEmptyText(type, id, view, query) {
@@ -183,7 +192,7 @@ function scopedWorkToolbar(type, id, items) {
       </div>
       ${workLayoutToggle("scopedWorkLayout")}
       ${scopedWorkMenus(type)}
-      ${workArchivedChip()}
+      ${workArchivedChip(S.scopedWorkLayout)}
       ${type === "project" || type === "team" ? `<button class="btn primary" id="work-new-task" type="button" data-act="work-new-task" aria-label="New task">${ic("plus", "ic16")}New<span class="work-new-word">task</span></button>` : ""}
     </div>
   </div>`;
@@ -204,9 +213,10 @@ function scopedWorkResults({ type, id, key, items }) {
   const view = presets.some(([v]) => v === S.scopedWorkView) ? S.scopedWorkView : "all";
   const base = scopedWorkBaseItems(type, items, query);
   const filtered = sortWorkItems(scopedWorkPresetItems(base, view, type, id), S.scopedWorkSort, workSortOrder(S.scopedWorkLayout, S.scopedWorkSort, S.scopedWorkOrder));
-  if (!filtered.length) return `<p class="empty-row">${esc(scopedWorkEmptyText(type, id, view, query))}</p>`;
+  const isFiltered = Boolean(query) || scopedWorkHasFilters(type);
+  if (!filtered.length) return workEmpty(scopedWorkEmptyText(type, id, view, query), isFiltered);
   const hideOwner = type === "agent" || type === "person";
-  if (S.scopedWorkLayout === "board") return board(filtered, { hideOwner, hideProject: type === "project", needsYouView: view === "needs-me", sortKey: S.scopedWorkSort, filtered: Boolean(query) || scopedWorkHasFilters(type) });
+  if (S.scopedWorkLayout === "board") return board(filtered, { hideOwner, hideProject: type === "project", needsYouView: view === "needs-me", sortKey: S.scopedWorkSort, filtered: isFiltered });
   const { group, subgroup } = scopedWorkGrouping(type);
   return workList(filtered, {
     groupBy: WORK_GROUP_FIELDS[group],
@@ -364,14 +374,30 @@ function boardReason(w) {
   if (w.status === "Blocked") return { line: w.waitsOn && w.waitsOn !== "you" && M[w.waitsOn] ? `Waiting on ${M[w.waitsOn].name}` : "Blocked" };
   return {};
 }
-/* One request opens it in Inbox; several open a menu that lists each of them */
+/* Expiring asks come first, and the soonest expiry is said on the card, next to the badge */
+const expiryRank = (ask) => ask.expiresInHours ?? (ask.expires ? 1e6 : 1e7);
+const expiryWhen = (ask) => ask.expires.replace(/^Expires\s+/i, "").replace(/\s*\(.*\)$/, "");
+function boardNeedDue(w, asks) {
+  const expiring = asks.filter((ask) => ask.expires);
+  if (!expiring.length) return { due: "", describedBy: "" };
+  const when = expiryWhen(expiring[0]), id = "due-" + w.id;
+  const text = asks.length === 1 ? `Expires ${when}` : expiring.length === 1 ? `1 expires ${when}` : `${expiring.length} expire, first ${when}`;
+  return { due: `<span class="board-need-due" id="${esc(id)}">${ic("clock", "ic14")}${esc(text)}</span>`, describedBy: ` aria-describedby="${esc(id)}"` };
+}
+function boardNeedItem(ask) {
+  const exp = ask.expires ? `<span class="board-need-exp">${ic("clock", "ic14")}${esc(`Expires ${expiryWhen(ask)}`)}</span>` : "";
+  return `<a role="menuitem" tabindex="-1" href="#/inbox/${esc(ask.id)}"><span class="board-need-sub"><span>${esc(ask.sub)}</span>${exp}</span><span class="board-need-what">${esc(ask.what)}</span></a>`;
+}
+/* One request opens it in Inbox; several open a menu that lists each of them. The menu is a top-layer popover,
+   so the board's scroller never clips it. */
 function boardNeedBadge(w, { badge, asks }) {
   if (!asks.length) return pill(badge, "amber", "bell", true);
-  if (asks.length === 1) return `<a class="pill t-amber chip board-need" href="#/inbox/${esc(asks[0].id)}" title="Open in Inbox">${ic("bell", "ic14")}${esc(badge)}${ic("chev-right", "ic14")}</a>`;
+  const ordered = [...asks].sort((a, b) => expiryRank(a) - expiryRank(b));
+  const { due, describedBy } = boardNeedDue(w, ordered);
+  if (asks.length === 1) return `<a class="pill t-amber chip board-need" href="#/inbox/${esc(asks[0].id)}" title="Open in Inbox"${describedBy}>${ic("bell", "ic14")}${esc(badge)}${ic("chev-right", "ic14")}</a>${due}`;
   const menuId = "need-" + w.id;
-  const items = asks.map((ask) => `<a role="menuitem" tabindex="-1" href="#/inbox/${esc(ask.id)}"><span class="board-need-sub">${esc(ask.sub)}</span><span class="board-need-what">${esc(ask.what)}</span></a>`).join("");
-  return `<div class="menu-wrap board-need-wrap"><button class="pill t-amber chip board-need" type="button" data-act="menu" data-id="${esc(menuId)}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${esc(menuId)}">${ic("bell", "ic14")}${esc(badge)}${ic("chev-down", "ic14")}</button>
-    <div class="menu left board-need-menu" id="menu-${esc(menuId)}" role="menu" aria-label="${esc(`Requests waiting on you for ${w.id}`)}" hidden>${items}</div></div>`;
+  return `<div class="menu-wrap board-need-wrap"><button class="pill t-amber chip board-need" type="button" data-act="menu" data-id="${esc(menuId)}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${esc(menuId)}"${describedBy}>${ic("bell", "ic14")}${esc(badge)}${ic("chev-down", "ic14")}</button>
+    <div class="menu board-need-menu board-pop-menu" id="menu-${esc(menuId)}" role="menu" aria-label="${esc(`Requests waiting on you for ${w.id}`)}" popover="manual" hidden>${ordered.map(boardNeedItem).join("")}</div></div>${due}`;
 }
 function boardMeta(w, hideProject) {
   const type = w.kind === "bug" ? "Bug" : w.kind === "request" ? "Request" : "";
@@ -422,9 +448,17 @@ function boardColumns(items, needsYouView, sortKey) {
     byPriority ? columns.get(key).sort((a, b) => boardRank(b) - boardRank(a)) : columns.get(key)]);
 }
 const isDoneStage = (stage) => stage === "Done" || BOARD_STAGE_OF[stage] === "Done";
-/* Done lanes show the last week unless "older" is toggled on */
+/* Done history: one control for how far back Done lanes reach. It writes the same state as the list's Show archived. */
+const DONE_HISTORY = [["recent", `Last ${DONE_WINDOW_DAYS} days`], ["all", "All unarchived"], ["archived", "Include archived"]];
+const doneHistory = () => (S.workShowArchived ? "archived" : S.workBoardAllDone ? "all" : "recent");
+function setDoneHistory(value) {
+  if (!DONE_HISTORY.some(([v]) => v === value)) return;
+  S.workBoardAllDone = value !== "recent";
+  S.workShowArchived = value === "archived";
+  try { sessionStorage.setItem(WORK_ARCHIVED_STORE, S.workShowArchived ? "1" : "0"); } catch (e) {}
+}
 function doneWindow(stage, tasks) {
-  if (!isDoneStage(stage) || S.workBoardAllDone) return { recent: tasks, older: 0 };
+  if (!isDoneStage(stage) || doneHistory() !== "recent") return { recent: tasks, older: 0 };
   const recent = tasks.filter((w) => !isClosed(w) || (w.closedDaysAgo ?? 0) <= DONE_WINDOW_DAYS);
   return { recent, older: tasks.length - recent.length };
 }
@@ -433,18 +467,26 @@ function laneCount(stage, tasks) {
   const { recent, older } = doneWindow(stage, tasks);
   return { recent, older, text: older ? `${recent.length} shown · ${older} older` : String(tasks.length) };
 }
-function doneToggle(stage, older) {
-  if (!isDoneStage(stage) || !(older || S.workBoardAllDone)) return "";
-  const label = S.workBoardAllDone ? `Last ${DONE_WINDOW_DAYS} days only` : "Show older";
-  return `<button type="button" class="bcol-older" data-act="board-done" title="${S.workBoardAllDone ? "Show only items completed in the last 7 days" : "Show older completed items"}">${label}</button>`;
+function doneHistoryOption([value, label], current) {
+  const on = value === current;
+  const hint = value === "archived" ? `<span class="muted">Closed ${S.archiveAfterDays}+ days ago</span>` : "";
+  return `<button type="button" role="menuitemradio" aria-checked="${on}" data-act="board-done" data-v="${value}">${on ? ic("check", "ic20") : '<span class="spacer20" aria-hidden="true"></span>'}<span class="bcol-history-label">${esc(label)}${hint}</span></button>`;
+}
+function doneHistoryMenu(stage) {
+  if (!isDoneStage(stage)) return "";
+  const current = doneHistory(), label = DONE_HISTORY.find(([v]) => v === current)[1], id = "done-" + laneId(stage).slice(5);
+  const options = DONE_HISTORY.filter(([v]) => v !== "archived" || S.archiveAfterDays > 0);
+  return `<div class="menu-wrap bcol-history"><button type="button" class="bcol-older" data-act="menu" data-id="${esc(id)}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${esc(id)}" aria-label="${esc(`Done history: ${label}`)}">${esc(label)}${ic("chev-down", "ic14")}</button>
+    <div class="menu board-pop-menu bcol-history-menu" id="menu-${esc(id)}" role="menu" aria-label="Done history" popover="manual" hidden><p class="menu-h">Done history</p>${options.map((option) => doneHistoryOption(option, current)).join("")}</div></div>`;
 }
 function boardColumnHead(stage, count) {
-  return `<div class="bcol-h"><h3 class="bcol-title"><span class="bcol-ic" aria-hidden="true">${workStatus(BOARD_STAGE_STATUS[stage] || stage)}</span><span class="bcol-name">${esc(stage)}</span><span class="cnt">${esc(count.text)}</span></h3>${doneToggle(stage, count.older)}</div>`;
+  return `<div class="bcol-h"><h3 class="bcol-title"><span class="bcol-ic" aria-hidden="true">${workStatus(BOARD_STAGE_STATUS[stage] || stage)}</span><span class="bcol-name">${esc(stage)}</span><span class="cnt">${esc(count.text)}</span></h3>${doneHistoryMenu(stage)}</div>`;
 }
 function boardColumnHtml(stage, tasks, opts) {
   const count = laneCount(stage, tasks), { recent, older } = count;
   const empty = older ? `No items in the last ${DONE_WINDOW_DAYS} days` : opts.filtered ? "No matches for these filters" : "Nothing here";
-  const list = recent.length ? `<ul class="bcol-list" role="list">${recent.map((w) => boardCard(w, { ...opts, selected: w.id === opts.selectedId })).join("")}</ul>` : `<p class="bcol-empty">${empty}</p>`;
+  const list = recent.length ? `<ul class="bcol-list" role="list">${recent.map((w) => boardCard(w, { ...opts, selected: w.id === opts.selectedId })).join("")}</ul>`
+    : `<div class="bcol-empty"><p>${empty}</p>${opts.filtered ? clearFiltersButton() : ""}</div>`;
   return `<section class="bcol" id="${esc(laneId(stage))}" aria-label="${esc(`${stage}, ${count.text}`)}">${boardColumnHead(stage, count)}${list}</section>`;
 }
 const laneId = (stage) => "bcol-" + stage.replace(/\s+/g, "-").toLowerCase();
@@ -469,12 +511,33 @@ function leadLaneIndex(board, cols) {
   });
   return lead;
 }
+/* An explicit jump goes to the top of the chosen lane, and that lane stays current while it is in view */
+let jumpTimer = 0;
 function jumpToBoardLane(index, root = document) {
   const board = root.querySelector(".board"), col = board?.querySelectorAll(".bcol")[Number(index)];
   if (!col) return;
+  const nav = root.querySelector(".board-lanes");
   const left = board.scrollLeft + col.getBoundingClientRect().left - board.getBoundingClientRect().left - boardScrollPad(board);
   const smooth = !matchMedia("(prefers-reduced-motion: reduce)").matches;
-  board.scrollTo({ left, behavior: smooth ? "smooth" : "auto" });
+  board.dataset.jump = col.id;
+  delete board.dataset.jumpReached;
+  clearTimeout(jumpTimer);
+  /* A jump the person interrupts before it arrives stops claiming the lane */
+  jumpTimer = setTimeout(() => {
+    if (board.dataset.jump !== col.id || "jumpReached" in board.dataset) return;
+    delete board.dataset.jump;
+    syncBoardLanes(board, nav);
+  }, 1500);
+  revealBoardTop(nav ?? board);
+  board.scrollTo({ left, top: 0, behavior: smooth ? "smooth" : "auto" });
+  syncBoardLanes(board, nav);
+}
+/* When the page itself scrolls (phones), bring the column jump and lane headers back into view */
+function revealBoardTop(el) {
+  const content = document.getElementById("content");
+  if (!content) return;
+  const offset = el.getBoundingClientRect().top - content.getBoundingClientRect().top;
+  if (offset < 0) content.scrollTop += offset;
 }
 /* Chips when every lane name fits on one row; otherwise the picker */
 function fitBoardLanes(nav) {
@@ -482,20 +545,34 @@ function fitBoardLanes(nav) {
   nav.dataset.fit = "chips";
   nav.dataset.fit = chips.scrollWidth > chips.clientWidth + 1 ? "picker" : "chips";
 }
+/* The jump target is current while it is in view; once it has been reached and scrolled away, the lead lane is */
+function currentLaneIndex(board, cols, lead, inView) {
+  const target = board.dataset.jump ? cols.findIndex((col) => col.id === board.dataset.jump) : -1;
+  if (target < 0) return lead;
+  if (inView[target]) { board.dataset.jumpReached = ""; return target; }
+  if (!("jumpReached" in board.dataset)) return target;
+  delete board.dataset.jump;
+  delete board.dataset.jumpReached;
+  return lead;
+}
 function syncBoardLanes(board, nav) {
   const cols = [...board.querySelectorAll(".bcol")];
   if (!nav || !cols.length) return;
   const overflow = board.scrollWidth > board.clientWidth + 1;
   nav.toggleAttribute("data-overflow", overflow);
   if (overflow) fitBoardLanes(nav);
-  const lead = leadLaneIndex(board, cols), view = board.getBoundingClientRect();
+  const view = board.getBoundingClientRect();
+  const inView = cols.map((col) => {
+    const r = col.getBoundingClientRect();
+    return Math.min(r.right, view.right) - Math.max(r.left, view.left) >= r.width * 0.6;
+  });
+  const current = currentLaneIndex(board, cols, leadLaneIndex(board, cols), inView);
   nav.querySelectorAll(".board-lane-chips button").forEach((chip, i) => {
-    const r = cols[i].getBoundingClientRect(), seen = Math.min(r.right, view.right) - Math.max(r.left, view.left);
-    chip.toggleAttribute("data-in-view", seen >= r.width * 0.6);
-    if (i === lead) chip.setAttribute("aria-current", "true"); else chip.removeAttribute("aria-current");
+    chip.toggleAttribute("data-in-view", inView[i]);
+    if (i === current) chip.setAttribute("aria-current", "true"); else chip.removeAttribute("aria-current");
   });
   const select = nav.querySelector("select");
-  if (select) select.value = String(lead);
+  if (select) select.value = String(current);
 }
 let boardResize = null;
 /* Keep the column jump control in sync with horizontal scrolling and with the board's width */
@@ -513,21 +590,32 @@ function mountBoard(main) {
   }
   sync();
 }
+/* Which board control to give focus back to: the same control on the same card or lane, by selector */
+const CARD_CONTROLS = [
+  [".work-item-link", " > .work-item-link"],
+  [".board-need, .board-need-menu a", " .board-need"],
+  [".board-project a", " .board-project a"],
+  [".board-owner-label a", " .board-owner-label a"],
+];
+function boardControlSelector(el) {
+  const card = el?.closest?.(".bcard"), lane = el?.closest?.(".bcol");
+  if (!el || !document.getElementById("work-results")?.contains(el)) return "";
+  if (card) {
+    const hit = CARD_CONTROLS.find(([match]) => el.matches(match));
+    return hit ? `.bcard[data-work-id="${CSS.escape(card.dataset.workId)}"]${hit[1]}` : "";
+  }
+  if (lane && el.closest(".bcol-history")) return `#${CSS.escape(lane.id)} .bcol-older`;
+  return el.matches("[data-board-lane]") ? "[data-board-lane]" : "";
+}
 /* Re-rendering results keeps the owner's place: the lane at the start edge, both scroll axes and focus */
-function boardPlace(results) {
+function boardPlace(results, control = document.activeElement) {
   const board = results.querySelector(".board");
   if (!board) return null;
   const cols = [...board.querySelectorAll(".bcol")], lead = cols.length ? cols[leadLaneIndex(board, cols)] : null;
-  const active = document.activeElement, card = active?.closest?.(".bcard");
-  let focus = "";
-  if (results.contains(active)) {
-    if (active.matches(".bcol-older")) focus = `#${CSS.escape(active.closest(".bcol").id)} .bcol-older`;
-    else if (card && active.matches(".work-item-link")) focus = `.bcard[data-work-id="${CSS.escape(card.dataset.workId)}"] > .work-item-link`;
-    else if (active.matches("[data-board-lane]")) focus = "[data-board-lane]";
-  }
   return {
     mode: board.dataset.mode, lead: lead?.id, leadOffset: lead ? lead.getBoundingClientRect().left - board.getBoundingClientRect().left : 0,
-    top: board.scrollTop, page: document.getElementById("content")?.scrollTop ?? 0, focus,
+    jump: "jumpReached" in board.dataset ? board.dataset.jump : undefined,
+    top: board.scrollTop, page: document.getElementById("content")?.scrollTop ?? 0, focus: boardControlSelector(control),
   };
 }
 function restoreBoardPlace(results, place, focus = place?.focus) {
@@ -537,8 +625,10 @@ function restoreBoardPlace(results, place, focus = place?.focus) {
   if (content) content.scrollTop = place.page;
   if (board) {
     /* Switching Stages and Status is a new set of lanes, so it starts from the first lane */
-    const lead = place.mode === board.dataset.mode && place.lead && board.querySelector("#" + CSS.escape(place.lead));
+    const sameMode = place.mode === board.dataset.mode;
+    const lead = sameMode && place.lead && board.querySelector("#" + CSS.escape(place.lead));
     if (lead) board.scrollLeft += lead.getBoundingClientRect().left - board.getBoundingClientRect().left - place.leadOffset;
+    if (sameMode && place.jump && board.querySelector("#" + CSS.escape(place.jump))) Object.assign(board.dataset, { jump: place.jump, jumpReached: "" });
     board.scrollTop = place.top;
     syncBoardLanes(board, results.querySelector(".board-lanes"));
   }
@@ -551,18 +641,6 @@ function replaceWorkResults(html, focus) {
   results.innerHTML = html;
   mountBoard(results);
   restoreBoardPlace(results, place, focus ?? place?.focus);
-}
-/* Done toggle: only the results change, so the board updates in place */
-function toggleBoardDone(trigger) {
-  S.workBoardAllDone = !S.workBoardAllDone;
-  const lane = trigger?.closest(".bcol")?.id, focus = lane ? `#${CSS.escape(lane)} .bcol-older` : undefined;
-  const results = document.getElementById("work-results");
-  if (results?.dataset.scope) {
-    const currentRoute = route();
-    replaceWorkResults(scopedWorkResults(scopedWorkView(currentRoute, scopedWorkType(currentRoute))), focus);
-  } else {
-    refreshWorkResults(focus);
-  }
 }
 function refreshScopedWorkResults(view) {
   replaceWorkResults(scopedWorkResults(view));
@@ -585,6 +663,20 @@ function workItemHref(item) {
   if (item) params.set("item", item);
   else params.delete("item");
   return params.size ? `${path}?${params}` : path;
+}
+
+/* A work link opened from a board's Inbox request stays in that board's scope when the item belongs there */
+function boardItemHref(origin, item) {
+  if (!origin) return workHref({ item });
+  const [path, query = ""] = origin.replace(/^#\/?/, "").split("?");
+  let parts;
+  try { parts = path.split("/").filter(Boolean).map(decodeURIComponent); } catch (e) { return workHref({ item }); }
+  const params = new URLSearchParams(query);
+  params.set("item", item);
+  if (parts[0] === "work" && parts.length === 1) return `#/work?${params}`;
+  const type = scopedWorkType(parts);
+  if (!type || !scopedWorkView(parts, type).items.some((w) => w.id === item)) return workHref({ item });
+  return `#/${path}?${params}`;
 }
 
 function canonicalWorkRef(ref) {
@@ -923,13 +1015,14 @@ function sortWorkItems(items, sortKey = S.workSort, order = S.workOrder) {
 
 function workResults(filtered, { view, group, subgroup }) {
   const items = sortWorkItems(workPresetItems(filtered, view), S.workSort, workSortOrder(S.workLayout, S.workSort, S.workOrder));
+  const isFiltered = Boolean(S.workQuery.trim()) || workHasFilters();
   if (!items.length) {
-    const text = S.workQuery.trim() || workHasFilters() ? "No work matches these filters."
+    const text = isFiltered ? "No work matches these filters."
       : view === "needs-me" ? "Nothing needs you in Work."
       : view === "mine" ? "Nothing is assigned to you." : "No work items yet.";
-    return `<p class="empty-row">${text}</p>`;
+    return workEmpty(text, isFiltered);
   }
-  return S.workLayout === "board" ? board(items, { needsYouView: view === "needs-me", sortKey: S.workSort, filtered: Boolean(S.workQuery.trim()) || workHasFilters() }) : workList(items, {
+  return S.workLayout === "board" ? board(items, { needsYouView: view === "needs-me", sortKey: S.workSort, filtered: isFiltered }) : workList(items, {
     groupBy: WORK_GROUP_FIELDS[group], subgroupBy: WORK_GROUP_FIELDS[subgroup],
   });
 }
@@ -974,7 +1067,7 @@ function pageWork() {
   S.workGroup = selection.group;
   S.workSubgroup = selection.subgroup;
   return `<header class="work-header queue-header">
-    ${queueHeadline("Work", `${W.filter(OPEN).length} open · ${W.filter(needsMe).length} need you`)}
+    ${queueHeadline("Work", `Across all work: ${W.filter(OPEN).length} open · ${W.filter(needsMe).length} need you`)}
     <div class="work-toolbar queue-toolbar">
       <div class="primary-tab-row" data-page-menu>
         <div class="queue-tabs" role="group" aria-label="Work views">
@@ -984,7 +1077,7 @@ function pageWork() {
       </div>
       ${workLayoutToggle("workLayout")}
       ${workViewControls(selection.group, selection.subgroup)}
-      ${workArchivedChip()}
+      ${workArchivedChip(S.workLayout)}
       <div class="work-tb-end">${workCalendarLink()}<button class="btn primary" id="work-new-task" type="button" data-act="work-new-task" aria-label="New task">${ic("plus", "ic16")}New<span class="work-new-word">task</span></button></div>
     </div>
   </header>${workWorkspace(workResults(filtered, selection), W, searchRow("work-search", "Search work", S.workQuery, "Search work… (Esc to close)", "work-search-row"))}`;
@@ -1211,12 +1304,13 @@ async function createWorkTask(form) {
 }
 
 export {
+  boardItemHref,
   boardPlace,
   jumpToBoardLane,
   restoreBoardPlace,
   mountBoard,
   refreshScopedWorkResults,
-  toggleBoardDone,
+  setDoneHistory,
   addIdeationComment,
   canonicalWorkRef,
   changeWorkCriterion,

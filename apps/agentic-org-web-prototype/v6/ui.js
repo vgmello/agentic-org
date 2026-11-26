@@ -118,12 +118,14 @@ function iconWithTooltip(label, icon, size = "ic16") {
   return ic(icon, size) + `<span class="icon-tooltip" aria-hidden="true">${esc(label)}</span>`;
 }
 /* Menu trigger: labelled ("Filter · 2"), icon-only, or the "Show <current>" text button. */
-function menuTrigger({ icon, label, active, focusTooltip, text, count, tooltip, cur }) {
+function menuTrigger({ icon, label, active, focusTooltip, text, short, count, tooltip, cur }) {
   const on = active ? " data-active" : "";
   if (icon && text) {
+    /* short: a compact label ("Stages ▾") that narrow toolbars keep when the full text gives way */
+    const compact = short ? `<span class="menu-textbtn-short" aria-hidden="true">${esc(short)}${ic("chev-down", "ic14")}</span>` : "";
     return {
       triggerAttrs: `class="btn ghost menu-textbtn" aria-label="${esc(label)}${count ? `, ${count} active` : ""}"${on}`,
-      triggerContent: `${ic(icon, "ic16")}<span>${esc(text)}</span>${count ? `<span class="menu-textbtn-count">${count}</span>` : ""}`,
+      triggerContent: `${ic(icon, "ic16")}<span>${esc(text)}</span>${compact}${count ? `<span class="menu-textbtn-count">${count}</span>` : ""}`,
     };
   }
   if (icon) {
@@ -134,10 +136,10 @@ function menuTrigger({ icon, label, active, focusTooltip, text, count, tooltip, 
   }
   return { triggerAttrs: 'class="btn textbtn"', triggerContent: `Show <span class="cur">${esc(cur.length ? cur.join(", ") : "all")}</span>${ic("chev-down", "ic16 muted")}` };
 }
-function showMenu(id, groups, { align = "", icon, label, active, focusTooltip = false, footer = "", text = "", count = 0 } = {}) {
+function showMenu(id, groups, { align = "", icon, label, active, focusTooltip = false, footer = "", text = "", short = "", count = 0 } = {}) {
   const cur = groups.map(([k, , opts]) => { const o = opts.find((x) => String(x[0]) === String(S[k])); return o && o[0] !== "all" ? o[1] : null; }).filter(Boolean);
   const tooltip = focusTooltip ? "" : ` title="${esc(label)}"`;
-  const { triggerAttrs, triggerContent } = menuTrigger({ icon, label, active, focusTooltip, text, count, tooltip, cur });
+  const { triggerAttrs, triggerContent } = menuTrigger({ icon, label, active, focusTooltip, text, short, count, tooltip, cur });
   return `<div class="menu-wrap"><button ${triggerAttrs} type="button" data-act="menu" data-id="${id}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${id}">${triggerContent}</button>
     <div class="menu ${align}" id="menu-${id}" role="menu"${label ? ` aria-label="${esc(label)}"` : ""} hidden>${groups.map(([k, title, opts], gi) => `${gi ? "<hr>" : ""}<p class="menu-h" id="mh-${id}-${gi}">${esc(title)}</p><div role="group" aria-labelledby="mh-${id}-${gi}">${opts.map(([v, l, n]) => { const on = String(S[k]) === String(v); return `<button role="menuitemradio" aria-checked="${on}" type="button" data-act="set" data-k="${k}" data-v="${v}">${on ? ic("check", "ic20") : '<span class="spacer20" aria-hidden="true"></span>'}<span style="flex:1">${esc(l)}</span>${n != null ? `<span class="muted tnum">${n}</span>` : ""}</button>`; }).join("")}</div>`).join("")}${footer}</div></div>`;
 }
