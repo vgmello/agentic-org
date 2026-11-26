@@ -204,7 +204,9 @@ pub fn create_owner_only_dir(path: &Path) -> io::Result<()> {
 }
 
 /// Recursively create missing directory components of `path` with mode `0700`, refusing any
-/// existing symlink or non-directory component. Every unsupported target fails closed.
+/// symlink or non-directory at the leaf or newly created branch (while tolerating existing live
+/// system ancestor symlinks such as macOS `/var -> /private/var`). Every unsupported target fails
+/// closed.
 pub fn create_owner_only_dir_all(path: &Path) -> io::Result<()> {
     native::create_owner_only_dir_all(path)
 }

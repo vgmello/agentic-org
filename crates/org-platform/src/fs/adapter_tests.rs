@@ -217,4 +217,22 @@ fn owner_only_ancestors_and_files_enforce_uid_mode_and_no_symlinks() {
         0o600
     );
     assert!(super::open_nofollow_ro(&secret).is_ok());
+    assert!(super::open_nofollow_ro(&host_dir).is_err());
+
+    // `..` traversal outside `stop_at`, mismatched `stop_at`, and trailing `/` or `/.` on
+    // symlinked directories MUST all fail closed (`TASK-167`, `TASK-168`).
+    let outside = directory.path().join("outside-0700");
+    super::create_owner_only_dir_all(&outside).unwrap();
+    let escape = host_dir.join("../../../../outside-0700");
+    assert!(super::verify_owner_only_ancestors(&escape, &root, uid).is_err());
+    assert!(super::verify_owner_only_ancestors(&host_dir, &outside, uid).is_err());
+    let dir_link = root.join("dir-link");
+    super::create_symlink(&outside, &dir_link).unwrap();
+    let dir_link_slash = std::path::PathBuf::from(format!("{}/", dir_link.display()));
+    let dir_link_dot = std::path::PathBuf::from(format!("{}/.", dir_link.display()));
+    for evasive in [&dir_link, &dir_link_slash, &dir_link_dot] {
+        assert!(super::verify_owner_only_dir(evasive, uid).is_err());
+        assert!(super::verify_owner_only_ancestors(evasive, &root, uid).is_err());
+        assert!(super::create_owner_only_dir_all(evasive).is_err());
+    }
 }

@@ -504,7 +504,7 @@ impl SqliteEngine {
         }
     }
 
-    /// Builds both replacement projections (`office.db.new` and `protected/messaging.db.new`)
+    /// Builds both replacement projections (`protected/office.db.new` and `protected/messaging.db.new`)
     /// and leaves them closed and synced.
     fn build_replacement(
         &self,
@@ -512,6 +512,9 @@ impl SqliteEngine {
         new_msg_path: &Path,
         build: &mut dyn FnMut(&mut SqliteTx) -> Result<Cursor, StoreError>,
     ) -> Result<(), StoreError> {
+        // Ensure `protected/` exists with `0700` BEFORE opening `protected/office.db.new`
+        // so recovery still works even if `protected/` was deleted while open (`TASK-166`).
+        messaging::ensure_protected_dir(new_msg_path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE;
         let db = connect(new_path, flags)?;
         db.execute_batch(
@@ -565,15 +568,19 @@ impl SqliteEngine {
             return Err(refused("closing the old messaging projection", error));
         }
         let swap_one = |src: &Path, dst: &Path| -> std::io::Result<()> {
-            let sync_folder = || match dst.parent() {
+            let sync_folder = |dir: Option<&Path>| match dir {
                 Some(folder) => crate::private_fs::sync_dir(folder),
                 None => Ok(()),
             };
             remove_if_present(&beside(dst, "-wal"))?;
             remove_if_present(&beside(dst, "-shm"))?;
-            sync_folder()?;
+            sync_folder(dst.parent())?;
             fs::rename(src, dst)?;
-            sync_folder()
+            sync_folder(dst.parent())?;
+            if src.parent() != dst.parent() {
+                sync_folder(src.parent())?;
+            }
+            Ok(())
         };
         let swapped = swap_one(new_path, &self.path)
             .and_then(|()| swap_one(new_msg_path, &self.msg_path))

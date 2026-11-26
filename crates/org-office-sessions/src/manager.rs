@@ -1554,10 +1554,14 @@ impl SessionManager {
         check_registry_startable(&reg, emp_id)?;
         let finished = if let Some(handle) = reg.live.get(emp_id) {
             let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-            let bwrap_topology_stale = handle
-                .bwrap_masked_siblings
-                .as_ref()
-                .is_some_and(|masked| self.has_unmasked_bwrap_sibling(emp_id, masked));
+            let bwrap_topology_stale =
+                handle.bwrap_masked_siblings.as_ref().is_some_and(|masked| {
+                    crate::bwrap_isolation::has_unmasked_bwrap_sibling_in_office(
+                        &self.office,
+                        emp_id,
+                        masked,
+                    )
+                });
             let stop_reason = warm_handle_stop_reason(
                 &self.office,
                 emp_id,
@@ -1568,6 +1572,14 @@ impl SessionManager {
             );
             if stop_reason.is_none() && is_warm_state_reusable(state.state) {
                 if let Some(text) = objective {
+                    // Never queue a new turn onto a busy `bwrap` handle whose sibling mask is
+                    // stale (`TASK-166`); require its active turn to finish or stop it first.
+                    if bwrap_topology_stale {
+                        return Err(ApiError::new(
+                            ErrorCode::Conflict,
+                            "sandboxed session topology is stale while busy; wait for current turn to finish or stop session first",
+                        ));
+                    }
                     let text = self.prepend_watch_notices(emp_id, text);
                     let tx = handle.tx.clone();
                     let st = Arc::clone(&handle.state);
@@ -1665,7 +1677,7 @@ impl SessionManager {
         // Before creating this agent's runtime directory or session-binding token on disk,
         // ensure no already-running Linux `bwrap` sibling lacks a mount mask for `emp_id`
         // (`TASK-166`).
-        self.enforce_bwrap_sibling_isolation(&emp_id)?;
+        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(self, &emp_id)?;
         let home = self
             .office
             .ensure_private_home(&emp_id)
@@ -1697,7 +1709,9 @@ impl SessionManager {
         let is_linux_claude_bwrap =
             is_linux_claude_bwrap(admitted.sandbox_enabled, admitted.adapter.id().as_str());
         let bwrap_masked_siblings = if is_linux_claude_bwrap {
-            Some(self.ensure_bwrap_deny_dirs(&emp_id)?)
+            Some(crate::bwrap_isolation::ensure_bwrap_deny_dirs(
+                self, &emp_id,
+            )?)
         } else {
             None
         };
@@ -1867,6 +1881,11 @@ impl SessionManager {
             .flatten()
             .map_or(0, |r| r.consecutive_stalls);
 
+        crate::bwrap_isolation::verify_bwrap_masked_before_spawn(
+            self,
+            &emp_id,
+            bwrap_masked_siblings.as_ref(),
+        )?;
         let spawned = self.spawn_and_persist(
             launch.prepared,
             &emp_id,
@@ -2013,10 +2032,12 @@ impl SessionManager {
         } = prepared;
         let active_permit = Arc::new(Mutex::new(permit));
         let (tx, rx) = mpsc::channel();
-        if !objective.is_empty() {
-            let _ = tx.send(PumpCommand::SendTurn(objective));
-        }
-        let hooks = self.build_pump_hooks(&emp_id, route_digest.clone(), oauth_expires_at_ms);
+        let hooks = self.build_pump_hooks(
+            &emp_id,
+            route_digest.clone(),
+            oauth_expires_at_ms,
+            bwrap_masked_siblings.clone(),
+        );
         let pump_ctx = PumpContext {
             employee_id: emp_id.clone(),
             run_id,
@@ -2038,15 +2059,37 @@ impl SessionManager {
             binding_file,
             hooks,
         };
-        if is_admissions_closed(self) {
-            return Err(abort_pre_pump_shutdown(
+        let bwrap_pre_raced = crate::bwrap_isolation::verify_bwrap_masked_before_spawn(
+            self,
+            &emp_id,
+            bwrap_masked_siblings.as_ref(),
+        )
+        .is_err();
+        if is_admissions_closed(self) || bwrap_pre_raced {
+            let _ = abort_pre_pump_shutdown(
                 self,
                 &emp_id,
                 spawned,
                 &mut session,
                 &pump_ctx,
                 &active_permit,
-            ));
+            );
+            return Err(if bwrap_pre_raced {
+                ApiError::new(
+                    ErrorCode::Conflict,
+                    "a newly started sibling agent was not masked in this sandbox; retry launch",
+                )
+            } else {
+                ApiError::new(
+                    ErrorCode::Unavailable,
+                    "office session manager is shutting down",
+                )
+            });
+        }
+        // Enqueue the initial turn BEFORE starting the pump thread so `run_pump` always sees
+        // Turn 1 immediately upon `Ready` without transitioning `Starting -> Idle` prematurely.
+        if !objective.is_empty() {
+            let _ = tx.send(PumpCommand::SendTurn(objective));
         }
         let thread = spawn_pump_thread(
             self,
@@ -2061,36 +2104,8 @@ impl SessionManager {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .to_view();
-        let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-        let bwrap_raced_unmasked = bwrap_masked_siblings.as_ref().is_some_and(|masked| {
-            reg.live
-                .keys()
-                .chain(reg.starting.iter())
-                .any(|other| other != &emp_id && !masked.contains(other))
-        });
-        if reg.draining || reg.shutting_down || bwrap_raced_unmasked {
-            drop(reg);
-            let _ = abort_post_spawn_shutdown(
-                self,
-                &emp_id,
-                tx,
-                thread,
-                &runtime_state,
-                &active_permit,
-            );
-            return Err(if bwrap_raced_unmasked {
-                ApiError::new(
-                    ErrorCode::Conflict,
-                    "a newly started sibling agent was not masked in this sandbox; retry launch",
-                )
-            } else {
-                ApiError::new(
-                    ErrorCode::Unavailable,
-                    "office session manager is shutting down",
-                )
-            });
-        }
-        reg.live.insert(
+        register_live_session_or_abort(
+            self,
             emp_id,
             LiveSessionHandle {
                 state: runtime_state,
@@ -2104,7 +2119,7 @@ impl SessionManager {
                 supports_mid_turn,
                 bwrap_masked_siblings,
             },
-        );
+        )?;
         Ok(view)
     }
 
@@ -2325,181 +2340,6 @@ impl SessionManager {
         )
     }
 
-    /// Pre-creates fixed `0700` sensitive office and sibling directories before launching a Linux
-    /// Claude `bwrap` sandbox so `bwrap` bind-mounts atomic directory masks without leaving
-    /// unmasked holes or creating 0-byte `0444` files (`TASK-144`, `TASK-166`). Fails closed on
-    /// any filesystem error (zero silent swallows). Never creates `<durable>/private` on
-    /// satellites (`ARCH-02`).
-    pub(crate) fn ensure_bwrap_deny_dirs(
-        &self,
-        employee_id: &str,
-    ) -> Result<std::collections::BTreeSet<String>, ApiError> {
-        let durable = self.office.durable_root();
-        let office_id = &self.office.info().office_id;
-        let office_local = durable.join("local").join("offices").join(office_id);
-        let runtime_root = self.office.runtime_root();
-        let office_rt = runtime_root.join(office_id);
-        // `authority` is pre-created on BOTH HQ and satellites; `private` stays HQ-only (`ARCH-02`).
-        for sub in [
-            "state",
-            "journal",
-            "authority",
-            "messaging",
-            "budgets",
-            "accounting",
-            "recovery",
-        ] {
-            ensure_owner_only_dir(&durable.join(sub))?;
-        }
-        if self.office.info().role == org_office::OfficeRole::Hq {
-            ensure_owner_only_dir(&durable.join("private"))?;
-        }
-        ensure_owner_only_dir(&self.office.folder().join("git-credentials"))?;
-        for sub in [
-            "auth",
-            "connections",
-            "sessions",
-            "enroll-tmp",
-            "security",
-            "subscription-usage",
-            "agents",
-        ] {
-            ensure_owner_only_dir(&office_local.join(sub))?;
-        }
-        for dir in [
-            office_rt.join("protected"),
-            office_rt.join("git-home"),
-            runtime_root.join("snapshot-import"),
-            runtime_root.join("snapshot-export"),
-        ] {
-            ensure_owner_only_dir(&dir)?;
-        }
-        let repos_root = office_rt.join("repositories");
-        let self_admins = org_office::git::OfficeGitState::load(runtime_root, office_id)
-            .ok()
-            .map(|gs| collect_self_active_admins(&gs, employee_id))
-            .unwrap_or_default();
-        if self_admins.is_empty() {
-            ensure_owner_only_dir(&repos_root)?;
-        } else {
-            for repo_id in self_admins.keys() {
-                let objects_dir = repos_root.join(format!("{repo_id}.git")).join("objects");
-                if objects_dir.is_dir() {
-                    ensure_owner_only_dir(&objects_dir.join("info"))?;
-                }
-            }
-        }
-        self.ensure_bwrap_sibling_dirs(&office_local, &office_rt, office_id, employee_id)
-    }
-
-    fn ensure_bwrap_sibling_dirs(
-        &self,
-        office_local: &Path,
-        office_rt: &Path,
-        office_id: &str,
-        employee_id: &str,
-    ) -> Result<std::collections::BTreeSet<String>, ApiError> {
-        let agents_root = office_local.join("agents");
-        let sibling_ids = self.collect_sibling_agent_ids(&agents_root, Some(employee_id));
-        for other in &sibling_ids {
-            ensure_owner_only_dir(&agents_root.join(other))?;
-        }
-        if let Some(sock_parent) = self.config.office_socket.parent() {
-            if sock_parent.is_dir() {
-                let short_root = sock_parent.join("t");
-                ensure_owner_only_dir(&short_root)?;
-                let own_slug = crate::host_auth::agent_tmpdir_slug(office_id, employee_id);
-                for other in &sibling_ids {
-                    let slug = crate::host_auth::agent_tmpdir_slug(office_id, other);
-                    if slug != own_slug {
-                        ensure_owner_only_dir(&short_root.join(slug))?;
-                    }
-                }
-            }
-        }
-        let chain = self.resolve_employee_team_chain(employee_id);
-        if !chain.is_empty() {
-            let mut team_dir = office_rt.to_path_buf();
-            for tid in &chain {
-                team_dir = team_dir.join("teams").join(tid);
-            }
-            let rt_agents_dir = team_dir.join("agents");
-            ensure_owner_only_dir(&rt_agents_dir)?;
-            for other in &sibling_ids {
-                ensure_owner_only_dir(&rt_agents_dir.join(other))?;
-            }
-        }
-        Ok(sibling_ids)
-    }
-
-    fn has_unmasked_bwrap_sibling(
-        &self,
-        self_employee_id: &str,
-        masked: &std::collections::BTreeSet<String>,
-    ) -> bool {
-        let office_id = &self.office.info().office_id;
-        let agents_root = self
-            .office
-            .durable_root()
-            .join("local")
-            .join("offices")
-            .join(office_id)
-            .join("agents");
-        let current = self.collect_sibling_agent_ids(&agents_root, Some(self_employee_id));
-        current.iter().any(|id| !masked.contains(id))
-    }
-
-    /// Ensures no live Linux `bwrap` session started before `starting_emp_id` existed can read
-    /// `starting_emp_id`'s newly created directory or `session-binding-*.v1` token (`TASK-166`).
-    /// Stale non-working `bwrap` siblings are stopped and reaped before launch proceeds; any stale
-    /// actively-working `bwrap` sibling fails launch closed with `Conflict`.
-    pub(crate) fn enforce_bwrap_sibling_isolation(
-        &self,
-        starting_emp_id: &str,
-    ) -> Result<(), ApiError> {
-        let stale_handles: Vec<LiveSessionHandle> = {
-            let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-            let mut stale_idle_ids = Vec::new();
-            for (other_id, handle) in &reg.live {
-                if other_id == starting_emp_id {
-                    continue;
-                }
-                let Some(masked) = &handle.bwrap_masked_siblings else {
-                    continue;
-                };
-                if masked.contains(starting_emp_id) {
-                    continue;
-                }
-                let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-                if matches!(
-                    st.state,
-                    SessionState::Starting | SessionState::Running | SessionState::WaitingApproval
-                ) {
-                    return Err(ApiError::new(
-                        ErrorCode::Conflict,
-                        format!(
-                            "cannot start `{starting_emp_id}` while active sandboxed session `{other_id}` does not isolate it; wait for its turn to finish or stop `{other_id}` first"
-                        ),
-                    ));
-                }
-                stale_idle_ids.push(other_id.clone());
-            }
-            stale_idle_ids
-                .into_iter()
-                .filter_map(|id| reg.live.remove(&id))
-                .collect()
-        };
-        for mut handle in stale_handles {
-            let _ = handle.tx.send(PumpCommand::Stop {
-                reason: "bwrap_sibling_isolation_refresh".into(),
-            });
-            if let Some(thread) = handle.thread.take() {
-                let _ = thread.join();
-            }
-        }
-        Ok(())
-    }
-
     #[cfg(test)]
     pub(crate) fn denied_office_globs(&self) -> Vec<PathPattern> {
         self.denied_office_globs_for(None)
@@ -2700,7 +2540,7 @@ impl SessionManager {
         }
     }
 
-    fn resolve_employee_team_chain_and_ids(
+    pub(crate) fn resolve_employee_team_chain_and_ids(
         &self,
         employee_id: &str,
     ) -> Option<(Vec<String>, Vec<String>)> {
@@ -2885,7 +2725,7 @@ impl SessionManager {
         append_privileged_socket_patterns(out);
     }
 
-    fn collect_sibling_agent_ids(
+    pub(crate) fn collect_sibling_agent_ids(
         &self,
         agents_root: &Path,
         self_employee_id: Option<&str>,
@@ -3216,6 +3056,50 @@ fn abort_pre_pump_shutdown(
         }
     }
     persist_shutdown_cancellation(mgr, emp_id, &pump_ctx.run_id, !cleanup_verified)
+}
+
+fn register_live_session_or_abort(
+    mgr: &SessionManager,
+    emp_id: String,
+    mut handle: LiveSessionHandle,
+) -> Result<(), ApiError> {
+    let disk_unmasked = handle.bwrap_masked_siblings.as_ref().is_some_and(|masked| {
+        crate::bwrap_isolation::has_unmasked_bwrap_sibling_in_office(&mgr.office, &emp_id, masked)
+    });
+    let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+    let bwrap_raced_unmasked = disk_unmasked
+        || handle.bwrap_masked_siblings.as_ref().is_some_and(|masked| {
+            reg.live
+                .keys()
+                .chain(reg.starting.iter())
+                .any(|other| other != &emp_id && !masked.contains(other))
+        });
+    if reg.draining || reg.shutting_down || bwrap_raced_unmasked {
+        drop(reg);
+        if let Some(thread) = handle.thread.take() {
+            let _ = abort_post_spawn_shutdown(
+                mgr,
+                &emp_id,
+                handle.tx,
+                thread,
+                &handle.state,
+                &handle.active_permit,
+            );
+        }
+        return Err(if bwrap_raced_unmasked {
+            ApiError::new(
+                ErrorCode::Conflict,
+                "a newly started sibling agent was not masked in this sandbox; retry launch",
+            )
+        } else {
+            ApiError::new(
+                ErrorCode::Unavailable,
+                "office session manager is shutting down",
+            )
+        });
+    }
+    reg.live.insert(emp_id, handle);
+    Ok(())
 }
 
 fn abort_post_spawn_shutdown(
@@ -3655,12 +3539,10 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
     let objective = mgr.prepend_watch_notices(employee.id.as_str(), req.objective.clone());
     let launch_res = mgr
         .plan_session_launch(&employee, &params, opts)
-        .and_then(|planned| mgr.issue_and_spawn_launch(objective, planned));
-    match launch_res {
-        Ok(prepared) => {
-            let _ = mgr.install_live_session(prepared);
-        }
-        Err(err) => record_failover_exhausted(mgr, &req, &err),
+        .and_then(|planned| mgr.issue_and_spawn_launch(objective, planned))
+        .and_then(|prepared| mgr.install_live_session(prepared));
+    if let Err(err) = launch_res {
+        record_failover_exhausted(mgr, &req, &err);
     }
 }
 
@@ -3957,7 +3839,7 @@ fn resolve_workspace(home: &Path, explicit: Option<&str>) -> Result<PathBuf, Api
     })
 }
 
-fn ensure_owner_only_dir(path: &Path) -> Result<(), ApiError> {
+pub(crate) fn ensure_owner_only_dir(path: &Path) -> Result<(), ApiError> {
     org_platform::fs::create_owner_only_dir_all(path)
         .and_then(|()| org_platform::fs::set_owner_only_dir(path))
         .map_err(|_| {
@@ -4127,30 +4009,42 @@ pub(crate) fn agent_git_identity(name: &str, handle: &str) -> (String, String) {
     let safe_handle = sanitize_agent_name(handle);
     let clean_name: String = name
         .chars()
+        .filter(|c| !matches!(c, '<' | '>'))
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
     let trimmed = clean_name.trim();
-    let display = if trimmed.is_empty() {
-        safe_handle.clone()
-    } else {
+    let has_ident_char = trimmed.chars().any(char::is_alphanumeric);
+    let display = if has_ident_char {
         trimmed.to_owned()
+    } else {
+        safe_handle.clone()
     };
     let email = format!("{safe_handle}@agents.agentic-org.local");
     (display, email)
 }
 
-fn push_safe_ro_dir(out: &mut Vec<SpecPath>, candidate: &Path, forbidden_canon: &[PathBuf]) {
+fn push_safe_ro_dir(
+    out: &mut Vec<SpecPath>,
+    candidate: &Path,
+    forbidden_canon: &[PathBuf],
+    host_home_canon: Option<&Path>,
+    disallowed_containers: &[PathBuf],
+) {
     if !candidate.is_absolute() || !candidate.is_dir() {
         return;
     }
     let Ok(resolved) = candidate.canonicalize() else {
         return;
     };
-    if resolved.parent().is_none()
+    let overlaps_forbidden = resolved.parent().is_none()
+        || host_home_canon.is_some_and(|h| resolved == h || h.starts_with(&resolved))
         || forbidden_canon
             .iter()
-            .any(|root| resolved.starts_with(root))
-    {
+            .any(|root| resolved.starts_with(root) || root.starts_with(&resolved))
+        || disallowed_containers
+            .iter()
+            .any(|c| c.starts_with(&resolved));
+    if overlaps_forbidden {
         return;
     }
     let text = resolved.display().to_string();
@@ -4163,8 +4057,8 @@ fn push_safe_ro_dir(out: &mut Vec<SpecPath>, candidate: &Path, forbidden_canon: 
 
 /// Collects safe read-only directories for Agy `--sandbox` (`--add-dir`) so `agent-os` and the
 /// host Rust toolchain execute without `BypassSandbox` (`TASK-164`). Mounts only individual safe
-/// Cargo subdirs (`bin`, `registry`, `git`) — NEVER host `~/.cargo` root, so `credentials*` stay
-/// inaccessible.
+/// Cargo subdirs (`bin`, `registry`, `git`) — NEVER host `~/.cargo` root, `$HOME`, or any
+/// ancestor of a forbidden office/workspace directory, so secrets stay inaccessible.
 pub(crate) fn collect_agy_read_only_dirs(
     helper_dir: &Path,
     rustup_explicit: Option<OsString>,
@@ -4176,24 +4070,54 @@ pub(crate) fn collect_agy_read_only_dirs(
         .iter()
         .map(|p| canonicalize_with_tail(p))
         .collect();
+    let host_home_canon = host_home
+        .as_deref()
+        .map(Path::new)
+        .filter(|p| p.is_absolute())
+        .and_then(|p| p.canonicalize().ok());
     let mut out = Vec::new();
-    push_safe_ro_dir(&mut out, helper_dir, &forbidden_canon);
+    push_safe_ro_dir(
+        &mut out,
+        helper_dir,
+        &forbidden_canon,
+        host_home_canon.as_deref(),
+        &[],
+    );
     // If `<helper_dir>/agent-os` is a symlink into a release-store directory, also mount the
     // canonical release directory holding the target binary.
     if let Ok(agent_os_real) = helper_dir.join("agent-os").canonicalize() {
         if let Some(parent) = agent_os_real.parent() {
-            push_safe_ro_dir(&mut out, parent, &forbidden_canon);
+            push_safe_ro_dir(
+                &mut out,
+                parent,
+                &forbidden_canon,
+                host_home_canon.as_deref(),
+                &[],
+            );
         }
     }
     if let Some(rustup) =
         host_rust_dir_env_from(rustup_explicit, host_home.clone(), ".rustup", forbidden)
     {
-        push_safe_ro_dir(&mut out, Path::new(&rustup), &forbidden_canon);
+        push_safe_ro_dir(
+            &mut out,
+            Path::new(&rustup),
+            &forbidden_canon,
+            host_home_canon.as_deref(),
+            &[],
+        );
     }
     if let Some(cargo) = host_rust_dir_env_from(cargo_explicit, host_home, ".cargo", forbidden) {
         let cargo_path = Path::new(&cargo);
+        let cargo_canon = canonicalize_with_tail(cargo_path);
         for sub in ["bin", "registry", "git"] {
-            push_safe_ro_dir(&mut out, &cargo_path.join(sub), &forbidden_canon);
+            push_safe_ro_dir(
+                &mut out,
+                &cargo_path.join(sub),
+                &forbidden_canon,
+                host_home_canon.as_deref(),
+                std::slice::from_ref(&cargo_canon),
+            );
         }
     }
     out
@@ -4546,7 +4470,7 @@ fn is_safe_worktree_admin_name(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
-fn collect_self_active_admins(
+pub(crate) fn collect_self_active_admins(
     git_state: &org_office::git::OfficeGitState,
     employee_id: &str,
 ) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
@@ -5206,6 +5130,23 @@ mod manager_helper_tests {
         );
         assert!(!ro_strs.contains(&"/"));
 
+        // Ancestors of forbidden dirs (`root` contains `home_dir`/`ws_dir`), raw `$HOME`, and
+        // symlinked `CARGO_HOME/bin -> CARGO_HOME` MUST all be refused (`TASK-164`).
+        let symlink_cargo = root.join("symlink-cargo");
+        std::fs::create_dir_all(&symlink_cargo).unwrap();
+        org_platform::fs::create_symlink(&symlink_cargo, &symlink_cargo.join("bin")).unwrap();
+        let hostile_ro = collect_agy_read_only_dirs(
+            &root,
+            Some(root.as_os_str().to_os_string()),
+            Some(symlink_cargo.as_os_str().to_os_string()),
+            Some(root.as_os_str().to_os_string()),
+            &forbidden,
+        );
+        assert!(
+            hostile_ro.is_empty(),
+            "ancestors of forbidden dirs, $HOME, and escaped CARGO_HOME/bin must be refused: {hostile_ro:?}"
+        );
+
         // Verify `AgyRuntime::plan_session` emits `--add-dir` for every collected RO dir.
         let ws_spec = SpecPath::try_from(ws_dir.to_str().unwrap()).unwrap();
         let preset_cfg = build_session_policy(
@@ -5284,6 +5225,10 @@ mod manager_helper_tests {
         let (git_name, git_email) = agent_git_identity("Worker EU\nAgy", "Worker_EU.Agy");
         assert_eq!(git_name, "Worker EU Agy");
         assert_eq!(git_email, "worker_eu-agy@agents.agentic-org.local");
+        assert_eq!(
+            agent_git_identity("<>...", "Worker_EU.Agy").0,
+            "worker_eu-agy"
+        );
 
         let search = SearchPath::new(
             &helper_dir,

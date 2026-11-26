@@ -347,6 +347,21 @@ fn a_replacement_with_a_dangling_reference_is_refused_by_row_and_the_projection_
         engine.unwrap().snapshot().unwrap().cursor().unwrap(),
         Some(cursor(10))
     );
+
+    // TASK-166: `open()` cleans interrupted `protected/office.db.new`, and `replace()` recreates
+    // `protected/` with `0700` if it was deleted while the engine was open.
+    let protected = dir.path().join("protected");
+    fs::write(protected.join("office.db.new"), b"stale").unwrap();
+    let engine = SqliteEngine::open(&dir.path().canonicalize().unwrap().join("office.db")).unwrap();
+    assert!(!protected.join("office.db.new").exists());
+    fs::remove_dir_all(&protected).unwrap();
+    engine.replace(&mut |_| Ok(cursor(11))).unwrap();
+    assert!(protected.is_dir());
+    assert!(!protected.join("office.db.new").exists());
+    assert_eq!(
+        engine.snapshot().unwrap().cursor().unwrap(),
+        Some(cursor(11))
+    );
 }
 
 #[test]

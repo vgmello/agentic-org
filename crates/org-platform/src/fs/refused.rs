@@ -180,5 +180,24 @@ mod tests {
         unsupported(super::require_disk(&directory, Path::new("/")));
         let dir = tempfile::tempdir().unwrap();
         assert_refused(super::set_owner_only_dir(dir.path()));
+        assert_refused(super::create_owner_only_dir(&dir.path().join("a")));
+        assert_refused(super::create_owner_only_dir_all(&dir.path().join("a/b")));
+        assert_refused(super::write_owner_only_file(&dir.path().join("f"), b"x"));
+        assert_refused(super::open_nofollow_ro(&dir.path().join("f")));
+        assert_refused(super::create_symlink(dir.path(), &dir.path().join("l")));
+        assert_refused(super::effective_uid());
+        assert_refused(super::verify_owner_only_dir(dir.path(), 0));
+        assert_refused(super::verify_owner_only_ancestors(
+            dir.path(),
+            dir.path(),
+            0,
+        ));
+        assert_refused(super::verify_owner_only_file(
+            &dir.path().join("f"),
+            0,
+            false,
+        ));
+        assert!(!super::paths_case_insensitive_by_default());
+        assert!(!super::has_macos_private_root_aliases());
     }
 }

@@ -662,12 +662,50 @@ fn extract_remote_host(url: &str, protocol: AllowedProtocol) -> Result<String, A
             validate_credential_host_dir(host)
         }
         AllowedProtocol::Ssh => {
+            if trimmed.contains('?') || trimmed.contains('#') {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "SSH remote URL must not contain query or fragment",
+                ));
+            }
             let host_part = if let Some(rest) = trimmed.strip_prefix("ssh://") {
                 let authority = rest.split('/').next().unwrap_or("");
-                let after_user = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-                split_https_host_port(after_user)?.0
+                if authority.matches('@').count() > 1 {
+                    return Err(ApiError::new(
+                        ErrorCode::InvalidRequest,
+                        "SSH remote URL has an ambiguous userinfo authority",
+                    ));
+                }
+                let after_user = match authority.split_once('@') {
+                    Some((user, host_port)) => {
+                        if user.is_empty() || user.contains(':') {
+                            return Err(ApiError::new(
+                                ErrorCode::InvalidRequest,
+                                "SSH remote URL has an invalid userinfo component",
+                            ));
+                        }
+                        host_port
+                    }
+                    None => authority,
+                };
+                let (host, port) = split_https_host_port(after_user)?;
+                if let Some(p) = port {
+                    if p.parse::<u16>().ok().filter(|n| *n > 0).is_none() {
+                        return Err(ApiError::new(
+                            ErrorCode::InvalidRequest,
+                            "SSH remote URL has an invalid port",
+                        ));
+                    }
+                }
+                host
             } else if let Some((user_host, _)) = trimmed.split_once(':') {
-                user_host.rsplit_once('@').map_or(user_host, |(_, h)| h)
+                if user_host.matches('@').count() > 1 {
+                    return Err(ApiError::new(
+                        ErrorCode::InvalidRequest,
+                        "SSH remote URL has an ambiguous userinfo authority",
+                    ));
+                }
+                user_host.split_once('@').map_or(user_host, |(_, h)| h)
             } else {
                 ""
             };
@@ -1062,16 +1100,18 @@ fn ensure_bare_cache_ready(
         }
         Err(GitError::RemoteUnavailable(detail)) if already_exists => {
             eprintln!(
-                "agentic-org-office: offline fetch fallback for cache {}: {detail}",
-                repo.id
+                "agentic-org-office: offline fetch fallback for cache {}: {}",
+                repo.id,
+                scrub_git_log_text(&detail)
             );
             Ok(())
         }
         Err(err) => {
             let sanitized = sanitized_git_reason(&err);
             eprintln!(
-                "agentic-org-office: cache fetch failed for {}: {err}",
-                repo.id
+                "agentic-org-office: cache fetch failed for {}: {}",
+                repo.id,
+                redact_git_error_for_log(&err)
             );
             state_guard.caches.insert(
                 repo.id.as_str().to_owned(),
@@ -1218,60 +1258,117 @@ fn sanitized_git_reason(err: &GitError) -> String {
     }
 }
 
+fn starts_with_ascii_ci(haystack: &str, needle: &str) -> bool {
+    haystack
+        .get(..needle.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(needle))
+}
+
+fn match_pem_block_len(rest: &str) -> Option<usize> {
+    if !starts_with_ascii_ci(rest, "-----begin ") {
+        return None;
+    }
+    let header_end = rest.find("-----").and_then(|_| rest[11..].find("-----"))?;
+    let label = &rest[11..11 + header_end];
+    if !label.to_ascii_lowercase().contains("private key") {
+        return None;
+    }
+    let lower = rest.to_ascii_lowercase();
+    if let Some(end_idx) = lower.find("-----end ") {
+        if let Some(close) = rest[end_idx + 9..].find("-----") {
+            return Some(end_idx + 9 + close + 5);
+        }
+    }
+    Some(rest.len())
+}
+
+fn match_url_userinfo_prefix(rest: &str) -> Option<(usize, usize)> {
+    let scheme_len = ["https://", "http://", "ssh://"]
+        .iter()
+        .find(|s| starts_with_ascii_ci(rest, s))
+        .map(|s| s.len())?;
+    let after_scheme = &rest[scheme_len..];
+    let token_end = after_scheme
+        .find(|c: char| c.is_whitespace() || matches!(c, '\'' | '"' | ')' | '>'))
+        .unwrap_or(after_scheme.len());
+    let authority = after_scheme[..token_end].split('/').next().unwrap_or("");
+    let at_pos = authority.rfind('@')?;
+    Some((scheme_len, scheme_len + at_pos + 1))
+}
+
+fn match_secret_span_len(rest: &str, prev_is_alnum: bool) -> Option<usize> {
+    const CI_PREFIXES: &[&str] = &[
+        "authorization:",
+        "proxy-authorization:",
+        "bearer ",
+        "basic ",
+        "x-access-token:",
+        "github_token=",
+        "gh_token=",
+        "git_ssh_command=",
+        "access_token=",
+        "refresh_token=",
+        "private_key=",
+        "api_key=",
+        "apikey=",
+        "password=",
+        "passwd=",
+        "token=",
+        "secret=",
+        "ghp_",
+        "gho_",
+        "ghu_",
+        "ghs_",
+        "ghr_",
+        "github_pat_",
+        "glpat-",
+        "sk-ant-",
+        "sk-proj-",
+    ];
+    let prefix_len = CI_PREFIXES
+        .iter()
+        .find(|p| starts_with_ascii_ci(rest, p))
+        .map(|p| p.len())
+        .or_else(|| (!prev_is_alnum && starts_with_ascii_ci(rest, "sk-")).then_some(3))?;
+    let tail = &rest[prefix_len..];
+    let is_header = starts_with_ascii_ci(rest, "authorization:")
+        || starts_with_ascii_ci(rest, "proxy-authorization:");
+    let end = if is_header {
+        tail.find(['\n', '\r'])
+            .map_or(rest.len(), |i| prefix_len + i)
+    } else {
+        tail.find(|c: char| {
+            c.is_whitespace() || matches!(c, '\'' | '"' | '&' | ';' | ',' | '\n' | '\r' | ')')
+        })
+        .map_or(rest.len(), |i| prefix_len + i)
+    };
+    Some(end)
+}
+
 fn scrub_git_log_text(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len().min(512));
     let mut rest = raw;
+    let mut prev_is_alnum = false;
     while !rest.is_empty() && out.len() < 512 {
-        // Redact embedded URL credentials: `https://user:secret@host` -> `https://<redacted>@host`.
-        if let Some(scheme_len) = ["https://", "http://", "ssh://"]
-            .iter()
-            .find(|s| rest.starts_with(*s))
-            .map(|s| s.len())
-        {
-            let after_scheme = &rest[scheme_len..];
-            let token_end = after_scheme
-                .find(|c: char| c.is_whitespace() || matches!(c, '\'' | '"' | ')' | '>'))
-                .unwrap_or(after_scheme.len());
-            let authority_and_path = &after_scheme[..token_end];
-            let authority = authority_and_path.split('/').next().unwrap_or("");
-            if let Some(at_pos) = authority.rfind('@') {
-                out.push_str(&rest[..scheme_len]);
-                out.push_str("<redacted>@");
-                out.push_str(&authority_and_path[at_pos + 1..]);
-                rest = &after_scheme[token_end..];
-                continue;
-            }
+        if let Some(pem_len) = match_pem_block_len(rest) {
+            out.push_str("<redacted-private-key>");
+            rest = &rest[pem_len..];
+            prev_is_alnum = false;
+            continue;
         }
-        // Redact common bearer/basic/PAT/key prefixes & `password=`/`token=`/`secret=` tokens.
-        if let Some(prefix_len) = [
-            "ghp_",
-            "gho_",
-            "ghu_",
-            "ghs_",
-            "ghr_",
-            "github_pat_",
-            "glpat-",
-            "sk-",
-            "x-access-token:",
-            "password=",
-            "token=",
-            "secret=",
-            "Authorization: Bearer ",
-            "Authorization: Basic ",
-            "authorization: bearer ",
-            "authorization: basic ",
-        ]
-        .iter()
-        .find(|p| rest.starts_with(*p))
-        .map(|p| p.len())
-        {
-            let end = rest[prefix_len..]
-                .find(|c: char| {
-                    c.is_whitespace() || matches!(c, '\'' | '"' | '&' | ';' | ',' | '\n' | '\r')
-                })
-                .map_or(rest.len(), |i| prefix_len + i);
+        if let Some((scheme_len, after_at)) = match_url_userinfo_prefix(rest) {
+            // Scrub `userinfo@` only, leaving the host/path/query to continue through the loop
+            // so query secrets like `?token=SECRET` are scrubbed too.
+            out.push_str(&rest[..scheme_len]);
+            out.push_str("<redacted>@");
+            rest = &rest[after_at..];
+            prev_is_alnum = false;
+            continue;
+        }
+        if let Some(span_len) = match_secret_span_len(rest, prev_is_alnum) {
             out.push_str("<redacted>");
-            rest = &rest[end..];
+            rest = &rest[span_len..];
+            prev_is_alnum = false;
             continue;
         }
         let ch = rest.chars().next().unwrap_or(' ');
@@ -1280,10 +1377,15 @@ fn scrub_git_log_text(raw: &str) -> String {
         } else {
             ch
         });
+        prev_is_alnum = ch.is_ascii_alphanumeric();
         rest = &rest[ch.len_utf8()..];
     }
-    if out.len() >= 512 {
-        out.truncate(512);
+    if out.len() > 512 || !rest.is_empty() {
+        let mut cut = out.len().min(512);
+        while cut > 0 && !out.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.truncate(cut);
         out.push_str("...[truncated]");
     }
     out
@@ -1980,19 +2082,54 @@ mod tests {
             resolve_office_git_credential(&office, url, AllowedProtocol::Https).is_err(),
             "symlink host dir must fail closed"
         );
+    }
 
-        // TASK-168 AC #3: git stderr redaction scrubs embedded URL creds, PATs, and auth headers.
+    #[test]
+    fn git_stderr_redaction_and_strict_ssh_host_validation() {
+        // TASK-168 AC #3: git stderr redaction scrubs embedded URL creds, query secrets, PATs,
+        // PEM private keys, case-insensitive headers/env dumps, preserves `task-123`, and never
+        // panics on multi-byte UTF-8 straddling byte 512.
         let leaked = GitError::CommandFailed {
             status: 128,
-            stderr: "fatal: could not read from https://x-access-token:ghp_SUPERSECRET123@github.com/org/repo.git Authorization: Bearer sk-secret-tok token=abc999".into(),
+            stderr: "fatal on task-123: HTTPS://x-access-token:ghp_SUPERSECRET123@github.com/org/repo.git?token=QSECRET99 Proxy-Authorization: Basic BASE64SECRET\nGITHUB_TOKEN=gh_env_secret -----BEGIN OPENSSH PRIVATE KEY-----\nAAAASECRETKEYBYTES\n-----END OPENSSH PRIVATE KEY-----".into(),
         };
         let redacted = redact_git_error_for_log(&leaked);
-        assert!(!redacted.contains("ghp_SUPERSECRET123"), "{redacted}");
-        assert!(!redacted.contains("sk-secret-tok"), "{redacted}");
-        assert!(!redacted.contains("abc999"), "{redacted}");
+        for secret in [
+            "ghp_SUPERSECRET123",
+            "QSECRET99",
+            "BASE64SECRET",
+            "gh_env_secret",
+            "AAAASECRETKEYBYTES",
+        ] {
+            assert!(
+                !redacted.contains(secret),
+                "leaked `{secret}` in: {redacted}"
+            );
+        }
         assert!(
-            redacted.contains("https://<redacted>@github.com/org/repo.git"),
+            redacted.contains("task-123"),
+            "benign task-123 corrupted: {redacted}"
+        );
+        assert!(
+            redacted.contains("HTTPS://<redacted>@github.com/org/repo.git?"),
             "{redacted}"
         );
+        let utf8_boundary = format!("{}ééé", "a".repeat(511));
+        let truncated = scrub_git_log_text(&utf8_boundary);
+        assert!(truncated.ends_with("...[truncated]"), "{truncated}");
+
+        // Strict SSH authority validation rejects ambiguous `@`, userinfo `:`, query, bad port.
+        for bad_ssh in [
+            "ssh://git@evil.com:22@github.com/org/repo.git",
+            "ssh://git@github.com:evil.com/org/repo.git",
+            "ssh://git:pw@github.com/org/repo.git",
+            "ssh://git@github.com:0/org/repo.git",
+            "ssh://git@github.com/org/repo.git?token=1",
+        ] {
+            assert!(
+                extract_remote_host(bad_ssh, AllowedProtocol::Ssh).is_err(),
+                "expected invalid SSH remote host for `{bad_ssh}`"
+            );
+        }
     }
 }

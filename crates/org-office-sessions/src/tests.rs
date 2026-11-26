@@ -4872,7 +4872,7 @@ fn task126_org_topology_invalidates_warm_digest_and_expiring_oauth_triggers_stal
         Arc::clone(&office),
         SessionManagerConfig::production(office.durable_root().join("sock")),
     );
-    let hooks = mgr.build_pump_hooks(&emp_a, "digest".into(), Some(1));
+    let hooks = mgr.build_pump_hooks(&emp_a, "digest".into(), Some(1), None);
     let acquire = hooks.on_permit_acquire.expect("permit acquire hook");
     let err = acquire("conn-1", None).expect_err("expiring OAuth must fail warm permit acquire");
     assert!(
@@ -5657,7 +5657,11 @@ fn task166_bwrap_deny_dirs_fail_closed_and_precreate_unstarted_siblings_and_git_
         .join(&office_id);
     // Register an unstarted sibling agent dir name by hiring or placing an employee dir check:
     // also verify all existing employees (like HR Lead) are pre-created as `0700` dirs.
-    let sibling_ids = mgr.ensure_bwrap_deny_dirs(&me).unwrap();
+    let sibling_ids = crate::bwrap_isolation::ensure_bwrap_deny_dirs(&mgr, &me).unwrap();
+    assert!(
+        !sibling_ids.is_empty(),
+        "default test office must have at least one sibling employee (e.g. HR Lead)"
+    );
     for other in &sibling_ids {
         let agent_dir = office_local.join("agents").join(other);
         assert!(
@@ -5678,6 +5682,62 @@ fn task166_bwrap_deny_dirs_fail_closed_and_precreate_unstarted_siblings_and_git_
     }
     assert!(office.durable_root().join("authority").is_dir());
     assert!(office.folder().join("git-credentials").is_dir());
+    // Cross-team sibling directories along the team hierarchy are pre-created (`TASK-166`).
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+    let child_team_a = new_uuid_v7();
+    let child_team_b = new_uuid_v7();
+    for (tid, name) in [(&child_team_a, "Team A"), (&child_team_b, "Team B")] {
+        office
+            .submit_org(
+                &me,
+                org_office::rules::OrgCommand::TeamCreate(org_proto::org::TeamCreateParams {
+                    command_id: new_uuid_v7(),
+                    team_id: tid.clone(),
+                    name: name.into(),
+                    owner_team_id: Some(root_team_id.clone()),
+                }),
+            )
+            .unwrap()
+            .unwrap();
+    }
+    let (emp_a, _) = hire_agent_with_runtime(
+        &office,
+        &me,
+        &child_team_a,
+        "anthropic",
+        "claude",
+        "team-a-eng",
+        "claude-sonnet-4-6",
+    );
+    crate::bwrap_isolation::ensure_bwrap_deny_dirs(&mgr, &emp_a).unwrap();
+    let office_rt = office.runtime_root().join(&office_id);
+    assert!(
+        office_rt
+            .join("teams")
+            .join(&root_team_id)
+            .join("teams")
+            .join(&child_team_b)
+            .is_dir(),
+        "sibling team dir must be pre-created for bwrap masking"
+    );
+    assert!(
+        office_rt
+            .join("teams")
+            .join(&root_team_id)
+            .join("agents")
+            .is_dir(),
+        "ancestor team agents dir must be pre-created for bwrap masking"
+    );
+    assert!(
+        office_rt
+            .join("teams")
+            .join(&root_team_id)
+            .join("teams")
+            .join(&child_team_a)
+            .join("teams")
+            .is_dir(),
+        "leaf child subteam dir must be pre-created for bwrap masking"
+    );
     let denies = mgr.denied_office_globs_for(Some(&me));
     let git_creds_canon = office
         .folder()
@@ -5695,7 +5755,7 @@ fn task166_bwrap_deny_dirs_fail_closed_and_precreate_unstarted_siblings_and_git_
     // MUST return `Err` instead of silently swallowing it with `let _ = ...`.
     let tampered = office_local.join("agents").join(unstarted_sibling);
     std::fs::write(&tampered, b"not-a-dir").unwrap();
-    let err = mgr.ensure_bwrap_deny_dirs(&me).unwrap_err();
+    let err = crate::bwrap_isolation::ensure_bwrap_deny_dirs(&mgr, &me).unwrap_err();
     assert_eq!(err.code, org_proto::ErrorCode::StorageError);
 }
 
@@ -5788,20 +5848,33 @@ fn task166_enforce_bwrap_sibling_isolation_blocks_working_and_stops_idle_for_pos
         .live
         .insert(emp_a.into(), handle_a);
 
-    mgr.enforce_bwrap_sibling_isolation(emp_b).unwrap();
+    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_b).unwrap();
     assert!(!stopped_a.load(Ordering::SeqCst));
 
-    let conflict = mgr.enforce_bwrap_sibling_isolation(emp_c).unwrap_err();
+    let conflict =
+        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
     assert_eq!(conflict.code, org_proto::ErrorCode::Conflict);
     assert!(!stopped_a.load(Ordering::SeqCst));
 
-    // 2. Once `emp_a` becomes `Idle`, starting post-launch sibling `emp_c` MUST stop & reap
-    // `emp_a`'s stale bwrap session before `emp_c` launches.
+    // 2. While another sibling is concurrently in `reg.starting`, fail closed with `Conflict`.
+    {
+        mgr.registry.lock().unwrap().starting.insert(emp_a.into());
+    }
+    let starting_conflict =
+        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    assert_eq!(starting_conflict.code, org_proto::ErrorCode::Conflict);
+    {
+        mgr.registry.lock().unwrap().starting.remove(emp_a);
+    }
+
+    // 3. Once `emp_a` becomes `Idle`, starting post-launch sibling `emp_c` MUST stop & reap
+    // `emp_a`'s stale bwrap session, revoke its binding, release `reg.starting`, and record state.
     {
         let reg = mgr.registry.lock().unwrap();
         reg.live[emp_a].state.lock().unwrap().state = SessionState::Idle;
     }
-    mgr.enforce_bwrap_sibling_isolation(emp_c).unwrap();
+    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
     assert!(stopped_a.load(Ordering::SeqCst));
     assert!(!mgr.registry.lock().unwrap().live.contains_key(emp_a));
+    assert!(!mgr.registry.lock().unwrap().starting.contains(emp_a));
 }

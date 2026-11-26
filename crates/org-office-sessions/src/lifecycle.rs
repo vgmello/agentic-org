@@ -541,6 +541,7 @@ impl SessionManager {
         employee_id: &str,
         route_digest: String,
         oauth_expires_at_ms: Option<u64>,
+        bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
     ) -> PumpHooks {
         let open_asks_check = Arc::clone(&self.open_required_asks);
         let has_open: OpenRequiredAsksHook = Arc::new(move |emp_id: &str| {
@@ -633,6 +634,17 @@ impl SessionManager {
             }
         });
 
+        let is_bwrap_topology_stale: Option<crate::pump::BwrapTopologyStaleHook> =
+            bwrap_masked_siblings.map(|masked| {
+                let office = Arc::clone(&self.office);
+                let emp = employee_id.to_owned();
+                Arc::new(move || {
+                    crate::bwrap_isolation::has_unmasked_bwrap_sibling_in_office(
+                        &office, &emp, &masked,
+                    )
+                }) as crate::pump::BwrapTopologyStaleHook
+            });
+
         PumpHooks {
             has_open_required_asks: Some(has_open),
             on_turn_ended: Some(on_turn_ended),
@@ -646,6 +658,7 @@ impl SessionManager {
             on_failover: Some(on_failover),
             stage_mid_turn_wakes: Some(stage_mid_turn_wakes),
             on_mid_turn_delivered: Some(on_mid_turn_delivered),
+            is_bwrap_topology_stale,
         }
     }
 
@@ -1917,15 +1930,34 @@ fn try_send_wake_on_live_handle(
                 handle.route_digest.clone(),
                 handle.oauth_expires_at_ms,
                 Arc::clone(&handle.active_permit),
+                handle.bwrap_masked_siblings.clone(),
             )
         })
     };
-    let Some((run_id, tx, conn_id, route_digest, oauth_expires_at_ms, active_permit)) = handle_info
+    let Some((
+        run_id,
+        tx,
+        conn_id,
+        route_digest,
+        oauth_expires_at_ms,
+        active_permit,
+        bwrap_masked_siblings,
+    )) = handle_info
     else {
         return Ok(false);
     };
     if crate::host_auth::is_oauth_expiring(oauth_expires_at_ms, now_ms()) {
         recycle_stale_warm_handle(employee_id, &run_id, "oauth_token_expiring", ctx);
+        return Ok(false);
+    }
+    if bwrap_masked_siblings.as_ref().is_some_and(|masked| {
+        crate::bwrap_isolation::has_unmasked_bwrap_sibling_in_office(
+            &ctx.office,
+            employee_id,
+            masked,
+        )
+    }) {
+        recycle_stale_warm_handle(employee_id, &run_id, "bwrap_sibling_topology_changed", ctx);
         return Ok(false);
     }
     if conn_id.is_none()
