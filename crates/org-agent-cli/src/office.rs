@@ -14,7 +14,8 @@ use org_proto::msg::{MsgBind, MsgBindParams};
 use org_proto::ErrorCode;
 use serde_json::Value;
 
-use crate::dispatch::{self, hint_for, OfficeTransport};
+use crate::dispatch;
+use crate::transport::{hint_for, OfficeTransport};
 
 /// Environment variable naming the office socket path (`doc-28` §2.8).
 pub const SOCKET_ENV: &str = "AGENT_OS_SOCKET";

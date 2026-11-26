@@ -16,12 +16,12 @@ use org_sync_proto::{FrameCodecError, FrameReader, OfficeId, OrgId, SyncFrame};
 use rustls::{ServerConnection, StreamOwned};
 
 use super::hq_dispatch::dispatch_hq_frame;
-use super::hq_peer::{
+use super::relay::sync_native_message_relays;
+use super::{now_ms, InboundCallbacks};
+use crate::federation_link::hq_peer::{
     check_not_revoked_fail_closed, push_hq_org_events_if_behind, read_hq_frame_nonblocking,
     send_hq_org_events_after, write_sync_frame_if_peer_active, HqSessionPeer,
 };
-use super::relay::sync_native_message_relays;
-use super::{now_ms, InboundCallbacks};
 
 fn flush_durable_relays_to_satellite(
     tls: &mut StreamOwned<ServerConnection, TcpStream>,

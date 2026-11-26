@@ -14,8 +14,8 @@ use org_sync_proto::{
 };
 use rustls::{ServerConnection, StreamOwned};
 
-use super::hq_peer::{write_sync_frame_if_peer_active, HqSessionPeer};
 use super::{deterministic_uuid_v7, SnapshotFileBatch};
+use crate::federation_link::hq_peer::{write_sync_frame_if_peer_active, HqSessionPeer};
 
 pub(super) struct WorkChangeInput {
     pub(super) org_id: String,

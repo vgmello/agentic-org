@@ -24,7 +24,10 @@ struct Cleared {
 
 pub(super) fn run(_args: ClearArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let path = crate::selection::context_path()?;
-    let saved = cli_context::load_from(&path).ok().flatten().is_some() || path.exists();
+    // Anything at the context's name counts, a symbolic link too (dangling or not): loading
+    // refuses it, and clearing removes the entry itself, never what it points at.
+    let saved = cli_context::load_from(&path).ok().flatten().is_some()
+        || std::fs::symlink_metadata(&path).is_ok();
     if ctx.modes().dry_run {
         let summary = if saved {
             "would clear the saved CLI context"

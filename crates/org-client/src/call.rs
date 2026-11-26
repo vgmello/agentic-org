@@ -1,10 +1,16 @@
 //! Calls: sending a request and waiting for its answer within the call's timeout.
 
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{mpsc, Arc};
+use std::time::{Duration, Instant};
 
-use org_proto::{Call, CallError, Request};
+use org_proto::{Call, CallError, Request, Response};
 
-use super::*;
+use super::error::ClientError;
+use super::{
+    default_timeout, lock, Client, Outgoing, ABANDONED, MAX_REQUEST_ID, QUEUED, WRITE_GRACE,
+    WRITING,
+};
 use crate::transport::{await_response, encode_request, enqueue_request, finish_outcome};
 
 /// Per-response metadata carried alongside an RPC result (`TASK-115` / `doc-101`).

@@ -23,11 +23,9 @@ mod sessions;
 mod shared;
 mod wire;
 
-use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::follow::{OrgFeed, Timing};
+use crate::follow::OrgFeed;
 use crate::live::LiveEvents;
 use org_mailbox::{Mailbox, MemberDirectory};
 use org_office::rules::OrgCommand;
@@ -37,11 +35,10 @@ use org_proto::projects::{
     ProjectInspectParams, ProjectListParams, ProjectListResult, ProjectRecord,
 };
 use org_proto::work::WorkAccepted;
-use org_proto::{frame, ApiError, ErrorCode, Hello, HelloResult, OrgSnapshot, Request, Response};
+use org_proto::{ApiError, OrgSnapshot, Request, Response};
 use org_work::{Caller, WorkCall};
 
 use self::dispatch::answer;
-use self::wire::{internal, send};
 
 pub use self::listener::{bind, run};
 pub use self::shared::Shared;

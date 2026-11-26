@@ -19,9 +19,9 @@ use org_proto::{
     Response,
 };
 
-use super::cli_error::{office_refused, refused_by, HostCliError};
 use super::cli_session::{connect_cli_session, end_session, AskPassword, Target};
 use super::wire::registered;
+use crate::cli_error::{office_refused, refused_by, HostCliError};
 use crate::human::Wire;
 
 /// Help text for `agentic-org project`.

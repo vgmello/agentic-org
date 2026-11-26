@@ -23,7 +23,7 @@ fn task166_bwrap_deny_dirs_fail_closed_and_precreate_unstarted_siblings_and_git_
         .join(&office_id);
     // Register an unstarted sibling agent dir name by hiring or placing an employee dir check:
     // also verify all existing employees (like HR Lead) are pre-created as `0700` dirs.
-    let sibling_ids = crate::bwrap_isolation::ensure_bwrap_deny_dirs(&mgr, &me).unwrap();
+    let sibling_ids = crate::manager::ensure_bwrap_deny_dirs(&mgr, &me).unwrap();
     assert!(
         !sibling_ids.is_empty(),
         "default test office must have at least one sibling employee (e.g. HR Lead)"
@@ -75,7 +75,7 @@ fn task166_bwrap_deny_dirs_fail_closed_and_precreate_unstarted_siblings_and_git_
         "team-a-eng",
         "claude-sonnet-4-6",
     );
-    crate::bwrap_isolation::ensure_bwrap_deny_dirs(&mgr, &emp_a).unwrap();
+    crate::manager::ensure_bwrap_deny_dirs(&mgr, &emp_a).unwrap();
     let office_rt = office.runtime_root().join(&office_id);
     assert!(
         office_rt
@@ -121,7 +121,7 @@ fn task166_bwrap_deny_dirs_fail_closed_and_precreate_unstarted_siblings_and_git_
     // MUST return `Err` instead of silently swallowing it with `let _ = ...`.
     let tampered = office_local.join("agents").join(unstarted_sibling);
     std::fs::write(&tampered, b"not-a-dir").unwrap();
-    let err = crate::bwrap_isolation::ensure_bwrap_deny_dirs(&mgr, &me).unwrap_err();
+    let err = crate::manager::ensure_bwrap_deny_dirs(&mgr, &me).unwrap_err();
     assert_eq!(err.code, org_proto::ErrorCode::StorageError);
 }
 
@@ -155,11 +155,10 @@ fn task166_enforce_bwrap_sibling_isolation_blocks_working_and_stops_idle_for_pos
         .live
         .insert(emp_a.into(), handle_a);
 
-    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_b).unwrap();
+    crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_b).unwrap();
     assert!(!stopped_a.load(Ordering::SeqCst));
 
-    let conflict =
-        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    let conflict = crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
     assert_eq!(conflict.code, org_proto::ErrorCode::Conflict);
     assert!(!stopped_a.load(Ordering::SeqCst));
 
@@ -168,7 +167,7 @@ fn task166_enforce_bwrap_sibling_isolation_blocks_working_and_stops_idle_for_pos
         mgr.registry.lock().unwrap().starting.insert(emp_a.into());
     }
     let starting_conflict =
-        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+        crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
     assert_eq!(starting_conflict.code, org_proto::ErrorCode::Conflict);
     {
         mgr.registry.lock().unwrap().starting.remove(emp_a);
@@ -180,7 +179,7 @@ fn task166_enforce_bwrap_sibling_isolation_blocks_working_and_stops_idle_for_pos
         let reg = mgr.registry.lock().unwrap();
         reg.live[emp_a].state.lock().unwrap().state = SessionState::Idle;
     }
-    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
+    crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
     assert!(stopped_a.load(Ordering::SeqCst));
     assert!(!mgr.registry.lock().unwrap().live.contains_key(emp_a));
     assert!(!mgr.registry.lock().unwrap().starting.contains(emp_a));
@@ -217,8 +216,7 @@ fn task166_panicking_bwrap_reap_persists_without_existing_file_and_blocks_stop_a
         .live
         .insert(hr_agent_id.clone(), panic_handle);
 
-    let reap_err =
-        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    let reap_err = crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
     assert_eq!(reap_err.code, org_proto::ErrorCode::Conflict);
     assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
     assert!(
@@ -251,12 +249,11 @@ fn task166_panicking_bwrap_reap_persists_without_existing_file_and_blocks_stop_a
     assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
 
     // Retry on `emp_c` must STILL fail closed until owner clears recovery on `hr_agent_id`.
-    let retry_err =
-        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    let retry_err = crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
     assert_eq!(retry_err.code, org_proto::ErrorCode::Conflict);
     mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap();
     assert!(!mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
-    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
+    crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
 }
 
 #[test]
@@ -320,7 +317,7 @@ fn task166_start_and_recycle_fail_closed_on_panicking_stale_bwrap_and_stop_all_d
             .unwrap()
             .recovery_required
     );
-    let sib_err = crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    let sib_err = crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
     assert_eq!(sib_err.code, org_proto::ErrorCode::Conflict);
     mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap();
 
@@ -337,7 +334,7 @@ fn task166_start_and_recycle_fail_closed_on_panicking_stale_bwrap_and_stop_all_d
     assert_eq!(stop_err.code, org_proto::ErrorCode::Conflict);
     assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
     assert!(
-        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).is_err(),
+        crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_c).is_err(),
         "sibling isolation must remain blocked after failed stop_session reap"
     );
 
@@ -440,10 +437,10 @@ fn task166_recycle_stale_warm_handle_fails_closed_and_updates_existing_active_tu
     assert_eq!(persisted.run_id, "run-existing");
     assert_eq!(persisted.mark, "m-existing");
 
-    let sib_err = crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    let sib_err = crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
     assert_eq!(sib_err.code, org_proto::ErrorCode::Conflict);
     mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap();
-    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
+    crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
 }
 
 #[test]
@@ -524,7 +521,7 @@ fn task166_clear_stall_lock_rejects_starting_and_fails_closed_on_panicking_pump(
             .unwrap()
             .recovery_required
     );
-    let sib_err = crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    let sib_err = crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
     assert_eq!(sib_err.code, org_proto::ErrorCode::Conflict);
 
     // Second `clear_stall_lock` (now that `thread` is `None`) clears recovery cleanly.
@@ -537,7 +534,7 @@ fn task166_clear_stall_lock_rejects_starting_and_fails_closed_on_panicking_pump(
             .unwrap()
             .recovery_required
     );
-    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
+    crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
 }
 
 #[test]
@@ -600,11 +597,11 @@ fn task166_unrecovered_pre_pump_abort_persists_and_blocks_sibling_isolation() {
         org_proto::ErrorCode::Conflict
     );
     assert_eq!(
-        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c)
+        crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_c)
             .unwrap_err()
             .code,
         org_proto::ErrorCode::Conflict
     );
     mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap();
-    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
+    crate::manager::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
 }

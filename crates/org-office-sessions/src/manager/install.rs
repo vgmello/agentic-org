@@ -10,13 +10,20 @@ use org_proto::{ApiError, ErrorCode};
 use crate::credentials::rfc3339_now;
 use crate::pump::{run_pump, PumpCommand, PumpContext, SessionRuntimeState};
 
+use super::reap::{reap_live_handle, ReapMode};
+use super::registry_guards::STOPPED_WHILE_STARTING;
 use super::spec::build_initial_runtime_state;
-use super::{is_admissions_closed, LiveSessionHandle, PreparedSessionLaunch, SessionManager};
+use super::{
+    is_admissions_closed, LiveSessionHandle, PreparedSessionLaunch, SessionManager, StartSlotGuard,
+};
 
 impl SessionManager {
+    /// Installs a spawned session. Takes the start slot so registering the handle and
+    /// releasing the slot happen in one `registry` critical section (`TASK-190`).
     pub(super) fn install_live_session(
         &self,
         prepared: PreparedSessionLaunch,
+        slot: StartSlotGuard<'_>,
     ) -> Result<SessionView, ApiError> {
         let runtime_state = Arc::new(Mutex::new(build_initial_runtime_state(
             self.office.info().office_id.clone(),
@@ -38,6 +45,7 @@ impl SessionManager {
             permit,
             task_ref,
             tried_connections,
+            start_stop_epoch,
             binding_file,
             objective,
             spawned,
@@ -46,11 +54,6 @@ impl SessionManager {
             ..
         } = prepared;
         let active_permit = Arc::new(Mutex::new(permit));
-        let stop_epoch = self
-            .registry
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .stop_epoch(&emp_id);
         let (tx, rx) = mpsc::channel();
         let hooks = self.build_pump_hooks(
             &emp_id,
@@ -78,7 +81,9 @@ impl SessionManager {
             cleanup_paths: lifecycle.cleanup_after_exit,
             binding_file,
             hooks,
-            stop_epoch,
+            // The epoch at slot reservation: a stop accepted or refused since then abandons any
+            // failover of this run (`TASK-190`).
+            stop_epoch: start_stop_epoch,
         };
         let pre_pump_meta = PrePumpHandleMeta {
             tx: tx.clone(),
@@ -114,6 +119,8 @@ impl SessionManager {
         register_live_session_or_abort(
             self,
             emp_id,
+            start_stop_epoch,
+            slot,
             LiveSessionHandle {
                 state: runtime_state,
                 tx,
@@ -158,7 +165,7 @@ pub(super) fn ensure_pre_pump_isolation(
     pump_ctx: PumpContext,
     meta: PrePumpHandleMeta,
 ) -> Result<VerifiedPrePump, ApiError> {
-    let bwrap_pre_raced = crate::bwrap_isolation::verify_bwrap_masked_before_spawn(
+    let bwrap_pre_raced = super::bwrap_isolation::verify_bwrap_masked_before_spawn(
         mgr,
         emp_id,
         meta.bwrap_masked_siblings.as_ref(),
@@ -373,13 +380,20 @@ fn record_aborted_view(mgr: &SessionManager, emp_id: &str, view: SessionView) {
         .insert(emp_id.to_owned(), view);
 }
 
+/// Registers a started handle, or tears it down when admissions closed, a `bwrap` sibling
+/// raced in unmasked, or an explicit stop (pause, offboard, owner stop) was accepted or
+/// refused since the start slot was reserved (`stop_epoch` moved, `TASK-190`). The epoch check,
+/// the insert and the slot release are one `registry` critical section, so a stop either sees
+/// the live handle or makes this registration abort; on abort the slot is held through the reap.
 pub(super) fn register_live_session_or_abort(
     mgr: &SessionManager,
     emp_id: String,
+    start_stop_epoch: u64,
+    slot: StartSlotGuard<'_>,
     mut handle: LiveSessionHandle,
 ) -> Result<(), ApiError> {
     let disk_unmasked = handle.bwrap_masked_siblings.as_ref().is_some_and(|masked| {
-        crate::bwrap_isolation::has_unmasked_bwrap_sibling_in_office(&mgr.office, &emp_id, masked)
+        super::bwrap_isolation::has_unmasked_bwrap_sibling_in_office(&mgr.office, &emp_id, masked)
     });
     let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
     let bwrap_raced_unmasked = disk_unmasked
@@ -389,25 +403,32 @@ pub(super) fn register_live_session_or_abort(
                 .chain(reg.starting.iter())
                 .any(|other| other != &emp_id && !masked.contains(other))
         });
-    if reg.draining || reg.shutting_down || bwrap_raced_unmasked {
+    let stopped_mid_start = reg.stop_epoch(&emp_id) != start_stop_epoch;
+    if reg.draining || reg.shutting_down || bwrap_raced_unmasked || stopped_mid_start {
         let shutting_down = reg.draining || reg.shutting_down;
         drop(reg);
-        if bwrap_raced_unmasked && !shutting_down {
-            let _ = crate::bwrap_isolation::reap_live_handle(
+        if (bwrap_raced_unmasked || stopped_mid_start) && !shutting_down {
+            let (reason, refusal) = if stopped_mid_start {
+                ("explicit_stop_during_start", STOPPED_WHILE_STARTING)
+            } else {
+                (
+                    "bwrap_sibling_race_abort",
+                    "a newly started sibling agent was not masked in this sandbox; retry launch",
+                )
+            };
+            reap_live_handle(
                 mgr,
                 &emp_id,
                 handle,
-                Some("bwrap_sibling_race_abort"),
-                crate::bwrap_isolation::ReapMode::FailClosedRestore {
+                Some(reason),
+                ReapMode::FailClosedRestore {
                     conflict_message: format!(
-                        "could not verify teardown of raced sandboxed session `{emp_id}`; resolve recovery first"
+                        "could not verify teardown of aborted session `{emp_id}`; resolve recovery first"
                     ),
                 },
             )?;
-            return Err(ApiError::new(
-                ErrorCode::Conflict,
-                "a newly started sibling agent was not masked in this sandbox; retry launch",
-            ));
+            drop(slot);
+            return Err(ApiError::new(ErrorCode::Conflict, refusal));
         }
         if let Some(thread) = handle.thread.take() {
             let _ = abort_post_spawn_shutdown(
@@ -425,6 +446,7 @@ pub(super) fn register_live_session_or_abort(
         ));
     }
     reg.live.insert(emp_id, handle);
+    slot.release_locked(&mut reg);
     Ok(())
 }
 

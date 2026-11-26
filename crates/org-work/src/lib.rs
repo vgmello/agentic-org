@@ -56,7 +56,7 @@
 //! `org-proto` (the vocabulary), `serde`, `serde_json` and `sha2` (the params hash). The
 //! `testkit` feature adds in-memory implementations of every port.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 mod aspects;
 mod bugs;
@@ -64,6 +64,7 @@ mod call;
 mod cascades;
 mod checklist;
 mod common;
+mod decision;
 mod engine;
 mod fail;
 mod feed;
@@ -93,8 +94,7 @@ pub mod testkit;
 pub use call::{Caller, WorkCall};
 pub use cascades::reconcile_bugs;
 pub use engine::{
-    execute, lookup_existing, TxnOutput, CHANGE_ID_MAX_AGE_MS, CHANGE_ID_MAX_AHEAD_MS,
-    CHANGE_RESULT_KEEP_MS,
+    execute, lookup_existing, CHANGE_ID_MAX_AGE_MS, CHANGE_ID_MAX_AHEAD_MS, CHANGE_RESULT_KEEP_MS,
 };
 pub use hash::{canonical_json, params_hash};
 pub use history_coverage::{
@@ -109,7 +109,7 @@ pub use model::{
     StoredResult, StoredStep, TaskFields,
 };
 pub use ports::{
-    Clock, LatestActivity, NumberScope, OrgView, StoreError, TxnFn, WorkActivityEntry,
+    Clock, LatestActivity, NumberScope, OrgView, StoreError, TxnFn, TxnOutput, WorkActivityEntry,
     WorkActivityError, WorkActivityPage, WorkActivityPosition, WorkActivityQuery,
     WorkActivityReads, WorkReads, WorkStore, WorkTxn,
 };

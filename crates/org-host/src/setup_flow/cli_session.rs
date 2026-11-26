@@ -20,8 +20,8 @@ use org_proto::ErrorCode;
 use crate::human::Wire;
 
 use super::admin_reset::not_running;
-use super::cli_error::{refused_by, sign_in_refused, HostCliError};
 use super::wire::connect_verified;
+use crate::cli_error::{refused_by, sign_in_refused, HostCliError};
 
 /// What office commands need from the person: their password, asked once after the host is verified.
 pub(crate) type AskPassword<'a> = &'a mut dyn FnMut() -> Result<Password, String>;

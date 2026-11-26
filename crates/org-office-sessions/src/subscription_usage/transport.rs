@@ -1,7 +1,24 @@
 //! The system HTTPS usage transport: isolated `curl` with pinned DNS resolution, bounded
 //! output, and shared DNS-lookup and scheduling budgets.
 
-use super::*;
+use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::net::{IpAddr, ToSocketAddrs};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{mpsc, Mutex, OnceLock};
+use std::time::Instant;
+
+use zeroize::Zeroizing;
+
+use super::endpoint::{
+    is_disallowed_ip, is_safe_curl_header_value, is_safe_curl_url_chars, is_safe_header_name,
+    validate_usage_endpoint_url, ValidatedEndpoint,
+};
+use super::{
+    HttpUsageResponse, SubscriptionUsageTransport, UsageTransportError, MAX_CONCURRENT_DNS_LOOKUPS,
+    MAX_DNS_TIMEOUT, MAX_USAGE_RESPONSE_BYTES,
+};
 
 pub(super) static ACTIVE_DNS_LOOKUPS: AtomicUsize = AtomicUsize::new(0);
 

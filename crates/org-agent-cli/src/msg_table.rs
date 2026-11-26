@@ -1,7 +1,6 @@
 //! `org-command` table rows for B6 messaging, channels, and status lines (`doc-28` §3.3, `TASK-45`).
 
-use org_command::{Ack, Command, Example, Field, IfMatch, Kind, Type};
-use org_proto::ErrorCode;
+use org_command::{Ack, Command, Example, IfMatch, Kind};
 
 mod schema;
 

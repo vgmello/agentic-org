@@ -243,6 +243,7 @@ pub(crate) fn start_optional_satellite_sync(
         delivery_notifier,
         feed_wake,
         sessions: sessions_for_recovery,
+        drain_inbound: federation::drain_satellite_inbound_persistent,
     };
     std::thread::Builder::new()
         .name("sat-federation-sync".into())

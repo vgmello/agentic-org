@@ -151,7 +151,7 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::dispatch::{OfficeTransport, TransportOffice};
+    use crate::transport::{OfficeTransport, TransportOffice};
 
     struct StubTransport {
         calls: Vec<(String, Value)>,

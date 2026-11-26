@@ -1,7 +1,6 @@
 //! `release install`: verify a signed bundle and pin it atomically into the release store.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use org_cli_shell::context::ExecutionContext;
@@ -32,13 +31,18 @@ pub(super) fn run(
         return preview(ctx, &store_dir, &source, kind);
     }
     // Only auto-create and restrict mode 0700 on our own default app directory; never chmod
-    // an arbitrary user-supplied `--store` parent (such as `$HOME`).
+    // an arbitrary user-supplied `--store` parent (such as `$HOME`). Either step failing
+    // stops the install: the store is never opened under a folder left more open.
     if explicit_store.is_none() {
         if let Some(parent) = store_dir.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                format!("creating release store parent ({}): {e}", parent.display())
-            })?;
-            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+            org_platform::fs::create_owner_only_dir_all(parent)
+                .and_then(|()| org_platform::fs::set_owner_only_dir(parent))
+                .map_err(|e| {
+                    format!(
+                        "creating release store parent owner-only ({}): {e}",
+                        parent.display()
+                    )
+                })?;
         }
     }
     let mut store = ReleaseStore::open(&store_dir).map_err(|e| {
@@ -120,26 +124,32 @@ impl Drop for StagingDirGuard {
     }
 }
 
-fn install_archive_into_store(
-    store: &mut ReleaseStore,
-    store_dir: &Path,
-    source: &Path,
-) -> Result<ReleasePin, String> {
+/// A fresh run folder under `<store>/staging`, removed when the guard drops. The staging
+/// folder is made or tightened owner-only (`0700`) and refused when it is a symbolic link or
+/// cannot be; the run folder is created `0700` in one step, never with a wider mode first.
+fn prepare_staging(store_dir: &Path) -> Result<StagingDirGuard, String> {
     let staging_root = store_dir.join("staging");
-    fs::create_dir_all(&staging_root)
+    org_platform::fs::create_owner_only_dir_all(&staging_root)
+        .and_then(|()| org_platform::fs::set_owner_only_dir(&staging_root))
         .map_err(|e| format!("preparing staging folder ({}): {e}", staging_root.display()))?;
-    let _ = fs::set_permissions(&staging_root, fs::Permissions::from_mode(0o700));
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let run_staging = staging_root.join(format!("install-{}-{nanos}", std::process::id()));
-    fs::create_dir(&run_staging)
+    org_platform::fs::create_owner_only_dir(&run_staging)
         .map_err(|e| format!("preparing staging run ({}): {e}", run_staging.display()))?;
-    let _guard = StagingDirGuard(run_staging.clone());
-    fs::set_permissions(&run_staging, fs::Permissions::from_mode(0o700))
-        .map_err(|e| format!("securing staging run ({}): {e}", run_staging.display()))?;
-    let mut bundle = ArchiveBundle::open(source, &run_staging)
+    Ok(StagingDirGuard(run_staging))
+}
+
+fn install_archive_into_store(
+    store: &mut ReleaseStore,
+    store_dir: &Path,
+    source: &Path,
+) -> Result<ReleasePin, String> {
+    let _guard = prepare_staging(store_dir)?;
+    let run_staging = &_guard.0;
+    let mut bundle = ArchiveBundle::open(source, run_staging)
         .map_err(|e| format!("verifying release archive `{}`: {e}", source.display()))?;
     store
         .install_archive(&mut bundle)
@@ -148,6 +158,44 @@ fn install_archive_into_store(
 
 #[cfg(test)]
 mod tests {
+    /// P1-4: the staging folders are owner-only or the install stops: a more open staging
+    /// folder is tightened, a linked one is refused (nothing is made through it), and the run
+    /// folder is `0700` and removed with its guard.
+    #[test]
+    fn staging_is_owner_only_or_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &std::path::Path| {
+            std::fs::symlink_metadata(path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("store");
+        std::fs::create_dir_all(store.join("staging")).unwrap();
+        std::fs::set_permissions(
+            store.join("staging"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let guard = super::prepare_staging(&store).unwrap();
+        assert_eq!(mode(&store.join("staging")), 0o700);
+        assert_eq!(mode(&guard.0), 0o700);
+        let run = guard.0.clone();
+        drop(guard);
+        assert!(!run.exists());
+
+        let linked = dir.path().join("linked");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&linked).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, linked.join("staging")).unwrap();
+        let error = super::prepare_staging(&linked).map(|_| ()).unwrap_err();
+        assert!(error.contains("staging folder"), "{error}");
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+    }
+
     #[test]
     fn resolve_bundle_source_rejects_symlink_leaf_and_canonicalizes_parent() {
         let dir = tempfile::tempdir().unwrap();

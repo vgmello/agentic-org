@@ -1,8 +1,6 @@
 //! Concise `Use when:` intent guidance for every `agent-os` (and shared `agentic-org`)
 //! `--help` output without bloating the 4 KiB `CommandTable::catalogue()` launch summary.
 
-use org_command::{Command, CommandTable, Output, Type};
-
 mod augment;
 
 pub(crate) use augment::augment_help;

@@ -1,7 +1,20 @@
 //! Browser-driven provider CLI enrollment: drivers, the single active enrollment, expiry and
 //! wipe (`ENROLL-1..7`).
 
-use super::*;
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use org_proto::sessions::{EnrollmentSessionView, EnrollmentState};
+use zeroize::Zeroizing;
+
+use super::vault::ensure_owner_dirs;
+use super::{
+    format_rfc3339_ms, is_safe_id, now_ms, random_hex, validate_pasted_code, CredentialVault,
+    EnrollmentVaultError, DEFAULT_ENROLLMENT_TIMEOUT,
+};
 
 /// Initial prompt returned by an [`EnrollmentDriver`] when a login starts.
 #[derive(Debug, Clone)]

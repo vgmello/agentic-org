@@ -2,7 +2,7 @@
 //! pending termination/job-control signals are unblocked. Never reads stdin/env.
 //! A pending termination signal or end of input cancels the entry with
 //! [`PASSWORD_CANCELLED`], which callers turn into a cancellation.
-use crate::setup_flow::PASSWORD_CANCELLED;
+use crate::cli_error::PASSWORD_CANCELLED;
 use org_host_control::Password;
 use std::{
     fs::OpenOptions,

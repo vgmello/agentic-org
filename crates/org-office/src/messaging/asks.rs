@@ -5,20 +5,18 @@
 //! asks (`ADR-0020` decision 14), and persists answers and withdrawals in canonical durable
 //! `participants/<employee-id>/answers/<ask-id>.json` files projected on both SQLite and Memory.
 
-use org_proto::ask::{
-    AskAnswerRecord, AskOption, AskQuestion, AskWithdrawalRecord, ChatAnswerResult, ChatAskResult,
-    ChatWaitAskResult, MsgWithdrawResult,
-};
+use org_proto::ask::{ChatAnswerResult, ChatAskResult, ChatWaitAskResult, MsgWithdrawResult};
 use org_proto::msg::{MessageHeader, KIND_REQUEST};
 use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
-use serde::{Deserialize, Serialize};
 
 use crate::time;
 
+use super::ask_card::AskOutcomeEnvelope;
+pub use super::ask_card::{decode_ask_answer_file, is_open_ask_card, parse_ask_card, AskCard};
 use super::features::{require_conversation_access, to_wire_header};
 use super::ports::MessagingRead;
-use super::records::{MessageRecord, ParticipantAnswerFile, RecipientStateRecord};
+use super::records::{MessageRecord, RecipientStateRecord};
 
 mod answer;
 mod ask;
@@ -35,56 +33,6 @@ pub use withdraw::decide_msg_withdraw;
 
 /// Non-required asks remain answerable for 24 hours after creation (`ADR-0020` rules).
 const NON_REQUIRED_EXPIRE_MS: u64 = 86_400_000;
-
-/// Durable `metadata["card"]` shape stored on `kind = "request"` messages.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AskCard {
-    pub questions: Vec<AskQuestion>,
-    #[serde(default)]
-    pub required: bool,
-    pub wait_ms: u64,
-    pub wait_until: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_at: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub addressed_to: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub blocks: Option<String>,
-    #[serde(default)]
-    pub approval: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub options: Vec<AskOption>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_option: Option<String>,
-}
-
-/// Durable envelope inside `ParticipantAnswerFile.answer`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "record", rename_all = "snake_case")]
-enum AskOutcomeEnvelope {
-    Answer(AskAnswerRecord),
-    Withdrawal(AskWithdrawalRecord),
-}
-
-/// Decodes a structured ask answer or withdrawal from [`ParticipantAnswerFile`].
-pub fn decode_ask_answer_file(
-    file: &ParticipantAnswerFile,
-) -> (Option<AskAnswerRecord>, Option<AskWithdrawalRecord>) {
-    let Some(val) = &file.answer else {
-        return (None, None);
-    };
-    match serde_json::from_value::<AskOutcomeEnvelope>(val.clone()) {
-        Ok(AskOutcomeEnvelope::Answer(ans)) => (Some(ans), None),
-        Ok(AskOutcomeEnvelope::Withdrawal(wd)) => (None, Some(wd)),
-        Err(_) => (None, None),
-    }
-}
-
-/// Parses `metadata["card"]` from a `request` message when present.
-pub fn parse_ask_card(msg: &MessageRecord) -> Option<AskCard> {
-    let val = msg.metadata.get("card")?;
-    serde_json::from_value::<AskCard>(val.clone()).ok()
-}
 
 /// Committed output of `msg.ask`, carrying wire headers for live event & waiter notifications.
 #[derive(Debug)]
@@ -152,19 +100,4 @@ pub fn inspect_ask_status(
         answer_file.as_ref(),
         now_ms,
     ))
-}
-
-/// Checks whether a message has an open (unanswered, unwithdrawn) structured ask card.
-pub fn is_open_ask_card(read: &impl MessagingRead, msg: &MessageRecord) -> bool {
-    if msg.kind != KIND_REQUEST || parse_ask_card(msg).is_none() {
-        return false;
-    }
-    match read.answer_for_message(&msg.id) {
-        Ok(Some(file)) => {
-            let (a, w) = decode_ask_answer_file(&file);
-            a.is_none() && w.is_none()
-        }
-        Ok(None) => true,
-        Err(_) => false,
-    }
 }

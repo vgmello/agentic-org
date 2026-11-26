@@ -1,6 +1,11 @@
 //! Durable per-employee pending-wake queue, suspended-ask state, and wake quota records.
 
-use super::*;
+use std::fs;
+use std::io;
+
+use crate::redact::redact_text;
+
+use super::{ensure_owner_dirs, is_safe_id, read_optional_json, write_atomic_json, SessionStore};
 
 impl SessionStore {
     pub fn read_pending_wakes(
@@ -25,7 +30,7 @@ impl SessionStore {
     ) -> io::Result<()> {
         let mut clean = record.clone();
         for item in &mut clean.items {
-            item.summary = redact_secrets(&item.summary, active_secrets);
+            item.summary = redact_text(&item.summary, active_secrets);
         }
         let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let dir = self.employee_dir(&clean.employee_id)?;
@@ -65,11 +70,11 @@ impl SessionStore {
     ) -> io::Result<()> {
         let mut clean = record.clone();
         for ask in &mut clean.asks {
-            ask.question_summary = redact_secrets(&ask.question_summary, active_secrets);
+            ask.question_summary = redact_text(&ask.question_summary, active_secrets);
         }
         for ans in &mut clean.pending_resume_answers {
-            ans.question_summary = redact_secrets(&ans.question_summary, active_secrets);
-            ans.answer_summary = redact_secrets(&ans.answer_summary, active_secrets);
+            ans.question_summary = redact_text(&ans.question_summary, active_secrets);
+            ans.answer_summary = redact_text(&ans.answer_summary, active_secrets);
         }
         let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let dir = self.employee_dir(&clean.employee_id)?;

@@ -1,6 +1,7 @@
 //! Field schemas, inputs, outputs and examples the task, checklist and note command rows use.
 
-use super::*;
+use org_command::{Field, Type};
+use org_proto::ErrorCode;
 
 pub(super) const STRING_TYPE: Type = Type::String;
 

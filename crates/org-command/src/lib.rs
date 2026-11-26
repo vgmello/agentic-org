@@ -24,6 +24,7 @@ mod help;
 mod node;
 mod office;
 mod parse;
+mod row;
 mod shape;
 mod table;
 #[cfg(feature = "testkit")]
@@ -34,7 +35,8 @@ pub use help::CATALOGUE_LIMIT;
 pub use node::Node;
 pub use office::{Answer, KeySource, Office, Refusal, Request, Sources, Status};
 pub use parse::{DEFAULT_LIMIT, MAX_INPUT_BYTES, MAX_LIMIT, MAX_YAML_INPUT_BYTES};
-pub use table::{Ack, Command, CommandTable, Example, Field, IfMatch, Kind, TableError, Type};
+pub use row::{Ack, Command, Example, Field, IfMatch, Kind, Type};
+pub use table::{CommandTable, TableError};
 
 use org_proto::ErrorCode;
 use parse::{Format, Parsed};

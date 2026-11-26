@@ -2,19 +2,10 @@
 //! (`TASK-49` AC #3 `CLI-15` + `TASK-77` B4b).
 
 use org_command::{Ack, Answer, Refusal, Request, Status};
-use org_proto::private_notes::{
-    TaskNotePublishResult, TaskNoteRemovedResult, TaskNoteResult, TasksNotesAdd,
-    TasksNotesAddParams, TasksNotesGet, TasksNotesGetParams, TasksNotesList, TasksNotesListParams,
-    TasksNotesListResult, TasksNotesPublish, TasksNotesPublishParams, TasksNotesRemove,
-    TasksNotesRemoveParams, TasksNotesUpdate, TasksNotesUpdateParams,
-};
 use org_proto::tasks::{
     LabelMatchMode, PatchField, TaskDependenciesResult, TaskInspectResult, TaskPriority,
     TaskSortMode, TaskStatus, TaskView, TasksAddDependency, TasksAddDependencyParams, TasksAssign,
-    TasksAssignParams, TasksChecklistAdd, TasksChecklistAddParams, TasksChecklistCheck,
-    TasksChecklistCheckParams, TasksChecklistEdit, TasksChecklistEditParams, TasksChecklistMove,
-    TasksChecklistMoveParams, TasksChecklistRemove, TasksChecklistRemoveParams,
-    TasksChecklistResult, TasksComment, TasksCommentParams, TasksCommentResult, TasksCreate,
+    TasksAssignParams, TasksComment, TasksCommentParams, TasksCommentResult, TasksCreate,
     TasksCreateParams, TasksDependencies, TasksDependenciesParams, TasksHistory,
     TasksHistoryParams, TasksHistoryResult, TasksInspect, TasksInspectParams, TasksLabels,
     TasksLabelsParams, TasksLabelsResult, TasksList, TasksListParams, TasksListResult,
@@ -25,8 +16,8 @@ use org_proto::tasks::{
 use org_proto::{Call, ErrorCode};
 use serde_json::{json, Map, Value};
 
-use crate::dispatch::OfficeTransport;
 use crate::keys::try_new_uuid_v7;
+use crate::transport::OfficeTransport;
 
 mod checklist;
 mod note;
@@ -81,14 +72,14 @@ fn cmd_id(request: &Request) -> Result<String, Refusal> {
         if org_proto::is_uuid_v7(key) {
             return Ok(key.to_owned());
         }
-        return Ok(crate::dispatch::derive_uuid_v7("task-command", key));
+        return Ok(crate::transport::derive_uuid_v7("task-command", key));
     }
     fresh_id()
 }
 
 fn entity_id(request: &Request, domain: &str) -> Result<String, Refusal> {
     if let Some(key) = request.idempotency_key.as_deref() {
-        return Ok(crate::dispatch::derive_uuid_v7(domain, key));
+        return Ok(crate::transport::derive_uuid_v7(domain, key));
     }
     fresh_id()
 }

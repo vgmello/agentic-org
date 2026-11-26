@@ -1,6 +1,33 @@
 //! One multiplexed office channel: negotiation, its read and write loops, round trips and eviction.
 
-use super::*;
+use super::MultiplexedChannel;
+use super::PendingMap;
+use super::CHANNEL_WRITE_QUEUE;
+use super::OFFICE_DEADLINE;
+use crate::event_hub::EventHub;
+use crate::event_hub::HubEvent;
+use org_proto::ApiRange;
+use org_proto::Hello;
+use org_proto::HelloParams;
+use org_proto::HelloResult;
+use org_proto::Outcome;
+use org_proto::Request;
+use org_proto::Response;
+use org_proto::MAX_FRAME_BYTES;
+use serde_json::Value;
+use std::collections::BTreeMap;
+use std::io;
+use std::os::unix::net::UnixStream as StdUnixStream;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Duration;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::io::BufReader;
+use tokio::net::UnixStream;
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
+use tokio::time;
 
 impl MultiplexedChannel {
     pub(super) fn from_std(

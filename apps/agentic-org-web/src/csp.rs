@@ -7,7 +7,7 @@ use hyper::header::HeaderValue;
 use scraper::{ElementRef, Html};
 use sha2::{Digest, Sha256};
 
-use crate::assets::BuildError;
+use crate::build_error::BuildError;
 
 const HTML_TEMPLATE: &str = include_str!("../../../config/csp/html.txt");
 const NON_HTML: &str = include_str!("../../../config/csp/non-html.txt");

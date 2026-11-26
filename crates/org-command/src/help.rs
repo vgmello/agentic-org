@@ -6,8 +6,9 @@ use serde_json::{Map, Value};
 
 use crate::envelope::code_name;
 use crate::node::Node;
+use crate::row::{Command, Field, IfMatch, Type, OPTIONS};
 use crate::shape;
-use crate::table::{Command, CommandTable, Field, IfMatch, Type, OPTIONS};
+use crate::table::CommandTable;
 
 /// The launch catalogue may not be longer than this (design 2.5).
 pub const CATALOGUE_LIMIT: usize = 4096;

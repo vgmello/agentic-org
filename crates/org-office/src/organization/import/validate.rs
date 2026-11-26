@@ -1,20 +1,15 @@
-//! Collecting and validating `state/` files through the office's production projectors.
+//! Collecting a local `state/` directory into the files an import validates, within the
+//! import's symlink, depth, count and size limits. Validating them through the office's
+//! production projectors is the office's part (`crate::office::import`).
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use org_office_launch::LOCAL_ONLY_NOT_RESTORED;
 use org_store::DurablePath;
 
-use crate::organization::records::{self};
-use crate::store::open::validate_imported_files;
-
-use super::git::{check_git_source, run_git_capture, PrivateTempDir};
-use super::tree::{parse_ls_tree_entries, read_git_blobs};
 use super::{
-    ImportError, ImportedOrganization, MAX_IMPORT_DEPTH, MAX_IMPORT_FILES, MAX_IMPORT_FILE_BYTES,
-    MAX_IMPORT_TOTAL_BYTES,
+    ImportError, MAX_IMPORT_DEPTH, MAX_IMPORT_FILES, MAX_IMPORT_FILE_BYTES, MAX_IMPORT_TOTAL_BYTES,
 };
 
 /// Walks a local `state_root` directory (for unit tests and local directory validation), enforcing
@@ -108,94 +103,4 @@ fn walk_dir(
         out.insert(durable, bytes);
     }
     Ok(())
-}
-
-fn validate_files_map(
-    files: BTreeMap<DurablePath, Vec<u8>>,
-    remote_url: &str,
-    state_branch: &str,
-    commit_oid: Option<String>,
-) -> Result<ImportedOrganization, ImportError> {
-    let org_path = records::organization_path();
-    let org_bytes = files
-        .get(&org_path)
-        .ok_or_else(|| ImportError::InvalidFile {
-            path: org_path.as_str().to_owned(),
-            reason: "the organization record is missing".into(),
-        })?;
-    let org_record =
-        records::decode_organization(org_bytes).map_err(|e| ImportError::InvalidFile {
-            path: org_path.as_str().to_owned(),
-            reason: e.to_string(),
-        })?;
-    let summary = validate_imported_files(&org_record.id, &files)?;
-    Ok(ImportedOrganization {
-        summary,
-        repository_remote_url: remote_url.to_owned(),
-        state_branch: state_branch.to_owned(),
-        commit_oid,
-        local_only_not_restored: LOCAL_ONLY_NOT_RESTORED
-            .iter()
-            .map(|s| (*s).to_owned())
-            .collect(),
-        files,
-    })
-}
-
-/// Validates a local directory of organization state files against the full data contract.
-pub fn validate_state_dir(
-    state_root: &Path,
-    remote_url: &str,
-    state_branch: &str,
-) -> Result<ImportedOrganization, ImportError> {
-    let files = collect_state_files(state_root)?;
-    validate_files_map(files, remote_url, state_branch, None)
-}
-
-/// Clones `state_branch` from `remote_url` into a bare temporary repository (no working-tree
-/// checkout), inspects the Git tree for symlinks/submodules/size/count limits, reads regular
-/// blobs via `git cat-file --batch`, and validates every file through the production projectors.
-pub fn clone_and_validate_state(
-    remote_url: &str,
-    state_branch: &str,
-) -> Result<ImportedOrganization, ImportError> {
-    check_git_source(remote_url, state_branch)?;
-    let staging = PrivateTempDir::create("org-import")?;
-    let repo_dir = staging.path().join("repo.git");
-    let repo_arg = repo_dir
-        .to_str()
-        .ok_or_else(|| ImportError::Storage("staging path is not valid UTF-8".into()))?;
-    run_git_capture(
-        &[
-            "clone",
-            "--bare",
-            "--depth",
-            "1",
-            "--single-branch",
-            "--branch",
-            state_branch,
-            "--",
-            remote_url,
-            repo_arg,
-        ],
-        None,
-        staging.path(),
-        "clone failed",
-    )?;
-    let rev_bytes = run_git_capture(
-        &["rev-parse", "--verify", "HEAD"],
-        Some(&repo_dir),
-        staging.path(),
-        "could not resolve branch head",
-    )?;
-    let commit_oid = String::from_utf8_lossy(&rev_bytes).trim().to_owned();
-    let tree_bytes = run_git_capture(
-        &["ls-tree", "-r", "-l", "-z", "HEAD"],
-        Some(&repo_dir),
-        staging.path(),
-        "could not list repository files",
-    )?;
-    let blobs = parse_ls_tree_entries(&tree_bytes)?;
-    let files = read_git_blobs(&repo_dir, &blobs, staging.path())?;
-    validate_files_map(files, remote_url, state_branch, Some(commit_oid))
 }

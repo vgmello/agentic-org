@@ -5,24 +5,39 @@ use std::{
     collections::BTreeMap,
     ops::ControlFlow,
     panic::{catch_unwind, AssertUnwindSafe},
-    sync::{mpsc::Receiver, Arc},
+    sync::{
+        mpsc::{Receiver, SyncSender},
+        Arc,
+    },
 };
 
 use crate::{
     change::{
-        Ack, Bytes, Change, DurablePath, FileChange, Outcome, Receipt, Refusal, Sha256, Timestamp,
+        Ack, Bytes, Change, DurablePath, FileChange, Operation, Outcome, Receipt, Refusal, Sha256,
+        Timestamp,
     },
     engine::{CorePort, CoreRead, Engine, Mark},
-    error::StoreError,
+    error::{JournalError, StoreError},
     files::{FileOp, Files},
-    journal::{
-        positions_between, Entry, EntryDraft, FileDraft, JournalError, JournalPoint,
-        OperationRecord,
-    },
+    hooks::Site,
+    journal::{positions_between, Entry, EntryDraft, FileDraft, JournalPoint, OperationRecord},
     receipts::{encode_receipt, receipt_path, ReceiptProjector},
     sequences::{successor, Sequences, Stream},
-    store::{Core, Job, Reply, Site},
+    state::{Core, Reply},
 };
+
+/// A submitted decision: run again until its entry is appended, never after.
+pub(crate) type Decide<E> =
+    Box<dyn FnMut(&mut UnitOfWork<'_, E>) -> Result<Change, Refusal> + Send + 'static>;
+
+/// One submitted operation, as the writer takes it from the store's queue.
+pub(crate) struct Job<E: Engine> {
+    pub(crate) op: Option<Operation>,
+    pub(crate) durable: bool,
+    pub(crate) dry_run: bool,
+    pub(crate) decide: Decide<E>,
+    pub(crate) to: SyncSender<Result<Reply, StoreError>>,
+}
 
 /// What a decision may see and take. Everything else is out of its reach.
 pub struct UnitOfWork<'a, E: Engine> {

@@ -11,13 +11,15 @@ use std::time::{Duration, Instant};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 
-use crate::credentials::{is_safe_id, redact_secrets, rfc3339_now};
+use crate::credentials::{is_safe_id, rfc3339_now};
 
 mod startup;
 mod usage_store;
 mod wake_store;
 
-pub use usage_store::*;
+pub use usage_store::{
+    DeferredUsageEntry, RejectedUsageEntry, UsageCaptureState, UsageWatermarkRecord,
+};
 
 /// Default turn stall timeout: 15 minutes (`ADR-0030` / `LIVE-12`).
 pub const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);

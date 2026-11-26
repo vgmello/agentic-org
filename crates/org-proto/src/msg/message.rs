@@ -6,7 +6,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
+use super::{BodySize, Meta, MetaSize};
 
 /// How soon a message needs attention. An omitted priority means `normal`, except that a
 /// `request` (an `ask`) defaults to `urgent`; the server decides. Unknown values decode as

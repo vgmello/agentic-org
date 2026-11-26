@@ -1,7 +1,9 @@
 //! The protocol's typed calls: `hello` and its version checks, `msg.bind`, the host's
 //! lists, and `subscribe`.
 
-use std::sync::mpsc;
+use std::sync::atomic::Ordering;
+use std::sync::{mpsc, Arc};
+use std::time::Duration;
 
 use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult};
 use org_proto::{
@@ -10,7 +12,9 @@ use org_proto::{
     Subscribe, SubscribeParams, API_VERSION,
 };
 
-use super::*;
+use super::call::CallOutcome;
+use super::error::ClientError;
+use super::{join_scoped, lock, Client, Subscription, DEFAULT_TIMEOUT, EVENT_QUEUE, STOP_POLL};
 
 impl Client {
     /// `hello`, then checks the protocol version. A server of another version is refused:

@@ -1,6 +1,21 @@
 //! Creating and opening a journal incarnation: anchor, recovery base and retained queue.
 
-use super::*;
+use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex};
+use std::{fs, io};
+
+use super::segment::{ends_at_or_below, read_small, scan, write_small, Bad, Repair};
+use super::{
+    flush_error, io_error, journal_dir, segment_name, Anchor, AnchorFacts, Checkpoint, Entry,
+    Inner, Journal, JournalPoint, Materialized, Recovered, Segment, FORMAT, SEGMENT_BYTES,
+};
+use crate::change::Sha256;
+use crate::custody::{OfficeIdentity, WriterAuthority};
+use crate::disk::{Disk, DiskFile, RealDisk};
+use crate::error::JournalError;
+use crate::sequences::MAX_POSITION;
 
 impl Journal {
     /// Starts a new journal incarnation: writes its immutable anchor. Refuses when one

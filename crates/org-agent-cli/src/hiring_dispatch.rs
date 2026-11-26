@@ -9,8 +9,8 @@ use org_proto::hiring::{
 use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
 
-use crate::dispatch::{derive_uuid_v7, parse_cursor, OfficeTransport};
 use crate::keys::UuidV7KeySource;
+use crate::transport::{derive_uuid_v7, parse_cursor, OfficeTransport};
 use org_command::KeySource;
 
 /// Dispatches a C2 hiring/role/agent command, returning `None` if not handled here.

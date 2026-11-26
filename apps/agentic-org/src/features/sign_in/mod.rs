@@ -12,6 +12,15 @@ use clap_complete::engine::ArgValueCompleter;
 
 pub(crate) use login::run;
 
+/// Where the host's sign-in writes its one-time browser approval link: standard error, in
+/// every mode. That link is the only text written there, and only when the host needs a
+/// person to approve this terminal (`session.local` refused), so an already signed-in run
+/// writes nothing, `--json` and `-q` included. It is never suppressed: under `--json` or `-q`
+/// the command would otherwise wait for an approval nobody can see.
+fn approval_link_stream() -> std::io::Stderr {
+    std::io::stderr()
+}
+
 use crate::args::InstanceArgs;
 use crate::completers;
 

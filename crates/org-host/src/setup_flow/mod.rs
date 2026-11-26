@@ -36,7 +36,7 @@ use std::io::Write;
 use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
 
-use org_host_control::listen::ListenConfig;
+use crate::browser_listener::published_http_notice;
 
 use crate::instance::registry::Registry;
 pub use crate::instance::setup::FederationConfig;
@@ -44,7 +44,6 @@ use crate::instance::setup::{Input, Journal, Paths, Service};
 pub use org_host_control::InvitationTokenSecret;
 
 pub mod cli_context;
-mod cli_error;
 pub(crate) mod cli_session;
 pub(crate) mod federation_command;
 #[cfg(all(feature = "test-support", debug_assertions))]
@@ -53,10 +52,9 @@ pub(crate) mod office_command;
 pub(crate) mod org_command;
 #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 pub mod seed;
-pub use cli_error::{
+pub use crate::cli_error::{
     kind_of, office_refused, refused_by, wire_name, HostCliError, HostCliErrorKind, OUTPUT_CLOSED,
 };
-pub(crate) use cli_error::{sign_in_refused, PASSWORD_CANCELLED};
 pub use federation_command::{
     office_approve, office_cancel, office_decline, office_invitations, office_invite,
     office_remove, office_sync_status, OfficeInviteInput,
@@ -149,19 +147,6 @@ pub fn path_environment() -> Vec<(OsString, OsString)> {
         .into_iter()
         .map(|(name, value)| (OsString::from(name), value))
         .collect()
-}
-
-/// What setup and the host say about the exposure of an explicit plain-HTTP listener.
-pub(crate) fn published_http_notice(listen: &ListenConfig) -> String {
-    format!(
-        "serving plain HTTP on a published port ({}). Every machine that can reach the \
-         listen address can reach sign-in and sessions in plain text. In Docker, publish \
-         only on the host's 127.0.0.1 (docker run -p 127.0.0.1:{port}:{port}). Open {}. \
-         For HTTPS, set up an instance with \"scheme\": \"https\".",
-        std::net::SocketAddr::new(listen.address(), listen.port()),
-        listen.origin().as_str(),
-        port = listen.port(),
-    )
 }
 
 /// INTERIM, in one place (X3 review, finding S4): making the directories of a credential

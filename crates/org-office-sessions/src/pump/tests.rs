@@ -13,7 +13,7 @@ use crate::subagents::BackgroundRegistry;
 
 use super::approval::handle_approval_request;
 use super::commands::{finalize_drained_stop, merge_stop_preserve};
-use super::events::evaluate_turn_failover;
+use super::events::{evaluate_turn_failover, redact_event_into_history};
 use super::turn::{ensure_permit_for_turn, PermitCheck};
 use super::{PumpContext, PumpHooks, PumpLoopState, SessionRuntimeState};
 
@@ -265,4 +265,81 @@ fn handle_approval_request_enforces_writable_roots_only_when_sandboxed() {
             ..
         })
     ));
+}
+
+#[test]
+fn pump_event_history_and_approval_views_go_through_the_redaction_choke_point() {
+    use crate::redact::testing::{assert_no_corpus_secret, secret_corpus};
+    use org_agent_runtime::SessionEvent;
+
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_pump_ctx(dir.path(), None, None);
+    let corpus = secret_corpus();
+
+    // `pump/events`: the event copy kept for display and the persisted history line.
+    let mut text_event = SessionEvent::AssistantText {
+        message_id: Some("m-1".into()),
+        text: corpus.text.clone(),
+    };
+    redact_event_into_history(&ctx, &mut text_event, &[]);
+    let SessionEvent::AssistantText { text, .. } = &text_event else {
+        unreachable!("the event kind never changes");
+    };
+    assert_no_corpus_secret(&corpus, text, "pump/events display copy");
+    let raw_key = ["corpus", "raw", "key", "0042"].join("-");
+    let mut tool_event = SessionEvent::ToolStarted {
+        tool_use_id: "toolu-1".into(),
+        name: "Bash".into(),
+        capability: None,
+        input: serde_json::json!({ "command": corpus.text, "api_key": raw_key }),
+    };
+    redact_event_into_history(&ctx, &mut tool_event, &[]);
+    let history = std::fs::read_to_string(ctx.store.history_path("emp-1").unwrap()).unwrap();
+    assert_no_corpus_secret(&corpus, &history, "pump/events history.jsonl");
+    assert!(!history.contains("corpus-raw-key-0042"), "{history}");
+    for line in history.lines() {
+        serde_json::from_str::<serde_json::Value>(line)
+            .expect("every redacted history line stays valid JSON");
+    }
+
+    // `pump/approval`: an owner escalation keeps no secret in its pending-approval view, and an
+    // auto-deny keeps none in the message sent back to the runtime.
+    let mut st = ctx.state.lock().unwrap();
+    let secret_tool = format!("mcp__corpus__{}", corpus.text.replace('\n', " "));
+    let mut escalated = ApprovalRequest::new(
+        ApprovalId::new("a-redact-1"),
+        org_agent_runtime::ApprovalKind::Unknown,
+        org_agent_runtime::Escalation::None,
+        secret_tool.clone(),
+        serde_json::json!({}),
+    );
+    escalated.capability = Some(org_agent_runtime::ToolCapability::Unknown);
+    assert!(handle_approval_request(&mut st, &escalated, &[]).is_none());
+    let pending = st.pending_approvals.last().expect("escalated to the owner");
+    assert_no_corpus_secret(&corpus, &pending.tool, "pump/approval tool");
+    assert_no_corpus_secret(
+        &corpus,
+        pending.reason.as_deref().unwrap_or_default(),
+        "pump/approval reason",
+    );
+
+    st.allowed_tools = Some(vec![org_agent_runtime::ToolName::try_from("Read").unwrap()]);
+    let denied = ApprovalRequest::new(
+        ApprovalId::new("a-redact-2"),
+        org_agent_runtime::ApprovalKind::Command,
+        org_agent_runtime::Escalation::None,
+        secret_tool,
+        serde_json::json!({ "command": "ls" }),
+    );
+    match handle_approval_request(&mut st, &denied, &[]) {
+        Some(Control::Answer {
+            decision: Decision::Deny { message, .. },
+            ..
+        }) => assert_no_corpus_secret(
+            &corpus,
+            message.as_deref().unwrap_or_default(),
+            "pump/approval deny message",
+        ),
+        other => panic!("a tool outside the allowlist must be auto-denied: {other:?}"),
+    }
 }

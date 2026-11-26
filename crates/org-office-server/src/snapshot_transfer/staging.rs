@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-use crate::federation::{hex_lower, SatelliteSyncSession, FIRST_FRAME_DEADLINE};
+use crate::federation_link::{hex_lower, SatelliteSyncSession, FIRST_FRAME_DEADLINE};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use org_office::Office;

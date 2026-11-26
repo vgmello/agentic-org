@@ -139,10 +139,7 @@ pub(super) fn classify_escalation(
     input: &Value,
 ) -> Escalation {
     if tool_name == "SandboxNetworkAccess"
-        || input
-            .get("dangerouslyDisableSandbox")
-            .and_then(Value::as_bool)
-            == Some(true)
+        || is_sandbox_bypass_requested(input.get("dangerouslyDisableSandbox"))
     {
         return Escalation::SandboxBypass;
     }
@@ -153,6 +150,12 @@ pub(super) fn classify_escalation(
         return Escalation::Unknown;
     }
     Escalation::None
+}
+
+/// `dangerouslyDisableSandbox` requests a bypass unless it is absent, `null` or `false`. Any
+/// other value (`"true"`, `1`, `{}`, ...) fails closed (`TASK-190`), as Agy's flag check does.
+fn is_sandbox_bypass_requested(flag: Option<&Value>) -> bool {
+    !matches!(flag, None | Some(Value::Null | Value::Bool(false)))
 }
 
 pub(super) fn parse_claude_usage(val: &Value) -> MessageUsage {

@@ -475,8 +475,8 @@ fn pass1_contended_failover_of_an_offboarded_agent_is_not_requeued() {
 }
 
 #[test]
-fn pass2_stop_session_conflicts_while_starting_with_no_live_handle_without_skewing_epoch_or_revoking_binding(
-) {
+fn pass2_stop_session_conflicting_with_an_in_flight_start_moves_the_epoch_without_revoking_binding()
+{
     let (_office, mgr, _owner_id, hr_agent_id) = manager_with_hr_agent();
     mgr.bindings
         .issue(&hr_agent_id, "run-in-flight", "sess-in-flight", 0)
@@ -496,8 +496,9 @@ fn pass2_stop_session_conflicts_while_starting_with_no_live_handle_without_skewi
     assert_eq!(err.code, org_proto::ErrorCode::Conflict);
     assert_eq!(
         mgr.registry.lock().unwrap().stop_epoch(&hr_agent_id),
-        epoch_before,
-        "conflicted stop_session must not skew stop_epoch"
+        epoch_before + 1,
+        "a stop refused by an in-flight start still moves stop_epoch, so that start aborts at \
+         registration instead of leaving a live session (TASK-190)"
     );
     assert_eq!(
         mgr.bindings.active_tokens(),
@@ -510,7 +511,7 @@ fn pass2_stop_session_conflicts_while_starting_with_no_live_handle_without_skewi
         .expect("stop_session succeeds once start slot releases");
     assert_eq!(
         mgr.registry.lock().unwrap().stop_epoch(&hr_agent_id),
-        epoch_before + 1
+        epoch_before + 2
     );
     assert!(
         mgr.bindings.active_tokens().is_empty(),

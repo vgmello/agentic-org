@@ -1,29 +1,17 @@
 //! Browser HTTP routes for C3 agent sessions, grants, approval decisions, stall recovery,
 //! and browser-driven provider CLI enrollment (`TASK-42` / C3, `ADR-0030`, `ADR-0032`).
 
-use hyper::{http::request::Parts, Method, StatusCode};
+use hyper::{http::request::Parts, Method};
 use org_proto::sessions::{
-    MemberSessionApprovalDecide, MemberSessionApprovalDecideParams, MemberSessionClearStall,
-    MemberSessionClearStallParams, MemberSessionGrants, MemberSessionGrantsParams,
-    MemberSessionInspect, MemberSessionInspectParams, MemberSessionList, MemberSessionListParams,
-    MemberSessionStart, MemberSessionStartParams, MemberSessionStop, MemberSessionStopParams,
-    MemberSessionTranscript, MemberSessionTranscriptParams, ProviderCredentialRevoke,
-    ProviderCredentialRevokeParams, ProviderCredentialStatus, ProviderCredentialStatusParams,
-    ProviderEnrollmentCancel, ProviderEnrollmentCancelParams, ProviderEnrollmentStart,
-    ProviderEnrollmentStartParams, ProviderEnrollmentStatus, ProviderEnrollmentStatusParams,
-    ProviderEnrollmentSubmit, ProviderEnrollmentSubmitParams,
+    MemberSessionApprovalDecideParams, MemberSessionClearStallParams, MemberSessionListParams,
+    MemberSessionStartParams, MemberSessionStopParams, MemberSessionTranscriptParams,
+    ProviderCredentialRevokeParams, ProviderEnrollmentCancelParams, ProviderEnrollmentStartParams,
+    ProviderEnrollmentSubmitParams,
 };
-use org_proto::web::{organizations, ReadResponse, WebError, WebErrorCode};
+use org_proto::web::organizations;
 use serde::Deserialize;
-use serde_json::Value;
 
-use super::org_routes::{resolve_hq_office, revalidate_and_resolve_hq};
-use super::{
-    bad_input, failure, invalid, not_found, result, unavailable, Call, CallerAuth, Route,
-    SessionApi,
-};
-use crate::host::Failure;
-use crate::office::OfficeFailure;
+use super::{bad_input, invalid, Call, CallerAuth, Route, SessionApi};
 use crate::service::{ApiReply, PreparedCall};
 
 mod calls;

@@ -1,6 +1,14 @@
 //! Framing and reading back one journal entry, and the journal points recovered from entries.
 
-use super::*;
+use std::collections::BTreeMap;
+
+use super::{Entry, EntryDraft, FileRecord, Header, JournalPoint, MAX_ENTRY_BYTES, TRAILER};
+use crate::change::Sha256;
+use crate::custody::{JournalHead, OfficeIdentity};
+use crate::engine::Cursor;
+use crate::error::JournalError;
+use crate::files::{FileOp, FileVersion};
+use crate::sequences::{HighWaters, Stream, MAX_POSITION};
 
 impl Entry {
     pub fn frame(draft: EntryDraft) -> Result<Entry, JournalError> {

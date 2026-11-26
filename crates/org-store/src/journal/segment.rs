@@ -1,6 +1,14 @@
 //! Verifying segment frames and publishing the journal's small files.
 
-use super::*;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::{fs, io};
+
+use super::{flush_error, io_error, Entry, JournalPoint, MAX_ENTRY_BYTES, TRAILER};
+use crate::change::{Sha256, TEMP_PREFIX};
+use crate::custody::OfficeIdentity;
+use crate::disk::{write_all, Disk, DiskFile};
+use crate::error::JournalError;
 
 /// A change opening makes to the drive, held back until the opening is known to pass.
 pub(super) enum Repair {

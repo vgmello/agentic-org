@@ -22,7 +22,11 @@ use crate::runtime_registry::RuntimeRegistry;
 
 mod warm_permit;
 
-pub(crate) use warm_permit::*;
+use warm_permit::compute_route_digest;
+
+#[cfg(test)]
+pub(crate) use warm_permit::compute_worktree_sandbox_digest;
+pub(crate) use warm_permit::{acquire_warm_permit_for_office, WarmPermitOutcome};
 
 /// Fully admitted connection route ready to spawn a supervised agent session.
 pub(crate) struct AdmittedRoute {

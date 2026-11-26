@@ -2,23 +2,20 @@
 //! and never over bytes this office did not write.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt,
+    collections::BTreeSet,
     fs::{self, OpenOptions},
     io::{self, Read},
     os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
+    sync::{atomic::AtomicU64, Arc},
 };
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     change::{Bytes, DurablePath, Sha256, TEMP_PREFIX},
-    disk::{write_all, Disk, DiskFile, RealDisk},
+    disk::{Disk, RealDisk},
+    error::FilesError,
 };
 
 mod one;
@@ -51,65 +48,6 @@ pub struct FileVersion<'a> {
     /// The hash of the version this one replaced; `None` when there was no file.
     pub previous_sha256: Option<Sha256>,
 }
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum FilesError {
-    /// The file holds bytes this office did not write. Nothing was replaced.
-    Foreign { path: DurablePath },
-    Io {
-        path: String,
-        action: &'static str,
-        message: String,
-        /// A flush failed. It must not be retried in this process.
-        flush: bool,
-    },
-}
-
-impl FilesError {
-    fn io(path: &Path, action: &'static str, error: &io::Error) -> Self {
-        Self::Io {
-            path: path.display().to_string(),
-            action,
-            message: error.to_string(),
-            flush: false,
-        }
-    }
-
-    fn flush(path: &Path, action: &'static str, error: &io::Error) -> Self {
-        Self::Io {
-            path: path.display().to_string(),
-            action,
-            message: error.to_string(),
-            flush: true,
-        }
-    }
-
-    /// The path the failure names.
-    pub fn path(&self) -> String {
-        match self {
-            Self::Foreign { path } => path.to_string(),
-            Self::Io { path, .. } => path.clone(),
-        }
-    }
-}
-
-impl fmt::Display for FilesError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Foreign { path } => {
-                write!(f, "{path} holds bytes this office did not write")
-            }
-            Self::Io {
-                path,
-                action,
-                message,
-                ..
-            } => write!(f, "{action} {path}: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for FilesError {}
 
 /// The canonical files of one organization: `<data-root>/<organization-id>/durable`.
 pub struct Files {

@@ -12,12 +12,12 @@ use crate::instance::setup::Paths;
 use super::account::{
     account_by_id, account_by_name, account_name, as_account, service_account, Account,
 };
-use super::cli_error::HostCliError;
 use super::output::fail;
 use super::report::{
     administrator_present, reset_hint, this_instances_link, this_instances_reset_link,
 };
 use super::wire::{connect, connect_verified, registered_with_origin, within};
+use crate::cli_error::HostCliError;
 
 /// What `admin reset` answers when its output is not a terminal (spec §4a.4).
 pub(crate) const NOT_A_TERMINAL: &str = "Run this in a terminal.";

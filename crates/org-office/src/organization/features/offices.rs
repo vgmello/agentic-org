@@ -1,17 +1,12 @@
-//! Organization office membership registration (HQ-only) and satellite replicated `state/`
-//! file application (`TASK-52` / `S1`).
+//! Organization office membership registration (HQ-only). Applying the `state/` files a
+//! satellite replicates from HQ is `crate::replication::state_files`.
 
-use org_store::{
-    Actor, Change, DurablePath, Engine, Id, OfficeIdentity, Operation, Refusal, Stream, UnitOfWork,
-};
+use org_store::{Actor, Change, Engine, Id, OfficeIdentity, Operation, Refusal, UnitOfWork};
 
 use super::{invalid, operation, reply, shared, Feature, Op};
-use crate::{
-    organization::{
-        ports::OrganizationRead,
-        records::{self, Meta, Office, OfficeCode, OfficeRole},
-    },
-    projects::ports::ProjectsRead,
+use crate::organization::{
+    ports::{OrganizationRead, TeamDependents},
+    records::{self, Meta, Office, OfficeCode, OfficeRole},
 };
 
 /// Registers (or idempotently refreshes) an enrolled satellite office in `state/offices/`
@@ -45,7 +40,7 @@ impl Feature for RegisterSatelliteOffice {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: ProjectsRead,
+        E::Tx: TeamDependents,
     {
         let admitted = shared::admit(uow, here, owner, by)?;
         if !records::is_stable_id(self.office_id.as_str()) {
@@ -119,123 +114,6 @@ impl Feature for RegisterSatelliteOffice {
                 records::encode_office_codes(&codes),
             )
             .reply(reply(&result)))
-    }
-}
-
-/// Applies authoritative `state/` file updates replicated from HQ onto a satellite's own
-/// `org-store` acceptance journal and projection (`TASK-52` / `S1`).
-#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
-pub struct ApplyReplicatedFiles {
-    /// List of `(durable_path_str, Some(bytes) for put / None for delete)`.
-    pub files: Vec<(String, Option<Vec<u8>>)>,
-}
-
-impl ApplyReplicatedFiles {
-    pub fn operation(&self, id: Id, actor: Actor) -> Operation {
-        operation(Op::ApplyReplicatedFiles, id, actor, self)
-    }
-
-    pub fn decide<E: Engine>(&self, uow: &mut UnitOfWork<'_, E>) -> Result<Change, Refusal>
-    where
-        E::Tx: OrganizationRead + crate::tasks::ports::TasksRead,
-    {
-        let _ = uow.next(Stream::Organization)?;
-        let stale_tasks = collect_stale_replicated_tasks(uow.view(), &self.files);
-        let mut change = Change::new(Op::ApplyReplicatedFiles.ack());
-        let mut deferred_hq_offices: Vec<(DurablePath, Vec<u8>)> = Vec::new();
-        for (raw_path, content) in &self.files {
-            if !raw_path.starts_with("state/") && !raw_path.starts_with("messaging/") {
-                return invalid("replicated files must stay strictly under state/ or messaging/");
-            }
-            let path = DurablePath::parse(raw_path)
-                .map_err(|_| Refusal::invalid("invalid replicated durable path"))?;
-            match content {
-                Some(bytes) => {
-                    if should_skip_stale_work_file(uow.view(), &path, bytes, &stale_tasks) {
-                        continue;
-                    }
-                    // During D25 HQ replacement, a new HQ office file may sort lexicographically
-                    // before the demoted previous HQ office file. Defer `role == Hq` office writes
-                    // so the demoted office releases `slug = "hq"` before the new HQ claims it.
-                    let is_hq_office =
-                        matches!(records::kind_of(&path), Some(records::Kind::Office(_)))
-                            && records::decode_office(bytes)
-                                .is_ok_and(|o| o.role == OfficeRole::Hq);
-                    if is_hq_office {
-                        deferred_hq_offices.push((path, bytes.clone()));
-                    } else {
-                        change = change.put(path, bytes.clone());
-                    }
-                }
-                None => change = change.remove(path),
-            }
-        }
-        for (path, bytes) in deferred_hq_offices {
-            change = change.put(path, bytes);
-        }
-        Ok(change)
-    }
-}
-
-/// Identifies task IDs whose committed local revision is already >= the incoming replicated
-/// task revision for the same owning `office_code` so an older replacement-HQ snapshot never
-/// downgrades a local task while leaving higher-numbered immutable events behind (`TASK-52` P10-#4).
-fn collect_stale_replicated_tasks(
-    view: &impl crate::tasks::ports::TasksRead,
-    files: &[(String, Option<Vec<u8>>)],
-) -> std::collections::BTreeSet<Id> {
-    let mut stale = std::collections::BTreeSet::new();
-    for (raw_path, content) in files {
-        let Some(bytes) = content else {
-            continue;
-        };
-        let Ok(path) = DurablePath::parse(raw_path) else {
-            continue;
-        };
-        let Some(crate::tasks::records::Kind::Task(tid)) = crate::tasks::records::kind_of(&path)
-        else {
-            continue;
-        };
-        let Ok(incoming) = serde_json::from_slice::<crate::tasks::records::TaskRecord>(bytes)
-        else {
-            continue;
-        };
-        if let Ok(Some(local)) = view.task(&tid) {
-            if local.office_code == incoming.office_code
-                && local.meta.revision > incoming.meta.revision
-            {
-                stale.insert(tid);
-            }
-        }
-    }
-    stale
-}
-
-fn should_skip_stale_work_file(
-    view: &impl crate::tasks::ports::TasksRead,
-    path: &DurablePath,
-    bytes: &[u8],
-    stale_tasks: &std::collections::BTreeSet<Id>,
-) -> bool {
-    match crate::tasks::records::kind_of(path) {
-        Some(crate::tasks::records::Kind::OfficeTaskCounter(code)) => {
-            let incoming_num = serde_json::from_slice::<serde_json::Value>(bytes)
-                .ok()
-                .and_then(|v| v.get("last_number").and_then(serde_json::Value::as_u64));
-            matches!(
-                (incoming_num, view.office_task_counter(&code)),
-                (Some(in_num), Ok(Some(local))) if local.last_number >= in_num
-            )
-        }
-        Some(
-            crate::tasks::records::Kind::Task(tid)
-            | crate::tasks::records::Kind::Checklist(tid)
-            | crate::tasks::records::Kind::Comment(tid, _)
-            | crate::tasks::records::Kind::Watchers(tid)
-            | crate::tasks::records::Kind::Links(tid)
-            | crate::tasks::records::Kind::Event(tid, _),
-        ) => stale_tasks.contains(&tid),
-        None => false,
     }
 }
 

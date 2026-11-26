@@ -18,8 +18,37 @@ fn normalize_lstat_path(path: &Path) -> PathBuf {
     path.components().collect()
 }
 
+/// Sets mode `0700` on the real directory at `path` through its own descriptor (`TASK-190`).
+///
+/// Trailing `/` and `/.` are stripped first so the kernel is never asked to resolve the last
+/// component; `O_NOFOLLOW` then refuses a symlink there, `O_DIRECTORY` refuses anything that is
+/// not a directory, and `O_NONBLOCK` keeps a FIFO swapped in at `path` from blocking the open.
+/// The opened handle must be a directory owned by the effective uid, and `fchmod` changes that
+/// exact inode, so a symlink or rename race can never redirect the mode change elsewhere.
 pub(super) fn set_owner_only_dir(path: &Path) -> io::Result<()> {
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+    let dir = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(normalize_lstat_path(path))?;
+    let meta = dir.metadata()?;
+    if !meta.file_type().is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "the opened entry is not a directory",
+        ));
+    }
+    if meta.uid() != effective_uid()? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "the directory is not owned by the effective account",
+        ));
+    }
+    // SAFETY: `dir` is an open descriptor this function owns until it returns; `fchmod` reads no
+    // memory and only changes the mode of the inode that descriptor refers to.
+    if unsafe { libc::fchmod(dir.as_raw_fd(), libc::S_IRWXU) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 pub(super) fn create_owner_only_dir(path: &Path) -> io::Result<()> {

@@ -10,7 +10,7 @@
 
 use org_proto::work::{CommentKind, EventRef, WaitReason, WorkEventKind};
 
-use crate::engine::{Draft, Origin};
+use crate::decision::{Draft, Origin};
 use crate::model::OpenWait;
 use crate::states::is_terminal;
 

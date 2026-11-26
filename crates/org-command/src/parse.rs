@@ -7,8 +7,9 @@ use serde_json::{Map, Value};
 
 use crate::help;
 use crate::office::{Request, Sources};
+use crate::row::{common_option, Command, Field, IfMatch, Kind, Type};
 use crate::shape::{self, FieldPath};
-use crate::table::{common_option, Command, CommandTable, Field, IfMatch, Kind, Type};
+use crate::table::CommandTable;
 
 /// The default page of a list, and the largest.
 pub const DEFAULT_LIMIT: u32 = 20;

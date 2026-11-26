@@ -16,7 +16,7 @@ use super::{
 };
 
 #[derive(Debug)]
-pub(super) struct TreeBlob {
+pub(crate) struct TreeBlob {
     durable: DurablePath,
     oid: String,
     size: u64,
@@ -135,7 +135,7 @@ fn check_entry_bounds(
     Ok(())
 }
 
-pub(super) fn parse_ls_tree_entries(raw: &[u8]) -> Result<Vec<TreeBlob>, ImportError> {
+pub(crate) fn parse_ls_tree_entries(raw: &[u8]) -> Result<Vec<TreeBlob>, ImportError> {
     let entries = decode_ls_tree_raw(raw)?;
     let prefix = select_state_prefix(&entries)?;
     let mut blobs = Vec::new();
@@ -174,7 +174,7 @@ pub(super) fn parse_ls_tree_entries(raw: &[u8]) -> Result<Vec<TreeBlob>, ImportE
     Ok(blobs)
 }
 
-pub(super) fn read_git_blobs(
+pub(crate) fn read_git_blobs(
     repo_dir: &Path,
     blobs: &[TreeBlob],
     staging: &Path,

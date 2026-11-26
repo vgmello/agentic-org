@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
+use super::message::{Message, MessageHeader};
 use crate::calls::Call;
 
 /// `msg.wait`: hold until the bound member has an unread message, and return the oldest

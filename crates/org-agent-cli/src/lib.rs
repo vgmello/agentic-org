@@ -26,6 +26,7 @@ pub mod sources;
 pub mod table;
 pub mod task_dispatch;
 pub mod task_table;
+pub mod transport;
 
 use std::io::{self, Write};
 

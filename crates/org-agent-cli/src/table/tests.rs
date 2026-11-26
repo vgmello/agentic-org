@@ -1,6 +1,6 @@
 //! The command table holds the org-command contract, and every write honours `--dry-run`.
 use super::*;
-use crate::dispatch::{OfficeTransport, TransportOffice};
+use crate::transport::{OfficeTransport, TransportOffice};
 use serde_json::{json, Value};
 
 struct DryRunAuditTransport {

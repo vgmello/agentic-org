@@ -2,8 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
-use crate::calls::Call;
+use super::events::WorkEvent;
+use super::items::{Feature, TimeFigures, WorkItem, WorkItemSummary, WorkPosition};
+use crate::call::Call;
+use crate::{ItemKind, ItemStatus, LinkKind};
 
 /// `work.snapshot`: the office's items (and, phase 3, features), one page at a time, each page
 /// at its own position. Subscribe from the first page's position. Open items always; closed

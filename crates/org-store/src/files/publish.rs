@@ -1,7 +1,16 @@
 //! Materializing accepted versions into the canonical tree: publication, temporary names and
 //! directories.
 
-use super::*;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::{fs, io};
+
+use super::{read_file, FileOp, FileVersion, Files, Plan};
+use crate::change::{DurablePath, Sha256, TEMP_PREFIX};
+use crate::disk::{write_all, DiskFile};
+use crate::error::FilesError;
 
 impl Files {
     /// Writes the final state of each path over `versions` (in acceptance order): each file

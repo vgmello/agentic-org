@@ -12,6 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::admin::{Admin, NativePresence};
+use crate::browser_listener::{browser_matches_setup, published_http_notice};
 use crate::home::{HostLock, Layout};
 use crate::hostdb::{HostDb, HostDbInit};
 use crate::instance::registry::Registry;
@@ -107,7 +108,7 @@ impl Host {
         // Said once per start, before anything is bound, using the active listener (omitted
         // once an http_published instance has opted in to HTTPS).
         if browser.scheme() == org_host_control::listen::ListenMode::HttpPublished {
-            host_log::log(&crate::setup_flow::published_http_notice(&browser));
+            host_log::log(&published_http_notice(&browser));
         }
         let policy = startup_app_policy(&config, true)?;
         let layout_paths = instance
@@ -233,24 +234,6 @@ impl Host {
         debug_assert!(named, "the instance name is installed once");
         Ok(host)
     }
-}
-
-/// Whether an instance's saved browser listener matches its frozen setup record: either
-/// identical, or an opt-in HTTPS upgrade / HSTS update (`ADR-0033`) preserving the exact
-/// reserved listen address, port, origin host, and origin port. Downgrades from `https`
-/// to plain HTTP and any address/port/host changes are refused.
-pub(crate) fn browser_matches_setup(
-    active: &org_host_control::listen::ListenConfig,
-    setup: &org_host_control::listen::ListenConfig,
-) -> bool {
-    if active == setup {
-        return true;
-    }
-    active.scheme() == org_host_control::listen::ListenMode::Https
-        && active.address() == setup.address()
-        && active.port() == setup.port()
-        && active.origin().host() == setup.origin().host()
-        && active.origin().port() == setup.origin().port()
 }
 
 /// The message a foreground start refuses with when its record names no secrets volume on a

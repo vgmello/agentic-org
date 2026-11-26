@@ -1,6 +1,10 @@
 //! Transfer-socket records (X-02 §5.2): channel kinds and record headers.
 
-use super::*;
+use org_proto::frame::FrameError;
+use serde::{Deserialize, Serialize};
+
+use super::TRANSFER_HEADER_MAX_BYTES;
+use crate::LaunchError;
 
 /// Which client a channel's descriptor serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

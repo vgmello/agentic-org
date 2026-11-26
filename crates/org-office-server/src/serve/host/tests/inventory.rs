@@ -1,5 +1,7 @@
 //! Source-backed inventory: actual Call definitions, parser reachability and server dispatch.
 use super::*;
+use org_office::rules::OrgCommand;
+use org_work::WorkCall;
 use std::collections::{BTreeMap, BTreeSet};
 use syn::visit::Visit;
 

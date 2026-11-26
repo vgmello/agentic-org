@@ -7,8 +7,8 @@ use serde::Serialize;
 use super::shared::{admit, id_in_use, reject};
 use super::{changed, invalid, stable, Feature, Op, RejectCode};
 use crate::organization::ports::OrganizationRead;
+use crate::organization::ports::TeamDependents;
 use crate::organization::records::{self, Meta, ModelProfile};
-use crate::projects::ports::ProjectsRead;
 
 fn revision_matches(actual: u64, expected: u64) -> Result<(), Refusal> {
     if actual != expected {
@@ -125,7 +125,7 @@ impl Feature for UpdateProviderConnection {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: ProjectsRead,
+        E::Tx: TeamDependents,
     {
         stable(&self.id, "the connection's ID")?;
         let admitted = admit(uow, here, owner, by)?;
@@ -167,7 +167,7 @@ impl Feature for UpdateProviderConnection {
 }
 
 fn validate_connection_update(
-    view: &impl ProjectsRead,
+    view: &impl TeamDependents,
     conn_id: &Id,
     cmd: &UpdateProviderConnection,
 ) -> Result<(), Refusal> {
@@ -240,7 +240,7 @@ impl Feature for CreateModelProfile {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: ProjectsRead,
+        E::Tx: TeamDependents,
     {
         stable(&self.id, "the model profile's ID")?;
         for cid in &self.connection_ids {
@@ -309,7 +309,7 @@ impl Feature for UpdateModelProfile {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: ProjectsRead,
+        E::Tx: TeamDependents,
     {
         stable(&self.id, "the model profile's ID")?;
         if let Some(ref cids) = self.connection_ids {
@@ -381,7 +381,7 @@ impl Feature for UpdateModelProfile {
     }
 }
 
-fn validate_pool_connections(view: &impl ProjectsRead, cids: &[Id]) -> Result<(), Refusal> {
+fn validate_pool_connections(view: &impl TeamDependents, cids: &[Id]) -> Result<(), Refusal> {
     if cids.is_empty() || cids.len() > 64 {
         return invalid("connection_ids must contain between 1 and 64 distinct connections");
     }

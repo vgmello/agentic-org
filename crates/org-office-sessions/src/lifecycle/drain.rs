@@ -76,12 +76,12 @@ pub(crate) fn recycle_stale_warm_handle_in(
         {
             let _start_guard = crate::manager::StartSlotGuard::new(&m.registry, emp.clone());
             if let Some(old) = worker_slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
-                reaped_cleanly = crate::bwrap_isolation::reap_live_handle(
+                reaped_cleanly = crate::manager::reap_live_handle(
                     &m,
                     &emp,
                     old,
                     None,
-                    crate::bwrap_isolation::ReapMode::FailClosedRestore {
+                    crate::manager::ReapMode::FailClosedRestore {
                         conflict_message: format!(
                             "could not verify teardown of recycled warm session `{emp}`; resolve recovery first"
                         ),
@@ -149,11 +149,7 @@ pub(super) fn try_send_wake_on_live_handle(
         return Ok(false);
     }
     if bwrap_masked_siblings.as_ref().is_some_and(|masked| {
-        crate::bwrap_isolation::has_unmasked_bwrap_sibling_in_office(
-            &ctx.office,
-            employee_id,
-            masked,
-        )
+        crate::manager::has_unmasked_bwrap_sibling_in_office(&ctx.office, employee_id, masked)
     }) {
         recycle_stale_warm_handle(employee_id, &run_id, "bwrap_sibling_topology_changed", ctx);
         return Ok(false);

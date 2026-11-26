@@ -9,12 +9,40 @@ use std::fmt;
 use std::sync::Arc;
 
 use org_proto::org::{Area, Member, Position, Project};
-use org_proto::work::{EventRef, ItemKind, Link, LinkKind, WorkEvent, WorkPosition};
+use org_proto::work::{
+    EventRef, ItemKind, Link, LinkKind, WorkAccepted, WorkChangedData, WorkEvent, WorkPosition,
+};
+use org_proto::ApiError;
 use serde::{Deserialize, Serialize};
 
 use crate::call::{Caller, WorkCall};
-use crate::engine::TxnOutput;
 use crate::model::{StoredItem, StoredResult};
+
+/// What one write request came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TxnOutput {
+    /// Committed now. Answer the caller with `accepted`, then send each `changed` part to
+    /// subscribers as `work.changed` (none when the call changed nothing).
+    Committed {
+        accepted: WorkAccepted,
+        changed: Vec<WorkChangedData>,
+    },
+    /// Refused now. Answer the caller with it; nothing to send.
+    Refused(ApiError),
+    /// A retry of an earlier call: its stored answer, unchanged. Nothing to send.
+    Replayed(Result<WorkAccepted, ApiError>),
+}
+
+impl TxnOutput {
+    /// The answer to give the caller.
+    pub fn answer(&self) -> Result<&WorkAccepted, &ApiError> {
+        match self {
+            Self::Committed { accepted, .. } => Ok(accepted),
+            Self::Refused(e) => Err(e),
+            Self::Replayed(r) => r.as_ref(),
+        }
+    }
+}
 
 /// A storage failure. The cause is for the server's log; `Display` never shows it (no paths,
 /// no SQL), so it is safe to answer a client with as `storage_error`.

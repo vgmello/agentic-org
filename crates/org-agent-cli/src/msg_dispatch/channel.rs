@@ -1,6 +1,13 @@
 //! `channel` commands: listing, membership and summaries.
 
-use super::*;
+use org_command::{Answer, Refusal, Request};
+use org_proto::chat::ChatChannelsResult;
+use serde_json::{json, Map, Value};
+
+use super::{
+    decode_err, insert_opt, opt_bool, opt_non_neg_u64, reject_dry_run, require_str, with_ack,
+};
+use crate::transport::OfficeTransport;
 
 pub(super) fn try_channel<T: OfficeTransport + ?Sized>(
     transport: &mut T,

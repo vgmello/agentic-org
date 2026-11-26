@@ -12,8 +12,8 @@ use org_proto::federation::{
 };
 use org_proto::Call;
 
-use super::cli_error::{office_refused, HostCliError};
 use super::project_command::call_office;
+use crate::cli_error::{office_refused, HostCliError};
 
 /// Input for `agentic-org office invite`.
 #[derive(Debug, Clone)]

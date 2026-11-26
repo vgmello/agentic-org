@@ -1,8 +1,15 @@
 //! Private release-store output primitives. Only authenticated names reach these
 //! methods; every mutation is relative to a retained no-follow directory.
-use super::*;
+use std::ffi::{CStr, CString, OsStr};
+use std::fs::File;
 use std::fs::{Permissions, TryLockError};
-use std::os::unix::fs::PermissionsExt;
+use std::io::{self, Write};
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::Path;
+
+use super::{component, identity, open_at, owned, Directory};
+use crate::release::Error;
 
 #[cfg(test)]
 thread_local! {static FLUSH_COUNTS:std::cell::RefCell<[usize;3]>=const {std::cell::RefCell::new([0;3])};}
