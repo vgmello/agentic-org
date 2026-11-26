@@ -99,9 +99,16 @@ pub fn service(
     let failed = |doing: &str, why: ServiceError| HostCliError::runtime(fail(doing, why));
     match action {
         ServiceAction::Start => {
-            manager
-                .start(&id)
-                .map_err(|e| failed("starting the service", e))?;
+            manager.start(&id).map_err(|e| match manager.status(&id) {
+                // What `release install` leaves of a stopped launchd agent it moved to a new
+                // release: launchd starts what it loads, so only setup loads it again.
+                Ok(ServiceStatus::Unloaded) => HostCliError::runtime(format!(
+                    "starting the service: it is registered but not loaded ({e}); run \
+                     `agentic-org setup{}` to load and start it",
+                    name.map(|n| format!(" --name {n}")).unwrap_or_default()
+                )),
+                _ => failed("starting the service", e),
+            })?;
             Ok(report(ServiceState::Started, None, Vec::new()))
         }
         ServiceAction::Stop => {

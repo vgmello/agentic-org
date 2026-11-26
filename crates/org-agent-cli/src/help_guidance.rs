@@ -5,6 +5,31 @@ mod augment;
 
 pub(crate) use augment::augment_help;
 
+/// The four lines that open `agent-os --help` in a shell with no office binding.
+const QUICKSTART_UNBOUND: &str = "Agent quickstart: this shell has no office binding.
+  Sign in first: agent-os login --as @<handle>
+  Rules, commands and guides without the office: agent-os boot --offline --format yaml
+  Office-started sessions are bound already and get their rules on turn 1.
+";
+
+/// The four lines that open `agent-os --help` in a bound shell: an office-started session
+/// (`AGENT_OS_*`) or a workspace signed in with `agent-os login`.
+const QUICKSTART_BOUND: &str = "Agent quickstart: this shell is bound to its office (an office-started session or a signed-in workspace).
+  Rules, commands, guides and must-follow processes: agent-os boot --format yaml
+  Office-started sessions get them on turn 1 and `agent-os login` prints them: re-run only after context compaction.
+  Then: agent-os whoami, agent-os <resource> --help, and agent-os skill list for guides.
+";
+
+/// The quickstart `agent-os --help` opens with: how to get bound when `bound` is false, and
+/// when `agent-os boot` is worth running when it is true.
+pub fn quickstart(bound: bool) -> &'static str {
+    if bound {
+        QUICKSTART_BOUND
+    } else {
+        QUICKSTART_UNBOUND
+    }
+}
+
 const TOP_USE_WHEN: &str = "running bound agent or signed-in operator organization commands \
 (tasks, messages, channels, repos, worktrees, processes, HR, sessions).";
 
@@ -84,7 +109,7 @@ pub const RESOURCE_GUIDANCE: &[(&str, &str)] = &[
     ),
     (
         "session",
-        "inspecting agent session state/usage or batching commands over a persistent socket (`session attach`).",
+        "loading your rules and catalogue (`agent-os boot`), inspecting agent session state/usage, or batching commands over a persistent socket (`session attach`).",
     ),
     (
         "skill",
@@ -255,7 +280,7 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
     (
         "member",
         "set-hiring",
-        "granting or revoking an employee's authorization to hire agents (requires `--if-match`).",
+        "granting (`--allow`) or revoking (`--revoke`) an employee's authorization to hire agents (requires `--if-match`).",
     ),
     // msg
     (
@@ -442,6 +467,11 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
     // session
     (
         "session",
+        "boot",
+        "loading the standing rules, command catalogue, guide index and your must-follow processes at once (`agent-os boot`; offline with `--offline`); a managed session already has them from turn 1.",
+    ),
+    (
+        "session",
         "inspect",
         "checking your (or a named agent's) live session state, workspace paths, stall status, and token usage.",
     ),
@@ -516,7 +546,7 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
     (
         "task",
         "list",
-        "querying and sorting tasks by status, team, assignee, project, labels, dependencies, or search text.",
+        "querying, sorting and paging tasks by status (or `--exclude-status`), team, assignee (or `--unassigned`), project, labels, dependencies, `--modified-file` or search text; `--count` for the total only.",
     ),
     (
         "task",

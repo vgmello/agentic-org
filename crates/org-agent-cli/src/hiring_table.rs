@@ -312,10 +312,15 @@ const AGENT_EXECUTION_SET_INPUT: &[Field] = &[
 
 const MEMBER_SET_MAY_HIRE_INPUT: &[Field] = &[
     Field::required("member", Type::String, "Employee UUIDv7"),
-    Field::required(
-        "may_hire",
+    Field::optional(
+        "allow",
         Type::Boolean,
-        "Whether the employee may hire agents",
+        "Grant the right to hire agents (give this or --revoke)",
+    ),
+    Field::optional(
+        "revoke",
+        Type::Boolean,
+        "Take the right to hire agents away (give this or --allow)",
     ),
 ];
 
@@ -366,7 +371,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
         summary: "Create a catalog role",
         call: "role.create",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: ROLE_CREATE_INPUT,
@@ -384,7 +389,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
         summary: "Update a catalog role",
         call: "role.update",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: ROLE_UPDATE_INPUT,
@@ -432,7 +437,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
         summary: "Hire, draft, confirm, or withdraw agent",
         call: "hr.hire",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Optional,
         },
         input: HR_HIRE_INPUT,
@@ -450,7 +455,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
         summary: "Update agent profile or manager",
         call: "member.agent_update",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: AGENT_UPDATE_INPUT,
@@ -468,7 +473,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
         summary: "Move agent to another team",
         call: "member.agent_move",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: AGENT_MOVE_INPUT,
@@ -486,7 +491,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
         summary: "Pause agent",
         call: "member.agent_set_status",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: AGENT_LIFECYCLE_INPUT,
@@ -504,7 +509,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
         summary: "Resume paused agent",
         call: "member.agent_set_status",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: AGENT_LIFECYCLE_INPUT,
@@ -522,7 +527,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
         summary: "Offboard agent",
         call: "member.agent_offboard",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: AGENT_LIFECYCLE_INPUT,
@@ -555,7 +560,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
         summary: "Configure agent model profile, preset, effort, and prompt",
         call: "member.agent_execution_set",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Optional,
         },
         input: AGENT_EXECUTION_SET_INPUT,
@@ -573,7 +578,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
         summary: "Grant or revoke hiring authority",
         call: "member.set_may_hire",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: MEMBER_SET_MAY_HIRE_INPUT,
@@ -581,7 +586,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
         output: ENTITY_OP_OUTPUT,
         errors: WRITE_ERRORS,
         example: Example {
-            input: r#"{"member":"0193a5c0-0000-7000-8000-000000000051","may_hire":true}"#,
+            input: r#"{"member":"0193a5c0-0000-7000-8000-000000000051","allow":true}"#,
             output: r#"{"id":"0193a5c0-0000-7000-8000-000000000051","revision":7,"generation":11}"#,
         },
     },
@@ -591,7 +596,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
         summary: "Set team member cap (1..=100)",
         call: "team.set_max_members",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: TEAM_SET_MAX_MEMBERS_INPUT,

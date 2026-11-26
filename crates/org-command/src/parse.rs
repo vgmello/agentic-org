@@ -61,6 +61,9 @@ pub(crate) fn parse(
     sources: &mut dyn Sources,
 ) -> Result<Parsed, Usage> {
     let usage = |message: String, hint: String| Usage { message, hint };
+    // A shorthand is read as the command it stands for, whatever follows it.
+    let args = table.expand(args);
+    let args = args.as_ref();
     let Some(resource) = args.first() else {
         return Err(usage(
             "No command was given.".into(),

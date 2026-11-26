@@ -13,14 +13,46 @@ use crate::table::CommandTable;
 /// The launch catalogue may not be longer than this (design 2.5).
 pub const CATALOGUE_LIMIT: usize = 4096;
 
+/// The lines that open the launch catalogue, before one line for each resource.
+pub(crate) const CATALOGUE_HEADING: &str = "## Commands\n\
+Each line is a resource and its verbs: run `<resource> <verb> --flag value`. `--help` after a \
+resource or a command lists its verbs or flags, with an example; `--schema` shows a command's \
+input and answer.\n";
+
 impl CommandTable {
-    /// The short catalogue an agent receives at launch: one line for each command.
+    /// The short catalogue an agent receives at launch, grouped by resource: the heading, then
+    /// one line for each resource with its verbs in name order (`task: create, inspect, list`),
+    /// then the shorthands when there are any.
+    /// The summaries are in `--help`, so the catalogue grows by a word, not a line, for each
+    /// command and stays far under [`CATALOGUE_LIMIT`]. An empty table has the heading alone.
     pub fn catalogue(&self) -> String {
-        self.rows()
-            .iter()
-            .map(|row| format!("{} {}: {}\n", row.resource, row.verb, row.summary))
-            .collect()
+        let mut out = CATALOGUE_HEADING.to_owned();
+        for resource in self.resources() {
+            out.push_str(resource);
+            out.push_str(": ");
+            out.push_str(&verb_names(&self.verbs(resource)));
+            out.push('\n');
+        }
+        if let Some(line) = shorthands_line(self) {
+            out.push_str(&line);
+            out.push('\n');
+        }
+        out
     }
+}
+
+/// The catalogue's last line when the table has shorthands:
+/// `Shorthands: who = directory list; boot = session boot.`
+pub(crate) fn shorthands_line(table: &CommandTable) -> Option<String> {
+    let aliases = table.aliases();
+    if aliases.is_empty() {
+        return None;
+    }
+    let pairs: Vec<String> = aliases
+        .iter()
+        .map(|alias| format!("{} = {}", alias.words.join(" "), alias.command.join(" ")))
+        .collect();
+    Some(format!("Shorthands: {}.", pairs.join("; ")))
 }
 
 fn verb_names(rows: &[&'static Command]) -> String {
@@ -283,8 +315,26 @@ pub(crate) fn flags_hint(program: &str, command: &Command) -> String {
     } else {
         flags.join(", ")
     };
+    // A field with structure has no flag: name it, so a caller knows to give it in `--json`.
+    let structured: Vec<String> = command
+        .input
+        .iter()
+        .filter(|field| !field.is_flag())
+        .map(|field| {
+            if field.required {
+                format!("{} (required)", field.name)
+            } else {
+                field.name.to_owned()
+            }
+        })
+        .collect();
+    let structured = if structured.is_empty() {
+        String::new()
+    } else {
+        format!(" Fields given in --json: {}.", structured.join(", "))
+    };
     format!(
-        "Flags of `{}`: {flags}. Options: {}. `{program} {} --help` says what each does.",
+        "Flags of `{}`: {flags}.{structured} Options: {}. `{program} {} --help` says what each does.",
         command.name(),
         options.join(", "),
         command.name()

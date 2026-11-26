@@ -10,10 +10,8 @@ use org_proto::private_notes::{
 use org_proto::Call;
 use serde_json::{json, Value};
 
-use super::{
-    cmd_id, decode_err, entity_id, list_answer, opt_str, req_str, require_revision, write_answer,
-};
-use crate::transport::OfficeTransport;
+use super::{cmd_id, decode_err, entity_id, opt_str, req_str, require_revision, write_answer};
+use crate::transport::{paginate, parse_cursor, OfficeTransport};
 
 pub(super) fn try_task_note<T: OfficeTransport + ?Sized>(
     transport: &mut T,
@@ -53,6 +51,7 @@ pub(super) fn read_note_list<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    parse_cursor(request.cursor.as_deref())?;
     let params = TasksNotesListParams {
         task: req_str(&request.input, "task")?.to_owned(),
         author_id: opt_str(&request.input, "author_id"),
@@ -60,7 +59,7 @@ pub(super) fn read_note_list<T: OfficeTransport + ?Sized>(
     let raw = transport.call_method(TasksNotesList::METHOD, json!(params))?;
     let res: TasksNotesListResult = serde_json::from_value(raw).map_err(decode_err)?;
     let items: Vec<Value> = res.notes.into_iter().map(|n| json!(n)).collect();
-    Ok(list_answer(items))
+    paginate(request, items)
 }
 
 pub(super) fn read_note_get<T: OfficeTransport + ?Sized>(

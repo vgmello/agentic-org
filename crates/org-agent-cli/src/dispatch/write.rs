@@ -5,8 +5,7 @@ use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
 
 use super::{
-    derived_or_fresh_id, entity_id, opt_bool, opt_str, require_if_match, require_str, send_write,
-    ConflictTarget,
+    entity_id, opt_bool, opt_str, require_if_match, require_str, send_write, ConflictTarget,
 };
 use crate::transport::{OfficeTransport, Refusal};
 
@@ -238,7 +237,8 @@ pub(super) fn write_person_move<T: OfficeTransport + ?Sized>(
     let member_id = require_str(request, "member")?;
     let to_team_id = require_str(request, "to_team_id")?;
     let expected = require_if_match(request)?;
-    let new_membership_id = derived_or_fresh_id(request, "member.move.new_membership");
+    let new_membership_id =
+        crate::transport::entity_id(request, None, "member.move.new_membership")?;
     let mut params = Map::new();
     params.insert("membership_id".into(), json!(member_id));
     params.insert("expected_version".into(), json!(expected));

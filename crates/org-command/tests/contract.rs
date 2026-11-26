@@ -11,9 +11,9 @@ use org_command::testkit::{
     StubOffice, StubSources, HARD_TEXT, SAMPLE_ROWS,
 };
 use org_command::{
-    envelope_schema, run, Ack, Answer, Command, CommandTable, Example, Field, IfMatch, KeySource,
-    Kind, Node, Office, Output, Refusal, Request, Status, Type, MAX_INPUT_BYTES,
-    MAX_YAML_INPUT_BYTES,
+    envelope_schema, run, Ack, Alias, Answer, Command, CommandTable, Example, Field, IfMatch,
+    KeySource, Kind, Node, Office, Output, Refusal, RefusalDetails, Request, Status, Type,
+    MAX_INPUT_BYTES, MAX_YAML_INPUT_BYTES,
 };
 use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
@@ -99,9 +99,7 @@ fn a_row_is_added_without_touching_the_parser() {
         json!({"widget_id": "W-1", "new_name": "Sprocket"})
     );
     assert_eq!((request.if_match, request.durable), (Some(7), true));
-    assert!(table
-        .catalogue()
-        .contains("widget rename: Rename a widget\n"));
+    assert!(table.catalogue().contains("\nwidget: rename\n"));
     let (help, _) = run_stub(&table, &args(&["--help"]), &mut StubSources::default());
     assert!(help.stdout.contains("widget"), "{}", help.stdout);
 }
@@ -1437,10 +1435,14 @@ fn a_write_without_a_key_is_given_one() {
         }
     }
 
-    // On failure the key is reported too. For `unavailable` and `not_ready`, `retry_with`
-    // carries it, beside what the office already said to change.
+    // On failure the key is reported too. For `unavailable`, `not_ready` and `timeout`,
+    // `retry_with` carries it, beside what the office already said to change.
     let refusal = |code| Refusal::new(code, "It did not answer.", "Repeat the call.");
-    for code in [ErrorCode::Unavailable, ErrorCode::NotReady] {
+    for code in [
+        ErrorCode::Unavailable,
+        ErrorCode::NotReady,
+        ErrorCode::Timeout,
+    ] {
         let (output, _, _) = run_counted(create, Some(refusal(code)));
         let envelope = json_envelope(&output, "a failure");
         assert_eq!(output.exit_code, 1);
@@ -1871,4 +1873,124 @@ fn check_reads_a_line_like_run_and_calls_nothing() {
             }
         }
     }
+}
+
+#[test]
+fn a_refusal_carries_the_offices_retry_delay_field_and_rule() {
+    let table = sample_table();
+    let refusal = Refusal {
+        details: Some(Box::new(RefusalDetails {
+            retry_after_ms: Some(1500),
+            field: Some("title".to_owned()),
+            rule: Some("too_long".to_owned()),
+        })),
+        ..Refusal::new(
+            ErrorCode::RateLimited,
+            "Too many attempts.",
+            "Wait, then retry.",
+        )
+    };
+    let output = answered(&table, &["sample", "inspect", "--id", "S-1"], Err(refusal));
+    assert_eq!(output.exit_code, 1);
+    assert_eq!(
+        output.stdout,
+        "{\"ok\":false,\"data\":null,\"meta\":{},\"error\":{\"code\":\"rate_limited\",\"message\":\"Too many attempts.\",\"hint\":\"Wait, then retry.\",\"field\":\"title\",\"rule\":\"too_long\",\"retry_after_ms\":1500}}\n"
+    );
+    let envelope: Value = serde_json::from_str(&output.stdout).expect("json");
+    assert_eq!(validate_schema(&envelope_schema(), &envelope), Ok(()));
+}
+
+#[test]
+fn a_list_reports_its_total_and_compact_shows_it_when_no_line_printed() {
+    let table = sample_table();
+    let item = json!({"id": "S-1", "title": "T", "state": "open", "labels": [], "revision": 1});
+    let mut page = Answer::completed(json!([item]));
+    page.total = Some(7);
+    page.next_cursor = Some("1".to_owned());
+    let output = answered(&table, &["sample", "list"], Ok(page));
+    let envelope = json_envelope(&output, "a page");
+    assert_eq!(
+        envelope["meta"],
+        json!({"status": "completed", "next_cursor": "1", "total": 7})
+    );
+    assert_eq!(validate_schema(&envelope_schema(), &envelope), Ok(()));
+    // Only a count: no line of data, so compact prints `meta` with the total.
+    let mut counted = Answer::completed(json!([]));
+    counted.total = Some(7);
+    let output = answered(
+        &table,
+        &["sample", "list", "--format", "compact"],
+        Ok(counted),
+    );
+    assert_eq!(
+        output.stdout,
+        "meta: {\"status\":\"completed\",\"total\":7}\n"
+    );
+    // A list that reports no total and printed nothing stays empty, as before.
+    let output = answered(
+        &table,
+        &["sample", "list", "--format", "compact"],
+        Ok(Answer::completed(json!([]))),
+    );
+    assert_eq!(output.stdout, "");
+}
+
+#[test]
+fn a_refused_line_names_the_fields_given_only_in_json() {
+    let table = sample_table();
+    let hint = refused(&table, &["sample", "create", "--owner", "x"]);
+    assert!(
+        hint.contains("Fields given in --json: owner, extra."),
+        "{hint}"
+    );
+    let hint = refused(&table, &["sample", "inspect", "--nope", "x"]);
+    assert!(!hint.contains("Fields given in --json"), "{hint}");
+}
+
+static SAMPLE_ALIASES: &[Alias] = &[
+    Alias {
+        words: &["ls"],
+        command: &["sample", "list"],
+    },
+    Alias {
+        words: &["sample", "all"],
+        command: &["sample", "list"],
+    },
+];
+
+#[test]
+fn a_shorthand_is_its_command_for_a_call_its_help_its_schema_and_a_check() {
+    let table = sample_table().with_aliases(SAMPLE_ALIASES);
+    check_rows(&table);
+    assert!(
+        table
+            .catalogue()
+            .ends_with("\nShorthands: ls = sample list; sample all = sample list.\n"),
+        "{}",
+        table.catalogue()
+    );
+    for (short, long) in [
+        (
+            &["ls", "--limit", "2"][..],
+            &["sample", "list", "--limit", "2"][..],
+        ),
+        (
+            &["sample", "all", "--schema"],
+            &["sample", "list", "--schema"],
+        ),
+        (&["ls", "--help"], &["sample", "list", "--help"]),
+        (&["ls", "--bogus"], &["sample", "list", "--bogus"]),
+    ] {
+        let (a, a_office) = run_stub(&table, &args(short), &mut StubSources::default());
+        let (b, b_office) = run_stub(&table, &args(long), &mut StubSources::default());
+        assert_eq!(a, b, "{short:?}");
+        assert_eq!(a_office.calls, b_office.calls, "{short:?}");
+    }
+    let mut sources = StubSources::default();
+    assert!(org_command::check(&table, "agent-os", &args(&["ls"]), &mut sources).is_ok());
+    assert!(
+        org_command::check(&table, "agent-os", &args(&["ls", "--nope"]), &mut sources).is_err()
+    );
+    // Without the shorthands the same words are not a command.
+    assert!(org_command::check(&sample_table(), "agent-os", &args(&["ls"]), &mut sources).is_err());
 }

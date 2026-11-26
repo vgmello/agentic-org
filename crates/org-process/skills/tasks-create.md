@@ -7,7 +7,7 @@ A task is a durable record of work someone has to do. Create one only when the w
 Look for an existing task before you write a new one:
 
 ```bash
-agent-os task list --query <words> --fields id,title,status --format compact
+agent-os task list --query <words> --exclude-status done --fields id,title,status --format compact
 agent-os task labels --query <word>
 ```
 

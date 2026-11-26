@@ -401,6 +401,28 @@ fn external_agent_lifecycle_over_the_real_office_socket() {
     assert!(live.call_raw("who", json!({})).is_err());
     assert!(client::bind(&target(&w).connect().unwrap(), &w.ada, &second_token).is_err());
 
+    // Revoking the lease releases the held wake from Ben's earlier ping; wait for that managed
+    // turn to settle before opening a fresh non-takeover lease for the offboarding check.
+    wait_until(
+        Duration::from_secs(5),
+        "held wake settles after revoke",
+        || {
+            w.node.recorded.count_for("ada") >= 1
+                && !matches!(
+                    w.node
+                        .sessions
+                        .inspect_session(&w.ada, None)
+                        .ok()
+                        .map(|s| s.session.state),
+                    Some(
+                        org_proto::sessions::SessionState::Starting
+                            | org_proto::sessions::SessionState::Running
+                            | org_proto::sessions::SessionState::WaitingApproval
+                    )
+                )
+        },
+    );
+
     // Offboarding ends a fresh lease durably and closes its connections.
     let (_, third_session, third_token) = signed_in(&w, "ada");
     let live = bound_client(&w, &w.ada, &third_token);

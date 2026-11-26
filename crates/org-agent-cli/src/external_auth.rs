@@ -170,12 +170,14 @@ impl Flags {
     }
 }
 
-/// The binding of this process: `AGENT_OS_*` environment variables when they carry a token
-/// (they always win), else the signed-in workspace of the working folder, else the (tokenless)
-/// environment binding, whose refusal says how to get one.
+/// The binding of this process: `AGENT_OS_*` environment variables when they carry a token or
+/// name one ([`crate::office::env_requests_binding`]; they always win, so a managed session whose
+/// token cannot be read fails closed instead of acting as a workspace's agent), else the
+/// signed-in workspace of the working folder, else the (tokenless) environment binding, whose
+/// refusal says how to get one.
 pub fn resolve_binding() -> Binding {
     let env = Binding::from_env();
-    if env.session_token.is_some() {
+    if env.session_token.is_some() || crate::office::env_requests_binding() {
         return env;
     }
     std::env::current_dir()
@@ -189,6 +191,11 @@ pub fn resolve_binding() -> Binding {
 pub fn workspace_binding(cwd: &Path) -> Option<Binding> {
     let root = store::state_root().ok()?;
     let (_, state) = store::find_workspace(&root, cwd)?;
+    binding_of(&state)
+}
+
+/// The binding of the signed-in workspace whose state is `state`; `None` when it has none.
+pub(crate) fn binding_of(state: &store::WorkspaceState) -> Option<Binding> {
     let binding = state.read_binding().ok()??;
     let token = state
         .read_token()
