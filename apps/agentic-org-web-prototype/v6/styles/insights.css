@@ -306,3 +306,10 @@ html[data-theme="cozy"] :is(.project-insights, .team-overview, .org-insights, .o
 
 /* Horizontal bars: gradient toward the tip, rounded ends */
 .ibars-bar i { background: linear-gradient(to right, color-mix(in srgb, var(--mark) 55%, transparent), var(--mark)); border-radius: 999px; }
+
+/* Graphite themes keep a monochrome UI, but charts get colour so series are easy to tell apart:
+   indigo for the main series, teal for the second; the average line stays ink. */
+html[data-theme="graphite"] :is(.project-insights, .team-overview, .org-insights) { --chart-accent: #818cf8; --chart-tint: #2dd4bf; }
+html[data-theme="graphite-light"] :is(.project-insights, .team-overview, .org-insights) { --chart-accent: #6366f1; --chart-tint: #0d9488; }
+html[data-theme="graphite"] .hb-spark i { background: linear-gradient(to bottom, #818cf8, color-mix(in srgb, #818cf8 55%, transparent)); }
+html[data-theme="graphite-light"] .hb-spark i { background: linear-gradient(to bottom, #6366f1, color-mix(in srgb, #6366f1 55%, transparent)); }
