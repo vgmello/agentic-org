@@ -102,6 +102,13 @@ fn allocation_row(row: &Row<'_>) -> rusqlite::Result<ProjectAllocation> {
 macro_rules! sqlite_projects_read {
     ($($view:ty),+) => {$(
         impl ProjectsRead for $view {
+            fn team_task_moves(
+                &self,
+                chains: &std::collections::BTreeMap<Id, (Vec<Id>, Vec<Id>)>,
+            ) -> Result<Vec<crate::organization::ports::TeamHomedMove>, EngineError> {
+                crate::tasks::relocation::team_task_moves(self, chains)
+            }
+
             fn project(&self, project_id: &Id) -> Result<Option<Project>, EngineError> {
                 let (db, scope) = self.view()?;
                 let sql = format!(

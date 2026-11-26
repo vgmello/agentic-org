@@ -94,12 +94,19 @@ fn fresh_id() -> Result<String, Refusal> {
     })
 }
 
+/// The answer to a write, acknowledged in the class its row declares (`doc-79`, `ADR-0014`),
+/// or `durable` when the caller asked to wait for it.
 fn write_answer(request: &Request, data: Value, revision: Option<u64>) -> Answer {
+    let declared = request.command.ack().unwrap_or(Ack::Committed);
     Answer {
         data,
         status: Status::Completed,
         operation_id: request.idempotency_key.clone(),
-        ack: Some(Ack::Committed),
+        ack: Some(if request.durable {
+            Ack::Durable
+        } else {
+            declared
+        }),
         revision,
         next_cursor: None,
         waiting_messages: None,

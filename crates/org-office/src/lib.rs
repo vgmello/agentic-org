@@ -97,7 +97,7 @@ pub use office::{
     classify_replicated_snapshot_path, export_authoritative_state_snapshot_pages,
     is_immutable_state_path, is_peer_revoked, is_stale_snapshot_task_entry,
     promote_pending_removed_origin_withdrawals, publish_message_journal_relay_for_dest_checked,
-    register_peer_session_stop, resolve_employee_office, run_if_peer_active,
+    register_peer_session_stop, relocated_task_paths, resolve_employee_office, run_if_peer_active,
     strip_org_core_employee_refs_typed, task_id_for_work_path, ApprovedSatelliteCert,
     ConsistentStateSnapshot, CreateInvitationParams, CreateInvitationResult, Custody, DataRoots,
     ExportedSnapshotPages, HqTlsIdentity, InvitationPollStatus, InvitationStatus,

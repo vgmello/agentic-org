@@ -201,6 +201,7 @@ fn apply_staged_deletions(
     office: &Office,
     staged: &StagedSnapshotImport,
     pending_work_paths: &BTreeSet<String>,
+    protected_tasks: &BTreeSet<String>,
     committer: &mut BoundedBatchCommitter<'_>,
 ) -> Result<(), String> {
     // Propagate local state scan errors so a failed scan can never leave buffered writes
@@ -208,13 +209,21 @@ fn apply_staged_deletions(
     let local_paths = office.list_local_state_paths().map_err(|e| {
         format!("failed listing local state paths for snapshot reconciliation: {e}")
     })?;
+    // Local task files are never removed (a satellite's own tasks may not be at HQ yet),
+    // except the copies a snapshot moved to another folder (`MoveTeam`, `doc-77`) of a task
+    // whose incoming files were applied (not one the satellite protected).
+    let mut relocated = org_office::relocated_task_paths(&local_paths, &staged.incoming_paths);
+    relocated.retain(|path| {
+        org_office::task_id_for_work_path(path).is_none_or(|tid| !protected_tasks.contains(&tid))
+    });
     let mut deletes: Vec<String> = local_paths
         .into_iter()
         .filter(|existing| {
             !staged.incoming_paths.contains(existing)
                 && !pending_work_paths.contains(existing)
-                && !org_office::is_immutable_state_path(existing)
-                && !existing.starts_with("state/work/")
+                && (relocated.contains(existing)
+                    || (!org_office::is_immutable_state_path(existing)
+                        && org_office::task_id_for_work_path(existing).is_none()))
         })
         .collect();
     deletes.sort_by(|a, b| {
@@ -270,6 +279,7 @@ pub(crate) fn sync_initial_snapshot_paged(
         &session.office,
         &staged,
         &pending_work_paths,
+        &protected_tasks,
         &mut committer,
     )?;
     // Explicitly require an empty committed buffer before installing the checkpoint (`TASK-52` P26-#1).

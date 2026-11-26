@@ -98,8 +98,11 @@ fn create_task(office: &Office, actor: &str, team_id: &str, title: &str) -> Stri
     task_id
 }
 
-/// HQ publishes its committed journal and returns its events after `after`.
+/// HQ publishes its committed journal and returns its events after `after`. A task create
+/// inside the office's reserved number block is answered `committed` (`ADR-0019`): HQ
+/// publishes it once it is flushed and confirmed, which the sync waits for.
 fn hq_events_after(hq: &Office, after: Position) -> Vec<OrgEvent> {
+    hq.sync_store().unwrap();
     hq.sync_org_journal_to_replication().unwrap();
     hq.replication()
         .org_events_after(after.epoch.get(), after.seq)

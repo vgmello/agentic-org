@@ -4,7 +4,7 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{atomic::AtomicBool, Arc},
 };
 
 use org_store::{
@@ -33,6 +33,9 @@ struct Opened<E: OfficeEngine> {
     incarnation: Id,
     /// Whether the last stop before this opening was orderly.
     stopped_cleanly: bool,
+    /// Set when it was not: task numbers up to the counter's reservation may have been
+    /// issued and lost, so the next task create jumps past it (`ADR-0019`).
+    task_counter_unsettled: Arc<AtomicBool>,
 }
 
 enum OfficeStoreInner {
@@ -85,7 +88,8 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     let files: Arc<dyn Projector<E>> = Arc::new(OrganizationFiles::new(organization.clone()));
     let projects: Arc<dyn Projector<E>> = Arc::new(ProjectFiles::new(organization.clone()));
     let messaging: Arc<dyn Projector<E>> = Arc::new(MessagingFiles::new(organization.clone()));
-    let tasks: Arc<dyn Projector<E>> = Arc::new(TaskFiles::new());
+    let tasks: Arc<dyn Projector<E>> =
+        Arc::new(TaskFiles::new(organization.clone(), here.office_id.clone()));
     let processes: Arc<dyn Projector<E>> = Arc::new(ProcessFiles::new());
     let local = OfficeLocalFiles::new(organization, here.office_id.clone());
     #[cfg_attr(
@@ -139,6 +143,7 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
         office: here.office_id.clone(),
         incarnation: here.journal_incarnation.clone(),
         stopped_cleanly,
+        task_counter_unsettled: Arc::new(AtomicBool::new(!stopped_cleanly)),
     })
 }
 
@@ -229,6 +234,13 @@ impl OfficeStore {
     /// drop, a fatal store or a failed close leaves none.
     pub fn stopped_cleanly(&self) -> bool {
         on_store!(self, opened => opened.stopped_cleanly)
+    }
+
+    /// Whether task numbers up to the office counter's `reserved_through` may have been
+    /// issued by a run that did not stop cleanly (`ADR-0019`). Shared with task creation:
+    /// the first create after such a stop issues past the reservation and clears it.
+    pub fn task_counter_unsettled(&self) -> Arc<AtomicBool> {
+        on_store!(self, opened => Arc::clone(&opened.task_counter_unsettled))
     }
 
     /// Returns when every accepted entry is flushed, confirmed and written to its files.

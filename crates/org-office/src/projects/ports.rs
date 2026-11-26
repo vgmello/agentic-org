@@ -22,6 +22,15 @@ pub trait ProjectsRead: OrganizationRead + ProcessesRead {
     fn project_counter(&self) -> Result<Option<ProjectCounter>, EngineError>;
     /// Allocations in ascending `number` order.
     fn project_allocations(&self) -> Result<Vec<ProjectAllocation>, EngineError>;
+    /// Every file of every projectless task folder homed in a team of `chains` (team ID to
+    /// its old and new chain), so a moved team's tasks move with it (`doc-77`). The tasks
+    /// family, above this one, keeps those folders: every engine view answers this through
+    /// `crate::tasks::relocation::team_task_moves`. Required, so no engine can leave a
+    /// team's tasks behind.
+    fn team_task_moves(
+        &self,
+        chains: &BTreeMap<Id, (Vec<Id>, Vec<Id>)>,
+    ) -> Result<Vec<TeamHomedMove>, EngineError>;
 
     /// Resolves a project by UUIDv7 ID, `P-<number>` reference (case-insensitive), or slug.
     fn resolve_project(&self, reference: &str) -> Result<Option<Project>, EngineError> {
@@ -61,7 +70,8 @@ impl<T: ProjectsRead + ?Sized> KnownProjects for T {
 }
 
 /// Every [`ProjectsRead`] answers the organization's [`TeamDependents`]: its projects, and the
-/// team process and standard documents that move with their team.
+/// team process and standard documents and the projectless task folders that move with
+/// their team.
 impl<T: ProjectsRead + ?Sized> TeamDependents for T {
     fn project_exists(&self, id: &Id) -> Result<bool, EngineError> {
         Ok(self.project(id)?.is_some())
@@ -91,6 +101,7 @@ impl<T: ProjectsRead + ?Sized> TeamDependents for T {
                 bytes: encode_structure_document(&doc),
             });
         }
+        moves.extend(self.team_task_moves(chains)?);
         Ok(moves)
     }
 }

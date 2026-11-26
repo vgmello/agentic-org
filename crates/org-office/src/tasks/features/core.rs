@@ -1,241 +1,48 @@
-//! Core task lifecycle mutations: create, update, transition, and assign (`TASK-49`, `TASK-77`).
+//! Core task lifecycle mutations: update, transition and assign (`TASK-49`, `TASK-77`). Each
+//! rewrites `task.md` at the task's next revision with that revision's history event and is
+//! answered `durable` (`doc-79`, `ADR-0014`).
 
 use std::collections::BTreeSet;
 
 use org_proto::tasks::{
-    PatchField, TaskPriority, TaskStatus, TasksAssignParams, TasksCreateParams,
-    TasksTransitionParams, TasksUpdateParams, TASK_MAX_DEPENDENCIES,
+    PatchField, TaskStatus, TasksAssignParams, TasksTransitionParams, TasksUpdateParams,
+    TASK_MAX_DEPENDENCIES,
 };
 use org_proto::ErrorCode;
-use org_store::{Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
-use serde_json::json;
+use org_store::{Ack, Change, Engine, Id, Refusal, UnitOfWork};
+use serde_json::{json, Value};
 
 use crate::organization::records::EmployeeKind;
 use crate::tasks::ports::TasksRead;
-use crate::tasks::records::{
-    encode_json, links_path, normalize_file_paths, normalize_labels, office_task_counter_path,
-    OfficeTaskCounterRecord, TaskLinkRecord, TaskMeta, TaskRecord,
-};
+use crate::tasks::records::{normalize_file_paths, normalize_labels, TaskLinkRecord, TaskRecord};
 use crate::time::format_rfc3339_ms;
 
+use super::write::{current_links, task_location, Writer};
 use super::{
     check_dependency_acyclic, parse_details, parse_uuid_v7, refuse, require_active_employee,
-    require_office_code, require_task, storage_refusal, validate_active_employee,
-    validate_active_team, validate_body, validate_task_type, validate_title, write_task_and_event,
+    require_task, storage_refusal, validate_active_employee, validate_active_team, validate_body,
+    validate_task_type, validate_title,
 };
 
-/// Creates a unified task (`task`, `bug`, `request`, ...), minting its office-coded key locally.
-pub struct CreateTask {
-    pub actor_member_id: String,
-    pub params: TasksCreateParams,
-}
-
-impl CreateTask {
-    pub fn decide<E: Engine>(
-        &self,
-        uow: &mut UnitOfWork<'_, E>,
-        here: &OfficeIdentity,
-    ) -> Result<(Change, Id, Option<Id>), Refusal>
-    where
-        E::Tx: TasksRead,
-    {
-        let actor = require_active_employee(uow.view(), &self.actor_member_id)?;
-        let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
-        let task_id = parse_uuid_v7(&self.params.task_id, "task_id")?;
-        if uow
-            .view()
-            .task(&task_id)
-            .map_err(storage_refusal)?
-            .is_some()
-        {
-            return Err(refuse(
-                ErrorCode::AlreadyExists,
-                format!("task `{task_id}` already exists"),
-            ));
-        }
-        let (team_id, project_id) = resolve_scope(uow.view(), &self.params)?;
-        let assigned_team_id = match self.params.assigned_team_id.as_deref() {
-            Some(tid) => Some(validate_active_team(uow.view(), tid, "assigned_team_id")?),
-            None => None,
-        };
-        let (assignee_id, assigned_agent) = match self.params.assignee_id.as_deref() {
-            Some(eid) => {
-                let emp = validate_active_employee(uow.view(), eid, "assignee_id")?;
-                let agent = (emp.kind == EmployeeKind::Agent).then(|| emp.id.clone());
-                (Some(emp.id), agent)
-            }
-            None => (None, None),
-        };
-        let title = validate_title(&self.params.title)?;
-        let body_markdown = validate_body(&self.params.body_markdown)?;
-        let task_type = match self.params.task_type.as_deref() {
-            Some(t) => validate_task_type(t)?,
-            None => "task".to_owned(),
-        };
-        let labels =
-            normalize_labels(&self.params.labels).map_err(|e| refuse(e.code, e.message))?;
-        let reference_files = normalize_file_paths(&self.params.reference_files, "reference")
-            .map_err(|e| refuse(e.code, e.message))?;
-        let modified_files = normalize_file_paths(&self.params.modified_files, "modified")
-            .map_err(|e| refuse(e.code, e.message))?;
-        let details = match self.params.details.as_ref() {
-            Some(w) => Some(parse_details(uow.view(), &task_id, w)?),
-            None => None,
-        };
-        let links = build_initial_depends_on(uow.view(), &task_id, &self.params.depends_on)?;
-
-        // Mint final `T-<CODE><N>` reference locally using this office's active office_code.
-        let office_code = require_office_code(uow.view(), &here.office_id)?;
-        let prev_counter = uow
-            .view()
-            .office_task_counter(&office_code)
-            .map_err(storage_refusal)?;
-        let next_number = prev_counter.as_ref().map_or(1, |c| c.last_number + 1);
-        let counter = OfficeTaskCounterRecord {
-            office_code: office_code.clone(),
-            last_number: next_number,
-            reserved_through: prev_counter
-                .as_ref()
-                .map_or(next_number, |c| c.reserved_through.max(next_number)),
-        };
-
-        if let Some(effort) = self.params.effort {
-            super::validate_i64_u64(effort, "effort")?;
-        }
-        if let Some(rank_order) = self.params.rank_order {
-            super::validate_i64_u64(rank_order, "rank_order")?;
-        }
-        let at = format_rfc3339_ms(uow.now().0);
-        let task = TaskRecord {
-            id: task_id.clone(),
-            office_code: office_code.clone(),
-            number: next_number,
-            team_id,
-            assigned_team_id,
-            project_id,
-            task_type: task_type.clone(),
-            work_type: self.params.work_type,
-            title: title.clone(),
-            status: TaskStatus::Todo,
-            assignee_id,
-            body_markdown,
-            feature_id: None,
-            milestone_id: None,
-            priority: self.params.priority.unwrap_or(TaskPriority::Normal),
-            effort: self.params.effort,
-            severity: self.params.severity.clone(),
-            resolution: None,
-            blocked_reason: None,
-            rank_order: self.params.rank_order,
-            labels,
-            reference_files,
-            modified_files,
-            repositories: Vec::new(),
-            details,
-            meta: TaskMeta::created(&actor.id, &at),
-        };
-
-        let counter_bytes = encode_json(&counter)
-            .map_err(|e| refuse(ErrorCode::StorageError, format!("encode counter: {e}")))?;
-        let mut change = Change::new(org_store::Ack::Durable)
-            .put(office_task_counter_path(&office_code), counter_bytes);
-        if !links.is_empty() {
-            let link_bytes = encode_json(&links)
-                .map_err(|e| refuse(ErrorCode::StorageError, format!("encode links: {e}")))?;
-            change = change.put(links_path(&task_id), link_bytes);
-        }
-        let change = write_task_and_event(
-            change,
-            &task,
-            &actor.id,
-            &at,
-            &self.params.command_id,
-            json!({
-                "type": "task_created",
-                "key": task.key(),
-                "task_type": task_type,
-                "title": title,
-                "rank_order": task.rank_order,
-                "labels": task.labels,
-            }),
-        )?;
-        Ok((change, task_id, assigned_agent))
-    }
-}
-
-fn resolve_scope<R: TasksRead>(
+/// A core mutation of `task`, already advanced to its next revision: `task.md` with the
+/// task's links as they stand and that revision's event, answered `durable` (`doc-79`).
+pub(crate) fn rewrite_task<R: TasksRead>(
     view: &R,
-    params: &TasksCreateParams,
-) -> Result<(Id, Option<Id>), Refusal> {
-    if let Some(proj_ref) = params.project_id.as_deref() {
-        let project = view
-            .resolve_project(proj_ref)
-            .map_err(storage_refusal)?
-            .ok_or_else(|| {
-                refuse(
-                    ErrorCode::NotFound,
-                    format!("project `{proj_ref}` not found"),
-                )
-            })?;
-        if project.archived {
-            return Err(refuse(
-                ErrorCode::InvalidRequest,
-                format!("project `{proj_ref}` is archived"),
-            ));
-        }
-        if let Some(team_str) = params.team_id.as_deref() {
-            let explicit_team = validate_active_team(view, team_str, "team_id")?;
-            if explicit_team != project.owner_team_id {
-                return Err(refuse(
-                    ErrorCode::InvalidRequest,
-                    "a project task's owning team_id must match the project's owner_team_id",
-                ));
-            }
-        }
-        return Ok((project.owner_team_id, Some(project.id)));
-    }
-    let Some(team_str) = params.team_id.as_deref() else {
-        return Err(refuse(
-            ErrorCode::InvalidRequest,
-            "either `team_id` or `project_id` is required",
-        ));
-    };
-    let team_id = validate_active_team(view, team_str, "team_id")?;
-    Ok((team_id, None))
-}
-
-fn build_initial_depends_on<R: TasksRead>(
-    view: &R,
-    task_id: &Id,
-    refs: &[String],
-) -> Result<Vec<TaskLinkRecord>, Refusal> {
-    if refs.len() > TASK_MAX_DEPENDENCIES {
-        return Err(refuse(
-            ErrorCode::TooLarge,
-            format!("at most {TASK_MAX_DEPENDENCIES} dependencies allowed"),
-        ));
-    }
-    let mut seen = BTreeSet::new();
-    let mut links = Vec::new();
-    for (idx, dep_ref) in refs.iter().enumerate() {
-        let target = require_task(view, dep_ref)?;
-        if &target.id == task_id {
-            return Err(refuse(
-                ErrorCode::InvalidRequest,
-                "a task cannot depend on itself",
-            ));
-        }
-        if seen.insert(target.id.clone()) {
-            links.push(TaskLinkRecord {
-                source_id: task_id.clone(),
-                id: derive_link_id(task_id, &target.id, idx as u32),
-                kind: "depends_on".into(),
-                target_kind: "task".into(),
-                target_id: target.id,
-            });
-        }
-    }
-    Ok(links)
+    task: &TaskRecord,
+    actor_id: &Id,
+    at: &str,
+    command_id: &str,
+    event: Value,
+) -> Result<Change, Refusal> {
+    let location = task_location(view, task)?;
+    let links = current_links(view, task)?;
+    Writer::new(view, actor_id, at, command_id)?.task_and_event(
+        Change::new(Ack::Durable),
+        &location,
+        task,
+        &links,
+        event,
+    )
 }
 
 pub(crate) fn derive_link_id(source: &Id, target: &Id, salt: u32) -> Id {
@@ -295,8 +102,8 @@ impl UpdateTask {
 
         let at = format_rfc3339_ms(uow.now().0);
         task.meta.touch(&actor.id, &at);
-        let change = write_task_and_event(
-            Change::new(org_store::Ack::Durable),
+        let change = rewrite_task(
+            uow.view(),
             &task,
             &actor.id,
             &at,
@@ -524,8 +331,8 @@ impl TransitionTask {
 
         let at = format_rfc3339_ms(uow.now().0);
         task.meta.touch(&actor.id, &at);
-        let change = write_task_and_event(
-            Change::new(org_store::Ack::Durable),
+        let change = rewrite_task(
+            uow.view(),
             &task,
             &actor.id,
             &at,
@@ -602,8 +409,8 @@ impl AssignTask {
         task.meta.touch(&actor.id, &at);
 
         // Exact `assignment_changed` shape required by `schema.sql` CHECK on `task_events` (`doc-84`).
-        let change = write_task_and_event(
-            Change::new(org_store::Ack::Durable),
+        let change = rewrite_task(
+            uow.view(),
             &task,
             &actor.id,
             &at,

@@ -27,6 +27,7 @@ mod companions;
 mod crashes;
 mod local;
 mod messaging;
+mod task_storage;
 mod tasks;
 
 pub(super) const ENGINES: [EngineChoice; 2] = [EngineChoice::Sqlite, EngineChoice::Memory];

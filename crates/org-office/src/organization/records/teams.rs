@@ -39,7 +39,7 @@ pub fn team_key(number: u64) -> String {
 }
 
 /// The folder of the team at the end of `chain`: a top-level team first, then each child.
-pub(super) fn team_folder(chain: &[Id]) -> String {
+pub(crate) fn team_folder(chain: &[Id]) -> String {
     let mut folder = String::from("state");
     for team in chain {
         folder.push_str("/teams/");

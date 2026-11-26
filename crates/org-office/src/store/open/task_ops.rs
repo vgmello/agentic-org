@@ -170,6 +170,9 @@ pub struct TaskCreateOp {
     pub actor: String,
     pub here: OfficeIdentity,
     pub params: TasksCreateParams,
+    /// [`super::OfficeStore::task_counter_unsettled`]: cleared once a create has issued past
+    /// the reservation a stop that was not clean left (`ADR-0019`).
+    pub counter_unsettled: Arc<AtomicBool>,
 }
 
 impl StoreOp for TaskCreateOp {
@@ -181,11 +184,15 @@ impl StoreOp for TaskCreateOp {
             &self.actor,
             &self.params,
         );
-        let cmd = CreateTask {
+        let unsettled = Arc::clone(&self.counter_unsettled);
+        let settled = Arc::clone(&self.counter_unsettled);
+        let mut cmd = CreateTask {
             actor_member_id: self.actor,
             params: self.params,
+            jump_reserved: false,
         };
         let (reply, replayed) = match submit_task(store, op, move |uow| {
+            cmd.jump_reserved = unsettled.load(Ordering::Acquire);
             let (change, id, agent) = cmd.decide(uow, &self.here)?;
             Ok(with_reply(
                 change,
@@ -198,6 +205,11 @@ impl StoreOp for TaskCreateOp {
             Ok(pair) => pair,
             Err(api_err) => return Ok(Err(api_err)),
         };
+        // A create that ran here and completed issued past any unsettled reservation, and
+        // its own reservation is durable (`ADR-0019`).
+        if !replayed && reply.outcome == Outcome::Completed {
+            settled.store(false, Ordering::Release);
+        }
         finish_view(store, reply, replayed)
     }
 }

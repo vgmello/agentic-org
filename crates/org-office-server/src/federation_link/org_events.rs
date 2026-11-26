@@ -103,8 +103,10 @@ pub(crate) fn apply_satellite_org_event_frames(
     Ok(applied)
 }
 
+/// A task folder file, a task history event or a messaging file: what a satellite's own
+/// work touches (`doc-77`, `doc-79`).
 fn is_work_path(path: &str) -> bool {
-    path.starts_with("state/work/") || path.starts_with("messaging/")
+    org_office::task_id_for_work_path(path).is_some() || path.starts_with("messaging/")
 }
 
 /// The one codec whose payload this side decodes into files before applying.

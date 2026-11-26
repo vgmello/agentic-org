@@ -13,8 +13,9 @@ impl Office {
     /// Reconciles an entire incoming snapshot against committed local satellite-owned tasks and
     /// pending local outbox edits BEFORE chunking into <= 8 MiB batches (`TASK-52` P11-#2 / P12-#1):
     /// - Uses strict `local.revision > incoming.revision` so an interrupted snapshot resuming at
-    ///   equal revision still applies any missing sidecars.
-    /// - Scans all incoming `task.json` entries BEFORE removing `pending_work_paths` and protects
+    ///   equal revision still applies any missing sidecars. The incoming revision is the
+    ///   effective one: `task.md`'s, or the task's latest history event in the snapshot.
+    /// - Scans all incoming `task.md` entries BEFORE removing `pending_work_paths` and protects
     ///   every task (and all its sidecars) touched by `pending_work_paths`.
     pub fn filter_stale_snapshot_work_files(
         &self,
@@ -25,23 +26,14 @@ impl Office {
             return Ok(files);
         }
         let mut protected_tasks = collect_task_ids_from_paths(pending_work_paths);
-        for (path, opt_bytes) in &files {
-            let Some(bytes) = opt_bytes else {
-                continue;
-            };
-            let Ok(dp) = DurablePath::parse(path) else {
-                continue;
-            };
-            let Some(crate::tasks::records::Kind::Task(tid)) = crate::tasks::records::kind_of(&dp)
-            else {
-                continue;
-            };
-            let incoming = serde_json::from_slice::<crate::tasks::records::TaskRecord>(bytes)
-                .map_err(|_| OfficeError::Invalid("malformed TaskRecord in snapshot"))?;
+        let refs = files.iter().map(|(p, b)| (p.as_str(), b.as_deref()));
+        let incoming = crate::tasks::replica::incoming_tasks(refs)
+            .map_err(|_| OfficeError::Invalid("malformed task.md in snapshot"))?;
+        for (tid, incoming) in incoming {
             match self.task_inspect(tid.as_str())? {
                 Ok(local) => {
-                    if local.task.office_code == incoming.office_code
-                        && local.task.revision > incoming.meta.revision
+                    if local.task.office_code == incoming.task.office_code
+                        && local.task.revision > incoming.revision
                     {
                         protected_tasks.insert(tid);
                     }
@@ -75,9 +67,10 @@ impl Office {
         Ok(files)
     }
 
-    /// Filters out stale self-echoes of this satellite's own single-writer task counter, tasks,
-    /// and sidecars from an HQ `OrgEvent` so a satellite creating task N+1 before pulling HQ's echo
-    /// of task N never stalls its own org stream on SQLite's monotonic counter trigger (`TASK-52` P8-#1).
+    /// Filters out stale self-echoes of this satellite's own single-writer tasks and their
+    /// sidecars from an HQ `OrgEvent` so an echo of an older local revision never rolls a task
+    /// back (`TASK-52` P8-#1). The office's task counter is office-local and never replicated
+    /// (`doc-80`), so it never echoes.
     pub fn filter_self_echoed_org_event_files(
         &self,
         files: ReplicatedFileBatch,
@@ -95,73 +88,43 @@ impl Office {
             return Ok(files);
         }
         let durable_files = Files::open(&self.durable).map_err(OfficeError::storage)?;
-        let mut skipped_tasks: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
+        let mut skipped_tasks: std::collections::BTreeSet<Id> = std::collections::BTreeSet::new();
         let mut out = Vec::with_capacity(files.len());
-        // Pass 1: identify stale echoed local tasks & counters.
+        // Pass 1: identify stale echoed local tasks.
         for (path, opt_bytes) in files {
             let Ok(dp) = DurablePath::parse(&path) else {
                 out.push((path, opt_bytes));
                 continue;
             };
-            match crate::tasks::records::kind_of(&dp) {
-                Some(crate::tasks::records::Kind::OfficeTaskCounter(ref code))
-                    if local_codes.contains(code) =>
-                {
-                    if should_skip_echoed_counter(&durable_files, &dp, opt_bytes.as_deref()) {
-                        continue;
-                    }
-                    out.push((path, opt_bytes));
+            if let Some(crate::tasks::records::Kind::Task(tid)) =
+                crate::tasks::records::kind_of(&dp)
+            {
+                let here = durable_files.read(&dp).ok().flatten().is_some();
+                if here && should_skip_echoed_task(self, &local_codes, &tid, opt_bytes.as_deref()) {
+                    skipped_tasks.insert(tid);
+                    continue;
                 }
-                Some(crate::tasks::records::Kind::Task(ref tid)) => {
-                    if should_skip_echoed_task(self, &local_codes, tid, opt_bytes.as_deref()) {
-                        skipped_tasks.insert(tid.as_str().to_owned());
-                        continue;
-                    }
-                    out.push((path, opt_bytes));
-                }
-                _ => out.push((path, opt_bytes)),
             }
+            out.push((path, opt_bytes));
         }
         // Pass 2: drop already-present sidecars for skipped local tasks.
         out.retain(|(path, opt_bytes)| {
             let Ok(dp) = DurablePath::parse(path) else {
                 return true;
             };
-            let sidecar_tid = match crate::tasks::records::kind_of(&dp) {
-                Some(
-                    crate::tasks::records::Kind::Checklist(tid)
-                    | crate::tasks::records::Kind::Comment(tid, _)
-                    | crate::tasks::records::Kind::Watchers(tid)
-                    | crate::tasks::records::Kind::Links(tid)
-                    | crate::tasks::records::Kind::Event(tid, _),
-                ) => tid,
-                _ => return true,
+            let Some(kind) = crate::tasks::records::kind_of(&dp) else {
+                return true;
             };
-            if opt_bytes.is_some()
-                && skipped_tasks.contains(sidecar_tid.as_str())
-                && durable_files.read(&dp).ok().flatten().is_some()
-            {
-                return false;
-            }
-            true
+            !(opt_bytes.is_some()
+                && skipped_tasks.contains(kind.task_id())
+                && durable_files.read(&dp).ok().flatten().is_some())
         });
         Ok(out)
     }
 }
 
 fn task_id_of_work_path(dp: &DurablePath) -> Option<Id> {
-    match crate::tasks::records::kind_of(dp) {
-        Some(
-            crate::tasks::records::Kind::Task(tid)
-            | crate::tasks::records::Kind::Checklist(tid)
-            | crate::tasks::records::Kind::Comment(tid, _)
-            | crate::tasks::records::Kind::Watchers(tid)
-            | crate::tasks::records::Kind::Links(tid)
-            | crate::tasks::records::Kind::Event(tid, _),
-        ) => Some(tid),
-        _ => None,
-    }
+    crate::tasks::records::kind_of(dp).map(|kind| kind.task_id().clone())
 }
 
 fn collect_task_ids_from_paths(
@@ -174,7 +137,8 @@ fn collect_task_ids_from_paths(
         .collect()
 }
 
-/// Returns the owning task ID string if `path` is a task record or task sidecar under `state/work/`.
+/// Returns the owning task ID string if `path` is a task folder file (`task.md` or a sidecar)
+/// or a task history event.
 pub fn task_id_for_work_path(path: &str) -> Option<String> {
     DurablePath::parse(path)
         .ok()
@@ -182,9 +146,48 @@ pub fn task_id_for_work_path(path: &str) -> Option<String> {
         .map(|id| id.as_str().to_owned())
 }
 
+/// The local task folder files a snapshot moves elsewhere: each is of a task whose `task.md`
+/// the snapshot (`incoming`) carries in another folder, as HQ's `MoveTeam` leaves it. Snapshot
+/// reconciliation removes them, history and comments included, so no copy of a moved task
+/// is left in its old folder; the projector keeps the moved task's rows (`doc-77`).
+pub fn relocated_task_paths<'a>(
+    local: impl IntoIterator<Item = &'a String>,
+    incoming: &std::collections::BTreeSet<String>,
+) -> std::collections::BTreeSet<String> {
+    let folders: std::collections::BTreeMap<Id, String> = incoming
+        .iter()
+        .filter_map(|p| DurablePath::parse(p).ok())
+        .filter(|p| {
+            matches!(
+                crate::tasks::records::kind_of(p),
+                Some(crate::tasks::records::Kind::Task(_))
+            )
+        })
+        .filter_map(|p| crate::tasks::records::task_dir_of(&p))
+        .map(|dir| (dir.task_id.clone(), dir.folder()))
+        .collect();
+    local
+        .into_iter()
+        .filter(|raw| {
+            let dir = DurablePath::parse(raw)
+                .ok()
+                .and_then(|p| crate::tasks::records::task_dir_of(&p));
+            dir.is_some_and(|dir| {
+                folders
+                    .get(&dir.task_id)
+                    .is_some_and(|folder| *folder != dir.folder())
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// Returns `Ok(Some(task_id))` when `office` is a satellite that already holds a strictly newer
-/// local revision for this incoming snapshot `task.json`, failing closed on storage or non-`NotFound`
+/// local revision for this incoming snapshot `task.md`, failing closed on storage or non-`NotFound`
 /// lookup errors so newer sidecars can never be overwritten (`TASK-52` P12-#1 / P21-#2 / P27-#1).
+/// Seen one file at a time, the incoming revision is `task.md`'s own: never above the task's
+/// effective revision, so a task this protects may have newer history in the snapshot, never
+/// the other way round.
 pub fn is_stale_snapshot_task_entry(
     office: &Office,
     path: &str,
@@ -197,8 +200,9 @@ pub fn is_stale_snapshot_task_entry(
     let Some(crate::tasks::records::Kind::Task(tid)) = crate::tasks::records::kind_of(&dp) else {
         return Ok(None);
     };
-    let incoming: crate::tasks::records::TaskRecord = serde_json::from_slice(bytes)
-        .map_err(|_| OfficeError::Invalid("malformed TaskRecord in snapshot"))?;
+    let incoming = crate::tasks::records::decode_task_md(bytes)
+        .map_err(|_| OfficeError::Invalid("malformed task.md in snapshot"))?
+        .task;
     match office.task_inspect(tid.as_str())? {
         Ok(local) => {
             if local.task.office_code == incoming.office_code
@@ -251,8 +255,7 @@ pub fn classify_replicated_snapshot_path(path: &str) -> SnapshotPathClass {
     };
     if let Some(tk) = crate::tasks::records::kind_of(&dp) {
         return match tk {
-            crate::tasks::records::Kind::OfficeTaskCounter(_)
-            | crate::tasks::records::Kind::Task(_) => SnapshotPathClass::WorkCore,
+            crate::tasks::records::Kind::Task(_) => SnapshotPathClass::WorkCore,
             _ => SnapshotPathClass::WorkSidecar,
         };
     }
@@ -311,32 +314,6 @@ pub(super) fn is_replicated_journal_entry(
     })
 }
 
-fn should_skip_echoed_counter(
-    durable_files: &Files,
-    dp: &DurablePath,
-    incoming_bytes: Option<&[u8]>,
-) -> bool {
-    let Some(in_raw) = incoming_bytes else {
-        return false;
-    };
-    let Ok(in_val) = serde_json::from_slice::<serde_json::Value>(in_raw) else {
-        return false;
-    };
-    let Some(in_num) = in_val
-        .get("last_number")
-        .and_then(serde_json::Value::as_u64)
-    else {
-        return false;
-    };
-    let Ok(Some(local_raw)) = durable_files.read(dp) else {
-        return false;
-    };
-    serde_json::from_slice::<serde_json::Value>(&local_raw)
-        .ok()
-        .and_then(|v| v.get("last_number").and_then(serde_json::Value::as_u64))
-        .is_some_and(|local_num| local_num >= in_num)
-}
-
 fn should_skip_echoed_task(
     office: &Office,
     local_codes: &std::collections::BTreeSet<String>,
@@ -346,7 +323,7 @@ fn should_skip_echoed_task(
     let Some(in_raw) = incoming_bytes else {
         return false;
     };
-    let Ok(in_rec) = serde_json::from_slice::<crate::tasks::records::TaskRecord>(in_raw) else {
+    let Ok(in_rec) = crate::tasks::records::decode_task_md(in_raw).map(|doc| doc.task) else {
         return false;
     };
     if !local_codes.contains(&in_rec.office_code) {

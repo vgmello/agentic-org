@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use org_proto::{ApiError, ErrorCode};
-use org_store::{Actor, Change, Id, Operation, Outcome, Refusal, Sha256, Store, StoreError};
+use org_store::{Actor, Id, Operation, Outcome, Refusal, Sha256, Store, StoreError};
 use serde_json::json;
 
 use crate::organization::ports::OrganizationRead;
@@ -12,8 +12,8 @@ use crate::organization::records::{Employee, Repository};
 use crate::projects::features::{resolve_repository, AttachProjectRepository, RegisterRepository};
 use crate::projects::records::Project;
 use crate::tasks::features::{
-    decode_refusal, parse_uuid_v7, require_active_employee, require_task, storage_refusal,
-    write_task_and_event,
+    decode_refusal, parse_uuid_v7, require_active_employee, require_task, rewrite_task,
+    storage_refusal,
 };
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{TaskRecord, TaskRepositoryRecord};
@@ -269,8 +269,8 @@ impl StoreOp for RecordTaskRepoBranchOp {
             upsert_task_repository_link(&mut task, &repository_id, &branch, &integrated_commit)?;
             let at = format_rfc3339_ms(uow.now().0);
             task.meta.touch(&emp.id, &at);
-            write_task_and_event(
-                Change::new(org_store::Ack::Durable),
+            rewrite_task(
+                uow.view(),
                 &task,
                 &emp.id,
                 &at,

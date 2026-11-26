@@ -243,6 +243,13 @@ impl TasksWrite for MemoryTx {
         normalized
             .repositories
             .sort_by(|a, b| a.repository_id.cmp(&b.repository_id));
+        // Effective revision (`doc-79`): `max(task.md revision, latest event revision)`.
+        let latest = tables
+            .events
+            .get(&record.id)
+            .and_then(|by_rev| by_rev.keys().next_back().copied())
+            .unwrap_or(0);
+        normalized.meta.revision = normalized.meta.revision.max(latest);
         tables.tasks.insert(record.id.clone(), normalized);
         Ok(())
     }
@@ -356,6 +363,11 @@ impl TasksWrite for MemoryTx {
             )));
         }
         by_rev.insert(record.revision, record.clone());
+        // A child-only change (`doc-79`) advances the task's effective revision without
+        // rewriting `task.md`.
+        if let Some(task) = tables.tasks.get_mut(&record.task_id) {
+            task.meta.revision = task.meta.revision.max(record.revision);
+        }
         Ok(())
     }
 }

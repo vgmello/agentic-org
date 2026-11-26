@@ -193,11 +193,14 @@ pub struct DurablePath(Arc<str>);
 
 impl DurablePath {
     /// The longest path, in bytes: it must fit a file-system path with the root before it.
-    pub const MAX_BYTES: usize = 512;
+    /// Sized for the deepest data-contract path with headroom: a task comment of a team
+    /// at the organization's deepest team chain (`MAX_TEAM_DEPTH = 16`,
+    /// `state/teams/<16 UUIDs>/work/tasks/<uuid>/comments/<uuid>.md`, 790 bytes).
+    pub const MAX_BYTES: usize = 1024;
 
     pub fn parse(text: &str) -> Result<Self, StoreError> {
         if text.len() > Self::MAX_BYTES {
-            return Err(StoreError::invalid("a durable path is at most 512 bytes"));
+            return Err(StoreError::invalid("a durable path is at most 1024 bytes"));
         }
         let mut components = text.split('/');
         let tree = components.next().unwrap_or_default();
@@ -514,9 +517,45 @@ mod tests {
         assert!(Id::parse("01900000-0000-7000-8000-00000000000a").is_ok());
         assert_eq!(path("state/a/b").parent(), Some(path("state/a")));
         assert_eq!(path("state").parent(), None);
-        let deep = format!("state/{}", "abcdefg/".repeat(64));
-        assert!(DurablePath::parse(&deep[..512]).is_ok());
-        assert!(DurablePath::parse(&format!("{}x", &deep[..512])).is_err());
+        let deep = format!("state/{}", "abcdefg/".repeat(128));
+        let max = DurablePath::MAX_BYTES;
+        assert_eq!(max, 1024);
+        assert!(DurablePath::parse(&deep[..max]).is_ok());
+        assert!(DurablePath::parse(&format!("{}x", &deep[..max])).is_err());
+    }
+
+    #[test]
+    fn the_deepest_team_task_comment_path_fits_with_headroom() {
+        // `MAX_TEAM_DEPTH = 16` team chain (the organization's limit), then a task's
+        // comment: the longest path the data contract names.
+        let uuid = |n: u64| format!("01900000-0000-7000-8000-{n:012x}");
+        let mut folder = String::from("state");
+        for depth in 0..16 {
+            folder.push_str("/teams/");
+            folder.push_str(&uuid(depth));
+        }
+        let comment = format!(
+            "{folder}/work/tasks/{}/comments/{}.md",
+            uuid(0x100),
+            uuid(0x200)
+        );
+        assert_eq!(comment.len(), 790);
+        assert!(DurablePath::parse(&comment).is_ok());
+        // Over 200 bytes (more than a fifth of the limit) are left for anything longer the
+        // contract adds.
+        assert!(
+            comment.len() + 200 <= DurablePath::MAX_BYTES,
+            "{}",
+            comment.len()
+        );
+        for name in ["task.md", "checklist.yaml", "operations.yaml"] {
+            let file = format!("{folder}/work/tasks/{}/{name}", uuid(0x100));
+            assert!(DurablePath::parse(&file).is_ok(), "{name}");
+        }
+        // The history of a task is not under its team: its path is short at any depth.
+        let history = format!("state/work-history/tasks/{}/{}.json", uuid(0x100), i64::MAX);
+        assert!(history.len() < 128);
+        assert!(DurablePath::parse(&history).is_ok());
     }
 
     #[test]
