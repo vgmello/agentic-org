@@ -5,7 +5,7 @@ import { S } from "../state.js";
 import { av, esc, ic, kindWord, plural, presence } from "../ui.js";
 import { chatTitle, findConversations, matchReason, openAsks, openDirectMessage, recipients } from "./chat-model.js";
 import { viewLinks } from "./chat-views.js";
-import { A2A_CLICKS, a2aSectionHtml } from "./chat-a2a.js";
+import { A2A_CLICKS, a2aSectionHtml, lastPicked, onA2AInput, onA2AKeydown } from "./chat-a2a.js";
 
 const GROUPS = [["channel", "Channels"], ["dm", "Direct messages"], ["a2a", "Between agents"]];
 const PRESENCE_WORD = { needs: "Waiting on you", withyou: "With you", working: "Working", paused: "Paused", available: "Available", asleep: "Asleep", offline: "Offline" };
@@ -123,12 +123,32 @@ function chooseConversation(e, link) {
   e.stopPropagation();
   return "same-conversation";
 }
+/* "Between agents" is the list's last section: while its picker is open the list scrolls just enough to show the
+   section whole (or from its heading down), so the picked names and their conversations are in view together. */
+function revealA2A(nav) {
+  const head = nav.querySelector("#chat-a2a-head");
+  if (!head || !nav.querySelector("#chat-a2a-filter")) return;
+  const headTop = head.getBoundingClientRect().top - nav.getBoundingClientRect().top + nav.scrollTop;
+  nav.scrollTop = Math.max(nav.scrollTop, Math.min(headTop - 4, nav.scrollHeight - nav.clientHeight));
+}
 /* The agents' section's controls re-render the list in place and keep focus on the control used. */
+function repaintA2A(root, focusId) {
+  const nav = root.querySelector("#chat-nav"), top = nav.scrollTop;
+  nav.innerHTML = navInner(root.dataset.ch);
+  nav.scrollTop = top;
+  revealA2A(nav);
+  document.getElementById(focusId)?.focus({ preventScroll: true });
+}
 function onA2AClick(root, t) {
-  const focusId = A2A_CLICKS[t.dataset.act](t.dataset.id);
-  root.querySelector("#chat-nav").innerHTML = navInner(root.dataset.ch);
-  document.getElementById(focusId)?.focus();
+  repaintA2A(root, A2A_CLICKS[t.dataset.act](t.dataset.id));
   return "handled";
+}
+/* Enter picks the highlighted agent, Backspace in the empty field removes the last one, Escape closes the picker. */
+function onPickerKeydown(e, root) {
+  const r = onA2AKeydown(e);
+  if (r === "close") repaintA2A(root, A2A_CLICKS["chat-a2a-filter"]());
+  else if (r === "remove") repaintA2A(root, A2A_CLICKS["chat-a2a-agent"](lastPicked()));
+  else if (r) repaintA2A(root, A2A_CLICKS["chat-a2a-agent"](r));
 }
 function onListClick(e, root) {
   const link = e.target.closest("#chat-nav a");
@@ -147,11 +167,12 @@ function onListInput(e, root) {
   } else if (t.id === "chat-to") {
     list.to = t.value;
     root.querySelector("#chat-to-list").innerHTML = pickerList();
-  }
+  } else if (t.id === "chat-a2a-q") onA2AInput(t);
 }
 /* Escape clears the filter, then closes the picker; only an empty list field lets Escape close the drawer. */
 function onListKeydown(e, root) {
   const t = e.target;
+  if (t.id === "chat-a2a-q") { onPickerKeydown(e, root); return; }
   if (e.key === "Escape" && t.id === "chat-to") { e.preventDefault(); e.stopPropagation(); setPicker(root, false); return; }
   if (e.key === "Escape" && t.id === "chat-find" && list.q) { e.preventDefault(); e.stopPropagation(); list.q = ""; rerenderList(root, "chat-find"); return; }
   if (e.key === "Enter" && (t.id === "chat-find" || t.id === "chat-to")) {

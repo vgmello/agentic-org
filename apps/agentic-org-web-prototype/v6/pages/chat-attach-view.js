@@ -57,7 +57,7 @@ function viewerInner() {
     <button class="btn ghost icon chat-lb-next" type="button" data-lb="next" aria-label="Next image">${ic("chev-right", "ic20")}</button>` : "";
   return `<div class="chat-lb-bar">
       <div class="chat-lb-title"><h2 id="chat-lb-title">${esc(img.name)}</h2><span>${esc(viewer.meta)} · ${esc(fileFacts(img))}${n > 1 ? ` · ${viewer.i + 1} of ${n}` : ""}</span></div>
-      <a class="btn ghost sm" href="${esc(img.url)}" download="${esc(img.name)}">${ic("download", "ic16")}<span class="chat-att-word">Download</span></a>
+      <a class="btn ghost sm" href="${esc(img.url)}" download="${esc(img.name)}" aria-label="Download ${esc(img.name)}" title="Download">${ic("download", "ic16")}<span class="chat-att-word">Download</span></a>
       <button class="btn ghost icon" type="button" data-lb="close" aria-label="Close image viewer">${ic("x", "ic20")}</button>
     </div>
     <figure class="chat-lb-stage"><img src="${esc(img.url)}" alt="${esc(altOf(img))}">${nav}</figure>
@@ -122,7 +122,8 @@ function conversationFiles(ch) {
   const out = [];
   for (const m of ch.msgs) {
     (m.files || []).forEach((f) => out.push({ f, m, link: m.id }));
-    (m.thread || []).forEach((r) => (r.files || []).forEach((f) => out.push({ f, m: r, link: m.id, inThread: true })));
+    /* A reply's file links to that exact reply (the thread opens on it), not to the thread's first message. */
+    (m.thread || []).forEach((r, i) => (r.files || []).forEach((f) => out.push({ f, m: r, link: `${m.id}-r${i}`, inThread: true })));
   }
   return out.reverse();
 }

@@ -23,12 +23,25 @@ function messageIndex(item) {
   return CH[item.ch]?.msgs.findIndex((m) => m.id === item.mid) ?? -1;
 }
 
+/* A line's attachments: each file's name and the link to the exact message (or thread reply) that carries it. */
+const lineFiles = (m, href) => (m.files || []).map((f) => ({ name: f.name, href }));
+function excerptLine(m, href) {
+  const files = lineFiles(m, href);
+  return { who: memberName(m.who), time: m.time, text: m.text || "", href, ...(files.length ? { files } : {}) };
+}
 /* The message, up to `earlier` messages before it, and its thread replies. Never the whole conversation. */
 function excerptLines(item) {
   const msgs = CH[item.ch]?.msgs || [], i = messageIndex(item);
   if (i < 0) return [];
-  const picked = [...msgs.slice(Math.max(0, i - item.earlier), i + 1), ...(msgs[i].thread || [])];
-  return picked.map((m) => ({ who: memberName(m.who), time: m.time, text: m.text }));
+  const base = `#/chat/${item.ch}/`;
+  const posts = msgs.slice(Math.max(0, i - item.earlier), i + 1).map((m) => excerptLine(m, base + m.id));
+  const replies = (msgs[i].thread || []).map((r, n) => excerptLine(r, `${base}${msgs[i].id}-r${n}`));
+  return [...posts, ...replies];
+}
+/* What a line says in one row of text: its words, then its files by name (an attachment-only line is never empty). */
+function lineSummary(l) {
+  const names = (l.files || []).map((f) => f.name).join(", ");
+  return [l.text, names && `Attached: ${names}`].filter(Boolean).join(" · ");
 }
 
 function chatExcerpt(chId, mid, earlier) {
@@ -55,7 +68,7 @@ function resolveContext(item) {
     ...item,
     title: `Conversation excerpt · ${chatTitle(CH[item.ch])} · ${plural(lines.length, "message", "messages")}`,
     href: `#/chat/${item.ch}/${item.mid}`,
-    preview: last ? clip(`${last.who}: ${last.text}`) : "",
+    preview: last ? clip(`${last.who}: ${lineSummary(last)}`) : "",
     lines,
   };
 }
@@ -156,8 +169,16 @@ function contextForTask(ctx) {
 const keyAttr = (key) => `data-key="${esc(key)}"`;
 const sel = (act, key) => `[data-stc="${act}"][data-key="${CSS.escape(key)}"]`;
 
+/* A line's files, each linking to its message in Chat (a new tab from the composer, so the draft stays). */
+function lineFilesHtml(l, cls, newTab = false) {
+  if (!l.files?.length) return "";
+  const target = newTab ? ' target="_blank" rel="noopener"' : "";
+  const links = l.files.map((f) => `<a class="alink" href="${esc(f.href)}"${target}>${esc(f.name)}</a>`).join(", ");
+  return `<p class="${cls}">${ic("paperclip", "ic14")}<span><span class="sr-only">Attached: </span>${links}</span></p>`;
+}
+const lineText = (l) => (l.text ? `<p>${esc(l.text)}</p>` : "");
 function excerptLinesHtml(lines, id) {
-  return `<ol class="stc-ctx-lines" id="${id}" role="list" tabindex="0" aria-label="Messages in the excerpt">${lines.map((l) => `<li><p class="stc-ctx-line-h"><b>${esc(l.who)}</b><time>${esc(l.time)}</time></p><p>${esc(l.text)}</p></li>`).join("")}</ol>`;
+  return `<ol class="stc-ctx-lines" id="${id}" role="list" tabindex="0" aria-label="Messages in the excerpt">${lines.map((l) => `<li><p class="stc-ctx-line-h"><b>${esc(l.who)}</b><time>${esc(l.time)}</time></p>${lineText(l)}${lineFilesHtml(l, "stc-ctx-files", true)}</li>`).join("")}</ol>`;
 }
 
 function excerptControls(ctx, item, index) {
@@ -296,7 +317,7 @@ function sourceMessageLink(src) {
 
 function detailContextItem(c) {
   const msgs = c.messages?.length ? `<details class="work-ctx-msgs"><summary>Show ${plural(c.messages.length, "message", "messages")}</summary>
-      <ol role="list">${c.messages.map((l) => `<li><p class="work-ctx-line-h"><b>${esc(l.who)}</b><time>${esc(l.time)}</time></p><p>${esc(l.text)}</p></li>`).join("")}</ol>
+      <ol role="list">${c.messages.map((l) => `<li><p class="work-ctx-line-h"><b>${esc(l.who)}</b><time>${esc(l.time)}</time></p>${lineText(l)}${lineFilesHtml(l, "work-ctx-files")}</li>`).join("")}</ol>
     </details>` : "";
   return `<li class="work-ctx-item">
     <p class="work-ctx-links"><a class="alink" href="${esc(c.href)}">${ic(KIND_ICON[c.kind] || "doc-check", "ic16")}<span>${esc(c.title)}</span></a>${sourceMessageLink(c.source)}</p>

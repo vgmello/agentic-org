@@ -540,6 +540,7 @@ function sendPromptToTess() {
     return;
   }
   enqueueTessIntake(STC);
+  STC.onCreated?.();
   if (STC.createMore) {
     Object.assign(STC, { prompt: "", mentions: [], error: "" });
     paintComposer("#stc-prompt");
@@ -572,6 +573,7 @@ function commitRawTaskNow() {
     context: contextForTask(STC.ctx),
   });
   toast(`Created ${created.id}`, "check-circle");
+  STC.onCreated?.();
   if (STC.createMore) {
     Object.assign(STC, { prompt: "", mentions: [], error: "" });
     render(false);
@@ -753,6 +755,8 @@ function openSmartTaskComposer(trigger, opts = {}) {
     error: "",
     mention: { open: false, start: 0, end: 0, query: "", activeIdx: 0 },
     context: { agentId, trigger },
+    /* Called once a task is created (or sent to Tess), e.g. so Chat's "/task …" leaves the composer only then. */
+    onCreated: opts.onCreated || null,
     /* Task context (what the assignee reads): Chat's excerpt by default, otherwise this page on offer. */
     ctx: createContextState(opts.excerpt, route()),
   };

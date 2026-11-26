@@ -88,7 +88,9 @@
 .chat .chlist a .ic16 { flex: none; }
 .chat .chlist .av { flex: none; }
 .chat-row-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.chat-row-word { flex: none; margin-inline-start: auto; font-size: var(--fs-xs); font-weight: 500; color: var(--gray-400); }
+/* Names come first: in a narrow rail the presence word ("Waiting on you") shrinks and truncates long before the
+   name would wrap (its shrink weight is far higher), down to a few letters. */
+.chat-row-word { flex: 0 1000 auto; min-width: 4ch; margin-inline-start: auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--fs-xs); font-weight: 500; color: var(--gray-400); }
 .chat .chlist a.is-unread { color: var(--white); font-weight: 650; }
 .chat .chlist a[aria-current="page"] { color: var(--white); font-weight: 600; box-shadow: inset 3px 0 0 var(--tone-accent); }
 .chat .chlist a[aria-current="page"] .chat-row-word { color: var(--gray-300); }
@@ -102,19 +104,31 @@
 .chat .chlist .chat-a2a-filter-btn { min-height: 28px; padding-inline: 6px; gap: 4px; font-size: var(--fs-xs); color: var(--gray-400); }
 .chat .chlist .chat-a2a-filter-btn[aria-expanded="true"], .chat .chlist .chat-a2a-filter-btn:hover { color: var(--white); background: var(--hover); }
 .chat-a2a-count { display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding-inline: 4px; border-radius: 999px; font-weight: 700; color: var(--tone-accent-ink); box-shadow: inset 0 0 0 1px currentColor; }
-.chat-a2a-filter { display: grid; gap: 6px; padding: 6px 8px 8px; }
+/* The window the rows cover ("Last 24 hours"), under the heading. */
+.chat .chlist .chat-a2a-window { padding: 0 8px 2px; font-size: var(--fs-xs); color: var(--gray-400); }
+/* The agent picker: picked names, a search field, and matching agents only while searching. */
+.chat-a2a-filter { display: grid; gap: 6px; padding: 4px 8px 6px; }
 .chat-a2a-hint { font-size: var(--fs-xs); color: var(--gray-400); line-height: 1.4; }
-.chat .chlist .chat-a2a-chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.chat-a2a-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 2px 10px; border-radius: 999px; font: inherit; font-size: var(--fs-xs); font-weight: 600; color: var(--gray-300); background: transparent; box-shadow: inset 0 0 0 1px var(--line2); cursor: pointer; }
-.chat-a2a-chip:hover { color: var(--white); background: var(--hover); }
-.chat-a2a-chip[aria-pressed="true"] { color: var(--tone-accent-ink); background: color-mix(in srgb, var(--tone-accent) 14%, transparent); box-shadow: inset 0 0 0 1px var(--tone-accent); }
-.chat-a2a-chip:disabled { opacity: .5; cursor: default; }
+.chat .chlist .chat-a2a-picked { display: flex; flex-wrap: wrap; gap: 4px; }
+.chat-a2a-token { display: inline-flex; align-items: center; gap: 2px; min-height: 28px; padding-inline: 10px 2px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; color: var(--tone-accent-ink); background: color-mix(in srgb, var(--tone-accent) 14%, transparent); box-shadow: inset 0 0 0 1px var(--tone-accent); }
+.chat-a2a-rm { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 999px; color: inherit; background: none; cursor: pointer; }
+.chat-a2a-rm:hover { background: var(--hover); }
+.chat .chlist .chat-a2a-combo .field { width: 100%; min-height: 32px; font-size: var(--fs-sm); }
+.chat .chlist .chat-a2a-options { gap: 0; }
+.chat .chlist .chat-a2a-options:not(:empty) { margin-block-start: 4px; padding: 4px; border-radius: var(--radius-md); background: var(--gray-800); box-shadow: inset 0 0 0 1px var(--line2); }
+.chat-a2a-options [role="option"] { display: flex; align-items: center; min-height: 32px; padding: 4px 8px; border-radius: var(--radius-md); font-size: var(--fs-sm); color: var(--gray-300); cursor: pointer; }
+.chat-a2a-options [role="option"]:hover { background: var(--hover); }
+.chat-a2a-options [role="option"][aria-selected="true"] { color: var(--white); background: var(--hover); box-shadow: inset 3px 0 0 var(--tone-accent); }
+.chat-a2a-none { padding: 4px 8px; font-size: var(--fs-xs); color: var(--gray-400); }
 .chat .chlist .chat-a2a-clear { justify-self: start; }
 .chat .chlist .chat-a2a-all { justify-content: flex-start; width: 100%; margin-block-start: 2px; font-size: var(--fs-sm); color: var(--gray-400); }
 .chat .chlist .chat-a2a-all:hover { color: var(--white); }
 .chat-at { display: inline-grid; place-items: center; flex: none; font-size: var(--fs-sm); font-weight: 700; line-height: 1; color: var(--gray-400); }
-/* Find a conversation and New message sit at the top of the list (and of the narrow drawer). */
-.chlist-tools { display: grid; gap: 6px; }
+/* Find a conversation and New message sit at the top of the list (and of the narrow drawer) and stay there: only the
+   conversations below them scroll. */
+.chlist-tools { display: grid; flex: none; gap: 6px; }
+#main .chat > .chlist { overflow: hidden; }
+#main .chat > .chlist > :is(nav, .chat-picker) { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin-inline: -4px; padding-inline: 4px; padding-block-end: 8px; }
 .chat-find { position: relative; display: flex; align-items: center; }
 .chat-find > .ic16 { position: absolute; z-index: 1; left: 10px; color: var(--gray-400); pointer-events: none; }
 .chat-find .field { width: 100%; min-height: var(--control-height); padding-inline: 32px 28px; }
@@ -228,8 +242,12 @@
 /* Meta items wrap on narrow cards; spacing separates them so no separator dangles at a line end. */
 .chat-needs-meta { column-gap: 16px; }
 .chat-needs-meta .sep { display: none; }
-.chat-needs-scope { display: flex; align-items: flex-start; gap: 6px; font-size: var(--fs-sm); color: var(--gray-300); }
-.chat-needs-scope .ic14 { flex: none; margin-block-start: 3px; }
+/* Scope and risk: the facts an inline decision rests on, right above its buttons. */
+.chat-needs-facts { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: var(--fs-sm); color: var(--gray-300); }
+.chat-needs-facts li { display: flex; align-items: flex-start; gap: 6px; }
+.chat-needs-facts .ic14 { flex: none; margin-block-start: 3px; color: var(--gray-400); }
+.chat-needs-facts li > span { min-width: 0; overflow-wrap: anywhere; }
+.chat-needs-fact-k { font-weight: 600; color: var(--white); }
 .chat-needs .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block-start: 4px; }
 .chat-needs .reply { display: grid; gap: 8px; margin-block-start: 4px; }
 .chat-needs .reply textarea { width: 100%; }
@@ -241,7 +259,8 @@
 .chat-needs-note { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--gray-300); }
 .chat-needs-note .ic14 { color: var(--tone-ok-ink); }
 /* Why this ask is decided in Inbox: stated quietly, from the ask's own data. */
-.chat-needs-route { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--gray-400); }
+/* The routing reason is small text, so it uses the stronger text token (at least 4.5:1 in every theme). */
+.chat-needs-route { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--gray-300); }
 .chat-needs-why summary { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; cursor: pointer; list-style: none; font-size: var(--fs-sm); font-weight: 600; color: var(--gray-300); }
 .chat-needs-why summary::-webkit-details-marker { display: none; }
 /* The chevron shows the disclosure's state: right when closed, down when open. */
@@ -295,15 +314,18 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
 #main .chat.list-overlay.list-open > .chlist .chlist-head h2 { padding: 0; font-size: var(--fs-sm); color: var(--white); }
 #main .chat.list-overlay.list-open > .chlist {
   display: flex; position: fixed; z-index: 81; top: 0; bottom: 0; left: var(--content-start, 0px);
-  width: min(288px, 100% - 48px); border-right: 1px solid var(--line2); background: var(--gray-800); overflow-y: auto;
+  width: min(288px, 100% - 48px); border-right: 1px solid var(--line2); background: var(--gray-800); overflow: hidden;
 }
 #main .chat.list-overlay.list-open > .chat-scrim { display: block; position: fixed; inset: 0; z-index: 80; background: rgb(0 0 0 / .5); }
 /* Drawer rows and controls meet the shared touch target. */
-#main .chat.list-overlay.list-open > .chlist :is(a, .chat-person, .chat-new, .chat-a2a-chip, .chat-a2a-filter-btn, .chat-a2a-all), #main .chat.list-overlay.list-open > .chlist .field { min-height: max(var(--control-height), 44px); }
+#main .chat.list-overlay.list-open > .chlist :is(a, .chat-person, .chat-new, .chat-a2a-filter-btn, .chat-a2a-all, .chat-a2a-options [role="option"]), #main .chat.list-overlay.list-open > .chlist .field { min-height: max(var(--control-height), 44px); }
+#main .chat.list-overlay.list-open > .chlist .chat-a2a-rm { width: 40px; height: 40px; }
 #main .chat.list-overlay > .chmain { grid-row: 2; grid-column: 1; }
 /* Touch: the agent filter, Show all and the cross-post choice are 44 px targets wherever the list is. */
 @media (pointer: coarse) {
-  .chat .chlist :is(.chat-a2a-chip, .chat-a2a-filter-btn, .chat-a2a-all) { min-height: 44px; }
+  .chat .chlist :is(.chat-a2a-filter-btn, .chat-a2a-all, .chat-a2a-options [role="option"]) { min-height: 44px; }
+  .chat .chlist .chat-a2a-combo .field { min-height: 44px; }
+  .chat .chlist .chat-a2a-rm { width: 40px; height: 40px; }
 }
 @media (pointer: coarse), (max-width: 639px) {
   .chat .chat-also { min-height: 44px; }
@@ -313,12 +335,20 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
   .chat.withthread .thread-scrim { display: block; position: fixed; inset: 0; z-index: 79; background: rgb(0 0 0 / .4); }
 }
 @media (max-width: 639px) {
-  /* Earlier asks: a row of its own above the stream, never over a message. */
-  .chat-asks-jump { height: auto; padding: 0 var(--gutter, 16px); }
-  .chat-asks-jump .btn { position: static; transform: none; width: 100%; max-width: none; margin-block: 8px 0; justify-content: center; }
-  /* Jump to latest: likewise a row of its own under the stream, never over a card's actions. */
-  .chat-latest-jump { height: auto; padding: 0 var(--gutter, 16px); }
-  .chat-latest-jump .btn { position: static; transform: none; width: 100%; margin-block: 8px 0; justify-content: center; }
+  /* Earlier asks and Jump to latest share one row under the stream, never over a message or a card's actions; either
+     one alone takes the whole row. The conversation column is a grid so the row can hold both. */
+  #main .chat .chmain { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto auto; column-gap: 8px; }
+  #main .chat .chmain > * { grid-column: 1 / -1; grid-row: 4; }
+  #main .chat .chmain > .chat-search-row { grid-row: 1; }
+  #main .chat .chmain > .msgs { grid-row: 2; }
+  #main .chat .chmain > .chat-drop { grid-row: 1 / -1; }
+  #main .chat .chmain > .chat-asks-jump { grid-row: 3; grid-column: 1; padding: 0 0 0 var(--gutter, 16px); }
+  #main .chat .chmain > .chat-latest-jump { grid-row: 3; grid-column: 2; padding: 0 var(--gutter, 16px) 0 0; }
+  #main .chat .chmain > :is(.chat-asks-jump, .chat-latest-jump):has(> .btn[hidden]) { display: none; }
+  #main .chat .chmain:has(> .chat-latest-jump > .btn[hidden]) > .chat-asks-jump { grid-column: 1 / -1; padding-inline: var(--gutter, 16px); }
+  #main .chat .chmain:has(> .chat-asks-jump > .btn[hidden]) > .chat-latest-jump { grid-column: 1 / -1; padding-inline: var(--gutter, 16px); }
+  .chat-asks-jump, .chat-latest-jump { height: auto; }
+  .chat-asks-jump .btn, .chat-latest-jump .btn { position: static; transform: none; width: 100%; max-width: none; margin-block: 8px 0; justify-content: center; }
   /* The title gets its own full row; context moves behind Details. (Content here is always under 768 px, so the
      selector matches the overlay header rule's weight and wins as the later rule.) */
   #main .chat.list-overlay > .chhead, #main .chat > .chhead { grid-template-columns: var(--control-height) auto minmax(0, 1fr) auto; grid-template-areas: "menu list . actions" "title title title title" "details details details details"; gap: 4px; row-gap: 2px; }
@@ -379,7 +409,10 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
   #main .chat > aside.thread { position: relative; }
   .chat-panel-resize { position: absolute; z-index: 2; top: 0; bottom: 0; left: -5px; width: 10px; cursor: col-resize; touch-action: none; }
   .chat-panel-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; background: transparent; transition: background-color .12s ease; }
+  /* A subtle grip, always visible, says the edge can be dragged; the edge lights up on hover, focus and drag. */
+  .chat-panel-resize::before { content: ""; position: absolute; z-index: 1; top: 50%; left: 2px; width: 6px; height: 32px; margin-block-start: -16px; border-radius: 999px; background: color-mix(in srgb, var(--gray-400) 55%, transparent); box-shadow: 0 0 0 2px var(--gray-900); transition: background-color .12s ease; }
   .chat-panel-resize:hover::after, .chat-panel-resize:focus-visible::after, .chat.is-resizing .chat-panel-resize::after { background: var(--tone-accent); }
+  .chat-panel-resize:hover::before, .chat-panel-resize:focus-visible::before, .chat.is-resizing .chat-panel-resize::before { background: var(--tone-accent); }
   .chat-panel-resize:focus-visible { outline: none; }
   .chat.is-resizing { cursor: col-resize; user-select: none; }
 }

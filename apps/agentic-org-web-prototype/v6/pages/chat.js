@@ -183,7 +183,7 @@ function composerHtml(o) {
     <div class="chat-compose-row">
       ${attachButton(o.field)}
       <label class="sr-only" for="${o.field}">${esc(o.label)}</label>
-      <textarea class="field" id="${o.field}" name="message" rows="1" placeholder="${esc(o.label)}" aria-describedby="${o.note ? o.field + "-note " : ""}${o.field}-help" autocomplete="off" enterkeyhint="enter" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false">
+      <textarea class="field" id="${o.field}" name="message" rows="1" placeholder="${esc(o.label)}" data-placeholder="${esc(o.label)}" aria-describedby="${o.note ? o.field + "-note " : ""}${o.field}-help" autocomplete="off" enterkeyhint="enter" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false">
 ${esc(o.draft || "")}</textarea>
       <button class="btn ${o.button}" type="submit" title="${o.submit} (${shortcut.label})" aria-keyshortcuts="${shortcut.keys}">${ic("send", "ic20")}${o.submit}</button>
     </div>
@@ -251,19 +251,28 @@ function sendable(form, field) {
   return att.files.length ? { text, files: att.files } : { text };
 }
 /* ---------------------------------------------------------------- / commands */
-/* /task: a task with this conversation's latest messages as context (the task-context excerpt). */
-function taskFromConversation(id, field) {
-  const ch = CH[id], last = [...ch.msgs].reverse().find((m) => !m.pending);
-  openSmartTaskComposer(field, last ? { prompt: "", proj: ch.proj, excerpt: { ch: id, mid: last.id } } : { prompt: "", proj: ch.proj });
-}
-function runCommand(name, id, field) {
-  if (name === "task") taskFromConversation(id, field);
-  else if (name === "files") toggleFiles();
-}
+/* The composer's words leave it only when their command succeeded; until then they stay, as the draft. */
 function clearComposer(id, field) {
   chatDrafts.delete(id);
   field.value = "";
   fitTextarea(field);
+}
+/* /task what to do: a task whose prompt is those words, with this conversation's latest messages as context (the
+   task-context excerpt). The composer keeps "/task …" until the task is created, so cancelling loses nothing. */
+function taskFromConversation(id, field, text = "") {
+  const ch = CH[id], last = [...ch.msgs].reverse().find((m) => !m.pending);
+  const opts = { prompt: text, proj: ch.proj, onCreated: () => clearComposer(id, field) };
+  if (last) opts.excerpt = { ch: id, mid: last.id };
+  openSmartTaskComposer(field, opts);
+}
+/* /files opens the Files panel; any words after it stay in the composer. */
+function filesCommand(id, field, text = "") {
+  if (text) { field.value = text; chatDrafts.set(id, text); fitTextarea(field); } else clearComposer(id, field);
+  toggleFiles();
+}
+function runCommand(name, id, field, text = "") {
+  if (name === "task") taskFromConversation(id, field, text);
+  else if (name === "files") filesCommand(id, field, text);
 }
 /* /ask @agent question: posted as the owner's structured question to that agent. */
 function postQuestion(form, field, cmd) {
@@ -284,22 +293,33 @@ function assignItem(form, field, cmd) {
   toast(`Assigned ${w.id} to ${M[cmd.who].name}.`, "check-circle");
   field.focus();
 }
-/* A message starting with "/" is a command; true when it was handled (run, or explained). */
+/* A slash word that is no command: say so, and offer to send the text as it is. */
+function showUnknownCommand(form, field, name) {
+  showEmptySendHint(form, field, `/${name} isn't a command. Type / to see the commands.`);
+  const hint = form.querySelector(".chat-compose-hint");
+  hint.insertAdjacentHTML("beforeend", ` <button class="alink chat-ref chat-send-plain" type="button" data-act="chat-send-plain">Send as message</button>`);
+}
+/* A message starting with a complete "/command" token; true when it was handled (run, or explained). */
 function sendCommand(form, field) {
   const cmd = parseCommand(field.value);
   if (!cmd) return false;
-  if (cmd.name === "ask" && !cmd.invalid) postQuestion(form, field, cmd);
-  else if (cmd.name === "assign" && !cmd.invalid) assignItem(form, field, cmd);
-  else if (cmd.name === "task" || cmd.name === "files") { clearComposer(form.dataset.id, field); runCommand(cmd.name, form.dataset.id, field); }
-  else showEmptySendHint(form, field, cmd.name === "ask" || cmd.name === "assign" ? `Finish the command: /${cmd.name} @agent …` : "Unknown command. Type / to see the commands.");
+  if (cmd.unknown) showUnknownCommand(form, field, cmd.name);
+  else if (cmd.invalid) showEmptySendHint(form, field, `Finish the command: /${cmd.name} @agent …`);
+  else if (cmd.name === "ask") postQuestion(form, field, cmd);
+  else if (cmd.name === "assign") assignItem(form, field, cmd);
+  else runCommand(cmd.name, form.dataset.id, field, cmd.text);
   return true;
 }
-function sendChatMessage(form) {
+/* Posts the composer's text and ready attachments; `plain` sends slash-led text as an ordinary message. */
+function sendChatMessage(form, plain = false) {
   const field = form.elements.message;
   closeAssist();
-  if (sendCommand(form, field)) return;
+  if (!plain && sendCommand(form, field)) return;
   const body = sendable(form, field);
   if (!body) return;
+  postMessage(form, field, body);
+}
+function postMessage(form, field, body) {
   const id = form.dataset.id, ch = CH[id];
   const mentions = mentionsIn(body.text || "", id);
   if (mentions.length) body.mentions = mentions;
@@ -308,11 +328,9 @@ function sendChatMessage(form) {
   if (dmSources.has(id)) { message.src = dmSources.get(id); dmSources.delete(id); form.querySelector(".chat-compose-src")?.remove(); }
   ch.msgs.push(message);
   markAllRead(id);
-  chatDrafts.delete(id);
   local.search = null;
   document.querySelector(".chat-search-row")?.remove();
-  field.value = "";
-  fitTextarea(field);
+  clearComposer(id, field);
   replaceStream(streamFor(id), streamHtml(id), true);
   field.focus();
   setTimeout(() => confirmSent(id, message), 700);
@@ -396,10 +414,15 @@ function contextParts(ch, chId, slot = "ctx") {
 const headerContext = (ch, chId) => joinSep(contextParts(ch, chId).map(([, v]) => (v ? `<span>${v}</span>` : "")));
 /* Plain words for when the full context line would be cut off: no links, so nothing clipped is focusable;
    Details holds the full line with its links. */
+/* An agent's summary leads with its status, so the actionable part survives the narrowest header: "Waiting on you · 2"
+   (its open requests) needs nothing more; otherwise the status, then the role. Details keeps role and links. */
 function dmSummary(who) {
   const m = M[who];
   if (m.kind === "person") return [m.role, m.last];
-  return [m.role, kindWord(who), PRESENCE_WORD[presence(who)]];
+  const word = PRESENCE_WORD[presence(who)];
+  if (presence(who) !== "needs") return [word, m.role];
+  const open = IN.filter((i) => !i.handled && i.from === who).length;
+  return [word, open ? String(open) : ""];
 }
 function summaryParts(ch) {
   if (ch.kind === "dm") return dmSummary(ch.with);
@@ -504,10 +527,19 @@ const latestJump = () => `<div class="chat-latest-jump"><button class="btn sm" t
 /* ---------------------------------------------------------------- page */
 /* A source link (#/chat/<ch>/<msg>) opens the unfiltered stream on that exact message, once per navigation: every
    hash change, and a click on a link to the URL already open, take it again; in-place re-renders do not. */
+/* A thread reply's link (#/chat/<ch>/<root>-r<n>) lands as search's "Open in thread" does: the stream on the root,
+   the thread open on that exact reply, marked and focused. */
+function replyTarget(id, target) {
+  const r = /^(.*)-r(\d+)$/.exec(target), root = r && CH[id].msgs.find((m) => m.id === r[1]);
+  return root?.thread?.[Number(r[2])] ? { root: root.id, reply: r[2] } : null;
+}
 function takeLink(id) {
   const target = route()[2];
-  if (!target || local.linked === location.hash || !CH[id].msgs.some((m) => m.id === target)) return;
-  Object.assign(local, { linked: location.hash, pendingLink: target, search: null });
+  if (!target || local.linked === location.hash) return;
+  const reply = !CH[id].msgs.some((m) => m.id === target) && replyTarget(id, target);
+  if (reply) local.openThread = { ch: id, id: reply.root, reply: reply.reply };
+  else if (!CH[id].msgs.some((m) => m.id === target)) return;
+  Object.assign(local, { linked: location.hash, pendingLink: reply ? reply.root : target, search: null });
 }
 /* "Open thread" from the Threads view opens the conversation with that thread. */
 function takeThread(id) {
@@ -648,7 +680,7 @@ function focusThreadLanding() {
   const reply = document.querySelector(".thread .msgs > .msg.is-linked");
   if (!reply) { document.getElementById("chat-thread-title")?.focus(); return; }
   reply.tabIndex = -1;
-  reply.setAttribute("aria-label", `Matching reply from ${reply.querySelector(".hd b")?.textContent || reply.querySelector(".sr-only")?.textContent || "the thread"}`);
+  reply.setAttribute("aria-label", `${local.search ? "Matching" : "Linked"} reply from ${reply.querySelector(".hd b")?.textContent || reply.querySelector(".sr-only")?.textContent || "the thread"}`);
   reply.focus({ preventScroll: true });
 }
 function focusThreadOpener(id) {
@@ -760,6 +792,7 @@ const CLICKS = {
   "chat-details": () => toggleDetails(),
   "chat-task": (id, t, chId) => turnIntoTask(t, chId, id),
   "chat-asks-jump": () => jumpToAsk(),
+  "chat-send-plain": (_id, t) => sendChatMessage(t.closest("form"), true),
   "chat-latest-jump": () => jumpToLatest(),
   "chat-dm-msg": (id, _t, chId) => {
     const m = CH[chId].msgs.find((x) => x.id === id);
@@ -860,6 +893,17 @@ function takeArrivalFocus() {
     document.getElementById("compose")?.focus();
   }
 }
+/* Phones keep the composer to one line: a long placeholder ("Message #agentic-org-v1") shortens to "Message"; the
+   field's label keeps the full name. */
+const SHORT_PLACEHOLDER = 18;
+function syncPlaceholders() {
+  const narrow = matchesMedia(NARROW_STREAM);
+  for (const f of document.querySelectorAll("#main .chat textarea[data-placeholder]")) {
+    const full = f.dataset.placeholder;
+    f.placeholder = narrow && full.length > SHORT_PLACEHOLDER ? "Message" : full;
+  }
+}
+window.matchMedia?.(NARROW_STREAM).addEventListener?.("change", syncPlaceholders);
 function mountChat() {
   releaseInert();
   const root = document.querySelector("#main .chat");
@@ -868,8 +912,9 @@ function mountChat() {
   root.addEventListener("input", onChatInput);
   root.addEventListener("keydown", onChatKeydown);
   root.addEventListener("focusout", (e) => { if (e.target.id === "compose" || e.target.id === "thread-compose") closeAssist(); });
-  root.addEventListener("chat-command", (e) => runCommand(e.detail.name, root.dataset.ch, e.target));
+  root.addEventListener("chat-command", (e) => runCommand(e.detail.name, root.dataset.ch, e.target, e.detail.text));
   bindAttachments(root);
+  syncPlaceholders();
   mountStream(root);
   mountThread(root);
   fitTextarea(document.getElementById("thread-compose"));
@@ -899,15 +944,35 @@ window.addEventListener("hashchange", () => {
   releaseInert();
   resetAsks();
   if (route()[0] !== "chat") endVisit();
-  Object.assign(local, { details: false, members: false, files: false, linked: null });
+  Object.assign(local, { details: false, members: false, files: false });
+  /* A link is taken once per arrival at its URL; the router may already have taken this one (it can render before
+     this listener runs), and a later in-place re-render must not take it again (a closed thread would reopen). */
+  if (local.linked !== location.hash) local.linked = null;
 });
 /* A link to the URL already open causes no hash change (the shell re-renders in place): capture phase, before it. */
 document.addEventListener("click", (e) => {
   const a = e.target.closest?.('a[href^="#/chat/"]');
   if (a && a.getAttribute("href") === location.hash) local.linked = null;
 }, true);
-/* Crossing the overlay width re-renders so a side panel is a dialog only where it covers the conversation. */
-window.matchMedia?.(OVERLAY_THREAD).addEventListener?.("change", () => { if (route()[0] === "chat" && (S.thread || local.members || local.files)) render(false); });
+/* Crossing 1280 px with a side panel open: the panel's mode follows at once, in place (no re-render, so drafts,
+   scroll and focus stay). Where it covers the conversation it is a modal dialog with an inert background, no resize
+   edge, and focus inside it; inline it is a plain region with its resize edge. */
+function setPanelModal(panel, modal) {
+  if (modal) { panel.setAttribute("role", "dialog"); panel.setAttribute("aria-modal", "true"); }
+  else { panel.removeAttribute("role"); panel.removeAttribute("aria-modal"); }
+}
+function syncPanelMode() {
+  const root = route()[0] === "chat" && document.querySelector("#main .chat"), panel = root && root.querySelector(":scope > aside.thread");
+  if (!panel) return;
+  const modal = matchesMedia(OVERLAY_THREAD);
+  setPanelModal(panel, modal);
+  releaseInert();
+  mountOverlays(root);
+  panel.querySelector(":scope > .chat-panel-resize")?.remove();
+  bindPanelResize(root);
+  if (modal && !panel.contains(document.activeElement)) panel.querySelector("h2[tabindex]")?.focus({ preventScroll: true });
+}
+window.matchMedia?.(OVERLAY_THREAD).addEventListener?.("change", syncPanelMode);
 
 export {
   chatDocTitle,
