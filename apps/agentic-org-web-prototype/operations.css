@@ -7,10 +7,15 @@
 
   html[data-theme="graphite"] {
     --sidebar-edge-shade: linear-gradient(to left, rgb(0 0 0 / .37), transparent 4px);
-    --sidebar-top-light: rgb(255 255 255 / .075);
-    --page-header-light: rgb(255 255 255 / .035);
+    --sidebar-top-light: rgb(255 255 255 / .12);
+    --sidebar-light-rx: 145%;
+    --sidebar-light-y: -24px;
+    --page-header-light: rgb(255 255 255 / .055);
 
     & #sidebar::before { box-shadow: inset -1px 0 #38393A; }
+    & #home-toolbar {
+      background-image: linear-gradient(to right, var(--page-header-light), transparent 28rem);
+    }
   }
 
   html[data-theme="ocean"] {
@@ -32,10 +37,10 @@
     pointer-events: none;
     background:
       var(--sidebar-edge-shade, none),
-      radial-gradient(ellipse 110% 330px at 0 -95px,
+      radial-gradient(ellipse var(--sidebar-light-rx, 110%) 330px at 0 var(--sidebar-light-y, -95px),
         var(--sidebar-top-light),
-        color-mix(in srgb, var(--sidebar-top-light) 45%, transparent) 30%,
-        transparent);
+        color-mix(in srgb, var(--sidebar-top-light) 45%, transparent) 34%,
+        transparent 78%);
   }
 
   html[data-interior-page]:not([data-theme="cozy"]) #main :is(.queue-header, .section-header, .has-page-toolbar:not(.queue-headline, :where(.section-header) > *)) {

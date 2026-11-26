@@ -95,7 +95,7 @@ html[data-theme="graphite"] {
   & .nav-item:is([aria-current="page"], .cur) { background: var(--graphite-active); color: var(--white); box-shadow: none; }
   & .nav-sub { border-left-color: var(--line2); }
   & .foot { border-top-color: var(--line); }
-  & :is(.proto-banner, .topbar) { background: var(--graphite-canvas); border-bottom: 1px solid var(--line); }
+  & :is(.proto-banner, .topbar) { background-color: var(--graphite-canvas); border-bottom: 1px solid var(--line); }
   & .proto-banner { backdrop-filter: none; box-shadow: none; }
   & .proto-hotzone::after { background: var(--gray-500); }
   & .proto-hotzone:hover::after { background: var(--gray-400); }
