@@ -366,6 +366,21 @@ html[data-ui-theme='ocean'][data-interior-page] {
 	--triage-row-selected: var(--ocean-selected);
 }
 
+html[data-ui-theme='ocean'] {
+	--exec-scrim-bg: rgba(4, 7, 16, 0.56);
+	--exec-tess-bg:
+		linear-gradient(155deg, rgba(167, 215, 250, 0.08), transparent 70%), rgba(11, 22, 42, 0.92);
+	--exec-tess-border: rgba(186, 222, 255, 0.2);
+	--exec-tess-blur: blur(26px) saturate(175%);
+	--exec-tess-shadow:
+		0 24px 64px -12px rgba(2, 6, 23, 0.68), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+	--exec-tess-pill-shadow: 0 14px 36px -8px rgba(0, 0, 0, 0.52);
+	--exec-notif-bg: rgba(14, 26, 48, 0.94);
+	--exec-notif-border: rgba(186, 222, 255, 0.2);
+	--exec-notif-blur: blur(24px) saturate(170%);
+	--exec-notif-shadow: 0 22px 54px rgba(0, 0, 0, 0.52);
+}
+
 html[data-ui-theme='ocean'][data-interior-page] .exec-canvas::before {
 	background: var(--ocean-canvas);
 }

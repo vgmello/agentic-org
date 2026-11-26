@@ -61,3 +61,37 @@ export function buildTessDraftPrompt(title: string, description: string, steps: 
 	}
 	return parts.join('\n\n') || 'Help me scope a new task for this organization.';
 }
+
+export interface TessIntakeRouting {
+	mode: 'draft' | 'direct';
+	label: string;
+}
+
+const DRAFT_SIGNALS = /\b(explore|scope|design|draft|options|rfc|proposal|tbd|ideate)\b|\?/i;
+
+/**
+ * Predicts whether Tess will file a straight To-do task or start a Draft ideation lifecycle
+ * based on scope complexity, open questions, or unassigned multi-part descriptions (TASK-139 / TASK-142).
+ */
+export function assessTessIntakeRouting(
+	title: string,
+	description: string,
+	steps: readonly string[],
+	assigneeName?: string
+): TessIntakeRouting {
+	const combined = `${title} ${description}`.trim();
+	const looksExploratory =
+		DRAFT_SIGNALS.test(combined) || description.trim().length >= 160 || steps.length >= 4;
+	if (looksExploratory) {
+		return {
+			mode: 'draft',
+			label: 'Tess will file as Draft for ideation & scoping'
+		};
+	}
+	return {
+		mode: 'direct',
+		label: assigneeName
+			? `Tess will refine & assign to ${assigneeName}`
+			: 'Tess will refine & file to To do'
+	};
+}

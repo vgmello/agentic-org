@@ -49,6 +49,7 @@
 		sortDir = 'asc',
 		showProject = true,
 		showDividers = false,
+		archivedIds,
 		selectedRef = null,
 		onopen
 	}: {
@@ -60,6 +61,7 @@
 		sortDir?: WorkSortDir;
 		showProject?: boolean;
 		showDividers?: boolean;
+		archivedIds?: ReadonlySet<string>;
 		selectedRef?: string | null;
 		onopen?: (row: TaskRow, triggerEl: HTMLElement | null) => void;
 	} = $props();
@@ -261,6 +263,13 @@
 
 											{#if row.awaitingVerification}
 												<span class="work-inline-chip">Verify fix</span>
+											{/if}
+
+											{#if archivedIds?.has(row.id)}
+												<span
+													class="work-inline-chip work-archived-tag"
+													data-testid="work-archived-tag">Archived</span
+												>
 											{/if}
 
 											{#if row.budget}

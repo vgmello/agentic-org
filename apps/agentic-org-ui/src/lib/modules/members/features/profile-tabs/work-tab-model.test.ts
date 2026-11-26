@@ -16,7 +16,12 @@ const ROWS: WorkRow[] = [
 
 describe('work-tab-model (TASK-130)', () => {
 	it('defaults to Open preset hiding done tasks, while explicit Done status reveals closed items', () => {
-		expect(memberWorkPresetCounts(ROWS)).toEqual({ open: 3, needs_me: 1, all: 4 });
+		expect(memberWorkPresetCounts(ROWS)).toEqual({
+			open: 3,
+			needs_me: 1,
+			requested_by_me: 0,
+			all: 4
+		});
 
 		const openOnly = filterAndSortMemberWork(ROWS, {
 			preset: 'open',

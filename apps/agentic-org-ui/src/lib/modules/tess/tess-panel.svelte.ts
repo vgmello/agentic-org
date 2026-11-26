@@ -30,14 +30,18 @@ export const TESS_STARTERS: readonly string[] = [
 	'Where is task time going?'
 ];
 
+export type TessCompanionMode = 'hidden' | 'pill' | 'open' | 'expanded';
+
 /**
- * Persistent right-hand Tess (Chief of Staff) side panel controller (`TASK-80.5` / `doc-97`).
+ * Zero-reflow Floating Tess Companion controller (TASK-145 / TASK-80.5 / doc-97).
  *
+ * Rests at bottom-right as a compact floating pill (or hidden if user toggled pill off),
+ * opens upward as a floating card, and expands to a centered 680px Studio dialog.
  * Uses local workspace derivation (`answerExecutiveQuestion`) with explicit `offline_summary`
  * badging until the live Tess streaming endpoint (`TASK-80.4`) is connected.
  */
 export class TessPanelState {
-	open = $state(false);
+	mode = $state<TessCompanionMode>('pill');
 	turns = $state<TessTurn[]>([]);
 	draft = $state('');
 	contextDismissed = $state(false);
@@ -48,20 +52,42 @@ export class TessPanelState {
 	/** Future seam for live SSE streaming (`TASK-80.4`). Always `'offline'` until wired. */
 	readonly runtimeStatus: 'offline' | 'online' = 'offline';
 
+	get open(): boolean {
+		return this.mode === 'open' || this.mode === 'expanded';
+	}
+
+	set open(value: boolean) {
+		this.mode = value ? (this.mode === 'expanded' ? 'expanded' : 'open') : 'pill';
+	}
+
+	get expanded(): boolean {
+		return this.mode === 'expanded';
+	}
+
 	setDomainContext(domain: HomeDomainData | undefined): void {
 		this.#domainContext = domain;
 	}
 
+	syncRestingVisibility(showPill: boolean): void {
+		if (!showPill && this.mode === 'pill') this.mode = 'hidden';
+		else if (showPill && this.mode === 'hidden') this.mode = 'pill';
+	}
+
 	openPanel(): void {
-		this.open = true;
+		this.mode = this.mode === 'expanded' ? 'expanded' : 'open';
 	}
 
-	close(): void {
-		this.open = false;
+	close(showPill = true): void {
+		this.mode = showPill ? 'pill' : 'hidden';
 	}
 
-	toggle(): void {
-		this.open = !this.open;
+	toggle(showPill = true): void {
+		if (this.open) this.close(showPill);
+		else this.openPanel();
+	}
+
+	toggleExpand(): void {
+		this.mode = this.mode === 'expanded' ? 'open' : 'expanded';
 	}
 
 	clear(): void {
@@ -86,7 +112,7 @@ export class TessPanelState {
 			this.decisionContext = opts.decision;
 			this.contextDismissed = false;
 		}
-		this.open = true;
+		this.openPanel();
 
 		const activeDecision =
 			opts?.decision ?? (this.contextDismissed ? undefined : this.decisionContext);

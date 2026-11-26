@@ -39,12 +39,17 @@ function toWorkPriority(priority: TaskRow['priority']): WorkRow['priority'] {
 	return 'medium';
 }
 
-export function buildMemberWorkRows(rows: readonly TaskRow[], memberId: string): WorkRow[] {
+export function buildMemberWorkRows(
+	rows: readonly TaskRow[],
+	memberId: string,
+	viewerEmployeeId?: string | null
+): WorkRow[] {
 	const out: WorkRow[] = [];
 	for (const row of rows) {
 		if (row.assignee?.id !== memberId) continue;
 		const state = toWorkState(row);
 		if (!state) continue;
+		const closedAt = state === 'done' ? row.statusAt || row.updatedAt : undefined;
 		out.push({
 			ref: row.ref,
 			kind: row.type,
@@ -52,6 +57,9 @@ export function buildMemberWorkRows(rows: readonly TaskRow[], memberId: string):
 			...(row.project?.name ? { project: row.project.name } : {}),
 			assigneeId: memberId,
 			assignee: row.assignee.name,
+			reporterId: row.reporter.id,
+			...(viewerEmployeeId ? { requestedByViewer: row.reporter.id === viewerEmployeeId } : {}),
+			...(closedAt ? { closedAt } : {}),
 			priority: toWorkPriority(row.priority),
 			state
 		});

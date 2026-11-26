@@ -64,8 +64,21 @@ export const STORAGE_KEYS = {
 	navCollapsed: 'agentic-org.ui.navCollapsed',
 	favorites: 'agentic-org.ui.favoriteProjects',
 	singleKey: 'agentic-org.ui.singleKey',
-	assemblyDividers: 'agentic-org.ui.assemblyDividers'
+	assemblyDividers: 'agentic-org.ui.assemblyDividers',
+	showTessPill: 'agentic-org.ui.showTessPill',
+	archiveAfterDays: 'agentic-org.ui.archiveAfterDays'
 } as const;
+
+export const ARCHIVE_AFTER_DAYS_OPTIONS = [0, 3, 7, 10, 14, 30] as const;
+export type ArchiveAfterDays = (typeof ARCHIVE_AFTER_DAYS_OPTIONS)[number];
+
+export function normalizeArchiveAfterDays(value: unknown): ArchiveAfterDays {
+	const num = typeof value === 'number' ? value : Number(value);
+	if (Number.isInteger(num) && (ARCHIVE_AFTER_DAYS_OPTIONS as readonly number[]).includes(num)) {
+		return num as ArchiveAfterDays;
+	}
+	return 10;
+}
 
 const VALID_THEMES = new Set<UiTheme>(UI_THEMES.map((t) => t.id));
 const THEME_SCHEMES = new Map<UiTheme, UiColorScheme>(UI_THEMES.map((t) => [t.id, t.scheme]));
@@ -98,6 +111,8 @@ export interface UiPrefBootstrap {
 	favoriteProjects: string[];
 	singleKeyShortcuts: boolean;
 	assemblyDividers: boolean;
+	showTessPill: boolean;
+	archiveAfterDays: ArchiveAfterDays;
 }
 
 /**
@@ -121,6 +136,8 @@ export function resolveInitialPreferences({
 	let storedFavs: string | null = null;
 	let storedSingleKey: string | null = null;
 	let storedAssemblyDividers: string | null = null;
+	let storedShowTessPill: string | null = null;
+	let storedArchiveDays: string | null = null;
 	try {
 		storedThemeRaw = storage?.getItem(STORAGE_KEYS.theme) ?? null;
 		storedCozyContrast = storage?.getItem(STORAGE_KEYS.cozyHighContrast) ?? null;
@@ -128,6 +145,8 @@ export function resolveInitialPreferences({
 		storedFavs = storage?.getItem(STORAGE_KEYS.favorites) ?? null;
 		storedSingleKey = storage?.getItem(STORAGE_KEYS.singleKey) ?? null;
 		storedAssemblyDividers = storage?.getItem(STORAGE_KEYS.assemblyDividers) ?? null;
+		storedShowTessPill = storage?.getItem(STORAGE_KEYS.showTessPill) ?? null;
+		storedArchiveDays = storage?.getItem(STORAGE_KEYS.archiveAfterDays) ?? null;
 	} catch {
 		// Private browsing or blocked storage: fall back safely to defaults.
 	}
@@ -153,7 +172,9 @@ export function resolveInitialPreferences({
 		navCollapsed: storedCollapsed === '1',
 		favoriteProjects,
 		singleKeyShortcuts: storedSingleKey !== '0',
-		assemblyDividers: storedAssemblyDividers === '1'
+		assemblyDividers: storedAssemblyDividers === '1',
+		showTessPill: storedShowTessPill !== '0',
+		archiveAfterDays: storedArchiveDays !== null ? normalizeArchiveAfterDays(storedArchiveDays) : 10
 	};
 }
 
@@ -198,6 +219,8 @@ class UiPreferencesStore {
 	favoriteProjects = $state<string[]>([]);
 	singleKeyShortcuts = $state(true);
 	assemblyDividers = $state(false);
+	showTessPill = $state(true);
+	archiveAfterDays = $state<ArchiveAfterDays>(10);
 	#hydrated = false;
 
 	hydrate(search = typeof window !== 'undefined' ? window.location.search : ''): void {
@@ -209,6 +232,8 @@ class UiPreferencesStore {
 		this.favoriteProjects = resolved.favoriteProjects;
 		this.singleKeyShortcuts = resolved.singleKeyShortcuts;
 		this.assemblyDividers = resolved.assemblyDividers;
+		this.showTessPill = resolved.showTessPill;
+		this.archiveAfterDays = resolved.archiveAfterDays;
 		this.#hydrated = true;
 
 		// Persist explicit URL overrides and auto-migrate persisted 'light' -> 'report'.
@@ -270,6 +295,21 @@ class UiPreferencesStore {
 
 	toggleAssemblyDividers(): void {
 		this.setAssemblyDividers(!this.assemblyDividers);
+	}
+
+	setShowTessPill(enabled: boolean): void {
+		this.showTessPill = enabled;
+		this.#save(STORAGE_KEYS.showTessPill, enabled ? '1' : '0');
+	}
+
+	toggleShowTessPill(): void {
+		this.setShowTessPill(!this.showTessPill);
+	}
+
+	setArchiveAfterDays(days: ArchiveAfterDays): void {
+		const normalized = normalizeArchiveAfterDays(days);
+		this.archiveAfterDays = normalized;
+		this.#save(STORAGE_KEYS.archiveAfterDays, String(normalized));
 	}
 
 	isFavorite(projectId: string): boolean {

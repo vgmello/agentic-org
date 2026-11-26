@@ -11,6 +11,7 @@
 	import Hash from '@lucide/svelte/icons/hash';
 	import House from '@lucide/svelte/icons/house';
 	import Inbox from '@lucide/svelte/icons/inbox';
+	import Keyboard from '@lucide/svelte/icons/keyboard';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import Palette from '@lucide/svelte/icons/palette';
 	import PanelLeft from '@lucide/svelte/icons/panel-left';
@@ -27,6 +28,7 @@
 	import type { Conversation } from '$lib/modules/messaging';
 	import { nonOwners } from '$lib/modules/organization/model';
 	import NewMenu, { type NewMenuAction } from './NewMenu.svelte';
+	import NotificationsButton from './NotificationsButton.svelte';
 	import { areaCapability } from './capabilities';
 	import type { ShellAiAskOptions } from './shell-ai';
 	import { useShellData } from './shell-data.svelte';
@@ -40,10 +42,11 @@
 		inboxItems = [],
 		offices = [],
 		ownerId = 'owner',
-		tessOpen = false,
+		offline = false,
 		onToggleTess,
-		onAskTess,
-		registerAskTriggerFocus
+		onToggleTessExpand,
+		onOpenShortcuts,
+		onAskTess
 	}: {
 		connection?: Connection;
 		snapshot?: OrgSnapshot;
@@ -51,14 +54,18 @@
 		inboxItems?: readonly InboxItem[];
 		offices?: OfficeInfo[];
 		ownerId?: string;
-		tessOpen?: boolean;
+		offline?: boolean;
 		onToggleTess?: () => void;
+		onToggleTessExpand?: () => void;
+		onOpenShortcuts?: () => void;
 		onAskTess?: (prompt: string, opts?: ShellAiAskOptions) => void;
-		registerAskTriggerFocus?: (fn: () => void) => void;
 	} = $props();
 
 	let newMenu = $state<ReturnType<typeof NewMenu> | undefined>();
-	let askBtnEl = $state<HTMLButtonElement | null>(null);
+
+	export function openNewTask() {
+		newMenu?.runAction('task');
+	}
 
 	type CommandIcon =
 		| 'plus'
@@ -68,6 +75,7 @@
 		| 'user-plus'
 		| 'panel-left'
 		| 'palette'
+		| 'keyboard'
 		| 'house'
 		| 'inbox'
 		| 'clipboard'
@@ -106,12 +114,6 @@
 
 	onDestroy(() => {
 		destroyed = true;
-	});
-
-	$effect(() => {
-		registerAskTriggerFocus?.(() => {
-			askBtnEl?.focus();
-		});
 	});
 
 	// Keep unused props typed cleanly for callers while Tess panel reads the same shell context.
@@ -509,6 +511,30 @@
 				keywords: 'collapse expand sidebar rail navigation',
 				action: () => uiPrefs.toggleNavCollapsed()
 			},
+			{
+				id: 'ws-toggle-tess-pill',
+				group: 'Workspace',
+				tag: 'Command',
+				icon: 'sparkles',
+				label: uiPrefs.showTessPill ? 'Hide Tess button on screen' : 'Show Tess button on screen',
+				sub: 'Toggle the floating bottom-right Tess pill (⌘/ still opens Tess anytime)',
+				keywords: 'tess companion pill floating button show hide',
+				action: () => uiPrefs.toggleShowTessPill()
+			},
+			...(onOpenShortcuts
+				? [
+						{
+							id: 'ws-shortcuts',
+							group: 'Workspace',
+							tag: 'Help',
+							icon: 'keyboard' as const,
+							label: 'Keyboard shortcuts',
+							sub: 'Show all global, navigation, and composer shortcuts (?)',
+							keywords: 'help keys hotkeys cheatsheet ?',
+							action: () => onOpenShortcuts()
+						}
+					]
+				: []),
 			...UI_THEMES.map((t): CommandEntry => ({
 				id: `theme-${t.id}`,
 				group: 'Workspace',
@@ -776,17 +802,6 @@
 		else if (entry.href) void goto(resolve(entry.href as '/'));
 	}
 
-	function handleAskClick() {
-		const pending = query.trim();
-		if (isHome && pending) {
-			handoffToTess(pending);
-			return;
-		}
-		if (inlineOpen) closeInline(false);
-		if (open) closeModal(false);
-		onToggleTess?.();
-	}
-
 	function handleWindowPointerDown(event: PointerEvent) {
 		if (!inlineOpen) return;
 		const target = event.target;
@@ -794,94 +809,105 @@
 		closeInline(false);
 	}
 
-	function handleWindowKeydown(event: KeyboardEvent) {
-		if (event.isComposing || event.keyCode === 229) return;
-		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-			event.preventDefault();
-			if (open) {
-				closeModal();
-			} else if (isHome) {
-				if (inlineOpen && document.activeElement === homeInputEl) {
-					closeInline(false);
-					homeInputEl?.blur();
-				} else {
-					openInline();
-				}
-			} else {
-				openModal();
-			}
-			return;
-		}
-		if ((event.metaKey || event.ctrlKey) && event.key === '/') {
-			event.preventDefault();
-			if (open) {
-				modalMode = modalMode === 'cmd' ? 'ai' : 'cmd';
-				void tick().then(() => inputEl?.focus());
-				return;
-			}
-			if (inlineOpen) closeInline(false);
-			onToggleTess?.();
-			return;
-		}
+	function hasBlockingOverlay(target: EventTarget | null): boolean {
 		const overlaySelector =
 			'[role="menu"], [role="dialog"]:not(.work-reading), [role="alertdialog"], [role="listbox"], aside[aria-label="Thread"], aside[aria-label="Members"], [data-chat-panel], [data-slot="sheet-content"]';
-		const overlayOpen =
-			Boolean(document.querySelector(overlaySelector)) ||
-			(event.target instanceof HTMLElement &&
-				Boolean(
-					event.target.closest(
-						'[role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"], aside[aria-label], [data-chat-panel], [data-slot="sheet-content"]'
-					)
-				));
+		if (document.querySelector(overlaySelector)) return true;
+		return (
+			target instanceof HTMLElement &&
+			Boolean(
+				target.closest(
+					'[role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"], aside[aria-label], [data-chat-panel], [data-slot="sheet-content"]'
+				)
+			)
+		);
+	}
+
+	function toggleCommandPaletteFromShortcut() {
+		if (open) {
+			closeModal();
+			return;
+		}
+		if (isHome && inlineOpen && document.activeElement === homeInputEl) {
+			closeInline(false);
+			homeInputEl?.blur();
+			return;
+		}
+		if (isHome) openInline();
+		else openModal();
+	}
+
+	function toggleTessFromShortcut() {
+		if (open) {
+			modalMode = modalMode === 'cmd' ? 'ai' : 'cmd';
+			void tick().then(() => inputEl?.focus());
+			return;
+		}
+		if (inlineOpen) closeInline(false);
+		onToggleTess?.();
+	}
+
+	function handleModShortcut(event: KeyboardEvent): boolean {
+		if (!event.metaKey && !event.ctrlKey) return false;
+		const lower = event.key.toLowerCase();
+		if (lower === 'k') {
+			event.preventDefault();
+			toggleCommandPaletteFromShortcut();
+			return true;
+		}
+		if (event.key === '/') {
+			event.preventDefault();
+			toggleTessFromShortcut();
+			return true;
+		}
+		if (event.shiftKey && (lower === 'e' || lower === 'm')) {
+			event.preventDefault();
+			if (open) closeModal(false);
+			if (inlineOpen) closeInline(false);
+			onToggleTessExpand?.();
+			return true;
+		}
+		return false;
+	}
+
+	function isChatHashShortcut(event: KeyboardEvent): boolean {
+		if (!isChat || event.key !== '#' || event.metaKey) return false;
 		const altGr = Boolean(event.getModifierState?.('AltGraph'));
-		if (
-			!open &&
-			isChat &&
-			singleKeyShortcutsOn() &&
-			event.key === '#' &&
-			!event.repeat &&
-			!event.metaKey &&
-			(altGr || (!event.ctrlKey && !event.altKey)) &&
-			!isEditableTarget(event.target) &&
-			!overlayOpen
-		) {
+		return altGr || (!event.ctrlKey && !event.altKey);
+	}
+
+	function handleSingleKeyShortcut(event: KeyboardEvent) {
+		if (isChatHashShortcut(event)) {
 			event.preventDefault();
 			openModalWithQuery('#');
 			return;
 		}
-		if (
-			!open &&
-			!inlineOpen &&
-			connection &&
-			singleKeyShortcutsOn() &&
-			(event.key === 'n' || event.key === 'N') &&
-			!event.repeat &&
-			!event.metaKey &&
-			!event.ctrlKey &&
-			!event.altKey &&
-			!isEditableTarget(event.target) &&
-			!overlayOpen
-		) {
+		if (event.metaKey || event.ctrlKey || event.altKey) return;
+		if (!inlineOpen && connection && event.key.toLowerCase() === 'n') {
 			event.preventDefault();
 			newMenu?.openMenu();
 			return;
 		}
-		if (
-			!open &&
-			singleKeyShortcutsOn() &&
-			event.key === '/' &&
-			!event.repeat &&
-			!event.metaKey &&
-			!event.ctrlKey &&
-			!event.altKey &&
-			!event.shiftKey &&
-			!isEditableTarget(event.target) &&
-			!overlayOpen
-		) {
+		if (event.key === '/' && !event.shiftKey) {
 			event.preventDefault();
 			if (isHome) openInline();
 			else openModal();
 		}
+	}
+
+	function handleWindowKeydown(event: KeyboardEvent) {
+		if (event.isComposing || event.keyCode === 229) return;
+		if (handleModShortcut(event)) return;
+		const blocked =
+			open || event.repeat || isEditableTarget(event.target) || hasBlockingOverlay(event.target);
+		if (blocked) return;
+		if (event.key === '?' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+			event.preventDefault();
+			onOpenShortcuts?.();
+			return;
+		}
+		if (!singleKeyShortcutsOn()) return;
+		handleSingleKeyShortcut(event);
 	}
 
 	$effect(() => {
@@ -985,6 +1011,8 @@
 		<PanelLeft class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
 	{:else if icon === 'palette'}
 		<Palette class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
+	{:else if icon === 'keyboard'}
+		<Keyboard class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
 	{:else if icon === 'house'}
 		<House class="exec-cmdk-row-ico size-4 shrink-0" aria-hidden="true" />
 	{:else if icon === 'inbox'}
@@ -1077,10 +1105,11 @@
 <svelte:window onkeydown={handleWindowKeydown} onpointerdown={handleWindowPointerDown} />
 
 {#if isHome}
-	<header
-		class="exec-topbar relative z-30 flex shrink-0 flex-wrap items-center justify-center gap-2.5 overflow-visible px-4 sm:px-6"
-	>
-		<div bind:this={homeShellEl} class="relative flex min-w-0 flex-1 max-w-[640px] flex-col">
+	<header class="exec-topbar exec-home-topbar relative z-30 shrink-0 overflow-visible px-4 sm:px-6">
+		<div
+			bind:this={homeShellEl}
+			class="exec-home-cmdk relative flex min-w-0 w-full max-w-[640px] flex-col"
+		>
 			<div class="exec-cmdk-bar flex w-full items-center">
 				<label
 					class="exec-cmdk-trigger exec-cmdk-home-field flex min-w-0 flex-1 items-center text-left"
@@ -1118,17 +1147,6 @@
 					/>
 					<kbd class="exec-cmdk-kbd hidden sm:inline-flex" aria-hidden="true">⌘K</kbd>
 				</label>
-				<span class="exec-cmdk-sep mx-1.5 h-[22px] w-px shrink-0" aria-hidden="true"></span>
-				<button
-					bind:this={askBtnEl}
-					type="button"
-					aria-expanded={tessOpen}
-					onclick={handleAskClick}
-					class="exec-ai-btn inline-flex shrink-0 items-center px-3.5"
-				>
-					<Sparkles class="exec-ai-ico size-[15px] shrink-0" aria-hidden="true" />
-					<span>Ask</span>
-				</button>
 			</div>
 
 			{#if inlineOpen}
@@ -1144,6 +1162,9 @@
 					</div>
 				</div>
 			{/if}
+		</div>
+		<div class="exec-home-utils">
+			<NotificationsButton {offline} />
 		</div>
 	</header>
 {/if}
@@ -1307,6 +1328,33 @@
 		background: var(--exec-topbar-bg);
 		border-bottom: var(--exec-topbar-border);
 		overflow: visible;
+	}
+	.exec-home-topbar {
+		display: grid;
+		grid-template-columns: 1fr minmax(0, 640px) 1fr;
+		align-items: center;
+		gap: 12px;
+	}
+	.exec-home-cmdk {
+		grid-column: 2;
+		justify-self: center;
+	}
+	.exec-home-utils {
+		grid-column: 3;
+		justify-self: end;
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+	}
+	@media (max-width: 959px) {
+		.exec-home-topbar {
+			display: flex;
+			justify-content: space-between;
+			gap: 10px;
+		}
+		.exec-home-cmdk {
+			flex: 1 1 auto;
+		}
 	}
 	:global(html[data-ui-theme='ocean']) .exec-topbar::before {
 		bottom: -14px;
@@ -1607,39 +1655,6 @@
 	.exec-cmdk-sep {
 		background: var(--exec-cmdk-sep);
 	}
-	.exec-ai-btn {
-		height: 36px;
-		min-height: 36px;
-		gap: 7px;
-		border-radius: var(--exec-ai-radius);
-		background: var(--exec-ai-bg);
-		box-shadow: var(--exec-ai-shadow);
-		color: var(--exec-ai-ink);
-		font-size: 0.8125rem;
-		line-height: 1.2;
-		font-weight: 600;
-		letter-spacing: -0.005em;
-		transition:
-			background 0.15s ease,
-			box-shadow 0.15s ease,
-			color 0.15s ease;
-	}
-	.exec-ai-btn :global(.exec-ai-ico) {
-		color: var(--exec-ai-ico);
-		transition: color 0.15s ease;
-	}
-	.exec-ai-btn:hover,
-	.exec-ai-btn:focus-visible,
-	.exec-ai-btn[aria-expanded='true'] {
-		background: var(--exec-ai-bg-hover);
-		box-shadow: var(--exec-ai-shadow-hover);
-		color: var(--exec-ai-ink-hover);
-	}
-	.exec-ai-btn:hover :global(.exec-ai-ico),
-	.exec-ai-btn:focus-visible :global(.exec-ai-ico),
-	.exec-ai-btn[aria-expanded='true'] :global(.exec-ai-ico) {
-		color: var(--exec-ai-ico-hover);
-	}
 	@media (max-width: 720px), (pointer: coarse) {
 		.exec-topbar {
 			height: auto;
@@ -1652,7 +1667,6 @@
 			padding: 4px 6px;
 		}
 		.exec-cmdk-trigger,
-		.exec-ai-btn,
 		.exec-cmdk-opt,
 		:global(.exec-cmdk-close) {
 			height: auto;

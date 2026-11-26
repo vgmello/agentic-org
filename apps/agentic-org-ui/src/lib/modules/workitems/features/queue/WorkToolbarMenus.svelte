@@ -54,6 +54,7 @@
 		sortBy,
 		sortDir,
 		showDividers,
+		showArchived = false,
 		uniqueProjects,
 		uniqueTeams,
 		uniquePeople,
@@ -73,6 +74,7 @@
 		onSortByChange,
 		onSortDirChange,
 		onDividersChange,
+		onShowArchivedChange,
 		onCreate
 	}: {
 		isOrgScope: boolean;
@@ -94,6 +96,7 @@
 		sortBy: WorkSortBy;
 		sortDir: WorkSortDir;
 		showDividers: boolean;
+		showArchived?: boolean;
 		uniqueProjects: [string, string][];
 		uniqueTeams: [string, string][];
 		uniquePeople: [string, string][];
@@ -113,6 +116,7 @@
 		onSortByChange: (next: WorkSortBy) => void;
 		onSortDirChange: (next: WorkSortDir) => void;
 		onDividersChange: (show: boolean) => void;
+		onShowArchivedChange?: (show: boolean) => void;
 		onCreate: (kind: TaskType) => void;
 	} = $props();
 
@@ -124,7 +128,11 @@
 	const showLabel = $derived(SHOW_VIEWS.find((v) => v.id === showMode)?.label ?? 'Mine');
 
 	const displayActive = $derived(
-		sortBy !== 'default' || sortDir !== 'asc' || showDividers || effectiveSubgroup !== 'none'
+		sortBy !== 'default' ||
+			sortDir !== 'asc' ||
+			showDividers ||
+			showArchived ||
+			effectiveSubgroup !== 'none'
 	);
 
 	const primaryCreate = $derived.by<{ kind: TaskType; label: string }>(() => {
@@ -730,6 +738,18 @@
 							</DropdownMenu.RadioItem>
 						</DropdownMenu.RadioGroup>
 					{/if}
+
+					{#if onShowArchivedChange}
+						<DropdownMenu.Separator />
+						<DropdownMenu.CheckboxItem
+							checked={showArchived}
+							onCheckedChange={(checked) => onShowArchivedChange(Boolean(checked))}
+							data-testid="work-show-archived-toggle"
+							class={itemHit}
+						>
+							Show archived
+						</DropdownMenu.CheckboxItem>
+					{/if}
 				</DropdownMenu.Content>
 			</DropdownMenu.Root>
 		</div>
@@ -777,9 +797,23 @@
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 6px 8px;
+		gap: 8px 16px;
 		margin-inline-start: auto;
 		margin-block: 4px;
+	}
+	.work-controls > :not(:first-child) {
+		position: relative;
+	}
+	.work-controls > :not(:first-child)::before {
+		content: '';
+		position: absolute;
+		inset-inline-start: -8px;
+		top: 50%;
+		width: 1px;
+		height: 18px;
+		transform: translateY(-50%);
+		background: var(--exec-border, var(--line));
+		pointer-events: none;
 	}
 	.work-menu-trigger {
 		display: inline-flex;
@@ -813,17 +847,20 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 2px;
-		padding-inline-start: 8px;
-		border-inline-start: 1px solid var(--exec-border, var(--line));
+		min-height: var(--work-control-height, 36px);
+		padding: 2px;
+		border-radius: var(--exec-ctrl-radius, 8px);
+		background: var(--toolbar-seg-bg, var(--exec-well, var(--surface-raised)));
+		box-shadow: inset 0 0 0 1px var(--exec-border, var(--line));
 	}
 	.work-toggle-tab {
 		display: inline-flex;
 		align-items: center;
 		gap: 5px;
-		min-height: var(--work-control-height, 36px);
+		min-height: calc(var(--work-control-height, 36px) - 6px);
 		padding: 0 10px;
 		border: 1px solid transparent;
-		border-radius: var(--exec-ctrl-radius, 6px);
+		border-radius: calc(var(--exec-ctrl-radius, 8px) - 2px);
 		background: transparent;
 		color: var(--exec-body, var(--fg-secondary));
 		font-size: 0.8125rem;
@@ -835,21 +872,25 @@
 			color 120ms ease-out;
 	}
 	.work-toggle-tab:hover {
-		background: var(--exec-btn-ghost-bg-hover, var(--surface-raised));
 		color: var(--exec-ink, var(--fg));
 	}
 	.work-toggle-tab[aria-pressed='true'] {
-		background: var(--workspace-mode-selected, var(--exec-well, var(--surface-raised)));
+		background: var(
+			--toolbar-seg-active-bg,
+			var(--workspace-mode-selected, var(--exec-surface-hi, var(--surface-overlay)))
+		);
 		border-color: var(--exec-border-hi, var(--line-strong));
 		color: var(--exec-ink, var(--fg));
+		box-shadow: var(--exec-panel-shadow, none);
 	}
 	.work-board-mode {
 		display: inline-flex;
 		align-items: center;
 		gap: 2px;
+		min-height: var(--work-control-height, 36px);
 		padding: 2px;
-		border-radius: var(--exec-ctrl-radius, 6px);
-		background: var(--exec-well, var(--surface-raised));
+		border-radius: var(--exec-ctrl-radius, 8px);
+		background: var(--toolbar-seg-bg, var(--exec-well, var(--surface-raised)));
 		box-shadow: inset 0 0 0 1px var(--exec-border, var(--line));
 	}
 	.work-mode-btn {
@@ -857,7 +898,7 @@
 		align-items: center;
 		min-height: calc(var(--work-control-height, 36px) - 6px);
 		padding: 0 9px;
-		border-radius: calc(var(--exec-ctrl-radius, 6px) - 2px);
+		border-radius: calc(var(--exec-ctrl-radius, 8px) - 2px);
 		background: transparent;
 		color: var(--exec-body, var(--fg-secondary));
 		font-size: 0.75rem;
@@ -869,15 +910,13 @@
 		color: var(--exec-ink, var(--fg));
 	}
 	.work-mode-btn[aria-pressed='true'] {
-		background: var(--exec-surface-hi, var(--surface-overlay));
+		background: var(--toolbar-seg-active-bg, var(--exec-surface-hi, var(--surface-overlay)));
 		color: var(--exec-ink, var(--fg));
 	}
 	.work-icon-controls {
 		display: inline-flex;
 		align-items: center;
 		gap: 2px;
-		padding-inline-start: 6px;
-		border-inline-start: 1px solid var(--exec-border, var(--line));
 	}
 	.queue-icon-btn {
 		position: relative;

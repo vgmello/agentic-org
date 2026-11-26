@@ -2,6 +2,8 @@
 	import ExecutiveCommandBar from '$lib/platform/shell/ExecutiveCommandBar.svelte';
 	import ExecutiveSidebar from '$lib/platform/shell/ExecutiveSidebar.svelte';
 	import MobileNavigation from '$lib/platform/shell/MobileNavigation.svelte';
+	import ShortcutsDialog from '$lib/platform/shell/ShortcutsDialog.svelte';
+	import { provideNotifications } from '$lib/platform/shell/notifications.svelte';
 	import HomeScrollHint from '$lib/modules/home/features/HomeScrollHint.svelte';
 	import TessPanel from '$lib/modules/tess/TessPanel.svelte';
 	import { provideTessPanel } from '$lib/modules/tess/tess-panel.svelte';
@@ -41,18 +43,28 @@
 	onDestroy(() => chatDrafts.dispose());
 
 	const tessPanel = provideTessPanel();
+	provideNotifications();
+	let shortcutsOpen = $state(false);
 	let commandBar = $state<ReturnType<typeof ExecutiveCommandBar> | undefined>();
-	let focusAskTrigger: (() => void) | undefined;
 
 	provideShellCommand({
 		openPalette(prefill?: string) {
 			commandBar?.openPalette(prefill);
 		},
 		toggleTess() {
-			tessPanel.toggle();
+			tessPanel.toggle(uiPrefs.showTessPill);
+		},
+		toggleTessExpand() {
+			tessPanel.toggleExpand();
 		},
 		async openTessChat() {
 			await commandBar?.openTessChat();
+		},
+		openShortcuts() {
+			shortcutsOpen = true;
+		},
+		openNewTask() {
+			commandBar?.openNewTask();
 		}
 	});
 
@@ -361,12 +373,11 @@
 			inboxItems={shellData.inboxItems}
 			offices={shellData.offices}
 			ownerId={shellData.ownerId}
-			tessOpen={tessPanel.open}
-			onToggleTess={() => tessPanel.toggle()}
+			offline={showPaused}
+			onToggleTess={() => tessPanel.toggle(uiPrefs.showTessPill)}
+			onToggleTessExpand={() => tessPanel.toggleExpand()}
+			onOpenShortcuts={() => (shortcutsOpen = true)}
 			onAskTess={askTess}
-			registerAskTriggerFocus={(fn) => {
-				focusAskTrigger = fn;
-			}}
 		/>
 		<div class="relative flex min-h-0 flex-1 flex-row overflow-hidden">
 			<div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -389,16 +400,17 @@
 					{@render children()}
 				</main>
 			</div>
-			<TessPanel
-				panel={tessPanel}
-				snapshot={shellData.snapshot}
-				items={shellData.workItems}
-				inboxItems={shellData.inboxItems}
-				offices={shellData.offices}
-				ownerId={shellData.ownerId}
-				onCloseRestoreFocus={() => focusAskTrigger?.()}
-			/>
 		</div>
+		<TessPanel
+			panel={tessPanel}
+			snapshot={shellData.snapshot}
+			items={shellData.workItems}
+			inboxItems={shellData.inboxItems}
+			offices={shellData.offices}
+			ownerId={shellData.ownerId}
+			offline={showPaused}
+		/>
+		<ShortcutsDialog bind:open={shortcutsOpen} />
 	</div>
 </div>
 <Toaster position="bottom-right" />

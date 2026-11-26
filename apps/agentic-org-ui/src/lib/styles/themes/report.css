@@ -305,6 +305,19 @@ html[data-ui-theme='report'] {
 	--side-panel-surface: #ffffff;
 	--assembly-surface: #ffffff;
 	--workspace-secondary-surface: #ffffff;
+	--exec-scrim-bg: rgba(11, 16, 27, 0.36);
+	--exec-tess-bg: #ffffff;
+	--exec-tess-border: #cbd3df;
+	--exec-tess-radius: 12px;
+	--exec-tess-blur: none;
+	--exec-tess-shadow: 0 22px 54px -16px rgba(11, 16, 27, 0.22);
+	--exec-tess-pill-shadow: 0 12px 30px -10px rgba(11, 16, 27, 0.2);
+	--exec-notif-bg: #ffffff;
+	--exec-notif-border: #cbd3df;
+	--exec-notif-blur: none;
+	--exec-notif-shadow: 0 20px 48px -14px rgba(11, 16, 27, 0.2);
+	--exec-analysis-bg:
+		radial-gradient(circle at 26% 52%, rgba(29, 78, 137, 0.07), transparent 48%), #f8fafc;
 }
 
 /* Report Day project release readiness strip: white surface with >= 3:1 unfilled progress track (Prototype Release 1149b4f1) */

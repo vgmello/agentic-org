@@ -253,17 +253,17 @@ html[data-ui-theme='graphite'] {
 	--exec-cmdk-tab-radius: 5px;
 	--exec-cmdk-esc-radius: 5px;
 	--exec-cmdk-opt-radius: 5px;
-	--exec-cmdk-menu-bg: var(--graphite-raised);
+	--exec-cmdk-menu-bg: #262930;
 	--exec-cmdk-menu-blur: none;
-	--exec-cmdk-menu-shadow: inset 0 0 0 1px #35373d, 0 16px 40px rgb(0 0 0 / 0.42);
-	--exec-cmdk-tabs-bg: var(--graphite-rail);
-	--exec-cmdk-foot-bg: var(--graphite-rail);
-	--exec-cmdk-tab-grp-bg: var(--graphite-panel);
-	--exec-cmdk-tab-grp-shadow: inset 0 0 0 1px var(--exec-border-hi);
-	--exec-cmdk-tab-active-bg: var(--graphite-active);
-	--exec-cmdk-tab-active-shadow: none;
-	--exec-cmdk-esc-bg: var(--graphite-panel);
-	--exec-cmdk-esc-shadow: inset 0 0 0 1px var(--exec-border-hi);
+	--exec-cmdk-menu-shadow: inset 0 0 0 1px #4c515c, 0 24px 64px -12px rgb(0 0 0 / 0.78);
+	--exec-cmdk-tabs-bg: #1e2127;
+	--exec-cmdk-foot-bg: #1e2127;
+	--exec-cmdk-tab-grp-bg: #16181c;
+	--exec-cmdk-tab-grp-shadow: inset 0 0 0 1px #3c4049;
+	--exec-cmdk-tab-active-bg: #353a45;
+	--exec-cmdk-tab-active-shadow: inset 0 0 0 1px #5f6676;
+	--exec-cmdk-esc-bg: #2b2f37;
+	--exec-cmdk-esc-shadow: inset 0 0 0 1px #4c515c;
 	--exec-cmdk-opt-hover-bg: var(--graphite-hover);
 	--exec-cmdk-opt-hover-shadow: none;
 	--exec-cmdk-opt-active-bg: var(--graphite-active);
@@ -272,6 +272,19 @@ html[data-ui-theme='graphite'] {
 	--exec-cmdk-foot-kbd-bg: var(--graphite-panel);
 	--exec-cmdk-foot-kbd-ring: #35373d;
 	--exec-cmdk-foot-kbd-ink: #c6c8ce;
+
+	/* Elevated Graphite Notifications & Floating Tess Companion surfaces (TASK-145) */
+	--exec-notif-bg: #2c3037;
+	--exec-notif-border: #525866;
+	--exec-notif-shadow: 0 24px 60px -10px rgb(0 0 0 / 0.78), inset 0 1px 0 rgb(255 255 255 / 0.08);
+	--exec-tess-bg: #2c3037;
+	--exec-tess-border: #525866;
+	--exec-tess-pill-bg: #30353e;
+	--exec-tess-pill-border: #5a6170;
+	--exec-tess-card-bg: #23262c;
+	--exec-tess-card-border: #464c58;
+	--exec-tess-q-bg: #3a404c;
+	--exec-tess-q-border: #5c6475;
 
 	/* Unread rail dot (no glow halo in matte Graphite) */
 	--exec-nav-dot: var(--tone-warn);

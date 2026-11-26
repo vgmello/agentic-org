@@ -51,6 +51,7 @@
 		boardMode = 'stages',
 		showProject = true,
 		stale = false,
+		archivedIds,
 		selectedRef = null,
 		onchanged,
 		onopen
@@ -60,6 +61,7 @@
 		boardMode?: BoardMode;
 		showProject?: boolean;
 		stale?: boolean;
+		archivedIds?: ReadonlySet<string>;
 		selectedRef?: string | null;
 		onchanged: () => void;
 		onopen?: (row: TaskRow, triggerEl: HTMLElement | null) => void;
@@ -448,6 +450,15 @@
 
 										{#if row.budget}
 											<BudgetChip budget={row.budget} hold={row.budgetHold} />
+										{/if}
+
+										{#if archivedIds?.has(row.id)}
+											<span
+												class="inline-flex items-center rounded bg-surface-raised px-1.5 py-0.5 text-[11px]/4 font-medium text-fg-muted ring-1 ring-line"
+												data-testid="work-archived-tag"
+											>
+												Archived
+											</span>
 										{/if}
 									</div>
 

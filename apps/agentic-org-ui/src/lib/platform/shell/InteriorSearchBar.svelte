@@ -10,6 +10,7 @@
 	import { Tooltip } from 'bits-ui';
 	import Search from '@lucide/svelte/icons/search';
 	import X from '@lucide/svelte/icons/x';
+	import NotificationsButton from './NotificationsButton.svelte';
 	import { useScopedSearchContext } from './scoped-search.svelte';
 	import { useShellCommand } from './shell-command';
 	import { isEditableTarget, singleKeyShortcutsOn } from './shortcuts';
@@ -215,12 +216,14 @@
 			</button>
 		{/if}
 	</div>
+	<NotificationsButton />
 </div>
 
 <style>
 	.interior-search-tools {
 		display: flex;
 		align-items: center;
+		gap: 8px;
 		min-width: 0;
 		max-width: 100%;
 	}

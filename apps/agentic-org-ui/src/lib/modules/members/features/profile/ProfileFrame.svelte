@@ -49,6 +49,7 @@
 	import { fact, factsList, factsWrap } from '../../components/facts';
 	import { FIRST_POLL_MS, LatestRead, awaitingOffice, nextPollDelay } from './pending';
 	import IdentityDialog from './IdentityDialog.svelte';
+	import AgentAnalysisOverlay from './AgentAnalysisOverlay.svelte';
 	import AgentOrbRail from './AgentOrbRail.svelte';
 	import { offboardPreview } from './identity';
 	import MoveHomeTeamDialog from './MoveHomeTeamDialog.svelte';
@@ -116,6 +117,7 @@
 	});
 
 	let dialog = $state<ProfileAction | undefined>();
+	let analysisOpen = $state(false);
 	let opener: HTMLElement | null = null;
 	let moreButton = $state<HTMLButtonElement | null>(null);
 
@@ -495,6 +497,13 @@
 									variant="outline"
 									size="sm"
 									class={actionBtn}
+									data-testid="agent-analysis-btn"
+									onclick={() => (analysisOpen = true)}>Analysis Mode</Button
+								>
+								<Button
+									variant="outline"
+									size="sm"
+									class={actionBtn}
 									onclick={(e) => act('run', e.currentTarget)}>Run now</Button
 								>
 							{/if}
@@ -504,15 +513,6 @@
 								class={actionBtn}
 								onclick={(e) => act('assign', e.currentTarget)}>Assign task</Button
 							>
-							{#if manage && p.kind === 'agent'}
-								<Button
-									variant="outline"
-									size="sm"
-									class="profile-pause {actionBtn}"
-									onclick={(e) => act(p.status === 'paused' ? 'resume' : 'pause', e.currentTarget)}
-									>{p.status === 'paused' ? 'Resume' : 'Pause'}</Button
-								>
-							{/if}
 							{#if manage}
 								<DropdownMenu>
 									<DropdownMenuTrigger>
@@ -585,8 +585,14 @@
 					<div class="agent-main min-w-0">
 						{@render tabContent()}
 					</div>
-					<AgentOrbRail profile={p} />
+					<AgentOrbRail profile={p} onOpenAnalysis={() => (analysisOpen = true)} />
 				</div>
+				<AgentAnalysisOverlay
+					bind:open={analysisOpen}
+					{organizationId}
+					profile={p}
+					onstarted={runRequested}
+				/>
 			{:else}
 				{@render tabContent()}
 			{/if}

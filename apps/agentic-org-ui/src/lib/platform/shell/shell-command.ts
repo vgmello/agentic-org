@@ -3,7 +3,10 @@ import { getContext, setContext } from 'svelte';
 export interface ShellCommandHost {
 	openPalette: (prefill?: string) => void;
 	toggleTess: () => void;
+	toggleTessExpand?: () => void;
 	openTessChat: () => Promise<void>;
+	openShortcuts?: () => void;
+	openNewTask?: (opts?: { projectId?: string | null; agentId?: string | null }) => void;
 }
 
 const SHELL_COMMAND_KEY = Symbol('agentic-org.shell-command');

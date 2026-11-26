@@ -139,6 +139,24 @@ function buildOrbNodes(): OrbNode[] {
 	return out;
 }
 
+function createGlowSprite(color: string): HTMLCanvasElement | null {
+	if (typeof document === 'undefined') return null;
+	const size = 96;
+	const half = size / 2;
+	const c = document.createElement('canvas');
+	c.width = size;
+	c.height = size;
+	const gctx = c.getContext('2d');
+	if (!gctx) return null;
+	const grad = gctx.createRadialGradient(half, half, 2, half, half, half);
+	grad.addColorStop(0, color);
+	grad.addColorStop(0.5, color);
+	grad.addColorStop(1, 'transparent');
+	gctx.fillStyle = grad;
+	gctx.fillRect(0, 0, size, size);
+	return c;
+}
+
 export class NeuralOrbEngine {
 	private canvas: HTMLCanvasElement;
 	private ctx: CanvasRenderingContext2D | null;
@@ -152,6 +170,7 @@ export class NeuralOrbEngine {
 	private targetEnergy = 0.28;
 	private thinking = 0.12;
 	private targetThinking = 0.12;
+	private firing = 0;
 	private ax: Vec3 = { x: 1, y: 0, z: 0 };
 	private ay: Vec3 = { x: 0, y: 1, z: 0 };
 	private az: Vec3 = { x: 0, y: 0, z: 1 };
@@ -160,6 +179,9 @@ export class NeuralOrbEngine {
 	private sorted: ProjectedPoint[];
 	private raf: number | null = null;
 	private lastDraw = 0;
+	private cachedThemeKey = '';
+	private cachedColors: OrbColors = { primary: '#38bdf8', secondary: '#2563eb', ring: '#38bdf8' };
+	private glowSprite: HTMLCanvasElement | null = null;
 
 	constructor(canvas: HTMLCanvasElement, initialState: OrbState = 'idle') {
 		this.canvas = canvas;
@@ -169,6 +191,23 @@ export class NeuralOrbEngine {
 		this.sorted = this.pts.slice();
 		this.setState(initialState, true);
 		this.resize();
+	}
+
+	private ensureColors(): OrbColors {
+		const themeAttr =
+			typeof document !== 'undefined'
+				? `${document.documentElement.dataset.uiTheme ?? ''}:${this.state}`
+				: this.state;
+		if (themeAttr !== this.cachedThemeKey) {
+			this.cachedThemeKey = themeAttr;
+			this.cachedColors = resolveOrbColors(this.state);
+			this.glowSprite = createGlowSprite(this.cachedColors.primary);
+		}
+		return this.cachedColors;
+	}
+
+	pulse(intensity = 1): void {
+		this.firing = Math.min(1, this.firing + 0.45 * intensity);
 	}
 
 	setState(next: OrbState, immediate = false): void {
@@ -276,9 +315,11 @@ export class NeuralOrbEngine {
 		const k = 1 - Math.exp(-dt * 4.2);
 		this.energy += (this.targetEnergy - this.energy) * k;
 		this.thinking += (this.targetThinking - this.thinking) * k;
-		this.fieldPhase += dt * (0.55 + this.thinking * 0.55 + this.energy * 0.35);
+		this.firing *= Math.exp(-dt * 3.5);
+		const boost = this.firing * 0.45;
+		this.fieldPhase += dt * (0.55 + this.thinking * 0.55 + (this.energy + boost) * 0.35);
 		this.breathPhase += dt * (1.2 + this.thinking * 0.6);
-		const spin = dt * (0.18 + this.thinking * 0.18 + this.energy * 0.14);
+		const spin = dt * (0.18 + this.thinking * 0.18 + (this.energy + boost) * 0.14);
 		const nod = dt * Math.sin(this.breathPhase * 0.35) * 0.06;
 		this.rotateBasis(spin, nod);
 	}
@@ -313,28 +354,22 @@ export class NeuralOrbEngine {
 	private draw(dt: number): void {
 		const ctx = this.ctx;
 		if (!ctx) return;
-		const colors = resolveOrbColors(this.state);
+		const colors = this.ensureColors();
 		const cx = this.w * 0.5;
 		const cy = this.h * 0.5;
 		const radius = Math.min(this.w, this.h) * 0.4;
 		ctx.clearRect(0, 0, this.w, this.h);
 
-		const grad = ctx.createRadialGradient(
-			cx - radius * 0.2,
-			cy - radius * 0.22,
-			radius * 0.1,
-			cx,
-			cy,
-			radius * 1.24
-		);
-		grad.addColorStop(0, colors.primary);
-		grad.addColorStop(0.55, colors.secondary);
-		grad.addColorStop(1, 'transparent');
-		ctx.globalAlpha = 0.14 + this.energy * 0.12;
-		ctx.fillStyle = grad;
-		ctx.beginPath();
-		ctx.arc(cx, cy, radius * 1.28, 0, TAU);
-		ctx.fill();
+		const glowR = radius * 1.28;
+		ctx.globalAlpha = 0.16 + (this.energy + this.firing * 0.3) * 0.12;
+		if (this.glowSprite) {
+			ctx.drawImage(this.glowSprite, cx - glowR, cy - glowR, glowR * 2, glowR * 2);
+		} else {
+			ctx.fillStyle = colors.primary;
+			ctx.beginPath();
+			ctx.arc(cx, cy, glowR, 0, TAU);
+			ctx.fill();
+		}
 
 		ctx.globalAlpha = 0.22 + this.energy * 0.14;
 		ctx.strokeStyle = colors.ring;

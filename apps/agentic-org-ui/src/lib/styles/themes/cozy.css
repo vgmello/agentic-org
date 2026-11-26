@@ -336,6 +336,19 @@ html[data-ui-theme='cozy'] {
 	--assembly-surface: transparent;
 	--triage-row-hover: rgba(255, 248, 240, 0.09);
 	--triage-row-selected: var(--tone-accent-bg);
+	--exec-scrim-bg: rgba(10, 7, 5, 0.58);
+	--exec-tess-bg: rgba(38, 31, 25, 0.88);
+	--exec-tess-border: var(--cozy-panel-edge);
+	--exec-tess-blur: blur(28px) saturate(145%);
+	--exec-tess-shadow: 0 28px 68px -12px rgba(10, 7, 5, 0.74), inset 0 1px rgba(255, 248, 238, 0.18);
+	--exec-tess-pill-shadow: 0 14px 36px -8px rgba(10, 7, 5, 0.6);
+	--exec-notif-bg: rgba(38, 31, 25, 0.88);
+	--exec-notif-border: var(--cozy-panel-edge);
+	--exec-notif-blur: blur(28px) saturate(145%);
+	--exec-notif-shadow:
+		0 28px 68px -12px rgba(10, 7, 5, 0.74), inset 0 1px rgba(255, 248, 238, 0.18);
+	--exec-analysis-bg:
+		radial-gradient(circle at 26% 52%, rgba(206, 142, 74, 0.13), transparent 48%), #211a14;
 }
 
 /* Cozy Glass High Contrast mode (`data-cozy-contrast='high'`) */
@@ -398,6 +411,10 @@ html[data-ui-theme='cozy'][data-cozy-contrast='high'] {
 	--exec-cta-glass-bg-hover: #1f724d;
 	--exec-cta-glass-shadow: inset 0 0 0 1px #6fd2a6;
 	--exec-cta-glass-shadow-hover: inset 0 0 0 1px #88dfae;
+	--exec-tess-bg: #1a1512;
+	--exec-tess-blur: none;
+	--exec-notif-bg: #1a1512;
+	--exec-notif-blur: none;
 
 	--exec-cos-fade: #1a1512;
 	--exec-scroll-hint-bg: rgba(26, 21, 18, 0.94);
@@ -435,11 +452,14 @@ html[data-ui-theme='cozy'] .exec-canvas::after {
 
 html[data-ui-theme='cozy'] .cozy-room {
 	position: fixed;
-	inset: 0;
+	inset: -28px;
 	z-index: 0;
 	display: block;
 	overflow: hidden;
 	pointer-events: none;
+	contain: strict;
+	transform: translateZ(0);
+	filter: blur(24px) saturate(130%);
 	background: radial-gradient(
 		circle at 50% 38%,
 		#9e8a75 0%,
@@ -589,9 +609,33 @@ html[data-ui-theme='cozy'] .exec-ai-btn {
 }
 
 html[data-ui-theme='cozy']
-	:is([data-slot='dialog-content'], [data-slot='sheet-content'], [data-slot='popover-content']) {
-	-webkit-backdrop-filter: blur(24px) saturate(135%);
-	backdrop-filter: blur(24px) saturate(135%);
+	:is(
+		[data-slot='dialog-content'],
+		[data-slot='sheet-content'],
+		[data-slot='popover-content'],
+		.exec-cmdk-dialog,
+		.exec-cmdk-home-results
+	) {
+	background: rgb(38 31 25 / 0.88);
+	-webkit-backdrop-filter: blur(28px) saturate(145%);
+	backdrop-filter: blur(28px) saturate(145%);
+	border-color: var(--cozy-panel-edge);
+	box-shadow:
+		0 28px 68px -12px rgb(10 7 5 / 0.74),
+		inset 0 1px rgb(255 248 238 / 0.18);
+}
+
+html[data-ui-theme='cozy'][data-cozy-contrast='high']
+	:is(
+		[data-slot='dialog-content'],
+		[data-slot='sheet-content'],
+		[data-slot='popover-content'],
+		.exec-cmdk-dialog,
+		.exec-cmdk-home-results
+	) {
+	background: #1a1512;
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
 }
 
 html[data-ui-theme='cozy'] .exec-brand-mark {

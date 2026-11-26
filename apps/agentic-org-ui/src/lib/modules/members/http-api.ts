@@ -336,8 +336,11 @@ export function createHttpMembersApi({
 		profile: loadProfile,
 
 		async work(organizationId: string, memberId: string) {
-			const rows = await safeWorkRows(organizationId);
-			return buildMemberWorkRows(rows, memberId);
+			const [rows, org] = await Promise.all([
+				safeWorkRows(organizationId),
+				readOrgView(organizationId)
+			]);
+			return buildMemberWorkRows(rows, memberId, org?.employee_id);
 		},
 		async conversations(organizationId: string, memberId: string) {
 			return readMemberConversations(http, organizationId, memberId);

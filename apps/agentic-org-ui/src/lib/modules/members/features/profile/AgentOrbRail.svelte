@@ -6,13 +6,20 @@
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import Maximize2 from '@lucide/svelte/icons/maximize-2';
 	import { agentSetupHref } from '$lib/modules/agent-setup';
 	import { reportedText } from '../../present';
 	import type { MemberProfile } from '../../types';
 	import { NeuralOrbEngine, type OrbState } from './neural-orb';
 	import { tabHref } from './tabs';
 
-	let { profile }: { profile: MemberProfile } = $props();
+	let {
+		profile,
+		onOpenAnalysis
+	}: {
+		profile: MemberProfile;
+		onOpenAnalysis?: () => void;
+	} = $props();
 
 	const telemetry = $derived.by<{ state: OrbState; label: string; detail: string }>(() => {
 		if (profile.status === 'inactive') {
@@ -91,6 +98,17 @@
 			<span class="text-fg-muted" aria-hidden="true">·</span>
 			<span class="orb-detail-txt">{telemetry.detail}</span>
 		</div>
+		{#if onOpenAnalysis}
+			<button
+				type="button"
+				onclick={onOpenAnalysis}
+				class="orb-analysis-btn"
+				data-testid="agent-rail-analysis-btn"
+			>
+				<Maximize2 class="size-3.5 shrink-0" aria-hidden="true" />
+				<span>Analysis Mode</span>
+			</button>
+		{/if}
 	</div>
 
 	<div class="rail-sec">
@@ -172,13 +190,33 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.5rem;
-		padding: 0.75rem 0.5rem 1rem;
-		border-radius: var(--exec-panel-radius, 12px);
-		background: var(--exec-panel-bg);
-		-webkit-backdrop-filter: var(--exec-panel-blur);
-		backdrop-filter: var(--exec-panel-blur);
-		box-shadow: var(--exec-panel-shadow);
+		gap: 0.625rem;
+		padding: 0.5rem 0.25rem 0.75rem;
+		background: transparent;
+		border: 0;
+		box-shadow: none;
+	}
+	.orb-analysis-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		padding: 0.375rem 0.75rem;
+		border-radius: var(--exec-ctrl-radius, 8px);
+		border: 1px solid var(--exec-border-hi, var(--line-strong));
+		background: var(--exec-well, var(--surface-raised));
+		color: var(--exec-body, var(--fg-secondary));
+		font-size: 0.75rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition:
+			background-color 0.14s ease,
+			color 0.14s ease,
+			border-color 0.14s ease;
+	}
+	.orb-analysis-btn:hover {
+		background: var(--exec-accent-soft, var(--surface-overlay));
+		border-color: var(--tone-accent-ring, var(--line-strong));
+		color: var(--exec-ink, var(--fg));
 	}
 	.orb-stage {
 		width: 11rem;
@@ -334,7 +372,6 @@
 		outline: 2px solid var(--focus);
 		outline-offset: 2px;
 	}
-	:global(html[data-ui-theme^='report']) .orb-section,
 	:global(html[data-ui-theme^='report']) .rail-sec {
 		border: 1px solid var(--report-rule);
 		border-radius: 4px;

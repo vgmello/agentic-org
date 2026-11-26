@@ -9,7 +9,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { SvelteURLSearchParams } from 'svelte/reactivity';
+	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import { Tooltip } from 'bits-ui';
 	import { X } from '@lucide/svelte';
 	import { toast } from 'svelte-sonner';
@@ -25,7 +25,13 @@
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { useScopedSearchContext } from '$lib/platform/shell/scoped-search.svelte';
 	import { isEditableTarget, singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
+	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import { workItemsApi } from '../../api';
+	import {
+		isArchivedTaskRow,
+		readSessionShowArchived,
+		writeSessionShowArchived
+	} from '../../archive';
 	import {
 		SHOW_VIEWS,
 		defaultFilters,
@@ -107,6 +113,7 @@
 	let sortBy = $state<WorkSortBy>('default');
 	let sortDir = $state<WorkSortDir>('asc');
 	let showDividers = $state(readStoredDividers());
+	let showArchived = $state(readSessionShowArchived());
 	let boardMode = $state<BoardMode>('stages');
 	let filters = $state<QueueFilters>(defaultFilters());
 	let savedExplicit = $state(false);
@@ -399,6 +406,11 @@
 		writeStoredDividers(next);
 	}
 
+	function setShowArchived(next: boolean) {
+		showArchived = next;
+		writeSessionShowArchived(next);
+	}
+
 	function setShow(next: ShowView): Promise<void> {
 		showOverride = next;
 		if (next === 'mine') {
@@ -529,15 +541,27 @@
 	);
 
 	// Derived queue metrics so the unified header and toolbar share one state cleanly
-	const openItemCount = $derived(
-		(queueRead.data?.rows ?? []).filter((r) => isOpen(r.status)).length
+	const archivedIds = $derived.by(() => {
+		const ids = new SvelteSet<string>();
+		const threshold = uiPrefs.archiveAfterDays;
+		if (threshold <= 0) return ids;
+		for (const r of queueRead.data?.rows ?? []) {
+			if (isArchivedTaskRow(r, threshold)) ids.add(r.id);
+		}
+		return ids;
+	});
+	const visibleQueueRows = $derived(
+		showArchived || archivedIds.size === 0
+			? (queueRead.data?.rows ?? [])
+			: (queueRead.data?.rows ?? []).filter((r) => !archivedIds.has(r.id))
 	);
-	const needsMeCount = $derived(needsMeRows(queueRead.data?.rows ?? []).length);
+	const openItemCount = $derived(visibleQueueRows.filter((r) => isOpen(r.status)).length);
+	const needsMeCount = $derived(needsMeRows(visibleQueueRows).length);
 	const showModeState = $derived<ShowView>(isOrgScope ? activeShow : 'mine');
 	const scopeMineState = $derived(isOrgScope && showModeState === 'mine' && !hasExplicitOrgFilter);
 	const savedCountsState = $derived(
 		queueRead.data
-			? savedFilterCounts(queueRead.data.rows, queueRead.data.viewer, activeTab)
+			? savedFilterCounts(visibleQueueRows, queueRead.data.viewer, activeTab)
 			: {
 					all: 0,
 					owned_by_my_team: 0,
@@ -694,7 +718,7 @@
 				>
 					<span>{t.label}</span>
 					<span class="queue-tab-count">
-						{q.rows.filter((r) => r.type === t.id).length}
+						{visibleQueueRows.filter((r) => r.type === t.id).length}
 					</span>
 				</button>
 			{/each}
@@ -721,6 +745,7 @@
 		{sortBy}
 		{sortDir}
 		{showDividers}
+		{showArchived}
 		{uniqueProjects}
 		{uniqueTeams}
 		{uniquePeople}
@@ -740,6 +765,7 @@
 		onSortByChange={(next) => (sortBy = next)}
 		onSortDirChange={(next) => (sortDir = next)}
 		onDividersChange={setDividers}
+		onShowArchivedChange={setShowArchived}
 		onCreate={openCapture}
 	/>
 {/snippet}
@@ -787,11 +813,12 @@
 		>
 			{#snippet children(q)}
 				{@const isStale = !!q.stale}
-				{@const needsMeItems = needsMeRows(q.rows)}
+				{@const sourceRows = visibleQueueRows}
+				{@const needsMeItems = needsMeRows(sourceRows)}
 				{@const tabSelected = !isOrgScope || showModeState === 'mine'}
 				{@const activeShowLabel = SHOW_VIEWS.find((v) => v.id === showModeState)?.label ?? 'Work'}
-				{@const baseRows = scopeMineState ? mineRows(q.rows, q.viewer) : q.rows}
-				{@const typeTotal = q.rows.filter((r) => r.type === activeTab).length}
+				{@const baseRows = scopeMineState ? mineRows(sourceRows, q.viewer) : sourceRows}
+				{@const typeTotal = sourceRows.filter((r) => r.type === activeTab).length}
 				{@const filtered = filterRows(
 					baseRows,
 					q.viewer,
@@ -904,8 +931,19 @@
 								</div>
 							{/if}
 
-							{#if activeChips.length > 0}
+							{#if activeChips.length > 0 || showArchived}
 								<div class="work-active-filters" data-testid="active-filter-bar">
+									{#if showArchived}
+										<button
+											type="button"
+											class="work-filter-chip work-archived-chip"
+											data-testid="work-showing-archived-chip"
+											onclick={() => setShowArchived(false)}
+										>
+											<span>Showing archived</span>
+											<X class="size-3 shrink-0 opacity-70" aria-hidden="true" />
+										</button>
+									{/if}
 									{#each activeChips as chip (chip.id)}
 										<button
 											type="button"
@@ -916,9 +954,11 @@
 											<X class="size-3 shrink-0 opacity-70" aria-hidden="true" />
 										</button>
 									{/each}
-									<button type="button" class="work-clear-btn" onclick={clearFilters}>
-										Clear filters
-									</button>
+									{#if activeChips.length > 0}
+										<button type="button" class="work-clear-btn" onclick={clearFilters}>
+											Clear filters
+										</button>
+									{/if}
 								</div>
 							{/if}
 
@@ -949,6 +989,7 @@
 										{sortDir}
 										showProject={false}
 										{showDividers}
+										{archivedIds}
 										selectedRef={openRowRef}
 										onopen={isOrgScope ? openInlineDetail : undefined}
 									/>
@@ -979,6 +1020,7 @@
 										{sortDir}
 										showProject={true}
 										{showDividers}
+										{archivedIds}
 										selectedRef={openRowRef}
 										onopen={isOrgScope ? openInlineDetail : undefined}
 									/>
@@ -1079,6 +1121,7 @@
 									{boardMode}
 									showProject={isOrgScope}
 									stale={isStale}
+									{archivedIds}
 									selectedRef={openRowRef}
 									onchanged={reloadQueue}
 									onopen={isOrgScope ? openInlineDetail : undefined}
@@ -1093,6 +1136,7 @@
 									{sortDir}
 									showProject={isOrgScope}
 									{showDividers}
+									{archivedIds}
 									selectedRef={openRowRef}
 									onopen={isOrgScope ? openInlineDetail : undefined}
 								/>

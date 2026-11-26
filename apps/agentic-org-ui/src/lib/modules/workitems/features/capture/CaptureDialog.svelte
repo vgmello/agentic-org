@@ -14,7 +14,9 @@
 	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import X from '@lucide/svelte/icons/x';
 	import { newId } from '$lib/modules/organization/commands';
+	import { useNotifications } from '$lib/platform/shell/notifications.svelte';
 	import { useShellAi } from '$lib/platform/shell/shell-ai';
+	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { UNAVAILABLE_MESSAGE } from '$lib/platform/unavailable-api';
 	import { toAppError } from '$lib/proto';
 	import { Button } from '$lib/components/ui/button';
@@ -39,6 +41,7 @@
 	} from '$lib/components/classes';
 	import { workItemsApi } from '../../api';
 	import { OUTCOME_UNKNOWN } from '../../budget';
+	import { withDraftIdeationMarker } from '../../ideation';
 	import {
 		PRIORITIES,
 		PRIORITY_WORD,
@@ -54,6 +57,7 @@
 	import type { Choices, EmployeeChoice, Priority, Severity, TaskRow, TaskType } from '../../types';
 	import {
 		applyMentionReplacement,
+		assessTessIntakeRouting,
 		buildTessDraftPrompt,
 		detectMentionMatch,
 		filterMentionCandidates,
@@ -88,6 +92,13 @@
 
 	const uid = $props.id();
 	const shellAi = useShellAi();
+	const notifications = useNotifications();
+	let shellData: ReturnType<typeof useShellData> | undefined;
+	try {
+		shellData = useShellData();
+	} catch {
+		shellData = undefined;
+	}
 	let type = $state<TaskType>('task');
 	let title = $state('');
 	let description = $state('');
@@ -181,6 +192,14 @@
 		if (type === 'request') return busy ? 'Saving…' : assigneeId ? 'Send request' : 'Save request';
 		return busy ? 'Creating…' : 'Create task';
 	});
+
+	const selectedAssigneeName = $derived(choices?.employees.find((e) => e.id === assigneeId)?.name);
+
+	const tessRouting = $derived(
+		type !== 'bug' && title.trim()
+			? assessTessIntakeRouting(title, description, draftSteps, selectedAssigneeName)
+			: null
+	);
 
 	function classifyChoicesError(e: unknown): {
 		state: 'unavailable' | 'unsupported' | 'error';
@@ -480,6 +499,93 @@
 		shellAi.ask(prompt);
 	}
 
+	async function executeTessIntakeBackground(input: {
+		jobId: string;
+		payload: ReturnType<typeof buildCreatePayload>;
+		stepsToAttach: string[];
+		capturedTitle: string;
+		capturedType: TaskType;
+		mode: 'draft' | 'direct';
+		assigneeName?: string;
+	}) {
+		try {
+			const created = await workItemsApi.create(organizationId, input.payload);
+			await persistDraftSteps(created.id, input.stepsToAttach);
+			const isDraft = input.mode === 'draft';
+			const summary = isDraft
+				? `${input.capturedTitle} · Ready for Draft ideation`
+				: `${input.capturedTitle}${input.assigneeName ? ` · Assigned to ${input.assigneeName}` : ''}`;
+			notifications?.finishJob(input.jobId, {
+				title: isDraft ? `Tess drafted ${created.ref}` : `Tess filed ${created.ref}`,
+				summary,
+				href: taskHref(created.ref),
+				icon: isDraft ? 'pencil' : 'check',
+				tone: isDraft ? 'accent' : 'ok'
+			});
+			oncreated?.({ ...created, type: input.capturedType });
+			void shellData?.refresh();
+		} catch (e) {
+			const msg = toAppError(e).message;
+			notifications?.failJob(input.jobId, `Couldn't file "${input.capturedTitle}"`, msg, '/work');
+			toast.error(msg);
+		}
+	}
+
+	/**
+	 * Fire-and-forget async intake (TASK-139): closes the composer immediately, tracks progress
+	 * in the top-bar Notifications bell + Floating Tess Companion pill, and creates the live
+	 * work item at HQ (marking Draft ideation when exploratory).
+	 */
+	async function sendToTessAsync() {
+		const blocked =
+			busy || checking || Boolean(unknownOpId) || choicesUnavailable || type === 'bug';
+		if (blocked) return;
+		fieldErrors = {};
+		formError = undefined;
+		const nextErrors = validateDraft();
+		if (Object.keys(nextErrors).length > 0) {
+			fieldErrors = nextErrors;
+			await focusField(Object.keys(nextErrors)[0]);
+			return;
+		}
+		const routing = assessTessIntakeRouting(title, description, draftSteps, selectedAssigneeName);
+		const capturedTitle = title.trim();
+		const capturedType = type;
+		const stepsToAttach = [...draftSteps, ...(stepInput.trim() ? splitSteps(stepInput) : [])];
+		const op = operationId || newId();
+		const basePayload = buildCreatePayload(op);
+		const payload =
+			routing.mode === 'draft'
+				? { ...basePayload, description: withDraftIdeationMarker(basePayload.description) }
+				: basePayload;
+		const jobId = `tess-intake-${op}`;
+
+		notifications?.startJob({
+			id: jobId,
+			title: `Refining: ${capturedTitle}`,
+			step: routing.label,
+			source: 'tess'
+		});
+		toast.message(`Sent "${capturedTitle}" to Tess — refining in background.`);
+
+		if (createMore) {
+			resetDraftFields(true);
+			void tick().then(() => titleInput?.focus());
+		} else {
+			open = false;
+		}
+
+		await executeTessIntakeBackground({
+			jobId,
+			payload,
+			stepsToAttach,
+			capturedTitle,
+			capturedType,
+			mode: routing.mode,
+			assigneeName: selectedAssigneeName
+		});
+	}
+
 	async function persistDraftSteps(taskId: string, pending: string[]) {
 		if (pending.length === 0) return;
 		try {
@@ -575,7 +681,11 @@
 	function handleFormKeydown(event: KeyboardEvent) {
 		if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
 			event.preventDefault();
-			if (!bugSubmitDisabledReason) void submit();
+			if (event.shiftKey || type === 'bug' || !notifications) {
+				if (!bugSubmitDisabledReason) void submit();
+			} else {
+				void sendToTessAsync();
+			}
 		}
 	}
 </script>
@@ -1077,6 +1187,16 @@
 				<p class={helpClass} data-testid="bug-submit-reason">{bugSubmitDisabledReason}</p>
 			{/if}
 
+			{#if tessRouting && !unknownOpId}
+				<p
+					class="flex items-center gap-1.5 text-xs/5 text-fg-muted"
+					data-testid="composer-tess-routing"
+				>
+					<Sparkles class="size-3.5 shrink-0 text-brand-text" aria-hidden="true" />
+					<span>{tessRouting.label}</span>
+				</p>
+			{/if}
+
 			{#if formError}
 				<div
 					class="rounded-md bg-danger-emphasis/10 px-3 py-2.5 text-sm/6 text-danger-text ring-1 ring-danger-emphasis/20"
@@ -1100,7 +1220,7 @@
 					></button>
 					<span>Create more</span>
 				</label>
-				<div class="flex items-center gap-2">
+				<div class="flex flex-wrap items-center gap-2">
 					<Button
 						type="button"
 						variant="outline"
@@ -1123,6 +1243,19 @@
 							onclick={checkCreateStatus}>{checking ? 'Checking…' : 'Check status'}</Button
 						>
 					{:else}
+						{#if type !== 'bug' && notifications}
+							<Button
+								type="button"
+								variant="outline"
+								class={mobileButton}
+								disabled={busy || choicesUnavailable}
+								onclick={() => void sendToTessAsync()}
+								data-testid="composer-send-to-tess"
+							>
+								<Sparkles class="size-3.5" aria-hidden="true" />
+								<span>Send to Tess</span>
+							</Button>
+						{/if}
 						<Button
 							type="submit"
 							class={mobileButton}

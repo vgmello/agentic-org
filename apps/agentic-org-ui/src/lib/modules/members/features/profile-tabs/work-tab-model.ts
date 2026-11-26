@@ -1,7 +1,8 @@
+import { isArchivedTimestamp } from '$lib/modules/workitems/archive';
 import { WORK_PRIORITY_LABELS, WORK_STATE_LABELS } from '../../present';
 import type { WorkRow, WorkState } from '../../types';
 
-export type MemberWorkPreset = 'open' | 'needs_me' | 'all';
+export type MemberWorkPreset = 'open' | 'needs_me' | 'requested_by_me' | 'all';
 export type MemberWorkGroupBy = 'status' | 'project' | 'none';
 export type MemberWorkSortBy = 'default' | 'title' | 'priority';
 export type MemberWorkDirection = 'asc' | 'desc';
@@ -35,14 +36,24 @@ export function isNeedsAttention(row: WorkRow): boolean {
 	return row.state === 'blocked' || row.state === 'in_review';
 }
 
+export function isArchivedMemberWorkRow(
+	row: WorkRow,
+	archiveAfterDays: number,
+	nowMs = Date.now()
+): boolean {
+	return row.state === 'done' && isArchivedTimestamp(row.closedAt, archiveAfterDays, nowMs);
+}
+
 export function memberWorkPresetCounts(rows: readonly WorkRow[]): Record<MemberWorkPreset, number> {
 	let open = 0;
 	let needsMe = 0;
+	let requestedByMe = 0;
 	for (const row of rows) {
 		if (row.state !== 'done') open += 1;
 		if (isNeedsAttention(row)) needsMe += 1;
+		if (row.requestedByViewer) requestedByMe += 1;
 	}
-	return { open, needs_me: needsMe, all: rows.length };
+	return { open, needs_me: needsMe, requested_by_me: requestedByMe, all: rows.length };
 }
 
 export function memberWorkProjects(rows: readonly WorkRow[]): string[] {
@@ -80,19 +91,21 @@ function compareWorkRows(a: WorkRow, b: WorkRow, sortBy: MemberWorkSortBy): numb
 	return sa - sb || a.ref.localeCompare(b.ref);
 }
 
+function matchesPreset(row: WorkRow, state: MemberWorkViewState): boolean {
+	if (state.status !== 'all') return row.state === state.status;
+	if (state.preset === 'open') return row.state !== 'done';
+	if (state.preset === 'needs_me') return isNeedsAttention(row);
+	if (state.preset === 'requested_by_me') return Boolean(row.requestedByViewer);
+	return true;
+}
+
 export function filterAndSortMemberWork(
 	rows: readonly WorkRow[],
 	state: MemberWorkViewState
 ): WorkRow[] {
 	const needle = state.query.trim().toLowerCase();
 	const filtered = rows.filter((row) => {
-		if (state.status !== 'all') {
-			if (row.state !== state.status) return false;
-		} else if (state.preset === 'open' && row.state === 'done') {
-			return false;
-		} else if (state.preset === 'needs_me' && !isNeedsAttention(row)) {
-			return false;
-		}
+		if (!matchesPreset(row, state)) return false;
 		if (state.project !== 'all' && row.project !== state.project) return false;
 		if (needle && !matchesSearch(row, needle)) return false;
 		return true;

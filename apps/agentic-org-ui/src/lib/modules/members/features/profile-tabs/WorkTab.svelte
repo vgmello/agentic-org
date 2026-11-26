@@ -25,7 +25,12 @@
 		DropdownMenuTrigger
 	} from '$lib/components/ui/dropdown-menu';
 	import { mobileButton } from '$lib/components/classes';
+	import {
+		readSessionShowArchived,
+		writeSessionShowArchived
+	} from '$lib/modules/workitems/archive';
 	import { useScopedSearchContext } from '$lib/platform/shell/scoped-search.svelte';
+	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import { membersApi } from '../../api';
 	import { WORK_PRIORITY_LABELS, WORK_STATE_LABELS } from '../../present';
 	import type { WorkState } from '../../types';
@@ -35,6 +40,7 @@
 	import {
 		filterAndSortMemberWork,
 		groupMemberWork,
+		isArchivedMemberWorkRow,
 		memberWorkBoardColumns,
 		memberWorkPresetCounts,
 		memberWorkProjects,
@@ -50,8 +56,9 @@
 	const work = tabResource((o, m) => membersApi.work(o, m));
 	const scopedSearch = useScopedSearchContext();
 
+	const isSelf = $derived(ctx.profile.viewer.isSelf);
 	let query = $state('');
-	let preset = $state<MemberWorkPreset>('open');
+	let preset = $state<MemberWorkPreset>('all');
 	let statusFilter = $state<'all' | WorkState>('all');
 	let projectFilter = $state<string>('all');
 	let groupBy = $state<MemberWorkGroupBy>('status');
@@ -60,9 +67,22 @@
 	let layout = $state<MemberWorkLayout>('list');
 	let boardMode = $state<MemberWorkBoardMode>('stages');
 	let showDividers = $state(true);
+	let showArchived = $state(readSessionShowArchived());
 
 	const isAgent = $derived(ctx.profile.kind === 'agent');
 	const hasActiveFilter = $derived(statusFilter !== 'all' || projectFilter !== 'all');
+	const hasActiveDisplay = $derived(
+		groupBy !== 'status' ||
+			sortBy !== 'default' ||
+			direction !== 'asc' ||
+			!showDividers ||
+			showArchived
+	);
+
+	function setShowArchived(next: boolean) {
+		showArchived = next;
+		writeSessionShowArchived(next);
+	}
 
 	$effect(() => {
 		if (!scopedSearch) return;
@@ -107,9 +127,29 @@
 		{/if}
 	{/snippet}
 	{#snippet children(rows)}
-		{@const counts = memberWorkPresetCounts(rows)}
-		{@const projects = memberWorkProjects(rows)}
-		{@const filtered = filterAndSortMemberWork(rows, {
+		{@const archivedRefs = new Set(
+			rows.filter((r) => isArchivedMemberWorkRow(r, uiPrefs.archiveAfterDays)).map((r) => r.ref)
+		)}
+		{@const visibleRows =
+			showArchived || archivedRefs.size === 0 ? rows : rows.filter((r) => !archivedRefs.has(r.ref))}
+		{@const counts = memberWorkPresetCounts(visibleRows)}
+		{@const projects = memberWorkProjects(visibleRows)}
+		{@const presetOptions = isSelf
+			? [
+					{ id: 'all' as const, label: 'All', count: counts.all },
+					{ id: 'open' as const, label: 'Open', count: counts.open },
+					{ id: 'needs_me' as const, label: 'Needs me', count: counts.needs_me }
+				]
+			: [
+					{ id: 'all' as const, label: 'All', count: counts.all },
+					{ id: 'needs_me' as const, label: 'Needs me', count: counts.needs_me },
+					{
+						id: 'requested_by_me' as const,
+						label: 'Requested by me',
+						count: counts.requested_by_me
+					}
+				]}
+		{@const filtered = filterAndSortMemberWork(visibleRows, {
 			preset,
 			status: statusFilter,
 			project: projectFilter,
@@ -121,7 +161,7 @@
 		{@const boardCols = memberWorkBoardColumns(filtered, boardMode)}
 
 		<div class="member-work-toolbar" data-testid="member-work-toolbar">
-			<div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+			<div class="flex min-w-0 flex-1 flex-wrap items-center gap-3">
 				{#if !scopedSearch}
 					<ScopedSearchInput
 						bind:value={query}
@@ -133,12 +173,8 @@
 					/>
 				{/if}
 
-				<div
-					role="group"
-					aria-label="Filter tasks"
-					class="exec-well inline-flex items-center gap-0.5 rounded-lg p-0.5"
-				>
-					{#each [{ id: 'open' as const, label: 'Open', count: counts.open }, { id: 'needs_me' as const, label: 'Needs me', count: counts.needs_me }, { id: 'all' as const, label: 'All', count: counts.all }] as opt (opt.id)}
+				<div role="group" aria-label="Filter tasks" class="mw-seg-track">
+					{#each presetOptions as opt (opt.id)}
 						<button
 							type="button"
 							aria-pressed={preset === opt.id && statusFilter === 'all'}
@@ -159,11 +195,7 @@
 					{/each}
 				</div>
 
-				<div
-					role="group"
-					aria-label="Layout"
-					class="exec-well inline-flex items-center gap-0.5 rounded-lg p-0.5"
-				>
+				<div role="group" aria-label="Layout" class="mw-seg-track">
 					{#each [{ id: 'list' as const, label: 'List' }, { id: 'board' as const, label: 'Board' }] as mode (mode.id)}
 						<button
 							type="button"
@@ -180,11 +212,7 @@
 				</div>
 
 				{#if layout === 'board'}
-					<div
-						role="group"
-						aria-label="Board columns"
-						class="exec-well inline-flex items-center gap-0.5 rounded-lg p-0.5"
-					>
+					<div role="group" aria-label="Board columns" class="mw-seg-track">
 						{#each [{ id: 'stages' as const, label: '4 stages' }, { id: 'statuses' as const, label: 'All statuses' }] as colMode (colMode.id)}
 							<button
 								type="button"
@@ -247,10 +275,13 @@
 								variant="outline"
 								size="sm"
 								aria-label="Display options"
-								class="min-h-8 gap-1.5 px-2.5 text-xs [@media(pointer:coarse)]:min-h-11"
+								class="relative min-h-8 gap-1.5 px-2.5 text-xs [@media(pointer:coarse)]:min-h-11"
 							>
 								<SlidersHorizontalIcon class="size-3.5" aria-hidden="true" />
 								<span>Display</span>
+								{#if hasActiveDisplay}
+									<span class="mw-active-dot" aria-hidden="true"></span>
+								{/if}
 							</Button>
 						{/snippet}
 					</DropdownMenuTrigger>
@@ -278,18 +309,35 @@
 						<DropdownMenuCheckboxItem bind:checked={showDividers}>
 							Row dividers
 						</DropdownMenuCheckboxItem>
+						<DropdownMenuCheckboxItem
+							checked={showArchived}
+							onCheckedChange={(checked) => setShowArchived(Boolean(checked))}
+						>
+							Show archived
+						</DropdownMenuCheckboxItem>
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
 
 			<p class="text-xs/5 text-fg-muted tabular-nums" role="status">
-				{filtered.length} of {rows.length}
-				{rows.length === 1 ? 'item' : 'items'}
+				{filtered.length} of {visibleRows.length}
+				{visibleRows.length === 1 ? 'item' : 'items'}
 			</p>
 		</div>
 
-		{#if hasActiveFilter}
+		{#if hasActiveFilter || showArchived}
 			<div class="mw-chip-bar" role="region" aria-label="Active filters">
+				{#if showArchived}
+					<button
+						type="button"
+						class="mw-chip"
+						onclick={() => setShowArchived(false)}
+						aria-label="Hide archived items"
+					>
+						<span>Showing archived</span>
+						<XIcon class="size-3" aria-hidden="true" />
+					</button>
+				{/if}
 				{#if statusFilter !== 'all'}
 					<button
 						type="button"
@@ -370,7 +418,7 @@
 							<StatusPill label={String(group.rows.length)} />
 						</div>
 					{/if}
-					<WorkRows rows={group.rows} hideAssignee />
+					<WorkRows rows={group.rows} hideAssignee {archivedRefs} />
 				{/each}
 			</div>
 		{/if}
@@ -397,10 +445,19 @@
 			padding-inline: 2rem;
 		}
 	}
+	.mw-seg-track {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		padding: 2px;
+		border-radius: var(--exec-ctrl-radius, 8px);
+		background: var(--toolbar-seg-bg, var(--exec-well, var(--surface-raised)));
+		box-shadow: inset 0 0 0 1px var(--exec-border, var(--line));
+	}
 	.mw-seg-btn.is-on {
-		background: var(--exec-accent-soft);
-		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+		background: var(--toolbar-seg-active-bg, var(--exec-surface-hi, var(--surface-overlay)));
+		color: var(--exec-ink, var(--fg));
+		box-shadow: inset 0 0 0 1px var(--exec-border-hi, var(--line-strong));
 	}
 	.mw-active-dot {
 		width: 0.375rem;
