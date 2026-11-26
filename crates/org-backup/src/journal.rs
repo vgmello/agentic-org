@@ -102,11 +102,36 @@ pub enum LiveJournal {
     Head { ordinal: u64 },
 }
 
-/// The custody guard (`doc-91`: missing custody, a changed incarnation or a journal behind
-/// its protected checkpoint needs explicit recovery, never a reset). Restoring may never
-/// leave the office with a journal the host's writer custody would have to be reset for: the
-/// archive must be of the incarnation the host reserved, and hold the live journal's head on
-/// its own chain (the same head, or a later one).
+/// The first field of the writer binding (`doc-91`: instance, organization, office, journal
+/// incarnation, writer epoch, machine) on which `staged` differs from `reserved`.
+fn binding_difference(staged: &OfficeIdentity, reserved: &OfficeIdentity) -> Option<&'static str> {
+    if staged.instance_id != reserved.instance_id {
+        Some("instance")
+    } else if staged.organization_id != reserved.organization_id {
+        Some("organization")
+    } else if staged.office_id != reserved.office_id {
+        Some("office")
+    } else if staged.journal_incarnation != reserved.journal_incarnation {
+        Some("journal incarnation")
+    } else if staged.writer_epoch != reserved.writer_epoch {
+        Some("writer epoch")
+    } else if staged.machine_id != reserved.machine_id {
+        Some("machine")
+    } else {
+        None
+    }
+}
+
+/// What restoring needs and never does: the host's writer custody reset.
+const NO_RESET: &str = "restoring it would need the host's writer custody reset, which this \
+command never does (doc-91: explicit recovery)";
+
+/// The custody guard (`doc-91`: missing custody, a changed incarnation or epoch, or a journal
+/// behind its protected checkpoint needs explicit recovery, never a reset). Restoring may
+/// never leave the office with a journal the host's writer custody would have to be reset
+/// for: the archive's journal must be bound to exactly the writer the host reserved (all six
+/// fields), whatever state the live journal is in, and hold the live journal's head on its
+/// own chain (the same head, or a later one).
 pub(crate) fn guard_custody(
     live_durable: &Path,
     reserved: &OfficeIdentity,
@@ -116,38 +141,55 @@ pub(crate) fn guard_custody(
     if manifest.journal.incarnation != reserved.journal_incarnation.as_str() {
         return Err(BackupError::Refused(format!(
             "the archive's journal incarnation {} is not the one the host reserved for office {} \
-             ({}); restoring it would need the host's writer custody reset, which this command \
-             never does (doc-91: explicit recovery)",
+             ({}); {NO_RESET}",
             manifest.journal.incarnation,
             manifest.office_id,
             reserved.journal_incarnation.as_str()
         )));
     }
     let live_dir = journal_dir(live_durable, reserved);
-    if !live_dir.join("anchor.json").exists() {
-        return Ok(LiveJournal::Missing);
-    }
-    let live = match Journal::inspect(&live_dir, None) {
-        Ok(live) => live,
-        Err(e) => return Ok(LiveJournal::Unreadable(format!("{e:?}"))),
+    let live = if live_dir.join("anchor.json").exists() {
+        Some(Journal::inspect(&live_dir, None))
+    } else {
+        None
     };
-    let staged = inspect(
-        &manifest_journal_dir(staged_durable, manifest)?,
-        Some(live.head.ordinal),
-    )?;
+    let probe = match &live {
+        Some(Ok(live)) => Some(live.head.ordinal),
+        _ => None,
+    };
+    // Before anything about the live journal is trusted or reported: the staged journal's
+    // anchor binds the writer, and the office opens only under that exact binding.
+    let staged = inspect(&manifest_journal_dir(staged_durable, manifest)?, probe)?;
+    if let Some(field) = binding_difference(&staged.identity, reserved) {
+        return Err(BackupError::Refused(format!(
+            "the archive's journal is bound to another {field} than the writer the host \
+             reserved for office {}; {NO_RESET}",
+            manifest.office_id
+        )));
+    }
+    let live = match live {
+        None => return Ok(LiveJournal::Missing),
+        Some(Err(e)) => return Ok(LiveJournal::Unreadable(format!("{e:?}"))),
+        Some(Ok(live)) => live,
+    };
     if staged.head.ordinal < live.head.ordinal {
         return Err(BackupError::Refused(format!(
             "the archive's journal ends at ordinal {} but office {} has already accepted through \
-             ordinal {}; restoring it would roll back acknowledged work and need the host's \
-             writer custody reset, which this command never does (doc-91: explicit recovery)",
+             ordinal {}; it would roll back acknowledged work, and {NO_RESET}",
             staged.head.ordinal, manifest.office_id, live.head.ordinal
+        )));
+    }
+    if live.head.ordinal < staged.base.ordinal {
+        return Err(BackupError::Refused(format!(
+            "the archive's journal was checkpointed at ordinal {}, past office {}'s head at \
+             ordinal {}, so it cannot be shown to continue the office's journal; {NO_RESET}",
+            staged.base.ordinal, manifest.office_id, live.head.ordinal
         )));
     }
     if staged.probe != Some(live.head.sha256) {
         return Err(BackupError::Refused(format!(
             "the archive's journal is not on the chain of office {}'s journal (they differ at \
-             ordinal {}); restoring it would fork the office and need the host's writer custody \
-             reset, which this command never does",
+             ordinal {}); restoring it would fork the office, and {NO_RESET}",
             manifest.office_id, live.head.ordinal
         )));
     }

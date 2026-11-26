@@ -76,8 +76,11 @@ pub fn verify(request: &VerifyRequest<'_>) -> Result<VerifyReport, BackupError> 
     drop(work);
     let to = match request.to {
         Some(to) => {
-            let to = new_folder(to)?;
-            extract_to(request, &to, &manifest)?;
+            let (to, made) = new_folder(to)?;
+            if let Err(error) = extract_to(request, &to, &manifest) {
+                discard_output(&to, made);
+                return Err(error);
+            }
             Some(to)
         }
         None => None,
@@ -161,8 +164,9 @@ fn check_new_folder(path: &Path) -> Result<(), BackupError> {
     }
 }
 
-/// `path` as a new owner-only folder: it must not exist, or be an empty folder.
-fn new_folder(path: &Path) -> Result<PathBuf, BackupError> {
+/// `path` as a new owner-only folder: it must not exist, or be an empty folder. Returns it
+/// with whether it was made here.
+fn new_folder(path: &Path) -> Result<(PathBuf, bool), BackupError> {
     let path = std::path::absolute(path)
         .map_err(BackupError::io(format!("resolving {}", path.display())))?;
     match std::fs::symlink_metadata(&path) {
@@ -177,20 +181,30 @@ fn new_folder(path: &Path) -> Result<PathBuf, BackupError> {
             }
             org_platform::fs::set_owner_only_dir(&path)
                 .map_err(BackupError::io(format!("protecting {}", path.display())))?;
+            Ok((path, false))
         }
-        Ok(_) => {
-            return Err(BackupError::Usage(format!(
-                "{} is not a folder",
-                path.display()
-            )))
-        }
+        Ok(_) => Err(BackupError::Usage(format!(
+            "{} is not a folder",
+            path.display()
+        ))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             org_platform::fs::create_owner_only_dir(&path)
                 .map_err(BackupError::io(format!("making {}", path.display())))?;
+            Ok((path, true))
         }
-        Err(e) => return Err(BackupError::io(format!("checking {}", path.display()))(e)),
+        Err(e) => Err(BackupError::io(format!("checking {}", path.display()))(e)),
     }
-    Ok(path)
+}
+
+/// After a failed extraction into `to`: what it wrote is removed, and `to` too when it was
+/// made for it, so no partial copy is left to be mistaken for a verified one.
+fn discard_output(to: &Path, made: bool) {
+    if made {
+        let _ = std::fs::remove_dir_all(to);
+        return;
+    }
+    let _ = std::fs::remove_dir_all(to.join("durable"));
+    let _ = std::fs::remove_file(to.join("manifest.json"));
 }
 
 /// The second, pristine extraction into `to`, with the manifest beside it.

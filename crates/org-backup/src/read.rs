@@ -111,7 +111,10 @@ pub(crate) fn extract(
     let (manifest, first_size) = read_manifest(entries.next(), limits, &context)?;
     // From here the stream may hold exactly what the manifest accounts for: the manifest
     // member already read, then every member and the end blocks.
-    let manifest_member = 512 + first_size.div_ceil(512) * 512;
+    let manifest_member = first_size
+        .div_ceil(512)
+        .saturating_mul(512)
+        .saturating_add(512);
     limit.set(manifest_member.saturating_add(manifest.tar_bytes()));
     org_platform::fs::create_owner_only_dir(to.durable)
         .map_err(BackupError::io(format!("making {}", to.durable.display())))?;
@@ -131,6 +134,11 @@ pub(crate) fn extract(
     drop(members);
     finish(archive.into_inner(), &context)?;
     if to.flush {
+        // Each file was flushed as it was written; its name lives in its folder. Deepest
+        // folders first (the reverse of path order), then the root.
+        for folder in manifest.directories.iter().rev() {
+            crate::output::sync_dir(&folder.under(to.durable))?;
+        }
         crate::output::sync_dir(to.durable)?;
     }
     Ok(manifest)

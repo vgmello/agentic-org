@@ -5,10 +5,14 @@
 //! Git `state/`, `messaging/`, `recovery/` (the acceptance journal), `authority/`,
 //! `accounting/`, `budgets/`, `checkpoints/`, `blobs/` when present, and
 //! `local/offices/<office-id>/`, less what is disposable there (`enroll-tmp/`, each agent's
-//! `runtime/` and `tmp/`); `private/task-notes.db`, a WAL-mode SQLite database, is carried as
-//! a transactionally consistent `VACUUM INTO` copy. The disposable `runtime/` root is never
-//! carried. Every other tree under `durable/` is carried as it is: a link, a socket, a FIFO or
-//! a device there fails the backup rather than being skipped.
+//! `runtime/` and `tmp/`, and the host toolchain caches the office links into an agent's
+//! `home/` again: `.cargo/registry`, `.cargo/git`, a legacy `.rustup`);
+//! `private/task-notes.db`, a WAL-mode SQLite database, is carried as a transactionally
+//! consistent `VACUUM INTO` copy. The disposable `runtime/` root is never carried. Every
+//! other tree under `durable/` is carried as it is: a link, a socket, a FIFO or a device
+//! there fails the backup rather than being skipped, except inside an agent's own `home/`,
+//! which its runtime writes, where such an entry is left out (never followed). An archive
+//! listing a path a backup never carries is refused.
 //!
 //! The archive is a deterministic `.tar.gz` (sorted members, normalized metadata) whose first
 //! member, `manifest.json`, records the format version, the organization, the office, the
@@ -23,8 +27,10 @@
 //!   verifies the journal to the recorded head, and rebuilds the office's projections from the
 //!   copy on a disposable runtime root.
 //! - [`restore_in_place`] does all of that, then refuses an archive the host's writer custody
-//!   would have to be reset for, swaps a pristine copy in (keeping the previous root) and
-//!   discards the rebuildable projections.
+//!   would have to be reset for (a journal bound to another writer than the host reserved, or
+//!   behind or off the live chain), discards the rebuildable projections and swaps a pristine
+//!   copy in (keeping the previous root). It also restores an office whose whole
+//!   `<organization-id>/` folder was lost.
 //!
 //! Module graph: `write, verify, restore -> read, journal, locate, collect, output`;
 //! `read -> envelope, manifest, tarfmt, paths`; `restore -> verify`; nothing points back.

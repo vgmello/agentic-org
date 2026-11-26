@@ -3,7 +3,9 @@
 //! custody guard refuses anything the host's writer custody would have to be reset for, and
 //! only then is a pristine copy staged beside the live root and swapped in. The previous
 //! durable root is kept, renamed, never deleted; the office's rebuildable projections are
-//! discarded so they are rebuilt from what was restored.
+//! discarded before the swap, so whatever root a crash leaves in place, they are rebuilt from
+//! it. A lost `<organization-id>/` folder (both roots gone) is made again once the archive
+//! has verified.
 
 use std::path::{Path, PathBuf};
 
@@ -53,13 +55,11 @@ pub fn restore_in_place(request: &RestoreRequest<'_>) -> Result<RestoreReport, B
     let _locks = take_locks(&target)?;
     let base = target.base().to_path_buf();
     let suffix = random_suffix()?;
+    // The check runs apart from the office's folders, which may be the very thing lost.
     let work = tempfile::Builder::new()
-        .prefix(".restore-check-")
-        .tempdir_in(&base)
-        .map_err(BackupError::io(format!(
-            "making a folder in {}",
-            base.display()
-        )))?;
+        .prefix("agentic-org-restore-check-")
+        .tempdir()
+        .map_err(BackupError::io("making a disposable folder"))?;
     let (manifest, _, rebuilt) = verify_in(
         request.archive,
         request.passphrase,
@@ -77,6 +77,8 @@ pub fn restore_in_place(request: &RestoreRequest<'_>) -> Result<RestoreReport, B
             manifest.office_id, manifest.org_id, target.office_id, target.org_id
         )));
     }
+    ensure_folder(&base)?;
+    ensure_folder(&target.runtime)?;
     let staging = Staging::new(base.join(format!(".restore-{suffix}")))?;
     let staged = staging.path.join("durable");
     let again = extract(
@@ -92,10 +94,13 @@ pub fn restore_in_place(request: &RestoreRequest<'_>) -> Result<RestoreReport, B
         return Err(BackupError::invalid("it changed while it was restored"));
     }
     let live_journal = guard_custody(&target.durable, &target.identity, &staged, &manifest)?;
-    let previous_durable = swap_in(&target.durable, &staged, &base, &suffix)?;
+    // Discarded first: projections are rebuilt from whichever root is in place when the
+    // office next opens, so a crash on either side of the swap leaves nothing stale.
     org_office::backup::discard_projections(&target.runtime, &target.office_id).map_err(
         BackupError::office("discarding the office's rebuildable projections"),
     )?;
+    sync_dir(&staging.path)?;
+    let previous_durable = swap_in(&target.durable, &staged, &base, &suffix)?;
     Ok(RestoreReport {
         manifest,
         rebuilt,
@@ -103,6 +108,28 @@ pub fn restore_in_place(request: &RestoreRequest<'_>) -> Result<RestoreReport, B
         previous_durable,
         live_journal,
     })
+}
+
+/// Makes `folder` (owner-only, with any missing parents) when it is missing, flushing the
+/// folder that now names it.
+fn ensure_folder(folder: &Path) -> Result<(), BackupError> {
+    match std::fs::symlink_metadata(folder) {
+        Ok(meta) if meta.is_dir() => return Ok(()),
+        Ok(_) => {
+            return Err(BackupError::Refused(format!(
+                "{} is not a folder; nothing was changed",
+                folder.display()
+            )))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(BackupError::io(format!("checking {}", folder.display()))(e)),
+    }
+    org_platform::fs::create_owner_only_dir_all(folder)
+        .map_err(BackupError::io(format!("making {}", folder.display())))?;
+    match folder.parent() {
+        Some(parent) => sync_dir(parent),
+        None => Ok(()),
+    }
 }
 
 /// A staging folder beside the live root, removed with what is left in it when dropped.

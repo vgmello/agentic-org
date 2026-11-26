@@ -82,17 +82,25 @@ impl Passphrase {
     }
 
     /// Reads a passphrase file: a regular file opened without following a link or blocking
-    /// on a FIFO, readable by its owner alone (`chmod 600`), at most
-    /// [`MAX_PASSPHRASE_BYTES`] and a line end.
+    /// on a FIFO, owned by this account and readable by its owner alone (`chmod 600`, no
+    /// set-id or sticky bit), at most [`MAX_PASSPHRASE_BYTES`] and a line end.
     pub fn from_file(path: &std::path::Path) -> Result<Self, BackupError> {
         use std::os::unix::fs::MetadataExt;
         let mut file = crate::collect::open_regular(path)?;
         let meta = file
             .metadata()
             .map_err(BackupError::io(format!("reading {}", path.display())))?;
-        if meta.mode() & 0o077 != 0 {
+        let uid = org_platform::fs::effective_uid()
+            .map_err(BackupError::io("reading this account's user ID"))?;
+        if meta.uid() != uid {
             return Err(BackupError::Usage(format!(
-                "the passphrase file {} can be read by others; make it owner-only (chmod 600)",
+                "the passphrase file {} is not owned by this account",
+                path.display()
+            )));
+        }
+        if meta.mode() & 0o7077 != 0 {
+            return Err(BackupError::Usage(format!(
+                "the passphrase file {} is not owner-only; make it so (chmod 600)",
                 path.display()
             )));
         }

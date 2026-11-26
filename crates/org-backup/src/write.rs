@@ -157,7 +157,7 @@ fn refuse_output_inside(durable: &Path, out: &Path) -> Result<(), BackupError> {
 
 /// A private scratch folder in the runtime root, removed when dropped.
 pub(crate) fn scratch_dir(runtime: &Path) -> Result<tempfile::TempDir, BackupError> {
-    std::fs::create_dir_all(runtime)
+    org_platform::fs::create_owner_only_dir_all(runtime)
         .map_err(BackupError::io(format!("making {}", runtime.display())))?;
     tempfile::Builder::new()
         .prefix(".backup-")

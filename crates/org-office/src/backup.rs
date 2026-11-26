@@ -4,9 +4,9 @@
 //! [`check_task_notes`]), and the proof that a restored durable root opens
 //! ([`rebuild_disposable`]).
 //!
-//! A disposable rebuild opens the office's store and its `L2` accounting and `L3` budgets
-//! companions over a restored durable root on a disposable runtime root, so every projection
-//! is rebuilt from the journal and the files, read back and closed. Writer custody is an
+//! A disposable rebuild opens the office's store, its `L2` accounting and `L3` budgets
+//! companions and its provider pool over a restored durable root on a disposable runtime
+//! root, so every projection is rebuilt from the journal and the files, read back and closed. Writer custody is an
 //! in-memory stand-in pinned to the head the backup recorded: an opening that would need less
 //! (a journal behind it, a fork) refuses as it would on the host. Nothing here touches a host,
 //! a key store or the host's custody.
@@ -25,8 +25,8 @@ use org_store::{CustodyError, JournalHead, OfficeIdentity, SystemClock, WriterAu
 
 use crate::error::OfficeError;
 use crate::store::open::{
-    open_accounting, open_budgets, open_store, EmployeesList, EngineChoice, OfficeStore,
-    OfficesCount, ProjectsList, StoreConfig,
+    open_accounting, open_budgets, open_providers, open_store, EmployeesList, EngineChoice,
+    OfficeStore, OfficesCount, ProjectsList, StoreConfig,
 };
 
 /// What a disposable rebuild opens.
@@ -110,7 +110,9 @@ fn report(store: &OfficeStore) -> Result<RebuildReport, OfficeError> {
     })
 }
 
-/// The companion stores rebuild their own projections under the runtime root when opened.
+/// The companion stores rebuild their own projections under the runtime root when opened:
+/// accounting, budgets, and the provider pool, which reads the restored provider connection
+/// bindings and execution-authority files.
 fn open_companions(spec: &DisposableRebuild) -> Result<(), OfficeError> {
     let office = spec.identity.office_id.as_str();
     let org = spec.identity.organization_id.as_str();
@@ -124,6 +126,14 @@ fn open_companions(spec: &DisposableRebuild) -> Result<(), OfficeError> {
         org,
     )?);
     drop(open_budgets(
+        EngineChoice::Sqlite,
+        durable,
+        runtime,
+        office,
+        org,
+        spec.is_hq,
+    )?);
+    drop(open_providers(
         EngineChoice::Sqlite,
         durable,
         runtime,

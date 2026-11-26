@@ -119,8 +119,8 @@ fn run_in_place(
         });
         return Ok(ctx.render_dry_run(&format!("would {}", action.to_lowercase()), &plan)?);
     }
-    let passphrase = passphrase_for(args, archive, ctx)?;
     require_confirmation(ctx, &action)?;
+    let passphrase = passphrase_for(args, archive, ctx)?;
     let report = restore_in_place(&RestoreRequest {
         archive,
         passphrase: passphrase.as_ref(),
@@ -135,7 +135,7 @@ fn run_in_place(
         LiveJournal::Unreadable(why) => json!({ "state": "unreadable", "reason": why }),
         LiveJournal::Head { ordinal } => json!({ "state": "head", "ordinal": ordinal }),
     };
-    let json = json!({
+    let mut json = json!({
         "restored": true,
         "archive": archive.display().to_string(),
         "org_id": report.manifest.org_id,
@@ -145,8 +145,12 @@ fn run_in_place(
         "previous_durable_root": report.previous_durable.as_ref().map(|p| p.display().to_string()),
         "live_journal": live,
         "rebuilt": rebuilt(&report.rebuilt),
-        "scope_notice": SCOPE_NOTICE,
     });
+    // A person reads the notice once, as the closing warning; a machine gets it as a field.
+    let human = !ctx.modes().json;
+    if !human {
+        json["scope_notice"] = SCOPE_NOTICE.into();
+    }
     show(ctx, &report.manifest.office_id, &json)?;
     if let LiveJournal::Unreadable(_) = report.live_journal {
         ctx.warn(
@@ -158,7 +162,7 @@ fn run_in_place(
         report.manifest.office_id,
         archive.display()
     ));
-    if !ctx.modes().json {
+    if human {
         ctx.warn(SCOPE_NOTICE);
     }
     Ok(())

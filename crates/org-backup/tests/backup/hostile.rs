@@ -324,3 +324,96 @@ fn a_flipped_byte_and_a_wrong_or_missing_passphrase_are_detected() {
     assert!(verify(&verify_request(&broken, None, Some(&to))).is_err());
     assert!(!to.exists());
 }
+
+#[test]
+fn an_archive_listing_a_path_a_backup_never_carries_is_refused_before_extraction() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path().canonicalize().unwrap();
+    let office = format!("local/offices/{OFFICE}");
+    let agent = format!("{office}/agents/019a0000-0000-7000-8000-0000000000a3");
+    // Folders, then a file (or none) below the last: each smuggles a path no backup lists.
+    let cases: Vec<(Vec<String>, Option<String>)> = vec![
+        (
+            vec!["private".into()],
+            Some("private/task-notes.db-wal".into()),
+        ),
+        (
+            vec!["private".into()],
+            Some("private/task-notes.db-shm".into()),
+        ),
+        (
+            vec!["private".into()],
+            Some("private/task-notes.db-journal".into()),
+        ),
+        (
+            vec![
+                "local".into(),
+                "local/offices".into(),
+                office.clone(),
+                format!("{office}/enroll-tmp"),
+            ],
+            Some(format!("{office}/enroll-tmp/seed")),
+        ),
+        (
+            vec![
+                "local".into(),
+                "local/offices".into(),
+                office.clone(),
+                format!("{office}/enroll-tmp"),
+            ],
+            None,
+        ),
+        (
+            vec![
+                "local".into(),
+                "local/offices".into(),
+                office.clone(),
+                format!("{office}/agents"),
+                agent.clone(),
+                format!("{agent}/runtime"),
+            ],
+            Some(format!("{agent}/runtime/sock")),
+        ),
+        (
+            vec![
+                "local".into(),
+                "local/offices".into(),
+                office.clone(),
+                format!("{office}/agents"),
+                agent.clone(),
+                format!("{agent}/home"),
+                format!("{agent}/home/.cargo"),
+                format!("{agent}/home/.cargo/registry"),
+            ],
+            Some(format!("{agent}/home/.cargo/registry/index")),
+        ),
+    ];
+    for (n, (folders, file)) in cases.into_iter().enumerate() {
+        let mut listed = manifest(&[]);
+        listed.directories = folders.iter().map(|f| RelPath::parse(f).unwrap()).collect();
+        listed.directories.sort();
+        let mut members: Vec<(String, EntryType, &[u8])> = folders
+            .iter()
+            .map(|f| (format!("durable/{f}"), EntryType::Directory, &b""[..]))
+            .collect();
+        if let Some(file) = &file {
+            listed.files = vec![FileMark {
+                path: RelPath::parse(file).unwrap(),
+                length: 5,
+                sha256: hex(b"stale"),
+            }];
+            members.push((format!("durable/{file}"), EntryType::Regular, &b"stale"[..]));
+        }
+        let raws: Vec<Raw<'_>> = members
+            .iter()
+            .map(|(name, kind, data)| raw(name, *kind, data))
+            .collect();
+        let archive = dir.join(format!("smuggled-{n}.tar.gz"));
+        craft(&archive, &listed, &raws, b"");
+        let reason = refused(&dir, &archive, Limits::default());
+        assert!(
+            reason.contains("a path a backup never carries"),
+            "case {n}: {reason}"
+        );
+    }
+}

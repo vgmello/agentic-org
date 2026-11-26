@@ -276,3 +276,135 @@ fn a_path_too_long_for_ustar_round_trips_through_its_extended_header() {
     let extracted = long.path.under(&side.join("durable"));
     assert_eq!(std::fs::read(extracted).unwrap(), b"far down");
 }
+
+/// Makes a FIFO at `path` with the system's own tool (no unsafe code in a test).
+pub fn mkfifo(path: &Path) {
+    let made = std::process::Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success(), "mkfifo {}", path.display());
+}
+
+fn restore_request<'a>(org: &'a Org, archive: &'a Path) -> RestoreRequest<'a> {
+    RestoreRequest {
+        archive,
+        passphrase: None,
+        office_home: &org.office_home,
+        org: &org.org_id,
+        office: None,
+        limits: Limits::default(),
+    }
+}
+
+#[test]
+fn links_and_special_files_an_agents_runtime_leaves_in_its_home_are_left_out_never_followed() {
+    let org = Org::seeded();
+    let agent = format!("local/offices/{}/agents/{}", org.office_id, org.agent);
+    let home = org.durable().join(&agent).join("home");
+    // The host's toolchain caches, which the office links into the home on every session.
+    let host = org.root.join("host-home");
+    for cache in [".cargo/registry", ".cargo/git", ".rustup"] {
+        std::fs::create_dir_all(host.join(cache)).unwrap();
+        std::fs::write(host.join(cache).join("host-only"), b"host toolchain").unwrap();
+    }
+    std::fs::create_dir_all(home.join(".cargo")).unwrap();
+    std::fs::write(home.join(".cargo/env"), b"agent env").unwrap();
+    for cache in [".cargo/registry", ".cargo/git", ".rustup"] {
+        std::os::unix::fs::symlink(host.join(cache), home.join(cache)).unwrap();
+    }
+    // A runtime's own `latest` link, a dangling link and a FIFO beside its real files.
+    let debug = home.join(".claude/debug");
+    std::fs::create_dir_all(&debug).unwrap();
+    std::fs::write(debug.join("session-1.txt"), b"debug log").unwrap();
+    std::os::unix::fs::symlink("session-1.txt", debug.join("latest")).unwrap();
+    std::os::unix::fs::symlink(org.root.join("nowhere"), home.join(".claude/dangling")).unwrap();
+    mkfifo(&home.join(".claude/ipc"));
+
+    let out = org.root.join("homes.tar.gz");
+    let report = take_backup(&org, &out, None);
+    let paths: Vec<&str> = report
+        .manifest
+        .directories
+        .iter()
+        .map(|d| d.as_str())
+        .chain(report.manifest.files.iter().map(|f| f.path.as_str()))
+        .collect();
+    for kept in [
+        ".cargo",
+        ".cargo/env",
+        ".claude/debug",
+        ".claude/debug/session-1.txt",
+    ] {
+        let kept = format!("{agent}/home/{kept}");
+        assert!(paths.contains(&kept.as_str()), "{kept} is missing");
+    }
+    for left_out in [
+        ".cargo/registry",
+        ".cargo/git",
+        ".rustup",
+        ".claude/debug/latest",
+        ".claude/dangling",
+        ".claude/ipc",
+    ] {
+        let left_out = format!("{agent}/home/{left_out}");
+        assert!(
+            !paths
+                .iter()
+                .any(|p| *p == left_out || p.starts_with(&format!("{left_out}/"))),
+            "{left_out} was carried"
+        );
+    }
+    assert!(!paths.iter().any(|p| p.contains("host-only")), "{paths:?}");
+
+    // It verifies and restores; the restored home holds the files and none of the links.
+    verify(&verify_request(&out, None, None)).expect("it verifies");
+    std::fs::remove_dir_all(org.durable()).unwrap();
+    restore_in_place(&restore_request(&org, &out)).expect("it restores");
+    assert_eq!(
+        std::fs::read(debug.join("session-1.txt")).unwrap(),
+        b"debug log"
+    );
+    assert!(std::fs::symlink_metadata(debug.join("latest")).is_err());
+    assert!(std::fs::symlink_metadata(home.join(".cargo/registry")).is_err());
+    assert_eq!(
+        std::fs::read(home.join(".cargo/env")).unwrap(),
+        b"agent env"
+    );
+    org.open().close().unwrap();
+}
+
+#[test]
+fn a_lost_organization_folder_is_restored_while_the_hosts_custody_remains() {
+    let org = Org::seeded();
+    let before = {
+        let office = org.open();
+        let answers = org.queries(&office);
+        office.close().unwrap();
+        answers
+    };
+    let out = org.root.join("disaster.tar.gz");
+    take_backup(&org, &out, None);
+    // Both data roots and the organization folder holding them are gone; the office's folder
+    // and the host's custody of the journal head remain.
+    let base = org.durable().parent().unwrap().to_path_buf();
+    std::fs::remove_dir_all(&base).unwrap();
+    let restored = restore_in_place(&restore_request(&org, &out)).expect("it restores");
+    assert_eq!(restored.live_journal, LiveJournal::Missing);
+    assert_eq!(restored.previous_durable, None);
+    let mode = |path: &Path| {
+        std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(path).unwrap().permissions())
+            & 0o777
+    };
+    assert_eq!(mode(&base), 0o700);
+    assert!(org.runtime().is_dir());
+    let mut names: Vec<String> = std::fs::read_dir(&base)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["durable", "runtime"]);
+    let office = org.open();
+    assert_eq!(org.queries(&office), before);
+    office.close().unwrap();
+}

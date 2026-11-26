@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::error::BackupError;
-use crate::paths::{shown, RelPath};
+use crate::paths::{disposition, shown, RelPath};
 
 /// The manifest's `format`.
 pub const FORMAT: &str = "agentic-org-backup";
@@ -117,7 +117,7 @@ impl Manifest {
     /// The bytes the tar stream holds after the manifest member: a header per member, file
     /// data padded to blocks, an extended header for each long path, and the end blocks.
     pub(crate) fn tar_bytes(&self) -> u64 {
-        let blocks = |n: u64| n.div_ceil(512) * 512;
+        let blocks = |n: u64| n.div_ceil(512).saturating_mul(512);
         let long = |path: &RelPath| {
             if path.member().len() > 100 {
                 512 + blocks(4096)
@@ -125,13 +125,16 @@ impl Manifest {
                 0
             }
         };
-        let dirs: u64 = self.directories.iter().map(|d| 512 + long(d)).sum();
-        let files: u64 = self
-            .files
+        let dirs = self
+            .directories
             .iter()
-            .map(|f| 512 + blocks(f.length) + long(&f.path))
-            .sum();
-        dirs + files + 1024
+            .fold(0u64, |sum, d| sum.saturating_add(512 + long(d)));
+        let files = self.files.iter().fold(0u64, |sum, f| {
+            sum.saturating_add(512)
+                .saturating_add(blocks(f.length))
+                .saturating_add(long(&f.path))
+        });
+        dirs.saturating_add(files).saturating_add(1024)
     }
 
     /// Everything a reader checks before it extracts a byte: the format and version, the
@@ -199,13 +202,25 @@ impl Manifest {
         Ok(())
     }
 
-    /// Sorted unique paths, valid digests, no path both a file and a folder, and every
-    /// path's folder listed.
+    /// Sorted unique paths a backup carries, valid digests, no path both a file and a
+    /// folder, and every path's folder listed.
     fn check_paths(&self) -> Result<(), String> {
         if !self.directories.windows(2).all(|w| w[0] < w[1])
             || !self.files.windows(2).all(|w| w[0].path < w[1].path)
         {
             return Err("paths that are not sorted or not unique".into());
+        }
+        // A notes sidecar or a disposable folder is never backed up: listed, it would land
+        // beside the restored data (a stale `-wal` replayed into the notes database).
+        let mut every = self
+            .directories
+            .iter()
+            .chain(self.files.iter().map(|f| &f.path));
+        if let Some(path) = every.find(|path| !disposition(path).is_carried()) {
+            return Err(format!(
+                "{}, a path a backup never carries",
+                shown(path.as_str())
+            ));
         }
         let folders: BTreeSet<&RelPath> = self.directories.iter().collect();
         if let Some(file) = self.files.iter().find(|f| !hex64(&f.sha256)) {

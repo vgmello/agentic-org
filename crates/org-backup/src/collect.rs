@@ -1,7 +1,9 @@
 //! Walking a durable root for a backup: every folder and regular file the layout's policy
 //! keeps ([`crate::paths::disposition`]), sorted. A link, a socket, a FIFO or a device where
 //! the office keeps its data is refused, never followed or skipped: a backup that silently
-//! missed data would be worse than none.
+//! missed data would be worse than none. The one exception is inside an agent's private home,
+//! which the agent's runtime writes (a `latest` link, a socket): there such an entry is left
+//! out, still never followed.
 
 use std::fs;
 use std::io::Read;
@@ -99,10 +101,10 @@ fn names(folder: &Path) -> Result<Vec<String>, BackupError> {
 }
 
 /// What the backup carries for `path`, or `None` when the policy leaves it out. A link or a
-/// special file is refused.
+/// special file is refused, except inside an agent's home, where it is left out.
 fn classify(durable: &Path, path: RelPath) -> Result<Option<Item>, BackupError> {
     let policy = disposition(&path);
-    if matches!(policy, Disposition::Skip | Disposition::NotesSidecar) {
+    if !policy.is_carried() {
         return Ok(None);
     }
     let full = path.under(durable);
@@ -119,6 +121,9 @@ fn classify(durable: &Path, path: RelPath) -> Result<Option<Item>, BackupError> 
             Source::Live(full)
         };
         return Ok(Some(Item::File(path, source)));
+    }
+    if policy == Disposition::AgentHome {
+        return Ok(None);
     }
     let what = if kind.is_symlink() {
         "a link"

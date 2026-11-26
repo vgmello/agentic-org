@@ -3,7 +3,7 @@
 //! copied or overwritten).
 
 use std::fs::{File, OpenOptions, TryLockError};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Component, Path, PathBuf};
 
 use org_office::backup::recorded_office;
@@ -12,6 +12,9 @@ use org_store::OfficeIdentity;
 
 use crate::error::BackupError;
 use crate::paths::shown;
+
+#[cfg(test)]
+mod tests;
 
 /// What a stopped office must be for a backup or a restore.
 const STOP_FIRST: &str = "stop it first (`agentic-org service stop`, or end the foreground \
@@ -173,21 +176,49 @@ fn take_lock(path: &Path, what: String) -> Result<File, BackupError> {
         .open(path)
         .map_err(BackupError::io(format!("opening {}", path.display())))?;
     match file.try_lock() {
-        Ok(()) => Ok(file),
-        Err(TryLockError::WouldBlock) => Err(BackupError::Live {
-            what,
-            lock: path.to_path_buf(),
-            help: STOP_FIRST,
-        }),
-        Err(TryLockError::Error(e)) => {
-            Err(BackupError::io(format!("locking {}", path.display()))(e))
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => {
+            return Err(BackupError::Live {
+                what,
+                lock: path.to_path_buf(),
+                help: STOP_FIRST,
+            })
         }
+        Err(TryLockError::Error(e)) => {
+            return Err(BackupError::io(format!("locking {}", path.display()))(e))
+        }
+    }
+    // A lock on a file that was replaced or unlinked after it was opened locks nothing: only
+    // a lock on the regular file still at `path` counts.
+    if !is_the_file_at(&file, path) {
+        let _ = file.unlock();
+        return Err(BackupError::Refused(format!(
+            "{} was replaced while it was being locked; nothing was read or changed, run this \
+             command again",
+            path.display()
+        )));
+    }
+    Ok(file)
+}
+
+/// Whether `file` is a regular file and the one now at `path` itself (same device and inode,
+/// never through a link).
+fn is_the_file_at(file: &File, path: &Path) -> bool {
+    match (file.metadata(), std::fs::symlink_metadata(path)) {
+        (Ok(open), Ok(named)) => {
+            open.is_file()
+                && named.is_file()
+                && open.dev() == named.dev()
+                && open.ino() == named.ino()
+        }
+        _ => false,
     }
 }
 
 /// Takes `host.lock` in the office home and `office.lock` in the office's folder, without
 /// waiting: either held means the host or the office runs, and nothing is read or written.
-/// Held, they keep a host or office from starting until the work is done.
+/// Held, they keep a host or office from starting until the work is done. Once both are
+/// held, the office folder must still record what `target` was located from.
 pub(crate) fn take_locks(target: &OfficeTarget) -> Result<HeldLocks, BackupError> {
     let host = take_lock(
         &target.office_home.join(HOST_LOCK_FILE_NAME),
@@ -197,7 +228,24 @@ pub(crate) fn take_locks(target: &OfficeTarget) -> Result<HeldLocks, BackupError
         &target.folder.join(OFFICE_LOCK_FILE_NAME),
         format!("office {}", target.office_id),
     )?;
-    Ok(HeldLocks {
+    let held = HeldLocks {
         _files: vec![host, office],
-    })
+    };
+    let still = recorded_office(&target.folder).ok().flatten();
+    let unchanged = still.is_some_and(|recorded| {
+        recorded.info.org_id == target.org_id
+            && recorded.info.office_id == target.office_id
+            && (recorded.info.role == org_office::OfficeRole::Hq) == target.is_hq
+            && recorded.roots.durable == target.durable
+            && recorded.roots.runtime == target.runtime
+            && recorded.identity == target.identity
+    });
+    if !unchanged {
+        return Err(BackupError::Refused(format!(
+            "office {} changed while its locks were being taken; nothing was read or changed, \
+             run this command again",
+            target.office_id
+        )));
+    }
+    Ok(held)
 }

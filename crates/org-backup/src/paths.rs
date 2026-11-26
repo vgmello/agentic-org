@@ -141,9 +141,15 @@ pub fn shown(text: &str) -> String {
 /// What a backup does with one entry of the durable root.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Disposition {
-    /// Carried as it is.
+    /// Carried as it is; a link or a special file here fails the backup.
     Keep,
-    /// Disposable: an enrollment's scratch folder, an agent's runtime or temporary folder.
+    /// Inside an agent's private home, which the agent itself writes: folders and regular
+    /// files are carried, while a link or a special file (a runtime's `latest` link, a
+    /// socket) is left out, never followed and never archived.
+    AgentHome,
+    /// Disposable: an enrollment's scratch folder, an agent's runtime or temporary folder,
+    /// and the host toolchain caches the office links into an agent's home again on its next
+    /// session (`.cargo/registry`, `.cargo/git`, a legacy `.rustup`).
     Skip,
     /// The WAL-mode private task notes database: carried as a consistent copy.
     NotesDatabase,
@@ -151,13 +157,24 @@ pub(crate) enum Disposition {
     NotesSidecar,
 }
 
+impl Disposition {
+    /// Whether a backup ever carries a path with this disposition; an archive that lists
+    /// one was not written by a backup.
+    pub(crate) fn is_carried(self) -> bool {
+        !matches!(self, Disposition::Skip | Disposition::NotesSidecar)
+    }
+}
+
 /// The durable layout's policy for `path` (every tree under `<durable>/` is carried; these
 /// are the exceptions). Applies to folders and files alike.
 pub(crate) fn disposition(path: &RelPath) -> Disposition {
     let parts: Vec<&str> = path.components().collect();
     match parts.as_slice() {
-        ["local", "offices", _, "enroll-tmp"] => Disposition::Skip,
-        ["local", "offices", _, "agents", _, "runtime" | "tmp"] => Disposition::Skip,
+        ["local", "offices", _, "enroll-tmp", ..]
+        | ["local", "offices", _, "agents", _, "runtime" | "tmp", ..]
+        | ["local", "offices", _, "agents", _, "home", ".cargo", "registry" | "git", ..]
+        | ["local", "offices", _, "agents", _, "home", ".rustup", ..] => Disposition::Skip,
+        ["local", "offices", _, "agents", _, "home", _, ..] => Disposition::AgentHome,
         ["private", "task-notes.db"] => Disposition::NotesDatabase,
         ["private", "task-notes.db-wal" | "task-notes.db-shm" | "task-notes.db-journal"] => {
             Disposition::NotesSidecar
