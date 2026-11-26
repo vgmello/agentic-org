@@ -176,11 +176,38 @@ pub(crate) fn password() -> Result<Password, String> {
     terminal::password()
 }
 
+/// Why [`terminal_secret`] returned no secret.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SecretEntryError {
+    /// The person cancelled the entry: Ctrl+C, or end of input at the prompt.
+    Cancelled,
+    /// There is no controlling terminal, or reading it failed.
+    Unavailable(String),
+}
+
+impl std::fmt::Display for SecretEntryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cancelled => f.write_str(crate::cli_error::PASSWORD_CANCELLED),
+            Self::Unavailable(why) => f.write_str(why),
+        }
+    }
+}
+
+impl std::error::Error for SecretEntryError {}
+
 /// Reads one secret line from the controlling terminal with echo off, after showing `label`
 /// (a backup passphrase). Never reads standard input or the environment; end of input or a
-/// pending interrupt cancels the entry. The copy returned is zeroed when dropped.
-pub fn terminal_secret(label: &str) -> Result<zeroize::Zeroizing<String>, String> {
-    let secret = terminal::secret(label.as_bytes())?;
+/// pending interrupt cancels the entry ([`SecretEntryError::Cancelled`]). The copy returned is
+/// zeroed when dropped.
+pub fn terminal_secret(label: &str) -> Result<zeroize::Zeroizing<String>, SecretEntryError> {
+    let secret = terminal::secret(label.as_bytes()).map_err(|why| {
+        if why == crate::cli_error::PASSWORD_CANCELLED {
+            SecretEntryError::Cancelled
+        } else {
+            SecretEntryError::Unavailable(why)
+        }
+    })?;
     Ok(zeroize::Zeroizing::new(secret.expose().to_owned()))
 }
 /// A development build may place every instance under an explicit application base,

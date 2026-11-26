@@ -2,12 +2,12 @@
 //! and journal head, and the length and SHA-256 of every file. A reader trusts nothing it
 //! did not check here first.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::BackupError;
-use crate::paths::{disposition, shown, RelPath};
+use crate::paths::{disposition, shown, Disposition, RelPath, NOTES_DB};
 
 /// The manifest's `format`.
 pub const FORMAT: &str = "agentic-org-backup";
@@ -222,6 +222,7 @@ impl Manifest {
                 shown(path.as_str())
             ));
         }
+        self.check_letter_case()?;
         let folders: BTreeSet<&RelPath> = self.directories.iter().collect();
         if let Some(file) = self.files.iter().find(|f| !hex64(&f.sha256)) {
             return Err(format!("an invalid digest for {}", file.path.as_str()));
@@ -241,5 +242,32 @@ impl Manifest {
             Some(path) => Err(format!("{} without its folder", path.as_str())),
             None => Ok(()),
         }
+    }
+
+    /// No two paths that differ only in ASCII letter case (on a case-insensitive file system,
+    /// macOS's default, one would land on the other), and the private notes database under
+    /// its canonical name alone (another spelling would escape its integrity check).
+    fn check_letter_case(&self) -> Result<(), String> {
+        let mut folded = HashMap::new();
+        let every = self
+            .directories
+            .iter()
+            .chain(self.files.iter().map(|f| &f.path));
+        for path in every {
+            if disposition(path) == Disposition::NotesDatabase && path.as_str() != NOTES_DB {
+                return Err(format!(
+                    "{}, the private notes database under another spelling than {NOTES_DB}",
+                    shown(path.as_str())
+                ));
+            }
+            if let Some(other) = folded.insert(path.as_str().to_ascii_lowercase(), path) {
+                return Err(format!(
+                    "{} and {}, paths that differ only in letter case",
+                    shown(other.as_str()),
+                    shown(path.as_str())
+                ));
+            }
+        }
+        Ok(())
     }
 }

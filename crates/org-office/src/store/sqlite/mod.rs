@@ -67,6 +67,8 @@ use connection::{
     beside, connect, connect_reader, connect_writer, open_writer, remove_database,
     remove_if_present,
 };
+#[cfg(test)]
+pub(crate) use projects::delete_project_row_for_drift_test;
 use references::check_references;
 use schema::Schema;
 

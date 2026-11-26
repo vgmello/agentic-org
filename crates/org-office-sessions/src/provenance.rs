@@ -21,7 +21,7 @@ pub(crate) fn verified_sender_relation(
     sender_id: &str,
     sender: Option<&Employee>,
 ) -> &'static str {
-    if sender_id == office.owner_member_id() {
+    if is_verified_owner(office, sender_id) {
         return "owner";
     }
     if sender_in_reports_to_chain(office, target, sender_id) {
@@ -35,6 +35,14 @@ pub(crate) fn verified_sender_relation(
         Some(EmployeeKind::Agent) => "peer",
         None => "unknown",
     }
+}
+
+/// Whether `sender_id` is the organization's active owner as this office knows it: the
+/// host-authoritative owner on HQ, the HQ-replicated owner (`hq-owner.v1.json`) on a satellite.
+/// A satellite's own office ID (its local custody ID, which an office falls back to before
+/// any owner is replicated) names no person and is never the owner.
+pub(crate) fn is_verified_owner(office: &Office, sender_id: &str) -> bool {
+    sender_id == office.effective_owner_member_id() && sender_id != office.info().office_id
 }
 
 pub(crate) fn sender_in_reports_to_chain(

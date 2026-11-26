@@ -16,6 +16,12 @@
 //! and written again), so callers run it on a disposable copy, never on a live office.
 
 pub use crate::office::recorded::{recorded_office, RecordedOffice};
+
+/// The owner-only folder beside an office's `durable/` and `runtime/` roots (in the folder
+/// that holds both) where an in-place restore stages the archive, runs its disposable
+/// check and keeps the durable root it replaced (`before-<suffix>`). It holds a full copy of
+/// office secrets, so agent sandboxes mask it like the durable root itself.
+pub const RESTORE_BACKUPS_DIR_NAME: &str = "restore-backups";
 pub use crate::store::sqlite::private_notes_copy::{check_task_notes, snapshot_task_notes};
 
 use std::path::{Path, PathBuf};
@@ -86,6 +92,7 @@ pub fn rebuild_disposable<R>(
     let answer = read(&store)?;
     store.close().map_err(OfficeError::storage)?;
     open_companions(spec)?;
+    check_office_local_state(spec)?;
     Ok((report, answer))
 }
 
@@ -142,6 +149,17 @@ fn open_companions(spec: &DisposableRebuild) -> Result<(), OfficeError> {
         spec.is_hq,
     )?);
     Ok(())
+}
+
+/// The office-local state the office reads when it opens and a rebuild does not open: the
+/// committed replication state (`replication/state.v1.json` with the events it names) and a
+/// satellite's replicated HQ owner (`hq-owner.v1.json`). Each, when present, must parse and
+/// validate, so a corrupt copy fails the verification instead of the office's next start.
+fn check_office_local_state(spec: &DisposableRebuild) -> Result<(), OfficeError> {
+    let office = spec.identity.office_id.as_str();
+    let org = spec.identity.organization_id.as_str();
+    crate::replication::check_committed_state(&spec.durable_root, office, org)?;
+    crate::office::check_replicated_hq_owner(&spec.durable_root, office, org)
 }
 
 /// The host's custody rule, in memory, starting from the pinned head: the restored journal

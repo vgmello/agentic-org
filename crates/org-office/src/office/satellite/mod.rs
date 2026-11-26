@@ -20,8 +20,8 @@ pub use filters::{
     strip_org_core_employee_refs_typed, task_id_for_work_path, SnapshotPathClass,
 };
 pub(crate) use identity::{
-    read_active_identity_binding, read_ca_digest_for_open, read_intent, read_replicated_hq_owner,
-    remove_replicated_hq_owner, write_replicated_hq_owner,
+    check_replicated_hq_owner, read_active_identity_binding, read_ca_digest_for_open, read_intent,
+    read_replicated_hq_owner, remove_replicated_hq_owner, write_replicated_hq_owner,
 };
 pub use identity::{SatelliteFederationConfig, SatelliteTlsIdentity};
 pub(crate) use placement::has_local_task_write_authority;

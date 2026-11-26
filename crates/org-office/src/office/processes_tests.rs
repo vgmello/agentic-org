@@ -1269,15 +1269,8 @@ fn a_live_task_whose_project_cannot_be_loaded_refuses_the_turn() {
         .runtime
         .join(identity().office_id.as_str())
         .join("office.db");
-    let drift = rusqlite::Connection::open(&db).unwrap();
-    drift.pragma_update(None, "foreign_keys", false).unwrap();
-    let removed = drift
-        .execute(
-            "DELETE FROM projects WHERE id = ?1",
-            [fx.project_id.as_str()],
-        )
-        .unwrap();
-    drop(drift);
+    let removed =
+        crate::store::sqlite::delete_project_row_for_drift_test(&db, fx.project_id.as_str());
     assert_eq!(removed, 1);
     let refused = fx
         .office

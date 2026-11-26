@@ -57,6 +57,7 @@ fn run_verify(
             "action": "restore_verify",
             "archive": archive.display().to_string(),
             "to": args.to.as_ref().map(|to| to.display().to_string()),
+            "work_dir": args.work_dir.as_ref().map(|dir| dir.display().to_string()),
         });
         return Ok(ctx.render_dry_run(&format!("would verify {}", archive.display()), &plan)?);
     }
@@ -65,7 +66,7 @@ fn run_verify(
         archive,
         passphrase: passphrase.as_ref(),
         to: args.to.as_deref(),
-        work_dir: None,
+        work_dir: args.work_dir.as_deref(),
         limits: Limits::default(),
     })
     .map_err(cli_error)?;
@@ -104,7 +105,7 @@ fn run_in_place(
     let home = office_home(&args.instance)?;
     let target = org_backup::locate(&home, org, args.office.as_deref()).map_err(cli_error)?;
     let action = format!(
-        "Replace the durable data of office {} of organization {} with {} (the current data is kept beside it)",
+        "Replace the durable data of office {} of organization {} with {} (the current data is kept in the restore-backups folder beside it)",
         target.office_id,
         target.org_id,
         archive.display()
@@ -152,9 +153,11 @@ fn run_in_place(
         json["scope_notice"] = SCOPE_NOTICE.into();
     }
     show(ctx, &report.manifest.office_id, &json)?;
-    if let LiveJournal::Unreadable(_) = report.live_journal {
+    // A machine reads `live_journal.state`; under --json standard error stays empty.
+    if human && matches!(report.live_journal, LiveJournal::Unreadable(_)) {
         ctx.warn(
-            "The office's previous journal did not verify; it was kept beside the restored one.",
+            "The office's previous journal did not verify; it was kept in the restore-backups \
+             folder beside the restored one.",
         );
     }
     ctx.success(&format!(

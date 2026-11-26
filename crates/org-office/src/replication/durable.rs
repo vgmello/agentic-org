@@ -76,6 +76,43 @@ fn appended<'a>(
     Some(after_iter.map(|(_, event)| event).collect())
 }
 
+/// Checks the committed durable replication state of office `office_id` below `durable_root`
+/// without changing either file (`restore --verify`, `TASK-104`): a `state.v1.json` that is
+/// there must decode as this organization's and this office's, with every event it names
+/// intact. An office that never replicated has none, which is not an error.
+pub(crate) fn check_committed_state(
+    durable_root: &Path,
+    office_id: &str,
+    org_id: &str,
+) -> Result<(), OfficeError> {
+    let state_dir = durable_root
+        .join("local")
+        .join("offices")
+        .join(office_id)
+        .join("replication");
+    let state_path = state_dir.join("state.v1.json");
+    match fs::symlink_metadata(&state_path) {
+        Ok(meta) if meta.is_file() => {}
+        Ok(_) => {
+            return Err(OfficeError::Invalid(
+                "durable replication state is not a file",
+            ))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(OfficeError::storage(e)),
+    }
+    let bytes = fs::read(&state_path).map_err(OfficeError::storage)?;
+    let parsed: ReplicationStateFile = serde_json::from_slice(&bytes)
+        .map_err(|_| OfficeError::Invalid("malformed durable replication state"))?;
+    if parsed.org_id != org_id || parsed.local_office != office_id {
+        return Err(OfficeError::Invalid(
+            "durable replication state belongs to another office",
+        ));
+    }
+    let (_, events) = EventsLog::open(&state_dir, &parsed)?;
+    core_from_file(&parsed, &events).map(drop)
+}
+
 /// The projection of an engine that serves reads from the state the store holds.
 #[cfg(any(test, feature = "testkit"))]
 struct NoProjection;
