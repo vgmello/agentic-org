@@ -999,19 +999,21 @@
 				</div>
 			</div>
 
-			<!-- Activity: Interactive Comments + Request History Timeline -->
+			<!-- Activity: Device-local Notes + Request History Timeline -->
 			<section class="triage-activity" aria-labelledby="triage-activity-title">
-				<h3 id="triage-activity-title">Activity</h3>
+				<h3 id="triage-activity-title">
+					Activity <span class="font-normal text-fg-muted">(notes saved on this device only)</span>
+				</h3>
 
 				<form class="triage-comment-form" onsubmit={handleCommentSubmit}>
-					<label class="sr-only" for="triage-comment">Comment on this request</label>
+					<label class="sr-only" for="triage-comment">Add a device-only note on this request</label>
 					<textarea
 						bind:this={commentInputEl}
 						id="triage-comment"
 						name="comment"
 						rows="2"
 						maxlength={MAX_INBOX_COMMENT_LENGTH}
-						placeholder="Leave a comment…"
+						placeholder="Add a local note (saved on this device only)…"
 						value={commentDraft}
 						oninput={(e) => updateCommentDraft(e.currentTarget.value)}
 						onkeydown={(e) => {

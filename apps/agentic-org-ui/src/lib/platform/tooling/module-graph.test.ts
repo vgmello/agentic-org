@@ -7,8 +7,9 @@ import { isNonProductionModule } from './production-import-guard';
 const UI_ROOT = resolve(import.meta.dirname, '../../../..');
 const SRC_LIB = resolve(UI_ROOT, 'src/lib');
 
+const COMMENT_RE = /\/\*[\s\S]*?\*\/|(?<![:\\])\/\/[^\n]*/g;
 const IMPORT_RE =
-	/(?:import|export)\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)/g;
+	/\b(?:import|export)\s+(?:type\s+)?(?:[^;'"]*?\s+from\s+)?['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 /**
  * Legacy source dependency cycles recorded as shrinking debt in Wave 0 (TASK-225).
@@ -107,7 +108,7 @@ describe('UI domain module dependency graph (doc-8, TASK-225)', () => {
 			if (!graph.has(fromDomain)) graph.set(fromDomain, new Set());
 
 			const abs = resolve(UI_ROOT, rel);
-			const source = readFileSync(abs, 'utf8');
+			const source = readFileSync(abs, 'utf8').replace(COMMENT_RE, '');
 			IMPORT_RE.lastIndex = 0;
 			let match: RegExpExecArray | null;
 			while ((match = IMPORT_RE.exec(source)) !== null) {

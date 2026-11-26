@@ -8,7 +8,7 @@ src/lib/modules/activity/features/command-center/ActivityStreamPanel.svelte 989
 src/lib/modules/activity/features/command-center/AssemblyLineMatrix.svelte 992
 src/lib/modules/activity/features/command-center/assembly-model.ts 1530
 src/lib/modules/agent-setup/http-api.ts 709
-src/lib/modules/chat/features/workspace/ChatWorkspace.svelte 1252
+src/lib/modules/chat/features/workspace/ChatWorkspace.svelte 1246
 src/lib/modules/costs/features/insights/OrganizationInsightsView.svelte 729
 src/lib/modules/costs/features/insights/ProjectInsightsView.svelte 843
 src/lib/modules/costs/features/member-cost/MemberCostView.svelte 714
@@ -17,7 +17,7 @@ src/lib/modules/docs/features/detail/DocumentPage.svelte 1423
 src/lib/modules/docs/features/list/DocsTab.svelte 954
 src/lib/modules/features/features/detail/FeaturePage.svelte 1094
 src/lib/modules/home/features/DecisionSpotlight.svelte 877
-src/lib/modules/inbox/features/triage/InboxDetailPane.svelte 1742
+src/lib/modules/inbox/features/triage/InboxDetailPane.svelte 1744
 src/lib/modules/inbox/features/triage/InboxTriageWorkspace.svelte 1645
 src/lib/modules/inbox/features/triage/triage-model.ts 840
 src/lib/modules/members/features/profile/AgentAnalysisOverlay.svelte 959

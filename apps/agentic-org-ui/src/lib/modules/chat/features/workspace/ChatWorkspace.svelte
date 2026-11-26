@@ -287,6 +287,7 @@
 		if (!pendingPlace || page.url.href === pendingPlace.href) documentPlace = viewTitle;
 	});
 
+	let mounted = false;
 	const loader = createChatSnapshotLoader({
 		chatApi,
 		getOrganizationId: () => organizationId,
@@ -295,6 +296,19 @@
 			now = nowIso;
 			chat = snap;
 			loadError = undefined;
+			if (mounted && !started && snap.state) {
+				openLocation(urlLocation(page.url.search));
+				lastSearch = page.url.search;
+				started = true;
+				shellApi.navigation(organizationId).then(
+					(n) => {
+						if (mounted) inboxCount = n.inboxOpen ?? undefined;
+					},
+					() => {
+						if (mounted) inboxCount = undefined;
+					}
+				);
+			}
 		},
 		onError: (msg) => {
 			loadError = msg;
@@ -304,40 +318,20 @@
 
 	async function retryLoad() {
 		loadError = undefined;
-		const loaded = await load();
-		if (loaded && chatState && !started) {
-			openLocation(urlLocation(page.url.search));
-			lastSearch = page.url.search;
-			started = true;
-		}
+		await load();
 	}
 
 	onMount(() => {
-		let alive = true;
+		mounted = true;
 		const media = window.matchMedia('(width < 1280px)');
 		const syncCompactPanels = () => (compactPanels = media.matches);
 		syncCompactPanels();
 		media.addEventListener('change', syncCompactPanels);
-		void load().then((loaded) => {
-			if (!alive || !loaded) return;
-			if (chatState) {
-				openLocation(urlLocation(page.url.search));
-				lastSearch = page.url.search;
-				started = true;
-			}
-			shellApi.navigation(organizationId).then(
-				(n) => {
-					if (alive) inboxCount = n.inboxOpen ?? undefined;
-				},
-				() => {
-					if (alive) inboxCount = undefined;
-				}
-			);
-		});
+		void load();
 		const stop = chatApi.subscribe(organizationId, () => loader.scheduleLiveReload());
 		const timer = setInterval(() => void load(), 30_000);
 		return () => {
-			alive = false;
+			mounted = false;
 			loader.dispose();
 			stop();
 			clearInterval(timer);

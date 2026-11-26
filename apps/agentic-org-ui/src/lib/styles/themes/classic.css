@@ -65,7 +65,7 @@ html[data-ui-theme='classic'] {
 	--brand-text-stronger: #e8f1fa;
 
 	--info: var(--tone-accent);
-	--info-emphasis: var(--tone-accent);
+	--info-emphasis: #4a7096;
 	--info-text: var(--tone-accent-ink);
 	--info-text-strong: #c7d2fe;
 	--info-text-stronger: #e0e7ff;
@@ -159,7 +159,7 @@ html[data-ui-theme='classic'] {
 	--exec-cmdk-sep: rgba(255, 255, 255, 0.11);
 	--exec-ai-radius: 5px;
 	--exec-ai-bg: var(--tone-accent-bg);
-	--exec-ai-bg-hover: var(--tone-accent);
+	--exec-ai-bg-hover: #4a7096;
 	--exec-ai-shadow: inset 0 0 0 1px var(--tone-accent-ring);
 	--exec-ai-shadow-hover: inset 0 0 0 1px var(--tone-accent-hi);
 	--exec-ai-ink: #e0e7ff;

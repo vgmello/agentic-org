@@ -43,31 +43,66 @@ async function scan(path: string) {
 	}
 }
 
-async function checkShellBundleBudget(): Promise<string> {
-	const clientRoot = fileURLToPath(new URL('../.svelte-kit/output/client/', import.meta.url));
-	const manifestPath = join(clientRoot, '.vite/manifest.json');
-	if (!existsSync(manifestPath)) return '';
-	const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<
-		string,
-		{ file?: string; imports?: string[] }
-	>;
-	const entries = Object.keys(manifest).filter(
-		(k) => k.includes('entry/start.js') || k.includes('nodes/0.js') || k.includes('nodes/3.js')
+type ViteManifest = Record<string, { file?: string; src?: string; imports?: string[] }>;
+
+async function resolveLayoutNodeKeys(
+	manifest: ViteManifest
+): Promise<{ rootLayout?: string; shellLayout?: string }> {
+	const keys = Object.keys(manifest);
+	let rootLayout = keys.find((k) => k.endsWith('routes/+layout.svelte'));
+	let shellLayout = keys.find((k) => k.endsWith('routes/(shell)/+layout.svelte'));
+	const nodesDir = fileURLToPath(
+		new URL('../.svelte-kit/generated/client/nodes/', import.meta.url)
 	);
+	if ((rootLayout && shellLayout) || !existsSync(nodesDir)) return { rootLayout, shellLayout };
+	const entries = await readdir(nodesDir);
+	const files = await Promise.all(
+		entries.map(async (entry) => ({ entry, text: await readFile(join(nodesDir, entry), 'utf8') }))
+	);
+	for (const { entry, text } of files) {
+		if (!rootLayout && text.includes('routes/+layout.svelte')) {
+			rootLayout = keys.find((k) => k.endsWith(`nodes/${entry}`));
+		}
+		if (!shellLayout && text.includes('routes/(shell)/+layout.svelte')) {
+			shellLayout = keys.find((k) => k.endsWith(`nodes/${entry}`));
+		}
+	}
+	return { rootLayout, shellLayout };
+}
+
+function collectJsClosure(manifest: ViteManifest, entryKeys: string[]): string[] {
 	const visited = new Set<string>();
-	const stack = [...entries];
+	const stack = [...entryKeys];
 	while (stack.length > 0) {
 		const key = stack.pop()!;
 		if (visited.has(key) || !manifest[key]) continue;
 		visited.add(key);
 		for (const imp of manifest[key].imports ?? []) stack.push(imp);
 	}
-	let gzBytes = 0;
-	for (const key of visited) {
-		const file = manifest[key]?.file;
-		if (!file || !file.endsWith('.js')) continue;
-		gzBytes += gzipSync(await readFile(join(clientRoot, file))).length;
+	return [...visited]
+		.map((k) => manifest[k]?.file)
+		.filter((f): f is string => Boolean(f && f.endsWith('.js')));
+}
+
+async function checkShellBundleBudget(): Promise<string> {
+	const clientRoot = fileURLToPath(new URL('../.svelte-kit/output/client/', import.meta.url));
+	const manifestPath = join(clientRoot, '.vite/manifest.json');
+	if (!existsSync(manifestPath)) return '';
+	const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as ViteManifest;
+	const appEntry = Object.keys(manifest).find(
+		(k) => k.endsWith('client/entry.js') || k.includes('entry/start.js')
+	);
+	const { rootLayout, shellLayout } = await resolveLayoutNodeKeys(manifest);
+	if (!shellLayout) {
+		problems.push(
+			'Could not locate SvelteKit shell layout manifest entry for bundle budget check.'
+		);
+		return '';
 	}
+	const entryKeys = [appEntry, rootLayout, shellLayout].filter((x): x is string => Boolean(x));
+	const jsFiles = collectJsClosure(manifest, entryKeys);
+	const buffers = await Promise.all(jsFiles.map((f) => readFile(join(clientRoot, f))));
+	const gzBytes = buffers.reduce((sum, buf) => sum + gzipSync(buf).length, 0);
 	const gzKb = +(gzBytes / 1024).toFixed(1);
 	if (gzKb > SHELL_GZIP_BUDGET_KB) {
 		problems.push(

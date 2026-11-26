@@ -130,8 +130,12 @@ describe('UI file-size ratchet (TASK-225, CAP=700, TARGET=500)', () => {
 		const head = parseAllowlist(readFileSync(ALLOW_PATH, 'utf8')).entries;
 		const errors: string[] = [];
 
-		const removed = [...base.entries()].filter(([p]) => !head.has(p));
-		const added = [...head.entries()].filter(([p]) => !base.has(p));
+		const removedDesc = [...base.entries()]
+			.filter(([p]) => !head.has(p))
+			.sort(([, a], [, b]) => b - a);
+		const addedDesc = [...head.entries()]
+			.filter(([p]) => !base.has(p))
+			.sort(([, a], [, b]) => b - a);
 
 		for (const [p, count] of head) {
 			const prev = base.get(p);
@@ -140,16 +144,17 @@ describe('UI file-size ratchet (TASK-225, CAP=700, TARGET=500)', () => {
 			}
 		}
 
-		if (added.length > removed.length) {
+		if (addedDesc.length > removedDesc.length) {
 			errors.push(
-				`large-files.allow added ${added.length} path(s) vs ${removed.length} removed: ${added.map(([p]) => p).join(', ')}`
+				`large-files.allow added ${addedDesc.length} path(s) vs ${removedDesc.length} removed: ${addedDesc.map(([p]) => p).join(', ')}`
 			);
 		}
-		for (const [newPath, newCount] of added) {
-			const matchingRemoved = removed.find(([, oldCount]) => newCount <= oldCount);
-			if (!matchingRemoved) {
+		for (let i = 0; i < Math.min(addedDesc.length, removedDesc.length); i++) {
+			const [newPath, newCount] = addedDesc[i];
+			const [oldPath, oldCount] = removedDesc[i];
+			if (newCount > oldCount) {
 				errors.push(
-					`${newPath} (${newCount}): added without a matching removed entry >= ${newCount}`
+					`${newPath} (${newCount}): exceeds paired removed entry ${oldPath} (${oldCount})`
 				);
 			}
 		}

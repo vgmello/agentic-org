@@ -1,3 +1,4 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import {
 	inboxCommentsStorageKey,
 	MAX_INBOX_COMMENT_LENGTH,
@@ -6,9 +7,23 @@ import {
 } from './features/triage/triage-model';
 
 const INBOX_COMMENTS_PREFIX = 'agentic-org.inbox.comments.';
+const INBOX_COMMENTS_CALLER_KEY = 'agentic-org.inbox.comments.__caller';
+
+function ensureCallerScope(): void {
+	if (typeof window === 'undefined') return;
+	const caller = appSession.callerScope ?? 'anon';
+	try {
+		const stored = window.localStorage.getItem(INBOX_COMMENTS_CALLER_KEY);
+		if (stored && stored !== caller) clearInboxDeviceComments();
+		window.localStorage.setItem(INBOX_COMMENTS_CALLER_KEY, caller);
+	} catch {
+		/* Ignore storage unavailability. */
+	}
+}
 
 export function readInboxDeviceComments(orgId: string, itemId: string): InboxCommentEntry[] {
 	if (typeof window === 'undefined') return [];
+	ensureCallerScope();
 	try {
 		return parseInboxCommentsJson(
 			window.localStorage.getItem(inboxCommentsStorageKey(orgId, itemId))
@@ -23,6 +38,7 @@ export function appendInboxDeviceComment(
 	itemId: string,
 	rawText: string
 ): InboxCommentEntry[] | undefined {
+	ensureCallerScope();
 	const text = rawText.trim().slice(0, MAX_INBOX_COMMENT_LENGTH);
 	const id =
 		typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
