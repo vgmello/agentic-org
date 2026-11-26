@@ -111,7 +111,8 @@ impl GitRunner {
     /// empty `HOME` directory so no user `~/.gitconfig` or `~/.ssh` is ever read.
     pub fn new(clean_home: impl Into<PathBuf>) -> Result<Self, GitError> {
         let clean_home = clean_home.into();
-        fs::create_dir_all(&clean_home).map_err(|e| GitError::io(&clean_home, e))?;
+        // The office's empty `HOME` for Git: never shared, owner-only whatever the mask.
+        crate::create_git_dirs(&clean_home, false)?;
         let fixed_path = fixed_system_path();
         let git_bin = resolve_git_binary(&fixed_path)?;
         verify_git_version(&git_bin, &clean_home, &fixed_path)?;

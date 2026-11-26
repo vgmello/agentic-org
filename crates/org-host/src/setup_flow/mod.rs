@@ -84,6 +84,7 @@ pub use sign_in_command::{
 pub(crate) mod tls_command;
 pub use tls_command::{admin_tls_set, TlsPairReplaced, HELP as ADMIN_TLS_SET_HELP};
 mod service_command;
+mod service_refresh;
 /// The host-control types the commands answer with, so that the command line names them
 /// without depending on `org-host-control` (the `org-proto` ones it names from there).
 pub use org_host_control::ops::{OfficeJoinResult, OfficeJoinState, RecoveryState};
@@ -92,6 +93,7 @@ pub use org_host_control::organization::{
 };
 pub use org_host_control::OneTimeLinkUrl;
 pub use service_command::{service, ServiceAction, ServiceReport, ServiceState};
+pub use service_refresh::{InstallAttempt, RefreshOutcome, ServiceRefresh, ServiceRefreshReport};
 mod account;
 mod adapters;
 mod address;
@@ -109,7 +111,7 @@ mod tests;
 mod wire;
 use account::user_name;
 pub(crate) use adapters::release_pin;
-pub use adapters::{platform, CredentialDirectory, Platform};
+pub use adapters::{platform, service_manager, CredentialDirectory, Platform};
 pub(crate) use address::{choose_port, loopback};
 use address::{port_free, saved_ports, tls_preflight};
 pub use admin_reset::{admin_reset, admin_reset_precheck, AdminLink, AdminResetLink};

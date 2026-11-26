@@ -170,6 +170,26 @@ pub(crate) fn platform(foreground: bool) -> Result<Platform, String> {
         });
     }
     #[cfg(not(all(debug_assertions, feature = "test-support")))]
+    refuse_development_service()?;
+    setup_flow::platform(false)
+}
+
+/// The account's registered service manager alone, as [`platform`] chooses it (the
+/// development stand-ins included), without the disk-encryption probe or the credential
+/// folder: `release install` only moves services, and neither of those stops it.
+pub(crate) fn service_manager() -> Result<Box<dyn org_platform::service::ServiceManager>, String> {
+    #[cfg(all(debug_assertions, feature = "test-support"))]
+    if let Some(service) = development_service()? {
+        return Ok(service);
+    }
+    #[cfg(not(all(debug_assertions, feature = "test-support")))]
+    refuse_development_service()?;
+    setup_flow::service_manager(false)
+}
+
+/// A build without the development adapters refuses the variables that name one.
+#[cfg(not(all(debug_assertions, feature = "test-support")))]
+fn refuse_development_service() -> Result<(), String> {
     for variable in [DEV_SERVICE_DIR, DEV_SERVICE_PROGRAMS] {
         if std::env::var_os(variable).is_some_and(|d| !d.is_empty()) {
             return Err(format!(
@@ -178,7 +198,7 @@ pub(crate) fn platform(foreground: bool) -> Result<Platform, String> {
             ));
         }
     }
-    setup_flow::platform(false)
+    Ok(())
 }
 
 /// The service is a detached child, never registered with the system (`ChildServiceManager`).

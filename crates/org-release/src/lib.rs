@@ -626,7 +626,10 @@ impl UiBudget {
     }
 }
 
-fn valid_release_id(id: &str) -> bool {
+/// Whether `id` is a release ID a manifest may carry, and so the name of a release's folder
+/// in a release store: 1 to 96 ASCII letters, digits, `.`, `_` or `-`, starting with a letter
+/// or digit (never `.` or `..`).
+pub fn valid_release_id(id: &str) -> bool {
     (1..=96).contains(&id.len())
         && id.as_bytes()[0].is_ascii_alphanumeric()
         && id

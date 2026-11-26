@@ -3,13 +3,16 @@
 
 use std::ffi::{OsStr, OsString};
 
-use crate::service::{ServiceError, Unit};
+use crate::service::{validate, ServiceError, Unit};
 
-/// What a definition this adapter wrote says: the unit it is a rendering of. `None` when
-/// the bytes are not exactly the rendering of a unit under `name`: a file someone wrote or
-/// changed, whose meaning the adapter does not claim to know. The parse only has to find
-/// the values; the comparison of the bytes with a new rendering is what makes it exact.
-pub(super) fn definition(name: &str, bytes: &[u8]) -> Option<Unit> {
+/// What a definition this adapter wrote says: the unit of `instance_id` it is a rendering
+/// of. `None` when the bytes are not exactly the rendering of a unit under `name`: a file
+/// someone wrote or changed, whose meaning the adapter does not claim to know. Also `None`
+/// for an exact rendering of a unit that [`validate`] or [`unit_file_safe`] refuses (a
+/// relative program, `LD_PRELOAD`, a repeated variable): this adapter never writes one, so
+/// it was written by hand. The parse only has to find the values; the comparison of the
+/// bytes with a new rendering is what makes it exact.
+pub(super) fn definition(name: &str, instance_id: &str, bytes: &[u8]) -> Option<Unit> {
     let text = std::str::from_utf8(bytes).ok()?;
     let mut exec = None;
     let mut env = Vec::new();
@@ -25,12 +28,13 @@ pub(super) fn definition(name: &str, bytes: &[u8]) -> Option<Unit> {
     }
     let mut exec = exec?.into_iter();
     let unit = Unit {
-        instance_id: String::new(),
+        instance_id: instance_id.to_owned(),
         program: exec.next()?.into(),
         args: exec.map(OsString::from).collect(),
         env,
     };
-    (render(name, &unit) == bytes).then_some(unit)
+    let written = render(name, &unit) == bytes;
+    (written && validate(&unit).is_ok() && unit_file_safe(&unit).is_ok()).then_some(unit)
 }
 
 /// The words of a line written by [`quote`], with its escapes undone: `%%` is `%` and, in

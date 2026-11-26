@@ -31,7 +31,13 @@ Options:
   --bin-dir <dir>        Directory for CLI symlinks (default: ~/.local/bin)
   --store <dir>          Explicit release store directory
   --allow-unsigned       Allow installing an unsigned local archive
+  --no-restart           Do not start again the services the upgrade stopped
   -h, --help             Show this help
+
+Upgrades move each instance's registered service (launchd/systemd) that setup wrote to the
+new release: a running service is stopped for the install and started again on the new
+release (unless --no-restart), a stopped one stays stopped, and a service definition changed
+by hand is left untouched with the steps to upgrade it.
 EOF
 }
 
@@ -58,6 +64,7 @@ BASE_URL=""
 BIN_DIR="${HOME}/.local/bin"
 STORE_DIR=""
 ALLOW_UNSIGNED=0
+NO_RESTART=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -70,6 +77,7 @@ while [[ $# -gt 0 ]]; do
     --bin-dir) require_arg "$@"; BIN_DIR="$2"; shift 2 ;;
     --store) require_arg "$@"; STORE_DIR="$2"; shift 2 ;;
     --allow-unsigned) ALLOW_UNSIGNED=1; shift ;;
+    --no-restart) NO_RESTART=1; shift ;;
     -h|--help)
       usage
       exit 0
@@ -537,6 +545,150 @@ verify_installed_binary_in_store() {
   esac
 }
 
+# Whether an agentic-org CLI moves the registered services to the release it installs
+# (its `release install` has `--no-restart`). Help is captured first, never piped into an
+# early-exit grep under pipefail.
+cli_refreshes_services() {
+  local help
+  help="$("$1" release install --help 2>/dev/null </dev/null || true)"
+  [[ "$help" == *"--no-restart"* ]]
+}
+
+# What `release install --json` (compact in a pipe) did to each registered service: one
+# line with the instance, the outcome and whether it runs, then its note (the steps an
+# operator takes for a refused, failed or stopped service), and the `services_warning` when
+# the services could not be read. JSON strings are read with their escapes undone; control
+# characters, and any `\uXXXX` escape, are shown as a space or `?`, never printed raw.
+report_services() {
+  LC_ALL=C awk '
+    function clean(text) {
+      gsub(/[[:cntrl:]]/, " ", text)
+      return text
+    }
+    { buf = buf $0 "\n" }
+    END {
+      n = length(buf)
+      i = 1
+      count = 0
+      while (i <= n) {
+        c = substr(buf, i, 1)
+        if (c == "\"") {
+          text = ""
+          i++
+          while (i <= n) {
+            c = substr(buf, i, 1)
+            if (c == "\"") {
+              break
+            }
+            if (c == "\\") {
+              i++
+              c = substr(buf, i, 1)
+              if (c == "u") {
+                text = text "?"
+                i += 4
+              } else if (c == "\"" || c == "\\" || c == "/") {
+                text = text c
+              } else {
+                text = text " "
+              }
+            } else {
+              text = text c
+            }
+            i++
+          }
+          count++
+          kind[count] = "string"
+          token[count] = clean(text)
+          i++
+        } else if (index("{}[]:,", c) > 0) {
+          count++
+          kind[count] = "mark"
+          token[count] = c
+          i++
+        } else if (c ~ /[[:space:]]/) {
+          i++
+        } else {
+          word = ""
+          while (i <= n) {
+            c = substr(buf, i, 1)
+            if (index("{}[]:,\" \t\r\n", c) > 0) {
+              break
+            }
+            word = word c
+            i++
+          }
+          count++
+          kind[count] = "word"
+          token[count] = word
+        }
+      }
+      depth = 0
+      key = ""
+      listing = 0
+      services = 0
+      warning = ""
+      for (t = 1; t <= count; t++) {
+        if (kind[t] == "mark") {
+          if (token[t] == "{" || token[t] == "[") {
+            depth++
+            if (token[t] == "[" && depth == 2 && key == "services") {
+              listing = 1
+            } else if (token[t] == "{" && listing && depth == 3) {
+              services++
+              instance[services] = ""
+              outcome[services] = ""
+              running[services] = ""
+              note[services] = ""
+            }
+          } else if (token[t] == "}" || token[t] == "]") {
+            if (token[t] == "]" && depth == 2) {
+              listing = 0
+            }
+            depth--
+          }
+          continue
+        }
+        if (kind[t] != "string" || t + 1 > count || kind[t + 1] != "mark" || token[t + 1] != ":") {
+          continue
+        }
+        key = token[t]
+        t += 2
+        if (t > count) {
+          break
+        }
+        if (kind[t] == "mark") {
+          # An object or a list: its marks are counted above.
+          t--
+          continue
+        }
+        if (depth == 1 && key == "services_warning" && kind[t] == "string") {
+          warning = token[t]
+        } else if (listing && depth == 3) {
+          if (key == "instance") {
+            instance[services] = token[t]
+          } else if (key == "outcome") {
+            outcome[services] = token[t]
+          } else if (key == "running") {
+            running[services] = token[t]
+          } else if (key == "note" && kind[t] == "string") {
+            note[services] = token[t]
+          }
+        }
+      }
+      for (k = 1; k <= services; k++) {
+        state = (running[k] == "true") ? "running" : "not running"
+        printf "Service of instance \"%s\": %s (%s).\n", instance[k], outcome[k], state
+        if (note[k] != "") {
+          printf "  %s\n", note[k]
+        }
+      }
+      if (warning != "") {
+        printf "Warning: %s\n", warning
+      }
+    }
+  ' <<< "$1" >&2
+}
+
 TRUSTED_CLI=""
 if TRUSTED_CLI="$(find_trusted_installed_cli)"; then
   :
@@ -641,7 +793,7 @@ if grep -qxF "release.v1.json" "$TAR_NAMES_FILE" \
   # On upgrades, always use the existing trusted installed binary — never execute the untrusted archive.
   if [[ -n "$TRUSTED_CLI" ]]; then
     echo "Using existing trusted installer: $TRUSTED_CLI" >&2
-    INSTALL_JSON="$("$TRUSTED_CLI" "${INSTALL_ARGS[@]}")"
+    INSTALLER_CLI="$TRUSTED_CLI"
   else
     tar -xzf "$STAGED_ARCHIVE" -C "$BOOTSTRAP_DIR" agentic-org
     if [[ ! -f "$BOOTSTRAP_DIR/agentic-org" || -L "$BOOTSTRAP_DIR/agentic-org" ]]; then
@@ -653,8 +805,22 @@ if grep -qxF "release.v1.json" "$TAR_NAMES_FILE" \
       verify_sha256 "$BOOTSTRAP_DIR/agentic-org" "$EXPECTED_CLI_SHA"
     fi
     chmod 0700 "$BOOTSTRAP_DIR/agentic-org"
-    INSTALL_JSON="$("$BOOTSTRAP_DIR/agentic-org" "${INSTALL_ARGS[@]}")"
+    INSTALLER_CLI="$BOOTSTRAP_DIR/agentic-org"
   fi
+
+  # A CLI that moves the registered services to the new release does it within its install
+  # (a running service holds the store, so it is stopped for the install and started again).
+  # An older installed CLI does not: it needs those services stopped first, and the newly
+  # installed release, verified into the protected store, then moves them below.
+  RUN_ARGS=("${INSTALL_ARGS[@]}")
+  INSTALLER_REFRESHES=0
+  if cli_refreshes_services "$INSTALLER_CLI"; then
+    INSTALLER_REFRESHES=1
+    if [[ "$NO_RESTART" -eq 1 ]]; then
+      RUN_ARGS+=(--no-restart)
+    fi
+  fi
+  INSTALL_JSON="$("$INSTALLER_CLI" "${RUN_ARGS[@]}" </dev/null)"
 
   RELEASE_ID="$(extract_json_string "$INSTALL_JSON" "release_id")"
   if [[ ! "$RELEASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$ ]]; then
@@ -668,6 +834,23 @@ if grep -qxF "release.v1.json" "$TAR_NAMES_FILE" \
   ln -sfn "$INSTALLED_CLI" "$BIN_DIR/agentic-org"
   ln -sfn "$INSTALLED_AGENT_OS" "$BIN_DIR/agent-os"
   echo "Pinned release ${RELEASE_ID} in ${EFFECTIVE_STORE_DIR}." >&2
+  if [[ "$INSTALLER_REFRESHES" -eq 1 ]]; then
+    report_services "$INSTALL_JSON"
+  elif cli_refreshes_services "$INSTALLED_CLI"; then
+    # The release is pinned already (an install of the same release changes nothing); this
+    # run moves the stopped services to it and reports them in its own words.
+    REFRESH_ARGS=(release install "$STAGED_ARCHIVE")
+    if [[ -n "$STORE_DIR" ]]; then
+      REFRESH_ARGS+=(--store "$STORE_DIR")
+    fi
+    if [[ "$NO_RESTART" -eq 1 ]]; then
+      REFRESH_ARGS+=(--no-restart)
+    fi
+    echo "Moving registered services to release ${RELEASE_ID} ..." >&2
+    if ! "$INSTALLED_CLI" "${REFRESH_ARGS[@]}" </dev/null >&2; then
+      echo "install.sh: release ${RELEASE_ID} is pinned, but its registered services were not moved to it; stop them (agentic-org service stop --yes) and run: agentic-org release install <archive>" >&2
+    fi
+  fi
 else
   if [[ "$ALLOW_UNSIGNED" -ne 1 ]]; then
     echo "install.sh: refusing unsigned archive (pass --allow-unsigned only for unsigned local archives)" >&2
