@@ -1,7 +1,19 @@
 //! Runtime output application and session event handling, including turn-end failover
 //! classification (`doc-88` §7).
 
-use super::*;
+use std::io::Write;
+use std::time::Instant;
+
+use org_agent_runtime::{Control, SessionEvent};
+use org_proto::sessions::SessionState;
+
+use crate::credentials::{redact_secrets, rfc3339_now};
+use crate::subagents::BackgroundKind;
+
+use super::approval::handle_approval_request;
+use super::{
+    persist_turn_update, FailoverRequest, PumpContext, PumpLoopState, SessionRuntimeState,
+};
 
 pub(super) fn rollback_failed_write_delivery(loop_state: &mut PumpLoopState, delivery_id: &str) {
     if loop_state
@@ -356,20 +368,8 @@ pub(super) fn evaluate_turn_failover(
         oauth_token_fp: ctx.oauth_token_fp.clone(),
         reason,
         rate_limit_resets_at: loop_state.rate_limit_resets_at.clone(),
+        stop_epoch: ctx.stop_epoch,
     });
     loop_state.stop_requested = true;
     false
-}
-
-pub(super) fn persist_turn_update(
-    ctx: &PumpContext,
-    mutate: impl FnOnce(&mut crate::recovery::ActiveTurnRecord),
-) {
-    let _ = ctx.store.update_active_turn(&ctx.employee_id, |persisted| {
-        if persisted.run_id != ctx.run_id {
-            return;
-        }
-        mutate(persisted);
-        persisted.updated_at = rfc3339_now();
-    });
 }

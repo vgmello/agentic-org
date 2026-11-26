@@ -1,6 +1,25 @@
 //! Unit tests for manager helpers (instructions, binding files, bwrap pruning, Rust caches).
 
-use super::*;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+
+use org_agent_runtime::{
+    AgentIdentity, AgentName, LaunchContext, PathPattern, RuntimeId, SessionId, SessionKind,
+    SessionSpec, SpecPath,
+};
+use org_office::organization_family::records::PermissionPreset;
+use org_supervise::{Environment, SearchPath};
+
+use crate::binding::RunBindingRegistry;
+use crate::preset::{apply_worktree_sandbox_rules, build_session_policy};
+
+use super::environment::{
+    agent_git_identity, combine_agent_instructions, office_env_names, write_owner_only_binding_file,
+};
+use super::rust_toolchain::{append_rust_toolchain_env, link_host_rust_caches};
+use super::sandbox_rules::{append_agy_credential_denies, collect_agy_read_only_dirs};
+use super::spec::{apply_linux_claude_bwrap_pruning, pattern_exists_for_bwrap};
+use super::BindingGuard;
 use std::os::unix::fs::PermissionsExt as _;
 
 #[test]

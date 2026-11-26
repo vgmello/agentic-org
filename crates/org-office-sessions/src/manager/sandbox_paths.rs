@@ -1,6 +1,25 @@
-//! Per-session sandbox read-only dirs, office/git/team denies, and worktree grants.
+//! Per-session sandbox read-only dirs, office/git/team denies, worktree grants, and the employee
+//! preset config they feed.
 
-use super::*;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
+use org_agent_runtime::{PathPattern, RuntimeId, SpecPath};
+use org_office::organization_family::records::PermissionPreset;
+use org_proto::{ApiError, ErrorCode};
+
+use crate::preset::{apply_worktree_sandbox_rules, build_session_policy, PresetConfig};
+use crate::runtime_registry::RuntimeRegistry;
+
+use super::environment::ensure_owner_only_dir;
+use super::rust_toolchain::canonicalize_with_tail;
+use super::sandbox_rules::{
+    append_agy_credential_denies, append_bare_cache_sandbox_rules, append_cargo_credential_denies,
+    append_privileged_socket_patterns, collect_agy_read_only_dirs, collect_existing_worktree_dirs,
+    collect_non_self_admin_names, collect_self_active_admins, push_exact_pattern,
+    push_glob_pattern,
+};
+use super::SessionManager;
 
 impl SessionManager {
     pub(super) fn collect_session_read_only_dirs(
@@ -437,5 +456,32 @@ impl SessionManager {
             ids.remove(me);
         }
         ids
+    }
+}
+
+impl SessionManager {
+    pub(super) fn build_employee_preset_cfg(
+        &self,
+        employee_id: &str,
+        preset: PermissionPreset,
+        sandbox_enabled: bool,
+        workspace: &SpecPath,
+        create_root: bool,
+    ) -> Result<PresetConfig, ApiError> {
+        let socket_str = self.config.office_socket.display().to_string();
+        let socket_spec = SpecPath::try_from(socket_str.as_str()).ok();
+        let denied_globs = self.denied_office_globs_for(Some(employee_id));
+        let mut cfg = build_session_policy(
+            preset,
+            sandbox_enabled,
+            workspace,
+            socket_spec.as_ref(),
+            &denied_globs,
+            1,
+        )
+        .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid permission preset"))?;
+        let (wt_writable, wt_write_denies) = self.worktree_sandbox_grants(employee_id, create_root);
+        apply_worktree_sandbox_rules(&mut cfg, &wt_writable, &wt_write_denies);
+        Ok(cfg)
     }
 }

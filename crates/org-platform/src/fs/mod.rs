@@ -271,9 +271,9 @@ pub enum SymlinkOutcome {
     RealDirectory,
 }
 
-/// A directory held by descriptor: opened with `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC` and
-/// verified (`fstat`) to be a real directory owned by the expected account with owner-only
-/// permissions. Its entries are then created, read and removed with `*at` calls on one plain
+/// A directory held by descriptor: opened with `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC |
+/// O_NONBLOCK` and verified (`fstat`) to be a real directory owned by the expected account with
+/// owner-only permissions. Its entries are then created, read and removed with `*at` calls on one plain
 /// name relative to the descriptor, so a symbolic link swapped into the path afterwards can never
 /// redirect a write outside it. Every unsupported target fails closed.
 #[derive(Debug)]

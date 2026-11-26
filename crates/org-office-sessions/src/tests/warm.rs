@@ -517,6 +517,7 @@ fn task126_recycle_stale_warm_handle_atomicity_and_stale_failover_non_drop() {
             oauth_token_fp: None,
             reason: "warm_route_stale",
             rate_limit_resets_at: None,
+            stop_epoch: 0,
         },
     );
     {

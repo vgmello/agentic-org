@@ -1,6 +1,15 @@
 //! Pump command draining: stop/suspend merging, background wakes, and permit release.
 
-use super::*;
+use std::sync::mpsc::Receiver;
+use std::time::Instant;
+
+use org_agent_runtime::{ApprovalId, Control};
+
+use crate::instructions::{compose_turn_objective, TurnTrigger};
+
+use super::approval::{apply_approval_resolution, record_stop_note};
+use super::events::apply_outputs;
+use super::{FailoverRequest, PumpCommand, PumpContext, PumpLoopState};
 
 pub(super) fn release_active_permit(ctx: &PumpContext) {
     let taken = ctx
@@ -41,6 +50,7 @@ pub(super) fn build_stale_failover_request(
         oauth_token_fp: ctx.oauth_token_fp.clone(),
         reason: "warm_route_stale",
         rate_limit_resets_at: None,
+        stop_epoch: ctx.stop_epoch,
     }
 }
 

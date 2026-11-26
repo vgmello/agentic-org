@@ -9,6 +9,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::credentials::rfc3339_now;
 
+mod sanitize;
+
+pub use sanitize::sanitize_untrusted_body;
+use sanitize::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
+
 /// Default maximum agent-initiated turns per rolling hour per target agent (`ADR-0023` d5).
 pub const DEFAULT_HOURLY_WAKE_LIMIT: usize = 12;
 
@@ -489,136 +494,6 @@ pub(crate) fn sender_conv_key(item: &PendingWakeItem) -> (String, String) {
         .clone()
         .unwrap_or_else(|| item.source_id.clone());
     (item.sender_id.clone(), scope)
-}
-
-/// Maximum UTF-8 byte budget for one sanitized header/provenance metadata token (`INSTR-5`).
-const MAX_META_FIELD_BYTES: usize = 96;
-
-/// Neutralizes fence-breakout tokens and caps untrusted text to `max_bytes` UTF-8 bytes (`INSTR-5`).
-pub fn sanitize_untrusted_body(raw: &str, max_bytes: usize) -> String {
-    let trimmed = raw.trim();
-    // Break every triple-delimiter sequence so no variant of `<<<UNTRUSTED_MESSAGE...>>>`,
-    // `<<<END_UNTRUSTED_MESSAGE>>>`, `=== OFFICE MID-TURN NOTICE ===`, or
-    // `=== END OFFICE MID-TURN NOTICE ===` can escape the untrusted data fence.
-    let mut neutralized = trimmed.to_owned();
-    while neutralized.contains("<<<") {
-        neutralized = neutralized.replace("<<<", "< < <");
-    }
-    while neutralized.contains(">>>") {
-        neutralized = neutralized.replace(">>>", "> > >");
-    }
-    while neutralized.contains("===") {
-        neutralized = neutralized.replace("===", "= = =");
-    }
-    truncate_utf8(&neutralized, max_bytes)
-}
-
-/// Sanitizes untrusted or user-editable header metadata (display name, handle, IDs) before
-/// interpolating into fence attributes or objective headers (`INSTR-5`).
-///
-/// Square brackets and their lookalikes become parentheses and the word `verified:` loses its
-/// colon in any ASCII letter case, so no spelling of the office-issued `[verified: <relation>]`
-/// sender badge (`[VeRiFiEd:`, `[ verified :`, `［verified：`, `⟦verified: owner⟧`) can be
-/// forged. Invisible format characters are dropped so none can split a marker or hide text, and
-/// line or paragraph separators become spaces so none can break a header line.
-fn sanitize_untrusted_meta(raw: &str, max_bytes: usize) -> String {
-    let cleaned: String =
-        raw.trim()
-            .chars()
-            .filter(|&ch| !is_invisible_format_char(ch))
-            .map(|ch| match ch {
-                '\n' | '\r' | '\t' | '\u{2028}' | '\u{2029}' => ' ',
-                '"' => '\'',
-                '[' | '\u{FF3B}' | '\u{27E6}' | '\u{3010}' | '\u{301A}' | '\u{2045}'
-                | '\u{298B}' => '(',
-                ']' | '\u{FF3D}' | '\u{27E7}' | '\u{3011}' | '\u{301B}' | '\u{2046}'
-                | '\u{298C}' => ')',
-                '\u{FF1A}' => ':',
-                c if c.is_control() => ' ',
-                c => c,
-            })
-            .collect();
-    let mut out = neutralize_verified_word(&cleaned);
-    while out.contains("<<<") {
-        out = out.replace("<<<", "< < <");
-    }
-    while out.contains(">>>") {
-        out = out.replace(">>>", "> > >");
-    }
-    while out.contains("===") {
-        out = out.replace("===", "= = =");
-    }
-    truncate_utf8(&out, max_bytes)
-}
-
-/// Replaces the colon of every `verified:` (any ASCII letter case, optional spaces before the
-/// colon) with ` -`. ASCII case folding keeps byte offsets, so matches in the folded copy map
-/// 1:1 onto `text`, and every match starts and ends on an ASCII byte (a char boundary).
-fn neutralize_verified_word(text: &str) -> String {
-    const WORD: &str = "verified";
-    let folded = text.to_ascii_lowercase();
-    let bytes = folded.as_bytes();
-    let mut out = String::with_capacity(text.len() + 4);
-    let mut cursor = 0;
-    let mut search = 0;
-    while let Some(found) = folded[search..].find(WORD) {
-        let mut colon = search + found + WORD.len();
-        while colon < bytes.len() && bytes[colon] == b' ' {
-            colon += 1;
-        }
-        if colon < bytes.len() && bytes[colon] == b':' {
-            out.push_str(&text[cursor..colon]);
-            out.push_str(" -");
-            cursor = colon + 1;
-        }
-        search = search + found + WORD.len();
-    }
-    out.push_str(&text[cursor..]);
-    out
-}
-
-/// Zero-width, joiner, bidi-control, soft-hyphen, variation-selector, and tag characters: they
-/// render as nothing, so untrusted metadata could use them to split or disguise a marker.
-fn is_invisible_format_char(ch: char) -> bool {
-    matches!(
-        ch,
-        '\u{00AD}'
-            | '\u{034F}'
-            | '\u{061C}'
-            | '\u{115F}'
-            | '\u{1160}'
-            | '\u{17B4}'
-            | '\u{17B5}'
-            | '\u{180B}'..='\u{180F}'
-            | '\u{200B}'..='\u{200F}'
-            | '\u{202A}'..='\u{202E}'
-            | '\u{2060}'..='\u{206F}'
-            | '\u{3164}'
-            | '\u{FE00}'..='\u{FE0F}'
-            | '\u{FEFF}'
-            | '\u{FFA0}'
-            | '\u{FFF0}'..='\u{FFF8}'
-            | '\u{E0000}'..='\u{E0FFF}'
-    )
-}
-
-fn truncate_utf8(text: &str, max_bytes: usize) -> String {
-    if text.len() <= max_bytes {
-        return text.to_owned();
-    }
-    const SUFFIX: &str = "… [truncated]";
-    if max_bytes <= SUFFIX.len() {
-        let mut end = max_bytes;
-        while end > 0 && !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        return text[..end].to_owned();
-    }
-    let mut end = max_bytes - SUFFIX.len();
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}{SUFFIX}", &text[..end])
 }
 
 fn format_sender_provenance(item: &PendingWakeItem) -> String {

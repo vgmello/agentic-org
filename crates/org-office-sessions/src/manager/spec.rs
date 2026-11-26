@@ -1,6 +1,25 @@
-//! Session spec, launch context, and Linux Claude `bwrap` deny pruning (`TASK-144`).
+//! Session spec, launch context, initial runtime state, approval writable roots, and Linux Claude
+//! `bwrap` deny pruning (`TASK-144`).
 
-use super::*;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use org_agent_runtime::{
+    AgentIdentity, AgentName, LaunchContext, PathPattern, RuntimeId, SandboxSpec, SessionId,
+    SessionKind, SessionSpec, SpecPath, Token,
+};
+use org_office::organization_family::records::{Employee, PermissionPreset};
+use org_proto::sessions::SessionState;
+use org_proto::{ApiError, ErrorCode};
+
+use crate::preset::PresetConfig;
+use crate::pump::SessionRuntimeState;
+use crate::recovery::StallWatchdog;
+use crate::subagents::BackgroundRegistry;
+
+use super::environment::{office_env_names, sanitize_agent_name};
+use super::rust_toolchain::canonicalize_with_tail;
+use super::PreparedSessionLaunch;
 
 pub(super) fn is_linux_claude_bwrap(sandbox_enabled: bool, runtime_id: &str) -> bool {
     sandbox_enabled
@@ -203,4 +222,77 @@ pub(super) fn canonical_or_spec(path: &Path) -> Result<SpecPath, ApiError> {
     let text = resolved.display().to_string();
     SpecPath::try_from(text.as_str())
         .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid workspace path"))
+}
+
+pub(super) fn build_initial_runtime_state(
+    office_id: String,
+    stall_timeout: Duration,
+    prepared: &PreparedSessionLaunch,
+) -> SessionRuntimeState {
+    SessionRuntimeState {
+        employee_id: prepared.emp_id.clone(),
+        office_id,
+        state: SessionState::Starting,
+        run_id: Some(prepared.run_id.clone()),
+        session_id: Some(prepared.session_id.clone()),
+        runtime_id: Some(prepared.runtime_id.clone()),
+        runtime_session_id: prepared
+            .lifecycle
+            .runtime_session_id
+            .as_ref()
+            .map(|s| s.as_str().to_owned()),
+        private_home: prepared.home.display().to_string(),
+        permission_preset: prepared.preset_cfg.preset.as_str().to_owned(),
+        sandbox_enabled: prepared.preset_cfg.sandbox.enabled,
+        spec_hash: prepared.spec_hash.clone(),
+        watchdog: StallWatchdog::from_persisted(
+            stall_timeout,
+            Instant::now(),
+            prepared.persisted_stalls,
+            false,
+        ),
+        recovery_required: false,
+        last_reply: None,
+        last_error: None,
+        backgrounds: BackgroundRegistry::new(),
+        pending_approvals: Vec::new(),
+        policy: prepared.preset_cfg.policy.clone(),
+        preset: prepared.preset_cfg.preset,
+        allowed_tools: prepared.preset_cfg.allowed_tools.clone(),
+        writable_roots: effective_approval_writable_roots(prepared),
+        suspended_on_asks: Vec::new(),
+        waiting_for_member_id: None,
+        waiting_for_name: None,
+        suspended_since: None,
+        pending_wake_count: 0,
+        pending_wake_reason: None,
+    }
+}
+
+pub(super) fn effective_approval_writable_roots(prepared: &PreparedSessionLaunch) -> Vec<SpecPath> {
+    effective_approval_writable_roots_from(
+        prepared.preset_cfg.preset,
+        &prepared.preset_cfg.sandbox.writable_roots,
+        &prepared.tmpdir,
+    )
+}
+
+pub(crate) fn effective_approval_writable_roots_from(
+    preset: PermissionPreset,
+    sandbox_writable_roots: &[SpecPath],
+    tmpdir: &Path,
+) -> Vec<SpecPath> {
+    let mut roots = sandbox_writable_roots.to_vec();
+    if preset == PermissionPreset::ReadOnly {
+        return roots;
+    }
+    let canon_tmp = canonicalize_with_tail(tmpdir);
+    if let Some(spec) = canon_tmp
+        .to_str()
+        .and_then(|s| SpecPath::try_from(s).ok())
+        .filter(|spec| !roots.contains(spec))
+    {
+        roots.push(spec);
+    }
+    roots
 }

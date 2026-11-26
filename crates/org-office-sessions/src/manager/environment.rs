@@ -1,6 +1,22 @@
-//! Per-run directories, standing instructions, and the scrubbed session environment.
+//! Per-run directories, standing instructions, and the scrubbed session environment (including
+//! the host Claude OAuth launch variables).
 
-use super::*;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+
+use org_agent_runtime::EnvName;
+use org_office::organization_family::records::{BuiltinKey, Employee, PermissionPreset};
+use org_proto::{ApiError, ErrorCode};
+use org_supervise::{Environment, SearchPath};
+
+use crate::instructions::{
+    assemble_standing_instructions, compose_turn_objective, InstructionInput, TurnTrigger,
+};
+use crate::preset::PresetConfig;
+use crate::runtime_registry::RuntimeRegistry;
+
+use super::rust_toolchain::append_rust_toolchain_env;
+use super::SessionManager;
 
 impl SessionManager {
     pub(super) fn load_preset_and_sandbox(
@@ -326,4 +342,25 @@ pub(super) fn combine_agent_instructions(
         (false, false) if prompt == body => prompt.to_owned(),
         (false, false) => format!("{prompt}\n\n{body}"),
     }
+}
+
+pub(super) fn assemble_launch_env(
+    mut launch_env: Vec<(OsString, OsString)>,
+    endpoint_env: Vec<(OsString, OsString)>,
+    runtime_name: &str,
+    allow_host_auth: bool,
+    runtime_path: &Path,
+    plan: &org_agent_runtime::LaunchPlan,
+) -> (Vec<(OsString, OsString)>, Option<u64>, Option<String>) {
+    let host_oauth = crate::host_auth::append_host_claude_oauth(
+        runtime_name,
+        allow_host_auth,
+        runtime_path,
+        plan,
+        &mut launch_env,
+    );
+    let expires_at_ms = host_oauth.as_ref().and_then(|m| m.expires_at_ms);
+    let token_fp = host_oauth.map(|m| m.token_fp);
+    launch_env.extend(endpoint_env);
+    (launch_env, expires_at_ms, token_fp)
 }

@@ -1,6 +1,17 @@
 //! Installing a spawned session: pre-pump isolation checks, pump thread, shutdown aborts.
 
-use super::*;
+use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+
+use org_proto::sessions::{SessionState, SessionView};
+use org_proto::{ApiError, ErrorCode};
+
+use crate::credentials::rfc3339_now;
+use crate::pump::{run_pump, PumpCommand, PumpContext, SessionRuntimeState};
+
+use super::spec::build_initial_runtime_state;
+use super::{is_admissions_closed, LiveSessionHandle, PreparedSessionLaunch, SessionManager};
 
 impl SessionManager {
     pub(super) fn install_live_session(
@@ -35,6 +46,11 @@ impl SessionManager {
             ..
         } = prepared;
         let active_permit = Arc::new(Mutex::new(permit));
+        let stop_epoch = self
+            .registry
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .stop_epoch(&emp_id);
         let (tx, rx) = mpsc::channel();
         let hooks = self.build_pump_hooks(
             &emp_id,
@@ -62,6 +78,7 @@ impl SessionManager {
             cleanup_paths: lifecycle.cleanup_after_exit,
             binding_file,
             hooks,
+            stop_epoch,
         };
         let pre_pump_meta = PrePumpHandleMeta {
             tx: tx.clone(),
@@ -330,13 +347,12 @@ pub(super) fn abort_pre_pump_shutdown(
             let _ = mgr.office.mark_turn_permit_release_pending(&pid);
         }
     }
+    let (session_id, view) = {
+        let st = pump_ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+        (st.session_id.clone(), st.to_view())
+    };
+    record_aborted_view(mgr, emp_id, view);
     if !cleanup_verified {
-        let session_id = pump_ctx
-            .state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .session_id
-            .clone();
         let _ = mgr.store.persist_recovery_required(
             emp_id,
             Some(&pump_ctx.run_id),
@@ -346,6 +362,15 @@ pub(super) fn abort_pre_pump_shutdown(
     }
     let _ = persist_shutdown_cancellation(mgr, emp_id, &pump_ctx.run_id, !cleanup_verified);
     cleanup_verified
+}
+
+/// Records the final view of a launch aborted during drain or shutdown, so `idle_view_for` never
+/// reports a stale view from before the drain (`stop_all`).
+fn record_aborted_view(mgr: &SessionManager, emp_id: &str, view: SessionView) {
+    mgr.last_states
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(emp_id.to_owned(), view);
 }
 
 pub(super) fn register_live_session_or_abort(
@@ -416,13 +441,17 @@ pub(super) fn abort_post_spawn_shutdown(
         reason: "office shutdown".into(),
     });
     let joined_ok = thread.join().is_ok();
-    let (cancelled_run_id, recovery_required) = {
-        let st = runtime_state.lock().unwrap_or_else(|p| p.into_inner());
-        (
-            st.run_id.clone(),
-            !joined_ok || st.recovery_required || st.state == SessionState::RecoveryRequired,
-        )
+    let (cancelled_run_id, recovery_required, view) = {
+        let mut st = runtime_state.lock().unwrap_or_else(|p| p.into_inner());
+        let recovery_required =
+            !joined_ok || st.recovery_required || st.state == SessionState::RecoveryRequired;
+        if recovery_required {
+            st.recovery_required = true;
+            st.state = SessionState::RecoveryRequired;
+        }
+        (st.run_id.clone(), recovery_required, st.to_view())
     };
+    record_aborted_view(mgr, emp_id, view);
     if let Some((pid, _)) = active_permit
         .lock()
         .unwrap_or_else(|p| p.into_inner())

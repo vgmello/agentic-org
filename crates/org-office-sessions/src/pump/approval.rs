@@ -1,6 +1,19 @@
 //! Approval requests and resolutions, stall handling, and child process finalization.
 
-use super::*;
+use std::os::unix::process::ExitStatusExt;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+use org_agent_runtime::{
+    ApprovalRequest, Control, Decision, Escalation, ExitInfo, Rule, RuleScope, RuleTool,
+};
+use org_proto::sessions::{PendingApprovalView, SessionState};
+use org_supervise::StopMode;
+
+use crate::credentials::{format_rfc3339_ms, now_ms, redact_secrets, rfc3339_now};
+use crate::preset::{decide_escalation_with_roots, EscalationDisposition};
+
+use super::{persist_turn_update, PumpContext, SessionRuntimeState};
 
 pub(super) fn handle_approval_request(
     state: &mut SessionRuntimeState,

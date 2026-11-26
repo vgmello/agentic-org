@@ -1,7 +1,32 @@
 //! Pump hook wiring: suspension, turn-end drain, mid-turn staging and delivery commit, usage,
 //! permits, rate limits, and failover (`TASK-115`, `doc-101` §4).
 
-use super::*;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use org_office::organization_family::records::EmployeeStatus;
+use org_office::Office;
+
+use crate::binding::RunBindingRegistry;
+use crate::credentials::{now_ms, rfc3339_now};
+use crate::employee_locks::EmployeeLockMap;
+use crate::manager::{set_waiting_messages_count, SessionManager};
+use crate::pump::{
+    FailoverHook, MidTurnDeliveredHook, MidTurnStageOutcome, OpenRequiredAsksHook,
+    PermitAcquireHook, PermitReleaseHook, PermitReleasePendingHook, PermitRenewHook, PumpHooks,
+    RateLimitHook, StageMidTurnWakesHook, StagedMidTurnBatch, SuspendedHook, TurnEndedHook,
+};
+use crate::recovery::SessionStore;
+use crate::wake::{
+    compose_mid_turn_notice_batch, sender_conv_key, MidTurnLimits, MidTurnRateTracker,
+    MidTurnSelection,
+};
+
+use super::asks::{persist_suspended_record, take_open_required_asks};
+use super::drain::drain_pending_wakes_into_live_pump;
+use super::usage::{flush_pending_usage, record_session_usage};
 
 impl SessionManager {
     pub(crate) fn build_pump_hooks(
@@ -116,44 +141,6 @@ impl SessionManager {
             is_bwrap_topology_stale,
         }
     }
-}
-
-impl SessionManager {
-    /// The turn-end drain context of this manager's pump hooks; it acquires warm permits through
-    /// the office router (an HQ permit RPC on satellites).
-    pub(super) fn turn_end_drain_ctx(&self) -> TurnEndDrainCtx {
-        TurnEndDrainCtx {
-            store: self.store.clone(),
-            registry: Arc::clone(&self.registry),
-            budget_hold: Arc::clone(&self.budget_hold),
-            employee_locks: Arc::clone(&self.employee_locks),
-            dispatching_wakes: Arc::clone(&self.dispatching_wakes),
-            waiting_messages: Arc::clone(&self.waiting_messages),
-            bindings: self.bindings.clone(),
-            office: Arc::clone(&self.office),
-            hq_permits: self.config.hq_permits.clone(),
-            acquire_warm_permit: Arc::new(crate::router::acquire_warm_permit_for_office),
-            weak_mgr: self.weak_self(),
-            hourly_limit: self.config.hourly_wake_limit,
-            window_ms: self.config.wake_window.as_millis() as u64,
-        }
-    }
-}
-
-pub(super) struct TurnEndDrainCtx {
-    pub(super) store: SessionStore,
-    pub(super) registry: Arc<Mutex<SessionRegistry>>,
-    pub(super) budget_hold: Arc<Mutex<Option<String>>>,
-    pub(super) employee_locks: Arc<EmployeeLockMap>,
-    pub(super) dispatching_wakes: Arc<Mutex<HashSet<String>>>,
-    pub(super) waiting_messages: Arc<Mutex<HashMap<String, Arc<AtomicU32>>>>,
-    pub(super) bindings: RunBindingRegistry,
-    pub(super) office: Arc<Office>,
-    pub(super) hq_permits: Option<Arc<dyn crate::router::HqPermitCoordinator>>,
-    pub(super) acquire_warm_permit: WarmPermitAcquirer,
-    pub(super) weak_mgr: Option<std::sync::Weak<SessionManager>>,
-    pub(super) hourly_limit: usize,
-    pub(super) window_ms: u64,
 }
 
 pub(super) fn build_mid_turn_hooks(

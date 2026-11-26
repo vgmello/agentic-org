@@ -1,7 +1,24 @@
 //! Required asks: suspension on turn end or grace expiry, answers, withdrawal, and resume
 //! (`C6`, `ASK-3..12`, `ADR-0030` d3).
 
-use super::*;
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+use org_office::organization_family::records::{Employee, EmployeeStatus};
+use org_proto::sessions::SessionState;
+
+use crate::binding::RunBindingRegistry;
+use crate::credentials::{now_ms, rfc3339_now};
+use crate::manager::{set_waiting_messages_count, SessionManager};
+use crate::pump::PumpCommand;
+use crate::recovery::SessionStore;
+use crate::wake::{
+    compose_required_ask_resume_objective, PendingAskAnswer, PendingWakeItem, SuspendedAskEntry,
+    SuspendedStateRecord, WakeHoldReason, WakeKind, WakeOutcome,
+};
+
+use super::DispatchWakeGuard;
 
 impl SessionManager {
     /// Records an open required ask created by an active agent so turn-end or grace expiry

@@ -98,3 +98,22 @@ fn denied_office_globs_cover_durable_private_notes_and_protected_companion_trees
         );
     }
 }
+
+#[test]
+fn command_table_or_empty_without_an_installed_catalogue_is_an_empty_table() {
+    let empty = crate::instructions::command_table_or_empty(None);
+    assert!(empty.rows().is_empty(), "no command rows");
+    assert!(empty.resources().is_empty(), "no command resources");
+    assert!(empty.find("msg", "send").is_none());
+    assert_eq!(
+        crate::instructions::render_command_catalogue(&empty),
+        "## Available `agent-os` Commands",
+        "the catalogue section lists no commands"
+    );
+
+    let live = crate::instructions::command_table_or_empty(Some(org_agent_cli::table::table));
+    assert!(
+        !live.rows().is_empty(),
+        "an installed catalogue is used as given"
+    );
+}

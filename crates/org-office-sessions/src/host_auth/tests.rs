@@ -1,6 +1,20 @@
-//! Host auth unit tests: OAuth parsing and expiry, tmpdir placement, refresh rotation, and the\n//! launch-scoped Keychain cache.
+//! Host auth unit tests: OAuth parsing and expiry, tmpdir placement, refresh rotation, and the
+//! launch-scoped Keychain cache.
 
-use super::*;
+use std::ffi::OsString;
+use std::path::Path;
+use std::time::Duration;
+
+use org_office::organization_family::records::ProviderAuthMode;
+use zeroize::Zeroizing;
+
+use super::keychain::KeychainTokenCache;
+use super::token::{parse_claude_oauth_token, ClaudeOAuthToken, MAX_HOST_CLAUDE_CRED_BYTES};
+use super::{
+    allows_host_subscription_auth, host_config_dir_for, is_oauth_expiring, oauth_token_fingerprint,
+    pick_fresher_oauth_entry, read_claude_credentials_from_path, refresh_host_claude_oauth_with,
+    resolve_agent_tmpdir, MAX_SHORT_TMPDIR_BYTES, OAUTH_REFRESH_LEAD_MS,
+};
 
 #[test]
 fn parses_claude_oauth_access_token_json() {

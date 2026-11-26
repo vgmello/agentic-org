@@ -278,7 +278,9 @@ fn verify_owner_only_dir_handle(dir: &File, expected_uid: u32) -> io::Result<()>
 pub(super) fn open_owner_only_dir(path: &Path, expected_uid: u32) -> io::Result<File> {
     let dir = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        // `O_NONBLOCK` (defense in depth): even a FIFO swapped in at `path` can never block the
+        // open; `O_DIRECTORY` then refuses it.
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(normalize_lstat_path(path))?;
     verify_owner_only_dir_handle(&dir, expected_uid)?;
     Ok(dir)
@@ -298,12 +300,18 @@ pub(super) fn open_or_create_owner_only_child(
             return Err(err);
         }
     }
-    // SAFETY: as above; `openat` reads `cname` and returns a new descriptor or -1.
+    // SAFETY: as above; `openat` reads `cname` and returns a new descriptor or -1. `O_NONBLOCK`
+    // (defense in depth) keeps a FIFO raced in under `name` from blocking before `O_DIRECTORY`
+    // refuses it.
     let fd = unsafe {
         libc::openat(
             dir.as_raw_fd(),
             cname.as_ptr(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            libc::O_RDONLY
+                | libc::O_DIRECTORY
+                | libc::O_NOFOLLOW
+                | libc::O_CLOEXEC
+                | libc::O_NONBLOCK,
         )
     };
     if fd < 0 {

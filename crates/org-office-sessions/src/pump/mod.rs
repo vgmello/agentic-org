@@ -3,27 +3,22 @@
 //! reaping, and durable `active-turn.v1.json` updates (`ADR-0025`, `ADR-0030`, `ADR-0032`).
 
 use std::fs::File;
-use std::io::{self, Read, Write};
-use std::os::unix::process::ExitStatusExt;
+use std::io::{self, Read};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use org_agent_runtime::{
-    ApprovalId, ApprovalRequest, Control, Decision, Escalation, ExitInfo, Frame, LineFramer,
-    PermissionPolicy, Rule, RuleScope, RuleTool, SessionEvent, ToolName,
-};
+use org_agent_runtime::{Decision, Frame, LineFramer, PermissionPolicy, ToolName};
 use org_office::organization_family::records::PermissionPreset;
 use org_proto::sessions::{PendingApprovalView, SessionState, SessionView};
 use org_supervise::StopMode;
 
 use crate::binding::RunBindingRegistry;
-use crate::credentials::{format_rfc3339_ms, now_ms, redact_secrets, rfc3339_now};
-use crate::instructions::{compose_turn_objective, TurnTrigger, SAME_USER_ISOLATION_NOTICE};
-use crate::preset::{decide_escalation_with_roots, EscalationDisposition};
+use crate::credentials::rfc3339_now;
+use crate::instructions::SAME_USER_ISOLATION_NOTICE;
 use crate::recovery::{SessionStore, StallWatchdog};
-use crate::subagents::{BackgroundKind, BackgroundRegistry};
+use crate::subagents::BackgroundRegistry;
 
 mod approval;
 mod commands;
@@ -32,10 +27,16 @@ mod events;
 mod tests;
 mod turn;
 
-pub(crate) use approval::*;
-use commands::*;
-pub(crate) use events::*;
-use turn::*;
+use approval::check_and_handle_stall;
+pub(crate) use approval::finalize_child;
+use commands::{
+    drain_commands, enqueue_background_wakes, mark_active_permit_release_pending,
+    release_active_permit,
+};
+use events::apply_outputs;
+#[cfg(test)]
+pub(crate) use events::classify_turn_failover_reason;
+use turn::{check_permit_heartbeat, dispatch_next_turn, maybe_deliver_mid_turn};
 
 const POST_EXIT_DRAIN_GRACE: Duration = Duration::from_millis(500);
 
@@ -110,6 +111,8 @@ pub(crate) struct FailoverRequest {
     pub oauth_token_fp: Option<String>,
     pub reason: &'static str,
     pub rate_limit_resets_at: Option<String>,
+    /// The failed run's [`PumpContext::stop_epoch`]: a later explicit stop abandons the failover.
+    pub stop_epoch: u64,
 }
 pub(crate) type FailoverHook = Arc<dyn Fn(FailoverRequest) + Send + Sync>;
 /// Returns `true` when this Linux `bwrap` session's masked sibling set is stale because a new
@@ -219,6 +222,9 @@ pub(crate) struct PumpContext {
     pub cleanup_paths: Vec<org_agent_runtime::CleanupPath>,
     pub binding_file: std::path::PathBuf,
     pub hooks: PumpHooks,
+    /// The employee's explicit-stop epoch when this run was installed
+    /// ([`crate::manager::SessionRegistry::stop_epoch`]), carried into every [`FailoverRequest`].
+    pub stop_epoch: u64,
 }
 
 enum ReaderMsg {
@@ -462,6 +468,21 @@ fn finish_pump(
         // Unproven cleanup (`AE-07`): keep slot occupied in `release_pending` & require recovery.
         mark_active_permit_release_pending(ctx);
     }
+}
+
+/// Applies `mutate` to this run's durable `active-turn.v1.json` record (a newer run's record is
+/// never touched) and stamps `updated_at`.
+fn persist_turn_update(
+    ctx: &PumpContext,
+    mutate: impl FnOnce(&mut crate::recovery::ActiveTurnRecord),
+) {
+    let _ = ctx.store.update_active_turn(&ctx.employee_id, |persisted| {
+        if persisted.run_id != ctx.run_id {
+            return;
+        }
+        mutate(persisted);
+        persisted.updated_at = rfc3339_now();
+    });
 }
 
 fn should_finish_after_exit(

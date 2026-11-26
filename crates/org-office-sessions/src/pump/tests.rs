@@ -1,6 +1,21 @@
 //! Pump unit tests: failover classification, permits, and mid-turn delivery.
 
-use super::*;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use org_agent_runtime::{ApprovalId, ApprovalRequest, Control, Decision, PermissionPolicy};
+use org_office::organization_family::records::PermissionPreset;
+use org_proto::sessions::SessionState;
+
+use crate::binding::RunBindingRegistry;
+use crate::recovery::{SessionStore, StallWatchdog};
+use crate::subagents::BackgroundRegistry;
+
+use super::approval::handle_approval_request;
+use super::commands::{finalize_drained_stop, merge_stop_preserve};
+use super::events::evaluate_turn_failover;
+use super::turn::{ensure_permit_for_turn, PermitCheck};
+use super::{PumpContext, PumpHooks, PumpLoopState, SessionRuntimeState};
 
 fn test_pump_ctx(
     dir: &std::path::Path,
@@ -74,6 +89,7 @@ fn test_pump_ctx(
             on_mid_turn_delivered: None,
             is_bwrap_topology_stale: None,
         },
+        stop_epoch: 0,
     }
 }
 

@@ -7,52 +7,27 @@ use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use org_agent_runtime::{
-    AgentIdentity, AgentName, Decision, EnvName, LaunchContext, PathPattern, RuntimeId,
-    SandboxSpec, SessionId, SessionKind, SessionSpec, SpecPath, Token,
-};
-use org_office::organization_family::records::{
-    BuiltinKey, Employee, EmployeeKind, EmployeeStatus, PermissionPreset,
-};
+use org_agent_runtime::LaunchContext;
 use org_office::Office;
-use org_proto::sessions::{
-    MemberSessionApprovalDecide, MemberSessionClearStall, MemberSessionGrants,
-    MemberSessionInspect, MemberSessionList, MemberSessionListParams, MemberSessionStart,
-    MemberSessionStartParams, MemberSessionStop, MemberSessionTranscript,
-    MemberSessionTranscriptParams, ProviderCredentialRevoke, ProviderCredentialStatus,
-    ProviderEnrollmentCancel, ProviderEnrollmentStart, ProviderEnrollmentStatus,
-    ProviderEnrollmentSubmit, SessionGrantsResult, SessionInspectResult, SessionListResult,
-    SessionState, SessionTranscriptResult, SessionView,
-};
-use org_proto::{ApiError, Call, ErrorCode, Request, Response};
-use org_supervise::{Environment, SearchPath, SessionMark};
+use org_proto::sessions::SessionView;
+use org_proto::{ApiError, ErrorCode, Response};
 
 use crate::binding::RunBindingRegistry;
 use crate::credentials::{
-    random_hex, rfc3339_now, CliEnrollmentDriver, CredentialVault, EnrollmentDriver,
-    EnrollmentManager, EnrollmentVaultError,
+    random_hex, CliEnrollmentDriver, CredentialVault, EnrollmentDriver, EnrollmentManager,
 };
-use crate::instructions::{
-    assemble_standing_instructions, compose_turn_objective, InstructionInput, TurnTrigger,
-    SAME_USER_ISOLATION_NOTICE,
-};
-use crate::preset::{
-    apply_worktree_sandbox_rules, build_grants_summary, build_session_policy, PresetConfig,
-};
-use crate::pump::{run_pump, FailoverRequest, PumpCommand, PumpContext, SessionRuntimeState};
+use crate::preset::PresetConfig;
+use crate::pump::{PumpCommand, SessionRuntimeState};
 use crate::recovery::{
-    ActiveTurnRecord, NativeProcessExitOracle, PendingStartRecord, ProcessExitOracle,
-    RecoveryAction, RecoveryReport, SessionStore, StallWatchdog, DEFAULT_STALL_TIMEOUT,
+    NativeProcessExitOracle, ProcessExitOracle, RecoveryAction, RecoveryReport, SessionStore,
+    DEFAULT_STALL_TIMEOUT,
 };
 use crate::runtime_registry::RuntimeRegistry;
-use crate::subagents::{
-    build_general_subagent_definition, write_subagent_definition, BackgroundRegistry,
-};
 use crate::subscription_usage::{
     collect_subscription_usage, list_subscription_usage, revoke_subscription_usage_credential,
     set_subscription_usage_credential, ProviderSubscriptionUsageCollector,
@@ -64,6 +39,7 @@ use crate::wake::{
     DEFAULT_SUSPEND_GRACE, DEFAULT_WAKE_WINDOW,
 };
 
+mod auth_guards;
 mod environment;
 mod failover;
 #[cfg(test)]
@@ -71,25 +47,28 @@ mod helper_tests;
 mod install;
 mod launch;
 mod lifecycle_ops;
+mod registry_guards;
 mod rpc;
 mod rust_toolchain;
 mod sandbox_paths;
 mod sandbox_rules;
 mod sessions_api;
 mod spec;
+mod views;
 mod warm;
 
-pub(crate) use environment::*;
-pub(crate) use failover::*;
+pub(crate) use environment::ensure_owner_only_dir;
+#[cfg(test)]
+pub(crate) use failover::{is_host_claude_subscription_refresh_eligible, run_failover_relaunch};
 #[cfg(test)]
 pub(crate) use install::{install_unrecovered_pre_pump_handle, PrePumpHandleMeta};
-pub(crate) use launch::*;
-use lifecycle_ops::*;
-pub(crate) use rust_toolchain::*;
-pub(crate) use sandbox_rules::*;
-use sessions_api::*;
-pub(crate) use spec::*;
-use warm::*;
+#[cfg(test)]
+pub(crate) use lifecycle_ops::{take_clearable_live_handle, ClearableHandle};
+#[cfg(test)]
+pub(crate) use rust_toolchain::host_rust_dir_env_from;
+pub(crate) use sandbox_rules::collect_self_active_admins;
+#[cfg(test)]
+pub(crate) use spec::effective_approval_writable_roots_from;
 
 /// Configuration for [`SessionManager`].
 #[derive(Clone)]
@@ -155,6 +134,25 @@ pub(crate) struct SessionRegistry {
     pub shutting_down: bool,
     pub bg_spawning: usize,
     pub bg_workers: Vec<JoinHandle<()>>,
+    /// Per-employee count of accepted explicit `stop_session` calls (pause, offboard, owner stop).
+    /// A run records its employee's epoch at install ([`crate::pump::PumpContext::stop_epoch`]);
+    /// a pool failover whose epoch is behind was explicitly stopped and is abandoned rather than
+    /// relaunched or requeued. Bounded by the number of employees ever stopped.
+    pub stop_epochs: HashMap<String, u64>,
+}
+
+impl SessionRegistry {
+    /// The current explicit-stop epoch of `employee_id` (`0` until its first explicit stop).
+    pub(crate) fn stop_epoch(&self, employee_id: &str) -> u64 {
+        self.stop_epochs.get(employee_id).copied().unwrap_or(0)
+    }
+
+    /// Records an accepted explicit stop of `employee_id`, so any failover of a run installed
+    /// before it is abandoned.
+    pub(crate) fn record_explicit_stop(&mut self, employee_id: &str) {
+        let epoch = self.stop_epochs.entry(employee_id.to_owned()).or_insert(0);
+        *epoch = epoch.saturating_add(1);
+    }
 }
 
 struct BgSpawnGuard<'a> {

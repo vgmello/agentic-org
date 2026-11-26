@@ -1,7 +1,21 @@
 //! Durable pending-wake queue dispatch: hold reasons, the mutual-deadlock breaker, and claimed
 //! wake launches (`C8`, `WAKE-1..7`, `LIVE-1..8`).
 
-use super::*;
+use std::collections::HashSet;
+
+use org_office::organization_family::records::{Employee, EmployeeStatus};
+use org_proto::sessions::SessionState;
+
+use crate::credentials::{now_ms, rfc3339_now};
+use crate::manager::SessionManager;
+use crate::wake::{
+    compose_coalesced_wake_objective, PendingWakeItem, PendingWakeQueueRecord,
+    SuspendedStateRecord, WakeHoldReason, WakeKind, WakeOutcome, WakeQuotaRecord,
+};
+
+use super::asks::insert_open_required_ask;
+use super::drain::remove_claimed_wakes;
+use super::DispatchWakeGuard;
 
 impl SessionManager {
     pub(super) fn queue_hold_reason(
@@ -53,21 +67,6 @@ impl SessionManager {
             }
         }
         None
-    }
-
-    pub(super) fn is_budget_held_for(&self, employee_id: &str, task_id: Option<&str>) -> bool {
-        if self
-            .budget_hold
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .is_some()
-        {
-            return true;
-        }
-        self.office
-            .active_budget_holds(Some(employee_id), task_id)
-            .map(|holds| !holds.is_empty())
-            .unwrap_or(false)
     }
 
     pub(super) fn try_dispatch_deadlock_breaker(

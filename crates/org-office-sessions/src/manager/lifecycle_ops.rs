@@ -1,6 +1,16 @@
 //! Stop, shutdown, and stall-lock clearing with fail-closed live-handle reaping.
 
-use super::*;
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
+
+use org_proto::sessions::{SessionState, SessionView};
+use org_proto::{ApiError, ErrorCode};
+
+use crate::credentials::rfc3339_now;
+
+use super::registry_guards::ensure_live_handle_not_recovery_required;
+use super::views::overlay_durable_wake_state;
+use super::{is_admissions_closed, LiveSessionHandle, SessionManager, StartSlotGuard};
 
 impl SessionManager {
     /// Stops any active session for `employee_id`, reaps background tasks, and revokes its
@@ -41,10 +51,28 @@ impl SessionManager {
     }
 }
 
-pub(super) fn take_clearable_live_handle(
+/// What a recovery clear found for the agent's live handle.
+pub(crate) enum ClearableHandle {
+    /// A dead or locked handle (`StallLocked`, `RecoveryRequired`, `Stopped`, `Suspended`, or
+    /// flagged `recovery_required`) was removed; the start slot is reserved for its reap.
+    Removed(LiveSessionHandle),
+    /// A handle that is still running or tearing down (such as a `Stopping` pump that may be
+    /// mid-failover) stays live. No start slot is reserved, so its own failover relaunch is never
+    /// refused for contention, and its teardown outcome is unknown, so durable recovery evidence
+    /// is kept.
+    Kept,
+    /// No live handle exists; the start slot is reserved so no start can begin (and persist fresh
+    /// recovery evidence) while the persisted lock is cleared.
+    Absent,
+}
+
+/// Classifies the live handle for a recovery clear, clearing its in-memory stall lock. Reserves
+/// the start slot (in the same `registry` critical section) only for [`ClearableHandle::Removed`]
+/// and [`ClearableHandle::Absent`]; the caller owns releasing it.
+pub(crate) fn take_clearable_live_handle(
     mgr: &SessionManager,
     employee_id: &str,
-) -> Result<Option<LiveSessionHandle>, ApiError> {
+) -> Result<ClearableHandle, ApiError> {
     let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
     if reg.starting.contains(employee_id) {
         return Err(ApiError::new(
@@ -52,10 +80,12 @@ pub(super) fn take_clearable_live_handle(
             "agent session start or teardown is already in progress",
         ));
     }
-    let should_remove = reg.live.get(employee_id).is_some_and(|handle| {
+    let Some(handle) = reg.live.get(employee_id) else {
+        reg.starting.insert(employee_id.to_owned());
+        return Ok(ClearableHandle::Absent);
+    };
+    let should_remove = {
         let mut guard = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-        // A `Stopping` handle is a pump still tearing down (possibly mid-failover): it stays live
-        // and the persisted `recovery_required` flag is kept below (Pass 6).
         let removable = guard.recovery_required
             || matches!(
                 guard.state,
@@ -74,24 +104,28 @@ pub(super) fn take_clearable_live_handle(
             }
         }
         removable
-    });
-    reg.starting.insert(employee_id.to_owned());
-    let old = if should_remove {
-        reg.live.remove(employee_id)
-    } else {
-        None
     };
-    Ok(old)
+    if !should_remove {
+        return Ok(ClearableHandle::Kept);
+    }
+    reg.starting.insert(employee_id.to_owned());
+    Ok(reg
+        .live
+        .remove(employee_id)
+        .map_or(ClearableHandle::Absent, ClearableHandle::Removed))
 }
 
-/// Clears the persisted stall lock, and the persisted `recovery_required` flag only when
-/// `clear_recovery` (no live handle remains whose teardown outcome is still unknown, Pass 6).
+/// Clears the persisted stall lock, and only when `clear_recovery` (no live handle remains whose
+/// teardown outcome is still unknown, Pass 6) also the persisted `recovery_required` flag and the
+/// `pending-start.v1.json` launch evidence startup recovery would need.
 pub(super) fn clear_persisted_recovery_state(
     mgr: &SessionManager,
     employee_id: &str,
     clear_recovery: bool,
 ) {
-    let _ = mgr.store.clear_pending_start(employee_id);
+    if clear_recovery {
+        let _ = mgr.store.clear_pending_start(employee_id);
+    }
     let _ = mgr.store.update_active_turn(employee_id, |persisted| {
         persisted.consecutive_stalls = 0;
         persisted.stall_locked = false;
@@ -114,20 +148,24 @@ pub(super) fn clear_stall_lock_impl(
 ) -> Result<SessionView, ApiError> {
     mgr.authorize_owner_only_inner(actor_member_id, hq_attested_owner)?;
     let _ = mgr.require_agent(employee_id)?;
-    let dead_handle = take_clearable_live_handle(mgr, employee_id)?;
-    let slot_guard = StartSlotGuard::new(&mgr.registry, employee_id.to_owned());
-    if let Some(old) = dead_handle {
-        reap_cleared_handle(mgr, employee_id, old)?;
+    match take_clearable_live_handle(mgr, employee_id)? {
+        ClearableHandle::Kept => clear_persisted_recovery_state(mgr, employee_id, false),
+        found => {
+            let slot_guard = StartSlotGuard::new(&mgr.registry, employee_id.to_owned());
+            if let ClearableHandle::Removed(old) = found {
+                reap_cleared_handle(mgr, employee_id, old)?;
+            }
+            // The start slot is held, so nothing can install a new handle in between.
+            let live_handle_remains = mgr
+                .registry
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .live
+                .contains_key(employee_id);
+            clear_persisted_recovery_state(mgr, employee_id, !live_handle_remains);
+            drop(slot_guard);
+        }
     }
-    // The start slot is held, so nothing can install a new handle in between.
-    let live_handle_remains = mgr
-        .registry
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .live
-        .contains_key(employee_id);
-    clear_persisted_recovery_state(mgr, employee_id, !live_handle_remains);
-    drop(slot_guard);
     let _ = mgr.process_due_wakes_for(employee_id);
     let live_view = {
         let reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
@@ -214,8 +252,12 @@ pub(super) fn stop_session_impl(
             if handle.is_some() {
                 reg.starting.insert(employee_id.to_owned());
             }
+            // Accepted: a pool failover of any run installed before now is abandoned, even one
+            // whose handle a concurrent recovery clear already reaped.
+            reg.record_explicit_stop(employee_id);
             handle
         } else {
+            reg.record_explicit_stop(employee_id);
             None
         }
     };
@@ -328,23 +370,4 @@ pub(super) fn stop_all_inner(mgr: &SessionManager, reason: &str, permanent: bool
         let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
         reg.draining = false;
     }
-}
-
-pub(super) fn check_registry_startable(
-    reg: &SessionRegistry,
-    emp_id: &str,
-) -> Result<(), ApiError> {
-    if reg.draining || reg.shutting_down {
-        return Err(ApiError::new(
-            ErrorCode::Unavailable,
-            "office session manager is shutting down",
-        ));
-    }
-    if reg.starting.contains(emp_id) {
-        return Err(ApiError::new(
-            ErrorCode::Conflict,
-            "agent session start is already in progress",
-        ));
-    }
-    Ok(())
 }

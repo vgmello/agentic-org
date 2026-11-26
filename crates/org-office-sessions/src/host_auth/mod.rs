@@ -20,8 +20,10 @@ use zeroize::Zeroizing;
 mod keychain;
 #[cfg(test)]
 mod tests;
+mod token;
 
-use keychain::*;
+use keychain::{invalidate_keychain_cache, read_claude_keychain_token, CLAUDE_KEYCHAIN_CACHE};
+use token::{parse_claude_oauth_token, ClaudeOAuthToken, MAX_HOST_CLAUDE_CRED_BYTES};
 
 /// Process-wide single-flight lock serializing host Claude OAuth refresh probes so concurrent
 /// expiring sessions never race on single-use rotating refresh tokens.
@@ -45,7 +47,6 @@ const REFRESH_SAFE_HOST_ENV: &[&str] = &[
     "SSL_CERT_DIR",
 ];
 
-const MAX_HOST_CLAUDE_CRED_BYTES: usize = 64 * 1024;
 /// Maximum byte length for an agent's `TMPDIR` so Linux `bwrap`/`socat` bridge sockets
 /// (`$TMPDIR/<name>.sock`, ~35 bytes) stay well under the 108-byte `sun_path` limit.
 const MAX_SHORT_TMPDIR_BYTES: usize = 70;
@@ -53,13 +54,6 @@ const MAX_SHORT_TMPDIR_BYTES: usize = 70;
 pub(crate) const OAUTH_REFRESH_LEAD_MS: u64 = 5 * 60 * 1000;
 /// Upper bound on a host-side `claude` OAuth token refresh probe before session launch.
 const OAUTH_REFRESH_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// Resolved host Claude Code OAuth access token and its optional expiry timestamp (epoch ms).
-#[derive(Clone)]
-pub(crate) struct ClaudeOAuthToken {
-    pub access_token: Zeroizing<String>,
-    pub expires_at_ms: Option<u64>,
-}
 
 /// Returns `true` when an OAuth token with `expires_at_ms` is already expired or within
 /// [`OAUTH_REFRESH_LEAD_MS`] of expiry.
@@ -419,18 +413,4 @@ fn read_claude_credentials_from_path(cred_path: &Path) -> Option<ClaudeOAuthToke
         return None;
     }
     parse_claude_oauth_token(&bytes)
-}
-
-fn parse_claude_oauth_token(raw: &[u8]) -> Option<ClaudeOAuthToken> {
-    let val: serde_json::Value = serde_json::from_slice(raw).ok()?;
-    let oauth = val.get("claudeAiOauth")?;
-    let token = oauth.get("accessToken")?.as_str()?.trim();
-    if token.is_empty() {
-        return None;
-    }
-    let expires_at_ms = oauth.get("expiresAt").and_then(serde_json::Value::as_u64);
-    Some(ClaudeOAuthToken {
-        access_token: Zeroizing::new(token.to_owned()),
-        expires_at_ms,
-    })
 }

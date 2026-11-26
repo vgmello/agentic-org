@@ -3,9 +3,8 @@
 //! `C10` always-available presence & human/task auto-start).
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use org_office::directory::MemberRuntime;
 use org_office::organization_family::records::{Employee, EmployeeKind, EmployeeStatus};
@@ -13,23 +12,10 @@ use org_office::Office;
 use org_proto::directory::{MemberPresence, RecipientPresence};
 use org_proto::sessions::SessionState;
 
-use crate::binding::RunBindingRegistry;
-use crate::credentials::{now_ms, rfc3339_now};
-use crate::employee_locks::EmployeeLockMap;
-use crate::manager::{set_waiting_messages_count, SessionManager, SessionRegistry};
-use crate::pump::{
-    FailoverHook, MidTurnDeliveredHook, MidTurnStageOutcome, OpenRequiredAsksHook,
-    PermitAcquireHook, PermitReleaseHook, PermitReleasePendingHook, PermitRenewHook, PumpCommand,
-    PumpHooks, RateLimitHook, StageMidTurnWakesHook, StagedMidTurnBatch, SuspendedHook,
-    TurnEndedHook,
-};
-use crate::recovery::SessionStore;
-use crate::wake::{
-    compose_coalesced_wake_objective, compose_mid_turn_notice_batch,
-    compose_required_ask_resume_objective, sender_conv_key, MidTurnLimits, MidTurnRateTracker,
-    MidTurnSelection, PendingAskAnswer, PendingWakeItem, PendingWakeQueueRecord, SuspendedAskEntry,
-    SuspendedStateRecord, WakeHoldReason, WakeKind, WakeOutcome, WakeQuotaRecord,
-};
+use crate::credentials::now_ms;
+use crate::manager::{set_waiting_messages_count, SessionManager};
+use crate::pump::PumpCommand;
+use crate::wake::{PendingWakeItem, PendingWakeQueueRecord, WakeKind, WakeOutcome};
 
 mod asks;
 mod drain;
@@ -37,10 +23,11 @@ mod hooks;
 mod usage;
 mod wake_queue;
 
-use asks::*;
-pub(crate) use drain::*;
-use hooks::*;
-pub(crate) use usage::*;
+#[cfg(test)]
+pub(crate) use drain::{
+    drain_into_live_pump_with_acquirer, recycle_stale_warm_handle_in, WarmPermitAcquirer,
+};
+use usage::flush_pending_usage;
 
 struct DispatchWakeGuard {
     set: Arc<Mutex<HashSet<String>>>,
@@ -69,6 +56,22 @@ impl Drop for DispatchWakeGuard {
 }
 
 impl SessionManager {
+    /// `true` while an office-wide or employee/task budget hold blocks new autonomous turns.
+    fn is_budget_held_for(&self, employee_id: &str, task_id: Option<&str>) -> bool {
+        if self
+            .budget_hold
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_some()
+        {
+            return true;
+        }
+        self.office
+            .active_budget_holds(Some(employee_id), task_id)
+            .map(|holds| !holds.is_empty())
+            .unwrap_or(false)
+    }
+
     /// Enqueues or immediately dispatches an autonomous wake item for `target_employee_id`
     /// (`WAKE-1..7`, `AVAIL-1..6`, `LIVE-1..8`).
     pub fn enqueue_wake(&self, target_employee_id: &str, item: PendingWakeItem) -> WakeOutcome {

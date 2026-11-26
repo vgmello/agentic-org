@@ -1,6 +1,15 @@
 //! Turn dispatch: turn permits and lease heartbeats, queued turns, and mid-turn delivery.
 
-use super::*;
+use std::time::{Duration, Instant};
+
+use org_agent_runtime::Control;
+use org_proto::sessions::SessionState;
+
+use crate::credentials::now_ms;
+
+use super::commands::{build_stale_failover_request, release_active_permit};
+use super::events::apply_outputs;
+use super::{persist_turn_update, MidTurnStageOutcome, PumpContext, PumpLoopState};
 
 pub(super) enum PermitCheck {
     Ready,

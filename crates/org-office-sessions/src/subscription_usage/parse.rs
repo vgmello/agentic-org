@@ -594,7 +594,7 @@ fn epoch_secs_to_rfc3339(secs: u64) -> Option<String> {
     if secs > MAX_RFC3339_EPOCH_SECS {
         return None;
     }
-    let formatted = crate::subscription_usage::format_rfc3339_ms(secs.saturating_mul(1_000));
+    let formatted = crate::credentials::format_rfc3339_ms(secs.saturating_mul(1_000));
     org_proto::parse_rfc3339_ms(&formatted).map(|_| formatted)
 }
 

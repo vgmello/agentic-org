@@ -1,7 +1,10 @@
 //! The host Claude Code sign-in from the macOS Keychain: one bounded lookup through
 //! `org_platform::keychain`, cached only while a launch is resolving host OAuth.
 
-use super::*;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+use super::token::{parse_claude_oauth_token, ClaudeOAuthToken, MAX_HOST_CLAUDE_CRED_BYTES};
 
 /// Upper bound on macOS Keychain lookup so a locked Keychain never hangs session launch or
 /// transcript redaction.

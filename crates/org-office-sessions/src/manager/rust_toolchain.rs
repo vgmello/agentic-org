@@ -1,6 +1,7 @@
 //! Host Rust toolchain environment and read-only Cargo cache links (`TASK-126`, `TASK-159`).
 
-use super::*;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
 /// Points `<agent_home>/.cargo/<name>` at a host read-only cache directory, relative to the
 /// already-verified `.cargo` descriptor. Refuses a target under a forbidden root.

@@ -1,6 +1,21 @@
 //! Pool failover relaunch, host Claude subscription refresh, and recovery wakes.
 
-use super::*;
+use std::collections::HashSet;
+use std::path::PathBuf;
+
+use org_office::organization_family::records::{EmployeeKind, EmployeeStatus, PermissionPreset};
+use org_proto::sessions::{MemberSessionStartParams, SessionState};
+use org_proto::ApiError;
+
+use crate::credentials::rfc3339_now;
+use crate::pump::FailoverRequest;
+
+use super::views::build_idle_session_view;
+use super::warm::LaunchRouteOpts;
+use super::{
+    is_admissions_closed, next_entropy_hex, set_waiting_messages_count, LiveSessionHandle,
+    SessionManager, StartSlotGuard,
+};
 
 impl SessionManager {
     /// Handles §7 connection failover after a pre-side-effect `rate_limited`, `quota_exhausted`,
@@ -39,27 +54,6 @@ pub(crate) fn is_host_claude_subscription_refresh_eligible(
         .ok()
 }
 
-pub(super) fn assemble_launch_env(
-    mut launch_env: Vec<(OsString, OsString)>,
-    endpoint_env: Vec<(OsString, OsString)>,
-    runtime_name: &str,
-    allow_host_auth: bool,
-    runtime_path: &Path,
-    plan: &org_agent_runtime::LaunchPlan,
-) -> (Vec<(OsString, OsString)>, Option<u64>, Option<String>) {
-    let host_oauth = crate::host_auth::append_host_claude_oauth(
-        runtime_name,
-        allow_host_auth,
-        runtime_path,
-        plan,
-        &mut launch_env,
-    );
-    let expires_at_ms = host_oauth.as_ref().and_then(|m| m.expires_at_ms);
-    let token_fp = host_oauth.map(|m| m.token_fp);
-    launch_env.extend(endpoint_env);
-    (launch_env, expires_at_ms, token_fp)
-}
-
 pub(super) fn try_refresh_host_claude_subscription(
     mgr: &SessionManager,
     req: &FailoverRequest,
@@ -72,35 +66,6 @@ pub(super) fn try_refresh_host_claude_subscription(
         return false;
     };
     crate::host_auth::refresh_host_claude_oauth_reactive(&binary, req.oauth_token_fp.as_deref())
-}
-
-pub(super) fn collect_non_self_admin_names(
-    wt_dir: &Path,
-    repo_id: Option<&str>,
-    git_state: &org_office::git::OfficeGitState,
-    self_admins: &std::collections::BTreeSet<String>,
-) -> std::collections::BTreeSet<String> {
-    let mut other_admins = std::collections::BTreeSet::new();
-    if let Ok(entries) = std::fs::read_dir(wt_dir) {
-        for name in entries
-            .flatten()
-            .filter_map(|e| e.file_name().into_string().ok())
-            .filter(|n| !self_admins.contains(n))
-        {
-            other_admins.insert(name);
-        }
-    }
-    if let Some(rid) = repo_id {
-        for ws in git_state.workspaces.values() {
-            if ws.repository_id == rid
-                && is_safe_worktree_admin_name(&ws.admin_dir_name)
-                && !self_admins.contains(&ws.admin_dir_name)
-            {
-                other_admins.insert(ws.admin_dir_name.clone());
-            }
-        }
-    }
-    other_admins
 }
 
 pub(super) fn record_failover_connection_health(mgr: &SessionManager, req: &FailoverRequest) {
@@ -129,13 +94,25 @@ pub(super) fn record_failover_connection_health(mgr: &SessionManager, req: &Fail
     }
 }
 
-pub(super) fn take_failed_live_handle(
-    mgr: &SessionManager,
-    req: &FailoverRequest,
-) -> Option<Option<LiveSessionHandle>> {
+/// Outcome of claiming a failed run's start slot for a pool failover relaunch.
+pub(super) enum FailoverSlot {
+    /// The failed run's handle (when still registered) was removed and the start slot reserved.
+    Reserved(Option<LiveSessionHandle>),
+    /// Admissions are closed or the run was explicitly stopped: the turn is intentionally dropped.
+    Abandoned,
+    /// A concurrent lifecycle operation holds the start slot (a recovery clear, stop, start, or
+    /// warm recycle), the handle needs recovery, or a newer run replaced it: the relaunch cannot
+    /// happen now, so the turn must be requeued rather than dropped.
+    Contended,
+}
+
+pub(super) fn take_failed_live_handle(mgr: &SessionManager, req: &FailoverRequest) -> FailoverSlot {
     let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
-    if reg.draining || reg.shutting_down || reg.starting.contains(&req.employee_id) {
-        return None;
+    if reg.draining || reg.shutting_down || reg.stop_epoch(&req.employee_id) != req.stop_epoch {
+        return FailoverSlot::Abandoned;
+    }
+    if reg.starting.contains(&req.employee_id) {
+        return FailoverSlot::Contended;
     }
     if let Some(existing) = reg.live.get(&req.employee_id) {
         let st = existing.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -143,12 +120,12 @@ pub(super) fn take_failed_live_handle(
             || st.state == SessionState::RecoveryRequired
             || st.run_id.as_deref() != Some(req.failed_run_id.as_str())
         {
-            return None;
+            return FailoverSlot::Contended;
         }
     }
     let old = reg.live.remove(&req.employee_id);
     reg.starting.insert(req.employee_id.clone());
-    Some(old)
+    FailoverSlot::Reserved(old)
 }
 
 pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) {
@@ -160,11 +137,13 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
     if !is_stale_recycle && !refreshed_same_conn {
         record_failover_connection_health(mgr, &req);
     }
-    let Some(dead_handle) = take_failed_live_handle(mgr, &req) else {
-        if is_stale_recycle && !is_admissions_closed(mgr) {
-            enqueue_recovery_wake(mgr, &req, None);
+    let dead_handle = match take_failed_live_handle(mgr, &req) {
+        FailoverSlot::Reserved(dead_handle) => dead_handle,
+        FailoverSlot::Abandoned => return,
+        FailoverSlot::Contended => {
+            requeue_contended_failover(mgr, &req);
+            return;
         }
-        return;
     };
     let _guard = StartSlotGuard::new(&mgr.registry, req.employee_id.clone());
     if let Some(old) = dead_handle {
@@ -225,6 +204,36 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
     if let Err(err) = launch_res {
         record_failover_exhausted(mgr, &req, &err);
     }
+}
+
+/// Persists a failover turn that lost its relaunch to a concurrent lifecycle operation as a
+/// durable `Recovery` wake (every failover reason, not only `warm_route_stale`), so the wake
+/// retry loop or the contending operation's own wake pass runs it once the slot frees.
+///
+/// Nothing is queued once admissions close or the agent is definitively retired (offboarded or no
+/// longer an agent). Pause and offboard already abandon the failover through their explicit
+/// `stop_session` ([`FailoverSlot::Abandoned`]); a transient admission refusal (a satellite
+/// awaiting its HQ snapshot, an unreadable record) keeps the turn, never drops it.
+pub(super) fn requeue_contended_failover(mgr: &SessionManager, req: &FailoverRequest) {
+    if is_admissions_closed(mgr) || is_retired_agent(mgr, &req.employee_id) {
+        return;
+    }
+    let note = serde_json::json!({
+        "type": "pool_failover_requeued",
+        "failed_connection_id": req.failed_connection_id,
+        "reason": req.reason,
+        "at": rfc3339_now(),
+    });
+    let _ = mgr.store.append_history(&req.employee_id, &note, &[]);
+    enqueue_recovery_wake(mgr, req, None);
+}
+
+/// `true` only when the employee record says the agent will never run again here.
+fn is_retired_agent(mgr: &SessionManager, employee_id: &str) -> bool {
+    matches!(
+        mgr.office.load_employee(employee_id),
+        Ok(Some(emp)) if emp.kind != EmployeeKind::Agent || emp.status == EmployeeStatus::Inactive
+    )
 }
 
 pub(super) fn record_failover_exhausted(

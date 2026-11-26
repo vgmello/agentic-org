@@ -1,6 +1,11 @@
 //! Pure sandbox path-rule builders shared by the session sandbox planners.
 
-use super::*;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+
+use org_agent_runtime::{PathPattern, SpecPath};
+
+use super::rust_toolchain::{canonicalize_with_tail, host_rust_dir_env_from};
 
 pub(super) fn push_safe_ro_dir(
     out: &mut Vec<SpecPath>,
@@ -293,4 +298,33 @@ pub(super) fn append_privileged_socket_patterns(out: &mut Vec<PathPattern>) {
             push_glob_pattern(out, &xdg_path.join("podman"));
         }
     }
+}
+
+pub(super) fn collect_non_self_admin_names(
+    wt_dir: &Path,
+    repo_id: Option<&str>,
+    git_state: &org_office::git::OfficeGitState,
+    self_admins: &std::collections::BTreeSet<String>,
+) -> std::collections::BTreeSet<String> {
+    let mut other_admins = std::collections::BTreeSet::new();
+    if let Ok(entries) = std::fs::read_dir(wt_dir) {
+        for name in entries
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| !self_admins.contains(n))
+        {
+            other_admins.insert(name);
+        }
+    }
+    if let Some(rid) = repo_id {
+        for ws in git_state.workspaces.values() {
+            if ws.repository_id == rid
+                && is_safe_worktree_admin_name(&ws.admin_dir_name)
+                && !self_admins.contains(&ws.admin_dir_name)
+            {
+                other_admins.insert(ws.admin_dir_name.clone());
+            }
+        }
+    }
+    other_admins
 }

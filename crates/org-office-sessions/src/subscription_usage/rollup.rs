@@ -2,6 +2,7 @@
 //! bounded concurrent collection (called by `SessionManager`).
 
 use super::*;
+use crate::credentials::format_rfc3339_ms;
 
 // ---------------------------------------------------------------------------
 // Office + CredentialVault orchestration (called by SessionManager)
