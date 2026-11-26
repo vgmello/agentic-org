@@ -39,7 +39,7 @@ function fakeRoot(): {
 	};
 }
 
-describe('ui preferences and 6-theme selection', () => {
+describe('ui preferences and 7-theme selection', () => {
 	it('defaults to ocean theme with shortcuts enabled, assembly dividers off, and cozy high contrast off', () => {
 		const resolved = resolveInitialPreferences();
 		expect(resolved.theme).toBe('ocean');
@@ -61,8 +61,16 @@ describe('ui preferences and 6-theme selection', () => {
 		expect(disabled.assemblyDividers).toBe(false);
 	});
 
-	it('reads saved theme from storage across all 6 v6 themes', () => {
-		for (const id of ['ocean', 'classic', 'graphite', 'cozy', 'report', 'report-dark'] as const) {
+	it('reads saved theme from storage across all 7 v6 themes', () => {
+		for (const id of [
+			'ocean',
+			'classic',
+			'graphite',
+			'graphite-light',
+			'cozy',
+			'report',
+			'report-dark'
+		] as const) {
 			const resolved = resolveInitialPreferences({
 				storage: memoryStorage({ [STORAGE_KEYS.theme]: id })
 			});
@@ -89,10 +97,13 @@ describe('ui preferences and 6-theme selection', () => {
 		expect(disabled.cozyHighContrast).toBe(false);
 	});
 
-	it('gives URL query params priority over storage for all 6 themes', () => {
+	it('gives URL query params priority over storage for all 7 themes', () => {
 		const storage = memoryStorage({ [STORAGE_KEYS.theme]: 'ocean' });
 		expect(resolveInitialPreferences({ search: '?theme=graphite', storage }).theme).toBe(
 			'graphite'
+		);
+		expect(resolveInitialPreferences({ search: '?theme=graphite-light', storage }).theme).toBe(
+			'graphite-light'
 		);
 		expect(resolveInitialPreferences({ search: '?theme=cozy', storage }).theme).toBe('cozy');
 		expect(resolveInitialPreferences({ search: '?theme=report', storage }).theme).toBe('report');
@@ -132,11 +143,12 @@ describe('ui preferences and 6-theme selection', () => {
 		expect(resolved.singleKeyShortcuts).toBe(false);
 	});
 
-	it('validates the 6 theme ids and color schemes strictly', () => {
+	it('validates the 7 theme ids and color schemes strictly', () => {
 		expect(UI_THEMES.map((t) => t.id)).toEqual([
 			'ocean',
 			'classic',
 			'graphite',
+			'graphite-light',
 			'cozy',
 			'report',
 			'report-dark'
@@ -144,6 +156,7 @@ describe('ui preferences and 6-theme selection', () => {
 		expect(isUiTheme('ocean')).toBe(true);
 		expect(isUiTheme('classic')).toBe(true);
 		expect(isUiTheme('graphite')).toBe(true);
+		expect(isUiTheme('graphite-light')).toBe(true);
 		expect(isUiTheme('cozy')).toBe(true);
 		expect(isUiTheme('report')).toBe(true);
 		expect(isUiTheme('report-dark')).toBe(true);
@@ -152,6 +165,7 @@ describe('ui preferences and 6-theme selection', () => {
 		expect(isUiTheme(null)).toBe(false);
 
 		expect(isLightTheme('report')).toBe(true);
+		expect(isLightTheme('graphite-light')).toBe(true);
 		expect(isLightTheme('report-dark')).toBe(false);
 		expect(isLightTheme('ocean')).toBe(false);
 		expect(isLightTheme('classic')).toBe(false);
@@ -173,6 +187,11 @@ describe('ui preferences and 6-theme selection', () => {
 
 		applyUiAttributes(root as unknown as HTMLElement, 'report', false);
 		expect(root.dataset.uiTheme).toBe('report');
+		expect(root.classes.has('light')).toBe(true);
+		expect(root.classes.has('dark')).toBe(false);
+
+		applyUiAttributes(root as unknown as HTMLElement, 'graphite-light', false);
+		expect(root.dataset.uiTheme).toBe('graphite-light');
 		expect(root.classes.has('light')).toBe(true);
 		expect(root.classes.has('dark')).toBe(false);
 

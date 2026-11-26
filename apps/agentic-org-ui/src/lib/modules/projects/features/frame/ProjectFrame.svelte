@@ -12,14 +12,15 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { mergeProps, Tooltip } from 'bits-ui';
-	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import FileText from '@lucide/svelte/icons/file-text';
 	import Layers from '@lucide/svelte/icons/layers';
 	import Package from '@lucide/svelte/icons/package';
 	import Settings from '@lucide/svelte/icons/settings';
+	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
 	import Callout from '$lib/components/Callout.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
+	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
 	import TabsNav from '$lib/components/TabsNav.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { Resource } from '$lib/components/resource.svelte';
@@ -162,13 +163,14 @@
 <svelte:head><title>{title}</title></svelte:head>
 
 <div class={['project-frame-root', isActivityTab && 'project-frame-activity']}>
-	<!-- The one named back link, in every state. -->
+	<!-- Breadcrumb trail, in every state. -->
 	<div class="shrink-0 px-4 pt-5 min-[640px]:px-6 min-[1024px]:px-8">
-		<a
-			href={resolve(PROJECTS_URL)}
-			class="inline-flex min-h-6 items-center gap-1 rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
-			><ChevronLeft class="size-4 shrink-0" aria-hidden="true" />Projects</a
-		>
+		<Breadcrumbs
+			items={[
+				{ label: 'Projects', href: PROJECTS_URL },
+				{ label: project?.name ?? (read.state === 'loading' ? 'Loading…' : 'Project') }
+			]}
+		/>
 	</div>
 	{#if read.state === 'loading'}
 		<FrameSkeleton />
@@ -190,40 +192,43 @@
 					{@const tone = projectBarTone(p.tasks, p.bugs, p.archived)}
 					<div class="section-header project-header">
 						<header
-							class="project-masthead ph px-4 pt-2 pb-2 min-[640px]:px-6 min-[1024px]:px-8"
+							class="project-masthead ph flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 pt-2 pb-2 min-[640px]:px-6 min-[1024px]:px-8"
 							data-testid="project-header"
 						>
-							<h2
-								id="project-heading"
-								tabindex="-1"
-								class="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere] focus:outline-none"
-							>
-								{p.name}
-								<span
-									class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs/5 font-normal text-fg-muted ring-1 ring-line ring-inset"
-									>{projectRef(p)}</span
+							<div class="min-w-0 flex-1 basis-64">
+								<h2
+									id="project-heading"
+									tabindex="-1"
+									class="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[clamp(1.375rem,2.2vw,1.875rem)]/[1.22] font-semibold tracking-[-0.03em] text-fg [overflow-wrap:anywhere] focus:outline-none"
 								>
-								<span
-									class={[
-										'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs/5 font-semibold whitespace-nowrap',
-										healthPillClass(tone)
-									]}>{projectHealthLabel(tone)}</span
-								>
-							</h2>
-							<ul role="list" class="mt-2 {factsLine} text-sm/6 text-fg-muted">
-								<li class={fact} data-testid="owner-team">
-									Accountable team: <TeamLink team={p.ownerTeam} />
-								</li>
-								{#if p.contributors.length > 0}
-									<li class={fact} data-testid="contributors">
-										Contributors: {#each p.contributors as t, i (t.id)}{#if i > 0},
-											{/if}<TeamLink team={t} />{/each}
+									{p.name}
+									<span
+										class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs/5 font-normal text-fg-muted ring-1 ring-line ring-inset"
+										>{projectRef(p)}</span
+									>
+									<span
+										class={[
+											'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs/5 font-semibold whitespace-nowrap',
+											healthPillClass(tone)
+										]}>{projectHealthLabel(tone)}</span
+									>
+								</h2>
+								<ul role="list" class="mt-2 {factsLine} text-sm/6 text-fg-muted">
+									<li class={fact} data-testid="owner-team">
+										Accountable team: <TeamLink team={p.ownerTeam} />
 									</li>
-								{/if}
-								<li class={fact}>
-									Slug: <span class="font-mono text-xs/5 text-fg-secondary">{p.slug}</span>
-								</li>
-							</ul>
+									{#if p.contributors.length > 0}
+										<li class={fact} data-testid="contributors">
+											Contributors: {#each p.contributors as t, i (t.id)}{#if i > 0},
+												{/if}<TeamLink team={t} />{/each}
+										</li>
+									{/if}
+									<li class={fact}>
+										Slug: <span class="font-mono text-xs/5 text-fg-secondary">{p.slug}</span>
+									</li>
+								</ul>
+							</div>
+							<InteriorSearchBar class="w-full shrink-0 sm:w-[clamp(18rem,28vw,25rem)]" />
 						</header>
 						<!-- Tabs wrap onto a second line rather than scroll out of sight (narrow widths, large text). -->
 						<div class="section-toolbar project-toolbar">
@@ -370,7 +375,7 @@
 	}
 	.section-header {
 		position: relative;
-		z-index: 1;
+		z-index: 20;
 		flex: none;
 		container-type: inline-size;
 		--proj-gutter: 1rem;

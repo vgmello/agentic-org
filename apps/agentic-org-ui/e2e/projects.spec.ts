@@ -451,12 +451,12 @@ test('PROJ-2: New project opens from Home via Command bar / All projects, empty 
 }) => {
 	await open(page, '/home');
 	await page.keyboard.press('ControlOrMeta+k');
-	const cmdkCombo = page.getByRole('combobox', { name: 'Search, run a command, or ask Org AI' });
+	const cmdkCombo = page.getByRole('combobox', { name: 'Search, run a command, or ask Tess' });
 	await expect(cmdkCombo).toBeFocused();
 	await cmdkCombo.fill('Go to Projects');
 	await page
 		.locator('#exec-cmdk-home-listbox')
-		.getByRole('option', { name: /^Go to Projects/ })
+		.getByRole('option', { name: /^Projects\b/ })
 		.click();
 	await expect(page).toHaveURL(/\/projects$/);
 	await page.getByRole('button', { name: 'New project' }).click();

@@ -1,4 +1,7 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { orgApi } from '$lib/modules/organization/api';
+import { createHttpWorkItemsApi } from './http-api';
 import type {
 	AssignmentChange,
 	BudgetAction,
@@ -203,39 +206,66 @@ export interface WorkItemsApi {
 	budgetOperation(organizationId: string, operationId: string): Promise<BudgetOperation>;
 }
 
-// The web API does not serve work items yet: every call refuses, and each place says so.
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+const gatewayWorkItemsApi = createHttpWorkItemsApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal),
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	},
+	orgApi,
+	viewerContext: (organizationId) => {
+		const session = signedInSession();
+		if (!session) return undefined;
+		const link = session.organizations.find((o) => o.org_id === organizationId);
+		return { employeeId: link?.employee_id, isAdmin: session.admin };
+	},
+	newId: () => appSession.newOperationId()
+});
+
+function guarded<K extends keyof WorkItemsApi>(key: K): WorkItemsApi[K] {
+	return ((...args: unknown[]) =>
+		signedInSession()
+			? (gatewayWorkItemsApi[key] as (...a: unknown[]) => Promise<unknown>)(...args)
+			: unavailableCall()) as WorkItemsApi[K];
+}
+
+// Production work items API backed by `/api/v1/organizations/{org}/tasks*`.
+// Fails closed when signed out; unserved endpoints fail closed inside `gatewayWorkItemsApi`.
 // Under `bun run dev:mock`, e2e/fakes/modules/workitems.ts stands in for this file.
-export const workItemsApi: WorkItemsApi = {
-	queue: unavailableCall,
-	task: unavailableCall,
-	choices: unavailableCall,
-	similar: unavailableCall,
-	lookup: unavailableCall,
-	create: unavailableCall,
+export const workItemsApi: WorkItemsApi = Object.freeze<WorkItemsApi>({
+	queue: guarded('queue'),
+	task: guarded('task'),
+	choices: guarded('choices'),
+	similar: guarded('similar'),
+	lookup: guarded('lookup'),
+	create: guarded('create'),
 	createOperation: unavailableCall,
-	addToExisting: unavailableCall,
-	setStatus: unavailableCall,
-	setPriority: unavailableCall,
-	edit: unavailableCall,
-	assign: unavailableCall,
-	triage: unavailableCall,
-	addSteps: unavailableCall,
-	setStep: unavailableCall,
-	moveStep: unavailableCall,
-	removeStep: unavailableCall,
-	comment: unavailableCall,
-	notes: unavailableCall,
-	addNote: unavailableCall,
-	editNote: unavailableCall,
-	deleteNote: unavailableCall,
-	publishNote: unavailableCall,
-	markFixed: unavailableCall,
-	verify: unavailableCall,
-	close: unavailableCall,
-	reopen: unavailableCall,
+	addToExisting: guarded('addToExisting'),
+	setStatus: guarded('setStatus'),
+	setPriority: guarded('setPriority'),
+	edit: guarded('edit'),
+	assign: guarded('assign'),
+	triage: guarded('triage'),
+	addSteps: guarded('addSteps'),
+	setStep: guarded('setStep'),
+	moveStep: guarded('moveStep'),
+	removeStep: guarded('removeStep'),
+	comment: guarded('comment'),
+	notes: guarded('notes'),
+	addNote: guarded('addNote'),
+	editNote: guarded('editNote'),
+	deleteNote: guarded('deleteNote'),
+	publishNote: guarded('publishNote'),
+	markFixed: guarded('markFixed'),
+	verify: guarded('verify'),
+	close: guarded('close'),
+	reopen: guarded('reopen'),
 	approve: unavailableCall,
 	askForChanges: unavailableCall,
-	decline: unavailableCall,
+	decline: guarded('decline'),
 	merge: unavailableCall,
 	whyChoices: unavailableCall,
 	linkWhy: unavailableCall,
@@ -243,4 +273,4 @@ export const workItemsApi: WorkItemsApi = {
 	setBudget: unavailableCall,
 	budgetAction: unavailableCall,
 	budgetOperation: unavailableCall
-};
+});

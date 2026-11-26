@@ -10,7 +10,13 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
+	import Plus from '@lucide/svelte/icons/plus';
+	import Sparkles from '@lucide/svelte/icons/sparkles';
+	import X from '@lucide/svelte/icons/x';
 	import { newId } from '$lib/modules/organization/commands';
+	import { useNotifications } from '$lib/platform/shell/notifications.svelte';
+	import { useShellAi } from '$lib/platform/shell/shell-ai';
+	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { UNAVAILABLE_MESSAGE } from '$lib/platform/unavailable-api';
 	import { toAppError } from '$lib/proto';
 	import { Button } from '$lib/components/ui/button';
@@ -35,6 +41,7 @@
 	} from '$lib/components/classes';
 	import { workItemsApi } from '../../api';
 	import { OUTCOME_UNKNOWN } from '../../budget';
+	import { withDraftIdeationMarker } from '../../ideation';
 	import {
 		PRIORITIES,
 		PRIORITY_WORD,
@@ -42,10 +49,20 @@
 		SEVERITY_HELP,
 		SEVERITY_WORD,
 		TYPE_WORD,
+		splitSteps,
+		stepError,
 		taskHref,
 		titleError
 	} from '../../present';
-	import type { Choices, Priority, Severity, TaskRow, TaskType } from '../../types';
+	import type { Choices, EmployeeChoice, Priority, Severity, TaskRow, TaskType } from '../../types';
+	import {
+		applyMentionReplacement,
+		assessTessIntakeRouting,
+		buildTessDraftPrompt,
+		detectMentionMatch,
+		filterMentionCandidates,
+		type MentionMatch
+	} from './composer-helpers';
 
 	let {
 		open = $bindable(false),
@@ -74,6 +91,14 @@
 	} = $props();
 
 	const uid = $props.id();
+	const shellAi = useShellAi();
+	const notifications = useNotifications();
+	let shellData: ReturnType<typeof useShellData> | undefined;
+	try {
+		shellData = useShellData();
+	} catch {
+		shellData = undefined;
+	}
 	let type = $state<TaskType>('task');
 	let title = $state('');
 	let description = $state('');
@@ -87,6 +112,13 @@
 	let chosenTeamId = $state('');
 	let assignedTeamId = $state('');
 	let assigneeId = $state('');
+	let createMore = $state(false);
+	let draftSteps = $state<string[]>([]);
+	let stepInput = $state('');
+	let stepInputError = $state<string | undefined>();
+	let mentionedIds = $state<string[]>([]);
+	let mentionMatch = $state<MentionMatch | null>(null);
+	let mentionIdx = $state(0);
 
 	type ChoicesState = 'loading' | 'ready' | 'unavailable' | 'unsupported' | 'error';
 
@@ -107,8 +139,18 @@
 	let formError = $state<string | undefined>();
 
 	let titleInput = $state<HTMLInputElement | null>(null);
+	let descriptionInput = $state<HTMLTextAreaElement | null>(null);
 	let whatHappenedInput = $state<HTMLTextAreaElement | null>(null);
 	let teamSelect = $state<HTMLSelectElement | null>(null);
+
+	const mentionCandidates = $derived(
+		mentionMatch && choices ? filterMentionCandidates(choices.employees, mentionMatch.query) : []
+	);
+	const mentionedEmployees = $derived(
+		mentionedIds
+			.map((id) => choices?.employees.find((e) => e.id === id))
+			.filter((e): e is EmployeeChoice => Boolean(e))
+	);
 
 	const selectedProject = $derived(choices?.projects.find((p) => p.id === chosenProjectId) ?? null);
 	const effectiveTeamId = $derived(selectedProject ? selectedProject.ownerTeam.id : chosenTeamId);
@@ -131,7 +173,8 @@
 			description.trim().length > 0 ||
 			whatHappened.trim().length > 0 ||
 			expected.trim().length > 0 ||
-			steps.trim().length > 0
+			steps.trim().length > 0 ||
+			draftSteps.length > 0
 	);
 
 	const bugSubmitDisabledReason = $derived.by(() => {
@@ -149,6 +192,14 @@
 		if (type === 'request') return busy ? 'Saving…' : assigneeId ? 'Send request' : 'Save request';
 		return busy ? 'Creating…' : 'Create task';
 	});
+
+	const selectedAssigneeName = $derived(choices?.employees.find((e) => e.id === assigneeId)?.name);
+
+	const tessRouting = $derived(
+		type !== 'bug' && title.trim()
+			? assessTessIntakeRouting(title, description, draftSteps, selectedAssigneeName)
+			: null
+	);
 
 	function classifyChoicesError(e: unknown): {
 		state: 'unavailable' | 'unsupported' | 'error';
@@ -177,6 +228,8 @@
 			choicesState = 'ready';
 			if (projectId && loaded.projects.some((p) => p.id === projectId)) {
 				chosenProjectId = projectId;
+			} else if (!chosenProjectId && !chosenTeamId && loaded.teams.length === 1) {
+				chosenTeamId = loaded.teams[0].id;
 			}
 		} catch (e) {
 			const classified = classifyChoicesError(e);
@@ -186,10 +239,7 @@
 		}
 	}
 
-	$effect(() => {
-		if (!open) return;
-		if (unknownOpId) return;
-		type = initialType;
+	function resetDraftFields(preserveScope = false) {
 		title = '';
 		description = '';
 		whatHappened = '';
@@ -198,14 +248,30 @@
 		environment = '';
 		severity = null;
 		priority = 'normal';
-		chosenProjectId = projectId ?? '';
-		chosenTeamId = '';
-		assignedTeamId = '';
-		assigneeId = '';
+		if (!preserveScope) {
+			chosenProjectId = projectId ?? '';
+			chosenTeamId = '';
+			assignedTeamId = '';
+			assigneeId = '';
+		}
+		draftSteps = [];
+		stepInput = '';
+		stepInputError = undefined;
+		mentionedIds = [];
+		mentionMatch = null;
+		mentionIdx = 0;
 		similar = [];
 		fieldErrors = {};
 		formError = undefined;
 		operationId = newId();
+	}
+
+	$effect(() => {
+		if (!open) return;
+		if (unknownOpId) return;
+		type = initialType;
+		createMore = false;
+		resetDraftFields(false);
 		void loadChoices();
 		void tick().then(() => titleInput?.focus());
 	});
@@ -346,6 +412,189 @@
 		}
 	}
 
+	function handleDescriptionInput(event: Event) {
+		const el = event.currentTarget as HTMLTextAreaElement;
+		description = el.value;
+		const nextMatch = detectMentionMatch(el.value, el.selectionStart ?? el.value.length);
+		mentionMatch = nextMatch;
+		mentionIdx = 0;
+	}
+
+	function pickMention(emp: EmployeeChoice) {
+		if (!mentionMatch) return;
+		const applied = applyMentionReplacement(description, mentionMatch, emp);
+		description = applied.text;
+		if (!mentionedIds.includes(emp.id)) mentionedIds = [...mentionedIds, emp.id];
+		if (!assigneeId) assigneeId = emp.id;
+		mentionMatch = null;
+		mentionIdx = 0;
+		void tick().then(() => {
+			if (!descriptionInput) return;
+			descriptionInput.focus();
+			descriptionInput.setSelectionRange(applied.caret, applied.caret);
+		});
+	}
+
+	function removeMention(id: string) {
+		const next = mentionedIds.filter((item) => item !== id);
+		mentionedIds = next;
+		if (assigneeId === id) assigneeId = next[0] ?? '';
+	}
+
+	function handleDescriptionKeydown(event: KeyboardEvent) {
+		if (!mentionMatch || mentionCandidates.length === 0) return;
+		if (event.key === 'ArrowDown') {
+			event.preventDefault();
+			mentionIdx = (mentionIdx + 1) % mentionCandidates.length;
+		} else if (event.key === 'ArrowUp') {
+			event.preventDefault();
+			mentionIdx = (mentionIdx - 1 + mentionCandidates.length) % mentionCandidates.length;
+		} else if (event.key === 'Enter' || event.key === 'Tab') {
+			event.preventDefault();
+			pickMention(mentionCandidates[Math.min(mentionIdx, mentionCandidates.length - 1)]);
+		} else if (event.key === 'Escape') {
+			event.preventDefault();
+			event.stopPropagation();
+			mentionMatch = null;
+		}
+	}
+
+	function appendDraftSteps(raw: string) {
+		const lines = splitSteps(raw);
+		const err = stepError(lines);
+		if (err) {
+			stepInputError = err;
+			return;
+		}
+		draftSteps = [...draftSteps, ...lines];
+		stepInput = '';
+		stepInputError = undefined;
+	}
+
+	function handleStepKeydown(event: KeyboardEvent) {
+		if (event.key !== 'Enter') return;
+		event.preventDefault();
+		if (stepInput.trim()) appendDraftSteps(stepInput);
+	}
+
+	function handleStepPaste(event: ClipboardEvent) {
+		const pasted = event.clipboardData?.getData('text') ?? '';
+		if (!pasted.includes('\n')) return;
+		event.preventDefault();
+		appendDraftSteps(stepInput ? `${stepInput}\n${pasted}` : pasted);
+	}
+
+	function removeDraftStep(index: number) {
+		draftSteps = draftSteps.filter((_, i) => i !== index);
+	}
+
+	function askTessToScope() {
+		if (!shellAi) return;
+		const prompt = buildTessDraftPrompt(
+			title,
+			type === 'bug' ? whatHappened : description,
+			draftSteps
+		);
+		open = false;
+		shellAi.ask(prompt);
+	}
+
+	async function executeTessIntakeBackground(input: {
+		jobId: string;
+		payload: ReturnType<typeof buildCreatePayload>;
+		stepsToAttach: string[];
+		capturedTitle: string;
+		capturedType: TaskType;
+		mode: 'draft' | 'direct';
+		assigneeName?: string;
+	}) {
+		try {
+			const created = await workItemsApi.create(organizationId, input.payload);
+			await persistDraftSteps(created.id, input.stepsToAttach);
+			const isDraft = input.mode === 'draft';
+			const summary = isDraft
+				? `${input.capturedTitle} · Ready for Draft ideation`
+				: `${input.capturedTitle}${input.assigneeName ? ` · Assigned to ${input.assigneeName}` : ''}`;
+			notifications?.finishJob(input.jobId, {
+				title: isDraft ? `Tess drafted ${created.ref}` : `Tess filed ${created.ref}`,
+				summary,
+				href: taskHref(created.ref),
+				icon: isDraft ? 'pencil' : 'check',
+				tone: isDraft ? 'accent' : 'ok'
+			});
+			oncreated?.({ ...created, type: input.capturedType });
+			void shellData?.refresh();
+		} catch (e) {
+			const msg = toAppError(e).message;
+			notifications?.failJob(input.jobId, `Couldn't file "${input.capturedTitle}"`, msg, '/work');
+			toast.error(msg);
+		}
+	}
+
+	/**
+	 * Fire-and-forget async intake (TASK-139): closes the composer immediately, tracks progress
+	 * in the top-bar Notifications bell + Floating Tess Companion pill, and creates the live
+	 * work item at HQ (marking Draft ideation when exploratory).
+	 */
+	async function sendToTessAsync() {
+		const blocked =
+			busy || checking || Boolean(unknownOpId) || choicesUnavailable || type === 'bug';
+		if (blocked) return;
+		fieldErrors = {};
+		formError = undefined;
+		const nextErrors = validateDraft();
+		if (Object.keys(nextErrors).length > 0) {
+			fieldErrors = nextErrors;
+			await focusField(Object.keys(nextErrors)[0]);
+			return;
+		}
+		const routing = assessTessIntakeRouting(title, description, draftSteps, selectedAssigneeName);
+		const capturedTitle = title.trim();
+		const capturedType = type;
+		const stepsToAttach = [...draftSteps, ...(stepInput.trim() ? splitSteps(stepInput) : [])];
+		const op = operationId || newId();
+		const basePayload = buildCreatePayload(op);
+		const payload =
+			routing.mode === 'draft'
+				? { ...basePayload, description: withDraftIdeationMarker(basePayload.description) }
+				: basePayload;
+		const jobId = `tess-intake-${op}`;
+
+		notifications?.startJob({
+			id: jobId,
+			title: `Refining: ${capturedTitle}`,
+			step: routing.label,
+			source: 'tess'
+		});
+		toast.message(`Sent "${capturedTitle}" to Tess — refining in background.`);
+
+		if (createMore) {
+			resetDraftFields(true);
+			void tick().then(() => titleInput?.focus());
+		} else {
+			open = false;
+		}
+
+		await executeTessIntakeBackground({
+			jobId,
+			payload,
+			stepsToAttach,
+			capturedTitle,
+			capturedType,
+			mode: routing.mode,
+			assigneeName: selectedAssigneeName
+		});
+	}
+
+	async function persistDraftSteps(taskId: string, pending: string[]) {
+		if (pending.length === 0) return;
+		try {
+			await workItemsApi.addSteps(organizationId, taskId, pending);
+		} catch {
+			toast.warning('Task created, but checklist steps could not be attached.');
+		}
+	}
+
 	async function submit(event?: Event) {
 		event?.preventDefault();
 		if (busy || checking || unknownOpId || choicesUnavailable) return;
@@ -359,15 +608,22 @@
 			return;
 		}
 
+		const stepsToAttach = [...draftSteps, ...(stepInput.trim() ? splitSteps(stepInput) : [])];
 		busy = true;
 		const op = operationId || newId();
 		operationId = op;
 		try {
 			const created = await workItemsApi.create(organizationId, buildCreatePayload(op));
+			await persistDraftSteps(created.id, stepsToAttach);
 			unknownOpId = undefined;
-			open = false;
 			toastCreated(created.ref);
 			oncreated?.({ ...created, type });
+			if (createMore) {
+				resetDraftFields(true);
+				void tick().then(() => titleInput?.focus());
+			} else {
+				open = false;
+			}
 		} catch (e) {
 			await handleCreateError(e, op);
 		} finally {
@@ -425,15 +681,33 @@
 	function handleFormKeydown(event: KeyboardEvent) {
 		if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
 			event.preventDefault();
-			if (!bugSubmitDisabledReason) void submit();
+			if (event.shiftKey || type === 'bug' || !notifications) {
+				if (!bugSubmitDisabledReason) void submit();
+			} else {
+				void sendToTessAsync();
+			}
 		}
 	}
 </script>
 
 <Dialog bind:open onOpenChange={handleOpenChange}>
-	<DialogContent class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
+	<DialogContent class="work-composer-dialog max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
 		<DialogHeader>
-			<DialogTitle text={dialogHeading} />
+			<div class="flex items-start justify-between gap-3 pr-6">
+				<DialogTitle text={dialogHeading} />
+				{#if shellAi}
+					<button
+						type="button"
+						onclick={askTessToScope}
+						disabled={busy || checking}
+						class="work-composer-tess-btn inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-xs/5 font-medium"
+						data-testid="composer-ask-tess"
+					>
+						<Sparkles class="size-3.5" aria-hidden="true" />
+						<span>Ask Tess</span>
+					</button>
+				{/if}
+			</div>
 			<DialogDescription>
 				{#if contextLabel}
 					{contextLabel}
@@ -676,22 +950,135 @@
 					/>
 				</div>
 			{:else}
-				<!-- Description / Request text -->
-				<div>
+				<!-- Description / Request text with @-mention assignee picker -->
+				<div class="relative">
 					<Label for="{uid}-desc" class="block text-sm/6 font-medium text-fg">
 						{type === 'request' ? 'Details and why it matters' : 'Description (optional)'}
 					</Label>
 					<textarea
 						id="{uid}-desc"
+						bind:this={descriptionInput}
 						rows={4}
-						bind:value={description}
+						value={description}
+						oninput={handleDescriptionInput}
+						onkeydown={handleDescriptionKeydown}
 						disabled={busy || checking || !!unknownOpId}
 						placeholder={type === 'request'
-							? 'Describe the outcome you want and any context…'
-							: 'Context, acceptance notes, or links…'}
+							? 'Describe the outcome you want… Type @ to tag an agent or person'
+							: 'Context, acceptance notes, or links… Type @ to tag an agent or person'}
 						class="mt-1.5 {textareaClass}"></textarea>
+
+					{#if mentionMatch && mentionCandidates.length > 0}
+						<div
+							role="listbox"
+							aria-label="Tag agent or person"
+							class="work-mention-popover absolute right-0 left-0 z-30 mt-1 flex flex-col gap-0.5 p-1"
+							data-testid="composer-mention-popover"
+						>
+							{#each mentionCandidates as emp, idx (emp.id)}
+								<button
+									type="button"
+									role="option"
+									aria-selected={idx === mentionIdx}
+									onmousedown={(e) => {
+										e.preventDefault();
+										pickMention(emp);
+									}}
+									onmouseenter={() => (mentionIdx = idx)}
+									class="work-mention-opt flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-xs/5 {idx ===
+									mentionIdx
+										? 'is-active'
+										: ''}"
+								>
+									<span class="flex min-w-0 items-center gap-2">
+										<span class="shrink-0 font-medium text-fg">{emp.name}</span>
+										{#if emp.role}
+											<span class="truncate text-fg-muted">{emp.role}</span>
+										{/if}
+									</span>
+									<span class="shrink-0 text-[11px]/4 text-fg-muted">
+										{emp.kind} · {emp.availability}
+									</span>
+								</button>
+							{/each}
+						</div>
+					{/if}
+
+					{#if mentionedEmployees.length > 0}
+						<div class="mt-2 flex flex-wrap gap-1.5" aria-label="Tagged members">
+							{#each mentionedEmployees as emp (emp.id)}
+								<span
+									class="inline-flex items-center gap-1 rounded-full bg-surface-raised px-2.5 py-0.5 text-xs/5 text-fg ring-1 ring-line"
+								>
+									<span>@{emp.name.split(' ')[0]}</span>
+									{#if emp.role}
+										<span class="text-fg-muted">{emp.role}</span>
+									{/if}
+									<button
+										type="button"
+										aria-label="Remove {emp.name}"
+										onclick={() => removeMention(emp.id)}
+										class="ml-0.5 rounded-full p-0.5 text-fg-muted hover:text-fg"
+									>
+										<X class="size-3" aria-hidden="true" />
+									</button>
+								</span>
+							{/each}
+						</div>
+					{/if}
 				</div>
 			{/if}
+
+			<!-- Inline Acceptance criteria / checklist steps -->
+			<div class="flex flex-col gap-1.5">
+				<Label for="{uid}-ac-step" class="block text-sm/6 font-medium text-fg">
+					Acceptance criteria (optional)
+				</Label>
+				{#if draftSteps.length > 0}
+					<ul role="list" class="flex flex-col gap-1" data-testid="composer-draft-steps">
+						{#each draftSteps as stepText, idx (`${idx}-${stepText}`)}
+							<li
+								class="flex items-center justify-between gap-2 rounded-md bg-surface-raised px-2.5 py-1.5 text-xs/5 text-fg ring-1 ring-line"
+							>
+								<span class="min-w-0 flex-1 [overflow-wrap:anywhere]">{stepText}</span>
+								<button
+									type="button"
+									aria-label="Remove step {idx + 1}"
+									onclick={() => removeDraftStep(idx)}
+									class="shrink-0 rounded p-0.5 text-fg-muted hover:text-fg"
+								>
+									<X class="size-3.5" aria-hidden="true" />
+								</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				<div class="flex items-center gap-2">
+					<Input
+						id="{uid}-ac-step"
+						bind:value={stepInput}
+						onkeydown={handleStepKeydown}
+						onpaste={handleStepPaste}
+						disabled={busy || checking || !!unknownOpId}
+						placeholder="+ Add checklist step (Enter to add, paste lines for multiple)"
+						class="flex-1 {inputClass}"
+					/>
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						disabled={busy || !stepInput.trim()}
+						onclick={() => appendDraftSteps(stepInput)}
+						class="shrink-0"
+					>
+						<Plus class="size-3.5" aria-hidden="true" />
+						<span>Add</span>
+					</Button>
+				</div>
+				{#if stepInputError}
+					<p class={errorClass} role="alert">{stepInputError}</p>
+				{/if}
+			</div>
 
 			<!-- Project & Accountable team -->
 			<div class="grid gap-3 sm:grid-cols-2">
@@ -800,6 +1187,16 @@
 				<p class={helpClass} data-testid="bug-submit-reason">{bugSubmitDisabledReason}</p>
 			{/if}
 
+			{#if tessRouting && !unknownOpId}
+				<p
+					class="flex items-center gap-1.5 text-xs/5 text-fg-muted"
+					data-testid="composer-tess-routing"
+				>
+					<Sparkles class="size-3.5 shrink-0 text-brand-text" aria-hidden="true" />
+					<span>{tessRouting.label}</span>
+				</p>
+			{/if}
+
 			{#if formError}
 				<div
 					class="rounded-md bg-danger-emphasis/10 px-3 py-2.5 text-sm/6 text-danger-text ring-1 ring-danger-emphasis/20"
@@ -809,35 +1206,66 @@
 				</div>
 			{/if}
 
-			<DialogFooter>
-				<Button
-					type="button"
-					variant="outline"
-					class={mobileButton}
-					disabled={busy || checking}
-					onclick={() => handleOpenChange(false)}>Cancel</Button
-				>
-				{#if unknownOpId}
+			<DialogFooter class="flex-wrap items-center justify-between gap-3 sm:justify-between">
+				<label class="inline-flex cursor-pointer items-center gap-2 text-xs/5 text-fg-secondary">
+					<button
+						type="button"
+						role="switch"
+						aria-checked={createMore}
+						aria-label="Create more"
+						disabled={busy || checking || !!unknownOpId}
+						onclick={() => (createMore = !createMore)}
+						class="work-composer-switch"
+						data-testid="composer-create-more"
+					></button>
+					<span>Create more</span>
+				</label>
+				<div class="flex flex-wrap items-center gap-2">
 					<Button
 						type="button"
 						variant="outline"
 						class={mobileButton}
-						disabled={checking}
-						onclick={discardAttempt}>Discard attempt</Button
+						disabled={busy || checking}
+						onclick={() => handleOpenChange(false)}>Cancel</Button
 					>
-					<Button type="button" class={mobileButton} disabled={checking} onclick={checkCreateStatus}
-						>{checking ? 'Checking…' : 'Check status'}</Button
-					>
-				{:else}
-					<Button
-						type="submit"
-						class={mobileButton}
-						disabled={busy || choicesUnavailable || !!bugSubmitDisabledReason}
-						aria-busy={busy}
-					>
-						{submitLabel}
-					</Button>
-				{/if}
+					{#if unknownOpId}
+						<Button
+							type="button"
+							variant="outline"
+							class={mobileButton}
+							disabled={checking}
+							onclick={discardAttempt}>Discard attempt</Button
+						>
+						<Button
+							type="button"
+							class={mobileButton}
+							disabled={checking}
+							onclick={checkCreateStatus}>{checking ? 'Checking…' : 'Check status'}</Button
+						>
+					{:else}
+						{#if type !== 'bug' && notifications}
+							<Button
+								type="button"
+								variant="outline"
+								class={mobileButton}
+								disabled={busy || choicesUnavailable}
+								onclick={() => void sendToTessAsync()}
+								data-testid="composer-send-to-tess"
+							>
+								<Sparkles class="size-3.5" aria-hidden="true" />
+								<span>Send to Tess</span>
+							</Button>
+						{/if}
+						<Button
+							type="submit"
+							class={mobileButton}
+							disabled={busy || choicesUnavailable || !!bugSubmitDisabledReason}
+							aria-busy={busy}
+						>
+							{submitLabel}
+						</Button>
+					{/if}
+				</div>
 			</DialogFooter>
 		</form>
 	</DialogContent>
@@ -856,3 +1284,74 @@
 	destructive
 	onconfirm={confirmDiscard}
 />
+
+<style>
+	:global(.work-composer-dialog) {
+		border-radius: var(--exec-cmdk-dialog-radius, 12px);
+		background: var(--exec-cmdk-menu-bg, var(--surface));
+		-webkit-backdrop-filter: var(--exec-cmdk-menu-blur, none);
+		backdrop-filter: var(--exec-cmdk-menu-blur, none);
+	}
+	:global(.work-composer-dialog :is(input, textarea, select)) {
+		background-color: var(--exec-well, var(--surface-raised));
+		outline-color: var(--exec-border-hi, var(--line-strong));
+	}
+	.work-composer-tess-btn {
+		border: 1px solid var(--exec-border-hi, var(--line-strong));
+		background: var(--exec-well, var(--surface-raised));
+		color: var(--exec-body, var(--fg-secondary));
+		cursor: pointer;
+	}
+	.work-composer-tess-btn:hover {
+		background: var(--exec-surface-hi, var(--surface-overlay));
+		color: var(--exec-ink, var(--fg));
+	}
+	.work-mention-popover {
+		border: 1px solid var(--exec-border-hi, var(--line-strong));
+		border-radius: var(--exec-ctrl-radius, 8px);
+		background: var(--popover, var(--surface-overlay));
+		-webkit-backdrop-filter: blur(18px);
+		backdrop-filter: blur(18px);
+		box-shadow: var(--exec-cmdk-menu-shadow, 0 12px 24px -8px var(--surface-sunken));
+	}
+	.work-mention-opt {
+		cursor: pointer;
+	}
+	.work-mention-opt:hover,
+	.work-mention-opt.is-active {
+		background: var(--exec-cmdk-opt-active-bg, var(--surface-raised));
+	}
+	.work-composer-switch {
+		position: relative;
+		width: 2rem;
+		height: 1.125rem;
+		border-radius: 9999px;
+		border: 1px solid var(--exec-border-hi, var(--line-strong));
+		background: var(--exec-well, var(--surface-raised));
+		cursor: pointer;
+		transition: background-color 140ms ease-out;
+	}
+	.work-composer-switch::after {
+		content: '';
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 0.75rem;
+		height: 0.75rem;
+		border-radius: 9999px;
+		background: var(--exec-muted, var(--fg-muted));
+		transition: transform 140ms ease-out;
+	}
+	.work-composer-switch[aria-checked='true'] {
+		background: var(--tone-accent, var(--primary));
+		border-color: var(--tone-accent, var(--primary));
+	}
+	.work-composer-switch[aria-checked='true']::after {
+		transform: translateX(0.875rem);
+		background: var(--on-emphasis);
+	}
+	.work-composer-switch:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: 2px;
+	}
+</style>

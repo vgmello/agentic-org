@@ -429,13 +429,53 @@ function formatExpiryBadge(iso: string, nowMs: number, source?: string): string 
 	return replyCutoff ? 'Reply cutoff tomorrow' : 'Expires tomorrow';
 }
 
-function inboxToSpotlight(item: InboxItem, nowMs: number): SpotlightDecision {
-	const urgent = Boolean(item.expires_at) || item.kind === 'problem';
-	const deadlineLabel = item.expires_at
-		? formatExpiryBadge(item.expires_at, nowMs, item.source)
-		: undefined;
-	const badgeText = deadlineLabel ?? (item.source || 'Decision');
+const RAW_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+function looksLikeRawId(name: string | undefined, id: string | undefined): boolean {
+	const trimmed = name?.trim() ?? '';
+	if (!trimmed) return true;
+	if (id && trimmed === id) return true;
+	return RAW_UUID_RE.test(trimmed);
+}
+
+function resolveDisplayLabel(
+	rawName: string | undefined,
+	rawId: string | undefined,
+	resolvedName: string | undefined
+): string | undefined {
+	if (!rawName && !resolvedName) return undefined;
+	return resolvedName && looksLikeRawId(rawName, rawId) ? resolvedName : rawName;
+}
+
+function resolveInboxEntityNames(item: InboxItem, snapshot: OrgSnapshot) {
+	const resolvedMember = memberById(snapshot, item.who.id);
+	const actorName =
+		resolveDisplayLabel(item.who.name, item.who.id, resolvedMember?.name) ?? item.who.name;
+	const resolvedProject = item.project?.id
+		? (snapshot.projects ?? []).find((p) => p.id === item.project!.id)
+		: undefined;
+	const resolvedTeam = item.team?.id
+		? (snapshot.teams ?? []).find((t) => t.id === item.team!.id)
+		: undefined;
+	const projectLabel = item.project
+		? resolveDisplayLabel(item.project.name, item.project.id, resolvedProject?.name)
+		: undefined;
+	const teamLabel = item.team
+		? resolveDisplayLabel(item.team.name, item.team.id, resolvedTeam?.name)
+		: undefined;
+	return {
+		resolvedMember,
+		actorName,
+		projectLabel,
+		teamLabel,
+		projectName: projectLabel ?? teamLabel ?? 'Organization'
+	};
+}
+
+function resolveInboxActions(item: InboxItem): {
+	primaryAction: SpotlightPrimaryAction;
+	secondaryAction?: SpotlightSecondaryAction;
+} {
 	const hasApprove = item.actions.includes('approve');
 	const hasDeny = item.actions.includes('deny');
 	const hasChoose = item.actions.includes('choose') && (item.choices?.length ?? 0) > 0;
@@ -457,7 +497,22 @@ function inboxToSpotlight(item: InboxItem, nowMs: number): SpotlightDecision {
 				? { kind: 'open_work', label: item.open.label }
 				: undefined;
 
-	const projectName = item.project?.name ?? item.team?.name ?? 'Organization';
+	return { primaryAction, secondaryAction };
+}
+
+function inboxToSpotlight(
+	item: InboxItem,
+	snapshot: OrgSnapshot,
+	nowMs: number
+): SpotlightDecision {
+	const urgent = Boolean(item.expires_at) || item.kind === 'problem';
+	const deadlineLabel = item.expires_at
+		? formatExpiryBadge(item.expires_at, nowMs, item.source)
+		: undefined;
+	const badgeText = deadlineLabel ?? (item.source || 'Decision');
+	const { primaryAction, secondaryAction } = resolveInboxActions(item);
+	const { resolvedMember, actorName, projectLabel, teamLabel, projectName } =
+		resolveInboxEntityNames(item, snapshot);
 	const risk: SpotlightCell =
 		item.kind === 'problem' || item.kind === 'decision'
 			? {
@@ -496,8 +551,8 @@ function inboxToSpotlight(item: InboxItem, nowMs: number): SpotlightDecision {
 
 	const auditChecks: string[] = [];
 	if (item.source) auditChecks.push(`Source: ${item.source}`);
-	if (item.project?.name) auditChecks.push(`Project: ${item.project.name}`);
-	if (item.team?.name) auditChecks.push(`Team: ${item.team.name}`);
+	if (projectLabel) auditChecks.push(`Project: ${projectLabel}`);
+	if (teamLabel) auditChecks.push(`Team: ${teamLabel}`);
 	if (item.open?.label) auditChecks.push(item.open.label);
 	if (deadlineLabel) auditChecks.push(deadlineLabel);
 
@@ -519,6 +574,7 @@ function inboxToSpotlight(item: InboxItem, nowMs: number): SpotlightDecision {
 					: undefined;
 	const isChiefOfStaff =
 		item.who.id === 'tess' ||
+		resolvedMember?.agent?.role === 'chief_of_staff' ||
 		item.source.toLowerCase().includes('tess') ||
 		item.source.toLowerCase().includes('chief of staff');
 
@@ -532,8 +588,8 @@ function inboxToSpotlight(item: InboxItem, nowMs: number): SpotlightDecision {
 		badgeText,
 		expiresShort: deadlineLabel,
 		actorId: item.who.id,
-		actorName: item.who.name,
-		actorInitials: initialsOf(item.who.name),
+		actorName,
+		actorInitials: initialsOf(actorName),
 		isChiefOfStaff,
 		projectName,
 		projectId: item.project?.id,
@@ -578,7 +634,7 @@ export function deriveDecisionSpotlight(
 		.sort(
 			(a, b) => inboxScore(b) - inboxScore(a) || Date.parse(b.created_at) - Date.parse(a.created_at)
 		)
-		.map((item) => inboxToSpotlight(item, nowMs));
+		.map((item) => inboxToSpotlight(item, snapshot, nowMs));
 
 	// Track referenced work refs/titles from inbox so we don't show duplicates.
 	const seenRefs = new Set<string>();
@@ -1037,6 +1093,53 @@ export function deriveProjectCards(
 	);
 }
 
+function deriveTeamHeadcount(
+	snapshot: OrgSnapshot,
+	offices: readonly OfficeInfo[],
+	directory: HomeDomainData['memberRows']
+): {
+	activeAgents: number;
+	pausedAgents: number;
+	unplacedAgents: number;
+	totalAgents: number;
+	peopleCount: number;
+} {
+	if (directory && directory.length > 0) {
+		const activeRows = directory.filter((m) => m.status !== 'inactive');
+		const agentRows = activeRows.filter((m) => m.kind === 'agent');
+		const personRows = activeRows.filter((m) => m.kind === 'person' && !m.owner);
+		const hasPresenceTelemetry = agentRows.some((a) => a.presence !== undefined);
+		const totalAgents = agentRows.length;
+		const activeAgents = agentRows.filter(
+			(a) =>
+				a.status === 'active' &&
+				a.office !== null &&
+				(!hasPresenceTelemetry || a.presence?.id === 'working' || a.presence?.id === 'with_you')
+		).length;
+		const unplacedAgents = agentRows.filter((a) => a.office === null).length;
+		return {
+			activeAgents,
+			pausedAgents: Math.max(0, totalAgents - activeAgents - unplacedAgents),
+			unplacedAgents,
+			totalAgents,
+			peopleCount: personRows.length
+		};
+	}
+
+	const members = nonOwners(snapshot).filter((m) => !isFormer(m));
+	const agents = agentsOf(members);
+	const knownOffices = new Set(offices.map((o) => o.id));
+	return {
+		activeAgents: agents.filter((a) => a.agent?.status === 'active').length,
+		pausedAgents: agents.filter((a) => a.agent?.status === 'paused').length,
+		unplacedAgents: agents.filter(
+			(a) => !a.office_id || (knownOffices.size > 0 && !knownOffices.has(a.office_id))
+		).length,
+		totalAgents: agents.length,
+		peopleCount: peopleOf(members).length
+	};
+}
+
 export function deriveKpiMetrics(
 	snapshot: OrgSnapshot,
 	items: readonly WorkItemSummary[],
@@ -1067,40 +1170,8 @@ export function deriveKpiMetrics(
 	const totalTracked = openCount + doneCount;
 	const completionPct = totalTracked > 0 ? Math.round((doneCount * 100) / totalTracked) : 0;
 
-	const directory = domain?.memberRows;
-	let activeAgents: number;
-	let pausedAgents: number;
-	let unplacedAgents: number;
-	let totalAgents: number;
-	let peopleCount: number;
-
-	if (directory && directory.length > 0) {
-		const activeRows = directory.filter((m) => m.status !== 'inactive');
-		const agentRows = activeRows.filter((m) => m.kind === 'agent');
-		const personRows = activeRows.filter((m) => m.kind === 'person' && !m.owner);
-		totalAgents = agentRows.length;
-		peopleCount = personRows.length;
-		activeAgents = agentRows.filter(
-			(a) =>
-				a.status === 'active' &&
-				a.office !== null &&
-				(a.presence?.id === 'working' || a.presence?.id === 'with_you')
-		).length;
-		unplacedAgents = agentRows.filter((a) => a.office === null).length;
-		pausedAgents = Math.max(0, totalAgents - activeAgents - unplacedAgents);
-	} else {
-		const members = nonOwners(snapshot).filter((m) => !isFormer(m));
-		const agents = agentsOf(members);
-		const people = peopleOf(members);
-		const knownOffices = new Set(offices.map((o) => o.id));
-		totalAgents = agents.length;
-		peopleCount = people.length;
-		activeAgents = agents.filter((a) => a.agent?.status === 'active').length;
-		pausedAgents = agents.filter((a) => a.agent?.status === 'paused').length;
-		unplacedAgents = agents.filter(
-			(a) => !a.office_id || (knownOffices.size > 0 && !knownOffices.has(a.office_id))
-		).length;
-	}
+	const { activeAgents, pausedAgents, unplacedAgents, totalAgents, peopleCount } =
+		deriveTeamHeadcount(snapshot, offices, domain?.memberRows);
 
 	const autonomyPct =
 		openCount > 0
@@ -1649,6 +1720,156 @@ export interface DecisionAiContext {
 	projectName: string;
 }
 
+function formatSpendPhrase(kpis: ExecutiveKpis): string | null {
+	if (!kpis.financials.available) return null;
+	const capDetail =
+		kpis.budgetRemainingPct !== null ? `${kpis.financials.usagePct}%` : 'no monthly cap set';
+	return `${kpis.financials.spentLabel} ${kpis.financials.budgetLabel} (${capDetail})`;
+}
+
+function answerBudgetAndTeam(query: string, kpis: ExecutiveKpis): OrgAiAnswer {
+	const spendPhrase = formatSpendPhrase(kpis);
+	const teamHeadline = `${kpis.activeAgents} of ${kpis.totalAgents} agents active · ${kpis.onlineOffices} online, ${kpis.offlineOffices} offline offices`;
+	return {
+		query,
+		headline: spendPhrase ? `${teamHeadline} · spend ${spendPhrase}.` : `${teamHeadline}.`,
+		bullets: [
+			{
+				text: spendPhrase
+					? `Monthly spend is ${spendPhrase}. Average per completed item: ${kpis.financials.costPerTaskLabel}.`
+					: `Cost metrics are not connected on this server yet (average per completed item: ${kpis.financials.costPerTaskLabel}).`,
+				href: '/settings/costs',
+				linkLabel: 'Open Costs'
+			},
+			...(kpis.financials.cappedAgent
+				? [
+						{
+							text: `${kpis.financials.cappedAgent.name} reached its budget cap.`,
+							href: '/settings/costs',
+							linkLabel: 'Review budgets'
+						}
+					]
+				: []),
+			{
+				text: `${kpis.activeAgents} active, ${kpis.pausedAgents} idle, ${kpis.unplacedAgents} unplaced across ${kpis.peopleCount} people.`,
+				href: '/teams/members',
+				linkLabel: 'Open Members'
+			},
+			{
+				text:
+					kpis.offlineOffices > 0
+						? `Offline offices: ${kpis.offlineOfficeNames.join(', ')}.`
+						: 'All connected offices are online.',
+				href: '/settings/offices',
+				linkLabel: 'Check Offices'
+			}
+		]
+	};
+}
+
+function answerBudgetOnly(query: string, kpis: ExecutiveKpis): OrgAiAnswer {
+	const spendPhrase = formatSpendPhrase(kpis);
+	return {
+		query,
+		headline: spendPhrase
+			? `Monthly spend is ${spendPhrase}.`
+			: 'Cost metrics are not connected on this server yet.',
+		bullets: [
+			...(kpis.financials.cappedAgent
+				? [
+						{
+							text: `${kpis.financials.cappedAgent.name} reached its budget cap.`,
+							href: '/settings/costs',
+							linkLabel: 'Review budgets'
+						}
+					]
+				: []),
+			{
+				text: `Average cost per completed item: ${kpis.financials.costPerTaskLabel}.`,
+				href: '/settings/costs',
+				linkLabel: 'Open Costs'
+			}
+		]
+	};
+}
+
+function answerUrgentInbox(query: string, spotlight: readonly SpotlightDecision[]): OrgAiAnswer {
+	return {
+		query,
+		headline:
+			spotlight.length > 0
+				? `${spotlight.length} ${spotlight.length === 1 ? 'decision needs' : 'decisions need'} your attention right now.`
+				: 'All clear — nothing is waiting on your decision.',
+		bullets:
+			spotlight.length > 0
+				? spotlight.slice(0, 3).map((d) => ({
+						text: `${d.title} (${d.kindLabel} · ${d.projectName})`,
+						href: '/inbox',
+						linkLabel: 'Review in Inbox'
+					}))
+				: [
+						{
+							text: 'Your team is running autonomously.',
+							href: '/work',
+							linkLabel: 'View all work'
+						}
+					]
+	};
+}
+
+function answerProjectsHealth(query: string, projects: readonly ProjectBentoCard[]): OrgAiAnswer {
+	const attn = projects.filter((p) => p.health !== 'On track');
+	return {
+		query,
+		headline:
+			attn.length > 0
+				? `${attn.length} of ${projects.length} projects need attention.`
+				: `All ${projects.length} active projects are on track.`,
+		bullets: (attn.length > 0 ? attn : projects).slice(0, 4).map((p) => ({
+			text: `${p.name} — ${p.health} (${p.pct}% done): ${p.blockerText}`,
+			href: p.workHref,
+			linkLabel: 'Open project'
+		}))
+	};
+}
+
+function answerTeamAndOffices(query: string, kpis: ExecutiveKpis): OrgAiAnswer {
+	return {
+		query,
+		headline: `${kpis.activeAgents} of ${kpis.totalAgents} agents active · ${kpis.onlineOffices} online, ${kpis.offlineOffices} offline offices.`,
+		bullets: [
+			{
+				text: `${kpis.activeAgents} active, ${kpis.pausedAgents} idle, ${kpis.unplacedAgents} unplaced across ${kpis.peopleCount} people.`,
+				href: '/teams/members',
+				linkLabel: 'Open Members'
+			},
+			{
+				text:
+					kpis.offlineOffices > 0
+						? `Offline offices: ${kpis.offlineOfficeNames.join(', ')}.`
+						: 'All connected offices are online.',
+				href: '/settings/offices',
+				linkLabel: 'Check Offices'
+			}
+		]
+	};
+}
+
+function findMatchingDecision(
+	query: string,
+	spotlight: readonly SpotlightDecision[],
+	decisionId?: string
+): SpotlightDecision | undefined {
+	if (decisionId) {
+		const byId = spotlight.find((d) => d.id === decisionId);
+		if (byId) return byId;
+	}
+	const explainMatch = query.match(/^explain the risk, impact, and recommendation for:\s*(.+)$/i);
+	if (!explainMatch) return undefined;
+	const targetTitle = explainMatch[1].trim().toLowerCase();
+	return spotlight.find((d) => d.title.toLowerCase() === targetTitle);
+}
+
 export function answerExecutiveQuestion(
 	rawQuery: string,
 	{
@@ -1692,12 +1913,7 @@ export function answerExecutiveQuestion(
 		]
 	});
 
-	// Prefer the caller's explicit decision snapshot so Ask works even while the shell snapshot is
-	// still hydrating or holding an older copy of the same decision ID.
-	if (decision) {
-		return formatDecisionAnswer(decision);
-	}
-
+	if (decision) return formatDecisionAnswer(decision);
 	if (!snapshot) {
 		return {
 			query,
@@ -1720,106 +1936,22 @@ export function answerExecutiveQuestion(
 		Date.now(),
 		domain?.inboxItems
 	);
-	const projects = deriveProjectCards(snapshot, items, domain);
-	const time = deriveTaskTimeBreakdown(items, ownerId, kpis.offlineOffices, domain);
+	const decisionMatch = findMatchingDecision(query, spotlight, decisionId);
+	if (decisionMatch) return formatDecisionAnswer(decisionMatch);
 
-	const explainMatch = query.match(/^explain the risk, impact, and recommendation for:\s*(.+)$/i);
-	const decisionMatch =
-		(decisionId ? spotlight.find((d) => d.id === decisionId) : undefined) ??
-		(explainMatch
-			? spotlight.find((d) => d.title.toLowerCase() === explainMatch[1].trim().toLowerCase())
-			: undefined);
-	if (decisionMatch) {
-		return formatDecisionAnswer(decisionMatch);
-	}
-
-	if (/spend|cost|budget|money|cap|dollar/.test(q)) {
-		return {
-			query,
-			headline: kpis.financials.available
-				? `Monthly spend is ${kpis.financials.spentLabel} ${kpis.financials.budgetLabel} (${kpis.financials.usagePct}%).`
-				: 'Cost metrics are not connected on this server yet.',
-			bullets: [
-				...(kpis.financials.cappedAgent
-					? [
-							{
-								text: `${kpis.financials.cappedAgent.name} reached its budget cap.`,
-								href: '/settings/costs',
-								linkLabel: 'Review budgets'
-							}
-						]
-					: []),
-				{
-					text: `Average cost per completed item: ${kpis.financials.costPerTaskLabel}.`,
-					href: '/settings/costs',
-					linkLabel: 'Open Costs'
-				}
-			]
-		};
-	}
-
+	const asksBudget = /spend|cost|budget|money|cap|dollar/.test(q);
+	const asksTeam = /office|agent|team|online|offline|who/.test(q);
+	if (asksBudget && asksTeam) return answerBudgetAndTeam(query, kpis);
+	if (asksBudget) return answerBudgetOnly(query, kpis);
 	if (/need|first|urgent|inbox|decision|approv|wait/.test(q)) {
-		return {
-			query,
-			headline:
-				spotlight.length > 0
-					? `${spotlight.length} ${spotlight.length === 1 ? 'decision needs' : 'decisions need'} your attention right now.`
-					: 'All clear — nothing is waiting on your decision.',
-			bullets:
-				spotlight.length > 0
-					? spotlight.slice(0, 3).map((d) => ({
-							text: `${d.title} (${d.kindLabel} · ${d.projectName})`,
-							href: '/inbox',
-							linkLabel: 'Review in Inbox'
-						}))
-					: [
-							{
-								text: 'Your team is running autonomously.',
-								href: '/work',
-								linkLabel: 'View all work'
-							}
-						]
-		};
+		return answerUrgentInbox(query, spotlight);
 	}
-
 	if (/project|slow|risk|block|health|track/.test(q)) {
-		const attn = projects.filter((p) => p.health !== 'On track');
-		return {
-			query,
-			headline:
-				attn.length > 0
-					? `${attn.length} of ${projects.length} projects need attention.`
-					: `All ${projects.length} active projects are on track.`,
-			bullets: (attn.length > 0 ? attn : projects).slice(0, 4).map((p) => ({
-				text: `${p.name} — ${p.health} (${p.pct}% done): ${p.blockerText}`,
-				href: p.workHref,
-				linkLabel: 'Open project'
-			}))
-		};
+		return answerProjectsHealth(query, deriveProjectCards(snapshot, items, domain));
 	}
+	if (asksTeam) return answerTeamAndOffices(query, kpis);
 
-	if (/office|agent|team|online|offline|who/.test(q)) {
-		return {
-			query,
-			headline: `${kpis.activeAgents} of ${kpis.totalAgents} agents active · ${kpis.onlineOffices} online, ${kpis.offlineOffices} offline offices.`,
-			bullets: [
-				{
-					text: `${kpis.activeAgents} active, ${kpis.pausedAgents} idle, ${kpis.unplacedAgents} unplaced across ${kpis.peopleCount} people.`,
-					href: '/teams/members',
-					linkLabel: 'Open Members'
-				},
-				{
-					text:
-						kpis.offlineOffices > 0
-							? `Offline offices: ${kpis.offlineOfficeNames.join(', ')}.`
-							: 'All connected offices are online.',
-					href: '/settings/offices',
-					linkLabel: 'Check Offices'
-				}
-			]
-		};
-	}
-
+	const time = deriveTaskTimeBreakdown(items, ownerId, kpis.offlineOffices, domain);
 	return {
 		query,
 		headline: `${kpis.openCount} open items · ${kpis.completionPct}% complete · ${spotlight.length} waiting on you.`,

@@ -66,10 +66,10 @@ html[data-ui-theme='graphite'] {
 	--fg-secondary: #c6c8ce;
 	--fg-muted: #a2a5ad;
 	--fg-subtle: #8e919a;
-	--on-emphasis: #ffffff;
+	--on-emphasis: #141516;
 
-	--primary: #535353;
-	--primary-hover: #616161;
+	--primary: #ececee;
+	--primary-hover: #ffffff;
 	--ring: var(--tone-accent);
 	--brand: var(--tone-accent);
 	--focus: var(--tone-accent);
@@ -112,7 +112,7 @@ html[data-ui-theme='graphite'] {
 	--card-foreground: #f1f1f3;
 	--popover: var(--graphite-raised);
 	--popover-foreground: #f1f1f3;
-	--primary-foreground: #ffffff;
+	--primary-foreground: #141516;
 	--secondary: var(--graphite-raised);
 	--secondary-foreground: #f1f1f3;
 	--muted: var(--graphite-panel);
@@ -144,8 +144,8 @@ html[data-ui-theme='graphite'] {
 	--exec-muted: #a2a5ad;
 	--exec-dim: #a2a5ad;
 	--exec-pillar-name-ink: #a2a5ad;
-	--exec-on-accent: #ffffff;
-	--exec-accent: #535353;
+	--exec-on-accent: #141516;
+	--exec-accent: #ececee;
 
 	/* Compact radii (5px controls, 7px panels) */
 	--exec-panel-radius: 7px;
@@ -203,20 +203,20 @@ html[data-ui-theme='graphite'] {
 	--exec-seg-queued: var(--tone-queued);
 	--exec-seg-queued-high: var(--tone-bad-bar);
 
-	/* Solid flat neutral charcoal CTAs (white on #535353 = 7.69:1, hover #616161 = 6.19:1; border #858891 >= 4.77:1) */
-	--exec-cta-bg: #535353;
-	--exec-cta-fill: #616161;
-	--exec-cta-shadow: inset 0 0 0 1px #858891;
-	--exec-cta-shadow-hover: inset 0 0 0 1px #a8a8a8;
+	/* High-contrast near-white primary CTAs (Prototype Release 3f647b0f: never reads as gray/disabled) */
+	--exec-cta-bg: #ececee;
+	--exec-cta-fill: #ffffff;
+	--exec-cta-shadow: none;
+	--exec-cta-shadow-hover: none;
 	--exec-cta-hover-lift: none;
 	--exec-cta-glass-radius: 5px;
-	--exec-cta-glass-bg: #535353;
-	--exec-cta-glass-bg-hover: #616161;
+	--exec-cta-glass-bg: #ececee;
+	--exec-cta-glass-bg-hover: #ffffff;
 	--exec-cta-glass-blur: none;
-	--exec-cta-glass-shadow: inset 0 0 0 1px #858891;
-	--exec-cta-glass-shadow-hover: inset 0 0 0 1px #a8a8a8;
-	--exec-cta-glass-ink: #ffffff;
-	--exec-cta-glass-ico: #ffffff;
+	--exec-cta-glass-shadow: none;
+	--exec-cta-glass-shadow-hover: none;
+	--exec-cta-glass-ink: #141516;
+	--exec-cta-glass-ico: #141516;
 	--exec-btn-outline-bg: var(--graphite-canvas);
 	--exec-btn-outline-bg-hover: var(--graphite-hover);
 	--exec-btn-outline-ink: #c6c8ce;
@@ -245,6 +245,46 @@ html[data-ui-theme='graphite'] {
 	--exec-cos-fade: var(--graphite-canvas);
 	--exec-cos-border: #35373d;
 	--exec-cos-rule: var(--tone-accent);
+	--exec-lens-on-bg: var(--graphite-active);
+	--exec-lens-on-ink: #f1f1f3;
+	--exec-lens-on-shadow: none;
+	--exec-cmdk-dialog-radius: 7px;
+	--exec-cmdk-tab-grp-radius: 5px;
+	--exec-cmdk-tab-radius: 5px;
+	--exec-cmdk-esc-radius: 5px;
+	--exec-cmdk-opt-radius: 5px;
+	--exec-cmdk-menu-bg: #262930;
+	--exec-cmdk-menu-blur: none;
+	--exec-cmdk-menu-shadow: inset 0 0 0 1px #4c515c, 0 24px 64px -12px rgb(0 0 0 / 0.78);
+	--exec-cmdk-tabs-bg: #1e2127;
+	--exec-cmdk-foot-bg: #1e2127;
+	--exec-cmdk-tab-grp-bg: #16181c;
+	--exec-cmdk-tab-grp-shadow: inset 0 0 0 1px #3c4049;
+	--exec-cmdk-tab-active-bg: #353a45;
+	--exec-cmdk-tab-active-shadow: inset 0 0 0 1px #5f6676;
+	--exec-cmdk-esc-bg: #2b2f37;
+	--exec-cmdk-esc-shadow: inset 0 0 0 1px #4c515c;
+	--exec-cmdk-opt-hover-bg: var(--graphite-hover);
+	--exec-cmdk-opt-hover-shadow: none;
+	--exec-cmdk-opt-active-bg: var(--graphite-active);
+	--exec-cmdk-opt-active-shadow: inset 0 0 0 1px #52555d;
+	--exec-cmdk-tag-bg: rgba(255, 255, 255, 0.07);
+	--exec-cmdk-foot-kbd-bg: var(--graphite-panel);
+	--exec-cmdk-foot-kbd-ring: #35373d;
+	--exec-cmdk-foot-kbd-ink: #c6c8ce;
+
+	/* Elevated Graphite Notifications & Floating Tess Companion surfaces (TASK-145) */
+	--exec-notif-bg: #2c3037;
+	--exec-notif-border: #525866;
+	--exec-notif-shadow: 0 24px 60px -10px rgb(0 0 0 / 0.78), inset 0 1px 0 rgb(255 255 255 / 0.08);
+	--exec-tess-bg: #2c3037;
+	--exec-tess-border: #525866;
+	--exec-tess-pill-bg: #30353e;
+	--exec-tess-pill-border: #5a6170;
+	--exec-tess-card-bg: #23262c;
+	--exec-tess-card-border: #464c58;
+	--exec-tess-q-bg: #3a404c;
+	--exec-tess-q-border: #5c6475;
 
 	/* Unread rail dot (no glow halo in matte Graphite) */
 	--exec-nav-dot: var(--tone-warn);
@@ -253,8 +293,8 @@ html[data-ui-theme='graphite'] {
 
 	/* Home scroll cue */
 	--exec-scroll-hint-bg: var(--graphite-canvas);
-	--exec-scroll-hint-pill-bg: #1b1d20;
-	--exec-scroll-hint-ink: #c6c8ce;
+	--exec-scroll-hint-pill-bg: transparent;
+	--exec-scroll-hint-ink: #a2a5ad;
 	--exec-scroll-hint-ink-hover: #f1f1f3;
 
 	--exec-hor-item-bg: var(--graphite-canvas);
@@ -332,14 +372,13 @@ html[data-ui-theme='graphite'] .exec-theme-pill.is-on {
 	}
 }
 
-/* Graphite interior sidebar text hierarchy (poc/v6.html 13abb1f1) */
-html[data-ui-theme='graphite'][data-interior-page] .exec-nav-label,
-html[data-ui-theme='graphite'][data-interior-page] .exec-nav-label svg {
+/* Uniform Graphite sidebar text hierarchy on EVERY page including Home (cbc1b140) */
+html[data-ui-theme='graphite'] .exec-nav-label,
+html[data-ui-theme='graphite'] .exec-nav-label svg {
 	color: #85888e;
 }
 
-html[data-ui-theme='graphite'][data-interior-page]
-	.exec-nav-item:not([aria-current='page']):not(:hover) {
+html[data-ui-theme='graphite'] .exec-nav-item:not([aria-current='page']):not(:hover) {
 	color: var(--exec-body);
 }
 
@@ -355,11 +394,6 @@ html[data-ui-theme='graphite']:has(.triage-workspace, .work-header) {
 	--triage-row-selected: #2a2d32;
 	--work-row-hover: #202226;
 	--work-row-selected: #2a2d32;
-}
-
-html[data-ui-theme='graphite']:has(.triage-workspace, .work-header) .exec-sidebar {
-	background-color: #131516;
-	box-shadow: inset -1px 0 var(--graphite-inbox-line);
 }
 
 html[data-ui-theme='graphite']:has(.triage-workspace, .work-header) .exec-topbar {
@@ -424,21 +458,8 @@ html[data-ui-theme='graphite']:has(.work-header) .work-reading .work-kind {
 	}
 }
 
-html[data-ui-theme='graphite']:has(.triage-workspace) .triage-page {
-	padding: 0;
-}
-
-html[data-ui-theme='graphite']:has(.triage-workspace) .triage-workspace,
-html[data-ui-theme='graphite']:has(.triage-workspace) .triage-workspace:hover {
+html[data-ui-theme='graphite']:has(.triage-workspace) .triage-workspace {
 	background-color: #18191a;
-	border-radius: 0;
-	box-shadow: none;
-}
-
-@media (min-width: 960px) {
-	html[data-ui-theme='graphite']:has(.triage-workspace) .triage-workspace {
-		height: max(600px, calc(100dvh - var(--exec-topbar-height, 58px)));
-	}
 }
 
 html[data-ui-theme='graphite']:has(.triage-workspace) .triage-header {

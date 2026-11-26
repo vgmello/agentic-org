@@ -1,4 +1,7 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { orgApi } from '$lib/modules/organization/api';
+import { createHttpEmployeesApi } from './http-api';
 import type { HireAccess, HireChoices, HirePreview, HireProposal, HireRequest } from './types';
 
 /**
@@ -35,16 +38,43 @@ export interface EmployeesApi {
 	retry(organizationId: string, requestId: string): Promise<void>;
 }
 
-// The web API does not serve these yet: every call refuses. Under `bun run dev:mock`,
-// e2e/fakes/modules/employees.ts stands in for this file.
-export const employeesApi: EmployeesApi = {
-	hireAccess: unavailableCall,
-	hireChoices: unavailableCall,
-	hireRequests: unavailableCall,
-	hireRequest: unavailableCall,
-	draft: unavailableCall,
-	preview: unavailableCall,
-	confirm: unavailableCall,
-	withdraw: unavailableCall,
-	retry: unavailableCall
-};
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+const gatewayEmployeesApi = createHttpEmployeesApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal),
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	},
+	orgApi,
+	session: () => {
+		const s = signedInSession();
+		return s ? { accountAdmin: s.admin } : undefined;
+	}
+});
+
+// Production HR hiring API backed by `/api/v1/organizations/{org}/hires/*`.
+// Under `bun run dev:mock`, e2e/fakes/modules/employees.ts stands in for this file.
+export const employeesApi: EmployeesApi = Object.freeze<EmployeesApi>({
+	hireAccess: (organizationId) =>
+		signedInSession() ? gatewayEmployeesApi.hireAccess(organizationId) : unavailableCall(),
+	hireChoices: (organizationId) =>
+		signedInSession() ? gatewayEmployeesApi.hireChoices(organizationId) : unavailableCall(),
+	hireRequests: (organizationId) =>
+		signedInSession() ? gatewayEmployeesApi.hireRequests(organizationId) : unavailableCall(),
+	hireRequest: (organizationId, requestId) =>
+		signedInSession()
+			? gatewayEmployeesApi.hireRequest(organizationId, requestId)
+			: unavailableCall(),
+	draft: (organizationId, input) =>
+		signedInSession() ? gatewayEmployeesApi.draft(organizationId, input) : unavailableCall(),
+	preview: (organizationId, proposal) =>
+		signedInSession() ? gatewayEmployeesApi.preview(organizationId, proposal) : unavailableCall(),
+	confirm: (organizationId, input) =>
+		signedInSession() ? gatewayEmployeesApi.confirm(organizationId, input) : unavailableCall(),
+	withdraw: (organizationId, requestId) =>
+		signedInSession() ? gatewayEmployeesApi.withdraw(organizationId, requestId) : unavailableCall(),
+	retry: (organizationId, requestId) =>
+		signedInSession() ? gatewayEmployeesApi.retry(organizationId, requestId) : unavailableCall()
+});

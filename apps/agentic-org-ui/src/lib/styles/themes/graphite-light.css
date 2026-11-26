@@ -1,0 +1,359 @@
+/*
+ * Theme: graphite-light — Graphite Light (TASK-182, Prototype Release 3f647b0f)
+ * Shares Graphite's compact, matte, monochrome structure on a crisp zinc light palette:
+ * #FAFAFA canvas, #F4F4F5 sidebar rail, #FFFFFF panels, #18181B primary buttons with #FFFFFF text,
+ * monochrome selection, muted AA status colors, tinted avatar chips with deep letters,
+ * and clean readable cmdk, menus, fields, and comment boxes.
+ */
+
+html[data-ui-theme='graphite-light'] {
+	color-scheme: light;
+
+	--graphite-canvas: #fafafa;
+	--graphite-rail: #f4f4f5;
+	--graphite-panel: #ffffff;
+	--graphite-raised: #ffffff;
+	--graphite-hover: #f1f1f3;
+	--graphite-active: #ebebed;
+	--graphite-primary: #18181b;
+	--graphite-primary-hi: #3f3f46;
+	--graphite-on-primary: #ffffff;
+
+	--bar-track: #e4e4e7;
+
+	--tone-accent: #3f3f46;
+	--tone-accent-bar: #52525b;
+	--tone-accent-hi: #09090b;
+	--tone-accent-ink: #27272a;
+	--tone-accent-bg: rgb(24 24 27 / 0.05);
+	--tone-accent-ring: rgb(24 24 27 / 0.16);
+
+	--tone-ok: #16a34a;
+	--tone-ok-bar: #16a34a;
+	--tone-ok-ink: #15803d;
+	--tone-ok-bg: rgb(22 163 74 / 0.09);
+	--tone-ok-ring: rgb(22 163 74 / 0.26);
+
+	--tone-warn: #d97706;
+	--tone-warn-bar: #d97706;
+	--tone-warn-ink: #b45309;
+	--tone-warn-bg: rgb(217 119 6 / 0.1);
+	--tone-warn-ring: rgb(217 119 6 / 0.28);
+
+	--tone-bad: #dc2626;
+	--tone-bad-bar: #dc2626;
+	--tone-bad-ink: #b91c1c;
+	--tone-bad-bg: rgb(220 38 38 / 0.08);
+	--tone-bad-ring: rgb(220 38 38 / 0.24);
+
+	--tone-queued: #71717a;
+	--tone-queued-ink: #52525b;
+
+	/* App-wide look tokens */
+	--surface: var(--graphite-canvas);
+	--surface-sunken: var(--graphite-rail);
+	--surface-chip: var(--graphite-rail);
+	--surface-raised: var(--graphite-panel);
+	--surface-overlay: var(--graphite-hover);
+	--line-subtle: #e4e4e7;
+	--line: #e4e4e7;
+	--line-strong: #d4d4d8;
+	--field-border: #d4d4d8;
+
+	--fg: #09090b;
+	--fg-bright: #09090b;
+	--fg-body: #27272a;
+	--fg-secondary: #3f3f46;
+	--fg-muted: #52525b;
+	--fg-subtle: #71717a;
+	--on-emphasis: #ffffff;
+
+	--primary: var(--graphite-primary);
+	--primary-hover: var(--graphite-primary-hi);
+	--ring: #18181b;
+	--brand: #27272a;
+	--focus: #18181b;
+	--link: #27272a;
+	--brand-text: #18181b;
+	--brand-text-strong: #09090b;
+	--brand-text-stronger: #09090b;
+
+	--info: var(--tone-accent);
+	--info-emphasis: var(--graphite-primary);
+	--info-text: var(--tone-accent-ink);
+	--info-text-strong: #09090b;
+	--info-text-stronger: #09090b;
+
+	--success: var(--tone-ok);
+	--success-emphasis: var(--tone-ok);
+	--success-text: var(--tone-ok-ink);
+	--positive: var(--tone-ok);
+	--positive-emphasis: var(--tone-ok);
+	--positive-text: var(--tone-ok-ink);
+	--positive-text-strong: var(--tone-ok-ink);
+
+	--warning: var(--tone-warn);
+	--warning-emphasis: var(--tone-warn);
+	--warning-deep: var(--tone-warn-ink);
+	--warning-text: var(--tone-warn-ink);
+	--warning-text-strong: var(--tone-warn-ink);
+	--warning-text-stronger: var(--tone-warn-ink);
+
+	--danger: var(--tone-bad);
+	--danger-emphasis: #b91c1c;
+	--danger-text: var(--tone-bad-ink);
+	--danger-text-strong: #991b1b;
+	--danger-text-stronger: #7f1d1d;
+
+	/* shadcn-svelte bindings */
+	--background: var(--graphite-canvas);
+	--foreground: #09090b;
+	--card: var(--graphite-panel);
+	--card-foreground: #09090b;
+	--popover: var(--graphite-panel);
+	--popover-foreground: #09090b;
+	--primary-foreground: #ffffff;
+	--secondary: var(--graphite-rail);
+	--secondary-foreground: #09090b;
+	--muted: var(--graphite-rail);
+	--muted-foreground: #52525b;
+	--accent: var(--graphite-hover);
+	--accent-foreground: #09090b;
+	--destructive: var(--tone-bad-ink);
+	--border: #e4e4e7;
+	--input: #d4d4d8;
+
+	/* Executive layout & card tokens */
+	--exec-bg: var(--graphite-canvas);
+	--exec-sidebar-bg: var(--graphite-rail);
+	--exec-sidebar-blur: none;
+	--exec-sidebar-sheen: none;
+	--exec-surface: var(--graphite-panel);
+	--exec-surface-hi: var(--graphite-hover);
+	--exec-well: var(--graphite-rail);
+	--exec-panel-sheen: none;
+	--exec-panel-bg: var(--graphite-panel);
+	--exec-panel-bg-hover: var(--graphite-panel);
+	--exec-border: #e4e4e7;
+	--exec-border-hi: #d4d4d8;
+	--exec-blur: none;
+	--exec-shadow: inset 0 0 0 1px #e4e4e7, 0 1px 2px rgb(9 9 11 / 0.04);
+	--exec-shadow-hi: inset 0 0 0 1px #d4d4d8, 0 2px 6px rgb(9 9 11 / 0.06);
+	--exec-panel-shadow: inset 0 0 0 1px #e4e4e7, 0 1px 2px rgb(9 9 11 / 0.04);
+	--exec-panel-shadow-hover: inset 0 0 0 1px #d4d4d8, 0 2px 6px rgb(9 9 11 / 0.06);
+	--exec-ink: #09090b;
+	--exec-body: #3f3f46;
+	--exec-muted: #52525b;
+	--exec-dim: #71717a;
+	--exec-pillar-name-ink: #52525b;
+	--exec-on-accent: #ffffff;
+	--exec-accent: #18181b;
+	--exec-accent-ink: #18181b;
+	--exec-accent-soft: rgb(24 24 27 / 0.05);
+	--exec-accent-ring: rgb(24 24 27 / 0.16);
+	--exec-ok: var(--tone-ok);
+	--exec-warn: var(--tone-warn);
+	--exec-bad: var(--tone-bad);
+
+	/* Compact radii matching Graphite */
+	--exec-panel-radius: 7px;
+	--exec-lenses-radius: 5px;
+	--exec-sm-radius: 5px;
+	--exec-ctrl-radius: 5px;
+	--exec-inset-radius: 7px;
+	--exec-memo-radius: 7px;
+	--exec-page-gap: 1.25rem;
+	--exec-section-gap: 0.75rem;
+	--exec-stage-gap: 0.75rem;
+
+	/* Top bar & Cmd+K */
+	--exec-topbar-height: 58px;
+	--exec-topbar-bg: var(--graphite-canvas);
+	--exec-topbar-border: 1px solid #e4e4e7;
+	--exec-topbar-fade: none;
+	--exec-topbar-fade-blur: none;
+	--exec-cmdk-radius: 5px;
+	--exec-cmdk-bg: var(--graphite-panel);
+	--exec-cmdk-bg-hover: var(--graphite-hover);
+	--exec-cmdk-blur: none;
+	--exec-cmdk-shadow: inset 0 0 0 1px #d4d4d8, 0 1px 2px rgb(9 9 11 / 0.04);
+	--exec-cmdk-shadow-hover: inset 0 0 0 1px #a1a1aa;
+	--exec-cmdk-hover-lift: none;
+	--exec-cmdk-trigger-radius: 5px;
+	--exec-cmdk-trigger-ink: #52525b;
+	--exec-cmdk-trigger-hover-bg: var(--graphite-hover);
+	--exec-cmdk-icon: #52525b;
+	--exec-cmdk-icon-hover: #09090b;
+	--exec-cmdk-kbd-radius: 5px;
+	--exec-cmdk-kbd-bg: var(--graphite-rail);
+	--exec-cmdk-kbd-shadow: inset 0 0 0 1px #d4d4d8;
+	--exec-cmdk-kbd-ink: #3f3f46;
+	--exec-cmdk-sep: #e4e4e7;
+
+	--exec-cmdk-dialog-radius: 7px;
+	--exec-cmdk-tab-grp-radius: 5px;
+	--exec-cmdk-tab-radius: 5px;
+	--exec-cmdk-esc-radius: 5px;
+	--exec-cmdk-opt-radius: 5px;
+	--exec-cmdk-menu-bg: #ffffff;
+	--exec-cmdk-menu-blur: none;
+	--exec-cmdk-menu-shadow: inset 0 0 0 1px #d4d4d8, 0 24px 64px -16px rgb(9 9 11 / 0.22);
+	--exec-cmdk-tabs-bg: #f4f4f5;
+	--exec-cmdk-foot-bg: #f4f4f5;
+	--exec-cmdk-tab-grp-bg: #fafafa;
+	--exec-cmdk-tab-grp-shadow: inset 0 0 0 1px #e4e4e7;
+	--exec-cmdk-tab-active-bg: #ffffff;
+	--exec-cmdk-tab-active-shadow: inset 0 0 0 1px #d4d4d8;
+	--exec-cmdk-esc-bg: #ffffff;
+	--exec-cmdk-esc-shadow: inset 0 0 0 1px #d4d4d8;
+	--exec-cmdk-opt-hover-bg: #f1f1f3;
+	--exec-cmdk-opt-hover-shadow: inset 0 0 0 1px #e4e4e7;
+	--exec-cmdk-opt-active-bg: #f1f1f3;
+	--exec-cmdk-opt-active-shadow: inset 0 0 0 1px #d4d4d8;
+	--exec-cmdk-tag-bg: #f4f4f5;
+	--exec-cmdk-foot-kbd-bg: #ffffff;
+	--exec-cmdk-foot-kbd-ring: #d4d4d8;
+	--exec-cmdk-foot-kbd-ink: #3f3f46;
+
+	/* Floating Notifications & Tess Companion */
+	--exec-scrim-bg: rgb(9 9 11 / 0.28);
+	--exec-notif-bg: #ffffff;
+	--exec-notif-border: #d4d4d8;
+	--exec-notif-blur: none;
+	--exec-notif-shadow: inset 0 0 0 1px #e4e4e7, 0 16px 40px -10px rgb(9 9 11 / 0.18);
+	--exec-tess-bg: #ffffff;
+	--exec-tess-border: #d4d4d8;
+	--exec-tess-radius: 12px;
+	--exec-tess-blur: none;
+	--exec-tess-shadow: inset 0 0 0 1px #e4e4e7, 0 20px 52px -14px rgb(9 9 11 / 0.2);
+	--exec-tess-pill-bg: #ffffff;
+	--exec-tess-pill-border: #d4d4d8;
+	--exec-tess-pill-shadow: 0 10px 28px -8px rgb(9 9 11 / 0.16);
+	--exec-tess-card-bg: #fafafa;
+	--exec-tess-card-border: #e4e4e7;
+	--exec-tess-q-bg: #f4f4f5;
+	--exec-tess-q-border: #d4d4d8;
+	--exec-analysis-bg:
+		radial-gradient(circle at 26% 52%, rgb(24 24 27 / 0.04), transparent 48%), #fafafa;
+
+	/* Buttons & CTAs */
+	--exec-cta-bg: #18181b;
+	--exec-cta-fill: #3f3f46;
+	--exec-cta-shadow: none;
+	--exec-cta-shadow-hover: none;
+	--exec-cta-hover-lift: none;
+	--exec-cta-glass-radius: 5px;
+	--exec-cta-glass-bg: #18181b;
+	--exec-cta-glass-bg-hover: #3f3f46;
+	--exec-cta-glass-blur: none;
+	--exec-cta-glass-shadow: none;
+	--exec-cta-glass-shadow-hover: none;
+	--exec-cta-glass-ink: #ffffff;
+	--exec-cta-glass-ico: #ffffff;
+	--exec-btn-outline-bg: #ffffff;
+	--exec-btn-outline-bg-hover: #f1f1f3;
+	--exec-btn-outline-ink: #09090b;
+	--exec-btn-outline-ink-hover: #09090b;
+	--exec-btn-outline-ring: #d4d4d8;
+	--exec-btn-outline-ring-hover: #a1a1aa;
+	--exec-btn-ghost-bg-hover: #f1f1f3;
+	--exec-avatar-bg: #f4f4f5;
+	--exec-avatar-ring: #ffffff;
+
+	/* Deny guard */
+	--exec-deny-bg: #ffffff;
+	--exec-deny-bg-hover: rgb(220 38 38 / 0.08);
+	--exec-deny-ink: var(--tone-bad-ink);
+	--exec-deny-ink-hover: #991b1b;
+	--exec-deny-ring: var(--tone-bad-ring);
+	--exec-deny-ring-hover: #dc2626;
+	--exec-deny-guard-bg: var(--tone-bad-bg);
+	--exec-deny-guard-ring: var(--tone-bad-ring);
+	--exec-deny-confirm-bg: #b91c1c;
+	--exec-deny-confirm-hover: #991b1b;
+	--exec-deny-confirm-ink: #ffffff;
+
+	/* Executive Brief & Progress bars */
+	--exec-bar-budget: #52525b;
+	--exec-bar-sky: #52525b;
+	--exec-bar-ok: var(--tone-ok-bar);
+	--exec-bar-warn: var(--tone-warn-bar);
+	--exec-bar-bad: var(--tone-bad-bar);
+	--exec-seg-agents: #3f3f46;
+	--exec-seg-ci: var(--tone-ok-bar);
+	--exec-seg-human: var(--tone-warn-bar);
+	--exec-seg-queued: #a1a1aa;
+	--exec-seg-queued-high: var(--tone-bad-bar);
+	--exec-cos-bg: #fafafa;
+	--exec-cos-fade: #fafafa;
+	--exec-cos-border: #e4e4e7;
+	--exec-cos-rule: #3f3f46;
+	--exec-lens-on-bg: #ffffff;
+	--exec-lens-on-ink: #09090b;
+	--exec-lens-on-shadow: inset 0 0 0 1px #d4d4d8, 0 1px 2px rgb(9 9 11 / 0.06);
+
+	/* Row hovers & panels */
+	--triage-row-hover: #f1f1f3;
+	--triage-row-selected: #ebebed;
+	--work-row-hover: #f1f1f3;
+	--work-row-selected: #ebebed;
+	--detail-panel-surface: #ffffff;
+	--side-panel-surface: #ffffff;
+	--assembly-surface: #ffffff;
+	--workspace-secondary-surface: #ffffff;
+	--toolbar-seg-bg: #f4f4f5;
+	--toolbar-seg-active-bg: #ffffff;
+
+	/* Unread rail dot */
+	--exec-nav-dot: var(--tone-warn);
+	--exec-nav-dot-halo: transparent;
+	--exec-nav-dot-ring: var(--graphite-rail);
+	--exec-scroll-hint-bg: var(--graphite-canvas);
+	--exec-scroll-hint-pill-bg: transparent;
+	--exec-scroll-hint-ink: #52525b;
+	--exec-scroll-hint-ink-hover: #09090b;
+	--exec-hor-item-bg: #ffffff;
+	--exec-hor-item-bg-hover: #f1f1f3;
+	--exec-hor-date-bg: #f4f4f5;
+	--exec-hor-date-month-ink: #52525b;
+	--exec-hor-date-day-ink: #09090b;
+}
+
+html[data-ui-theme='graphite-light'] .exec-canvas::before,
+html[data-ui-theme='graphite-light'] .exec-canvas::after {
+	display: none;
+}
+
+html[data-ui-theme='graphite-light'] .exec-nav-item:hover {
+	background: var(--graphite-hover);
+	color: var(--exec-ink);
+}
+
+html[data-ui-theme='graphite-light'] .exec-nav-item.is-active {
+	background: var(--graphite-panel);
+	color: var(--exec-ink);
+	box-shadow:
+		inset 0 0 0 1px #e4e4e7,
+		0 1px 2px rgb(0 0 0 / 0.04);
+}
+
+html[data-ui-theme='graphite-light'] .exec-theme-pill.is-on {
+	background: var(--graphite-panel);
+	color: var(--exec-ink);
+	box-shadow: inset 0 0 0 1px #d4d4d8;
+}
+
+/* Soft tinted avatar chips with deep letters in light themes (TASK-182) */
+html[data-ui-theme='graphite-light'] .ao-avatar {
+	background: color-mix(in oklab, var(--av-tint, #a1a1aa) 16%, #ffffff);
+	color: color-mix(in oklab, var(--av-tint, #71717a) 42%, #18181b);
+	box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--av-tint, #a1a1aa) 30%, #ffffff);
+}
+
+.swatch-graphite-light {
+	background: linear-gradient(90deg, #f4f4f5 0%, #f4f4f5 28%, #fafafa 28%, #fafafa 100%);
+}
+
+.swatch-graphite-light .swatch-bar {
+	background: linear-gradient(90deg, #18181b 0%, #52525b 62%, #16a34a 100%);
+}

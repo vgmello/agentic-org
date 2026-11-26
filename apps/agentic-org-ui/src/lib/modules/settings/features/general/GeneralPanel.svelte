@@ -4,6 +4,12 @@
 	import Section from '$lib/components/Section.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import { selectClass } from '$lib/components/classes';
+	import {
+		ARCHIVE_AFTER_DAYS_OPTIONS,
+		uiPrefs,
+		type ArchiveAfterDays
+	} from '$lib/platform/shell/ui-preferences.svelte';
 	import { settingsApi } from '../../api';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import { tone } from '$lib/components/pills';
@@ -22,6 +28,19 @@
 		needs_setup: { word: 'Needs setup', tone: tone.owner },
 		unknown: { word: 'Status unknown', tone: tone.neutral }
 	};
+
+	const uid = $props.id();
+
+	function archiveLabel(days: ArchiveAfterDays): string {
+		if (days === 0) return 'Off (keep all closed tasks visible)';
+		if (days === 10) return '10 days (default)';
+		return `${days} days`;
+	}
+
+	function handleArchiveChange(event: Event) {
+		const raw = Number((event.currentTarget as HTMLSelectElement).value);
+		uiPrefs.setArchiveAfterDays(raw as ArchiveAfterDays);
+	}
 </script>
 
 <PageHeader
@@ -58,6 +77,36 @@
 					{ term: 'HQ machine', value: general.hqMachine }
 				]}
 			/>
+		</Section>
+
+		<Section
+			level={3}
+			title="Auto-archive closed tasks"
+			description="Closed tasks older than this stay hidden from Work, Project, Team, and Member task lists unless “Show archived” is turned on for this session."
+		>
+			<div
+				class="flex flex-wrap items-center justify-between gap-4 border-y border-line-subtle px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8"
+			>
+				<div class="min-w-0 flex-1">
+					<label for="{uid}-archive-days" class="block text-sm/6 font-semibold text-fg">
+						Archive closed items after
+					</label>
+					<p class="mt-0.5 text-xs/5 text-fg-muted">
+						Applies across Work, Project Work, Team Work, and Member Work lists.
+					</p>
+				</div>
+				<select
+					id="{uid}-archive-days"
+					value={String(uiPrefs.archiveAfterDays)}
+					onchange={handleArchiveChange}
+					class="w-auto min-w-52 {selectClass}"
+					data-testid="archive-after-days-select"
+				>
+					{#each ARCHIVE_AFTER_DAYS_OPTIONS as days (days)}
+						<option value={String(days)}>{archiveLabel(days)}</option>
+					{/each}
+				</select>
+			</div>
 		</Section>
 
 		<Section

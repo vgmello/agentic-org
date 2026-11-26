@@ -1,6 +1,7 @@
 import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import { orgApi } from '$lib/modules/organization/api';
+import { workItemsApi } from '$lib/modules/workitems/api';
 import { createHttpProjectsApi } from './http-api';
 import type {
 	ActivityEntry,
@@ -95,6 +96,7 @@ const gatewayProjectsApi = createHttpProjectsApi({
 		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
 	},
 	orgApi,
+	workItemsApi,
 	instanceId: () => signedInSession()?.instance_id,
 	newId: () => appSession.newOperationId()
 });

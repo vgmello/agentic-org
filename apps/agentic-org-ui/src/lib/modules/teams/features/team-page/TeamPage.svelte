@@ -10,10 +10,11 @@
 	import { afterNavigate, beforeNavigate, goto, invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import { toast } from 'svelte-sonner';
+	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
 	import Callout from '$lib/components/Callout.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
+	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import TabsNav, { type Tab } from '$lib/components/TabsNav.svelte';
 	import { Button } from '$lib/components/ui/button';
@@ -152,13 +153,14 @@
 
 <svelte:head><title>{title}</title></svelte:head>
 
-<!-- The one named back link, in every state: loading, failed, unavailable, not found and found. -->
+<!-- Breadcrumb trail, in every state: loading, failed, unavailable, not found and found. -->
 <div class="px-4 pt-5 min-[640px]:px-6 min-[1024px]:px-8">
-	<a
-		href={resolve('/teams')}
-		class="inline-flex min-h-6 items-center gap-1 rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
-		><ChevronLeft class="size-4 shrink-0" aria-hidden="true" />Teams</a
-	>
+	<Breadcrumbs
+		items={[
+			{ label: 'Teams', href: '/teams' },
+			{ label: detail?.team.name ?? (team.state === 'loading' ? 'Loading…' : 'Team') }
+		]}
+	/>
 </div>
 {#if team.state === 'loading'}
 	<TeamPageSkeleton />
@@ -180,12 +182,14 @@
 				{@const archived = d.team.status === 'archived'}
 				{@const parent = d.path.at(-1)}
 				<div class="section-header team-header">
-					<header class="team-masthead ph px-4 pt-2 pb-5 min-[640px]:px-6 min-[1024px]:px-8">
-						<div class="min-w-0">
+					<header
+						class="team-masthead ph flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 pt-2 pb-5 min-[640px]:px-6 min-[1024px]:px-8"
+					>
+						<div class="min-w-0 flex-1 basis-64">
 							<h2
 								id="team-heading"
 								tabindex="-1"
-								class="flex flex-wrap items-baseline gap-x-2 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere] focus:outline-none"
+								class="flex flex-wrap items-baseline gap-x-2 text-[clamp(1.375rem,2.2vw,1.875rem)]/[1.22] font-semibold tracking-[-0.03em] text-fg [overflow-wrap:anywhere] focus:outline-none"
 							>
 								{d.team.name}
 							</h2>
@@ -215,6 +219,7 @@
 								</div>
 							</div>
 						</div>
+						<InteriorSearchBar class="w-full shrink-0 sm:w-[clamp(18rem,28vw,25rem)]" />
 					</header>
 					<div class="section-toolbar team-toolbar">
 						<div class="primary-tab-row">

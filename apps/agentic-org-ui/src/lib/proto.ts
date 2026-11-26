@@ -220,9 +220,27 @@ export interface Member {
 	reports_to_member_id?: string;
 	/** Agents only. */
 	agent?: AgentProfile;
+	/** Built-in agent identifier ('hr' | 'chief_of_staff'), set by HQ when built-in. */
+	builtin_key?: string;
 	/** RFC 3339, set by HQ when the member was created; missing on older records. */
 	created_at?: string;
 	version: number;
+}
+
+/**
+ * True for built-in organization agents (HR and Chief of Staff / Tess) that cannot be renamed,
+ * offboarded, or deleted while the organization exists (TASK-80.1, doc-78).
+ */
+export function isBuiltInAgent(member: Member | undefined): boolean {
+	if (!member || member.kind !== 'agent') return false;
+	if (typeof member.builtin_key === 'string' && member.builtin_key.length > 0) {
+		return member.builtin_key === 'hr' || member.builtin_key === 'chief_of_staff';
+	}
+	const handle = (member.handle ?? member.agent?.messaging_name ?? '').trim().toLowerCase();
+	const role = (member.agent?.role ?? '').trim().toLowerCase();
+	if (handle === 'hr') return true;
+	if (handle === 'tess' && role.includes('chief of staff')) return true;
+	return false;
 }
 
 /** A team working on a project. Usually one per project; several teams can share one. */

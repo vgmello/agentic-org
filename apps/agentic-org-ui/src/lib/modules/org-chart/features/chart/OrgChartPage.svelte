@@ -40,6 +40,7 @@
 	import OwnerBar from '../owner/OwnerBar.svelte';
 	import ChartNode, { type NodeAction } from './ChartNode.svelte';
 	import ChartSkeleton from './ChartSkeleton.svelte';
+	import OrgChartCanvas from './OrgChartCanvas.svelte';
 
 	let {
 		connection,
@@ -58,6 +59,7 @@
 
 	const organizationId = $derived(connection.organization.id);
 	const collapsed = new SvelteSet<string>();
+	let viewMode = $state<'canvas' | 'outline'>('canvas');
 	let seeded = false;
 	/**
 	 * The last chart a read returned. Open dialogs work from it, so a failed re-read (the page then says it couldn't
@@ -256,34 +258,67 @@
 				{/if}
 
 				{#if tree}
-					<section aria-labelledby="no-manager-heading" class="mt-8 max-w-4xl">
-						<h3 id="no-manager-heading" class="text-sm/6 font-semibold text-fg">
-							No explicit manager
-							<span class="font-normal text-fg-muted"
-								><span aria-hidden="true">· {roots}</span><span class="sr-only"
-									>, {roots} {roots === 1 ? 'member' : 'members'}</span
-								></span
+					<div class="mt-6 flex flex-wrap items-center justify-between gap-2">
+						<div class="org-view-seg" role="group" aria-label="Chart layout">
+							<button
+								type="button"
+								aria-pressed={viewMode === 'canvas'}
+								onclick={() => (viewMode = 'canvas')}
+								class={['org-view-btn', viewMode === 'canvas' && 'is-on']}
 							>
-						</h3>
-						<p class="text-xs/5 text-fg-muted">
-							Everyone with no recorded manager. No manager is assumed for them.
-						</p>
-						<!-- The keys move between the nodes' links; each node's own controls stay in the Tab order. -->
-						<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-						<ul role="list" class="mt-3" aria-label="Reporting lines" onkeydown={onTreeKey}>
-							{#each tree.roots as node (node.employee.id)}
-								<ChartNode
-									{node}
-									{collapsed}
-									ownerId={data.ownerId}
-									highlight={justAdded}
-									canMove={!!snapshot}
-									{ontoggle}
-									{onaction}
-								/>
-							{/each}
-						</ul>
-					</section>
+								Interactive canvas
+							</button>
+							<button
+								type="button"
+								aria-pressed={viewMode === 'outline'}
+								onclick={() => (viewMode = 'outline')}
+								class={['org-view-btn', viewMode === 'outline' && 'is-on']}
+							>
+								Reporting outline
+							</button>
+						</div>
+					</div>
+
+					{#if viewMode === 'canvas'}
+						<div class="mt-3">
+							<OrgChartCanvas
+								employees={data.employees}
+								ownerId={data.ownerId}
+								{snapshot}
+								canMove={!!snapshot}
+								{onaction}
+							/>
+						</div>
+					{:else}
+						<section aria-labelledby="no-manager-heading" class="mt-6 max-w-4xl">
+							<h3 id="no-manager-heading" class="text-sm/6 font-semibold text-fg">
+								No explicit manager
+								<span class="font-normal text-fg-muted"
+									><span aria-hidden="true">· {roots}</span><span class="sr-only"
+										>, {roots} {roots === 1 ? 'member' : 'members'}</span
+									></span
+								>
+							</h3>
+							<p class="text-xs/5 text-fg-muted">
+								Everyone with no recorded manager. No manager is assumed for them.
+							</p>
+							<!-- The keys move between the nodes' links; each node's own controls stay in the Tab order. -->
+							<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+							<ul role="list" class="mt-3" aria-label="Reporting lines" onkeydown={onTreeKey}>
+								{#each tree.roots as node (node.employee.id)}
+									<ChartNode
+										{node}
+										{collapsed}
+										ownerId={data.ownerId}
+										highlight={justAdded}
+										canMove={!!snapshot}
+										{ontoggle}
+										{onaction}
+									/>
+								{/each}
+							</ul>
+						</section>
+					{/if}
 				{/if}
 			</div>
 		{/snippet}
@@ -343,3 +378,26 @@
 		/>
 	{/if}
 {/key}
+
+<style>
+	.org-view-seg {
+		display: inline-flex;
+		padding: 2px;
+		border-radius: var(--exec-ctrl-radius, 8px);
+		background: var(--exec-well);
+		box-shadow: inset 0 0 0 1px var(--exec-border);
+	}
+	.org-view-btn {
+		padding: 5px 12px;
+		border-radius: calc(var(--exec-ctrl-radius, 8px) - 2px);
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--exec-muted);
+		cursor: pointer;
+	}
+	.org-view-btn.is-on {
+		background: var(--exec-accent-soft);
+		color: var(--exec-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	}
+</style>
