@@ -69,6 +69,29 @@ function navTeamsGroupHtml(r0, r1, teamsOpen) {
         </li>`;
 }
 
+/* Workspace group is organizable: pinned items show in the list (registry order), the rest sit under
+   "More". Hover an item to pin or unpin it; the choice is saved per browser (S.navPinned). */
+const WORKSPACE_ITEMS = [
+  ["work", "#/work", "Work", "clipboard"],
+  ["chat", "#/chat", "Chat", "chat"],
+  ["activity", "#/activity", "Activity", "signal"],
+  ["projects", "#/projects", "Projects", "folder"],
+  ["calendar", "#/calendar", "Calendar", "calendar-check"],
+];
+function workspaceItemHtml([key, href, label, icon], cur, pinned) {
+  const pin = `<button class="nav-pin" type="button" data-act="nav-pin" data-v="${key}" aria-label="${pinned ? "Move" : "Pin"} ${esc(label)} ${pinned ? "to More" : "to the sidebar"}" title="${pinned ? "Move to More" : "Pin to sidebar"}">${ic(pinned ? "minimize" : "plus", "ic14")}</button>`;
+  return `<li class="nav-org-item"><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon)}<span class="lbl">${esc(label)}</span></a>${pin}</li>`;
+}
+function workspaceNavHtml(r0, r1) {
+  const isCur = (key) => r0 === key && (key !== "projects" || !r1);
+  const pinned = WORKSPACE_ITEMS.filter(([k]) => S.navWorkspace.includes(k)), extra = WORKSPACE_ITEMS.filter(([k]) => !S.navWorkspace.includes(k));
+  if (!extra.length) return pinned.map((it) => workspaceItemHtml(it, isCur(it[0]), true)).join("");
+  const open = S.v4Open["nav-more"] ?? extra.some(([k]) => isCur(k));
+  const moreBtn = `<li><button class="nav-item nav-more-btn" type="button" data-act="v4-acc" data-id="nav-more" aria-expanded="${!!open}" aria-controls="nav-more-list" title="More">${ic("ellipsis")}<span class="lbl">More</span>${ic("chev-down", "ic14 nav-more-chev")}</button></li>`;
+  const list = open ? `<li><ul class="nav-list nav-more-list" id="nav-more-list" role="list" aria-label="More workspace items">${extra.map((it) => workspaceItemHtml(it, isCur(it[0]), false)).join("")}</ul></li>` : "";
+  return pinned.map((it) => workspaceItemHtml(it, isCur(it[0]), true)).join("") + moreBtn + list;
+}
+
 function renderNav(route) {
   const [r0, r1] = route;
   const homeEmpty = r0 === "home" && S.homeState === "empty";
@@ -93,11 +116,7 @@ function renderNav(route) {
     <li>
       <div class="nav-label">Workspace</div>
       <ul class="nav-list" role="list">
-        ${item("#/work", "Work", "clipboard", r0 === "work")}
-        ${item("#/chat", "Chat", "chat", r0 === "chat")}
-        ${item("#/calendar", "Calendar", "calendar-check", r0 === "calendar")}
-        ${item("#/activity", "Activity", "signal", r0 === "activity")}
-        ${item("#/projects", "Projects", "folder", r0 === "projects" && !r1)}
+        ${workspaceNavHtml(r0, r1)}
       </ul>
     </li>
     ${navFavoritesHtml(favs, r0, r1, homeError, favsOpen)}

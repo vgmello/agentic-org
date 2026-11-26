@@ -764,6 +764,7 @@ function pageWork() {
       </div>
       ${workLayoutToggle("workLayout")}
       ${workViewControls(selection.group, selection.subgroup)}
+      <a class="btn ghost icon work-cal-btn" href="#/calendar" aria-label="Open calendar" title="Calendar">${ic("calendar-check", "ic20")}</a>
       ${workArchivedChip()}
       <button class="btn primary" id="work-new-task" type="button" data-act="work-new-task">${ic("plus", "ic16")}New task</button>
     </div>

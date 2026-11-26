@@ -1,3 +1,4 @@
+import { calendarAction } from "../pages/calendar.js";
 import { IN, M, OFFICES, P, TEAMS, W, blockedOnOwner } from "../data.js";
 import { activityFilterKey, activityViewKey, addAssemblySample, assemblySimulation, projectActivityId, refreshAssemblySimulation, setActivityPanel, syncAssemblySimulationTimer, updateAssemblyPlayback } from "../pages/activity.js";
 import { closeAgentFocus, isAgentFocusOpen, openAgentFocus } from "../pages/agent-focus.js";
@@ -14,7 +15,7 @@ import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRe
 import { endNavigationKeys, getNavigationKeys, handleNavigationKeys } from "./keyboard.js";
 import { pageSearchInput, render, route } from "./router.js";
 import { askTessInPanel, clearCompanionHistory, clearReadNotifications, closeCompanion, dismissCompanionContext, handleCompanionEscape, handleCompanionInput, isCompanionModal, markAllNotificationsRead, markNotificationRead, openTessPanel, toggleExpandCompanion, toggleNotificationRead, toggleTessPanel } from "./topbar-utils.js";
-import { ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, ORG_NAME_STORE, S, SR, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, applyCozyContrast, applyFontStyle, applyShortcuts, applyTheme, inTextField, overlayOpen, qs, setOrgName, showOrgName, toggleNavPinned, writeSingleKey } from "../state.js";
+import { applyCozyContrast, applyFontStyle, applyShortcuts, applyTheme, ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, inTextField, ORG_NAME_STORE, overlayOpen, qs, S, saveNavWorkspace, setOrgName, showOrgName, SR, toggleNavPinned, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, writeSingleKey } from "../state.js";
 import { spotQueue, toast } from "../ui.js";
 
 /* ---------------------------------------------------------------- actions */
@@ -367,6 +368,12 @@ const CLICK_ACTIONS = {
   "notif-mark-all": () => markAllNotificationsRead(),
   "notif-clear-read": () => clearReadNotifications(),
   "brief-lens": (_e, _t, _id, v) => { S.briefLens = v; S.briefCopied = false; render(false); document.querySelector(`[data-act="brief-lens"][data-v="${CSS.escape(v || "")}"]`)?.focus(); },
+  "nav-pin": (_e, _t, _id, v) => {
+    S.navWorkspace = S.navWorkspace.includes(v) ? S.navWorkspace.filter((k) => k !== v) : [...S.navWorkspace, v];
+    saveNavWorkspace(); render(false);
+    document.querySelector(`.nav [data-act="nav-pin"][data-v="${CSS.escape(v)}"]`)?.focus();
+  },
+  cal: (_e, _t, id, v) => calendarAction(id, v),
   "brief-view": (_e, _t, _id, v) => { S.briefView = v === "memo" ? "memo" : "highlights"; render(false); document.querySelector(`[data-act="brief-view"][data-v="${CSS.escape(S.briefView)}"]`)?.focus(); },
   "brief-expand": () => { S.briefExpanded = !S.briefExpanded; render(false); },
   "ai-copy-brief": () => handleCopyBrief(),
