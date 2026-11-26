@@ -1,8 +1,8 @@
 mod attachments;
 mod inbox;
 mod office_socket;
+pub(super) mod retired_work;
 mod unserved;
-mod work;
 
 use std::collections::HashMap;
 use std::io::BufReader;
@@ -26,11 +26,9 @@ use org_proto::msg::{
     MsgSendParams, MsgWait, MsgWaitParams, KIND_MSG, MAX_HANDLE_BYTES,
 };
 use org_proto::org::{CommandAccepted, CommandStatus, Position, TeamCreate, TeamCreateParams};
-use org_proto::work::WorkAccepted;
 use org_proto::{
     frame, ApiError, ErrorCode, Hello, MemberKind, OfficeRole, OrgSnapshot, Request, Response,
 };
-use org_work::{Caller, WorkCall};
 
 use super::connection::{serve_connection, serve_connection_as, serve_connection_with_poll};
 use super::held::{CancelOnDrop, Control, Held, Place, Registration};
@@ -864,7 +862,6 @@ pub(super) fn test_info() -> org_office::OfficeInfo {
 pub(super) fn ports(snapshot: SnapshotFn) -> OfficePorts {
     let (mailbox, directory) = messaging();
     OfficePorts {
-        work: Box::new(|_, _| Err("none".into())),
         operation_get: Box::new(|_, _| {
             Ok(Err(ApiError::new(
                 ErrorCode::NotFound,
@@ -1328,7 +1325,6 @@ fn serving(
         &test_info(),
         path,
         OfficePorts {
-            work: Box::new(|_, _| Err("none".into())),
             operation_get: Box::new(|_, _| {
                 Ok(Err(ApiError::new(
                     ErrorCode::NotFound,
@@ -1813,7 +1809,6 @@ fn following_with(
             &test_info(),
             path,
             OfficePorts {
-                work: Box::new(|_, _| Err("none".into())),
                 operation_get: Box::new(|_, _| {
                     Ok(Err(ApiError::new(
                         ErrorCode::NotFound,
@@ -2023,17 +2018,14 @@ fn a_position_the_log_cannot_resume_from_is_snapshot_required_and_subscribes_not
         code_of(client.subscribe(Some(0))),
         ErrorCode::SnapshotRequired
     );
-    let work = |id| {
-        Request::new::<org_proto::Subscribe>(
-            id,
-            &org_proto::SubscribeParams {
-                from_position: None,
-                from_work_position: Some(org_proto::work::WorkPosition::default()),
-            },
-        )
-        .unwrap()
+    // The retired work feed: a `from_work_position` is refused while the params decode.
+    let work = |id| Request {
+        id,
+        method: "subscribe".into(),
+        principal: None,
+        params: serde_json::json!({"from_work_position": {"incarnation": 0, "seq": 0}}),
     };
-    assert_eq!(code_of(client.ask(work)), ErrorCode::SnapshotRequired);
+    assert_eq!(code_of(client.ask(work)), ErrorCode::InvalidRequest);
     // None of them subscribed: nothing is pushed, and a good subscribe still works.
     feed.push(3);
     assert!(client.nothing_within(Duration::from_millis(300)));
@@ -2319,7 +2311,6 @@ fn asking(
         &test_info(),
         path,
         OfficePorts {
-            work: Box::new(|_, _| Err("none".into())),
             operation_get: Box::new(|_, _| {
                 Ok(Err(ApiError::new(
                     ErrorCode::NotFound,

@@ -139,7 +139,6 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
             on_agent_stop: None,
             hr_message_guard: None,
             submit: Box::new(|_, _, _| panic!("host touched Office submit")),
-            work: Box::new(|_, _| panic!("host touched Office work")),
             operation_get: Box::new(|_, _| panic!("host touched Office operation")),
             who: Box::new(|_| panic!("host touched Office who")),
             status: Box::new(|_, _| panic!("host touched Office status")),

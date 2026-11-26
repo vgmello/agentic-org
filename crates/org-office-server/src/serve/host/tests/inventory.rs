@@ -1,7 +1,6 @@
 //! Source-backed inventory: actual Call definitions, parser reachability and server dispatch.
 use super::*;
 use org_office::rules::OrgCommand;
-use org_work::WorkCall;
 use std::collections::{BTreeMap, BTreeSet};
 use syn::visit::Visit;
 
@@ -294,7 +293,6 @@ fn inventory() -> (BTreeSet<String>, BTreeSet<String>) {
     for source in [
         "crates/org-office-server/src/lib.rs",
         "crates/org-office/src/rules/command.rs",
-        "crates/org-work/src/call.rs",
     ] {
         modules(&root.join(source), &mut |file| dispatch.visit_file(file));
     }
@@ -307,11 +305,9 @@ fn inventory() -> (BTreeSet<String>, BTreeSet<String>) {
         .collect();
     for method in &candidates {
         let request = signed(&shared, method, Value::Null);
-        // Exercise the real registries. A new OrgCommand or WorkCall is discovered even if
-        // no direct request.is::<Call>() appears in agentic-org-office.
-        if !matches!(OrgCommand::parse(&request), Ok(None))
-            || !matches!(WorkCall::parse(&request), Ok(None))
-        {
+        // Exercise the real registry. A new OrgCommand is discovered even if no direct
+        // request.is::<Call>() appears in agentic-org-office.
+        if !matches!(OrgCommand::parse(&request), Ok(None)) {
             dispatch.methods.insert(method.clone());
         }
         let response = super::super::super::super::answer(
@@ -416,19 +412,9 @@ fn expected_policy(method: &str, served: bool) -> HostPolicy {
             HostPolicy::Refuse
         }
         _ if served => HostPolicy::Serve,
-        _ if [
-            "work.",
-            "task.",
-            "bug.",
-            "checklist.",
-            "project.",
-            "area.",
-            "msg.",
-            "chat.",
-            "dm.",
-        ]
-        .iter()
-        .any(|prefix| method.starts_with(prefix)) =>
+        _ if ["project.", "area.", "msg.", "chat.", "dm."]
+            .iter()
+            .any(|prefix| method.starts_with(prefix)) =>
         {
             HostPolicy::Unserved
         }

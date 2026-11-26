@@ -1444,7 +1444,6 @@ dependencies = [
  "org-store",
  "org-sync",
  "org-sync-proto",
- "org-work",
  "proc-macro2",
  "rustls",
  "serde",
@@ -1594,16 +1593,6 @@ name = "org-sync-proto"
 version = "0.0.0"
 dependencies = [
  "base64",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "org-work"
-version = "0.0.0"
-dependencies = [
- "org-proto",
  "serde",
  "serde_json",
  "sha2",
