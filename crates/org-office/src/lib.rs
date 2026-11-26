@@ -11,6 +11,7 @@
 //! rules; `rules` reads the native protocol's organization commands.
 
 pub mod accounting;
+pub mod backup;
 pub mod budgets;
 pub mod git;
 pub mod hq_creation;

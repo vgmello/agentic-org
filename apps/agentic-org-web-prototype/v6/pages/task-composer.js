@@ -730,7 +730,7 @@ function openSmartTaskComposer(trigger, opts = {}) {
     step: "capture",
     proj,
     team,
-    prompt: "",
+    prompt: opts.prompt || "",
     pinnedAssignee: agentId || null,
     pinnedType: null,
     pinnedPriority: null,

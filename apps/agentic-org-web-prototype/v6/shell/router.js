@@ -10,7 +10,8 @@ import { pageInsights } from "../pages/org-insights.js";
 import { mountProjectQueue, pageProject, pageProjects } from "../pages/projects.js";
 import { SET, notFound, pagePreferences, pageSearch, pageSettings } from "../pages/settings.js";
 import { pageMember, pageMembersDir, pageOrgChart, pageTeam, pageTeams } from "../pages/teams.js";
-import { fitTextarea, mountBoard, pageWork, setWorkPanelExpanded, showSidePanel } from "../pages/work.js";
+import { boardPlace, fitTextarea, mountBoard, pageWork, restoreBoardPlace, setWorkPanelExpanded, showSidePanel } from "../pages/work.js";
+import { adoptBoardReturn, takeBoardReturnPlace } from "./board-return.js";
 import { isMacPlatform } from "./cmdk.js";
 import { endNavigationKeys } from "./keyboard.js";
 import { mountHomeProjectHint, renderBanner, renderNav } from "./sidebar.js";
@@ -95,7 +96,7 @@ const ROUTE_RENDERERS = {
   inbox: (r1, r2) => pageInbox(r1, r2),
   projects: (r1, r2) => (!r1 ? pageProjects() : own(P, r1) ? pageProject(r1, r2) : notFound()),
   work: () => pageWork(),
-  chat: (r1) => pageChat(own(CH, r1) ? r1 : null),
+  chat: (r1) => pageChat(r1), /* Chat resolves unknown ids; dm-<member> opens or creates that DM */
   activity: () => pageActivity(),
   insights: () => pageInsights(),
   calendar: () => pageCalendar(),
@@ -160,7 +161,7 @@ function restoreFocusAfterRender({ main, content, r0, r1, key, focus, workPanel,
 }
 
 function captureBeforeRender(main, content) {
-  const priorBoard = main.querySelector("#work-results .board");
+  const priorResults = main.querySelector("#work-results");
   const active = document.activeElement;
   const toolbarFocus = pageSearchTools.contains(active) || active?.classList?.contains("inline-search-input") ? active.id : "";
   const toolbarCaret = toolbarFocus && document.activeElement.type === "search" ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
@@ -169,7 +170,7 @@ function captureBeforeRender(main, content) {
     priorActivity: main.querySelector(".activity-main"),
     panelScroll: document.getElementById("activity-panel-scroll")?.scrollTop ?? 0,
     pageScroll: content.scrollTop,
-    workBoardScroll: priorBoard && { left: priorBoard.scrollLeft, top: priorBoard.scrollTop },
+    workBoardPlace: priorResults && boardPlace(priorResults),
     toolbarFocus,
     toolbarCaret,
   };
@@ -191,12 +192,24 @@ function pageTitle(r0, r1) {
   return TITLES[r0] || "Not found";
 }
 
+/* An in-place re-render (search opened, Display changed, panel opened) keeps the board's lane and scroll */
+function restoreBoardInPlace(results, place) {
+  if (results && place) restoreBoardPlace(results, place, "");
+}
+
+/* Coming back to a board you left (Back, or "Back to work board" in Inbox) returns to its lanes, scroll and control */
+function restoreReturnedBoard(results) {
+  const back = takeBoardReturnPlace();
+  if (back && results) restoreBoardPlace(results, back);
+}
+
 function render(focus = true) {
   endNavigationKeys();
   const r = normalizeRouteRedirects();
   if (!r) return;
   stopAgentOrb();
   const [r0, r1, r2] = r, projectId = projectActivityId(r);
+  adoptBoardReturn(r0);
   const sameActivity = syncActivityScopeState(r0, projectId);
   document.documentElement.toggleAttribute("data-interior-page", r0 !== "home");
   const main = document.getElementById("main"), content = document.getElementById("content"), key = location.hash;
@@ -216,11 +229,11 @@ function render(focus = true) {
   renderBanner(r0);
   mountActivityAfterRender(main, sameActivity, snap.priorActivity, snap.panelScroll, projectId);
   document.title = pageTitle(r0, r1) + " · Agentic Org";
-  if (sameWorkPage) {
-    content.scrollTop = snap.pageScroll;
-    if (snap.workBoardScroll) main.querySelector("#work-results .board")?.scrollTo(snap.workBoardScroll);
-  }
+  if (sameWorkPage) content.scrollTop = snap.pageScroll;
+  const results = main.querySelector("#work-results");
+  if (sameWorkPage || key === S.lastRoute) restoreBoardInPlace(results, snap.workBoardPlace);
   restoreFocusAfterRender({ main, content, r0, r1, key, focus, workPanel, priorPanel: snap.priorPanel, sameWorkPage, toolbarFocus: snap.toolbarFocus, toolbarCaret: snap.toolbarCaret });
+  if (focus && key !== S.lastRoute && !workPanel) restoreReturnedBoard(results);
   S.lastRoute = key; S.focusAfter = null;
   mountHomeProjectHint();
   fitTextarea(document.getElementById("work-comment"));

@@ -42,6 +42,8 @@ fn help_subcommand_routes_to_command_help() {
         &["help", "service", "status"],
         &["help", "status"],
         &["help", "completion"],
+        &["help", "backup"],
+        &["help", "restore"],
     ] {
         let routed = help_routing(words(args));
         assert_eq!(
@@ -147,11 +149,14 @@ fn cli_reference_documents_every_top_level_and_office_command() {
         "status",
         "completion",
         "recovery",
+        "backup",
+        "restore",
     ] {
         assert!(help.contains(command), "top-level help missing `{command}`");
         assert_cli_reference_entry_has_use_when(&format!("`agentic-org {command}"));
     }
     assert_cli_reference_entry_has_use_when("`agentic-org setup --non-interactive");
+    assert_cli_reference_entry_has_use_when("`agentic-org restore --verify");
     for sub in ["start", "stop", "status"] {
         assert_cli_reference_entry_has_use_when(&format!("`agentic-org service {sub}"));
     }
@@ -163,6 +168,12 @@ fn cli_reference_documents_every_top_level_and_office_command() {
     }
     for sub in ["create", "list", "inspect"] {
         assert_cli_reference_entry_has_use_when(&format!("`agentic-org org {sub}"));
+    }
+    for sub in ["approve", "sessions", "revoke"] {
+        assert_cli_reference_entry_has_use_when(&format!("`agentic-org agent {sub}"));
+    }
+    for verb in ["login", "whoami", "logout", "exec"] {
+        assert_cli_reference_entry_has_use_when(&format!("`agent-os {verb}"));
     }
     let office = cli::command()
         .find_subcommand_mut("office")

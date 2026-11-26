@@ -8,6 +8,7 @@ use org_work::{Caller, WorkCall};
 
 use super::auth::Binding;
 use super::binding::bind_connection;
+use super::external::{answer_operator, external_may_call, external_refusal};
 use super::messaging::answer_message;
 use super::org::{answer_org_command, org_snapshot, status_set, who};
 use super::sessions::project_or_hiring;
@@ -43,6 +44,9 @@ pub(super) fn answer_and_record(
     binding: &mut Binding,
     peer_pid: Option<libc::pid_t>,
 ) -> Response {
+    if binding.external_session().is_some() && !external_may_call(&request.method) {
+        return external_refusal(request.id);
+    }
     let response = answer_with_peer(request, shared, binding, peer_pid);
     if matches!(response.outcome, org_proto::Outcome::Result(_))
         && !request.is::<MsgBind>()
@@ -67,6 +71,9 @@ fn answer_with_peer(
     binding: &mut Binding,
     peer_pid: Option<libc::pid_t>,
 ) -> Response {
+    if let Some(response) = answer_operator(request, shared, binding) {
+        return response;
+    }
     if let Some(response) = answer_inbox_or_operation(request, shared, binding) {
         return response;
     }
@@ -192,12 +199,16 @@ fn answer_work_call(request: &Request, shared: &Shared, binding: &Binding) -> Op
         Ok(None) => return None,
         other => other,
     };
-    let Binding::Member { id, via_grant } = binding else {
-        return Some(bind_error(
-            request.id,
-            ErrorCode::NotBound,
-            "bind as a member to change work",
-        ));
+    let (id, via_grant) = match binding {
+        Binding::Member { id, via_grant } => (id, via_grant),
+        Binding::External { id, .. } => (id, &false),
+        Binding::Anonymous => {
+            return Some(bind_error(
+                request.id,
+                ErrorCode::NotBound,
+                "bind as a member to change work",
+            ))
+        }
     };
     if WorkCall::is_grant_only(request) && !*via_grant {
         return Some(Response::error(

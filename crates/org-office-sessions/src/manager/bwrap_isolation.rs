@@ -65,6 +65,11 @@ pub(crate) fn ensure_bwrap_deny_dirs(
     ] {
         ensure_owner_only_dir(&dir)?;
     }
+    // `agent-os` external sign-in state (`TASK-137`): masked even before the first
+    // `agent-os login` creates it, so a key written mid-session never appears unmasked.
+    for root in &mgr.config.agent_os_state_roots {
+        ensure_owner_only_dir(root)?;
+    }
     ensure_bwrap_repo_dirs(runtime_root, &office_rt, office_id, employee_id)?;
     ensure_bwrap_sibling_dirs(mgr, &office_local, &office_rt, office_id, employee_id)
 }

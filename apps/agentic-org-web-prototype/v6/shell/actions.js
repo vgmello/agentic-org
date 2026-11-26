@@ -3,14 +3,16 @@ import { IN, M, OFFICES, P, TEAMS, W, blockedOnOwner } from "../data.js";
 import { activityFilterKey, activityViewKey, addAssemblySample, assemblySimulation, projectActivityId, refreshAssemblySimulation, setActivityPanel, syncAssemblySimulationTimer, updateAssemblyPlayback } from "../pages/activity.js";
 import { closeAgentFocus, isAgentFocusOpen, openAgentFocus } from "../pages/agent-focus.js";
 import { consoleSessions } from "../pages/agent-profile.js";
-import { chatDrafts, openDirectMessage, sendChatMessage, sendThreadReply } from "../pages/chat.js";
+import { chatDrafts, findConversation, openDirectMessage, recordAskReply, sendChatMessage, sendThreadReply } from "../pages/chat.js";
 import { answerOrgQuestion } from "../pages/home.js";
 import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment, refreshInboxSearch, resetInboxSelection } from "../pages/inbox.js";
 import { updateProjectInsights } from "../pages/insights.js";
 import { removeTeam } from "../pages/projects.js";
-import { addIdeationComment, changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkCounts, refreshWorkResults, scopedWorkQueries, scopedWorkResults, scopedWorkType, scopedWorkView, selectWorkView, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
+import { addIdeationComment, boardPlace, changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, jumpToBoardLane, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkResults, refreshWorkResults, scopedWorkQueries, scopedWorkType, scopedWorkView, selectWorkView, setDoneHistory, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
 import { openSmartTaskComposer } from "../pages/task-composer.js";
 import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, goSearch, narrowSearch, openCmdk, renderCmdk, runCmdkItem, setCmdkMode } from "./cmdk.js";
+import { rememberBoardExit, returnToBoard } from "./board-return.js";
+import { closePopoverMenu, isPopoverMenu, openPopoverMenu, tabOutOfPopoverMenu } from "./popover-menu.js";
 import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRemove, openHealth, openShortcutsHelp, setSheetReturn } from "./dialogs.js";
 import { endNavigationKeys, getNavigationKeys, handleNavigationKeys } from "./keyboard.js";
 import { pageSearchInput, render, route } from "./router.js";
@@ -60,7 +62,7 @@ function focusHandledTarget(id, inInbox) {
 
 function advanceInboxAfterHandle(id, it, next) {
   if (route()[1] !== id && route()[1]) return;
-  history.replaceState(null, "", "#/inbox/" + (next || it).id);
+  history.replaceState(history.state, "", "#/inbox/" + (next || it).id);
   S.lastRoute = location.hash;
 }
 
@@ -93,7 +95,7 @@ function reopenInboxItem(item) {
   });
   item.handled = false; item.handledNow = false; item.justHandled = false;
   delete item.outcome;
-  if (route()[0] === "inbox") { S.inboxKind = "all"; history.replaceState(null, "", "#/inbox/" + item.id); S.lastRoute = location.hash; }
+  if (route()[0] === "inbox") { S.inboxKind = "all"; history.replaceState(history.state, "", "#/inbox/" + item.id); S.lastRoute = location.hash; }
   render(false);
   document.getElementById("triage-detail-title")?.focus();
   toast("Returned to your queue.", "refresh");
@@ -102,9 +104,24 @@ function reopenInboxItem(item) {
 function closeMenus(except) {
   document.querySelectorAll(".menu").forEach((m) => {
     if (m.id === except) return;
+    if (isPopoverMenu(m)) closePopoverMenu(m);
     m.hidden = true;
     document.querySelector(`[aria-controls="${m.id}"]`)?.setAttribute("aria-expanded", "false");
   });
+}
+
+/* Zero results: clear filters and search for the current Work view, then return to the Filter control */
+function clearWorkFilters() {
+  if (document.getElementById("work-results")?.dataset.scope) {
+    const r = route();
+    Object.assign(S, { scopedWorkStatus: "all", scopedWorkProject: "all", scopedWorkTeam: "all" });
+    scopedWorkQueries.delete(scopedWorkType(r) + ":" + r[1]);
+  } else {
+    Object.assign(S, { workQuery: "", workStatus: "all", workProject: "all", workTeam: "all" });
+  }
+  render(false);
+  document.querySelector('[aria-controls="menu-scoped-work-filter"], [aria-controls="menu-work-filter"]')?.focus();
+  toast("Filters cleared.");
 }
 
 function toggleStoredFlag(stateKey, attr, storeKey, t, invertAttr = false) {
@@ -140,6 +157,8 @@ function handleSendReply(id) {
   }
   const outcome = S.replyMode === "changes" ? "Changes requested" : "Answered";
   S.replyMode = null;
+  /* In Chat the owner's words stay in the conversation and on the request, not only its outcome. */
+  if (ta.closest(".chat")) recordAskReply(id, txt);
   handle(id, outcome);
 }
 
@@ -233,7 +252,8 @@ const CLICK_ACTIONS = {
   menu: (_e, t, id) => {
     const m = document.getElementById("menu-" + id), open = m.hidden;
     closeMenus(m.id); m.hidden = !open; t.setAttribute("aria-expanded", String(open));
-    if (open) m.querySelector("button")?.focus();
+    if (isPopoverMenu(m)) { if (open) openPopoverMenu(m, t); else closePopoverMenu(m); }
+    if (open) (m.querySelector('[role^="menuitem"][aria-checked="true"]') || m.querySelector('[role^="menuitem"], button'))?.focus();
   },
   proto: (_e, t, _id, v) => {
     const mm = t.closest(".menu"); closeMenus();
@@ -289,12 +309,21 @@ const CLICK_ACTIONS = {
   "work-comment-focus": () => document.getElementById("work-comment")?.focus(),
   "inbox-reopen": (_e, _t, id) => { const item = IN.find((c) => c.id === id); if (item?.handled) { if (item.reopen) item.reopen(); else reopenInboxItem(item); } },
   set: (_e, t, _id, v) => handleSetAction(t, v),
-  "board-done": () => { S.workBoardAllDone = !S.workBoardAllDone; render(false); document.querySelector(".bcol-older")?.focus({ preventScroll: true }); },
-  "board-lane": (_e, _t, _id, v) => {
-    const board = document.querySelector(".board"), col = board?.querySelectorAll(".bcol")[Number(v)];
-    if (col) board.scrollTo({ left: col.offsetLeft - parseFloat(getComputedStyle(board).scrollPaddingInlineStart || "0"), behavior: "smooth" });
-    document.querySelectorAll(".board-lanes button").forEach((b, i) => (i === Number(v) ? b.setAttribute("aria-current", "true") : b.removeAttribute("aria-current")));
+  /* The toolbar's history chip resets Done history; focus goes to Display, where the history lives */
+  "board-done": (_e, _t, _id, v) => {
+    setDoneHistory(v);
+    closeMenus();
+    render(false);
+    document.querySelector('[aria-controls="menu-work-display"], [aria-controls="menu-scoped-work-display"]')?.focus();
   },
+  /* An empty state's "Show N older/archived matches" widens history, then lands on the first revealed item */
+  "work-reveal": (_e, _t, _id, v) => {
+    setDoneHistory(v);
+    render(false);
+    (document.querySelector("#work-results .work-item-link") ?? document.getElementById("work-results"))?.focus();
+  },
+  "work-clear-filters": () => clearWorkFilters(),
+  "board-lane": (_e, _t, _id, v) => jumpToBoardLane(v),
   "cozy-contrast": (_e, t) => { S.cozyContrast = !S.cozyContrast; try { localStorage.setItem(COZY_CONTRAST_STORE, S.cozyContrast ? "1" : "0"); } catch (e) {} applyCozyContrast(); t.setAttribute("aria-checked", String(S.cozyContrast)); },
   "work-expand-detail": (_e, t) => { const panel = t.closest("dialog"); setWorkPanelExpanded(panel, !panel.hasAttribute("data-expanded")); },
   "agent-focus-open": (_e, t, id) => { if (id) openAgentFocus(id, t); },
@@ -323,8 +352,6 @@ const CLICK_ACTIONS = {
     trigger?.focus();
   },
   "fav-proj": (_e, _t, id) => { const idx = S.favProjs.indexOf(id); if (idx >= 0) { S.favProjs.splice(idx, 1); toast(`Removed ${P[id].name} from favorites.`); } else { S.favProjs.push(id); toast(`Added ${P[id].name} to favorites.`); } render(false); },
-  thread: (_e, _t, id) => { S.thread = S.thread === id ? null : id; render(false); (S.thread ? document.getElementById("chat-thread-title") : document.querySelector(`.chmain [data-act="thread"][data-id="${CSS.escape(id)}"]`))?.focus(); },
-  "thread-close": () => document.querySelector(`.chmain [data-act="thread"][data-id="${CSS.escape(S.thread)}"]`)?.click(),
   answer: (_e, t, id, v) => {
     if (/^Ask why/i.test(v)) { toast("Prototype: your question goes to the agent; the ask stays open."); return; }
     S.answered[id] = v;
@@ -359,9 +386,8 @@ const CLICK_ACTIONS = {
   },
   "search-close": () => closeCmdk(true),
   sgo: (_e, _t, _id, v) => goSearch(v),
-  "chat-jump": (_e, t) => openCmdk("#", "cmd", t, false),
   "chat-list": (_e, _t, id) => toggleChatList(id),
-  "chat-dm": (_e, _t, id) => { location.hash = openDirectMessage(id); },
+  "chat-dm": (_e, _t, id, v) => { location.hash = openDirectMessage(id, v); },
   "search-toggle": (_e, _t, _id, v) => toggleInlineSearch(v),
   "search-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
   "cmdk-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
@@ -430,11 +456,20 @@ function dismissTopbarOverlaysForLink(link) {
   if (act === "close-sheet") closeSheet();
 }
 
+/* Leaving a work board by one of its links (an Inbox request, a project, a person) keeps the board's place */
+function rememberBoardLinkExit(link, href) {
+  const results = document.getElementById("work-results");
+  if (!results?.querySelector(".board") || !results.contains(link) || link.matches(".work-item-link") || href === location.hash) return;
+  rememberBoardExit(boardPlace(results, link), href);
+}
+
 function handleHashLinkClick(e) {
   const link = e.target.closest('a[href^="#/"]');
   if (!link || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return false;
   const href = link.getAttribute("href");
   e.preventDefault();
+  if (link.matches(".triage-board-return") && returnToBoard()) return true;
+  rememberBoardLinkExit(link, href);
   document.body.classList.remove("drawer");
   closeMenus();
   dismissTopbarOverlaysForLink(link);
@@ -519,8 +554,7 @@ const INPUT_BY_ID = {
   "scoped-work-search": (target) => {
     const currentRoute = route(), view = scopedWorkView(currentRoute, scopedWorkType(currentRoute));
     scopedWorkQueries.set(view.key, target.value);
-    document.getElementById("work-results").innerHTML = scopedWorkResults(view);
-    refreshScopedWorkCounts(view);
+    refreshScopedWorkResults(view);
   },
   "work-search": handleWorkSearchInput,
   "o-name": (target) => target.setCustomValidity(""),
@@ -658,7 +692,8 @@ function handleCmdkKeydown(e) {
 }
 
 function handleOpenMenuKeydown(e, openMenu) {
-  const items = [...openMenu.querySelectorAll('[role^="menuitem"]')], i = items.indexOf(e.target);
+  /* Items a narrow layout hides (an overflow link shown only on phones) are skipped */
+  const items = [...openMenu.querySelectorAll('[role^="menuitem"]')].filter((el) => el.getClientRects().length), i = items.indexOf(e.target);
   const go = (n) => { e.preventDefault(); items[(n + items.length) % items.length].focus(); return true; };
   if (e.key === "ArrowDown") return go(i + 1);
   if (e.key === "ArrowUp") return go(i - 1);
@@ -669,6 +704,12 @@ function handleOpenMenuKeydown(e, openMenu) {
     e.preventDefault(); if (applyDisplay) e.target.click();
     const trigger = document.querySelector(`[aria-controls="${openMenu.id}"]`);
     closeMenus(); trigger?.focus(); return true;
+  }
+  if (e.key === "Tab" && isPopoverMenu(openMenu)) {
+    e.preventDefault();
+    closeMenus();
+    tabOutOfPopoverMenu(openMenu, e.shiftKey);
+    return true;
   }
   if (e.key === "Tab") {
     closeMenus();
@@ -776,7 +817,7 @@ function isSingleKeyBlocked(e) {
 
 function tryPunctuationShortcut(e) {
   if (!isPlainAltGrOrUnmodified(e)) return false;
-  if (e.key === "#" && route()[0] === "chat") { e.preventDefault(); openCmdk("#", "cmd", e.target, false); return true; }
+  if (e.key === "#" && route()[0] === "chat") { e.preventDefault(); findConversation(); return true; }
   if (e.key === "/") {
     e.preventDefault();
     const inline = document.querySelector('#main [data-act="search-toggle"]');

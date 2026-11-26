@@ -136,6 +136,18 @@ pub(super) fn registered(
     Ok((record, id, socket))
 }
 
+/// The office home of the registered instance `name` (`None` is `default`): its setup
+/// record's instance root, `<root>/office-state`, where the host keeps `host.lock` and the
+/// office folders. Read from the frozen setup record only: no lock is taken, nothing is made
+/// and no service is asked, for offline commands (a backup or a restore) that take the
+/// host's and the office's locks themselves.
+pub fn instance_office_home(name: Option<&str>) -> Result<PathBuf, String> {
+    let paths = crate::human::paths(name)?;
+    let record =
+        Journal::snapshot(&paths.base, name).map_err(|e| fail("reading the setup record", e))?;
+    Ok(record.input.root.join("office-state"))
+}
+
 /// Like [`registered`], also resolving the active browser origin from `instance.json` when
 /// present (reflecting opt-in HTTPS upgrades), falling back to the setup record's origin.
 pub(crate) fn registered_with_origin(

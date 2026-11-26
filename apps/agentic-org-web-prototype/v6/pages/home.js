@@ -23,10 +23,11 @@ function v4ActionBtn(it, style, act, v, icon, label, tone) {
 
 function v4ReplyBox(it) {
   const changes = S.replyMode === "changes", deny = S.replyMode === "deny", who = esc(M[it.from].name);
-  const lbl = deny ? `Optional reason for ${who}…` : changes ? `What should ${who} change?` : `Reply to ${who}`;
+  const answer = !deny && !changes && it.kind === "question";
+  const lbl = deny ? `Optional reason for ${who}…` : changes ? `What should ${who} change?` : answer ? `Answer ${who}` : `Reply to ${who}`;
   const submitInner = deny
     ? `${ic("deny", "ic16")}Confirm deny`
-    : `<span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl"><span class="h4-cta-ico">${ic("send", "ic16")}</span><span>${changes ? "Send changes" : "Send reply"}</span></span></span>`;
+    : `<span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl"><span class="h4-cta-ico">${ic("send", "ic16")}</span><span>${changes ? "Send changes" : answer ? "Send answer" : "Send reply"}</span></span></span>`;
   return `<div class="reply"><label class="sr-only" for="r-${it.id}">${lbl}</label><textarea id="r-${it.id}" rows="2" placeholder="${lbl}"></textarea>
       <div class="actions"><button class="btn ${deny ? "outline" : "primary h4-cta"} sm" ${deny ? "" : 'data-cta-tone="reply"'} type="button" data-act="send-reply" data-id="${it.id}">${submitInner}</button><button class="btn ghost sm" type="button" data-act="cancel-reply" data-id="${it.id}">Cancel</button></div></div>`;
 }
@@ -68,10 +69,16 @@ function v4CustomButtons(it) {
   return { b, guardedHtml };
 }
 
+/* A question's one-tap answers, then a written answer. Both resolve it, so neither is labelled "Reply". */
+function v4QuestionButtons(it) {
+  const taps = (it.answers || []).map((o, i) => v4ActionBtn(it, i ? "outline" : "primary", "handle", "Answered: " + o, null, o, "win"));
+  return [...taps, v4ActionBtn(it, taps.length ? "outline" : "primary", "reply", "", "pencil", "Answer…", "reply")];
+}
+
 function v4BuildButtons(it) {
   if (it.acts) return v4CustomButtons(it);
   if (it.kind === "approval") return { b: [v4ActionBtn(it, "primary", "handle", "Approved", "check", it.cta || "Approve", "win")], guardedHtml: v4DenySlot(it, "Deny", "Denied", "deny") };
-  if (it.kind === "question") return { b: [v4ActionBtn(it, "primary", "reply", "", "reply", "Reply", "reply")], guardedHtml: "" };
+  if (it.kind === "question") return { b: v4QuestionButtons(it), guardedHtml: "" };
   if (it.kind === "decision") return { b: it.opts.map((o, i) => v4ActionBtn(it, i ? "outline" : "primary", "handle", "Chose: " + o, i ? null : "check", o, "win")), guardedHtml: "" };
   return it.kind === "problem" ? v4ProblemButtons(it) : { b: [], guardedHtml: "" };
 }
@@ -808,4 +815,6 @@ export {
   answerOrgQuestion,
   itemActionsV4,
   pageHome,
+  v4BuildButtons,
+  v4ReplyBox,
 };

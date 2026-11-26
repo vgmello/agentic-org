@@ -24,6 +24,8 @@ html[data-theme="report"] :is(.project-insights, .team-overview, .org-insights) 
 html[data-theme="graphite-light"] :is(.project-insights, .team-overview, .org-insights) { --chart-ring: var(--graphite-panel); --chart-tip-bg: #FFFFFF; --chart-tint: color-mix(in srgb, var(--chart-accent) 62%, transparent); }
 html[data-theme="graphite"] :is(.project-insights, .team-overview, .org-insights) { --chart-ring: var(--hover); --chart-tip-bg: var(--graphite-canvas); }
 html:is([data-theme="classic"], [data-theme="report-dark"]) :is(.project-insights, .team-overview, .org-insights) { --chart-ring: var(--gray-800); --chart-tip-bg: var(--gray-900); --chart-accent: var(--tone-accent-ink); }
+/* Classic charts use Graphite's data blue: main series steel blue, second series cool silver */
+html[data-theme="classic"] :is(.project-insights, .team-overview, .org-insights) { --chart-accent: var(--classic-blue); --chart-tint: var(--classic-blue-2); }
 html[data-theme="cozy"] :is(.project-insights, .team-overview, .org-insights) { --chart-ring: #2d241c; --chart-tip-bg: #352b22; --chart-bad: var(--tone-bad-ink); --chart-tint: color-mix(in srgb, var(--chart-accent) 76%, transparent); }
 /* Cozy's secondary gray sits near 3.4:1 on its glass cards; a step toward its primary gray reaches AA */
 html[data-theme="cozy"] :is(.project-insights, .team-overview, .org-insights, .org-insights-page) { --insight-muted: color-mix(in srgb, var(--gray-400) 30%, var(--gray-300)); }
@@ -324,8 +326,8 @@ html[data-theme="cozy"] :is(.project-insights, .team-overview, .org-insights, .o
    indigo for the main series, teal for the second; the average line stays ink. */
 /* Graphite data colour: a muted steel blue that sits with the theme's greys and muted status tones;
    the second series is a cool silver so pairs read apart without adding a new hue. */
-html[data-theme="graphite"] { --graphite-data: #86a9cc; --graphite-data-2: #b9c1cc; --graphite-data-deep: #5f84a8; }
-html[data-theme="graphite-light"] { --graphite-data: #3e6a94; --graphite-data-2: #8d98a6; --graphite-data-deep: #2f5479; }
+html[data-theme="graphite"] { --graphite-data: #86a9cc; --graphite-data-2: #a9c6e4; --graphite-data-deep: #5f84a8; }
+html[data-theme="graphite-light"] { --graphite-data: #3e6a94; --graphite-data-2: #7d9cc0; --graphite-data-deep: #2f5479; }
 html[data-theme^="graphite"] :is(.project-insights, .team-overview, .org-insights) { --chart-accent: var(--graphite-data); --chart-tint: var(--graphite-data-2); }
 html[data-theme^="graphite"] .hb-spark i { background: linear-gradient(to bottom, var(--graphite-data), color-mix(in srgb, var(--graphite-data) 55%, transparent)); }
 /* Home summary bars in Graphite: grey read as "disabled", so progress uses the chart indigo */
@@ -339,3 +341,7 @@ html[data-theme^="graphite"] .assembly-progress-bar::-moz-progress-bar { backgro
 html[data-theme^="graphite"] :is(.assembly-chip, .assembly-legend span, .activity-stage-bar i)[data-stage="agents"] { --stage-color: var(--graphite-data); --stage-soft: color-mix(in srgb, var(--graphite-data) 14%, transparent); }
 .insight-card-head .insight-select { width: auto; flex: none; justify-self: end; align-self: start; }
 html[data-theme^="graphite"] :is(.project-throughput-plot > div, .activity-throughput i) { background: linear-gradient(to bottom, var(--graphite-data), var(--graphite-data-deep)); }
+/* Graphite queue stage: slate blue instead of neutral grey, so the stage bar reads as data like the rest of the palette */
+html[data-theme="graphite"] { --graphite-queue: #8aa0c4; }
+html[data-theme="graphite-light"] { --graphite-queue: #5d769c; }
+html[data-theme^="graphite"] :is(.assembly-chip, .assembly-legend span, .activity-stage-bar i)[data-stage="queue"] { --stage-color: var(--graphite-queue); --stage-soft: color-mix(in srgb, var(--graphite-queue) 14%, transparent); }

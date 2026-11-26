@@ -399,6 +399,9 @@ fn expected_policy(method: &str, served: bool) -> HostPolicy {
         "hello" => HostPolicy::Hello,
         "msg.bind" | "msg.wait" | "status.set" => HostPolicy::InvalidRequest,
         "subscribe" | "member.set_run_mode" => HostPolicy::Refuse,
+        // External-agent sign-in is answered only on the office socket, before a bind
+        // (`TASK-137`): a host channel never serves it.
+        _ if method.starts_with("auth.") => HostPolicy::Refuse,
         _ if [
             "session.",
             "channel.",

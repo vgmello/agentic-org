@@ -26,7 +26,7 @@ impl SessionManager {
         ))
     }
 
-    pub(super) fn authorize_owner_or_person_inner(
+    pub(crate) fn authorize_owner_or_person_inner(
         &self,
         member_id: &str,
         hq_attested_owner: bool,
@@ -49,7 +49,7 @@ impl SessionManager {
         ))
     }
 
-    pub(super) fn require_agent(&self, employee_id: &str) -> Result<Employee, ApiError> {
+    pub(crate) fn require_agent(&self, employee_id: &str) -> Result<Employee, ApiError> {
         let emp = self
             .office
             .load_employee(employee_id)
@@ -64,7 +64,7 @@ impl SessionManager {
         Ok(emp)
     }
 
-    pub(super) fn require_active_agent(&self, employee_id: &str) -> Result<Employee, ApiError> {
+    pub(crate) fn require_active_agent(&self, employee_id: &str) -> Result<Employee, ApiError> {
         if self
             .office
             .sync_status()

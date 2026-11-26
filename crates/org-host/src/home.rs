@@ -11,8 +11,8 @@ use org_proto::location::{self, OFFICE_SOCKET_HANDLE_CHARS};
 
 use crate::error::HostError;
 
-/// The host's lock file in the office home.
-pub(crate) const HOST_LOCK_FILE_NAME: &str = "host.lock";
+/// The host's lock file in the office home (the launch contract names it for offline tools).
+pub(crate) use org_office_launch::HOST_LOCK_FILE_NAME;
 
 /// The paths the host uses inside one office home.
 #[derive(Debug, Clone)]

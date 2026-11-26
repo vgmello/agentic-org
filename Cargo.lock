@@ -12,9 +12,12 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "agent-os"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "org-agent-cli",
  "org-proto",
+ "ring",
  "serde_json",
+ "sha2",
  "tempfile",
 ]
 
@@ -27,11 +30,13 @@ dependencies = [
  "clap_complete",
  "libc",
  "org-agent-cli",
+ "org-backup",
  "org-cli-shell",
  "org-client",
  "org-command",
  "org-host",
  "org-host-control",
+ "org-office",
  "org-office-launch",
  "org-platform",
  "org-proto",
@@ -1105,13 +1110,17 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 name = "org-agent-cli"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "org-client",
  "org-command",
  "org-platform",
  "org-proto",
+ "ring",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
@@ -1149,6 +1158,27 @@ dependencies = [
  "org-agent-runtime",
  "org-platform",
  "serde_json",
+]
+
+[[package]]
+name = "org-backup"
+version = "0.0.0"
+dependencies = [
+ "argon2",
+ "flate2",
+ "org-office",
+ "org-office-launch",
+ "org-platform",
+ "org-proto",
+ "org-store",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror",
+ "zeroize",
 ]
 
 [[package]]
@@ -1358,6 +1388,7 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "subtle",
  "tempfile",
  "zeroize",
 ]
@@ -1418,6 +1449,7 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "zeroize",
 ]
 
 [[package]]

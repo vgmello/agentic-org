@@ -47,7 +47,12 @@ impl SessionManager {
         if live_needs_recovery {
             return Some((WakeHoldReason::RecoveryRequired, None));
         }
-        if self.has_live_active_turn(employee.id.as_str()) {
+        if self.has_active_managed_turn(employee.id.as_str()) {
+            return Some((WakeHoldReason::Busy, None));
+        }
+        // Single active lease: an external workspace drives this agent, so the wake stays
+        // durable (and counted in `waiting_messages`) instead of spawning a competing run.
+        if self.has_active_external_lease(employee.id.as_str()) {
             return Some((WakeHoldReason::Busy, None));
         }
         if self.is_budget_held_for(employee.id.as_str(), task_refs) {

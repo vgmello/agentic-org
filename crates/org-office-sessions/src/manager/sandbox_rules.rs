@@ -328,3 +328,49 @@ pub(super) fn collect_non_self_admin_names(
     }
     other_admins
 }
+
+/// `agent-os` external sign-in state folders this account may have (`TASK-137`): workspace keys,
+/// fast tokens and `exec` token files live under `<application base>/agent-os/`. Every managed
+/// sandbox denies them, so a managed agent can never read another agent's external key or token.
+///
+/// - `<application base of $HOME>/agent-os` and, when it differs (GNU/Linux `XDG_DATA_HOME`),
+///   `<account application base>/agent-os`;
+/// - in a development build (`development`), the roots `agent-os` itself may be moved to:
+///   `AGENT_OS_STATE_DIR` and `ORG_DEV_ACCOUNT_BASE/agent-os` (absolute paths only).
+pub(crate) fn agent_os_state_roots_from(
+    env: &dyn Fn(&str) -> Option<OsString>,
+    development: bool,
+) -> Vec<PathBuf> {
+    let absolute = |name: &str| {
+        env(name)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+    };
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let mut add = |root: PathBuf| {
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    };
+    if let Some(home) = absolute("HOME") {
+        for base in [
+            org_platform::dirs::application_base(&home),
+            org_platform::dirs::account_application_base(&home),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            add(base.join("agent-os"));
+        }
+    }
+    if development {
+        if let Some(dir) = absolute("AGENT_OS_STATE_DIR") {
+            add(dir);
+        }
+        if let Some(base) = absolute("ORG_DEV_ACCOUNT_BASE") {
+            add(base.join("agent-os"));
+        }
+    }
+    roots
+}

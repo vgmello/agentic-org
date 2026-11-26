@@ -443,6 +443,99 @@ mod tests {
         }
     }
 
+    /// TASK-137 B1: the operator shorthand (`agent approve <code>`, `agent sessions @<handle>`,
+    /// `agent revoke @<handle> [<session>]`) reaches the office whatever the run adds after
+    /// the command path (`--format json` on a terminal or with `--json`, `--format compact` in
+    /// a pipe), through both ways in. So does the exact line `agent-os exec` runs.
+    #[test]
+    fn the_operator_shorthand_reaches_the_office_through_the_added_format() {
+        let json = Modes {
+            json: true,
+            ..Modes::default()
+        };
+        let exec_line =
+            org_agent_cli::external_auth::operator_approve_args("ABCD-EFGH", 3_600, true);
+        /// A line, the verb it names and the input fields the office must receive.
+        type Case = (
+            Vec<String>,
+            &'static str,
+            Vec<(&'static str, serde_json::Value)>,
+        );
+        let cases: Vec<Case> = vec![
+            (
+                words(&["agent", "approve", "ABCD-EFGH"]),
+                "approve",
+                vec![("code", "ABCD-EFGH".into())],
+            ),
+            (
+                words(&["agent", "approve", "K7QF-9XM2", "--ttl", "8h", "--takeover"]),
+                "approve",
+                vec![
+                    ("code", "K7QF-9XM2".into()),
+                    ("ttl", "8h".into()),
+                    ("takeover", true.into()),
+                ],
+            ),
+            (
+                exec_line,
+                "approve",
+                vec![
+                    ("code", "ABCD-EFGH".into()),
+                    ("ttl", "3600s".into()),
+                    ("takeover", true.into()),
+                ],
+            ),
+            (
+                words(&["agent", "sessions", "@ada", "--limit", "50"]),
+                "sessions",
+                vec![("member", "@ada".into()), ("history_limit", 50.into())],
+            ),
+            (
+                words(&["agent", "revoke", "@ada"]),
+                "revoke",
+                vec![("member", "@ada".into())],
+            ),
+            (
+                words(&["agent", "revoke", "@ada", "ext-0193a5c0"]),
+                "revoke",
+                vec![
+                    ("member", "@ada".into()),
+                    ("session", "ext-0193a5c0".into()),
+                ],
+            ),
+        ];
+        for (line, verb, inputs) in cases {
+            for (modes, terminal) in [
+                (Modes::default(), Terminal::piped()),
+                (Modes::default(), tty(Some(80))),
+                (json.clone(), Terminal::piped()),
+            ] {
+                for through_prepare in [true, false] {
+                    let (mut ctx, _streams) = captured(modes.clone(), terminal, &[]);
+                    let forwarded = if through_prepare {
+                        prepare(&line, &mut ctx).unwrap().forwarded
+                    } else {
+                        line.clone()
+                    };
+                    let mut office = Recording::default();
+                    let answered = ask(forwarded, &ctx, &mut office);
+                    assert_ne!(
+                        answered.output.exit_code, 2,
+                        "{line:?} ({modes:?}): {}",
+                        answered.output.stdout
+                    );
+                    assert_eq!(office.0.len(), 1, "{line:?} never reached the office");
+                    let request = &office.0[0];
+                    assert_eq!(request.command.resource, "agent");
+                    assert_eq!(request.command.verb, verb);
+                    for (field, value) in &inputs {
+                        assert_eq!(&request.input[*field], value, "{line:?}: {field}");
+                    }
+                }
+            }
+        }
+    }
+
     /// B-02: a value that reads `-h` or `--help` is text, not a request for help: the answer
     /// is shown as the run asked (`-q`, a table, compact), never the table's help as written.
     #[test]

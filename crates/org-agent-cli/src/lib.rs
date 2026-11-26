@@ -11,6 +11,7 @@ pub mod boot;
 pub mod budget_dispatch;
 pub mod budget_table;
 pub mod dispatch;
+pub mod external_auth;
 pub mod git_dispatch;
 pub mod git_table;
 pub mod help_guidance;
@@ -30,6 +31,7 @@ pub mod task_dispatch;
 pub mod task_table;
 pub mod transport;
 
+use std::borrow::Cow;
 use std::io::{self, Write};
 
 use aliases::normalize_args;
@@ -57,7 +59,12 @@ pub fn execute_with_office(program: &str, args: &[String], office: &mut dyn Offi
             exit_code: 0,
         };
     }
-    let effective_args = normalize_args(args);
+    let expanded = normalize_args(args);
+    // `agent approve <code>` and the other operator verbs read their bare words as named flags.
+    let effective_args = match external_auth::operator::rewrite_positional(&expanded) {
+        Some(rewritten) => Cow::Owned(rewritten),
+        None => expanded,
+    };
     let table = table::runtime_table();
     let mut sources = StdSources;
     let mut keys = UuidV7KeySource;
@@ -96,15 +103,23 @@ fn is_help_flag(arg: &str) -> bool {
     arg == "--help" || arg == "-h"
 }
 
-/// The office of this process: its `AGENT_OS_*` binding, bound when the environment names a
-/// session token or a binding file ([`office::env_requests_binding`]).
+/// The office of this process ([`external_auth::resolve_binding`]): its `AGENT_OS_*` binding,
+/// bound when the environment names a session token or a binding file
+/// ([`office::env_requests_binding`]), else the signed-in workspace of the working folder, bound
+/// too. Either is bound even when its token cannot be read yet, so `boot` never drops to offline.
 fn env_office() -> BoundOffice {
-    BoundOffice::new(Binding::from_env()).with_binding_requested(office::env_requests_binding())
+    BoundOffice::new(external_auth::resolve_binding())
+        .with_binding_requested(office::env_requests_binding())
 }
 
-/// Runs `agent-os` using `AGENT_OS_*` environment variables, writing the single envelope or
-/// help output to stdout and returning the exit code.
+/// Runs `agent-os`, writing the single envelope or help output to stdout and returning the exit
+/// code. `login|whoami|logout|exec` are the external lifecycle ([`external_auth`]); every other
+/// command binds through `AGENT_OS_*` environment variables, else the signed-in workspace of the
+/// working folder ([`external_auth::resolve_binding`]).
 pub fn run(args: &[String]) -> u8 {
+    if let Some((stdout, exit_code)) = external_auth::run_lifecycle(args) {
+        return emit(&mut io::stdout().lock(), &stdout, exit_code);
+    }
     if matches!(args, [a, b, ..] if a == "session" && b == "attach") {
         return run_session_attach(args, env_office());
     }
