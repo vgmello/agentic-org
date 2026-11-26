@@ -309,12 +309,18 @@ const CLICK_ACTIONS = {
   "work-comment-focus": () => document.getElementById("work-comment")?.focus(),
   "inbox-reopen": (_e, _t, id) => { const item = IN.find((c) => c.id === id); if (item?.handled) { if (item.reopen) item.reopen(); else reopenInboxItem(item); } },
   set: (_e, t, _id, v) => handleSetAction(t, v),
-  "board-done": (_e, t, _id, v) => {
-    const lane = t.closest(".bcol")?.id;
+  /* The toolbar's history chip resets Done history; focus goes to Display, where the history lives */
+  "board-done": (_e, _t, _id, v) => {
     setDoneHistory(v);
     closeMenus();
     render(false);
-    document.querySelector(lane ? `#${CSS.escape(lane)} .bcol-older` : ".bcol-older")?.focus({ preventScroll: true });
+    document.querySelector('[aria-controls="menu-work-display"], [aria-controls="menu-scoped-work-display"]')?.focus();
+  },
+  /* An empty state's "Show N older/archived matches" widens history, then lands on the first revealed item */
+  "work-reveal": (_e, _t, _id, v) => {
+    setDoneHistory(v);
+    render(false);
+    (document.querySelector("#work-results .work-item-link") ?? document.getElementById("work-results"))?.focus();
   },
   "work-clear-filters": () => clearWorkFilters(),
   "board-lane": (_e, _t, _id, v) => jumpToBoardLane(v),
@@ -686,7 +692,8 @@ function handleCmdkKeydown(e) {
 }
 
 function handleOpenMenuKeydown(e, openMenu) {
-  const items = [...openMenu.querySelectorAll('[role^="menuitem"]')], i = items.indexOf(e.target);
+  /* Items a narrow layout hides (an overflow link shown only on phones) are skipped */
+  const items = [...openMenu.querySelectorAll('[role^="menuitem"]')].filter((el) => el.getClientRects().length), i = items.indexOf(e.target);
   const go = (n) => { e.preventDefault(); items[(n + items.length) % items.length].focus(); return true; };
   if (e.key === "ArrowDown") return go(i + 1);
   if (e.key === "ArrowUp") return go(i - 1);
