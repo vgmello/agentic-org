@@ -514,6 +514,9 @@ async function checkPhoneLaneJump(page: Page) {
   await page.waitForFunction(() => document.querySelector(".board")!.scrollTop === 0);
   assert.equal(await picker.inputValue(), "3", "The picked lane stays current");
   await page.setViewportSize({ width: 320, height: 812 });
+  /* Let the resize settle (layout and the measured compact labels) before counting toolbar rows */
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await page.waitForTimeout(150);
   const rows = await page.locator(".work-toolbar > *").evaluateAll((els) => els.map((el) => el.getBoundingClientRect().top).sort((a, b) => a - b)
     .filter((top, i, tops) => i === 0 || top - tops[i - 1] > 20).length);
   /* 44px List / Board buttons and the words Filter and Display leave no room for two rows at 320px (round 8): the toolbar
