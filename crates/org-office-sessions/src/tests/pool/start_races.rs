@@ -86,11 +86,25 @@ fn warm_up(mgr: &SessionManager, owner: &str, agent: &str, recorded: &PoolRecord
         .unwrap();
     assert!(
         wait_until(Duration::from_secs(8), || {
-            mgr.inspect_session(owner, Some(agent)).is_ok_and(|r| {
+            let idle = mgr.inspect_session(owner, Some(agent)).is_ok_and(|r| {
                 r.session.state == SessionState::Idle && r.session.last_reply.is_some()
-            })
+            });
+            if !idle {
+                return false;
+            }
+            let reg = mgr.registry.lock().unwrap();
+            let permit_released = reg
+                .live
+                .get(agent)
+                .is_some_and(|h| h.active_permit.lock().unwrap().is_none());
+            let bg_quiet = reg.bg_spawning == 0
+                && reg
+                    .bg_workers
+                    .iter()
+                    .all(std::thread::JoinHandle::is_finished);
+            permit_released && bg_quiet
         }),
-        "the first turn must finish so the next start takes the warm path"
+        "the first turn must finish and release its permit so the next start takes the warm path"
     );
     recorded.turns.lock().unwrap().len()
 }

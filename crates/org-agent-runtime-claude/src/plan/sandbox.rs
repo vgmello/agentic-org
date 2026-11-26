@@ -92,7 +92,26 @@ fn apply_linux_bwrap_sandbox_rules(
         // enforced in `permissions.deny` and the office approval bridge.
         let kept = filter_linux_bwrap_deny_write(std::mem::take(deny_write), writable);
         *deny_write = normalize_linux_bwrap_concrete_globs(kept);
+    } else {
+        *deny_read = collapse_trailing_globstars(std::mem::take(deny_read));
+        *deny_write = collapse_trailing_globstars(std::mem::take(deny_write));
     }
+}
+
+fn collapse_trailing_globstars(patterns: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(patterns.len());
+    for entry in patterns {
+        let (base, had_globstar) = split_trailing_globstar(&entry);
+        let candidate = if had_globstar && !base.is_empty() {
+            format!("{base}/**")
+        } else {
+            entry
+        };
+        if !out.iter().any(|existing| existing == &candidate) {
+            out.push(candidate);
+        }
+    }
+    out
 }
 
 /// `raw` without trailing `/` and without any run of trailing `/**` segments, and whether at

@@ -449,3 +449,44 @@ fn an_escaped_backslash_before_n_is_not_a_json_line_break() {
     let value = redact_text(r#"{"env":"PWD=abc\\def\/ghi","ok":1}"#, &[]);
     assert_eq!(value, r#"{"env":"PWD=[REDACTED]","ok":1}"#);
 }
+
+#[test]
+fn auth_scheme_stops_at_json_escapes_without_leaking_next_line_or_breaking_json() {
+    let cases = [
+        (
+            r#"{"msg":"line1\nBearer TopSecret999\nCookie: sid=abc123secret","ok":true}"#,
+            &["TopSecret999", "abc123secret"][..],
+        ),
+        (
+            r#"{"msg":"line1\r\nBasic QWRtaW46c2VjcmV0\r\nX-Api-Key: custom_opaque_secret","ok":true}"#,
+            &["QWRtaW46c2VjcmV0", "custom_opaque_secret"][..],
+        ),
+        (
+            r#"{"msg":"Bearer TopSecret999\n\"token\": \"secret123\"","ok":true}"#,
+            &["TopSecret999", "secret123"][..],
+        ),
+        (
+            r#"{"msg":"\"Bearer TopSecret999\"","ok":true}"#,
+            &["TopSecret999"][..],
+        ),
+        (
+            r#"{"msg":"Bearer TopSecret999\tCookie: sid=tabsecret777","ok":true}"#,
+            &["TopSecret999", "tabsecret777"][..],
+        ),
+    ];
+    for (raw, secrets) in cases {
+        let redacted = redact_text(raw, &[]);
+        assert_clean(&redacted, secrets);
+        let parsed: serde_json::Value = serde_json::from_str(&redacted).expect(&redacted);
+        assert_eq!(parsed["ok"], json!(true), "{redacted}");
+    }
+    // Empty/escaped sibling JSON keys after an empty Authorization header stay valid JSON.
+    for valid in [
+        r#"{"msg":"Authorization:","":true}"#,
+        r#"["Authorization:",""]"#,
+        r#"{"msg":"Authorization:","\u006fk":true}"#,
+    ] {
+        let redacted = redact_text(valid, &[]);
+        serde_json::from_str::<serde_json::Value>(&redacted).expect(&redacted);
+    }
+}

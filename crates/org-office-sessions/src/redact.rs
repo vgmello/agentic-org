@@ -340,10 +340,7 @@ fn redact_auth_scheme(input: &str, scheme_lower: &str) -> String {
             continue;
         }
         let token_start = after_scheme + gap;
-        let token_len = input[token_start..]
-            .bytes()
-            .take_while(|b| !b.is_ascii_whitespace() && !matches!(b, b'"' | b'\'' | b',' | b'}'))
-            .count();
+        let token_len = unquoted_token_len(&input.as_bytes()[token_start..], b"\"',}");
         let token = &input[token_start..token_start + token_len];
         out.push_str(&input[pos..token_start]);
         if token != REDACTED && looks_like_credential(token) {
@@ -532,11 +529,11 @@ fn pairs_header_param(bytes: &[u8], idx: usize, level: u32) -> bool {
         match bytes.get(at) {
             None | Some(b'\n' | b'\r') => return false,
             Some(b'"') if run.trailing_ones() == level => {
-                let next = bytes.get(at + 1);
-                return matches!(
-                    next,
-                    None | Some(b',' | b';' | b' ' | b'\t' | b'\r' | b'\n' | b'"' | b'\\')
-                );
+                return match bytes.get(at + 1) {
+                    None | Some(b',' | b';' | b' ' | b'\t' | b'\r' | b'\n') => true,
+                    Some(b'"' | b'\\') => level > 0,
+                    _ => false,
+                };
             }
             // A shallower quote ends the enclosing string before any partner.
             Some(b'"') if run.trailing_ones() < level => return false,
@@ -727,13 +724,21 @@ fn redact_env_value(after: &str) -> (String, usize) {
             None => (format!("{q}{REDACTED}"), after.len()),
         };
     }
-    let bytes = after.as_bytes();
+    let len = unquoted_token_len(after.as_bytes(), b";,\"'");
+    if len == 0 {
+        return (String::new(), 0);
+    }
+    (REDACTED.to_owned(), len)
+}
+
+/// Byte length of an unquoted token starting at `bytes[0]`, stopping at ASCII whitespace, any
+/// caller-supplied stop byte, or an odd backslash run escaping `"`, `n`, `r`, or `t` (while
+/// keeping even `\\` pairs and other escapes such as `\/` or `\u…` inside the token).
+fn unquoted_token_len(bytes: &[u8], stops: &[u8]) -> usize {
     let mut len = 0;
     while len < bytes.len() {
         let b = bytes[len];
         if b == b'\\' {
-            // An odd run escapes the next byte: a quote or a JSON line break or tab ends the value,
-            // while `\\`, `\/` and `\u…` are part of it.
             let run = bytes[len..].iter().take_while(|&&c| c == b'\\').count();
             if run % 2 == 1 && matches!(bytes.get(len + run), Some(b'"' | b'n' | b'r' | b't')) {
                 len += run - 1;
@@ -742,15 +747,12 @@ fn redact_env_value(after: &str) -> (String, usize) {
             len += run;
             continue;
         }
-        if b.is_ascii_whitespace() || matches!(b, b';' | b',' | b'"' | b'\'') {
+        if b.is_ascii_whitespace() || stops.contains(&b) {
             break;
         }
         len += 1;
     }
-    if len == 0 {
-        return (String::new(), 0);
-    }
-    (REDACTED.to_owned(), len)
+    len
 }
 
 #[cfg(test)]
