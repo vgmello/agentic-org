@@ -1,7 +1,9 @@
 //! Start-path lock scope and stop-versus-start races (`TASK-190`): watch-notice I/O never runs
 //! under the `registry` or a handle's state lock, and an offboard or pause that arrives while a
 //! cold start, a warm send or a pool failover relaunch holds the start slot leaves no live
-//! session, sends no turn and queues no recovery wake, while a paused wake stays durable.
+//! session, sends no turn and queues no recovery wake, while a paused wake stays durable. A
+//! `stop_all`/`shutdown` drain that overtakes a warm send refuses it the same way, with
+//! `Unavailable`.
 
 use std::sync::mpsc;
 
@@ -411,4 +413,149 @@ fn pause_during_a_warm_wake_send_keeps_the_durable_wakes_and_charges_no_quota() 
         "a refused wake is never charged to the wake quota"
     );
     mgr.shutdown("test_end");
+}
+
+/// Which drain overtakes a warm send.
+#[derive(Clone, Copy, Debug)]
+enum Drain {
+    StopAll,
+    Shutdown,
+}
+
+/// Starts `drain` while `send` waits in its warm path's watch notices holding the start slot,
+/// lets `send` finish once the drain has closed admissions, and joins both.
+fn drain_during_warm_send<T: Send + 'static>(
+    mgr: &Arc<SessionManager>,
+    agent: &str,
+    drain: Drain,
+    send: impl FnOnce(&SessionManager) -> T + Send + 'static,
+) -> T {
+    let gate = gate_watch_notices(mgr, agent);
+    let sender = {
+        let mgr = Arc::clone(mgr);
+        std::thread::spawn(move || send(&mgr))
+    };
+    gate.entered
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the warm send reads its watch notices holding the start slot");
+    assert!(mgr.registry.lock().unwrap().starting.contains(agent));
+    let drainer = {
+        let mgr = Arc::clone(mgr);
+        std::thread::spawn(move || match drain {
+            Drain::StopAll => mgr.stop_all("drain_race"),
+            Drain::Shutdown => mgr.shutdown("drain_race"),
+        })
+    };
+    assert!(
+        wait_until(Duration::from_secs(5), || mgr
+            .registry
+            .lock()
+            .unwrap()
+            .draining),
+        "{drain:?} closes admissions while the warm send holds the start slot"
+    );
+    // The drain cannot reap a handle whose start slot is held: the warm send decides first.
+    assert!(mgr.registry.lock().unwrap().live.contains_key(agent));
+    gate.release.send(()).unwrap();
+    let out = sender.join().unwrap();
+    drainer.join().unwrap();
+    out
+}
+
+#[test]
+fn a_drain_during_a_warm_wake_send_sends_no_turn_and_keeps_the_durable_wake() {
+    for drain in [Drain::StopAll, Drain::Shutdown] {
+        let (_tmp, office, mgr, recorded, owner) = setup_office_and_manager(REPLY_SCRIPT);
+        let agent = pool_agent(&office, &owner, "drain-hal");
+        let peer = pool_agent(&office, &owner, "drain-ivy");
+        let turns_before = warm_up(&mgr, &owner, &agent, &recorded);
+        let wake_agent = agent.clone();
+        let outcome = drain_during_warm_send(&mgr, &agent, drain, move |mgr| {
+            mgr.enqueue_wake(
+                &wake_agent,
+                PendingWakeItem {
+                    item_id: "wake-drain-1".into(),
+                    kind: WakeKind::Handoff,
+                    sender_id: peer,
+                    sender_name: "Ivy".into(),
+                    sender_handle: None,
+                    sender_relation: None,
+                    sender_is_person: false,
+                    conversation_id: Some("c-drain".into()),
+                    source_id: "msg-drain-1".into(),
+                    summary: "Peer handoff during a drain".into(),
+                    enqueued_at_ms: now_ms(),
+                },
+            )
+        });
+        assert_eq!(
+            outcome,
+            WakeOutcome::Queued {
+                reason: WakeHoldReason::AdmissionRefused
+            },
+            "{drain:?}: the drained wake is not reported as started"
+        );
+        // The drain reaped the handle, joining its pump, so any turn sent is already recorded.
+        assert_eq!(
+            recorded.turns.lock().unwrap().len(),
+            turns_before,
+            "{drain:?}: no turn reaches the child: {:?}",
+            recorded.turns.lock().unwrap()
+        );
+        assert_no_live_session(&mgr, &agent);
+        let queue = mgr
+            .store()
+            .read_pending_wakes(&agent)
+            .unwrap()
+            .expect("the claimed wake stays durable");
+        assert!(
+            queue
+                .items
+                .iter()
+                .any(|item| item.item_id == "wake-drain-1"),
+            "{drain:?}: the claimed wake is preserved for the next start: {:?}",
+            queue.items
+        );
+        let quota = mgr.store().read_wake_quota(&agent).unwrap();
+        assert!(
+            quota.is_none_or(|q| q.agent_wake_timestamps_ms.is_empty()),
+            "{drain:?}: a refused wake is never charged to the wake quota"
+        );
+        mgr.shutdown("test_end");
+    }
+}
+
+#[test]
+fn a_drain_during_an_autonomous_warm_send_refuses_it_with_unavailable() {
+    for drain in [Drain::StopAll, Drain::Shutdown] {
+        let (_tmp, office, mgr, recorded, owner) = setup_office_and_manager(REPLY_SCRIPT);
+        let agent = pool_agent(&office, &owner, "drain-jon");
+        let turns_before = warm_up(&mgr, &owner, &agent, &recorded);
+        let employee = office
+            .list_employees()
+            .unwrap()
+            .into_iter()
+            .find(|e| e.id.as_str() == agent)
+            .expect("the hired agent");
+        let err = drain_during_warm_send(&mgr, &agent, drain, move |mgr| {
+            mgr.spawn_or_send_autonomous(
+                &employee,
+                "autonomous turn".into(),
+                None,
+                None,
+                serde_json::json!({ "type": "turn_trigger" }),
+            )
+        })
+        .expect_err("a warm send overtaken by a drain is refused");
+        assert_eq!(err.code, org_proto::ErrorCode::Unavailable, "{drain:?}");
+        assert_eq!(err.message, "office session manager is shutting down");
+        assert_eq!(
+            recorded.turns.lock().unwrap().len(),
+            turns_before,
+            "{drain:?}: no turn reaches the child: {:?}",
+            recorded.turns.lock().unwrap()
+        );
+        assert_no_live_session(&mgr, &agent);
+        mgr.shutdown("test_end");
+    }
 }

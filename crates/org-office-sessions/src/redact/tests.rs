@@ -324,3 +324,128 @@ fn quoted_header_parameters_never_end_a_header_value_early() {
     let empty = r#"{"msg":"Authorization:","ok":true}"#;
     assert_eq!(redact_text(empty, &[]), empty);
 }
+
+#[test]
+fn a_quoted_parameter_starting_with_json_punctuation_is_still_redacted_whole() {
+    // `,`, `}` or `]` right after a parameter's opening quote never makes it look like the end of
+    // a JSON string when the quote has a partner (`TASK-190` pass 2).
+    for raw in [
+        "Cookie: a=\",\", sid=secretcookie123",
+        "Cookie: a=\"}\", sid=secretcookie123",
+        "Cookie: a=\"]\", sid=secretcookie123",
+    ] {
+        assert_eq!(redact_text(raw, &[]), "Cookie: [REDACTED]", "{raw}");
+    }
+    let digest = redact_text(
+        r#"Authorization: Digest realm=",", response="deadbeef1234""#,
+        &[],
+    );
+    assert_eq!(digest, "Authorization: [REDACTED]");
+
+    // Inside a JSON string the parameter quotes are escaped; the JSON structure survives.
+    let in_json = redact_text(
+        r#"{"msg":"Cookie: a=\",\", sid=secretcookie123","ok":true}"#,
+        &[],
+    );
+    assert_eq!(in_json, r#"{"msg":"Cookie: [REDACTED]","ok":true}"#);
+    let json_digest = redact_text(
+        r#"{"msg":"Authorization: Digest realm=\",\", response=\"deadbeef1234\"","ok":true}"#,
+        &[],
+    );
+    assert_eq!(
+        json_digest,
+        r#"{"msg":"Authorization: [REDACTED]","ok":true}"#
+    );
+    let bearer = redact_text(
+        r#"{"msg":"Authorization: Bearer topsecret","ok":true}"#,
+        &[],
+    );
+    for text in [&in_json, &json_digest, &bearer] {
+        assert_clean(text, &["secretcookie123", "deadbeef1234", "topsecret"]);
+        let parsed: serde_json::Value = serde_json::from_str(text).expect(text);
+        assert_eq!(parsed["ok"], json!(true), "{text}");
+    }
+    // A quote ending the JSON string right after the header is not paired with the next key.
+    let empty_cookie = r#"{"msg":"Cookie: a=","ok":true}"#;
+    let kept = redact_text(empty_cookie, &[]);
+    let parsed: serde_json::Value = serde_json::from_str(&kept).expect(&kept);
+    assert_eq!(parsed["ok"], json!(true));
+}
+
+#[test]
+fn json_escaped_line_breaks_and_tabs_are_word_and_line_boundaries() {
+    let aws = aws_key_id();
+    let cases = [
+        (
+            r#"{"log":"Accept: json\nCookie: sid=abc123secret"}"#.to_owned(),
+            "abc123secret",
+        ),
+        (
+            r#"{"msg":"Host: api.example.com\nX-Api-Key: custom_opaque_secret"}"#.to_owned(),
+            "custom_opaque_secret",
+        ),
+        (
+            r#"{"msg":"line1\nsk-ant-api03-secret1234"}"#.to_owned(),
+            "secret1234",
+        ),
+        (
+            r#"{"msg":"line1\nBearer TopSecret999"}"#.to_owned(),
+            "TopSecret999",
+        ),
+        (format!(r#"{{"msg":"line1\n{aws}"}}"#), "Z7QX3TESTKEY0042"),
+        (
+            r#"{"env":"FOO=1\nPWD=mysecret123"}"#.to_owned(),
+            "mysecret123",
+        ),
+        (
+            r#"{"env":"FOO=1\r\nTOKEN=crlfsecret0042"}"#.to_owned(),
+            "crlfsecret0042",
+        ),
+        (
+            r#"{"msg":"col1\tBearer TabSecret999"}"#.to_owned(),
+            "TabSecret999",
+        ),
+        (
+            r#"{"env":"FOO=1\tPASSWORD=tabsecret0042"}"#.to_owned(),
+            "tabsecret0042",
+        ),
+        (
+            r#"{"msg":"a: b\tCookie: sid=tabcookie0042"}"#.to_owned(),
+            "tabcookie0042",
+        ),
+    ];
+    for (raw, secret) in &cases {
+        let redacted = redact_text(raw, &[]);
+        assert_clean(&redacted, &[secret]);
+        assert!(redacted.contains(REDACTED), "{redacted}");
+        serde_json::from_str::<serde_json::Value>(&redacted).expect(&redacted);
+    }
+    // The next line keeps its own name, and an unrelated line stays readable.
+    let lines = redact_text(r#"{"log":"Accept: json\nCookie: sid=abc123secret"}"#, &[]);
+    assert_eq!(lines, r#"{"log":"Accept: json\nCookie: [REDACTED]"}"#);
+    let env = redact_text(r#"{"env":"FOO=1\nPWD=mysecret123"}"#, &[]);
+    assert_eq!(env, r#"{"env":"FOO=1\nPWD=[REDACTED]"}"#);
+
+    // An HTTP dump with CRLF escapes: every secret goes and the JSON stays valid.
+    let http = redact_text(
+        r#"{"msg":"GET / HTTP/1.1\r\nHost: api.example.com\r\nAuthorization: Digest username=\"alice\", response=\"deadbeef1234\"","ok":true}"#,
+        &[],
+    );
+    assert_eq!(
+        http,
+        r#"{"msg":"GET / HTTP/1.1\r\nHost: api.example.com\r\nAuthorization: [REDACTED]","ok":true}"#
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&http).expect(&http);
+    assert_eq!(parsed["ok"], json!(true));
+}
+
+#[test]
+fn an_escaped_backslash_before_n_is_not_a_json_line_break() {
+    // `\\n` is a literal backslash and `n`: `nBearer` and `nPWD` are single words.
+    for text in [r"foo\\nBearer TopSecret999", r"foo\\nPWD=visible123"] {
+        assert_eq!(redact_text(text, &[]), text, "over-redacted: {text}");
+    }
+    // An escaped backslash inside a value is part of the value, never its end.
+    let value = redact_text(r#"{"env":"PWD=abc\\def\/ghi","ok":1}"#, &[]);
+    assert_eq!(value, r#"{"env":"PWD=[REDACTED]","ok":1}"#);
+}

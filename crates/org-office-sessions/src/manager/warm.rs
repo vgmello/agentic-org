@@ -11,7 +11,7 @@ use crate::pump::{PumpCommand, SessionRuntimeState};
 
 use super::reap::{reap_live_handle, ReapMode};
 use super::registry_guards::{stopped_since, stopped_while_starting};
-use super::{LiveSessionHandle, PermitGuard, SessionManager, StartSlotGuard};
+use super::{is_admissions_closed, LiveSessionHandle, PermitGuard, SessionManager, StartSlotGuard};
 
 /// The outcome of reserving a start: a live or warm-send view, or a reserved start slot with
 /// the handle it replaces and the explicit-stop epoch at reservation (`TASK-190`).
@@ -61,12 +61,25 @@ enum FencedSend<'a> {
     PumpGone(Option<LiveSessionHandle>),
     /// An explicit stop overtook the turn: nothing was sent and the slot is still held.
     Stopped(StartSlotGuard<'a>),
+    /// `stop_all`/`shutdown` began: nothing was sent and the slot is still held, so the caller
+    /// returns its unused permit before the drain reaps the handle.
+    Draining(StartSlotGuard<'a>),
+}
+
+/// The refusal of a warm turn that `stop_all`/`shutdown` overtook: the drain reaps the handle,
+/// and an autonomous wake keeps its durable items (`TASK-190`).
+fn manager_shutting_down() -> ApiError {
+    ApiError::new(
+        ErrorCode::Unavailable,
+        "office session manager is shutting down",
+    )
 }
 
 /// Sends a turn to a warm handle. An explicit stop (pause, offboard, owner stop) that arrives
 /// while this send holds the start slot always wins: no turn reaches the child, the handle is
-/// reaped and the caller gets `Conflict`, so a paused autonomous wake keeps its durable items
-/// (`TASK-190`).
+/// reaped and the caller gets `Conflict`, so a paused autonomous wake keeps its durable items.
+/// A `stop_all`/`shutdown` drain wins the same way, with `Unavailable`; it reaps the handle
+/// itself once the slot is released (`TASK-190`).
 pub(super) fn dispatch_warm_handle_turn(
     mgr: &SessionManager,
     turn: WarmHandleTurn<'_>,
@@ -84,6 +97,10 @@ pub(super) fn dispatch_warm_handle_turn(
             turn.emp_id,
             slot_guard,
         ));
+    }
+    if is_admissions_closed(mgr) {
+        drop(slot_guard);
+        return Err(manager_shutting_down());
     }
     let cold = |old: Option<LiveSessionHandle>| StartReservation {
         live_view: None,
@@ -151,12 +168,17 @@ pub(super) fn dispatch_warm_handle_turn(
                 slot_guard,
             ))
         }
+        FencedSend::Draining(slot_guard) => {
+            release_installed_permit(mgr, &turn.active_permit, installed_pid.as_deref());
+            drop(slot_guard);
+            Err(manager_shutting_down())
+        }
     }
 }
 
-/// Checks the stop epoch, sends the turn and releases the start slot in one `registry` critical
-/// section, so a stop either lands first (and no turn reaches the child) or finds no start in
-/// flight and stops the session itself. `Sender::send` on the pump's unbounded channel never
+/// Checks the stop epoch and the drain flags, sends the turn and releases the start slot in one
+/// `registry` critical section, so a stop or drain either lands first (and no turn reaches the
+/// child) or finds no start in flight and stops the session itself. `Sender::send` on the pump's unbounded channel never
 /// blocks, so no slow work runs under the lock (rules §3.4).
 fn send_turn_fenced<'a>(
     mgr: &'a SessionManager,
@@ -170,6 +192,10 @@ fn send_turn_fenced<'a>(
     if reg.stop_epoch(emp_id) != start_stop_epoch {
         drop(reg);
         return FencedSend::Stopped(slot_guard);
+    }
+    if reg.draining || reg.shutting_down {
+        drop(reg);
+        return FencedSend::Draining(slot_guard);
     }
     if tx.send(PumpCommand::SendTurn(text)).is_ok() {
         slot_guard.release_locked(&mut reg);
@@ -253,6 +279,7 @@ fn abort_stopped_warm_turn(
             .is_some_and(|h| Arc::ptr_eq(&h.state, state));
         same_handle.then(|| reg.live.remove(emp_id)).flatten()
     };
+    let mut permit_released = false;
     if let Some(handle) = stopped {
         let reaped = reap_live_handle(
             mgr,
@@ -265,11 +292,16 @@ fn abort_stopped_warm_turn(
                 ),
             },
         );
-        if let Err(err) = reaped {
-            return err;
+        match reaped {
+            Ok(reaped) => permit_released = reaped.permit_released,
+            Err(err) => return err,
         }
     }
     drop(slot_guard);
+    // The freed permit may admit another agent's held wake, as after any stop.
+    if permit_released && !is_admissions_closed(mgr) {
+        mgr.process_due_wakes();
+    }
     stopped_while_starting()
 }
 

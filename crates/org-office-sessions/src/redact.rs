@@ -12,7 +12,8 @@
 //! credentials, JWTs, URL userinfo, sensitive header lines (`Authorization:`, `X-Api-Key:`,
 //! `Cookie:`), quoted secret fields (`"token": "…"`, `'password': '…'`, `\"api_key\":\"…\"`) and
 //! sensitive `KEY=value` / `?token=` assignments. A partial match never hides the rest of the
-//! text: every pass keeps scanning after each redaction.
+//! text: every pass keeps scanning after each redaction. A JSON `\n`, `\r` or `\t` escape is a
+//! word and line boundary, so serialized multi-line strings are redacted like raw text.
 
 use serde_json::Value;
 
@@ -247,10 +248,29 @@ fn is_token_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.')
 }
 
+/// `true` when an odd run of backslashes ends just before `idx`, so `bytes[idx]` is escaped
+/// (`\n` is a JSON line break; `\\n` is a literal backslash and `n`).
+fn odd_backslashes_before(bytes: &[u8], idx: usize) -> bool {
+    bytes[..idx]
+        .iter()
+        .rev()
+        .take_while(|&&b| b == b'\\')
+        .count()
+        % 2
+        == 1
+}
+
+/// `true` when `bytes[idx]` is the letter of a JSON `\n`, `\r` or `\t` escape: a boundary, never
+/// the first letter of the word after it.
+fn is_json_space_escape(bytes: &[u8], idx: usize) -> bool {
+    matches!(bytes[idx], b'n' | b'r' | b't') && odd_backslashes_before(bytes, idx)
+}
+
 /// `true` when the byte before `idx` cannot be part of the same word (so `task-…` never
-/// matches the `sk-` prefix).
+/// matches the `sk-` prefix, while `line\nsk-…` does).
 fn at_word_start(input: &str, idx: usize) -> bool {
-    idx == 0 || !input.as_bytes()[idx - 1].is_ascii_alphanumeric()
+    let bytes = input.as_bytes();
+    idx == 0 || !bytes[idx - 1].is_ascii_alphanumeric() || is_json_space_escape(bytes, idx - 1)
 }
 
 fn redact_prefixed(input: &str, prefix: &str, min_tail: usize) -> String {
@@ -411,14 +431,19 @@ fn redact_header_values(input: &str) -> String {
             i += 1;
             continue;
         }
-        let name_start = input[..i]
+        let mut name_start = i - input[..i]
             .bytes()
             .rev()
             .take_while(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
             .count();
-        let name = &input[i - name_start..i];
-        let starts_word =
-            i - name_start == 0 || !matches!(bytes[i - name_start - 1], b':' | b'.' | b'/' | b'\\');
+        let mut starts_word =
+            name_start == 0 || !matches!(bytes[name_start - 1], b':' | b'.' | b'/' | b'\\');
+        // A JSON `\n`, `\r` or `\t` before the name starts its line; its letter is not the name's.
+        if name_start < i && is_json_space_escape(bytes, name_start) {
+            name_start += 1;
+            starts_word = true;
+        }
+        let name = &input[name_start..i];
         if name.is_empty()
             || !starts_word
             || !SENSITIVE_HEADERS_NORMALIZED.contains(&normalize_key(name).as_str())
@@ -446,7 +471,8 @@ fn redact_header_values(input: &str) -> String {
 /// opening a parameter (after `=`, or at the value start) pairs with the next quote of its level,
 /// and a deeper quote inside that pair is a literal, so `Digest response="…", nc=…` and
 /// `Cookie: a="1", sid=…` are redacted whole while `{"msg":"Authorization: …","ok":true}` keeps
-/// its JSON structure.
+/// its JSON structure. A quote that could also end a JSON string (`a=",", sid=…`) opens a
+/// parameter when [`pairs_header_param`] finds its partner.
 fn header_value_end(bytes: &[u8], start: usize) -> usize {
     let mut open: Option<u32> = None;
     let mut i = start;
@@ -470,7 +496,9 @@ fn header_value_end(bytes: &[u8], start: usize) -> usize {
             Some(cur) if level > cur => {}
             // A shallower quote closes the string that holds the header.
             Some(_) => return i,
-            None if opens_header_param(bytes, start, i) && !closes_json_string(bytes, at) => {
+            None if opens_header_param(bytes, start, i)
+                && (!closes_json_string(bytes, at) || pairs_header_param(bytes, at, level)) =>
+            {
                 open = Some(level);
             }
             // An unmatched escaped quote, or a raw one ending a JSON string, ends the value.
@@ -490,6 +518,32 @@ fn opens_header_param(bytes: &[u8], value_start: usize, idx: usize) -> bool {
         .rev()
         .find(|b| !matches!(b, b' ' | b'\t'));
     matches!(before, None | Some(b'='))
+}
+
+/// `true` when the quote at `idx` (escape `level`) has a same-level partner before the end of
+/// the line, and what follows that partner ends a header parameter (`,`, `;`, a blank, a quote,
+/// an escape or the end) rather than starting a JSON key: `a=",", sid=…` opens a parameter, the
+/// `"` after `{"msg":"Authorization:` ends the JSON string before `"ok":true}`.
+fn pairs_header_param(bytes: &[u8], idx: usize, level: u32) -> bool {
+    let mut i = idx + 1;
+    while i < bytes.len() {
+        let run = bytes[i..].iter().take_while(|&&b| b == b'\\').count();
+        let at = i + run;
+        match bytes.get(at) {
+            None | Some(b'\n' | b'\r') => return false,
+            Some(b'"') if run.trailing_ones() == level => {
+                let next = bytes.get(at + 1);
+                return matches!(
+                    next,
+                    None | Some(b',' | b';' | b' ' | b'\t' | b'\r' | b'\n' | b'"' | b'\\')
+                );
+            }
+            // A shallower quote ends the enclosing string before any partner.
+            Some(b'"') if run.trailing_ones() < level => return false,
+            _ => i = at + 1,
+        }
+    }
+    false
 }
 
 /// `true` when the `"` at `idx` ends a JSON string: what follows is the end, `,`, `}` or `]`.
@@ -629,12 +683,17 @@ fn redact_env_line(line: &str) -> String {
     let mut pos = 0;
     while let Some(rel_eq) = line[pos..].find('=') {
         let eq = pos + rel_eq;
-        let key_start = line[..eq]
-            .bytes()
-            .rev()
-            .take_while(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
-            .count();
-        let key = &line[eq - key_start..eq];
+        let mut key_start = eq
+            - line[..eq]
+                .bytes()
+                .rev()
+                .take_while(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+                .count();
+        // `FOO=1\nPWD=…` in a JSON string: the escape's letter is not part of the key.
+        if key_start < eq && is_json_space_escape(line.as_bytes(), key_start) {
+            key_start += 1;
+        }
+        let key = &line[key_start..eq];
         out.push_str(&line[pos..=eq]);
         pos = eq + 1;
         if key.is_empty() || line[pos..].starts_with('=') || !is_sensitive_key(key) {
@@ -672,12 +731,18 @@ fn redact_env_value(after: &str) -> (String, usize) {
     let mut len = 0;
     while len < bytes.len() {
         let b = bytes[len];
-        let json_escape = b == b'\\'
-            && matches!(
-                bytes.get(len + 1),
-                Some(b'"' | b'n' | b'r' | b't' | b'\\' | b'/' | b'u')
-            );
-        if b.is_ascii_whitespace() || matches!(b, b';' | b',' | b'"' | b'\'') || json_escape {
+        if b == b'\\' {
+            // An odd run escapes the next byte: a quote or a JSON line break or tab ends the value,
+            // while `\\`, `\/` and `\u…` are part of it.
+            let run = bytes[len..].iter().take_while(|&&c| c == b'\\').count();
+            if run % 2 == 1 && matches!(bytes.get(len + run), Some(b'"' | b'n' | b'r' | b't')) {
+                len += run - 1;
+                break;
+            }
+            len += run;
+            continue;
+        }
+        if b.is_ascii_whitespace() || matches!(b, b';' | b',' | b'"' | b'\'') {
             break;
         }
         len += 1;
