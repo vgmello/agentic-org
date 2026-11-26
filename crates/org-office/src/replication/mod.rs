@@ -8,6 +8,7 @@
 #[cfg(any(test, feature = "testkit"))]
 pub mod conformance;
 pub(crate) mod durable;
+pub(crate) use durable::check_committed_state;
 pub mod memory;
 pub(crate) mod state_files;
 

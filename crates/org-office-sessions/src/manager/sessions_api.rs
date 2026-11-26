@@ -42,12 +42,17 @@ impl SessionManager {
         self.check_not_recovery_required(emp_id)?;
         self.clear_persisted_stall_only(emp_id);
 
-        let initial_obj = params
-            .instruction
-            .as_deref()
-            .map(|text| self.objective_text(&employee, actor_member_id, text));
-        let reservation =
-            self.reserve_start_or_send(&employee, initial_obj, None, params.workspace.as_deref())?;
+        // Composed once, for a live session and a new one alike: an owner instruction the HQ
+        // proxied (`hq_attested_owner`) is badged `owner` either way.
+        let objective = params.instruction.as_deref().map(|text| {
+            self.objective_text_attested(&employee, actor_member_id, hq_attested_owner, text)
+        });
+        let reservation = self.reserve_start_or_send(
+            &employee,
+            objective.clone(),
+            None,
+            params.workspace.as_deref(),
+        )?;
         if let Some(view) = reservation.live_view {
             return Ok(view);
         }
@@ -68,10 +73,11 @@ impl SessionManager {
             }),
             &refs,
         );
-        let prepared = self.prepare_and_spawn(
-            actor_member_id,
+        let prepared = self.prepare_and_spawn_raw(
             &employee,
             params,
+            objective.unwrap_or_default(),
+            None,
             None,
             reservation.start_stop_epoch,
         )?;

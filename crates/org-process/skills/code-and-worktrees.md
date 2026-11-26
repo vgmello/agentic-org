@@ -19,10 +19,18 @@ agent-os worktree prepare --task <task> --repo <repo>
 
 - The answer's `data.worktree.worktree_path` is where you work, and `data.worktree.branch` is your task branch.
 - `data.writable_roots` lists the folders your sandbox may write; Git metadata in `data.fixed_write_denies` stays read-only to you.
-- `--base-branch <branch>` starts the branch from another branch than the integration branch.
+- A project task's branch always starts from the project's integration branch; naming any other with `--base-branch` is refused. A task without a project needs `--base-branch <branch>` to say where its branch starts.
 - Preparing again for the same task returns the same worktree; it does not reset your work.
 
 List your worktrees with `agent-os worktree list`, or `agent-os worktree list --task <task>` for one task.
+
+## See branches pushed after you prepared
+
+```bash
+agent-os repo fetch --repo <repo>
+```
+
+The office refreshes its cache from the origin with its own credentials and answers with `data.added`, `data.updated` and `data.pruned` branches. Your checkout does not move: merge or rebase from `origin/<branch>` yourself. Never run `git fetch` in the worktree; its Git metadata is read-only to you. While a fetch of a repository runs, and for 10 seconds after it ends, another fetch of it is refused with `rate_limited`: wait, then retry.
 
 ## Work
 
@@ -44,5 +52,5 @@ Record what you pushed on the task, for example in your closing comment (see `ta
 ## When something is wrong
 
 - `not_found`: check the task and repository with `agent-os task inspect --task <task>` and `agent-os repo list`.
-- `unavailable` from `agent-os repo status` or `agent-os repo push`: the office cannot reach the remote right now. Retry later with the same `--idempotency-key`, or tell the task owner if it persists.
+- `unavailable` from `agent-os repo status`, `agent-os repo fetch` or `agent-os repo push`: the office cannot reach the remote right now. Retry later with the same `--idempotency-key`, or tell the task owner if it persists.
 - A merge or integration decision that is not yours: ask the project lead (see `messaging-and-asks`).
