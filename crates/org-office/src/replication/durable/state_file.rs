@@ -1,5 +1,6 @@
 //! The durable state file `state.v1.json`: encoding the replication core into it and
-//! decoding it back. Engine-independent: no SQL here.
+//! decoding it back, and the organization events' stored form. Engine-independent: no SQL
+//! here.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -14,10 +15,29 @@ use crate::error::OfficeError;
 use crate::replication::{
     decode_b64, decode_hex_digest, encode_b64, memory::ReplicationCoreData, message_from_stored,
     message_to_stored, outbox_from_stored, receipt_from_stored, receipt_to_stored,
-    ReplicationStateFile, StoredOrgEvent, StoredWorkChange,
+    ReplicationStateFile, StoredEventsLog, StoredOrgEvent, StoredWorkChange,
 };
 
-pub(super) fn encode_state_file(data: &ReplicationCoreData) -> Result<Vec<u8>, OfficeError> {
+/// An organization event in its stored form: a line of `events.v1.ndjson`, or an entry of
+/// an inline `events` list.
+pub(super) fn stored_event(e: &OrgEvent) -> StoredOrgEvent {
+    StoredOrgEvent {
+        epoch: e.position.epoch.get(),
+        seq: e.position.seq,
+        previous_hex: e.previous.to_hex(),
+        digest_hex: e.digest.to_hex(),
+        codec_name: e.codec.id().to_owned(),
+        codec_version: e.codec.version(),
+        payload_b64: encode_b64(&e.payload),
+    }
+}
+
+/// Encodes `data` as `state.v1.json`: its events inline when `events_log` is `None`, else
+/// only the log's committed extent (`TASK-140`).
+pub(super) fn encode_state_file(
+    data: &ReplicationCoreData,
+    events_log: Option<&StoredEventsLog>,
+) -> Result<Vec<u8>, OfficeError> {
     let cp = &data.checkpoint;
     let file = ReplicationStateFile {
         version: 1,
@@ -33,19 +53,11 @@ pub(super) fn encode_state_file(data: &ReplicationCoreData) -> Result<Vec<u8>, O
         pending_restore_base_hex: cp.pending_restore_base.map(|d| d.to_hex()),
         protocol_level: cp.protocol_level,
         initial_snapshot_required: data.initial_snapshot_required,
-        events: data
-            .events
-            .values()
-            .map(|e| StoredOrgEvent {
-                epoch: e.position.epoch.get(),
-                seq: e.position.seq,
-                previous_hex: e.previous.to_hex(),
-                digest_hex: e.digest.to_hex(),
-                codec_name: e.codec.id().to_owned(),
-                codec_version: e.codec.version(),
-                payload_b64: encode_b64(&e.payload),
-            })
-            .collect(),
+        events: match events_log {
+            Some(_) => Vec::new(),
+            None => data.events.values().map(stored_event).collect(),
+        },
+        events_log: events_log.cloned(),
         work_incarnation: data.work_outbox.origin().incarnation.as_str().to_owned(),
         work_last_seq: data.work_outbox.last_seq(),
         work_acked_seq: data.work_outbox.acknowledged_seq(),
@@ -103,8 +115,11 @@ pub(super) fn encode_state_file(data: &ReplicationCoreData) -> Result<Vec<u8>, O
     serde_json::to_vec_pretty(&file).map_err(OfficeError::storage)
 }
 
+/// Decodes `state.v1.json` with its organization events, `events` (inline, or read from
+/// the log by [`super::events_log::EventsLog::open`]).
 pub(super) fn core_from_file(
     file: &ReplicationStateFile,
+    stored_events: &[StoredOrgEvent],
 ) -> Result<ReplicationCoreData, OfficeError> {
     if file.version != 1 {
         return Err(OfficeError::Invalid(
@@ -141,8 +156,8 @@ pub(super) fn core_from_file(
         protocol_level: file.protocol_level,
     };
     let mut events = BTreeMap::new();
-    let mut applied_org = Vec::with_capacity(file.events.len());
-    for ev in &file.events {
+    let mut applied_org = Vec::with_capacity(stored_events.len());
+    for ev in stored_events {
         let payload: Arc<[u8]> = Arc::from(decode_b64(&ev.payload_b64)?);
         let event = OrgEvent {
             org_id: org_id.clone(),
@@ -156,6 +171,19 @@ pub(super) fn core_from_file(
                 .map_err(|_| OfficeError::Invalid("event codec"))?,
             payload: Arc::clone(&payload),
         };
+        // Every stored event still carries its own digest: a damaged log or state file fails
+        // closed instead of serving altered history (`TASK-140`).
+        let expected = org_sync_proto::event_digest_v1(
+            &event.org_id,
+            event.position,
+            event.previous,
+            &event.codec,
+            &event.payload,
+        )
+        .map_err(|_| OfficeError::Invalid("stored event digest parameters"))?;
+        if expected != event.digest {
+            return Err(OfficeError::Invalid("stored event digest mismatch"));
+        }
         events.insert((ev.epoch, ev.seq), event);
         applied_org.push(payload);
     }

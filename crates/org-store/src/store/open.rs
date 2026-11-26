@@ -102,6 +102,7 @@ pub(super) fn open_store_core<E: Engine>(
             closing: false,
             writer_done: false,
             sync_wanted: false,
+            flush_now: false,
             holding_back: false,
             queued: 0,
             flushed: head.ordinal,

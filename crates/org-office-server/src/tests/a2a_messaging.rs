@@ -353,6 +353,7 @@ impl LiveOfficeNode {
         let sat_wake = Arc::new(SatSyncWake::default());
         let hq_fed_slot: crate::federation_runtime::HqFederationSlot = Arc::default();
         let sync_wake = crate::federation_runtime::build_sync_wake_fn(
+            &office,
             Arc::clone(&sat_wake),
             Arc::clone(&hq_fed_slot),
         );

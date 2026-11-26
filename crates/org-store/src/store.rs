@@ -290,6 +290,20 @@ impl<E: Engine> Store<E> {
         }
     }
 
+    /// Asks the flusher to flush every entry appended so far now instead of at the end of
+    /// the flush interval, and returns at once: it waits for nothing (`TASK-140`). A
+    /// buffered write another office is waiting on (a cross-office message, a relay) uses
+    /// it so the entry is confirmed in milliseconds rather than after the group-flush
+    /// interval. A no-op once the store has stopped.
+    pub fn request_flush(&self) {
+        let mut flow = self.core.flow();
+        if flow.dead || flow.fatal.is_some() {
+            return;
+        }
+        flow.flush_now = true;
+        self.core.wake.notify_all();
+    }
+
     /// An orderly stop: takes no more operations, finishes the queued ones, flushes,
     /// writes the files, and joins both threads.
     pub fn close(self) -> Result<(), StoreError> {

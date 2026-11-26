@@ -204,6 +204,9 @@ fn drain_hq_inbound_frames(
                         after_epoch,
                         after_seq,
                     } => {
+                        // Only the satellite's persistent sync session follows the organization
+                        // stream; proxied session RPCs prefer it (`TASK-174` AC #1).
+                        peer_handle.mark_persistent();
                         state.active_snapshot = None;
                         let Some(last_sent) =
                             send_hq_org_events_after(tls, peer, after_epoch, after_seq)
@@ -252,6 +255,11 @@ fn hq_session_flush_outbound(
 ) -> bool {
     if !state.hello_done || state.reader.has_partial_frame() {
         return true;
+    }
+    if *wake_triggered || peer.office.has_pending_journal_pipeline() {
+        // A committed write another office waits on: confirm it now rather than after the
+        // store's group-flush interval (`TASK-140`); this never blocks the session.
+        peer.office.request_store_flush();
     }
     let sent_before = state.sent_in_session.len();
     let cursor_before = state.peer_org_cursor;

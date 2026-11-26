@@ -162,3 +162,91 @@ fn malformed_snapshot_reference_remains_invalid_input_before_adapter_lookup() {
     );
     assert_eq!(satellite.restart().applied(), vec![payload]);
 }
+
+/// `TASK-140`: a burst of HQ events applies in one transaction exactly as one `apply` per
+/// event would: every event acknowledged in order, a gap stops the batch after committing
+/// the events before it, and an error commits nothing.
+#[test]
+fn apply_batch_applies_consecutive_events_in_one_transaction_like_apply() {
+    let (hq, satellite, peer) = offices();
+    let events: Vec<OrgEvent> = (1..=6)
+        .map(|n| hq.publish(format!("event-{n}").as_bytes()).unwrap())
+        .collect();
+    assert!(apply_batch(&satellite, &peer, Vec::new())
+        .unwrap()
+        .is_empty());
+
+    let outputs = apply_batch(&satellite, &peer, events[..3].to_vec()).unwrap();
+    assert_eq!(outputs.len(), 3);
+    for (output, event) in outputs.iter().zip(&events) {
+        assert_eq!(
+            *output,
+            OrgOutput::Ack {
+                position: event.position,
+                digest: event.digest,
+                duplicate: false,
+            }
+        );
+    }
+    assert_eq!(satellite.checkpoint().position, events[2].position);
+    assert_eq!(satellite.applied().len(), 3);
+
+    // An error anywhere aborts the whole batch: the duplicate before it is not committed
+    // twice and the valid event before it is not committed at all.
+    let mut corrupt = events[4].clone();
+    corrupt.payload = Arc::from(b"changed".as_slice());
+    let before = satellite.checkpoint();
+    let error = apply_batch(
+        &satellite,
+        &peer,
+        vec![events[2].clone(), events[3].clone(), corrupt],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SyncError::Refused(Refusal::IntegrityFailure)
+    ));
+    assert_eq!(satellite.checkpoint(), before);
+    assert_eq!(satellite.applied().len(), 3);
+
+    // A gap stops the batch; the events before it commit, the ones after it are not tried.
+    let outputs = apply_batch(
+        &satellite,
+        &peer,
+        vec![
+            events[2].clone(),
+            events[3].clone(),
+            events[5].clone(),
+            events[4].clone(),
+        ],
+    )
+    .unwrap();
+    assert_eq!(outputs.len(), 3);
+    assert!(matches!(
+        outputs[0],
+        OrgOutput::Ack {
+            duplicate: true,
+            ..
+        }
+    ));
+    assert!(matches!(
+        outputs[1],
+        OrgOutput::Ack {
+            duplicate: false,
+            ..
+        }
+    ));
+    assert_eq!(
+        outputs[2],
+        OrgOutput::Gap {
+            after: events[3].position
+        }
+    );
+    assert_eq!(satellite.checkpoint().position, events[3].position);
+    assert_eq!(satellite.applied().len(), 4);
+
+    let outputs = apply_batch(&satellite, &peer, events[4..].to_vec()).unwrap();
+    assert_eq!(outputs.len(), 2);
+    assert_eq!(satellite.checkpoint().position, events[5].position);
+    assert_eq!(satellite.applied().len(), 6);
+}

@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::io;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -35,6 +35,10 @@ pub(crate) struct HqPeerHandle {
     pub(crate) wake: WakePipe,
     wake_gen: AtomicU64,
     rpc_queue: Mutex<PeerRpcQueue>,
+    /// Set once the session asked for the organization stream (`SyncFrame::OrgGap`): it is the
+    /// satellite's persistent sync session, not a short-lived permit or RPC connection
+    /// (`TASK-174` AC #1).
+    persistent: AtomicBool,
 }
 
 impl HqPeerHandle {
@@ -43,7 +47,17 @@ impl HqPeerHandle {
             wake: WakePipe::new()?,
             wake_gen: AtomicU64::new(0),
             rpc_queue: Mutex::new(PeerRpcQueue::default()),
+            persistent: AtomicBool::new(false),
         })
+    }
+
+    /// Marks this session as the satellite's persistent sync session (`TASK-174` AC #1).
+    pub(crate) fn mark_persistent(&self) {
+        self.persistent.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn is_persistent(&self) -> bool {
+        self.persistent.load(Ordering::Acquire)
     }
 
     pub(crate) fn notify_wake(&self) {
@@ -191,10 +205,18 @@ impl HqPeerRegistry {
         }
     }
 
-    fn latest_peer(&self, office_id: &str) -> Option<Arc<HqPeerHandle>> {
+    /// The session to proxy a session RPC over: the newest persistent sync session, so a
+    /// short-lived connection (a permit coordinator, ~1-10 ms) that registered later is never
+    /// chosen while the persistent one is up; the newest session only while none is marked
+    /// persistent yet (`TASK-174` AC #1).
+    pub(super) fn latest_peer(&self, office_id: &str) -> Option<Arc<HqPeerHandle>> {
         let map = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
-        map.get(office_id)
-            .and_then(|list| list.last().map(|(_, h)| Arc::clone(h)))
+        let list = map.get(office_id)?;
+        list.iter()
+            .rev()
+            .find(|(_, h)| h.is_persistent())
+            .or_else(|| list.last())
+            .map(|(_, h)| Arc::clone(h))
     }
 
     pub(crate) fn proxy_session_rpc(
