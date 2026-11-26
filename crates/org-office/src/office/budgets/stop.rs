@@ -1,4 +1,4 @@
-//! Stopping budget-held execution: blocking held tasks and the durable stop intent.
+//! `budget.stop`: records a task budget's durable stop intent, or keeps open periods paused.
 
 use org_proto::budgets::{BudgetMutationResult, BudgetScopeKind, BudgetStopParams};
 use org_proto::{ApiError, ErrorCode};
