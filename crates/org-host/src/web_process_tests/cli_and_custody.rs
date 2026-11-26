@@ -21,7 +21,7 @@ use std::{
     time::Duration,
 };
 
-use org_agent_cli::dispatch::{hint_for, OfficeTransport, TransportOffice};
+use org_agent_cli::{hint_for, OfficeTransport, TransportOffice};
 use org_command::Refusal;
 use org_host_control::{
     ops::{SessionGrant, SessionGrantParams},

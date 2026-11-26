@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use org_agent_cli::external_auth::client::{self, Target};
 use org_agent_cli::external_auth::store::{TokenFile, WorkspaceBinding, WorkspaceState};
-use org_agent_cli::office::Binding;
+use org_agent_cli::Binding;
 use org_client::Client;
 use org_office::{EngineChoice, Office, TestOffice};
 use org_proto::external_auth::{

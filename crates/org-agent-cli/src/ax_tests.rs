@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use org_command::{Ack, Kind};
 use serde_json::{json, Value};
 
-use crate::transport::{derive_uuid_v7, OfficeTransport, Refusal, TransportOffice};
+use crate::runtime::transport::{derive_uuid_v7, OfficeTransport, Refusal, TransportOffice};
 
 /// Answers each method with a fixed reply and records every call.
 #[derive(Default)]
@@ -81,7 +81,7 @@ fn ask_reply(status: &str) -> Value {
 
 #[test]
 fn every_write_declares_its_ack_class_and_durable_is_refused_where_it_cannot_hold() {
-    let table = crate::table::table();
+    let table = crate::registry::table();
     let committed: Vec<String> = table
         .rows()
         .iter()
@@ -494,7 +494,7 @@ fn list_cases() -> Vec<(Vec<&'static str>, &'static str, Value)> {
 
 #[test]
 fn every_list_answers_bounded_pages_with_a_cursor_and_a_total() {
-    let table = crate::table::table();
+    let table = crate::registry::table();
     for row in table.rows().iter().filter(|row| row.kind == Kind::List) {
         assert!(
             row.input.iter().all(|f| f.name != "max_results"),
@@ -660,11 +660,12 @@ fn an_unreadable_task_answer_is_unavailable_not_a_storage_error() {
 fn the_office_error_metadata_and_its_hints_reach_the_envelope() {
     let mut limited = org_proto::ApiError::rate_limited(2500);
     limited.message = "too many attempts".into();
-    let refusal = crate::office::api_refusal(limited);
+    let refusal = crate::runtime::binding::api_refusal(limited);
     let details = refusal.details.as_deref().expect("details");
     assert_eq!(details.retry_after_ms, Some(2500));
     assert!(refusal.hint.contains("2500 ms"), "{}", refusal.hint);
-    let refusal = crate::office::api_refusal(org_proto::ApiError::rule("login", "format"));
+    let refusal =
+        crate::runtime::binding::api_refusal(org_proto::ApiError::rule("login", "format"));
     let details = refusal.details.as_deref().expect("details");
     assert_eq!(
         (details.field.as_deref(), details.rule.as_deref()),
@@ -675,7 +676,7 @@ fn the_office_error_metadata_and_its_hints_reach_the_envelope() {
 
 #[test]
 fn agent_os_help_opens_with_the_quickstart_of_its_binding_state() {
-    use crate::office::Binding;
+    use crate::runtime::binding::Binding;
     let help = vec!["--help".to_owned()];
     let unbound = crate::execute(&help, Binding::default());
     let lines: Vec<&str> = unbound.stdout.lines().take(5).collect();
@@ -706,7 +707,7 @@ fn agent_os_help_opens_with_the_quickstart_of_its_binding_state() {
 
 #[test]
 fn shorthands_read_the_same_in_help_and_schema() {
-    use crate::office::Binding;
+    use crate::runtime::binding::Binding;
     for (short, long) in [
         ("boot --schema", "session boot --schema"),
         ("who --schema", "directory list --schema"),

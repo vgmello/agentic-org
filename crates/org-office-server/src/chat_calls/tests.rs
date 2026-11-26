@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use org_agent_cli::attach::run_attach_loop;
-use org_agent_cli::office::{Binding, BoundOffice};
+use org_agent_cli::run_attach_loop;
+use org_agent_cli::{Binding, BoundOffice, TransportOffice};
 use org_office::{Office, TestOffice};
 use org_proto::chat::{
     ChatChannelCreate, ChatChannelCreateParams, ChatEventsPoll, ChatEventsPollParams, ChatSend,
@@ -596,7 +596,12 @@ fn b6_agent_os_commands_session_attach_and_ack1_latency_over_real_office() {
     }
     let start = Instant::now();
     let mut out = Vec::new();
-    let exit = run_attach_loop("agent-os", Cursor::new(lines), &mut out, &mut office);
+    let exit = run_attach_loop(
+        "agent-os",
+        Cursor::new(lines),
+        &mut out,
+        &mut TransportOffice(&mut office),
+    );
     let elapsed = start.elapsed();
     assert_eq!(exit, 0);
     let rendered = std::str::from_utf8(&out).unwrap();
@@ -1675,12 +1680,12 @@ fn task95_real_office_dry_run_forwarded_and_refused_writes_leave_store_unchanged
         fx: &'a LiveOfficeFixture,
         next_id: u64,
     }
-    impl org_agent_cli::dispatch::OfficeTransport for OwnerServerTransport<'_> {
+    impl org_agent_cli::OfficeTransport for OwnerServerTransport<'_> {
         fn call_method(
             &mut self,
             method: &str,
             params: Value,
-        ) -> Result<Value, org_agent_cli::dispatch::Refusal> {
+        ) -> Result<Value, org_agent_cli::Refusal> {
             self.next_id += 1;
             let req = Request {
                 id: self.next_id,
@@ -1695,7 +1700,7 @@ fn task95_real_office_dry_run_forwarded_and_refused_writes_leave_store_unchanged
                 .outcome
             {
                 Outcome::Result(v) => Ok(v),
-                Outcome::Error(err) => Err(org_agent_cli::dispatch::Refusal::new(
+                Outcome::Error(err) => Err(org_agent_cli::Refusal::new(
                     err.code,
                     err.message,
                     "Check office error.",
@@ -1706,7 +1711,7 @@ fn task95_real_office_dry_run_forwarded_and_refused_writes_leave_store_unchanged
 
     let fx = LiveOfficeFixture::start();
     let before = fx.office.org_snapshot().unwrap();
-    let mut office = org_agent_cli::dispatch::TransportOffice(OwnerServerTransport {
+    let mut office = org_agent_cli::TransportOffice(OwnerServerTransport {
         fx: &fx,
         next_id: 700,
     });
