@@ -59,10 +59,12 @@ function readPos(s) {
 function messageEl(s, mid) {
   return mid ? s.querySelector(`:scope > [data-mid="${CSS.escape(mid)}"]`) : null;
 }
+/* A linked message sits a third of the way down, or just below the sticky day band when it is taller than the view,
+   so the band never covers its author line. */
+const linkedOffset = (s, el) => Math.max(BOUNDARY_GAP + bandOf(s), (s.clientHeight - el.offsetHeight) / 3);
 function placeAt(s, pos) {
   const anchor = messageEl(s, pos.mid || pos.target);
-  /* A linked message sits a third of the way down, or at the top when it is taller than the view. */
-  if (anchor && pos.target) return scrollToY(s, Math.max(0, yOf(s, anchor) - Math.max(BOUNDARY_GAP, (s.clientHeight - anchor.offsetHeight) / 3)));
+  if (anchor && pos.target) return scrollToY(s, Math.max(0, yOf(s, anchor) - linkedOffset(s, anchor)));
   if (anchor) return scrollToY(s, yOf(s, anchor) - pos.offset);
   if (pos.top) return scrollToY(s, 0);
   return pos.end ? scrollToEnd(s) : scrollToY(s, boundaryY(s));
@@ -101,6 +103,7 @@ function replaceStream(s, html, follow = false) {
   s.innerHTML = html;
   applyPos(s, pos);
   positions.set(s.dataset.ch, readPos(s));
+  syncLatestJump(s);
 }
 
 export { applyPos, placeStream, readPos, replaceStream, savePos, savedPos, scrollToEnd, trackPos };
@@ -111,11 +114,27 @@ export { applyPos, placeStream, readPos, replaceStream, savePos, savedPos, scrol
 const threadPositions = new Map();
 const thread = { toEnd: false };
 const followThreadEnd = () => { thread.toEnd = true; };
-function placeThread(panel, rootId) {
+/* Opened from its reply count: when the root card fills a short screen, the panel opens at the replies; the ask
+   stays one scroll above. */
+function showReplies(s) {
+  const count = s.querySelector(":scope > .chat-thread-count"), first = count?.nextElementSibling;
+  if (first && yOf(s, first) + Math.min(first.offsetHeight, 48) > s.clientHeight) s.scrollTop = yOf(s, count) - BOUNDARY_GAP;
+}
+/* Opened from a search match: that reply sits a third of the way down, marked. */
+function showReply(s, rootId, i) {
+  const el = s.querySelector(`:scope > [data-mid="${CSS.escape(rootId + "-r" + i)}"]`);
+  if (!el) return;
+  el.classList.add("is-linked");
+  s.scrollTop = yOf(s, el) - Math.max(BOUNDARY_GAP, (s.clientHeight - el.offsetHeight) / 3);
+}
+/* `land`: { replies: true } from the reply count, { reply: i } from a search match; otherwise the saved position. */
+function placeThread(panel, rootId, land = null) {
   const s = panel?.querySelector(":scope > .msgs");
   if (!s) return;
   if (thread.toEnd) { thread.toEnd = false; s.scrollTop = s.scrollHeight; threadPositions.set(rootId, s.scrollTop); }
+  else if (land && Number.isInteger(land.reply)) showReply(s, rootId, land.reply);
   else if (threadPositions.has(rootId)) s.scrollTop = threadPositions.get(rootId);
+  else if (land?.replies) showReplies(s);
   s.addEventListener("scroll", () => threadPositions.set(rootId, s.scrollTop), { passive: true });
 }
 
@@ -144,11 +163,40 @@ function jumpToAsk() {
   card.querySelector(".chat-needs-q").focus({ preventScroll: true });
   syncAskJump(s);
 }
+/* ---------------------------------------------------------------- newer messages below the reading position
+   When the opening position (or the reader) leaves the newest message below the fold, "Jump to latest" floats at
+   the stream's foot; it goes once the newest message is fully in view. */
+const lastMessage = (s) => [...s.querySelectorAll(":scope > .msg")].pop();
+function newerBelow(s) {
+  const last = lastMessage(s);
+  return Boolean(last) && last.getBoundingClientRect().bottom > s.getBoundingClientRect().bottom + 1;
+}
+function syncLatestJump(s) {
+  const btn = document.querySelector('[data-act="chat-latest-jump"]');
+  if (btn) btn.hidden = !newerBelow(s);
+}
+/* Scrolls to the end and moves focus to the newest message (the button that had focus goes away). */
+function jumpToLatest() {
+  const s = document.querySelector(".chat .chmain .msgs[data-ch]"), last = s && lastMessage(s);
+  if (!last) return;
+  scrollToEnd(s);
+  markStuckDays(s);
+  positions.set(s.dataset.ch, { end: true });
+  last.tabIndex = -1;
+  last.setAttribute("aria-label", `Latest message from ${last.querySelector(".hd b")?.textContent || last.querySelector(".sr-only")?.textContent || "this conversation"}`);
+  last.focus({ preventScroll: true });
+  syncLatestJump(s);
+}
+function syncJumps(s) {
+  syncAskJump(s);
+  syncLatestJump(s);
+}
 function watchAsks(s) {
   let frame = 0;
-  s.addEventListener("scroll", () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(() => syncAskJump(s)); }, { passive: true });
-  setTimeout(() => s.isConnected && syncAskJump(s), 400);
-  syncAskJump(s);
+  s.addEventListener("scroll", () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(() => syncJumps(s)); }, { passive: true });
+  setTimeout(() => s.isConnected && syncJumps(s), 400);
+  setTimeout(() => s.isConnected && syncJumps(s), 1600);
+  syncJumps(s);
 }
 
-export { jumpToAsk, watchAsks };
+export { jumpToAsk, jumpToLatest, syncLatestJump, watchAsks };

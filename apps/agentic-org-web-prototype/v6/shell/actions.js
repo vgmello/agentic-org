@@ -9,7 +9,7 @@ import { answerOrgQuestion } from "../pages/home.js";
 import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment, refreshInboxSearch, resetInboxSelection } from "../pages/inbox.js";
 import { updateProjectInsights } from "../pages/insights.js";
 import { removeTeam } from "../pages/projects.js";
-import { addIdeationComment, boardPlace, changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, jumpToBoardLane, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkResults, refreshWorkResults, scopedWorkQueries, scopedWorkType, scopedWorkView, selectWorkView, setDoneHistory, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
+import { addIdeationComment, boardPlace, changeWorkCriterion, focusRevealedWork, openDoneHistory, shownWorkIds, closeWorkPanel, createWorkTask, fitTextarea, jumpToBoardLane, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkResults, refreshWorkResults, scopedWorkQueries, scopedWorkType, scopedWorkView, selectWorkView, setDoneHistory, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
 import { openSmartTaskComposer } from "../pages/task-composer.js";
 import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, goSearch, narrowSearch, openCmdk, renderCmdk, runCmdkItem, setCmdkMode } from "./cmdk.js";
 import { rememberBoardExit, returnToBoard } from "./board-return.js";
@@ -312,12 +312,15 @@ const CLICK_ACTIONS = {
     render(false);
     document.querySelector('[aria-controls="menu-work-display"], [aria-controls="menu-scoped-work-display"]')?.focus();
   },
-  /* An empty state's "Show N older/archived matches" widens history, then lands on the first revealed item */
+  /* "Show N older/archived matches" widens history, then lands on the first item it added and says how many */
   "work-reveal": (_e, _t, _id, v) => {
+    const before = shownWorkIds();
     setDoneHistory(v);
     render(false);
-    (document.querySelector("#work-results .work-item-link") ?? document.getElementById("work-results"))?.focus();
+    focusRevealedWork(before);
   },
+  /* A Done lane's history window opens the one Done history control, in Display */
+  "board-history": () => openDoneHistory(),
   "work-clear-filters": () => clearWorkFilters(),
   "board-lane": (_e, _t, _id, v) => jumpToBoardLane(v),
   "cozy-contrast": (_e, t) => { S.cozyContrast = !S.cozyContrast; try { localStorage.setItem(COZY_CONTRAST_STORE, S.cozyContrast ? "1" : "0"); } catch (e) {} applyCozyContrast(); t.setAttribute("aria-checked", String(S.cozyContrast)); },

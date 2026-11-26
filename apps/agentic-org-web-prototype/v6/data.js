@@ -350,7 +350,7 @@ const IN = [
     acts: [["Dismiss for this month", "Dismissed for this month", "x"]], src: { href: "#/settings/agents/jules", label: "Open Agent setup" }, clears: "When you dismiss it for this month, or the budget resets" },
   { id: "in13", kind: "problem", sub: "Unplaced agent", from: "noor", time: "5h", group: "Today", what: "Noor Haddad isn't placed in an office yet", why: "Noor was hired yesterday, but no office runs Noor yet, so Noor can't pick up work. Choose an office in Agent setup.", rec: "", proj: "agency-v1", task: "", expires: "",
     src: { href: "#/settings/agents/noor", label: "Open Agent setup" }, clears: "When Noor is placed in an office" },
-  { id: "in9", kind: "problem", sub: "Goal paused", from: "quinn", time: "4h", group: "Today", what: "Quinn's goal is paused: the Build box office is offline", why: "T-A135 can't start until the satellite office is back. Resume the goal once it's online, or move T-A135 to HQ.", rec: "", proj: "office-federation", task: "T-A135", expires: "", resume: true, clears: "When the goal resumes" },
+  { id: "in9", kind: "problem", sub: "Goal paused", from: "quinn", time: "4h", group: "Today", what: "Quinn's goal is paused: the Build box office is offline", why: "T-A135 can't start until the satellite office is back. Resume the goal once it's online, or move T-A135 to HQ.", rec: "", proj: "office-federation", task: "T-A135", expires: "", resume: true, hold: { office: "sat" }, clears: "When the goal resumes" },
   { id: "in6", kind: "approval", sub: "Review requested", from: "emery", time: "Yesterday", group: "Earlier", what: "Review T-A131: the IA v2 prototype, draft 4.1", why: "Emery applied Eden's draft-4 recheck and asks for your review before the stories go to engineering.", recTone: "ok", rec: "Eden recommends: approve. Her recheck findings are fixed.", proj: "look-feel", task: "T-A131", expires: "",
     acts: [["Approve", "Approved", "check"], ["Request changes", "Changes requested", "pencil", "changes"]], clears: "When you answer, here or anywhere" },
   { id: "in14", origin: { ch: "dm-ada", msg: "x3" }, kind: "approval", sub: "Hand-off", from: "ada", time: "1h", group: "Today", what: "Take on T-A146: sign the Apple developer agreement", why: "Notarizing the v1.0 build needs the account holder to accept Apple's updated agreement. Only you can sign it, so ada handed T-A146 to you.", rec: "", proj: "agency-v1", task: "T-A146", expires: "",
@@ -522,9 +522,16 @@ const blockedOnOwner = (w) => w.status === "Blocked" && w.waitsOn === "you";
 /* Open Inbox asks linked to a work item that only the owner can clear: approvals, decisions, questions,
    suggestions, and problems that ask the owner to assign someone. Plain problem reports are not asks. */
 const ownerAsks = (w) => IN.filter((i) => !i.handled && i.task === w.id && (i.kind !== "problem" || i.assign));
-/* Needs the owner: blocked on you, an open linked ask, or open Critical work nobody is assigned to.
+/* Needs the owner: blocked on you, open Critical work nobody is assigned to, or an open linked ask. A pending ask
+   counts whatever the item's status, so a Fixed bug whose fix still waits for your approval stays in Needs you.
    Work's Needs you filter, card badge and badge destination all read these same pending owner actions. */
-const needsMe = (w) => OPEN(w) && (blockedOnOwner(w) || (!w.who && w.pri === "Critical") || ownerAsks(w).length > 0);
+const needsMe = (w) => (OPEN(w) && (blockedOnOwner(w) || (!w.who && w.pri === "Critical"))) || ownerAsks(w).length > 0;
+/* A known execution hold: an open Inbox item that says the work can't run until an office is back. It is not an
+   owner ask (nothing for the owner to approve), so it is a separate cue, never Needs you. */
+const executionHold = (w) => {
+  const item = OPEN(w) ? IN.find((i) => !i.handled && i.task === w.id && i.hold?.office) : null;
+  return item ? { item, office: OFFICES[item.hold.office] } : null;
+};
 
 const officeName = (o) => (OFFICES[o] ? OFFICES[o].name : "Not placed");
 
@@ -550,6 +557,7 @@ export {
   W,
   WORK_DISCUSSIONS,
   blockedOnOwner,
+  executionHold,
   needsMe,
   officeName,
   ownerAsks,

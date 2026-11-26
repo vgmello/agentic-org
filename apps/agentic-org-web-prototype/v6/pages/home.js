@@ -1,4 +1,5 @@
 import { receiptHtml } from "./ask-receipt.js";
+import { decidedInInbox, reviewInInbox, routeReasonHtml } from "./ask-route.js";
 import { denyDraftKey, draftText, replyDraftKey } from "./ask-drafts.js";
 import { A, CAL_TODAY, EVENTS, IN, KIND, M, OFFICES, OPEN, P, W } from "../data.js";
 import { eventContext, eventDate, eventTone, sortEvents } from "./calendar.js";
@@ -86,8 +87,13 @@ function v4BuildButtons(it) {
   return it.kind === "problem" ? v4ProblemButtons(it) : { b: [], guardedHtml: "" };
 }
 
+/* Outside Inbox (`opts.route`), a consequential ask offers "Review in Inbox" and the short reason, never a decision. */
+const ctaInner = (label) => `<span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl">${label}</span></span>`;
+const inboxRouteActions = (it) => `<div class="actions">${reviewInInbox(it, { cls: "btn primary sm h4-cta", attrs: ' data-cta-tone="reply"', inner: ctaInner })}${routeReasonHtml(it)}</div>`;
+
 function itemActionsV4(it, opts = {}) {
   if (it.handled) return receiptHtml(it, "h4-handled-win");
+  if (opts.route && decidedInInbox(it)) return inboxRouteActions(it);
   if (S.replying === it.id) return v4ReplyBox(it);
   const { b, guardedHtml } = v4BuildButtons(it);
   if (guardedHtml) {
@@ -120,7 +126,7 @@ function needsCardV4(it) {
         <span class="muted">·</span>
         ${plink(it.proj)}${it.task ? `<span class="h4-task-chip">${esc(it.task)}</span>` : ""}
       </div>
-      ${itemActionsV4(it)}
+      ${itemActionsV4(it, { route: true })}
     </div>
   </article>`;
 }
@@ -147,7 +153,7 @@ function inputAccordionV4(it) {
       ${it.rec && !it.handled ? `<div class="h4-rec">${ic("info", "ic16")}<span>${esc(it.rec)}</span></div>` : ""}
       <div class="h4-d-foot">
         <div class="h4-origin">${mlink(it.from)}<span class="muted">·</span>${plink(it.proj)}${it.task ? `<span class="h4-task-chip">${esc(it.task)}</span>` : ""}</div>
-        ${itemActionsV4(it)}
+        ${itemActionsV4(it, { route: true })}
       </div>
     </div>` : ""}
   </article>`;
@@ -523,10 +529,10 @@ function spotlightDotsHtml(queue) {
 }
 
 function spotlightFootHtml(it, open, allQueueCleared, remainingInInbox) {
-  const detailsLink = !it.handled ? `<a class="btn ghost sm" href="#/inbox/${it.id}">Details${ic("chev-right", "ic14")}</a>` : "";
+  const detailsLink = !it.handled && !decidedInInbox(it) ? `<a class="btn ghost sm" href="#/inbox/${it.id}">Details${ic("chev-right", "ic14")}</a>` : "";
   const doneBtn = allQueueCleared && S.v4Open["spot-review"] ? `<button type="button" class="hb-skip-btn" data-act="v4-acc" data-id="spot-review">Done reviewing</button>` : "";
   const inboxLink = remainingInInbox ? `<a class="hb-skip-btn" href="#/inbox">All ${open.length} in Inbox${ic("chev-right", "ic14")}</a>` : "";
-  return `<div class="hb-spot-foot">${itemActionsV4(it, { hideDetails: true })}<div class="hb-spot-foot-meta">${detailsLink}${doneBtn}${inboxLink}</div></div>`;
+  return `<div class="hb-spot-foot">${itemActionsV4(it, { hideDetails: true, route: true })}<div class="hb-spot-foot-meta">${detailsLink}${doneBtn}${inboxLink}</div></div>`;
 }
 
 function spotlightHeaderBarHtml(it, queue, isUrgent) {
