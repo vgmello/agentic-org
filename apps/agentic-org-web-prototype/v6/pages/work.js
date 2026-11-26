@@ -145,7 +145,8 @@ function scopedWorkGrouping(type) {
   return { allowed, group, subgroup };
 }
 
-/* Active filters in words: the Filter trigger shows a single one ("Filter  Fixed"), the board's summary shows all */
+/* Active filters in words: the Filter trigger always says "Filter" and adds a single value ("Filter  Fixed") when it
+   fits; its accessible name and the board's summary name every value */
 function filterParts(query, filters) {
   return [...(query ? [`Search “${query}”`] : []), ...filters.filter(([, v]) => v).map(([name, v]) => `${name}: ${v}`)];
 }
@@ -163,7 +164,7 @@ function filterTrigger(values) {
   const one = active.length === 1 ? active[0] : null;
   return {
     icon: "filter", text: "Filter", active: active.length > 0,
-    label: one ? `Filter work, ${one[0]} ${one[1]}` : "Filter work",
+    label: one ? `Filter work, ${one[0]} ${one[1]}` : active.length ? `Filter work, ${active.length} active: ${active.map(([name, v]) => `${name} ${v}`).join(", ")}` : "Filter work",
     sub: one ? one[1] : "", count: active.length > 1 ? active.length : 0,
   };
 }
@@ -257,7 +258,7 @@ function scopedWorkResults({ type, id, key, items }) {
   const presets = scopedWorkPresets(type, id);
   const view = presets.some(([v]) => v === S.scopedWorkView) ? S.scopedWorkView : "all";
   const base = scopedWorkBaseItems(type, items, query);
-  const filtered = sortWorkItems(scopedWorkPresetItems(base, view, type, id), S.scopedWorkSort, workSortOrder(S.scopedWorkLayout, S.scopedWorkSort, S.scopedWorkOrder));
+  const filtered = sortWorkItems(scopedWorkPresetItems(base, view, type, id), S.scopedWorkSort, workSortOrder(S.scopedWorkLayout, S.scopedWorkSort, S.scopedWorkOrder), S.scopedWorkLayout);
   const isFiltered = Boolean(query) || scopedWorkHasFilters(type);
   const archived = S.workShowArchived ? 0 : scopedWorkPresetItems(scopedWorkBaseItems(type, items, query, true), view, type, id).length;
   if (!filtered.length) return workEmpty(scopedWorkEmptyText(type, id, view, query), isFiltered, { archived });
@@ -466,27 +467,26 @@ function boardNeedBadge(w, { badge, asks }) {
   return `<div class="menu-wrap board-need-wrap"><button class="pill t-amber chip board-need" type="button" data-act="menu" data-id="${esc(menuId)}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${esc(menuId)}"${describedBy}>${ic("bell", "ic14")}${esc(badge)}${ic("chev-down", "ic14")}</button>
     <div class="menu board-need-menu board-pop-menu" id="menu-${esc(menuId)}" role="menu" aria-label="${esc(`Requests waiting on you for ${w.id}`)}" popover="manual" hidden>${ordered.map(boardNeedItem).join("")}</div></div>${due}`;
 }
-/* Reference row: priority (bars and word) and the reference, as in the List. The project always takes its own
-   line under it, so it is in the same place on every card at every lane width. */
-function boardMeta(w, hideProject) {
+/* Reference row: priority (bars and word) and the reference, as in the List */
+function boardMeta(w) {
   const type = w.kind === "bug" ? "Bug" : w.kind === "request" ? "Request" : "";
-  const ref = `<span class="board-ref">${boardPriorityMark(w)}${type ? `<span class="btype">${type}</span>` : ""}<span class="mono">${esc(w.id)}</span></span>`;
-  const project = hideProject ? "" : `<span class="board-project">${plink(w.proj)}</span>`;
-  return `<div class="board-card-meta">${ref}${project}</div>`;
+  return `<div class="board-card-meta"><span class="board-ref">${boardPriorityMark(w)}${type ? `<span class="btype">${type}</span>` : ""}<span class="mono">${esc(w.id)}</span></span></div>`;
 }
-/* Small facts, each said once: exact status when it differs from the lane, bug severity, ETA, criteria, subtasks.
-   Narrow lanes keep a short word on each count ("2/3 crit", "2 sub"), never a bare number. */
+/* Small facts, each said once: exact status when it differs from the lane, bug severity, ETA, criteria, subtasks,
+   then the team and Archived as the List shows them. Counts always keep their full word ("0/2 criteria"), at every
+   lane width, so "criteria" never reads as "Critical". */
 function boardCountTags(w) {
-  const crit = w.criteria?.length ? `<span class="btag">${ic("check-circle", "ic14")}${workCriteria(w.criteria, w.id)}<span class="btag-word" aria-hidden="true">criteria</span><span class="btag-short" aria-hidden="true">crit</span></span>` : "";
+  const crit = w.criteria?.length ? `<span class="btag">${ic("check-circle", "ic14")}${workCriteria(w.criteria, w.id)}<span class="btag-word" aria-hidden="true">criteria</span></span>` : "";
   const n = w.subtasks?.length ?? 0, word = n === 1 ? "subtask" : "subtasks";
-  const subs = n ? `<span class="btag" title="${n} ${word}">${ic("list", "ic14")}<span aria-hidden="true">${n}</span><span class="btag-word" aria-hidden="true">${word}</span><span class="btag-short" aria-hidden="true">sub</span><span class="sr-only">${n} ${word}</span></span>` : "";
+  const subs = n ? `<span class="btag" title="${n} ${word}">${ic("list", "ic14")}<span aria-hidden="true">${n}</span><span class="btag-word" aria-hidden="true">${word}</span><span class="sr-only">${n} ${word}</span></span>` : "";
   return crit + subs;
 }
 function boardTags(w, sortKey) {
   const st = S.workBoardStages !== "detailed" && !BOARD_STAGES.includes(w.status) ? `<span class="bstatus">${workStatus(w.status)}${esc(w.status)}</span>` : "";
   const eta = w.etaHours != null || sortKey === "eta" ? workEta(w) : "";
   const etaTag = eta ? `<span class="btag beta">${ic("clock", "ic14")}ETA ${esc(eta)}</span>` : "";
-  const tags = `${st}${boardSeverity(w)}${etaTag}${boardCountTags(w)}`;
+  const team = workTeam(w), teamTag = team ? `<span class="work-team board-team">${esc(TEAMS[team].name)}</span>` : "";
+  const tags = `${st}${boardSeverity(w)}${etaTag}${boardCountTags(w)}${teamTag}${isArchivedWork(w) ? pill("Archived", "gray", null, true) : ""}`;
   return tags ? `<div class="board-tags">${tags}</div>` : "";
 }
 /* A search that matches a subtask says which one on its parent card, with a link to it */
@@ -500,13 +500,14 @@ function boardOwner(w) {
   if (!w.who || !M[w.who]) return `<span class="board-assignee">${av(null, 24)}<span class="board-owner-label">Unassigned</span></span>`;
   return `<span class="board-assignee">${av(w.who, 24)}<span class="board-owner-label">${mlink(w.who)}</span><span class="board-kind">${esc(kindWord(w.who))}</span></span>`;
 }
-/* Footer: owner on the start side; team (as the List shows it) and Archived on the end side */
-function boardFooter(w, hideOwner) {
-  const team = workTeam(w), archived = isArchivedWork(w);
-  const end = `${team ? `<span class="work-team board-team">${esc(TEAMS[team].name)}</span>` : ""}${archived ? pill("Archived", "gray", null, true) : ""}`;
-  if (hideOwner && !end) return "";
-  return `<div class="board-card-footer">${hideOwner ? "" : boardOwner(w)}${end ? `<span class="board-footer-end">${end}</span>` : ""}</div>`;
+/* Context row: the project and the assignee, the card's two links, side by side; it wraps for long names */
+function boardContext(w, hideOwner, hideProject) {
+  const project = hideProject ? "" : `<span class="board-project">${plink(w.proj)}</span>`;
+  if (hideOwner && !project) return "";
+  return `<div class="board-card-context">${project}${hideOwner ? "" : boardOwner(w)}</div>`;
 }
+/* What the card asks of you comes straight after its title: the request badge (or why it is blocked), then the
+   supporting facts, then who and where */
 function boardCard(w, { hideOwner, hideProject, selected, sortKey, query }) {
   const attention = showsNeedsYou(w), reason = boardReason(w);
   const badge = reason.badge ? boardNeedBadge(w, reason) : "";
@@ -514,10 +515,10 @@ function boardCard(w, { hideOwner, hideProject, selected, sortKey, query }) {
   const team = workTeam(w);
   return `<li class="bcard" data-work-id="${esc(w.id)}"${team ? ` data-team="${esc(team)}"` : ""}${attention ? " data-attention" : ""}${selected ? ' aria-current="true"' : ""}>
     <a class="work-item-link t" data-item="${esc(w.id)}" href="${esc(workItemHref(w.id))}" aria-haspopup="dialog" title="${esc(w.title)}">${esc(w.title)}</a>
-    <div class="board-facts">${boardMeta(w, hideProject)}${boardTags(w, sortKey)}</div>
-    ${boardSubtaskHits(w, query)}
     ${status}
-    ${boardFooter(w, hideOwner)}
+    <div class="board-facts">${boardMeta(w)}${boardTags(w, sortKey)}</div>
+    ${boardSubtaskHits(w, query)}
+    ${boardContext(w, hideOwner, hideProject)}
   </li>`;
 }
 /* Attention first (the board's default): owner asks that expire, soonest deadline first; then other cards that
@@ -724,6 +725,30 @@ function mountBoard(main) {
   }
   sync();
 }
+/* At 420px and below, Filter and Display keep their words. Their current values show as secondary text only when
+   that adds no toolbar row and clips no trigger; otherwise the values are left to the menu, the trigger's accessible
+   name and the board's results summary. */
+function toolbarRows(bar) {
+  const tops = [...bar.children].filter((el) => el.getClientRects().length).map((el) => Math.round(el.getBoundingClientRect().top)).sort((a, b) => a - b);
+  return tops.filter((top, i) => i === 0 || top - tops[i - 1] > 20).length;
+}
+function fitToolbarValues(bar) {
+  delete bar.dataset.values;
+  if (!bar.querySelector(".menu-textbtn-sub") || !matchMedia("(max-width: 420px)").matches) return;
+  bar.dataset.values = "hidden";
+  const rows = toolbarRows(bar), height = bar.offsetHeight;
+  delete bar.dataset.values;
+  const clipped = [...bar.querySelectorAll(".menu-textbtn, .menu-textbtn-sub")].some((btn) => btn.scrollWidth > btn.clientWidth + 1);
+  if (clipped || toolbarRows(bar) > rows || bar.offsetHeight > height + 1) bar.dataset.values = "hidden";
+}
+let toolbarFitBound = false;
+function mountWorkToolbar() {
+  const fit = () => document.querySelectorAll(".work-toolbar").forEach(fitToolbarValues);
+  fit();
+  if (toolbarFitBound) return;
+  toolbarFitBound = true;
+  addEventListener("resize", () => requestAnimationFrame(fit));
+}
 /* Which board control to give focus back to: the same control on the same card or lane, by selector */
 const CARD_CONTROLS = [
   [".work-item-link", " > .work-item-link"],
@@ -742,20 +767,27 @@ function boardControlSelector(el) {
   if (lane && el.matches(".bcol-title")) return `#${CSS.escape(lane.id)} .bcol-title`;
   return el.matches("[data-board-lane]") ? "[data-board-lane]" : "";
 }
-/* Re-rendering results keeps the owner's place: the lane at the start edge, both scroll axes and focus */
+/* Re-rendering results keeps the owner's place: the lane at the start edge, both scroll axes and focus. A control
+   on a card also saves that card's work item and lane, so focus can still find the card if the control is gone. */
 function boardPlace(results, control = document.activeElement) {
   const board = results.querySelector(".board");
   if (!board) return null;
   const cols = [...board.querySelectorAll(".bcol")], lead = cols.length ? cols[leadLaneIndex(board, cols)] : null;
+  const focus = boardControlSelector(control), card = focus ? control.closest(".bcard") : null;
   return {
     mode: board.dataset.mode, lead: lead?.id, leadOffset: lead ? lead.getBoundingClientRect().left - board.getBoundingClientRect().left : 0,
     jump: "jumpReached" in board.dataset ? board.dataset.jump : undefined,
-    top: board.scrollTop, page: document.getElementById("content")?.scrollTop ?? 0, focus: boardControlSelector(control),
+    top: board.scrollTop, page: document.getElementById("content")?.scrollTop ?? 0, focus,
+    item: card?.dataset.workId, lane: card?.closest(".bcol")?.id,
   };
 }
 function restoreBoardPlace(results, place, focus = place?.focus) {
-  const board = results.querySelector(".board");
   if (!place) return;
+  restoreBoardScroll(results, place);
+  if (focus) restoreBoardFocus(results, place, focus);
+}
+function restoreBoardScroll(results, place) {
+  const board = results.querySelector(".board");
   const content = document.getElementById("content");
   if (content) content.scrollTop = place.page;
   if (board) {
@@ -767,7 +799,46 @@ function restoreBoardPlace(results, place, focus = place?.focus) {
     board.scrollTop = place.top;
     syncBoardLanes(board, results.querySelector(".board-lanes"));
   }
-  if (focus) results.querySelector(focus)?.focus({ preventScroll: true });
+}
+/* Focus goes back to the same control. If it has gone (its last request was answered), it goes to the card's title,
+   with the card's lane brought into view; if the card has left this view, to the active view control, and the
+   new count is announced. A restored scroll never leaves the focused control out of sight. */
+function restoreBoardFocus(results, place, focus) {
+  const exact = results.querySelector(focus);
+  const card = !exact && place.item ? results.querySelector(`.bcard[data-work-id="${CSS.escape(place.item)}"]`) : null;
+  const target = exact ?? card?.querySelector(":scope > .work-item-link");
+  if (target) {
+    revealBoardControl(results, target);
+    target.focus({ preventScroll: true });
+    const lane = card?.closest(".bcol");
+    if (lane && lane.id !== place.lane) announceWorkStatus(`${place.item} is now in ${lane.querySelector(".bcol-name")?.textContent}.`);
+    return;
+  }
+  if (!place.item) return;
+  document.querySelector('.work-toolbar .queue-tabs [aria-pressed="true"]')?.focus({ preventScroll: true });
+  const n = results.querySelectorAll(".bcard").length;
+  announceWorkStatus(`${place.item} is no longer in this view. ${n} ${n === 1 ? "card" : "cards"} shown.`);
+}
+/* Scroll just enough to show a rectangle inside a scroller, below whatever is sticky at its top */
+function scrollIntoRange(scroller, r, inset = 0) {
+  const view = scroller.getBoundingClientRect();
+  if (r.top < view.top + inset) scroller.scrollTop -= view.top + inset - r.top + 8;
+  else if (r.bottom > view.bottom) scroller.scrollTop += Math.min(r.bottom - view.bottom + 8, r.top - view.top - inset);
+}
+function revealBoardControl(results, el) {
+  const board = results.querySelector(".board"), col = el.closest(".bcol");
+  if (!board || !col) return;
+  if (!laneInView(board, col)) jumpToBoardLane([...board.querySelectorAll(".bcol")].indexOf(col), results, { focus: false, instant: true });
+  scrollIntoRange(board, el.getBoundingClientRect(), col.querySelector(".bcol-h")?.offsetHeight ?? 0);
+  const content = document.getElementById("content");
+  if (content) scrollIntoRange(content, el.getBoundingClientRect());
+}
+/* Polite status after a re-render, a moment later so a freshly rendered live region is read */
+function announceWorkStatus(text) {
+  setTimeout(() => {
+    const status = document.getElementById("work-results-status");
+    if (status) status.textContent = text;
+  }, 150);
 }
 /* Search or filters that leave every lane in view empty bring the first lane with matches into view (phones show
    one lane at a time). Focus stays where it is, in search. */
@@ -837,17 +908,32 @@ function boardHiddenEmpty(columns, { filtered, archived = 0, emptyText }) {
   const older = counts.reduce((sum, count) => sum + count.older, 0);
   return workEmpty(emptyText || "No work matches these filters.", filtered, { older, archived });
 }
-/* Filters and search are summed up once above the board, with the one way back to every card */
-function boardFilterBar(columns, summary) {
-  const shown = columns.reduce((sum, [stage, tasks]) => sum + doneWindow(stage, tasks).recent.length, 0);
-  return `<div class="board-filterbar"><p><strong>${shown} ${shown === 1 ? "card" : "cards"}</strong>${summary.map((part) => `${SEP}<span>${esc(part)}</span>`).join("")}</p>${clearFiltersButton()}</div>`;
+/* The board's results summary, above the lanes: how many cards show, the column mode, a chosen sort and every
+   active filter, in words. Filtered results also count the matches that Done history hides ("2 shown · 1 archived
+   match") with the way to reveal them, and the one Clear filters. Compact toolbars rely on this row for the values. */
+const BOARD_SORT_WORD = { priority: "Priority", eta: "ETA", title: "Title" };
+function boardSummaryParts(columns, { filtered, archived, sortKey, summary }) {
+  const counts = columns.map(([stage, tasks]) => laneCount(stage, tasks));
+  const shown = counts.reduce((sum, count) => sum + count.recent.length, 0);
+  const older = filtered ? counts.reduce((sum, count) => sum + count.older, 0) : 0;
+  const hiddenArchived = filtered ? archived : 0;
+  const lead = older || hiddenArchived ? `${shown} shown` : `${shown} ${shown === 1 ? "card" : "cards"}`;
+  const hidden = [...(older ? [`${older} older ${matchWord(older)}`] : []), ...(hiddenArchived ? [`${hiddenArchived} archived ${matchWord(hiddenArchived)}`] : [])];
+  const view = [`${S.workBoardStages === "detailed" ? "Status" : "Stages"} columns`, ...(BOARD_SORT_WORD[sortKey] ? [`Sorted by ${BOARD_SORT_WORD[sortKey]}`] : [])];
+  return { lead, hidden, view, reveal: revealButtons({ older, archived: hiddenArchived }) };
+}
+function boardSummary(columns, opts) {
+  const { lead, hidden, view, reveal } = boardSummaryParts(columns, opts);
+  const parts = [...hidden, ...view, ...opts.summary].map((part) => `${SEP}<span>${esc(part)}</span>`).join("");
+  const actions = reveal || opts.filtered ? `<div class="board-summary-actions">${reveal}${opts.filtered ? clearFiltersButton() : ""}</div>` : "";
+  return `<div class="board-filterbar"${opts.filtered ? " data-filtered" : ""}><p><strong>${esc(lead)}</strong>${parts}</p>${actions}</div>`;
 }
 function board(items, { hideOwner = false, hideProject = false, needsYouView = false, sortKey = "default", filtered = false, summary = [], query = "", archived = 0, emptyText = "" } = {}) {
   if (!items.length) return `<p class="empty-row">No work here yet.</p>`;
   const columns = boardColumns(items, needsYouView, sortKey), selectedId = qs().get("item");
   const hidden = boardHiddenEmpty(columns, { filtered, archived, emptyText });
   if (hidden) return hidden;
-  return `${filtered ? boardFilterBar(columns, summary) : ""}${boardLaneNav(columns)}<div class="board" role="region" aria-label="Work board" tabindex="0" data-mode="${S.workBoardStages === "detailed" ? "status" : "stages"}"${filtered ? " data-filtered" : ""}>
+  return `${boardSummary(columns, { filtered, archived, sortKey, summary })}${boardLaneNav(columns)}<div class="board" role="region" aria-label="Work board" tabindex="0" data-mode="${S.workBoardStages === "detailed" ? "status" : "stages"}"${filtered ? " data-filtered" : ""}>
     <div class="board-columns" style="--board-column-count:${columns.length}">${columns.map(([stage, tasks]) => boardColumnHtml(stage, tasks, { hideOwner, hideProject, selectedId, filtered, sortKey, query })).join("")}</div>
   </div>`;
 }
@@ -1200,10 +1286,12 @@ function workFilteredItems(archivedOnly = false) {
   });
 }
 
-function sortWorkItems(items, sortKey = S.workSort, order = S.workOrder) {
+/* Ascending priority is highest first, so the default direction puts the most important work on top. The Board sorts
+   by the priority each card shows (set, else inferred); bug severity stays its own fact and never ranks priority. */
+const priorityReaders = { list: (w) => -workPriorityRank(w.pri) || undefined, board: (w) => -boardRank(w) };
+function sortWorkItems(items, sortKey = S.workSort, order = S.workOrder, layout = "list") {
   const descending = order === "desc";
-  /* Ascending priority is highest first, so the default direction puts the most important work on top */
-  const read = { title: (w) => w.title, priority: (w) => -workPriorityRank(w.pri) || undefined, eta: (w) => w.etaHours }[sortKey];
+  const read = { title: (w) => w.title, priority: priorityReaders[layout] ?? priorityReaders.list, eta: (w) => w.etaHours }[sortKey];
   if (!read) return descending ? [...items].reverse() : items;
   return [...items].sort((left, right) => {
     const a = read(left), b = read(right);
@@ -1214,7 +1302,7 @@ function sortWorkItems(items, sortKey = S.workSort, order = S.workOrder) {
 }
 
 function workResults(filtered, { view, group, subgroup }) {
-  const items = sortWorkItems(workPresetItems(filtered, view), S.workSort, workSortOrder(S.workLayout, S.workSort, S.workOrder));
+  const items = sortWorkItems(workPresetItems(filtered, view), S.workSort, workSortOrder(S.workLayout, S.workSort, S.workOrder), S.workLayout);
   const isFiltered = Boolean(S.workQuery.trim()) || workHasFilters();
   const text = isFiltered ? "No work matches these filters."
     : view === "needs-me" ? "Nothing needs you in Work."
@@ -1507,6 +1595,7 @@ async function createWorkTask(form) {
 
 export {
   boardItemHref,
+  mountWorkToolbar,
   settleWorkResults,
   workPanelOpener,
   boardPlace,

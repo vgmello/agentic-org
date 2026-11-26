@@ -2237,13 +2237,13 @@ html[data-theme="report"] .tess-return-btn.is-ready:hover { background: var(--to
   font-size: var(--item-title-size);
   line-height: 1.35;
 }
-.board .bcard[data-attention] { border-color: var(--tone-warn-ring); box-shadow: inset 3px 0 0 var(--tone-warn); }
+.board .bcard[data-attention] { border-color: var(--tone-warn-ring); }
 .board .bcard:hover { background: var(--hover); border-color: var(--gray-500); }
 .board .bcard[aria-current="true"] { box-shadow: inset 0 0 0 1px var(--tone-accent-ink); border-color: var(--tone-accent-ink); }
 .board .bcard > .t:focus-visible { outline: none; }
 .board .bcard:has(> .t:focus-visible) { outline: 2px solid var(--tone-accent-ink); outline-offset: 2px; }
 .board-card-meta { flex-wrap: nowrap; overflow: hidden; }
-.board-card-meta .board-project { min-width: 0; }
+.board-card-context .board-project { min-width: 0; }
 .board-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: var(--fs-sm); color: var(--gray-300); }
 .btag { display: inline-flex; align-items: center; gap: 4px; color: var(--gray-400); }
 .board-status { display: flex; min-width: 0; }
@@ -2268,7 +2268,7 @@ html[data-theme="report"] .tess-return-btn.is-ready:hover { background: var(--to
   overflow-wrap: anywhere;
   font-weight: 600;
 }
-.board-card-meta, .board-card-footer, .board-assignee {
+.board-card-meta, .board-card-context, .board-assignee {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2277,7 +2277,7 @@ html[data-theme="report"] .tess-return-btn.is-ready:hover { background: var(--to
   font-size: var(--fs-sm);
 }
 .board-card-meta > .mono { flex: none; font-size: var(--fs-sm); }
-.board-card-footer { justify-content: space-between; }
+.board-card-context { flex-wrap: wrap; column-gap: 14px; }
 .board-project, .board-owner-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .section-header {
@@ -3465,8 +3465,8 @@ html[data-theme="report"] .assembly-release {
 .menu-textbtn-count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--tone-accent-soft); color: var(--tone-accent-ink); font-size: var(--fs-xs); display: inline-grid; place-items: center; }
 
 .bstatus { padding: 0 6px; border-radius: 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--gray-300); box-shadow: inset 0 0 0 1px var(--line2); white-space: nowrap; }
-.board-card-meta .board-project a { color: inherit; position: relative; z-index: 1; }
-.board-card-meta .board-project a:hover { color: var(--white); text-decoration: underline; }
+.board-project a { color: inherit; position: relative; z-index: 1; }
+.board-project a:hover { color: var(--white); text-decoration: underline; }
 .board-owner-label a { text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 3px; }
 .board-owner-label a:hover { text-decoration-color: currentColor; }
 
@@ -3580,20 +3580,13 @@ html[data-theme="report"] .assembly-release {
 .board .bcard .bstatus { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px 0 3px; }
 .board .bcard .bstatus > .work-status { transform: scale(.85); }
 .board .bcard .board-team { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); color: var(--gray-400); }
-.board .bcard .board-footer-end { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 6px; min-width: 0; }
-/* Narrow lanes: the small facts share the reference row; the project wraps to its own line only when needed */
+/* Narrow lanes: the team gives way first */
 @container board-lane (max-width: 15.5rem) {
-  .board .bcard .board-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; }
-  .board .bcard .board-facts > .board-card-meta { display: contents; }
-  .board .bcard .board-facts > .board-card-meta > .sep { display: none; }
-  .board .bcard .board-facts > .board-tags { display: contents; }
-  .board .bcard .board-card-meta > .board-project { order: 1; flex: 0 1 auto; min-width: 0; max-width: 100%; }
-  .board .bcard .btag-word { display: none; }
   .board .bcard .board-team { display: none; }
 }
 
 /* Secondary card links: a clear solid underline and their own focus ring */
-.board .bcard .board-card-meta .board-project a,
+.board .bcard .board-project a,
 .board .bcard .board-owner-label a,
 .board .bcard .board-subhits a {
   text-decoration: underline; text-decoration-thickness: 1px; text-decoration-color: var(--gray-500); text-underline-offset: 3px;
@@ -3635,17 +3628,9 @@ html[data-theme="report"] .assembly-release {
 .board .bcard .bsev { color: var(--gray-300); font-weight: 600; }
 .board .bcard .bsev[data-severity="critical"] { color: var(--tone-bad-ink); }
 
-/* The project is always the last fact line, at every lane width */
-.board .bcard .board-facts > .board-card-meta { display: contents; }
-.board .bcard .board-facts > .board-card-meta > .board-ref { order: 0; }
-.board .bcard .board-facts > .board-tags { order: 1; }
-.board .bcard .board-facts > .board-card-meta > .board-project { order: 2; justify-self: start; max-width: 100%; }
-.board .bcard .btag-short { display: none; }
 @container board-lane (max-width: 15.5rem) {
-  .board .bcard .board-facts > .board-card-meta > .board-project { order: 2; flex: 1 0 100%; }
   .board .bcard .board-ref .bpri-inf { display: none; }
   .board .bcard .board-ref .bpri-tilde { display: inline; }
-  .board .bcard .btag > .btag-short { display: inline; margin-inline-start: 2px; }
 }
 
 /* Phones and touch: project, owner and subtask links get a 44px hit area of their own, in the layout,
@@ -3654,19 +3639,40 @@ html[data-theme="report"] .assembly-release {
   .board .bcard :is(.board-project a, .board-owner-label a, .board-subhits a) {
     display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; padding-block: 0; margin-block: 0; vertical-align: middle;
   }
-  .board .bcard .board-facts { row-gap: 0; }
-  .board .bcard .board-card-footer { min-height: 44px; }
+  .board .bcard .board-card-context { min-height: 44px; row-gap: 0; }
   .board .bcard .board-subhits { padding-block: 0; }
 }
 
-/* 420px and below: a trigger that names its current value ("Display  Stages", "Filter  Fixed") keeps its icon and
-   the value in compact form; the word stays in its accessible name */
-@media (max-width: 420px) {
-  .work-toolbar .queue-controls .menu-textbtn:has(> .menu-textbtn-sub) > .menu-textbtn-label { display: none; }
+
+
+/* ── Work board, review round 8 ─────────────────────────────────────────── */
+
+/* Filter and Display always keep their words. A current value ("Display  Stages", "Filter  Fixed") is secondary text
+   only where it fits (work.js measures it at 420px and below); otherwise it is left to the menu, the accessible name
+   and the results summary. */
+.work-toolbar[data-values="hidden"] .queue-controls .menu-textbtn > .menu-textbtn-sub { display: none; }
+
+/* Phones and touch: each List / Board button is a 44 × 44 target */
+@media (max-width: 639px), (pointer: coarse) {
+  .work-toolbar .work-layout-toggle .queue-tab { min-width: 44px; min-height: 44px; justify-content: center; }
+  /* A short name ("Ada") centres in its 44px target, so the kind word stays close */
+  .board .bcard .board-owner-label a { justify-content: center; }
 }
-@container queue-header (max-width: 23.5rem) {
-  .work-toolbar .queue-controls .menu-textbtn:has(> .menu-textbtn-sub) > .ic:first-child { display: inline-block; }
-}
-@container work-subbar (max-width: 23.5rem) {
-  .work-toolbar .queue-controls .menu-textbtn:has(> .menu-textbtn-sub) > .ic:first-child { display: inline-block; }
+
+/* Results summary: count, column mode and filters on the start side; reveal and Clear filters on the end side */
+#work-results > .board-filterbar > .board-summary-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Card facts flow as one wrapping line of small facts after the reference */
+.board .bcard .board-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 10px; }
+.board .bcard .board-facts > :is(.board-card-meta, .board-tags) { display: contents; }
+.board .bcard .board-tags > .pill { font-size: var(--fs-xs); }
+/* Context row: project and assignee share a row and wrap for long names */
+.board .bcard .board-card-context > .board-project { flex: 0 1 auto; max-width: 100%; }
+.board .bcard .board-card-context > .board-assignee { flex: 0 1 auto; max-width: 100%; }
+
+/* The attention stripe is its own logical border on a layer above the card, so no theme's card shadow or border
+   can remove it */
+.board .bcard[data-attention]::before {
+  content: ""; position: absolute; inset: -1px; z-index: 0; pointer-events: none;
+  border-inline-start: 3px solid var(--tone-warn); border-radius: inherit;
 }
