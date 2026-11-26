@@ -584,11 +584,11 @@ select.field option { background: #0E1629; color: #F8FAFC; }
 .hb-pill-link:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 0 rgba(186, 222, 255, .18), inset 0 0 0 1px var(--hb-border-hi); color: var(--hb-ink); }
 .hb-pill-link b { color: var(--hb-ink); font-weight: 600; font-variant-numeric: tabular-nums; }
 
-/* Zone 1b: 3 Executive CEO Pillar Scorecards (Financials · Team · Projects) */
-.hb-pillars { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+/* Zone 1b: 4 Executive CEO Pillar Scorecards (Projects · Delivery · Team · Financials) */
+.hb-pillars { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .hb-pillar {
-  position: relative; display: flex; flex-direction: column; gap: 13px;
-  padding: 16px 18px 14px; border-radius: 16px;
+  position: relative; display: flex; flex-direction: column; gap: 11px;
+  padding: 14px 16px 13px; border-radius: 16px;
   background: var(--hb-surface);
   backdrop-filter: var(--hb-blur); -webkit-backdrop-filter: var(--hb-blur);
   box-shadow: var(--hb-shadow);
@@ -625,7 +625,7 @@ a.hb-pillar-hero:hover { background: rgba(186, 222, 255, .05); }
 .hb-pillar-primary { display: inline-flex; align-items: baseline; gap: 7px; min-width: 0; }
 .hb-pillar-num {
   font-family: var(--font-sans);
-  font-size: var(--fs-kpi); line-height: 1.05; font-weight: var(--fw-kpi);
+  font-size: clamp(1.5rem, 1.85vw, 1.95rem); line-height: 1.05; font-weight: var(--fw-kpi);
   letter-spacing: -.04em; color: var(--hb-ink); font-variant-numeric: tabular-nums;
 }
 .hb-pillar-unit { font-size: var(--fs-sm); font-weight: 500; color: var(--hb-muted); white-space: nowrap; }
@@ -642,14 +642,16 @@ a.hb-pillar-hero:hover { background: rgba(186, 222, 255, .05); }
 .hb-pillar-bar .seg-spend { background: var(--bar-fill-spend); }
 .hb-pillar-bar .seg-auto { background: var(--tone-accent-bar); }
 .hb-pillar-bar .seg-human { background: var(--tone-warn-bar); }
-.hb-pillar-bar .seg-pass { background: var(--tone-ok-bar); }
+.hb-pillar-bar .seg-pass, .hb-pillar-bar .seg-ok { background: var(--tone-ok-bar); }
+.hb-pillar-bar .seg-warn { background: var(--tone-warn-bar); }
+.hb-pillar-bar .seg-bad { background: var(--tone-bad-bar); }
 .hb-pillar-bar .seg-rework { display: none; }
 
 .hb-pillar-sub {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
-  padding-top: 11px; border-top: 1px solid rgba(186, 222, 255, .09);
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;
+  padding-top: 10px; border-top: 1px solid rgba(186, 222, 255, .09);
 }
-.hb-pillar-sub.is-team { grid-template-columns: minmax(0, 1.24fr) minmax(0, 1fr); gap: 10px; }
+.hb-pillar-sub.is-team { grid-template-columns: minmax(0, 1.45fr) minmax(0, 0.9fr); gap: 8px; }
 .hb-sub-item {
   display: flex; flex-direction: column; gap: 2px; min-width: 0;
   border-radius: 8px; padding: 2px 4px; margin: -2px -4px;
@@ -1334,7 +1336,7 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 .hb-tleg.humans strong { color: var(--tone-warn-ink); }
 .hb-tleg.queued strong { color: var(--tone-queued-ink); }
 .hb-tleg.queued.is-high strong { color: var(--tone-bad-ink); }
-.hb-skel-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.hb-skel-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .hb-skel-card { padding: 18px; border-radius: 16px; background: var(--hb-surface); box-shadow: var(--hb-shadow); display: flex; flex-direction: column; gap: 12px; }
 .hb-time-foot {
   display: flex; align-items: center; justify-content: space-between;
@@ -1354,16 +1356,16 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 }
 .hb-time-auto b { color: var(--hb-muted); font-weight: 600; }
 
+@media (max-width: 1180px) {
+  .hb-pillars, .hb-skel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (max-width: 1120px) {
   .hb-stage { grid-template-columns: 1fr; }
   .hb-bento, .hb-hor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 960px) {
-  .hb-pillars { grid-template-columns: 1fr; }
-}
 @media (max-width: 720px) {
   .hb { padding: 20px var(--gutter) 40px; gap: 20px; }
-  .hb-pillars, .hb-bento, .hb-hor-grid { grid-template-columns: 1fr; }
+  .hb-pillars, .hb-skel-grid, .hb-bento, .hb-hor-grid { grid-template-columns: 1fr; }
   .hb-spot { padding: 18px; min-height: 0; }
 }
 

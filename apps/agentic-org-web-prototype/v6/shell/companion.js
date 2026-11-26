@@ -119,17 +119,23 @@ function syncSidebarTessTrigger() {
   const btn = document.getElementById("sidebar-tess-trigger");
   if (!btn) return;
   const busy = getActiveTessJobs();
+  const offline = isOfflineMode();
   const open = COMP.mode !== "hidden";
   const kbd = shortcutLabel("toggle");
-  const tip = busy.length ? `Tess refining (${busy.length}) · ${kbd}` : `Ask Tess · ${kbd}`;
+  const tip = busy.length ? `Tess refining (${busy.length}) · ${kbd}` : `Chat with Tess · ${kbd}`;
   btn.classList.toggle("is-active", open);
   btn.classList.toggle("is-busy", busy.length > 0);
+  btn.classList.toggle("is-offline", offline);
   btn.setAttribute("aria-pressed", String(open));
   btn.setAttribute("aria-label", tip);
   btn.title = tip;
   delete btn.dataset.tip;
   const dot = document.getElementById("sidebar-tess-busy");
   if (dot) dot.hidden = busy.length === 0;
+  const role = document.getElementById("sidebar-tess-role");
+  if (role) role.textContent = busy.length ? `Refining (${busy.length})…` : offline ? "Offline · local" : "Chief of Staff";
+  const kbdEl = document.getElementById("sidebar-tess-kbd");
+  if (kbdEl) kbdEl.textContent = kbd;
 }
 
 function syncCompanionClasses(panel, scrim, compact) {

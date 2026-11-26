@@ -269,14 +269,14 @@ function financialsPillarHtml(emptyMode) {
         </div>
         <a class="hb-pillar-hero" href="#/settings">
           <div class="hb-pillar-valrow">
-            <div class="hb-pillar-primary"><span class="hb-pillar-num">${emptyMode ? "$0" : "$142"}</span><span class="hb-pillar-unit">${emptyMode ? "spent" : "/ $210 monthly"}</span></div>
-            <span class="hb-pillar-right" ${emptyMode ? 'style="color:var(--tone-accent-ink)"' : ""}>${emptyMode ? "Set monthly cap" : "68% · ~$204 est."}</span>
+            <div class="hb-pillar-primary"><span class="hb-pillar-num">${emptyMode ? "$0" : "$142"}</span><span class="hb-pillar-unit">${emptyMode ? "spent" : "/ $210"}</span></div>
+            <span class="hb-pillar-right" ${emptyMode ? 'style="color:var(--tone-accent-ink)"' : ""}>${emptyMode ? "Set cap" : "68% · ~$204"}</span>
           </div>
           <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-spend" style="width:${emptyMode ? 0 : 68}%"></span></div>
         </a>
         <div class="hb-pillar-sub">
-          <a class="hb-sub-item" href="#/activity" title="Average AI spend per completed task (last 7 days)"><span class="hb-sub-lbl">Cost per task · 7d</span><span class="hb-sub-val">${emptyMode ? "—" : '$7.45<span class="hb-sub-meta ok">-11%</span>'}</span></a>
-          <a class="hb-sub-item" href="#/settings" title="Remaining parallel capacity across your connected AI subscriptions"><span class="hb-sub-lbl">AI capacity</span><span class="hb-sub-val">${emptyMode ? '100%<span class="hb-sub-meta ok">Ready</span>' : '74%<span class="hb-sub-meta ok">available</span>'}</span></a>
+          <a class="hb-sub-item" href="#/activity" title="Average AI spend per completed task (last 7 days)"><span class="hb-sub-lbl">Cost / task</span><span class="hb-sub-val">${emptyMode ? "—" : '$7.45<span class="hb-sub-meta ok">-11%</span>'}</span></a>
+          <a class="hb-sub-item" href="#/settings" title="Remaining parallel capacity across your connected AI subscriptions"><span class="hb-sub-lbl">AI capacity</span><span class="hb-sub-val">${emptyMode ? '100%<span class="hb-sub-meta ok">Ready</span>' : '74%<span class="hb-sub-meta ok">free</span>'}</span></a>
         </div>
       </article>`;
 }
@@ -290,7 +290,7 @@ function summarizeHomeOffices(emptyMode) {
     onlineN, offlineN,
     pillCls: offlineN ? "bad" : "ok",
     pillTitle: offlineN ? `Offline: ${esc(offlineNames)}` : "All connected offices are online",
-    pillText: offlineN ? `${plural(offlineN, "office", "offices")} offline` : (emptyMode ? "HQ online" : "All offices online"),
+    pillText: offlineN ? `${plural(offlineN, "office", "offices")} offline` : (emptyMode ? "HQ online" : "All online"),
     rowTitle: offlineN ? `${onlineN} online · ${offlineN} offline (${esc(offlineNames)})` : `${plural(onlineN, "office", "offices")} online`,
   };
 }
@@ -300,7 +300,7 @@ function teamPillarHtml(emptyMode, fleet) {
   const capVal = emptyMode
     ? '0 agents<span class="hb-sub-meta">· 1 person</span>'
     : `${fleet.liveWorkingN} active<span class="hb-sub-meta warn">· ${fleet.idleSpecsN} idle</span>${fleet.offlineSpecsN ? `<span class="hb-sub-meta bad">· ${fleet.offlineSpecsN} off</span>` : ""}`;
-  const offlineTag = off.offlineN ? `<span class="hb-sub-sep" aria-hidden="true">·</span><span class="hb-sub-bad">${off.offlineN} offline</span>` : "";
+  const offlineTag = off.offlineN ? `<span class="hb-sub-sep" aria-hidden="true">·</span><span class="hb-sub-bad">${off.offlineN} off</span>` : "";
   return `<article class="hb-pillar" aria-labelledby="hb-pil-team">
         <div class="hb-pillar-hd">
           <a class="hb-pillar-name" id="hb-pil-team" href="#/teams/members">${ic("user-group", "ic14 c-indigo")}<span>Team</span></a>
@@ -309,57 +309,106 @@ function teamPillarHtml(emptyMode, fleet) {
         <a class="hb-pillar-hero" href="#/teams/members" title="Share of work completed autonomously without needing your input (last 7 days)">
           <div class="hb-pillar-valrow">
             <div class="hb-pillar-primary"><span class="hb-pillar-num">${emptyMode ? "—" : "78%"}</span><span class="hb-pillar-unit">autonomous</span></div>
-            <span class="hb-pillar-right">${emptyMode ? "No activity yet" : "22% needed you · 7d"}</span>
+            <span class="hb-pillar-right">${emptyMode ? "No activity" : "22% you · 7d"}</span>
           </div>
           <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-auto" style="width:${emptyMode ? 0 : 78}%"></span><span class="seg-human" style="width:${emptyMode ? 0 : 22}%"></span></div>
         </a>
         <div class="hb-pillar-sub is-team">
-          <a class="hb-sub-item" href="#/teams/members" title="All ${fleet.totalAgents} agents: ${fleet.liveWorkingN} active, ${fleet.idleSpecsN} idle (Jules at budget cap, Avery paused, Noor unplaced), ${fleet.offlineSpecsN} waiting on an offline office (Quinn)">
-            <span class="hb-sub-lbl">${emptyMode ? "Team capacity" : `${fleet.leadsN} leads · ${fleet.specsN} specialists`}</span>
+          <a class="hb-sub-item" href="#/teams/members" title="All ${fleet.leadsN + fleet.specsN} hired agents (${fleet.leadsN} leads, ${fleet.specsN} specialists): ${fleet.liveWorkingN} active, ${fleet.idleSpecsN} idle, ${fleet.offlineSpecsN} waiting on an offline office">
+            <span class="hb-sub-lbl">${emptyMode ? "Team capacity" : `${fleet.leadsN + fleet.specsN} agents`}</span>
             <span class="hb-sub-val">${capVal}</span>
           </a>
           <a class="hb-sub-item" href="#/settings/offices" title="${off.rowTitle}">
             <span class="hb-sub-lbl">Offices</span>
-            <span class="hb-sub-val is-offices"><span class="hb-sub-ok">${off.onlineN} online</span>${offlineTag}</span>
+            <span class="hb-sub-val is-offices"><span class="hb-sub-ok">${off.onlineN} on</span>${offlineTag}</span>
           </a>
         </div>
       </article>`;
 }
 
-function deliveryBadgeMeta(emptyMode, offTrackProjs, atRiskProjs) {
-  if (emptyMode) return { cls: "", text: "No deliveries yet" };
+function projectHealthBadgeMeta(emptyMode, offTrackProjs, atRiskProjs) {
+  if (emptyMode) return { cls: "", text: "No projects yet" };
   const needsAttn = offTrackProjs + atRiskProjs;
   if (!needsAttn) return { cls: "ok", text: "All on track" };
   if (offTrackProjs && !atRiskProjs) return { cls: "bad", text: `${plural(offTrackProjs, "project", "projects")} off track` };
   return { cls: "warn", text: `${needsAttn} need attention` };
 }
 
-function deliveryPillarHtml(emptyMode, offTrackProjs, atRiskProjs) {
-  const badge = deliveryBadgeMeta(emptyMode, offTrackProjs, atRiskProjs);
-  return `<article class="hb-pillar" aria-labelledby="hb-pil-proj">
+const pillarBarSeg = (cls, pct) => (pct > 0 ? `<span class="${cls}" style="width:${pct}%"></span>` : "");
+
+function projectsPillarData(emptyMode, projs, offTrackProjs, atRiskProjs) {
+  if (emptyMode) {
+    return {
+      total: 0, onTrack: 0, num: "0", unit: "projects", right: "Create first",
+      rightStyle: ' style="color:var(--tone-accent-ink)"', bars: "",
+      healthSplit: "—", blockedVal: "—",
+    };
+  }
+  const total = projs.length;
+  const onTrack = Math.max(0, total - offTrackProjs - atRiskProjs);
+  const blockedN = W.filter((w) => w.status === "Blocked").length;
+  const okPct = total ? Math.round((onTrack * 100) / total) : 0;
+  const warnPct = total ? Math.round((atRiskProjs * 100) / total) : 0;
+  const badPct = total ? Math.max(0, 100 - okPct - warnPct) : 0;
+  return {
+    total, onTrack, num: `${onTrack}/${total}`, unit: "on track", right: `${total} active`,
+    rightStyle: "",
+    bars: pillarBarSeg("seg-ok", okPct) + pillarBarSeg("seg-warn", warnPct) + pillarBarSeg("seg-bad", badPct),
+    healthSplit: `<span class="hb-sub-ok">${onTrack} ok</span><span class="hb-sub-meta warn">· ${atRiskProjs} risk</span><span class="hb-sub-meta bad">· ${offTrackProjs} off</span>`,
+    blockedVal: blockedN ? `${blockedN} <span class="hb-sub-meta warn">on you</span>` : `0 <span class="hb-sub-meta ok">clear</span>`,
+  };
+}
+
+function projectsPillarHtml(emptyMode, projs, offTrackProjs, atRiskProjs) {
+  const badge = projectHealthBadgeMeta(emptyMode, offTrackProjs, atRiskProjs);
+  const d = projectsPillarData(emptyMode, projs, offTrackProjs, atRiskProjs);
+  return `<article class="hb-pillar" aria-labelledby="hb-pil-projects">
         <div class="hb-pillar-hd">
-          <a class="hb-pillar-name" id="hb-pil-proj" href="#/work">${ic("check-circle", "ic14 c-green")}<span>Delivery</span></a>
+          <a class="hb-pillar-name" id="hb-pil-projects" href="#/projects">${ic("folder", "ic14 c-indigo")}<span>Projects</span></a>
           <a class="hb-pillar-pill ${badge.cls}" href="#/projects">${badge.text}</a>
         </div>
-        <a class="hb-pillar-hero" href="#/work" title="Percentage of completed tasks approved on the first try without revisions (last 7 days)">
+        <a class="hb-pillar-hero" href="#/projects" title="${d.total} active projects: ${d.onTrack} on track, ${atRiskProjs} at risk, ${offTrackProjs} off track">
           <div class="hb-pillar-valrow">
-            <div class="hb-pillar-primary"><span class="hb-pillar-num">${emptyMode ? "—" : "84%"}</span><span class="hb-pillar-unit">approved first try</span></div>
-            <span class="hb-pillar-right ok">${emptyMode ? "" : "+6% · 7d"}</span>
+            <div class="hb-pillar-primary"><span class="hb-pillar-num">${d.num}</span><span class="hb-pillar-unit">${d.unit}</span></div>
+            <span class="hb-pillar-right"${d.rightStyle}>${d.right}</span>
           </div>
-          <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-pass" style="width:${emptyMode ? 0 : 84}%"></span><span class="seg-rework" style="width:${emptyMode ? 0 : 16}%"></span></div>
+          <div class="hb-pillar-bar" aria-hidden="true">${d.bars}</div>
         </a>
-        <div class="hb-pillar-sub">
-          <a class="hb-sub-item" href="#/activity" title="Average time from task start to approval (last 7 days)"><span class="hb-sub-lbl">Avg. turnaround · 7d</span><span class="hb-sub-val">${emptyMode ? "—" : '18m<span class="hb-sub-meta ok">-14%</span>'}</span></a>
-          <a class="hb-sub-item" href="#/work" title="Tasks completed and accepted in the last 7 days (+4 vs. prior week)"><span class="hb-sub-lbl">Delivered · 7d</span><span class="hb-sub-val">${emptyMode ? "—" : '19 tasks<span class="hb-sub-meta ok">+4</span>'}</span></a>
+        <div class="hb-pillar-sub is-team">
+          <a class="hb-sub-item" href="#/projects" title="Portfolio health: ${d.onTrack} on track, ${atRiskProjs} at risk, ${offTrackProjs} off track"><span class="hb-sub-lbl">Health</span><span class="hb-sub-val">${d.healthSplit}</span></a>
+          <a class="hb-sub-item" href="#/work" title="Tasks currently blocked across active projects"><span class="hb-sub-lbl">Blocked</span><span class="hb-sub-val">${d.blockedVal}</span></a>
         </div>
       </article>`;
 }
 
-function renderHomeMetrics(st, fleet, offTrackProjs, atRiskProjs) {
-  if (st === "loading") return homeSkelCards(3, "Loading executive overview…");
+function deliveryPillarHtml(emptyMode) {
+  const d = emptyMode
+    ? { cls: "", pill: "No deliveries yet", num: "—", right: "", pass: 0, rework: 0, turn: "—", deliv: "—" }
+    : { cls: "ok", pill: "Quality +6%", num: "84%", right: "7d avg", pass: 84, rework: 16, turn: '18m<span class="hb-sub-meta ok">-14%</span>', deliv: '19<span class="hb-sub-meta ok">+4</span>' };
+  return `<article class="hb-pillar" aria-labelledby="hb-pil-proj">
+        <div class="hb-pillar-hd">
+          <a class="hb-pillar-name" id="hb-pil-proj" href="#/work">${ic("check-circle", "ic14 c-green")}<span>Delivery</span></a>
+          <a class="hb-pillar-pill ${d.cls}" href="#/work">${d.pill}</a>
+        </div>
+        <a class="hb-pillar-hero" href="#/work" title="Percentage of completed tasks approved on the first try without revisions (last 7 days)">
+          <div class="hb-pillar-valrow">
+            <div class="hb-pillar-primary"><span class="hb-pillar-num">${d.num}</span><span class="hb-pillar-unit">first try</span></div>
+            <span class="hb-pillar-right ok">${d.right}</span>
+          </div>
+          <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-pass" style="width:${d.pass}%"></span><span class="seg-rework" style="width:${d.rework}%"></span></div>
+        </a>
+        <div class="hb-pillar-sub">
+          <a class="hb-sub-item" href="#/activity" title="Average time from task start to approval (last 7 days)"><span class="hb-sub-lbl">Turnaround</span><span class="hb-sub-val">${d.turn}</span></a>
+          <a class="hb-sub-item" href="#/work" title="Tasks completed and accepted in the last 7 days (+4 vs. prior week)"><span class="hb-sub-lbl">Delivered · 7d</span><span class="hb-sub-val">${d.deliv}</span></a>
+        </div>
+      </article>`;
+}
+
+function renderHomeMetrics(st, fleet, projs, offTrackProjs, atRiskProjs) {
+  if (st === "loading") return homeSkelCards(4, "Loading executive overview…");
   if (st === "error") return "";
   const emptyMode = st === "empty";
-  return `<section class="hb-pillars" aria-label="Executive overview: Financials, Team, and Delivery">${financialsPillarHtml(emptyMode)}${teamPillarHtml(emptyMode, fleet)}${deliveryPillarHtml(emptyMode, offTrackProjs, atRiskProjs)}</section>`;
+  return `<section class="hb-pillars" aria-label="Executive overview: Projects, Delivery, Team, and Financials">${projectsPillarHtml(emptyMode, projs, offTrackProjs, atRiskProjs)}${deliveryPillarHtml(emptyMode)}${teamPillarHtml(emptyMode, fleet)}${financialsPillarHtml(emptyMode)}</section>`;
 }
 
 function spotlightErrorHtml() {
@@ -656,7 +705,7 @@ function pageHome() {
   const remainingInInbox = Math.max(0, open.length - queue.filter((i) => !i.handled).length);
   const fleet = summarizeHomeFleet(st);
   const headline = homeHeadline(st, open.filter((i) => i.expires).length, open.length);
-  const metricsHtml = renderHomeMetrics(st, fleet, offTrackProjs, atRiskProjs);
+  const metricsHtml = renderHomeMetrics(st, fleet, projs, offTrackProjs, atRiskProjs);
   const spotlightHtml = renderHomeSpotlight({ st, queue, open, curItem: queue[S.spotIdx] || null, allQueueCleared, remainingInInbox });
   const mainBody = isEmpty
     ? `<div class="hb-stage is-single">${spotlightHtml}</div>${metricsHtml}`

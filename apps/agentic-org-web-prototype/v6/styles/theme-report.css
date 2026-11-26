@@ -290,7 +290,7 @@ html[data-theme^="report"] .hb-pillar {
   border-radius: 0;
   border: 0;
   box-shadow: none;
-  padding: 2px 32px;
+  padding: 2px 20px;
   background: transparent;
 }
 html[data-theme^="report"] .hb-pillar:first-child { padding-left: 0; }
@@ -579,19 +579,24 @@ html[data-theme^="report"] .hb-tseg { border-radius: 1px; box-shadow: none; }
 html[data-theme^="report"] .hb-tleg-dot { width: 8px; height: 8px; border-radius: 1px; }
 
 /* Responsive rule collapse inside full-width report */
+@media (max-width: 1180px) {
+  html[data-theme^="report"] .hb-pillar { padding: 14px 18px; }
+  html[data-theme^="report"] .hb-pillar:nth-child(odd) { padding-left: 0; border-left: 0; }
+  html[data-theme^="report"] .hb-pillar:nth-child(even) { padding-right: 0; border-left: 1px solid #EEF1F6; }
+  html[data-theme^="report"] .hb-pillar:nth-child(n+3) { border-top: 1px solid #EEF1F6; }
+}
 @media (max-width: 1120px) {
   html[data-theme^="report"] .hb-spot { padding: 22px 0; }
   html[data-theme^="report"] .hb-catchup { border-left: 0; border-top: 1px solid #EEF1F6; padding: 22px 0; }
   html[data-theme^="report"] .hb-card { padding: 16px 0; }
   html[data-theme^="report"] .hb-card + .hb-card { border-left: 0; border-top: 1px solid #EEF1F6; }
 }
-@media (max-width: 960px) {
+@media (max-width: 720px) {
   html[data-theme^="report"] .hb { padding: 20px 20px 36px; }
   html[data-theme^="report"] .topbar { padding: 8px 20px; }
   html[data-theme^="report"] .hb-pillar { padding: 16px 0; }
+  html[data-theme^="report"] .hb-pillar:nth-child(even) { border-left: 0; }
   html[data-theme^="report"] .hb-pillar + .hb-pillar { border-left: 0; border-top: 1px solid #EEF1F6; }
-}
-@media (max-width: 720px) {
   html[data-theme^="report"] .hb-spot-bar { flex-wrap: wrap; gap: 10px; }
   html[data-theme^="report"] .hb-spot-badge { max-width: 100%; white-space: normal; }
   html[data-theme^="report"] .hb-spot-nav { width: 100%; justify-content: space-between; }
@@ -1038,14 +1043,16 @@ html[data-theme="report-dark"] .hb-hor-date strong { color: #ffffff; }
 /* Report Night Capacity & Bottleneck Analysis (Exact Classic Colors) */
 html[data-theme="report-dark"] .hb-time-unit { color: #99a1af; }
 
+@media (max-width: 1180px) {
+  html[data-theme="report-dark"] .hb-pillar:nth-child(even) { border-left-color: rgba(255, 255, 255, .08); }
+  html[data-theme="report-dark"] .hb-pillar:nth-child(n+3) { border-top-color: rgba(255, 255, 255, .08); }
+}
 @media (max-width: 1120px) {
   html[data-theme="report-dark"] .hb-catchup,
   html[data-theme="report-dark"] .hb-card + .hb-card { border-top-color: rgba(255, 255, 255, .08); }
 }
-@media (max-width: 960px) {
-  html[data-theme="report-dark"] .hb-pillar + .hb-pillar { border-top-color: rgba(255, 255, 255, .08); }
-}
 @media (max-width: 720px) {
+  html[data-theme="report-dark"] .hb-pillar + .hb-pillar { border-top-color: rgba(255, 255, 255, .08); }
   html[data-theme="report-dark"] .hb-spot-meta { padding: 6px 12px; }
   html[data-theme="report-dark"] .hb-spot-cell + .hb-spot-cell { border-top-color: rgba(255, 255, 255, .08); }
 }

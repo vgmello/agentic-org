@@ -109,19 +109,27 @@
       </svg>
     </button>
   </div>
-  <div class="sidebar-start" id="sidebar-start" role="group" aria-label="Start menu">
+  <div class="sidebar-start" id="sidebar-start" role="group" aria-label="Search">
     <button class="start-search" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-label="Search or run command" aria-keyshortcuts="Meta+K Control+K" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog" title="Search (⌘K)">
       <svg class="ic ic16" aria-hidden="true"><use href="#i-search"/></svg>
       <span class="lbl">Search…</span>
       <kbd id="cmdk-kbd" aria-hidden="true">⌘K</kbd>
     </button>
-    <button class="start-tess" id="sidebar-tess-trigger" type="button" data-act="tess-toggle" aria-label="Ask Tess" aria-keyshortcuts="Meta+/ Control+/" aria-pressed="false" title="Ask Tess (⌘/)">
-      <svg class="ic ic16" aria-hidden="true"><use href="#i-sparkle"/></svg>
-      <span class="start-tess-busy" id="sidebar-tess-busy" hidden aria-hidden="true"></span>
-    </button>
   </div>
   <nav class="nav" aria-label="Main" id="nav"></nav>
   <div class="foot">
+    <button class="sidebar-tess-contact" id="sidebar-tess-trigger" type="button" data-act="tess-toggle" aria-label="Chat with Tess, Chief of Staff" aria-keyshortcuts="Meta+/ Control+/" aria-pressed="false" title="Chat with Tess (⌘/)">
+      <span class="tess-contact-av" aria-hidden="true">
+        <svg class="ic ic16"><use href="#i-sparkle"/></svg>
+        <span class="tess-contact-dot" id="sidebar-tess-status"></span>
+        <span class="start-tess-busy" id="sidebar-tess-busy" hidden></span>
+      </span>
+      <span class="tess-contact-meta">
+        <span class="tess-contact-name">Tess</span>
+        <span class="tess-contact-role" id="sidebar-tess-role">Chief of Staff</span>
+      </span>
+      <kbd class="tess-contact-kbd" id="sidebar-tess-kbd" aria-hidden="true">⌘/</kbd>
+    </button>
     <div class="menu-wrap">
       <button class="acct" type="button" data-act="menu" data-id="acct" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-acct" aria-label="You · Owner, account menu" title="You · Owner">
         <span class="av av32" style="color:var(--tone-accent-ink)" aria-hidden="true">Y</span>

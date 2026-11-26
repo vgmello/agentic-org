@@ -1,4 +1,52 @@
 @font-face {
+  font-family: "Noto Sans";
+  src: url("../../fonts/noto-sans-var.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Instrument Sans";
+  src: url("../../fonts/instrument-sans-var.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Manrope";
+  src: url("../../fonts/manrope-var.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Outfit";
+  src: url("../../fonts/outfit-var.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Schibsted Grotesk";
+  src: url("../../fonts/schibsted-grotesk-var.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Albert Sans";
+  src: url("../../fonts/albert-sans-var.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
   font-family: "DM Sans";
   src: url("../../fonts/dm-sans-var.woff2") format("woff2");
   font-weight: 300 700;
@@ -62,14 +110,14 @@
 
 :root {
   color-scheme: dark;
-  --font-display: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-display: "Noto Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-sans: "Noto Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --fw-display: 500;
-  --fw-heading: 500;
-  --fw-kpi: 400;
+  --fw-display: 550;
+  --fw-heading: 600;
+  --fw-kpi: 350;
   --fw-item: 500;
-  --ls-display: -0.025em;
+  --ls-display: -0.02em;
   --em-style: normal;
   --fs-2xs: 0.6875rem;
   --fs-xs: 0.75rem;
@@ -156,6 +204,66 @@
   --green-500: var(--tone-ok); --green-400: var(--tone-ok-ink);
   --red-400: var(--tone-bad); --red-300: var(--tone-bad-ink);
   --sky-400: var(--tone-accent); --sky-300: var(--tone-accent-ink);
+}
+html[data-font="instrument"] {
+  --font-display: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-sans: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --fw-display: 500;
+  --fw-heading: 500;
+  --fw-kpi: 400;
+  --fw-item: 500;
+  --ls-display: -0.025em;
+  --em-style: normal;
+}
+html[data-font="manrope"] {
+  --font-display: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-sans: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --fw-display: 500;
+  --fw-heading: 500;
+  --fw-kpi: 350;
+  --fw-item: 500;
+  --ls-display: -0.03em;
+  --em-style: normal;
+}
+html[data-font="outfit"] {
+  --font-display: "Outfit", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-sans: "Outfit", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --fw-display: 500;
+  --fw-heading: 500;
+  --fw-kpi: 350;
+  --fw-item: 500;
+  --ls-display: -0.025em;
+  --em-style: normal;
+}
+html[data-font="schibsted"] {
+  --font-display: "Schibsted Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-sans: "Schibsted Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --fw-display: 500;
+  --fw-heading: 500;
+  --fw-kpi: 400;
+  --fw-item: 500;
+  --ls-display: -0.025em;
+  --em-style: normal;
+}
+html[data-font="albert"] {
+  --font-display: "Albert Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-sans: "Albert Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --fw-display: 500;
+  --fw-heading: 500;
+  --fw-kpi: 350;
+  --fw-item: 500;
+  --ls-display: -0.025em;
+  --em-style: normal;
+}
+html[data-font="dm-sans"] {
+  --font-display: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --fw-display: 500;
+  --fw-heading: 500;
+  --fw-kpi: 400;
+  --fw-item: 500;
+  --ls-display: -0.025em;
+  --em-style: normal;
 }
 html[data-font="swiss"] {
   --font-display: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;

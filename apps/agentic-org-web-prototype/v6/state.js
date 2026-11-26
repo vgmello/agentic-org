@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------------- state */
-const S = { theme: "ocean", fontStyle: "dm-sans", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
+const S = { theme: "ocean", fontStyle: "noto-sans", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
   scopedWorkView: "all", scopedWorkLayout: "list", scopedWorkStatus: "all", scopedWorkProject: "all", scopedWorkTeam: "all", scopedWorkGroup: "status", scopedWorkSubgroup: "none", scopedWorkSort: "default", scopedWorkOrder: "asc",
   actView: "assembly", actProject: "all", actFilter: "all", actPanel: null,
   projectActView: "assembly", projectActFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
@@ -56,13 +56,18 @@ function applyTheme(remember = false) {
   }
 }
 applyTheme();
-const FONT_STORE = "agentic-org.v6.fontStyle.v2";
+const FONT_STORE = "agentic-org.v6.fontStyle.v4";
 const FONT_OPTIONS = [
-  ["dm-sans", "DM Sans"],
+  ["noto-sans", "Noto Sans (Ellosoft)"],
+  ["instrument", "Instrument Sans"],
+  ["manrope", "Manrope"],
+  ["outfit", "Outfit"],
+  ["schibsted", "Schibsted Grotesk"],
+  ["albert", "Albert Sans"],
   ["swiss", "Geist"],
-  ["system", "SF Pro (System)"],
+  ["dm-sans", "DM Sans"],
   ["ibm-plex", "IBM Plex Sans"],
-  ["humanist", "Plus Jakarta Sans"],
+  ["system", "SF Pro (System)"],
   ["editorial", "Newsreader (Editorial)"],
 ];
 const VALID_FONTS = new Set(FONT_OPTIONS.map(([value]) => value));
@@ -76,7 +81,7 @@ if (VALID_FONTS.has(urlFont)) {
   } catch (e) {}
 }
 function applyFontStyle(remember = false) {
-  const f = VALID_FONTS.has(S.fontStyle) ? S.fontStyle : "dm-sans";
+  const f = VALID_FONTS.has(S.fontStyle) ? S.fontStyle : "noto-sans";
   S.fontStyle = f;
   document.documentElement.dataset.font = f;
   if (!remember) return;
