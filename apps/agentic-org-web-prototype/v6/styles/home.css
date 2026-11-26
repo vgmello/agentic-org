@@ -629,6 +629,9 @@ a.hb-pillar-hero:hover { background: rgba(186, 222, 255, .05); }
   letter-spacing: var(--ls-kpi); color: var(--hb-ink); font-variant-numeric: proportional-nums;
 }
 .hb-pillar-unit { font-size: var(--fs-sm); font-weight: 400; color: var(--hb-muted); white-space: nowrap; }
+.hb-spark { display: inline-flex; align-items: flex-end; gap: 3px; height: 24px; flex: none; }
+.hb-spark i { display: block; width: 6px; border-radius: 2px 2px 0 0; background: var(--tone-accent-bar, var(--tone-accent)); opacity: .55; }
+.hb-spark i:last-child { opacity: 1; }
 .hb-pillar-right { font-size: var(--fs-xs); font-weight: 500; color: var(--hb-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hb-pillar-right.ok { color: var(--tone-ok-ink); }
 .hb-pillar-right.warn { color: var(--tone-warn-ink); }
@@ -1423,3 +1426,10 @@ a.hb-tleg:hover { color: var(--hb-ink); }
   .hb-spot { padding: 18px; min-height: 0; }
 }
 
+
+/* Spotlight recommendation uses the shared toned callout */
+.hb-spot .recommendation { font-size: var(--fs-base); padding: 10px 14px; }
+
+/* Where task time goes: header outside like the other Home sections */
+.hb-time-sec { display: flex; flex-direction: column; gap: 12px; }
+.hb-time-sec > .sec-head { margin: 0; }

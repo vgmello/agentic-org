@@ -302,9 +302,9 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org who`
   List people and agents with live presence and `@handles` over an approved office channel.
   **Use when:** checking active handles and online presence across HQ and satellite offices.
-- `agentic-org repo register|list|attach|status|push`
-  Register and manage organization/project Git repositories and push task branches over an approved office channel.
-  **Use when:** registering a Git repo, attaching it to a project's integration branch, checking office bare-cache status, or pushing a task branch.
+- `agentic-org repo register|list|attach|status|fetch|push`
+  Register and manage organization/project Git repositories, refresh an office's cache of the origin, and push task branches over an approved office channel.
+  **Use when:** registering a Git repo, attaching it to a project's integration branch, checking office bare-cache status, fetching newly pushed origin branches (`repo fetch --repo <id-or-key>`), or pushing a task branch.
 - `agentic-org worktree list|prepare`
   List or prepare isolated task Git worktrees over an approved office channel.
   **Use when:** preparing a clean per-task Git worktree before editing code or inspecting active worktrees.
@@ -346,9 +346,10 @@ Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os 
 - `agent-os task-note add|list|get|update|remove|publish` (alias: `agent-os task note ...`)
   Private task notes with optional copy-to-comment publishing.
   **Use when:** recording private working notes on a task (`add|list|get|update|remove`) without notifying the team until you choose to `publish` a copy as a public comment.
-- `agent-os repo register|list|attach|status|push`
-  Git repository registry, office bare-cache status, and task-branch pushes.
-  **Use when:** listing registered repos, verifying office bare-cache readiness (`repo status`), registering/attaching a repo, or pushing your task branch (`repo push`).
+- `agent-os repo register|list|attach|status|fetch|push`
+  Git repository registry, office bare-cache status, on-demand origin fetch, and task-branch pushes.
+  **Use when:** listing registered repos, verifying office bare-cache readiness (`repo status`), registering/attaching a repo, seeing branches pushed to the origin after your worktree was prepared (`repo fetch --repo <id-or-key>`), or pushing your task branch (`repo push`).
+  `repo fetch` asks the office to refresh its cache of the origin with the office's own credentials (none reach your session); afterwards `git branch -r` in your task worktree shows new `origin/*` branches. It writes only `origin/*` refs and tags, never your checkout or uncommitted edits, and answers `added`/`updated`/`pruned` branches, `default_branch`, `head_oid` and `fetched_at`. One fetch per repository runs at a time and a repository is fetched at most once every 10 seconds (`rate_limited` otherwise); an unreachable origin answers `unavailable`, leaving a `ready` cache as it was; a cache that was never filled is recorded `failed` until a fetch succeeds.
 - `agent-os worktree list|prepare`
   Isolated per-task Git worktrees.
   **Use when:** preparing a clean task worktree before making code changes (`worktree prepare`) or inspecting active worktrees (`worktree list`).

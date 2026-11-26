@@ -193,7 +193,6 @@ pub(crate) fn write_replicated_hq_owner(
 ) -> Result<(), OfficeError> {
     let dir = replicated_hq_owner_dir(durable_root, office_id);
     private_dir_synced(durable_root, &dir).map_err(OfficeError::storage)?;
-    let path = dir.join(REPLICATED_HQ_OWNER_FILE);
     let record = ReplicatedHqOwnerFile {
         v: 1,
         org_id: org_id.to_owned(),
@@ -201,7 +200,8 @@ pub(crate) fn write_replicated_hq_owner(
         owner_member_id: owner_member_id.as_str().to_owned(),
     };
     let bytes = serde_json::to_vec_pretty(&record).map_err(OfficeError::storage)?;
-    write_private_atomic(&path, &bytes).map_err(OfficeError::storage)
+    org_store::publish_one(&dir, REPLICATED_HQ_OWNER_FILE, &bytes, false)
+        .map_err(OfficeError::storage)
 }
 
 pub(crate) fn remove_replicated_hq_owner(

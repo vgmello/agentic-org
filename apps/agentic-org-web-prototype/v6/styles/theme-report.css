@@ -1143,3 +1143,4 @@ html[data-theme="report-dark"] :is(.hb-cal-meta, .hb-cal-date span) { color: #99
 
 /* Report Night: selected Inbox / priority-queue row uses Classic's tinted fill */
 html[data-theme="report-dark"] :is(.triage-workspace .triage-queue, .pj-queue-pane) { --triage-row-selected: rgba(97, 95, 255, .14); }
+html[data-theme^="report"] .hb-time-sec .hb-time { padding-top: 8px; }

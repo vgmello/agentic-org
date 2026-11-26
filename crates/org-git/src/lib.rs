@@ -1,7 +1,8 @@
 //! Hardened plain-Git engine for Agentic Org (`TASK-51`, `C7`, `doc-35`).
 //!
 //! Owns host `git` execution with clean environments, strict transport allowlists, canonical
-//! bare cache integrity checks, per-repository locking, isolated per-task worktrees,
+//! bare cache integrity checks, per-repository locking, on-demand origin refresh with a branch
+//! change summary, isolated per-task worktrees,
 //! non-force commit-OID branch pushes, `merged/`/`archive/` cleanup tags, checkpoint bundles,
 //! and derived sandbox allow/deny rules (`FC-103`, `FC-140`).
 //!
@@ -10,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cache;
+pub mod refresh;
 pub mod runner;
 #[cfg(test)]
 mod tests;
@@ -21,6 +23,7 @@ pub use cache::{
     canonical_cache_config, fetch_cache, init_bare_cache, ls_remote_heads, verify_cache_integrity,
     RepoLocks,
 };
+pub use refresh::{list_origin_branches, refresh_cache, remote_default_branch, CacheRefresh};
 pub use runner::{
     validate_local_origin_path, validate_remote_url, AllowedProtocol, GitCommandOutput,
     GitCredential, GitRunner, RemoteSpec, MIN_GIT_VERSION,
