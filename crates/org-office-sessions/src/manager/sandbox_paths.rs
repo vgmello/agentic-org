@@ -95,6 +95,10 @@ impl SessionManager {
         self.append_sibling_and_socket_denies(&mut out, &office_local, office_id, self_employee_id);
         append_cargo_credential_denies(&mut out);
         append_agy_credential_denies(&mut out);
+        // Other agents' external (BYOA) keys and fast tokens (`TASK-137`).
+        for root in &self.config.agent_os_state_roots {
+            push_glob_pattern(&mut out, root);
+        }
         out
     }
 

@@ -12,6 +12,7 @@ use org_office::organization_family::records::{Employee, PermissionPreset};
 use org_proto::sessions::SessionState;
 use org_proto::{ApiError, ErrorCode};
 
+use crate::instructions::StandingInstructions;
 use crate::preset::PresetConfig;
 use crate::pump::SessionRuntimeState;
 use crate::recovery::StallWatchdog;
@@ -63,7 +64,7 @@ pub(super) fn build_session_spec_for_launch(
     choice: ModelChoice,
     workspace: SpecPath,
     read_only_dirs: Vec<SpecPath>,
-    instructions: String,
+    instructions: StandingInstructions,
     preset_cfg: &PresetConfig,
     linux_claude_bwrap: bool,
 ) -> Result<SessionSpec, ApiError> {
@@ -125,7 +126,7 @@ pub(crate) fn build_session_spec(
     choice: ModelChoice,
     workspace: SpecPath,
     read_only_dirs: Vec<SpecPath>,
-    instructions: String,
+    instructions: StandingInstructions,
     preset_cfg: &PresetConfig,
 ) -> Result<SessionSpec, ApiError> {
     let safe_name = sanitize_agent_name(&employee.handle);
@@ -144,7 +145,8 @@ pub(crate) fn build_session_spec(
         effort: choice.effort,
         workspace,
         read_only_dirs,
-        instructions,
+        instructions: instructions.instructions,
+        repository_instructions: instructions.repository_instructions,
         permission_mode: preset_cfg.permission_mode,
         policy: preset_cfg.policy.clone(),
         sandbox: preset_cfg.sandbox.clone(),

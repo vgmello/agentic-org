@@ -24,7 +24,7 @@ const COMMON_VALUE_OPTIONS: &[&str] = &[
 pub const RESOURCE_GUIDANCE: &[(&str, &str)] = &[
     (
         "agent",
-        "inspecting or managing agent profiles, team placement, pause/resume, or offboarding.",
+        "inspecting or managing agent profiles, team placement, pause/resume, offboarding, or external (bring-your-own) agent sessions.",
     ),
     (
         "budget",
@@ -76,7 +76,7 @@ pub const RESOURCE_GUIDANCE: &[(&str, &str)] = &[
     ),
     (
         "repo",
-        "registering or listing Git repositories, attaching them to projects, checking cache readiness, or pushing task branches.",
+        "registering or listing Git repositories, attaching them to projects, checking cache readiness, fetching new origin branches, or pushing task branches.",
     ),
     (
         "role",
@@ -117,6 +117,11 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
     // agent
     (
         "agent",
+        "approve",
+        "approving an external workspace's `agent-os login` code so it acts as the agent (`--takeover` parks a live managed turn).",
+    ),
+    (
+        "agent",
         "execution-get",
         "inspecting an agent's model profile, model ID, permission preset, reasoning effort, and standing system prompt.",
     ),
@@ -149,6 +154,16 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
         "agent",
         "resume",
         "re-activating a paused agent so it can take turns again (requires `--if-match`).",
+    ),
+    (
+        "agent",
+        "revoke",
+        "ending an agent's external workspace session at once (its connections close and held wakes run again).",
+    ),
+    (
+        "agent",
+        "sessions",
+        "checking which external workspace an agent is signed in from, until when, and its sign-in history.",
     ),
     (
         "agent",
@@ -377,6 +392,11 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
         "repo",
         "attach",
         "linking a registered repository and verified integration branch to a project.",
+    ),
+    (
+        "repo",
+        "fetch",
+        "seeing branches pushed to the origin after your worktree was prepared: the office refreshes `origin/*` with its own credentials and never moves your checkout.",
     ),
     (
         "repo",

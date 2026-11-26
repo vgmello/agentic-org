@@ -16,8 +16,7 @@ use crate::subagents::{build_general_subagent_definition, write_subagent_definit
 
 use super::bwrap_isolation::has_unmasked_bwrap_sibling_in_office;
 use super::environment::{
-    assemble_launch_env, build_objective_text, resolve_workspace, write_owner_only_binding_file,
-    SessionEnvInput,
+    assemble_launch_env, resolve_workspace, write_owner_only_binding_file, SessionEnvInput,
 };
 use super::registry_guards::{
     check_registry_startable, ensure_live_handle_not_recovery_required, ensure_not_stopped_since,
@@ -78,6 +77,8 @@ impl SessionManager {
         requested_workspace: Option<&str>,
     ) -> Result<StartReservation, ApiError> {
         let emp_id = employee.id.as_str();
+        // Load the lease cache now, so the check under the registry lock below never misses it.
+        let _ = self.external_lease(emp_id);
         for _ in 0..MAX_WARM_REVALIDATIONS {
             let snapshot = self.snapshot_warm_handle(emp_id)?;
             let freshness = snapshot
@@ -178,6 +179,15 @@ impl SessionManager {
     ) -> Result<Option<StartDecision>, ApiError> {
         let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
         check_registry_startable(&reg, emp_id)?;
+        if self
+            .external
+            .cached_active(emp_id, crate::credentials::now_ms())
+        {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "this agent is signed in from an external workspace; revoke that session first",
+            ));
+        }
         let handle = reg.live.get(emp_id);
         let unchanged = match (snapshot, handle) {
             (None, None) => true,
@@ -242,7 +252,7 @@ impl SessionManager {
         let objective = params
             .instruction
             .as_deref()
-            .map(|text| build_objective_text(employee, actor_member_id, text))
+            .map(|text| self.objective_text(employee, actor_member_id, text))
             .unwrap_or_default();
         self.prepare_and_spawn_raw(
             employee,
@@ -342,7 +352,7 @@ impl SessionManager {
         let _ = write_subagent_definition(&runtime_dir, &subagent_def);
 
         let instructions =
-            self.build_instructions(employee, &home, &workspace_real, &preset_cfg, opts.task_ref)?;
+            self.build_instructions(employee, &home, &workspace_real, &preset_cfg)?;
         let read_only_dirs = self.collect_session_read_only_dirs(
             admitted.adapter.id(),
             &home,

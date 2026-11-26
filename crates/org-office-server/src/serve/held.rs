@@ -22,6 +22,20 @@ pub(super) struct Control {
     /// with `not_bound`, then closes. If it remains idle, the next reader tick ends it and
     /// removes its registration.
     pub(super) revoked: std::sync::atomic::AtomicBool,
+    /// The external (BYOA) lease session the connection is bound with, `None` for any other
+    /// binding. Written under the [`Bound`] lock, so a revocation that spares one lease session
+    /// (a fresh approval's) sees the connection's binding as of its registration.
+    pub(super) external_session: Mutex<Option<String>>,
+}
+
+impl Control {
+    /// The external lease session the connection is bound with, if any.
+    pub(super) fn external_session(&self) -> Option<String> {
+        self.external_session
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
 }
 
 /// The member-bound connections, by connection number: who each acts as, and how to reach it.
@@ -39,12 +53,28 @@ pub(super) struct Registration<'a> {
 
 impl Registration<'_> {
     /// `true` when the connection is newly registered as `member`: it may have become unbindable
-    /// before the watcher could see it, so the caller looks once.
-    pub(super) fn sync(&mut self, member: Option<&str>) -> bool {
-        if self.member.as_deref() == member {
+    /// before the watcher could see it, so the caller looks once. `external_session` is the
+    /// external lease the binding holds, recorded under the same lock.
+    pub(super) fn sync(&mut self, member: Option<&str>, external_session: Option<&str>) -> bool {
+        let session_changed = self
+            .control
+            .external_session
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_deref()
+            != external_session;
+        if self.member.as_deref() == member && !session_changed {
             return false;
         }
         let mut bound = self.bound.lock().unwrap_or_else(|p| p.into_inner());
+        *self
+            .control
+            .external_session
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = external_session.map(str::to_owned);
+        if self.member.as_deref() == member {
+            return false;
+        }
         // Under the lock the watcher acts under: a decision about the member this connection
         // had must not unbind the one it has now.
         match member {

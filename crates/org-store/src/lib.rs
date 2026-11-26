@@ -36,7 +36,8 @@ pub use error::{EngineError, FilesError, JournalError, ProjectionError, StoreErr
 pub use files::{publish_one, read_one, FileOp, FileVersion, Files, MAX_FILE_BYTES};
 pub use journal::{
     journal_dir, positions_between, AnchorFacts, Entry, EntryDraft, FileDraft, FileRecord, Header,
-    Journal, JournalPoint, OperationRecord, Predecessor, Recovered, MAX_ENTRY_BYTES, SEGMENT_BYTES,
+    Inspection, Journal, JournalPoint, OperationRecord, Predecessor, Recovered, MAX_ENTRY_BYTES,
+    SEGMENT_BYTES,
 };
 pub use rebuild::{rebuild, RebuildReport};
 pub use receipts::{

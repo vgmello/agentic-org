@@ -1,6 +1,8 @@
 import { CH, M, P } from "../data.js";
 import { answerOrgQuestion } from "../pages/home.js";
 import { openSmartTaskComposer } from "../pages/task-composer.js";
+import { startNewMessage } from "../pages/chat.js";
+import { findConversations } from "../pages/chat-model.js";
 import { canonicalWorkRef, workHref, workItems } from "../pages/work.js";
 import { closeMenus } from "./actions.js";
 import { openShortcutsHelp } from "./dialogs.js";
@@ -10,9 +12,10 @@ import { S, toggleNavPinned } from "../state.js";
 import { av, esc, ic, kindWord, leadTxt, memberIds, toast, unhandled } from "../ui.js";
 
 /* ---------------------------------------------------------------- search & command palette */
-function conversationResults(query, channelsOnly = false) {
-  return Object.entries(CH)
-    .filter(([, channel]) => (!channelsOnly || channel.kind === "channel") && channel.name.toLowerCase().includes(query))
+/* Channels, DMs and agent-to-agent conversations, by name, topic or member (Chat's own matcher). */
+function conversationResults(query) {
+  return findConversations(query)
+    .map((id) => [id, CH[id]])
     .map(([id, channel]) => ({
       href: `#/chat/${id}`,
       label: channel.kind === "channel" ? "#" + channel.name : channel.name,
@@ -55,7 +58,7 @@ function cmdkCommands() {
     { group: "Actions", label: "New task", sub: "Send a task, bug, or request to Tess", icon: "plus", tag: "Command", run: () => openSmartTaskComposer() },
     { group: "Actions", label: "New project", sub: "Start a project wizard to group work", icon: "folder", tag: "Wizard", run: () => toast("New project wizard (prototype action)") },
     { group: "Actions", label: "Hire an agent", sub: "Describe role, review suggestion, hire", icon: "sparkle", tag: "Wizard", run: () => toast("Hire an agent wizard (Describe, Suggestion, Review, Hiring)") },
-    { group: "Actions", label: "New message", sub: "Start a conversation in Chat", icon: "chat", tag: "Command", run: () => toast("New message (prototype action)") },
+    { group: "Actions", label: "New message", sub: "Choose a person or agent to message", icon: "chat", tag: "Command", run: () => startNewMessage() },
     { group: "Actions", label: "Add a person", sub: "Invite a teammate to this organization", icon: "user-plus", tag: "Command", run: () => toast("Add a person (prototype action)") },
     ...(isEmpty ? [
       { group: "Ask Tess", label: "Ask: How do I launch my first project?", sub: "Walk through setting up projects and hiring agents", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("How do I launch my first project?") }
@@ -218,8 +221,8 @@ function buildCmdkGroups(raw) {
   const q = (cmdOnly ? raw.slice(1) : raw).trim().toLowerCase();
   const cmds = cmdkCommands();
   if (raw.startsWith("#")) {
-    const channels = conversationResults(raw.slice(1).trim().toLowerCase(), true);
-    return channels.length ? [["Channels", channels]] : [];
+    const chats = conversationResults(raw.slice(1).trim().toLowerCase());
+    return chats.length ? [["Conversations", chats]] : [];
   }
   if (!q) {
     const byGrp = {};

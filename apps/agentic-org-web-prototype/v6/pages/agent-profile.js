@@ -1,4 +1,4 @@
-import { CH, M, OFFICES, P, PAST_SESSIONS } from "../data.js";
+import { M, OFFICES, P, PAST_SESSIONS } from "../data.js";
 import { S } from "../state.js";
 import { SEP, av, esc, ic, iconWithTooltip, pill, plural, toast } from "../ui.js";
 
@@ -928,7 +928,7 @@ function sessionsSubbarHtml(aid, disabled) {
 }
 
 function sessionsComposerHtml(aid, m, avail, disabled) {
-  const chKey = CH["dm-" + aid] ? "dm-" + aid : "general";
+  const chKey = "dm-" + aid; /* Chat opens (or creates) the DM */
   const promptPlaceholder = avail.active ? `Send a prompt to ${esc(m.name)}’s session…` : `${esc(avail.title)} — prompting unavailable`;
   return `<div class="c-composer" id="c-composer" ${S.consoleView !== "chat" ? "hidden" : ""}>
         <div class="c-composer-in">

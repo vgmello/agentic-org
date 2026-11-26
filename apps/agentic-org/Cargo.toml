@@ -39,6 +39,8 @@ org-socket = { path = "../../crates/org-socket", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 org-agent-cli = { path = "../../crates/org-agent-cli" }
+# `backup` and `restore` (TASK-104): the archive, its verification and the restore.
+org-backup = { path = "../../crates/org-backup" }
 org-command = { path = "../../crates/org-command" }
 org-host = { path = "../../crates/org-host" }
 org-platform = { path = "../../crates/org-platform" }
@@ -61,6 +63,8 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 syn = { version = "=2.0.119", features = ["full", "visit"] }
+# The backup CLI test's real SQLite HQ office in a temporary folder (`TestOffice`).
+org-office = { path = "../../crates/org-office", features = ["testkit"] }
 
 [lints]
 workspace = true

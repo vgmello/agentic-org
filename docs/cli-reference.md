@@ -192,6 +192,18 @@ Any other key, a control character or an over-long value makes it invalid (exit 
   Read the organization's record from its office (the office command `org inspect`).
   **Use when:** checking the organization's name, identifiers and settings from the terminal.
 
+### Backup & Restore (`backup`, `restore`)
+
+- `agentic-org backup <org_id> --out <path> [--office <office_id>] [--encrypt] [--passphrase-file <path> | --passphrase-fd <fd>] [--name <instance>] [--json]`
+  Write one consistent, deterministic `.tar.gz` of the office's `<data-root>/<org_id>/durable/` folder (Org Git `state/`, `messaging/`, `recovery/` with the acceptance journal, `authority/`, `accounting/`, `budgets/`, `checkpoints/`, `blobs/` when present, `local/offices/<id>/` less `enroll-tmp/` and each agent's `runtime/` and `tmp/`), with a versioned `manifest.json` (org, office, journal incarnation and head, `created_at`, and every file's length and SHA-256). `private/task-notes.db` is carried as a consistent SQLite `VACUUM INTO` copy; the disposable `runtime/` folder never is. The office must be stopped (a held `host.lock` or `office.lock` is refused), and the archive is written owner-only and atomically and never replaces a file. `--encrypt` seals it with a passphrase (Argon2id 64 MiB, t=3, p=4 and AES-256-GCM) read from the terminal, `--passphrase-file` (owner-only) or `--passphrase-fd`, never from the command line.
+  **Use when:** taking a local safety-net backup of an organization before maintenance, an upgrade or risky work, with the office stopped (`agentic-org service stop`).
+- `agentic-org restore --verify <archive> [--to <dir>] [--passphrase-file <path> | --passphrase-fd <fd>] [--json]`
+  Verify an archive and change nothing: the encryption tag (detected from the archive's first bytes), every member against the manifest (no `..`, absolute paths, links, special, unlisted, duplicated or oversized members), SQLite's `integrity_check` on the notes copy, the journal to its recorded head, and a full rebuild of the office's projections from it in a disposable folder. `--to` also extracts the verified archive into a new or empty folder.
+  **Use when:** proving a backup actually restores before you rely on it, or inspecting its files without touching the organization.
+- `agentic-org restore <archive> --org <org_id> [--office <office_id>] [--yes] [--passphrase-file <path> | --passphrase-fd <fd>] [--name <instance>] [--json]`
+  Verify the archive in full, then replace the stopped office's durable folder with it (the previous one is kept beside it as `durable.before-restore-*`) and discard the rebuildable projections. It never resets the host's writer custody: an archive of another incarnation, behind the office's journal or off its chain is refused. Host-local custody, the host registry and accounts, and the office secrets key in the Keychain or credential store are not in a backup; moving an office to another machine is not supported in v1.
+  **Use when:** putting an organization's durable data back on this computer after it was lost or damaged, with the office stopped.
+
 ### Offices & Multi-Office Federation (`office`)
 
 - `agentic-org office list [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
@@ -278,9 +290,18 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org hr hire|list|inspect`
   Hire and manage agents across HQ and satellite offices over an approved office channel (confirm or withdraw pending proposals with `hr hire --id <proposal_id> [--withdraw]`).
   **Use when:** hiring an agent onto HQ or a remote satellite office from the terminal.
-- `agentic-org agent inspect|update|move|pause|resume|offboard|execution-get|execution-set`
+- `agentic-org agent inspect|update|move|pause|resume|offboard|execution-get|execution-set|approve|sessions|revoke`
   Inspect or manage hired agents and their execution configuration (`model_profile_id`, `model_id`, `permission_preset`, optional `effort`, `system_prompt_markdown`) over an approved office channel. `execution-set` is a full replacement: `--effort low|medium|high|xhigh|max` sets the agent's reasoning effort (any other value is refused), and leaving it out returns the agent to the runtime's default. Claude Code receives the level as `--effort`; Codex receives it as `model_reasoning_effort`, with `max` running as Codex's highest level, `xhigh`. A changed effort recycles the agent's warm session. `hr hire --effort <level>` sets it at hire.
   **Use when:** checking agent status, placement, lifecycle state, or configuring an agent's model profile, permission preset, reasoning effort, and system prompt.
+- `agentic-org agent approve <code> [--ttl <duration>] [--takeover]` (also `--code <code>`)
+  Approve an external ("bring your own agent") workspace that ran `agent-os login --as @<handle>`: the code is the one `agent-os login` printed (`ABCD-EFGH`, valid 10 minutes, locked after 3 wrong attempts by people who may approve it; a person without authority over the agent never spends an attempt). The agent gets one active external lease (default `--ttl 24h`, 5 minutes to 7 days); approving supersedes the agent's previous external session and closes its connections. A live managed turn is refused unless `--takeover` parks it first; while the lease is active, the agent's wakes stay queued instead of starting managed runs. Only the owner, a person who may hire, or the agent's manager or team lead may approve; an agent can never approve itself.
+  **Use when:** letting a terminal, IDE or external agent harness act as an organization agent after it asked to sign in.
+- `agentic-org agent sessions @<handle> [--limit <n>]` (also `--member <handle|employee_id>`, `--history-limit <n>`)
+  Show an agent's active external lease (workspace, key fingerprint, approver, expiry) and its recent sign-in history, the last `--limit` entries (default 20, at most 200): lifecycle and security events only (`approved`, `superseded`, `token_issued`, `revoked`, `logout`, `offboarded`, `paused`). Commands an external session runs are counted in the office's memory, never written per command.
+  **Use when:** checking which external workspace an agent is signed in from and until when.
+- `agentic-org agent revoke @<handle> [<session_id>]` (also `--member`, `--session`)
+  End an agent's external lease at once: its fast tokens stop working, its connections close, and its held wakes run again as managed turns. Pausing or offboarding the agent revokes it too.
+  **Use when:** cutting off an external agent session immediately (a lost laptop, a finished pairing session).
 - `agentic-org team list|inspect|create|update`
   Discover, inspect, or create organization teams over an approved office channel.
   **Use when:** finding a `team_id` before hiring agents or creating projects.
@@ -290,9 +311,9 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org who`
   List people and agents with live presence and `@handles` over an approved office channel.
   **Use when:** checking active handles and online presence across HQ and satellite offices.
-- `agentic-org repo register|list|attach|status|push`
-  Register and manage organization/project Git repositories and push task branches over an approved office channel.
-  **Use when:** registering a Git repo, attaching it to a project's integration branch, checking office bare-cache status, or pushing a task branch.
+- `agentic-org repo register|list|attach|status|fetch|push`
+  Register and manage organization/project Git repositories, refresh an office's cache of the origin, and push task branches over an approved office channel.
+  **Use when:** registering a Git repo, attaching it to a project's integration branch, checking office bare-cache status, fetching newly pushed origin branches (`repo fetch --repo <id-or-key>`), or pushing a task branch.
 - `agentic-org worktree list|prepare`
   List or prepare isolated task Git worktrees over an approved office channel.
   **Use when:** preparing a clean per-task Git worktree before editing code or inspecting active worktrees.
@@ -334,9 +355,10 @@ Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os 
 - `agent-os task-note add|list|get|update|remove|publish` (alias: `agent-os task note ...`)
   Private task notes with optional copy-to-comment publishing.
   **Use when:** recording private working notes on a task (`add|list|get|update|remove`) without notifying the team until you choose to `publish` a copy as a public comment.
-- `agent-os repo register|list|attach|status|push`
-  Git repository registry, office bare-cache status, and task-branch pushes.
-  **Use when:** listing registered repos, verifying office bare-cache readiness (`repo status`), registering/attaching a repo, or pushing your task branch (`repo push`).
+- `agent-os repo register|list|attach|status|fetch|push`
+  Git repository registry, office bare-cache status, on-demand origin fetch, and task-branch pushes.
+  **Use when:** listing registered repos, verifying office bare-cache readiness (`repo status`), registering/attaching a repo, seeing branches pushed to the origin after your worktree was prepared (`repo fetch --repo <id-or-key>`), or pushing your task branch (`repo push`).
+  `repo fetch` asks the office to refresh its cache of the origin with the office's own credentials (none reach your session); afterwards `git branch -r` in your task worktree shows new `origin/*` branches. It writes only `origin/*` refs and tags, never your checkout or uncommitted edits, and answers `added`/`updated`/`pruned` branches, `default_branch`, `head_oid` and `fetched_at`. One fetch per repository runs at a time and a repository is fetched at most once every 10 seconds (`rate_limited` otherwise); an unreachable origin answers `unavailable`, leaving a `ready` cache as it was; a cache that was never filled is recorded `failed` until a fetch succeeds.
 - `agent-os worktree list|prepare`
   Isolated per-task Git worktrees.
   **Use when:** preparing a clean task worktree before making code changes (`worktree prepare`) or inspecting active worktrees (`worktree list`).
@@ -350,8 +372,8 @@ Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os 
   Effective organization, team, and project processes and standards.
   **Use when:** checking mandatory or overridable rules for your scope (`process list`), reading full guidance or `--why` inheritance chains (`process inspect`), or authoring/updating a process or standard.
 - `agent-os skill list|read`
-  Built-in on-demand `agent-os` product skills.
-  **Use when:** discovering (`skill list`) or loading (`skill read`) built-in operational guides on demand.
+  Built-in on-demand `agent-os` product skills: `agent-os-basics`, `tasks-create`, `tasks-execute`, `tasks-finalize`, `messaging-and-asks`, `channels`, `code-and-worktrees`, `hiring-and-directory`, `processes-and-standards`, `budgets`, `errors-and-recovery` and `batch-and-attach` (bodies in `crates/org-process/skills/`, each checked flag by flag against the live command table).
+  **Use when:** discovering (`skill list`) or loading (`skill read --name <key>`) built-in operational guides on demand.
 - `agent-os session inspect|attach`
   Self-inspection and persistent JSON-line batching over one office socket.
   **Use when:** inspecting your live session/usage (`session inspect`) or pipelining multiple commands in one shell turn without rebinding (`session attach`).
@@ -361,6 +383,21 @@ Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os 
 - `agent-os budget status`
   Own daily, monthly, and task budget status.
   **Use when:** checking remaining budget allowance before starting expensive work.
+- `agent-os login --as @<handle> [--office <office_id> | --socket <path>] [--wait <seconds>] [--workspace <dir>] [--label <text>]`
+  Sign a workspace in as an organization agent you bring yourself: generates a workspace Ed25519 key, prints `agentic-org agent approve <code>` (and the agent's page in the web app) on standard error, waits for a person to approve it (`--wait`, default 120 seconds; the code stays valid 10 minutes), then saves the binding outside Git in `<application base>/agent-os/workspaces/<sha256 of the workspace root>/` (`0700`: `binding.v1.json`, `key.ed25519.pkcs8`, `token.v1`, each `0600`, never through a symbolic link) and prints `whoami` plus the command catalogue. The workspace root is the Git root of the working folder (else the folder). A development build may move the state with `AGENT_OS_STATE_DIR` or `ORG_DEV_ACCOUNT_BASE`.
+  **Use when:** running your own agent harness (or a terminal) as an organization agent instead of an office-launched managed run.
+- `agent-os whoami`
+  The agent, office, mode (`managed` or `external`), session and expiries this shell acts as.
+  **Use when:** checking which identity a command will act as before running it.
+- `agent-os logout [--workspace <dir>]`
+  End this workspace's external session on the office (signed with the workspace key) and remove its local binding, key and token.
+  **Use when:** finishing work in an external workspace or handing the agent back to managed runs.
+- `agent-os exec --as @<handle> [--ttl <duration>] [--takeover] [--office <office_id> | --socket <path>] -- <command...>`
+  Mint an external session with your signed-in `agentic-org` (`agentic-org agent approve --code <code>`, or `AGENTIC_ORG_BIN`), run the command with `AGENT_OS_SESSION_TOKEN`, `AGENT_OS_BINDING_FILE`, `AGENT_OS_SOCKET` and `AGENT_OS_AGENT_ID` set (the token file is refreshed while it runs), and end the session when it exits. Ctrl-C goes to the command; `SIGTERM` or `SIGHUP` to `agent-os exec` is forwarded to it (killed after 10 seconds). Either way the session is ended and the token file removed, and `agent-os exec` exits with the command's code (128 + the signal when a signal ended it).
+  **Use when:** launching one external agent harness as an organization agent without a manual approval step.
+
+Binding order: `AGENT_OS_BINDING_FILE` / `AGENT_OS_SESSION_TOKEN` with `AGENT_OS_SOCKET` (or `AGENT_OS_OFFICE`) always win (managed runs and `agent-os exec`); otherwise `agent-os` walks up from the working folder to its Git root looking for a signed-in workspace. An external workspace's fast token lives in office memory only (1 hour); a stale token, or one the office no longer knows after a restart, is refreshed with one Ed25519 challenge-response. Sign-in calls (`auth.*`) have an office-wide budget per kind of call besides each connection's own; a refused call answers `rate_limited` with `retry_after_ms`, and a waiting `agent-os login` keeps polling. An external session may only use collaboration commands (messages, chat, tasks, directory, status, projects, processes, skills, own budget).
+
 - `agent-os org|team|person|agent|project|role|hr|member <verb>`
   Organization structure, directory cards, role catalog, and HR hiring lifecycle.
   **Use when:** inspecting org/team/project structure, reading role definitions, or running authorized HR hiring and agent lifecycle workflows.

@@ -38,6 +38,7 @@ mod processes;
 #[cfg(test)]
 mod provider_pool_tests;
 mod providers;
+pub(crate) mod recorded;
 mod satellite;
 #[cfg(test)]
 mod satellite_tests;

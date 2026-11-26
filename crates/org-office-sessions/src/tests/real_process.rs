@@ -497,6 +497,27 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
     );
 }
 
+/// The `_meta.antigravity.systemPrompt.append` of a captured Agy `session/new|resume` line.
+fn captured_system_prompt(open_line: &str) -> String {
+    let open: serde_json::Value = serde_json::from_str(open_line.trim()).expect("open line");
+    open["params"]["_meta"]["antigravity"]["systemPrompt"]["append"]
+        .as_str()
+        .expect("system prompt")
+        .to_owned()
+}
+
+/// The text of a captured Agy `session/prompt` line.
+fn captured_turn_text(prompt_line: &str) -> String {
+    let prompt: serde_json::Value = serde_json::from_str(prompt_line.trim()).expect("prompt line");
+    prompt["params"]["prompt"]
+        .as_array()
+        .expect("prompt blocks")
+        .iter()
+        .filter_map(|b| b["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn task_assignment_wake_injects_project_owning_chain_for_contributing_agent() {
     let _ = org_platform::process::harden_self();
@@ -507,7 +528,8 @@ fn task_assignment_wake_injects_project_owning_chain_for_contributing_agent() {
         seed_project_task_wake_fixture(&office, &owner_id, &root_team_id);
 
     let tmp = tempfile::tempdir().unwrap();
-    let capture_path = tmp.path().join("captured-task-instructions.txt");
+    let open_capture = tmp.path().join("captured-open.txt");
+    let turn_capture = tmp.path().join("captured-turn.txt");
     let fake_agy = write_fake_cli(
         tmp.path(),
         "agy",
@@ -515,14 +537,16 @@ fn task_assignment_wake_injects_project_owning_chain_for_contributing_agent() {
             r#"#!/bin/sh
 read init_line
 echo '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentInfo":{{"name":"antigravity","version":"1.5.17"}}}}}}'
-read open_line
-printf '%s\n' "$open_line" > "{capture}"
+read -r open_line
+printf '%s\n' "$open_line" > "{open}"
 echo '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"agy-task-1","models":{{"currentModelId":"gemini-2.5-pro"}},"modes":{{"currentModeId":"default"}}}}}}'
-read prompt_line
+read -r prompt_line
+printf '%s\n' "$prompt_line" > "{turn}"
 echo '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"agy-task-1","update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"Audited"}}}}}}}}'
 echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inputTokens":5,"outputTokens":2}}}}}}'
 "#,
-            capture = capture_path.display()
+            open = open_capture.display(),
+            turn = turn_capture.display()
         ),
     );
     let mut registry = RuntimeRegistry::production();
@@ -533,6 +557,7 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
     let mut cfg = SessionManagerConfig::production(tmp.path().join("office.sock"));
     cfg.runtimes = registry;
     cfg.helper_dir = Some(tmp.path().to_path_buf());
+    cfg.command_catalogue = Some(org_agent_cli::table::table);
     let manager = SessionManager::new(Arc::clone(&office), cfg);
 
     let enrolled = manager
@@ -549,7 +574,30 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
         )
         .unwrap();
 
-    // Wake contributing-team agent for the project task.
+    // 1. A plain start: the standing prompt carries the home team chain only.
+    manager
+        .start_session(
+            &owner_id,
+            &MemberSessionStartParams {
+                command_id: new_uuid_v7(),
+                employee_id: contrib_agent_id.clone(),
+                instruction: Some("Say hello.".into()),
+                workspace: None,
+            },
+        )
+        .expect("plain start");
+    let _ = wait_for_reply(&manager, &owner_id, &contrib_agent_id);
+    let _ = manager.stop_session(&contrib_agent_id, "done");
+    let plain_prompt =
+        captured_system_prompt(&fs::read_to_string(&open_capture).expect("plain open"));
+    let plain_turn = captured_turn_text(&fs::read_to_string(&turn_capture).expect("plain turn"));
+    assert!(
+        plain_turn.contains("kind=\"direct_instruction\""),
+        "{plain_turn}"
+    );
+    assert!(plain_turn.contains("[verified: owner]"), "{plain_turn}");
+
+    // 2. A task wake for the project task the agent's team only contributes to.
     let outcome = manager.on_task_assigned(
         &contrib_agent_id,
         &owner_id,
@@ -559,20 +607,70 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
         &task_title,
     );
     assert_eq!(outcome, crate::WakeOutcome::Started);
-    let _ = wait_for_reply(&manager, &owner_id, &contrib_agent_id);
+    // The first run's reply is still the last one: wait for the task turn itself.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !fs::read_to_string(&turn_capture)
+        .is_ok_and(|turn| turn.contains("kind=\\\"assignment\\\""))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the task wake turn never reached the runtime"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
     let _ = manager.stop_session(&contrib_agent_id, "done");
+    let task_prompt =
+        captured_system_prompt(&fs::read_to_string(&open_capture).expect("task open"));
+    let task_turn = captured_turn_text(&fs::read_to_string(&turn_capture).expect("task turn"));
 
-    let captured = fs::read_to_string(&capture_path).expect("captured task instructions");
+    // The task never changes the standing prompt: it is byte-identical to the plain start's,
+    // starts with the release-static built-in text, and names the home team, not its ID.
+    assert_eq!(
+        task_prompt, plain_prompt,
+        "per-wake task_ref must not change the prefix"
+    );
+    assert!(task_prompt.starts_with(&crate::instructions::builtin_instructions()));
     assert!(
-        captured.contains("OWNING_TEAM_MANDATORY_SENTINEL"),
-        "project owning team standard missing on task wake: {captured}"
+        task_prompt.contains("Home team: QA Guild."),
+        "{task_prompt}"
     );
     assert!(
-        captured.contains("PROJECT_MANDATORY_SENTINEL"),
-        "project mandatory standard missing on task wake: {captured}"
+        task_prompt.contains("CONTRIB_TEAM_MUST_NOT_APPEAR"),
+        "standing home team chain"
     );
     assert!(
-        !captured.contains("CONTRIB_TEAM_MUST_NOT_APPEAR"),
-        "contributing team standard leaked into project task wake: {captured}"
+        !task_prompt.contains("OWNING_TEAM_MANDATORY_SENTINEL"),
+        "{task_prompt}"
+    );
+    assert!(
+        !task_prompt.contains("PROJECT_MANDATORY_SENTINEL"),
+        "{task_prompt}"
+    );
+
+    // The turn carries the task's chain after its objective, and names the standing document
+    // that does not apply to this task without repeating its body.
+    let objective_at = task_turn
+        .find("UNTRUSTED_MESSAGE")
+        .expect("fenced objective");
+    let delta_at = task_turn.find("## Processes for task").expect("task delta");
+    assert!(
+        objective_at < delta_at,
+        "the delta follows the objective: {task_turn}"
+    );
+    assert!(
+        task_turn.contains("OWNING_TEAM_MANDATORY_SENTINEL"),
+        "project owning team standard missing on task wake: {task_turn}"
+    );
+    assert!(
+        task_turn.contains("PROJECT_MANDATORY_SENTINEL"),
+        "project mandatory standard missing on task wake: {task_turn}"
+    );
+    assert!(
+        task_turn.contains("do not apply to this task:\n- QA Guild Rule"),
+        "{task_turn}"
+    );
+    assert!(
+        !task_turn.contains("CONTRIB_TEAM_MUST_NOT_APPEAR"),
+        "contributing team standard leaked into project task wake: {task_turn}"
     );
 }

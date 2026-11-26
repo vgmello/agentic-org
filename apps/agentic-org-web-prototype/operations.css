@@ -24,6 +24,14 @@
     --page-header-base-image: var(--ocean-header);
   }
 
+  /* Report Night: the same corner light as Graphite under the Agentic Org mark */
+  html[data-theme="report-dark"] {
+    --sidebar-top-light: rgb(255 255 255 / .12);
+    --sidebar-light-rx: 145%;
+    --sidebar-light-y: -24px;
+    --page-header-light: rgb(255 255 255 / .05);
+  }
+
   html[data-theme="report"] {
     --sidebar-top-light: rgb(255 255 255 / .96);
     --page-header-light: rgb(136 159 188 / .065);
@@ -52,9 +60,12 @@
   }
 
   html[data-interior-page]:not([data-theme="cozy"]) #main :is(.queue-header, .section-header, :is(.has-page-toolbar, .has-page-nav):not(.queue-headline, :where(.section-header) > *)) {
+    /* Same top-left light as Home, so every page header shares it */
     background-image:
-      linear-gradient(to right, var(--page-header-light), transparent 28rem),
+      radial-gradient(ellipse 46rem 16rem at 0 0, var(--page-header-light), var(--page-header-light) 35%, transparent 100%),
+      radial-gradient(ellipse 30rem 10rem at 0 0, var(--page-header-light), transparent 100%),
       var(--page-header-base-image, none);
+    background-repeat: no-repeat;
   }
 }
 
@@ -2173,7 +2184,8 @@ html[data-theme="report"] .tess-return-btn.is-ready:hover { background: var(--to
 }
 
 /* Work board */
-.work-header + #work-results:has(> .board) {
+/* Global and project Work share one height-bounded board: it scrolls on both axes under sticky lane headers */
+#work-results:has(> .board) {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -2200,7 +2212,7 @@ html[data-theme="report"] .tess-return-btn.is-ready:hover { background: var(--to
 /* Column header: status icon + name + count beside it; stays visible while the page scrolls */
 .bcol > .bcol-h {
   position: sticky; top: 0; z-index: 2;
-  display: flex; align-items: center; gap: 8px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
   padding: 8px 4px 10px;
   border-block-end: 1px solid var(--line2);
   background: var(--board-head-bg, var(--graphite-canvas, var(--gray-950)));
@@ -2209,8 +2221,9 @@ html[data-theme="report"] .tess-return-btn.is-ready:hover { background: var(--to
 }
 .bcol-h .cnt { color: var(--gray-400); font-weight: 500; font-variant-numeric: tabular-nums; }
 .bcol-ic { display: inline-flex; }
+.bcol-title { display: flex; align-items: center; gap: 8px; min-width: 0; font: inherit; }
 .bcol-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.bcol-empty { padding: 14px 4px; font-size: var(--fs-sm); color: var(--gray-500); }
+.bcol-empty { padding: 14px 4px; font-size: var(--fs-sm); color: var(--gray-300); }
 .bcol-more { align-self: flex-start; padding: 4px; font-size: var(--fs-sm); color: var(--gray-400); }
 .bcol-more:hover { color: var(--white); }
 .bcard {
@@ -2234,24 +2247,19 @@ html[data-theme="report"] .tess-return-btn.is-ready:hover { background: var(--to
 .board-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: var(--fs-sm); color: var(--gray-300); }
 .btag { display: inline-flex; align-items: center; gap: 4px; color: var(--gray-400); }
 .board-status { display: flex; min-width: 0; }
-.board-status .board-need { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-status .board-need { max-width: 100%; white-space: normal; text-align: left; line-height: 1.3; padding-block: 3px; }
+.board-need .ic:last-child { opacity: .7; }
 .btype { font-weight: 600; color: var(--gray-300); }
 .bpri { display: inline-flex; align-items: center; gap: 4px; color: var(--gray-300); white-space: nowrap; }
 .bpri .work-priority-mark { color: var(--gray-300); }
 .bpri.is-urgent { color: var(--white); font-weight: 600; }
 .bpri.is-critical { color: var(--tone-bad-ink); font-weight: 600; }
 .board-reason { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--gray-400); }
-.board-kind { flex: none; font-size: var(--fs-xs); color: var(--gray-500); }
+.board-kind { flex: none; font-size: var(--fs-xs); color: var(--gray-400); }
 .board-need { position: relative; z-index: 1; flex: none; }
-.board-need:hover { filter: brightness(1.12); }
 .board-assignee { min-width: 0; }
 .board-assignee .board-owner-label { overflow: visible; min-width: 0; }
 .board-owner-label a { display: inline-block; max-width: 100%; padding-block: 4px; margin-block: -4px; vertical-align: bottom; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 639px) {
-  .board { scroll-snap-type: x mandatory; }
-  .board-columns { --board-column-width: calc(100vw - 2 * var(--gutter) - 32px); }
-  .bcol { scroll-snap-align: start; }
-}
 .bcard > .t {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -2505,6 +2513,7 @@ html[data-theme^="report"] .triage-queue {
   line-height: 1.6;
 }
 .triage-document .triage-back { display: none; }
+.triage-document .triage-board-return { align-self: start; }
 .triage-intro { display: grid; gap: 8px; }
 .triage-from {
   display: flex;
@@ -2915,22 +2924,6 @@ html[data-theme^="graphite"]:has(.triage-workspace) {
 .thread-title h2 { font-size: var(--section-title-size); }
 .thread-title .muted { font-size: var(--fs-sm); }
 .chat-context .alink { color: var(--gray-300); }
-.chat-jump {
-  justify-content: flex-start;
-  width: 100%;
-  margin-block-end: 8px;
-  color: var(--white);
-}
-.chat-jump kbd { margin-inline-start: auto; color: var(--gray-400); }
-.chat-directory summary {
-  padding: 0 8px;
-  color: var(--gray-300);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  cursor: pointer;
-}
-.chat-directory h2:not(:first-child) { margin-block-start: 12px; }
-.chat-directory a:focus-visible { outline-offset: -2px; }
 .chat .msg > .av { align-self: start; }
 .chat .compose .field {
   flex: 1;
@@ -2939,27 +2932,6 @@ html[data-theme^="graphite"]:has(.triage-workspace) {
   max-height: min(12rem, 35dvh);
   resize: none;
   field-sizing: content;
-}
-
-@media (min-width: 960px) {
-  .chat-directory summary { display: none; }
-}
-@media (max-width: 959px) {
-  .chat:not(.withthread) { min-height: 100dvh; grid-template-rows: auto auto minmax(min-content, 1fr); }
-  .chat .chlist {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
-    gap: 8px;
-    padding: 6px var(--gutter);
-    border-block-end: 1px solid var(--line);
-  }
-  .chat-directory { grid-column: 2; }
-  .chat-directory summary { line-height: var(--control-height); }
-  .chat .chlist:has(.chat-directory[open]) { grid-template-columns: minmax(0, 1fr); }
-  .chat-directory[open] { grid-column: 1; }
-  .chat-jump { margin-block-end: 0; }
-  .chat-jump kbd { margin-inline-start: 2px; }
 }
 
 /* Activity command center */
@@ -3166,6 +3138,10 @@ html[data-assembly-dividers] .assembly-table tbody tr:not(.assembly-milestone) +
   background: var(--tone-accent-soft);
   border-block: 1px solid var(--line2);
 }
+/* Classic and Report Night: the purple accent tint fought the table; milestone rows stay neutral */
+html:is([data-theme="classic"], [data-theme="report-dark"]) .assembly-table .assembly-milestone th { color: var(--white); background: var(--hover); }
+html:is([data-theme="classic"], [data-theme="report-dark"]) .assembly-milestone .alink { color: inherit; text-decoration: none; }
+html:is([data-theme="classic"], [data-theme="report-dark"]) .assembly-milestone .alink:hover { text-decoration: underline; }
 .assembly-milestone th > div { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .assembly-progress { display: grid; justify-items: start; gap: 2px; color: var(--gray-400); font-size: var(--fs-xs); white-space: nowrap; }
 .assembly-milestone .assembly-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-weight: 400; white-space: normal; }
@@ -3447,13 +3423,188 @@ html[data-theme="report"] .assembly-release {
   .assembly-release-gates { margin-inline-start: 0; }
 }
 
-/* Phone: toolbar menu buttons collapse to icons (names stay in aria-label) so cards start higher */
+/* Work toolbar rows follow the space the content has. DOM order is the visual and tab order at every width:
+   views, layout, search/filter/display, then Calendar and New task. Labels give way before items wrap. */
+@container queue-header (max-width: 61rem) {
+  .work-toolbar .work-cal-btn > span { display: none; }
+}
 @media (max-width: 639px) {
-  .work-toolbar .menu-textbtn > span:not(.menu-textbtn-count) { display: none; }
+  /* Phones: one control row under the views; names stay in each control's accessible name */
+  .work-toolbar { column-gap: 8px; }
+  .work-toolbar .work-cal-btn > span { display: none; }
   .work-toolbar .menu-textbtn { padding-inline: 8px; }
-  .work-toolbar #work-new-task { padding-inline: 10px; }
+  .work-toolbar .work-layout-toggle .queue-tab { padding-inline: 10px; }
+  .work-toolbar .work-layout-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+@container queue-header (max-width: 26rem) {
+  .work-toolbar .work-new-word { display: none; }
+}
+@container work-subbar (max-width: 26rem) {
+  .work-toolbar .work-new-word { display: none; }
+}
+/* Column jump: only when lanes overflow the board. Named chips when they all fit on one row, a picker otherwise. */
+.board-lanes { display: none; }
+.board-lanes[data-overflow] { display: flex; flex: none; align-items: center; gap: 10px; min-width: 0; padding: 8px var(--gutter) 0; }
+.board-lanes-label { flex: none; font-size: var(--fs-xs); font-weight: 600; color: var(--gray-300); }
+.board-lane-chips { display: flex; flex: 1 1 auto; gap: 6px; min-width: 0; overflow: hidden; }
+.board-lane-chips button { flex: none; min-height: 32px; padding: 0 12px; border-radius: 999px; font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; color: var(--gray-300); box-shadow: inset 0 0 0 1px var(--line2); }
+.board-lane-chips button:hover { color: var(--white); background: var(--hover); }
+.board-lane-chips button[data-in-view] { color: var(--white); box-shadow: inset 0 0 0 1px var(--gray-500); }
+.board-lane-chips .cnt { color: inherit; font-weight: 500; }
+.board-lane-pick { display: none; position: relative; flex: 1 1 auto; min-width: 0; max-width: 22rem; }
+.board-lanes[data-fit="picker"] .board-lane-chips { display: none; }
+.board-lanes[data-fit="picker"] .board-lane-pick { display: block; }
+.board-lane-pick select.field { appearance: none; width: 100%; min-height: 40px; padding-inline-end: 36px; font-size: var(--fs-sm); font-weight: 600; text-overflow: ellipsis; }
+.board-lane-pick > .ic { position: absolute; inset-inline-end: 12px; top: 50%; translate: 0 -50%; pointer-events: none; color: var(--gray-400); }
+@media (max-width: 639px) {
+  .board-lane-chips button, .board-lane-pick select.field { min-height: 44px; }
 }
 .menu-textbtn { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 600; color: var(--gray-300); }
 .menu-textbtn:hover, .menu-textbtn[aria-expanded="true"] { color: var(--white); }
 .menu-textbtn[data-active] { color: var(--white); }
 .menu-textbtn-count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--tone-accent-soft); color: var(--tone-accent-ink); font-size: var(--fs-xs); display: inline-grid; place-items: center; }
+
+.bstatus { padding: 0 6px; border-radius: 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--gray-300); box-shadow: inset 0 0 0 1px var(--line2); white-space: nowrap; }
+.board-card-meta .board-project a { color: inherit; position: relative; z-index: 1; }
+.board-card-meta .board-project a:hover { color: var(--white); text-decoration: underline; }
+.board-owner-label a { text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 3px; }
+.board-owner-label a:hover { text-decoration-color: currentColor; }
+
+/* Round 3 polish */
+.bcard > .t { -webkit-line-clamp: 3; }
+.board-card-meta { flex-wrap: wrap; overflow: visible; row-gap: 0; }
+.btag > .btag-word { margin-inline-start: 2px; }
+.board-lane-chips button[aria-current="true"] { color: var(--white); background: var(--tone-accent-soft); box-shadow: inset 0 0 0 1px var(--tone-accent-ring); }
+
+/* Board menus (several requests, Done history) open in the top layer, placed and clamped by popover-menu.js,
+   so the board's scroller and the cards' stacking contexts never clip them */
+.menu.board-pop-menu { position: fixed; inset: auto; margin: 0; border: 0; overflow-y: auto; color: inherit; }
+/* Several requests on one card: the badge opens a menu that lists each of them, soonest expiry first */
+.board-need-wrap { position: relative; z-index: 1; display: inline-block; max-width: 100%; }
+.board-need-wrap > .board-need { cursor: pointer; }
+.board-need-menu { min-width: 0; width: max-content; max-width: min(22rem, calc(100vw - 16px)); }
+.board-need-menu a { display: grid; gap: 2px; padding: 8px 12px; color: var(--white); text-decoration: none; white-space: normal; }
+.board-need-menu a:hover, .board-need-menu a:focus-visible { background: var(--hover); outline-offset: -2px; }
+.board-need-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: var(--fs-xs); font-weight: 600; color: var(--tone-warn-ink); }
+.board-need-exp { display: inline-flex; align-items: center; gap: 3px; font-weight: 500; color: var(--gray-300); }
+.board-need-what { font-size: var(--fs-sm); line-height: 1.35; }
+.board-status { flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.board-need-due { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--tone-warn-ink); }
+/* Empty lanes and zero results say why and offer the way back */
+.bcol-empty { display: grid; justify-items: start; gap: 8px; }
+.bcol-empty > p, .work-empty > p { margin: 0; }
+.work-empty { display: grid; justify-items: center; gap: 12px; }
+
+/* Focus: the card's main link rings the whole card; secondary links get their own local ring */
+.board .bcard > .work-item-link:focus-visible::after { outline: none; }
+.bcard :is(.board-project a, .board-owner-label a, a.board-need, button.board-need):focus-visible {
+  outline: 2px solid var(--tone-accent-ink); outline-offset: 1px; border-radius: 3px;
+  background: var(--tone-accent-soft); text-decoration-color: currentColor;
+}
+.bcard :is(a.board-need, button.board-need):focus-visible { border-radius: var(--radius-md); }
+
+/* Narrow lanes (Status columns, 1024px): supporting facts stay on single lines instead of wrapping the card taller */
+.bcol { container: board-lane / inline-size; }
+@container board-lane (max-width: 15.5rem) {
+  .bcard { padding: 10px 12px; gap: 5px; }
+}
+@media (max-width: 639px) {
+  .board-owner-label a { padding-block: 10px; margin-block: -10px; }
+}
+/* Touch and phones: request and Done history controls keep their look and get a 44px hit area */
+@media (max-width: 639px), (pointer: coarse) {
+  .board-status .board-need { min-height: 36px; padding-block: 8px; }
+  .board-status .board-need::after { content: ""; position: absolute; inset: -4px 0; }
+  .board-pop-menu :is(a, button) { min-height: 44px; }
+}
+
+/* ── Work board, review round 6 ───────────────────────────────────────────
+   Selectors are scoped to the board and toolbar (not bare utility classes) so they win whatever order the
+   stylesheets are bundled in. */
+
+/* Display ▾ with the column mode as secondary text; Filter keeps its label on phones */
+.work-toolbar .menu-textbtn > .menu-textbtn-sub { font-weight: 500; color: var(--gray-400); }
+.work-toolbar .menu-textbtn > .menu-textbtn-chev { margin-inline-start: -2px; color: var(--gray-400); }
+@media (max-width: 420px) {
+  .work-toolbar .menu-textbtn > .menu-textbtn-sub { display: none; }
+}
+/* Calendar overflows into Display when the toolbar would otherwise need a third row */
+.work-toolbar .queue-controls .menu .work-cal-overflow { display: none; }
+@container queue-header (max-width: 23.5rem) {
+  .work-toolbar .work-tb-end > .work-cal-btn { display: none; }
+  .work-toolbar .queue-controls .menu hr.work-cal-overflow { display: block; }
+  .work-toolbar .queue-controls .menu a.work-cal-overflow {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px; min-height: 36px;
+    border-radius: max(4px, calc(var(--radius-md) - 2px)); color: var(--white); font-size: var(--fs-sm); text-decoration: none;
+  }
+  .work-toolbar .queue-controls .menu a.work-cal-overflow:is(:hover, :focus-visible) { background: var(--hover); outline-offset: -2px; }
+  .work-toolbar .work-layout-toggle .queue-tab { padding-inline: 8px; }
+  .work-toolbar { column-gap: 6px; }
+  /* 320px: views + layout on one row, search/Filter/Display/New on the next; text triggers drop their icons */
+  .work-toolbar .primary-tab-row > .queue-tabs { gap: 2px; }
+  .work-toolbar .primary-tab-row .queue-tab { padding-inline: 5px; }
+  .work-toolbar .queue-controls .menu-textbtn > .ic:first-child { display: none; }
+}
+/* "New task" says "New" before the toolbar would wrap */
+@container queue-header (max-width: 27rem) {
+  .work-toolbar .work-new-word { display: none; }
+}
+.work-empty .work-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+
+/* Request badge hover: no brightness filter. The card's own hover fill sits under the badge's translucent tint, so
+   the text moves to the theme's strongest ink (dark on light themes, light on dark) and a ring in the badge's ink
+   marks the hover; text contrast stays at or above 4.5:1 in every theme */
+.board .bcard .board-need:hover { color: var(--white); box-shadow: inset 0 0 0 1.5px var(--tone-warn-ink); text-decoration: underline; text-underline-offset: 2px; }
+
+/* Phones: the selected lane takes the full content width with no peek of the next one; swipe snaps lane to lane
+   and the picker names them */
+.board { container: work-board / inline-size; }
+@media (max-width: 639px) {
+  .board { scroll-snap-type: x mandatory; }
+  .board .board-columns { --board-column-width: calc(100cqi - 2 * var(--gutter)); --board-column-gap: calc(var(--gutter) * 2); }
+  .board .bcol { scroll-snap-align: start; scroll-snap-stop: always; }
+  .board-lanes[data-overflow] .board-lane-chips { display: none; }
+  .board-lanes[data-overflow] .board-lane-pick { display: block; max-width: none; }
+}
+
+/* A committed column jump lands on the lane heading */
+.board .bcol-title:focus { outline: none; }
+.board .bcol-title:focus-visible { outline: 2px solid var(--tone-accent-ink); outline-offset: 2px; border-radius: 4px; }
+
+/* Card facts: reference row (priority bars + reference + project), then small facts */
+.board .bcard .board-facts { display: grid; gap: 6px; min-width: 0; }
+.board .bcard .board-ref { display: inline-flex; flex: none; align-items: center; gap: 6px; }
+.board .bcard .board-ref > .work-priority-mark { flex: none; }
+.board .bcard .work-priority-mark.is-inferred { opacity: .55; }
+.board .bcard .bstatus { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px 0 3px; }
+.board .bcard .bstatus > .work-status { transform: scale(.85); }
+.board .bcard .board-team { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); color: var(--gray-400); }
+.board .bcard .board-footer-end { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 6px; min-width: 0; }
+/* Narrow lanes: the small facts share the reference row; the project wraps to its own line only when needed */
+@container board-lane (max-width: 15.5rem) {
+  .board .bcard .board-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; }
+  .board .bcard .board-facts > .board-card-meta { display: contents; }
+  .board .bcard .board-facts > .board-card-meta > .sep { display: none; }
+  .board .bcard .board-facts > .board-tags { display: contents; }
+  .board .bcard .board-card-meta > .board-project { order: 1; flex: 0 1 auto; min-width: 0; max-width: 100%; }
+  .board .bcard .btag-word { display: none; }
+  .board .bcard .board-team { display: none; }
+}
+
+/* Secondary card links: a clear solid underline and their own focus ring */
+.board .bcard .board-card-meta .board-project a,
+.board .bcard .board-owner-label a,
+.board .bcard .board-subhits a {
+  text-decoration: underline; text-decoration-thickness: 1px; text-decoration-color: var(--gray-500); text-underline-offset: 3px;
+}
+.board .bcard :is(.board-project a, .board-owner-label a, .board-subhits a):hover { color: var(--white); text-decoration-color: currentColor; }
+.board .bcard .board-subhits a:focus-visible {
+  outline: 2px solid var(--tone-accent-ink); outline-offset: 1px; border-radius: 3px; background: var(--tone-accent-soft);
+}
+
+/* Search that matches a subtask names it on the parent card */
+.board .bcard .board-subhits { display: grid; gap: 2px; margin: 0; padding: 4px 6px; list-style: none; border-radius: var(--radius-md); background: var(--hover); font-size: var(--fs-sm); color: var(--gray-300); }
+.board .bcard .board-subhits li { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.board .bcard .board-subhits .board-subhit-word { flex: none; font-size: var(--fs-xs); font-weight: 600; color: var(--gray-400); }
+.board .bcard .board-subhits a { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--white); }
+

@@ -42,6 +42,9 @@ pub struct Binding {
     pub runtime_dir: Option<PathBuf>,
     pub session_token: Option<String>,
     pub agent_id: Option<String>,
+    /// The state folder of a signed-in external workspace (`TASK-137`): its token is refreshed
+    /// by challenge-response when stale or refused.
+    pub external_state: Option<PathBuf>,
 }
 
 impl fmt::Debug for Binding {
@@ -55,12 +58,15 @@ impl fmt::Debug for Binding {
                 &self.session_token.as_ref().map(|_| "<redacted>"),
             )
             .field("agent_id", &self.agent_id)
+            .field("external_state", &self.external_state)
             .finish()
     }
 }
 
 impl Binding {
-    /// Reads the process binding from `AGENT_OS_*` environment variables.
+    /// Reads the process binding from `AGENT_OS_*` environment variables. The token in
+    /// `AGENT_OS_BINDING_FILE` wins over `AGENT_OS_SESSION_TOKEN`: a managed run writes the same
+    /// token to both, and `agent-os exec` keeps the file fresh while its child runs.
     pub fn from_env() -> Self {
         let non_empty = |name: &str| {
             env::var(name)
@@ -72,14 +78,16 @@ impl Binding {
             .or_else(|| non_empty(OFFICE_RUNTIME_DIR_ENV))
             .map(PathBuf::from)
             .or_else(|| non_empty(OFFICE_HOME_ENV).map(|h| PathBuf::from(h).join("run")));
-        let session_token = non_empty(SESSION_TOKEN_ENV)
-            .or_else(|| non_empty(BINDING_FILE_ENV).and_then(|p| read_binding_file_token(&p)));
+        let session_token = non_empty(BINDING_FILE_ENV)
+            .and_then(|p| read_binding_file_token(&p))
+            .or_else(|| non_empty(SESSION_TOKEN_ENV));
         Self {
             socket: non_empty(SOCKET_ENV).map(PathBuf::from),
             office_id: non_empty(OFFICE_ENV),
             runtime_dir,
             session_token,
             agent_id: non_empty(AGENT_ID_ENV),
+            external_state: None,
         }
     }
 }
@@ -211,7 +219,11 @@ impl BoundOffice {
 
     fn client(&mut self) -> Result<&mut Client, Refusal> {
         if self.client.is_none() {
-            let client = self.connect_client()?;
+            let client = if self.binding.external_state.is_some() {
+                crate::external_auth::connect_workspace(&mut self.binding)?
+            } else {
+                self.connect_client()?
+            };
             self.client = Some(client);
         }
         Ok(self.client.as_mut().expect("client just connected"))
@@ -266,7 +278,7 @@ fn map_connect_error(error: ClientError, office_id: Option<&str>) -> Refusal {
     }
 }
 
-fn map_client_error(error: ClientError) -> Refusal {
+pub(crate) fn map_client_error(error: ClientError) -> Refusal {
     match error {
         ClientError::Api(api) => {
             let hint = if api.code == ErrorCode::NotAuthorized
@@ -313,6 +325,7 @@ mod tests {
             runtime_dir: Some(PathBuf::from("/tmp")),
             session_token: Some("super-secret-session-token".into()),
             agent_id: Some("0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1".into()),
+            external_state: None,
         };
         let rendered = format!("{binding:?}");
         assert!(
@@ -330,6 +343,7 @@ mod tests {
             runtime_dir: Some(PathBuf::from("/tmp")),
             session_token: Some("token".into()),
             agent_id: None,
+            external_state: None,
         });
         let err = office.connect_client().err().expect("refused");
         assert_eq!(err.code, ErrorCode::InvalidRequest);
@@ -343,6 +357,7 @@ mod tests {
             runtime_dir: Some(dir.path().to_path_buf()),
             session_token: Some("token".into()),
             agent_id: None,
+            external_state: None,
         });
         let err = missing.connect_client().err().expect("refused");
         assert_eq!(err.code, ErrorCode::NotFound);
@@ -433,6 +448,7 @@ mod tests {
             runtime_dir: None,
             session_token: Some("tok-123".into()),
             agent_id: Some("0193a5c0-0000-7000-8000-000000000003".into()),
+            external_state: None,
         });
         office.ensure_connected().unwrap();
         assert_eq!(office.waiting_messages, None);

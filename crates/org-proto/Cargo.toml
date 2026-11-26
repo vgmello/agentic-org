@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+# Fast tokens on the wire types are wiped from memory when dropped (`TASK-137`).
+zeroize = "=1.9.1"
 
 [lints]
 workspace = true

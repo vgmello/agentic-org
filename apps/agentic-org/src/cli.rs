@@ -6,7 +6,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use org_cli_shell::context::{ColorMode, Modes};
 
 use crate::args::PassArgs;
-use crate::features::{admin, completion, context, office, org, project, provider};
+use crate::features::{admin, backup, completion, context, office, org, project, provider};
 use crate::features::{release, service, sign_in, status};
 
 const ABOUT: &str = "Agentic Org\n\
@@ -18,6 +18,7 @@ const AFTER_HELP: &str = "Examples:
   agentic-org org create \"Acme\" --slug acme --repo https://git.example.com/acme/org.git
   agentic-org org list --json
   agentic-org office remove <office-id> --org <org-id> --yes
+  agentic-org backup <org-id> --out acme.backup --encrypt
   agentic-org task list --format compact
   agentic-org completion zsh > ~/.zfunc/_agentic-org
 
@@ -120,6 +121,14 @@ pub(crate) enum TopCommand {
     /// Use when: installing or upgrading prebuilt signed binaries without compiling from source.
     #[command(verbatim_doc_comment)]
     Release(release::ReleaseArgs),
+    /// Back up an organization's durable data into one verifiable archive
+    /// Use when: taking a consistent local backup of a stopped office's organization data, optionally passphrase-encrypted.
+    #[command(verbatim_doc_comment)]
+    Backup(backup::BackupArgs),
+    /// Verify a backup archive, or restore it over the organization's stopped office
+    /// Use when: proving a backup restores (`--verify`) or putting an organization's durable data back after a loss.
+    #[command(verbatim_doc_comment)]
+    Restore(backup::RestoreArgs),
     /// Start, stop or inspect the instance's registered service
     /// Use when: managing the OS background service created by `agentic-org setup`.
     #[command(verbatim_doc_comment)]
@@ -148,8 +157,8 @@ pub(crate) enum TopCommand {
     /// Use when: hiring new agents onto HQ or a remote satellite office from the terminal.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Hr(PassArgs),
-    /// Inspect or manage hired agents (agent inspect|update|move|pause|resume|offboard|...)
-    /// Use when: checking agent status, execution settings, or lifecycle state.
+    /// Inspect or manage hired agents (agent inspect|update|pause|offboard|approve|revoke|...)
+    /// Use when: checking agent status, execution settings, lifecycle state, or external sign-ins.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Agent(PassArgs),
     /// Manage organization teams (team list|inspect|create|update)
@@ -255,6 +264,7 @@ impl TopCommand {
             Self::Context(args) => args.yes(),
             Self::Admin(args) => args.yes(),
             Self::Service(args) => args.yes(),
+            Self::Restore(args) => args.yes(),
             _ => false,
         }
     }
@@ -269,6 +279,8 @@ impl TopCommand {
             Self::Office(args) => args.reads_a_secret(),
             Self::Project(args) => args.reads_a_secret(),
             Self::Provider(args) => args.reads_a_secret(),
+            Self::Backup(args) => args.reads_a_secret(),
+            Self::Restore(args) => args.reads_a_secret(),
             _ => false,
         }
     }

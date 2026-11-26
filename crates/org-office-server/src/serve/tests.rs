@@ -268,7 +268,7 @@ fn an_unbind_preserves_a_racing_watcher_revocation() {
     };
     // The watcher wins after a call's liveness check but before a lookup-failure unbind.
     control.revoked.store(true, Ordering::SeqCst);
-    registration.sync(None);
+    registration.sync(None, None);
     assert!(bound.lock().unwrap().is_empty());
     assert!(control.revoked.load(Ordering::SeqCst));
 }
@@ -877,6 +877,7 @@ pub(super) fn ports(snapshot: SnapshotFn) -> OfficePorts {
         sessions: None,
         run_binding_verify: None,
         run_binding_active: None,
+        external_auth: None,
         record_agent_command: None,
         waiting_messages_counter: None,
         on_agent_stop: None,
@@ -1339,6 +1340,7 @@ fn serving(
             sessions: None,
             run_binding_verify: None,
             run_binding_active: None,
+            external_auth: None,
             record_agent_command: None,
             waiting_messages_counter: None,
             on_agent_stop: None,
@@ -1822,6 +1824,7 @@ fn following_with(
                 sessions: None,
                 run_binding_verify: None,
                 run_binding_active: None,
+                external_auth: None,
                 record_agent_command: None,
                 waiting_messages_counter: None,
                 on_agent_stop: None,
@@ -2326,6 +2329,7 @@ fn asking(
             sessions: None,
             run_binding_verify: None,
             run_binding_active: None,
+            external_auth: None,
             record_agent_command: None,
             waiting_messages_counter: None,
             on_agent_stop: None,
