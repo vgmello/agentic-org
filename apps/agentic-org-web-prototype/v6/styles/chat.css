@@ -23,7 +23,7 @@
 .chat .chat-pair { display: inline-flex; flex: none; }
 .chat .chat-pair .av + .av { margin-inline-start: -6px; box-shadow: 0 0 0 2px var(--gray-900); }
 .chat .chat-actions { flex: none; flex-wrap: nowrap; gap: 4px; }
-.chat-list-btn { display: none; flex: none; }
+#main .chat > .chhead > .chat-list-btn { display: none; flex: none; }
 .chat-list-btn .chat-attn { margin-inline-start: 2px; }
 .chat-scrim { display: none; }
 .chlist-head { display: none; }
@@ -175,7 +175,7 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
 @media (max-width: 959px) {
   .chat, .chat.withthread { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   /* The list button exists only while the list is hidden; the header stays one row. */
-  .chat-list-btn { display: inline-flex; }
+  #main .chat > .chhead > .chat-list-btn { display: inline-flex; }
   #main .chat > .chhead { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "list title actions"; }
   .chat .chlist { display: none; }
   .chat.list-open .chlist-head { display: flex; align-items: center; justify-content: space-between; padding-inline-start: 8px; }
