@@ -13,7 +13,7 @@ use org_proto::external_auth::ExternalHistoryEntry;
 use crate::external::ExternalLeaseRecord;
 use crate::redact::redact_json;
 
-use super::{ensure_owner_dirs_synced, write_atomic_json_durable, SessionStore};
+use super::{ensure_owner_dirs, ensure_owner_dirs_synced, write_atomic_json_durable, SessionStore};
 
 /// Largest lease file read (it holds a handful of short fields).
 const MAX_LEASE_BYTES: u64 = 16 * 1024;
@@ -70,7 +70,9 @@ impl SessionStore {
         write_atomic_json_durable(&self.external_lease_path(&record.employee_id)?, record)
     }
 
-    /// Appends one redacted JSON line to `external-history.jsonl` (0600, never through a link).
+    /// Appends one redacted JSON line to `external-history.jsonl` (0600, never through a link):
+    /// a lifecycle or security event, never one per command. Like `history.jsonl`, an audit
+    /// append is not synced; the lease file it describes is ([`Self::write_external_lease`]).
     pub fn append_external_history(
         &self,
         employee_id: &str,
@@ -78,7 +80,7 @@ impl SessionStore {
         active_secrets: &[&str],
     ) -> io::Result<()> {
         let dir = self.employee_dir(employee_id)?;
-        ensure_owner_dirs_synced(&self.sessions_root, &dir)?;
+        ensure_owner_dirs(&dir)?;
         let redacted =
             serde_json::to_string(&redact_json(entry, active_secrets)).map_err(io::Error::other)?;
         let mut file = OpenOptions::new()

@@ -16,10 +16,11 @@
 //! - **Fast tokens** live in [`crate::RunBindingRegistry`] (RAM-only) and exist only while the
 //!   lease is active.
 //!
-//! Lock order: `lease_mutation` (outermost, approvals/revocations only), then an employee lock,
-//! then `registry`, then `leases` (a leaf, never held across I/O or another lock).
+//! Lock order: `lease_mutation` (outermost: approvals, revocations, logouts and the final
+//! check-and-issue of an exchange), then an employee lock, then `registry` and `bindings`, then
+//! `leases` (a leaf, never held across I/O or another lock).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -72,8 +73,12 @@ pub(crate) struct ExternalAuthState {
     /// Lease cache: `Some(None)` means "read from disk: no lease". Filled lazily, updated by every
     /// approval and revocation before it returns.
     leases: Mutex<HashMap<String, Option<ExternalLeaseRecord>>>,
-    /// Serializes approvals, revocations and logouts (rare operator actions).
+    /// Serializes approvals, revocations, logouts and the final check-and-issue of a token
+    /// exchange (rare actions). Taken before `registry` and `leases`.
     lease_mutation: Mutex<()>,
+    /// Agents whose lease RAM holds revoked but whose file still says active (a failed durable
+    /// write): the next revocation call or approval writes it.
+    unpersisted: Mutex<HashSet<String>>,
 }
 
 impl ExternalAuthState {
@@ -118,6 +123,30 @@ impl ExternalAuthState {
             .insert(employee_id.to_owned(), lease)
     }
 
+    /// Records that `employee_id`'s revocation is in RAM but not yet on disk.
+    fn mark_unpersisted(&self, employee_id: &str) {
+        self.unpersisted
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(employee_id.to_owned());
+    }
+
+    /// Whether `employee_id`'s lease file still owes a revocation RAM already made.
+    fn owes_disk(&self, employee_id: &str) -> bool {
+        self.unpersisted
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(employee_id)
+    }
+
+    /// `employee_id`'s lease file now says what RAM says.
+    fn settle_persisted(&self, employee_id: &str) {
+        self.unpersisted
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(employee_id);
+    }
+
     /// Restores a cache entry after a failed durable write.
     fn restore(&self, employee_id: &str, previous: Option<Option<ExternalLeaseRecord>>) {
         let mut leases = self.leases.lock().unwrap_or_else(|p| p.into_inner());
@@ -129,6 +158,23 @@ impl ExternalAuthState {
                 leases.remove(employee_id);
             }
         }
+    }
+}
+
+#[cfg(test)]
+impl ExternalAuthState {
+    /// Holds `lease_mutation` as an approval does, for tests of what must wait for it.
+    pub(crate) fn lease_mutation_for_test(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.lease_mutation
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Publishes `lease` in the cache as an approval or revocation does; the caller holds
+    /// [`Self::lease_mutation_for_test`].
+    pub(crate) fn publish_for_test(&self, lease: ExternalLeaseRecord) {
+        let employee_id = lease.employee_id.clone();
+        self.replace(&employee_id, Some(lease));
     }
 }
 

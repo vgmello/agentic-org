@@ -14,18 +14,16 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use ring::rand::{SecureRandom, SystemRandom};
+use zeroize::Zeroizing;
 
 mod external;
 
+/// Constant-time equality of two secrets (tokens, code halves) through `subtle`, the audited
+/// constant-time primitive (`ring`'s slice comparison is deprecated and makes no side-channel
+/// promise). Unequal lengths are unequal at once: a fixed-size token's length is not secret.
 pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (&x, &y) in a.iter().zip(b.iter()) {
-        diff |= std::hint::black_box(x ^ y);
-    }
-    std::hint::black_box(diff) == 0
+    use subtle::ConstantTimeEq as _;
+    bool::from(a.ct_eq(b))
 }
 
 /// One accepted `agent-os` command recorded for a live run (`ADR-0030` decision 8).
@@ -49,7 +47,8 @@ pub enum BindingMode {
 /// (managed) or from an approved external workspace (external).
 #[derive(Clone)]
 pub struct ActiveRunBinding {
-    token: String,
+    /// Wiped from memory when the binding (and every clone of it) is dropped.
+    token: Zeroizing<String>,
     pub employee_id: String,
     pub run_id: String,
     pub session_id: String,
@@ -72,7 +71,7 @@ impl fmt::Debug for ActiveRunBinding {
 
 impl ActiveRunBinding {
     pub fn expose_token(&self) -> &str {
-        &self.token
+        self.token.as_str()
     }
 
     /// The managed run's root process, `None` for an external binding.
@@ -114,15 +113,17 @@ impl RunBindingRegistry {
         Self::default()
     }
 
-    /// Generates a cryptographically random 32-byte hex session token.
-    pub fn mint_token() -> Result<String, String> {
-        let mut bytes = [0u8; 32];
+    /// Generates a cryptographically random 32-byte hex session token, wiped when dropped.
+    pub fn mint_token() -> Result<Zeroizing<String>, String> {
+        let mut bytes = Zeroizing::new([0u8; 32]);
         SystemRandom::new()
-            .fill(&mut bytes)
+            .fill(bytes.as_mut())
             .map_err(|_| "system entropy unavailable".to_owned())?;
-        let mut out = String::with_capacity(64);
-        for byte in bytes {
-            out.push_str(&format!("{byte:02x}"));
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut out = Zeroizing::new(String::with_capacity(64));
+        for byte in bytes.iter() {
+            out.push(char::from(HEX[usize::from(byte >> 4)]));
+            out.push(char::from(HEX[usize::from(byte & 0x0f)]));
         }
         Ok(out)
     }
@@ -264,10 +265,10 @@ impl RunBindingRegistry {
     pub fn active_tokens(&self) -> Vec<String> {
         let mut out: Vec<String> = {
             let map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-            map.values().map(|b| b.token.clone()).collect()
+            map.values().map(|b| b.token.to_string()).collect()
         };
         let external = self.external.lock().unwrap_or_else(|p| p.into_inner());
-        out.extend(external.values().map(|b| b.token.clone()));
+        out.extend(external.values().map(|b| b.token.to_string()));
         out
     }
 }

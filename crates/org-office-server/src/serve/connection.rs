@@ -120,7 +120,7 @@ pub(super) fn serve_connection_as(
         member: None,
     };
     // A connection that starts bound is watched from its first frame, as one bound by a call is.
-    registration.sync(initial.member());
+    registration.sync(initial.member(), initial.external_session());
     // The events sent on this connection, whichever subscription sent them.
     let sent = AtomicU64::new(0);
     // The subscription's thread is joined when the connection ends: it reads the office, which
@@ -172,7 +172,7 @@ pub(super) fn serve_connection_as(
             }
             if !request.is::<MsgBind>() && matches!(member_lookup, Some(Lookup::Failed)) {
                 binding = Binding::Anonymous;
-                registration.sync(None);
+                registration.sync(None, None);
                 generation.fetch_add(1, Ordering::SeqCst);
                 subscribed = false;
                 held.cancel_all();
@@ -270,7 +270,7 @@ pub(super) fn serve_connection_as(
             };
             // The watcher finds this connection by the member it now acts as. Registered before
             // the answer goes out, so a client that has its bind's answer is already watched.
-            if registration.sync(binding.member()) {
+            if registration.sync(binding.member(), binding.external_session()) {
                 // Registered after the member may already have gone: the watcher cannot have
                 // seen this entry, so look once.
                 if let Some(member) = binding.member() {

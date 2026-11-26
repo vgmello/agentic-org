@@ -219,8 +219,22 @@ fn org_command_stop_target(command: &OrgCommand) -> Option<(String, &'static str
 }
 
 pub(super) fn revoke_bound_member(shared: &Shared, member_id: &str) {
+    revoke_bound_where(shared, member_id, |_| true);
+}
+
+/// Closes the connections bound as `member_id` whose external lease session (`None` for a
+/// managed or grant binding) `close` picks: their held calls end now and their next call is
+/// refused. A connection bound with a lease the caller spares (a fresh approval's) keeps going.
+pub(super) fn revoke_bound_where(
+    shared: &Shared,
+    member_id: &str,
+    close: impl Fn(Option<&str>) -> bool,
+) {
     let bound = shared.bound.lock().unwrap_or_else(|p| p.into_inner());
     for (_, control) in bound.values().filter(|(m, _)| m == member_id) {
+        if !close(control.external_session().as_deref()) {
+            continue;
+        }
         control.revoked.store(true, Ordering::SeqCst);
         control.generation.fetch_add(1, Ordering::SeqCst);
         control.held.cancel_all();

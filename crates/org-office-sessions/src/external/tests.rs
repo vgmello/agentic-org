@@ -66,15 +66,27 @@ fn a_pending_login_locks_after_three_wrong_codes_and_never_leaks_its_secret() {
         s[n % 4] = ch;
         format!("{lookup}-{}", s.into_iter().collect::<String>())
     };
-    let first = book.check_code(&wrong(0), 2_000).unwrap_err();
+    // Finding the request a code names never spends an attempt, however often and with
+    // whatever secret: only `check_code` (after the caller's authority) does.
+    for n in 0..10 {
+        let found = book.find_live(&wrong(n), 2_000).unwrap();
+        assert_eq!(found.request_id, "req-1");
+        assert_eq!(found.employee_id, "emp-1");
+    }
+    let target = book.find_live(&code, 2_000).unwrap();
+    let first = book.check_code(&wrong(0), &target, 2_000).unwrap_err();
     assert_eq!(first.code, ErrorCode::NotAuthorized);
     assert!(first.message.contains("2 attempt"), "{}", first.message);
-    book.check_code(&wrong(1), 2_000).unwrap_err();
-    let locked = book.check_code(&wrong(2), 2_000).unwrap_err();
+    book.check_code(&wrong(1), &target, 2_000).unwrap_err();
+    let locked = book.check_code(&wrong(2), &target, 2_000).unwrap_err();
     assert!(locked.message.contains("locked"), "{}", locked.message);
     // The right code no longer works, and polling says so.
-    let after = book.check_code(&code, 2_000).unwrap_err();
+    let after = book.check_code(&code, &target, 2_000).unwrap_err();
     assert_eq!(after.code, ErrorCode::Conflict);
+    assert_eq!(
+        book.find_live(&code, 2_000).unwrap_err().code,
+        ErrorCode::Conflict
+    );
     assert_eq!(
         book.poll("req-1", 2_000).unwrap().state,
         ExternalLoginState::Locked
@@ -88,12 +100,19 @@ fn codes_expire_after_ten_minutes_and_unknown_lookups_are_not_found() {
         .insert("req-1".into(), "emp-1", KEY, "laptop", 0)
         .unwrap();
     let ttl_ms = APPROVAL_CODE_TTL_SECS * 1000;
+    let target = book.find_live(&code, ttl_ms - 1).unwrap();
     assert_eq!(
-        book.check_code(&code, ttl_ms - 1).unwrap().request_id,
+        book.check_code(&code, &target, ttl_ms - 1)
+            .unwrap()
+            .request_id,
         "req-1"
     );
-    let expired = book.check_code(&code, ttl_ms).unwrap_err();
+    let expired = book.check_code(&code, &target, ttl_ms).unwrap_err();
     assert_eq!(expired.code, ErrorCode::Conflict);
+    assert_eq!(
+        book.find_live(&code, ttl_ms).unwrap_err().code,
+        ErrorCode::Conflict
+    );
     assert_eq!(
         book.poll("req-1", ttl_ms).unwrap().state,
         ExternalLoginState::Expired
@@ -108,13 +127,56 @@ fn codes_expire_after_ten_minutes_and_unknown_lookups_are_not_found() {
         "0000-0000"
     };
     assert_eq!(
-        book.check_code(other, 0).unwrap_err().code,
+        book.find_live(other, 0).unwrap_err().code,
         ErrorCode::NotFound
     );
     assert_eq!(
-        book.check_code("not-a-code!", 0).unwrap_err().code,
+        book.find_live("not-a-code!", 0).unwrap_err().code,
         ErrorCode::InvalidRequest
     );
+    // A target whose lookup now names another request is refused without an attempt.
+    let (_, fresh) = book
+        .insert("req-2".into(), "emp-2", KEY, "laptop", ttl_ms * 10)
+        .unwrap();
+    let stale = super::codes::CodeTarget {
+        request_id: "req-1".into(),
+        employee_id: "emp-1".into(),
+    };
+    assert_eq!(
+        book.check_code(&fresh, &stale, ttl_ms * 10)
+            .unwrap_err()
+            .code,
+        ErrorCode::Conflict
+    );
+    assert_eq!(
+        book.poll("req-2", ttl_ms * 10).unwrap().state,
+        ExternalLoginState::Pending
+    );
+}
+
+#[test]
+fn settled_records_make_room_so_the_book_never_grows_past_its_cap() {
+    use super::codes::MAX_ENTRIES_TOTAL;
+    let mut book = PendingLogins::default();
+    let mut n = 0u32;
+    // Round after round of logins, each approved at once (settled records stay pollable for
+    // two minutes): the total stays bounded and every new login still fits.
+    for round in 0..6u64 {
+        let now = 1_000 + round;
+        for i in 0..MAX_PENDING_TOTAL {
+            n += 1;
+            let employee = format!("emp-{}", i / MAX_PENDING_PER_EMPLOYEE);
+            let (entry, _) = book
+                .insert(format!("req-{n}"), &employee, KEY, "laptop", now)
+                .unwrap_or_else(|e| panic!("round {round}, login {i}: {e:?}"));
+            book.mark_approved(&entry.request_id, "ext-1", "2099-01-01T00:00:00.000Z", now);
+            assert!(book.len() <= MAX_ENTRIES_TOTAL, "{}", book.len());
+        }
+    }
+    assert_eq!(book.len(), MAX_ENTRIES_TOTAL);
+    // The newest settled records are the ones still pollable; the oldest made room.
+    assert!(book.poll(&format!("req-{n}"), 1_010).is_some());
+    assert!(book.poll("req-1", 1_010).is_none());
 }
 
 #[test]

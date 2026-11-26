@@ -268,7 +268,7 @@ fn an_unbind_preserves_a_racing_watcher_revocation() {
     };
     // The watcher wins after a call's liveness check but before a lookup-failure unbind.
     control.revoked.store(true, Ordering::SeqCst);
-    registration.sync(None);
+    registration.sync(None, None);
     assert!(bound.lock().unwrap().is_empty());
     assert!(control.revoked.load(Ordering::SeqCst));
 }

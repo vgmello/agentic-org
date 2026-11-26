@@ -42,13 +42,15 @@ pub struct WorkspaceBinding {
     pub lease_expires_at: String,
 }
 
-/// The disposable fast token (refreshed by challenge-response; deleted on logout).
+/// The disposable fast token (refreshed by challenge-response; deleted on logout), wiped from
+/// memory when dropped.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TokenFile {
     pub version: u32,
     pub session_id: String,
-    pub token: String,
+    #[serde(with = "org_proto::external_auth::secret_string")]
+    pub token: Zeroizing<String>,
     pub expires_at: String,
 }
 

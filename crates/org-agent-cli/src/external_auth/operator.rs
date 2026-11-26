@@ -71,11 +71,14 @@ const APPROVE_INPUT: &[Field] = &[
     ),
 ];
 
-const MEMBER_INPUT: &[Field] = &[Field::required(
-    "member",
-    Type::String,
-    "Agent @handle or employee UUIDv7",
-)];
+const SESSIONS_INPUT: &[Field] = &[
+    Field::required("member", Type::String, "Agent @handle or employee UUIDv7"),
+    Field::optional(
+        "history_limit",
+        Type::Integer,
+        "Most recent history entries, 1 to 200 (default 20; `--limit` works too)",
+    ),
+];
 
 const REVOKE_INPUT: &[Field] = &[
     Field::required("member", Type::String, "Agent @handle or employee UUIDv7"),
@@ -124,7 +127,7 @@ pub const EXTERNAL_COMMANDS: &[Command] = &[
         summary: "List an agent's external sessions",
         call: "member.external_sessions",
         kind: Kind::Read,
-        input: MEMBER_INPUT,
+        input: SESSIONS_INPUT,
         content_field: None,
         output: SESSIONS_OUTPUT,
         errors: ERRORS,
@@ -154,8 +157,15 @@ pub const EXTERNAL_COMMANDS: &[Command] = &[
 ];
 
 /// Rewrites the positional shorthand of the operator verbs into their named flags:
-/// `agent approve <code>`, `agent sessions <member>`, `agent revoke <member> [<session>]`.
-/// Any other command line is returned unchanged.
+/// `agent approve <code>`, `agent sessions <member>`, `agent revoke <member> [<session>]`, and
+/// `agent sessions --limit <n>` into `--history-limit <n>` (`--limit` is a list's option).
+///
+/// The bare words may stand anywhere before `--`: a caller (`agentic-org`'s office proxy) puts
+/// `--format json|compact` and `--dry-run` right after the command path, before them. Flags are
+/// stepped over the way the table's parser reads them ([`org_command::Command::flag_takes_value`]),
+/// so a flag's value (`--ttl 8h`) is never taken for a bare word. Any other command line, and one
+/// with no bare word or more bare words than the verb has positions, is returned unchanged (`None`)
+/// for the table to refuse as written.
 pub fn rewrite_positional(args: &[String]) -> Option<Vec<String>> {
     let [resource, verb, rest @ ..] = args else {
         return None;
@@ -169,16 +179,49 @@ pub fn rewrite_positional(args: &[String]) -> Option<Vec<String>> {
         "revoke" => &["--member", "--session"],
         _ => return None,
     };
-    let bare = rest.iter().take_while(|a| !a.starts_with('-')).count();
-    if bare == 0 || bare > names.len() {
+    let command = crate::table::runtime_table().find(resource, verb)?;
+    let mut bare: Vec<&String> = Vec::new();
+    let mut flags: Vec<String> = Vec::new();
+    let mut aliased = false;
+    let mut at = 0;
+    while let Some(arg) = rest.get(at) {
+        at += 1;
+        if arg == "--" {
+            flags.extend_from_slice(&rest[at - 1..]);
+            break;
+        }
+        if !arg.starts_with('-') {
+            bare.push(arg);
+            continue;
+        }
+        let name = arg
+            .strip_prefix("--")
+            .filter(|n| !n.is_empty() && !n.contains('='));
+        let inline_limit = arg.strip_prefix("--limit=");
+        if verb == "sessions" && (name == Some("limit") || inline_limit.is_some()) {
+            aliased = true;
+            flags.push(inline_limit.map_or_else(
+                || "--history-limit".to_owned(),
+                |value| format!("--history-limit={value}"),
+            ));
+        } else {
+            flags.push(arg.clone());
+        }
+        let takes_value = name.is_some_and(|n| command.flag_takes_value(n) == Some(true));
+        if let Some(value) = rest.get(at).filter(|_| takes_value) {
+            flags.push(value.clone());
+            at += 1;
+        }
+    }
+    if (bare.is_empty() && !aliased) || bare.len() > names.len() {
         return None;
     }
     let mut out = vec![resource.clone(), verb.clone()];
-    for (name, value) in names.iter().zip(&rest[..bare]) {
+    for (name, value) in names.iter().zip(bare) {
         out.push((*name).to_owned());
         out.push(value.clone());
     }
-    out.extend_from_slice(&rest[bare..]);
+    out.extend(flags);
     Some(out)
 }
 
@@ -254,8 +297,22 @@ fn sessions<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
-    let params = json!({ "employee_id": required(request, "member")? });
-    let raw = transport.call_method(MemberExternalSessions::METHOD, params)?;
+    let mut params = Map::new();
+    params.insert("employee_id".into(), json!(required(request, "member")?));
+    if let Some(limit) = request.input.get("history_limit") {
+        let limit = limit
+            .as_u64()
+            .filter(|n| (1..=200).contains(n))
+            .ok_or_else(|| {
+                Refusal::new(
+                    ErrorCode::InvalidRequest,
+                    "--history-limit is a number from 1 to 200.",
+                    "Pass --limit 50.",
+                )
+            })?;
+        params.insert("limit".into(), json!(limit));
+    }
+    let raw = transport.call_method(MemberExternalSessions::METHOD, Value::Object(params))?;
     Ok(Answer::completed(raw))
 }
 

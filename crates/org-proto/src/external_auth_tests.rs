@@ -27,11 +27,16 @@ fn secrets_never_appear_in_debug_output() {
         member_id: "m".into(),
         office_id: "o".into(),
         session_id: "s".into(),
-        token: "tok-very-secret".into(),
+        token: String::from("tok-very-secret").into(),
         expires_at: "2026-11-26T00:00:00Z".into(),
         lease_expires_at: "2026-11-27T00:00:00Z".into(),
     };
     assert!(!format!("{exchange:?}").contains("tok-very-secret"));
+    // The token is a plain JSON string on the wire and reads back into wiped memory.
+    let wire = serde_json::to_value(&exchange).unwrap();
+    assert_eq!(wire["token"], "tok-very-secret");
+    let back: AuthExchangeResult = serde_json::from_value(wire).unwrap();
+    assert_eq!(back, exchange);
     let signed = SignedChallengeParams {
         member: "m".into(),
         session_id: "s".into(),

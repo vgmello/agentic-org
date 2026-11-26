@@ -17,6 +17,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use crate::calls::Call;
 use crate::Empty;
@@ -215,13 +216,29 @@ impl fmt::Debug for SignedChallengeParams {
 
 pub struct AuthExchange;
 
-/// A fresh fast token. Its `Debug` never shows the token.
+/// Serde for a secret held in [`Zeroizing`] (a fast token): written as a plain JSON string, read
+/// into memory that is wiped when it is dropped. `#[serde(with = "secret_string")]`.
+pub mod secret_string {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use zeroize::Zeroizing;
+
+    pub fn serialize<S: Serializer>(value: &Zeroizing<String>, out: S) -> Result<S::Ok, S::Error> {
+        out.serialize_str(value)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(input: D) -> Result<Zeroizing<String>, D::Error> {
+        String::deserialize(input).map(Zeroizing::new)
+    }
+}
+
+/// A fresh fast token, wiped from memory when dropped. Its `Debug` never shows the token.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthExchangeResult {
     pub member_id: String,
     pub office_id: String,
     pub session_id: String,
-    pub token: String,
+    #[serde(with = "secret_string")]
+    pub token: Zeroizing<String>,
     pub expires_at: String,
     pub lease_expires_at: String,
 }

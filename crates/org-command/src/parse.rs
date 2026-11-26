@@ -148,15 +148,8 @@ fn asks_for_help(command: &Command, rest: &[String]) -> bool {
         let Some(name) = arg.strip_prefix("--") else {
             continue;
         };
-        let takes_value = match common_option(name) {
-            Some(option) => option.value.is_some(),
-            None => command
-                .input
-                .iter()
-                .any(|field| field.flag() == name && field.is_flag() && field.ty != Type::Boolean),
-        };
         // `--name=value` is no flag's name, so nothing is skipped after it.
-        if takes_value {
+        if command.flag_takes_value(name) == Some(true) {
             at += 1;
         }
     }

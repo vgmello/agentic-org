@@ -103,9 +103,129 @@ fn operator_shorthand_rewrites_to_named_flags_only_for_the_external_verbs() {
         &["agent", "revoke", "a", "b", "c"],
         &["task", "approve", "x"],
         &["agent"],
+        &["agent", "approve", "--format", "json"],
+        &["agent", "approve", "--ttl", "8h"],
     ] {
         assert_eq!(rewrite_positional(&words(unchanged)), None, "{unchanged:?}");
     }
+}
+
+/// B1: `agentic-org` puts `--format json|compact` (and `--dry-run`) right after the command
+/// path, before the caller's bare words. The shorthand still reads them, and never takes a
+/// flag's value for a bare word.
+#[test]
+fn operator_shorthand_reads_bare_words_after_the_flags_a_caller_added() {
+    for (line, expected) in [
+        (
+            &["agent", "approve", "--format", "json", "ABCD-EFGH"][..],
+            &[
+                "agent",
+                "approve",
+                "--code",
+                "ABCD-EFGH",
+                "--format",
+                "json",
+            ][..],
+        ),
+        (
+            &[
+                "agent",
+                "approve",
+                "--format",
+                "compact",
+                "ABCD-EFGH",
+                "--ttl",
+                "8h",
+                "--takeover",
+            ],
+            &[
+                "agent",
+                "approve",
+                "--code",
+                "ABCD-EFGH",
+                "--format",
+                "compact",
+                "--ttl",
+                "8h",
+                "--takeover",
+            ],
+        ),
+        (
+            &["agent", "approve", "--ttl", "8h", "K7QF-9XM2", "--dry-run"],
+            &[
+                "agent",
+                "approve",
+                "--code",
+                "K7QF-9XM2",
+                "--ttl",
+                "8h",
+                "--dry-run",
+            ],
+        ),
+        (
+            &[
+                "agent", "sessions", "--format", "json", "@ada", "--limit", "50",
+            ],
+            &[
+                "agent",
+                "sessions",
+                "--member",
+                "@ada",
+                "--format",
+                "json",
+                "--history-limit",
+                "50",
+            ],
+        ),
+        (
+            &["agent", "sessions", "--member", "@ada", "--limit=5"],
+            &["agent", "sessions", "--member", "@ada", "--history-limit=5"],
+        ),
+        (
+            &["agent", "revoke", "--format", "compact", "@ada", "ext-1"],
+            &[
+                "agent",
+                "revoke",
+                "--member",
+                "@ada",
+                "--session",
+                "ext-1",
+                "--format",
+                "compact",
+            ],
+        ),
+        (
+            &["agent", "revoke", "--fields", "revoked", "@ada"],
+            &["agent", "revoke", "--member", "@ada", "--fields", "revoked"],
+        ),
+        // Nothing after `--` is read: it stays for the table to refuse as written.
+        (
+            &["agent", "approve", "X", "--", "Y"],
+            &["agent", "approve", "--code", "X", "--", "Y"],
+        ),
+    ] {
+        assert_eq!(
+            rewrite_positional(&words(line)),
+            Some(words(expected)),
+            "{line:?}"
+        );
+    }
+}
+
+/// `agent-os exec` approves through `agentic-org` with named flags only.
+#[test]
+fn exec_approves_with_named_flags_only() {
+    use super::operator_approve_args;
+    assert_eq!(
+        operator_approve_args("ABCD-EFGH", 3_600, false),
+        words(&["agent", "approve", "--code", "ABCD-EFGH", "--ttl", "3600s"])
+    );
+    assert_eq!(
+        operator_approve_args("ABCD-EFGH", 60, true)
+            .last()
+            .map(String::as_str),
+        Some("--takeover")
+    );
 }
 
 #[test]

@@ -10,6 +10,7 @@ use org_proto::external_auth::{
     SignedChallengeParams, FAST_TOKEN_TTL_SECS, MAX_WORKSPACE_LABEL_BYTES,
 };
 use org_proto::{ApiError, ErrorCode};
+use zeroize::Zeroizing;
 
 use crate::credentials::{format_rfc3339_ms, is_safe_id, now_ms};
 use crate::manager::SessionManager;
@@ -182,31 +183,42 @@ impl SessionManager {
     }
 
     /// `auth.exchange`: a fresh RAM-only fast token for a correctly signed exchange nonce.
+    ///
+    /// The final "is this lease still the active one" check and the token's issue happen under
+    /// `lease_mutation`, the lock every approval, revocation and logout holds: a revocation
+    /// either lands first (no token is issued) or after (and removes the token), and a newer
+    /// lease's token can never be replaced by a token of the lease it superseded.
     pub fn external_exchange(
         &self,
         employee_id: &str,
         params: &SignedChallengeParams,
     ) -> Result<AuthExchangeResult, ApiError> {
-        let lease = self.verify_signed_answer(employee_id, params, ChallengePurpose::Exchange)?;
-        let now = now_ms();
-        let lease_expires_ms = lease.expires_at_ms();
-        let expires_ms = now
-            .saturating_add(FAST_TOKEN_TTL_SECS * 1000)
-            .min(lease_expires_ms);
-        let binding = self
-            .bindings
-            .issue_external(employee_id, &lease.session_id, expires_ms)
-            .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))?;
-        // A revocation racing this exchange wins: it revokes after updating the cache, so either
-        // it removes this token or this re-check sees the revoked lease.
-        if !self
-            .external_lease(employee_id)
-            .is_some_and(|l| l.is_active(now) && l.session_id == lease.session_id)
-        {
-            self.bindings
-                .revoke_external(employee_id, Some(&lease.session_id));
-            return Err(refused());
-        }
+        let signed = self.verify_signed_answer(employee_id, params, ChallengePurpose::Exchange)?;
+        let (lease, binding, expires_ms) = {
+            let _serial = self
+                .external
+                .lease_mutation
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            let now = now_ms();
+            let lease = self
+                .external_lease(employee_id)
+                .filter(|l| {
+                    l.is_active(now)
+                        && l.session_id == signed.session_id
+                        && l.pubkey_ed25519_b64 == signed.pubkey_ed25519_b64
+                })
+                .ok_or_else(refused)?;
+            let expires_ms = now
+                .saturating_add(FAST_TOKEN_TTL_SECS * 1000)
+                .min(lease.expires_at_ms());
+            let binding = self
+                .bindings
+                .issue_external(employee_id, &lease.session_id, expires_ms)
+                .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))?;
+            (lease, binding, expires_ms)
+        };
+        // A lifecycle event (not a per-command line), written outside the lock.
         self.record_external_event(
             employee_id,
             "token_issued",
@@ -218,7 +230,7 @@ impl SessionManager {
             member_id: employee_id.to_owned(),
             office_id: self.office.info().office_id.clone(),
             session_id: lease.session_id.clone(),
-            token: binding.expose_token().to_owned(),
+            token: Zeroizing::new(binding.expose_token().to_owned()),
             expires_at: format_rfc3339_ms(expires_ms),
             lease_expires_at: lease.expires_at,
         })
@@ -245,21 +257,5 @@ impl SessionManager {
             session_id: lease.session_id,
             revoked: ended.is_some(),
         })
-    }
-
-    /// Records one accepted command of an externally bound connection in the audit history
-    /// (`mode: external`); a managed run's command goes to `active-turn.v1.json`.
-    pub(crate) fn record_external_command(&self, employee_id: &str, method: &str) {
-        let session = self
-            .external_lease(employee_id)
-            .filter(|l| l.revoked_at.is_none())
-            .map(|l| l.session_id);
-        self.record_external_event(
-            employee_id,
-            "command",
-            session.as_deref(),
-            None,
-            Some(method),
-        );
     }
 }

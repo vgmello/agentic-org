@@ -2,7 +2,10 @@
 //! 3-attempt lockout. Nothing here touches disk.
 //!
 //! A code is `LLLL-SSSS` in Crockford base32: `LLLL` finds the request, `SSSS` is the secret.
-//! A known `LLLL` with a wrong `SSSS` counts against that request; the third miss locks it.
+//! Approval reads the request `LLLL` names first ([`PendingLogins::find_live`], no attempt
+//! spent), so the caller's authority over that agent is checked before the secret is: only then
+//! does a wrong `SSSS` count against the request ([`PendingLogins::check_code`]), and the third
+//! miss locks it. A person without authority over the agent can never lock its sign-in.
 
 use org_proto::external_auth::{ExternalLoginState, APPROVAL_CODE_TTL_SECS, MAX_APPROVAL_ATTEMPTS};
 use org_proto::{ApiError, ErrorCode};
@@ -16,6 +19,9 @@ const PART_LEN: usize = 4;
 /// Most pending logins on one office, and per agent.
 pub(crate) const MAX_PENDING_TOTAL: usize = 32;
 pub(crate) const MAX_PENDING_PER_EMPLOYEE: usize = 3;
+/// Most records kept at all, live or settled (a settled one stays pollable for a grace): the
+/// oldest settled record makes room for a new login.
+pub(crate) const MAX_ENTRIES_TOTAL: usize = 2 * MAX_PENDING_TOTAL;
 /// How long a settled (approved, locked or expired) request stays pollable.
 const SETTLED_GRACE_MS: u64 = 2 * 60 * 1000;
 
@@ -86,6 +92,13 @@ pub(crate) struct PendingLogins {
     entries: Vec<PendingLogin>,
 }
 
+/// The live request a code's lookup half names, read without spending an attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodeTarget {
+    pub(crate) request_id: String,
+    pub(crate) employee_id: String,
+}
+
 fn random_part(rng: &SystemRandom) -> Result<String, ApiError> {
     let mut bytes = [0u8; PART_LEN];
     rng.fill(&mut bytes)
@@ -120,6 +133,13 @@ pub(crate) fn normalize_code(code: &str) -> Option<(String, String)> {
     })
 }
 
+fn too_many() -> ApiError {
+    ApiError::new(
+        ErrorCode::Unavailable,
+        "too many sign-ins are waiting for approval on this office; retry later",
+    )
+}
+
 fn bad_code() -> ApiError {
     ApiError::new(
         ErrorCode::InvalidRequest,
@@ -131,6 +151,22 @@ impl PendingLogins {
     fn prune(&mut self, now_ms: u64) {
         self.entries
             .retain(|e| now_ms < e.settled_ms().saturating_add(SETTLED_GRACE_MS));
+    }
+
+    /// Drops the oldest settled records until a new one fits under [`MAX_ENTRIES_TOTAL`].
+    fn make_room(&mut self, now_ms: u64) -> Result<(), ApiError> {
+        while self.entries.len() >= MAX_ENTRIES_TOTAL {
+            let oldest = self
+                .entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| !e.is_live(now_ms))
+                .min_by_key(|(_, e)| e.settled_ms())
+                .map(|(at, _)| at)
+                .ok_or_else(too_many)?;
+            self.entries.remove(oldest);
+        }
+        Ok(())
     }
 
     /// Records a new pending login and answers it with its full code (`LLLL-SSSS`).
@@ -145,10 +181,7 @@ impl PendingLogins {
         self.prune(now_ms);
         let live: Vec<&PendingLogin> = self.entries.iter().filter(|e| e.is_live(now_ms)).collect();
         if live.len() >= MAX_PENDING_TOTAL {
-            return Err(ApiError::new(
-                ErrorCode::Unavailable,
-                "too many sign-ins are waiting for approval on this office; retry later",
-            ));
+            return Err(too_many());
         }
         if live.iter().filter(|e| e.employee_id == employee_id).count() >= MAX_PENDING_PER_EMPLOYEE
         {
@@ -157,6 +190,7 @@ impl PendingLogins {
                 "this agent already has sign-ins waiting for approval; approve one or wait",
             ));
         }
+        self.make_room(now_ms)?;
         let rng = SystemRandom::new();
         let mut lookup = random_part(&rng)?;
         let mut tries = 0;
@@ -212,11 +246,20 @@ impl PendingLogins {
         })
     }
 
-    /// Finds the live pending login `code` names without consuming it. A wrong secret for a
-    /// known request counts as an attempt; the [`MAX_APPROVAL_ATTEMPTS`]th locks the request.
-    pub(crate) fn check_code(&mut self, code: &str, now_ms: u64) -> Result<PendingLogin, ApiError> {
+    /// The live request `code`'s lookup half names. Reads only: no attempt is spent and the
+    /// secret half is not looked at, so the caller's authority over the agent can be checked
+    /// before [`Self::check_code`].
+    pub(crate) fn find_live(&mut self, code: &str, now_ms: u64) -> Result<CodeTarget, ApiError> {
         self.prune(now_ms);
-        let (lookup, secret) = normalize_code(code).ok_or_else(bad_code)?;
+        let (lookup, _) = normalize_code(code).ok_or_else(bad_code)?;
+        let entry = self.live_by_lookup(&lookup, now_ms)?;
+        Ok(CodeTarget {
+            request_id: entry.request_id.clone(),
+            employee_id: entry.employee_id.clone(),
+        })
+    }
+
+    fn live_by_lookup(&mut self, lookup: &str, now_ms: u64) -> Result<&mut PendingLogin, ApiError> {
         let Some(entry) = self.entries.iter_mut().find(|e| e.lookup == lookup) else {
             return Err(ApiError::new(
                 ErrorCode::NotFound,
@@ -233,6 +276,28 @@ impl PendingLogins {
                     Settle::Approved { .. } => "that sign-in is already approved",
                     Settle::Pending => "that approval code expired; run `agent-os login` again",
                 },
+            ));
+        }
+        Ok(entry)
+    }
+
+    /// Checks `code`'s secret half against the live request `target` names, without consuming
+    /// it. Call only after the caller's authority over `target`'s agent is established: a wrong
+    /// secret counts as an attempt and the [`MAX_APPROVAL_ATTEMPTS`]th locks the request.
+    pub(crate) fn check_code(
+        &mut self,
+        code: &str,
+        target: &CodeTarget,
+        now_ms: u64,
+    ) -> Result<PendingLogin, ApiError> {
+        self.prune(now_ms);
+        let (lookup, secret) = normalize_code(code).ok_or_else(bad_code)?;
+        let entry = self.live_by_lookup(&lookup, now_ms)?;
+        if entry.request_id != target.request_id || entry.employee_id != target.employee_id {
+            // The lookup now names another request (the first expired and its half was reused).
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "that approval code changed while it was checked; run `agent-os login` again",
             ));
         }
         if !constant_time_eq(entry.secret.as_bytes(), secret.as_bytes()) {

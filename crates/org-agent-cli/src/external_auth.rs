@@ -22,9 +22,11 @@ use org_client::Client;
 use org_command::Refusal;
 use org_proto::ErrorCode;
 use serde_json::Value;
+use zeroize::Zeroizing;
 
 use crate::office::Binding;
 
+pub use exec::operator_approve_args;
 pub use login::{EXEC_HELP, LOGIN_HELP, LOGOUT_HELP, WHOAMI_HELP};
 
 /// How long before its expiry a workspace token is refreshed.
@@ -193,7 +195,7 @@ pub fn workspace_binding(cwd: &Path) -> Option<Binding> {
         .ok()
         .flatten()
         .filter(|t| t.session_id == binding.session_id)
-        .map(|t| t.token);
+        .map(|t| t.token.to_string());
     Some(Binding {
         socket: binding.socket.map(PathBuf::from),
         office_id: Some(binding.office_id),
@@ -220,14 +222,27 @@ fn not_signed_in() -> Refusal {
     )
 }
 
+/// The signer of a signed-in workspace: its key, office, agent and lease session.
+pub(crate) fn signer_of<'a>(
+    binding: &'a store::WorkspaceBinding,
+    pkcs8: &'a [u8],
+) -> client::Signer<'a> {
+    client::Signer {
+        pkcs8,
+        office_id: Some(&binding.office_id),
+        member_id: &binding.member_id,
+        session_id: &binding.session_id,
+    }
+}
+
 /// Refreshes the workspace's fast token on the unbound `client` and saves it.
 fn refresh_token(
     client: &Client,
     state: &store::WorkspaceState,
     binding: &store::WorkspaceBinding,
-) -> Result<String, Refusal> {
+) -> Result<Zeroizing<String>, Refusal> {
     let key = state.read_key()?.ok_or_else(not_signed_in)?;
-    let fresh = client::exchange(client, &key, &binding.member_id, &binding.session_id)?;
+    let fresh = client::exchange(client, &signer_of(binding, &key))?;
     state.write_token(&store::TokenFile {
         version: 1,
         session_id: fresh.session_id,
@@ -255,7 +270,7 @@ pub(crate) fn connect_workspace(binding: &mut Binding) -> Result<Client, Refusal
     loop {
         match client::bind(&client, &workspace.member_id, &token) {
             Ok(()) => {
-                binding.session_token = Some(token);
+                binding.session_token = Some(token.to_string());
                 return Ok(client);
             }
             Err(refusal) if !fresh && refusal.code == ErrorCode::NotAuthorized => {

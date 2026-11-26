@@ -39,6 +39,8 @@ use crate::wake::{
     DEFAULT_SUSPEND_GRACE, DEFAULT_WAKE_WINDOW,
 };
 
+#[cfg(test)]
+mod agent_os_sandbox_tests;
 mod auth_guards;
 mod bwrap_isolation;
 mod environment;
@@ -97,6 +99,11 @@ pub struct SessionManagerConfig {
     /// the one the composition root installed ([`crate::instructions::install_command_catalogue`]).
     /// Without one, the instructions' command catalogue section lists no commands.
     pub command_catalogue: Option<crate::instructions::CommandCatalogue>,
+    /// The account's `agent-os` external sign-in state folders (workspace keys, fast tokens):
+    /// every managed sandbox denies them and a Linux `bwrap` launch masks them (`TASK-137`).
+    /// `production` resolves them from `HOME` ([`sandbox_rules::agent_os_state_roots_from`]);
+    /// this crate's unit tests start with none, so no test writes under the real account.
+    pub agent_os_state_roots: Vec<PathBuf>,
 }
 
 impl SessionManagerConfig {
@@ -115,6 +122,14 @@ impl SessionManagerConfig {
             subscription_usage_collector: Arc::new(ProviderSubscriptionUsageCollector::production()),
             hq_permits: None,
             command_catalogue: crate::instructions::installed_command_catalogue(),
+            agent_os_state_roots: if cfg!(test) {
+                Vec::new()
+            } else {
+                sandbox_rules::agent_os_state_roots_from(
+                    &|name| std::env::var_os(name),
+                    cfg!(debug_assertions),
+                )
+            },
         }
     }
 }
@@ -536,13 +551,14 @@ impl SessionManager {
 
     /// Records an accepted `agent-os` command in memory and durably in `active-turn.v1.json`
     /// so mid-turn office crashes preserve accepted commands on restart (`ADR-0030` d8).
-    /// An externally bound connection's command goes to `external-history.jsonl` instead.
+    /// An externally bound connection's command is kept in RAM only, on its binding (bounded):
+    /// the bound hot path does no disk write and no sync (`doc-7` #18), and
+    /// `external-history.jsonl` keeps the lease's lifecycle and security events alone.
     pub fn record_accepted_command(&self, employee_id: &str, method: &str) {
         let mode = self
             .bindings
             .record_accepted_command(employee_id, method, method);
         if matches!(mode, Some(crate::binding::BindingMode::External { .. })) {
-            self.record_external_command(employee_id, method);
             return;
         }
         let method_owned = method.to_owned();

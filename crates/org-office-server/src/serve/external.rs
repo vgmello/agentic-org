@@ -2,13 +2,16 @@
 //!
 //! - `auth.login_request|login_poll|challenge|exchange|logout`: answered only on the office
 //!   socket and only before a connection binds. The socket's accept gate admits same-UID peers
-//!   only (`peer_allowed`); each connection has a call budget; the port's books are bounded.
+//!   only (`peer_allowed`); each connection has a call budget, the office an office-wide budget
+//!   per kind of call ([`super::auth_limits`]); the port's books are bounded.
 //! - `auth.whoami`: a bound connection's member, mode (`managed`|`external`) and expiries.
 //! - `member.external_approve|sessions|revoke`: operator calls, only through a verified grant
 //!   (a person or the owner, on a host channel). An agent on the office socket, managed or
 //!   external, can never approve, list or revoke a lease.
 //! - An externally bound connection may only make the organization's collaboration calls
 //!   ([`external_may_call`]): never host administration, provider credentials or raw data.
+
+use std::time::Instant;
 
 use org_proto::external_auth::{
     AuthChallenge, AuthChallengeResult, AuthExchange, AuthExchangeResult, AuthLoginPoll,
@@ -23,7 +26,7 @@ use org_proto::{ApiError, Call, ErrorCode, MemberKind, Request, Response};
 
 use super::auth::Binding;
 use super::binding::{lookup, Lookup};
-use super::org::revoke_bound_member;
+use super::org::revoke_bound_where;
 use super::shared::Shared;
 use super::wire::internal;
 
@@ -184,6 +187,20 @@ pub(super) fn answer_auth(
         return None;
     }
     let id = request.id;
+    let port = shared.ports.external_auth.as_deref();
+    if let (Some(port), true) = (port, request.is::<AuthWhoami>()) {
+        // A bound connection's question about itself: not a sign-in call, never budgeted.
+        let response = match binding.member() {
+            Some(member) => {
+                reply::<AuthWhoami>(id, Ok(port.whoami(member, binding.external_session())))
+            }
+            None => error(id, ErrorCode::NotBound, "bind before asking who you are"),
+        };
+        return Some(AuthAnswer {
+            response,
+            close: false,
+        });
+    }
     *calls = calls.saturating_add(1);
     if *calls > MAX_AUTH_CALLS_PER_CONNECTION {
         return Some(AuthAnswer {
@@ -195,24 +212,21 @@ pub(super) fn answer_auth(
             close: true,
         });
     }
-    let response = match shared.ports.external_auth.as_deref() {
+    let response = match port {
         None => error(
             id,
             ErrorCode::Unsupported,
             "this office does not serve external agents",
         ),
-        Some(port) if request.is::<AuthWhoami>() => match binding.member() {
-            Some(member) => {
-                reply::<AuthWhoami>(id, Ok(port.whoami(member, binding.external_session())))
-            }
-            None => error(id, ErrorCode::NotBound, "bind before asking who you are"),
-        },
         Some(_) if binding.is_bound() => error(
             id,
             ErrorCode::InvalidRequest,
             "sign-in calls are made on a connection that is not bound",
         ),
-        Some(port) => answer_signin(request, shared, port),
+        Some(port) => match shared.auth_limits.admit(&request.method, Instant::now()) {
+            Ok(()) => answer_signin(request, shared, port),
+            Err(refusal) => Response::error(id, refusal),
+        },
     };
     Some(AuthAnswer {
         response,
@@ -256,8 +270,9 @@ fn answer_signin(request: &Request, shared: &Shared, port: &dyn ExternalAuthPort
         };
         let outcome = signin_agent(shared, &p.member).and_then(|m| port.logout(&m, &p));
         if let Ok(done) = &outcome {
-            // Every connection still bound with the ended lease closes now.
-            revoke_bound_member(shared, &done.member_id);
+            // Every connection still bound with the ended lease closes now; a managed run the
+            // logout's released wakes started already is left alone.
+            close_external_session(shared, &done.member_id, &done.session_id);
         }
         reply::<AuthLogout>(id, outcome)
     } else {
@@ -318,8 +333,7 @@ pub(super) fn answer_operator(
             Ok(p) => {
                 let outcome = port.approve(actor, &p);
                 if let Ok(view) = &outcome {
-                    // A superseded lease's or a parked run's connections close now.
-                    revoke_bound_member(shared, &view.employee_id);
+                    close_after_approval(shared, view);
                 }
                 reply::<MemberExternalApprove>(id, outcome)
             }
@@ -340,8 +354,8 @@ pub(super) fn answer_operator(
                 let outcome = operator_target(shared, &p.employee_id)
                     .and_then(|target| port.revoke(actor, &target, p.session_id.as_deref()));
                 if let Ok(done) = &outcome {
-                    if done.revoked {
-                        revoke_bound_member(shared, &done.employee_id);
+                    if let Some(session) = done.session_id.as_deref().filter(|_| done.revoked) {
+                        close_external_session(shared, &done.employee_id, session);
                     }
                 }
                 reply::<MemberExternalRevoke>(id, outcome)
@@ -349,4 +363,18 @@ pub(super) fn answer_operator(
             Err(refusal) => refusal,
         }
     })
+}
+
+/// After an approval: the connections of the lease it superseded and of the managed run it
+/// parked close now. A connection already bound with the new lease (a fast-polling
+/// `agent-os login` that exchanged and bound before this runs) keeps going.
+pub(crate) fn close_after_approval(shared: &Shared, view: &ExternalSessionView) {
+    revoke_bound_where(shared, &view.employee_id, |session| {
+        session != Some(view.session_id.as_str())
+    });
+}
+
+/// Closes the connections bound with external lease `session_id` of `member_id`, only those.
+fn close_external_session(shared: &Shared, member_id: &str, session_id: &str) {
+    revoke_bound_where(shared, member_id, |session| session == Some(session_id));
 }

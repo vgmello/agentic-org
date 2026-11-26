@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 
 use org_command::Refusal;
 use org_proto::external_auth::{
-    AuthLoginPoll, AuthLoginPollParams, AuthLoginRequest, AuthLoginRequestParams,
-    AuthLoginRequestResult, AuthLogout, AuthWhoami, ChallengePurpose, ExternalLoginState,
-    APPROVAL_CODE_TTL_SECS, MAX_WORKSPACE_LABEL_BYTES,
+    AuthLoginPoll, AuthLoginPollParams, AuthLoginPollResult, AuthLoginRequest,
+    AuthLoginRequestParams, AuthLoginRequestResult, AuthLogout, AuthWhoami, ChallengePurpose,
+    ExternalLoginState, MAX_WORKSPACE_LABEL_BYTES,
 };
 use org_proto::{Call, Empty, ErrorCode};
 use serde_json::{json, Value};
@@ -23,9 +23,10 @@ pub const LOGIN_HELP: &str = "Usage: agent-os login --as @<handle> [--office <of
 Use when: signing this workspace (a terminal, IDE or external agent harness) in as an organization agent you bring yourself.
 
 Generates a workspace Ed25519 key, prints an approval code for a person to approve
-(`agentic-org agent approve <code>` or the agent's page in the web app), waits for it, and saves
-the binding outside Git. Afterwards every agent-os command in this folder tree acts as the agent.
-Approving a new sign-in supersedes the agent's previous external session.
+(`agentic-org agent approve <code>` or the agent's page in the web app), waits for it (--wait,
+default 120 seconds; the code itself stays valid for 10 minutes), and saves the binding outside
+Git. Afterwards every agent-os command in this folder tree acts as the agent. Approving a new
+sign-in supersedes the agent's previous external session.
 
 Example:
   agent-os login --as @ada --office 0193a5c0-0000-7000-8000-000000000001
@@ -100,7 +101,8 @@ fn workspace_root(flag: Option<&str>) -> Result<PathBuf, Refusal> {
     }
 }
 
-/// Asks the office for a login of `member` with the workspace's public key.
+/// Asks the office for a login of `member` with the workspace's public key. A socket that
+/// answers for another office than `--office` named is refused.
 pub(super) fn request_login(
     target: &Target,
     member: &str,
@@ -115,10 +117,28 @@ pub(super) fn request_login(
             workspace_label: label.to_owned(),
         },
     )?;
+    if target
+        .office_id
+        .as_deref()
+        .is_some_and(|office| office != request.office_id)
+    {
+        return Err(Refusal::new(
+            ErrorCode::NotAuthorized,
+            "The office socket answered for another office than --office named.",
+            "Check --socket / --office and run the command again.",
+        ));
+    }
     Ok(request)
 }
 
-/// Polls until the login is approved (answering its lease session) or `wait` runs out.
+/// How long `agent-os login` waits for an approval by default (`doc-102` §1); the code itself
+/// stays valid on the office for `APPROVAL_CODE_TTL_SECS`.
+pub(super) const DEFAULT_LOGIN_WAIT_SECS: u64 = 120;
+/// Between two polls of a pending login.
+const POLL_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Polls until the login is approved (answering its lease session) or `wait` runs out. A poll
+/// the office rate-limits is retried at the next interval.
 pub(super) fn wait_for_approval(
     target: &Target,
     request: &AuthLoginRequestResult,
@@ -132,32 +152,16 @@ pub(super) fn wait_for_approval(
             &AuthLoginPollParams {
                 request_id: request.request_id.clone(),
             },
-        )?;
-        match polled.state {
-            ExternalLoginState::Approved => {
-                return polled.session_id.ok_or_else(|| {
-                    Refusal::new(
-                        ErrorCode::Unavailable,
-                        "The office approved the sign-in without a session.",
-                        "Run `agent-os login` again.",
-                    )
-                })
+        );
+        match polled {
+            Ok(polled) => {
+                if let Some(session) = settled(polled)? {
+                    return Ok(session);
+                }
             }
-            ExternalLoginState::Pending => {}
-            ExternalLoginState::Locked => {
-                return Err(Refusal::new(
-                    ErrorCode::NotAuthorized,
-                    "The sign-in was locked after too many wrong approval codes.",
-                    "Run `agent-os login` again for a new code.",
-                ))
-            }
-            _ => {
-                return Err(Refusal::new(
-                    ErrorCode::Timeout,
-                    "The approval code expired before anyone approved it.",
-                    "Run `agent-os login` again for a new code.",
-                ))
-            }
+            // The office's sign-in budget is spent for now: poll again at the next interval.
+            Err(refusal) if refusal.code == ErrorCode::RateLimited => {}
+            Err(refusal) => return Err(refusal),
         }
         if Instant::now() >= deadline {
             return Err(Refusal::new(
@@ -166,10 +170,34 @@ pub(super) fn wait_for_approval(
                     "No one approved the sign-in within the wait (code {}).",
                     request.approval_code
                 ),
-                "Run `agent-os login` again, or pass a longer --wait.",
+                "Approve it and run `agent-os login` again, or pass a longer --wait (the code is valid for 10 minutes).",
             ));
         }
-        std::thread::sleep(Duration::from_secs(1));
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// The lease session of an approved login, `None` while it is pending, or why it never will be.
+fn settled(polled: AuthLoginPollResult) -> Result<Option<String>, Refusal> {
+    match polled.state {
+        ExternalLoginState::Approved => polled.session_id.map(Some).ok_or_else(|| {
+            Refusal::new(
+                ErrorCode::Unavailable,
+                "The office approved the sign-in without a session.",
+                "Run `agent-os login` again.",
+            )
+        }),
+        ExternalLoginState::Pending => Ok(None),
+        ExternalLoginState::Locked => Err(Refusal::new(
+            ErrorCode::NotAuthorized,
+            "The sign-in was locked after too many wrong approval codes.",
+            "Run `agent-os login` again for a new code.",
+        )),
+        _ => Err(Refusal::new(
+            ErrorCode::Timeout,
+            "The approval code expired before anyone approved it.",
+            "Run `agent-os login` again for a new code.",
+        )),
     }
 }
 
@@ -202,10 +230,10 @@ fn run_login(args: &[String]) -> Result<Printed, Refusal> {
             Refusal::new(
                 ErrorCode::InvalidRequest,
                 "Usage: --wait is a number of seconds.",
-                "Pass --wait 600.",
+                "Pass --wait 300.",
             )
         })?,
-        None => APPROVAL_CODE_TTL_SECS,
+        None => DEFAULT_LOGIN_WAIT_SECS,
     };
     let target = Target::resolve(
         flags.value("socket").map(PathBuf::from),
@@ -226,7 +254,15 @@ fn run_login(args: &[String]) -> Result<Printed, Refusal> {
         request.expires_at,
     );
     let session_id = wait_for_approval(&target, &request, Duration::from_secs(wait))?;
-    let token = client::exchange(&target.connect()?, &pkcs8, &request.member_id, &session_id)?;
+    let token = client::exchange(
+        &target.connect()?,
+        &client::Signer {
+            pkcs8: &pkcs8,
+            office_id: Some(&request.office_id),
+            member_id: &request.member_id,
+            session_id: &session_id,
+        },
+    )?;
     state.ensure()?;
     state.write_key(&pkcs8)?;
     let binding = WorkspaceBinding {
@@ -350,9 +386,7 @@ pub(super) fn end_lease(
     let conn = target.connect()?;
     let signed = client::signed_challenge(
         &conn,
-        key,
-        &binding.member_id,
-        &binding.session_id,
+        &super::signer_of(binding, key),
         ChallengePurpose::Logout,
     )?;
     Ok(call::<AuthLogout>(&conn, &signed)?.revoked)

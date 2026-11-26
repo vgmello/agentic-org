@@ -4,6 +4,7 @@
 
 use std::os::unix::fs::PermissionsExt;
 
+use crate::ExternalLeaseRecord;
 use base64::Engine as _;
 use org_proto::external_auth::{
     challenge_message, AuthLoginRequestParams, ChallengePurpose, ExternalLoginState,
@@ -95,7 +96,10 @@ fn signed(
 
 fn exchange(mgr: &SessionManager, ws: &Workspace, agent: &str, session: &str) -> String {
     let params = signed(mgr, ws, agent, session, ChallengePurpose::Exchange);
-    mgr.external_exchange(agent, &params).unwrap().token
+    mgr.external_exchange(agent, &params)
+        .unwrap()
+        .token
+        .to_string()
 }
 
 fn wake_item(sender: &str, id: &str) -> PendingWakeItem {
@@ -418,6 +422,18 @@ fn offboarding_and_pausing_end_the_external_lease() {
     approve(&mgr, &fx.owner_id, &code_b, false).unwrap();
     mgr.revoke_external_lease(&fx.agent_b, "agent paused");
     assert!(!mgr.has_active_external_lease(&fx.agent_b));
+    let events: Vec<String> = mgr
+        .external_sessions(&fx.owner_id, &fx.agent_b, None)
+        .unwrap()
+        .history
+        .into_iter()
+        .map(|e| e.event)
+        .collect();
+    assert_eq!(
+        events.last().map(String::as_str),
+        Some("paused"),
+        "{events:?}"
+    );
 }
 
 #[test]
@@ -460,4 +476,267 @@ fn login_requests_validate_key_label_and_agent() {
         )
         .unwrap_err();
     assert_eq!(ttl.code, ErrorCode::InvalidRequest);
+}
+
+/// Adds a person with no authority over the fixture's agents: in a team of their own, not
+/// its lead, unable to hire, nobody's manager.
+fn bystander(fx: &WakeFixture) -> String {
+    let root = fx.office.org_snapshot().unwrap().teams[0].id.clone();
+    let team = next_id();
+    fx.office
+        .submit_org(
+            &fx.owner_id,
+            org_office::rules::OrgCommand::TeamCreate(org_proto::org::TeamCreateParams {
+                command_id: next_id(),
+                team_id: team.clone(),
+                name: "Elsewhere".into(),
+                owner_team_id: Some(root),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    let person = next_id();
+    fx.office
+        .submit_org(
+            &fx.owner_id,
+            org_office::rules::OrgCommand::MemberAddPerson(org_proto::org::MemberAddPersonParams {
+                command_id: next_id(),
+                member_id: person.clone(),
+                name: "Bystander".into(),
+                handle: Some("bystander".into()),
+                home_team_id: Some(team),
+                contact: None,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    // A new person may hire by default: take that away.
+    let version = fx
+        .office
+        .org_snapshot()
+        .unwrap()
+        .members
+        .into_iter()
+        .find(|m| m.id == person)
+        .unwrap()
+        .version;
+    let request = Request::new::<org_proto::hiring::MemberSetMayHire>(
+        1,
+        &org_proto::hiring::MemberSetMayHireParams {
+            command_id: next_id(),
+            member_id: person.clone(),
+            expected_version: version,
+            may_hire: false,
+        },
+    )
+    .unwrap();
+    let answer = fx
+        .office
+        .dispatch_hiring_rpc(Some(&fx.owner_id), &request)
+        .expect("a hiring call");
+    assert!(
+        matches!(answer.outcome, org_proto::Outcome::Result(_)),
+        "{answer:?}"
+    );
+    person
+}
+
+/// B5b: a signed-in person without authority over an agent can neither spend nor lock its
+/// pending approval code, whatever they try: the owner still approves with it afterwards.
+#[test]
+fn an_unprivileged_person_cannot_spend_or_lock_another_teams_approval_code() {
+    let fx = WakeFixture::new(LOOP_ECHO_SCRIPT);
+    let mgr = fx.make_manager(12, Duration::from_secs(3600), Duration::from_secs(2));
+    let ws = Workspace::new();
+    let person = bystander(&fx);
+    let (request_id, code) = login(&mgr, &fx.agent_a, &ws);
+    let (lookup, secret) = code.split_once('-').unwrap();
+    let wrong = |n: usize| {
+        let mut chars: Vec<char> = secret.chars().collect();
+        chars[n % 4] = if chars[n % 4] == 'Z' { 'Y' } else { 'Z' };
+        format!("{lookup}-{}", chars.into_iter().collect::<String>())
+    };
+    for n in 0..8 {
+        let refused = approve(&mgr, &person, &wrong(n), false).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::NotAuthorized, "{refused:?}");
+        assert!(
+            !refused.message.contains("attempt") && !refused.message.contains("locked"),
+            "no attempt was spent: {}",
+            refused.message
+        );
+    }
+    let refused = approve(&mgr, &person, &code, false).unwrap_err();
+    assert_eq!(refused.code, ErrorCode::NotAuthorized);
+    assert_eq!(
+        mgr.external_login_poll(&request_id).unwrap().state,
+        ExternalLoginState::Pending
+    );
+    // The owner's first wrong attempt is the first one counted (two left), then the right code.
+    let counted = approve(&mgr, &fx.owner_id, &wrong(0), false).unwrap_err();
+    assert!(counted.message.contains("2 attempt"), "{}", counted.message);
+    let view = approve(&mgr, &fx.owner_id, &code, false).unwrap();
+    assert!(view.active);
+}
+
+/// B4a: an exchange that passed its signature check while a newer lease was being approved
+/// waits for the approval and is refused: it never replaces the newer lease's token.
+#[test]
+fn an_exchange_racing_a_newer_approval_never_replaces_its_token() {
+    let fx = WakeFixture::new(LOOP_ECHO_SCRIPT);
+    let mgr = fx.make_manager(12, Duration::from_secs(3600), Duration::from_secs(2));
+    let ws = Workspace::new();
+    let (_, code) = login(&mgr, &fx.agent_a, &ws);
+    let old = approve(&mgr, &fx.owner_id, &code, false)
+        .unwrap()
+        .session_id;
+    let params = signed(&mgr, &ws, &fx.agent_a, &old, ChallengePurpose::Exchange);
+    let lease = mgr.external_lease(&fx.agent_a).unwrap();
+    let newer = ExternalLeaseRecord {
+        session_id: "ext-newer".into(),
+        ..lease.clone()
+    };
+    let (outcome, newer_token) = std::thread::scope(|scope| {
+        let serial = mgr.external.lease_mutation_for_test();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mgr_ref = &mgr;
+        let agent = fx.agent_a.clone();
+        let params_ref = &params;
+        scope.spawn(move || {
+            let _ = tx.send(mgr_ref.external_exchange(&agent, params_ref));
+        });
+        assert!(
+            rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "the exchange must wait for the approval in progress"
+        );
+        // Meanwhile the approval publishes a newer lease and its workspace gets a token.
+        mgr.external.publish_for_test(newer.clone());
+        mgr.bindings().revoke_external(&fx.agent_a, None);
+        let newer_token = mgr
+            .bindings()
+            .issue_external(&fx.agent_a, "ext-newer", now_ms() + 3_600_000)
+            .unwrap()
+            .expose_token()
+            .to_owned();
+        drop(serial);
+        (rx.recv().unwrap(), newer_token)
+    });
+    assert_eq!(outcome.unwrap_err().code, ErrorCode::NotAuthorized);
+    assert_eq!(
+        mgr.verify_external_token(&fx.agent_a, Some(&newer_token))
+            .as_deref(),
+        Some("ext-newer"),
+        "the newer lease keeps its token"
+    );
+
+    // The same race against a revocation: the exchange issues nothing.
+    let params = {
+        mgr.external.publish_for_test(lease.clone());
+        signed(&mgr, &ws, &fx.agent_a, &old, ChallengePurpose::Exchange)
+    };
+    let outcome = std::thread::scope(|scope| {
+        let serial = mgr.external.lease_mutation_for_test();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mgr_ref = &mgr;
+        let agent = fx.agent_a.clone();
+        let params_ref = &params;
+        scope.spawn(move || {
+            let _ = tx.send(mgr_ref.external_exchange(&agent, params_ref));
+        });
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+        mgr.external.publish_for_test(ExternalLeaseRecord {
+            revoked_at: Some("2026-11-26T00:00:00.000Z".into()),
+            ..lease.clone()
+        });
+        mgr.bindings().revoke_external(&fx.agent_a, None);
+        drop(serial);
+        rx.recv().unwrap()
+    });
+    assert_eq!(outcome.unwrap_err().code, ErrorCode::NotAuthorized);
+    assert!(!mgr.bindings().has_active_external(&fx.agent_a, 0));
+}
+
+/// A revocation whose file cannot be rewritten still ends the lease in RAM (fail closed) and
+/// is written by the next revocation call.
+#[test]
+fn a_revocation_the_disk_refuses_stays_revoked_in_ram_and_is_written_later() {
+    let fx = WakeFixture::new(LOOP_ECHO_SCRIPT);
+    let mgr = fx.make_manager(12, Duration::from_secs(3600), Duration::from_secs(2));
+    let ws = Workspace::new();
+    let (_, code) = login(&mgr, &fx.agent_a, &ws);
+    let session = approve(&mgr, &fx.owner_id, &code, false)
+        .unwrap()
+        .session_id;
+    let token = exchange(&mgr, &ws, &fx.agent_a, &session);
+    // The lease file's place is taken by a non-empty folder: no rename can replace it.
+    let path = mgr.store().external_lease_path(&fx.agent_a).unwrap();
+    let saved = fs::read(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    fs::write(path.join("blocker"), b"x").unwrap();
+
+    let refused = mgr
+        .external_revoke(&fx.owner_id, &fx.agent_a, None)
+        .unwrap_err();
+    assert_eq!(refused.code, ErrorCode::StorageError);
+    assert!(!mgr.has_active_external_lease(&fx.agent_a));
+    assert!(mgr
+        .verify_external_token(&fx.agent_a, Some(&token))
+        .is_none());
+    assert!(mgr
+        .external_challenge(&fx.agent_a, &session, ChallengePurpose::Exchange)
+        .is_err());
+    // A pause's best-effort revocation fails closed the same way.
+    mgr.revoke_external_lease(&fx.agent_a, "paused");
+    assert!(!mgr.has_active_external_lease(&fx.agent_a));
+
+    // Once the disk takes writes again, the next call writes the owed revocation.
+    fs::remove_dir_all(&path).unwrap();
+    fs::write(&path, &saved).unwrap();
+    let done = mgr
+        .external_revoke(&fx.owner_id, &fx.agent_a, None)
+        .unwrap();
+    assert_eq!(done.session_id.as_deref(), Some(session.as_str()));
+    let on_disk = mgr
+        .store()
+        .read_external_lease(&fx.agent_a)
+        .unwrap()
+        .unwrap();
+    assert!(on_disk.revoked_at.is_some());
+    // Nothing is owed any more.
+    let again = mgr
+        .external_revoke(&fx.owner_id, &fx.agent_a, None)
+        .unwrap();
+    assert!(!again.revoked);
+}
+
+/// B3: commands of an externally bound agent are counted in RAM only; the history file keeps
+/// lifecycle events alone.
+#[test]
+fn external_commands_are_recorded_in_ram_and_never_appended_to_the_history() {
+    let fx = WakeFixture::new(LOOP_ECHO_SCRIPT);
+    let mgr = fx.make_manager(12, Duration::from_secs(3600), Duration::from_secs(2));
+    let ws = Workspace::new();
+    let (_, code) = login(&mgr, &fx.agent_a, &ws);
+    let session = approve(&mgr, &fx.owner_id, &code, false)
+        .unwrap()
+        .session_id;
+    let _token = exchange(&mgr, &ws, &fx.agent_a, &session);
+    let history = mgr.store().external_history_path(&fx.agent_a).unwrap();
+    let before = fs::read(&history).unwrap();
+    for _ in 0..50 {
+        mgr.record_accepted_command(&fx.agent_a, "msg.inbox");
+    }
+    assert_eq!(fs::read(&history).unwrap(), before, "no per-command line");
+    assert_eq!(
+        mgr.bindings().external_accepted_commands(&fx.agent_a).len(),
+        50
+    );
+    let events: Vec<String> = mgr
+        .external_sessions(&fx.owner_id, &fx.agent_a, Some(200))
+        .unwrap()
+        .history
+        .into_iter()
+        .map(|e| e.event)
+        .collect();
+    assert_eq!(events, ["approved", "token_issued"], "{events:?}");
 }

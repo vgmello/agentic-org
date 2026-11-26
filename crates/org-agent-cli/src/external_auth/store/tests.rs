@@ -81,7 +81,7 @@ fn state_files_are_owner_only_and_round_trip() {
     let token = TokenFile {
         version: 1,
         session_id: "ext-1".into(),
-        token: "tok-secret".into(),
+        token: String::from("tok-secret").into(),
         expires_at: "2026-11-27T00:00:00.000Z".into(),
     };
     state.write_token(&token).unwrap();
@@ -184,7 +184,7 @@ fn tokens_are_stale_at_expiry_minus_the_margin_and_when_unreadable() {
     let token = TokenFile {
         version: 1,
         session_id: "s".into(),
-        token: "t".into(),
+        token: String::from("t").into(),
         expires_at: "2026-11-27T00:00:00.000Z".into(),
     };
     let exp = org_proto::parse_rfc3339_ms(&token.expires_at).unwrap();

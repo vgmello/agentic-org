@@ -9,7 +9,8 @@ use super::{
     RunBindingRegistry,
 };
 
-/// Most accepted commands kept in RAM per external binding (audit lines go to disk as well).
+/// Most accepted commands kept in RAM per external binding. Never written to disk per command:
+/// the bound hot path does no I/O (`doc-7` #18).
 const MAX_EXTERNAL_ACCEPTED_COMMANDS: usize = 512;
 
 impl RunBindingRegistry {

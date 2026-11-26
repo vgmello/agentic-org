@@ -160,14 +160,22 @@ impl SessionManager {
             .lease_mutation
             .lock()
             .unwrap_or_else(|p| p.into_inner());
+        // Authority over the agent the code names first, the secret after: a person who may not
+        // manage that agent learns nothing of the secret and never spends (or locks) its attempts.
+        let target = self
+            .external
+            .pending
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .find_live(&params.code, now_ms())?;
+        let employee = self.require_active_agent(&target.employee_id)?;
+        self.authorize_external_operator(actor, &employee)?;
         let pending = self
             .external
             .pending
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .check_code(&params.code, now_ms())?;
-        let employee = self.require_active_agent(&pending.employee_id)?;
-        self.authorize_external_operator(actor, &employee)?;
+            .check_code(&params.code, &target, now_ms())?;
         let emp_id = employee.id.as_str();
         let now = now_ms();
         let session_id = format!("ext-{}", self.office.next_uuid_v7());
@@ -192,6 +200,8 @@ impl SessionManager {
             self.external.restore(emp_id, previous);
             return Err(storage("save"));
         }
+        // The new lease file replaced whatever revocation was still owed to the disk.
+        self.external.settle_persisted(emp_id);
         // The new lease has no token yet: every older external token and nonce is void.
         self.bindings.revoke_external(emp_id, None);
         self.external
@@ -329,8 +339,17 @@ impl SessionManager {
     }
 
     /// Ends `employee_id`'s lease without an operator (pause, offboard): best effort, logged.
+    /// RAM is revoked whatever the disk does ([`Self::end_external_lease`]).
     pub fn revoke_external_lease(&self, employee_id: &str, reason: &str) {
-        if let Err(e) = self.end_external_lease(employee_id, None, None, reason) {
+        // The history names the lifecycle event, whatever words the caller's reason has.
+        let event = if reason.contains("offboard") {
+            "offboarded"
+        } else if reason.contains("pause") {
+            "paused"
+        } else {
+            "revoked"
+        };
+        if let Err(e) = self.end_external_lease(employee_id, None, None, event) {
             eprintln!("org-office-sessions: could not end external lease of {employee_id}: {e:?}");
             // Fail closed in RAM even when the file could not be rewritten.
             self.bindings.revoke_external(employee_id, None);
@@ -340,6 +359,11 @@ impl SessionManager {
     /// Marks the active lease revoked (durably) and drops its token and nonces. Answers the
     /// ended session, `None` when nothing was active. Callers that end a lease of an agent that
     /// stays active run its held wakes afterwards.
+    ///
+    /// Fails closed: the RAM cache says revoked before the file is rewritten and stays revoked
+    /// when the write fails, so no challenge, exchange or token is served for that lease from
+    /// then on and its wakes are no longer held. The revocation the disk still owes is written
+    /// by the next call for this agent, or replaced by the next approval's lease file.
     pub(crate) fn end_external_lease(
         &self,
         employee_id: &str,
@@ -347,43 +371,60 @@ impl SessionManager {
         actor: Option<&str>,
         reason: &str,
     ) -> Result<Option<String>, ApiError> {
-        let ended = {
-            let _serial = self
-                .external
-                .lease_mutation
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
-            let Some(mut lease) = self
-                .external_lease(employee_id)
-                .filter(|l| l.revoked_at.is_none())
-            else {
-                self.bindings.revoke_external(employee_id, None);
-                return Ok(None);
-            };
-            if session_id.is_some_and(|id| id != lease.session_id) {
-                return Err(ApiError::new(
-                    ErrorCode::NotFound,
-                    "that external session is not this agent's current one",
-                ));
-            }
-            lease.revoked_at = Some(rfc3339_now());
-            let previous = self.external.replace(employee_id, Some(lease.clone()));
+        let _serial = self
+            .external
+            .lease_mutation
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let Some(mut lease) = self.external_lease(employee_id) else {
             self.bindings.revoke_external(employee_id, None);
-            self.external
-                .nonces
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .purge_member(employee_id);
-            if self.store.write_external_lease(&lease).is_err() {
-                // RAM stays revoked (fail closed); the cache is restored only so a later attempt
-                // can retry the durable write.
-                self.external.restore(employee_id, previous);
-                return Err(storage("revoke"));
-            }
-            self.record_external_event(employee_id, reason, Some(&lease.session_id), actor, None);
-            lease.session_id
+            return Ok(None);
         };
-        Ok(Some(ended))
+        if lease.revoked_at.is_some() {
+            self.bindings.revoke_external(employee_id, None);
+            if !self.external.owes_disk(employee_id) {
+                return Ok(None);
+            }
+            // An earlier revocation reached RAM only: write it now.
+            return self.persist_revocation(&lease, actor, reason).map(Some);
+        }
+        if session_id.is_some_and(|id| id != lease.session_id) {
+            return Err(ApiError::new(
+                ErrorCode::NotFound,
+                "that external session is not this agent's current one",
+            ));
+        }
+        lease.revoked_at = Some(rfc3339_now());
+        self.external.replace(employee_id, Some(lease.clone()));
+        self.external.mark_unpersisted(employee_id);
+        self.bindings.revoke_external(employee_id, None);
+        self.external
+            .nonces
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .purge_member(employee_id);
+        self.persist_revocation(&lease, actor, reason).map(Some)
+    }
+
+    /// Writes a lease RAM already holds revoked, then records it. On failure the debt stays.
+    fn persist_revocation(
+        &self,
+        lease: &ExternalLeaseRecord,
+        actor: Option<&str>,
+        reason: &str,
+    ) -> Result<String, ApiError> {
+        if self.store.write_external_lease(lease).is_err() {
+            return Err(storage("revoke"));
+        }
+        self.external.settle_persisted(&lease.employee_id);
+        self.record_external_event(
+            &lease.employee_id,
+            reason,
+            Some(&lease.session_id),
+            actor,
+            None,
+        );
+        Ok(lease.session_id.clone())
     }
 
     fn external_view(

@@ -34,6 +34,10 @@ struct Office {
     tokens: Vec<String>,
     bound_with: Vec<String>,
     logged_out: bool,
+    /// When set, challenges claim to come from this office (a socket that is not the
+    /// signed-in office).
+    challenge_office: Option<String>,
+    exchanges: u32,
 }
 
 fn verify(office: &Office, purpose: ChallengePurpose, nonce: &str, sig: &str) -> bool {
@@ -103,13 +107,17 @@ fn answer(req: &Request, office: &mut Office) -> Response {
             id,
             &AuthChallengeResult {
                 member_id: ADA.into(),
-                office_id: OFFICE.into(),
+                office_id: office
+                    .challenge_office
+                    .clone()
+                    .unwrap_or_else(|| OFFICE.into()),
                 nonce: format!("nonce{}", office.nonce),
                 expires_at: "2099-01-01T00:00:00.000Z".into(),
             },
         )
         .unwrap()
     } else if req.is::<AuthExchange>() {
+        office.exchanges += 1;
         let p = req.params::<AuthExchange>().unwrap();
         if !verify(
             office,
@@ -127,7 +135,7 @@ fn answer(req: &Request, office: &mut Office) -> Response {
                 member_id: ADA.into(),
                 office_id: OFFICE.into(),
                 session_id: SESSION.into(),
-                token,
+                token: token.into(),
                 expires_at: "2099-01-01T00:00:00.000Z".into(),
                 lease_expires_at: "2099-01-01T00:00:00.000Z".into(),
             },
@@ -367,4 +375,240 @@ fn a_symlinked_binding_is_never_followed() {
         .unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(envelope(&out)["error"]["code"], "not_authorized");
+}
+
+/// A stand-in for the operator's signed-in `agentic-org`: records the words `exec` approves
+/// with (one per line) and the office it named, then succeeds. The fake office approves on
+/// its second poll whatever the operator does.
+fn stub_operator(dir: &Path) -> PathBuf {
+    let stub = dir.join("agentic-org-stub");
+    std::fs::write(
+        &stub,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\nprintf '%s\\n' \"$AGENTIC_ORG_OFFICE\" > \"$0.office\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    stub
+}
+
+struct ExecWorld {
+    _tmp: tempfile::TempDir,
+    root: PathBuf,
+    sock: PathBuf,
+    state: PathBuf,
+    stub: PathBuf,
+    office: Arc<Mutex<Office>>,
+}
+
+fn exec_world(prefix: &str) -> ExecWorld {
+    let tmp = tempfile::Builder::new().prefix(prefix).tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let sock = root.join("office.sock");
+    let office = Arc::new(Mutex::new(Office::default()));
+    serve(UnixListener::bind(&sock).unwrap(), Arc::clone(&office));
+    let stub = stub_operator(&root);
+    ExecWorld {
+        state: root.join("state"),
+        _tmp: tmp,
+        root,
+        sock,
+        stub,
+        office,
+    }
+}
+
+impl ExecWorld {
+    fn exec(&self, script: &str, script_args: &[&Path]) -> Command {
+        let mut cmd = agent_os(&self.root, &self.state, &self.root);
+        cmd.env("AGENTIC_ORG_BIN", &self.stub)
+            .args(["exec", "--as", "@ada", "--socket"])
+            .arg(&self.sock)
+            .args(["--", "sh", "-c", script, "sh"])
+            .args(script_args);
+        cmd
+    }
+
+    /// The `exec/<id>` folders left under the state root (none once `exec` is done).
+    fn exec_dirs(&self) -> Vec<PathBuf> {
+        std::fs::read_dir(self.state.join("exec"))
+            .map(|entries| entries.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default()
+    }
+
+    fn assert_lease_ended_and_folder_removed(&self) {
+        assert!(self.office.lock().unwrap().logged_out, "lease not ended");
+        assert!(self.exec_dirs().is_empty(), "{:?}", self.exec_dirs());
+    }
+}
+
+fn wait_for_file(path: &Path, child: &mut std::process::Child) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !path.exists() {
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("exec ended early: {status:?}");
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{path:?} never appeared"
+        );
+        thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+fn wait_exit(child: &mut std::process::Child, secs: u64) -> std::process::ExitStatus {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("exec did not end within {secs}s");
+        }
+        thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+fn signal(target: &str, name: &str) {
+    let status = Command::new("sh")
+        .args(["-c", &format!("kill -{name} {target}")])
+        .status()
+        .unwrap();
+    assert!(status.success(), "kill -{name} {target}");
+}
+
+/// B1 + B6: `exec` approves through `agentic-org` with named flags, hands the child a token
+/// (env and an owner-only file), then ends the lease and removes the file when it exits.
+#[test]
+fn exec_runs_the_child_with_a_token_then_ends_the_lease_and_removes_its_folder() {
+    let w = exec_world("aose");
+    let out = w.root.join("seen");
+    let output = w
+        .exec(
+            "printf '%s\\n%s\\n' \"$AGENT_OS_SESSION_TOKEN\" \"$AGENT_OS_BINDING_FILE\" > \"$1\"; \
+             test -f \"$AGENT_OS_BINDING_FILE\" || exit 9; exit 7",
+            &[&out],
+        )
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let args = std::fs::read_to_string(w.stub.with_file_name("agentic-org-stub.args")).unwrap();
+    assert_eq!(
+        args.lines().collect::<Vec<_>>(),
+        ["agent", "approve", "--code", "ABCD-EFGH", "--ttl", "86400s"]
+    );
+    let office_named =
+        std::fs::read_to_string(w.stub.with_file_name("agentic-org-stub.office")).unwrap();
+    assert_eq!(office_named.trim(), OFFICE);
+    let seen = std::fs::read_to_string(&out).unwrap();
+    let mut lines = seen.lines();
+    let token = lines.next().unwrap();
+    let file = PathBuf::from(lines.next().unwrap());
+    assert_eq!(token, w.office.lock().unwrap().tokens[0]);
+    assert!(file.starts_with(w.state.join("exec")), "{file:?}");
+    assert!(!file.exists());
+    w.assert_lease_ended_and_folder_removed();
+}
+
+/// B6: `SIGTERM` to the wrapper is forwarded to the child; the lease still ends and the token
+/// folder is removed, and the wrapper exits as a shell would (128 + 15).
+#[test]
+fn a_terminated_exec_forwards_the_signal_ends_the_lease_and_cleans_up() {
+    let w = exec_world("aost");
+    let ready = w.root.join("ready");
+    let mut child = w
+        .exec("echo up > \"$1\"; exec sleep 30", &[&ready])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_for_file(&ready, &mut child);
+    assert_eq!(
+        w.exec_dirs().len(),
+        1,
+        "the token folder exists while it runs"
+    );
+    signal(&child.id().to_string(), "TERM");
+    let status = wait_exit(&mut child, 20);
+    assert_eq!(status.code(), Some(143), "{status:?}");
+    w.assert_lease_ended_and_folder_removed();
+}
+
+/// B6: Ctrl-C reaches the child (the terminal signals the whole foreground group); the wrapper
+/// survives it, waits for the child, then ends the lease and cleans up. An interrupt sent to
+/// the wrapper alone does not end it.
+#[test]
+fn ctrl_c_reaches_the_child_and_the_wrapper_still_cleans_up() {
+    use std::os::unix::process::CommandExt as _;
+    let w = exec_world("aosi");
+    let ready = w.root.join("ready");
+    let mut child = w
+        .exec("echo up > \"$1\"; while :; do sleep 0.05; done", &[&ready])
+        .stdout(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    wait_for_file(&ready, &mut child);
+    signal(&child.id().to_string(), "INT");
+    thread::sleep(std::time::Duration::from_millis(400));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "an interrupt to the wrapper alone never ends it"
+    );
+    assert!(!w.office.lock().unwrap().logged_out);
+    // Ctrl-C: the whole process group.
+    signal(&format!("-{}", child.id()), "INT");
+    let status = wait_exit(&mut child, 20);
+    assert_eq!(status.code(), Some(130), "{status:?}");
+    w.assert_lease_ended_and_folder_removed();
+}
+
+/// A socket that answers a refresh's challenge for another office gets no signature: the
+/// workspace key is never a signing oracle for a nonce it did not sign in to.
+#[test]
+fn a_challenge_for_another_office_is_never_signed() {
+    let tmp = tempfile::Builder::new().prefix("aoso").tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let sock = root.join("office.sock");
+    let office = Arc::new(Mutex::new(Office::default()));
+    serve(UnixListener::bind(&sock).unwrap(), Arc::clone(&office));
+    let repo = root.join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let state = root.join("state");
+    let out = agent_os(&repo, &state, &root)
+        .args(["login", "--as", "@ada", "--socket"])
+        .arg(&sock)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", envelope(&out));
+    let exchanges = {
+        let mut office = office.lock().unwrap();
+        // The office "forgets" the token (a restart), and its socket now claims another office.
+        office.tokens.clear();
+        office.challenge_office = Some("0193a5c0-0000-7000-8000-00000000e011".into());
+        office.exchanges
+    };
+    let out = agent_os(&repo, &state, &root)
+        .arg("whoami")
+        .output()
+        .unwrap();
+    let env = envelope(&out);
+    assert_eq!(out.status.code(), Some(1), "{env}");
+    assert_eq!(env["error"]["code"], "not_authorized", "{env}");
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("another office"),
+        "{env}"
+    );
+    assert_eq!(
+        office.lock().unwrap().exchanges,
+        exchanges,
+        "nothing was signed or sent"
+    );
 }

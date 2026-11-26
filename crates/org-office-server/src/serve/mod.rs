@@ -10,6 +10,7 @@
 //! touches a database that is closing.
 
 mod auth;
+mod auth_limits;
 mod binding;
 mod connection;
 mod dispatch;
@@ -41,6 +42,8 @@ use org_work::{Caller, WorkCall};
 
 use self::dispatch::answer;
 
+#[cfg(test)]
+pub(crate) use self::external::close_after_approval;
 pub use self::external::ExternalAuthPort;
 pub use self::listener::{bind, run};
 pub use self::shared::Shared;

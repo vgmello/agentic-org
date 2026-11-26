@@ -120,12 +120,24 @@ fn signed_in(w: &World, member: &str) -> (Zeroizing<Vec<u8>>, String, String) {
     assert_eq!(polled.state, ExternalLoginState::Approved);
     let token = client::exchange(
         &target(w).connect().unwrap(),
-        &pkcs8,
-        &request.member_id,
-        &view.session_id,
+        &signer(w, &pkcs8, &request.member_id, &view.session_id),
     )
     .unwrap();
-    (pkcs8, view.session_id, token.token)
+    (pkcs8, view.session_id, token.token.to_string())
+}
+
+fn signer<'a>(
+    w: &'a World,
+    pkcs8: &'a [u8],
+    member: &'a str,
+    session: &'a str,
+) -> client::Signer<'a> {
+    client::Signer {
+        pkcs8,
+        office_id: Some(&w.office.info().office_id),
+        member_id: member,
+        session_id: session,
+    }
 }
 
 fn bound_client(w: &World, member: &str, token: &str) -> Client {
@@ -304,9 +316,7 @@ fn external_agent_lifecycle_over_the_real_office_socket() {
     // Nonce replay is refused.
     let signed = client::signed_challenge(
         &target(&w).connect().unwrap(),
-        &pkcs8,
-        &w.ada,
-        &session,
+        &signer(&w, &pkcs8, &w.ada, &session),
         ChallengePurpose::Exchange,
     )
     .unwrap();
@@ -340,7 +350,7 @@ fn external_agent_lifecycle_over_the_real_office_socket() {
         .write_token(&TokenFile {
             version: 1,
             session_id: session.clone(),
-            token: token.clone(),
+            token: token.clone().into(),
             expires_at: "2099-01-01T00:00:00.000Z".into(),
         })
         .unwrap();
@@ -354,7 +364,7 @@ fn external_agent_lifecycle_over_the_real_office_socket() {
     };
     let (code, who) = agent_os(&w, workspace.clone(), &["who"]);
     assert_eq!(code, 0, "refresh after token loss: {who}");
-    let refreshed = state.read_token().unwrap().unwrap().token;
+    let refreshed = state.read_token().unwrap().unwrap().token.to_string();
     assert_ne!(refreshed, token);
 
     // A second approval supersedes the lease: the old key and token stop working at once.
@@ -425,3 +435,194 @@ fn external_agent_lifecycle_over_the_real_office_socket() {
         !w.node.sessions.bindings().has_active_external(&w.ada, 0)
     });
 }
+
+/// B4b: the approval's closing step spares a connection already bound with the new lease (a
+/// fast-polling `agent-os login` that exchanged and bound first) and closes the lease it
+/// superseded; an operator revocation and a logout close only their own lease's connections.
+#[test]
+fn an_approval_never_closes_a_connection_already_bound_with_the_new_lease() {
+    let w = world();
+    let (_, old_session, old_token) = signed_in(&w, "ada");
+    let old_conn = bound_client(&w, &w.ada, &old_token);
+    // The second sign-in is approved through the port alone: the server's closing step has
+    // not run yet when the workspace polls, exchanges and binds.
+    let (pkcs8, request) = login(&w, "ada");
+    let view = w
+        .node
+        .sessions
+        .external_approve(
+            &w.owner,
+            &MemberExternalApproveParams {
+                command_id: None,
+                code: request.approval_code.clone(),
+                ttl_secs: None,
+                takeover: false,
+            },
+        )
+        .unwrap();
+    assert_ne!(view.session_id, old_session);
+    let token = client::exchange(
+        &target(&w).connect().unwrap(),
+        &signer(&w, &pkcs8, &w.ada, &view.session_id),
+    )
+    .unwrap();
+    let new_conn = bound_client(&w, &w.ada, &token.token);
+    crate::serve::close_after_approval(&w.node.shared, &view);
+    assert!(
+        new_conn.call_raw("who", json!({})).is_ok(),
+        "the new lease's connection keeps going"
+    );
+    assert!(old_conn.call_raw("who", json!({})).is_err());
+    // Revoking the new lease closes its connection.
+    let revoked = ok_value(grant_call::<MemberExternalRevoke>(
+        &w,
+        &MemberExternalRevokeParams {
+            command_id: None,
+            employee_id: "ada".into(),
+            session_id: Some(view.session_id.clone()),
+        },
+    ));
+    assert_eq!(revoked["revoked"], true);
+    assert!(new_conn.call_raw("who", json!({})).is_err());
+}
+
+/// B5a: a caller that opens a fresh connection for every sign-in call never meets the
+/// per-connection budget; the office-wide budget stops it, per kind of call.
+#[test]
+fn fresh_connections_cannot_flood_the_sign_in_calls() {
+    let w = world();
+    let mut answers = Vec::new();
+    for _ in 0..12 {
+        let (_, pubkey) = client::generate_key().unwrap();
+        answers.push(client::call::<AuthLoginRequest>(
+            &target(&w).connect().unwrap(),
+            &AuthLoginRequestParams {
+                member: "@ben".into(),
+                pubkey_ed25519_b64: pubkey,
+                workspace_label: "flood".into(),
+            },
+        ));
+    }
+    let codes: Vec<ErrorCode> = answers
+        .iter()
+        .map(|a| a.as_ref().err().map_or(ErrorCode::Unknown, |r| r.code))
+        .collect();
+    let accepted = answers.iter().filter(|a| a.is_ok()).count();
+    assert_eq!(accepted, 3, "the per-agent pending cap: {codes:?}");
+    assert!(
+        codes[8..].iter().all(|c| *c == ErrorCode::RateLimited),
+        "the office-wide budget: {codes:?}"
+    );
+    // Polls have their own budget: the waiting logins still learn where they stand.
+    let pending = answers[0].as_ref().unwrap();
+    let polled = client::call::<AuthLoginPoll>(
+        &target(&w).connect().unwrap(),
+        &AuthLoginPollParams {
+            request_id: pending.request_id.clone(),
+        },
+    )
+    .unwrap();
+    assert_eq!(polled.state, ExternalLoginState::Pending);
+    // A flood of polls from several callers on fresh connections is held the same way.
+    let limited = std::sync::atomic::AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            scope.spawn(|| {
+                for _ in 0..400 {
+                    if limited.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+                    let answer = client::call::<AuthLoginPoll>(
+                        &target(&w).connect().unwrap(),
+                        &AuthLoginPollParams {
+                            request_id: "no-such-request".into(),
+                        },
+                    );
+                    if answer.is_err_and(|r| r.code == ErrorCode::RateLimited) {
+                        limited.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                }
+            });
+        }
+    });
+    let limited = limited.into_inner();
+    assert!(limited, "polls are budgeted office-wide");
+}
+
+/// B3: a bound external agent's commands write nothing to disk (the history keeps lifecycle
+/// events alone) and stay within the hot-path budget over the real office socket (`doc-7` #18):
+/// the external binding's own share of a call (against the same call on a managed binding,
+/// sampled in turn) is at most 1 ms at the median and 2 ms at the 95th percentile in every
+/// build, and the whole call is within that budget in an optimized build. (An unoptimized test
+/// build spends more than 1 ms per call in the directory lookup every bound call makes, managed
+/// or external alike.)
+#[test]
+fn bound_external_commands_do_no_disk_io_and_stay_within_the_hot_path_budget() {
+    let w = world();
+    let (_, _session, token) = signed_in(&w, "ada");
+    let external = bound_client(&w, &w.ada, &token);
+    let run = w
+        .node
+        .sessions
+        .bindings()
+        .issue(
+            &w.ben,
+            "run-ben",
+            "sess-ben",
+            std::process::id() as libc::pid_t,
+        )
+        .unwrap();
+    let managed = bound_client(&w, &w.ben, run.expose_token());
+    let history = w
+        .node
+        .sessions
+        .store()
+        .external_history_path(&w.ada)
+        .unwrap();
+    let before = std::fs::read(&history).unwrap();
+    for _ in 0..30 {
+        external.call_raw(HOT_PATH_METHOD, json!({})).unwrap();
+        managed.call_raw(HOT_PATH_METHOD, json!({})).unwrap();
+    }
+    let timed = |conn: &Client| {
+        let started = std::time::Instant::now();
+        conn.call_raw(HOT_PATH_METHOD, json!({})).unwrap();
+        started.elapsed()
+    };
+    let (mut ext, mut man): (Vec<Duration>, Vec<Duration>) = (0..300)
+        .map(|_| (timed(&external), timed(&managed)))
+        .unzip();
+    ext.sort();
+    man.sort();
+    let at = |samples: &[Duration], pct: usize| samples[samples.len() * pct / 100];
+    let (median, p95) = (at(&ext, 50), at(&ext, 95));
+    let share_median = median.saturating_sub(at(&man, 50));
+    let share_p95 = p95.saturating_sub(at(&man, 95));
+    eprintln!(
+        "external hot path over the socket: median {median:?} (external share {share_median:?}), p95 {p95:?} (external share {share_p95:?})"
+    );
+    assert!(share_median <= Duration::from_millis(1), "{share_median:?}");
+    assert!(share_p95 <= Duration::from_millis(2), "{share_p95:?}");
+    if !cfg!(debug_assertions) {
+        assert!(median <= Duration::from_millis(1), "median {median:?}");
+        assert!(p95 <= Duration::from_millis(2), "p95 {p95:?}");
+    }
+    assert_eq!(
+        std::fs::read(&history).unwrap(),
+        before,
+        "no history line per command"
+    );
+    assert!(
+        w.node
+            .sessions
+            .bindings()
+            .external_accepted_commands(&w.ada)
+            .len()
+            >= 330,
+        "every command is still counted in RAM"
+    );
+    w.node.sessions.bindings().revoke(&w.ben, None);
+}
+
+/// The collaboration call the hot-path test repeats.
+const HOT_PATH_METHOD: &str = "msg.inbox";

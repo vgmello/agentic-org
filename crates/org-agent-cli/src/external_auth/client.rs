@@ -6,8 +6,8 @@ use base64::Engine as _;
 use org_client::Client;
 use org_command::Refusal;
 use org_proto::external_auth::{
-    challenge_message, AuthChallenge, AuthChallengeParams, AuthExchange, AuthExchangeResult,
-    ChallengePurpose, SignedChallengeParams,
+    challenge_message, AuthChallenge, AuthChallengeParams, AuthChallengeResult, AuthExchange,
+    AuthExchangeResult, ChallengePurpose, SignedChallengeParams,
 };
 use org_proto::location::{OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
 use org_proto::msg::{MsgBind, MsgBindParams};
@@ -127,54 +127,91 @@ pub fn public_key_b64(pkcs8: &[u8]) -> Result<String, Refusal> {
     Ok(base64::engine::general_purpose::STANDARD.encode(key_pair(pkcs8)?.public_key().as_ref()))
 }
 
-/// Asks for a `purpose` nonce on lease `session_id` and signs it with the workspace key.
-pub fn signed_challenge(
+/// What a signed challenge is for: the office and agent the workspace signed in to, and its
+/// lease session. The client signs only a nonce the office issued for exactly these.
+#[derive(Debug, Clone, Copy)]
+pub struct Signer<'a> {
+    pub pkcs8: &'a [u8],
+    /// The office the workspace signed in to; `None` only before the first answer names it.
+    pub office_id: Option<&'a str>,
+    pub member_id: &'a str,
+    pub session_id: &'a str,
+}
+
+fn foreign_challenge() -> Refusal {
+    Refusal::new(
+        ErrorCode::NotAuthorized,
+        "The office socket answered for another office or agent; nothing was signed.",
+        "Check --socket / --office, then run `agent-os login --as @<handle>` again.",
+    )
+}
+
+/// Asks the office for a `purpose` nonce on the signer's lease session.
+fn request_challenge(
     client: &Client,
-    pkcs8: &[u8],
-    member_id: &str,
-    session_id: &str,
+    signer: &Signer<'_>,
     purpose: ChallengePurpose,
-) -> Result<SignedChallengeParams, Refusal> {
-    let challenge = call::<AuthChallenge>(
+) -> Result<AuthChallengeResult, Refusal> {
+    call::<AuthChallenge>(
         client,
         &org_proto::external_auth::AuthChallengeParams {
-            member: member_id.to_owned(),
-            session_id: session_id.to_owned(),
+            member: signer.member_id.to_owned(),
+            session_id: signer.session_id.to_owned(),
             purpose,
         },
-    )?;
+    )
+}
+
+/// Signs `challenge` with the workspace key, after checking it was issued for the signer's own
+/// office and agent: a challenge for anyone else is refused before anything is signed, so a
+/// socket that is not the signed-in office cannot use the workspace key as a signing oracle.
+fn sign(
+    signer: &Signer<'_>,
+    purpose: ChallengePurpose,
+    challenge: AuthChallengeResult,
+) -> Result<SignedChallengeParams, Refusal> {
+    if challenge.member_id != signer.member_id
+        || signer
+            .office_id
+            .is_some_and(|office| office != challenge.office_id)
+    {
+        return Err(foreign_challenge());
+    }
     let message = challenge_message(
         purpose,
         &challenge.office_id,
-        &challenge.member_id,
-        session_id,
+        signer.member_id,
+        signer.session_id,
         &challenge.nonce,
     );
-    let signature = key_pair(pkcs8)?.sign(&message);
+    let signature = key_pair(signer.pkcs8)?.sign(&message);
     Ok(SignedChallengeParams {
-        member: challenge.member_id,
-        session_id: session_id.to_owned(),
+        member: signer.member_id.to_owned(),
+        session_id: signer.session_id.to_owned(),
         nonce: challenge.nonce,
         signature_ed25519_b64: base64::engine::general_purpose::STANDARD.encode(signature.as_ref()),
     })
 }
 
-/// The 1-RTT refresh: challenge, sign, exchange for a fresh fast token.
-pub fn exchange(
+/// Asks for a `purpose` nonce on the signer's lease session and signs it ([`sign`]).
+pub fn signed_challenge(
     client: &Client,
-    pkcs8: &[u8],
-    member_id: &str,
-    session_id: &str,
-) -> Result<AuthExchangeResult, Refusal> {
-    let signed = signed_challenge(
-        client,
-        pkcs8,
-        member_id,
-        session_id,
-        ChallengePurpose::Exchange,
-    )
-    .map_err(ended)?;
-    call::<AuthExchange>(client, &signed).map_err(ended)
+    signer: &Signer<'_>,
+    purpose: ChallengePurpose,
+) -> Result<SignedChallengeParams, Refusal> {
+    sign(signer, purpose, request_challenge(client, signer, purpose)?)
+}
+
+/// The 1-RTT refresh: challenge, sign, exchange for a fresh fast token. A token issued for
+/// another agent or lease session than the signer's is refused.
+pub fn exchange(client: &Client, signer: &Signer<'_>) -> Result<AuthExchangeResult, Refusal> {
+    let challenge = request_challenge(client, signer, ChallengePurpose::Exchange).map_err(ended)?;
+    let signed = sign(signer, ChallengePurpose::Exchange, challenge)?;
+    let fresh = call::<AuthExchange>(client, &signed).map_err(ended)?;
+    if fresh.member_id != signer.member_id || fresh.session_id != signer.session_id {
+        return Err(foreign_challenge());
+    }
+    Ok(fresh)
 }
 
 /// A refused challenge or exchange means the lease is gone.
