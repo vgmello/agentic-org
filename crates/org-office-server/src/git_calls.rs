@@ -690,7 +690,9 @@ fn extract_remote_host(url: &str, protocol: AllowedProtocol) -> Result<String, A
                 };
                 let (host, port) = split_https_host_port(after_user)?;
                 if let Some(p) = port {
-                    if p.parse::<u16>().ok().filter(|n| *n > 0).is_none() {
+                    if !p.bytes().all(|b| b.is_ascii_digit())
+                        || p.parse::<u16>().ok().filter(|n| *n > 0).is_none()
+                    {
                         return Err(ApiError::new(
                             ErrorCode::InvalidRequest,
                             "SSH remote URL has an invalid port",
@@ -1331,18 +1333,42 @@ fn match_secret_span_len(rest: &str, prev_is_alnum: bool) -> Option<usize> {
         .map(|p| p.len())
         .or_else(|| (!prev_is_alnum && starts_with_ascii_ci(rest, "sk-")).then_some(3))?;
     let tail = &rest[prefix_len..];
-    let is_header = starts_with_ascii_ci(rest, "authorization:")
-        || starts_with_ascii_ci(rest, "proxy-authorization:");
-    let end = if is_header {
+    let is_line_scoped = starts_with_ascii_ci(rest, "authorization:")
+        || starts_with_ascii_ci(rest, "proxy-authorization:")
+        || starts_with_ascii_ci(rest, "x-access-token:")
+        || starts_with_ascii_ci(rest, "git_ssh_command=");
+    let end = if is_line_scoped {
         tail.find(['\n', '\r'])
             .map_or(rest.len(), |i| prefix_len + i)
     } else {
-        tail.find(|c: char| {
-            c.is_whitespace() || matches!(c, '\'' | '"' | '&' | ';' | ',' | '\n' | '\r' | ')')
-        })
-        .map_or(rest.len(), |i| prefix_len + i)
+        prefix_len + scan_secret_value_len(tail)
     };
     Some(end)
+}
+
+fn scan_secret_value_len(tail: &str) -> usize {
+    let ws_skip = tail
+        .find(|c: char| !matches!(c, ' ' | '\t'))
+        .unwrap_or(tail.len());
+    let val = &tail[ws_skip..];
+    if let Some(quote) = val.chars().next().filter(|c| matches!(c, '\'' | '"')) {
+        let after_open = &val[quote.len_utf8()..];
+        let stop = after_open
+            .find([quote, '\n', '\r'])
+            .map_or(after_open.len(), |i| {
+                if after_open[i..].starts_with(quote) {
+                    i + quote.len_utf8()
+                } else {
+                    i
+                }
+            });
+        ws_skip + quote.len_utf8() + stop
+    } else {
+        val.find(|c: char| {
+            c.is_whitespace() || matches!(c, '\'' | '"' | '&' | ';' | ',' | '\n' | '\r' | ')')
+        })
+        .map_or(tail.len(), |i| ws_skip + i)
+    }
 }
 
 fn scrub_git_log_text(raw: &str) -> String {
@@ -2091,13 +2117,18 @@ mod tests {
         // panics on multi-byte UTF-8 straddling byte 512.
         let leaked = GitError::CommandFailed {
             status: 128,
-            stderr: "fatal on task-123: HTTPS://x-access-token:ghp_SUPERSECRET123@github.com/org/repo.git?token=QSECRET99 Proxy-Authorization: Basic BASE64SECRET\nGITHUB_TOKEN=gh_env_secret -----BEGIN OPENSSH PRIVATE KEY-----\nAAAASECRETKEYBYTES\n-----END OPENSSH PRIVATE KEY-----".into(),
+            stderr: "fatal on task-123: HTTPS://x-access-token:ghp_SUPERSECRET123@github.com/org/repo.git?token=QSECRET99 Proxy-Authorization: Basic BASE64SECRET\nX-Access-Token: HDRSECRET1\npassword=\"DQSECRET\" token='SQSECRET' Bearer  DSPACE_SECRET\nGIT_SSH_COMMAND=ssh -i /priv/secret_key\nGITHUB_TOKEN=\"gh_env_secret\" -----BEGIN OPENSSH PRIVATE KEY-----\nAAAASECRETKEYBYTES\n-----END OPENSSH PRIVATE KEY-----".into(),
         };
         let redacted = redact_git_error_for_log(&leaked);
         for secret in [
             "ghp_SUPERSECRET123",
             "QSECRET99",
             "BASE64SECRET",
+            "HDRSECRET1",
+            "DQSECRET",
+            "SQSECRET",
+            "DSPACE_SECRET",
+            "/priv/secret_key",
             "gh_env_secret",
             "AAAASECRETKEYBYTES",
         ] {
@@ -2118,12 +2149,13 @@ mod tests {
         let truncated = scrub_git_log_text(&utf8_boundary);
         assert!(truncated.ends_with("...[truncated]"), "{truncated}");
 
-        // Strict SSH authority validation rejects ambiguous `@`, userinfo `:`, query, bad port.
+        // Strict SSH authority validation rejects ambiguous `@`, userinfo `:`, query, bad port, `+22`.
         for bad_ssh in [
             "ssh://git@evil.com:22@github.com/org/repo.git",
             "ssh://git@github.com:evil.com/org/repo.git",
             "ssh://git:pw@github.com/org/repo.git",
             "ssh://git@github.com:0/org/repo.git",
+            "ssh://git@github.com:+22/org/repo.git",
             "ssh://git@github.com/org/repo.git?token=1",
         ] {
             assert!(

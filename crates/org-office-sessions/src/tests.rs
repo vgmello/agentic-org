@@ -5877,4 +5877,36 @@ fn task166_enforce_bwrap_sibling_isolation_blocks_working_and_stops_idle_for_pos
     assert!(stopped_a.load(Ordering::SeqCst));
     assert!(!mgr.registry.lock().unwrap().live.contains_key(emp_a));
     assert!(!mgr.registry.lock().unwrap().starting.contains(emp_a));
+
+    // 4. Stale `RecoveryRequired` handle or panicking pump reap MUST fail closed with `Conflict`
+    // and remain in `reg.live` so retries never skip the unproven-dead `bwrap` child (`TASK-166`).
+    let (mut panic_handle, _) = spawn_stub_handle(SessionState::Idle, masked);
+    let (ptx, prx) = std::sync::mpsc::channel::<crate::pump::PumpCommand>();
+    let panicking = std::thread::spawn(move || {
+        let _ = prx.recv();
+        panic!("simulated unverified teardown");
+    });
+    // Cleanly stop the replaced stub thread before overwriting `tx`/`thread`.
+    let _ = panic_handle.tx.send(crate::pump::PumpCommand::Stop {
+        reason: "test_cleanup".into(),
+    });
+    if let Some(t) = panic_handle.thread.take() {
+        let _ = t.join();
+    }
+    panic_handle.tx = ptx;
+    panic_handle.thread = Some(panicking);
+    mgr.registry
+        .lock()
+        .unwrap()
+        .live
+        .insert(emp_a.into(), panic_handle);
+
+    let reap_err =
+        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    assert_eq!(reap_err.code, org_proto::ErrorCode::Conflict);
+    assert!(mgr.registry.lock().unwrap().live.contains_key(emp_a));
+    // Retry must STILL fail closed because `emp_a` was restored in `RecoveryRequired`.
+    let retry_err =
+        crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
+    assert_eq!(retry_err.code, org_proto::ErrorCode::Conflict);
 }

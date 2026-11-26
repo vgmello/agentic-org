@@ -165,21 +165,26 @@ pub(crate) fn has_unmasked_bwrap_sibling_in_office(
         .join("offices")
         .join(office_id)
         .join("agents");
-    if let Ok(entries) = std::fs::read_dir(&agents_root) {
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                if name != self_employee_id && !masked.contains(name) {
-                    return true;
+    match std::fs::read_dir(&agents_root) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name != self_employee_id && !masked.contains(name) {
+                        return true;
+                    }
                 }
             }
         }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return true, // Fail closed on unexpected I/O error reading sibling agent dir.
     }
-    if let Ok(employees) = office.list_employees() {
-        for emp in employees {
-            let id = emp.id.as_str();
-            if id != self_employee_id && !masked.contains(id) {
-                return true;
-            }
+    let Ok(employees) = office.list_employees() else {
+        return true; // Fail closed on unexpected DB/store error listing enrolled employees.
+    };
+    for emp in employees {
+        let id = emp.id.as_str();
+        if id != self_employee_id && !masked.contains(id) {
+            return true;
         }
     }
     false
@@ -245,14 +250,19 @@ fn collect_stale_bwrap_siblings<'a>(
             continue;
         }
         let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-        if matches!(
-            st.state,
-            SessionState::Starting | SessionState::Running | SessionState::WaitingApproval
-        ) {
+        if st.recovery_required
+            || matches!(
+                st.state,
+                SessionState::Starting
+                    | SessionState::Running
+                    | SessionState::WaitingApproval
+                    | SessionState::RecoveryRequired
+            )
+        {
             return Err(ApiError::new(
                 ErrorCode::Conflict,
                 format!(
-                    "cannot start `{starting_emp_id}` while active sandboxed session `{other_id}` does not isolate it; wait for its turn to finish or stop `{other_id}` first"
+                    "cannot start `{starting_emp_id}` while active or unrecovered sandboxed session `{other_id}` does not isolate it; wait for its turn to finish or resolve `{other_id}` first"
                 ),
             ));
         }
@@ -273,7 +283,12 @@ fn collect_stale_bwrap_siblings<'a>(
     })
 }
 
-fn reap_stale_bwrap_handle(mgr: &SessionManager, other_id: String, mut handle: LiveSessionHandle) {
+fn reap_stale_bwrap_handle(
+    mgr: &SessionManager,
+    starting_emp_id: &str,
+    other_id: String,
+    mut handle: LiveSessionHandle,
+) -> Result<(), ApiError> {
     mgr.bindings.revoke(&other_id, None);
     let _ = handle.tx.send(PumpCommand::Stop {
         reason: "bwrap_sibling_isolation_refresh".into(),
@@ -282,13 +297,21 @@ fn reap_stale_bwrap_handle(mgr: &SessionManager, other_id: String, mut handle: L
         .thread
         .take()
         .is_none_or(|thread| thread.join().is_ok());
+    let (recovery_required, view) = {
+        let mut st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+        if !joined_ok {
+            st.recovery_required = true;
+            st.state = SessionState::RecoveryRequired;
+        }
+        (st.recovery_required, st.to_view())
+    };
     if let Some((pid, _)) = handle
         .active_permit
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .take()
     {
-        if joined_ok {
+        if joined_ok && !recovery_required {
             crate::router::release_turn_permit_any(
                 &mgr.office,
                 mgr.config.hq_permits.as_deref(),
@@ -298,30 +321,49 @@ fn reap_stale_bwrap_handle(mgr: &SessionManager, other_id: String, mut handle: L
             let _ = mgr.office.mark_turn_permit_release_pending(&pid);
         }
     }
-    let view = handle
-        .state
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .to_view();
     mgr.last_states
         .lock()
         .unwrap_or_else(|p| p.into_inner())
-        .insert(other_id, view);
+        .insert(other_id.clone(), view);
+    if !joined_ok || recovery_required {
+        // Teardown was NOT verified (`AE-07`): restore the unrecovered handle into `reg.live`
+        // (preserving `bwrap_masked_siblings`, with `thread: None`) before `StartSlotGuard` drops
+        // so subsequent retries continue to fail closed until manual recovery clears it.
+        mgr.registry
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .live
+            .insert(other_id.clone(), handle);
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            format!(
+                "could not verify teardown of stale sandboxed session `{other_id}` before starting `{starting_emp_id}`; resolve recovery on `{other_id}` first"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Ensures no live or starting Linux `bwrap` session started before `starting_emp_id` existed
 /// can read `starting_emp_id`'s newly created directory or `session-binding-*.v1` token
 /// (`TASK-166`). Stale non-working `bwrap` siblings are guarded in `reg.starting`, stopped,
-/// revoked, reaped, and permit-cleaned before launch proceeds; any stale actively-working or
-/// concurrently-starting sibling fails launch closed with `Conflict`.
+/// revoked, reaped, and permit-cleaned before launch proceeds; any stale actively-working,
+/// unrecovered (`RecoveryRequired`), failed-reap, or concurrently-starting sibling fails launch
+/// closed with `Conflict`.
 pub(crate) fn enforce_bwrap_sibling_isolation(
     mgr: &SessionManager,
     starting_emp_id: &str,
 ) -> Result<(), ApiError> {
     let batch = collect_stale_bwrap_siblings(mgr, starting_emp_id)?;
+    let mut first_err: Option<ApiError> = None;
     for (other_id, handle) in batch.handles {
-        reap_stale_bwrap_handle(mgr, other_id, handle);
+        if let Err(err) = reap_stale_bwrap_handle(mgr, starting_emp_id, other_id, handle) {
+            first_err.get_or_insert(err);
+        }
     }
     drop(batch.guards);
+    if let Some(err) = first_err {
+        return Err(err);
+    }
     Ok(())
 }
