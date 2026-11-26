@@ -241,29 +241,6 @@ impl SessionManager {
         }))
     }
 
-    pub(super) fn prepare_and_spawn(
-        &self,
-        actor_member_id: &str,
-        employee: &Employee,
-        params: &MemberSessionStartParams,
-        resume_runtime_session_id: Option<&str>,
-        start_stop_epoch: u64,
-    ) -> Result<PreparedSessionLaunch, ApiError> {
-        let objective = params
-            .instruction
-            .as_deref()
-            .map(|text| self.objective_text(employee, actor_member_id, text))
-            .unwrap_or_default();
-        self.prepare_and_spawn_raw(
-            employee,
-            params,
-            objective,
-            resume_runtime_session_id,
-            None,
-            start_stop_epoch,
-        )
-    }
-
     pub(super) fn prepare_and_spawn_raw(
         &self,
         employee: &Employee,

@@ -13,6 +13,7 @@ use org_proto::sessions::SessionState;
 use org_proto::{ApiError, ErrorCode};
 
 use super::environment::ensure_owner_only_dir;
+use super::office_masks::OfficeMasks;
 use super::reap::{reap_live_handle, ReapMode};
 use super::sandbox_rules::collect_self_active_admins;
 use super::{LiveSessionHandle, SessionManager, StartSlotGuard};
@@ -30,33 +31,14 @@ pub(crate) fn ensure_bwrap_deny_dirs(
     let office_local = durable.join("local").join("offices").join(office_id);
     let runtime_root = mgr.office.runtime_root();
     let office_rt = runtime_root.join(office_id);
-    // `authority` is pre-created on BOTH HQ and satellites; `private` stays HQ-only (`ARCH-02`).
-    for sub in [
-        "state",
-        "journal",
-        "authority",
-        "messaging",
-        "budgets",
-        "accounting",
-        "recovery",
-    ] {
-        ensure_owner_only_dir(&durable.join(sub))?;
-    }
-    if mgr.office.info().role == org_office::OfficeRole::Hq {
-        ensure_owner_only_dir(&durable.join("private"))?;
+    // Every durable family (`private` HQ-only, `ARCH-02`), every companion store folder (a
+    // one-file store such as `hq-owner.v1.json` is masked only where it exists) and the
+    // restore backups beside the data roots (`TASK-203`).
+    for dir in OfficeMasks::of(&mgr.office).pre_created() {
+        ensure_owner_only_dir(dir)?;
     }
     ensure_owner_only_dir(&mgr.office.folder().join("git-credentials"))?;
-    for sub in [
-        "auth",
-        "connections",
-        "sessions",
-        "enroll-tmp",
-        "security",
-        "subscription-usage",
-        "agents",
-    ] {
-        ensure_owner_only_dir(&office_local.join(sub))?;
-    }
+    ensure_owner_only_dir(&office_local.join("agents"))?;
     for dir in [
         office_rt.join("protected"),
         office_rt.join("git-home"),

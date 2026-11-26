@@ -37,8 +37,10 @@ const RESTORE_EXAMPLES: &str = "Examples:
   agentic-org service stop
   agentic-org restore acme.tar.gz --org <org-id> --yes
 
-`--verify` changes nothing (with `--to`, it only fills that new folder). An in-place restore \
-needs the office stopped, keeps the replaced durable folder beside it, and never resets the \
+`--verify` changes nothing (with `--to`, it only fills that new folder); its disposable \
+check copy is owner-only and made beside `--to` or the archive (or in `--work-dir`), never in \
+the shared temporary folder. An in-place restore needs the office stopped, keeps the replaced \
+durable folder in the owner-only `restore-backups` folder beside it, and never resets the \
 host's writer custody: an archive behind the office's journal is refused.";
 
 /// Where a passphrase comes from besides the terminal; never the command line itself.
@@ -103,6 +105,10 @@ pub(crate) struct RestoreArgs {
     /// With --verify: extract the verified archive into this new or empty folder
     #[arg(long, value_name = "DIR", requires = "verify")]
     to: Option<PathBuf>,
+    /// With --verify: make the disposable check copy in this folder of yours [default: beside
+    /// --to, else beside the archive, else your own temporary folder; never the shared one]
+    #[arg(long, value_name = "DIR", requires = "verify")]
+    work_dir: Option<PathBuf>,
     /// The organization whose office the archive replaces
     #[arg(
         long,
@@ -168,19 +174,34 @@ fn cli_error(error: BackupError) -> CliError {
     }
 }
 
-/// Shows `json` as a card of its scalar fields, or prints it under `--json`.
+/// Shows `json` as a card, or prints it under `--json`. A nested object (`rebuilt`,
+/// `live_journal`) is one row of its own `key value` pairs, sorted by key.
 fn show(ctx: &mut ExecutionContext, id: &str, json: &serde_json::Value) -> Result<(), CliError> {
     use org_cli_shell::output::Cell;
     let mut cells = Vec::new();
     if let serde_json::Value::Object(fields) = json {
         for (key, value) in fields {
-            let text = match value {
-                serde_json::Value::Null | serde_json::Value::Object(_) => continue,
-                serde_json::Value::String(text) => text.clone(),
-                other => other.to_string(),
-            };
-            cells.push((key.as_str(), Cell::plain(text)));
+            if let Some(text) = card_text(value) {
+                cells.push((key.as_str(), Cell::plain(text)));
+            }
         }
     }
     Ok(ctx.render_detail(id, &cells, json)?)
+}
+
+/// The card text of one field: `None` for a null (left out), an object's non-null fields as
+/// `key value` pairs separated by commas.
+fn card_text(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(text) => Some(text.clone()),
+        serde_json::Value::Object(fields) => {
+            let pairs: Vec<String> = fields
+                .iter()
+                .filter_map(|(key, value)| card_text(value).map(|text| format!("{key} {text}")))
+                .collect();
+            (!pairs.is_empty()).then(|| pairs.join(", "))
+        }
+        other => Some(other.to_string()),
+    }
 }

@@ -61,6 +61,7 @@ mod instructions;
 mod instructions_fencing;
 mod instructions_guard;
 mod launch;
+mod office_masks;
 mod pool;
 mod presets;
 mod provenance;

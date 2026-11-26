@@ -114,11 +114,7 @@ fn an_archive_behind_the_offices_journal_is_refused_rather_than_resetting_custod
     // Nothing changed, and no staging folder is left behind.
     assert_eq!(crate::support::tree(org.durable()), before);
     let base = org.durable().parent().unwrap();
-    let names: Vec<String> = std::fs::read_dir(base)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().into_string().unwrap())
-        .collect();
-    assert_eq!(names.len(), 2, "{names:?}");
+    assert_eq!(left_in(base), ["durable", "runtime"]);
     org.open().close().unwrap();
 }
 
@@ -198,6 +194,20 @@ fn names(folder: &Path) -> Vec<String> {
     names
 }
 
+/// What a refused restore left in `base`, the folder holding the data roots: its entries
+/// besides the owner-only restore-backups folder, which must hold nothing (no staged copy,
+/// no disposable check).
+fn left_in(base: &Path) -> Vec<String> {
+    let backups = base.join(org_backup::RESTORE_BACKUPS_DIR_NAME);
+    if backups.exists() {
+        assert!(names(&backups).is_empty(), "{:?}", names(&backups));
+    }
+    names(base)
+        .into_iter()
+        .filter(|name| name != org_backup::RESTORE_BACKUPS_DIR_NAME)
+        .collect()
+}
+
 #[test]
 fn an_archive_bound_to_another_writer_is_refused_whether_or_not_the_live_root_survives() {
     let org = Org::seeded();
@@ -220,7 +230,7 @@ fn an_archive_bound_to_another_writer_is_refused_whether_or_not_the_live_root_su
         if lost {
             std::fs::rename(org.durable(), org.root.join("lost-durable")).unwrap();
         }
-        let listing = names(&base);
+        let listing = left_in(&base);
         let before = (!lost).then(|| tree(org.durable()));
         for (field, value, why) in &cases {
             reserve(&org, field, value);
@@ -234,7 +244,7 @@ fn an_archive_bound_to_another_writer_is_refused_whether_or_not_the_live_root_su
             assert!(text.contains(why), "{field}: {text}");
             assert!(text.contains("writer custody"), "{field}: {text}");
             // Nothing was swapped in or left staged.
-            assert_eq!(names(&base), listing, "{field}");
+            assert_eq!(left_in(&base), listing, "{field}");
             assert_eq!(before, (!lost).then(|| tree(org.durable())), "{field}");
         }
     }
@@ -392,4 +402,44 @@ fn an_existing_output_an_unknown_organization_and_a_weak_passphrase_are_refused(
         passphrase: Some(&weak),
     });
     assert!(matches!(refused, Err(BackupError::Usage(_))), "{refused:?}");
+}
+
+#[test]
+fn corrupt_replication_or_replicated_owner_state_fails_verification_not_the_next_start() {
+    // A disposable rebuild opens the store and its accounting, budgets and provider
+    // companions; the office's replication state and replicated HQ owner are read only when
+    // the office itself opens, so they are checked too (`TASK-203`): a corrupt copy fails
+    // `restore --verify` at once.
+    let org = Org::seeded();
+    let local = org.durable().join("local/offices").join(&org.office_id);
+    let cases: [(&str, &[u8]); 3] = [
+        ("replication/state.v1.json", b"{not json"),
+        ("hq-owner.v1.json", b"{\"v\":1}"),
+        (
+            "hq-owner.v1.json",
+            b"{\"v\":1,\"org_id\":\"019a0000-0000-7000-8000-0000000000ff\",\
+              \"hq_office_id\":\"019a0000-0000-7000-8000-0000000000fe\",\
+              \"owner_member_id\":\"019a0000-0000-7000-8000-0000000000fd\"}",
+        ),
+    ];
+    for (n, (name, bytes)) in cases.into_iter().enumerate() {
+        let path = local.join(name);
+        let saved = std::fs::read(&path).ok();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        let out = org.root.join(format!("corrupt-{n}.tar.gz"));
+        take_backup(&org, &out, None);
+        let error = verify(&verify_request(&out, None, None)).unwrap_err();
+        let text = error.to_string();
+        assert!(matches!(error, BackupError::Invalid(_)), "{name}: {text}");
+        assert!(text.contains("does not open from it"), "{name}: {text}");
+        match saved {
+            Some(bytes) => std::fs::write(&path, bytes).unwrap(),
+            None => std::fs::remove_file(&path).unwrap(),
+        }
+    }
+    // Put back as it was, the office's state verifies.
+    let out = org.root.join("sound.tar.gz");
+    take_backup(&org, &out, None);
+    verify(&verify_request(&out, None, None)).expect("it verifies");
 }

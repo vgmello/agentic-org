@@ -12,6 +12,7 @@ use crate::preset::{apply_worktree_sandbox_rules, build_session_policy, PresetCo
 use crate::runtime_registry::RuntimeRegistry;
 
 use super::environment::ensure_owner_only_dir;
+use super::office_masks::OfficeMasks;
 use super::rust_toolchain::canonicalize_with_tail;
 use super::sandbox_rules::{
     append_agy_credential_denies, append_bare_cache_sandbox_rules, append_cargo_credential_denies,
@@ -64,28 +65,9 @@ impl SessionManager {
         let durable = self.office.durable_root();
         let office_id = &self.office.info().office_id;
         let office_local = durable.join("local").join("offices").join(office_id);
-        for sub in [
-            "state",
-            "journal",
-            "authority",
-            "private",
-            "messaging",
-            "budgets",
-            "accounting",
-            "recovery",
-        ] {
-            push_glob_pattern(&mut out, &durable.join(sub));
-        }
-        for sub in [
-            "auth",
-            "connections",
-            "sessions",
-            "enroll-tmp",
-            "security",
-            "subscription-usage",
-        ] {
-            push_glob_pattern(&mut out, &office_local.join(sub));
-        }
+        // Durable families, companion stores, restore backups and anything unexpected beside
+        // `agents/` or the data roots (`TASK-203`).
+        OfficeMasks::of(&self.office).push_denies(&mut out);
         self.append_runtime_office_denies(
             &mut out,
             self.office.runtime_root(),
