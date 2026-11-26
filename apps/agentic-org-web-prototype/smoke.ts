@@ -84,10 +84,13 @@ async function checkWorkBoard(page: Page) {
   const requests = page.getByRole("menu", { name: /^Requests waiting on you for / }).getByRole("menuitem");
   assert.equal(await requests.count(), asked, "A badge for several requests lists each of them");
   await page.keyboard.press("Escape");
+  for (const width of [1440, 1024, 420, 320]) await checkToolbarTabOrder(page, width);
   await checkBoardRequestMenus(page, board);
   await checkAttentionFirst(page, board);
   await checkBoardPrioritySort(page, board);
   await checkBoardCountsAndLabels(page, board);
+  await checkPendingApprovalAndHold(page, board);
+  await checkListBoardPriority(page, board);
   await checkCardLayout(page, board);
   assert.match((await page.getByRole("button", { name: /^Work display/ }).getAttribute("aria-label"))!, /Stages columns/, "Display names the column mode");
   const trailingGutter = await board.evaluate((el) => {
@@ -124,6 +127,7 @@ async function checkBoardCountsAndLabels(page: Page, board: ReturnType<Page["loc
   assert.equal(await board.locator(".bcard").count(), Number(await page.locator('[data-work-count="all"]').textContent()),
     "All counts the cards the Board shows, inside the Done history window");
   assert.match((await board.locator("#bcol-done .bcol-window").textContent())!, /Last 7 days/, "Done names its history window");
+  assert.equal(await board.locator("#bcol-done").getByRole("button", { name: "Done history: Last 7 days. Change" }).count(), 1, "The history window is a button");
   const set = board.locator('.bcard[data-work-id="T-A146"] .bpri');
   assert.equal(await set.getAttribute("aria-label"), "High priority");
   assert.equal((await set.innerText()).trim(), "High", "A set priority is a word beside the bars");
@@ -131,6 +135,86 @@ async function checkBoardCountsAndLabels(page: Page, board: ReturnType<Page["loc
   assert.match((await bug.locator(".bpri").innerText()).trim(), /^High · inferred$/, "A missing priority says it is inferred, in text");
   assert.match((await bug.locator(".bpri").getAttribute("aria-label"))!, /^No priority set, inferred High$/);
   assert.equal((await bug.locator(".bsev").innerText()).trim(), "Critical severity", "Bug severity is labelled apart from priority");
+}
+
+/* The toolbar's Tab order is its visual reading order (rows top to bottom, each left to right) at every width: no
+   control is moved visually away from its place in the DOM */
+async function checkToolbarTabOrder(page: Page, width: number) {
+  await page.setViewportSize({ width, height: 900 });
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await page.waitForTimeout(150);
+  const visual = await page.evaluate(() => {
+    const els = [...document.querySelectorAll<HTMLElement>(".work-toolbar :is(a[href], button, select, input, [tabindex])")]
+      .filter((el) => el.tabIndex >= 0 && el.getClientRects().length && !el.closest("[hidden], .menu"));
+    const rows: { cy: number; items: { id: string; left: number }[] }[] = [];
+    els.forEach((el, i) => {
+      el.dataset.tabProbe = String(i);
+      const r = el.getBoundingClientRect(), cy = r.top + r.height / 2;
+      const row = rows.find((row) => Math.abs(row.cy - cy) < 16);
+      if (row) row.items.push({ id: String(i), left: r.left }); else rows.push({ cy, items: [{ id: String(i), left: r.left }] });
+    });
+    return rows.sort((a, b) => a.cy - b.cy).flatMap((row) => row.items.sort((a, b) => a.left - b.left).map((item) => item.id));
+  });
+  assert.ok(visual.length >= 6, `The toolbar has its controls at ${width}px (${visual.length})`);
+  await page.locator('.work-toolbar [data-tab-probe="0"]').focus();
+  const tabbed = [await page.evaluate(() => (document.activeElement as HTMLElement).dataset.tabProbe)];
+  for (let i = 1; i < visual.length; i++) {
+    await page.keyboard.press("Tab");
+    tabbed.push(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.tabProbe));
+  }
+  assert.deepEqual(tabbed, visual, `Tab order follows the toolbar's visual order at ${width}px`);
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+/* A pending owner approval on Fixed work stays in view: it counts in Needs you, ignores the Done history window and
+   archiving, and Needs you shows a Done lane holding only such cards. A known execution hold is its own cue. */
+async function checkPendingApprovalAndHold(page: Page, board: ReturnType<Page["locator"]>) {
+  const fixed = board.locator('#bcol-done .bcard[data-work-id="T-A81"]');
+  assert.equal(await fixed.count(), 1, "T-A81 (Fixed 21 days ago, fix waiting for approval) stays in Done");
+  assert.equal(await fixed.getAttribute("data-attention"), "", "Its pending approval marks it as needing you");
+  assert.match((await fixed.locator(".board-need").innerText()).trim(), /^Needs you · Fix to verify/);
+  const hold = board.locator('.bcard[data-work-id="T-A135"]');
+  assert.match((await hold.locator(".board-hold").innerText()).replace(/\s+/g, " ").trim(), /^Waiting for office · Build box is offline$/, "A known execution hold says the office is waiting");
+  assert.equal(await hold.getAttribute("data-attention"), null, "An execution hold is not Needs you");
+  assert.equal(await hold.locator(".board-hold a").getAttribute("href"), "#/inbox/in9", "The hold opens its Inbox explanation");
+  await page.locator('[data-act="work-preset"][data-v="needs-me"]').click();
+  await page.locator('[data-act="work-preset"][data-v="needs-me"][aria-pressed="true"]').waitFor();
+  await board.locator(".bcard").first().waitFor();
+  const lanes = await board.locator(".bcol").evaluateAll((cols) => cols.map((col) => [col.id, [...col.querySelectorAll(".bcard")].map((c) => c.getAttribute("data-work-id"))]));
+  const done = lanes.find(([id]) => id === "bcol-done");
+  assert.deepEqual(done?.[1], ["T-A81"], `Needs you shows a Done lane holding only the pending approval (${JSON.stringify(lanes)})`);
+  assert.equal(await board.locator(".bcard").count(), Number(await page.locator('[data-work-count="needs-me"]').textContent()), "Needs you counts every card it shows");
+  await page.locator('[data-act="work-preset"][data-v="all"]').click();
+  await page.locator('[data-act="work-preset"][data-v="all"][aria-pressed="true"]').waitFor();
+  await board.locator('.bcard[data-work-id="T-A112"]').waitFor();
+}
+
+/* List and Board read one priority (set, else inferred) and label bug severity apart from it, and sort the same way */
+async function checkListBoardPriority(page: Page, board: ReturnType<Page["locator"]>) {
+  const boardLabels = Object.fromEntries(await board.locator(".bcard").evaluateAll((cards) => cards.map((c) => [c.getAttribute("data-work-id"), c.querySelector(".bpri")!.getAttribute("aria-label")])));
+  const layout = page.getByRole("group", { name: "Work layout" });
+  await layout.getByRole("button", { name: "List" }).click();
+  const rows = page.locator("#work-results .work-list > .work-item > .work-row");
+  await rows.first().waitFor();
+  const listLabels = Object.fromEntries(await rows.evaluateAll((els) => els.map((r) => [r.getAttribute("data-work-id"), r.querySelector(".work-priority-mark")!.getAttribute("aria-label")])));
+  for (const [id, label] of Object.entries(boardLabels)) assert.equal(listLabels[id], label, `${id} has the same priority in List and Board`);
+  const bug = page.locator('#work-results .work-row[data-work-id="T-A84"]');
+  assert.equal(await bug.locator(".work-priority-mark").getAttribute("data-level"), "3", "T-A84's bars show its inferred High, not its Minor severity");
+  assert.match(await bug.locator(".work-severity").innerText(), /^Minor severity$/, "The List labels severity apart from priority");
+  await page.getByRole("button", { name: "Work display" }).click();
+  await page.getByRole("group", { name: "Group by", exact: true }).getByRole("menuitemradio", { name: "No grouping" }).click();
+  await page.getByRole("button", { name: "Work display" }).click();
+  await page.getByRole("group", { name: "Sort by" }).getByRole("menuitemradio", { name: "Priority", exact: true }).click();
+  await page.keyboard.press("Escape").catch(() => {});
+  const ranks = await rows.evaluateAll((els) => els.map((r) => Number(r.querySelector(".work-priority-mark")!.getAttribute("data-level"))));
+  assert.ok(ranks.every((rank, i) => i === 0 || rank <= ranks[i - 1]), `The List's Priority sort follows the displayed priority (${ranks})`);
+  await page.goto(page.url().replace(/#.*$/, "#/work"));
+  await page.locator("#main h1").first().waitFor();
+  await page.getByRole("button", { name: "Work display" }).click();
+  await page.getByRole("group", { name: "Sort by" }).getByRole("menuitemradio", { name: "Original order" }).click();
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.getByRole("group", { name: "Work layout" }).getByRole("button", { name: "Board" }).click();
+  await board.locator(".bcard").first().waitFor();
 }
 
 /* Closing a task returns focus to the link that opened it: a subtask link on its parent card, or the parent card */
@@ -190,22 +274,22 @@ async function checkPhoneSearchRevealsLane(page: Page) {
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
-/* Narrow Status lanes keep a short word on each count and the project on its own line */
+/* 1024px: lanes keep about 260px and overflow into the column jump. Compact cards put the assignee straight under the
+   title and request, keep severity, and leave criteria and subtask totals to the detail. */
 async function checkCompactCardLabels(page: Page) {
   await page.setViewportSize({ width: 1024, height: 800 });
-  await page.getByRole("button", { name: /^Work display/ }).click();
-  await page.getByRole("menuitemradio", { name: "Status", exact: true }).click();
-  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => document.querySelector(".board-lanes")?.hasAttribute("data-overflow"));
+  const widths = await page.locator(".board .bcol").evaluateAll((cols) => cols.map((c) => c.getBoundingClientRect().width));
+  assert.ok(widths.every((w) => w >= 255), `Lanes keep a readable width at 1024 (${widths.map(Math.round)})`);
   const card = page.locator('.board .bcard[data-work-id="T-A146"]');
-  const tags = await card.locator(".btag").evaluateAll((els) => els.map((el) => (el as HTMLElement).innerText.replace(/\s+/g, " ").trim()));
-  /* innerText also carries the sr-only full wording ("2 subtasks") after the visible short one */
-  assert.ok(tags.some((tag) => /^2 subtasks\b/.test(tag)), `Narrow subtask count keeps its full word (${tags})`);
-  const words = await page.locator(".board .bcard .btag").evaluateAll((els) => els.map((el) => (el as HTMLElement).innerText.replace(/\s+/g, " ").trim()));
-  assert.ok(words.some((tag) => /criteria$/.test(tag)), "Narrow lanes say criteria");
-  assert.ok(!words.some((tag) => /\bcrit\b|\bsub\b/.test(tag)), `Narrow lanes never shorten a count's word (${words.filter((t) => /crit|sub/.test(t))})`);
-  await page.getByRole("button", { name: /^Work display/ }).click();
-  await page.getByRole("menuitemradio", { name: "Stages", exact: true }).click();
+  assert.equal(await card.locator(".btag-count").evaluateAll((els) => els.filter((el) => el.getClientRects().length).length), 0, "Compact cards leave subtask and criteria totals to detail");
+  assert.ok(await page.locator('.board .bcard[data-work-id="T-A88"] .bsev').isVisible(), "Compact cards keep severity");
+  const [status, owner, facts] = await card.evaluate((el) => [".board-status", ".board-assignee", ".board-facts"].map((sel) => el.querySelector(sel)!.getBoundingClientRect().top));
+  assert.ok(status < owner && owner < facts, "The assignee sits directly under the request, before the facts");
+  await card.locator(":scope > .work-item-link").click();
+  await page.locator("#work-detail-subtasks").waitFor();
   await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "detached" });
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
@@ -231,7 +315,16 @@ async function checkBoardPrioritySort(page: Page, board: ReturnType<Page["locato
   assert.ok(ranks.every((lane) => lane.every((rank, i) => i === 0 || rank <= lane[i - 1])), `Each lane runs from the highest displayed priority down (${JSON.stringify(ranks)})`);
   const order = await board.locator("#bcol-in-progress .bcard").evaluateAll((cards) => cards.map((card) => card.getAttribute("data-work-id")));
   assert.ok(order.indexOf("T-A84") < order.indexOf("T-A121"), `Inferred High (Minor severity) sorts above set Medium (${order})`);
-  assert.match((await page.locator("#work-results > .board-filterbar").innerText()).replace(/\s+/g, " "), /Sorted by Priority/, "The summary names the chosen sort");
+  const summary = page.locator("#work-results > .board-filterbar");
+  assert.match((await summary.innerText()).replace(/\s+/g, " "), /Highest priority first/, "The summary names the sort and its direction");
+  assert.doesNotMatch(await summary.innerText(), /\bcards?\b|Stages columns/, "The summary repeats neither the preset count nor the mode the toolbar shows");
+  await display.click();
+  await page.getByRole("group", { name: "Direction" }).getByRole("menuitemradio", { name: "Lowest first" }).click();
+  await page.keyboard.press("Escape");
+  assert.match((await summary.innerText()).replace(/\s+/g, " "), /Lowest priority first/);
+  await display.click();
+  await page.getByRole("group", { name: "Direction" }).getByRole("menuitemradio", { name: "Highest first" }).click();
+  await page.keyboard.press("Escape");
   await display.click();
   await page.getByRole("group", { name: "Sort by" }).getByRole("menuitemradio", { name: "Attention first" }).click();
   await page.keyboard.press("Escape");
@@ -273,8 +366,13 @@ async function checkMixedArchivedMatches(page: Page, board: ReturnType<Page["loc
   const [, shown, archived] = (text.match(/^(\d+) shown\W+(\d+) archived match/) ?? assert.fail(`Mixed results summary: ${text}`)).map(Number);
   assert.ok(shown > 0 && archived > 0, `Mixed results say what is shown and what is archived (${text})`);
   assert.equal(await board.locator(".bcard").count(), shown);
+  const before = await board.locator(".bcard").evaluateAll((cards) => cards.map((c) => c.getAttribute("data-work-id")));
   await summary.getByRole("button", { name: `Show ${archived} archived ${archived === 1 ? "match" : "matches"}` }).click();
   assert.equal(await board.locator(".bcard").count(), shown + archived, "Revealing adds the archived matches");
+  const focused = await page.evaluate(() => document.activeElement?.closest(".bcard")?.getAttribute("data-work-id"));
+  assert.ok(focused && !before.includes(focused), `Focus lands on the newly revealed card (${focused}, already shown: ${before})`);
+  assert.ok(await page.evaluate(() => document.activeElement?.matches(".bcard > .work-item-link")), "Focus is on the revealed card's title");
+  await page.waitForFunction((n) => document.getElementById("work-results-status")?.textContent === `${n} more ${n === 1 ? "card" : "cards"} shown`, archived);
   assert.doesNotMatch((await summary.innerText()).replace(/\s+/g, " "), /archived match/, "Nothing is left hidden");
   await page.locator(".work-archived-chip").click();
   await page.locator("#work-results").getByRole("button", { name: "Clear filters" }).click();
@@ -317,7 +415,11 @@ async function checkBoardRequestMenus(page: Page, board: ReturnType<Page["locato
   const trigger = card.locator("button.board-need");
   assert.equal(await card.locator(".board-need-due").textContent(), "1 expires in 4 hours", "The card says when its soonest request expires");
   await page.setViewportSize({ width: 1024, height: 520 });
-  await board.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+  /* Lanes overflow at 1024: put the card's lane against the board's right edge, then open its menu */
+  await board.evaluate((el) => {
+    const lane = el.querySelector('.bcard[data-work-id="T-A121"]')!.closest(".bcol")!;
+    el.scrollLeft += lane.getBoundingClientRect().right - el.getBoundingClientRect().right + 4;
+  });
   await trigger.click();
   const menu = page.locator(".board-need-menu:popover-open");
   const box = (await menu.boundingBox())!;
@@ -333,6 +435,20 @@ async function checkBoardRequestMenus(page: Page, board: ReturnType<Page["locato
   await page.keyboard.press("Tab");
   assert.equal(await menu.count(), 0, "Tab closes the menu");
   assert.ok(await page.evaluate(() => Boolean(document.activeElement?.closest('.bcard[data-work-id="T-A121"] .board-card-context'))), "Tab moves on to the next control on the card");
+  /* Scrolling the badge under its lane's sticky header closes its menu, though the badge is still in the viewport */
+  await board.evaluate((el) => { el.scrollTop = 0; });
+  await trigger.click();
+  await menu.waitFor();
+  await board.evaluate((el) => {
+    const t = el.querySelector('.bcard[data-work-id="T-A121"] button.board-need')!.getBoundingClientRect();
+    /* Where the sticky header's bottom sits once it is pinned to the top of the board */
+    const head = el.querySelector('.bcard[data-work-id="T-A121"]')!.closest(".bcol")!.querySelector(".bcol-h")!.getBoundingClientRect();
+    el.scrollTop += t.top + t.height / 2 - (el.getBoundingClientRect().top + head.height) + 4;
+  });
+  await page.waitForFunction(() => !document.querySelector(".board-need-menu:popover-open"));
+  assert.ok(await trigger.evaluate((el) => el.getBoundingClientRect().bottom > 0), "The badge is still inside the viewport, under the header");
+  assert.equal(await trigger.getAttribute("aria-expanded"), "false");
+  await board.evaluate((el) => { el.scrollTop = 0; });
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 
@@ -413,6 +529,11 @@ async function checkDoneHistory(page: Page, board: ReturnType<Page["locator"]>) 
   assert.equal(await done.locator(".bcard").count(), before);
   assert.equal(await chip.count(), 0);
   assert.ok(await focusedIs(display), "Resetting history returns focus to Display");
+  await done.locator("button.bcol-window").click();
+  const current = page.getByRole("group", { name: "Done history" }).getByRole("menuitemradio", { name: "Last 7 days" });
+  await current.waitFor();
+  assert.ok(await focusedIs(current), "The Done lane's history button opens Done history with the current choice focused");
+  await page.keyboard.press("Escape");
 }
 
 /* Filtering to a status whose only matches are archived offers to show them instead of a dead end */
@@ -425,8 +546,11 @@ async function checkArchivedOnlyMatches(page: Page, board: ReturnType<Page["loca
   await reveal.waitFor();
   const n = Number((await reveal.textContent())!.match(/\d+/)![0]);
   assert.ok(n > 0);
+  /* T-A81 (Fixed, its fix still waiting for approval) is never archived, so it is shown before the reveal */
+  const before = await board.locator(".bcard").count();
+  assert.equal(await board.locator('.bcard[data-work-id="T-A81"]').count(), 1, "A Fixed item with a pending approval is not archived");
   await reveal.click();
-  assert.equal(await board.locator(".bcard").count(), n, "Show archived matches reveals each of them");
+  assert.equal(await board.locator(".bcard").count(), before + n, "Show archived matches reveals each of them");
   assert.ok(await page.evaluate(() => Boolean(document.activeElement?.matches(".bcard .work-item-link"))), "Focus lands on the first revealed item");
   await page.locator(".work-archived-chip").click();
   await page.locator("#work-results").getByRole("button", { name: "Clear filters" }).click();
@@ -485,7 +609,9 @@ async function checkPhoneLaneJump(page: Page) {
   const display = page.getByRole("button", { name: /^Work display/ });
   assert.match((await display.innerText()).trim(), /^Display\b/, "At 420px and below Display keeps its word");
   assert.match((await display.getAttribute("aria-label"))!, /^Work display, Stages columns/);
-  assert.match((await page.locator("#work-results > .board-filterbar").innerText()).replace(/\s+/g, " "), /Stages columns/, "The results summary names the column mode");
+  const valuesHidden = await page.locator(".work-toolbar").evaluate((el) => el.getAttribute("data-values") === "hidden");
+  const modeShown = await page.locator("#work-results > .board-filterbar .bsum-mode").isVisible();
+  assert.equal(modeShown, valuesHidden, "The results summary names the column mode exactly when the toolbar hides it");
   const toggles = await page.getByRole("group", { name: "Work layout" }).getByRole("button").evaluateAll((els) => els.map((el) => { const r = el.getBoundingClientRect(); return [r.width, r.height]; }));
   assert.ok(toggles.every(([w, h]) => w >= 44 && h >= 44), `List and Board are 44 × 44 on phones (${JSON.stringify(toggles)})`);
   assert.match((await page.getByRole("button", { name: /^Filter work/ }).innerText()).trim(), /^Filter/, "Phones keep the Filter label");
@@ -517,11 +643,15 @@ async function checkPhoneLaneJump(page: Page) {
   /* Let the resize settle (layout and the measured compact labels) before counting toolbar rows */
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   await page.waitForTimeout(150);
-  const rows = await page.locator(".work-toolbar > *").evaluateAll((els) => els.map((el) => el.getBoundingClientRect().top).sort((a, b) => a - b)
+  const rows = await page.locator(".work-toolbar > *").evaluateAll((els) => els.filter((el) => el.getClientRects().length).map((el) => el.getBoundingClientRect().top).sort((a, b) => a - b)
     .filter((top, i, tops) => i === 0 || top - tops[i - 1] > 20).length);
-  /* 44px List / Board buttons and the words Filter and Display leave no room for two rows at 320px (round 8): the toolbar
-     wraps New to a third row, and nothing is clipped or scrolls sideways */
-  assert.ok(rows <= 3, `The 320px toolbar wraps to at most three rows (${rows})`);
+  /* Two rows at 320px: the views with New, then layout, search, Filter and Display; nothing is clipped or scrolls sideways */
+  assert.equal(rows, 2, `The 320px toolbar has two rows (${rows})`);
+  const [tabsTop, newBox] = await page.evaluate(() => [document.querySelector(".work-toolbar .primary-tab-row")!.getBoundingClientRect().top, document.getElementById("work-new-task")!.getBoundingClientRect().toJSON()]);
+  assert.ok(Math.abs(newBox.top - tabsTop) < 20, "New sits beside the views");
+  assert.ok(newBox.width >= 44 && newBox.height >= 44, "New stays a 44px target");
+  assert.match((await page.getByRole("button", { name: /^Filter work/ }).innerText()).trim(), /^Filter$/, "At 320px Filter keeps its word");
+  assert.ok(await page.locator("#work-results > .board-filterbar .bsum-mode").isVisible(), "At 320px the summary names the column mode the toolbar hides");
   const overflow = await page.locator(".work-toolbar").evaluate((el) => el.scrollWidth - el.clientWidth);
   assert.ok(overflow <= 1, `The 320px toolbar does not overflow (${overflow}px)`);
   assert.match((await page.getByRole("button", { name: /^Work display/ }).innerText()).trim(), /^Display$/, "At 320px Display keeps its word; the mode is left to the summary");
