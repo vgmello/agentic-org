@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------------- state */
-const S = { theme: "ocean", fontStyle: "editorial", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
+const S = { theme: "ocean", fontStyle: "dm-sans", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
   scopedWorkView: "all", scopedWorkLayout: "list", scopedWorkStatus: "all", scopedWorkProject: "all", scopedWorkTeam: "all", scopedWorkGroup: "status", scopedWorkSubgroup: "none", scopedWorkSort: "default", scopedWorkOrder: "asc",
   actView: "assembly", actProject: "all", actFilter: "all", actPanel: null,
   projectActView: "assembly", projectActFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
@@ -56,11 +56,14 @@ function applyTheme(remember = false) {
   }
 }
 applyTheme();
-const FONT_STORE = "agentic-org.v6.fontStyle";
+const FONT_STORE = "agentic-org.v6.fontStyle.v2";
 const FONT_OPTIONS = [
-  ["editorial", "Editorial"],
-  ["swiss", "Swiss"],
-  ["humanist", "Humanist"],
+  ["dm-sans", "DM Sans"],
+  ["swiss", "Geist"],
+  ["system", "SF Pro (System)"],
+  ["ibm-plex", "IBM Plex Sans"],
+  ["humanist", "Plus Jakarta Sans"],
+  ["editorial", "Newsreader (Editorial)"],
 ];
 const VALID_FONTS = new Set(FONT_OPTIONS.map(([value]) => value));
 const urlFont = new URLSearchParams(location.search).get("font");
@@ -73,7 +76,7 @@ if (VALID_FONTS.has(urlFont)) {
   } catch (e) {}
 }
 function applyFontStyle(remember = false) {
-  const f = VALID_FONTS.has(S.fontStyle) ? S.fontStyle : "editorial";
+  const f = VALID_FONTS.has(S.fontStyle) ? S.fontStyle : "dm-sans";
   S.fontStyle = f;
   document.documentElement.dataset.font = f;
   if (!remember) return;

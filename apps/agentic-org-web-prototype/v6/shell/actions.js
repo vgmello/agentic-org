@@ -499,6 +499,12 @@ document.addEventListener("change", (e) => {
     S.chatSend = e.target.value;
     try { localStorage.setItem(CHAT_SEND_STORE, S.chatSend); } catch (e) {}
   }
+  if (e.target.matches("[data-font-select]")) {
+    S.fontStyle = e.target.value;
+    applyFontStyle(true);
+    render(false);
+    document.getElementById(e.target.id)?.focus();
+  }
   if (e.target.id === "settings-section") { S.focusAfter = "#settings-section"; location.hash = e.target.value; }
 });
 

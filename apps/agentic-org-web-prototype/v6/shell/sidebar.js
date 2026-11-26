@@ -130,7 +130,8 @@ window.addEventListener("resize", () => fitTextarea(document.getElementById("com
 function renderBanner(r0) {
   const el = document.getElementById("banner-ctl"); if (!el) return;
   const themeCtl = seg("theme", THEME_OPTIONS, "Theme");
-  const fontCtl = seg("fontStyle", FONT_OPTIONS, "Typography");
+  const fontOpts = FONT_OPTIONS.map(([v, label]) => `<option value="${esc(v)}"${S.fontStyle === v ? " selected" : ""}>${esc(label)}</option>`).join("");
+  const fontCtl = `<label class="banner-font-wrap"><span>Font</span><select class="banner-select" id="banner-font-select" data-font-select aria-label="Typography">${fontOpts}</select></label>`;
   const homeCtl = r0 === "home" ? seg("homeState", [["filled", "Filled"], ["empty", "Empty"], ["loading", "Loading"], ["error", "Error"]], "Home sections") : "";
   el.innerHTML = themeCtl + fontCtl + homeCtl;
 }

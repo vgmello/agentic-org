@@ -60,8 +60,13 @@ function pageSettings(sec = "general", sub) {
   return settingsFrame(sec, header, body);
 }
 function pagePreferences() {
+  const fontOpts = FONT_OPTIONS.map(([v, label]) => `<option value="${esc(v)}"${S.fontStyle === v ? " selected" : ""}>${esc(label)}</option>`).join("");
   return settingsFrame("appearance", hdr("Your preferences", ""), `<section class="section" aria-labelledby="h-theme"><div class="sec-h"><h2 id="h-theme">Appearance</h2></div>
-    <div class="pref theme-pref">${seg("theme", THEME_OPTIONS, "Theme")}${seg("fontStyle", FONT_OPTIONS, "Typography")}
+    <div class="pref theme-pref">${seg("theme", THEME_OPTIONS, "Theme")}
+      <div class="pref theme-contrast">
+        <div><label class="lbl" for="pref-font-select">Typography</label><p class="muted help">Choose the typeface used across headings and body text.</p></div>
+        <select class="field" id="pref-font-select" data-font-select>${fontOpts}</select>
+      </div>
       ${S.theme === "cozy" ? `<div class="pref theme-contrast">
         <div><p class="lbl" id="cozy-contrast-label">AA Contrast</p><p class="muted help" id="cozy-contrast-help">Makes glass surfaces more opaque and text easier to read.</p></div>
         <button class="switch" type="button" role="switch" data-act="cozy-contrast" aria-checked="${S.cozyContrast}" aria-labelledby="cozy-contrast-label" aria-describedby="cozy-contrast-help"></button>
