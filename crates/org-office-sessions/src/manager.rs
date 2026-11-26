@@ -2167,6 +2167,7 @@ impl SessionManager {
         );
         self.append_sibling_and_socket_denies(&mut out, &office_local, office_id, self_employee_id);
         append_cargo_credential_denies(&mut out);
+        append_agy_credential_denies(&mut out);
         out
     }
 
@@ -3750,7 +3751,6 @@ fn ensure_bwrap_deny_dirs(office: &Office, employee_id: &str) {
     for sub in [
         "state",
         "journal",
-        "authority",
         "messaging",
         "budgets",
         "accounting",
@@ -3759,7 +3759,9 @@ fn ensure_bwrap_deny_dirs(office: &Office, employee_id: &str) {
         let _ = ensure_owner_only_dir(&durable.join(sub));
     }
     if office.info().role == org_office::OfficeRole::Hq {
-        let _ = ensure_owner_only_dir(&durable.join("private"));
+        for sub in ["authority", "private"] {
+            let _ = ensure_owner_only_dir(&durable.join(sub));
+        }
     }
     for sub in [
         "auth",
@@ -3798,10 +3800,11 @@ fn ensure_bwrap_deny_dirs(office: &Office, employee_id: &str) {
 
 fn pattern_exists_for_bwrap(pat: &PathPattern) -> bool {
     let raw = pat.as_str();
-    let prefix = raw
+    let stripped = raw
         .strip_suffix("/**")
         .or_else(|| raw.strip_suffix("/*"))
         .unwrap_or(raw);
+    let prefix = if stripped.is_empty() { "/" } else { stripped };
     if prefix.contains('*') || prefix.contains('?') || prefix.contains('[') {
         return true;
     }
@@ -3972,6 +3975,17 @@ fn append_cargo_credential_denies(out: &mut Vec<PathPattern>) {
     for dir in dirs {
         for file in ["credentials", "credentials.toml"] {
             push_exact_pattern(out, &dir.join(file));
+        }
+    }
+}
+
+fn append_agy_credential_denies(out: &mut Vec<PathPattern>) {
+    if let Some(home) = std::env::var_os("HOME") {
+        let gemini = PathBuf::from(home).join(".gemini");
+        if gemini.is_absolute() {
+            for rel in org_agent_runtime_agy::AGY_CONFIG_CREDENTIAL_FILES {
+                push_exact_pattern(out, &gemini.join(rel));
+            }
         }
     }
 }
@@ -4369,5 +4383,25 @@ mod manager_helper_tests {
             false,
         );
         assert!(!unsandboxed.iter().any(|(k, _)| k == "CARGO_NET_OFFLINE"));
+    }
+
+    #[test]
+    fn pattern_exists_for_bwrap_preserves_root_glob_and_agy_credential_denies_match_adapter() {
+        assert!(pattern_exists_for_bwrap(
+            &PathPattern::try_from("/**").unwrap()
+        ));
+        assert!(pattern_exists_for_bwrap(
+            &PathPattern::try_from("/*").unwrap()
+        ));
+        let mut agy_denies = Vec::new();
+        append_agy_credential_denies(&mut agy_denies);
+        if std::env::var_os("HOME").is_some() {
+            for rel in org_agent_runtime_agy::AGY_CONFIG_CREDENTIAL_FILES {
+                assert!(
+                    agy_denies.iter().any(|p| p.as_str().ends_with(rel)),
+                    "missing agy credential deny for `{rel}`: {agy_denies:?}"
+                );
+            }
+        }
     }
 }

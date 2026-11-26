@@ -2903,13 +2903,14 @@ fn real_process_fake_cli_runs_native_agy_and_codex_adapters_end_to_end() {
         "agy",
         r#"#!/bin/sh
 read init_line
-echo '{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":["neo-agy"],"mode":"ask","version":"1.5.14"}}}'
-read user_line
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"antigravity","version":"1.5.17"}}}'
+read open_line
+echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"agy-live-1","models":{"currentModelId":"gemini-2.5-pro"}}}'
+read prompt_line
 mkdir -p "$HOME/.gemini/antigravity-cli/brain/agy-live-1/.system_generated/logs"
 printf '{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"2026-11-22T06:00:00Z","content":"Transcript leak key=%s"}\n' "$GEMINI_API_KEY" > "$HOME/.gemini/antigravity-cli/brain/agy-live-1/.system_generated/logs/transcript.jsonl"
-echo '{"type":"system","subtype":"init","conversation_id":"agy-live-1","mode":"ask"}'
-printf '{"type":"assistant","message":{"id":"m1","model":"gemini-2.5-pro","content":[{"type":"text","text":"Agy reply tok=%s key=%s"}],"usage":{"input_tokens":20,"output_tokens":10}}}\n' "$AGENT_OS_SESSION_TOKEN" "$GEMINI_API_KEY"
-echo '{"type":"result","subtype":"success","is_error":false}'
+printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"agy-live-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Agy reply tok=%s key=%s"}}}}\n' "$AGENT_OS_SESSION_TOKEN" "$GEMINI_API_KEY"
+echo '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","usage":{"inputTokens":20,"outputTokens":10}}}'
 "#,
     );
     let fake_codex = write_fake_cli(
@@ -3149,21 +3150,14 @@ fn session_launch_injects_effective_processes_and_refuses_mandatory_budget_overf
         "agy",
         &format!(
             r#"#!/bin/sh
-settings=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--settings" ]; then
-    shift
-    settings="$1"
-  fi
-  shift
-done
-cat "$(dirname "$settings")/agy-instructions.md" > "{capture}"
 read init_line
-echo '{{"type":"control_response","response":{{"subtype":"success","request_id":"host-1","response":{{"agents":["proc-bot"],"mode":"ask","version":"1.5.14"}}}}}}'
-read user_line
-echo '{{"type":"system","subtype":"init","conversation_id":"agy-proc-1","mode":"ask"}}'
-echo '{{"type":"assistant","message":{{"id":"m1","model":"gemini-2.5-pro","content":[{{"type":"text","text":"Ack"}}],"usage":{{"input_tokens":5,"output_tokens":2}}}}}}'
-echo '{{"type":"result","subtype":"success","is_error":false}}'
+echo '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentInfo":{{"name":"antigravity","version":"1.5.17"}}}}}}'
+read open_line
+printf '%s\n' "$open_line" > "{capture}"
+echo '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"agy-proc-1","models":{{"currentModelId":"gemini-2.5-pro"}}}}}}'
+read prompt_line
+echo '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"agy-proc-1","update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"Ack"}}}}}}}}'
+echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inputTokens":5,"outputTokens":2}}}}}}'
 "#,
             capture = capture_path.display()
         ),
@@ -3428,21 +3422,14 @@ fn task_assignment_wake_injects_project_owning_chain_for_contributing_agent() {
         "agy",
         &format!(
             r#"#!/bin/sh
-settings=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--settings" ]; then
-    shift
-    settings="$1"
-  fi
-  shift
-done
-cat "$(dirname "$settings")/agy-instructions.md" > "{capture}"
 read init_line
-echo '{{"type":"control_response","response":{{"subtype":"success","request_id":"host-1","response":{{"agents":["qa-bot"],"mode":"ask","version":"1.5.14"}}}}}}'
-read user_line
-echo '{{"type":"system","subtype":"init","conversation_id":"agy-task-1","mode":"ask"}}'
-echo '{{"type":"assistant","message":{{"id":"m1","model":"gemini-2.5-pro","content":[{{"type":"text","text":"Audited"}}],"usage":{{"input_tokens":5,"output_tokens":2}}}}}}'
-echo '{{"type":"result","subtype":"success","is_error":false}}'
+echo '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentInfo":{{"name":"antigravity","version":"1.5.17"}}}}}}'
+read open_line
+printf '%s\n' "$open_line" > "{capture}"
+echo '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"agy-task-1","models":{{"currentModelId":"gemini-2.5-pro"}}}}}}'
+read prompt_line
+echo '{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"agy-task-1","update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"Audited"}}}}}}}}'
+echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inputTokens":5,"outputTokens":2}}}}}}'
 "#,
             capture = capture_path.display()
         ),
