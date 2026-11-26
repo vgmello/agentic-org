@@ -86,6 +86,7 @@ async function checkWorkBoard(page: Page) {
   await page.keyboard.press("Escape");
   await checkBoardRequestMenus(page, board);
   await checkAttentionFirst(page, board);
+  await checkBoardCountsAndLabels(page, board);
   assert.match((await page.getByRole("button", { name: /^Work display/ }).getAttribute("aria-label"))!, /Stages columns/, "Display names the column mode");
   const trailingGutter = await board.evaluate((el) => {
     el.scrollLeft = el.scrollWidth;
@@ -104,10 +105,112 @@ async function checkWorkBoard(page: Page) {
   await checkDoneHistory(page, board);
   await checkArchivedOnlyMatches(page, board);
   await checkBoardSubtaskSearch(page, board);
+  await checkSubtaskFocusReturn(page, board);
   await checkBoardClearFilters(page, board);
   await checkBoardReturnFromInbox(page, board);
   await checkPhoneLaneJump(page);
+  await checkPhoneSearchRevealsLane(page);
+  await checkCompactCardLabels(page);
   await layout.getByRole("button", { name: "List" }).press("Enter");
+  await checkProjectWorkTab(page);
+}
+
+/* Preset counts are the cards the Board shows; Done names its history window; priority and severity read in words */
+async function checkBoardCountsAndLabels(page: Page, board: ReturnType<Page["locator"]>) {
+  assert.equal(await board.locator(".bcard").count(), Number(await page.locator('[data-work-count="all"]').textContent()),
+    "All counts the cards the Board shows, inside the Done history window");
+  assert.match((await board.locator("#bcol-done .bcol-window").textContent())!, /Last 7 days/, "Done names its history window");
+  const set = board.locator('.bcard[data-work-id="T-A146"] .bpri');
+  assert.equal(await set.getAttribute("aria-label"), "High priority");
+  assert.equal((await set.innerText()).trim(), "High", "A set priority is a word beside the bars");
+  const bug = board.locator('.bcard[data-work-id="T-A88"]');
+  assert.match((await bug.locator(".bpri").innerText()).trim(), /^High · inferred$/, "A missing priority says it is inferred, in text");
+  assert.match((await bug.locator(".bpri").getAttribute("aria-label"))!, /^No priority set, inferred High$/);
+  assert.equal((await bug.locator(".bsev").innerText()).trim(), "Critical severity", "Bug severity is labelled apart from priority");
+}
+
+/* Closing a task returns focus to the link that opened it: a subtask link on its parent card, or the parent card */
+async function checkSubtaskFocusReturn(page: Page, board: ReturnType<Page["locator"]>) {
+  await page.getByRole("button", { name: "Search work" }).first().click();
+  await page.keyboard.type("Inventory CSP");
+  const hit = board.locator('.bcard .board-subhits a[data-item="T-A147"]');
+  await hit.click();
+  const panel = page.getByRole("dialog");
+  await panel.waitFor({ state: "visible" });
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "detached" });
+  assert.ok(await focusedIs(hit), "Closing a subtask opened from search returns to its subtask link");
+  const search = page.getByRole("searchbox", { name: "Search work" });
+  await search.fill("");
+  await search.press("Escape");
+  await search.waitFor({ state: "detached" });
+  const parent = board.locator('.bcard[data-work-id="T-A124"] > .work-item-link');
+  await parent.click();
+  await panel.waitFor({ state: "visible" });
+  await panel.locator('.work-detail-links a[href*="item=T-A147"]').click();
+  await page.getByRole("heading", { name: "Inventory CSP fixtures" }).waitFor();
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "detached" });
+  assert.ok(await focusedIs(parent), "A subtask with no link of its own on the board returns to its parent card");
+}
+
+/* Phones show one lane: a search whose matches are all in another lane brings that lane into view, keeps focus in
+   search and says the result */
+async function checkPhoneSearchRevealsLane(page: Page) {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.locator("select[data-board-lane]").selectOption("0");
+  await page.waitForFunction(() => document.querySelector(".board")!.scrollLeft === 0);
+  const search = page.getByRole("searchbox", { name: "Search work" });
+  /* Clear filters leaves an empty search row open; the toggle would close it */
+  if (!(await search.count())) await page.locator('[data-act="search-toggle"][data-v="work-search"]').click();
+  await search.focus();
+  await page.keyboard.type("Inventory CSP");
+  await page.waitForFunction(() => /Showing/.test(document.getElementById("work-results-status")?.textContent ?? ""));
+  const lane = await page.evaluate(() => {
+    const board = document.querySelector(".board")!, view = board.getBoundingClientRect();
+    const shown = [...board.querySelectorAll(".bcol")].find((col) => Math.abs(col.getBoundingClientRect().left - view.left) < view.width / 2);
+    return { name: shown?.querySelector(".bcol-name")?.textContent, cards: shown?.querySelectorAll(".bcard").length };
+  });
+  assert.ok(lane.cards! > 0, `The lane in view has the match (${lane.name})`);
+  assert.equal(await page.locator("#work-results-status").textContent(), `1 match. Showing ${lane.name}.`, "The result and lane are announced");
+  assert.equal(await page.locator("select[data-board-lane]").inputValue(), "2", "The picker names the revealed lane");
+  assert.ok(await focusedIs(search), "Focus stays in search");
+  assert.equal(await page.locator("#work-results").getByRole("button", { name: "Clear filters" }).count(), 1, "One Clear filters for the whole board");
+  /* Touch: project, owner and subtask links have 44px hit areas */
+  const sizes = await page.locator(".board .bcard :is(.board-project a, .board-owner-label a, .board-subhits a)").evaluateAll((links) =>
+    links.filter((a) => a.getClientRects().length).map((a) => { const r = a.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; }));
+  assert.ok(sizes.length >= 3 && sizes.every(([w, h]) => w >= 44 && h >= 44), `Secondary links are 44px targets (${JSON.stringify(sizes)})`);
+  await search.fill("");
+  await search.press("Escape");
+  await search.waitFor({ state: "detached" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+/* Narrow Status lanes keep a short word on each count and the project on its own line */
+async function checkCompactCardLabels(page: Page) {
+  await page.setViewportSize({ width: 1024, height: 800 });
+  await page.getByRole("button", { name: /^Work display/ }).click();
+  await page.getByRole("menuitemradio", { name: "Status", exact: true }).click();
+  await page.keyboard.press("Escape");
+  const card = page.locator('.board .bcard[data-work-id="T-A146"]');
+  const tags = await card.locator(".btag").evaluateAll((els) => els.map((el) => (el as HTMLElement).innerText.replace(/\s+/g, " ").trim()));
+  /* innerText also carries the sr-only full wording ("2 subtasks") after the visible short one */
+  assert.ok(tags.some((tag) => /^2 sub\b/.test(tag)), `Narrow subtask count keeps a word (${tags})`);
+  const [ref, project] = await Promise.all([card.locator(".board-ref").boundingBox(), card.locator(".board-project").boundingBox()]);
+  assert.ok(project!.y >= ref!.y + ref!.height - 1, "The project has its own line");
+  await page.getByRole("button", { name: /^Work display/ }).click();
+  await page.getByRole("menuitemradio", { name: "Stages", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+/* The project's Work tab says what its count is */
+async function checkProjectWorkTab(page: Page) {
+  const back = page.url();
+  await page.goto(back.replace(/#.*$/, "#/projects/agency-v1/work"));
+  assert.match((await page.locator('.tabs a[href$="/work"]').innerText()).replace(/\s+/g, " "), /^Work \d+ open$/, "Work tab count says open");
+  await page.goto(back);
+  await page.locator("#main h1").first().waitFor();
 }
 
 const focusedIs = (locator: ReturnType<Page["locator"]>) => locator.evaluate((el) => el === document.activeElement);
@@ -221,6 +324,8 @@ async function checkDoneHistory(page: Page, board: ReturnType<Page["locator"]>) 
 async function checkArchivedOnlyMatches(page: Page, board: ReturnType<Page["locator"]>) {
   await page.getByRole("button", { name: /^Filter work/ }).click();
   await page.getByRole("group", { name: "Status" }).getByRole("menuitemradio", { name: "Fixed", exact: true }).click();
+  const filter = page.getByRole("button", { name: "Filter work, Status Fixed" });
+  assert.match(await filter.innerText(), /Fixed/, "The Filter trigger shows the active value");
   const reveal = page.locator("#work-results").getByRole("button", { name: /^Show \d+ archived match/ });
   await reveal.waitFor();
   const n = Number((await reveal.textContent())!.match(/\d+/)![0]);
@@ -281,7 +386,8 @@ async function checkBoardReturnFromInbox(page: Page, board: ReturnType<Page["loc
 async function checkPhoneLaneJump(page: Page) {
   await page.setViewportSize({ width: 375, height: 812 });
   const display = page.getByRole("button", { name: /^Work display/ });
-  assert.match((await display.innerText()).trim(), /^Display/, "Phones label the combined menu Display");
+  assert.match((await display.innerText()).trim(), /^Stages/, "At 420px and below Display keeps the column mode in compact form");
+  assert.match((await display.getAttribute("aria-label"))!, /^Work display, Stages columns/);
   assert.match((await page.getByRole("button", { name: /^Filter work/ }).innerText()).trim(), /^Filter/, "Phones keep the Filter label");
   const board = page.locator(".board");
   const [peek, chipsShown] = await board.evaluate((el) => {
