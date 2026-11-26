@@ -8,8 +8,12 @@ const positions = new Map();
 
 const spacerOf = (s) => Number(s.dataset.spacer) || 0;
 const yOf = (s, el) => el.getBoundingClientRect().top - s.getBoundingClientRect().top + s.scrollTop;
-const items = (s) => [...s.querySelectorAll(":scope > .msg, :scope > .chat-day")];
+/* Day labels are sticky, so their box moves while stuck; the static rule before each label marks the day's
+   start for boundary placement. */
+const items = (s) => [...s.querySelectorAll(":scope > .msg, :scope > .chat-day-rule")];
 
+/* Height of the sticky day band, which covers the top of whatever message sits at the stream's top edge. */
+const bandOf = (s) => s.querySelector(":scope > .chat-day")?.offsetHeight || 0;
 function setSpacer(s, px) {
   s.dataset.spacer = String(px);
   s.style.setProperty("--chat-spacer", px + "px");
@@ -34,8 +38,10 @@ function boundaryY(s) {
   if (max <= 0) return 0;
   const cap = Math.min(120, s.clientHeight / 5);
   let best = max, bestCost = Infinity;
+  const band = bandOf(s);
   for (const el of items(s)) {
-    const y = yOf(s, el) - BOUNDARY_GAP;
+    /* A message opens just below the day band; a day's own start shows its label in place. */
+    const y = yOf(s, el) - BOUNDARY_GAP - (el.classList.contains("msg") ? band : 0);
     if (y > max + cap) continue;
     const cost = y >= max ? y - max : (max - y) * 2;
     if (cost < bestCost) { best = y; bestCost = cost; }
@@ -53,7 +59,7 @@ function readPos(s) {
 function messageEl(s, mid) {
   return mid ? s.querySelector(`:scope > [data-mid="${CSS.escape(mid)}"]`) : null;
 }
-function applyPos(s, pos) {
+function placeAt(s, pos) {
   const anchor = messageEl(s, pos.mid || pos.target);
   /* A linked message sits a third of the way down, or at the top when it is taller than the view. */
   if (anchor && pos.target) return scrollToY(s, Math.max(0, yOf(s, anchor) - Math.max(BOUNDARY_GAP, (s.clientHeight - anchor.offsetHeight) / 3)));
@@ -61,10 +67,20 @@ function applyPos(s, pos) {
   if (pos.top) return scrollToY(s, 0);
   return pos.end ? scrollToEnd(s) : scrollToY(s, boundaryY(s));
 }
+/* A day label stuck at the stream's top edge becomes a solid band, so the lines scrolling under it never show
+   through; in place it is the plain divider. */
+function markStuckDays(s) {
+  const top = s.getBoundingClientRect().top;
+  for (const d of s.querySelectorAll(":scope > .chat-day")) d.classList.toggle("is-stuck", s.scrollTop > 0 && d.getBoundingClientRect().top - top < 1);
+}
+function applyPos(s, pos) {
+  placeAt(s, pos);
+  markStuckDays(s);
+}
 const savedPos = (id) => positions.get(id);
 const savePos = (id, pos) => positions.set(id, pos);
 function trackPos(s) {
-  s.addEventListener("scroll", () => positions.set(s.dataset.ch, readPos(s)), { passive: true });
+  s.addEventListener("scroll", () => { positions.set(s.dataset.ch, readPos(s)); markStuckDays(s); }, { passive: true });
 }
 /* Places the stream and keeps that placement while fonts, styles and avatars settle,
    until the reader scrolls or the page has been still for a moment. */
@@ -89,6 +105,22 @@ function replaceStream(s, html, follow = false) {
 
 export { applyPos, placeStream, readPos, replaceStream, savePos, savedPos, scrollToEnd, trackPos };
 
+/* ---------------------------------------------------------------- thread panel position
+   Each thread keeps its own scroll position across close, reopen and re-render; after the owner sends in a
+   thread, the panel opens at its end so the new reply is in view. */
+const threadPositions = new Map();
+const thread = { toEnd: false };
+const followThreadEnd = () => { thread.toEnd = true; };
+function placeThread(panel, rootId) {
+  const s = panel?.querySelector(":scope > .msgs");
+  if (!s) return;
+  if (thread.toEnd) { thread.toEnd = false; s.scrollTop = s.scrollHeight; threadPositions.set(rootId, s.scrollTop); }
+  else if (threadPositions.has(rootId)) s.scrollTop = threadPositions.get(rootId);
+  s.addEventListener("scroll", () => threadPositions.set(rootId, s.scrollTop), { passive: true });
+}
+
+export { followThreadEnd, placeThread };
+
 /* ---------------------------------------------------------------- earlier asks above the reading position
    One button jumps to the nearest, oldest last. On phones it is its own row above the stream (never over a
    message); when that row appears or goes, the stream scrolls by its height so the text doesn't move. */
@@ -108,7 +140,7 @@ function syncAskJump(s) {
 function jumpToAsk() {
   const s = document.querySelector(".chat .chmain .msgs[data-ch]"), card = s && asksAbove(s).pop();
   if (!card) return;
-  s.scrollTop += card.closest(".msg").getBoundingClientRect().top - s.getBoundingClientRect().top - 8;
+  s.scrollTop += card.closest(".msg").getBoundingClientRect().top - s.getBoundingClientRect().top - 8 - bandOf(s);
   card.querySelector(".chat-needs-q").focus({ preventScroll: true });
   syncAskJump(s);
 }

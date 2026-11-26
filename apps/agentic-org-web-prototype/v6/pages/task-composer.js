@@ -708,6 +708,8 @@ function inferOpeningContext(opts = {}) {
   const [page, id] = route();
   const projects = activeProjects();
   let { proj, team } = inferProjectFromRoute(page, id, projects);
+  /* A caller that knows the context (a channel's project, for "Turn into task") names it. */
+  if (isActiveProject(opts.proj)) { proj = opts.proj; team = defaultTeamForProject(proj); }
   let agentId = opts.agentId && own(M, opts.agentId) ? opts.agentId : null;
   if (!agentId && page === "members" && own(M, id) && id !== "you") agentId = id;
   if (agentId && isActiveProject(M[agentId]?.proj)) {
