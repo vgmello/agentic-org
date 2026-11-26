@@ -356,12 +356,11 @@ async function checkCardLayout(page: Page, board: ReturnType<Page["locator"]>) {
   for (const theme of ["ocean", "classic", "report", "report-dark", "graphite", "graphite-light", "cozy"]) {
     await page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
     const stripe = await board.locator(".bcard[data-attention]").first().evaluate((el) => {
-      const s = getComputedStyle(el, "::before");
-      return { width: s.borderInlineStartWidth, color: s.borderInlineStartColor, style: s.borderInlineStartStyle };
+      const s = getComputedStyle(el, "::before"), c = getComputedStyle(el);
+      return { before: s.borderInlineStartStyle, card: c.borderInlineStartStyle === "none" || c.borderInlineStartColor === "rgba(0, 0, 0, 0)" };
     });
-    assert.equal(stripe.width, "3px", `The attention stripe shows in ${theme}`);
-    assert.equal(stripe.style, "solid");
-    assert.notEqual(stripe.color, "rgba(0, 0, 0, 0)", `The attention stripe has a colour in ${theme}`);
+    assert.notEqual(stripe.before, "solid", `No attention stripe on cards in ${theme} (owner)`);
+    assert.ok(stripe.card, `Cards draw no coloured edge in ${theme}`);
   }
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "graphite"));
 }

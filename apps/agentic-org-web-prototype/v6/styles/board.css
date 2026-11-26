@@ -112,11 +112,7 @@ html[data-theme="graphite-light"] .board { --bd-canvas: #fafafa; --bd-ring: #3f3
 }
 /* Selected (its detail is open): an accent ring drawn as a shadow, not a border */
 .board .bcard[aria-current="true"] { box-shadow: 0 0 0 2px var(--tone-accent-ink), var(--bd-shadow); }
-/* The attention stripe is its own logical border on a layer above the card, so no shadow can hide it */
-.board .bcard[data-attention]::before {
-  content: ""; position: absolute; inset: -1px; z-index: 0; pointer-events: none;
-  border-inline-start: 3px solid var(--tone-warn); border-radius: inherit;
-}
+/* No attention stripe on cards (owner): the Needs you badge is the signal */
 /* The title link covers the card; focus rings the whole card */
 .board .bcard > .work-item-link::after { border-radius: var(--bd-radius-card); }
 .board .bcard > .work-item-link:focus-visible { outline: none; }
