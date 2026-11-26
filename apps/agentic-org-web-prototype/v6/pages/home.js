@@ -1,3 +1,6 @@
+import { receiptHtml } from "./ask-receipt.js";
+import { decidedInInbox, reviewInInbox, routeReasonHtml } from "./ask-route.js";
+import { denyDraftKey, draftText, replyDraftKey } from "./ask-drafts.js";
 import { A, CAL_TODAY, EVENTS, IN, KIND, M, OFFICES, OPEN, P, W } from "../data.js";
 import { eventContext, eventDate, eventTone, sortEvents } from "./calendar.js";
 import { homeOrgFigures } from "./org-insights.js";
@@ -28,7 +31,8 @@ function v4ReplyBox(it) {
   const submitInner = deny
     ? `${ic("deny", "ic16")}Confirm deny`
     : `<span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl"><span class="h4-cta-ico">${ic("send", "ic16")}</span><span>${changes ? "Send changes" : answer ? "Send answer" : "Send reply"}</span></span></span>`;
-  return `<div class="reply"><label class="sr-only" for="r-${it.id}">${lbl}</label><textarea id="r-${it.id}" rows="2" placeholder="${lbl}"></textarea>
+  const draft = replyDraftKey(it.id, S.replyMode);
+  return `<div class="reply"><label class="sr-only" for="r-${it.id}">${lbl}</label><textarea id="r-${it.id}" rows="2" placeholder="${lbl}" data-draft="${esc(draft)}">${esc(draftText(draft))}</textarea>
       <div class="actions"><button class="btn ${deny ? "outline" : "primary h4-cta"} sm" ${deny ? "" : 'data-cta-tone="reply"'} type="button" data-act="send-reply" data-id="${it.id}">${submitInner}</button><button class="btn ghost sm" type="button" data-act="cancel-reply" data-id="${it.id}">Cancel</button></div></div>`;
 }
 
@@ -46,7 +50,7 @@ function v4DenySlot(it, label, outcome, icon = "deny") {
           </div>
         </div>
         <label class="sr-only" for="deny-msg-${it.id}">Optional message for ${who}</label>
-        <input class="field hb-deny-input" id="deny-msg-${it.id}" data-deny-id="${it.id}" data-deny-outcome="${esc(outcome)}" type="text" placeholder="Optional reason for ${who}…" autocomplete="off">
+        <input class="field hb-deny-input" id="deny-msg-${it.id}" data-deny-id="${it.id}" data-deny-outcome="${esc(outcome)}" data-draft="${esc(denyDraftKey(it.id))}" type="text" placeholder="Optional reason for ${who}…" value="${esc(draftText(denyDraftKey(it.id)))}" autocomplete="off">
       </div>`;
 }
 
@@ -83,8 +87,13 @@ function v4BuildButtons(it) {
   return it.kind === "problem" ? v4ProblemButtons(it) : { b: [], guardedHtml: "" };
 }
 
+/* Outside Inbox (`opts.route`), a consequential ask offers "Review in Inbox" and the short reason, never a decision. */
+const ctaInner = (label) => `<span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl">${label}</span></span>`;
+const inboxRouteActions = (it) => `<div class="actions">${reviewInInbox(it, { cls: "btn primary sm h4-cta", attrs: ' data-cta-tone="reply"', inner: ctaInner })}${routeReasonHtml(it)}</div>`;
+
 function itemActionsV4(it, opts = {}) {
-  if (it.handled) return `<p class="h4-handled-win" id="handled-${esc(it.id)}">${ic("check-circle", "ic16")}<span>${esc(it.outcome)}</span></p>`;
+  if (it.handled) return receiptHtml(it, "h4-handled-win");
+  if (opts.route && decidedInInbox(it)) return inboxRouteActions(it);
   if (S.replying === it.id) return v4ReplyBox(it);
   const { b, guardedHtml } = v4BuildButtons(it);
   if (guardedHtml) {
@@ -117,7 +126,7 @@ function needsCardV4(it) {
         <span class="muted">·</span>
         ${plink(it.proj)}${it.task ? `<span class="h4-task-chip">${esc(it.task)}</span>` : ""}
       </div>
-      ${itemActionsV4(it)}
+      ${itemActionsV4(it, { route: true })}
     </div>
   </article>`;
 }
@@ -144,7 +153,7 @@ function inputAccordionV4(it) {
       ${it.rec && !it.handled ? `<div class="h4-rec">${ic("info", "ic16")}<span>${esc(it.rec)}</span></div>` : ""}
       <div class="h4-d-foot">
         <div class="h4-origin">${mlink(it.from)}<span class="muted">·</span>${plink(it.proj)}${it.task ? `<span class="h4-task-chip">${esc(it.task)}</span>` : ""}</div>
-        ${itemActionsV4(it)}
+        ${itemActionsV4(it, { route: true })}
       </div>
     </div>` : ""}
   </article>`;
@@ -520,10 +529,10 @@ function spotlightDotsHtml(queue) {
 }
 
 function spotlightFootHtml(it, open, allQueueCleared, remainingInInbox) {
-  const detailsLink = !it.handled ? `<a class="btn ghost sm" href="#/inbox/${it.id}">Details${ic("chev-right", "ic14")}</a>` : "";
+  const detailsLink = !it.handled && !decidedInInbox(it) ? `<a class="btn ghost sm" href="#/inbox/${it.id}">Details${ic("chev-right", "ic14")}</a>` : "";
   const doneBtn = allQueueCleared && S.v4Open["spot-review"] ? `<button type="button" class="hb-skip-btn" data-act="v4-acc" data-id="spot-review">Done reviewing</button>` : "";
   const inboxLink = remainingInInbox ? `<a class="hb-skip-btn" href="#/inbox">All ${open.length} in Inbox${ic("chev-right", "ic14")}</a>` : "";
-  return `<div class="hb-spot-foot">${itemActionsV4(it, { hideDetails: true })}<div class="hb-spot-foot-meta">${detailsLink}${doneBtn}${inboxLink}</div></div>`;
+  return `<div class="hb-spot-foot">${itemActionsV4(it, { hideDetails: true, route: true })}<div class="hb-spot-foot-meta">${detailsLink}${doneBtn}${inboxLink}</div></div>`;
 }
 
 function spotlightHeaderBarHtml(it, queue, isUrgent) {

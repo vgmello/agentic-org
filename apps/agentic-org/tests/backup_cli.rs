@@ -90,6 +90,35 @@ impl Instance {
         child.wait_with_output().unwrap()
     }
 
+    /// [`Self::run`] with nothing on standard input, killed and failed if it has not ended
+    /// within `limit`: a command that waits for a terminal answer must not hang a test run.
+    fn run_within(&self, args: &[&str], limit: std::time::Duration) -> Output {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_agentic-org"))
+            .args(args)
+            .env("ORG_DEV_ACCOUNT_BASE", &self.base)
+            .env_remove("AGENTIC_ORG_INSTANCE")
+            .env_remove("AGENTIC_ORG_OFFICE")
+            .current_dir(&self.root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        while child.try_wait().unwrap().is_none() {
+            if started.elapsed() > limit {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!(
+                    "`agentic-org {}` did not end within {limit:?}",
+                    args.join(" ")
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        child.wait_with_output().unwrap()
+    }
+
     fn path(&self, name: &str) -> String {
         self.root.join(name).to_str().unwrap().to_owned()
     }
@@ -259,4 +288,99 @@ fn the_command_line_refuses_a_running_office_a_wrong_passphrase_and_unsafe_sourc
     refused(&plain, 2, "need --encrypt");
     let slug = at.run(&["backup", "acme", "--out", &at.path("b4")], None);
     refused(&slug, 2, "organization ID");
+}
+
+#[test]
+fn machine_mode_never_asks_for_a_passphrase_and_keeps_standard_error_empty() {
+    let at = Instance::new();
+    let archive = at.path("acme.backup");
+    let pass = at.pass.to_str().unwrap().to_owned();
+    let limit = std::time::Duration::from_secs(60);
+    // `--json` (or `-q`) without a passphrase source fails at once (exit 2), never waiting on
+    // the terminal, and writes no archive.
+    for mode in ["--json", "-q"] {
+        let asked = at.run_within(
+            &["backup", &at.org_id, "--out", &archive, "--encrypt", mode],
+            limit,
+        );
+        // Refused before the terminal is touched (not "could not be read" from `/dev/tty`).
+        refused(&asked, 2, "no one can be asked here");
+        refused(&asked, 2, "--passphrase-file");
+        assert!(!Path::new(&archive).exists());
+    }
+    json(&at.run(
+        &[
+            "backup",
+            &at.org_id,
+            "--out",
+            &archive,
+            "--encrypt",
+            "--passphrase-file",
+            &pass,
+            "--json",
+        ],
+        None,
+    ));
+    let verify = at.run_within(&["restore", "--verify", &archive, "--json"], limit);
+    refused(&verify, 2, "no one can be asked here");
+
+    // A human verification shows the rebuilt projections on the card, not only in --json.
+    let shown = at.run(
+        &["restore", "--verify", &archive, "--passphrase-file", &pass],
+        None,
+    );
+    let stdout = String::from_utf8_lossy(&shown.stdout);
+    assert!(shown.status.success(), "{stdout}");
+    assert!(stdout.contains("rebuilt\t"), "{stdout}");
+    assert!(stdout.contains("offices 1"), "{stdout}");
+    assert!(stdout.contains("stopped_cleanly true"), "{stdout}");
+
+    // Over a live journal that does not verify, a --json restore reports it as a field and
+    // writes nothing to standard error.
+    let acceptance = at
+        .durable
+        .join("recovery/offices")
+        .read_dir()
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path()
+        .join("journals/acceptance");
+    let incarnation = acceptance
+        .read_dir()
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    fs::write(incarnation.join("anchor.json"), b"{not an anchor").unwrap();
+    let restored = at.run(
+        &[
+            "restore",
+            &archive,
+            "--org",
+            &at.org_id,
+            "--passphrase-file",
+            &pass,
+            "--yes",
+            "--json",
+        ],
+        None,
+    );
+    let answer = json(&restored);
+    assert_eq!(answer["live_journal"]["state"], "unreadable", "{answer}");
+    assert!(
+        restored.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&restored.stderr)
+    );
+    let previous = answer["previous_durable_root"].as_str().unwrap();
+    assert!(
+        Path::new(previous)
+            .parent()
+            .unwrap()
+            .ends_with("restore-backups"),
+        "{previous}"
+    );
 }

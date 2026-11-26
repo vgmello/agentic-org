@@ -156,8 +156,9 @@
   --tone-accent-hover: #BAE6FD;
   --tone-accent-on-soft: #E0F2FE;
   --tone-accent-on-dark: #7DD3FC;
-  --tone-accent-solid: #0284C7;
-  --tone-accent-solid-hi: #0369A1;
+  /* Primary fill: white text holds 5.9:1 at rest and 7.6:1 on hover/press (was #0284C7, 4.1:1). */
+  --tone-accent-solid: #0369A1;
+  --tone-accent-solid-hi: #075985;
   --tone-accent-soft: rgba(56, 189, 248, .13);
   --tone-accent-soft-hi: rgba(56, 189, 248, .22);
   --tone-accent-ring: rgba(125, 211, 252, .30);

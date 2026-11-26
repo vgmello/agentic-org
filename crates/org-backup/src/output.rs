@@ -30,6 +30,17 @@ pub(crate) fn sync_dir(dir: &Path) -> Result<(), BackupError> {
     org_platform::fs::full_sync(&handle).map_err(BackupError::io(context()))
 }
 
+/// A new owner-only (`0700` from its creation) disposable folder in `dir`, named `prefix`
+/// and a random tail, removed with what it holds when dropped: where a decrypted archive is
+/// extracted and checked.
+pub(crate) fn private_tempdir_in(dir: &Path, prefix: &str) -> std::io::Result<tempfile::TempDir> {
+    use std::os::unix::fs::PermissionsExt;
+    tempfile::Builder::new()
+        .prefix(prefix)
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir_in(dir)
+}
+
 /// A random suffix for a temporary name.
 pub(crate) fn random_suffix() -> Result<String, BackupError> {
     let mut bytes = [0u8; 8];

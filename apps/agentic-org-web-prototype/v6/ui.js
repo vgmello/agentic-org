@@ -255,7 +255,7 @@ function feedItemHtml(a, opts) {
   const stamp = opts.day === a.time ? "" : `<time>${esc(a.time)}</time>`;
   const proj = opts.noProj ? "" : " · " + plink(a.proj);
   const summary = a.summary ? `<br><span class="muted">${esc(a.summary)}</span>` : "";
-  const triage = inboxItem ? `<div class="activity-triage" id="activity-triage-${inboxItem.id}" tabindex="-1"><a class="alink" href="#/inbox/${inboxItem.id}">${esc(inboxItem.what)}</a>${itemActionsV4(inboxItem, { hideDetails: true })}</div>` : "";
+  const triage = inboxItem ? `<div class="activity-triage" id="activity-triage-${inboxItem.id}" tabindex="-1"><a class="alink" href="#/inbox/${inboxItem.id}">${esc(inboxItem.what)}</a>${itemActionsV4(inboxItem, { hideDetails: true, route: true })}</div>` : "";
   return `<li><div class="l1">${av(a.who, 24, opts.noDots ? false : "tip")}<span class="actor">${mlink(a.who)}<span class="kind">${ic(t.icon, "ic14")}${t.label}</span></span>${stamp}</div>
       <p class="l2">${esc(a.text)}${proj}${summary}</p>
       ${feedRunLogHtml(a)}

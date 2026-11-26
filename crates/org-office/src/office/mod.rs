@@ -69,6 +69,7 @@ pub use self::invitations::{
     RelayAdmission, SatelliteRemovalResult,
 };
 pub use self::providers::OfficePermitSpec;
+pub(crate) use self::satellite::check_replicated_hq_owner;
 pub use self::satellite::{
     classify_replicated_snapshot_path, export_authoritative_state_snapshot_pages,
     is_immutable_state_path, relocated_task_paths, resolve_employee_office,
@@ -79,7 +80,7 @@ pub use self::satellite::{
     SatelliteTlsIdentity, SnapshotExportProgress, SnapshotPathClass,
 };
 #[cfg(any(test, feature = "testkit"))]
-pub use self::testkit::TestOffice;
+pub use self::testkit::{TestOffice, TestSatellite};
 use crate::{
     error::OfficeError,
     hq_creation::{LocalRecord, PublicRecord},
@@ -422,6 +423,14 @@ impl Office {
     /// custody ID on a satellite office).
     pub fn owner_member_id(&self) -> &str {
         self.owner.as_str()
+    }
+
+    /// The member ID of the organization's active owner as this office knows it: on HQ the
+    /// host-authoritative owner, on a satellite the HQ-replicated active owner
+    /// (`hq-owner.v1.json`) once a verified `Hello` recorded one, else the satellite's local
+    /// custody ID (which names no person). The identity a `[verified: owner]` badge checks.
+    pub fn effective_owner_member_id(&self) -> String {
+        self.effective_owner_for_ops().as_str().to_owned()
     }
 
     /// Returns the owner ID for organization/directory/messaging/relay ops: on HQ this is always

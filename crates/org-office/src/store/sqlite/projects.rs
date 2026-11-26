@@ -322,3 +322,18 @@ impl ProjectsWrite for SqliteTx {
         run(db, &sql, vec![text(scope), whole(num)?])
     }
 }
+
+/// Deletes project `project_id`'s row from the projection database at `db` behind the
+/// store's back (references unchecked) and returns how many rows went: the projection drift
+/// a test needs to show that a live task whose project no longer loads fails closed. The SQL
+/// stays in this adapter (ADR-0018 ENG-1).
+#[cfg(test)]
+pub(crate) fn delete_project_row_for_drift_test(db: &std::path::Path, project_id: &str) -> usize {
+    let drift = Connection::open(db).expect("the projection database opens");
+    drift
+        .pragma_update(None, "foreign_keys", false)
+        .expect("references can be unchecked");
+    drift
+        .execute("DELETE FROM projects WHERE id = ?1", [project_id])
+        .expect("the project row is deleted")
+}

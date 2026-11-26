@@ -50,6 +50,7 @@ mod helper_tests;
 mod install;
 mod launch;
 mod lifecycle_ops;
+mod office_masks;
 mod reap;
 mod registry_guards;
 mod rpc;

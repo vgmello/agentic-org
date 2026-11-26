@@ -328,7 +328,9 @@ const RECOMMENDATION_TONES = {
 };
 /* Inbox items. Ask routing outside Inbox (Chat cards): `consequential` names why an ask must be decided
    in Inbox (binding choice, tradeoff, high or irreversible impact); asks without it answer inline.
-   `origin` is the conversation and message where the ask was raised (Chat deep link #/chat/<ch>/<msg>).
+   `origin` is the conversation and message where the ask was raised (Chat deep link #/chat/<ch>/<msg>);
+   `related` is a message it came out of (an agent-to-agent exchange the owner can read).
+   `response` is the one durable answer record: { verb, answer?, by, time } (actor, time, option or text).
    `answers` are a question's one-tap answers. */
 const IN = [
   { id: "in1", consequential: "high-impact release", origin: { ch: "agency-v1", msg: "m2" }, kind: "approval", sub: "Release sign-off", from: "ada", time: "12m", group: "Today", what: "Approve publishing Kai's sync update to v1.0", cta: "Approve Kai's sync", why: "Kai's update makes office syncing cleaner and more reliable for v1.0. All 412 automated checks passed and Tomas approved review with zero open issues. High-impact release changes require your final sign-off before publishing.", audit: ["412 automated checks passing", "Tomas reviewed — 0 open issues", "Reversible release gate · T-A121"], recTone: "ok", rec: "Ada recommends: approve. Tomas completed review with no open issues.", impact: [["shield-check", "ok", "Low risk", "Easy to roll back"], ["bolt", "", "High impact", "Unblocks v1.0 launch"], ["check-circle", "ok", "Checks passed", "412 automated checks"]], proj: "agency-v1", task: "T-A121", expires: "Expires in 4 hours (release window)", expiresInHours: 4, scope: "Publishes to v1.0 · easy to roll back" },
@@ -348,15 +350,15 @@ const IN = [
     acts: [["Dismiss for this month", "Dismissed for this month", "x"]], src: { href: "#/settings/agents/jules", label: "Open Agent setup" }, clears: "When you dismiss it for this month, or the budget resets" },
   { id: "in13", kind: "problem", sub: "Unplaced agent", from: "noor", time: "5h", group: "Today", what: "Noor Haddad isn't placed in an office yet", why: "Noor was hired yesterday, but no office runs Noor yet, so Noor can't pick up work. Choose an office in Agent setup.", rec: "", proj: "agency-v1", task: "", expires: "",
     src: { href: "#/settings/agents/noor", label: "Open Agent setup" }, clears: "When Noor is placed in an office" },
-  { id: "in9", kind: "problem", sub: "Goal paused", from: "quinn", time: "4h", group: "Today", what: "Quinn's goal is paused: the Build box office is offline", why: "T-A135 can't start until the satellite office is back. Resume the goal once it's online, or move T-A135 to HQ.", rec: "", proj: "office-federation", task: "T-A135", expires: "", resume: true, clears: "When the goal resumes" },
+  { id: "in9", kind: "problem", sub: "Goal paused", from: "quinn", time: "4h", group: "Today", what: "Quinn's goal is paused: the Build box office is offline", why: "T-A135 can't start until the satellite office is back. Resume the goal once it's online, or move T-A135 to HQ.", rec: "", proj: "office-federation", task: "T-A135", expires: "", resume: true, hold: { office: "sat" }, clears: "When the goal resumes" },
   { id: "in6", kind: "approval", sub: "Review requested", from: "emery", time: "Yesterday", group: "Earlier", what: "Review T-A131: the IA v2 prototype, draft 4.1", why: "Emery applied Eden's draft-4 recheck and asks for your review before the stories go to engineering.", recTone: "ok", rec: "Eden recommends: approve. Her recheck findings are fixed.", proj: "look-feel", task: "T-A131", expires: "",
     acts: [["Approve", "Approved", "check"], ["Request changes", "Changes requested", "pencil", "changes"]], clears: "When you answer, here or anywhere" },
   { id: "in14", origin: { ch: "dm-ada", msg: "x3" }, kind: "approval", sub: "Hand-off", from: "ada", time: "1h", group: "Today", what: "Take on T-A146: sign the Apple developer agreement", why: "Notarizing the v1.0 build needs the account holder to accept Apple's updated agreement. Only you can sign it, so ada handed T-A146 to you.", rec: "", proj: "agency-v1", task: "T-A146", expires: "",
     acts: [["Accept", "Accepted", "check"]], assignTo: { "Accepted": "you" }, clears: "When you accept it, here or in Chat" },
-  { id: "in7", origin: { ch: "a2a-kai-rowan", msg: "k2" }, kind: "question", sub: "Question", from: "rowan", time: "Yesterday", group: "Earlier", what: "Keep the old codec behind a flag for one release?", answers: ["Keep it one release", "Remove it now"], why: "Removing it now saves 400 lines; keeping it lets a satellite on the old version still sync.", recTone: "warn", rec: "Rowan recommends: keep it for one release.", proj: "agency-v1", task: "T-A121", expires: "" },
+  { id: "in7", origin: { ch: "dm-rowan", msg: "r1" }, related: { ch: "a2a-kai-rowan", msg: "k2" }, kind: "question", sub: "Question", from: "rowan", time: "Yesterday", group: "Earlier", what: "Keep the old codec behind a flag for one release?", answers: ["Keep it one release", "Remove it now"], why: "Removing it now saves 400 lines; keeping it lets a satellite on the old version still sync.", recTone: "warn", rec: "Rowan recommends: keep it for one release.", proj: "agency-v1", task: "T-A121", expires: "" },
   { id: "in15", kind: "problem", sub: "Critical bug", from: "tomas", time: "2h", group: "Today", what: "Critical bug: T-A88, the Inbox loses replies when the office restarts", why: "Tomas reproduced it twice: a reply sent while the office restarts never reaches the agent. Nobody is assigned yet.", recTone: "bad", rec: "Tomas recommends: assign it to Rowan.", proj: "agency-v1", task: "T-A88", expires: "", assign: true, clears: "When it's assigned to anyone, or closed" },
   { id: "in10", kind: "problem", sub: "Crash", from: "rowan", time: "Yesterday", group: "Earlier", what: "A run on T-A138 crashed", why: "The run stopped with an error after 3 minutes: the certificate tool wasn't found on PATH. Nothing was changed.", rec: "", proj: "office-federation", task: "T-A138", expires: "", dismiss: true, clears: "When you dismiss it, or the next run succeeds" },
-  { id: "in8", kind: "approval", sub: "Run approval", from: "rowan", time: "Nov 10", group: "Earlier", what: "Approve the A-OC1 pins", why: "Pins the office contract versions for v1.0.", rec: "", proj: "office-federation", task: "", expires: "", handled: true, outcome: "Approved" }
+  { id: "in8", kind: "approval", sub: "Run approval", from: "rowan", time: "Nov 10", group: "Earlier", what: "Approve the A-OC1 pins", why: "Pins the office contract versions for v1.0.", rec: "", proj: "office-federation", task: "", expires: "", handled: true, outcome: "Approved", response: { verb: "Approved", by: "you", time: "Nov 10" } }
 ];
 const A = [
   { id: "a1", type: "run", who: "kai", time: "12m", proj: "agency-v1", text: "finished a run on T-A121 Split codec 2a.3.2b", summary: "Woken by ada's message · 12 min · finished", log: [["09:29", "Woken by ada's message in #agentic-org-v1"], ["09:30", "Read T-A121 and Tomas's review notes"], ["09:33", "Changed 3 files in org-sync-proto"], ["09:38", "Ran the Rust suite: 412 passed"], ["09:40", "Pushed 0a520e5b and asked Tomas for review"], ["09:41", "Finished · 12 min"]] },
@@ -375,10 +377,12 @@ const A = [
   { id: "a12", type: "conversation", who: "maya", time: "Nov 10", proj: "agency-v1", text: "asked for an activity export (T-A12)" }
 ];
 const CH = {
-  "general":   { name: "general", kind: "channel", topic: "Everyone in Agentic Org", msgs: [
+  "general":   { name: "general", kind: "channel", topic: "Everyone in Agentic Org",
+    members: ["you", "tess", "maya", "ada", "rowan", "eden", "emery", "tomas", "kai", "sage", "quinn", "jules", "avery", "noor"], msgs: [
     { id: "g1", who: "maya", time: "Nov 10, 16:02", text: "Could we export the activity feed for the monthly report? Filed as T-A12." },
     { id: "g2", who: "you", time: "Nov 10, 16:20", text: "Yes, later. Leaving it unrouted for now." } ] },
-  "agency-v1": { name: "agentic-org-v1", kind: "channel", topic: "Shipping the first release", proj: "agency-v1", msgs: [
+  "agency-v1": { name: "agentic-org-v1", kind: "channel", topic: "Shipping the first release", proj: "agency-v1",
+    members: ["you", "ada", "maya", "tomas", "kai", "jules", "avery", "noor"], msgs: [
     { id: "m1", who: "ada", time: "09:12", text: "Morning. Codec split is in review; CSP gates next. I am re-planning the nav slices for IA v2 today." },
     { id: "m2", who: "tomas", time: "09:40", text: "READY on Kai's 0a520e5b for T-A121. It needs the owner's go to merge (tier A).", needs: "in1", thread: [
       { who: "kai", time: "09:41", text: "Thanks. I'll merge as soon as it's approved." },
@@ -386,10 +390,12 @@ const CH = {
       { who: "tomas", time: "09:44", text: "Noted. Next up is Sage's 492e59e4." } ] },
     { id: "m3", who: "jules", time: "09:52", text: "The CSP gateway test for T-A124 can't reach the gateway without a local permission.", needs: "in5" },
     { id: "m4", who: "you", time: "10:01", text: "Looking at it now." } ] },
-  "platform":  { name: "platform", kind: "channel", topic: "Office server, sync and core", proj: "office-federation", unread: 2, msgs: [
+  "platform":  { name: "platform", kind: "channel", topic: "Office server, sync and core", proj: "office-federation", unread: 2,
+    members: ["you", "ada", "rowan", "kai", "sage", "quinn"], msgs: [
     { id: "p1", who: "rowan", time: "09:10", text: "Ruling on the custody lock: the lease is safer, the per-office lock is faster. Owner decides; details in T-A118.", ref: "in2" },
     { id: "p2", who: "sage", time: "09:18", text: "Waiting until the owner picks one. Asked in the Inbox.", needs: "in2" } ] },
-  "design":    { name: "design", kind: "channel", topic: "Look, feel and information architecture", proj: "look-feel", unread: 1, msgs: [
+  "design":    { name: "design", kind: "channel", topic: "Look, feel and information architecture", proj: "look-feel", unread: 1,
+    members: ["you", "maya", "eden", "emery", "avery"], msgs: [
     { id: "d1", who: "emery", time: "08:55", text: "IA v2 draft 4.1 is up as a clickable prototype, with Eden's design system v2 applied. Feedback welcome." },
     { id: "d2", who: "eden", time: "09:05", text: "Presence set looks right. One open question on the org chart tree; I asked the owner.", ref: "in3" } ] },
   "dm-ada":    { name: "Ada", kind: "dm", with: "ada", msgs: [
@@ -400,10 +406,12 @@ const CH = {
     { id: "y1", who: "eden", time: "09:06", text: "Quick one in your Inbox about the org chart, whenever you have a minute.", needs: "in3" } ] },
   "dm-maya":   { name: "Maya Chen", kind: "dm", with: "maya", msgs: [
     { id: "z1", who: "maya", time: "Nov 10", text: "I'll draft the onboarding checklist this week (T-A144)." } ] },
+  "dm-rowan":  { name: "Rowan", kind: "dm", with: "rowan", msgs: [
+    { id: "r1", who: "rowan", time: "Yesterday, 09:26", text: "Kai and I would keep the old codec decoder behind a flag for one release, so a satellite on the old version can still sync. Is that worth 400 extra lines?", needs: "in7", src: { ch: "a2a-kai-rowan", msg: "k2" } } ] },
   "a2a-kai-rowan": { name: "Kai and Rowan", kind: "a2a", pair: ["kai", "rowan"], msgs: [
-    { id: "k1", who: "kai", time: "09:20", text: "The codec frame header changes size in 2a.3.2b. Does the satellite need to read both for a release?" },
-    { id: "k2", who: "rowan", time: "09:24", text: "Yes, one release. Keep the old decoder behind a flag; I'll ask the owner if it's worth the 400 lines.", ref: "in7" },
-    { id: "k3", who: "kai", time: "09:25", text: "Thanks. Keeping the flag for now while you ask the owner." } ] },
+    { id: "k1", who: "kai", time: "Yesterday, 09:20", text: "The codec frame header changes size in 2a.3.2b. Does the satellite need to read both for a release?" },
+    { id: "k2", who: "rowan", time: "Yesterday, 09:24", text: "Yes, one release. Keep the old decoder behind a flag; I'll ask the owner if it's worth the 400 lines.", ref: "in7" },
+    { id: "k3", who: "kai", time: "Yesterday, 09:25", text: "Thanks. Keeping the flag for now while you ask the owner." } ] },
   "a2a-tomas-sage": { name: "Tomas and Sage", kind: "a2a", pair: ["tomas", "sage"], msgs: [
     { id: "s1", who: "tomas", time: "08:38", text: "Two findings on 492e59e4: the lease renewal can race with shutdown, and the test doesn't fail without the fix." },
     { id: "s2", who: "sage", time: "08:50", text: "Agreed on both. Waiting on the owner's lease decision before I fix the first.", ref: "in2" } ] }
@@ -514,9 +522,16 @@ const blockedOnOwner = (w) => w.status === "Blocked" && w.waitsOn === "you";
 /* Open Inbox asks linked to a work item that only the owner can clear: approvals, decisions, questions,
    suggestions, and problems that ask the owner to assign someone. Plain problem reports are not asks. */
 const ownerAsks = (w) => IN.filter((i) => !i.handled && i.task === w.id && (i.kind !== "problem" || i.assign));
-/* Needs the owner: blocked on you, an open linked ask, or open Critical work nobody is assigned to.
+/* Needs the owner: blocked on you, open Critical work nobody is assigned to, or an open linked ask. A pending ask
+   counts whatever the item's status, so a Fixed bug whose fix still waits for your approval stays in Needs you.
    Work's Needs you filter, card badge and badge destination all read these same pending owner actions. */
-const needsMe = (w) => OPEN(w) && (blockedOnOwner(w) || (!w.who && w.pri === "Critical") || ownerAsks(w).length > 0);
+const needsMe = (w) => (OPEN(w) && (blockedOnOwner(w) || (!w.who && w.pri === "Critical"))) || ownerAsks(w).length > 0;
+/* A known execution hold: an open Inbox item that says the work can't run until an office is back. It is not an
+   owner ask (nothing for the owner to approve), so it is a separate cue, never Needs you. */
+const executionHold = (w) => {
+  const item = OPEN(w) ? IN.find((i) => !i.handled && i.task === w.id && i.hold?.office) : null;
+  return item ? { item, office: OFFICES[item.hold.office] } : null;
+};
 
 const officeName = (o) => (OFFICES[o] ? OFFICES[o].name : "Not placed");
 
@@ -542,6 +557,7 @@ export {
   W,
   WORK_DISCUSSIONS,
   blockedOnOwner,
+  executionHold,
   needsMe,
   officeName,
   ownerAsks,

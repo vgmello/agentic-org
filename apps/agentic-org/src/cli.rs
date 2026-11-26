@@ -185,8 +185,8 @@ pub(crate) enum TopCommand {
     /// Use when: reviewing or changing who belongs to the organization.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Member(PassArgs),
-    /// Manage repositories and push task branches (repo register|list|attach|status|push)
-    /// Use when: registering/attaching Git repos, checking office cache status, or pushing branches.
+    /// Manage repositories, fetch origin branches and push task branches (repo register|list|attach|status|fetch|push)
+    /// Use when: registering/attaching Git repos, checking office cache status, fetching newly pushed origin branches, or pushing branches.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Repo(PassArgs),
     /// List or prepare isolated task worktrees (worktree list|prepare)
@@ -213,8 +213,8 @@ pub(crate) enum TopCommand {
     /// Use when: listing or managing the grants that let sessions act on an office.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Grant(PassArgs),
-    /// Supervised processes of an office (process ...)
-    /// Use when: inspecting or controlling the processes an office supervises.
+    /// Manage organization, team, and project processes and standards (process list|inspect|create|update)
+    /// Use when: reading the processes and standards that apply to a scope, their inheritance, or authoring one.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Process(PassArgs),
     /// Agent skills (skill ...)

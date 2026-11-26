@@ -6,6 +6,8 @@
 //!   `checklist.yaml` back;
 //! - a snapshot part holding a task's checklist with older history than the satellite's is
 //!   not stale when the whole snapshot brings the task further;
+//! - a snapshot part holding only a task's child files (no `task.md`, no event) is judged by
+//!   the snapshot's revision for the task, and never reverts a later local write;
 //! - HQ's `MoveTeam` moves every local projectless task of the moved subtree, those HQ never
 //!   named included, whether the move arrives whole or in pieces.
 
@@ -162,6 +164,46 @@ fn a_snapshot_part_with_older_history_applies_when_the_whole_snapshot_is_newer()
         let dump = sat.store().dump();
         sat.rebuild();
         assert_eq!(sat.store().dump(), dump, "{engine:?}: rebuild parity");
+    }
+}
+
+#[test]
+fn a_child_only_snapshot_part_older_than_the_local_task_is_skipped() {
+    for engine in ENGINES {
+        let mut hq = Bench::new(engine);
+        let mut sat = Bench::new(engine);
+        let task = hq.create(Some(TEAM_B), None);
+        assert_eq!(sat.create(Some(TEAM_B), None).id, task.id);
+        let first = add_step(&mut hq, &task.id, "Step one");
+        assert_eq!(add_step(&mut sat, &task.id, "Step one"), first);
+        hq.store().sync().unwrap();
+        // A local write lands while HQ's snapshot (revision 2) is in flight...
+        let second = add_step(&mut sat, &task.id, "Step two");
+        assert_eq!(sat.task(&task.id).unwrap().meta.revision, 3);
+
+        // ...then a snapshot part holding only the task's checklist: no task.md, no event.
+        let tid = Id::parse(&task.id).unwrap();
+        let location = Location::Team(vec![id(TOP_TEAM), id(TEAM_B)]);
+        let checklist = records::checklist_path(&location, &tid).unwrap();
+        let part = vec![(
+            checklist.as_str().to_owned(),
+            Some(hq.file(checklist.as_str()).expect("HQ's checklist")),
+        )];
+        apply_part(&sat, 0x83, part, BTreeMap::from([(tid, 2)]));
+        sat.store().sync().unwrap();
+
+        let both = vec![first, second];
+        assert_eq!(steps(&sat, &task.id), both, "{engine:?}: projection");
+        assert_eq!(
+            checklist_on_disk(&sat, &[TOP_TEAM, TEAM_B], &task.id),
+            both,
+            "{engine:?}: checklist.yaml"
+        );
+        assert_eq!(sat.task(&task.id).unwrap().meta.revision, 3);
+        let dump = sat.store().dump();
+        sat.rebuild();
+        assert_eq!(sat.store().dump(), dump, "{engine:?}: rebuild parity");
+        assert_eq!(steps(&sat, &task.id), both, "{engine:?}: after rebuild");
     }
 }
 

@@ -1269,7 +1269,8 @@ fn a_live_task_whose_project_cannot_be_loaded_refuses_the_turn() {
         .runtime
         .join(identity().office_id.as_str())
         .join("office.db");
-    let removed = crate::store::sqlite::drift_remove_project_row(&db, fx.project_id.as_str());
+    let removed =
+        crate::store::sqlite::delete_project_row_for_drift_test(&db, fx.project_id.as_str());
     assert_eq!(removed, 1);
     let refused = fx
         .office

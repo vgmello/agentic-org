@@ -135,12 +135,14 @@ fn replicated_hq_owner_dir(durable_root: &Path, office_id: &str) -> PathBuf {
     durable_root.join("local").join("offices").join(office_id)
 }
 
-pub(crate) fn read_replicated_hq_owner(
+/// The replicated HQ owner file of office `office_id`, parsed and checked for everything that
+/// does not depend on which HQ the satellite is bound to: its version, organization, a UUIDv7
+/// HQ office id, and an owner id that names neither office. `None` when there is none.
+fn load_replicated_hq_owner(
     durable_root: &Path,
     office_id: &str,
     org_id: &str,
-    hq_office_id: &str,
-) -> Result<Option<org_store::Id>, OfficeError> {
+) -> Result<Option<ReplicatedHqOwnerFile>, OfficeError> {
     let dir = replicated_hq_owner_dir(durable_root, office_id);
     match fs::symlink_metadata(&dir) {
         Ok(meta) if meta.is_dir() => {}
@@ -170,18 +172,42 @@ pub(crate) fn read_replicated_hq_owner(
             "replicated HQ owner file belongs to another organization",
         ));
     }
-    if parsed.hq_office_id != hq_office_id {
-        return Ok(None);
-    }
-    if !org_proto::is_valid_member_id(&parsed.owner_member_id)
+    if !org_proto::is_uuid_v7(&parsed.hq_office_id)
+        || !org_proto::is_valid_member_id(&parsed.owner_member_id)
         || parsed.owner_member_id == office_id
-        || parsed.owner_member_id == hq_office_id
+        || parsed.owner_member_id == parsed.hq_office_id
+        || org_store::Id::parse(&parsed.owner_member_id).is_err()
     {
         return Err(OfficeError::Invalid("invalid replicated HQ owner id"));
+    }
+    Ok(Some(parsed))
+}
+
+pub(crate) fn read_replicated_hq_owner(
+    durable_root: &Path,
+    office_id: &str,
+    org_id: &str,
+    hq_office_id: &str,
+) -> Result<Option<org_store::Id>, OfficeError> {
+    let Some(parsed) = load_replicated_hq_owner(durable_root, office_id, org_id)? else {
+        return Ok(None);
+    };
+    if parsed.hq_office_id != hq_office_id {
+        return Ok(None);
     }
     org_store::Id::parse(&parsed.owner_member_id)
         .map(Some)
         .map_err(|_| OfficeError::Invalid("invalid replicated HQ owner id"))
+}
+
+/// Checks a restored copy's replicated HQ owner file, when there is one, without knowing the
+/// HQ the satellite is bound to (`restore --verify`, `TASK-104`): it must parse and validate.
+pub(crate) fn check_replicated_hq_owner(
+    durable_root: &Path,
+    office_id: &str,
+    org_id: &str,
+) -> Result<(), OfficeError> {
+    load_replicated_hq_owner(durable_root, office_id, org_id).map(|_| ())
 }
 
 pub(crate) fn write_replicated_hq_owner(

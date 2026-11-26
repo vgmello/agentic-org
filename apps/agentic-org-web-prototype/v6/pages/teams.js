@@ -115,7 +115,7 @@ function pageTeam(id, tab = "overview") {
   const actions = hireMenu(id) + moreMenu("tmore", "More actions for " + t.name, menuItem("proto", "Edit team " + t.name, "pencil", "Edit team") + menuItem("proto", "Move team " + t.name + " (choose its parent team)", "user-group", "Move team…") + menuItem("proto", "Change manager of " + t.name, "user", "Change manager…"));
   const ws = teamWork(id);
   const tabs = linkTabs("#/teams/" + id, [
-    ["", "Overview"], ["members", "Members", t.members.length], ["work", "Work", ws.filter(OPEN).length], ["calendar", "Calendar"],
+    ["", "Overview"], ["members", "Members", t.members.length], ["work", "Work", `${ws.filter(OPEN).length} open`], ["calendar", "Calendar"],
     ["projects", "Projects"], ["activity", "Activity"], ["conversations", "Conversations"],
   ], tab === "overview" ? "" : tab, "Team sections");
   const header = crumbs([["#/teams", "Teams"], [null, t.name]]) + `<div class="section-header">${queueHeadline(t.name, count)}${sectionTabs(tabs, "", actions)}</div>`;
@@ -190,7 +190,7 @@ function personOverviewHtml(m, owner, myW, myActs) {
 }
 
 function personMemberView(id, tab, m, owner, myW, myActs) {
-  const tabs = [["", "Overview"], ["work", "Work", myW.filter(OPEN).length], ["conversations", "Conversations"], ["activity", "Activity"]];
+  const tabs = [["", "Overview"], ["work", "Work", `${myW.filter(OPEN).length} open`], ["conversations", "Conversations"], ["activity", "Activity"]];
   if (tab === "work") return { tabs, controls: "", body: scopedWorkToolbar("person", id, myW) + scopedWorkWorkspace() };
   if (tab === "activity") return { tabs, controls: "", body: activityTimeline(myActs) };
   if (tab === "conversations") return { tabs, controls: "", body: personConversationsHtml(id) };
@@ -289,7 +289,7 @@ function memberMetaFacts(id, m, owner) {
 }
 
 function agentMemberView(id, resolvedTab, m, myW, myActs) {
-  const tabs = [["", "Overview"], ["tasks", "Tasks", myW.filter(OPEN).length], ["sessions", "Sessions"], ["journal", "Journal"], ["memory", "Memory"], ["knowledge", "Knowledge"], ["settings", "Settings"]];
+  const tabs = [["", "Overview"], ["tasks", "Tasks", `${myW.filter(OPEN).length} open`], ["sessions", "Sessions"], ["journal", "Journal"], ["memory", "Memory"], ["knowledge", "Knowledge"], ["settings", "Settings"]];
   const { controls, leftBody } = agentTabContent(id, resolvedTab, m, agentSessionAvailability(id), myW, myActs);
   const body = `<div class="agent-shell" id="agent-shell" data-agent="${id}" data-tab="${resolvedTab}"><div class="agent-main">${leftBody}</div>${agentRailHtml(id, resolvedTab)}</div>`;
   return { tabs, controls, body };

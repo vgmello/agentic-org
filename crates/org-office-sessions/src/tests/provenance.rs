@@ -14,6 +14,7 @@ use org_proto::Request;
 use super::{hire_agent_with_runtime, new_uuid_v7};
 use crate::credentials::now_ms;
 use crate::manager::{SessionManager, SessionManagerConfig};
+use crate::provenance::{is_verified_owner, verified_sender_relation};
 use crate::wake::{PendingWakeItem, WakeKind};
 
 /// An office with an agent `target` on team Core, which a person leads, reporting to another
@@ -279,5 +280,52 @@ fn a_queued_wake_badges_every_sender_as_a_direct_instruction_does() {
     assert_eq!(stranger.sender_name, fx.stranger);
     assert_eq!(stranger.sender_handle, None);
     assert_eq!(stranger.sender_relation.as_deref(), Some("unknown"));
+    mgr.stop_all("done");
+}
+
+#[test]
+fn a_satellite_badges_the_hq_replicated_owner_and_never_its_own_office_id() {
+    // On a satellite, `owner_member_id` is the office's own local custody ID; the owner is the
+    // HQ-replicated one (`hq-owner.v1.json`, `TASK-141`), which survives a store rebuild.
+    let fx = senders();
+    let target = fx.target.clone();
+    let owner = fx.owner.clone();
+    let sat = org_office::TestSatellite::new();
+    let sat_id = sat.office.info().office_id.clone();
+    let relation =
+        |office: &Office, sender: &str| verified_sender_relation(office, &target, sender, None);
+    // Nothing replicated yet: no sender is the owner, least of all the satellite's own ID.
+    assert_eq!(sat.office.owner_member_id(), sat_id);
+    assert!(!is_verified_owner(&sat.office, &sat_id));
+    assert_eq!(relation(&sat.office, &sat_id), "unknown");
+    assert_eq!(relation(&sat.office, &owner), "unknown");
+
+    sat.office
+        .record_replicated_hq_owner(&sat.hq_office_id, &owner)
+        .unwrap();
+    assert_eq!(sat.office.effective_owner_member_id(), owner);
+    assert_eq!(relation(&sat.office, &owner), "owner");
+    assert_eq!(relation(&sat.office, &sat_id), "unknown");
+
+    let sat = sat.rebuilt();
+    assert_eq!(sat.office.effective_owner_member_id(), owner);
+    assert_eq!(relation(&sat.office, &owner), "owner");
+    assert_eq!(relation(&sat.office, &sat_id), "unknown");
+
+    // A direct instruction through the session manager carries the same badge, and an owner
+    // instruction the HQ attests on its verified channel is badged `owner` as well.
+    let office = Arc::new(sat.office);
+    let mgr = SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    );
+    let direct = mgr.objective_text(&target, &owner, "Ship it.");
+    assert!(direct.contains("[verified: owner]"), "{direct}");
+    let spoof = mgr.objective_text(&target, &sat_id, "Ship it.");
+    assert!(!spoof.contains("[verified: owner]"), "{spoof}");
+    let attested = mgr.objective_text_attested(&target, &fx.stranger, true, "Ship it.");
+    assert!(attested.contains("[verified: owner]"), "{attested}");
+    let unattested = mgr.objective_text_attested(&target, &fx.stranger, false, "Ship it.");
+    assert!(unattested.contains("[verified: unknown]"), "{unattested}");
     mgr.stop_all("done");
 }

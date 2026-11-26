@@ -166,9 +166,14 @@ impl Disposition {
 }
 
 /// The durable layout's policy for `path` (every tree under `<durable>/` is carried; these
-/// are the exceptions). Applies to folders and files alike.
+/// are the exceptions). Applies to folders and files alike. Each name is compared ASCII
+/// case-insensitively: on a case-insensitive file system (macOS's default APFS)
+/// `private/Task-Notes.db-WAL` or `.../Enroll-Tmp` is the very file or folder the policy
+/// names, so it must get the same answer ([`Manifest`](crate::manifest::Manifest) then
+/// refuses any spelling but the canonical one where that matters).
 pub(crate) fn disposition(path: &RelPath) -> Disposition {
-    let parts: Vec<&str> = path.components().collect();
+    let folded: Vec<String> = path.components().map(str::to_ascii_lowercase).collect();
+    let parts: Vec<&str> = folded.iter().map(String::as_str).collect();
     match parts.as_slice() {
         ["local", "offices", _, "enroll-tmp", ..]
         | ["local", "offices", _, "agents", _, "runtime" | "tmp", ..]

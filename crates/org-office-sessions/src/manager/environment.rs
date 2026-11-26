@@ -142,17 +142,35 @@ impl SessionManager {
         }
     }
 
+    /// The sender of a request `member_id` made to `target`, without an HQ attestation.
+    #[cfg(test)]
+    pub(crate) fn turn_sender(&self, target: &Employee, member_id: &str) -> TurnSender {
+        self.turn_sender_attested(target, member_id, false)
+    }
+
     /// The office-verified sender of a request `member_id` made to `target`: the same relation
     /// a queued wake from them carries ([`crate::provenance::verified_sender_relation`]). A sender
-    /// the office cannot load keeps its raw ID as name and is badged `unknown`.
-    pub(crate) fn turn_sender(&self, target: &Employee, member_id: &str) -> TurnSender {
+    /// the office cannot load keeps its raw ID as name and is badged `unknown`. With
+    /// `hq_attested_owner` the HQ vouched on its verified channel that `member_id` is the
+    /// organization's owner (an owner instruction it proxied to this satellite), so the sender
+    /// is badged `owner` even before this office has replicated who the owner is.
+    pub(crate) fn turn_sender_attested(
+        &self,
+        target: &Employee,
+        member_id: &str,
+        hq_attested_owner: bool,
+    ) -> TurnSender {
         let record = self.office.load_employee(member_id).ok().flatten();
-        let relation = crate::provenance::verified_sender_relation(
-            &self.office,
-            target,
-            member_id,
-            record.as_ref(),
-        )
+        let relation = if hq_attested_owner {
+            "owner"
+        } else {
+            crate::provenance::verified_sender_relation(
+                &self.office,
+                target,
+                member_id,
+                record.as_ref(),
+            )
+        }
         .to_owned();
         match record {
             Some(employee) => TurnSender {
@@ -168,15 +186,29 @@ impl SessionManager {
         }
     }
 
-    /// The turn input for an instruction `requester` sent to `employee`: a hiring request for
-    /// the built-in HR lead, a direct instruction otherwise. Both are fenced as data.
+    /// The turn input for an instruction `requester` sent to `employee`, without an HQ
+    /// attestation.
+    #[cfg(test)]
     pub(crate) fn objective_text(
         &self,
         employee: &Employee,
         requester: &str,
         text: &str,
     ) -> String {
-        let sender = self.turn_sender(employee, requester);
+        self.objective_text_attested(employee, requester, false, text)
+    }
+
+    /// The turn input for an instruction `requester` sent to `employee`: a hiring request for
+    /// the built-in HR lead, a direct instruction otherwise. Both are fenced as data; the
+    /// sender is badged as [`Self::turn_sender_attested`] says.
+    pub(crate) fn objective_text_attested(
+        &self,
+        employee: &Employee,
+        requester: &str,
+        hq_attested_owner: bool,
+        text: &str,
+    ) -> String {
+        let sender = self.turn_sender_attested(employee, requester, hq_attested_owner);
         if employee.builtin_key == Some(BuiltinKey::Hr) {
             compose_turn_objective(&TurnTrigger::HrProposalRequest {
                 requester: sender,

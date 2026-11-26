@@ -28,7 +28,8 @@ fn as_refs(files: &[(String, Option<Vec<u8>>)]) -> impl Iterator<Item = (&str, O
 
 /// Tasks whose committed local revision is already past the revision the batch brings them
 /// to: the later of the batch's `task.md` and its latest history event, so a batch of
-/// child-only changes (no `task.md`) is judged by its events. `hints` is the revision the
+/// child-only changes (no `task.md`) is judged by its events, or with neither, by its hint
+/// alone. `hints` is the revision the
 /// whole replicated set the batch is one part of brings a task to (a snapshot applied in
 /// several batches, whose `task.md` and history are in different ones). A batch writing
 /// `task.md` with another owning office code is never stale; one whose `task.md` does not
@@ -42,8 +43,8 @@ pub(super) fn stale_tasks(
         return BTreeSet::new();
     };
     let mut stale = BTreeSet::new();
-    for (id, incoming) in incoming {
-        let Ok(Some(local)) = view.task(&id) else {
+    for (id, incoming) in &incoming {
+        let Ok(Some(local)) = view.task(id) else {
             continue;
         };
         let other_office = incoming
@@ -51,10 +52,21 @@ pub(super) fn stale_tasks(
             .as_ref()
             .is_some_and(|task| task.office_code != local.office_code);
         let revision = hints
-            .get(&id)
+            .get(id)
             .map_or(incoming.revision, |hint| incoming.revision.max(*hint));
         if !other_office && local.meta.revision > revision {
-            stale.insert(id);
+            stale.insert(id.clone());
+        }
+    }
+    // A task the batch has only child files of (no `task.md`, no event) is judged by its hint.
+    for (id, &hint) in hints {
+        if incoming.contains_key(id) {
+            continue;
+        }
+        if let Ok(Some(local)) = view.task(id) {
+            if local.meta.revision > hint {
+                stale.insert(id.clone());
+            }
         }
     }
     stale

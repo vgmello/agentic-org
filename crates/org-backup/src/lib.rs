@@ -12,7 +12,9 @@
 //! other tree under `durable/` is carried as it is: a link, a socket, a FIFO or a device
 //! there fails the backup rather than being skipped, except inside an agent's own `home/`,
 //! which its runtime writes, where such an entry is left out (never followed). An archive
-//! listing a path a backup never carries is refused.
+//! listing a path a backup never carries (in any letter case: macOS's default file system
+//! ignores case), two paths that differ only in letter case, or the notes database under
+//! another spelling is refused.
 //!
 //! The archive is a deterministic `.tar.gz` (sorted members, normalized metadata) whose first
 //! member, `manifest.json`, records the format version, the organization, the office, the
@@ -29,8 +31,9 @@
 //! - [`restore_in_place`] does all of that, then refuses an archive the host's writer custody
 //!   would have to be reset for (a journal bound to another writer than the host reserved, or
 //!   behind or off the live chain), discards the rebuildable projections and swaps a pristine
-//!   copy in (keeping the previous root). It also restores an office whose whole
-//!   `<organization-id>/` folder was lost.
+//!   copy in, keeping the previous root in the owner-only `restore-backups/` folder beside
+//!   the roots, where it also stages and checks (never in the shared temporary folder). It
+//!   also restores an office whose whole `<organization-id>/` folder was lost.
 //!
 //! Module graph: `write, verify, restore -> read, journal, locate, collect, output`;
 //! `read -> envelope, manifest, tarfmt, paths`; `restore -> verify`; nothing points back.
@@ -58,6 +61,8 @@ pub use locate::{locate, OfficeTarget};
 pub use manifest::{FileMark, JournalMark, Limits, Manifest, FORMAT, VERSION};
 pub use paths::{RelPath, DURABLE_PREFIX, MANIFEST_MEMBER};
 pub use read::archive_kind;
-pub use restore::{restore_in_place, RestoreReport, RestoreRequest, SCOPE_NOTICE};
+pub use restore::{
+    restore_in_place, RestoreReport, RestoreRequest, RESTORE_BACKUPS_DIR_NAME, SCOPE_NOTICE,
+};
 pub use verify::{verify, Rebuilt, VerifyReport, VerifyRequest};
 pub use write::{backup, BackupReport, BackupRequest};

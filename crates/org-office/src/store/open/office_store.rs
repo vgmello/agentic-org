@@ -352,30 +352,11 @@ impl OfficeStore {
     }
 }
 
+/// The companion stores of the office ([`crate::companion_paths`]): written beside the journal,
+/// never materialized from it.
 fn companion_store_exclusions(office_id: &Id) -> Vec<org_store::DurablePath> {
-    [
-        "authority/agent-execution".to_owned(),
-        "accounting".to_owned(),
-        "budgets".to_owned(),
-        format!("local/offices/{office_id}/connections"),
-        format!("local/offices/{office_id}/auth"),
-        format!("local/offices/{office_id}/subscription-usage"),
-        format!("local/offices/{office_id}/agents"),
-        format!("local/offices/{office_id}/sessions"),
-        format!("local/offices/{office_id}/enroll-tmp"),
-        format!("local/offices/{office_id}/replication"),
-        format!("local/offices/{office_id}/hq-owner.v1.json"),
-        format!("local/offices/{office_id}/watcher"),
-        format!("local/offices/{office_id}/repositories"),
-        format!("local/offices/{office_id}/close-recovery"),
-        format!("local/offices/{office_id}/local-execution"),
-        format!("local/offices/{office_id}/invitations"),
-        format!("local/offices/{office_id}/tls"),
-        format!("local/offices/{office_id}/security/git-https-helper"),
-        format!("local/offices/{office_id}/security/git-ssh-key"),
-        format!("local/offices/{office_id}/security/git-known-hosts"),
-    ]
-    .into_iter()
-    .map(|p| org_store::DurablePath::parse(&p).expect("valid companion store prefix"))
-    .collect()
+    crate::companion_paths::companion_store_paths(office_id.as_str())
+        .into_iter()
+        .map(|c| org_store::DurablePath::parse(&c.path).expect("valid companion store prefix"))
+        .collect()
 }

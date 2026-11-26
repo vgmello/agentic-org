@@ -707,7 +707,8 @@ html[data-theme="report-dark"] {
   --tone-accent-hover: #c7d2fe;
   --tone-accent-on-soft: #e0e7ff;
   --tone-accent-solid: var(--tone-accent);
-  --tone-accent-solid-hi: #7c86ff;
+  /* Hover and focus darken the action fill, so white text keeps at least 4.5:1 (#4f46e5: 6.3:1). */
+  --tone-accent-solid-hi: #4f46e5;
   --tone-accent-soft: rgba(97, 95, 255, .14);
   --tone-accent-soft-hi: rgba(97, 95, 255, .20);
   --tone-accent-ring: rgba(124, 134, 255, .30);
@@ -1062,11 +1063,12 @@ html[data-theme="report-dark"] .btn.primary.h4-cta,
 html[data-theme="report-dark"] .h4-cta { background: var(--tone-accent); color: #ffffff; }
 html[data-theme="report-dark"] .h4-cta-fill,
 html[data-theme="report-dark"] .h4-cta[data-cta-tone="ocean"] .h4-cta-fill,
-html[data-theme="report-dark"] .h4-cta[data-cta-tone="reply"] .h4-cta-fill { background: var(--indigo-400); }
+html[data-theme="report-dark"] .h4-cta[data-cta-tone="reply"] .h4-cta-fill { background: var(--tone-accent); }
 html[data-theme="report-dark"] .h4-cta:hover,
 html[data-theme="report-dark"] .h4-cta:focus-visible,
 html[data-theme="report-dark"] .btn.primary.h4-cta:hover,
-html[data-theme="report-dark"] .btn.primary.h4-cta:focus-visible { background: var(--indigo-400); color: #ffffff; }
+html[data-theme="report-dark"] .btn.primary.h4-cta:focus-visible { background: var(--tone-accent-solid-hi); color: #ffffff; }
+html[data-theme="report-dark"] .h4-cta:is(:hover, :focus-visible) .h4-cta-fill { background: var(--tone-accent-solid-hi); }
 html[data-theme="report-dark"] .h4-cta.hb-cta-glass {
   background: var(--tone-accent-soft); color: var(--tone-accent-on-soft);
   box-shadow: inset 0 0 0 1px var(--tone-accent-ring);

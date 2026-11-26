@@ -417,3 +417,134 @@ fn an_archive_listing_a_path_a_backup_never_carries_is_refused_before_extraction
         );
     }
 }
+
+/// Crafts an archive listing `folders` and `files` (each file's content `stale`) and returns
+/// why verification refused it.
+fn refused_listing(dir: &Path, name: &str, folders: &[String], files: &[String]) -> String {
+    let mut listed = manifest(&[]);
+    listed.directories = folders.iter().map(|f| RelPath::parse(f).unwrap()).collect();
+    listed.directories.sort();
+    listed.files = files
+        .iter()
+        .map(|file| FileMark {
+            path: RelPath::parse(file).unwrap(),
+            length: 5,
+            sha256: hex(b"stale"),
+        })
+        .collect();
+    listed.files.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut members: Vec<(String, EntryType)> = folders
+        .iter()
+        .map(|f| (format!("durable/{f}"), EntryType::Directory))
+        .chain(
+            files
+                .iter()
+                .map(|f| (format!("durable/{f}"), EntryType::Regular)),
+        )
+        .collect();
+    members.sort_by(|a, b| a.0.cmp(&b.0));
+    let raws: Vec<Raw<'_>> = members
+        .iter()
+        .map(|(member, kind)| {
+            let data: &[u8] = if *kind == EntryType::Regular {
+                b"stale"
+            } else {
+                b""
+            };
+            raw(member, *kind, data)
+        })
+        .collect();
+    let archive = dir.join(format!("{name}.tar.gz"));
+    craft(&archive, &listed, &raws, b"");
+    refused(dir, &archive, Limits::default())
+}
+
+#[test]
+fn other_letter_cases_of_policy_paths_and_case_colliding_paths_are_refused_before_extraction() {
+    // macOS's default APFS is case-insensitive: each spelling below is the very file or
+    // folder the backup policy names there, so none may slip past it (`TASK-203` P1-1).
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path().canonicalize().unwrap();
+    let office = format!("local/offices/{OFFICE}");
+    let agent = format!("{office}/agents/019a0000-0000-7000-8000-0000000000a3");
+    let office_folders =
+        || -> Vec<String> { vec!["local".into(), "local/offices".into(), office.clone()] };
+    let private = vec!["private".to_owned()];
+
+    let notes = refused_listing(
+        &dir,
+        "notes-case",
+        &private,
+        &["private/Task-Notes.db".into()],
+    );
+    assert!(notes.contains("another spelling"), "{notes}");
+    let shouting = refused_listing(
+        &dir,
+        "notes-folder-case",
+        &["PRIVATE".into()],
+        &["PRIVATE/TASK-NOTES.DB".into()],
+    );
+    assert!(shouting.contains("another spelling"), "{shouting}");
+    for (n, sidecar) in [
+        "task-notes.db-WAL",
+        "Task-Notes.db-Shm",
+        "task-notes.db-JOURNAL",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let reason = refused_listing(
+            &dir,
+            &format!("sidecar-{n}"),
+            &private,
+            &[format!("private/{sidecar}")],
+        );
+        assert!(
+            reason.contains("a path a backup never carries"),
+            "{sidecar}: {reason}"
+        );
+    }
+
+    let mut enroll = office_folders();
+    enroll.push(format!("{office}/Enroll-Tmp"));
+    let reason = refused_listing(&dir, "enroll", &enroll, &[format!("{office}/Enroll-Tmp/x")]);
+    assert!(reason.contains("a path a backup never carries"), "{reason}");
+
+    let mut runtime = office_folders();
+    runtime.extend([
+        format!("{office}/agents"),
+        agent.clone(),
+        format!("{agent}/Runtime"),
+    ]);
+    let reason = refused_listing(&dir, "runtime", &runtime, &[format!("{agent}/Runtime/s")]);
+    assert!(reason.contains("a path a backup never carries"), "{reason}");
+
+    let mut cargo = office_folders();
+    cargo.extend([
+        format!("{office}/agents"),
+        agent.clone(),
+        format!("{agent}/home"),
+        format!("{agent}/home/.Cargo"),
+        format!("{agent}/home/.Cargo/Registry"),
+    ]);
+    let reason = refused_listing(
+        &dir,
+        "cargo",
+        &cargo,
+        &[format!("{agent}/home/.Cargo/Registry/index")],
+    );
+    assert!(reason.contains("a path a backup never carries"), "{reason}");
+
+    // Two entries one case-insensitive file system holds as one: files, or a file and a folder.
+    let state = vec!["state".to_owned()];
+    let files = ["state/A.yaml".to_owned(), "state/a.yaml".to_owned()];
+    let reason = refused_listing(&dir, "collide-files", &state, &files);
+    assert!(reason.contains("differ only in letter case"), "{reason}");
+    let reason = refused_listing(
+        &dir,
+        "collide-folder",
+        &["state".into(), "state/Teams".into()],
+        &["state/teams".into()],
+    );
+    assert!(reason.contains("differ only in letter case"), "{reason}");
+}

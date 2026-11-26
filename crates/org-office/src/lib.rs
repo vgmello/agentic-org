@@ -13,6 +13,8 @@
 pub mod accounting;
 pub mod backup;
 pub mod budgets;
+/// The stores an office keeps beside its journal, which agents' sandboxes mask.
+pub mod companion_paths;
 pub mod git;
 pub mod hq_creation;
 mod organization;
@@ -91,8 +93,6 @@ pub use time::parse_rfc3339_ms;
 pub use error::{NameError, OfficeError};
 pub use key::Key;
 pub use model::{NewOffice, OfficeInfo, OfficeRole};
-#[cfg(any(test, feature = "testkit"))]
-pub use office::TestOffice;
 pub use office::{
     ack_message_relay_and_enqueue_receipt_checked, admit_relay_item_if_active,
     classify_replicated_snapshot_path, export_authoritative_state_snapshot_pages,
@@ -109,3 +109,5 @@ pub use office::{
     SatelliteReEnrollSpec, SatelliteRemovalResult, SatelliteTlsIdentity, SnapshotExportProgress,
     SnapshotPathClass, LOCK_WAIT,
 };
+#[cfg(any(test, feature = "testkit"))]
+pub use office::{TestOffice, TestSatellite};

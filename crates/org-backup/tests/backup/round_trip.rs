@@ -112,6 +112,15 @@ fn round_trip(encrypted: bool) {
     // Verify, extracting a pristine copy beside it.
     let side = org.root.join("verified");
     let verified = verify(&verify_request(&out, pass, Some(&side))).expect("it verifies");
+    // The disposable copy was made beside `--to` (never in the shared temporary folder) and
+    // is gone.
+    assert!(
+        !names(&org.root)
+            .iter()
+            .any(|name| name.starts_with(".agentic-org-verify-")),
+        "{:?}",
+        names(&org.root)
+    );
     assert_eq!(verified.encrypted, encrypted);
     assert!(verified.private_notes_checked);
     assert_eq!(verified.manifest, report.manifest);
@@ -183,6 +192,21 @@ fn a_restore_over_the_same_head_keeps_the_previous_root_and_rebuilds_the_project
         .previous_durable
         .expect("the previous root is kept");
     assert!(previous.join("state").is_dir());
+    // The replaced root, like the staged copy and the disposable check, lives only in the
+    // owner-only restore-backups folder beside the roots, which agent sandboxes mask; the
+    // staging and check folders are gone.
+    let base = org.durable().parent().unwrap().to_path_buf();
+    let backups = base.join(org_backup::RESTORE_BACKUPS_DIR_NAME);
+    assert_eq!(previous.parent(), Some(backups.as_path()));
+    assert!(previous
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("before-"));
+    assert_eq!(names(&base), ["durable", "restore-backups", "runtime"]);
+    assert_eq!(names(&backups).len(), 1, "{:?}", names(&backups));
+    assert_eq!(mode(&backups), 0o700);
     assert!(!runtime_office.join("office.db").exists());
     assert!(!runtime_office.join("protected").exists());
     let office = org.open();
@@ -392,19 +416,36 @@ fn a_lost_organization_folder_is_restored_while_the_hosts_custody_remains() {
     let restored = restore_in_place(&restore_request(&org, &out)).expect("it restores");
     assert_eq!(restored.live_journal, LiveJournal::Missing);
     assert_eq!(restored.previous_durable, None);
-    let mode = |path: &Path| {
-        std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(path).unwrap().permissions())
-            & 0o777
-    };
     assert_eq!(mode(&base), 0o700);
     assert!(org.runtime().is_dir());
-    let mut names: Vec<String> = std::fs::read_dir(&base)
+    assert_eq!(names(&base), ["durable", "restore-backups", "runtime"]);
+    let backups = base.join(org_backup::RESTORE_BACKUPS_DIR_NAME);
+    assert!(names(&backups).is_empty(), "{:?}", names(&backups));
+    assert_eq!(mode(&backups), 0o700);
+    // The check ran in the office home (the organization folder was the thing lost), and
+    // left nothing there.
+    assert!(
+        !names(&org.office_home)
+            .iter()
+            .any(|name| name.starts_with(".restore-verify-")),
+        "{:?}",
+        names(&org.office_home)
+    );
+    let office = org.open();
+    assert_eq!(org.queries(&office), before);
+    office.close().unwrap();
+}
+
+/// The sorted names in folder `dir`.
+fn names(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
     names.sort();
-    assert_eq!(names, ["durable", "runtime"]);
-    let office = org.open();
-    assert_eq!(org.queries(&office), before);
-    office.close().unwrap();
+    names
+}
+
+fn mode(path: &Path) -> u32 {
+    std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(path).unwrap().permissions()) & 0o777
 }

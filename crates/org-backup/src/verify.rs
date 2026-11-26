@@ -1,5 +1,6 @@
-//! `restore --verify`: proving an archive restores. It is read and extracted into a
-//! disposable folder (every member checked against the manifest), the private task notes
+//! `restore --verify`: proving an archive restores. It is read and extracted into an
+//! owner-only disposable folder, never in the shared temporary folder (every member checked
+//! against the manifest), the private task notes
 //! copy passes SQLite's integrity check, the journal verifies to the head the manifest
 //! records, and the office's projections are rebuilt from it on a disposable runtime root.
 //! With `--to`, the archive is then extracted once more, untouched by the rebuild, into a
@@ -13,7 +14,7 @@ use crate::envelope::{ArchiveKind, Passphrase};
 use crate::error::BackupError;
 use crate::journal::check_restored;
 use crate::manifest::{Limits, Manifest};
-use crate::output::sync_dir;
+use crate::output::{private_tempdir_in, sync_dir};
 use crate::paths::{RelPath, NOTES_DB};
 use crate::read::{archive_kind, extract, Destination};
 
@@ -24,7 +25,8 @@ pub struct VerifyRequest<'a> {
     pub passphrase: Option<&'a Passphrase>,
     /// A new folder to extract the verified archive into (`<to>/durable`, `<to>/manifest.json`).
     pub to: Option<&'a Path>,
-    /// Where the disposable copy is made [default: the system's temporary folder].
+    /// The folder the disposable copy is made in [default: beside `to`, else beside the
+    /// archive, else this user's own temporary folder; never the shared system one].
     pub work_dir: Option<&'a Path>,
     pub limits: Limits,
 }
@@ -60,13 +62,7 @@ pub fn verify(request: &VerifyRequest<'_>) -> Result<VerifyReport, BackupError> 
     if let Some(to) = request.to {
         check_new_folder(to)?;
     }
-    let work = match request.work_dir {
-        Some(dir) => tempfile::Builder::new().prefix(".verify-").tempdir_in(dir),
-        None => tempfile::Builder::new()
-            .prefix("agentic-org-verify-")
-            .tempdir(),
-    }
-    .map_err(BackupError::io("making a disposable folder"))?;
+    let work = work_folder(request)?;
     let (manifest, notes, rebuilt) = verify_in(
         request.archive,
         request.passphrase,
@@ -92,6 +88,62 @@ pub fn verify(request: &VerifyRequest<'_>) -> Result<VerifyReport, BackupError> 
         rebuilt,
         extracted_to: to,
     })
+}
+
+/// The prefix of a verification's disposable folder.
+const WORK_PREFIX: &str = ".agentic-org-verify-";
+
+/// The owner-only disposable folder a verification extracts the archive into, removed when
+/// dropped. Never in the system's shared temporary folder: a decrypted copy left there by a
+/// killed process is readable on shared or memory-backed storage, and a small `/tmp` fills.
+/// `work_dir` when given; otherwise beside `to`, beside the archive, or in this user's own
+/// temporary folder, the first that takes it.
+fn work_folder(request: &VerifyRequest<'_>) -> Result<tempfile::TempDir, BackupError> {
+    if let Some(dir) = request.work_dir {
+        return private_tempdir_in(dir, WORK_PREFIX).map_err(BackupError::io(format!(
+            "making a disposable folder in {}",
+            dir.display()
+        )));
+    }
+    let beside = |path: &Path| {
+        std::path::absolute(path)
+            .ok()
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+    };
+    let mut candidates = request.to.and_then(beside).into_iter().collect::<Vec<_>>();
+    candidates.extend(beside(request.archive));
+    for dir in candidates {
+        if let Ok(work) = private_tempdir_in(&dir, WORK_PREFIX) {
+            return Ok(work);
+        }
+    }
+    let base = user_work_base()?;
+    private_tempdir_in(&base, WORK_PREFIX).map_err(BackupError::io(format!(
+        "making a disposable folder in {}",
+        base.display()
+    )))
+}
+
+/// This user's own temporary folder (`org-platform`'s per-user base), made owner-only.
+fn user_work_base() -> Result<PathBuf, BackupError> {
+    const HELP: &str = "give --work-dir <dir> (a folder of your own on a disk with room for the \
+                        archive's contents)";
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
+        .ok_or_else(|| {
+            BackupError::Usage(format!(
+                "no folder beside the archive takes a disposable copy and HOME is not set; {HELP}"
+            ))
+        })?;
+    let base = org_platform::dirs::user_temp_base(&home).map_err(|e| {
+        BackupError::Usage(format!(
+            "no folder beside the archive takes a disposable copy ({e}); {HELP}"
+        ))
+    })?;
+    org_platform::fs::create_owner_only_dir_all(&base)
+        .map_err(BackupError::io(format!("making {}", base.display())))?;
+    Ok(base)
 }
 
 /// Extracts and checks the archive below `work` (a folder of the caller's that it discards),

@@ -4,6 +4,7 @@ import { CH, M } from "../data.js";
 import { S } from "../state.js";
 import { av, esc, ic, kindWord, plural, presence } from "../ui.js";
 import { chatTitle, findConversations, openAsks, openDirectMessage, recipients } from "./chat-model.js";
+import { viewLinks } from "./chat-views.js";
 
 const GROUPS = [["channel", "Channels"], ["dm", "Direct messages"], ["a2a", "Between agents"]];
 const PRESENCE_WORD = { needs: "Waiting on you", withyou: "With you", working: "Working", paused: "Paused", available: "Available", asleep: "Asleep", offline: "Offline" };
@@ -44,7 +45,7 @@ function navInner(activeId) {
   const q = list.q.trim().toLowerCase();
   const keys = q ? findConversations(q) : Object.keys(CH);
   if (!keys.length) return noConversation(q);
-  return GROUPS.map(([kind, label]) => {
+  return (q ? "" : viewLinks(activeId)) + GROUPS.map(([kind, label]) => {
     const rows = keys.filter((k) => CH[k].kind === kind);
     return rows.length ? `<h2>${label}</h2><ul>${rows.map((k) => chatLinkHtml(k, activeId)).join("")}</ul>` : "";
   }).join("");
@@ -93,20 +94,36 @@ function setPicker(root, on) {
   Object.assign(list, { picker: on, to: "" });
   rerenderList(root, on ? "chat-to" : "chat-new");
 }
-function startMessage(who) {
+/* Opens the DM with the composer focused. When that DM is already open the hash would not change, so the
+   caller closes the picker and drawer in place ("same-conversation"). */
+function startMessage(root, who) {
   Object.assign(list, { picker: false, to: "", q: "", focusAfter: "compose" });
+  const hash = openDirectMessage(who);
+  if (hash === "#/chat/" + root.dataset.ch) return "same-conversation";
   S.chatList = null;
-  location.hash = openDirectMessage(who);
+  location.hash = hash;
+  return "";
 }
 const LIST_CLICKS = {
   "chat-new": (root) => setPicker(root, true),
   "chat-new-cancel": (root) => setPicker(root, false),
-  "chat-to": (_root, id) => startMessage(id),
+  "chat-to": (root, id) => startMessage(root, id),
 };
+/* Choosing any conversation closes the drawer. Choosing the one already open changes no URL, so the caller
+   closes the drawer in place and focuses the conversation's heading ("same-conversation"). */
+function chooseConversation(e, link) {
+  list.q = "";
+  S.chatList = null;
+  if (link.getAttribute("href") !== location.hash) return "";
+  e.preventDefault();
+  e.stopPropagation();
+  return "same-conversation";
+}
 function onListClick(e, root) {
-  if (e.target.closest("#chat-nav a")) list.q = "";
+  const link = e.target.closest("#chat-nav a");
+  if (link) return chooseConversation(e, link);
   const t = e.target.closest("[data-act]"), fn = t && LIST_CLICKS[t.dataset.act];
-  if (fn) fn(root, t.dataset.id);
+  return fn ? fn(root, t.dataset.id) : "";
 }
 function onListInput(e, root) {
   const t = e.target;
