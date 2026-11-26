@@ -3407,17 +3407,13 @@ html[data-theme="report"] .assembly-release {
 .board-need-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: var(--fs-xs); font-weight: 600; color: var(--tone-warn-ink); }
 .board-need-exp { display: inline-flex; align-items: center; gap: 3px; font-weight: 500; color: var(--gray-300); }
 .board-need-what { font-size: var(--fs-sm); line-height: 1.35; }
-.board-status { flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-.board-need-due { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--tone-warn-ink); }
 /* Empty lanes and zero results say why and offer the way back */
 .bcol-empty { display: grid; justify-items: start; gap: 8px; }
 .bcol-empty > p, .work-empty > p { margin: 0; }
 .work-empty { display: grid; justify-items: center; gap: 12px; }
 
-/* Touch and phones: request and Done history controls keep their look and get a 44px hit area */
+/* Touch and phones: menu items in board menus are 44px targets (card icons get theirs in board.css) */
 @media (max-width: 639px), (pointer: coarse) {
-  .board-status .board-need { min-height: 36px; padding-block: 8px; }
-  .board-status .board-need::after { content: ""; position: absolute; inset: -4px 0; }
   .board-pop-menu :is(a, button) { min-height: 44px; }
 }
 
@@ -3455,10 +3451,6 @@ html[data-theme="report"] .assembly-release {
 }
 .work-empty .work-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 
-/* Request badge hover: no brightness filter. The card's own hover fill sits under the badge's translucent tint, so
-   the text moves to the theme's strongest ink (dark on light themes, light on dark) and a ring in the badge's ink
-   marks the hover; text contrast stays at or above 4.5:1 in every theme */
-.board .bcard .board-need:hover { color: var(--white); box-shadow: inset 0 0 0 1.5px var(--tone-warn-ink); text-decoration: underline; text-underline-offset: 2px; }
 
 /* Phones: the selected lane takes the full content width with no peek of the next one; swipe snaps lane to lane
    and the picker names them */
@@ -3523,15 +3515,19 @@ html[data-theme="report"] .assembly-release {
 .work-row .work-priority-mark.is-inferred, .work-panel .work-priority-mark.is-inferred, .work-detail-links .work-priority-mark.is-inferred { opacity: .55; }
 .work-row .work-severity { color: var(--gray-300); }
 
-/* Results summary: parts separated by a small dot; the column mode shows only while the toolbar hides it */
+/* Results summary: parts separated by a small dot */
 #work-results > .board-filterbar .bsum-part:not(:first-child)::before {
   content: ""; display: inline-block; width: 2px; height: 2px; margin-inline-end: 8px; border-radius: 99px;
   background: var(--gray-400); vertical-align: middle;
 }
-#work-results > .board-filterbar .bsum-mode { display: none; }
-#work-results > .board-filterbar[data-mode-only] { display: none; }
-body:has(.work-toolbar[data-values="hidden"]) #work-results > .board-filterbar .bsum-mode { display: inline; }
-body:has(.work-toolbar[data-values="hidden"]) #work-results > .board-filterbar[data-mode-only] { display: flex; }
+/* The lane picker's label names the column mode while the toolbar hides it ("Stages"), else says "Columns" */
+.board-lanes .board-lanes-mode { display: none; }
+body:has(.work-toolbar[data-values="hidden"]) .board-lanes .board-lanes-word { display: none; }
+body:has(.work-toolbar[data-values="hidden"]) .board-lanes .board-lanes-mode { display: inline; }
+/* Narrow headers: the headline keeps the open count; Needs you's count is on its tab already */
+@container queue-header (max-width: 27rem) {
+  #main .work-header .queue-count .work-head-needs { display: none; }
+}
 
 /* 320px: two toolbar rows. New follows the views in the DOM, so it shares their row; layout, search, Filter and
    Display take the second. Calendar has moved into Display, so its empty end group leaves the flow. No CSS order. */
@@ -3565,3 +3561,8 @@ body:has(.work-toolbar[data-values="hidden"]) #work-results > .board-filterbar[d
 @container queue-header (max-width: 27rem) {
   #main .work-header > .ph.queue-headline .work-new-word { display: none; }
 }
+
+/* ── Work page, review round 11 ──────────────────────────────────────────
+   The List's progress reads like the Board's ("1/4 criteria", "1/3 subtasks"); a fixed-width column keeps every
+   title starting at the same x, and the count sits on the title's line. */
+.work-row .work-markers .work-criteria.work-row-progress { min-width: 6.75em; text-align: start; line-height: 1rem; }

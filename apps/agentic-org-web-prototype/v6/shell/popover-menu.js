@@ -33,7 +33,8 @@ function closePopoverMenu(menu) {
 }
 
 /* The area a trigger can be seen in: the viewport, narrowed to its scroller ([data-popover-scroller]) and, at the top,
-   to below any sticky header in that scroller ([data-popover-inset]) that sits over the trigger's column */
+   to below any sticky header in that scroller ([data-popover-inset]) that sits over the trigger's column
+   (other than one that holds the trigger) */
 function visibleArea(trigger) {
   const area = { top: 0, bottom: window.innerHeight, left: 0, right: document.documentElement.clientWidth };
   const scroller = trigger.closest("[data-popover-scroller]");
@@ -41,6 +42,8 @@ function visibleArea(trigger) {
   const s = scroller.getBoundingClientRect(), t = trigger.getBoundingClientRect();
   Object.assign(area, { top: Math.max(area.top, s.top), bottom: Math.min(area.bottom, s.bottom), left: Math.max(area.left, s.left), right: Math.min(area.right, s.right) });
   for (const inset of scroller.querySelectorAll("[data-popover-inset]")) {
+    /* A trigger inside the sticky header itself (a lane's ⋯) is never under it */
+    if (inset.contains(trigger)) continue;
     const r = inset.getBoundingClientRect();
     if (r.left < t.right && r.right > t.left && r.top <= t.top) area.top = Math.max(area.top, r.bottom);
   }
