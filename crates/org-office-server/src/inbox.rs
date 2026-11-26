@@ -17,7 +17,13 @@ pub(crate) struct Hq {
 }
 
 impl Hq {
-    pub(crate) fn for_office(office: Arc<org_office::Office>) -> std::io::Result<Self> {
+    /// HQ's inbox over `office`: this module's organization source first, then the `sources`
+    /// the composition root registers (`office_runtime::hq_inbox`: the mailbox and the
+    /// budget), and a clock with a fresh random epoch. The inbox imports no source's module.
+    pub(crate) fn new(
+        office: Arc<org_office::Office>,
+        sources: Vec<Arc<dyn Source>>,
+    ) -> std::io::Result<Self> {
         use std::io::Read;
         let mut epoch = [0; 16];
         std::fs::File::open("/dev/urandom")?.read_exact(&mut epoch)?;
@@ -32,14 +38,11 @@ impl Hq {
             }),
             office_id,
         );
-        let mailbox_source = crate::mailbox_store::MailboxInboxSource::new(Arc::clone(&office));
-        let budget_source = crate::cost_calls::BudgetInboxSource::new(Arc::clone(&office));
+        let mut all: Vec<Arc<dyn Source>> = Vec::with_capacity(sources.len() + 1);
+        all.push(Arc::new(source));
+        all.extend(sources);
         Ok(Self {
-            sources: vec![
-                Arc::new(source),
-                Arc::new(mailbox_source),
-                Arc::new(budget_source),
-            ],
+            sources: all,
             clock: Clock::new(format!("{:032x}", u128::from_be_bytes(epoch))),
             list_office: Some(office),
         })

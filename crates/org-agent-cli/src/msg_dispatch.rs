@@ -1,27 +1,21 @@
 //! Dispatch for B6 `msg`, `channel`, and `status` commands over [`OfficeTransport`] (`TASK-45`).
 
 use org_command::{Ack, Answer, Refusal, Request};
-use org_proto::ask::{
-    AskStatus, ChatAnswerResult, ChatAskResult, ChatWaitAskResult, MsgWithdrawResult,
-    MAX_SHORT_HOLD_MS,
-};
-use org_proto::chat::{ChatChannelsResult, ChatInboxResult, ChatMessagesResult, ChatSendResult};
+use org_proto::ask::AskStatus;
+use org_proto::chat::ChatSendResult;
 use org_proto::directory::StatusSetResult;
-use org_proto::msg::{HeaderPage, MsgReadResult, MsgWaitResult, SendResult, MAX_WAIT_MS};
+use org_proto::msg::SendResult;
 use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
 
-use crate::dispatch::OfficeTransport;
 use crate::keys::try_new_uuid_v7;
+use crate::transport::OfficeTransport;
 
 mod ask;
 mod channel;
 mod read;
 
-use ask::{
-    insert_ask_outcome_fields, write_msg_accept, write_msg_answer, write_msg_ask,
-    write_msg_withdraw,
-};
+use ask::{write_msg_accept, write_msg_answer, write_msg_ask, write_msg_withdraw};
 use channel::try_channel;
 use read::{read_msg_inbox, read_msg_list, read_msg_read, read_msg_wait};
 

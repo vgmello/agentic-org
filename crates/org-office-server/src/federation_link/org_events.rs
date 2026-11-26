@@ -12,7 +12,7 @@ use org_sync_proto::{Codec, Digest, Epoch, OrgId, Position, SyncFrame};
 
 use super::{deterministic_uuid_v7, SnapshotFileBatch, StaticPeer};
 
-pub(super) fn apply_satellite_org_event_frame(
+pub(crate) fn apply_satellite_org_event_frame(
     office: &Office,
     hq_peer: &PeerIdentity,
     frame: SyncFrame,

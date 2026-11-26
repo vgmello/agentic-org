@@ -27,9 +27,9 @@ use org_host_control::{HostOpResult, Password, SessionHandle, TlsPrivateKey};
 use org_proto::ErrorCode;
 use serde::Serialize;
 
-use super::cli_error::{refused_by, sign_in_refused, HostCliError};
 use super::cli_session::connect_for_secrets;
 use super::wire::registered_with_origin;
+use crate::cli_error::{refused_by, sign_in_refused, HostCliError};
 
 /// The command's help.
 pub const HELP: &str = "agentic-org admin tls set --cert <file> --key <file> --login <login> \

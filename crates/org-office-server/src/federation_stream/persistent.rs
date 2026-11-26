@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-use crate::federation::{InboundDeliveryNotifier, SatelliteSyncSession, WakeRelayHandler};
+use crate::federation_link::{InboundDeliveryNotifier, SatelliteSyncSession, WakeRelayHandler};
 use crate::org_feed::FeedWake;
 use org_office::Office;
 use org_sync_proto::SyncFrame;
@@ -17,12 +17,25 @@ use super::{
     SatSyncWake, IDLE_POLL_SLICE, KEEPALIVE_IDLE, KEEPALIVE_TIMEOUT, RECONNECT_MAX, RECONNECT_MIN,
 };
 
+/// Drains every buffered and socket-ready inbound frame of a persistent session, answering
+/// relays, org events and session RPCs; the count handled, or why the session must end.
+/// `federation_runtime` injects `federation::drain_satellite_inbound_persistent`, so this
+/// stream never imports the federation module that drives it.
+pub(crate) type DrainInbound = fn(
+    &mut SatelliteSyncSession,
+    Option<&WakeRelayHandler>,
+    Option<&InboundDeliveryNotifier>,
+    Option<&FeedWake>,
+    &SatRpcContext<'_>,
+) -> Result<usize, String>;
+
 /// Runtime hooks passed into the satellite's persistent bidirectional mTLS loop.
 pub(crate) struct PersistentSyncHooks {
     pub(crate) wake_handler: WakeRelayHandler,
     pub(crate) delivery_notifier: InboundDeliveryNotifier,
     pub(crate) feed_wake: Option<Arc<FeedWake>>,
     pub(crate) sessions: Weak<org_office_sessions::SessionManager>,
+    pub(crate) drain_inbound: DrainInbound,
 }
 
 /// Runs the satellite's persistent bidirectional mTLS loop with instant local outbox flush,
@@ -202,7 +215,7 @@ fn run_connected_session(
             sat_wake,
             active_workers: &rpc_workers,
         };
-        let drained = crate::federation::drain_satellite_inbound_persistent(
+        let drained = (hooks.drain_inbound)(
             session,
             Some(&hooks.wake_handler),
             Some(&hooks.delivery_notifier),

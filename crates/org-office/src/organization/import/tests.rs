@@ -4,6 +4,7 @@ use std::path::Path;
 use super::git::sanitize_git_stderr;
 use super::tree::parse_ls_tree_entries;
 use super::*;
+use crate::office::import::validate_state_dir;
 use crate::organization::records::OfficeCode;
 use crate::TestOffice;
 

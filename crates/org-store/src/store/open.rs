@@ -1,6 +1,21 @@
 //! Opening a store: journal incarnation, replay, materialization and the store threads.
 
-use super::*;
+use std::collections::VecDeque;
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::JoinHandle;
+
+use super::consumers::load_consumer_watermarks;
+use super::{Opening, StoreParts};
+use crate::changes::Changes;
+use crate::custody::{OfficeIdentity, WriterAuthority};
+use crate::disk::Disk;
+use crate::engine::{CoreRead, Cursor, Engine};
+use crate::error::StoreError;
+use crate::files::Files;
+use crate::journal::{Journal, JournalPoint, Recovered};
+use crate::rebuild::{materialize, rebuild_with, Projectors};
+use crate::sequences::Sequences;
+use crate::state::{Core, Flow};
 
 pub(super) fn spawn_store_thread(
     name: &str,

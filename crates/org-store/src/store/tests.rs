@@ -6,9 +6,10 @@ use std::{
 
 use super::*;
 use crate::{
-    change::{Ack, DurablePath, Sha256, Timestamp},
+    change::{Ack, DurablePath, Outcome, Sha256, Timestamp},
+    custody::JournalHead,
     engine::Cursor,
-    journal::JournalError,
+    error::JournalError,
     receipts::receipt_path,
     sequences::Stream,
     testkit::{

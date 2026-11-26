@@ -3,7 +3,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
+use crate::{
+    FeatureStatus, ItemKind, ItemStatus, LinkKind, Priority, RequestKind, Resolution, RoutedBy,
+    Severity, WorkStatus,
+};
 
 /// A position in this office's work feed. `incarnation` changes if the office's work data is
 /// restored or re-created: a client that sees another incarnation takes a fresh snapshot.

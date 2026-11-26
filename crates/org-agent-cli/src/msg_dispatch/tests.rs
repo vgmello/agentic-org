@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::dispatch::{OfficeTransport, TransportOffice};
+use crate::transport::{OfficeTransport, TransportOffice};
 
 struct RecordingTransport {
     last_method: Option<String>,

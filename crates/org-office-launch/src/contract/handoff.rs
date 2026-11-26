@@ -1,7 +1,12 @@
 //! The host's handoff on the rendezvous connection: its header line, the descriptors it names and
 //! the secrets it borrows.
 
-use super::*;
+use org_proto::{GrantKey, RecoveryCode};
+use serde::de::IgnoredAny;
+use serde::{Deserialize, Deserializer, Serialize};
+
+use super::{check_version, InvitationSecret, Line, LAUNCH_VERSION};
+use crate::{zero, ByteCounter, LaunchError, OfficeSecretsKey};
 
 /// A descriptor named by a [`Handoff`] header, in the order they arrive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

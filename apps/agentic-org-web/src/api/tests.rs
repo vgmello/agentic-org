@@ -1,6 +1,7 @@
 //! Session routes against a scripted host socket: what reaches the host, what
 //! the browser gets back, and when the cache spares a host call.
 use super::*;
+use crate::transport::PeerAddress;
 use crate::{
     assets::BuildFiles,
     ingress::RequestAdmission,
@@ -9,8 +10,10 @@ use crate::{
     Hsts, StaticUi,
 };
 use http_body_util::{BodyExt, Full};
+use hyper::Method;
 use hyper::{body::Bytes, header, Request};
 use serde_json::{json, Value};
+use std::sync::atomic::Ordering;
 use std::{
     io,
     net::SocketAddr,

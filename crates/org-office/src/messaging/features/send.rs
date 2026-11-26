@@ -375,7 +375,7 @@ fn build_send_commit_change(
         .as_deref()
         .and_then(|root_id| read.message(root_id).ok().flatten())
         .filter(|root| {
-            root.kind == KIND_REQUEST && crate::messaging::asks::is_open_ask_card(read, root)
+            root.kind == KIND_REQUEST && crate::messaging::ask_card::is_open_ask_card(read, root)
         })
         .and_then(|root| root.sender_employee_id.map(|id| id.as_str().to_owned()));
     let thread_id = thread_root_id.unwrap_or_else(|| record.id.clone());

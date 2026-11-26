@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::office::{storage, Office};
 use crate::{
-    error::OfficeError, model::OfficeRole, organization::features::offices::ApplyReplicatedFiles,
+    error::OfficeError, model::OfficeRole, replication::state_files::ApplyReplicatedFiles,
     store::open::ApplyReplicatedFilesOp,
 };
 

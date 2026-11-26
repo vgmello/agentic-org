@@ -20,7 +20,7 @@
 //!
 //! Depends on `serde` and `serde_json` only. Nothing depends on a runtime or on the office.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 mod builtin;
 mod contract;

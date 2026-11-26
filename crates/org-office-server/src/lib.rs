@@ -24,6 +24,7 @@ mod failure;
 pub mod fdswap;
 pub mod federation;
 mod federation_calls;
+mod federation_link;
 mod federation_runtime;
 mod federation_stream;
 mod follow;

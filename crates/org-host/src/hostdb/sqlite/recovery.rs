@@ -457,7 +457,7 @@ impl HostDb {
                     }
                 }
                 _ => {
-                    crate::provisioning::pending_recovery(custody, &r)
+                    crate::hostdb::pending_recovery::pending_recovery(custody, &r)
                         .map_err(|_| Error::Unsafe)?;
                 }
             }

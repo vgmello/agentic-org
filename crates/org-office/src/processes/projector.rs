@@ -4,10 +4,9 @@ use std::collections::BTreeSet;
 
 use org_store::{CoreRead, DurablePath, Engine, Id, ProjectionError, Projector};
 
-use super::ports::{ProcessesRead, ProcessesWrite};
+use super::ports::{KnownProjects, ProcessesRead, ProcessesWrite};
 use super::records::{self, StructureDocPath};
 use crate::organization::ports::OrganizationRead;
-use crate::projects::ports::ProjectsRead;
 
 /// Projects `state/{processes,standards}/`, `state/teams/.../{processes,standards}/`, and
 /// `state/projects/<id>/{processes,standards}/` Markdown files into `structure_documents`.
@@ -39,7 +38,7 @@ fn agree(path: &DurablePath, ok: bool, what: &str) -> Result<(), ProjectionError
 
 impl<E: Engine> Projector<E> for ProcessFiles
 where
-    E::Tx: ProcessesWrite + ProjectsRead,
+    E::Tx: ProcessesWrite + KnownProjects,
 {
     fn owns(&self, path: &DurablePath) -> bool {
         records::parse_path(path).is_some()
@@ -96,7 +95,7 @@ where
                 .iter()
                 .map(|t| (t.id.clone(), t.parent_team_id.clone()))
                 .collect(),
-            projects: tx.projects()?.into_iter().map(|p| p.id).collect(),
+            projects: tx.project_ids()?.into_iter().collect(),
             employees: tx.employees()?.into_iter().map(|e| e.id).collect(),
         };
         let mut seen_keys: BTreeSet<(Option<Id>, Option<Id>, String)> = BTreeSet::new();
@@ -139,7 +138,7 @@ fn validate_single_structure_doc<Tx>(
     seen_keys: &mut BTreeSet<(Option<Id>, Option<Id>, String)>,
 ) -> Result<(), ProjectionError>
 where
-    Tx: ProcessesRead + ProjectsRead + CoreRead,
+    Tx: ProcessesRead + KnownProjects + CoreRead,
 {
     let team_chain = doc
         .team_id

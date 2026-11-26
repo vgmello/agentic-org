@@ -13,6 +13,16 @@ pub trait ProcessesRead: OrganizationRead {
     fn structure_documents(&self) -> Result<Vec<StructureDocument>, EngineError>;
 }
 
+/// The projects a structure document may be scoped to. The processes family declares the one
+/// read of projects it needs; the projects family provides it for every [`ProjectsRead`]
+/// (`crate::projects::ports`), so this family never depends on that one.
+///
+/// [`ProjectsRead`]: crate::projects::ports::ProjectsRead
+pub trait KnownProjects {
+    /// The ID of every project in this organization.
+    fn project_ids(&self) -> Result<Vec<Id>, EngineError>;
+}
+
 /// Write operations on projected `structure_documents` inside a store transaction.
 pub trait ProcessesWrite: ProcessesRead + OrganizationWrite {
     fn put_structure_document(&mut self, record: &StructureDocument) -> Result<(), EngineError>;

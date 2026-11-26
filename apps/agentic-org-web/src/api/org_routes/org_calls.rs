@@ -1,6 +1,23 @@
 //! Executing organization snapshot, mutation, operation and CLI-approval calls.
 
-use super::*;
+use hyper::StatusCode;
+use org_host_control::browser::{BrowserCliApprovalDecide, BrowserCliApprovalDecideParams};
+use org_host_control::organization::BrowserAuth;
+use org_host_control::LinkToken;
+use org_proto::web::org_mutations::{classify_org_reply, OrgMutation, OrgReplyClassification};
+use org_proto::web::{
+    MutationOutcome, OperationId, ResumeCursor, SnapshotResponse, WebError, WebErrorCode,
+};
+
+use super::super::hq_context::{resolve_hq_office, revalidate_and_resolve_hq};
+use super::super::{
+    failure, mutation, not_found, result, signed_out, unavailable, CallerAuth, SessionApi,
+};
+use super::{classify_stored_outcome, map_read_office_error};
+use crate::host::Failure;
+use crate::office::OfficeFailure;
+use crate::service::ApiReply;
+use crate::sse::HubEvent;
 
 pub(in crate::api) async fn execute_org_snapshot(
     api: &SessionApi,

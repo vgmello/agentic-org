@@ -11,8 +11,8 @@ use org_proto::processes::{
 use org_proto::{Call, ErrorCode};
 use serde_json::{Map, Value};
 
-use crate::dispatch::OfficeTransport;
 use crate::keys::try_new_uuid_v7;
+use crate::transport::OfficeTransport;
 
 pub fn try_execute<T: OfficeTransport + ?Sized>(
     transport: &mut T,
@@ -277,7 +277,7 @@ fn write_process<T: OfficeTransport + ?Sized>(
     }
     let command_id = match request.idempotency_key.as_deref() {
         Some(k) if org_proto::is_uuid_v7(k) => k.to_owned(),
-        Some(k) => crate::dispatch::derive_uuid_v7("process-write", k),
+        Some(k) => crate::transport::derive_uuid_v7("process-write", k),
         None => try_new_uuid_v7().ok_or_else(|| {
             Refusal::new(
                 ErrorCode::StorageError,
@@ -384,7 +384,7 @@ fn read_skill_read<T: OfficeTransport + ?Sized>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dispatch::OfficeTransport;
+    use crate::transport::OfficeTransport;
     use org_proto::processes::{
         EffectiveProcessEntryWire, ProcessDocumentWire, ProcessLayerWire, SkillSummaryWire,
     };
@@ -607,7 +607,7 @@ mod tests {
             }
         }
 
-        let mut office = crate::dispatch::TransportOffice(WhyTransport);
+        let mut office = crate::transport::TransportOffice(WhyTransport);
         let args: Vec<String> = vec!["process", "inspect", "--key", "code-review", "--why"]
             .into_iter()
             .map(str::to_owned)
@@ -700,7 +700,7 @@ mod tests {
             }
         }
 
-        let mut office = crate::dispatch::TransportOffice(ChunkedTransport {
+        let mut office = crate::transport::TransportOffice(ChunkedTransport {
             body: full_body.clone(),
             seen_offsets: vec![],
         });

@@ -26,9 +26,10 @@ use super::{
 use crate::{
     office_file,
     office_local::{records as local, testkit::ca_material},
-    organization::{testkit::creation_files, wire},
+    organization::testkit::creation_files,
     rules::OrgCommand,
     store::open::Testing,
+    structure::wire,
 };
 
 #[path = "hiring_tests.rs"]

@@ -1,6 +1,6 @@
 //! Organization replication policy. No filesystem, networking, threads, or ambient clock.
 //! Public adapter contracts are introduced only after lead/consumer agreement.
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 pub mod error;
 pub mod messages;

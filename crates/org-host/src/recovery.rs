@@ -294,7 +294,7 @@ impl Recovery {
             return Err(unavailable());
         }
         let source = self.db.recovery_source(&p.org_id).map_err(storage)?;
-        let code = crate::provisioning::pending_recovery(&*self.custody, &source)?;
+        let code = crate::hostdb::pending_recovery::pending_recovery(&*self.custody, &source)?;
         self.authority(c, r, &p.session, true)?;
         let delivered = self
             .db

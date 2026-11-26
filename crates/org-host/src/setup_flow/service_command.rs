@@ -7,10 +7,10 @@ use serde::Serialize;
 use crate::instance::setup::Service;
 
 use super::account::user_name;
-use super::cli_error::HostCliError;
 use super::output::fail;
 use super::report::{lingering_report, service_id};
 use super::wire::{connect, registered};
+use crate::cli_error::HostCliError;
 
 /// `agentic-org service start|stop|status`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]

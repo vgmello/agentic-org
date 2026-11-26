@@ -1,6 +1,24 @@
 //! Caller sessions: authentication state, lookup scopes, validation, caching and revalidation.
 
-use super::*;
+use std::net::IpAddr;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+
+use hyper::header::SET_COOKIE;
+use hyper::http::request::Parts;
+use org_host_control::browser::{
+    BrowserLocalSession, BrowserLocalSessionParams, BrowserSession, SessionValidate,
+    SessionValidateParams,
+};
+use org_host_control::organization::BrowserAuth;
+use org_proto::web::{LookupQuery, OperationKind, Scope, SessionEstablished, SessionProof};
+
+use super::instance_routes::CallerAuth;
+use super::{failure, invalid, now_ms, result, signed_out, unavailable, view, SessionApi};
+use crate::host::Failure;
+use crate::service::ApiReply;
+use crate::session::{BrowserPair, PresentedPair};
+use crate::transport::PeerAddress;
 
 impl SessionApi {
     /// The accepted socket's peer; absent only off the real transport (fails closed).

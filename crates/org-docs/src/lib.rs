@@ -11,6 +11,7 @@
 //! It also holds the shared check for text that one-line fields must not contain
 //! ([`is_invisible_or_break`]).
 
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 use std::fmt;

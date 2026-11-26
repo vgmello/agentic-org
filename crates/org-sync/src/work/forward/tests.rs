@@ -1,5 +1,13 @@
+use super::super::RecordVersion;
 use super::*;
+use org_sync_proto::work_record_digest_v1;
+use org_sync_proto::work_source_digest_v1;
+use org_sync_proto::Codec;
+use org_sync_proto::OrgId;
+use org_sync_proto::OriginIncarnation;
+use org_sync_proto::Position;
 use org_sync_proto::WorkRejection;
+use std::collections::VecDeque;
 use std::{collections::BTreeMap, sync::Mutex};
 
 #[derive(Clone, Debug, PartialEq, Eq)]

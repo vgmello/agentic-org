@@ -10,22 +10,15 @@
 //!   allowed the op; `not_found` for an organization or office the session isn't linked to;
 //!   `unavailable` when the sign-in pool is full; `operation_reused` per [`crate::journal`].
 
-use std::fmt;
-use std::fmt::Write as _;
-
 use org_proto::{Call, Empty, Grant, ListOfficesResult};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
-use crate::listen::{
-    Hsts, InvalidListenConfig, ListenFailure, ListenMode, ListenOrigin, Uncovered,
-};
-use crate::pem::{self, InvalidPem};
+pub use crate::organization::RecoveryState;
 use crate::{
     HostOpResult, InvitationTokenSecret, OneTimeLinkUrl, Password, RecoveryCode, SessionHandle,
-    TlsPrivateKey,
 };
 
+mod journaled;
 mod tls;
 
 pub use tls::{
@@ -260,23 +253,6 @@ impl Call for SessionGrant {
     const METHOD: &'static str = "session.grant";
     type Params = SessionGrantParams;
     type Result = SessionGrantResult;
-}
-
-/// Where an organization's recovery code is (X-02 §6.4). Unknown values decode as
-/// [`RecoveryState::Unknown`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum RecoveryState {
-    /// Staged by the host, never shown.
-    Pending,
-    /// Shown once with `recovery.release`, not yet acknowledged.
-    Delivered,
-    /// Acknowledged: the staged copy is erased.
-    Acknowledged,
-    /// A state this build doesn't know. It is never sent: serializing it fails.
-    #[serde(other, skip_serializing)]
-    Unknown,
 }
 
 /// `office.list`: the offices of the organizations the session is linked to, or of `org_id`.

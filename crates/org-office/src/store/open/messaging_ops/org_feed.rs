@@ -21,7 +21,7 @@ pub struct OrgChangesAfterRead {
 impl ReadOp for OrgChangesAfterRead {
     type Out = Vec<OrgChangedData>;
     fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
-        let org_snap = crate::organization::snapshot::project(snapshot, &self.owner)?;
+        let org_snap = crate::structure::snapshot::project(snapshot, &self.owner)?;
         let teams: BTreeMap<&str, &org_proto::Team> =
             org_snap.teams.iter().map(|t| (t.id.as_str(), t)).collect();
         let members: BTreeMap<&str, &org_proto::Member> = org_snap

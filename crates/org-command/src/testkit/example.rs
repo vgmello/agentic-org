@@ -4,7 +4,8 @@
 use serde_json::{Map, Value};
 
 use super::{run_recorded, OfficeFactory, StubSources, PROGRAM};
-use crate::table::{Command, CommandTable};
+use crate::row::Command;
+use crate::table::CommandTable;
 
 /// `stdout`, the `--help` of `row`, ends with the row's example as one printable line that
 /// [`shell_words`] reads back as the same words.

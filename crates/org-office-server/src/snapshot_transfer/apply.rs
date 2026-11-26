@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::federation::{
+use crate::federation_link::{
     collect_pending_work_paths_checked, deterministic_uuid_v7, SatelliteSyncSession,
 };
 use org_office::Office;

@@ -12,7 +12,7 @@ use super::{
     stable, Feature, Op, RejectCode,
 };
 use crate::organization::{
-    ports::OrganizationRead,
+    ports::{OrganizationRead, TeamDependents},
     records::{self, Employee, EmployeeKind, EmployeeStatus, Meta},
 };
 
@@ -70,7 +70,7 @@ impl Feature for AddPerson {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: crate::projects::ports::ProjectsRead,
+        E::Tx: TeamDependents,
     {
         decide(uow, here, owner, by, self)
     }
@@ -84,7 +84,7 @@ pub fn decide<E: Engine>(
     command: &AddPerson,
 ) -> Result<Change, Refusal>
 where
-    E::Tx: crate::projects::ports::ProjectsRead,
+    E::Tx: TeamDependents,
 {
     stable(&command.id, "the person's ID")?;
     stable(&command.home_team, "the home team's ID")?;

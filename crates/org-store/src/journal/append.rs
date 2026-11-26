@@ -1,6 +1,18 @@
 //! Appending, flushing, materializing and releasing journal entries.
 
-use super::*;
+use std::collections::VecDeque;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+
+use super::segment::{scan, write_small, Bad};
+use super::{
+    flush_error, io_error, segment_name, Checkpoint, Entry, Journal, JournalPoint, Materialized,
+    Segment, FORMAT,
+};
+use crate::error::JournalError;
+use crate::sequences::MAX_POSITION;
 
 impl Journal {
     /// Appends a batch in one write. On an error or a short write nothing of the batch is

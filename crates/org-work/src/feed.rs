@@ -5,7 +5,7 @@ use org_proto::work::{
     WorkChange, WorkChangedData, WorkItemSummary, WorkPosition, WORK_CHANGED_MAX_BYTES,
 };
 
-use crate::engine::Draft;
+use crate::decision::Draft;
 
 /// Room left for the envelope around the changes (position, change id, part numbers).
 const ENVELOPE_BYTES: usize = 512;

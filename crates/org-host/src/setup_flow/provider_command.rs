@@ -15,8 +15,8 @@ use org_proto::providers::{
 };
 use serde::Serialize;
 
-use super::cli_error::{office_refused, HostCliError};
 use super::project_command::call_office;
+use crate::cli_error::{office_refused, HostCliError};
 
 /// Help text for `agentic-org provider`.
 pub const HELP: &str = "agentic-org provider <subcommand>\n\

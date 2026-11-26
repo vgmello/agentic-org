@@ -24,12 +24,12 @@ use org_host_control::{
 use org_proto::{Call, ErrorCode, ListOfficesResult, OfficeInfo};
 use serde::Serialize;
 
-use super::cli_error::{refused_by, HostCliError};
 use super::cli_session::{
     connect_and_sign_in, connect_cli_session, connect_local_peer, end_session, AskPassword, Target,
     APPROVAL_MAX_WAIT, APPROVAL_POLL_INTERVAL,
 };
 use super::wire::registered;
+use crate::cli_error::{refused_by, HostCliError};
 use crate::human::Wire;
 
 /// Help text for `agentic-org office`.

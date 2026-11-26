@@ -2,11 +2,17 @@
 //! and the writer and reader threads.
 
 use std::io::{ErrorKind, Write};
-use std::sync::mpsc::{self, TrySendError};
+use std::os::unix::net::UnixStream;
+use std::sync::atomic::Ordering;
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::time::{Duration, Instant};
 
-use org_proto::{frame, salvage_id, Request, ServerMessage, MAX_FRAME_BYTES};
+use org_proto::{frame, salvage_id, Request, Response, ServerMessage, MAX_FRAME_BYTES};
 
-use super::*;
+use super::error::ClientError;
+use super::{
+    lock, Outgoing, Shared, ABANDONED, MAX_QUEUED_BYTES, QUEUED, WRITE_GRACE, WRITING, WRITTEN,
+};
 
 pub(crate) fn encode_request(request: &Request) -> Result<Vec<u8>, ClientError> {
     let mut line = serde_json::to_vec(request).map_err(|e| ClientError::Protocol(e.to_string()))?;

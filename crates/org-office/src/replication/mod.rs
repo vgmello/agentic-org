@@ -9,6 +9,7 @@
 pub mod conformance;
 pub(crate) mod durable;
 pub mod memory;
+pub(crate) mod state_files;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;

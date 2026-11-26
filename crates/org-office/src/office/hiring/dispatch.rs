@@ -24,12 +24,12 @@ use crate::organization::{
         UpdateAgent, UpdateRole, UpsertAgentExecution, WithdrawHire, NOT_AUTHORIZED,
     },
     records::{HireState, PermissionPreset, ProviderAuthMode},
-    wire,
 };
 use crate::store::open::{
     AgentExecutionById, HireInspectById, HiresList, ModelProfilesList, ReceiptById,
     RoleInspectByRef, RolesList, StructureOp,
 };
+use crate::structure::wire;
 
 impl Office {
     /// Dispatches any C2 role, hiring, permission, team-limit, or agent lifecycle RPC.

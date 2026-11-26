@@ -22,7 +22,7 @@ use crate::aspects::Aspect;
 use crate::common::{
     distinct, expect_kind, known_priority, load, new_steps, not_deleted, require_ulid, unused,
 };
-use crate::engine::{Ctx, Draft, Origin, Plan};
+use crate::decision::{Ctx, Draft, Origin, Plan};
 use crate::fail::{invalid, not_found, refuse, Fail};
 use crate::fixes;
 use crate::items::DOC_KEY_MAX_CHARS;
@@ -152,17 +152,6 @@ pub(crate) fn severity_word(s: Severity) -> &'static str {
         Severity::Trivial => "trivial",
         _ => "unknown",
     }
-}
-
-/// A bug a task may fix (`fixes`, C8): a bug of the task's project that isn't deleted.
-pub(crate) fn check_fixable(project_id: &str, bug: &StoredItem) -> Result<(), Fail> {
-    if bug.kind != ItemKind::Bug {
-        return Err(invalid("a task fixes a bug, and the item isn't one"));
-    }
-    if bug.project_id.as_deref() != Some(project_id) {
-        return Err(invalid("a task fixes only bugs of its own project"));
-    }
-    not_deleted(bug)
 }
 
 fn wrong_state(what: &str, status: ItemStatus) -> Fail {

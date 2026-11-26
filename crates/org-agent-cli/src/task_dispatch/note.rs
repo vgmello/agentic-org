@@ -1,6 +1,19 @@
 //! `task note` commands: private notes on a task and their publication.
 
-use super::*;
+use org_command::{Answer, Refusal, Request};
+use org_proto::private_notes::{
+    TaskNotePublishResult, TaskNoteRemovedResult, TaskNoteResult, TasksNotesAdd,
+    TasksNotesAddParams, TasksNotesGet, TasksNotesGetParams, TasksNotesList, TasksNotesListParams,
+    TasksNotesListResult, TasksNotesPublish, TasksNotesPublishParams, TasksNotesRemove,
+    TasksNotesRemoveParams, TasksNotesUpdate, TasksNotesUpdateParams,
+};
+use org_proto::Call;
+use serde_json::{json, Value};
+
+use super::{
+    cmd_id, decode_err, entity_id, list_answer, opt_str, req_str, require_revision, write_answer,
+};
+use crate::transport::OfficeTransport;
 
 pub(super) fn try_task_note<T: OfficeTransport + ?Sized>(
     transport: &mut T,

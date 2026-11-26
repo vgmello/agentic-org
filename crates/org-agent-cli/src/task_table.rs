@@ -2,8 +2,7 @@
 //! (`TASK-49` AC #3 `CLI-15` + `TASK-77` B4b: dependencies, searchable labels, reference/modified
 //! files, and task ordering).
 
-use org_command::{Ack, Command, Example, Field, IfMatch, Kind, Type};
-use org_proto::ErrorCode;
+use org_command::{Ack, Command, Example, IfMatch, Kind};
 
 mod schema;
 

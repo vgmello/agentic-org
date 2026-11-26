@@ -1,5 +1,6 @@
 //! The organization's structure as the native protocol's `org.snapshot` gives it
-//! (`org_proto::OrgSnapshot`), from one consistent read of the organization family. Pure:
+//! (`org_proto::OrgSnapshot`), from one consistent read of the organization and projects
+//! families. Pure:
 //! it reads through the read port and names no store and no engine.
 //!
 //! Agents (including the built-in HR lead) carry their `office_id` (HQ office) and
@@ -15,7 +16,7 @@ use org_proto::org::{
 };
 use org_store::{EngineError, Id};
 
-use super::records::{self, EmployeeKind, EmployeeStatus, HireState, OfficeRole};
+use crate::organization::records::{self, EmployeeKind, EmployeeStatus, HireState, OfficeRole};
 use crate::projects::{ports::ProjectsRead, records::Project as ProjectRecord};
 
 /// The protocol position of directory generation `generation`. The organization's

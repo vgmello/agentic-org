@@ -11,12 +11,13 @@ use crate::{
             create_organization, AddPerson, ArchiveTeam, CreateOrganization, CreateTeam,
             DeactivatePerson, Feature, MovePerson, MoveTeam, UpdatePerson, UpdateTeam,
         },
-        records, snapshot,
+        records,
     },
     projects::{
         features::{AddProjectTeam, CreateProject, ProjectFeature, RemoveProjectTeam},
         records::Project as ProjectRecord,
     },
+    structure::snapshot,
     tasks::ports::TasksRead,
 };
 
@@ -120,7 +121,7 @@ pub struct StructureOp<C> {
 
 impl<C> StructureOp<C> {
     pub fn from_request(
-        request: crate::organization::wire::StructureRequest<C>,
+        request: crate::structure::wire::StructureRequest<C>,
         here: OfficeIdentity,
         owner: Id,
     ) -> Self {
@@ -163,7 +164,7 @@ pub struct CheckOp<C> {
 
 impl<C> CheckOp<C> {
     pub fn from_request(
-        request: crate::organization::wire::StructureRequest<C>,
+        request: crate::structure::wire::StructureRequest<C>,
         here: OfficeIdentity,
         owner: Id,
     ) -> Self {
@@ -212,7 +213,7 @@ pub struct ProjectOp<C> {
 
 impl<C> ProjectOp<C> {
     pub fn from_request(
-        request: crate::organization::wire::StructureRequest<C>,
+        request: crate::structure::wire::StructureRequest<C>,
         here: OfficeIdentity,
         owner: Id,
     ) -> Self {
@@ -254,7 +255,7 @@ pub struct ProjectCheckOp<C> {
 
 impl<C> ProjectCheckOp<C> {
     pub fn from_request(
-        request: crate::organization::wire::StructureRequest<C>,
+        request: crate::structure::wire::StructureRequest<C>,
         here: OfficeIdentity,
         owner: Id,
     ) -> Self {
@@ -647,7 +648,7 @@ pub type RegisterSatelliteOfficeOp =
 pub struct ApplyReplicatedFilesOp {
     pub operation_id: Id,
     pub actor: Actor,
-    pub command: crate::organization::features::offices::ApplyReplicatedFiles,
+    pub command: crate::replication::state_files::ApplyReplicatedFiles,
 }
 
 impl StoreOp for ApplyReplicatedFilesOp {

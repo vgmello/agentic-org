@@ -33,14 +33,12 @@
 
 use std::io::{BufRead, Write};
 
-use org_proto::frame::{self, FrameError};
-use org_proto::{GrantKey, OfficeRole};
+use org_proto::frame::{self};
+use org_proto::OfficeRole;
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{
-    read_secret_line, zero, ByteCounter, FirstLine, LaunchError, OfficeSecretsKey, ServerEvent,
-};
+use crate::{read_secret_line, zero, FirstLine, LaunchError};
 
 /// An organization's recovery code (X-02 §6.4): staged by the host at `reserved` and sent on
 /// every attempt of an HQ create, so the server creates the CA and the escrow with it. A secret:

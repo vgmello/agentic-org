@@ -23,8 +23,9 @@ mod validate;
 
 pub use decide::{decide_import, next_office_code, ImportOrganization};
 pub use git::check_git_source;
-pub(crate) use git::PrivateTempDir;
-pub use validate::{clone_and_validate_state, collect_state_files, validate_state_dir};
+pub(crate) use git::{run_git_capture, PrivateTempDir};
+pub(crate) use tree::{parse_ls_tree_entries, read_git_blobs};
+pub use validate::collect_state_files;
 
 /// Maximum size of any single imported state file (4 MiB).
 const MAX_IMPORT_FILE_BYTES: u64 = 4 * 1024 * 1024;

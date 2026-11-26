@@ -25,7 +25,8 @@ use crate::{
     custody::{OfficeIdentity, WriterAuthority},
     engine::{Engine, Projector},
     journal::AnchorFacts,
-    store::{Opening, Reply, Store, StoreParts},
+    state::Reply,
+    store::{Opening, Store, StoreParts},
     testkit::{
         identity, probe::Decision, with_faults, CrashPoint, Dump, FakeCustody, Faults, FixedClock,
         Rng,

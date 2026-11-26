@@ -88,7 +88,7 @@ fn build_chat_message_view(
     });
     let (answer, withdrawal) = answer_file
         .as_ref()
-        .map(crate::messaging::asks::decode_ask_answer_file)
+        .map(crate::messaging::ask_card::decode_ask_answer_file)
         .unwrap_or((None, None));
     let mentions = m
         .metadata

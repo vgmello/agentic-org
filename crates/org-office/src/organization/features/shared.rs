@@ -7,7 +7,7 @@ use org_store::{StoreError, UnitOfWork};
 use super::{invalid, reply, OrgRejection, RejectCode, NOT_AUTHORIZED};
 use crate::organization::{
     names::name_key,
-    ports::{OrganizationRead, MAX_TEAM_DEPTH},
+    ports::{OrganizationRead, TeamDependents, MAX_TEAM_DEPTH},
     records::{self, By, EmployeeKind, EmployeeStatus, Meta, OfficeRole, Organization, Team},
 };
 
@@ -94,7 +94,7 @@ pub(crate) fn check_revision(current: u64, expected: u64) -> Result<(), Refusal>
 
 /// Whether `id` names any record of the organization, whatever its kind.
 pub(crate) fn id_in_use(
-    view: &impl crate::projects::ports::ProjectsRead,
+    view: &impl TeamDependents,
     organization: &Organization,
     id: &Id,
 ) -> Result<bool, StoreError> {
@@ -106,7 +106,7 @@ pub(crate) fn id_in_use(
         || view.hire_request(id)?.is_some()
         || view.provider_connection(id)?.is_some()
         || view.model_profile(id)?.is_some()
-        || view.project(id)?.is_some()
+        || view.project_exists(id)?
         || view.repositories()?.iter().any(|r| r.id == *id))
 }
 
@@ -170,7 +170,7 @@ pub(super) struct Moved {
 /// process/standard document in the moved subtree, unchanged but for the path.
 /// The team's own file is the caller's, since its record changes.
 pub(super) fn relocate(
-    view: &impl crate::projects::ports::ProjectsRead,
+    view: &impl TeamDependents,
     old: &[Id],
     new: &[Id],
 ) -> Result<Vec<Moved>, Refusal> {
@@ -225,28 +225,14 @@ pub(super) fn relocate(
             bytes: records::encode_hire_request(&req),
         });
     }
-    for doc in view.structure_documents()? {
-        let Some(ref tid) = doc.team_id else {
-            continue;
-        };
-        let Some((from, to)) = chains.get(tid) else {
-            continue;
-        };
+    for homed in view.team_homed_moves(&chains)? {
         moved.push(Moved {
-            from: crate::processes::records::structure_document_path(
-                doc.kind,
-                &doc.id,
-                Some(from),
-                None,
-            )?,
-            to: crate::processes::records::structure_document_path(
-                doc.kind,
-                &doc.id,
-                Some(to),
-                None,
-            )
-            .or_else(|_| reject(RejectCode::InvalidRequest, TOO_DEEP))?,
-            bytes: crate::processes::records::encode_structure_document(&doc),
+            from: homed.from?,
+            to: match homed.to {
+                Some(to) => to,
+                None => return reject(RejectCode::InvalidRequest, TOO_DEEP),
+            },
+            bytes: homed.bytes,
         });
     }
     Ok(moved)
