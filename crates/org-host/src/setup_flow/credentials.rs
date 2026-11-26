@@ -254,9 +254,8 @@ pub(super) fn credential_directory(
     // While the store is still locked by this check, so that no other opener holds a lock
     // on the file that goes.
     if let (Some(store), Ok(_)) = (lock_made_here, &checked) {
-        use std::os::fd::AsRawFd;
-        // SAFETY: the held store directory and a NUL-terminated single name.
-        unsafe { libc::unlinkat(store.as_raw_fd(), c".lock".as_ptr(), 0) };
+        // The held store directory and a NUL-terminated single name.
+        let _ = org_platform::posix::remove_at(store, c".lock", 0);
     }
     let checked = checked.map(drop);
     if !keep || checked.is_err() {
@@ -316,7 +315,6 @@ pub(super) fn development_keys(
 /// others. It is made from its parent's descriptor, and the mode is set on what was made,
 /// whatever the process's mask is; an existing folder is never changed.
 pub(super) fn development_folder(folder: &Path, root: &Path) -> Result<(), String> {
-    use std::os::fd::AsRawFd;
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::MetadataExt;
     let refuse = |why: String| {
@@ -375,14 +373,12 @@ pub(super) fn development_folder(folder: &Path, root: &Path) -> Result<(), Strin
     };
     let leaf =
         std::ffi::CString::new(name.as_bytes()).map_err(|_| refuse("is not a path".into()))?;
-    // SAFETY: an open directory and a NUL-terminated single name.
-    let made = unsafe { libc::mkdirat(parent_fd.as_raw_fd(), leaf.as_ptr(), 0o700) } == 0;
-    if !made {
-        let error = std::io::Error::last_os_error();
-        if error.kind() != std::io::ErrorKind::AlreadyExists {
-            return Err(refuse(format!("cannot be made: {error}")));
-        }
-    }
+    // An open directory and a NUL-terminated single name.
+    let made = match org_platform::posix::make_directory_at(&parent_fd, &leaf, 0o700) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+        Err(error) => return Err(refuse(format!("cannot be made: {error}"))),
+    };
     let opened = store_directories::open_directory(Some(&parent_fd), &leaf)
         .map_err(|e| refuse(format!("is not a folder this user's keys can be in ({e})")))?;
     let file = std::fs::File::from(opened);

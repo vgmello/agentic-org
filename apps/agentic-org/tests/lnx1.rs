@@ -425,9 +425,8 @@ fn the_real_host_starts_the_real_worker_under_custody_and_its_socket_answers() {
     assert_eq!(unbound_json["error"]["code"], "not_authorized");
 
     // The service stops on SIGTERM, exits 0 and leaves no worker serving the socket.
-    // SAFETY: sends SIGTERM to this test's own live child process.
-    let rc = unsafe { libc::kill(host.0.id() as libc::pid_t, libc::SIGTERM) };
-    assert_eq!(rc, 0);
+    // Sends SIGTERM to this test's own live child process.
+    org_platform::posix::kill(host.0.id() as libc::pid_t, libc::SIGTERM).unwrap();
     let stopped = Instant::now();
     let status = loop {
         if let Some(status) = host.0.try_wait().unwrap() {

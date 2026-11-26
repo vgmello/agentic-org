@@ -312,9 +312,9 @@ fn premature_cleanup_retains_a_live_child_and_external_reaping_disarms_signals()
         .wait_until(Instant::now() + Duration::from_secs(10))
         .unwrap()
         .unwrap();
-    // SAFETY: deliberate contract violation confined to this test's exited child.
-    let waited = unsafe { libc::waitpid(child.identity().pid as i32, std::ptr::null_mut(), 0) };
-    assert_eq!(waited, child.identity().pid as i32);
+    // A deliberate contract violation confined to this test's exited child.
+    let waited = org_platform::posix::wait_pid(child.identity().pid as i32, 0).unwrap();
+    assert!(waited.is_some());
     let error = child
         .stop(&stdin, &StopPolicy::default(), StopMode::Fast)
         .unwrap_err();
@@ -480,13 +480,9 @@ fn failed_probe_identity_recording_removes_the_owned_cwd_and_reaps_the_child() {
         .record_identity(|_| Err(io::Error::other("identity persistence refused")))
         .is_err());
     assert!(!cwd.exists());
-    // SAFETY: only the child whose failed persistence guard must have reaped it.
-    let waited = unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) };
-    assert_eq!(waited, -1);
-    assert_eq!(
-        io::Error::last_os_error().raw_os_error(),
-        Some(libc::ECHILD)
-    );
+    // Only the child whose failed persistence guard must have reaped it.
+    let waited = org_platform::posix::wait_pid(pid, libc::WNOHANG).unwrap_err();
+    assert_eq!(waited.raw_os_error(), Some(libc::ECHILD));
 }
 
 #[test]
@@ -562,9 +558,12 @@ fn linux_owned_zombie_group_keeps_success_or_esrch_signalling_behavior() {
         .wait_until(Instant::now() + Duration::from_secs(10))
         .unwrap()
         .unwrap();
-    // SAFETY: still-unreaped owned leader reserves this private group ID.
-    let result = unsafe { libc::killpg(spawned.child.identity().pgid as i32, libc::SIGKILL) };
-    assert!(result == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH));
+    // A still-unreaped owned leader reserves this private group ID.
+    let result =
+        org_platform::posix::kill_group(spawned.child.identity().pgid as i32, libc::SIGKILL);
+    assert!(result
+        .as_ref()
+        .map_or_else(|e| e.raw_os_error() == Some(libc::ESRCH), |()| true));
     assert_eq!(
         spawned.child.cleanup_and_reap(&[]).unwrap().status.code(),
         Some(17)

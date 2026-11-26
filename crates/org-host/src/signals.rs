@@ -1,5 +1,5 @@
 //! Waiting for a shutdown signal: SIGTERM (launchd, at logout) or SIGINT (Ctrl-C in a
-//! terminal), with plain libc and no handler.
+//! terminal), with no handler (`org_platform::posix`'s masks and `sigwait`).
 //!
 //! [`ShutdownSignals::block`] blocks both signals and replaces inherited ignored dispositions
 //! before any thread starts. Every thread inherits the mask, so subsequent signals stay pending
@@ -8,35 +8,19 @@
 //! std clears the signal mask of every process it spawns.
 
 use std::io;
-use std::mem::MaybeUninit;
+
+use org_platform::posix::{self, SignalSet};
 
 pub struct ShutdownSignals {
-    set: libc::sigset_t,
+    set: SignalSet,
 }
 
 impl ShutdownSignals {
     /// Claims SIGTERM and SIGINT for shutdown, blocking them in this thread and every thread
     /// it starts from now on, even if a background launcher ignored them. Call first in `main`.
     pub fn block() -> io::Result<Self> {
-        let mut set = MaybeUninit::<libc::sigset_t>::uninit();
-        // SAFETY: sigemptyset initializes `set`; sigaddset and pthread_sigmask get valid
-        // pointers to it.
-        let set = unsafe {
-            if libc::sigemptyset(set.as_mut_ptr()) != 0 {
-                return Err(io::Error::last_os_error());
-            }
-            for signal in [libc::SIGTERM, libc::SIGINT] {
-                if libc::sigaddset(set.as_mut_ptr(), signal) != 0 {
-                    return Err(io::Error::last_os_error());
-                }
-            }
-            set.assume_init()
-        };
-        // SAFETY: a valid, initialized set; the old mask isn't wanted.
-        let rc = unsafe { libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) };
-        if rc != 0 {
-            return Err(io::Error::from_raw_os_error(rc));
-        }
+        let set = SignalSet::of(&[libc::SIGTERM, libc::SIGINT])?;
+        posix::block_signals(&set)?;
         // Block BEFORE changing dispositions, before any threads start: restoring defaults
         // while unblocked would let a shutdown signal terminate the host without cleanup.
         // Ownership starts once BOTH resets complete; signals received before then are not
@@ -51,31 +35,12 @@ impl ShutdownSignals {
 
     /// Waits until SIGTERM or SIGINT arrives, and returns it.
     pub fn wait(&self) -> io::Result<i32> {
-        let mut signal = 0;
-        // SAFETY: a valid, initialized set and a valid out-pointer.
-        let rc = unsafe { libc::sigwait(&self.set, &mut signal) };
-        if rc == 0 {
-            Ok(signal)
-        } else {
-            Err(io::Error::from_raw_os_error(rc))
-        }
+        posix::wait_for_signal(&self.set)
     }
 }
 
 fn default_disposition(signal: libc::c_int) -> io::Result<()> {
-    // SAFETY: all-zero sigaction fields are valid; sigemptyset initializes its mask.
-    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
-    action.sa_sigaction = libc::SIG_DFL;
-    // SAFETY: valid initialized action, a writable mask and no old-action output.
-    unsafe {
-        if libc::sigemptyset(&mut action.sa_mask) != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        if libc::sigaction(signal, &action, std::ptr::null_mut()) != 0 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    Ok(())
+    posix::default_disposition(signal)
 }
 
 #[cfg(test)]

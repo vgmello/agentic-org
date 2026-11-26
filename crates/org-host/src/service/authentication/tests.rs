@@ -453,8 +453,7 @@ fn real_host_listener_negotiates_signin_renewal_and_logout() {
         ListenerConfig {
             max_connections: 3,
             max_in_flight: 2,
-            // SAFETY: geteuid has no preconditions and reads the current process UID.
-            expected_uid: unsafe { libc::geteuid() },
+            expected_uid: org_platform::posix::effective_uid(),
         },
         Arc::new(service),
     )

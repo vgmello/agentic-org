@@ -73,8 +73,8 @@ fn pids(program: &Path) -> Vec<i32> {
 fn kill_worker_and_wait_for_another(worker: &Path) -> i32 {
     let before = pids(worker);
     assert_eq!(before.len(), 1, "exactly one worker: {before:?}");
-    // SAFETY: plain signal to a child process this test's host started.
-    assert_eq!(unsafe { libc::kill(before[0], libc::SIGKILL) }, 0);
+    // A plain signal to a child process this test's host started.
+    org_platform::posix::kill(before[0], libc::SIGKILL).unwrap();
     let until = Instant::now() + WAIT;
     loop {
         let now = pids(worker);

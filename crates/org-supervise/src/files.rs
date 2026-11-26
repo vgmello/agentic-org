@@ -1,11 +1,13 @@
 //! Directory-relative, no-follow planned file installation. Never writes through a leaf.
 use std::ffi::{CString, OsStr};
-use std::fs::File;
+use std::fs::{File, Permissions};
 use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::OwnedFd;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
+
+use org_platform::posix;
 
 use crate::invalid;
 
@@ -17,14 +19,11 @@ fn directory(parent: &OwnedFd, name: &OsStr, create: bool) -> io::Result<OwnedFd
     let name = c(name)?;
     let mut created = false;
     if create {
-        // SAFETY: valid directory descriptor and literal child name; no symlink traversal.
-        if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o700) } == 0 {
-            created = true;
-        } else {
-            let e = io::Error::last_os_error();
-            if e.kind() != io::ErrorKind::AlreadyExists {
-                return Err(e);
-            }
+        // A literal child name of a held directory; no symlink traversal.
+        match posix::make_directory_at(parent, &name, 0o700) {
+            Ok(()) => created = true,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
         }
     }
     open_directory(
@@ -49,35 +48,23 @@ enum DirectoryUse {
 // mkdir does not return an inode handle: even a pinned directory may have been substituted
 // before open. Never chmod a directory. Validate the new-path inode's owner/mode instead.
 fn open_directory(parent: &OwnedFd, name: &CString, usage: DirectoryUse) -> io::Result<OwnedFd> {
-    // SAFETY: openat is confined to this component; O_NOFOLLOW rejects a symlink and
+    // openat is confined to this component; O_NOFOLLOW rejects a symlink and
     // O_DIRECTORY rejects a replacement that isn't a directory.
-    let fd = unsafe {
-        libc::openat(
-            parent.as_raw_fd(),
-            name.as_ptr(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-        )
-    };
-    if fd < 0 {
-        let error = io::Error::last_os_error();
-        if matches!(usage, DirectoryUse::Created) && error.kind() == io::ErrorKind::PermissionDenied
+    let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    let fd = match posix::open_at(parent, name, flags, 0) {
+        Ok(fd) => fd,
+        Err(error)
+            if matches!(usage, DirectoryUse::Created)
+                && error.kind() == io::ErrorKind::PermissionDenied =>
         {
             return Err(io::Error::new(error.kind(), "new planned directory cannot be pinned securely; use a umask preserving owner permissions"));
         }
-        return Err(error);
-    }
-    // SAFETY: newly opened descriptor, already verified as a non-symlink directory.
-    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        Err(error) => return Err(error),
+    };
     if !matches!(usage, DirectoryUse::Traverse) {
-        let mut info = std::mem::MaybeUninit::<libc::stat>::uninit();
-        // SAFETY: owned directory descriptor and correctly sized output slot.
-        if unsafe { libc::fstat(fd.as_raw_fd(), info.as_mut_ptr()) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: successful fstat initialized the complete stat record.
-        let info = unsafe { info.assume_init() };
-        // SAFETY: credential query only; preparation already refuses euid0.
-        if info.st_uid != unsafe { libc::geteuid() } {
+        let info = posix::status(&fd)?;
+        // Preparation already refuses euid 0.
+        if info.st_uid != effective_uid() {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "planned directory must be owned by the current user",
@@ -94,18 +81,11 @@ pub(crate) fn root(path: &Path) -> io::Result<OwnedFd> {
     if !path.is_absolute() {
         return Err(invalid("planned-file root must be absolute"));
     }
-    // SAFETY: constant C string names root, returning a newly owned directory fd.
-    let fd = unsafe {
-        libc::open(
-            c"/".as_ptr(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
-        )
-    };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: ownership from open.
-    let mut current = unsafe { OwnedFd::from_raw_fd(fd) };
+    let mut current = posix::open(
+        c"/",
+        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        0,
+    )?;
     for part in path.components() {
         match part {
             Component::RootDir => {}
@@ -117,18 +97,11 @@ pub(crate) fn root(path: &Path) -> io::Result<OwnedFd> {
 }
 
 pub(crate) fn effective_uid() -> libc::uid_t {
-    // SAFETY: geteuid has no preconditions and cannot fail.
-    unsafe { libc::geteuid() }
+    posix::effective_uid()
 }
 
 pub(crate) fn private_directory(fd: &OwnedFd) -> io::Result<()> {
-    let mut info = std::mem::MaybeUninit::<libc::stat>::uninit();
-    // SAFETY: an owned directory descriptor and a valid output slot.
-    if unsafe { libc::fstat(fd.as_raw_fd(), info.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: successful fstat initialized the record.
-    let info = unsafe { info.assume_init() };
+    let info = posix::status(fd)?;
     if info.st_mode & libc::S_IFMT != libc::S_IFDIR
         || info.st_uid != effective_uid()
         || info.st_mode & 0o7777 != 0o700
@@ -167,10 +140,8 @@ impl PrivateDirectory {
         let mut random = [0; 16];
         File::open("/dev/urandom")?.read_exact(&mut random)?;
         let name = CString::new(format!("probe-{:032x}", u128::from_ne_bytes(random))).unwrap();
-        // SAFETY: pinned private parent, newly allocated literal name, no chmod of any inode.
-        if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
+        // Pinned private parent, newly allocated literal name, no chmod of any inode.
+        posix::make_directory_at(&parent, &name, 0o700)?;
         let result = (|| {
             let fd = open_directory(&parent, &name, DirectoryUse::Created)?;
             private_directory(&fd)?;
@@ -280,45 +251,21 @@ pub(crate) fn write_file(base: &Path, relative: &Path, contents: &[u8]) -> io::R
         u128::from_ne_bytes(random)
     ))
     .unwrap();
-    // SAFETY: parent is held open, name is literal, O_EXCL prevents writing another file.
-    let fd = unsafe {
-        libc::openat(
-            parent.as_raw_fd(),
-            temp.as_ptr(),
-            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            0o600,
-        )
-    };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: new descriptor transferred exactly once to File.
-    let mut file = unsafe { File::from_raw_fd(fd) };
+    // Parent is held open, name is literal, O_EXCL prevents writing another file.
+    let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    let mut file = File::from(posix::open_at(&parent, &temp, flags, 0o600)?);
     let result = (|| {
-        // SAFETY: adjust only the newly created inode held by our descriptor. A restrictive
-        // process umask must not silently change the planned file's specified mode.
-        if unsafe { libc::fchmod(file.as_raw_fd(), 0o600) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
+        // Adjust only the newly created inode held by our descriptor (`fchmod`). A
+        // restrictive process umask must not silently change the planned file's mode.
+        file.set_permissions(Permissions::from_mode(0o600))?;
         file.write_all(contents)?;
-        // SAFETY: both names relative to the same owned directory. Replace the leaf, never
+        // Both names are relative to the same owned directory. Replace the leaf, never
         // follow its symlink or truncate a file with additional hardlinks.
-        if unsafe {
-            libc::renameat(
-                parent.as_raw_fd(),
-                temp.as_ptr(),
-                parent.as_raw_fd(),
-                leaf.as_ptr(),
-            )
-        } != 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
+        posix::rename_at(&parent, &temp, &parent, &leaf)
     })();
     if result.is_err() {
-        // SAFETY: only the temporary file created above, in the still-owned parent.
-        unsafe { libc::unlinkat(parent.as_raw_fd(), temp.as_ptr(), 0) };
+        // Only the temporary file created above, in the still-owned parent.
+        let _ = posix::remove_at(&parent, &temp, 0);
     }
     result
 }

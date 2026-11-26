@@ -215,9 +215,9 @@ fn web_pid(program: &Path) -> String {
 /// Kills the process `pid`, a web process this test's own host started.
 fn kill(pid: &str) {
     let pid: libc::pid_t = pid.parse().unwrap();
-    // SAFETY: a signal to one process, named by the id `web_pid` just found for the
-    // unique program path of this test's own web process.
-    assert_eq!(unsafe { libc::kill(pid, libc::SIGKILL) }, 0);
+    // A signal to one process, named by the id `web_pid` just found for the unique program
+    // path of this test's own web process.
+    org_platform::posix::kill(pid, libc::SIGKILL).unwrap();
 }
 
 /// What the fixture registry holds before the host first starts.

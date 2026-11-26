@@ -1,6 +1,9 @@
 //! Account lookups for the service's user and running a step as that account.
 
-use std::time::{Duration, Instant};
+use std::io::{self, Write};
+use std::time::Duration;
+
+use org_platform::posix::{self, ChildAnswerError};
 
 use super::output::fail;
 
@@ -30,28 +33,9 @@ fn plain_name(name: &str) -> bool {
 
 /// The account database's name of `uid`, when it has one and it is a [`plain_name`].
 pub(super) fn plain_account_name(uid: u32) -> Option<String> {
-    let mut buffer = vec![0 as libc::c_char; 16 * 1024];
-    // SAFETY: an all-zero `passwd` is a valid value for the call to fill in.
-    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
-    let mut found: *mut libc::passwd = std::ptr::null_mut();
-    // SAFETY: an entry, buffer and result valid for the call.
-    let status = unsafe {
-        libc::getpwuid_r(
-            uid,
-            &mut entry,
-            buffer.as_mut_ptr(),
-            buffer.len(),
-            &mut found,
-        )
-    };
-    if status == 0 && !found.is_null() && !entry.pw_name.is_null() {
-        // SAFETY: on success `pw_name` is a NUL-terminated string inside `buffer`.
-        let name = unsafe { std::ffi::CStr::from_ptr(entry.pw_name) }.to_string_lossy();
-        if plain_name(&name) {
-            return Some(name.into_owned());
-        }
-    }
-    None
+    let name = posix::account_by_uid(uid).ok()??.name?;
+    let name = name.to_string_lossy();
+    plain_name(&name).then(|| name.into_owned())
 }
 
 /// An account of this machine: its user and primary group.
@@ -110,44 +94,22 @@ pub(crate) fn service_account(
     Ok(Some(account))
 }
 
-/// One entry of the account database, by name or by number.
-fn account_entry(
-    look: impl Fn(&mut libc::passwd, &mut [libc::c_char], &mut *mut libc::passwd) -> libc::c_int,
-) -> Option<Account> {
-    let mut buffer = vec![0 as libc::c_char; 16 * 1024];
-    // SAFETY: an all-zero `passwd` is a valid value for the call to fill in.
-    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
-    let mut found: *mut libc::passwd = std::ptr::null_mut();
-    if look(&mut entry, &mut buffer, &mut found) != 0 || found.is_null() {
-        return None;
-    }
+/// One entry of the account database, as an [`Account`].
+fn account_entry(entry: io::Result<Option<posix::AccountEntry>>) -> Option<Account> {
+    let entry = entry.ok()??;
     Some(Account {
-        uid: entry.pw_uid,
-        gid: entry.pw_gid,
+        uid: entry.uid,
+        gid: entry.gid,
     })
 }
 
 pub(super) fn account_by_name(name: &str) -> Option<Account> {
     let name = std::ffi::CString::new(name).ok()?;
-    account_entry(|entry, buffer, found| {
-        // SAFETY: a NUL-terminated name, and an entry, buffer and result valid for the call.
-        unsafe {
-            libc::getpwnam_r(
-                name.as_ptr(),
-                entry,
-                buffer.as_mut_ptr(),
-                buffer.len(),
-                found,
-            )
-        }
-    })
+    account_entry(posix::account_by_name(&name))
 }
 
 pub(super) fn account_by_id(uid: u32) -> Option<Account> {
-    account_entry(|entry, buffer, found| {
-        // SAFETY: an entry, buffer and result valid for the call.
-        unsafe { libc::getpwuid_r(uid, entry, buffer.as_mut_ptr(), buffer.len(), found) }
-    })
+    account_entry(posix::account_by_uid(uid))
 }
 
 /// How long root waits for the lookup of the service user's instance ([`as_account`]).
@@ -178,169 +140,78 @@ pub(super) fn as_account<T: serde::Serialize + serde::de::DeserializeOwned>(
 
 /// `account`'s identity, for good, in this (child) process: nothing when it is not root.
 pub(super) fn become_account(account: Account) -> Result<(), String> {
-    let error = |what: &str| fail(what, std::io::Error::last_os_error());
+    let error = |what: &str, why: io::Error| fail(what, why);
     if crate::home::euid() != 0 {
         return Ok(());
     }
-    let mut buffer = vec![0 as libc::c_char; 16 * 1024];
-    // SAFETY: an all-zero `passwd` is a valid value for the call to fill in.
-    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
-    let mut found: *mut libc::passwd = std::ptr::null_mut();
-    // SAFETY: an entry, buffer and result valid for the call.
-    let status = unsafe {
-        libc::getpwuid_r(
-            account.uid,
-            &mut entry,
-            buffer.as_mut_ptr(),
-            buffer.len(),
-            &mut found,
-        )
-    };
     // The account's groups: all of them where the database names the account, else its
     // primary group alone.
-    let grouped = if status == 0 && !found.is_null() && !entry.pw_name.is_null() {
-        // SAFETY: a NUL-terminated name inside `buffer`, and the account's group.
-        unsafe { libc::initgroups(entry.pw_name, account.gid as _) }
-    } else {
-        // SAFETY: one group, read from a valid array.
-        unsafe { libc::setgroups(1, &account.gid) }
+    let named = posix::account_by_uid(account.uid)
+        .ok()
+        .flatten()
+        .and_then(|entry| entry.name);
+    let grouped = match named {
+        Some(name) => posix::initialize_groups(&name, account.gid),
+        None => posix::set_groups(&[account.gid]),
     };
-    if grouped != 0 {
-        return Err(error("acting as the service user"));
-    }
-    // Root sets the real, effective and saved IDs alike. SAFETY: plain identity changes.
-    if unsafe { libc::setgid(account.gid) } != 0 || unsafe { libc::setuid(account.uid) } != 0 {
-        return Err(error("acting as the service user"));
-    }
-    // SAFETY: plain identity queries and one change that must fail.
-    let dropped = unsafe {
-        libc::getuid() == account.uid
-            && libc::geteuid() == account.uid
-            && libc::getgid() == account.gid
-            && libc::getegid() == account.gid
-            && libc::setuid(0) != 0
-    };
+    grouped.map_err(|why| error("acting as the service user", why))?;
+    // Root sets the real, effective and saved IDs alike.
+    posix::set_gid(account.gid)
+        .and_then(|()| posix::set_uid(account.uid))
+        .map_err(|why| error("acting as the service user", why))?;
+    let dropped = posix::real_uid() == account.uid
+        && posix::effective_uid() == account.uid
+        && posix::real_gid() == account.gid
+        && posix::effective_gid() == account.gid
+        && posix::set_uid(0).is_err();
     if !dropped {
         return Err("acting as the service user: root's identity was not given up".into());
     }
     Ok(())
 }
 
-/// Forks; the child runs `become` and then `work`, writes the answer to a pipe and ends;
-/// this process reads it within `limit`. See [`as_account`].
+/// Runs `become` and then `work` in a forked child, which writes its answer (JSON) to a pipe
+/// and ends; this process reads it within `limit`. The process must have one thread (see
+/// [`as_account`]): `org_platform::posix::answer_from_child` refuses to fork otherwise.
 pub(super) fn in_child<T: serde::Serialize + serde::de::DeserializeOwned>(
     become_child: impl FnOnce() -> Result<(), String>,
     work: impl FnOnce() -> Result<T, String>,
     limit: Duration,
 ) -> Result<T, String> {
-    use std::io::Read;
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-    let lookup = |why: std::io::Error| fail("finding the service user's instance", why);
-    let mut ends = [0 as libc::c_int; 2];
-    // SAFETY: a writable array of two descriptors.
-    if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
-        return Err(lookup(std::io::Error::last_os_error()));
-    }
-    // SAFETY: two new descriptors owned only here.
-    let (read, write) = unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
-    for end in [&read, &write] {
-        // SAFETY: an open descriptor owned here. One thread: no spawn races this.
-        if unsafe { libc::fcntl(end.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } != 0 {
-            return Err(lookup(std::io::Error::last_os_error()));
+    let bytes = posix::answer_from_child(
+        |out| child_answer(become_child, work, out),
+        limit,
+        LOOKUP_BYTES,
+    )
+    .map_err(|refused| match refused {
+        ChildAnswerError::TimedOut => {
+            format!("the lookup did not end within {}s", limit.as_secs())
         }
-    }
-    // SAFETY: the process has one thread (see `as_account`); the child never returns.
-    let pid = unsafe { libc::fork() };
-    if pid < 0 {
-        return Err(lookup(std::io::Error::last_os_error()));
-    }
-    if pid == 0 {
-        drop(read);
-        // The child keeps no descriptor of this process but its end of the pipe: nothing
-        // root holds (its terminal, a listener, a lock) is the account's process's, or stays
-        // held while it runs. Its standard three are the null device.
-        // SAFETY: a NUL-terminated path; each standard descriptor is replaced by a copy.
-        unsafe {
-            let null = libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
-            if null >= 0 {
-                for fd in 0..3 {
-                    libc::dup2(null, fd);
-                }
-                if null > 2 {
-                    libc::close(null);
-                }
-            }
+        ChildAnswerError::TooLarge => "the lookup answered with too much".into(),
+        ChildAnswerError::NotStarted(why) | ChildAnswerError::Read(why) => {
+            fail("finding the service user's instance", why)
         }
-        let keep = write.as_raw_fd();
-        // SAFETY: sysconf has no preconditions.
-        let most = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) }.clamp(3, 65_536) as libc::c_int;
-        for fd in 3..most {
-            if fd != keep {
-                // SAFETY: closing a descriptor this child does not use; a closed one fails.
-                unsafe { libc::close(fd) };
-            }
-        }
-        let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            become_child().and_then(|()| work())
-        }))
-        .unwrap_or_else(|_| Err("the lookup failed".into()));
-        let bytes = serde_json::to_vec(&answer).unwrap_or_default();
-        let mut file = std::fs::File::from(write);
-        let _ = std::io::Write::write_all(&mut file, &bytes);
-        drop(file);
-        // SAFETY: the end of the child, without the parent's exit handlers.
-        unsafe { libc::_exit(0) };
-    }
-    drop(write);
-    let deadline = Instant::now() + limit;
-    let mut file = std::fs::File::from(read);
-    let mut bytes = Vec::new();
-    let mut chunk = [0_u8; 8192];
-    let read = loop {
-        let left = deadline.saturating_duration_since(Instant::now());
-        let mut poll = libc::pollfd {
-            fd: file.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        let millis = libc::c_int::try_from(left.as_millis()).unwrap_or(libc::c_int::MAX);
-        // SAFETY: one valid pollfd.
-        match unsafe { libc::poll(&mut poll, 1, millis) } {
-            0 => {
-                break Err(format!(
-                    "the lookup did not end within {}s",
-                    limit.as_secs()
-                ))
-            }
-            n if n < 0 => {
-                let error = std::io::Error::last_os_error();
-                if error.kind() == std::io::ErrorKind::Interrupted {
-                    continue;
-                }
-                break Err(lookup(error));
-            }
-            _ => match file.read(&mut chunk) {
-                Ok(0) => break Ok(()),
-                Ok(n) if bytes.len() + n <= LOOKUP_BYTES => bytes.extend_from_slice(&chunk[..n]),
-                Ok(_) => break Err("the lookup answered with too much".into()),
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) => break Err(lookup(e)),
-            },
-        }
-    };
-    if read.is_err() {
-        // SAFETY: the child this call made.
-        unsafe { libc::kill(pid, libc::SIGKILL) };
-    }
-    // Reaped within a bound too: a child the kill cannot end at once (stuck in a filesystem
-    // that does not answer) is left to the system, and the command goes on.
-    let reap = Instant::now() + Duration::from_secs(1);
-    let mut status = 0;
-    // SAFETY: the child this call made, reaped once, without waiting.
-    while unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) } == 0 && Instant::now() < reap {
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    read?;
-    serde_json::from_slice::<Result<T, String>>(&bytes)
+    })?;
+    decode_answer(&bytes)
+}
+
+/// What the child of [`in_child`] writes: `become` then `work`'s result as JSON, or that the
+/// lookup failed when either panics.
+pub(super) fn child_answer<T: serde::Serialize>(
+    become_child: impl FnOnce() -> Result<(), String>,
+    work: impl FnOnce() -> Result<T, String>,
+    out: &mut dyn Write,
+) {
+    let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        become_child().and_then(|()| work())
+    }))
+    .unwrap_or_else(|_| Err("the lookup failed".into()));
+    let bytes = serde_json::to_vec(&answer).unwrap_or_default();
+    let _ = out.write_all(&bytes);
+}
+
+/// The answer [`child_answer`] wrote.
+pub(super) fn decode_answer<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
+    serde_json::from_slice::<Result<T, String>>(bytes)
         .map_err(|_| "the lookup did not answer".to_owned())?
 }

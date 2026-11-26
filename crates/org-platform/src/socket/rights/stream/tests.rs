@@ -6,10 +6,8 @@ use std::os::unix::net::{UnixDatagram, UnixListener};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use org_platform::socket::testing::{
-    bind_path, seqpacket_pair, CONNECTED_STREAM_CAN_LISTEN, SEQPACKET,
-};
-use org_platform::socket::PEER_CLOSED_IS_EINVAL;
+use crate::socket::testing::{bind_path, seqpacket_pair, CONNECTED_STREAM_CAN_LISTEN, SEQPACKET};
+use crate::socket::PEER_CLOSED_IS_EINVAL;
 
 #[test]
 fn connected_pair_is_owned_usable_and_keeps_cloexec() {
@@ -31,7 +29,7 @@ fn connected_pair_is_owned_usable_and_keeps_cloexec() {
     stream.read_exact(&mut body[..5]).unwrap();
     assert_eq!(&body[..5], b"reply");
     drop(stream);
-    assert!(crate::poll_readable(peer.as_raw_fd(), Duration::from_secs(1)).unwrap());
+    assert!(crate::posix::poll_readable(peer.as_raw_fd(), Duration::from_secs(1)).unwrap());
     assert_eq!(peer.read(&mut [0]).unwrap(), 0);
 }
 
@@ -114,7 +112,7 @@ fn native_platform_state_table_checks_real_peer_errno_and_adoption_outcome() {
 
 fn run_case(case: &str) {
     run_child(
-        "rights::stream::tests::adoption_child",
+        "socket::rights::stream::tests::adoption_child",
         "ORG_SOCKET_ADOPTION_CASE",
         case,
     );
@@ -303,7 +301,7 @@ fn adoption_child() {
         let mut stream = result.unwrap();
         assert_eq!(stream.as_raw_fd(), raw);
         if case == "peer-closed" {
-            assert!(crate::poll_readable(raw, Duration::from_secs(1)).unwrap());
+            assert!(crate::posix::poll_readable(raw, Duration::from_secs(1)).unwrap());
             assert_eq!(stream.read(&mut [0]).unwrap(), 0);
         }
         drop(stream);
@@ -330,7 +328,7 @@ fn adoption_child() {
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
     if let Some(mut peer) = unix_peer.filter(|_| !case.starts_with("listener")) {
-        assert!(crate::poll_readable(peer.as_raw_fd(), Duration::from_secs(1)).unwrap());
+        assert!(crate::posix::poll_readable(peer.as_raw_fd(), Duration::from_secs(1)).unwrap());
         assert_eq!(peer.read(&mut [0]).unwrap(), 0);
     }
     drop(dir);
@@ -390,7 +388,7 @@ fn received_descriptor_passes_validation_without_a_second_flags_update() {
     let (sender, socket) = UnixDatagram::pair().unwrap();
     let (source, mut peer) = UnixStream::pair().unwrap();
     super::super::tests::send_rights(sender.as_raw_fd(), b"!", &[source.as_raw_fd()]);
-    let mut receiver = crate::rights::DatagramReceiver::new(socket);
+    let mut receiver = crate::socket::rights::DatagramReceiver::new(socket);
     let mut received = receiver
         .receive_up_to(&mut [0], 1, &std::sync::Mutex::new(()))
         .unwrap();
@@ -410,7 +408,7 @@ fn received_descriptor_passes_validation_without_a_second_flags_update() {
     peer.read_exact(&mut byte).unwrap();
     assert_eq!(byte, [b'x']);
     drop(stream);
-    assert!(crate::poll_readable(peer.as_raw_fd(), Duration::from_secs(1)).unwrap());
+    assert!(crate::posix::poll_readable(peer.as_raw_fd(), Duration::from_secs(1)).unwrap());
     assert_eq!(peer.read(&mut byte).unwrap(), 0);
 }
 
@@ -502,7 +500,7 @@ pub(super) fn listening(fd: RawFd) -> io::Result<bool> {
     if injected(Fault::Listener) {
         return Err(io::Error::last_os_error());
     }
-    org_platform::socket::listening(fd)
+    crate::socket::listening(fd)
 }
 
 pub(super) fn peer_address(stream: &UnixStream) -> io::Result<SocketAddr> {

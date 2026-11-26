@@ -6,8 +6,7 @@ use std::os::unix::net::UnixStream;
 
 /// The effective UID of this process, for admitting same-user local connections.
 pub fn effective_uid() -> u32 {
-    // SAFETY: geteuid has no arguments or memory safety preconditions.
-    unsafe { libc::geteuid() }
+    org_platform::posix::effective_uid()
 }
 
 /// Whether the kernel identifies the peer as `expected_uid`. Query failures refuse the peer.
@@ -30,8 +29,11 @@ mod tests {
     #[test]
     fn real_pair_admits_only_its_kernel_uid_and_bad_descriptors_fail_closed() {
         let (stream, _peer) = UnixStream::pair().unwrap();
-        // SAFETY: geteuid has no preconditions; this is an independent oracle for the export.
-        let uid = unsafe { libc::geteuid() };
+        // An independent oracle for the export: a new file belongs to the effective user.
+        let probe = std::env::temp_dir().join(format!("org-socket-uid-{}", std::process::id()));
+        let file = std::fs::File::create(&probe).unwrap();
+        let uid = std::os::unix::fs::MetadataExt::uid(&file.metadata().unwrap());
+        std::fs::remove_file(&probe).unwrap();
         assert_eq!(effective_uid(), uid);
         assert_eq!(peer_uid(stream.as_raw_fd()).unwrap(), uid);
         assert!(peer_allowed(&stream, uid));

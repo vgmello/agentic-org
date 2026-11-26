@@ -1,8 +1,9 @@
 //! Unix-socket peer credentials, descriptor-passing flags and socket shape.
 //!
-//! Linux host design section 4, `socket`. `org-socket` keeps the portable socket code
-//! (the framing, the retry loops and the shape policy of an adopted descriptor) and
-//! asks this module for each fact that differs by system:
+//! Linux host design section 4, `socket`. Descriptor passing itself (`SCM_RIGHTS`
+//! messages, their retry loops and the shape policy of an adopted descriptor) is
+//! [`rights`], which `org-socket` re-exports; it and `org-socket`'s framing ask this
+//! module for each fact that differs by system:
 //!
 //! - [`peer_uid`]: who the kernel says is at the other end. macOS: `getpeereid`.
 //!   Linux: `SO_PEERCRED`.
@@ -16,9 +17,10 @@
 //!   `SO_ACCEPTCONN`.
 //! - [`peer_closed`]: which peer-query error means only that the peer already closed.
 //!
-//! Descriptors are passed as raw numbers. Every function here only queries the
-//! descriptor: none closes it, keeps it or changes its flags, and a number that is
-//! not an open descriptor is an error from the kernel.
+//! Descriptors are passed to the functions of this module (not of [`rights`]) as raw
+//! numbers. Every one of them only queries the descriptor: none closes it, keeps it or
+//! changes its flags, and a number that is not an open descriptor is an error from the
+//! kernel.
 
 use std::io;
 use std::os::fd::{OwnedFd, RawFd};
@@ -93,6 +95,8 @@ pub const STREAM_PEER_CLOSE_WITH_UNREAD_RESETS: bool = native::STREAM_PEER_CLOSE
 /// The `errno` of a socket call for an address family the kernel does not have at
 /// all, such as IPv6 on a kernel built without it. Its number differs by system.
 pub const EAFNOSUPPORT: i32 = libc::EAFNOSUPPORT;
+
+pub mod rights;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;

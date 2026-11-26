@@ -83,12 +83,9 @@ fn child_entry() {
     };
     match case.as_str() {
         "core-limit-parent" => {
-            let mut limits = std::mem::MaybeUninit::<libc::rlimit>::uninit();
-            // SAFETY: correctly sized output slot, querying this isolated helper only.
-            let rc = unsafe { libc::getrlimit(libc::RLIMIT_CORE, limits.as_mut_ptr()) };
-            assert_eq!(rc, 0);
-            // SAFETY: successful query initialized both fields.
-            let limits = unsafe { limits.assume_init() };
+            let limits =
+                org_platform::posix::resource_limit(org_platform::posix::Resource::CoreFileSize)
+                    .unwrap();
             assert_eq!((limits.rlim_cur, limits.rlim_max), (0, 0));
             // The normal prepare/spawn path rechecks the actual inherited zero limits.
             let root = std::env::current_dir().unwrap();
@@ -106,10 +103,7 @@ fn child_entry() {
         "inspect" => {
             // No open calls before this scan. The test runner has no external descriptor.
             let extra: Vec<_> = (3..1024)
-                .filter(|fd| {
-                    // SAFETY: F_GETFD only queries whether this numeric descriptor is open.
-                    unsafe { libc::fcntl(*fd, libc::F_GETFD) >= 0 }
-                })
+                .filter(|fd| org_platform::posix::is_open(*fd))
                 .collect();
             assert!(extra.is_empty(), "inherited descriptors: {extra:?}");
             assert_eq!(
@@ -130,11 +124,9 @@ fn child_entry() {
             ] {
                 assert!(std::env::var_os(name).is_none(), "unexpected {name}");
             }
-            // SAFETY: process/session queries for this child only.
-            unsafe {
-                assert_eq!(libc::getsid(0), libc::getpid());
-                assert_eq!(libc::getpgrp(), libc::getpid());
-            }
+            let me = std::process::id() as libc::pid_t;
+            assert_eq!(org_platform::posix::session_id(0).unwrap(), me);
+            assert_eq!(org_platform::posix::process_group(0).unwrap(), me);
             println!("INSPECTED");
         }
         "echo" => {
@@ -148,18 +140,11 @@ fn child_entry() {
         },
         "signal-parent" => {
             // Isolated helper process: never change the main test runner's dispositions.
-            // SAFETY: only this helper process; descendants must reset these states.
-            unsafe {
-                libc::signal(libc::SIGTERM, libc::SIG_IGN);
-                libc::signal(libc::SIGPIPE, libc::SIG_IGN);
-                let mut blocked = std::mem::zeroed();
-                libc::sigemptyset(&mut blocked);
-                libc::sigaddset(&mut blocked, libc::SIGTERM);
-                assert_eq!(
-                    libc::pthread_sigmask(libc::SIG_BLOCK, &blocked, std::ptr::null_mut()),
-                    0
-                );
-            }
+            // Only this helper process; descendants must reset these states.
+            org_platform::posix::ignore_signal(libc::SIGTERM).unwrap();
+            org_platform::posix::ignore_signal(libc::SIGPIPE).unwrap();
+            let blocked = org_platform::posix::SignalSet::of(&[libc::SIGTERM]).unwrap();
+            org_platform::posix::block_signals(&blocked).unwrap();
             let root = std::env::current_dir().unwrap();
             for signal in ["TERM", "PIPE"] {
                 let mut child = prepare(
@@ -192,10 +177,8 @@ fn child_entry() {
             println!("SIGNALS-RESET");
         }
         "autowait-parent" => {
-            // SAFETY: isolated helper only; parent test runner's SIGCHLD is unaffected.
-            unsafe {
-                libc::signal(libc::SIGCHLD, libc::SIG_IGN);
-            }
+            // Isolated helper only; parent test runner's SIGCHLD is unaffected.
+            org_platform::posix::ignore_signal(libc::SIGCHLD).unwrap();
             let root = std::env::current_dir().unwrap();
             assert!(PreparedSpawn::new(
                 SpawnSpec {
@@ -264,8 +247,11 @@ fn assert_owned_group_cleanup(natural_exit: bool) {
         .trim()
         .parse()
         .unwrap();
-    // SAFETY: queries only the freshly reported private fixture process.
-    assert_eq!(unsafe { libc::getpgid(pid) }, child.identity().pgid as i32);
+    // Queries only the freshly reported private fixture process.
+    assert_eq!(
+        org_platform::posix::process_group(pid).unwrap(),
+        child.identity().pgid as i32
+    );
     if natural_exit {
         let status = child
             .wait_until(Instant::now() + Duration::from_secs(5))
@@ -285,34 +271,30 @@ fn assert_owned_group_cleanup(natural_exit: bool) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         if subreaper {
-            let mut status = 0;
-            // SAFETY: the isolated subreaper owns this adopted, unreaped grandchild.
-            let rc = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
-            if rc == pid {
-                assert!(libc::WIFSIGNALED(status));
-                assert_eq!(libc::WTERMSIG(status), libc::SIGKILL);
-                break; // reaping ends ownership; never probe or signal a reused PID
-            }
-            if rc == -1 {
-                assert_eq!(
-                    io::Error::last_os_error().kind(),
-                    io::ErrorKind::Interrupted
-                );
-                continue;
+            // The isolated subreaper owns this adopted, unreaped grandchild.
+            match org_platform::posix::wait_pid(pid, libc::WNOHANG) {
+                Ok(Some(status)) => {
+                    assert!(libc::WIFSIGNALED(status));
+                    assert_eq!(libc::WTERMSIG(status), libc::SIGKILL);
+                    break; // reaping ends ownership; never probe or signal a reused PID
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+                    continue;
+                }
             }
         }
-        // SAFETY: signal0 only probes the fixture pid; it cannot signal a reused identity.
-        if unsafe { libc::kill(pid, 0) } == -1 {
-            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+        // Signal 0 only probes the fixture pid; it cannot signal a reused identity.
+        if let Err(error) = org_platform::posix::kill(pid, 0) {
+            assert_eq!(error.raw_os_error(), Some(libc::ESRCH));
             break;
         }
         if Instant::now() >= deadline {
             if subreaper {
-                // SAFETY: clean up the isolated subreaper's own still-unreaped grandchild.
-                unsafe {
-                    libc::kill(pid, libc::SIGKILL);
-                    libc::waitpid(pid, std::ptr::null_mut(), 0);
-                }
+                // Clean up the isolated subreaper's own still-unreaped grandchild.
+                let _ = org_platform::posix::kill(pid, libc::SIGKILL);
+                let _ = org_platform::posix::reap(pid);
             }
             // The EOF gate is already closed, so the fixture can exit without a signal.
             // Never signal a macOS nonchild using a numeric PID after leader reaping.
@@ -418,14 +400,9 @@ fn mark_and_identity_must_be_persisted_before_stdin_is_exposed() {
     assert!(pending
         .record_identity(|_| Err(io::Error::other("record failed")))
         .is_err());
-    let mut status = 0;
-    // SAFETY: observing only the test child; its owner must already have reaped it.
-    let waited = unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) };
-    assert_eq!(waited, -1);
-    assert_eq!(
-        io::Error::last_os_error().raw_os_error(),
-        Some(libc::ECHILD)
-    );
+    // Observing only the test child; its owner must already have reaped it.
+    let waited = org_platform::posix::wait_pid(pid as i32, libc::WNOHANG).unwrap_err();
+    assert_eq!(waited.raw_os_error(), Some(libc::ECHILD));
 }
 
 #[test]
@@ -470,13 +447,9 @@ fn exit_wait_retains_child_and_drop_reaps_it() {
     assert_eq!(status.code(), Some(17));
     assert_eq!(child.child.try_exit().unwrap(), Some(status));
     drop(child);
-    // SAFETY: only our test child; Drop must have reaped it.
-    let waited = unsafe { libc::waitpid(pid as i32, std::ptr::null_mut(), libc::WNOHANG) };
-    assert_eq!(waited, -1);
-    assert_eq!(
-        io::Error::last_os_error().raw_os_error(),
-        Some(libc::ECHILD)
-    );
+    // Only our test child; Drop must have reaped it.
+    let waited = org_platform::posix::wait_pid(pid as i32, libc::WNOHANG).unwrap_err();
+    assert_eq!(waited.raw_os_error(), Some(libc::ECHILD));
 }
 
 #[test]
@@ -490,13 +463,9 @@ fn deadline_does_not_reap_and_owner_drop_kills_a_live_child() {
         .unwrap()
         .is_none());
     drop(child);
-    // SAFETY: observing only the pid from the test's owned child.
-    let waited = unsafe { libc::waitpid(pid as i32, std::ptr::null_mut(), libc::WNOHANG) };
-    assert_eq!(waited, -1);
-    assert_eq!(
-        io::Error::last_os_error().raw_os_error(),
-        Some(libc::ECHILD)
-    );
+    // Observing only the pid from the test's owned child.
+    let waited = org_platform::posix::wait_pid(pid as i32, libc::WNOHANG).unwrap_err();
+    assert_eq!(waited.raw_os_error(), Some(libc::ECHILD));
 }
 
 #[test]
@@ -589,35 +558,24 @@ fn only_three_fds_even_during_concurrent_inheritable_fd_receipt() {
         let done = done.clone();
         let received = received.clone();
         std::thread::spawn(move || {
+            static FENCE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let mut rx = org_platform::socket::rights::StreamReceiver::new(rx);
             loop {
-                // SAFETY: SCM_RIGHTS buffers use aligned storage, sufficient for one fd;
-                // receiver owns the returned fd and intentionally leaves it inheritable.
-                let fd = unsafe {
-                    let mut byte = [0u8];
-                    let mut iov = libc::iovec {
-                        iov_base: byte.as_mut_ptr().cast(),
-                        iov_len: 1,
-                    };
-                    let mut control = [0usize; 8];
-                    let mut msg = std::mem::zeroed::<libc::msghdr>();
-                    msg.msg_iov = &mut iov;
-                    msg.msg_iovlen = 1;
-                    msg.msg_control = control.as_mut_ptr().cast();
-                    msg.msg_controllen = std::mem::size_of_val(&control) as _;
-                    assert_eq!(libc::recvmsg(rx.as_raw_fd(), &mut msg, 0), 1);
-                    let header = libc::CMSG_FIRSTHDR(&msg);
-                    assert!(!header.is_null());
-                    let fd = libc::CMSG_DATA(header).cast::<i32>().read_unaligned();
-                    assert_eq!(libc::fcntl(fd, libc::F_SETFD, 0), 0);
-                    fd
+                // The receiver owns the received descriptor and makes it inheritable.
+                let fd = loop {
+                    let ready = rx.fd().map(|fd| fd.as_raw_fd()).unwrap();
+                    org_platform::posix::poll_readable(ready, Duration::from_secs(5)).unwrap();
+                    match rx.receive_byte(1, &FENCE) {
+                        Ok((_, mut fds)) => break fds.pop().unwrap(),
+                        Err(org_platform::socket::rights::ReceiveError::WouldBlock) => {}
+                        Err(error) => panic!("{error}"),
+                    }
                 };
+                org_platform::posix::set_close_on_exec(&fd, false).unwrap();
                 received.fetch_add(1, Ordering::SeqCst);
                 barrier.wait(); // main spawns while this newly received fd is inheritable
                 barrier.wait();
-                // SAFETY: receiver uniquely owns the received descriptor.
-                unsafe {
-                    libc::close(fd);
-                }
+                drop(fd);
                 if done.load(Ordering::SeqCst) {
                     break;
                 }
@@ -626,28 +584,11 @@ fn only_three_fds_even_during_concurrent_inheritable_fd_receipt() {
     };
     let file = File::open("/dev/null").unwrap();
     for round in 0..16 {
-        // SAFETY: aligned, sized SCM_RIGHTS payload with one valid borrowed fd.
-        unsafe {
-            let mut byte = [1u8];
-            let mut iov = libc::iovec {
-                iov_base: byte.as_mut_ptr().cast(),
-                iov_len: 1,
-            };
-            let mut control = [0usize; 8];
-            let mut msg = std::mem::zeroed::<libc::msghdr>();
-            msg.msg_iov = &mut iov;
-            msg.msg_iovlen = 1;
-            msg.msg_control = control.as_mut_ptr().cast();
-            msg.msg_controllen = libc::CMSG_SPACE(std::mem::size_of::<i32>() as _) as _;
-            let header = libc::CMSG_FIRSTHDR(&msg);
-            (*header).cmsg_level = libc::SOL_SOCKET;
-            (*header).cmsg_type = libc::SCM_RIGHTS;
-            (*header).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<i32>() as _) as _;
-            libc::CMSG_DATA(header)
-                .cast::<i32>()
-                .write_unaligned(file.as_raw_fd());
-            assert_eq!(libc::sendmsg(tx.as_raw_fd(), &msg, 0), 1);
-        }
+        use std::os::fd::AsFd;
+        // One byte and one borrowed descriptor in one SCM_RIGHTS message.
+        let sent =
+            org_platform::socket::rights::send_once(tx.as_fd(), &[1], &[file.as_fd()], 0).unwrap();
+        assert_eq!(sent, 1);
         barrier.wait();
         let (_, text) = output(launch(&root.path().canonicalize().unwrap(), "inspect"));
         assert!(text.contains("INSPECTED"));

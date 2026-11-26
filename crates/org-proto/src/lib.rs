@@ -83,8 +83,8 @@
 //!
 //! Its vectors are in `test-vectors/v2/proto-*.json`.
 
-// No unsafe code, except the one function that zeroes a secret's bytes (see `token`).
-#![deny(unsafe_code)]
+// No unsafe code: a secret's bytes are zeroed through `zeroize` (see `token`).
+#![forbid(unsafe_code)]
 
 mod identity;
 pub mod selected_bootstrap;

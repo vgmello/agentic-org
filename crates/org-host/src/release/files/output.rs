@@ -1,14 +1,15 @@
 //! Private release-store output primitives. Only authenticated names reach these
 //! methods; every mutation is relative to a retained no-follow directory.
-use std::ffi::{CStr, CString, OsStr};
+use std::ffi::OsStr;
 use std::fs::File;
 use std::fs::{Permissions, TryLockError};
 use std::io::{self, Write};
-use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
-use super::{component, identity, open_at, owned, Directory};
+use org_platform::posix;
+
+use super::{component, identity, open_at, owned_at, Directory};
 use crate::release::Error;
 
 #[cfg(test)]
@@ -58,27 +59,19 @@ impl Directory {
         Ok(())
     }
     pub(in crate::release) fn duplicate_output(&self) -> Result<Self, Error> {
-        // SAFETY: module-owned '.' addresses this held directory only.
-        Ok(Self(owned(unsafe {
-            libc::openat(
-                self.0.as_raw_fd(),
-                c".".as_ptr(),
-                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            )
-        })?))
+        // The module-owned '.' addresses this held directory only.
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        Ok(Self(owned_at(&self.0, c".", flags, 0)?))
     }
     pub(in crate::release) fn create_store(path: &Path) -> Result<Self, Error> {
         let parent = Self::open(path.parent().ok_or(Error::UnsafeInput)?)?;
         let name = path.file_name().ok_or(Error::UnsafeInput)?;
         let cname = component(name)?;
-        // SAFETY: checked single component under held parent, private fixed mode.
-        if unsafe { libc::mkdirat(parent.0.as_raw_fd(), cname.as_ptr(), 0o700) } != 0 {
-            let error = io::Error::last_os_error();
-            if error.kind() != io::ErrorKind::AlreadyExists {
-                return Err(error.into());
-            }
-        } else {
-            parent.sync_directory()?;
+        // A checked single component under the held parent, private fixed mode.
+        match posix::make_directory_at(&parent.0, &cname, 0o700) {
+            Ok(()) => parent.sync_directory()?,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
         }
         let root = Self(open_at(&parent.0, name, true)?);
         root.require_mode(0o700)?;
@@ -117,14 +110,11 @@ impl Directory {
     pub(in crate::release) fn output_child(&self, name: &str, create: bool) -> Result<Self, Error> {
         if create {
             let cname = component(OsStr::new(name))?;
-            // SAFETY: create only a checked component under a retained directory.
-            if unsafe { libc::mkdirat(self.0.as_raw_fd(), cname.as_ptr(), 0o700) } != 0 {
-                let e = io::Error::last_os_error();
-                if e.kind() != io::ErrorKind::AlreadyExists {
-                    return Err(e.into());
-                }
-            } else {
-                self.sync_directory()?;
+            // Create only a checked component under a retained directory.
+            match posix::make_directory_at(&self.0, &cname, 0o700) {
+                Ok(()) => self.sync_directory()?,
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e.into()),
             }
         }
         let result = Self(open_at(&self.0, OsStr::new(name), true)?);
@@ -141,25 +131,18 @@ impl Directory {
 
     pub(in crate::release) fn claim_output(&self, name: &str) -> Result<Self, Error> {
         let name = component(OsStr::new(name))?;
-        // SAFETY: exclusive claim of a checked, module-generated component.
-        if unsafe { libc::mkdirat(self.0.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
-            return Err(io::Error::last_os_error().into());
-        }
+        // An exclusive claim of a checked, module-generated component.
+        posix::make_directory_at(&self.0, &name, 0o700)?;
         self.sync_directory()?;
         self.output_child(name.to_str().map_err(|_| Error::UnsafeInput)?, false)
     }
 
     pub(in crate::release) fn new_file(&self, name: &str) -> Result<File, Error> {
         let name = component(OsStr::new(name))?;
-        // SAFETY: retained directory, checked single name, create-new no-follow.
-        let file = owned(unsafe {
-            libc::openat(
-                self.0.as_raw_fd(),
-                name.as_ptr(),
-                libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-                0o600,
-            )
-        })?;
+        // A retained directory, a checked single name, create-new no-follow.
+        let flags =
+            libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        let file = owned_at(&self.0, &name, flags, 0o600)?;
         identity(&file)?;
         Ok(file)
     }
@@ -218,57 +201,11 @@ impl Directory {
         &self,
         mut visit: impl FnMut(&str) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        let dot = CString::new(".").map_err(|_| Error::UnsafeInput)?;
-        // SAFETY: reopen '.' for an independent directory offset (dup shares it).
-        let fd = unsafe {
-            libc::openat(
-                self.0.as_raw_fd(),
-                dot.as_ptr(),
-                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            )
-        };
-        let file = owned(fd)?;
-        use std::os::fd::IntoRawFd;
-        let fd = file.into_raw_fd();
-        // SAFETY: fdopendir takes this newly owned directory descriptor.
-        let dir = unsafe { libc::fdopendir(fd) };
-        if dir.is_null() {
-            // SAFETY: failed fdopendir did not take ownership.
-            unsafe {
-                libc::close(fd);
-            }
-            return Err(io::Error::last_os_error().into());
+        // A new open description of '.', for an independent directory offset (dup shares it).
+        for name in posix::Entries::of(&self.0)? {
+            visit(name?.to_str().map_err(|_| Error::UnsafeInput)?)?;
         }
-        struct Entries(*mut libc::DIR);
-        impl Drop for Entries {
-            fn drop(&mut self) {
-                // SAFETY: sole owner of the live DIR handle returned by fdopendir.
-                unsafe {
-                    libc::closedir(self.0);
-                }
-            }
-        }
-        let _entries = Entries(dir);
-        loop {
-            org_platform::fs::set_errno(0)?;
-            // SAFETY: this is a live directory stream; entry remains valid until next call.
-            let entry = unsafe { libc::readdir(dir) };
-            if entry.is_null() {
-                let e = io::Error::last_os_error();
-                return if e.raw_os_error() == Some(0) {
-                    Ok(())
-                } else {
-                    Err(e.into())
-                };
-            }
-            // SAFETY: `entry` is non-null from `readdir` on this live stream, and `d_name`
-            // is a NUL-terminated C string valid until the next `readdir` or `closedir`.
-            let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
-            if matches!(name.to_bytes(), b"." | b"..") {
-                continue;
-            }
-            visit(name.to_str().map_err(|_| Error::UnsafeInput)?)?;
-        }
+        Ok(())
     }
 }
 

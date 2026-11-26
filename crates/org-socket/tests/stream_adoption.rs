@@ -1,4 +1,4 @@
-//! Exercise the public helper with the production libc imports (no unit fault seam).
+//! Exercise the public helper with the production system calls (no unit fault seam).
 use org_socket::rights::connected_unix_stream;
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
@@ -9,13 +9,11 @@ use std::time::Duration;
 fn public_adoption_uses_real_syscalls_and_preserves_unique_ownership() {
     let (source, mut peer) = UnixStream::pair().unwrap();
     let raw = source.as_raw_fd();
-    // SAFETY: source owns raw; F_GETFD only queries descriptor flags.
-    let flags = unsafe { libc::fcntl(raw, libc::F_GETFD) };
+    let flags = org_platform::posix::descriptor_flags(raw).unwrap();
     assert_ne!(flags & libc::FD_CLOEXEC, 0);
     let mut adopted = connected_unix_stream(OwnedFd::from(source)).unwrap();
     assert_eq!(adopted.as_raw_fd(), raw);
-    // SAFETY: adopted owns the same live fd; F_GETFD only queries flags.
-    assert_eq!(unsafe { libc::fcntl(raw, libc::F_GETFD) }, flags);
+    assert_eq!(org_platform::posix::descriptor_flags(raw).unwrap(), flags);
     adopted.write_all(b"request").unwrap();
     let mut request = [0; 7];
     peer.read_exact(&mut request).unwrap();
@@ -85,8 +83,7 @@ fn assert_named_peer_closed(kind: &str) {
             (stream, peer)
         };
         let raw = stream.as_raw_fd();
-        // SAFETY: F_GETFD only queries the test-owned stream.
-        let flags = unsafe { libc::fcntl(raw, libc::F_GETFD) };
+        let flags = org_platform::posix::descriptor_flags(raw).unwrap();
         assert_ne!(flags & libc::FD_CLOEXEC, 0);
         // macOS returned EINVAL when configuring these peer-closed sockets.
         stream
@@ -100,8 +97,7 @@ fn assert_named_peer_closed(kind: &str) {
             raw,
             "{kind}: adoption duplicated the fd"
         );
-        // SAFETY: adopted owns the same live descriptor; F_GETFD only queries it.
-        assert_eq!(unsafe { libc::fcntl(raw, libc::F_GETFD) }, flags);
+        assert_eq!(org_platform::posix::descriptor_flags(raw).unwrap(), flags);
         let mut received = vec![0; pending.len()];
         adopted.read_exact(&mut received).unwrap();
         assert_eq!(received, pending, "{kind}: queued bytes changed");

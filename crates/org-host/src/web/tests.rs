@@ -1042,8 +1042,8 @@ fn a_running_request_never_keeps_the_web_process_alive() {
 
     let stopping = thread::spawn(move || drop(running));
     // Reaped: no process has the pid any more (a zombie still would).
-    // SAFETY: signal 0 only asks whether the pid exists.
-    let exists = || unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+    // Signal 0 only asks whether the pid exists.
+    let exists = || org_platform::posix::process_exists(pid as libc::pid_t);
     let until = Instant::now() + Duration::from_secs(5);
     while exists() && Instant::now() < until {
         thread::sleep(Duration::from_millis(5));

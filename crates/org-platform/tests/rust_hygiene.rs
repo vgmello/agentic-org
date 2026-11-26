@@ -7,7 +7,10 @@
 //!    at any depth) specifies a top-level `reason = "..."` unsuffixed string literal
 //!    with non-whitespace text.
 //! 2. `write_volatile` stays confined to the canonical secret-zeroing primitives so
-//!    workspace crates reuse `org_proto::zero_bytes` instead of duplicating `unsafe`.
+//!    workspace crates reuse `org_proto::zero_bytes` (which zeroes through `zeroize`) instead
+//!    of duplicating `unsafe`.
+//! 3. Unsafe code stays in the platform crates, and every other crate root forbids it
+//!    (`rust_hygiene/unsafe_code.rs`).
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -19,10 +22,10 @@ use proc_macro2::{Delimiter, Ident, Spacing, TokenStream, TokenTree};
 const BUILD_OUTPUT_MARKER: &str = "CACHEDIR.TAG";
 
 /// The only source files allowed to call `ptr::write_volatile` directly.
-const ALLOWED_WRITE_VOLATILE_PATHS: [&str; 2] = [
-    "crates/org-proto/src/token.rs",
-    "crates/org-platform-host/src/credentials/mod.rs",
-];
+const ALLOWED_WRITE_VOLATILE_PATHS: [&str; 1] = ["crates/org-platform-host/src/credentials/mod.rs"];
+
+#[path = "rust_hygiene/unsafe_code.rs"]
+mod unsafe_code;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Findings {

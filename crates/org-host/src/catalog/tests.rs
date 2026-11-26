@@ -144,8 +144,7 @@ fn an_office_json_that_isnt_a_regular_file_is_refused_and_left_alone() {
     fs::create_dir_all(offices.join(as_fifo)).unwrap();
     let fifo = offices.join(as_fifo).join(OFFICE_FILE_NAME);
     let fifo_c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
-    // SAFETY: a valid NUL-terminated path.
-    assert_eq!(unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) }, 0);
+    org_platform::posix::make_fifo(&fifo_c, 0o600).unwrap();
 
     for id in [as_dir, as_fifo] {
         let err = read_office_file(&offices.join(id).join(OFFICE_FILE_NAME)).unwrap_err();

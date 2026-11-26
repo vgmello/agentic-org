@@ -184,6 +184,9 @@ pub(super) const SPAWNS_SUSPENDED: bool = false;
 const POSIX_SPAWN_SETSID: libc::c_short = libc::POSIX_SPAWN_SETSID as libc::c_short;
 
 #[cfg(any(test, feature = "test-support"))]
+pub(super) use super::raw_spawn::spawn_raw;
+
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn posix_spawn_setsid() -> io::Result<libc::c_short> {
     Ok(POSIX_SPAWN_SETSID)
 }
@@ -354,6 +357,16 @@ pub(super) unsafe fn session_flags(
     let flags =
         i32::from(POSIX_SPAWN_SETSID) | libc::POSIX_SPAWN_SETSIGMASK | libc::POSIX_SPAWN_SETSIGDEF;
     Ok(flags)
+}
+
+/// The `Threads:` line of `/proc/self/status`.
+pub(super) fn thread_count() -> io::Result<usize> {
+    let status = std::fs::read_to_string("/proc/self/status")?;
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("Threads:"))
+        .and_then(|count| count.trim().parse().ok())
+        .ok_or_else(|| invalid("no thread count in /proc/self/status"))
 }
 
 pub(super) fn entropy(bytes: &mut [u8; 32]) -> io::Result<()> {
