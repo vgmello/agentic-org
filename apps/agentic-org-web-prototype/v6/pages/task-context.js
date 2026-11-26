@@ -169,12 +169,18 @@ function contextForTask(ctx) {
 const keyAttr = (key) => `data-key="${esc(key)}"`;
 const sel = (act, key) => `[data-stc="${act}"][data-key="${CSS.escape(key)}"]`;
 
-/* A line's files, each linking to its message in Chat (a new tab from the composer, so the draft stays). */
+/* A line's files by name, each with "Open source message" to the message in Chat that carries it (a new tab from the
+   composer, so the draft stays). */
 function lineFilesHtml(l, cls, newTab = false) {
   if (!l.files?.length) return "";
   const target = newTab ? ' target="_blank" rel="noopener"' : "";
-  const links = l.files.map((f) => `<a class="alink" href="${esc(f.href)}"${target}>${esc(f.name)}</a>`).join(", ");
-  return `<p class="${cls}">${ic("paperclip", "ic14")}<span><span class="sr-only">Attached: </span>${links}</span></p>`;
+  const one = (f) => `<span class="ctx-file"><span class="ctx-file-name">${esc(f.name)}</span> · <a class="alink" href="${esc(f.href)}"${target} aria-label="Open source message for ${esc(f.name)}">Open source message</a></span>`;
+  return `<p class="${cls}">${ic("paperclip", "ic14")}<span><span class="sr-only">Attached: </span>${l.files.map(one).join("")}</span></p>`;
+}
+/* "Show 6 messages · 1 file": a collapsed excerpt says what it carries. */
+function excerptCount(lines) {
+  const files = lines.reduce((n, l) => n + (l.files?.length || 0), 0);
+  return plural(lines.length, "message", "messages") + (files ? ` · ${plural(files, "file", "files")}` : "");
 }
 const lineText = (l) => (l.text ? `<p>${esc(l.text)}</p>` : "");
 function excerptLinesHtml(lines, id) {
@@ -185,7 +191,7 @@ function excerptControls(ctx, item, index) {
   const max = messageIndex(item), open = ctx.expanded.has(item.key), id = `stc-ctx-lines-${index}`;
   const step = (act, label, glyph, off) => `<button class="stc-ctx-step-btn" type="button" data-stc="${act}" ${keyAttr(item.key)} aria-label="${label}" aria-disabled="${off}">${glyph}</button>`;
   return `<div class="stc-ctx-tools">
-      <button class="stc-ctx-toggle" type="button" data-stc="ctx-expand" ${keyAttr(item.key)} aria-expanded="${open}" aria-controls="${id}">${ic(open ? "chev-down" : "chev-right", "ic14")}${open ? "Hide messages" : `Show ${plural(item.lines.length, "message", "messages")}`}</button>
+      <button class="stc-ctx-toggle" type="button" data-stc="ctx-expand" ${keyAttr(item.key)} aria-expanded="${open}" aria-controls="${id}">${ic(open ? "chev-down" : "chev-right", "ic14")}${open ? "Hide messages" : `Show ${excerptCount(item.lines)}`}</button>
       <span class="stc-ctx-step" role="group" aria-label="Earlier messages in the excerpt">
         ${step("ctx-fewer", "Include one fewer earlier message", "−", item.earlier <= 0)}
         <span class="stc-ctx-step-n">${plural(item.earlier, "earlier message", "earlier messages")}</span>
@@ -373,11 +379,11 @@ function sourceMessageLink(src) {
 /* A saved line's files: each still links its exact message, or names the file with "Message unavailable". */
 function detailFilesHtml(l) {
   if (!l.files?.length) return "";
-  const one = (f) => (linkOpens(f.href) ? `<a class="alink" href="${esc(f.href)}">${esc(f.name)}</a>` : `${esc(f.name)} ${unavailable("Message")}`);
-  return `<p class="work-ctx-files">${ic("paperclip", "ic14")}<span><span class="sr-only">Attached: </span>${l.files.map(one).join(", ")}</span></p>`;
+  const one = (f) => `<span class="ctx-file"><span class="ctx-file-name">${esc(f.name)}</span> ${linkOpens(f.href) ? `· <a class="alink" href="${esc(f.href)}" aria-label="Open source message for ${esc(f.name)}">Open source message</a>` : unavailable("Message")}</span>`;
+  return `<p class="work-ctx-files">${ic("paperclip", "ic14")}<span><span class="sr-only">Attached: </span>${l.files.map(one).join("")}</span></p>`;
 }
 function detailContextItem(c) {
-  const msgs = c.messages?.length ? `<details class="work-ctx-msgs"><summary>Show ${plural(c.messages.length, "message", "messages")}</summary>
+  const msgs = c.messages?.length ? `<details class="work-ctx-msgs"><summary>Show ${excerptCount(c.messages)}</summary>
       <ol role="list">${c.messages.map((l) => `<li><p class="work-ctx-line-h"><b>${esc(l.who)}</b><time>${esc(l.time)}</time></p>${lineText(l)}${detailFilesHtml(l)}</li>`).join("")}</ol>
     </details>` : "";
   const label = `${ic(KIND_ICON[c.kind] || "doc-check", "ic16")}<span>${esc(c.title)}</span>`;

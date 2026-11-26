@@ -19,24 +19,24 @@ function rowLead(ch) {
   if (ch.kind === "channel") return ic("hash", "ic16");
   return ch.kind === "dm" ? av(ch.with, 24) : ic("eye", "ic16");
 }
-function rowTrail(ch, unread) {
+function rowTrail(ch, unread, when = "") {
   const needs = openAsks(ch).length;
-  const dot = unread ? unreadDot : "";
+  const dot = (when ? `<time class="chat-row-when">${esc(when)}</time>` : "") + (unread ? unreadDot : "");
   if (needs) return dot + needsCount(needs);
   if (ch.kind !== "dm") return dot;
   const word = M[ch.with].kind === "person" ? "Person" : PRESENCE_WORD[presence(ch.with)];
   return (word ? `<span class="chat-row-word">${word}</span>` : "") + dot;
 }
 /* `why`: while finding, what matched when the name doesn't show it (a project, a task id, a message's words). */
-function chatLinkHtml(k, activeId, why = "") {
+function chatLinkHtml(k, activeId, why = "", when = "") {
   const ch = CH[k], unread = ch.unread && k !== activeId;
   const attrs = (k === activeId ? ' aria-current="page"' : "") + (unread ? ' class="is-unread"' : "");
   const unreadText = unread ? `<span class="sr-only">, ${plural(ch.unread, "unread message", "unread messages")}</span>` : "";
   const reason = why ? `<span class="chat-row-why"><span class="sr-only">, </span>${esc(why)}</span>` : "";
-  return `<li><a href="#/chat/${k}"${attrs}>${rowLead(ch)}<span class="chat-row-name">${esc(ch.kind === "channel" ? ch.name : chatTitle(ch))}${reason}</span>${unreadText}${rowTrail(ch, unread)}</a></li>`;
+  return `<li><a href="#/chat/${k}"${attrs}>${rowLead(ch)}<span class="chat-row-name">${esc(ch.kind === "channel" ? ch.name : chatTitle(ch))}${reason}</span>${unreadText}${rowTrail(ch, unread, when)}</a></li>`;
 }
 function groupHtml(kind, label, rows, activeId, q) {
-  if (kind === "a2a" && !q) return rows.length ? a2aSectionHtml(rows, activeId, (k) => chatLinkHtml(k, activeId)) : "";
+  if (kind === "a2a" && !q) return rows.length ? a2aSectionHtml(rows, activeId, (k, when) => chatLinkHtml(k, activeId, "", when)) : "";
   return rows.length ? `<h2>${label}</h2><ul>${rows.map((k) => chatLinkHtml(k, activeId, q ? matchReason(CH[k], q) : "")).join("")}</ul>` : "";
 }
 function recipientButton(k, act = "chat-to") {

@@ -3,7 +3,7 @@
    (one agent: every conversation it is in; two: that pair). */
 import { CH, M } from "../data.js";
 import { esc, ic, plural } from "../ui.js";
-import { activeToday, newestFirst } from "./chat-model.js";
+import { activeToday, lastActiveLabel, newestFirst } from "./chat-model.js";
 
 const a2a = { all: false, filter: false, agents: [], q: "", open: false, active: 0 };
 const MAX_PICKS = 2;
@@ -88,10 +88,13 @@ function pickedSummary() {
   return `<p class="chat-a2a-active"><span>${ic("filter", "ic14")}<span><span class="sr-only">Filtered to </span>${esc(pickedNames())}</span></span>
     <button class="btn ghost sm chat-a2a-clear" id="chat-a2a-clear" type="button" data-act="chat-a2a-clear" aria-label="Clear the agent filter">Clear</button></p>`;
 }
+/* The open pair, when older than the window, leads the section under its own label, so it stays in view. */
 function currentOutside(current, rowHtml) {
   if (!current) return "";
-  return `<p class="chat-a2a-window">Current conversation · outside 24 hours</p><ul>${rowHtml(current)}</ul>`;
+  return `<p class="chat-a2a-window chat-a2a-older">Older than 24h</p><ul>${rowHtml(current, lastActiveLabel(CH[current]))}</ul>`;
 }
+/* Widened (Show all) or filtered rows say when each pair last spoke; the last day's rows need no date. */
+const rowWhen = (k) => (a2a.all || a2a.agents.length ? lastActiveLabel(CH[k]) : "");
 function statusText(n) {
   if (!a2a.agents.length) return "";
   return `${plural(n, "conversation", "conversations")} with ${a2a.agents.map((k) => M[k].name).join(" and ")}`;
@@ -99,10 +102,10 @@ function statusText(n) {
 /* The section: heading with its filter, the rows, then Show all. `rowHtml(key)` renders one list row. */
 function a2aSectionHtml(keys, activeId, rowHtml) {
   const { rows, hidden, current } = visibleRows(keys, activeId);
-  const list = rows.length ? `<ul>${rows.map(rowHtml).join("")}</ul>` : emptyLine();
-  return `<div class="chat-sec-head" id="chat-a2a-head"><h2>Between agents</h2>${filterButton()}</div>${pickedSummary()}${windowLabel()}${filterPanel()}
+  const list = rows.length ? `<ul>${rows.map((k) => rowHtml(k, rowWhen(k))).join("")}</ul>` : emptyLine();
+  return `<div class="chat-sec-head" id="chat-a2a-head"><h2>Between agents</h2>${filterButton()}</div>${pickedSummary()}${currentOutside(current, rowHtml)}${windowLabel()}${filterPanel()}
     <p class="sr-only" role="status">${statusText(rows.length)}</p>
-    ${list}${currentOutside(current, rowHtml)}${showAllButton(keys.length, hidden)}`;
+    ${list}${showAllButton(keys.length, hidden)}`;
 }
 
 /* Clicks: each returns the id of the control that keeps focus after the list re-renders. Picking or removing an
