@@ -2227,7 +2227,7 @@ html[data-theme^="report"] .triage-queue {
 .triage-person strong { font-size: var(--fs-sm); font-weight: 600; }
 .triage-person time { margin-inline-start: auto; color: var(--gray-400); font-size: var(--fs-xs); }
 .triage-kind { display: inline-flex; align-items: center; gap: 4px; color: var(--gray-400); font-size: var(--fs-xs); }
-.triage-title { color: var(--white); font-size: var(--item-title-size); font-weight: 600; line-height: 1.44; padding-inline-start: 32px; }
+.triage-title { color: var(--white); font-size: var(--item-title-size); font-weight: var(--fw-item); line-height: 1.44; padding-inline-start: 32px; }
 .triage-meta { display: flex; flex-wrap: wrap; gap: 1px 8px; padding-inline-start: 32px; color: var(--gray-400); font-size: var(--fs-xs); }
 .triage-expiry { display: inline-flex; align-items: center; gap: 4px; color: var(--tone-warn-ink); }
 .triage-reading {
@@ -2279,7 +2279,7 @@ html[data-theme^="report"] .triage-queue {
 }
 .triage-from-member:not([data-preview-dismissed]):is(:hover, :focus-within) .triage-from-card { display: flex; }
 .triage-from-card strong { display: block; color: var(--white); font-size: var(--fs-base); font-weight: 600; }
-.triage-document h2 { font-size: var(--fs-xl); line-height: 1.22; letter-spacing: var(--ls-tight); overflow-wrap: anywhere; }
+.triage-document h2 { font-family: var(--font-display); font-size: var(--fs-xl); font-weight: var(--fw-display); line-height: 1.2; letter-spacing: var(--ls-display); font-optical-sizing: auto; overflow-wrap: anywhere; }
 .triage-document h3:not(.recommendation-label) { color: var(--white); font-size: var(--item-title-size); font-weight: 600; }
 .triage-description { max-width: 75ch; color: var(--gray-300); overflow-wrap: anywhere; }
 .triage-context, .triage-decision { display: grid; min-width: 0; gap: 12px; }

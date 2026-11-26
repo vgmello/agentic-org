@@ -14,7 +14,7 @@ import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRe
 import { endNavigationKeys, getNavigationKeys, handleNavigationKeys } from "./keyboard.js";
 import { pageSearchInput, render, route } from "./router.js";
 import { askTessInPanel, clearCompanionHistory, clearReadNotifications, closeCompanion, dismissCompanionContext, handleCompanionEscape, handleCompanionInput, isCompanionModal, markAllNotificationsRead, markNotificationRead, openTessPanel, toggleExpandCompanion, toggleNotificationRead, toggleTessPanel } from "./topbar-utils.js";
-import { ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, ORG_NAME_STORE, S, SR, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, applyCozyContrast, applyShortcuts, applyTheme, inTextField, overlayOpen, qs, setOrgName, showOrgName, toggleNavPinned, writeSingleKey } from "../state.js";
+import { ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, ORG_NAME_STORE, S, SR, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, applyCozyContrast, applyFontStyle, applyShortcuts, applyTheme, inTextField, overlayOpen, qs, setOrgName, showOrgName, toggleNavPinned, writeSingleKey } from "../state.js";
 import { spotQueue, toast } from "../ui.js";
 
 /* ---------------------------------------------------------------- actions */
@@ -143,10 +143,11 @@ function handleSetAction(t, v) {
     return;
   }
   const val = v === "true" ? true : v === "false" ? false : v;
-  const scope = k === "theme" ? t.closest("#main, #banner-ctl") : document;
+  const scope = (k === "theme" || k === "fontStyle") ? t.closest("#main, #banner-ctl") : document;
   S[k] = val;
   normalizeScopedWorkState(k, val);
   if (k === "theme") applyTheme(true);
+  if (k === "fontStyle") applyFontStyle(true);
   if (menuId === "menu-inbox-filter") resetInboxSelection();
   render(false);
   const again = menuId ? document.querySelector(`[aria-controls="${menuId}"]`) : scope?.querySelector(`[data-k="${k}"][data-v="${v}"]`);

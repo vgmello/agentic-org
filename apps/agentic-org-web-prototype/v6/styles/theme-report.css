@@ -268,13 +268,13 @@ html[data-theme^="report"] .hb-eyebrow {
   color: #64748B; letter-spacing: .10em; font-weight: 600;
 }
 html[data-theme^="report"] .hb-title {
-
-  font-weight: 700; letter-spacing: -.038em; line-height: 1.18; color: #0B101B;
+  font-family: var(--font-display);
+  font-weight: var(--fw-display); letter-spacing: var(--ls-display); line-height: 1.18; color: #0B101B;
 }
 html[data-theme^="report"] .hb-title em {
-  color: #0B101B; font-style: normal;
+  color: #0B101B; font-style: var(--em-style, italic); font-weight: 400;
   text-decoration: underline; text-decoration-color: var(--tone-bad);
-  text-decoration-thickness: 2.5px; text-underline-offset: 5px;
+  text-decoration-thickness: 1.5px; text-underline-offset: 6px;
 }
 html[data-theme^="report"] .hb-title em.calm { text-decoration-color: var(--tone-accent); }
 html[data-theme^="report"] .hb-title em.ok { text-decoration-color: var(--tone-ok); }
@@ -302,7 +302,7 @@ html[data-theme^="report"] .hb-pillar-name {
 }
 html[data-theme^="report"] .hb-pillar-name .ic { color: #64748B; }
 html[data-theme^="report"] .hb-pillar-num {
- line-height: 1.05; font-weight: 700; letter-spacing: -.045em; color: #0B101B;
+  line-height: 1.05; font-weight: var(--fw-kpi); letter-spacing: -.04em; color: #0B101B;
 }
 html[data-theme^="report"] .hb-pillar-pill {
   border-radius: 3px; font-weight: 600; letter-spacing: .01em;
@@ -328,8 +328,9 @@ html[data-theme^="report"] .hb-rep-sec-hd {
   margin-bottom: 4px;
 }
 html[data-theme^="report"] .hb-rep-sec-title {
-  font-size: var(--section-title-size); line-height: 1.25; font-weight: 700;
-  letter-spacing: -.028em; color: #0B101B;
+  font-family: var(--font-display);
+  font-size: var(--section-title-size); line-height: 1.24; font-weight: var(--fw-heading);
+  letter-spacing: var(--ls-display); font-optical-sizing: auto; color: #0B101B;
 }
 
 /* Section 02: Open 2-Column Executive Stage (Key Decision | Briefing Log) */
@@ -426,8 +427,9 @@ html[data-theme^="report"] .hb-catchup {
 }
 html[data-theme^="report"] .hb-cu-hd { align-items: baseline; margin-bottom: 4px; }
 html[data-theme^="report"] .hb-cu-title {
-  font-size: var(--section-title-size); line-height: 1.25; font-weight: 700;
-  letter-spacing: -.028em; text-transform: none; color: #0B101B;
+  font-family: var(--font-display);
+  font-size: var(--section-title-size); line-height: 1.24; font-weight: var(--fw-heading);
+  letter-spacing: var(--ls-display); font-optical-sizing: auto; text-transform: none; color: #0B101B;
 }
 html[data-theme^="report"] .hb-cu-title .ic { display: none; }
 html[data-theme^="report"] .hb-cu-window {
@@ -496,8 +498,9 @@ html[data-theme^="report"] .hb-proj-sec {
 html[data-theme^="report"] .hb-proj-head { align-items: baseline; }
 html[data-theme^="report"] .hb-proj-head h2,
 html[data-theme^="report"] .hb-proj-title {
-  font-size: var(--section-title-size); line-height: 1.25; font-weight: 700;
-  letter-spacing: -.028em; text-transform: none; color: #0B101B;
+  font-family: var(--font-display);
+  font-size: var(--section-title-size); line-height: 1.24; font-weight: var(--fw-heading);
+  letter-spacing: var(--ls-display); font-optical-sizing: auto; text-transform: none; color: #0B101B;
 }
 html[data-theme^="report"] .hb-proj-head .link,
 html[data-theme^="report"] .hb-inline-act { font-weight: 600; }
@@ -564,8 +567,9 @@ html[data-theme^="report"] .hb-time {
   background: transparent;
 }
 html[data-theme^="report"] .hb-time-title {
-  font-size: var(--section-title-size); line-height: 1.25; font-weight: 700;
-  letter-spacing: -.028em; text-transform: none; color: #0B101B;
+  font-family: var(--font-display);
+  font-size: var(--section-title-size); line-height: 1.24; font-weight: var(--fw-heading);
+  letter-spacing: var(--ls-display); font-optical-sizing: auto; text-transform: none; color: #0B101B;
 }
 html[data-theme^="report"] .hb-time-unit { font-family: var(--font-mono); color: #526074; }
 html[data-theme^="report"] .hb-time-bar {

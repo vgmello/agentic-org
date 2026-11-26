@@ -1,7 +1,7 @@
 import { M, OFFICES, officeName } from "../data.js";
 import { agentSetupFields } from "./teams.js";
 import { searchResults } from "../shell/cmdk.js";
-import { ARCHIVE_DAY_OPTIONS, CHAT_SEND_SHORTCUTS, S, THEME_OPTIONS, getOrgName } from "../state.js";
+import { ARCHIVE_DAY_OPTIONS, CHAT_SEND_SHORTCUTS, FONT_OPTIONS, S, THEME_OPTIONS, getOrgName } from "../state.js";
 import { SEP, av, avStack, back, empty, esc, hdr, ic, mlink, pill, plural, presPill, seg } from "../ui.js";
 
 const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["processes", "Processes", "refresh"], ["access", "Members and access", "key"], ["updates", "Updates", "download"], ["appearance", "Appearance", "adjustments"]];
@@ -61,7 +61,7 @@ function pageSettings(sec = "general", sub) {
 }
 function pagePreferences() {
   return settingsFrame("appearance", hdr("Your preferences", ""), `<section class="section" aria-labelledby="h-theme"><div class="sec-h"><h2 id="h-theme">Appearance</h2></div>
-    <div class="pref theme-pref">${seg("theme", THEME_OPTIONS, "Theme")}
+    <div class="pref theme-pref">${seg("theme", THEME_OPTIONS, "Theme")}${seg("fontStyle", FONT_OPTIONS, "Typography")}
       ${S.theme === "cozy" ? `<div class="pref theme-contrast">
         <div><p class="lbl" id="cozy-contrast-label">AA Contrast</p><p class="muted help" id="cozy-contrast-help">Makes glass surfaces more opaque and text easier to read.</p></div>
         <button class="switch" type="button" role="switch" data-act="cozy-contrast" aria-checked="${S.cozyContrast}" aria-labelledby="cozy-contrast-label" aria-describedby="cozy-contrast-help"></button>

@@ -3,7 +3,7 @@ import { fitTextarea } from "../pages/work.js";
 import { CMDK, closeCmdk } from "./cmdk.js";
 import { own } from "./router.js";
 import { getRunningJobs, unreadNotificationsCount } from "./topbar-utils.js";
-import { S, THEME_OPTIONS, applyNavCollapsed, sidebarHasOpenMenu } from "../state.js";
+import { FONT_OPTIONS, S, THEME_OPTIONS, applyNavCollapsed, sidebarHasOpenMenu } from "../state.js";
 import { effectiveHealth, esc, ic, seg, unhandled } from "../ui.js";
 
 /* ---------------------------------------------------------------- sidebar */
@@ -130,8 +130,9 @@ window.addEventListener("resize", () => fitTextarea(document.getElementById("com
 function renderBanner(r0) {
   const el = document.getElementById("banner-ctl"); if (!el) return;
   const themeCtl = seg("theme", THEME_OPTIONS, "Theme");
+  const fontCtl = seg("fontStyle", FONT_OPTIONS, "Typography");
   const homeCtl = r0 === "home" ? seg("homeState", [["filled", "Filled"], ["empty", "Empty"], ["loading", "Loading"], ["error", "Error"]], "Home sections") : "";
-  el.innerHTML = themeCtl + homeCtl;
+  el.innerHTML = themeCtl + fontCtl + homeCtl;
 }
 
 let stopHomeProjectHint;

@@ -568,7 +568,7 @@ select.field option { background: #0E1629; color: #F8FAFC; }
 .hb-eyebrow-meta a:hover { color: #E2E8F0; }
 .hb-eyebrow-meta .warn-dot { color: var(--tone-bad-ink); }
 .hb-title { color: var(--hb-ink); }
-.hb-title em { font-style: normal; color: var(--tone-warn-ink); }
+.hb-title em { font-style: var(--em-style, italic); font-weight: 400; color: var(--tone-warn-ink); }
 .hb-title em.calm { color: var(--tone-accent-ink); }
 .hb-title em.ok { color: var(--tone-ok-ink); }
 .hb-pills { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
@@ -624,7 +624,8 @@ a.hb-pillar-hero:hover { background: rgba(186, 222, 255, .05); }
 .hb-pillar-valrow { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .hb-pillar-primary { display: inline-flex; align-items: baseline; gap: 7px; min-width: 0; }
 .hb-pillar-num {
-  font-size: 2.125rem; line-height: 1.05; font-weight: 700;
+  font-family: var(--font-sans);
+  font-size: var(--fs-kpi); line-height: 1.05; font-weight: var(--fw-kpi);
   letter-spacing: -.04em; color: var(--hb-ink); font-variant-numeric: tabular-nums;
 }
 .hb-pillar-unit { font-size: var(--fs-sm); font-weight: 500; color: var(--hb-muted); white-space: nowrap; }
@@ -752,8 +753,10 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 .hb-spot-who .who { font-weight: 600; color: var(--hb-ink); }
 .hb-spot-who a:hover { color: var(--hb-ink); text-decoration: underline; }
 .hb-spot-title {
-  font-size: clamp(1.125rem, 1.6vw, 1.375rem);
-  line-height: 1.3; font-weight: 600; letter-spacing: -.02em; color: var(--hb-ink);
+  font-family: var(--font-display);
+  font-size: clamp(1.25rem, 1.8vw, 1.5rem);
+  line-height: 1.26; font-weight: var(--fw-heading); letter-spacing: var(--ls-display); color: var(--hb-ink);
+  font-optical-sizing: auto;
   max-width: 48ch;
 }
 .hb-spot-rec {
@@ -1144,7 +1147,7 @@ a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 
 .hb-proj-sec { display: flex; flex-direction: column; gap: 14px; }
 .hb-proj-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .hb-proj-head-l { display: flex; align-items: baseline; gap: 10px; }
-.hb-proj-head h2 { font-size: var(--fs-md); font-weight: 600; letter-spacing: -.01em; color: var(--hb-ink); }
+.hb-proj-head h2 { font-family: var(--font-display); font-size: var(--section-title-size); font-weight: var(--fw-heading); letter-spacing: var(--ls-display); font-optical-sizing: auto; color: var(--hb-ink); }
 .hb-proj-head span { font-size: var(--fs-sm); color: var(--hb-muted); }
 .hb-proj-head h2 span { font-size: inherit; color: inherit; }
 html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) .hb-proj-head-l {

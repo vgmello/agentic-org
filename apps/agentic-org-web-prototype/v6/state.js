@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------------- state */
-const S = { theme: "ocean", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
+const S = { theme: "ocean", fontStyle: "editorial", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
   scopedWorkView: "all", scopedWorkLayout: "list", scopedWorkStatus: "all", scopedWorkProject: "all", scopedWorkTeam: "all", scopedWorkGroup: "status", scopedWorkSubgroup: "none", scopedWorkSort: "default", scopedWorkOrder: "asc",
   actView: "assembly", actProject: "all", actFilter: "all", actPanel: null,
   projectActView: "assembly", projectActFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
@@ -56,6 +56,35 @@ function applyTheme(remember = false) {
   }
 }
 applyTheme();
+const FONT_STORE = "agentic-org.v6.fontStyle";
+const FONT_OPTIONS = [
+  ["editorial", "Editorial"],
+  ["swiss", "Swiss"],
+  ["humanist", "Humanist"],
+];
+const VALID_FONTS = new Set(FONT_OPTIONS.map(([value]) => value));
+const urlFont = new URLSearchParams(location.search).get("font");
+if (VALID_FONTS.has(urlFont)) {
+  S.fontStyle = urlFont;
+} else {
+  try {
+    const savedFont = localStorage.getItem(FONT_STORE);
+    if (VALID_FONTS.has(savedFont)) S.fontStyle = savedFont;
+  } catch (e) {}
+}
+function applyFontStyle(remember = false) {
+  const f = VALID_FONTS.has(S.fontStyle) ? S.fontStyle : "editorial";
+  S.fontStyle = f;
+  document.documentElement.dataset.font = f;
+  if (!remember) return;
+  try { localStorage.setItem(FONT_STORE, f); } catch (e) {}
+  const url = new URL(location.href);
+  if (url.searchParams.has("font")) {
+    url.searchParams.delete("font");
+    history.replaceState(history.state, "", url);
+  }
+}
+applyFontStyle();
 const INBOX_DIVIDERS_STORE = "agentic-org.v6.inboxDividers";
 S.inboxDividers = false;
 try { S.inboxDividers = localStorage.getItem(INBOX_DIVIDERS_STORE) === "1"; } catch (e) {}
@@ -167,6 +196,7 @@ export {
   CHAT_SEND_SHORTCUTS,
   CHAT_SEND_STORE,
   COZY_CONTRAST_STORE,
+  FONT_OPTIONS,
   INBOX_DIVIDERS_STORE,
   ORG_NAME_STORE,
   S,
@@ -177,6 +207,7 @@ export {
   WORK_DIVIDERS_STORE,
   WORK_SUBTASKS_STORE,
   applyCozyContrast,
+  applyFontStyle,
   applyNavCollapsed,
   applyShortcuts,
   applyTheme,
