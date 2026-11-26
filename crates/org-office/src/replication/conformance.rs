@@ -1,8 +1,9 @@
 //! Engine-independent ADR-0018 `ENG-3` replication conformance suite (`TASK-52` / `FC-145`).
 //!
 //! Invoked identically against BOTH [`crate::replication::memory::MemoryReplicationStore`] and
-//! [`crate::store::sqlite::replication::SqliteReplicationStore`] (including durable restart and
-//! `runtime/` projection delete-and-rebuild verification on SQLite).
+//! the durable store `crate::replication::durable::DurableReplicationStore`, unprojected (the
+//! memory engine) and with the SQLite projection (including durable restart and `runtime/`
+//! projection delete-and-rebuild verification on SQLite).
 
 use std::sync::Arc;
 

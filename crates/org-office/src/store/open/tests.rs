@@ -8,9 +8,10 @@ use org_store::{
     testkit::{
         id, identity, FakeCustody, FamilyScript, Faults, FixedClock, MemoryEngine, Probe, Rng,
     },
-    Actor, AnchorFacts, Opening, Outcome, Reply, Store, StoreError,
+    Actor, AnchorFacts, Id, Opening, Outcome, Reply, Store, StoreError,
 };
 
+use super::office_store::{memory_engine, sqlite_engine};
 use super::*;
 use crate::office_local::{testkit::ca_material, CaMaterial};
 use crate::organization::{
@@ -19,8 +20,10 @@ use crate::organization::{
     records::{Employee, Organization, Team, TeamAllocation, TeamCounter},
     testkit::{creation_command, OrganizationScript, Step, CREATION_AT},
 };
+use crate::store::sqlite::SqliteEngine;
 
 mod ack;
+mod companions;
 mod crashes;
 mod local;
 mod messaging;

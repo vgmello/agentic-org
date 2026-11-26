@@ -1,6 +1,6 @@
 //! The rules of a release directory, pure: each decision over plain facts.
 //!
-//! The GNU/Linux adapter supplies the facts from live probes (`linux/release.rs`) and
+//! The GNU/Linux adapter supplies the facts from live probes (`linux/release/`) and
 //! is the only caller; the decisions are compiled and tested on every target. The
 //! rules are stated in `release.rs`.
 
