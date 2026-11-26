@@ -339,3 +339,7 @@ html[data-theme^="graphite"] .assembly-progress-bar::-moz-progress-bar { backgro
 html[data-theme^="graphite"] :is(.assembly-chip, .assembly-legend span, .activity-stage-bar i)[data-stage="agents"] { --stage-color: var(--graphite-data); --stage-soft: color-mix(in srgb, var(--graphite-data) 14%, transparent); }
 .insight-card-head .insight-select { width: auto; flex: none; justify-self: end; align-self: start; }
 html[data-theme^="graphite"] :is(.project-throughput-plot > div, .activity-throughput i) { background: linear-gradient(to bottom, var(--graphite-data), var(--graphite-data-deep)); }
+/* Graphite queue stage: slate blue instead of neutral grey, so the stage bar reads as data like the rest of the palette */
+html[data-theme="graphite"] { --graphite-queue: #8aa0c4; }
+html[data-theme="graphite-light"] { --graphite-queue: #5d769c; }
+html[data-theme^="graphite"] :is(.assembly-chip, .assembly-legend span, .activity-stage-bar i)[data-stage="queue"] { --stage-color: var(--graphite-queue); --stage-soft: color-mix(in srgb, var(--graphite-queue) 14%, transparent); }
