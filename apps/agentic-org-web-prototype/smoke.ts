@@ -1220,6 +1220,10 @@ async function checkShortScreens(page: Page) {
   const jump = page.locator('[data-act="chat-latest-jump"]');
   const newestBelow = () => page.evaluate(() => { const s = document.querySelector(".chmain .msgs[data-ch]")!; return [...s.querySelectorAll(":scope > .msg")].pop()!.getBoundingClientRect().bottom > s.getBoundingClientRect().bottom + 1; });
   assert.equal(await jump.isVisible(), await newestBelow(), "Jump to latest shows exactly when the newest message is below the fold");
+  if (await jump.isVisible()) {
+    const [stream, button] = await Promise.all([page.locator(".chmain .msgs[data-ch]").boundingBox(), jump.boundingBox()]);
+    assert.ok(stream && button && button.y >= stream.y + stream.height - 1, "On phones Jump to latest is its own row, never over the stream");
+  }
   await page.evaluate(() => { document.querySelector(".chmain .msgs[data-ch]")!.scrollTop = 0; });
   await jump.waitFor();
   await jump.click();

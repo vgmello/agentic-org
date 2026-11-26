@@ -277,6 +277,9 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
   /* Earlier asks: a row of its own above the stream, never over a message. */
   .chat-asks-jump { height: auto; padding: 0 var(--gutter, 16px); }
   .chat-asks-jump .btn { position: static; transform: none; width: 100%; max-width: none; margin-block: 8px 0; justify-content: center; }
+  /* Jump to latest: likewise a row of its own under the stream, never over a card's actions. */
+  .chat-latest-jump { height: auto; padding: 0 var(--gutter, 16px); }
+  .chat-latest-jump .btn { position: static; transform: none; width: 100%; margin-block: 8px 0; justify-content: center; }
   /* The title gets its own full row; context moves behind Details. */
   #main .chat > .chhead { grid-template-columns: var(--control-height) auto minmax(0, 1fr) auto; grid-template-areas: "menu list . actions" "title title title title" "details details details details"; gap: 4px; row-gap: 2px; }
   .chat .chat-context { display: none; }
