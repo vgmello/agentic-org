@@ -1,8 +1,7 @@
-//! Inbound relay entry point: the outcome types, and the parse, validation and assembly of a
-//! relayed delta before it is applied.
+//! Inbound relay entry point: the parse, validation and assembly of a relayed delta before it is
+//! applied.
 
 use org_store::{DurablePath, Id, Outcome};
-use serde::{Deserialize, Serialize};
 
 use crate::error::OfficeError;
 use crate::office::satellite::placement::load_placement_context;
@@ -14,67 +13,9 @@ use super::inbound_close::{
 };
 use super::inbound_handoff::apply_relayed_handoff_accept;
 use super::inbound_message::{ApplyRelayedConversationOnlyOp, ApplyRelayedMessageOp};
-use super::outbound::message_expires_at_ms;
-
-/// Structured answer summary returned when an inbound relayed reply closes a local ask whose
-/// asker is an active agent owned by this office (`TASK-52` P6-#2).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RelayedAskAnswer {
-    pub ask_id: String,
-    pub asker_id: String,
-    pub question_summary: String,
-    pub answer_summary: String,
-}
-
-/// Structured withdrawal summary returned when an inbound relayed withdrawal closes a local ask
-/// whose asker is an active agent owned by this office (`TASK-52` P13-#4).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RelayedAskWithdrawal {
-    pub ask_id: String,
-    pub asker_id: String,
-}
-
-/// Exact wake action derived for one local active agent recipient of a relayed message.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RelayedRecipientWake {
-    pub employee_id: String,
-    pub kind: String,
-}
-
-/// Summary of a durably committed inbound relayed native message so the destination office can
-/// derive and deduplicate local agent wakes, resume suspended required askers, and notify local
-/// waiters/live streams (`TASK-52` P4-#8 / P6-#2, `TASK-117`).
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct RelayedMessageOutcome {
-    pub message_id: String,
-    pub conversation_id: String,
-    pub sender_id: String,
-    pub sender_name: String,
-    pub sender_is_person: bool,
-    pub is_dm: bool,
-    #[serde(default)]
-    pub inserted: bool,
-    #[serde(default)]
-    pub conversation_kind: Option<org_proto::chat::ConversationKind>,
-    pub summary: String,
-    pub local_agent_recipients: Vec<String>,
-    #[serde(default)]
-    pub local_recipient_wakes: Vec<RelayedRecipientWake>,
-    #[serde(default)]
-    pub local_delivered_headers: Vec<org_proto::msg::MessageHeader>,
-    #[serde(default)]
-    pub answered_ask: Option<RelayedAskAnswer>,
-    #[serde(default)]
-    pub withdrawn_ask: Option<RelayedAskWithdrawal>,
-    #[serde(default)]
-    pub closed_ask_id: Option<String>,
-    #[serde(default)]
-    pub closed_ask_reason: Option<String>,
-    #[serde(default)]
-    pub handoff_accepted: bool,
-    #[serde(skip)]
-    pub delivered_message: Option<crate::messaging::records::MessageRecord>,
-}
+use super::types::{
+    message_expires_at_ms, ParsedHandoffAccept, ParsedOriginAskClose, RelayedMessageOutcome,
+};
 
 impl Office {
     /// Validates and atomically applies an inbound relayed native message (with optional new
@@ -97,26 +38,10 @@ struct ParsedRelayedMessage {
     msg: crate::messaging::records::MessageRecord,
 }
 
-pub(super) struct ParsedOriginAskClose {
-    pub(super) conv: Option<crate::messaging::records::ConversationRecord>,
-    pub(super) ask_msg: Option<crate::messaging::records::MessageRecord>,
-    pub(super) cid: Id,
-    pub(super) emp_id: Id,
-    pub(super) ask_id: String,
-    pub(super) answer: crate::messaging::records::ParticipantAnswerFile,
-}
-
 struct ParsedOriginAskRecovery {
     conv: Option<crate::messaging::records::ConversationRecord>,
     cid: Id,
     ask_msg: crate::messaging::records::MessageRecord,
-}
-
-pub(super) struct ParsedHandoffAccept {
-    pub(super) cid: Id,
-    pub(super) emp_id: Id,
-    pub(super) message_id: String,
-    pub(super) answer: crate::messaging::records::ParticipantAnswerFile,
 }
 
 enum ParsedRelayedDelta {

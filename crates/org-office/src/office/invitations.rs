@@ -9,7 +9,7 @@ use org_pki::Zeroizing;
 use org_proto::{ApiError, ErrorCode};
 use serde::{Deserialize, Serialize};
 
-use super::{satellite::tls_dir, Office};
+use super::{tls_dir, Office};
 use crate::{
     error::OfficeError,
     model::OfficeRole,
@@ -29,9 +29,6 @@ pub use peers::{
     PeerSessionGuard, RelayAdmission,
 };
 pub use removal::promote_pending_removed_origin_withdrawals;
-pub(crate) use removal::{
-    is_satellite_office_removed_locked, removed_satellite_offices, removed_satellite_offices_locked,
-};
 
 const MAX_WRONG_CHECK_CODE_ATTEMPTS: u32 = 3;
 const DEFAULT_INVITATION_TTL_SECS: u64 = 30 * 60;
@@ -279,6 +276,44 @@ fn save_revocations(office: &Office, rev: &RevocationsFile) -> Result<(), Office
     private_dir_synced(&office.durable, &dir).map_err(OfficeError::storage)?;
     let bytes = serde_json::to_vec_pretty(rev).map_err(OfficeError::storage)?;
     write_private_atomic(&dir.join("revocations.v1.json"), &bytes).map_err(OfficeError::storage)
+}
+
+fn is_satellite_office_removed(office: &Office, office_id: &str) -> Result<bool, OfficeError> {
+    let _guard = office
+        .federation_io_lock
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    is_satellite_office_removed_locked(office, office_id)
+}
+
+/// Checks `removed_offices` fail-closed when the caller already holds `office.federation_io_lock`.
+pub(crate) fn is_satellite_office_removed_locked(
+    office: &Office,
+    office_id: &str,
+) -> Result<bool, OfficeError> {
+    Ok(removed_satellite_offices_locked(office)?.contains(office_id))
+}
+
+/// Loads all permanently removed satellite office IDs fail-closed when `office.federation_io_lock` is held.
+pub(crate) fn removed_satellite_offices_locked(
+    office: &Office,
+) -> Result<BTreeSet<String>, OfficeError> {
+    // Only HQ maintains the local CA `revocations.v1.json` store; satellites learn enrolled
+    // offices from HQ's replicated org projection and store `org-ca.v1.der` without a local
+    // revocations file (`TASK-117`). Keep HQ strictly fail-closed via `load_revocations`.
+    if office.info.role == crate::OfficeRole::Satellite {
+        return Ok(BTreeSet::new());
+    }
+    Ok(load_revocations(office)?.removed_offices)
+}
+
+/// Loads all permanently removed satellite office IDs fail-closed, acquiring `office.federation_io_lock`.
+pub(crate) fn removed_satellite_offices(office: &Office) -> Result<BTreeSet<String>, OfficeError> {
+    let _guard = office
+        .federation_io_lock
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    removed_satellite_offices_locked(office)
 }
 
 fn require_hq_owner(office: &Office, actor_member_id: &str) -> Result<(), ApiError> {

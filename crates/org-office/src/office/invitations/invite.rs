@@ -10,12 +10,12 @@ use org_proto::{ApiError, ErrorCode};
 use crate::error::OfficeError;
 use crate::office::Office;
 
-use super::removal::{is_satellite_office_removed, is_satellite_office_removed_locked};
 use super::tls::ensure_hq_tls_identity_locked;
 use super::{
-    load_invitations, require_hq_owner, save_invitations, CreateInvitationParams,
-    CreateInvitationResult, InvitationPollStatus, InvitationStatus, InvitationSummaryView,
-    StoredInvitation, DEFAULT_INVITATION_TTL_SECS, MAX_INVITATION_TTL_SECS,
+    is_satellite_office_removed, is_satellite_office_removed_locked, load_invitations,
+    require_hq_owner, save_invitations, CreateInvitationParams, CreateInvitationResult,
+    InvitationPollStatus, InvitationStatus, InvitationSummaryView, StoredInvitation,
+    DEFAULT_INVITATION_TTL_SECS, MAX_INVITATION_TTL_SECS,
 };
 
 impl Office {

@@ -14,7 +14,7 @@ use crate::messaging::{
 };
 use crate::organization::records::Employee;
 
-use super::channels::effective_auto_members;
+use super::auto_channels::effective_auto_members;
 use super::conversations::all_conversations_including_auto;
 use super::recipients::upsert_participant_snapshot;
 use super::send::{decide_chat_send, ChatSendCommitted};

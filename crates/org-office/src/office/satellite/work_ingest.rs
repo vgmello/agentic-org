@@ -5,7 +5,7 @@ use org_store::{DurablePath, Id};
 use crate::error::OfficeError;
 use crate::office::{storage, Office};
 
-use super::replication::is_immutable_state_path;
+use super::is_immutable_state_path;
 
 pub(super) fn validate_work_file_paths(
     files: &[(String, Option<Vec<u8>>)],

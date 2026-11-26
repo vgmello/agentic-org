@@ -8,18 +8,19 @@ use org_proto::{ApiError, ErrorCode};
 use serde_json::json;
 
 use crate::budgets::eval::{apply_extend_once, ExtendOnceRequest};
-use crate::budgets::{BudgetAggregate, BudgetPolicyVersion};
+use crate::budgets::BudgetPolicyVersion;
 use crate::error::OfficeError;
 use crate::office::Office;
 use crate::time::format_rfc3339_ms;
 
 use super::authority::require_budget_actor;
-use super::evaluation::{evaluate_in_memory, period_watermark_regressed, save_budget_aggregate};
-use super::queries::render_budget_view;
+use super::evaluation::{evaluate_in_memory, period_watermark_regressed, render_budget_view};
 use super::receipts::invalid_op_id;
-use super::set::push_budget_event;
-use super::stop::{ensure_held_task_blocked, reconcile_pending_stop};
-use super::{check_operation_replay, request_fingerprint};
+use super::reconcile::{ensure_held_task_blocked, reconcile_pending_stop};
+use super::{
+    check_operation_replay, mark_open_periods_kept_paused, push_budget_event, request_fingerprint,
+    save_budget_aggregate,
+};
 
 pub(super) fn op_budget_clear(
     office: &Office,
@@ -262,21 +263,4 @@ pub(super) fn op_budget_keep_paused(
         budget: render_budget_view(office, &agg, true)?,
         replayed: false,
     }))
-}
-
-pub(super) fn mark_open_periods_kept_paused(agg: &mut BudgetAggregate) {
-    for p in &mut agg.periods {
-        if p.state == "open" {
-            p.kept_paused = true;
-        }
-    }
-}
-
-pub(super) fn resolve_reached_notices(agg: &mut BudgetAggregate, now_utc: &str) {
-    for n in &mut agg.notices {
-        if n.kind == "budget_reached" && n.delivery_state != "resolved" {
-            n.delivery_state = "resolved".into();
-            n.resolved_at = Some(now_utc.to_owned());
-        }
-    }
 }

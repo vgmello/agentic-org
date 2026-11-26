@@ -10,33 +10,6 @@ use crate::organization::records::{Employee, EmployeeKind};
 
 use super::{ResolvedTarget, PERSON_ONLY_MSG};
 
-pub(super) fn collect_employee_kinds(
-    office: &Office,
-    agg: &BudgetAggregate,
-) -> Result<Vec<(String, &'static str)>, OfficeError> {
-    let mut ids = std::collections::BTreeSet::new();
-    ids.extend(agg.budget.agent_id.iter().cloned());
-    ids.extend(agg.budget.time_zone_subject_ref.iter().cloned());
-    for v in &agg.versions {
-        ids.insert(v.changed_by_id.clone());
-        ids.extend(v.time_zone_subject_ref.iter().cloned());
-    }
-    ids.extend(agg.events.iter().filter_map(|e| e.actor_id.clone()));
-    ids.extend(agg.notices.iter().filter_map(|n| n.recipient_id.clone()));
-    if let Some(intent) = &agg.pending_stop {
-        ids.insert(intent.actor_id.clone());
-    }
-    let mut out = Vec::with_capacity(ids.len());
-    for id in ids {
-        let kind = match office.load_employee(&id)? {
-            Some(emp) if emp.kind == EmployeeKind::Agent => "agent",
-            _ => "person",
-        };
-        out.push((id, kind));
-    }
-    Ok(out)
-}
-
 pub(super) fn resolve_budget_target(
     office: &Office,
     params: &BudgetSetParams,

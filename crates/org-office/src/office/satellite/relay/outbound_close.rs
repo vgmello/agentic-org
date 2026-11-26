@@ -8,7 +8,7 @@ use crate::office::satellite::placement::PlacementContext;
 use crate::office::satellite::replication::OrgDeltaPayload;
 use crate::office::{storage, Office};
 
-use super::outbound::{PendingMessageJournalEntry, ReadConversationMembersOp, ReadConversationOp};
+use super::types::{PendingMessageJournalEntry, ReadConversationMembersOp, ReadConversationOp};
 
 struct ReadMessageOp {
     ask_id: String,

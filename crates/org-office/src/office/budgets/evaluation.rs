@@ -10,9 +10,8 @@ use crate::error::OfficeError;
 use crate::office::Office;
 use crate::time::format_rfc3339_ms;
 
-use super::authority::collect_employee_kinds;
-use super::queries::render_budget_view;
-use super::stop::{ensure_held_task_blocked, reconcile_pending_stop};
+use super::reconcile::{ensure_held_task_blocked, reconcile_pending_stop};
+use super::save_budget_aggregate;
 
 pub(in crate::office) fn op_reevaluate_for_record(
     office: &Office,
@@ -268,10 +267,17 @@ pub(super) fn evaluate_and_save_budget(
     Ok(outcome)
 }
 
-pub(super) fn save_budget_aggregate(
+pub(super) fn render_budget_view(
     office: &Office,
     agg: &BudgetAggregate,
-) -> Result<Result<(), ApiError>, OfficeError> {
-    let emp_kinds = collect_employee_kinds(office, agg)?;
-    office.budgets.save_aggregate(agg, &emp_kinds)
+    amounts_visible: bool,
+) -> Result<BudgetView, OfficeError> {
+    let mut view = agg.to_view(amounts_visible);
+    if view.can_extend_once {
+        let cov = office.accounting.coverage_summary(&office.info.org_id)?;
+        if cov.incomplete_streams > 0 || period_watermark_regressed(office, agg)? {
+            view.can_extend_once = false;
+        }
+    }
+    Ok(view)
 }

@@ -20,6 +20,7 @@ mod accounting;
 #[cfg(test)]
 mod accounting_budget_tests;
 mod budgets;
+mod companions;
 mod creation;
 mod folder;
 mod git;
@@ -56,6 +57,7 @@ use std::{
 
 use org_store::{Clock, Files, Id, OfficeIdentity, StoreError, SystemClock, WriterAuthority};
 
+use self::companions::{open_companion_stores, CompanionOpenSpec};
 pub use self::invitations::{
     ack_message_relay_and_enqueue_receipt_checked, admit_relay_item_if_active, is_peer_revoked,
     promote_pending_removed_origin_withdrawals, publish_message_journal_relay_for_dest_checked,
@@ -64,15 +66,15 @@ pub use self::invitations::{
     InvitationSummaryView, JoinRequestAccepted, JoinRequestParams, PeerSessionGuard,
     RelayAdmission, SatelliteRemovalResult,
 };
-pub(crate) use self::opening::{check_roots, open_companion_stores, CompanionOpenSpec};
 pub use self::providers::OfficePermitSpec;
 pub use self::satellite::{
     classify_replicated_snapshot_path, export_authoritative_state_snapshot_pages,
     is_immutable_state_path, is_stale_snapshot_task_entry, resolve_employee_office,
-    strip_org_core_employee_refs_typed, task_id_for_work_path, ExportedSnapshotPages,
-    OrgDeltaPayload, PendingMessageJournalEntry, RelayedAskAnswer, RelayedAskWithdrawal,
-    RelayedMessageOutcome, RelayedRecipientWake, SatelliteFederationConfig, SatelliteProvisionSpec,
-    SatelliteReEnrollSpec, SatelliteTlsIdentity, SnapshotExportProgress, SnapshotPathClass,
+    strip_org_core_employee_refs_typed, task_id_for_work_path, ConsistentStateSnapshot,
+    ExportedSnapshotPages, OrgDeltaPayload, PendingMessageJournalBatch, PendingMessageJournalEntry,
+    RelayedAskAnswer, RelayedAskWithdrawal, RelayedMessageOutcome, RelayedRecipientWake,
+    ReplicatedFileBatch, SatelliteFederationConfig, SatelliteProvisionSpec, SatelliteReEnrollSpec,
+    SatelliteTlsIdentity, SnapshotExportProgress, SnapshotPathClass,
 };
 #[cfg(any(test, feature = "testkit"))]
 pub use self::testkit::TestOffice;
@@ -100,6 +102,46 @@ pub struct DataRoots {
 pub struct Custody {
     pub identity: OfficeIdentity,
     pub authority: Arc<dyn WriterAuthority>,
+}
+
+/// Roots that are absolute and plain: no `.` or `..`, and two different folders.
+pub(crate) fn check_roots(roots: &DataRoots) -> Result<(), OfficeError> {
+    let plain = |path: &Path| {
+        path.is_absolute()
+            && path.to_str().is_some()
+            && path.components().all(|c| {
+                matches!(
+                    c,
+                    std::path::Component::RootDir | std::path::Component::Normal(_)
+                )
+            })
+    };
+    if !plain(&roots.durable) || !plain(&roots.runtime) || roots.durable == roots.runtime {
+        return Err(OfficeError::Invalid(
+            "the data roots are not two plain absolute folders",
+        ));
+    }
+    // The host makes both, owner-only, when it reserves the office's custody.
+    for root in [&roots.durable, &roots.runtime] {
+        match std::fs::symlink_metadata(root) {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => return Err(OfficeError::Invalid("a data root is not a folder")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(OfficeError::Invalid("a data root is not there"));
+            }
+            Err(e) => return Err(OfficeError::storage(e)),
+        }
+    }
+    Ok(())
+}
+
+/// The office's local TLS folder: `<durable>/local/offices/<office-id>/tls`.
+pub(crate) fn tls_dir(durable_root: &Path, office_id: &str) -> PathBuf {
+    durable_root
+        .join("local")
+        .join("offices")
+        .join(office_id)
+        .join("tls")
 }
 
 /// What the office composes its store from besides the request: production uses SQLite

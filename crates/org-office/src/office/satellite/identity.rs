@@ -13,7 +13,7 @@ use org_pki::{
 use org_sync_proto::Digest;
 use serde::{Deserialize, Serialize};
 
-use crate::office::{DataRoots, Office};
+use crate::office::{tls_dir, DataRoots, Office};
 use crate::{
     error::OfficeError,
     key::Key,
@@ -21,7 +21,7 @@ use crate::{
     private_fs::{private_dir_synced, write_private_atomic},
 };
 
-pub(crate) const SATELLITE_INTENT_FILE: &str = "satellite-join.v1.json";
+const SATELLITE_INTENT_FILE: &str = "satellite-join.v1.json";
 
 const INTENT_LIMIT: u64 = 64 * 1024;
 
@@ -153,7 +153,7 @@ pub(crate) fn read_intent(folder: &Path) -> Result<Option<SatelliteJoinIntent>, 
     Ok(Some(intent))
 }
 
-pub(crate) fn write_intent(
+pub(super) fn write_intent(
     folder: &Path,
     intent: &SatelliteJoinIntent,
     replace: bool,
@@ -166,15 +166,7 @@ pub(crate) fn write_intent(
         .map_err(OfficeError::storage)
 }
 
-pub(crate) fn tls_dir(durable_root: &Path, office_id: &str) -> PathBuf {
-    durable_root
-        .join("local")
-        .join("offices")
-        .join(office_id)
-        .join("tls")
-}
-
-pub(crate) fn persist_satellite_tls(
+pub(super) fn persist_satellite_tls(
     durable_root: &Path,
     office_id: &str,
     secrets_key: &Key,

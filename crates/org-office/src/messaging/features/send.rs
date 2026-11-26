@@ -20,7 +20,7 @@ use crate::messaging::{
 use crate::organization::ports::OrganizationRead;
 use crate::organization::records::Employee;
 
-use super::channels::effective_auto_members;
+use super::auto_channels::effective_auto_members;
 use super::messages::to_wire_header;
 use super::recipients::{
     append_send_recipient_states, build_mention_candidates, collect_recipient_reasons,

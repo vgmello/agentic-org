@@ -6,8 +6,8 @@ use org_store::{DurablePath, Files, Id};
 use crate::error::OfficeError;
 use crate::office::{storage, Office};
 
-use super::replication::ReplicatedFileBatch;
 use super::work_ingest::ReadOfficeCodesOp;
+use super::ReplicatedFileBatch;
 
 impl Office {
     /// Reconciles an entire incoming snapshot against committed local satellite-owned tasks and

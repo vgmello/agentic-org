@@ -8,18 +8,20 @@ use org_proto::tz::validate_iana_timezone;
 use org_proto::{ApiError, ErrorCode};
 use serde_json::json;
 
-use crate::budgets::{BudgetAggregate, BudgetEventRecord, BudgetPolicyVersion, BudgetRecord};
+use crate::budgets::{BudgetAggregate, BudgetPolicyVersion, BudgetRecord};
 use crate::error::OfficeError;
 use crate::office::Office;
 use crate::organization::records::Employee;
 use crate::time::format_rfc3339_ms;
 
 use super::authority::{authorize_budget_set, resolve_budget_target};
-use super::evaluation::{evaluate_in_memory, save_budget_aggregate};
-use super::queries::render_budget_view;
+use super::evaluation::{evaluate_in_memory, render_budget_view};
 use super::receipts::invalid_op_id;
-use super::stop::{ensure_held_task_blocked, reconcile_pending_stop};
-use super::{check_operation_replay, request_fingerprint, ResolvedTarget, ResolvedTz};
+use super::reconcile::{ensure_held_task_blocked, reconcile_pending_stop};
+use super::{
+    check_operation_replay, push_budget_event, request_fingerprint, save_budget_aggregate,
+    ResolvedTarget, ResolvedTz,
+};
 
 pub(super) fn op_budget_set(
     office: &Office,
@@ -238,33 +240,6 @@ fn apply_policy_if_changed(
         reason: params.reason.clone(),
     });
     (false, limit_or_unit_changed)
-}
-
-pub(super) fn push_budget_event(
-    office: &Office,
-    agg: &mut BudgetAggregate,
-    operation_id: &str,
-    kind: &str,
-    actor_id: &str,
-    now_utc: &str,
-    payload_json: String,
-) {
-    let Some(period_id) = agg.open_period().map(|p| p.id.clone()) else {
-        return;
-    };
-    agg.events.push(BudgetEventRecord {
-        organization_id: office.info.org_id.clone(),
-        id: office.next_uuid_v7(),
-        budget_id: agg.budget.id.clone(),
-        period_id,
-        operation_id: operation_id.to_owned(),
-        kind: kind.to_owned(),
-        policy_revision: agg.budget.current_revision,
-        actor_kind: "employee".into(),
-        actor_id: Some(actor_id.to_owned()),
-        occurred_at: now_utc.to_owned(),
-        payload_json,
-    });
 }
 
 /// Maximum representable base limit whose +20% extension (`L + L/5`) stays `<= i64::MAX`,

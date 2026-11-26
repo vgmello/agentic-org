@@ -14,6 +14,7 @@ use crate::organization::records::{Employee, EmployeeStatus};
 use super::{ports::MessagingRead, records::ConversationRecord};
 
 mod answers;
+mod auto_channels;
 mod channels;
 mod conversations;
 mod dm;
@@ -26,8 +27,9 @@ mod reply;
 mod send;
 
 pub use answers::{deliver_answer_candidates, AnswerCandidateDelivery};
-pub use channels::{decide_channel_create, decide_channel_membership, virtual_auto_channels};
-pub(crate) use channels::{effective_auto_members, slugify_channel};
+pub use auto_channels::virtual_auto_channels;
+pub(crate) use auto_channels::{effective_auto_members, slugify_channel};
+pub use channels::{decide_channel_create, decide_channel_membership};
 pub use conversations::{list_channels, list_conversations};
 pub use dm::decide_dm_open;
 pub use handoff::decide_accept_handoff;

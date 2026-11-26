@@ -16,7 +16,7 @@ use crate::messaging::{
     records::{ConversationRecord, MessageRecord, RecipientStateRecord},
 };
 
-use super::channels::effective_auto_members;
+use super::auto_channels::effective_auto_members;
 use super::conversations::{all_conversations_including_auto, find_channel};
 
 fn resolve_messages_target(

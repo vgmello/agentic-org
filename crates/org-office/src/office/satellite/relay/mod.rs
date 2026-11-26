@@ -7,11 +7,13 @@ mod inbound_handoff;
 mod inbound_message;
 mod outbound;
 mod outbound_close;
+mod types;
 
-pub use inbound::{
-    RelayedAskAnswer, RelayedAskWithdrawal, RelayedMessageOutcome, RelayedRecipientWake,
+pub use outbound::PendingMessageJournalBatch;
+pub use types::{
+    PendingMessageJournalEntry, RelayedAskAnswer, RelayedAskWithdrawal, RelayedMessageOutcome,
+    RelayedRecipientWake,
 };
-pub use outbound::PendingMessageJournalEntry;
 
 #[cfg(test)]
 mod tests;

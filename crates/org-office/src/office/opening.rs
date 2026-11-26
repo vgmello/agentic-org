@@ -1,10 +1,7 @@
-//! Opening an office: the open binding, root and custody checks, the companion stores and the
-//! journal consumers registered at startup.
+//! Opening an office: the open binding, custody checks and the journal consumers registered at
+//! startup.
 
-use std::{
-    path::{Path, PathBuf},
-    sync::{atomic::AtomicU64, Arc},
-};
+use std::{path::PathBuf, sync::atomic::AtomicU64};
 
 use org_store::{Id, OfficeIdentity};
 
@@ -13,14 +10,17 @@ use crate::{
     key::Key,
     model::OfficeInfo,
     office_file,
-    store::open::{open_store, DirectorySnapshot, EngineChoice, OfficeStanding, OfficeStore},
+    store::open::{open_store, DirectorySnapshot, OfficeStanding, OfficeStore},
 };
 
+use super::companions::{open_companion_stores, CompanionOpenSpec};
 use super::folder::LOCK_WAIT;
 use super::folder::{
     check_named_by, check_not_a_link, lock_folder, plain_folder, refuse_older_build,
 };
-use super::{intent, recovery, satellite, storage, Custody, DataRoots, Office, Options};
+use super::{
+    check_roots, intent, recovery, satellite, storage, Custody, DataRoots, Office, Options,
+};
 
 fn validate_open_binding(
     intent: &intent::Intent,
@@ -52,75 +52,6 @@ fn validate_open_binding(
     let owner = Id::parse(effective_owner).map_err(|_| recovery())?;
     let creation = Id::parse(&intent.operation).map_err(|_| recovery())?;
     Ok((owner, creation, intent.operation.clone()))
-}
-
-pub(crate) struct CompanionStores {
-    pub private_notes: Arc<dyn crate::private_notes::PrivateNotesStore>,
-    pub accounting: Arc<dyn crate::accounting::AccountingStore>,
-    pub budgets: Arc<dyn crate::budgets::BudgetStore>,
-    pub providers: Arc<dyn crate::providers::ProviderPoolStore>,
-    pub replication: Arc<dyn crate::replication::ReplicationStore>,
-}
-
-pub(crate) struct CompanionOpenSpec<'a> {
-    pub engine: EngineChoice,
-    pub roots: &'a DataRoots,
-    pub info: &'a OfficeInfo,
-    pub identity: &'a OfficeIdentity,
-    pub hq_office_id: &'a str,
-    pub ca_digest: org_sync_proto::Digest,
-    pub epoch: u64,
-    pub initial_snapshot_required: bool,
-}
-
-pub(crate) fn open_companion_stores(
-    spec: CompanionOpenSpec<'_>,
-) -> Result<CompanionStores, OfficeError> {
-    let is_hq = spec.info.role == crate::model::OfficeRole::Hq;
-    Ok(CompanionStores {
-        private_notes: crate::store::open::open_private_notes(
-            spec.engine,
-            &spec.roots.durable,
-            is_hq,
-        )?,
-        accounting: crate::store::open::open_accounting(
-            spec.engine,
-            &spec.roots.durable,
-            &spec.roots.runtime,
-            &spec.info.office_id,
-            &spec.info.org_id,
-        )?,
-        budgets: crate::store::open::open_budgets(
-            spec.engine,
-            &spec.roots.durable,
-            &spec.roots.runtime,
-            &spec.info.office_id,
-            &spec.info.org_id,
-            is_hq,
-        )?,
-        providers: crate::store::open::open_providers(
-            spec.engine,
-            &spec.roots.durable,
-            &spec.roots.runtime,
-            &spec.info.office_id,
-            &spec.info.org_id,
-            is_hq,
-        )?,
-        replication: crate::store::open::open_replication(
-            crate::store::open::ReplicationOpenSpec {
-                engine: spec.engine,
-                durable_root: &spec.roots.durable,
-                runtime_root: &spec.roots.runtime,
-                org_id: &spec.info.org_id,
-                local_office: &spec.info.office_id,
-                hq_office: spec.hq_office_id,
-                ca_digest: spec.ca_digest,
-                epoch: spec.epoch,
-                incarnation: spec.identity.journal_incarnation.as_str(),
-                initial_snapshot_required: spec.initial_snapshot_required,
-            },
-        )?,
-    })
 }
 
 fn check_standing_on(
@@ -205,37 +136,6 @@ fn verify_store_on_open(
         }
     }
     Ok(store)
-}
-
-/// Roots that are absolute and plain: no `.` or `..`, and two different folders.
-pub(crate) fn check_roots(roots: &DataRoots) -> Result<(), OfficeError> {
-    let plain = |path: &Path| {
-        path.is_absolute()
-            && path.to_str().is_some()
-            && path.components().all(|c| {
-                matches!(
-                    c,
-                    std::path::Component::RootDir | std::path::Component::Normal(_)
-                )
-            })
-    };
-    if !plain(&roots.durable) || !plain(&roots.runtime) || roots.durable == roots.runtime {
-        return Err(OfficeError::Invalid(
-            "the data roots are not two plain absolute folders",
-        ));
-    }
-    // The host makes both, owner-only, when it reserves the office's custody.
-    for root in [&roots.durable, &roots.runtime] {
-        match std::fs::symlink_metadata(root) {
-            Ok(meta) if meta.is_dir() => {}
-            Ok(_) => return Err(OfficeError::Invalid("a data root is not a folder")),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(OfficeError::Invalid("a data root is not there"));
-            }
-            Err(e) => return Err(OfficeError::storage(e)),
-        }
-    }
-    Ok(())
 }
 
 impl Office {

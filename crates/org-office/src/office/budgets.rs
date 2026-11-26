@@ -10,8 +10,11 @@ use org_proto::budgets::{
 use org_proto::{ApiError, ErrorCode};
 use org_store::Sha256;
 
-use crate::budgets::{ActiveBudgetHoldInfo, BudgetAggregate, OpenBudgetInboxNotice};
+use crate::budgets::{
+    ActiveBudgetHoldInfo, BudgetAggregate, BudgetEventRecord, OpenBudgetInboxNotice,
+};
 use crate::error::OfficeError;
+use crate::organization::records::EmployeeKind;
 
 use super::Office;
 
@@ -20,6 +23,7 @@ mod controls;
 mod evaluation;
 mod queries;
 mod receipts;
+mod reconcile;
 mod set;
 mod stop;
 
@@ -215,4 +219,88 @@ fn check_operation_replay(
             "operation_id reused with different actor, action, or parameters",
         ))
     }
+}
+
+enum StopExecutionOutcome {
+    Closed(&'static str),
+    Refused(String),
+}
+
+fn push_budget_event(
+    office: &Office,
+    agg: &mut BudgetAggregate,
+    operation_id: &str,
+    kind: &str,
+    actor_id: &str,
+    now_utc: &str,
+    payload_json: String,
+) {
+    let Some(period_id) = agg.open_period().map(|p| p.id.clone()) else {
+        return;
+    };
+    agg.events.push(BudgetEventRecord {
+        organization_id: office.info.org_id.clone(),
+        id: office.next_uuid_v7(),
+        budget_id: agg.budget.id.clone(),
+        period_id,
+        operation_id: operation_id.to_owned(),
+        kind: kind.to_owned(),
+        policy_revision: agg.budget.current_revision,
+        actor_kind: "employee".into(),
+        actor_id: Some(actor_id.to_owned()),
+        occurred_at: now_utc.to_owned(),
+        payload_json,
+    });
+}
+
+fn mark_open_periods_kept_paused(agg: &mut BudgetAggregate) {
+    for p in &mut agg.periods {
+        if p.state == "open" {
+            p.kept_paused = true;
+        }
+    }
+}
+
+fn resolve_reached_notices(agg: &mut BudgetAggregate, now_utc: &str) {
+    for n in &mut agg.notices {
+        if n.kind == "budget_reached" && n.delivery_state != "resolved" {
+            n.delivery_state = "resolved".into();
+            n.resolved_at = Some(now_utc.to_owned());
+        }
+    }
+}
+
+fn save_budget_aggregate(
+    office: &Office,
+    agg: &BudgetAggregate,
+) -> Result<Result<(), ApiError>, OfficeError> {
+    let emp_kinds = collect_employee_kinds(office, agg)?;
+    office.budgets.save_aggregate(agg, &emp_kinds)
+}
+
+fn collect_employee_kinds(
+    office: &Office,
+    agg: &BudgetAggregate,
+) -> Result<Vec<(String, &'static str)>, OfficeError> {
+    let mut ids = std::collections::BTreeSet::new();
+    ids.extend(agg.budget.agent_id.iter().cloned());
+    ids.extend(agg.budget.time_zone_subject_ref.iter().cloned());
+    for v in &agg.versions {
+        ids.insert(v.changed_by_id.clone());
+        ids.extend(v.time_zone_subject_ref.iter().cloned());
+    }
+    ids.extend(agg.events.iter().filter_map(|e| e.actor_id.clone()));
+    ids.extend(agg.notices.iter().filter_map(|n| n.recipient_id.clone()));
+    if let Some(intent) = &agg.pending_stop {
+        ids.insert(intent.actor_id.clone());
+    }
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        let kind = match office.load_employee(&id)? {
+            Some(emp) if emp.kind == EmployeeKind::Agent => "agent",
+            _ => "person",
+        };
+        out.push((id, kind));
+    }
+    Ok(out)
 }

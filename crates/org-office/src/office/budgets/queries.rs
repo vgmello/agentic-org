@@ -13,9 +13,7 @@ use crate::organization::records::{Employee, EmployeeKind, EmployeeStatus};
 use crate::time::format_rfc3339_ms;
 
 use super::authority::is_pm_of_task;
-use super::evaluation::{
-    evaluate_and_save_budget, load_and_eval_agent_budget, period_watermark_regressed,
-};
+use super::evaluation::{evaluate_and_save_budget, load_and_eval_agent_budget, render_budget_view};
 
 pub(super) fn op_budget_get(
     office: &Office,
@@ -206,21 +204,6 @@ fn load_own_task_budget(
     };
     evaluate_and_save_budget(office, &mut agg, now_ms, now_utc)?;
     Ok(Ok(Some(render_budget_view(office, &agg, true)?)))
-}
-
-pub(super) fn render_budget_view(
-    office: &Office,
-    agg: &BudgetAggregate,
-    amounts_visible: bool,
-) -> Result<BudgetView, OfficeError> {
-    let mut view = agg.to_view(amounts_visible);
-    if view.can_extend_once {
-        let cov = office.accounting.coverage_summary(&office.info.org_id)?;
-        if cov.incomplete_streams > 0 || period_watermark_regressed(office, agg)? {
-            view.can_extend_once = false;
-        }
-    }
-    Ok(view)
 }
 
 fn budget_view_for_caller(

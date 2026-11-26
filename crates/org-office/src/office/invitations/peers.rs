@@ -3,8 +3,7 @@
 use crate::error::OfficeError;
 use crate::office::Office;
 
-use super::load_revocations;
-use super::removal::is_satellite_office_removed_locked;
+use super::{is_satellite_office_removed_locked, load_revocations};
 
 /// Atomically checks origin and destination revocation and enrollment under `federation_io_lock`
 /// before admitting `item` into the durable relay store, preventing concurrent removal races from

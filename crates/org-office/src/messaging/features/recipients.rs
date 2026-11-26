@@ -294,11 +294,7 @@ pub(crate) fn build_mention_candidates(
 /// Resolves the single office owning durable inbox state for `emp_id` (an agent's placed office
 /// when hired into an enrolled satellite, else HQ or `here_office_id` in single-office mode,
 /// `TASK-52` P5-#3).
-pub(in crate::messaging) fn recipient_owner_office_id(
-    read: &impl MessagingRead,
-    here_office_id: &Id,
-    emp_id: &Id,
-) -> Id {
+fn recipient_owner_office_id(read: &impl MessagingRead, here_office_id: &Id, emp_id: &Id) -> Id {
     let Ok(offices) = read.offices() else {
         return here_office_id.clone();
     };

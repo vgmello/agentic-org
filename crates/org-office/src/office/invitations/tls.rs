@@ -13,7 +13,7 @@ use org_pki::{
     SigningKey, Zeroizing,
 };
 
-use crate::office::{satellite::tls_dir, Office};
+use crate::office::{tls_dir, Office};
 use crate::{
     error::OfficeError,
     model::OfficeRole,

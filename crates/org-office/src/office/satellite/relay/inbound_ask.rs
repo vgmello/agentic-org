@@ -2,8 +2,7 @@
 
 use org_store::Id;
 
-use super::inbound::RelayedAskAnswer;
-use super::inbound_message::RelayedRecipientCtx;
+use super::types::{RelayedAskAnswer, RelayedRecipientCtx};
 
 pub(super) fn attach_relayed_ask_answer(
     view: &impl crate::messaging::ports::MessagingRead,

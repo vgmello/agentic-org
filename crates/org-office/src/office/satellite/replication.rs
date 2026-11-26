@@ -14,6 +14,7 @@ use crate::{
 
 use super::filters::is_replicated_journal_entry;
 use super::work_ingest::{validate_typed_work_files_against_hq, validate_work_file_paths};
+use super::ReplicatedFileBatch;
 
 impl Office {
     /// Applies an HQ-authoritative batch of `state/` files onto this satellite's `org-store`.
@@ -204,9 +205,6 @@ pub struct OrgDeltaPayload {
     pub files: Vec<(String, Option<String>)>,
 }
 
-/// Decoded batch of `(state_path, Some(bytes) for put / None for delete)`.
-pub type ReplicatedFileBatch = Vec<(String, Option<Vec<u8>>)>;
-
 impl OrgDeltaPayload {
     pub fn decode_files(&self) -> Result<ReplicatedFileBatch, OfficeError> {
         if self.v != 1 {
@@ -233,21 +231,6 @@ impl OrgDeltaPayload {
         }
         Ok(out)
     }
-}
-
-/// Returns true when `path` is an append-only immutable task or messaging file that must NEVER be
-/// deleted during snapshot reconciliation (`TASK-52` H-9).
-pub fn is_immutable_state_path(path: &str) -> bool {
-    let Ok(dp) = DurablePath::parse(path) else {
-        return false;
-    };
-    matches!(
-        crate::tasks::records::kind_of(&dp),
-        Some(crate::tasks::records::Kind::Event(_, _) | crate::tasks::records::Kind::Comment(_, _))
-    ) || matches!(
-        crate::messaging::records::kind_of(&dp),
-        Some(crate::messaging::records::Kind::Message(_, _))
-    )
 }
 
 fn is_hq_org_event_version(path: &DurablePath, bytes: Option<&[u8]>) -> bool {

@@ -13,8 +13,8 @@ use crate::{
     private_fs::{private_dir_synced, write_private_atomic},
 };
 
-use super::inbound::{ParsedOriginAskClose, RelayedAskWithdrawal, RelayedMessageOutcome};
 use super::inbound_message::canonicalize_deterministic_auto_channel;
+use super::types::{ParsedOriginAskClose, RelayedAskWithdrawal, RelayedMessageOutcome};
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct StagedAskRecovery {

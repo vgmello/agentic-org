@@ -11,21 +11,10 @@ use crate::office::satellite::replication::OrgDeltaPayload;
 use crate::office::{storage, Office};
 
 use super::outbound_close::{append_hq_channel_only_relays, append_origin_close_answer_relays};
-
-/// One locally committed native messaging journal entry ready for cross-office relay publication.
-#[derive(Clone, Debug)]
-pub struct PendingMessageJournalEntry {
-    pub ordinal: u64,
-    pub conversation_id: String,
-    pub message_id: String,
-    pub files: Vec<(String, Option<String>)>,
-    /// Target offices determined by recipient placement (for DMs/GroupDMs) or channel membership
-    /// (`TASK-52` P3-#1 / P4-#2).
-    pub destination_offices: Vec<String>,
-    /// Native message expiry timestamp in Unix ms (e.g. non-required ask expiry), preserved in
-    /// transport deadlines (`TASK-52` P4-#9).
-    pub expires_at_ms: Option<u64>,
-}
+use super::types::{
+    message_expires_at_ms, PendingMessageJournalEntry, ReadConversationMembersOp,
+    ReadConversationOp,
+};
 
 /// Batch returned by [`Office::collect_pending_message_journal_entries`].
 #[derive(Clone, Debug)]
@@ -148,48 +137,6 @@ impl Office {
         out.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(out)
     }
-}
-
-pub(super) struct ReadConversationOp {
-    pub(super) conversation_id: Id,
-}
-
-impl crate::store::open::StoreOp for ReadConversationOp {
-    type Out = Result<Option<crate::messaging::records::ConversationRecord>, org_store::StoreError>;
-
-    fn run<E: crate::store::open::OfficeEngine>(self, store: &org_store::Store<E>) -> Self::Out {
-        let (conv, _) = store.read(|snap| {
-            crate::messaging::ports::MessagingRead::conversation(snap, &self.conversation_id)
-                .map_err(org_store::StoreError::Engine)
-        })?;
-        Ok(conv)
-    }
-}
-
-pub(super) struct ReadConversationMembersOp {
-    pub(super) conv: crate::messaging::records::ConversationRecord,
-    pub(super) owner: Id,
-}
-
-impl crate::store::open::StoreOp for ReadConversationMembersOp {
-    type Out = Result<Vec<Id>, org_store::StoreError>;
-
-    fn run<E: crate::store::open::OfficeEngine>(self, store: &org_store::Store<E>) -> Self::Out {
-        let (members, _) = store.read(|snap| {
-            crate::messaging::features::effective_auto_members(snap, &self.conv, &self.owner)
-                .map_err(org_store::StoreError::Engine)
-        })?;
-        Ok(members)
-    }
-}
-
-pub(super) fn message_expires_at_ms(msg: &crate::messaging::records::MessageRecord) -> Option<u64> {
-    if let Some(exp) = msg.expires_at.as_deref() {
-        return crate::parse_rfc3339_ms(exp);
-    }
-    msg.ttl_ms.and_then(|ttl| {
-        crate::parse_rfc3339_ms(&msg.created_at).map(|created| created.saturating_add(ttl))
-    })
 }
 
 fn route_message_destinations(

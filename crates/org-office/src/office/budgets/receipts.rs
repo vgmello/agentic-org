@@ -8,7 +8,7 @@ use crate::budgets::PendingStopIntent;
 use crate::error::OfficeError;
 use crate::office::Office;
 
-use super::stop::StopExecutionOutcome;
+use super::StopExecutionOutcome;
 
 pub(super) enum TaskReceiptOutcome {
     Final(StopExecutionOutcome),

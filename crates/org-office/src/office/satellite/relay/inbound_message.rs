@@ -5,9 +5,10 @@ use org_store::{Actor, Id};
 
 use crate::office::satellite::placement::PlacementContext;
 
-use super::inbound::{RelayedMessageOutcome, RelayedRecipientWake};
 use super::inbound_ask::attach_relayed_ask_answer;
-use super::outbound::message_expires_at_ms;
+use super::types::{
+    message_expires_at_ms, RelayedMessageOutcome, RelayedRecipientCtx, RelayedRecipientWake,
+};
 
 pub(super) struct ApplyRelayedMessageOp {
     pub(super) operation_id: Id,
@@ -42,16 +43,6 @@ impl crate::store::open::StoreOp for ApplyRelayedMessageOp {
             decide_apply_relayed_message(uow, &self)
         })
     }
-}
-
-pub(super) struct RelayedRecipientCtx<'a> {
-    pub(super) here: &'a org_store::OfficeIdentity,
-    pub(super) owner: &'a Id,
-    pub(super) placement: &'a PlacementContext,
-    pub(super) employees: &'a [crate::organization::records::Employee],
-    pub(super) conv: &'a crate::messaging::records::ConversationRecord,
-    pub(super) active_members: &'a [Id],
-    msg: &'a crate::messaging::records::MessageRecord,
 }
 
 fn validate_relayed_sender(

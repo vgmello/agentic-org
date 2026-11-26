@@ -12,8 +12,8 @@ use super::peers::{
     cleanup_peer_activity_fence_if_unused, peer_activity_fence_for, signal_peer_session_stops,
 };
 use super::{
-    load_invitations, load_revocations, require_hq_owner, save_invitations, save_revocations,
-    InvitationStatus, SatelliteRemovalResult,
+    load_invitations, load_revocations, removed_satellite_offices, require_hq_owner,
+    save_invitations, save_revocations, InvitationStatus, SatelliteRemovalResult,
 };
 
 impl Office {
@@ -221,45 +221,4 @@ impl crate::store::open::StoreOp for PromoteOneRemovedOriginWithdrawalOp {
         })?;
         Ok(promoted.load(std::sync::atomic::Ordering::Acquire))
     }
-}
-
-pub(crate) fn is_satellite_office_removed(
-    office: &Office,
-    office_id: &str,
-) -> Result<bool, OfficeError> {
-    let _guard = office
-        .federation_io_lock
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    is_satellite_office_removed_locked(office, office_id)
-}
-
-/// Checks `removed_offices` fail-closed when the caller already holds `office.federation_io_lock`.
-pub(crate) fn is_satellite_office_removed_locked(
-    office: &Office,
-    office_id: &str,
-) -> Result<bool, OfficeError> {
-    Ok(removed_satellite_offices_locked(office)?.contains(office_id))
-}
-
-/// Loads all permanently removed satellite office IDs fail-closed when `office.federation_io_lock` is held.
-pub(crate) fn removed_satellite_offices_locked(
-    office: &Office,
-) -> Result<BTreeSet<String>, OfficeError> {
-    // Only HQ maintains the local CA `revocations.v1.json` store; satellites learn enrolled
-    // offices from HQ's replicated org projection and store `org-ca.v1.der` without a local
-    // revocations file (`TASK-117`). Keep HQ strictly fail-closed via `load_revocations`.
-    if office.info.role == crate::OfficeRole::Satellite {
-        return Ok(BTreeSet::new());
-    }
-    Ok(load_revocations(office)?.removed_offices)
-}
-
-/// Loads all permanently removed satellite office IDs fail-closed, acquiring `office.federation_io_lock`.
-pub(crate) fn removed_satellite_offices(office: &Office) -> Result<BTreeSet<String>, OfficeError> {
-    let _guard = office
-        .federation_io_lock
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    removed_satellite_offices_locked(office)
 }

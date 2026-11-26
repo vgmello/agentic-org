@@ -13,7 +13,7 @@ use crate::messaging::{
 use crate::organization::ports::OrganizationRead;
 use crate::organization::records::Employee;
 
-use super::channels::virtual_auto_channels;
+use super::auto_channels::virtual_auto_channels;
 use super::conversations::summarize_conversation;
 use super::{check_hr_access, is_active_employee, refusal, resolve_employee};
 

@@ -17,8 +17,6 @@ use org_sync_proto::{
 use crate::error::OfficeError;
 use crate::replication::{initial_checkpoint, StoredRelayItem, SyncStatusSnapshot};
 
-use super::txn::CoreOrgTxn;
-
 #[derive(Clone, Debug)]
 pub(crate) struct ReplicationCoreData {
     pub checkpoint: OrgCheckpoint,
@@ -113,34 +111,6 @@ impl ReplicationCoreData {
             self.replicated_op_ids.pop_front();
         }
         self.replicated_op_ids.push_back(op_id.to_owned());
-    }
-
-    /// Atomically publishes one or more HQ `OrgEvent` payloads for `(incarnation, ordinal)` into
-    /// this state (`TASK-52` M-16). Returns `Ok(0)` if already published.
-    pub(crate) fn publish_hq_journal_events(
-        &mut self,
-        codec: Codec,
-        payloads: Vec<Arc<[u8]>>,
-        incarnation: &str,
-        ordinal: u64,
-    ) -> Result<usize, OfficeError> {
-        if let Some((ref inc, ord)) = self.last_published_journal {
-            if inc == incarnation && ordinal <= ord {
-                return Ok(0);
-            }
-        }
-        let mut count = 0usize;
-        for payload in payloads {
-            org_sync::organization::append_hq(
-                &mut CoreOrgTxn { data: self },
-                codec.clone(),
-                payload,
-            )
-            .map_err(|_| OfficeError::Invalid("failed publishing org replication event"))?;
-            count += 1;
-        }
-        self.last_published_journal = Some((incarnation.to_owned(), ordinal));
-        Ok(count)
     }
 
     /// Atomically publishes one or more satellite work outbox entries for `(incarnation, ordinal)`

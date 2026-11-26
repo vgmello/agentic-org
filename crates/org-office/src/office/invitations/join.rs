@@ -20,12 +20,11 @@ use crate::{
     store::open::RegisterSatelliteOfficeOp,
 };
 
-use super::removal::is_satellite_office_removed_locked;
 use super::tls::{ensure_hq_tls_identity_locked, unwrap_hq_ca_key};
 use super::{
-    load_invitations, require_hq_owner, save_invitations, ApprovedSatelliteCert, InvitationStatus,
-    InvitationsStateFile, JoinRequestAccepted, JoinRequestParams, StoredInvitation,
-    MAX_WRONG_CHECK_CODE_ATTEMPTS,
+    is_satellite_office_removed_locked, load_invitations, require_hq_owner, save_invitations,
+    ApprovedSatelliteCert, InvitationStatus, InvitationsStateFile, JoinRequestAccepted,
+    JoinRequestParams, StoredInvitation, MAX_WRONG_CHECK_CODE_ATTEMPTS,
 };
 
 impl Office {

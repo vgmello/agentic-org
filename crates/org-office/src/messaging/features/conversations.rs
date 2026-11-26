@@ -9,7 +9,7 @@ use org_store::Id;
 
 use crate::messaging::{ports::MessagingRead, records::ConversationRecord};
 
-use super::channels::{active_member, effective_auto_members, virtual_auto_channels};
+use super::auto_channels::{active_member, effective_auto_members, virtual_auto_channels};
 
 pub(super) fn summarize_conversation(
     read: &impl MessagingRead,
