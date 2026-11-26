@@ -174,9 +174,6 @@ fn prepare_worktree_locked(
         remote,
         ..
     } = *args;
-    if let Err(api_err) = ensure_bare_cache_ready(svc, runner, repo, bare_path, remote) {
-        return Ok(Err(api_err));
-    }
     let durable_link = ctx
         .task
         .repositories
@@ -195,24 +192,25 @@ fn prepare_worktree_locked(
         Ok(allowed) => allowed,
         Err(err) => return Ok(Err(map_office_error(err))),
     };
+    if let Err(api_err) = ensure_bare_cache_ready(svc, runner, repo, bare_path, remote) {
+        return Ok(Err(api_err));
+    }
     let office_id = svc.office.info().office_id.clone();
     let ws_key = OfficeGitState::workspace_key(
         ctx.task.id.as_str(),
         repo.id.as_str(),
         ctx.workspace_owner_id.as_str(),
     );
-    let taken_branches =
-        match try_reuse_workspace(&svc.state, bare_path, &ws_key, repo.id.as_str())? {
-            Ok(reused) => {
-                if let Err(err) =
-                    check_durable_link_matches_branch(durable_link, &reused.worktree.branch)
-                {
-                    return Ok(Err(err));
-                }
-                return Ok(Ok(reused));
-            }
-            Err(taken) => taken,
-        };
+    let taken_branches = match try_reuse_workspace(
+        &svc.state,
+        bare_path,
+        &ws_key,
+        repo.id.as_str(),
+        durable_link,
+    )? {
+        Ok(reused) => return Ok(reused),
+        Err(taken) => taken,
+    };
     let base_commit = resolve_remote_branch_commit(runner, bare_path, base_branch)?;
     let branch = choose_unique_task_branch(
         runner,
@@ -303,23 +301,27 @@ fn try_reuse_workspace(
     bare_path: &Path,
     ws_key: &str,
     repo_id: &str,
-) -> Result<Result<WorktreePrepareResult, BTreeSet<String>>, GitError> {
+    durable_link: Option<&org_office::tasks::records::TaskRepositoryRecord>,
+) -> Result<Result<Result<WorktreePrepareResult, ApiError>, BTreeSet<String>>, GitError> {
     let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(existing) = state_guard.workspaces.get(ws_key) {
         let existing_path = PathBuf::from(&existing.worktree_path);
         if existing.state == "active" && existing_path.is_dir() {
+            if let Err(err) = check_durable_link_matches_branch(durable_link, &existing.branch) {
+                return Ok(Ok(Err(err)));
+            }
             if existing.admin_dir_name.is_empty() {
                 return Err(GitError::SecurityViolation(
                     "workspace is missing recorded admin_dir_name".into(),
                 ));
             }
             sanitize_worktree_links(bare_path, &existing.admin_dir_name, &existing_path)?;
-            return Ok(Ok(build_prepare_result(
+            return Ok(Ok(Ok(build_prepare_result(
                 existing,
                 bare_path,
                 &existing.admin_dir_name,
                 &existing_path,
-            )));
+            ))));
         }
     }
     let taken = state_guard

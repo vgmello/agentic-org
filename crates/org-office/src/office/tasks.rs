@@ -37,8 +37,17 @@ pub(super) fn ensure_local_task_write_authority(
     }
     let inspect = match office.task_inspect(task_ref)? {
         Ok(res) => res,
-        // Let the underlying command return canonical `NotFound` / `InvalidRequest`.
-        Err(_) => return Ok(Ok(())),
+        // Let the underlying command return canonical `NotFound` / `InvalidRequest`;
+        // fail closed on `StorageError` or any other non-lookup error (`TASK-192`).
+        Err(api_err)
+            if matches!(
+                api_err.code,
+                ErrorCode::NotFound | ErrorCode::InvalidRequest
+            ) =>
+        {
+            return Ok(Ok(()));
+        }
+        Err(api_err) => return Ok(Err(api_err)),
     };
     if office.has_local_task_write_authority_for_code(&inspect.task.office_code)? {
         return Ok(Ok(()));

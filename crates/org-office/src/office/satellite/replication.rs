@@ -359,6 +359,19 @@ fn sync_satellite_work_outbox_locked(office: &Office) -> Result<usize, OfficeErr
     Ok(enqueued)
 }
 
+struct ReadTaskOfficeCodeOp(Id);
+
+impl crate::store::open::ReadOp for ReadTaskOfficeCodeOp {
+    type Out = Option<String>;
+
+    fn read<S: crate::tasks::ports::TasksRead>(
+        self,
+        snapshot: &S,
+    ) -> Result<Self::Out, org_store::StoreError> {
+        Ok(snapshot.task(&self.0)?.map(|t| t.office_code))
+    }
+}
+
 /// Belt-and-suspenders guard (`TASK-192`) ensuring a satellite never enqueues a `WorkChange`
 /// touching another office's task/counter or immutable-history deletion (which HQ would reject
 /// and stall sync), while propagating transient storage errors so the outbox consumer watermark
@@ -414,11 +427,11 @@ fn is_locally_owned_satellite_work_entry(
         if verified_tasks.contains(&tid) {
             continue;
         }
-        let locally_owned = match office.task_inspect(tid.as_str())? {
-            Ok(res) => local_codes.contains(&res.task.office_code),
-            Err(_) => false,
-        };
-        if !locally_owned {
+        let (office_code, _) = office
+            .store
+            .read(ReadTaskOfficeCodeOp(tid.clone()))
+            .map_err(storage)?;
+        if !office_code.is_some_and(|code| local_codes.contains(&code)) {
             return Ok(false);
         }
         verified_tasks.insert(tid);
