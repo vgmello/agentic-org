@@ -65,7 +65,6 @@ const DIRECTORY_CARD_FIELDS: &[Field] = &[
             "online",
             "available",
             "busy",
-            "working",
             "idle",
             "needs_you",
             "waiting_for_answer",

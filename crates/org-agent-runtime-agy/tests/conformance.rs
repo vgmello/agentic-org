@@ -1012,12 +1012,50 @@ fn opening_mode_mismatch_auth_error_and_resume_failure_scoping() {
             ..
         }) if m == "default"
     )));
-    // Runtime drift from `default` into `accept-edits` must fast-stop the session.
-    let drift = s_default.on_line(
-        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"current_mode_update","currentModeId":"accept-edits"}}}"#,
-        now,
-    );
-    assert!(drift.iter().any(|o| matches!(o, Output::CloseStdin)));
+    // Runtime drift from `default` into `accept-edits` or unknown permissive mode must fast-stop.
+    for bad_runtime_mode in ["accept-edits", "acceptEdits", "dontAsk"] {
+        let (_, mut s_drift) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+        let _ = s_drift.start(now);
+        let _ = s_drift.on_line(
+            br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"version":"1.5.17"}}}"#,
+            now,
+        );
+        let _ = s_drift.on_line(
+            br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-d","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":"default"}}}"#,
+            now,
+        );
+        let frame = format!(
+            r#"{{"jsonrpc":"2.0","method":"session/update","params":{{"update":{{"sessionUpdate":"current_mode_update","currentModeId":"{bad_runtime_mode}"}}}}}}"#
+        );
+        let drift = s_drift.on_line(frame.as_bytes(), now);
+        assert!(
+            drift.iter().any(|o| matches!(o, Output::CloseStdin)),
+            "expected CloseStdin on runtime drift to `{bad_runtime_mode}`"
+        );
+    }
+    // Under PermissionMode::Plan, runtime drift to `default` or `accept-edits` must fast-stop.
+    let mut plan_spec = sample_spec();
+    plan_spec.permission_mode = PermissionMode::Plan;
+    for bad_plan_drift in ["default", "accept-edits"] {
+        let (_, mut s_plan) = runtime.plan_session(&plan_spec, &sample_ctx()).unwrap();
+        let _ = s_plan.start(now);
+        let _ = s_plan.on_line(
+            br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"version":"1.5.17"}}}"#,
+            now,
+        );
+        let _ = s_plan.on_line(
+            br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-p","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":"plan"}}}"#,
+            now,
+        );
+        let frame = format!(
+            r#"{{"jsonrpc":"2.0","method":"session/update","params":{{"update":{{"sessionUpdate":"current_mode_update","currentModeId":"{bad_plan_drift}"}}}}}}"#
+        );
+        let drift = s_plan.on_line(frame.as_bytes(), now);
+        assert!(
+            drift.iter().any(|o| matches!(o, Output::CloseStdin)),
+            "expected CloseStdin on Plan runtime drift to `{bad_plan_drift}`"
+        );
+    }
 
     // Banned or mismatched `modes.currentModeId` in `session/new` fails closed with ModeMismatch.
     for bad_mode in ["yolo", "auto", "accept-edits", "ask"] {

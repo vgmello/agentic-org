@@ -1609,6 +1609,19 @@ mod task115_mid_turn_tests {
             !legacy_obj.contains("01a21542-587c-7862-a03a-4adccc15e4d9:e67f5d6d"),
             "composite employee suffix must not leak into wake prompt: {legacy_obj}"
         );
+        // Non-UUID single-colon source_id must stay intact (N3).
+        let mut custom = make_item(
+            "custom-1",
+            WakeKind::DirectMessage,
+            "owner",
+            true,
+            Some("c1"),
+            "Check",
+            102,
+        );
+        custom.source_id = "msg:123".into();
+        let custom_obj = compose_coalesced_wake_objective(std::slice::from_ref(&custom), &[]);
+        assert!(custom_obj.contains("agent-os msg reply --id msg:123"));
 
         // Multi-byte UTF-8 body truncation stays strictly <= MAX_WAKE_ITEM_BODY_BYTES.
         let huge = "🦀".repeat(1_000);

@@ -630,11 +630,11 @@ fn handle_current_mode_update(
     let mut out = vec![Output::Event(SessionEvent::ModeChanged {
         mode: Some(mode.to_owned()),
     })];
-    let escalated_accept_edits =
-        s.cfg.expected_mode.reported_name == "default" && mode.eq_ignore_ascii_case("accept-edits");
-    if (is_banned_mode(mode) || escalated_accept_edits)
-        && !matches!(s.phase, Phase::Closing | Phase::Failed | Phase::Ended)
-    {
+    // Fail closed on any runtime mode drift outside the requested mode (allowing at most strict
+    // narrowing to `plan`, matching opening validation semantics).
+    let mode_disallowed =
+        is_banned_mode(mode) || (mode != s.cfg.expected_mode.reported_name && mode != "plan");
+    if mode_disallowed && !matches!(s.phase, Phase::Closing | Phase::Failed | Phase::Ended) {
         s.phase = Phase::Closing;
         s.handshake_deadline = None;
         out.push(Output::Event(SessionEvent::Notice {

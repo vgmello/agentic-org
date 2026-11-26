@@ -586,7 +586,8 @@ fn format_sender_provenance(item: &PendingWakeItem) -> String {
 
 /// Returns the replyable identifier for a wake item, stripping legacy `<message_id>:<employee_id>`
 /// composite relay keys persisted before `TASK-157` so `agent-os msg reply --id` always receives
-/// the real message UUIDv7.
+/// the real message UUIDv7 (only when both halves are valid UUIDv7s so arbitrary single-colon IDs
+/// like `msg:123` are never mangled; remove once pre-TASK-157 dogfood queues drain).
 fn display_source_id(item: &PendingWakeItem) -> String {
     let raw = item.source_id.as_str();
     let trimmed = if matches!(
@@ -594,7 +595,7 @@ fn display_source_id(item: &PendingWakeItem) -> String {
         WakeKind::DirectMessage | WakeKind::Mention | WakeKind::Handoff | WakeKind::Ask
     ) {
         if let Some((head, tail)) = raw.split_once(':') {
-            if !head.is_empty() && !tail.is_empty() && !tail.contains(':') {
+            if org_proto::is_uuid_v7(head) && org_proto::is_uuid_v7(tail) {
                 head
             } else {
                 raw
