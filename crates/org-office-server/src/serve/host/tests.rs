@@ -1,4 +1,6 @@
 use super::*;
+use std::path::Path;
+use std::time::Duration;
 
 fn context() -> HostChannel {
     let mut hello = HelloResult::host("test", "This Mac")

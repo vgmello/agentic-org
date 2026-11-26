@@ -1,0 +1,199 @@
+//! Member binding: binding a connection, the live directory lookup, and its outcomes.
+
+use std::sync::atomic::Ordering;
+
+use org_proto::msg::{json_string_len, MsgBind, MsgBindResult, MAX_HANDLE_BYTES, OFFICE_SENDER};
+use org_proto::{AgentStatus, ErrorCode, MemberKind, Request, Response};
+
+use super::auth::Binding;
+use super::held::Control;
+use super::shared::Shared;
+use super::wire::{bind_error, internal};
+
+pub(super) fn lookup_live_binding(
+    shared: &Shared,
+    binding: &Binding,
+    control: &Control,
+) -> Option<Lookup> {
+    let run_revoked = !binding.via_grant()
+        && binding.member().is_some_and(|member| {
+            shared
+                .ports
+                .run_binding_active
+                .as_ref()
+                .is_some_and(|active| !active(member))
+        });
+    if control.revoked.load(Ordering::SeqCst) || run_revoked {
+        Some(Lookup::Not)
+    } else {
+        binding
+            .member()
+            .map(|member| lookup_binding(shared, member))
+    }
+}
+
+/// `msg.bind`, in the contract's order (`org_proto::msg::MsgBind`): the input alone, then the
+/// member; it fails closed. Each call replaces the previous binding, and a
+/// failed one leaves the connection unbound.
+pub(super) fn bind_connection(
+    request: &Request,
+    shared: &Shared,
+    binding: &mut Binding,
+    peer_pid: Option<libc::pid_t>,
+) -> Response {
+    *binding = Binding::Anonymous;
+    let params = match request.params::<MsgBind>() {
+        Ok(params) => params,
+        Err(_) => return bind_error(request.id, ErrorCode::InvalidRequest, "bad msg.bind params"),
+    };
+    // The retired `app_token` is refused while the params decode. An app-wide bind is gone:
+    // persons and the owner act through grants on host channels.
+    let Some(member) = params.member else {
+        return bind_error(request.id, ErrorCode::InvalidRequest, "bind as a member");
+    };
+    let bound = bind_member(
+        request.id,
+        shared,
+        &member,
+        params.session_token.as_deref(),
+        peer_pid,
+    );
+    match bound {
+        Ok((now, member_id)) => {
+            *binding = now;
+            let result = MsgBindResult {
+                member_id,
+                office_id: shared.office_id.clone(),
+            };
+            Response::ok::<MsgBind>(request.id, &result).unwrap_or_else(|_| internal(request.id))
+        }
+        Err(refusal) => refusal,
+    }
+}
+
+/// As a member: an agent of this office that may message. Office-run agents require a live
+/// `AGENT_OS_SESSION_TOKEN` and kernel descendant PID check (`CLI-12`, `SUB-3`, `B2 Q9`).
+fn bind_member(
+    id: u64,
+    shared: &Shared,
+    member: &str,
+    session_token: Option<&str>,
+    peer_pid: Option<libc::pid_t>,
+) -> Result<(Binding, Option<String>), Response> {
+    // Step 1, which needs no lookup.
+    if json_string_len(member) > MAX_HANDLE_BYTES {
+        return Err(bind_error(
+            id,
+            ErrorCode::TooLarge,
+            "the member is too long",
+        ));
+    }
+    let handle = org_office::directory::trim_address(member);
+    if handle.eq_ignore_ascii_case(OFFICE_SENDER) {
+        return Err(bind_error(
+            id,
+            ErrorCode::InvalidRequest,
+            "a connection cannot bind as the office",
+        ));
+    }
+    // Step 2: the member. A lookup that fails, an unknown member and one that cannot message are
+    // all `not_authorized`, and say no more.
+    let refused = || {
+        bind_error(
+            id,
+            ErrorCode::NotAuthorized,
+            "this office cannot bind this member",
+        )
+    };
+    let Some(found) = bindable(shared, handle) else {
+        return Err(refused());
+    };
+    // A person binds only through a grant, never on this socket, and is refused as an unknown
+    // member would be.
+    if found.kind == MemberKind::Person {
+        return Err(refused());
+    }
+    if let Some(verify) = &shared.ports.run_binding_verify {
+        if !verify(&found.id, session_token, peer_pid) {
+            return Err(refused());
+        }
+    } else if session_token.is_some()
+        || found
+            .agent
+            .as_ref()
+            .is_some_and(|profile| profile.run_mode.is_some())
+    {
+        return Err(refused());
+    }
+    let member_id = found.id;
+    Ok((
+        Binding::Member {
+            id: member_id.clone(),
+            via_grant: false,
+        },
+        Some(member_id),
+    ))
+}
+
+/// The member `handle` names if a connection may act as it: a person or the owner, or an agent
+/// of this office that is active or paused and not office-run (an office-run agent needs a session
+/// token, which this office does not issue yet). `None` for anything else and for a lookup that
+/// fails: it fails closed. Used at bind and again on every later call of the connection.
+fn bindable(shared: &Shared, handle: &str) -> Option<org_proto::Member> {
+    match lookup(shared, handle) {
+        Lookup::Bindable(member) => Some(*member),
+        Lookup::Not | Lookup::Failed => None,
+    }
+}
+
+/// What a look at a member found.
+pub(super) enum Lookup {
+    Bindable(Box<org_proto::Member>),
+    /// The member is there to see and may not be bound (or is not there).
+    Not,
+    /// The directory could not say. A bind or a call fails closed on it; the watcher does not
+    /// end a connection on it (the next look, or the connection's next call, decides).
+    Failed,
+}
+
+pub(super) fn lookup(shared: &Shared, handle: &str) -> Lookup {
+    let found = match shared.ports.directory.resolve_member(handle) {
+        Ok(Some((found, _))) => found,
+        Ok(None) => return Lookup::Not,
+        Err(_) => return Lookup::Failed,
+    };
+    let may = match found.kind {
+        MemberKind::Person => true,
+        MemberKind::Agent => {
+            found.office_id.as_deref() == Some(shared.office_id.as_str())
+                && found.agent.as_ref().is_some_and(|profile| {
+                    if shared.ports.run_binding_verify.is_some() {
+                        profile.status == AgentStatus::Active
+                    } else {
+                        matches!(profile.status, AgentStatus::Active | AgentStatus::Paused)
+                            && profile.run_mode.is_none()
+                    }
+                })
+        }
+        _ => false,
+    };
+    if may {
+        Lookup::Bindable(Box::new(found))
+    } else {
+        Lookup::Not
+    }
+}
+
+/// Resolves an existing binding by identity: another member's matching handle cannot keep it.
+pub(super) fn lookup_binding(shared: &Shared, id: &str) -> Lookup {
+    match lookup(shared, id) {
+        Lookup::Bindable(member) if member.id != id => Lookup::Not,
+        found => found,
+    }
+}
+
+/// Whether the member `id` is certainly no longer bindable. A directory that could not answer is
+/// not certain.
+pub(super) fn is_gone(shared: &Shared, id: &str) -> bool {
+    matches!(lookup_binding(shared, id), Lookup::Not)
+}

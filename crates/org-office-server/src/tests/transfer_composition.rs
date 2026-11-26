@@ -6,9 +6,10 @@
 //! BEFORE that child's process exit can mask a forgotten service or database.
 use super::super::*;
 use crate::hq_creation::tests::{code, key, World, INSTANCE, OFFICE};
+use crate::office_runtime::{serve_office, socket_path};
 use org_office_launch::{
-    self, ChannelKind, Handoff, HandoffFd, HostFirstLine, OfficeLine, RendezvousEvent,
-    TransferRecord,
+    self, ChannelKind, FirstLine, Handoff, HandoffFd, HostFirstLine, OfficeLine, RendezvousEvent,
+    ServerEvent, TransferRecord,
 };
 use org_proto::{GrantKey, OfficeSecretsKey};
 use std::io::{BufReader, Read, Seek, Write};
