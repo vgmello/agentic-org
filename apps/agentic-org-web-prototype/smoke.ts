@@ -15,7 +15,7 @@ const SWEEP_ROUTES = [
   "home", "inbox", "projects", "projects/agency-v1", "projects/agency-v1/work",
   "projects/agency-v1/insights", "projects/office-federation/activity", "projects/office-federation/team",
   "work", "chat", "chat/general", "activity",
-  "teams", "teams/platform", "teams/members", "teams/org",
+  "teams", "teams/platform", "teams/members", "teams/org-chart",
   "members/ada", "members/ada/sessions", "members/ada/journal",
   "members/ada/memory", "members/ada/knowledge", "members/ada/settings",
   "settings", "settings/offices", "settings/agents", "settings/agents/ada",

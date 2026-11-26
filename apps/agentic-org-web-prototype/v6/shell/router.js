@@ -1,6 +1,7 @@
 import { CH, M, P, TEAMS } from "../data.js";
 import { activityPanelResize, pageActivity, projectActivityId, refreshActivityPanel, syncAssemblySimulationTimer, updateActivityPanelScroll } from "../pages/activity.js";
 import { mountAgentProfile, stopAgentOrb } from "../pages/agent-profile.js";
+import { mountOrgChart } from "../pages/org-chart.js";
 import { pageChat } from "../pages/chat.js";
 import { pageHome } from "../pages/home.js";
 import { pageInbox } from "../pages/inbox.js";
@@ -195,6 +196,7 @@ function render(focus = true) {
   const sameWorkPage = (snap.priorPanel || workPanel) && S.lastRoute?.split("?")[0] === key.split("?")[0];
   const shell = document.getElementById("agent-shell");
   if (shell) mountAgentProfile(shell.dataset.agent, shell.dataset.tab);
+  mountOrgChart(main);
   placeSearchToolbar(main, r);
   if (S.singleKey) main.querySelector("[data-page-menu]")?.setAttribute("aria-keyshortcuts", "M");
   scrollCurrentTabsIntoView(main);

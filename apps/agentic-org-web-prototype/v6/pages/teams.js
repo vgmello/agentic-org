@@ -1,3 +1,4 @@
+import { orgChartBody, orgSummary } from "./org-chart.js";
 import { CH, KNOWLEDGE, M, NOTES, OFFICES, OPEN, P, TEAMS, W } from "../data.js";
 import { activityEventTime, activityTimeline, formatTelemetryHours } from "./activity.js";
 import { agentRailHtml, agentSessionAvailability, getConsoleSession } from "./agent-profile.js";
@@ -137,11 +138,7 @@ function pageMembersDir() {
     memberRows(ids, { emptyText: "No members match this filter." });
 }
 function pageOrgChart() {
-  const node = (id) => `<a class="node" href="#/members/${id}">${av(id, 32, "word")}<span><span class="nm">${esc(M[id].name)}</span><span class="rl">${esc(M[id].role)} · ${kindWord(id)}</span></span><span class="node-presence">${presInline(id)}</span></a>`;
-  const tree = (id) => { const kids = memberIds().filter((k) => M[k].mgr === id); return `<li>${node(id)}${kids.length ? `<ul>${kids.map(tree).join("")}</ul>` : ""}</li>`; };
-  const roots = memberIds().filter((k) => M[k].mgr === "you");
-  return teamsHeader("Org chart", `By reporting line · ${plural(memberIds().length, "member", "members")}`, "org-chart", "", hireMenu()) +
-    `<div class="section"><ul class="tree" aria-label="Reporting lines"><li>${ownerCard()}<ul>${roots.map(tree).join("")}</ul></li></ul></div>`;
+  return teamsHeader("Org chart", orgSummary(), "org-chart", "", hireMenu()) + orgChartBody();
 }
 
 function agentSetupFields(id, inProfile = false) {
