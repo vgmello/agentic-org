@@ -1019,6 +1019,8 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   transition: background-color .14s ease, color .14s ease;
 }
 .hb-brief-lenses button:hover { color: var(--hb-ink); }
+.hb-brief-view button { display: inline-flex; align-items: center; gap: 5px; }
+.hb-brief-view .ic { width: 13px; height: 13px; }
 .hb-brief-lenses button[aria-pressed="true"] {
   background: var(--tone-accent-soft-hi); color: #F8FAFC;
   box-shadow: inset 0 0 0 1px var(--tone-accent-ring);

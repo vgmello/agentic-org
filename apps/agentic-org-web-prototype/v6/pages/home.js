@@ -559,6 +559,30 @@ function briefSectionsHtml(lens, recentDoneN, tessApplied, liveWorkingN) {
         </ul>`;
 }
 
+function briefMemoHtml(lens, recentDoneN, tessApplied, liveWorkingN) {
+  if (lens === "week") {
+    return `<div class="hb-cos-sec"><span class="hb-cos-k is-ok">Velocity &amp; Delivery</span><p class="hb-cos-p">The team shipped <strong>19 tasks over the last 7 days</strong> (+4 WoW) with median turnaround improving <strong>14% to 18m</strong>. <strong>Look &amp; feel refresh</strong> is running 1 day ahead of its Nov 28 milestone.</p></div>
+        <div class="hb-cos-sec"><span class="hb-cos-k">Autonomy &amp; Budget</span><p class="hb-cos-p"><strong>78% of work ran autonomously</strong> across 4 leads and 7 specialists. Month-to-date spend is <strong>$142 of $210</strong> (68%), pacing to <strong>~$204</strong> — inside budget, though Jules hit its individual cap.</p></div>
+        <div class="hb-cos-sec"><span class="hb-cos-k is-ok">Quality Bar</span><p class="hb-cos-p"><strong>84% of deliverables were approved on the first try</strong> (+6% WoW). All <strong>412 automated workspace checks</strong> are green on the v1.0 release candidate.</p></div>`;
+  }
+  if (lens === "board") {
+    return `<div class="hb-cos-sec"><span class="hb-cos-k is-ok">Executive Summary</span><p class="hb-cos-p">Delivery throughput rose <strong>+27% week over week</strong> (19 tasks shipped) at <strong>84% first-pass approval</strong>, with <strong>78%</strong> autonomous execution and spend tracking <strong>$6 under the $210 monthly budget</strong>.</p></div>
+          <div class="hb-cos-sec"><span class="hb-cos-k">v1.0 Launch Readiness</span><p class="hb-cos-p"><strong>Agentic Org v1.0</strong> has passed 412 automated checks with release notes and onboarding complete; <strong>${recentDoneN ? "priority release sign-offs are advancing" : "Kai’s sync sign-off is the primary remaining gate"}</strong> for the Dec 5 target.</p></div>
+          <div class="hb-cos-sec"><span class="hb-cos-k is-warn">Operational Watchpoints</span><p class="hb-cos-p">The Build box satellite office is offline (+5d slip on Office federation v0.9), with a verified reconnect fix staged. ${tessApplied ? "Jules’s stalled queue has been rerouted to Maya &amp; Rowan at $0 extra spend." : "A zero-cost reassignment for Jules’s 3 stalled tasks is queued for owner approval."}</p></div>`;
+  }
+  const doneLead = recentDoneN ? `You’ve already cleared <strong>${recentDoneN} ${recentDoneN === 1 ? "item" : "items"}</strong> this session. ` : "";
+  const tessNote = tessApplied ? " and applied the reroute for Jules’s 3 tasks to Maya &amp; Rowan at $0 added spend." : " and added my suggested <strong>zero-cost reroute for Jules’s 3 stalled tasks</strong> right behind it — clearing both keeps v1.0 on schedule for Dec 5.";
+  return `<div class="hb-cos-sec"><span class="hb-cos-k is-ok">Live Status &amp; Highlights</span><p class="hb-cos-p"><strong>${liveWorkingN} agents are working live</strong> across 3 projects — Kai is in session with you and Maya is auditing the v1.0 launch checklist. In the last 4 hours, Ada &amp; Maya drafted the v1.0 release notes, Avery shipped 2 UI polish updates, and all 412 CI checks cleared green.</p></div>
+          <div class="hb-cos-sec"><span class="hb-cos-k is-warn">Problems Needing Attention</span><p class="hb-cos-p"><strong>Build box office</strong> has been offline for 2h, putting Office federation <strong>+5d behind</strong> (Sage’s reconnect fix is staged for your review). Separately, <strong>Jules reached its $210 monthly cap</strong>, leaving 3 tasks stalled in the queue.</p></div>
+          <div class="hb-cos-sec"><span class="hb-cos-k">What I’ve Queued For You</span><p class="hb-cos-p">${doneLead}I prioritized <strong>Kai’s v1.0 sync sign-off</strong> first on the left${tessNote}</p></div>`;
+}
+
+function briefViewToggleHtml() {
+  const view = S.briefView || "highlights";
+  const btn = (v, icon, label) => `<button type="button" data-act="brief-view" data-v="${v}" aria-pressed="${view === v}" title="${label}">${ic(icon, "ic14")}<span>${label}</span></button>`;
+  return `<div class="hb-brief-lenses hb-brief-view" role="group" aria-label="Brief format">${btn("highlights", "list", "Highlights")}${btn("memo", "doc-check", "Full brief")}</div>`;
+}
+
 function renderHomeCatchup(st, liveWorkingN) {
   if (st === "error" || st === "empty") return "";
   const recentDoneN = IN.filter((i) => i.handled && i.handledNow).length;
@@ -566,9 +590,9 @@ function renderHomeCatchup(st, liveWorkingN) {
   const lens = S.briefLens || "today";
   const memoBody = st === "loading" ? skel(4, "Tess is preparing your executive brief…") : `
       <div class="hb-cos-memo${S.briefExpanded ? " is-expanded" : ""}">
-        <div class="hb-cos-scroll" id="hb-cos-scroll" tabindex="0" aria-label="Executive brief content">${briefSectionsHtml(lens, recentDoneN, tessApplied, liveWorkingN)}</div>
+        <div class="hb-cos-scroll${S.briefView === "memo" ? " is-memo" : ""}" id="hb-cos-scroll" tabindex="0" aria-label="Executive brief content">${(S.briefView === "memo" ? briefMemoHtml : briefSectionsHtml)(lens, recentDoneN, tessApplied, liveWorkingN)}</div>
         <button type="button" class="hb-cos-expand" data-act="brief-expand" aria-expanded="${!!S.briefExpanded}" aria-controls="hb-cos-scroll">
-          <span>${S.briefExpanded ? "Show less" : "Show full brief"}</span>${ic("chev-down", "ic14")}
+          <span>${S.briefExpanded ? "Show less" : "Show more"}</span>${ic("chev-down", "ic14")}
         </button>
         <div class="hb-cos-sig">
           <a class="hb-cos-sig-who" href="#/members/tess" title="Open Tess's profile">
@@ -576,7 +600,7 @@ function renderHomeCatchup(st, liveWorkingN) {
             <div class="hb-cos-sig-txt"><span class="hb-cos-sig-name">Tess</span><span class="hb-cos-sig-role">Chief of Staff</span></div>
           </a>
           <div class="hb-cos-sig-r">
-            ${lens !== "board" ? `<span class="hb-cos-sig-meta">Updated 2m ago</span>` : ""}
+            ${briefViewToggleHtml()}
             <button type="button" class="hb-cos-copy${S.briefCopied ? " is-copied" : ""}" data-act="ai-copy-brief" aria-live="polite">
               ${ic(S.briefCopied ? "check" : "clipboard", "ic14")}<span>${S.briefCopied ? "Copied" : "Copy brief"}</span>
             </button>
@@ -702,7 +726,7 @@ function stageHeadsHtml(st, open) {
   if (st !== "filled" && st !== "loading") return "";
   const pending = st === "loading" ? "" : `${open.length} pending`;
   return secHeadHtml({ id: "hb-spot-h", title: "Needs your attention", repTitle: "Decision &amp; approval queue", count: pending, cls: "is-spot", right: `<a class="link" href="#/inbox">Open inbox${ic("chev-right", "ic16")}</a>` })
-    + secHeadHtml({ id: "hb-brief-h", title: "Executive digest", count: "from Tess", cls: "is-brief", right: briefLensesHtml() });
+    + secHeadHtml({ id: "hb-brief-h", title: "Executive digest", count: (S.briefLens || "today") === "board" ? "from Tess" : "from Tess · 2m ago", cls: "is-brief", right: briefLensesHtml() });
 }
 
 function homeProjectsSectionHtml(st, projs, queue, needsAttnProjs) {

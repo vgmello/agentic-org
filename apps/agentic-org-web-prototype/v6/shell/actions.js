@@ -366,6 +366,7 @@ const CLICK_ACTIONS = {
   "notif-mark-all": () => markAllNotificationsRead(),
   "notif-clear-read": () => clearReadNotifications(),
   "brief-lens": (_e, _t, _id, v) => { S.briefLens = v; S.briefCopied = false; render(false); document.querySelector(`[data-act="brief-lens"][data-v="${CSS.escape(v || "")}"]`)?.focus(); },
+  "brief-view": (_e, _t, _id, v) => { S.briefView = v === "memo" ? "memo" : "highlights"; render(false); document.querySelector(`[data-act="brief-view"][data-v="${CSS.escape(S.briefView)}"]`)?.focus(); },
   "brief-expand": () => { S.briefExpanded = !S.briefExpanded; render(false); },
   "ai-copy-brief": () => handleCopyBrief(),
   "ai-copy-board": () => handleCopyBrief(),
