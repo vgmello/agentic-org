@@ -317,8 +317,16 @@ fn verify_satellite_provision_isolation_reopen_d25_and_revocation(
         2
     );
 
-    // 6. Close and reopen the satellite through `Office::open_with` (`ARCH-02`).
+    // 6. Persist `hq-owner.v1.json`, close, delete `runtime/` to force a full
+    // `org-store::rebuild()`, and reopen through `Office::open_with` (`ARCH-02`, `TASK-141`).
+    // Verifies `local/offices/<id>/hq-owner.v1.json` is excluded from org-store projection so
+    // rebuilding `office.db` never fails closed with "no family owns this path".
+    sat.record_replicated_hq_owner(&hq.info().office_id, owner)
+        .unwrap();
+    let sat_runtime_dir = sat_roots.runtime.clone();
     sat.close().unwrap();
+    std::fs::remove_dir_all(&sat_runtime_dir).unwrap();
+    std::fs::create_dir_all(&sat_runtime_dir).unwrap();
     let sat_instance = sat_custody.identity.instance_id.to_string();
     let sat_reopened = Office::open_with(
         sat_folder,
@@ -330,6 +338,7 @@ fn verify_satellite_provision_isolation_reopen_d25_and_revocation(
     )
     .unwrap();
     assert_eq!(sat_reopened.info().role, OfficeRole::Satellite);
+    assert_eq!(sat_reopened.effective_owner_for_ops().as_str(), owner);
     assert_eq!(
         sat_reopened
             .store
@@ -372,8 +381,8 @@ fn verify_d25_reenroll_and_revocation(
     )
     .unwrap();
     let new_hq_id = "0195a000-0000-7000-8000-000000000088";
-    // Record a replicated HQ owner before D25 re-enrollment and verify re-enrollment durably
-    // removes `hq-owner.v1.json` and clears in-memory state (`TASK-141`).
+    // Verify D25 re-enrollment durably removes `hq-owner.v1.json` (persisted and rebuilt in
+    // step 6 above) and clears in-memory state (`TASK-141`).
     sat_reopened
         .record_replicated_hq_owner(&hq.info().office_id, owner)
         .unwrap();
