@@ -1,6 +1,6 @@
 //! Wire contracts and typed RPCs for shared repository registration, per-project integration
-//! branches, office-managed bare Git caches, isolated per-task worktrees, and office Git push
-//! (`TASK-51`, `C7`, `doc-35`, `FC-103`, `FC-139`, `FC-140`).
+//! branches, office-managed bare Git caches, on-demand origin fetch, isolated per-task worktrees,
+//! and office Git push (`TASK-51`, `TASK-173`, `C7`, `doc-35`, `FC-103`, `FC-139`, `FC-140`).
 
 use serde::{Deserialize, Serialize};
 
@@ -157,6 +157,48 @@ pub struct RepoStatusResult {
     pub reason: Option<String>,
 }
 
+/// Most branch names each [`RepoFetchResult`] change list carries; its `*_count` stays exact.
+pub const REPO_FETCH_MAX_LISTED_BRANCHES: usize = 50;
+
+/// `repo.fetch` params (`TASK-173`): the office refreshes its bare cache of the repository's
+/// origin with office-side credentials, so `refs/remotes/origin/*` and tags in every task
+/// worktree of this office see newly pushed remote branches. Never touches `refs/heads/*`,
+/// a worktree's working tree, or its checked-out branch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoFetchParams {
+    /// Repository UUIDv7 or key.
+    pub repository: String,
+}
+
+/// `repo.fetch` result: the refreshed cache and how `refs/remotes/origin/*` changed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoFetchResult {
+    pub office_id: String,
+    pub repository_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_key: Option<String>,
+    pub state: CacheStateWire,
+    /// The origin's `HEAD` branch, when the origin advertises one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_branch: Option<String>,
+    /// Commit OID of `origin/<default_branch>` after the fetch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_oid: Option<String>,
+    /// Number of `origin/*` branches in the cache after the fetch.
+    pub branch_count: u64,
+    /// New `origin/*` branches (at most [`REPO_FETCH_MAX_LISTED_BRANCHES`] names, sorted).
+    pub added: Vec<String>,
+    pub added_count: u64,
+    /// `origin/*` branches whose commit moved (at most [`REPO_FETCH_MAX_LISTED_BRANCHES`]).
+    pub updated: Vec<String>,
+    pub updated_count: u64,
+    /// `origin/*` branches removed because the origin no longer has them (capped likewise).
+    pub pruned: Vec<String>,
+    pub pruned_count: u64,
+    /// When the fetch completed (`YYYY-MM-DDTHH:MM:SS.mmmZ`).
+    pub fetched_at: String,
+}
+
 /// `worktree.list` params (`doc-28` §3.6).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct WorktreeListParams {
@@ -230,6 +272,13 @@ impl Call for RepoStatus {
     const METHOD: &'static str = "repo.status";
     type Params = RepoStatusParams;
     type Result = RepoStatusResult;
+}
+
+pub struct RepoFetch;
+impl Call for RepoFetch {
+    const METHOD: &'static str = "repo.fetch";
+    type Params = RepoFetchParams;
+    type Result = RepoFetchResult;
 }
 
 pub struct WorktreeList;
