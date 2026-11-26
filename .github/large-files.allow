@@ -1,0 +1,15 @@
+# Production Rust files over the 1,000-line cap (TASK-178).
+#
+# Each line is a production source file and its line count, as the check in
+# crates/org-platform/tests/file_size_ratchet.rs counts them: every line of the file, as
+# `wc -l` reports it, inline #[cfg(test)] modules included. Dedicated test code is not
+# counted: a file or directory named tests, testing, testkit or test_support, or ending
+# in _tests or -tests.
+#
+# This list only shrinks. Every production file on v1 (as of 972e6b95) is at or under
+# the 1,000-line cap, so this list is empty and must stay empty: no production file may
+# exceed 1,000 lines, and new or refactored production files target 800 lines or fewer.
+# Rules: .agents/rules/rust-security-and-modularity.md
+#
+# To print what the check finds, in this format:
+# FILE_SIZE_RATCHET_PRINT=1 cargo test -p org-platform --test file_size_ratchet -- --nocapture
