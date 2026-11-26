@@ -1,4 +1,4 @@
-import type { AppError, Member, OrgSnapshot } from '$lib/proto';
+import { isBuiltInAgent, type AppError, type Member, type OrgSnapshot } from '$lib/proto';
 import {
 	unwrapGatewayResult,
 	type GatewayHttpTransport,
@@ -252,14 +252,6 @@ function mapReadiness(
 	return { known: true, checkedAt, blockers };
 }
 
-function isBuiltInHr(member: Member): boolean {
-	return (
-		member.handle?.toLowerCase() === 'hr' ||
-		member.agent?.messaging_name?.toLowerCase() === 'hr' ||
-		member.name.trim().toLowerCase() === 'hr'
-	);
-}
-
 /**
  * Production HTTP adapter for Organization settings › Agent setup backed by `/snapshot`, `/offices`,
  * `/provider-connections`, `/model-profiles`, `/roles`, `/agents/{id}/{execution,readiness}`,
@@ -434,7 +426,7 @@ export function createHttpAgentSetupApi(deps: {
 			handle: (member.handle ?? member.agent?.messaging_name ?? member.name).replace(/^@/, ''),
 			...(roleRef ? { role: roleRef.name, roleId: roleRef.id } : {}),
 			...(member.agent?.role ? { roleText: member.agent.role } : {}),
-			builtIn: isBuiltInHr(member),
+			builtIn: isBuiltInAgent(member),
 			status: (member.agent?.status === 'paused' ? 'paused' : 'active') as 'paused' | 'active',
 			...(homeTeam ? { homeTeam: { id: homeTeam.id, name: homeTeam.name } } : {})
 		};

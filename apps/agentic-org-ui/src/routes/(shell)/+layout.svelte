@@ -72,12 +72,15 @@
 		tessPanel.ask(
 			prompt,
 			{
+				organizationId,
 				snapshot: shellData.snapshot,
 				items: shellData.workItems,
 				offices: shellData.offices,
 				ownerId: shellData.ownerId,
 				domain: { inboxItems: shellData.inboxItems },
-				routeLabel: areaFor(page.url.pathname) ?? 'Home'
+				routeLabel: areaFor(page.url.pathname) ?? 'Home',
+				routePath: page.url.pathname,
+				offline: showPaused
 			},
 			opts
 		);
@@ -407,6 +410,7 @@
 		</div>
 		<TessPanel
 			panel={tessPanel}
+			{organizationId}
 			snapshot={shellData.snapshot}
 			items={shellData.workItems}
 			inboxItems={shellData.inboxItems}

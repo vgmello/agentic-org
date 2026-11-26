@@ -32,7 +32,7 @@
 		DropdownMenuTrigger
 	} from '$lib/components/ui/dropdown-menu';
 	import { pageTitle } from '$lib/nav';
-	import { toAppError } from '$lib/proto';
+	import { isBuiltInAgent, toAppError } from '$lib/proto';
 	import { offboardAgent, removePerson, setAgentStatus } from '$lib/modules/organization/actions';
 	import { offboardSummary } from '$lib/modules/organization/agents';
 	import { orgApi } from '$lib/modules/organization/api';
@@ -553,14 +553,14 @@
 												>Move home team…</DropdownMenuItem
 											>
 										{/if}
-										{#if p.kind === 'agent'}
+										{#if p.kind === 'agent' && !isBuiltInAgent(record)}
 											<DropdownMenuSeparator />
 											<DropdownMenuItem
 												variant="destructive"
 												class="max-[639px]:min-h-11"
 												onSelect={() => act('offboard')}>Offboard…</DropdownMenuItem
 											>
-										{:else if !p.owner}
+										{:else if p.kind !== 'agent' && !p.owner}
 											<DropdownMenuSeparator />
 											<DropdownMenuItem
 												variant="destructive"

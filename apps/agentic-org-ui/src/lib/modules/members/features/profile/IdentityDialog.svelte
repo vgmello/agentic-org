@@ -22,7 +22,7 @@
 	} from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { toAppError } from '$lib/proto';
+	import { isBuiltInAgent, toAppError } from '$lib/proto';
 	import { updateAgent, updatePerson } from '$lib/modules/organization/actions';
 	import { messagingNameError } from '$lib/modules/organization/agents';
 	import { checkPersonName } from '$lib/modules/organization/people-edit';
@@ -64,6 +64,7 @@
 	let busy = $state(false);
 
 	const isAgent = $derived(member.kind === 'agent');
+	const isBuiltIn = $derived(isBuiltInAgent(member));
 	const oldHandle = $derived(member.agent?.messaging_name ?? '');
 	const handleError = $derived(
 		isAgent && form.handle !== oldHandle
@@ -130,7 +131,8 @@
 	key: 'name' | 'role' | 'title' | 'focus',
 	label: string,
 	note: string | undefined,
-	err: string | undefined
+	err: string | undefined,
+	locked = false
 )}
 	<div>
 		<Label for="{ids}-{key}" class="flex-wrap gap-x-2 gap-y-0 leading-6"
@@ -139,7 +141,7 @@
 		<Input
 			id="{ids}-{key}"
 			bind:value={form[key]}
-			disabled={busy}
+			disabled={busy || locked}
 			autocomplete="off"
 			class="mt-2 {inputClass}"
 			aria-invalid={err ? true : undefined}
@@ -167,7 +169,13 @@
 				</DialogDescription>
 			</DialogHeader>
 
-			{@render field('name', 'Name', undefined, nameError)}
+			{@render field(
+				'name',
+				'Name',
+				isBuiltIn ? '(built-in agent — cannot be renamed)' : undefined,
+				nameError,
+				isBuiltIn
+			)}
 			{#if isAgent}
 				<div class="grid gap-4 sm:grid-cols-2">
 					{@render field('role', 'Role', undefined, required(form.role, 'Enter a role.'))}
@@ -181,7 +189,7 @@
 						<Input
 							id="{ids}-handle"
 							bind:value={form.handle}
-							disabled={busy}
+							disabled={busy || isBuiltIn}
 							autocomplete="off"
 							spellcheck={false}
 							class="font-mono {inputClass}"
@@ -190,7 +198,9 @@
 						/>
 					</div>
 					<div id="{ids}-handle-help">
-						{#if handleError}
+						{#if isBuiltIn}
+							<p class={helpClass}>Built-in agent handle is reserved and cannot be changed.</p>
+						{:else if handleError}
 							<p class={errorClass} role="alert">{handleError}</p>
 						{:else if form.handle !== oldHandle && form.handle !== ''}
 							<p class="{helpClass} text-warning-text-strong" data-testid="handle-change-warning">

@@ -16,7 +16,9 @@
 	import Maximize2 from '@lucide/svelte/icons/maximize-2';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import Minimize2 from '@lucide/svelte/icons/minimize-2';
+	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
+	import Square from '@lucide/svelte/icons/square';
 	import WifiOff from '@lucide/svelte/icons/wifi-off';
 	import X from '@lucide/svelte/icons/x';
 	import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
@@ -25,10 +27,15 @@
 	import { useNotifications } from '$lib/platform/shell/notifications.svelte';
 	import { useShellCommand } from '$lib/platform/shell/shell-command';
 	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
+	import { splitCanonicalRefSegments } from './api';
+	import TessActionProposalCard from './TessActionProposalCard.svelte';
+	import TessEntityList from './TessEntityList.svelte';
+	import TessToolProgress from './TessToolProgress.svelte';
 	import { TESS_STARTERS, type TessPanelState } from './tess-panel.svelte';
 
 	interface Props {
 		panel: TessPanelState;
+		organizationId?: string;
 		snapshot?: OrgSnapshot;
 		items?: readonly WorkItemSummary[];
 		inboxItems?: readonly InboxItem[];
@@ -40,6 +47,7 @@
 
 	let {
 		panel,
+		organizationId,
 		snapshot,
 		items = [],
 		inboxItems = [],
@@ -102,9 +110,22 @@
 	const statusLabel = $derived(
 		activeTessJobs.length > 0
 			? `Refining (${activeTessJobs.length})`
-			: offline
-				? 'Offline · Local only'
-				: 'Chief of Staff · Local summary'
+			: panel.isStreaming
+				? 'Thinking…'
+				: offline
+					? 'Offline · Local summary'
+					: panel.runtimeStatus === 'ready'
+						? 'Chief of Staff · Ready'
+						: panel.runtimeStatus === 'no_runtime'
+							? 'No runtime · Local summary'
+							: 'Offline · Local summary'
+	);
+
+	const latestTurn = $derived(panel.turns.at(-1));
+	const latestFollowUps = $derived(
+		latestTurn && !latestTurn.streaming && latestTurn.followUps?.length
+			? latestTurn.followUps.slice(0, 3)
+			: []
 	);
 
 	let pillBtnEl = $state<HTMLButtonElement | null>(null);
@@ -128,13 +149,20 @@
 		const trimmed = raw.trim();
 		if (!trimmed) return;
 		panel.ask(trimmed, {
+			organizationId,
 			snapshot,
 			items,
 			offices,
 			ownerId,
 			domain: { inboxItems },
-			routeLabel
+			routeLabel,
+			routePath: page.url.pathname,
+			offline
 		});
+	}
+
+	function handleArtifactNavigate() {
+		if (isExpanded) panel.toggleExpand();
 	}
 
 	function closeCompanion(restoreFocus = true) {
@@ -246,11 +274,12 @@
 					{#if panel.turns.length > 0}
 						<button
 							type="button"
-							onclick={() => panel.clear()}
-							title="Clear Tess thread"
-							class="cmp-text-btn"
+							onclick={() => void panel.resetSession(organizationId)}
+							title="Start a new Tess thread"
+							class="cmp-text-btn inline-flex items-center gap-1"
 						>
-							Clear
+							<RotateCcw class="size-3" aria-hidden="true" />
+							<span>New thread</span>
 						</button>
 					{/if}
 					<button
@@ -305,12 +334,25 @@
 				</div>
 			{/if}
 
-			{#if offline}
+			{#if offline || panel.runtimeStatus !== 'ready'}
 				<div class="tess-offline-note" role="status">
 					<WifiOff class="size-3.5 shrink-0" aria-hidden="true" />
-					<span>Offline quick summary · Local data only</span>
+					<span class="min-w-0 flex-1">
+						{panel.runtimeStatus === 'no_runtime'
+							? 'No runtime configured · Offline quick summary'
+							: 'Offline quick summary · Local data only'}
+					</span>
+					<a
+						href={resolve('/settings/agents')}
+						onclick={handleArtifactNavigate}
+						class="tess-connect-link"
+					>
+						Connect runtime →
+					</a>
 				</div>
 			{/if}
+
+			<span class="sr-only" aria-live="polite">{panel.liveAnnouncement}</span>
 
 			<div {@attach scrollOnTurns(panel.turns.length)} class="tess-body">
 				{#if panel.turns.length > 0}
@@ -323,31 +365,89 @@
 										<Sparkles class="size-3" aria-hidden="true" />
 										<span>Tess</span>
 										{#if turn.mode === 'offline_summary'}
-											<span class="tess-a-mode">Local summary</span>
+											<span class="tess-a-mode">Offline quick summary · Local data only</span>
+										{:else if turn.streaming}
+											<span class="tess-a-mode">Live</span>
 										{/if}
 									</div>
+
+									{#if turn.toolCalls?.length || turn.streaming}
+										<TessToolProgress
+											calls={turn.toolCalls ?? []}
+											streaming={Boolean(turn.streaming)}
+											onCancel={turn.streaming ? () => void panel.stopActiveTurn() : undefined}
+										/>
+									{/if}
+
+									{#if turn.errorMessage}
+										<p class="tess-turn-err" role="alert">{turn.errorMessage}</p>
+									{/if}
+
 									<div class="tess-a-body">
-										<p class="font-semibold text-[var(--exec-ink,var(--fg))]">
-											{turn.answer.headline}
-										</p>
-										{#if turn.answer.bullets.length > 0}
-											<ul class="mt-1.5 flex flex-col gap-1">
-												{#each turn.answer.bullets as bullet (bullet.text)}
-													<li class="flex flex-wrap items-baseline gap-x-2">
-														<span>• {bullet.text}</span>
-														{#if bullet.href && bullet.linkLabel}
+										{#if turn.mode === 'live'}
+											{#if turn.streamText}
+												<p class="whitespace-pre-wrap text-[var(--exec-body)]">
+													{#each splitCanonicalRefSegments(turn.streamText) as seg, idx (`${idx}-${seg.text}`)}
+														{#if seg.href}
 															<a
-																href={resolve(bullet.href as '/')}
-																onclick={() => {
-																	if (isExpanded) panel.toggleExpand();
-																}}
+																href={resolve(seg.href as '/')}
+																onclick={handleArtifactNavigate}
+																class="tess-ref-link"
 															>
-																{bullet.linkLabel}
+																{seg.text}
 															</a>
+														{:else}
+															{seg.text}
 														{/if}
-													</li>
-												{/each}
-											</ul>
+													{/each}
+												</p>
+											{/if}
+										{:else}
+											<p class="font-semibold text-[var(--exec-ink,var(--fg))]">
+												{turn.answer.headline}
+											</p>
+											{#if turn.answer.bullets.length > 0}
+												<ul class="mt-1.5 flex flex-col gap-1">
+													{#each turn.answer.bullets as bullet (bullet.text)}
+														<li class="flex flex-wrap items-baseline gap-x-2">
+															<span>• {bullet.text}</span>
+															{#if bullet.href && bullet.linkLabel}
+																<a
+																	href={resolve(bullet.href as '/')}
+																	onclick={handleArtifactNavigate}
+																>
+																	{bullet.linkLabel}
+																</a>
+															{/if}
+														</li>
+													{/each}
+												</ul>
+											{/if}
+										{/if}
+
+										{#if turn.blocks?.length}
+											{#each turn.blocks as block, bIdx (`${turn.id}-blk-${bIdx}`)}
+												{#if block.kind === 'action_proposal'}
+													<TessActionProposalCard
+														proposal={block.proposal}
+														onApply={(id) => void panel.applyProposal(turn.id, id)}
+														onDismiss={(id) => void panel.dismissProposal(turn.id, id)}
+														onNavigate={handleArtifactNavigate}
+													/>
+												{:else if block.kind === 'entity_list' || block.kind === 'navigation'}
+													<TessEntityList
+														title={block.title}
+														items={block.items}
+														onNavigate={handleArtifactNavigate}
+													/>
+												{:else if block.kind === 'metrics'}
+													<TessEntityList
+														title={block.title}
+														metrics={block.metrics}
+														onNavigate={handleArtifactNavigate}
+													/>
+												{/if}
+											{/each}
 										{/if}
 									</div>
 								</article>
@@ -356,7 +456,16 @@
 					</div>
 				{/if}
 
-				{#if remainingStarters.length > 0}
+				{#if latestFollowUps.length > 0}
+					<div class="tess-chips" aria-label="Follow-up prompts">
+						{#each latestFollowUps as follow (follow)}
+							<button type="button" class="tess-chip" onclick={() => submitPrompt(follow)}>
+								<Sparkles class="cmp-chip-ico size-3.5 shrink-0" aria-hidden="true" />
+								<span>{follow}</span>
+							</button>
+						{/each}
+					</div>
+				{:else if remainingStarters.length > 0}
 					<div class="tess-chips" aria-label="Suggested prompts">
 						{#each remainingStarters as starter (starter)}
 							<button type="button" class="tess-chip" onclick={() => submitPrompt(starter)}>
@@ -383,14 +492,25 @@
 					aria-label="Ask Tess anything"
 					placeholder="Ask Tess anything…"
 				/>
-				<button
-					type="submit"
-					disabled={!panel.draft.trim()}
-					aria-label="Send to Tess"
-					class="tess-send-btn"
-				>
-					<ArrowUp class="size-4" aria-hidden="true" />
-				</button>
+				{#if panel.isStreaming}
+					<button
+						type="button"
+						onclick={() => void panel.stopActiveTurn()}
+						aria-label="Stop Tess turn"
+						class="tess-send-btn is-stop"
+					>
+						<Square class="size-3.5 fill-current" aria-hidden="true" />
+					</button>
+				{:else}
+					<button
+						type="submit"
+						disabled={!panel.draft.trim()}
+						aria-label="Send to Tess"
+						class="tess-send-btn"
+					>
+						<ArrowUp class="size-4" aria-hidden="true" />
+					</button>
+				{/if}
 			</form>
 		{/if}
 	</aside>
@@ -859,6 +979,38 @@
 	.tess-send-btn:disabled {
 		opacity: 0.4;
 		cursor: not-allowed;
+	}
+	.tess-send-btn.is-stop {
+		background: var(--tone-bad);
+		color: var(--exec-on-accent);
+	}
+	.tess-connect-link {
+		flex: none;
+		font-weight: 600;
+		color: var(--exec-accent-ink);
+		text-decoration: none;
+		white-space: nowrap;
+	}
+	.tess-connect-link:hover {
+		text-decoration: underline;
+	}
+	.tess-turn-err {
+		margin-bottom: 6px;
+		padding: 7px 10px;
+		border-radius: var(--exec-sm-radius, 8px);
+		background: var(--tone-bad-bg);
+		color: var(--tone-bad-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-bad-ring);
+		font-size: 0.78rem;
+		line-height: 1.4;
+	}
+	.tess-ref-link {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--exec-accent-ink);
+		text-decoration: underline;
+		text-underline-offset: 2px;
 	}
 
 	@media (max-width: 639px) {

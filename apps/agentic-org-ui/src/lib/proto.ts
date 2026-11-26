@@ -225,6 +225,22 @@ export interface Member {
 	version: number;
 }
 
+/**
+ * True for built-in organization agents (HR and Chief of Staff / Tess) that cannot be renamed,
+ * offboarded, or deleted while the organization exists (TASK-80.1, doc-78).
+ */
+export function isBuiltInAgent(member: Member | undefined): boolean {
+	if (!member || member.kind !== 'agent') return false;
+	const builtinKey = (member as { builtin_key?: unknown }).builtin_key;
+	if (builtinKey === 'hr' || builtinKey === 'chief_of_staff') return true;
+	const handle = (member.handle ?? member.agent?.messaging_name ?? '').trim().toLowerCase();
+	const name = member.name.trim().toLowerCase();
+	const role = (member.agent?.role ?? '').trim().toLowerCase();
+	if (handle === 'hr' || name === 'hr') return true;
+	if (handle === 'tess' || (name === 'tess' && role.includes('chief of staff'))) return true;
+	return false;
+}
+
 /** A team working on a project. Usually one per project; several teams can share one. */
 export interface ProjectTeam {
 	id: string;
