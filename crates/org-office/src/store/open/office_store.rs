@@ -324,6 +324,7 @@ fn companion_store_exclusions(office_id: &Id) -> Vec<org_store::DurablePath> {
         format!("local/offices/{office_id}/sessions"),
         format!("local/offices/{office_id}/enroll-tmp"),
         format!("local/offices/{office_id}/replication"),
+        format!("local/offices/{office_id}/hq-owner.v1.json"),
         format!("local/offices/{office_id}/local-execution"),
         format!("local/offices/{office_id}/invitations"),
         format!("local/offices/{office_id}/tls"),
