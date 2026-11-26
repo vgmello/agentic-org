@@ -742,6 +742,16 @@ impl SessionManager {
                 return Some((WakeHoldReason::RecoveryRequired, None));
             }
         }
+        let live_needs_recovery = {
+            let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+            reg.live.get(employee.id.as_str()).is_some_and(|handle| {
+                let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+                st.recovery_required || st.state == SessionState::RecoveryRequired
+            })
+        };
+        if live_needs_recovery {
+            return Some((WakeHoldReason::RecoveryRequired, None));
+        }
         if self.has_live_active_turn(employee.id.as_str()) {
             return Some((WakeHoldReason::Busy, None));
         }

@@ -1554,14 +1554,8 @@ impl SessionManager {
         check_registry_startable(&reg, emp_id)?;
         let finished = if let Some(handle) = reg.live.get(emp_id) {
             let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-            let bwrap_topology_stale =
-                handle.bwrap_masked_siblings.as_ref().is_some_and(|masked| {
-                    crate::bwrap_isolation::has_unmasked_bwrap_sibling_in_office(
-                        &self.office,
-                        emp_id,
-                        masked,
-                    )
-                });
+            ensure_live_handle_not_recovery_required(&state)?;
+            let bwrap_topology_stale = is_bwrap_topology_stale(&self.office, emp_id, handle);
             let stop_reason = warm_handle_stop_reason(
                 &self.office,
                 emp_id,
@@ -1572,14 +1566,7 @@ impl SessionManager {
             );
             if stop_reason.is_none() && is_warm_state_reusable(state.state) {
                 if let Some(text) = objective {
-                    // Never queue a new turn onto a busy `bwrap` handle whose sibling mask is
-                    // stale (`TASK-166`); require its active turn to finish or stop it first.
-                    if bwrap_topology_stale {
-                        return Err(ApiError::new(
-                            ErrorCode::Conflict,
-                            "sandboxed session topology is stale while busy; wait for current turn to finish or stop session first",
-                        ));
-                    }
+                    ensure_warm_bwrap_not_stale(bwrap_topology_stale)?;
                     let text = self.prepend_watch_notices(emp_id, text);
                     let tx = handle.tx.clone();
                     let st = Arc::clone(&handle.state);
@@ -2878,6 +2865,32 @@ fn check_registry_startable(reg: &SessionRegistry, emp_id: &str) -> Result<(), A
         return Err(ApiError::new(
             ErrorCode::Conflict,
             "agent session start is already in progress",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_live_handle_not_recovery_required(state: &SessionRuntimeState) -> Result<(), ApiError> {
+    if state.recovery_required || state.state == SessionState::RecoveryRequired {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            "agent session requires manual recovery before starting",
+        ));
+    }
+    Ok(())
+}
+
+fn is_bwrap_topology_stale(office: &Office, emp_id: &str, handle: &LiveSessionHandle) -> bool {
+    handle.bwrap_masked_siblings.as_ref().is_some_and(|masked| {
+        crate::bwrap_isolation::has_unmasked_bwrap_sibling_in_office(office, emp_id, masked)
+    })
+}
+
+fn ensure_warm_bwrap_not_stale(bwrap_topology_stale: bool) -> Result<(), ApiError> {
+    if bwrap_topology_stale {
+        return Err(ApiError::new(
+            ErrorCode::Conflict,
+            "sandboxed session topology is stale while busy; wait for current turn to finish or stop session first",
         ));
     }
     Ok(())

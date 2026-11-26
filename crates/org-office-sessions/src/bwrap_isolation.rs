@@ -167,7 +167,10 @@ pub(crate) fn has_unmasked_bwrap_sibling_in_office(
         .join("agents");
     match std::fs::read_dir(&agents_root) {
         Ok(entries) => {
-            for entry in entries.flatten() {
+            for entry in entries {
+                let Ok(entry) = entry else {
+                    return true; // Fail closed on per-entry readdir I/O error.
+                };
                 if let Some(name) = entry.file_name().to_str() {
                     if name != self_employee_id && !masked.contains(name) {
                         return true;
@@ -303,7 +306,8 @@ fn reap_stale_bwrap_handle(
             st.recovery_required = true;
             st.state = SessionState::RecoveryRequired;
         }
-        (st.recovery_required, st.to_view())
+        let needs_recovery = st.recovery_required || st.state == SessionState::RecoveryRequired;
+        (needs_recovery, st.to_view())
     };
     if let Some((pid, _)) = handle
         .active_permit
@@ -326,6 +330,13 @@ fn reap_stale_bwrap_handle(
         .unwrap_or_else(|p| p.into_inner())
         .insert(other_id.clone(), view);
     if !joined_ok || recovery_required {
+        // Persist durable recovery state so restarts and wake/start checks cannot bypass AE-07
+        // after an unverified `bwrap` teardown (`TASK-166`).
+        let _ = mgr.store.update_active_turn(&other_id, |rec| {
+            rec.active = false;
+            rec.recovery_required = true;
+            rec.updated_at = crate::credentials::rfc3339_now();
+        });
         // Teardown was NOT verified (`AE-07`): restore the unrecovered handle into `reg.live`
         // (preserving `bwrap_masked_siblings`, with `thread: None`) before `StartSlotGuard` drops
         // so subsequent retries continue to fail closed until manual recovery clears it.

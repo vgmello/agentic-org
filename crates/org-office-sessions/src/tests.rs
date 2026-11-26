@@ -5759,9 +5759,81 @@ fn task166_bwrap_deny_dirs_fail_closed_and_precreate_unstarted_siblings_and_git_
     assert_eq!(err.code, org_proto::ErrorCode::StorageError);
 }
 
+fn spawn_stub_bwrap_handle(
+    office_id: &str,
+    emp_id: &str,
+    state_kind: SessionState,
+    masked: std::collections::BTreeSet<String>,
+) -> (
+    crate::manager::LiveSessionHandle,
+    Arc<std::sync::atomic::AtomicBool>,
+) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let (tx, rx) = std::sync::mpsc::channel::<crate::pump::PumpCommand>();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let stopped_c = Arc::clone(&stopped);
+    let worker = std::thread::spawn(move || {
+        while let Ok(cmd) = rx.recv() {
+            if matches!(cmd, crate::pump::PumpCommand::Stop { .. }) {
+                stopped_c.store(true, Ordering::SeqCst);
+                break;
+            }
+        }
+    });
+    let state = Arc::new(Mutex::new(crate::pump::SessionRuntimeState {
+        employee_id: emp_id.into(),
+        office_id: office_id.into(),
+        state: state_kind,
+        run_id: Some("run-a".into()),
+        session_id: Some("sess-a".into()),
+        runtime_id: Some("claude".into()),
+        runtime_session_id: None,
+        private_home: "/tmp/home-a".into(),
+        permission_preset: "autonomous_sandboxed".into(),
+        sandbox_enabled: true,
+        spec_hash: "h".into(),
+        watchdog: crate::recovery::StallWatchdog::new(Duration::from_secs(60), Instant::now()),
+        recovery_required: false,
+        last_reply: None,
+        last_error: None,
+        backgrounds: crate::subagents::BackgroundRegistry::default(),
+        pending_approvals: Vec::new(),
+        policy: org_agent_runtime::PermissionPolicy {
+            version: 1,
+            allow: Vec::new(),
+            deny: Vec::new(),
+        },
+        preset: PermissionPreset::AutonomousSandboxed,
+        allowed_tools: None,
+        writable_roots: Vec::new(),
+        suspended_on_asks: Vec::new(),
+        waiting_for_member_id: None,
+        waiting_for_name: None,
+        suspended_since: None,
+        pending_wake_count: 0,
+        pending_wake_reason: None,
+    }));
+    (
+        crate::manager::LiveSessionHandle {
+            state,
+            tx,
+            thread: Some(worker),
+            connection_id: None,
+            route_digest: String::new(),
+            oauth_expires_at_ms: None,
+            workspace: None,
+            active_permit: Arc::new(Mutex::new(None)),
+            supports_mid_turn: false,
+            bwrap_masked_siblings: Some(masked),
+        },
+        stopped,
+    )
+}
+
 #[test]
 fn task166_enforce_bwrap_sibling_isolation_blocks_working_and_stops_idle_for_post_launch_sibling() {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::Ordering;
 
     let office = Arc::new(Office::for_test(TestOffice::default()));
     let mgr = Arc::new(SessionManager::new(
@@ -5772,76 +5844,17 @@ fn task166_enforce_bwrap_sibling_isolation_blocks_working_and_stops_idle_for_pos
     let emp_b = "01a212a8-982e-7000-8000-000000000b02";
     let emp_c = "01a212a8-982e-7000-8000-000000000c03";
 
-    let spawn_stub_handle = |state_kind: SessionState,
-                             masked: std::collections::BTreeSet<String>|
-     -> (crate::manager::LiveSessionHandle, Arc<AtomicBool>) {
-        let (tx, rx) = std::sync::mpsc::channel::<crate::pump::PumpCommand>();
-        let stopped = Arc::new(AtomicBool::new(false));
-        let stopped_c = Arc::clone(&stopped);
-        let worker = std::thread::spawn(move || {
-            while let Ok(cmd) = rx.recv() {
-                if matches!(cmd, crate::pump::PumpCommand::Stop { .. }) {
-                    stopped_c.store(true, Ordering::SeqCst);
-                    break;
-                }
-            }
-        });
-        let state = Arc::new(Mutex::new(crate::pump::SessionRuntimeState {
-            employee_id: emp_a.into(),
-            office_id: office.info().office_id.clone(),
-            state: state_kind,
-            run_id: Some("run-a".into()),
-            session_id: Some("sess-a".into()),
-            runtime_id: Some("claude".into()),
-            runtime_session_id: None,
-            private_home: "/tmp/home-a".into(),
-            permission_preset: "autonomous_sandboxed".into(),
-            sandbox_enabled: true,
-            spec_hash: "h".into(),
-            watchdog: crate::recovery::StallWatchdog::new(Duration::from_secs(60), Instant::now()),
-            recovery_required: false,
-            last_reply: None,
-            last_error: None,
-            backgrounds: crate::subagents::BackgroundRegistry::default(),
-            pending_approvals: Vec::new(),
-            policy: org_agent_runtime::PermissionPolicy {
-                version: 1,
-                allow: Vec::new(),
-                deny: Vec::new(),
-            },
-            preset: PermissionPreset::AutonomousSandboxed,
-            allowed_tools: None,
-            writable_roots: Vec::new(),
-            suspended_on_asks: Vec::new(),
-            waiting_for_member_id: None,
-            waiting_for_name: None,
-            suspended_since: None,
-            pending_wake_count: 0,
-            pending_wake_reason: None,
-        }));
-        (
-            crate::manager::LiveSessionHandle {
-                state,
-                tx,
-                thread: Some(worker),
-                connection_id: None,
-                route_digest: String::new(),
-                oauth_expires_at_ms: None,
-                workspace: None,
-                active_permit: Arc::new(Mutex::new(None)),
-                supports_mid_turn: false,
-                bwrap_masked_siblings: Some(masked),
-            },
-            stopped,
-        )
-    };
-
     // 1. Pre-launch sibling `emp_b` IS masked by `emp_a`, while post-launch `emp_c` is NOT.
     // While `emp_a` is actively `Running`:
     //   - `emp_b` passes cleanly without disturbing `emp_a`.
     //   - `emp_c` MUST fail closed with `Conflict` before any binding file is written.
     let masked: std::collections::BTreeSet<String> = [emp_b.to_owned()].into_iter().collect();
-    let (handle_a, stopped_a) = spawn_stub_handle(SessionState::Running, masked.clone());
+    let (handle_a, stopped_a) = spawn_stub_bwrap_handle(
+        &office.info().office_id,
+        emp_a,
+        SessionState::Running,
+        masked,
+    );
     mgr.registry
         .lock()
         .unwrap()
@@ -5877,16 +5890,65 @@ fn task166_enforce_bwrap_sibling_isolation_blocks_working_and_stops_idle_for_pos
     assert!(stopped_a.load(Ordering::SeqCst));
     assert!(!mgr.registry.lock().unwrap().live.contains_key(emp_a));
     assert!(!mgr.registry.lock().unwrap().starting.contains(emp_a));
+}
 
-    // 4. Stale `RecoveryRequired` handle or panicking pump reap MUST fail closed with `Conflict`
-    // and remain in `reg.live` so retries never skip the unproven-dead `bwrap` child (`TASK-166`).
-    let (mut panic_handle, _) = spawn_stub_handle(SessionState::Idle, masked);
+#[test]
+fn task166_panicking_bwrap_reap_persists_and_enforces_recovery_required() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let mgr = Arc::new(SessionManager::new(
+        Arc::clone(&office),
+        SessionManagerConfig::production(office.durable_root().join("sock")),
+    ));
+    let emp_b = "01a212a8-982e-7000-8000-000000000b02";
+    let emp_c = "01a212a8-982e-7000-8000-000000000c03";
+    let masked: std::collections::BTreeSet<String> = [emp_b.to_owned()].into_iter().collect();
+
+    // Stale `RecoveryRequired` handle or panicking pump reap MUST fail closed with `Conflict`,
+    // persist `recovery_required = true`, block `start_session` / `reserve_start_or_send` on
+    // `hr_agent_id`, and stay in `reg.live` until manual `clear_stall_lock` clears it (`TASK-166`).
+    let owner_id = office.owner_member_id().to_owned();
+    let hr_agent_id = office
+        .list_employees()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == org_office::organization_family::records::EmployeeKind::Agent)
+        .unwrap()
+        .id
+        .as_str()
+        .to_owned();
+    mgr.store
+        .write_active_turn(&ActiveTurnRecord {
+            version: 1,
+            employee_id: hr_agent_id.clone(),
+            run_id: "run-hr".into(),
+            session_id: "sess-hr".into(),
+            runtime_session_id: None,
+            mark: "m-hr".into(),
+            pid: None,
+            pgid: None,
+            started_identity: None,
+            boot_identity: None,
+            objective: "work".into(),
+            accepted_commands: Vec::new(),
+            resume_attempts: 0,
+            consecutive_stalls: 0,
+            stall_locked: false,
+            recovery_required: false,
+            active: true,
+            updated_at: "2026-11-26T00:00:00Z".into(),
+        })
+        .unwrap();
+    let (mut panic_handle, _) = spawn_stub_bwrap_handle(
+        &office.info().office_id,
+        &hr_agent_id,
+        SessionState::Idle,
+        masked,
+    );
     let (ptx, prx) = std::sync::mpsc::channel::<crate::pump::PumpCommand>();
     let panicking = std::thread::spawn(move || {
         let _ = prx.recv();
         panic!("simulated unverified teardown");
     });
-    // Cleanly stop the replaced stub thread before overwriting `tx`/`thread`.
     let _ = panic_handle.tx.send(crate::pump::PumpCommand::Stop {
         reason: "test_cleanup".into(),
     });
@@ -5899,14 +5961,39 @@ fn task166_enforce_bwrap_sibling_isolation_blocks_working_and_stops_idle_for_pos
         .lock()
         .unwrap()
         .live
-        .insert(emp_a.into(), panic_handle);
+        .insert(hr_agent_id.clone(), panic_handle);
 
     let reap_err =
         crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
     assert_eq!(reap_err.code, org_proto::ErrorCode::Conflict);
-    assert!(mgr.registry.lock().unwrap().live.contains_key(emp_a));
-    // Retry must STILL fail closed because `emp_a` was restored in `RecoveryRequired`.
+    assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+    assert!(
+        mgr.store
+            .read_active_turn(&hr_agent_id)
+            .unwrap()
+            .unwrap()
+            .recovery_required,
+        "panicking bwrap reap must persist recovery_required=true"
+    );
+    // Starting `hr_agent_id` itself MUST fail closed (cannot evict the restored RecoveryRequired handle).
+    let start_hr_err = mgr
+        .start_session(
+            &owner_id,
+            &MemberSessionStartParams {
+                command_id: new_uuid_v7(),
+                employee_id: hr_agent_id.clone(),
+                instruction: Some("bypass?".into()),
+                workspace: None,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(start_hr_err.code, org_proto::ErrorCode::Conflict);
+    assert!(mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+    // Retry on `emp_c` must STILL fail closed until owner clears recovery on `hr_agent_id`.
     let retry_err =
         crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap_err();
     assert_eq!(retry_err.code, org_proto::ErrorCode::Conflict);
+    mgr.clear_stall_lock(&owner_id, &hr_agent_id).unwrap();
+    assert!(!mgr.registry.lock().unwrap().live.contains_key(&hr_agent_id));
+    crate::bwrap_isolation::enforce_bwrap_sibling_isolation(&mgr, emp_c).unwrap();
 }
