@@ -6,7 +6,7 @@ import { conversationPreview, memberRows } from "./projects.js";
 import { healthMark, notFound } from "./settings.js";
 import { scopedWorkToolbar, scopedWorkWorkspace, teamWork, visibleWorkItems, workGroups, workList } from "./work.js";
 import { S } from "../state.js";
-import { SEP, acts, av, avStack, back, esc, feed, hireMenu, ic, isPerson, joinSep, kindWord, leadOf, leadTxt, linkTabs, memberIds, menuItem, mlink, moreMenu, needsCard, openFrom, pill, plink, plural, presInline, presPill, progress, projPill, queueHeadline, sectionTabs, showMenu, statusLine } from "../ui.js";
+import { SEP, acts, av, avStack, crumbs, esc, feed, hireMenu, ic, isPerson, joinSep, kindWord, leadOf, leadTxt, linkTabs, memberIds, menuItem, mlink, moreMenu, needsCard, openFrom, pill, plink, plural, presInline, presPill, progress, projPill, queueHeadline, sectionTabs, showMenu, statusLine } from "../ui.js";
 
 /* ---------------------------------------------------------------- teams */
 function teamsHeader(title, count, current, controls = "", actions = "") {
@@ -116,7 +116,7 @@ function pageTeam(id, tab = "overview") {
     ["", "Overview"], ["members", "Members", t.members.length], ["work", "Work", ws.filter(OPEN).length],
     ["projects", "Projects"], ["activity", "Activity"], ["conversations", "Conversations"],
   ], tab === "overview" ? "" : tab, "Team sections");
-  const header = back("#/teams", "Teams") + `<div class="section-header">${queueHeadline(t.name, count)}${sectionTabs(tabs, "", actions)}</div>`;
+  const header = crumbs([["#/teams", "Teams"], [null, t.name]]) + `<div class="section-header">${queueHeadline(t.name, count)}${sectionTabs(tabs, "", actions)}</div>`;
   if (tab === "overview") return header + teamOverview(id, ws);
   if (tab === "members") return header + `<section aria-labelledby="h-mem"><h2 class="team-roster-title" id="h-mem">All members</h2>${memberRows(t.members, { noTeam: true })}</section>`;
   if (tab === "work") return header + scopedWorkToolbar("team", id, ws) + scopedWorkWorkspace();
@@ -309,7 +309,7 @@ function pageMember(id, tab) {
   const pp = presPill(id, true);
   const nowLine = !agent && (pp || line) ? `<p class="now">${pp}${line ? `<span>${line}</span>` : ""}</p>` : "";
   const nav = linkTabs("#/members/" + id, tabs, resolvedTab === "overview" ? "" : resolvedTab, "Profile sections");
-  const backLink = owner ? back("#/teams", "Teams") : back("#/teams/members", "Members");
+  const backLink = owner ? crumbs([["#/teams", "Teams"], [null, m.name]]) : crumbs([["#/teams", "Teams"], ["#/teams/members", "Members"], [null, m.name]]);
   return `${backLink}<div class="section-header"><header class="prof">${av(id, 40, "word")}<div class="grow"><h1 tabindex="-1">${esc(m.name)} <span class="role">${esc(m.role)}</span></h1>
     <p class="meta">${memberMetaFacts(id, m, owner)}</p>${nowLine}</div></header>${sectionTabs(nav, controls, actions, "profile-actions")}</div>${body}`;
 }

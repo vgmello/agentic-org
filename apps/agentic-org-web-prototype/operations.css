@@ -230,7 +230,9 @@
   &.prof > .grow > h1 { grid-column: 2; }
   &.prof > .av { grid-column: 1; grid-row: var(--page-title-row); }
   &.prof > .grow > :is(.meta, .now) { grid-column: 2 / -1; margin: 0; }
-  &.prof > .back { grid-column: 1 / -2; }
+  &.prof.has-page-nav > .back { grid-column: 1 / -1; }
+  &.prof.has-page-toolbar > .back { grid-column: 1 / -2; }
+  &.prof > .grow > :is(.meta, .now) { grid-row: calc(var(--page-title-row) + 1); }
 
   @media (min-width: 1360px) {
     &.has-page-nav:has(> .ph-actions):not(:has(> .back)) {

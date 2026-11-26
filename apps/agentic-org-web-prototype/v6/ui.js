@@ -77,7 +77,11 @@ function queueHeadline(title, count, announce = false) {
   return `<div class="ph queue-headline"><div class="ph-t"><h1 tabindex="-1">${esc(title)}</h1>
     <span class="cnt queue-count"${announce ? ' role="status"' : ""}><i aria-hidden="true"></i>${esc(count)}</span></div></div>`;
 }
-const back = (href, label) => `<a class="back" href="${href}">${ic("chev-left", "ic16")}${esc(label)}</a>`;
+/* Breadcrumb trail: ancestors as links, then the current page. items = [[href, label], ..., [null, currentLabel]] */
+const crumbs = (items) => `<nav class="back crumbs" aria-label="Breadcrumb"><ol>${items.map(([href, label], i) => {
+  const last = i === items.length - 1;
+  return `<li>${last ? `<span aria-current="page">${esc(label)}</span>` : `<a href="${href}">${esc(label)}</a>${ic("chev-right", "ic14 crumb-sep")}`}</li>`;
+}).join("")}</ol></nav>`;
 function linkTabs(base, tabs, cur, label = "Sections") {
   return `<nav class="tabs" aria-label="${esc(label)}">${tabs.map(([k, l, n]) => `<a class="tab" data-menu-label="${esc(l)}" href="${base}${k ? "/" + k : ""}" ${cur === k ? 'aria-current="page"' : ""}>${esc(l)}${n != null ? `<span class="tcount">${n}</span>` : ""}</a>`).join("")}</nav>`;
 }
@@ -263,7 +267,7 @@ export {
   acts,
   av,
   avStack,
-  back,
+  crumbs,
   displayCheckbox,
   effectiveHealth,
   empty,

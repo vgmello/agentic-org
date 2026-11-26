@@ -6,7 +6,7 @@ import { notFound } from "./settings.js";
 import { scopedWorkToolbar, scopedWorkWorkspace } from "./work.js";
 import { render } from "../shell/router.js";
 import { S } from "../state.js";
-import { SEP, acts, av, avStack, back, esc, feed, hdr, ic, kindWord, leadOf, leadTxt, linkTabs, menuItem, moreMenu, needsCard, pill, presPill, progress, projMembers, projPill, sectionTabs, showMenu, statusLine, toast } from "../ui.js";
+import { SEP, acts, av, avStack, crumbs, esc, feed, hdr, ic, kindWord, leadOf, leadTxt, linkTabs, menuItem, moreMenu, needsCard, pill, presPill, progress, projMembers, projPill, sectionTabs, showMenu, statusLine, toast } from "../ui.js";
 
 function pageProjects() {
   const ids = Object.keys(P).filter((p) => S.showArchived || !P[p].archived);
@@ -38,7 +38,7 @@ function pageProject(id, tab) {
   ];
   const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit"), "ghost");
   const activityControls = tab === "activity" ? `<div class="queue-controls project-activity-controls">${activityViewControls(id)}</div>` : "";
-  return back("#/projects", "Projects") + `<div class="section-header project-header">
+  return crumbs([["#/projects", "Projects"], [null, pr.name]]) + `<div class="section-header project-header">
     ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id))}
     ${sectionTabs(linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab), activityControls + more)}
   </div>` + (tab === "overview" ? projectReleaseSummary(id) : "") + projectBody(id, tab);

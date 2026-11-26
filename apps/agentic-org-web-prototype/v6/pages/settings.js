@@ -2,7 +2,7 @@ import { M, OFFICES, officeName } from "../data.js";
 import { agentSetupFields } from "./teams.js";
 import { searchResults } from "../shell/cmdk.js";
 import { ARCHIVE_DAY_OPTIONS, CHAT_SEND_SHORTCUTS, FONT_OPTIONS, S, THEME_OPTIONS, getOrgName } from "../state.js";
-import { SEP, av, avStack, back, empty, esc, hdr, ic, mlink, pill, plural, presPill, seg } from "../ui.js";
+import { SEP, av, avStack, crumbs, empty, esc, hdr, ic, mlink, pill, plural, presPill, seg } from "../ui.js";
 
 const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["processes", "Processes", "refresh"], ["access", "Members and access", "key"], ["updates", "Updates", "download"], ["appearance", "Appearance", "adjustments"]];
 const health = (a) => (M[a].offboarded ? "Offboarded" : M[a].setup.needs ? "Needs setup: " + M[a].setup.needs : M[a].paused ? "Paused" : "Ready");
@@ -38,8 +38,8 @@ function pageSettings(sec = "general", sub) {
   }).join("")}</ul><div class="section"><button class="btn outline" type="button" data-act="proto" data-v="Add an office">${ic("plus", "ic20")}Add an office</button></div>`;
   } else if (sec === "agents" && M[sub]?.kind === "agent") {
     const agent = M[sub];
-    header = hdr(agent.name, esc(agent.role) + " · Agent setup", `<a class="btn outline" href="#/members/${sub}/sessions">${ic("terminal", "ic20")}Sessions</a><a class="btn outline" href="#/members/${sub}">${ic("user", "ic20")}View profile</a>`);
-    body = back("#/settings/agents", "Agent setup") + `<div class="section" style="padding-bottom:0">${healthMark(sub)} ${presPill(sub, true)}</div>` + agentSetupFields(sub);
+    header = crumbs([["#/settings", "Settings"], ["#/settings/agents", "Agent setup"], [null, agent.name]]) + hdr(agent.name, esc(agent.role) + " · Agent setup", `<a class="btn outline" href="#/members/${sub}/sessions">${ic("terminal", "ic20")}Sessions</a><a class="btn outline" href="#/members/${sub}">${ic("user", "ic20")}View profile</a>`);
+    body = `<div class="section" style="padding-bottom:0">${healthMark(sub)} ${presPill(sub, true)}</div>` + agentSetupFields(sub);
   } else if (sec === "agents") {
     header = hdr("Agent setup", [plural(agents.length, "agent", "agents"), agents.filter((a) => M[a].setup.needs).length + " need setup", agents.filter((a) => M[a].paused && !M[a].setup.needs).length + " paused"].join(" · "), `<button class="btn outline" type="button" data-act="proto" data-v="Hire an agent">${ic("user-plus", "ic20")}Hire an agent</button>`);
     body = `<p class="desc">How each agent runs. To see an agent as a colleague (work, conversations, activity), open its profile.</p>

@@ -46,8 +46,8 @@ function resolvePageSearchConfig(currentRoute) {
 
 function attachToolbarHost(main, heading, hasLocalSearch) {
   if (heading) {
-    const backLink = main.firstElementChild;
-    if (backLink?.matches("a.back")) heading.prepend(backLink);
+    const backLink = main.querySelector(":scope > .back, :scope > .settings > .back");
+    if (backLink) heading.prepend(backLink);
     heading.classList.toggle("has-page-toolbar", hasLocalSearch);
     heading.classList.toggle("has-page-nav", !hasLocalSearch);
     heading.prepend(drawerButton);

@@ -878,6 +878,15 @@ body.nokeys .search kbd { display: none; }
 .ph-actions { display: flex; align-items: center; min-width: 0; gap: 8px; flex-wrap: wrap; }
 .back { display: inline-flex; align-items: center; gap: 4px; color: var(--gray-400); font-weight: 600; font-size: var(--fs-sm); padding: 12px var(--gutter) 0; }
 .back:hover { color: var(--white); }
+/* Breadcrumb trail on nested pages (Projects › Agentic Org v1.0) */
+.crumbs { font-weight: 500; }
+.crumbs ol { list-style: none; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin: 0; padding: 0; min-width: 0; }
+.crumbs li { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+.crumbs a { color: var(--gray-400); border-radius: 4px; padding: 1px 4px; margin-inline: -4px 0; transition: color .14s ease, background-color .14s ease; }
+.crumbs li + li a { margin-inline-start: 0; }
+.crumbs a:hover { color: var(--white); background: var(--hover); }
+.crumbs [aria-current="page"] { color: var(--gray-300); padding: 1px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crumbs .crumb-sep { width: 14px; height: 14px; color: var(--gray-500); flex: none; }
 .desc { padding: 16px var(--gutter) 0; color: var(--gray-400); max-width: 820px; }
 
 /* Sections */
