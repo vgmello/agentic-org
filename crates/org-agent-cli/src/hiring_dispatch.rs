@@ -244,6 +244,7 @@ fn build_proposal(request: &Request) -> Result<HireProposalWire, Refusal> {
         model_profile_id: opt_str(request, "model_profile_id").map(str::to_owned),
         model_id: opt_str(request, "model_id").map(str::to_owned),
         permission_preset: opt_str(request, "permission_preset").map(str::to_owned),
+        effort: opt_str(request, "effort").map(str::to_owned),
         tools_config: Vec::new(),
         system_prompt_markdown: opt_str(request, "system_prompt_markdown").map(str::to_owned),
         body: opt_str(request, "body").map(str::to_owned),
@@ -361,6 +362,7 @@ fn write_agent_execution_set<T: OfficeTransport + ?Sized>(
         "permission_preset",
         "permission_preset",
     );
+    copy_opt_str(request, &mut params, "effort", "effort");
     if let Some(enabled) = opt_bool(request, "enabled") {
         params.insert("enabled".into(), json!(enabled));
     }

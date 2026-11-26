@@ -2253,3 +2253,32 @@ fn task115_step_hook_registers_post_tool_use_delivers_additional_context_and_fai
         .position(|o| matches!(o, Output::Event(SessionEvent::TurnEnded { .. })));
     assert!(matches!((fail_idx, end_idx), (Some(f), Some(e)) if f < e));
 }
+
+/// `TASK-181`: Claude Code's `--effort` takes the office's five levels by the same names, so
+/// each one reaches the command line as it is, once; no effort means no flag.
+#[test]
+fn every_office_effort_level_reaches_claude_as_effort_flag() {
+    let runtime = ClaudeRuntime::new();
+    for level in ["low", "medium", "high", "xhigh", "max"] {
+        let mut spec = sample_spec();
+        spec.effort = Some(Token::try_from(level).unwrap());
+        let (plan, _) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+        let at: Vec<usize> = plan
+            .args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "--effort")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(at.len(), 1, "{level}: {:?}", plan.args);
+        assert_eq!(plan.args[at[0] + 1], level, "{:?}", plan.args);
+    }
+    let mut spec = sample_spec();
+    spec.effort = None;
+    let (plan, _) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    assert!(
+        !plan.args.iter().any(|a| a == "--effort"),
+        "{:?}",
+        plan.args
+    );
+}

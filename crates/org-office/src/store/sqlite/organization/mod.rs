@@ -162,7 +162,7 @@ const HIRE_REQUEST: &str = "id, revision, state, requested_by_employee_id, home_
                             proposal_json, reason, confirmed_at, closed_reason, employee_id, \
                             failed_step, created_at, updated_at";
 const AGENT_EXEC: &str = "employee_id, model_profile_id, model_id, system_prompt_markdown, \
-                          tools_config_json, permission_preset, enabled";
+                          tools_config_json, permission_preset, enabled, effort";
 const PROVIDER_CONN: &str = "id, key, name, provider_type, auth_mode, subscription_identity, \
                              runtime_driver, endpoint_url, enabled, archived, max_concurrent_turns";
 const MODEL_PROFILE: &str =

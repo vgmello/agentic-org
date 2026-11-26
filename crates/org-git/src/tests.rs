@@ -240,7 +240,8 @@ fn bare_cache_worktree_commit_push_hostile_config_hooks_and_cleanup() {
 
     // 6. Agent commits in worktree; office pushes by commit OID.
     fs::write(wt_dir.join("feature.rs"), "pub fn ok() -> bool { true }\n").unwrap();
-    git_raw(&wt_dir, &["add", "feature.rs"]);
+    fs::write(wt_dir.join(".gitignore"), "/target/\n").unwrap();
+    git_raw(&wt_dir, &["add", "feature.rs", ".gitignore"]);
     git_raw(&wt_dir, &["commit", "-m", "Implement fix"]);
     let head_sha = git_raw(&wt_dir, &["rev-parse", "HEAD"]);
 
@@ -289,6 +290,16 @@ fn bare_cache_worktree_commit_push_hostile_config_hooks_and_cleanup() {
         Err(GitError::Conflict(_))
     ));
     fs::remove_file(wt_dir.join("dirty.tmp")).unwrap();
+    // An agent's Cargo build output inside its worktree is ignored, so it neither blocks the
+    // cleanup nor outlives it: tearing the worktree down reclaims its `target/` too.
+    let build = wt_dir.join("target/debug/deps");
+    fs::create_dir_all(&build).unwrap();
+    fs::write(build.join("libfeature.rlib"), vec![0_u8; 64 * 1024]).unwrap();
+    fs::write(
+        wt_dir.join("target/CACHEDIR.TAG"),
+        "Signature: 8a477f597d28d172789f06886806bc55\n",
+    )
+    .unwrap();
     let cleaned = cleanup_worktree(
         &runner,
         &cache_dir,
@@ -302,5 +313,9 @@ fn bare_cache_worktree_commit_push_hostile_config_hooks_and_cleanup() {
     .unwrap();
     assert_eq!(cleaned.tag_name, "archive/task/T-A1-fix-login");
     assert!(!cleaned.merged);
+    assert!(
+        !wt_dir.join("target").exists(),
+        "teardown leaves no Cargo target"
+    );
     assert!(!wt_dir.exists());
 }

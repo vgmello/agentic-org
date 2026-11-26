@@ -59,6 +59,7 @@ use crate::subagents::{
 mod approval;
 mod approval_bridge;
 mod bwrap;
+mod effort;
 mod enrollment;
 mod instructions;
 mod launch;
@@ -415,6 +416,7 @@ fn hire_agent_with_runtime(
                 tools_config: Vec::new(),
                 system_prompt_markdown: None,
                 body: Some("Answer directly.".into()),
+                effort: None,
             },
             reason: "Runtime E2E".into(),
         },

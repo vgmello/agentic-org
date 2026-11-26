@@ -118,12 +118,12 @@ pub const COMMAND_GUIDANCE: &[(&str, &str, &str)] = &[
     (
         "agent",
         "execution-get",
-        "inspecting an agent's model profile, model ID, permission preset, and standing system prompt.",
+        "inspecting an agent's model profile, model ID, permission preset, reasoning effort, and standing system prompt.",
     ),
     (
         "agent",
         "execution-set",
-        "configuring or updating an agent's model profile, model ID, permission preset, and system prompt.",
+        "configuring or updating an agent's model profile, model ID, permission preset, reasoning effort, and system prompt.",
     ),
     (
         "agent",

@@ -6,6 +6,9 @@ use org_proto::ErrorCode;
 
 const STRING_TYPE: Type = Type::String;
 
+/// `low|medium|high|xhigh|max`, the office's reasoning-effort names (`TASK-181`).
+const EFFORT_TYPE: Type = Type::Enum(&org_proto::hiring::AGENT_EFFORT_LEVELS);
+
 const READ_ERRORS: &[ErrorCode] = &[
     ErrorCode::InvalidRequest,
     ErrorCode::NotFound,
@@ -74,6 +77,7 @@ const HIRE_PROPOSAL_FIELDS: &[Field] = &[
         Type::String,
         "Execution permission preset",
     ),
+    Field::optional("effort", EFFORT_TYPE, "Reasoning effort"),
     Field::optional(
         "tools_config",
         Type::List(&STRING_TYPE),
@@ -191,6 +195,11 @@ const HR_HIRE_INPUT: &[Field] = &[
         "Execution permission preset",
     ),
     Field::optional(
+        "effort",
+        EFFORT_TYPE,
+        "Reasoning effort (low, medium, high, xhigh, max); omitted keeps the runtime default",
+    ),
+    Field::optional(
         "system_prompt_markdown",
         Type::String,
         "Agent system prompt markdown",
@@ -260,6 +269,11 @@ const AGENT_EXECUTION_OUTPUT: &[Field] = &[
         "Enabled tool names",
     ),
     Field::required("permission_preset", Type::String, "Permission preset"),
+    Field::optional(
+        "effort",
+        EFFORT_TYPE,
+        "Reasoning effort; absent when the runtime default applies",
+    ),
     Field::required("enabled", Type::Boolean, "Whether execution is enabled"),
     Field::required(
         "system_prompt_markdown",
@@ -282,6 +296,11 @@ const AGENT_EXECUTION_SET_INPUT: &[Field] = &[
             "autonomous_sandboxed",
         ]),
         "Execution permission preset (full replacement; defaults to safe_ask when omitted)",
+    ),
+    Field::optional(
+        "effort",
+        EFFORT_TYPE,
+        "Reasoning effort (full replacement; omitted keeps the runtime default)",
     ),
     Field::optional("enabled", Type::Boolean, "Enable or disable execution"),
     Field::required(
@@ -527,13 +546,13 @@ pub const HIRING_COMMANDS: &[Command] = &[
         errors: READ_ERRORS,
         example: Example {
             input: r#"{"member":"0193a5c0-0000-7000-8000-000000000051"}"#,
-            output: r#"{"employee_id":"0193a5c0-0000-7000-8000-000000000051","model_profile_id":"0193a5c0-0000-7000-8000-000000000060","model_id":"sonnet","tools_config":[],"permission_preset":"autonomous_sandboxed","enabled":true,"system_prompt_markdown":"You are an engineer.","revision":1}"#,
+            output: r#"{"employee_id":"0193a5c0-0000-7000-8000-000000000051","model_profile_id":"0193a5c0-0000-7000-8000-000000000060","model_id":"sonnet","tools_config":[],"permission_preset":"autonomous_sandboxed","effort":"xhigh","enabled":true,"system_prompt_markdown":"You are an engineer.","revision":1}"#,
         },
     },
     Command {
         resource: "agent",
         verb: "execution-set",
-        summary: "Configure agent model profile, preset, and prompt",
+        summary: "Configure agent model profile, preset, effort, and prompt",
         call: "member.agent_execution_set",
         kind: Kind::Write {
             ack: Ack::Committed,
@@ -544,7 +563,7 @@ pub const HIRING_COMMANDS: &[Command] = &[
         output: ENTITY_OP_OUTPUT,
         errors: WRITE_ERRORS,
         example: Example {
-            input: r#"{"member":"0193a5c0-0000-7000-8000-000000000051","model_profile_id":"0193a5c0-0000-7000-8000-000000000060","model_id":"sonnet","permission_preset":"autonomous_sandboxed","system_prompt_markdown":"You are an engineer."}"#,
+            input: r#"{"member":"0193a5c0-0000-7000-8000-000000000051","model_profile_id":"0193a5c0-0000-7000-8000-000000000060","model_id":"sonnet","permission_preset":"autonomous_sandboxed","effort":"xhigh","system_prompt_markdown":"You are an engineer."}"#,
             output: r#"{"id":"0193a5c0-0000-7000-8000-000000000051","revision":1,"generation":10}"#,
         },
     },
@@ -585,3 +604,6 @@ pub const HIRING_COMMANDS: &[Command] = &[
         },
     },
 ];
+
+#[cfg(test)]
+mod tests;

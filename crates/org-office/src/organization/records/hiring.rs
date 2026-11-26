@@ -80,6 +80,38 @@ impl PermissionPreset {
     }
 }
 
+/// Reasoning effort on an agent's `execution.md` (`TASK-181`): how hard the runtime thinks on
+/// each turn. Absent keeps the runtime's default. These are the office's names (the same list
+/// as [`org_proto::hiring::AGENT_EFFORT_LEVELS`]); each runtime adapter maps them onto its own.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+
+impl ReasoningEffort {
+    pub const ALL: [Self; 5] = [Self::Low, Self::Medium, Self::High, Self::Xhigh, Self::Max];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Xhigh => "xhigh",
+            Self::Max => "max",
+        }
+    }
+
+    /// The level named exactly `text`; anything else (`""`, `none`, `High`) is no level.
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|e| e.as_str() == text)
+    }
+}
+
 /// Authentication mode for a provider connection (`doc-88` §4, `schema.sql:1536`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -129,6 +161,8 @@ pub struct HireProposal {
     pub model_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_preset: Option<PermissionPreset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<ReasoningEffort>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools_config: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -265,6 +299,9 @@ pub struct AgentExecutionConfig {
     pub model_id: String,
     pub tools_config: Vec<String>,
     pub permission_preset: PermissionPreset,
+    /// `None` keeps the runtime's default; the file then has no `effort` key at all, so a file
+    /// written before `TASK-181` reads the same and encodes back to the same bytes.
+    pub effort: Option<ReasoningEffort>,
     pub enabled: bool,
     pub meta: Meta,
     pub system_prompt_markdown: String,
@@ -294,6 +331,9 @@ pub fn encode_agent_execution(record: &AgentExecutionConfig) -> Vec<u8> {
         "permission_preset".into(),
         json!(record.permission_preset.as_str()),
     );
+    if let Some(effort) = record.effort {
+        fields.insert("effort".into(), json!(effort.as_str()));
+    }
     fields.insert("enabled".into(), json!(record.enabled));
     yaml::encode_document(&fields, &record.system_prompt_markdown)
 }
@@ -303,6 +343,17 @@ pub fn decode_agent_execution(bytes: &[u8]) -> Result<AgentExecutionConfig, Reco
     let preset_text = reader.text("permission_preset")?;
     let permission_preset = PermissionPreset::parse(&preset_text)
         .ok_or_else(|| reader.error("permission_preset", "not a known permission preset"))?;
+    // Optional: a file may omit it (or write `null`) for the runtime's default.
+    let effort_text = match reader.has("effort") {
+        true => reader.optional_text("effort")?,
+        false => None,
+    };
+    let effort = effort_text
+        .map(|text| {
+            ReasoningEffort::parse(&text)
+                .ok_or_else(|| reader.error("effort", "not a known reasoning effort"))
+        })
+        .transpose()?;
     let record = AgentExecutionConfig {
         meta: Meta::read(&mut reader)?,
         employee_id: id(&mut reader, "employee_id")?,
@@ -310,6 +361,7 @@ pub fn decode_agent_execution(bytes: &[u8]) -> Result<AgentExecutionConfig, Reco
         model_id: line(&mut reader, "model_id")?,
         tools_config: reader.strings("tools_config")?,
         permission_preset,
+        effort,
         enabled: reader.flag("enabled")?,
         system_prompt_markdown: body,
     };

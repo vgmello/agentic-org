@@ -70,6 +70,52 @@ existing SvelteKit/cookie/deepmerge dependency graph remain visible in the full
 report. The scoped minimatch override patches GHSA-g3hv-75wg-m249 without replacing the
 older minimatch 3 API used by other tools.
 
+## Cargo target directories and disk use
+
+Several agents often build side by side, each in its own worktree, and every worktree
+has its own `target/`. Keep each one bounded:
+
+- **Line tables only.** The root `Cargo.toml` sets `[profile.dev] debug = "line-tables-only"`,
+  and the `test` profile inherits it. Panics and backtraces still show every function,
+  file and line, and `target/debug` is about 70% smaller than with full debug info. Build
+  with `CARGO_PROFILE_DEV_DEBUG=full` when you need a debugger session.
+- **Constrained machines.** On a machine with 4 cores, about 8 GiB of memory and no swap,
+  build with `CARGO_BUILD_JOBS=2`, as the checks above do. For a one-off check or test run
+  in a short-lived worktree, also set `CARGO_INCREMENTAL=0`. Incremental caches are often
+  the biggest part of a debug `target/`, and they only pay off when you edit and rebuild
+  in the same worktree.
+- **One target per worktree.** Concurrent worktrees should not share one mutable
+  `CARGO_TARGET_DIR`. Cargo holds a build lock, so parallel builds queue behind each other.
+  Builds with different flags (`RUSTFLAGS`, features, `CARGO_PROFILE_*`) replace each
+  other's artifacts and rebuild every time. A shared target also matches artifacts by
+  workspace-relative paths, so building another checkout of an older commit can silently
+  replace the artifacts of crates you changed, and your tests then run old code. If you
+  ever shared a target, run `cargo clean -p <crate>` for each crate you changed before you
+  trust a result.
+- **Worktree hygiene.** `git worktree remove` deletes the ignored `target/` along with the
+  worktree. Office-managed task worktrees are torn down the same way. A worktree you keep
+  but no longer build in still holds its `target/`. Remove that with `cargo clean`, or let
+  the pruning script below find it.
+
+`scripts/prune-cargo-targets.sh` removes Cargo target directories that have not been used
+for a number of days:
+
+```sh
+scripts/prune-cargo-targets.sh --dry-run --root ~/projects   # what would go, and its size
+scripts/prune-cargo-targets.sh --root ~/projects             # remove targets idle 7+ days
+scripts/prune-cargo-targets.sh --max-age-days 0 --root ~/projects   # every idle target
+```
+
+It considers only directories that hold Cargo's `CACHEDIR.TAG` and lie strictly inside a
+`--root`. It follows no symlinks, skips `.git` and `node_modules`, and searches
+`--max-depth` levels (default 5). It never removes a target that is in use: one with a held
+Cargo lock (a build, check, test or run), one whose workspace has a running `cargo`,
+`rustc`, `rustdoc`, Clippy or `rust-analyzer` process, or one a running process names on
+its command line (such as a test binary). While it removes a target it holds every Cargo
+lock in it, so a build that starts meanwhile waits and then builds from scratch. It prints
+the space reclaimed, and a second run removes nothing more. It needs `python3`.
+`scripts/test-prune-cargo-targets.sh` runs its self-test on throwaway fixtures.
+
 ## Lint and formatting
 
 Clippy warns on `dbg!()`, `todo!()`, and `unimplemented!()` in the targets it
