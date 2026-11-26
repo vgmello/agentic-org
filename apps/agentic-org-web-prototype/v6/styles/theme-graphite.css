@@ -78,7 +78,6 @@ html[data-theme="graphite"] {
   & .work-row:is(:hover, :focus-within) { background: #27292B; }
   & :is(.nav-label, .nav-group-title) {
     color: var(--gray-300);
-    font-size: .8125rem;
     font-weight: 600;
     letter-spacing: 0;
     text-transform: none;
