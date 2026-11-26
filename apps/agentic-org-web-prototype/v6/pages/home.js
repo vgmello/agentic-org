@@ -1,6 +1,6 @@
-import { A, IN, KIND, M, OFFICES, OPEN, P, W } from "../data.js";
+import { A, EVENTS, IN, KIND, M, OFFICES, OPEN, P, W } from "../data.js";
 import { S } from "../state.js";
-import { ATYPE, av, avStack, effectiveHealth, esc, ic, leadOf, leadTxt, memberIds, mlink, pill, plink, plural, presence, projMembers, projPill, skel, spotQueue, unhandled } from "../ui.js";
+import { ATYPE, av, avStack, sectionHead, effectiveHealth, esc, ic, leadOf, leadTxt, memberIds, mlink, pill, plink, plural, presence, projMembers, projPill, skel, spotQueue, unhandled } from "../ui.js";
 
 /* ---------------------------------------------------------------- pages */
 function v4PrimaryBtn(it, act, v, icon, label, tone = "win") {
@@ -269,14 +269,14 @@ function financialsPillarHtml(emptyMode) {
         </div>
         <a class="hb-pillar-hero" href="#/settings">
           <div class="hb-pillar-valrow">
-            <div class="hb-pillar-primary"><span class="hb-pillar-num">${emptyMode ? "$0" : "$142"}</span><span class="hb-pillar-unit">${emptyMode ? "spent" : "/ $210 monthly"}</span></div>
-            <span class="hb-pillar-right" ${emptyMode ? 'style="color:var(--tone-accent-ink)"' : ""}>${emptyMode ? "Set monthly cap" : "68% · ~$204 est."}</span>
+            <div class="hb-pillar-primary"><span class="hb-pillar-num">${emptyMode ? "$0" : "$142"}</span><span class="hb-pillar-unit">${emptyMode ? "spent" : "/ $210"}</span></div>
+            <span class="hb-pillar-right" ${emptyMode ? 'style="color:var(--tone-accent-ink)"' : ""}>${emptyMode ? "Set cap" : "68% · ~$204"}</span>
           </div>
           <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-spend" style="width:${emptyMode ? 0 : 68}%"></span></div>
         </a>
         <div class="hb-pillar-sub">
-          <a class="hb-sub-item" href="#/activity" title="Average AI spend per completed task (last 7 days)"><span class="hb-sub-lbl">Cost per task · 7d</span><span class="hb-sub-val">${emptyMode ? "—" : '$7.45<span class="hb-sub-meta ok">-11%</span>'}</span></a>
-          <a class="hb-sub-item" href="#/settings" title="Remaining parallel capacity across your connected AI subscriptions"><span class="hb-sub-lbl">AI capacity</span><span class="hb-sub-val">${emptyMode ? '100%<span class="hb-sub-meta ok">Ready</span>' : '74%<span class="hb-sub-meta ok">available</span>'}</span></a>
+          <a class="hb-sub-item" href="#/activity" title="Average AI spend per completed task (last 7 days)"><span class="hb-sub-lbl">Cost / task</span><span class="hb-sub-val">${emptyMode ? "—" : '$7.45<span class="hb-sub-meta ok">-11%</span>'}</span></a>
+          <a class="hb-sub-item" href="#/settings" title="Remaining parallel capacity across your connected AI subscriptions"><span class="hb-sub-lbl">AI capacity</span><span class="hb-sub-val">${emptyMode ? '100%<span class="hb-sub-meta ok">Ready</span>' : '74%<span class="hb-sub-meta ok">free</span>'}</span></a>
         </div>
       </article>`;
 }
@@ -290,7 +290,7 @@ function summarizeHomeOffices(emptyMode) {
     onlineN, offlineN,
     pillCls: offlineN ? "bad" : "ok",
     pillTitle: offlineN ? `Offline: ${esc(offlineNames)}` : "All connected offices are online",
-    pillText: offlineN ? `${plural(offlineN, "office", "offices")} offline` : (emptyMode ? "HQ online" : "All offices online"),
+    pillText: offlineN ? `${plural(offlineN, "office", "offices")} offline` : (emptyMode ? "HQ online" : "All online"),
     rowTitle: offlineN ? `${onlineN} online · ${offlineN} offline (${esc(offlineNames)})` : `${plural(onlineN, "office", "offices")} online`,
   };
 }
@@ -300,7 +300,7 @@ function teamPillarHtml(emptyMode, fleet) {
   const capVal = emptyMode
     ? '0 agents<span class="hb-sub-meta">· 1 person</span>'
     : `${fleet.liveWorkingN} active<span class="hb-sub-meta warn">· ${fleet.idleSpecsN} idle</span>${fleet.offlineSpecsN ? `<span class="hb-sub-meta bad">· ${fleet.offlineSpecsN} off</span>` : ""}`;
-  const offlineTag = off.offlineN ? `<span class="hb-sub-sep" aria-hidden="true">·</span><span class="hb-sub-bad">${off.offlineN} offline</span>` : "";
+  const offlineTag = off.offlineN ? `<span class="hb-sub-sep" aria-hidden="true">·</span><span class="hb-sub-bad">${off.offlineN} off</span>` : "";
   return `<article class="hb-pillar" aria-labelledby="hb-pil-team">
         <div class="hb-pillar-hd">
           <a class="hb-pillar-name" id="hb-pil-team" href="#/teams/members">${ic("user-group", "ic14 c-indigo")}<span>Team</span></a>
@@ -309,57 +309,106 @@ function teamPillarHtml(emptyMode, fleet) {
         <a class="hb-pillar-hero" href="#/teams/members" title="Share of work completed autonomously without needing your input (last 7 days)">
           <div class="hb-pillar-valrow">
             <div class="hb-pillar-primary"><span class="hb-pillar-num">${emptyMode ? "—" : "78%"}</span><span class="hb-pillar-unit">autonomous</span></div>
-            <span class="hb-pillar-right">${emptyMode ? "No activity yet" : "22% needed you · 7d"}</span>
+            <span class="hb-pillar-right">${emptyMode ? "No activity" : "22% you · 7d"}</span>
           </div>
           <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-auto" style="width:${emptyMode ? 0 : 78}%"></span><span class="seg-human" style="width:${emptyMode ? 0 : 22}%"></span></div>
         </a>
         <div class="hb-pillar-sub is-team">
-          <a class="hb-sub-item" href="#/teams/members" title="All ${fleet.totalAgents} agents: ${fleet.liveWorkingN} active, ${fleet.idleSpecsN} idle (Jules at budget cap, Avery paused, Noor unplaced), ${fleet.offlineSpecsN} waiting on an offline office (Quinn)">
-            <span class="hb-sub-lbl">${emptyMode ? "Team capacity" : `${fleet.leadsN} leads · ${fleet.specsN} specialists`}</span>
+          <a class="hb-sub-item" href="#/teams/members" title="All ${fleet.leadsN + fleet.specsN} hired agents (${fleet.leadsN} leads, ${fleet.specsN} specialists): ${fleet.liveWorkingN} active, ${fleet.idleSpecsN} idle, ${fleet.offlineSpecsN} waiting on an offline office">
+            <span class="hb-sub-lbl">${emptyMode ? "Team capacity" : `${fleet.leadsN + fleet.specsN} agents`}</span>
             <span class="hb-sub-val">${capVal}</span>
           </a>
           <a class="hb-sub-item" href="#/settings/offices" title="${off.rowTitle}">
             <span class="hb-sub-lbl">Offices</span>
-            <span class="hb-sub-val is-offices"><span class="hb-sub-ok">${off.onlineN} online</span>${offlineTag}</span>
+            <span class="hb-sub-val is-offices"><span class="hb-sub-ok">${off.onlineN} on</span>${offlineTag}</span>
           </a>
         </div>
       </article>`;
 }
 
-function deliveryBadgeMeta(emptyMode, offTrackProjs, atRiskProjs) {
-  if (emptyMode) return { cls: "", text: "No deliveries yet" };
+function projectHealthBadgeMeta(emptyMode, offTrackProjs, atRiskProjs) {
+  if (emptyMode) return { cls: "", text: "No projects yet" };
   const needsAttn = offTrackProjs + atRiskProjs;
   if (!needsAttn) return { cls: "ok", text: "All on track" };
   if (offTrackProjs && !atRiskProjs) return { cls: "bad", text: `${plural(offTrackProjs, "project", "projects")} off track` };
   return { cls: "warn", text: `${needsAttn} need attention` };
 }
 
-function deliveryPillarHtml(emptyMode, offTrackProjs, atRiskProjs) {
-  const badge = deliveryBadgeMeta(emptyMode, offTrackProjs, atRiskProjs);
-  return `<article class="hb-pillar" aria-labelledby="hb-pil-proj">
+const pillarBarSeg = (cls, pct) => (pct > 0 ? `<span class="${cls}" style="width:${pct}%"></span>` : "");
+
+function projectsPillarData(emptyMode, projs, offTrackProjs, atRiskProjs) {
+  if (emptyMode) {
+    return {
+      total: 0, onTrack: 0, num: "0", unit: "projects", right: "Create first",
+      rightStyle: ' style="color:var(--tone-accent-ink)"', bars: "",
+      healthSplit: "—", blockedVal: "—",
+    };
+  }
+  const total = projs.length;
+  const onTrack = Math.max(0, total - offTrackProjs - atRiskProjs);
+  const blockedN = W.filter((w) => w.status === "Blocked").length;
+  const okPct = total ? Math.round((onTrack * 100) / total) : 0;
+  const warnPct = total ? Math.round((atRiskProjs * 100) / total) : 0;
+  const badPct = total ? Math.max(0, 100 - okPct - warnPct) : 0;
+  return {
+    total, onTrack, num: `${onTrack}/${total}`, unit: "on track", right: `${total} active`,
+    rightStyle: "",
+    bars: pillarBarSeg("seg-ok", okPct) + pillarBarSeg("seg-warn", warnPct) + pillarBarSeg("seg-bad", badPct),
+    healthSplit: `<span class="hb-sub-ok">${onTrack} ok</span><span class="hb-sub-meta warn">· ${atRiskProjs} risk</span><span class="hb-sub-meta bad">· ${offTrackProjs} off</span>`,
+    blockedVal: blockedN ? `${blockedN} <span class="hb-sub-meta warn">on you</span>` : `0 <span class="hb-sub-meta ok">clear</span>`,
+  };
+}
+
+function projectsPillarHtml(emptyMode, projs, offTrackProjs, atRiskProjs) {
+  const badge = projectHealthBadgeMeta(emptyMode, offTrackProjs, atRiskProjs);
+  const d = projectsPillarData(emptyMode, projs, offTrackProjs, atRiskProjs);
+  return `<article class="hb-pillar" aria-labelledby="hb-pil-projects">
         <div class="hb-pillar-hd">
-          <a class="hb-pillar-name" id="hb-pil-proj" href="#/work">${ic("check-circle", "ic14 c-green")}<span>Delivery</span></a>
+          <a class="hb-pillar-name" id="hb-pil-projects" href="#/projects">${ic("folder", "ic14 c-indigo")}<span>Projects</span></a>
           <a class="hb-pillar-pill ${badge.cls}" href="#/projects">${badge.text}</a>
         </div>
-        <a class="hb-pillar-hero" href="#/work" title="Percentage of completed tasks approved on the first try without revisions (last 7 days)">
+        <a class="hb-pillar-hero" href="#/projects" title="${d.total} active projects: ${d.onTrack} on track, ${atRiskProjs} at risk, ${offTrackProjs} off track">
           <div class="hb-pillar-valrow">
-            <div class="hb-pillar-primary"><span class="hb-pillar-num">${emptyMode ? "—" : "84%"}</span><span class="hb-pillar-unit">approved first try</span></div>
-            <span class="hb-pillar-right ok">${emptyMode ? "" : "+6% · 7d"}</span>
+            <div class="hb-pillar-primary"><span class="hb-pillar-num">${d.num}</span><span class="hb-pillar-unit">${d.unit}</span></div>
+            <span class="hb-pillar-right"${d.rightStyle}>${d.right}</span>
           </div>
-          <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-pass" style="width:${emptyMode ? 0 : 84}%"></span><span class="seg-rework" style="width:${emptyMode ? 0 : 16}%"></span></div>
+          <div class="hb-pillar-bar" aria-hidden="true">${d.bars}</div>
         </a>
-        <div class="hb-pillar-sub">
-          <a class="hb-sub-item" href="#/activity" title="Average time from task start to approval (last 7 days)"><span class="hb-sub-lbl">Avg. turnaround · 7d</span><span class="hb-sub-val">${emptyMode ? "—" : '18m<span class="hb-sub-meta ok">-14%</span>'}</span></a>
-          <a class="hb-sub-item" href="#/work" title="Tasks completed and accepted in the last 7 days (+4 vs. prior week)"><span class="hb-sub-lbl">Delivered · 7d</span><span class="hb-sub-val">${emptyMode ? "—" : '19 tasks<span class="hb-sub-meta ok">+4</span>'}</span></a>
+        <div class="hb-pillar-sub is-team">
+          <a class="hb-sub-item" href="#/projects" title="Portfolio health: ${d.onTrack} on track, ${atRiskProjs} at risk, ${offTrackProjs} off track"><span class="hb-sub-lbl">Health</span><span class="hb-sub-val">${d.healthSplit}</span></a>
+          <a class="hb-sub-item" href="#/work" title="Tasks currently blocked across active projects"><span class="hb-sub-lbl">Blocked</span><span class="hb-sub-val">${d.blockedVal}</span></a>
         </div>
       </article>`;
 }
 
-function renderHomeMetrics(st, fleet, offTrackProjs, atRiskProjs) {
-  if (st === "loading") return homeSkelCards(3, "Loading executive overview…");
+function deliveryPillarHtml(emptyMode) {
+  const d = emptyMode
+    ? { cls: "", pill: "No deliveries yet", num: "—", right: "", pass: 0, rework: 0, turn: "—", deliv: "—" }
+    : { cls: "ok", pill: "Quality +6%", num: "84%", right: "7d avg", pass: 84, rework: 16, turn: '18m<span class="hb-sub-meta ok">-14%</span>', deliv: '19<span class="hb-sub-meta ok">+4</span>' };
+  return `<article class="hb-pillar" aria-labelledby="hb-pil-proj">
+        <div class="hb-pillar-hd">
+          <a class="hb-pillar-name" id="hb-pil-proj" href="#/work">${ic("check-circle", "ic14 c-green")}<span>Delivery</span></a>
+          <a class="hb-pillar-pill ${d.cls}" href="#/work">${d.pill}</a>
+        </div>
+        <a class="hb-pillar-hero" href="#/work" title="Percentage of completed tasks approved on the first try without revisions (last 7 days)">
+          <div class="hb-pillar-valrow">
+            <div class="hb-pillar-primary"><span class="hb-pillar-num">${d.num}</span><span class="hb-pillar-unit">first try</span></div>
+            <span class="hb-pillar-right ok">${d.right}</span>
+          </div>
+          <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-pass" style="width:${d.pass}%"></span><span class="seg-rework" style="width:${d.rework}%"></span></div>
+        </a>
+        <div class="hb-pillar-sub">
+          <a class="hb-sub-item" href="#/activity" title="Average time from task start to approval (last 7 days)"><span class="hb-sub-lbl">Turnaround</span><span class="hb-sub-val">${d.turn}</span></a>
+          <a class="hb-sub-item" href="#/work" title="Tasks completed and accepted in the last 7 days (+4 vs. prior week)"><span class="hb-sub-lbl">Delivered · 7d</span><span class="hb-sub-val">${d.deliv}</span></a>
+        </div>
+      </article>`;
+}
+
+function renderHomeMetrics(st, fleet, projs, offTrackProjs, atRiskProjs) {
+  if (st === "loading") return homeSkelCards(4, "Loading executive overview…");
   if (st === "error") return "";
   const emptyMode = st === "empty";
-  return `<section class="hb-pillars" aria-label="Executive overview: Financials, Team, and Delivery">${financialsPillarHtml(emptyMode)}${teamPillarHtml(emptyMode, fleet)}${deliveryPillarHtml(emptyMode, offTrackProjs, atRiskProjs)}</section>`;
+  return `<section class="hb-pillars" aria-label="Executive overview: Projects, Delivery, Team, and Financials">${projectsPillarHtml(emptyMode, projs, offTrackProjs, atRiskProjs)}${deliveryPillarHtml(emptyMode)}${teamPillarHtml(emptyMode, fleet)}${financialsPillarHtml(emptyMode)}</section>`;
 }
 
 function spotlightErrorHtml() {
@@ -471,8 +520,7 @@ function renderHomeSpotlight({ st, queue, open, curItem, allQueueCleared, remain
   if (!queue.length || (allQueueCleared && !S.v4Open["spot-review"])) return spotlightClearedHtml(st, queue, open, allQueueCleared);
   const it = curItem, isUrgent = Boolean(it.expires && !it.handled);
   const ctxKey = "spot-ctx-" + it.id, ctxOpen = !!S.v4Open[ctxKey];
-  return `<section class="hb-spot${isUrgent ? " is-urgent" : ""}${it.handled ? " is-done" : ""}" id="hb-spotlight" aria-label="Decision spotlight">
-      <div class="hb-rep-only hb-rep-sec-hd"><h2 class="hb-rep-sec-title">Decision &amp; Approval Queue</h2></div>
+  return `<section class="hb-spot${isUrgent ? " is-urgent" : ""}${it.handled ? " is-done" : ""}" id="hb-spotlight" aria-labelledby="hb-spot-h">
       ${spotlightHeaderBarHtml(it, queue, isUrgent)}
       ${spotlightBodyHtml(it, ctxKey, ctxOpen)}
       ${spotlightFootHtml(it, open, allQueueCleared, remainingInInbox)}
@@ -480,7 +528,38 @@ function renderHomeSpotlight({ st, queue, open, curItem, allQueueCleared, remain
     </section>`;
 }
 
+const digestItem = (tone, icon, title, detail) =>
+  `<li class="hb-dg-item is-${tone}"><span class="hb-dg-ic" aria-hidden="true">${ic(icon, "ic16")}</span><div class="hb-dg-txt"><span class="hb-dg-t">${title}</span><span class="hb-dg-d">${detail}</span></div></li>`;
+
 function briefSectionsHtml(lens, recentDoneN, tessApplied, liveWorkingN) {
+  if (lens === "week") {
+    return `<p class="hb-dg-lead"><strong>19 tasks shipped this week,</strong> 4 more than last week.</p>
+        <ul class="hb-dg-list">
+          ${digestItem("ok", "bolt", "Turnaround improved 14%", "Median is now 18m. Look &amp; feel refresh is 1 day ahead of Nov 28.")}
+          ${digestItem("ok", "check-circle", "84% approved on the first try", "Up 6% on last week. All 412 workspace checks are green.")}
+          ${digestItem("accent", "signal", "78% of work ran autonomously", "Across 4 leads and 7 specialists.")}
+          ${digestItem("warn", "currency", "$142 of $210 spent", "Pacing to ~$204, inside budget. Jules hit its individual cap.")}
+        </ul>`;
+  }
+  if (lens === "board") {
+    return `<p class="hb-dg-lead"><strong>Throughput up 27% week over week</strong> at 84% first-pass approval, $6 under the monthly budget.</p>
+        <ul class="hb-dg-list">
+          ${digestItem("ok", "flag", "v1.0 launch readiness", `412 checks passed; notes and onboarding done. ${recentDoneN ? "Release sign-offs are advancing" : "Kai’s sync sign-off is the last gate"} for Dec 5.`)}
+          ${digestItem("bad", "offline", "Build box office offline", "Office federation v0.9 slips 5 days. A verified reconnect fix is staged.")}
+          ${digestItem(tessApplied ? "ok" : "warn", "currency", "Jules’s stalled queue", tessApplied ? "Rerouted to Maya &amp; Rowan at $0 extra spend." : "A zero-cost reassignment is waiting for your approval.")}
+        </ul>`;
+  }
+  const cleared = recentDoneN ? `You’ve cleared ${plural(recentDoneN, "item", "items")} this session. ` : "";
+  return `<p class="hb-dg-lead"><strong>${liveWorkingN} agents are working across 3 projects.</strong> Two problems need you to keep v1.0 on track for Dec 5.</p>
+        <ul class="hb-dg-list">
+          ${digestItem("ok", "check-circle", "Release checks passed", "All 412 CI checks are green; Ada &amp; Maya drafted the v1.0 notes.")}
+          ${digestItem("bad", "offline", "Build box office offline for 2h", "Office federation is 5 days behind. Sage’s reconnect fix is staged.")}
+          ${digestItem(tessApplied ? "ok" : "warn", "currency", tessApplied ? "Jules’s tasks rerouted" : "Jules reached its $210 cap", tessApplied ? "3 tasks moved to Maya &amp; Rowan at $0 added spend." : "3 tasks are stalled. A zero-cost reroute is queued for you.")}
+          ${digestItem("accent", "sparkle", "Queued for you", `${cleared}Kai’s v1.0 sync sign-off is first in your queue.`)}
+        </ul>`;
+}
+
+function briefMemoHtml(lens, recentDoneN, tessApplied, liveWorkingN) {
   if (lens === "week") {
     return `<div class="hb-cos-sec"><span class="hb-cos-k is-ok">Velocity &amp; Delivery</span><p class="hb-cos-p">The team shipped <strong>19 tasks over the last 7 days</strong> (+4 WoW) with median turnaround improving <strong>14% to 18m</strong>. <strong>Look &amp; feel refresh</strong> is running 1 day ahead of its Nov 28 milestone.</p></div>
         <div class="hb-cos-sec"><span class="hb-cos-k">Autonomy &amp; Budget</span><p class="hb-cos-p"><strong>78% of work ran autonomously</strong> across 4 leads and 7 specialists. Month-to-date spend is <strong>$142 of $210</strong> (68%), pacing to <strong>~$204</strong> — inside budget, though Jules hit its individual cap.</p></div>
@@ -498,6 +577,12 @@ function briefSectionsHtml(lens, recentDoneN, tessApplied, liveWorkingN) {
           <div class="hb-cos-sec"><span class="hb-cos-k">What I’ve Queued For You</span><p class="hb-cos-p">${doneLead}I prioritized <strong>Kai’s v1.0 sync sign-off</strong> first on the left${tessNote}</p></div>`;
 }
 
+function briefViewToggleHtml() {
+  const view = S.briefView || "highlights";
+  const btn = (v, icon, label) => `<button type="button" data-act="brief-view" data-v="${v}" aria-pressed="${view === v}" title="${label}">${ic(icon, "ic14")}<span>${label}</span></button>`;
+  return `<div class="hb-brief-lenses hb-brief-view" role="group" aria-label="Brief format">${btn("highlights", "list", "Highlights")}${btn("memo", "doc-check", "Full brief")}</div>`;
+}
+
 function renderHomeCatchup(st, liveWorkingN) {
   if (st === "error" || st === "empty") return "";
   const recentDoneN = IN.filter((i) => i.handled && i.handledNow).length;
@@ -505,9 +590,9 @@ function renderHomeCatchup(st, liveWorkingN) {
   const lens = S.briefLens || "today";
   const memoBody = st === "loading" ? skel(4, "Tess is preparing your executive brief…") : `
       <div class="hb-cos-memo${S.briefExpanded ? " is-expanded" : ""}">
-        <div class="hb-cos-scroll" id="hb-cos-scroll" tabindex="0" aria-label="Executive brief content">${briefSectionsHtml(lens, recentDoneN, tessApplied, liveWorkingN)}</div>
+        <div class="hb-cos-scroll${S.briefView === "memo" ? " is-memo" : ""}" id="hb-cos-scroll" tabindex="0" aria-label="Executive brief content">${(S.briefView === "memo" ? briefMemoHtml : briefSectionsHtml)(lens, recentDoneN, tessApplied, liveWorkingN)}</div>
         <button type="button" class="hb-cos-expand" data-act="brief-expand" aria-expanded="${!!S.briefExpanded}" aria-controls="hb-cos-scroll">
-          <span>${S.briefExpanded ? "Show less" : "Show full brief"}</span>${ic("chev-down", "ic14")}
+          <span>${S.briefExpanded ? "Show less" : "Show more"}</span>${ic("chev-down", "ic14")}
         </button>
         <div class="hb-cos-sig">
           <a class="hb-cos-sig-who" href="#/members/tess" title="Open Tess's profile">
@@ -515,22 +600,14 @@ function renderHomeCatchup(st, liveWorkingN) {
             <div class="hb-cos-sig-txt"><span class="hb-cos-sig-name">Tess</span><span class="hb-cos-sig-role">Chief of Staff</span></div>
           </a>
           <div class="hb-cos-sig-r">
-            ${lens !== "board" ? `<span class="hb-cos-sig-meta">Updated 2m ago</span>` : ""}
+            ${briefViewToggleHtml()}
             <button type="button" class="hb-cos-copy${S.briefCopied ? " is-copied" : ""}" data-act="ai-copy-brief" aria-live="polite">
               ${ic(S.briefCopied ? "check" : "clipboard", "ic14")}<span>${S.briefCopied ? "Copied" : "Copy brief"}</span>
             </button>
           </div>
         </div>
       </div>`;
-  return `<aside class="hb-catchup" aria-label="Executive brief from Tess, Chief of Staff">
-      <div class="hb-cu-hd">
-        <div class="hb-cu-title">${ic("sparkle", "ic16")}<span class="lbl-std">Executive Brief</span><span class="lbl-rep">Executive Brief</span></div>
-        <div class="hb-brief-lenses" role="group" aria-label="Brief timeframe">
-          <button type="button" data-act="brief-lens" data-v="today" aria-pressed="${lens === "today"}">Today</button>
-          <button type="button" data-act="brief-lens" data-v="week" aria-pressed="${lens === "week"}">7-Day</button>
-          <button type="button" data-act="brief-lens" data-v="board" aria-pressed="${lens === "board"}">Board</button>
-        </div>
-      </div>
+  return `<aside class="hb-catchup" aria-labelledby="hb-brief-h">
       ${memoBody}
     </aside>`;
 }
@@ -634,14 +711,49 @@ function summarizeHomeFleet(st) {
   };
 }
 
+
+function briefLensesHtml() {
+  const lens = S.briefLens || "today";
+  const btn = (v, label) => `<button type="button" data-act="brief-lens" data-v="${v}" aria-pressed="${lens === v}">${label}</button>`;
+  return `<div class="hb-brief-lenses" role="group" aria-label="Brief timeframe">${btn("today", "Today")}${btn("week", "7-day")}${btn("board", "Board")}</div>`;
+}
+
+function stageHeadsHtml(st, open) {
+  if (st !== "filled" && st !== "loading") return "";
+  const pending = st === "loading" ? "" : `${open.length} pending`;
+  return sectionHead({ id: "hb-spot-h", title: "Needs your attention", repTitle: "Decision &amp; approval queue", count: pending, cls: "is-spot", right: `<a class="link" href="#/inbox">Open inbox${ic("chev-right", "ic16")}</a>` })
+    + sectionHead({ id: "hb-brief-h", title: "Executive digest", count: (S.briefLens || "today") === "board" ? "from Tess" : "from Tess · 2m ago", cls: "is-brief", right: briefLensesHtml() });
+}
+
 function homeProjectsSectionHtml(st, projs, queue, needsAttnProjs) {
   if (st === "error" || st === "empty") return "";
-  const countTxt = st === "loading" ? "" : `<span>${projs.length} active${needsAttnProjs ? ` · ${needsAttnProjs} need attention` : ""}</span>`;
+  const countTxt = st === "loading" ? "" : `${projs.length} active${needsAttnProjs ? ` · ${needsAttnProjs} need attention` : ""}`;
   const body = st === "loading" ? homeSkelCards(3, "Loading projects…") : `<div class="hb-bento">${projs.map((p) => renderProjBentoCard(p, queue)).join("")}</div>`;
   return `<div><section class="hb-proj-sec" id="hb-projects" aria-labelledby="hb-projs-h">
-        <div class="hb-proj-head"><div class="hb-proj-head-l"><h2 id="hb-projs-h"><span class="lbl-std">Projects</span><span class="lbl-rep">Project Delivery Scorecard</span></h2>${countTxt}</div><a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a></div>
+        ${sectionHead({ id: "hb-projs-h", title: "Projects", repTitle: "Project delivery scorecard", count: countTxt, right: `<a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a>` })}
         ${body}
       </section></div>`;
+}
+
+function upcomingEventHtml(e) {
+  const proj = P[e.proj];
+  return `<li class="hb-cal-ev">
+          <span class="hb-cal-date" aria-hidden="true"><span>${esc(e.mon)}</span><strong>${esc(e.day)}</strong></span>
+          <a class="hb-cal-main" href="#/projects/${esc(e.proj)}">
+            <span class="hb-cal-t">${esc(e.title)}<span class="hb-cal-proj"> – ${esc(proj?.name ?? "")}</span></span>
+            <span class="hb-cal-meta"><span class="sr-only">${esc(e.mon)} ${Number(e.day)}, </span><span>${esc(e.when)}</span><span aria-hidden="true">·</span><span class="tnum">${esc(e.start)} – ${esc(e.end)}</span><span aria-hidden="true">·</span><span>${plural(e.attendees.length, "attendee", "attendees")}</span></span>
+          </a>
+          ${avStack(e.attendees, 3)}
+        </li>`;
+}
+
+function homeUpcomingSectionHtml(st) {
+  if (st === "error" || st === "empty") return "";
+  const body = st === "loading" ? skel(2, "Loading upcoming meetings…") : `<ul class="hb-cal-list">${EVENTS.map(upcomingEventHtml).join("")}</ul>`;
+  return `<section class="hb-cal-sec" aria-labelledby="hb-cal-h">
+        ${sectionHead({ id: "hb-cal-h", title: "Upcoming", count: st === "loading" ? "" : `${EVENTS.length} in the next 8 days`, right: `<button type="button" class="link" data-act="proto" data-v="Calendar (coming soon)">View calendar${ic("chev-right", "ic16")}</button>` })}
+        <div class="hb-cal">${body}</div>
+      </section>`;
 }
 
 function pageHome() {
@@ -656,13 +768,12 @@ function pageHome() {
   const remainingInInbox = Math.max(0, open.length - queue.filter((i) => !i.handled).length);
   const fleet = summarizeHomeFleet(st);
   const headline = homeHeadline(st, open.filter((i) => i.expires).length, open.length);
-  const metricsHtml = renderHomeMetrics(st, fleet, offTrackProjs, atRiskProjs);
+  const metricsHtml = renderHomeMetrics(st, fleet, projs, offTrackProjs, atRiskProjs);
   const spotlightHtml = renderHomeSpotlight({ st, queue, open, curItem: queue[S.spotIdx] || null, allQueueCleared, remainingInInbox });
-  const quickActs = st === "error" || isEmpty ? "" : `<div class="hb-quick-acts" aria-label="Quick actions"><button class="btn sm h4-cta hb-cta-glass" data-cta-tone="ocean" type="button" data-act="proto" data-v="New task"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>New task</span></span></span></button></div>`;
   const mainBody = isEmpty
     ? `<div class="hb-stage is-single">${spotlightHtml}</div>${metricsHtml}`
-    : `${metricsHtml}<div class="hb-stage${st === "error" ? " is-single" : ""}">${spotlightHtml}${renderHomeCatchup(st, fleet.liveWorkingN)}</div>`;
-  return `<div class="hb"><header class="hb-hero"><div class="hb-brief"><h1 class="hb-title" tabindex="-1">${headline}</h1></div>${quickActs}</header>${mainBody}${homeProjectsSectionHtml(st, projs, queue, offTrackProjs + atRiskProjs)}${renderTaskTimeSection(st, open.length, fleet.idleSpecsN)}</div>`;
+    : `${metricsHtml}<div class="hb-stage${st === "error" ? " is-single" : " has-heads"}">${stageHeadsHtml(st, open)}${spotlightHtml}${renderHomeCatchup(st, fleet.liveWorkingN)}</div>`;
+  return `<div class="hb"><header class="hb-hero"><div class="hb-brief"><h1 class="hb-title" tabindex="-1">${headline}</h1></div></header>${mainBody}${homeProjectsSectionHtml(st, projs, queue, offTrackProjs + atRiskProjs)}${homeUpcomingSectionHtml(st)}${renderTaskTimeSection(st, open.length, fleet.idleSpecsN)}</div>`;
 }
 
 export {

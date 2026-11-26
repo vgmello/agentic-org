@@ -1,17 +1,3 @@
-@font-face {
-  font-family: "Cozy Inter";
-  src: url("./fonts/cozy-inter.woff2") format("woff2");
-  font-weight: 400 750;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Cozy JetBrains Mono";
-  src: url("./fonts/cozy-jetbrains-mono.woff2") format("woff2");
-  font-weight: 400 650;
-  font-display: swap;
-}
-
 .cozy-room, .cozy-shell { display: none; }
 
 html[data-theme="cozy"] {
@@ -90,14 +76,14 @@ html[data-theme="cozy"] {
   --cozy-primary-edge: rgb(74 222 154 / .45);
   --cozy-secondary: rgb(255 248 240 / .07);
   --cozy-secondary-edge: rgb(255 248 240 / .15);
-  --cozy-mono: "Cozy JetBrains Mono", "JetBrains Mono", ui-monospace, monospace;
+  --cozy-mono: var(--font-mono);
   background: #3f342b;
 
   & body {
     background: transparent;
     color: var(--white);
-    font-family: "Cozy Inter", Inter, system-ui, sans-serif;
-    font-size: .875rem;
+    font-family: var(--font-sans);
+    font-size: var(--fs-base);
   }
 
   & body.a11y-mode {
@@ -292,7 +278,7 @@ html[data-theme="cozy"] {
     --h4-dim: var(--gray-400);
   }
 
-  & :is(.hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-horizon, .hb-skel-card,
+  & :is(.hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-cal, .hb-horizon, .hb-skel-card,
     .card, .bcard, .c-entry, .prof, .split .list) {
     background: var(--cozy-panel);
     backdrop-filter: none;
@@ -350,18 +336,10 @@ html[data-theme="cozy"] {
     background: var(--cozy-secondary);
     box-shadow: inset 0 0 0 1px var(--line);
   }
-  & :is(.cnt, .meta, .work-eta, .hb-spot-cell-sub, .hb-spot-next-lbl, .hb-cos-k, .hb-cos-sig-role,
-    .hb-cos-ts, .hb-cos-sig-meta, .hb-spot-next-ai, .hb-pillar-name, .hb-pillar-pill, .hb-sub-lbl,
-    .hb-sub-meta, .hb-eyebrow, .hb-card-k, .hb-pace, .hb-hor-note, .hb-rel-tag, .hb-unblock-btn,
-    .hb-brief-lenses button, .mono, code, .av24,
-    .hb-hor-date span, .nav-label, .nav-group-title, .nav-group-all, .cmdk-grp, .cmdk-trigger kbd,
-    .cmdk-opt-sub, .cmdk-opt-tag, .cmdk-esc, .cmdk-ai-prev-lbl) {
-    font-size: max(.75rem, 12px);
-  }
   & :is(.mono, .work-ref, .work-eta, code, pre, .runlog, .h4-task-chip, .hb-cos-k, .hb-cos-ts, .cmdk-trigger kbd, .cmdk-opt-tag) {
-    font-family: var(--cozy-mono);
+    font-family: var(--font-mono);
   }
-  & .work-ref { color: var(--gray-300); font-size: .875rem; font-weight: 500; }
+  & .work-ref { color: var(--gray-300); }
 
   & :is(.btn, .nav-item, .nav-collapse-btn, .nav-group-all, .acct, .seg, .seg button,
     .nav-fold-btn, .cmdk-opt, .cmdk-esc, .cmdk-ai-prev-chip, .cmdk-tab, .menu button,

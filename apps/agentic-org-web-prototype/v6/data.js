@@ -482,6 +482,14 @@ const PAST_SESSIONS = [
 
 const STATUSES = { task: ["To do", "In progress", "Blocked", "Done"], bug: ["New", "Triaged", "In progress", "Fixed", "Closed"], request: ["Not routed", "Rowan is scoping", "Scoped", "Approved"] };
 const ALL_STATUSES = [...new Set([...STATUSES.task, ...STATUSES.bug, ...STATUSES.request, ...W.map((w) => w.status)])];
+/* Calendar (prototype mock): upcoming meetings across projects. Today is Thu, Nov 26. */
+const EVENTS = [
+  { id: "ev1", title: "Release sign-off review", proj: "agency-v1", mon: "Nov", day: "27", when: "Tomorrow", start: "10:00", end: "10:30", attendees: ["you", "ada", "tomas", "kai"] },
+  { id: "ev2", title: "Design polish walkthrough", proj: "look-feel", mon: "Nov", day: "28", when: "Sat", start: "14:00", end: "14:45", attendees: ["you", "eden", "emery", "avery"] },
+  { id: "ev3", title: "Office sync test", proj: "office-federation", mon: "Dec", day: "01", when: "Tue", start: "11:00", end: "12:00", attendees: ["you", "rowan", "sage", "quinn"] },
+  { id: "ev4", title: "v1.0 launch go / no-go", proj: "agency-v1", mon: "Dec", day: "04", when: "Fri", start: "16:00", end: "16:30", attendees: ["you", "maya", "ada", "emery", "tomas", "rowan"] },
+];
+
 const OPEN = (w) => !["Done", "Fixed", "Closed", "Approved", "Declined"].includes(w.status);
 const NEEDS_ME_SUBS = ["Review requested", "Hand-off"];
 const blockedOnOwner = (w) => w.status === "Blocked" && w.waitsOn === "you";
@@ -493,6 +501,7 @@ export {
   A,
   ALL_STATUSES,
   CH,
+  EVENTS,
   HEALTH,
   IN,
   KIND,

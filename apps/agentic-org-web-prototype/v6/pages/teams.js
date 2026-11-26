@@ -1,3 +1,4 @@
+import { orgChartBody, orgSummary } from "./org-chart.js";
 import { CH, KNOWLEDGE, M, NOTES, OFFICES, OPEN, P, TEAMS, W } from "../data.js";
 import { activityEventTime, activityTimeline, formatTelemetryHours } from "./activity.js";
 import { agentRailHtml, agentSessionAvailability, getConsoleSession } from "./agent-profile.js";
@@ -6,7 +7,7 @@ import { conversationPreview, memberRows } from "./projects.js";
 import { healthMark, notFound } from "./settings.js";
 import { scopedWorkToolbar, scopedWorkWorkspace, teamWork, visibleWorkItems, workGroups, workList } from "./work.js";
 import { S } from "../state.js";
-import { SEP, acts, av, avStack, back, esc, feed, hireMenu, ic, isPerson, joinSep, kindWord, leadOf, leadTxt, linkTabs, memberIds, menuItem, mlink, moreMenu, needsCard, openFrom, pill, plink, plural, presInline, presPill, progress, projPill, queueHeadline, sectionTabs, showMenu, statusLine } from "../ui.js";
+import { SEP, acts, av, avStack, crumbs, esc, feed, hireMenu, ic, isPerson, joinSep, kindWord, leadOf, leadTxt, linkTabs, memberIds, menuItem, mlink, moreMenu, needsCard, openFrom, pill, plink, plural, presInline, presPill, progress, projPill, queueHeadline, sectionTabs, showMenu, statusLine } from "../ui.js";
 
 /* ---------------------------------------------------------------- teams */
 function teamsHeader(title, count, current, controls = "", actions = "") {
@@ -116,7 +117,7 @@ function pageTeam(id, tab = "overview") {
     ["", "Overview"], ["members", "Members", t.members.length], ["work", "Work", ws.filter(OPEN).length],
     ["projects", "Projects"], ["activity", "Activity"], ["conversations", "Conversations"],
   ], tab === "overview" ? "" : tab, "Team sections");
-  const header = back("#/teams", "Teams") + `<div class="section-header">${queueHeadline(t.name, count)}${sectionTabs(tabs, "", actions)}</div>`;
+  const header = crumbs([["#/teams", "Teams"], [null, t.name]]) + `<div class="section-header">${queueHeadline(t.name, count)}${sectionTabs(tabs, "", actions)}</div>`;
   if (tab === "overview") return header + teamOverview(id, ws);
   if (tab === "members") return header + `<section aria-labelledby="h-mem"><h2 class="team-roster-title" id="h-mem">All members</h2>${memberRows(t.members, { noTeam: true })}</section>`;
   if (tab === "work") return header + scopedWorkToolbar("team", id, ws) + scopedWorkWorkspace();
@@ -137,11 +138,7 @@ function pageMembersDir() {
     memberRows(ids, { emptyText: "No members match this filter." });
 }
 function pageOrgChart() {
-  const node = (id) => `<a class="node" href="#/members/${id}">${av(id, 32, "word")}<span><span class="nm">${esc(M[id].name)}</span><span class="rl">${esc(M[id].role)} · ${kindWord(id)}</span></span><span class="node-presence">${presInline(id)}</span></a>`;
-  const tree = (id) => { const kids = memberIds().filter((k) => M[k].mgr === id); return `<li>${node(id)}${kids.length ? `<ul>${kids.map(tree).join("")}</ul>` : ""}</li>`; };
-  const roots = memberIds().filter((k) => M[k].mgr === "you");
-  return teamsHeader("Org chart", `By reporting line · ${plural(memberIds().length, "member", "members")}`, "org-chart", "", hireMenu()) +
-    `<div class="section"><ul class="tree" aria-label="Reporting lines"><li>${ownerCard()}<ul>${roots.map(tree).join("")}</ul></li></ul></div>`;
+  return teamsHeader("Org chart", orgSummary(), "org-chart", "", hireMenu()) + orgChartBody();
 }
 
 function agentSetupFields(id, inProfile = false) {
@@ -208,7 +205,7 @@ function agentOverviewTab(id, m, avail, myW, myActs) {
     : `<p class="muted">${avail.active ? "Not working on anything right now." : esc(avail.reason)}</p>`;
   const latestHtml = lastEntry ? `<div class="k-doc" style="margin-top:16px">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">
-              <span style="font-weight:600;color:#fff;display:inline-flex;align-items:center;gap:6px">${ic("terminal", "ic16")}Latest session output</span>
+              <span style="font-weight:600;color:var(--white);display:inline-flex;align-items:center;gap:6px">${ic("terminal", "ic16")}Latest session output</span>
               <a class="link" style="font-size:0.75rem" href="#/members/${id}/sessions">Open Sessions${ic("chev-right", "ic16")}</a>
             </div>
             <p class="muted" style="font-size:0.75rem;margin-bottom:6px">${esc(M[lastEntry.from] ? M[lastEntry.from].name : lastEntry.from)} · ${esc(lastEntry.time)} — “${esc(lastEntry.text)}”</p>
@@ -309,7 +306,7 @@ function pageMember(id, tab) {
   const pp = presPill(id, true);
   const nowLine = !agent && (pp || line) ? `<p class="now">${pp}${line ? `<span>${line}</span>` : ""}</p>` : "";
   const nav = linkTabs("#/members/" + id, tabs, resolvedTab === "overview" ? "" : resolvedTab, "Profile sections");
-  const backLink = owner ? back("#/teams", "Teams") : back("#/teams/members", "Members");
+  const backLink = owner ? crumbs([["#/teams", "Teams"], [null, m.name]]) : crumbs([["#/teams", "Teams"], ["#/teams/members", "Members"], [null, m.name]]);
   return `${backLink}<div class="section-header"><header class="prof">${av(id, 40, "word")}<div class="grow"><h1 tabindex="-1">${esc(m.name)} <span class="role">${esc(m.role)}</span></h1>
     <p class="meta">${memberMetaFacts(id, m, owner)}</p>${nowLine}</div></header>${sectionTabs(nav, controls, actions, "profile-actions")}</div>${body}`;
 }

@@ -1,5 +1,12 @@
+use super::show::{effective_differs, parse_show, property, shell_words};
+use super::systemd::user_name;
+use super::unit_file::{definition, render, unit_file_safe};
 use super::*;
+use crate::service::{validate, Lingering, Registration, ServiceError, ServiceStatus, Unit};
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 /// What the stand-in for systemd's user manager holds of the one unit a test registers.
 #[derive(Default)]

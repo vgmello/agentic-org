@@ -2,10 +2,11 @@ import { CH, IN, KIND, M, P, TEAMS, WORK_DISCUSSIONS } from "../data.js";
 import { itemActionsV4 } from "./home.js";
 import { findWorkItem, fitTextarea, workCommentPrefix, workHref } from "./work.js";
 import { route } from "../shell/router.js";
+import { getNotifications, getRunningJobs, markNotificationRead, unreadNotificationsCount } from "../shell/topbar-utils.js";
 import { S } from "../state.js";
-import { av, displayCheckbox, esc, ic, kindWord, mlink, plink, plural, queueHeadline, recommendationCallout, showMenu, toast, unhandled } from "../ui.js";
+import { av, displayCheckbox, esc, ic, kindWord, mlink, plink, plural, queueHeadline, recommendationCallout, searchRow, searchToggle, showMenu, toast, unhandled } from "../ui.js";
 
-const INBOX_TABS = ["all", "approval", "decision"];
+const INBOX_TABS = ["all", "approval", "decision", "notifications"];
 const INBOX_MORE = ["question", "problem", "suggestion", "handled"];
 const inboxUrgent = (item) => Boolean(item.expires || item.assign);
 function matchesInboxQuery(item, query) {
@@ -29,10 +30,29 @@ function inboxItems(kind = S.inboxKind) {
   ).sort((a, b) => (priorityFirst ? Number(inboxUrgent(b)) - Number(inboxUrgent(a)) : 0)
     || Number(b.group === "Today") - Number(a.group === "Today"));
 }
+function filteredNotifications() {
+  const q = S.inboxQuery.trim().toLowerCase();
+  const list = getNotifications();
+  if (!q) return list;
+  return list.filter((n) => [n.title, n.summary, n.source].some((v) => v && v.toLowerCase().includes(q)));
+}
 function inboxTabLabel(key) {
-  return key === "all" ? "All" : key === "handled" ? "Handled" : KIND[key].plural;
+  if (key === "all") return "All";
+  if (key === "handled") return "Handled";
+  if (key === "notifications") return "Notifications";
+  return KIND[key].plural;
+}
+function inboxTabCount(key) {
+  return key === "notifications" ? getRunningJobs().length + filteredNotifications().length : inboxItems(key).length;
 }
 function inboxViewControls() {
+  if (S.inboxKind === "notifications") {
+    const unread = unreadNotificationsCount();
+    const hasRead = getNotifications().some((n) => n.read);
+    const markAll = unread > 0 ? `<button class="btn ghost sm" type="button" data-act="notif-mark-all">Mark all read</button>` : "";
+    const clearRead = hasRead ? `<button class="btn ghost sm" type="button" data-act="notif-clear-read">Clear read</button>` : "";
+    return `<div class="queue-controls notif-inbox-acts" role="group" aria-label="Notification actions">${inboxSearchToggle()}${markAll}${clearRead}</div>`;
+  }
   const inboxFiltered = S.inboxUrgent || S.inboxProj !== "all" || S.inboxTeam !== "all";
   const filter = showMenu("inbox-filter", [
     ["inboxUrgent", "Urgency", [[false, "All items"], [true, "Urgent only"]]],
@@ -45,13 +65,19 @@ function inboxViewControls() {
     icon: "adjustments", label: "Inbox display", active: S.inboxOrder === "date",
     footer: `<hr>${displayCheckbox("inbox-dividers", "Row dividers", S.inboxDividers)}`,
   });
-  return `<div class="queue-controls" role="group" aria-label="Inbox view controls">${filter}${display}</div>`;
+  return `<div class="queue-controls" role="group" aria-label="Inbox view controls">${inboxSearchToggle()}${filter}${display}</div>`;
 }
+const inboxSearchToggle = () => searchToggle("triage-search", "Search inbox", S.inboxQuery);
+const inboxSearchRow = () => searchRow("triage-search", "Search inbox", S.inboxQuery, "Search inbox… (Esc to close)");
 function inboxCategories() {
   const moreActive = INBOX_MORE.includes(S.inboxKind);
+  const notifAlert = unreadNotificationsCount() + getRunningJobs().length > 0;
   return `<div class="primary-tab-row" role="group" aria-label="Inbox queue controls"${S.singleKey ? ' aria-keyshortcuts="M"' : ""}>
-    <div class="queue-tabs">${INBOX_TABS.map((key) => `
-      <button class="queue-tab" type="button" data-act="inbox-category" data-v="${key}" aria-pressed="${S.inboxKind === key}">${inboxTabLabel(key)}<span>${inboxItems(key).length}</span></button>`).join("")}
+    <div class="queue-tabs">${INBOX_TABS.map((key) => {
+      const dot = key === "notifications" && notifAlert ? '<span class="tab-live-dot" aria-hidden="true"></span>' : "";
+      return `
+      <button class="queue-tab" type="button" data-act="inbox-category" data-v="${key}" aria-pressed="${S.inboxKind === key}">${inboxTabLabel(key)}<span>${inboxTabCount(key)}</span>${dot}</button>`;
+    }).join("")}
     </div>
       <div class="menu-wrap"><button class="queue-tab" type="button" data-act="menu" data-id="inbox-kinds"
         aria-haspopup="menu" aria-expanded="false" aria-controls="menu-inbox-kinds"${moreActive ? ` data-current-kind title="Viewing ${esc(inboxTabLabel(S.inboxKind))}"` : ""}>More${ic("chev-down", "ic14")}</button>
@@ -89,7 +115,84 @@ function inboxQueue(items, selected) {
     return `<section class="triage-group"><h2>${label}</h2><ul class="triage-list">${group.map((item) => inboxQueueRow(item, selected)).join("")}</ul></section>`;
   }).join("");
 }
-function pageInbox(sel) {
+function notifQueueRow(n, selected) {
+  return `<li><a class="triage-item notif-inbox-item${n.read ? "" : " is-unread"}" href="#/inbox/notifications/${esc(n.id)}" ${selected?.id === n.id ? 'aria-current="true"' : ""}>
+    <span class="triage-person">
+      <span class="notif-row-ic tone-${esc(n.tone || "accent")}" aria-hidden="true">${ic(n.icon || "check-circle", "ic14")}</span>
+      <span class="triage-sender"><strong>${esc(n.source || "System")}</strong></span>
+      <span class="triage-stamp">${n.read ? "" : '<span class="notif-unread-dot" aria-hidden="true"></span>'}<time>${esc(n.time)}</time></span>
+    </span>
+    <span class="triage-title">${esc(n.title)}</span>
+    <span class="triage-meta">${esc(n.summary)}</span>
+  </a></li>`;
+}
+function notifRunningGroupHtml() {
+  const jobs = getRunningJobs();
+  if (!jobs.length) return "";
+  const rows = jobs.map((job) => `<li class="notif-job-row">
+    <span class="notif-job-spin" aria-hidden="true"></span>
+    <span class="notif-row-copy">
+      <span class="notif-row-title">${esc(job.title)}</span>
+      <span class="notif-row-sub">${esc(job.step || "Processing in background…")}</span>
+    </span>
+    <span class="notif-job-pill">Active</span>
+  </li>`).join("");
+  return `<section class="triage-group"><h2>In progress</h2><ul class="notif-list" role="list">${rows}</ul></section>`;
+}
+function inboxNotificationsQueue(list, selected) {
+  const runningHtml = notifRunningGroupHtml();
+  if (!list.length && !runningHtml) {
+    return `<div class="triage-empty">${ic("bell", "ic20")}<h2>${S.inboxQuery.trim() ? "No matching notifications" : "All caught up"}</h2><p>${S.inboxQuery.trim() ? "Try another search." : "Background jobs and completions will appear here."}</p></div>`;
+  }
+  const unread = list.filter((n) => !n.read);
+  const read = list.filter((n) => n.read);
+  const unreadHtml = unread.length ? `<section class="triage-group"><h2>Unread</h2><ul class="triage-list">${unread.map((n) => notifQueueRow(n, selected)).join("")}</ul></section>` : "";
+  const readHtml = read.length ? `<section class="triage-group"><h2>Earlier</h2><ul class="triage-list">${read.map((n) => notifQueueRow(n, selected)).join("")}</ul></section>` : "";
+  return runningHtml + unreadHtml + readHtml;
+}
+function inboxNotificationDetail(n) {
+  if (!n) return `<div class="triage-empty">${ic("bell", "ic20")}<h2>No notification selected</h2><p>Select a notification on the left to inspect or jump to its source.</p></div>`;
+  return `<article class="triage-document" aria-labelledby="triage-detail-title">
+    <a class="triage-back btn ghost sm" href="#/inbox/notifications">${ic("chev-left", "ic16")}Back to Notifications</a>
+    <header class="triage-intro">
+      <p class="triage-from">
+        <span class="notif-row-ic tone-${esc(n.tone || "accent")}" aria-hidden="true">${ic(n.icon || "check-circle", "ic14")}</span>
+        <span>${esc(n.source || "System notification")}</span>
+        <span aria-hidden="true">·</span>
+        <span class="triage-from-time">${esc(n.time)}</span>
+      </p>
+      <h2 tabindex="-1" id="triage-detail-title">${esc(n.title)}</h2>
+    </header>
+    <p class="triage-description">${esc(n.summary)}</p>
+    <div class="triage-decision">
+      <div class="triage-actions">
+        ${n.href ? `<a class="btn primary sm" href="${esc(n.href)}">${ic("open", "ic16")}${esc(n.hrefLabel || "Open item")}</a>` : ""}
+        <button class="btn outline sm" type="button" data-act="notif-toggle-read" data-id="${esc(n.id)}">${n.read ? "Mark as unread" : "Mark as read"}</button>
+      </div>
+    </div>
+  </article>`;
+}
+function pageInboxNotifications(selId) {
+  if (selId) markNotificationRead(selId);
+  const list = filteredNotifications();
+  const selected = list.find((n) => n.id === selId) || (narrow() ? null : list[0] || null);
+  const total = getRunningJobs().length + list.length;
+  return `<section class="triage-workspace${selId && selected ? " triage-has-detail" : ""}" aria-label="Inbox workspace">
+    <header class="triage-header queue-header">
+      ${queueHeadline("Inbox", unhandled().length + " waiting on you", true)}
+      <div class="triage-toolbar queue-toolbar" id="triage-categories">${inboxCategories()}</div>
+    </header>
+    <div class="triage-split">
+      <section class="triage-queue" aria-label="Notifications queue">${inboxSearchRow()}<div class="triage-queue-summary"><span>Live &amp; recent</span><span id="triage-visible" role="status">${plural(total, "notification", "notifications")}</span></div>
+        <div id="triage-list">${inboxNotificationsQueue(list, selected)}</div>
+      </section>
+      <section class="triage-reading" id="triage-reading" aria-label="Notification details">${inboxNotificationDetail(selected)}</section>
+    </div>
+  </section>`;
+}
+function pageInbox(sel, sub) {
+  if (sel === "notifications") S.inboxKind = "notifications";
+  if (S.inboxKind === "notifications") return pageInboxNotifications(sel === "notifications" ? sub : null);
   const items = inboxItems(), item = inboxSelection(items, sel);
   const queueLabel = INBOX_MORE.includes(S.inboxKind)
     ? (S.inboxKind === "handled" ? "Handled items" : inboxTabLabel(S.inboxKind))
@@ -100,7 +203,7 @@ function pageInbox(sel) {
       <div class="triage-toolbar queue-toolbar" id="triage-categories">${inboxCategories()}</div>
     </header>
     <div class="triage-split">
-      <section class="triage-queue" aria-label="Inbox queue"><div class="triage-queue-summary"><span>${queueLabel}</span><span id="triage-visible" role="status">${plural(items.length, "item in view", "items in view")}</span></div>
+      <section class="triage-queue" aria-label="Inbox queue">${inboxSearchRow()}<div class="triage-queue-summary"><span>${queueLabel}</span><span id="triage-visible" role="status">${plural(items.length, "item in view", "items in view")}</span></div>
         <div id="triage-list">${inboxQueue(items, item)}</div>
       </section>
       <section class="triage-reading" id="triage-reading" aria-label="Item details">${item ? inboxDetail(item) : inboxEmptyDetail()}</section>
@@ -247,6 +350,16 @@ function inboxDetail(it) {
   </article>`;
 }
 function refreshInboxSearch() {
+  if (S.inboxKind === "notifications") {
+    const list = filteredNotifications(), sel = route()[2];
+    const selected = list.find((n) => n.id === sel) || (narrow() ? null : list[0] || null);
+    const total = getRunningJobs().length + list.length;
+    document.getElementById("triage-categories").innerHTML = inboxCategories();
+    document.getElementById("triage-visible").textContent = plural(total, "notification", "notifications");
+    document.getElementById("triage-list").innerHTML = inboxNotificationsQueue(list, selected);
+    document.getElementById("triage-reading").innerHTML = inboxNotificationDetail(selected);
+    return;
+  }
   const items = inboxItems(), sel = route()[1];
   const keep = items.some((item) => item.id === sel);
   if (sel && !keep) resetInboxSelection();

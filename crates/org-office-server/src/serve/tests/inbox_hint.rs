@@ -229,7 +229,7 @@ fn hint_cursor_failure_still_emits_ready_without_capability_or_owner_delivery() 
     );
     let (rendezvous, host) = UnixStream::pair().unwrap();
     control.set_rendezvous_for_test(rendezvous);
-    crate::announce_ready(
+    crate::office_runtime::announce_ready(
         &mut control,
         std::path::Path::new("/ready-probe"),
         &mut shared,

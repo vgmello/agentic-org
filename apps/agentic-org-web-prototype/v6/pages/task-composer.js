@@ -217,10 +217,12 @@ function finalizeDraftIntake(intake, ctx) {
     title: `Draft ${created.id} ready with ${leadName}`,
     summary: `${created.title} — open to refine scope or publish to To do.`,
     href: `#/work?item=${created.id}`,
+    hrefLabel: `Open ${created.id} in Work`,
+    source: `Tess · ${P[ctx.proj]?.name || "Work"}`,
     icon: "pencil",
     tone: "accent",
   });
-  toast(`Draft ${created.id} opened with ${leadName} · Ready to refine`, "sparkle");
+  toast(`Draft ${created.id} opened with ${leadName}`, "sparkle", { label: "See in Inbox", href: "#/inbox/notifications" });
 }
 
 function finalizeFastIntake(intake, ctx) {
@@ -243,10 +245,12 @@ function finalizeFastIntake(intake, ctx) {
     title: `Tess filed ${created.id}`,
     summary: `${created.title}${assigneeNote}`,
     href: `#/work?item=${created.id}`,
+    hrefLabel: `Open ${created.id} in Work`,
+    source: `Tess · ${P[ctx.proj]?.name || "Work"}`,
     icon: "check-circle",
     tone: "ok",
   });
-  toast(`Tess filed ${created.id}${assigneeNote}`, "check-circle");
+  toast(`Tess filed ${created.id}${assigneeNote}`, "check-circle", { label: "See in Inbox", href: "#/inbox/notifications" });
 }
 
 function finalizeAsyncIntake(intake) {
@@ -286,7 +290,7 @@ function enqueueTessIntake(state) {
     step: complex ? "Tess routing to project lead for Draft…" : "Tess classifying & assigning…",
     source: "tess",
   });
-  toast("Sent to Tess — track live progress in Notifications", "sparkle");
+  toast("Sent to Tess — refining in background", "sparkle", { label: "See in Inbox", href: "#/inbox/notifications" });
   const delay = complex ? 1600 : 1000;
   setTimeout(() => finalizeAsyncIntake(intake), delay);
 }

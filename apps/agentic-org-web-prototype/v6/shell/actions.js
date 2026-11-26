@@ -12,9 +12,9 @@ import { openSmartTaskComposer } from "../pages/task-composer.js";
 import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, goSearch, narrowSearch, openCmdk, renderCmdk, runCmdkItem, setCmdkMode } from "./cmdk.js";
 import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRemove, openHealth, openShortcutsHelp, setSheetReturn } from "./dialogs.js";
 import { endNavigationKeys, getNavigationKeys, handleNavigationKeys } from "./keyboard.js";
-import { homeSearchField, homeSearchInput, homeSearchResults, pageSearchInput, render, route } from "./router.js";
-import { UTIL, askTessInPanel, clearCompanionHistory, clearReadNotifications, closeCompanion, closeNotificationsPopover, dismissCompanionContext, handleCompanionEscape, handleCompanionInput, isCompanionModal, markAllNotificationsRead, markNotificationRead, openTessPanel, toggleExpandCompanion, toggleNotificationsPopover, toggleTessPanel, toggleTessPillVisible } from "./topbar-utils.js";
-import { ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, ORG_NAME_STORE, S, SR, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, applyCozyContrast, applyShortcuts, applyTheme, inTextField, overlayOpen, qs, setOrgName, showOrgName, toggleNavPinned, writeSingleKey } from "../state.js";
+import { pageSearchInput, render, route } from "./router.js";
+import { askTessInPanel, clearCompanionHistory, clearReadNotifications, closeCompanion, dismissCompanionContext, handleCompanionEscape, handleCompanionInput, isCompanionModal, markAllNotificationsRead, markNotificationRead, openTessPanel, toggleExpandCompanion, toggleNotificationRead, toggleTessPanel } from "./topbar-utils.js";
+import { ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, ORG_NAME_STORE, S, SR, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, applyCozyContrast, applyFontStyle, applyShortcuts, applyTheme, inTextField, overlayOpen, qs, setOrgName, showOrgName, toggleNavPinned, writeSingleKey } from "../state.js";
 import { spotQueue, toast } from "../ui.js";
 
 /* ---------------------------------------------------------------- actions */
@@ -143,10 +143,11 @@ function handleSetAction(t, v) {
     return;
   }
   const val = v === "true" ? true : v === "false" ? false : v;
-  const scope = k === "theme" ? t.closest("#main, #banner-ctl") : document;
+  const scope = (k === "theme" || k === "fontStyle") ? t.closest("#main, #banner-ctl") : document;
   S[k] = val;
   normalizeScopedWorkState(k, val);
   if (k === "theme") applyTheme(true);
+  if (k === "fontStyle") applyFontStyle(true);
   if (menuId === "menu-inbox-filter") resetInboxSelection();
   render(false);
   const again = menuId ? document.querySelector(`[aria-controls="${menuId}"]`) : scope?.querySelector(`[data-k="${k}"][data-v="${v}"]`);
@@ -263,7 +264,14 @@ const CLICK_ACTIONS = {
     const panel = document.getElementById("activity-triage-" + id); panel?.focus(); panel?.scrollIntoView({ block: "nearest" });
   },
   "inbox-category": (_e, _t, _id, v) => {
-    S.inboxKind = v; resetInboxSelection(); render(false);
+    S.inboxKind = v;
+    if (v === "notifications") {
+      history.replaceState(null, "", "#/inbox/notifications");
+      S.lastRoute = location.hash;
+    } else {
+      resetInboxSelection();
+    }
+    render(false);
     (document.querySelector(`.queue-tabs > [data-act="inbox-category"][data-v="${v}"]`) || document.querySelector('[aria-controls="menu-inbox-kinds"]'))?.focus();
   },
   "work-preset": (_e, _t, _id, v) => selectWorkView({ ...workSelection(), view: v }, `[data-act="work-preset"][data-v="${v}"]`),
@@ -324,7 +332,7 @@ const CLICK_ACTIONS = {
     document.querySelector('[aria-controls="menu-pmore"]')?.focus();
     toast(pr.health ? `${pr.name} health set to ${pr.health}.` : `${pr.name} health cleared.`, "check-circle");
   },
-  "team-rm": (_e, t, id, v) => { if (P[id].teams.length === 1) openConfirmRemove(id, v, t); else removeTeam(id, v); },
+  "team-rm": (_e, t, id, v) => openConfirmRemove(id, v, t),
   "team-rm-confirm": (_e, _t, id, v) => { setSheetReturn(null); closeSheet(); removeTeam(id, v); },
   "team-add": (_e, t, id) => openAddTeam(id, t),
   assign: (_e, t, id) => openAssign(id, t),
@@ -337,6 +345,7 @@ const CLICK_ACTIONS = {
   "search-close": () => closeCmdk(true),
   sgo: (_e, _t, _id, v) => goSearch(v),
   "chat-jump": (_e, t) => openCmdk("#", "cmd", t, false),
+  "search-toggle": (_e, _t, _id, v) => toggleInlineSearch(v),
   "search-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
   "cmdk-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
   "cmdk-open-ai": (_e, t) => openTessPanel("", t),
@@ -352,25 +361,20 @@ const CLICK_ACTIONS = {
   "cmp-clear": () => clearCompanionHistory(),
   "cmp-ask-chip": (_e, _t, _id, v) => askTessInPanel(v),
   "cmp-dismiss-ctx": (_e, _t, _id, v) => dismissCompanionContext(v),
-  "toggle-tess-pill": (_e, t) => {
-    toggleTessPillVisible();
-    if (t.matches('[role="switch"]')) render(false);
-    toast(S.showTessPill ? "Tess shown at bottom-right." : "Tess hidden. Press ⌘/ anytime to open.", "sparkle");
-  },
-  "shortcuts-help": (_e, t) => { closeMenus(); closeNotificationsPopover(false); openShortcutsHelp(t); },
-  "notif-toggle": (_e, t) => toggleNotificationsPopover(t),
-  "notif-close": () => closeNotificationsPopover(true),
+  "shortcuts-help": (_e, t) => { closeMenus(); openShortcutsHelp(t); },
   "notif-open": (_e, _t, id) => markNotificationRead(id),
+  "notif-toggle-read": (_e, _t, id) => toggleNotificationRead(id),
   "notif-mark-all": () => markAllNotificationsRead(),
   "notif-clear-read": () => clearReadNotifications(),
   "brief-lens": (_e, _t, _id, v) => { S.briefLens = v; S.briefCopied = false; render(false); document.querySelector(`[data-act="brief-lens"][data-v="${CSS.escape(v || "")}"]`)?.focus(); },
+  "brief-view": (_e, _t, _id, v) => { S.briefView = v === "memo" ? "memo" : "highlights"; render(false); document.querySelector(`[data-act="brief-view"][data-v="${CSS.escape(S.briefView)}"]`)?.focus(); },
   "brief-expand": () => { S.briefExpanded = !S.briefExpanded; render(false); },
   "ai-copy-brief": () => handleCopyBrief(),
   "ai-copy-board": () => handleCopyBrief(),
   "cmdk-ai-submit": () => askInCmdk(CMDK.q),
   "cmdk-ai-clear": () => { CMDK.aiAns = null; CMDK.aiHistory = []; renderCmdk(); document.getElementById("cmdk-input")?.focus(); },
   "cmdk-run": (_e, _t, _id, v) => runCmdkItem(Number(v)),
-  "banner-close": () => { document.getElementById("banner")?.remove(); document.getElementById("banner-hotzone")?.remove(); (homeSearchField.hidden ? document.getElementById("cmdk-trigger") : homeSearchInput).focus(); },
+  "banner-close": () => { document.getElementById("banner")?.remove(); document.getElementById("banner-hotzone")?.remove(); document.getElementById("cmdk-trigger")?.focus(); },
   "close-sheet": () => closeSheet(),
   drawer: () => { document.body.classList.add("drawer"); document.querySelector("#nav a").focus(); },
   "drawer-close": () => document.body.classList.remove("drawer"),
@@ -399,7 +403,6 @@ function handleBackdropOrJumpClick(e) {
 function dismissTopbarOverlaysForLink(link) {
   const act = link.dataset.act;
   if (act === "notif-open" && link.dataset.id) { markNotificationRead(link.dataset.id); return; }
-  if (act === "notif-close") { closeNotificationsPopover(false); return; }
   if (link.closest("#tess-panel") && isCompanionModal()) closeCompanion(false);
   if (act === "close-sheet") closeSheet();
 }
@@ -429,7 +432,6 @@ document.addEventListener("click", (e) => {
   if (handleBackdropOrJumpClick(e) || handleHashLinkClick(e)) return;
   const t = e.target.closest("[data-act]");
   if (!e.target.closest(".menu-wrap")) closeMenus();
-  if (UTIL.notifOpen && !e.target.closest("#notif-wrap, #notif-popover")) closeNotificationsPopover(false);
   if (!e.target.closest(".search")) {
     if (SR.open) closeSearch();
     if (document.body.classList.contains("searching")) { const q = document.getElementById("q"); if (q) q.value = ""; SR.q = ""; document.body.classList.remove("searching"); }
@@ -445,7 +447,6 @@ document.addEventListener("click", (e) => {
 
 document.addEventListener("click", (e) => {
   if (e.target?.id === "cmdk-root") { closeCmdk(true); return; }
-  if (CMDK.inline && !homeSearchField.contains(e.target) && !homeSearchResults.contains(e.target)) closeCmdk(false);
   if (CMDK.open && e.target.closest?.('.cmdk-ai-card a[href^="#/"]')) closeCmdk(false);
 });
 
@@ -462,8 +463,33 @@ function handleWorkSearchInput(target) {
   else refreshWorkResults();
 }
 
+/* Inline page search (Inbox, Work): toolbar icon or "/" opens the row and focuses it; Esc leaves it. */
+function focusInlineSearch(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.focus({ preventScroll: true });
+  const end = input.value.length;
+  input.setSelectionRange(end, end);
+}
+function openInlineSearch(inputId) {
+  if (!document.getElementById(inputId)) { S.searchOpen[inputId] = true; render(false); }
+  focusInlineSearch(inputId);
+}
+function closeInlineSearch(input) {
+  const inputId = input.id;
+  if (!input.value.trim()) { S.searchOpen[inputId] = false; render(false); }
+  else input.blur();
+  document.querySelector(`[data-act="search-toggle"][data-v="${CSS.escape(inputId)}"]`)?.focus({ preventScroll: true });
+}
+function toggleInlineSearch(inputId) {
+  const input = document.getElementById(inputId);
+  if (input && !input.value.trim()) closeInlineSearch(input);
+  else openInlineSearch(inputId);
+}
+
 const INPUT_BY_ID = {
   compose: (target) => { chatDrafts.set(target.form.dataset.id, target.value); fitTextarea(target); },
+  "projects-search": (target) => { S.projectQuery = target.value; render(false); },
   "triage-search": (target) => { S.inboxQuery = target.value; refreshInboxSearch(); },
   "triage-comment": handleDetailCommentInput,
   "work-comment": handleDetailCommentInput,
@@ -483,8 +509,7 @@ document.addEventListener("input", (e) => {
   if (target.name === "title" && target.form?.dataset.form === "work-create") target.setCustomValidity("");
   INPUT_BY_ID[target.id]?.(target);
   if (handleCompanionInput(target)) return;
-  if (target === homeSearchInput && !CMDK.inline) { openCmdk(homeSearchInput.value, "cmd", homeSearchInput, true); return; }
-  if (target === homeSearchInput || target.id === "cmdk-input") { CMDK.q = target.value; CMDK.active = 0; renderCmdk(); }
+  if (target.id === "cmdk-input") { CMDK.q = target.value; CMDK.active = 0; renderCmdk(); }
 });
 
 document.addEventListener("change", (e) => {
@@ -500,6 +525,12 @@ document.addEventListener("change", (e) => {
   if (e.target.id === "chat-send-shortcut" && Object.hasOwn(CHAT_SEND_SHORTCUTS, e.target.value)) {
     S.chatSend = e.target.value;
     try { localStorage.setItem(CHAT_SEND_STORE, S.chatSend); } catch (e) {}
+  }
+  if (e.target.matches("[data-font-select]")) {
+    S.fontStyle = e.target.value;
+    applyFontStyle(true);
+    render(false);
+    document.getElementById(e.target.id)?.focus();
   }
   if (e.target.id === "settings-section") { S.focusAfter = "#settings-section"; location.hash = e.target.value; }
 });
@@ -518,7 +549,6 @@ document.addEventListener("focusin", (e) => {
   const activeNavKeys = getNavigationKeys();
   if (activeNavKeys && !activeNavKeys.scope.contains(e.target)) endNavigationKeys();
   resetInboxSenderPreview(e);
-  if (CMDK.inline && e.target !== homeSearchInput && !homeSearchResults.contains(e.target)) closeCmdk(false);
   if (e.target.closest && !e.target.closest(".menu-wrap")) closeMenus();
 });
 
@@ -585,7 +615,7 @@ function handleCmdkListKey(e) {
     renderCmdk();
     return;
   }
-  if (e.key === "Enter" && (e.target === homeSearchInput || e.target.id === "cmdk-input")) {
+  if (e.key === "Enter" && e.target.id === "cmdk-input") {
     e.preventDefault(); runCmdkItem(CMDK.active);
   }
 }
@@ -632,7 +662,6 @@ function dismissLocalEscapeTarget(e) {
 
 function handleEscapeKeydown(e) {
   if (dismissLocalEscapeTarget(e)) return;
-  if (UTIL.notifOpen) { e.preventDefault(); closeNotificationsPopover(true); return; }
   if (handleCompanionEscape()) { e.preventDefault(); return; }
   if (isAgentFocusOpen()) { e.preventDefault(); closeAgentFocus(true); return; }
   const closeThread = e.target.closest(".thread")?.querySelector('[data-act="thread-close"]');
@@ -718,7 +747,13 @@ function isSingleKeyBlocked(e) {
 function tryPunctuationShortcut(e) {
   if (!isPlainAltGrOrUnmodified(e)) return false;
   if (e.key === "#" && route()[0] === "chat") { e.preventDefault(); openCmdk("#", "cmd", e.target, false); return true; }
-  if (e.key === "/") { e.preventDefault(); const input = pageSearchInput(); if (input) input.focus(); else openCmdk(); return true; }
+  if (e.key === "/") {
+    e.preventDefault();
+    const inline = document.querySelector('#main [data-act="search-toggle"]');
+    const input = pageSearchInput();
+    if (inline) openInlineSearch(inline.dataset.v); else if (input) input.focus(); else openCmdk();
+    return true;
+  }
   return false;
 }
 
@@ -771,14 +806,13 @@ function tryTessGlobalShortcut(e) {
 function handleSearchGlobalKeydown(e) {
   if (isCmdKCombo(e)) {
     e.preventDefault();
-    const pageInput = pageSearchInput();
-    if (CMDK.open && (!CMDK.inline || pageInput !== homeSearchInput)) closeCmdk(true);
-    else openCmdk(pageInput?.value || "");
+    if (CMDK.open) closeCmdk(true);
+    else openCmdk(pageSearchInput()?.value || "");
     return true;
   }
   if (tryTessGlobalShortcut(e)) return true;
-  if (!CMDK.open && e.target === homeSearchInput && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-    e.preventDefault(); openCmdk(homeSearchInput.value, "cmd", homeSearchInput, true); return true;
+  if (e.key === "Escape" && e.target.classList?.contains("inline-search-input")) {
+    e.preventDefault(); closeInlineSearch(e.target); return true;
   }
   if (e.key === "Escape" && e.target === pageSearchInput()) {
     e.preventDefault(); closeCmdk(false); document.querySelector("#main h1")?.focus({ preventScroll: true }); return true;
@@ -817,7 +851,7 @@ if (window.matchMedia) {
   if (mqp.addEventListener) mqp.addEventListener("change", applyShortcuts); else if (mqp.addListener) mqp.addListener(applyShortcuts);
 }
 window.addEventListener("hashchange", () => {
-  closeCmdk(false); closeNotificationsPopover(false);
+  closeCmdk(false);
   if (isCompanionModal()) closeCompanion(false);
   document.querySelector(".work-task-dialog[open]")?.close(); document.body.classList.remove("drawer");
   S.thread = null; S.replying = null; S.replyMode = null; S.confirmDeny = null;

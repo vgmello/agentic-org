@@ -1,8 +1,8 @@
 import { M, OFFICES, officeName } from "../data.js";
 import { agentSetupFields } from "./teams.js";
 import { searchResults } from "../shell/cmdk.js";
-import { ARCHIVE_DAY_OPTIONS, CHAT_SEND_SHORTCUTS, S, THEME_OPTIONS, getOrgName } from "../state.js";
-import { SEP, av, avStack, back, empty, esc, hdr, ic, mlink, pill, plural, presPill, seg } from "../ui.js";
+import { ARCHIVE_DAY_OPTIONS, CHAT_SEND_SHORTCUTS, FONT_OPTIONS, S, THEME_OPTIONS, getOrgName } from "../state.js";
+import { SEP, av, avStack, crumbs, empty, esc, hdr, ic, mlink, pill, plural, presPill, seg } from "../ui.js";
 
 const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["processes", "Processes", "refresh"], ["access", "Members and access", "key"], ["updates", "Updates", "download"], ["appearance", "Appearance", "adjustments"]];
 const health = (a) => (M[a].offboarded ? "Offboarded" : M[a].setup.needs ? "Needs setup: " + M[a].setup.needs : M[a].paused ? "Paused" : "Ready");
@@ -38,8 +38,8 @@ function pageSettings(sec = "general", sub) {
   }).join("")}</ul><div class="section"><button class="btn outline" type="button" data-act="proto" data-v="Add an office">${ic("plus", "ic20")}Add an office</button></div>`;
   } else if (sec === "agents" && M[sub]?.kind === "agent") {
     const agent = M[sub];
-    header = hdr(agent.name, esc(agent.role) + " · Agent setup", `<a class="btn outline" href="#/members/${sub}/sessions">${ic("terminal", "ic20")}Sessions</a><a class="btn outline" href="#/members/${sub}">${ic("user", "ic20")}View profile</a>`);
-    body = back("#/settings/agents", "Agent setup") + `<div class="section" style="padding-bottom:0">${healthMark(sub)} ${presPill(sub, true)}</div>` + agentSetupFields(sub);
+    header = crumbs([["#/settings", "Settings"], ["#/settings/agents", "Agent setup"], [null, agent.name]]) + hdr(agent.name, esc(agent.role) + " · Agent setup", `<a class="btn outline" href="#/members/${sub}/sessions">${ic("terminal", "ic20")}Sessions</a><a class="btn outline" href="#/members/${sub}">${ic("user", "ic20")}View profile</a>`);
+    body = `<div class="section" style="padding-bottom:0">${healthMark(sub)} ${presPill(sub, true)}</div>` + agentSetupFields(sub);
   } else if (sec === "agents") {
     header = hdr("Agent setup", [plural(agents.length, "agent", "agents"), agents.filter((a) => M[a].setup.needs).length + " need setup", agents.filter((a) => M[a].paused && !M[a].setup.needs).length + " paused"].join(" · "), `<button class="btn outline" type="button" data-act="proto" data-v="Hire an agent">${ic("user-plus", "ic20")}Hire an agent</button>`);
     body = `<p class="desc">How each agent runs. To see an agent as a colleague (work, conversations, activity), open its profile.</p>
@@ -60,16 +60,17 @@ function pageSettings(sec = "general", sub) {
   return settingsFrame(sec, header, body);
 }
 function pagePreferences() {
+  const fontOpts = FONT_OPTIONS.map(([v, label]) => `<option value="${esc(v)}"${S.fontStyle === v ? " selected" : ""}>${esc(label)}</option>`).join("");
   return settingsFrame("appearance", hdr("Your preferences", ""), `<section class="section" aria-labelledby="h-theme"><div class="sec-h"><h2 id="h-theme">Appearance</h2></div>
     <div class="pref theme-pref">${seg("theme", THEME_OPTIONS, "Theme")}
+      <div class="pref theme-contrast">
+        <div><label class="lbl" for="pref-font-select">Typography</label><p class="muted help">Choose the typeface used across headings and body text.</p></div>
+        <select class="field" id="pref-font-select" data-font-select>${fontOpts}</select>
+      </div>
       ${S.theme === "cozy" ? `<div class="pref theme-contrast">
         <div><p class="lbl" id="cozy-contrast-label">AA Contrast</p><p class="muted help" id="cozy-contrast-help">Makes glass surfaces more opaque and text easier to read.</p></div>
         <button class="switch" type="button" role="switch" data-act="cozy-contrast" aria-checked="${S.cozyContrast}" aria-labelledby="cozy-contrast-label" aria-describedby="cozy-contrast-help"></button>
       </div>` : ""}
-      <div class="pref theme-contrast">
-        <div><p class="lbl" id="tess-pill-label">Show Tess on screen</p><p class="muted help" id="tess-pill-help">Keep Tess parked at bottom-right. You can always press ⌘/ (or Ctrl /) to open Tess even when hidden.</p></div>
-        <button class="switch" type="button" role="switch" data-act="toggle-tess-pill" aria-checked="${S.showTessPill}" aria-labelledby="tess-pill-label" aria-describedby="tess-pill-help"></button>
-      </div>
     </div></section>
     <section class="section" aria-labelledby="h-keys"><div class="sec-h"><h2 id="h-keys">Keyboard</h2></div>
     <div class="pref"><div><p class="lbl" id="sk-l">Single-key shortcuts</p><p class="muted" id="sk-d" style="font-size:13px">Outside text fields, N opens New task and / focuses Search. Press S for the sidebar or M for the Inbox menu, then type an item's first letter. Repeat the letter to select the next match.</p></div>

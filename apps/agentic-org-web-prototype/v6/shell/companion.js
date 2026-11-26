@@ -1,14 +1,14 @@
 import { IN, M, P, W } from "../data.js";
 import { answerOrgQuestion } from "../pages/home.js";
 import { CMDK, closeCmdk, isMacPlatform } from "./cmdk.js";
-import { S, TESS_PILL_STORE, qs } from "../state.js";
+import { S, qs } from "../state.js";
 import { esc, ic } from "../ui.js";
 
-/* ---------------------------------------------------------------- Floating Tess Companion (Bottom-Right, Tess-Only) */
+/* ---------------------------------------------------------------- Floating Tess Companion (Anchored to Sidebar Start Menu) */
 
 const COMP = {
-  mode: "pill", // "hidden" | "pill" | "open" | "expanded"
-  prevMode: "pill",
+  mode: "hidden", // "hidden" | "open" | "expanded"
+  prevMode: "hidden",
   dismissedCtxKey: null,
   draft: "",
   returnTo: null,
@@ -22,15 +22,9 @@ const TESS_STARTERS = {
 };
 
 let getActiveTessJobs = () => [];
-let closeNotifHook = () => {};
 
-function registerCompanionHooks({ activeJobs, closeNotif }) {
+function registerCompanionHooks({ activeJobs }) {
   getActiveTessJobs = activeJobs;
-  closeNotifHook = closeNotif;
-}
-
-function restingMode() {
-  return S.showTessPill ? "pill" : "hidden";
 }
 
 function isOfflineMode() {
@@ -60,18 +54,15 @@ function describeRouteContext(r = COMP.currentRoute) {
   return { key: `page:${page || "home"}`, label: map[page] || "Workspace" };
 }
 
-/* ---------------------------------------------------------------- rendering */
-
-function renderContextRow() {
+function placeholderForContext() {
   const ctx = describeRouteContext();
-  if (COMP.dismissedCtxKey === ctx.key) return "";
-  return `<div class="cmp-ctx-row">
-    <span class="cmp-ctx-pill">
-      <span class="cmp-ctx-lbl">Context: <strong>${esc(ctx.label)}</strong></span>
-      <button type="button" data-act="cmp-dismiss-ctx" data-v="${esc(ctx.key)}" aria-label="Detach page context">${ic("x", "ic14")}</button>
-    </span>
-  </div>`;
+  if (ctx.key === "page:home") return "Ask Tess anything…";
+  const short = ctx.label.replace(/^(Project|Member|Inbox|Task)\s*·\s*/, "");
+  const clipped = short.length > 26 ? short.slice(0, 25).trimEnd() + "…" : short;
+  return `Ask Tess about ${clipped}…`;
 }
+
+/* ---------------------------------------------------------------- rendering */
 
 function renderActiveBanners() {
   const busy = getActiveTessJobs();
@@ -92,14 +83,11 @@ function renderTessBody() {
   const threadHtml = turns.length ? `<div class="tess-thread">${turns.map((turn) => `
     <div class="tess-turn">
       <div class="tess-q">${esc(turn.q)}</div>
-      <div class="tess-a">
-        <div class="tess-a-hd">${ic("sparkle", "ic14")}<span>Tess</span></div>
-        <div class="tess-a-body">${turn.html}</div>
-      </div>
+      <div class="tess-a"><div class="tess-a-body">${turn.html}</div></div>
     </div>`).join("")}</div>` : "";
   const chipsHtml = chips.length ? `<div class="tess-chips" aria-label="Suggested prompts">${chips.map((q) => `
     <button type="button" class="tess-chip" data-act="cmp-ask-chip" data-v="${esc(q)}">
-      ${ic("sparkle", "ic14")}<span>${esc(q)}</span>
+      <span>${esc(q)}</span><span class="tess-chip-arr" aria-hidden="true">→</span>
     </button>`).join("")}</div>` : "";
   return threadHtml + chipsHtml;
 }
@@ -107,19 +95,17 @@ function renderTessBody() {
 function renderTessHeader(expanded) {
   const busy = getActiveTessJobs();
   const offline = isOfflineMode();
-  const statusLbl = busy.length ? `Refining (${busy.length})` : offline ? "Offline · Local only" : "Chief of Staff";
+  const statusLbl = busy.length ? `Refining (${busy.length})` : offline ? "Offline · Local only" : "";
   const clearBtn = CMDK.aiHistory.length
     ? `<button type="button" class="notif-text-btn" data-act="cmp-clear" title="Clear Tess thread">Clear</button>` : "";
   const expKbd = shortcutLabel("expand");
   const expTip = `${expanded ? "Restore size" : "Maximize"} · ${expKbd}`;
-  const closeTip = `${S.showTessPill ? "Minimize to bottom" : "Close"} · Esc`;
+  const closeTip = "Close · Esc";
   return `<div class="cmp-hd">
     <div class="cmp-tess-who">
-      <span class="cmp-tess-mark" aria-hidden="true">${ic(offline ? "offline" : "sparkle", "ic14")}</span>
-      <div class="cmp-tess-txt">
-        <strong>Tess</strong>
-        <span class="cmp-tess-st${offline ? " is-offline" : ""}">${esc(statusLbl)}</span>
-      </div>
+      ${ic(offline ? "offline" : "sparkle", "ic14")}
+      <strong>Tess</strong>
+      ${statusLbl ? `<span class="cmp-tess-st${offline ? " is-offline" : ""}">· ${esc(statusLbl)}</span>` : ""}
     </div>
     <div class="cmp-hd-acts">
       ${clearBtn}
@@ -129,43 +115,50 @@ function renderTessHeader(expanded) {
   </div>`;
 }
 
-function renderRestingPill(panel) {
+function syncSidebarTessTrigger() {
+  const btn = document.getElementById("sidebar-tess-trigger");
+  if (!btn) return;
   const busy = getActiveTessJobs();
   const offline = isOfflineMode();
+  const open = COMP.mode !== "hidden";
   const kbd = shortcutLabel("toggle");
-  const tip = busy.length ? `Tess refining (${busy.length}) · ${kbd}` : `Ask Tess · ${kbd}`;
-  const sub = busy.length ? `Refining (${busy.length})` : offline ? "Offline" : "";
-  const dot = busy.length ? `<span class="tess-live-dot" aria-hidden="true"></span>` : "";
-  panel.innerHTML = `<button type="button" class="cmp-dock-btn" id="tess-dock-pill" data-act="cmp-restore" data-tip="${esc(tip)}" aria-label="${esc(tip)}" aria-keyshortcuts="Meta+/ Control+/">
-    ${ic(offline ? "offline" : "sparkle", "ic14")}
-    <strong>Tess</strong>
-    ${sub ? `<span class="cmp-pill-st">${esc(sub)}</span>` : `<kbd class="cmp-pill-kbd" aria-hidden="true">${esc(kbd)}</kbd>`}
-    ${dot}
-  </button>`;
+  const status = busy.length ? `Refining (${busy.length})…` : offline ? "Offline · local" : "Available";
+  const tip = `Chat with Tess, Chief of Staff · ${status} · ${kbd}`;
+  btn.classList.toggle("is-active", open);
+  btn.classList.toggle("is-busy", busy.length > 0);
+  btn.classList.toggle("is-offline", offline);
+  btn.setAttribute("aria-pressed", String(open));
+  btn.setAttribute("aria-label", tip);
+  btn.title = tip;
+  delete btn.dataset.tip;
+  const dot = document.getElementById("sidebar-tess-busy");
+  if (dot) dot.hidden = busy.length === 0;
+  const role = document.getElementById("sidebar-tess-role");
+  if (role) role.textContent = status;
+  const kbdEl = document.getElementById("sidebar-tess-kbd");
+  if (kbdEl) kbdEl.textContent = kbd;
 }
 
 function syncCompanionClasses(panel, scrim, compact) {
   const visible = COMP.mode !== "hidden";
-  const pill = COMP.mode === "pill";
   const open = COMP.mode === "open";
   const expanded = COMP.mode === "expanded";
   const mobile = window.innerWidth <= 639;
   panel.hidden = !visible;
   panel.classList.toggle("is-compact", open && compact);
   panel.classList.toggle("is-expanded", expanded);
-  panel.classList.toggle("is-minimized", pill);
+  panel.classList.remove("is-minimized");
   panel.setAttribute("role", expanded || (open && mobile) ? "dialog" : "complementary");
   if (expanded || (open && mobile)) panel.setAttribute("aria-modal", "true");
   else panel.removeAttribute("aria-modal");
   document.body.classList.toggle("companion-open", open);
-  document.body.classList.toggle("companion-minimized", pill);
+  document.body.classList.remove("companion-minimized");
   if (scrim) scrim.hidden = !(expanded || (open && mobile));
 }
 
 function resolveModeAnim(prev, next) {
   if (prev === next || next === "hidden") return "";
   if (next === "expanded") return "expand";
-  if (next === "pill") return prev === "open" || prev === "expanded" ? "pill" : "";
   if (next === "open") return prev === "expanded" ? "restore" : "open";
   return "";
 }
@@ -181,25 +174,25 @@ function triggerPanelAnimation(panel, anim) {
 }
 
 function renderCompanion() {
+  syncSidebarTessTrigger();
   const panel = document.getElementById("tess-panel");
   if (!panel) return;
-  if (COMP.mode === "pill" && !S.showTessPill) COMP.mode = "hidden";
-  if (COMP.mode === "hidden" && S.showTessPill) COMP.mode = "pill";
   const anim = resolveModeAnim(COMP.prevMode, COMP.mode);
   COMP.prevMode = COMP.mode;
   const compact = CMDK.aiHistory.length === 0;
   syncCompanionClasses(panel, document.getElementById("tess-panel-scrim"), compact);
   if (COMP.mode === "hidden") { delete panel.dataset.anim; return; }
-  if (COMP.mode === "pill") { renderRestingPill(panel); triggerPanelAnimation(panel, anim); return; }
 
+  const ph = placeholderForContext();
   panel.innerHTML = `
     ${renderTessHeader(COMP.mode === "expanded")}
-    ${renderContextRow()}
     ${renderActiveBanners()}
     <div class="tess-body" id="tess-panel-body">${renderTessBody()}</div>
     <form class="tess-compose" data-form="tess-panel-ask">
-      <input id="tess-panel-input" type="text" value="${esc(COMP.draft)}" placeholder="Ask Tess anything…" autocomplete="off" aria-label="Ask Tess anything">
-      <button type="submit" class="btn primary sm icon tess-send-btn" aria-label="Send to Tess">${ic("send", "ic14")}</button>
+      <div class="tess-input-capsule">
+        <input id="tess-panel-input" type="text" value="${esc(COMP.draft)}" placeholder="${esc(ph)}" autocomplete="off" aria-label="${esc(ph)}">
+        <button type="submit" id="tess-return-btn" class="tess-return-btn${COMP.draft.trim() ? " is-ready" : ""}" aria-label="Send to Tess" title="Send (Enter)">↵</button>
+      </div>
     </form>`;
 
   triggerPanelAnimation(panel, anim);
@@ -208,20 +201,6 @@ function renderCompanion() {
 }
 
 /* ---------------------------------------------------------------- actions & shortcuts */
-
-function syncTessVisibilityMenu() {
-  const menuItem = document.getElementById("menu-tess-toggle");
-  if (menuItem) menuItem.setAttribute("aria-checked", String(S.showTessPill));
-}
-
-function toggleTessPillVisible() {
-  S.showTessPill = !S.showTessPill;
-  try { localStorage.setItem(TESS_PILL_STORE, S.showTessPill ? "1" : "0"); } catch (e) {}
-  if (!S.showTessPill && COMP.mode === "pill") COMP.mode = "hidden";
-  if (S.showTessPill && COMP.mode === "hidden") COMP.mode = "pill";
-  syncTessVisibilityMenu();
-  renderCompanion();
-}
 
 function sendCompanionMessage(rawText) {
   const q = String(rawText || "").trim();
@@ -239,8 +218,7 @@ function sendCompanionMessage(rawText) {
 
 function openCompanion(initialQuestion = "", trigger = null) {
   if (CMDK.open) closeCmdk(false);
-  if (window.innerWidth < 900) closeNotifHook(false);
-  if (COMP.mode === "pill" || COMP.mode === "hidden") COMP.returnTo = trigger || document.activeElement;
+  if (COMP.mode === "hidden") COMP.returnTo = trigger || document.activeElement;
   COMP.mode = COMP.mode === "expanded" ? "expanded" : "open";
   if (initialQuestion && String(initialQuestion).trim()) sendCompanionMessage(initialQuestion);
   else renderCompanion();
@@ -248,25 +226,26 @@ function openCompanion(initialQuestion = "", trigger = null) {
 }
 
 function closeCompanion(restoreFocus = false) {
-  const target = restingMode();
-  if (COMP.mode === target) return;
-  COMP.mode = target;
+  if (COMP.mode === "hidden") return;
+  COMP.mode = "hidden";
   renderCompanion();
   if (!restoreFocus) return;
-  const fallback = S.showTessPill ? document.getElementById("tess-dock-pill") : COMP.returnTo;
+  const fallback = COMP.returnTo && document.body.contains(COMP.returnTo)
+    ? COMP.returnTo
+    : document.getElementById("sidebar-tess-trigger");
   if (fallback && document.body.contains(fallback)) fallback.focus();
   COMP.returnTo = null;
 }
 
 function toggleCompanion(trigger) {
-  if (COMP.mode === "pill" || COMP.mode === "hidden") { openCompanion("", trigger); return; }
+  if (COMP.mode === "hidden") { openCompanion("", trigger); return; }
   const panel = document.getElementById("tess-panel");
-  if (panel?.contains(document.activeElement) || COMP.mode === "expanded") closeCompanion(true);
+  if (panel?.contains(document.activeElement) || COMP.mode === "expanded" || trigger?.id === "sidebar-tess-trigger") closeCompanion(true);
   else document.getElementById("tess-panel-input")?.focus({ preventScroll: true });
 }
 
 function toggleExpandCompanion() {
-  if (COMP.mode === "pill" || COMP.mode === "hidden") {
+  if (COMP.mode === "hidden") {
     COMP.mode = "expanded";
     renderCompanion();
     document.getElementById("tess-panel-input")?.focus({ preventScroll: true });
@@ -280,6 +259,7 @@ function toggleExpandCompanion() {
 function handleCompanionInput(target) {
   if (target.id !== "tess-panel-input") return false;
   COMP.draft = target.value;
+  document.getElementById("tess-return-btn")?.classList.toggle("is-ready", Boolean(COMP.draft.trim()));
   return true;
 }
 
@@ -307,7 +287,6 @@ function syncCompanionRoute(r) {
     COMP.currentRoute = r;
     if (prevKey !== describeRouteContext(r).key) COMP.dismissedCtxKey = null;
   }
-  syncTessVisibilityMenu();
   renderCompanion();
 }
 
@@ -331,5 +310,4 @@ export {
   syncCompanionRoute,
   toggleCompanion,
   toggleExpandCompanion,
-  toggleTessPillVisible,
 };

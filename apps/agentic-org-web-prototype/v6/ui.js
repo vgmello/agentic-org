@@ -40,7 +40,7 @@ function av(id, size = 32, mode = false) {
   const p = mode ? presence(id) : null;
   const dot = p && p !== "unknown" ? `<span class="avdot p-${p}"></span>` : "";
   const tip = dot && mode === "tip";
-  return `<span class="av av${size}" style="color:${TINTS[hash(id) % 7]}" aria-hidden="true"${tip ? ` title="${esc(m.name)} · ${PRES[p].label}"` : ""}>${esc(initials(m.name))}${dot}</span>${tip ? `<span class="sr-only">(${PRES[p].label})</span>` : ""}`;
+  return `<span class="av av${size}" style="--av-tint:${TINTS[hash(id) % 7]}" aria-hidden="true"${tip ? ` title="${esc(m.name)} · ${PRES[p].label}"` : ""}>${esc(initials(m.name))}${dot}</span>${tip ? `<span class="sr-only">(${PRES[p].label})</span>` : ""}`;
 }
 const pill = (text, tone = "gray", icon = null, chip = false) => `<span class="pill t-${tone}${chip ? " chip" : ""}">${icon ? ic(icon, "ic14") : ""}${esc(text)}</span>`;
 const presPill = (id, profile = false) => { const p = presence(id); return p && (p !== "unknown" || profile) ? pill(PRES[p].label, PRES[p].tone, PRES[p].icon) : ""; };
@@ -77,7 +77,22 @@ function queueHeadline(title, count, announce = false) {
   return `<div class="ph queue-headline"><div class="ph-t"><h1 tabindex="-1">${esc(title)}</h1>
     <span class="cnt queue-count"${announce ? ' role="status"' : ""}><i aria-hidden="true"></i>${esc(count)}</span></div></div>`;
 }
-const back = (href, label) => `<a class="back" href="${href}">${ic("chev-left", "ic16")}${esc(label)}</a>`;
+/* Section header shared by Home, project Overview and other pages. repTitle swaps the label in Report themes. */
+function sectionHead({ id, title, repTitle = title, count = "", right = "", cls = "" }) {
+  const label = repTitle === title ? title : `<span class="lbl-std">${title}</span><span class="lbl-rep">${repTitle}</span>`;
+  return `<div class="sec-head${cls ? " " + cls : ""}"><div class="sec-head-l"><h2 id="${id}">${label}</h2>${count ? `<span class="sec-head-count">${count}</span>` : ""}</div>${right}</div>`;
+}
+/* Inline page search: a toolbar icon reveals a search row above the results ("/" opens it too). */
+const searchIsOpen = (inputId, value) => Boolean(S.searchOpen?.[inputId] || String(value ?? "").trim());
+const searchToggle = (inputId, label, value) => `<button class="btn ghost icon search-toggle${searchIsOpen(inputId, value) ? " is-active" : ""}" type="button" data-act="search-toggle" data-v="${inputId}" aria-label="${esc(label)}" title="${esc(label)} (/)" aria-expanded="${searchIsOpen(inputId, value)}" aria-controls="${inputId}-row" aria-keyshortcuts="/">${ic("search", "ic20")}</button>`;
+const searchRow = (inputId, label, value, placeholder, cls = "") => searchIsOpen(inputId, value)
+  ? `<div class="inline-search${cls ? " " + cls : ""}" id="${inputId}-row"><label>${ic("search", "ic16")}<span class="sr-only">${esc(label)}</span><input id="${inputId}" class="inline-search-input" type="search" value="${esc(value ?? "")}" placeholder="${esc(placeholder)}" autocomplete="off" spellcheck="false"></label><kbd aria-hidden="true">Esc</kbd></div>`
+  : "";
+/* Breadcrumb trail: ancestors as links, then the current page. items = [[href, label], ..., [null, currentLabel]] */
+const crumbs = (items) => `<nav class="back crumbs" aria-label="Breadcrumb"><ol>${items.map(([href, label], i) => {
+  const last = i === items.length - 1;
+  return `<li>${last ? `<span aria-current="page">${esc(label)}</span>` : `<a href="${href}">${esc(label)}</a>${ic("chev-right", "ic14 crumb-sep")}`}</li>`;
+}).join("")}</ol></nav>`;
 function linkTabs(base, tabs, cur, label = "Sections") {
   return `<nav class="tabs" aria-label="${esc(label)}">${tabs.map(([k, l, n]) => `<a class="tab" data-menu-label="${esc(l)}" href="${base}${k ? "/" + k : ""}" ${cur === k ? 'aria-current="page"' : ""}>${esc(l)}${n != null ? `<span class="tcount">${n}</span>` : ""}</a>`).join("")}</nav>`;
 }
@@ -170,17 +185,18 @@ function problemActionButtons(it, first, btn) {
 function itemActionButtons(it, first) {
   const btn = (style, act, v, icon, label) => `<button class="btn ${style} sm" type="button" data-act="${act}" data-id="${it.id}"${v ? ` data-v="${esc(v)}"` : ""}>${icon ? ic(icon, "ic16") : ""}${esc(label)}</button>`;
   if (it.acts) return it.acts.map(([label, outcome, icon, mode], i) => mode === "changes" ? btn(i ? "outline" : first, "reply", "changes", icon, label) : btn(i ? "outline" : first, "handle", outcome, icon, label));
-  if (it.kind === "approval") return [btn(first, "handle", "Approved", "check", "Approve"), btn("outline", "handle", "Denied", "deny", "Deny")];
+  if (it.kind === "approval") return [btn(first, "handle", "Approved", "check", it.cta || "Approve"), btn("danger-outline", "handle", "Denied", "deny", "Deny")];
   if (it.kind === "question") return [btn(first, "reply", "", "reply", "Reply")];
   if (it.kind === "decision") return it.opts.map((o, i) => btn(i ? "outline" : first, "handle", "Chose: " + o, null, o));
   return it.kind === "problem" ? problemActionButtons(it, first, btn) : [];
 }
 function itemActions(it, where) {
   if (it.handled) return `<p class="handled" id="handled-${esc(it.id)}">${esc(it.outcome)}</p>`;
-  const card = where === "card", first = card ? "outline" : "primary";
+  const card = where === "card", first = "primary";
   if (S.replying === it.id) return itemReplyComposer(it, first);
   const s = card ? null : sourceOf(it);
-  const open = card ? `<a class="btn outline sm" href="#/inbox/${it.id}">${ic("open", "ic16")}Open</a>` : `<a class="btn ghost sm" href="${s.href}">${ic("open", "ic16")}${esc(s.label)}</a>`;
+  /* Cards open through their title link, so the action row is just the decision (one line). */
+  const open = card ? "" : `<a class="btn ghost sm" href="${s.href}">${ic("open", "ic16")}${esc(s.label)}</a>`;
   return `<div class="actions">${[...itemActionButtons(it, first), open].join("")}</div>`;
 }
 function recommendationCallout(it, headingTag = "p") {
@@ -193,13 +209,19 @@ function recommendationCallout(it, headingTag = "p") {
     </div>
   </div>`;
 }
-function needsCard(it) {
+/* Decision card used inside "Needs you" sections (project Overview, member pages).
+   The section already says it needs you, so only "Handled" is badged; hideProject drops the project link on project pages. */
+function needsCard(it, opts = {}) {
   return `<article class="card${it.handled ? " done" : ""}" aria-label="${esc(it.sub)} from ${esc(M[it.from].name)}">
-    <div class="top">${av(it.from, 24)}<span class="grow">${mlink(it.from)} <span class="muted">· ${esc(it.sub)} · ${esc(it.time)}</span></span>${it.handled ? pill("Handled", "gray", "check-circle") : pill("Needs you", "amber", "bell")}</div>
-    <h3>${esc(it.what)}</h3>
+    <div class="top">${av(it.from, 24)}<span class="grow">${mlink(it.from)} <span class="muted">· ${esc(it.sub)} · ${esc(it.time)}</span></span>${it.handled ? pill("Handled", "gray", "check-circle") : ""}</div>
+    <h3><a class="needs-title" href="#/inbox/${esc(it.id)}">${esc(it.what)}</a></h3>
     <p class="why">${esc(it.why)}</p>
     ${it.rec && !it.handled ? recommendationCallout(it) : ""}
-    <div class="meta" style="margin-top:0">${plink(it.proj)}${it.task ? SEP + `<span>${esc(it.task)}</span>` : ""}${it.expires && !it.handled ? SEP + `<span class="pin wrap">${ic("clock", "ic14")}${esc(it.expires)}</span>` : ""}</div>
+    <div class="meta" style="margin-top:0">${joinSep([
+      opts.hideProject ? "" : plink(it.proj),
+      it.task ? `<span>${esc(it.task)}</span>` : "",
+      it.expires && !it.handled ? `<span class="pin wrap">${ic("clock", "ic14")}${esc(it.expires)}</span>` : "",
+    ])}</div>
     ${itemActions(it, "card")}
   </article>`;
 }
@@ -230,19 +252,31 @@ function feed(items, opts = {}) {
   return `<${tag} class="feed${opts.day ? " activity-timeline" : ""}" role="list">${items.map((a) => feedItemHtml(a, opts)).join("")}</${tag}>`;
 }
 
-function toast(text, icon = "info", undoFn = null) {
+function toast(text, icon = "info", action = null) {
   const t = document.createElement("div");
   t.className = "toast";
   t.innerHTML = `${ic(icon)}<p>${esc(text)}</p>`;
-  if (typeof undoFn === "function") {
+  if (typeof action === "function") {
     const b = document.createElement("button");
     b.type = "button"; b.className = "toast-undo"; b.textContent = "Undo";
-    b.addEventListener("click", () => { t.remove(); undoFn(); });
+    b.addEventListener("click", () => { t.remove(); action(); });
     t.appendChild(b);
+  } else if (action && typeof action === "object" && action.label) {
+    const el = document.createElement(action.href ? "a" : "button");
+    el.className = "toast-undo";
+    el.textContent = action.label;
+    if (action.href) {
+      el.href = action.href;
+      el.addEventListener("click", () => t.remove());
+    } else {
+      el.type = "button";
+      el.addEventListener("click", () => { t.remove(); action.onClick?.(); });
+    }
+    t.appendChild(el);
   }
   const box = document.querySelector(".work-panel[open] .toasts") || document.getElementById("toasts");
   box.appendChild(t);
-  setTimeout(() => t.remove(), undoFn ? 5500 : 3200);
+  setTimeout(() => t.remove(), action ? 5500 : 3200);
 }
 
 export {
@@ -251,7 +285,10 @@ export {
   acts,
   av,
   avStack,
-  back,
+  crumbs,
+  searchRow,
+  sectionHead,
+  searchToggle,
   displayCheckbox,
   effectiveHealth,
   empty,
@@ -284,6 +321,7 @@ export {
   projMembers,
   projPill,
   queueHeadline,
+  itemActions,
   recommendationCallout,
   sectionTabs,
   seg,
