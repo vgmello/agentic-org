@@ -282,3 +282,20 @@ html[data-theme="cozy"] :is(.project-insights, .team-overview, .org-insights, .o
   .insights-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* ---------------------------------------------------------------- organization Insights */
+.org-insights-page .ph-actions .insights-controls { justify-content: flex-end; }
+.org-compare { display: grid; gap: 12px; min-width: 0; }
+.org-compare .sec-head { margin-block-start: 10px; }
+.org-compare .insight-card { gap: 10px; padding-block: 6px 12px; }
+.org-compare table { min-width: 760px; }
+.org-compare :is(th, td) { padding: 9px 10px; white-space: nowrap; }
+.org-compare thead th { font-size: var(--fs-xs); font-weight: 600; }
+.org-compare tbody th { font-weight: 500; text-align: start; }
+.org-compare th:first-child { text-align: start; }
+.org-compare tfoot :is(th, td) { border-block-end: 0; border-block-start: 1px solid var(--line2); color: var(--white); font-weight: 600; }
+.org-compare-name { display: inline-flex; align-items: center; gap: 8px; }
+.org-compare-name .pill { font-weight: 500; }
+@container insights (max-width: 40rem) {
+  .org-compare tbody th { min-width: 9.5rem; white-space: normal; }
+  .org-compare-name { flex-wrap: wrap; gap: 2px 8px; }
+}

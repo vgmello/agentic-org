@@ -96,6 +96,7 @@ function renderNav(route) {
         ${item("#/work", "Work", "clipboard", r0 === "work")}
         ${item("#/chat", "Chat", "chat", r0 === "chat")}
         ${item("#/activity", "Activity", "signal", r0 === "activity")}
+        ${item("#/insights", "Insights", "chart", r0 === "insights", '<span class="sr-only"> for the organization</span>')}
         ${item("#/projects", "Projects", "folder", r0 === "projects" && !r1)}
       </ul>
     </li>
