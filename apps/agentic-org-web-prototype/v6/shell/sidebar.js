@@ -75,12 +75,13 @@ const WORKSPACE_ITEMS = [
   ["work", "#/work", "Work", "clipboard"],
   ["chat", "#/chat", "Chat", "chat"],
   ["activity", "#/activity", "Activity", "signal"],
+  ["insights", "#/insights", "Insights", "chart", " for the organization"],
   ["projects", "#/projects", "Projects", "folder"],
   ["calendar", "#/calendar", "Calendar", "calendar-check"],
 ];
-function workspaceItemHtml([key, href, label, icon], cur, pinned) {
+function workspaceItemHtml([key, href, label, icon, srSuffix = ""], cur, pinned) {
   const pin = `<button class="nav-pin" type="button" data-act="nav-pin" data-v="${key}" aria-label="${pinned ? "Move" : "Pin"} ${esc(label)} ${pinned ? "to More" : "to the sidebar"}" title="${pinned ? "Move to More" : "Pin to sidebar"}">${ic(pinned ? "minimize" : "plus", "ic14")}</button>`;
-  return `<li class="nav-org-item"><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon)}<span class="lbl">${esc(label)}</span></a>${pin}</li>`;
+  return `<li class="nav-org-item"><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon)}<span class="lbl">${esc(label)}</span>${srSuffix ? `<span class="sr-only">${esc(srSuffix)}</span>` : ""}</a>${pin}</li>`;
 }
 function workspaceNavHtml(r0, r1) {
   const isCur = (key) => r0 === key && (key !== "projects" || !r1);

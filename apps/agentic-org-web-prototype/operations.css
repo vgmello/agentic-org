@@ -3372,129 +3372,6 @@ html[data-theme="report"] .assembly-release {
 .activity-triage:focus { outline: 2px solid var(--tone-accent); outline-offset: 1px; }
 .activity-timeline .runlog, .activity-triage { max-width: calc(100% - 32px); }
 
-:is(.project-insights, .team-overview) {
-  container: project-insights / inline-size;
-  display: grid;
-  gap: 14px;
-  min-width: 0;
-  padding: 18px var(--gutter) 32px;
-  color: var(--white);
-}
-.insights-header,
-.insight-card-head {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: start;
-  gap: 8px 14px;
-}
-.insights-header h2 { font-size: 1.25rem; font-weight: 600; }
-.insights-header p,
-.insight-card-head p { margin-block-start: 3px; color: var(--gray-400); font-size: var(--fs-sm); }
-.insights-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
-.insight-select { display: grid; gap: 3px; color: var(--gray-300); font-size: var(--fs-xs); font-weight: 600; }
-.project-insights :is(.insight-select .field, .insights-controls .btn, .insight-card-head .btn) {
-  min-height: var(--control-height);
-  color: var(--white);
-}
-.project-insights .insight-select .field { padding-inline: 10px; background: var(--hover); }
-.insight-kpis,
-.insights-grid { display: grid; gap: 12px; min-width: 0; }
-.insight-kpis { grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr)); }
-.insights-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
-/* An odd last card spans the row so the grid never leaves a hole */
-.insights-grid > :last-child:nth-child(odd) { grid-column: 1 / -1; }
-.insight-kpis > div,
-.insight-card,
-.insight-actions > a {
-  min-width: 0;
-  padding: 14px;
-  border: 1px solid var(--line2);
-  border-radius: var(--radius-md);
-  background: var(--hover);
-}
-.insight-kpis dt { color: var(--gray-300); font-size: var(--fs-sm); }
-.insight-kpis dd { margin-block-start: 3px; font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; }
-.insight-kpis .insight-kpi-note { color: var(--gray-400); font-size: var(--fs-xs); font-weight: 500; }
-.insights-section-title { margin-block-start: 7px; font-size: var(--fs-md); font-weight: 600; }
-.insight-card { display: grid; align-content: start; gap: 12px; }
-.insight-card-head h3 { font-size: var(--fs-md); font-weight: 600; }
-.insight-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.insight-actions > a { flex: 1 1 260px; display: flex; align-items: center; gap: 10px; padding-block: 8px; font-size: var(--fs-sm); }
-.insight-actions > a > svg:first-child { color: var(--tone-accent-ink); }
-.insight-actions > a > svg:last-child { margin-inline-start: auto; }
-.insight-actions > a:hover { background: var(--line2); }
-.insight-actions small { display: block; color: var(--gray-400); font-size: var(--fs-xs); }
-.insight-link { color: var(--gray-300); text-decoration: none; font-weight: 500; }
-.insight-link:hover { color: var(--white); text-decoration: underline; text-underline-offset: 3px; }
-.insight-point-value { font-variant-numeric: tabular-nums; }
-.insight-plot,
-.insight-series,
-.insight-gates { display: grid; gap: 8px; min-width: 0; }
-.insight-series { gap: 3px; }
-.insight-plot li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
-  align-items: center;
-  gap: 4px 10px;
-  min-width: 0;
-  font-size: var(--fs-sm);
-}
-.insight-point-label { color: var(--gray-300); overflow-wrap: anywhere; }
-.insight-point {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(5.5rem, max-content);
-  align-items: center;
-  gap: 5px;
-}
-.insight-point-value { justify-self: end; }
-.insight-bar {
-  width: var(--insight-value);
-  height: 6px;
-  border-radius: 2px;
-  background: var(--insight-series-color, var(--tone-accent));
-  forced-color-adjust: none;
-}
-:is(.project-insights, .team-overview) [data-series="1"] { --insight-series-color: var(--gray-400); }
-.project-insights [data-series="2"] { --insight-series-color: var(--tone-warn-ink); }
-.project-insights [aria-labelledby="insight-readiness-title"] [data-series="0"] { --insight-series-color: var(--tone-ok-ink); }
-.project-insights [aria-labelledby="insight-readiness-title"] [data-series="1"] { --insight-series-color: var(--gray-400); }
-.insight-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--gray-300); font-size: var(--fs-xs); }
-.insight-legend li::before {
-  content: "";
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-inline-end: 5px;
-  border-radius: 2px;
-  background: var(--insight-series-color, var(--tone-accent));
-  forced-color-adjust: none;
-}
-.insight-empty { color: var(--gray-400); font-size: var(--fs-base); }
-.insight-table-scroll { max-width: 100%; overflow-x: auto; }
-.insight-table-scroll table { width: 100%; border-collapse: collapse; text-align: start; font-size: var(--fs-sm); }
-.insight-table-scroll :is(th, td) { padding: 7px 5px; border-block-end: 1px solid var(--line); }
-.insight-table-scroll td { font-variant-numeric: tabular-nums; }
-.insight-table-scroll thead { color: var(--gray-400); }
-.insight-table-scroll :is(th, td):not(:first-child) { text-align: end; }
-.insight-records .insight-table-scroll :is(th, td) { padding-inline: 8px; text-align: start; white-space: nowrap; }
-.insight-records .insight-table-scroll :is(th, td):nth-last-child(-n+2) { text-align: end; }
-.insight-cap { color: var(--gray-300); font-size: var(--fs-sm); }
-.insight-cap .assembly-progress-bar { display: block; width: 100%; margin-block-start: 6px; }
-.insight-gates { gap: 0; }
-.insight-gates li {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 4px 12px;
-  padding-block: 6px;
-  border-block-start: 1px solid var(--line);
-  font-size: var(--fs-sm);
-}
-.insight-gates [data-gate-state="pending"] { color: var(--tone-warn-ink); }
-.insight-gates [data-gate-state="blocked"] { color: var(--tone-bad-ink); }
-.insight-gates [data-gate-state="cleared"] { color: var(--tone-ok-ink); }
-.insight-trend { display: none; }
 
 .team-overview-intro,
 .team-overview-projects li > div:first-child,
@@ -3511,7 +3388,6 @@ html[data-theme="report"] .assembly-release {
 .team-overview-events time { color: var(--gray-400); font-size: var(--fs-sm); }
 .team-overview .insights-grid { align-items: stretch; }
 .team-overview .insight-card-head > .insight-link { font-size: var(--fs-sm); }
-.team-overview .insight-point { grid-template-columns: minmax(0, 1fr) minmax(1.25rem, max-content); }
 .team-overview .insight-table-scroll :is(th, td) { overflow-wrap: anywhere; }
 .team-overview .insight-table-scroll th:first-child { text-align: start; }
 .team-overview .insight-table-scroll tbody th { font-weight: 500; }
@@ -3523,69 +3399,6 @@ html[data-theme="report"] .assembly-release {
 .team-overview-events li > span { flex: 1; min-width: min(100%, 15rem); }
 .team-roster-title { padding: 16px var(--gutter) 0; font-size: 1rem; font-weight: 600; }
 
-@container project-insights (min-width: 1040px) {
-  .insight-trend-card .insight-plot { display: none; }
-  .insight-trend {
-    position: relative;
-    display: grid;
-    grid-template-columns: repeat(var(--insight-points), minmax(0, 1fr));
-    min-height: 138px;
-    text-align: center;
-    --trend-height: 102px;
-  }
-  .insight-trend::before,
-  .insight-trend::after { content: ""; position: absolute; inset: 0 0 auto; height: var(--trend-height); pointer-events: none; }
-  .insight-trend::before { content: ""; border-block-end: 1px solid var(--line2); }
-  .insight-trend::after { background: var(--tone-accent); clip-path: var(--insight-trace); }
-  .insight-trend li { display: flex; justify-content: center; padding-block-start: calc(var(--trend-height) + 5px); }
-  .insight-trend-date { color: var(--gray-300); font-size: var(--fs-xs); }
-  .insight-trend-value {
-    position: absolute;
-    z-index: 1;
-    inset-inline-start: var(--insight-x);
-    top: calc(var(--trend-height) * var(--insight-y));
-    translate: -50% calc(-100% - 6px);
-    white-space: nowrap;
-    font-size: var(--fs-xs);
-    font-variant-numeric: tabular-nums;
-  }
-  .insight-trend-value::after {
-    position: absolute;
-    content: "";
-    inset: calc(100% + 3px) auto auto 50%;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    translate: -50%;
-    background: var(--tone-accent);
-  }
-  .insight-columns { grid-template-columns: repeat(var(--insight-points), minmax(0, 1fr)); }
-  .insight-columns li {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 100px auto;
-    align-items: start;
-    text-align: center;
-  }
-  .insight-columns .insight-series {
-    grid-row: 1;
-    display: flex;
-    justify-content: center;
-    height: 100%;
-    border-block-end: 1px solid var(--line2);
-  }
-  .insight-columns .insight-point {
-    display: flex;
-    flex: 1;
-    max-width: 55px;
-    flex-direction: column-reverse;
-    gap: 2px;
-    font-size: var(--fs-xs);
-  }
-  .insight-columns .insight-bar { flex: none; width: 70%; height: calc(.79 * var(--insight-value)); }
-}
-@container project-insights (max-width: 660px) {
-  .insights-grid { grid-template-columns: minmax(0, 1fr); }
-}
 @media (max-width: 620px) {
   :is(.assembly-summary, .assembly-release) { --summary-block-padding: 10px; }
   .assembly-legend { padding: 10px var(--gutter); }
