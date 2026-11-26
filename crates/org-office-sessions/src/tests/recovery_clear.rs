@@ -473,3 +473,64 @@ fn pass1_contended_failover_of_an_offboarded_agent_is_not_requeued() {
     );
     mgr.registry.lock().unwrap().starting.remove(&agent_id);
 }
+
+#[test]
+fn pass2_stop_session_conflicts_while_starting_with_no_live_handle_without_skewing_epoch_or_revoking_binding(
+) {
+    let (_office, mgr, _owner_id, hr_agent_id) = manager_with_hr_agent();
+    mgr.bindings
+        .issue(&hr_agent_id, "run-in-flight", "sess-in-flight", 0)
+        .unwrap();
+    let tokens_before = mgr.bindings.active_tokens();
+    assert_eq!(tokens_before.len(), 1);
+    let epoch_before = {
+        let mut reg = mgr.registry.lock().unwrap();
+        assert!(!reg.live.contains_key(&hr_agent_id));
+        reg.starting.insert(hr_agent_id.clone());
+        reg.stop_epoch(&hr_agent_id)
+    };
+
+    let err = mgr
+        .stop_session(&hr_agent_id, "owner_stop")
+        .expect_err("stop_session must conflict while reg.starting is held with no live handle");
+    assert_eq!(err.code, org_proto::ErrorCode::Conflict);
+    assert_eq!(
+        mgr.registry.lock().unwrap().stop_epoch(&hr_agent_id),
+        epoch_before,
+        "conflicted stop_session must not skew stop_epoch"
+    );
+    assert_eq!(
+        mgr.bindings.active_tokens(),
+        tokens_before,
+        "conflicted stop_session must not revoke the in-flight launch binding"
+    );
+
+    mgr.registry.lock().unwrap().starting.remove(&hr_agent_id);
+    mgr.stop_session(&hr_agent_id, "owner_stop")
+        .expect("stop_session succeeds once start slot releases");
+    assert_eq!(
+        mgr.registry.lock().unwrap().stop_epoch(&hr_agent_id),
+        epoch_before + 1
+    );
+    assert!(
+        mgr.bindings.active_tokens().is_empty(),
+        "accepted stop_session revokes the binding"
+    );
+}
+
+#[test]
+fn pass2_requeue_contended_failover_abandons_after_explicit_stop_epoch_bump() {
+    let (_office, mgr, _owner_id, hr_agent_id) = manager_with_hr_agent();
+    mgr.set_budget_hold(Some("test: never launch".into()));
+    let epoch = mgr.registry.lock().unwrap().stop_epoch(&hr_agent_id);
+    mgr.stop_session(&hr_agent_id, "owner_stop").unwrap();
+
+    crate::manager::requeue_contended_failover(
+        &mgr,
+        &failover_request(&hr_agent_id, "rate_limited", epoch),
+    );
+    assert!(
+        queued_recovery_summaries(&mgr, &hr_agent_id).is_empty(),
+        "explicit stop between contention and requeue must abandon the failover wake"
+    );
+}

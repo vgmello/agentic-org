@@ -59,7 +59,9 @@ mod warm;
 
 pub(crate) use environment::ensure_owner_only_dir;
 #[cfg(test)]
-pub(crate) use failover::{is_host_claude_subscription_refresh_eligible, run_failover_relaunch};
+pub(crate) use failover::{
+    is_host_claude_subscription_refresh_eligible, requeue_contended_failover, run_failover_relaunch,
+};
 #[cfg(test)]
 pub(crate) use install::{install_unrecovered_pre_pump_handle, PrePumpHandleMeta};
 #[cfg(test)]

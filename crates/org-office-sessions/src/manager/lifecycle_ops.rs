@@ -257,6 +257,12 @@ pub(super) fn stop_session_impl(
             reg.record_explicit_stop(employee_id);
             handle
         } else {
+            if reg.starting.contains(employee_id) {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "agent session start or teardown is already in progress",
+                ));
+            }
             reg.record_explicit_stop(employee_id);
             None
         }

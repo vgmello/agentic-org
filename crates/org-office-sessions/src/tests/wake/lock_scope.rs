@@ -11,8 +11,8 @@ use crate::router::WarmPermitOutcome;
 use crate::wake::PendingWakeQueueRecord;
 
 /// Every operation for employee B (and a new wake for A) must finish within this budget while A
-/// sits inside its permit RPC.
-const UNBLOCKED_BUDGET: Duration = Duration::from_millis(50);
+/// sits blocked inside its permit RPC (A is not released until after these assertions finish).
+const UNBLOCKED_BUDGET: Duration = Duration::from_millis(500);
 
 /// A live handle whose pump commands are captured instead of run.
 fn stub_live_handle(

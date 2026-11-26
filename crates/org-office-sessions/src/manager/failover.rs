@@ -214,8 +214,12 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
 /// longer an agent). Pause and offboard already abandon the failover through their explicit
 /// `stop_session` ([`FailoverSlot::Abandoned`]); a transient admission refusal (a satellite
 /// awaiting its HQ snapshot, an unreadable record) keeps the turn, never drops it.
-pub(super) fn requeue_contended_failover(mgr: &SessionManager, req: &FailoverRequest) {
-    if is_admissions_closed(mgr) || is_retired_agent(mgr, &req.employee_id) {
+pub(crate) fn requeue_contended_failover(mgr: &SessionManager, req: &FailoverRequest) {
+    let abandoned = {
+        let reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        reg.draining || reg.shutting_down || reg.stop_epoch(&req.employee_id) != req.stop_epoch
+    };
+    if abandoned || is_retired_agent(mgr, &req.employee_id) {
         return;
     }
     let note = serde_json::json!({
@@ -279,6 +283,12 @@ pub(super) fn enqueue_recovery_wake(
 ) {
     let ts = crate::credentials::now_ms();
     let _lock = mgr.employee_locks.lock(&req.employee_id);
+    {
+        let reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if reg.draining || reg.shutting_down || reg.stop_epoch(&req.employee_id) != req.stop_epoch {
+            return;
+        }
+    }
     let mut queue = mgr
         .store
         .read_pending_wakes(&req.employee_id)

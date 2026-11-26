@@ -632,6 +632,13 @@ fn task115_step_hook_mid_turn_delivery_retains_seen_ids_and_defers_task_assignme
     assert_eq!(*rec.interrupts.lock().unwrap(), 0);
 
     // Disk still retains TaskAssignment AND seen_item_ids for dm-mt-1; counter == 1.
+    assert!(
+        wait_until(
+            || counter.load(std::sync::atomic::Ordering::Relaxed) == 1,
+            Duration::from_secs(3)
+        ),
+        "expected waiting_messages counter to settle to 1 after mid-turn delivery persisted"
+    );
     let q = mgr
         .store()
         .read_pending_wakes(&fx.agent_a)
