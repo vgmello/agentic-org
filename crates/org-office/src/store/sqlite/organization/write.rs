@@ -261,6 +261,7 @@ impl OrganizationWrite for SqliteTx {
             text(&tools_json),
             text(record.permission_preset.as_str()),
             Value::Integer(i64::from(record.enabled)),
+            optional(record.effort.map(|e| e.as_str())),
         ];
         meta_values(&record.meta, &mut values)?;
         let columns = format!("organization_id, {AGENT_EXEC}, schema_version, {META}");

@@ -432,6 +432,7 @@ fn hire_agent(
                 tools_config: Vec::new(),
                 system_prompt_markdown: None,
                 body: Some("Be helpful.".into()),
+                effort: None,
             },
             reason: "pool test".into(),
         },
@@ -454,6 +455,7 @@ fn hire_agent(
             permission_preset: Some("safe_ask".into()),
             enabled: true,
             system_prompt_markdown: "Be helpful.".into(),
+            effort: None,
         },
     )
     .unwrap();

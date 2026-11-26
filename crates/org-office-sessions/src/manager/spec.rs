@@ -45,14 +45,22 @@ pub(super) fn apply_linux_claude_bwrap_pruning(spec: &mut SessionSpec) {
     }
 }
 
+/// The model and reasoning effort a session runs with, as runtime tokens from the admitted
+/// route (`TASK-181`). `None` keeps the runtime's default for that setting.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ModelChoice {
+    pub(crate) model: Option<Token>,
+    pub(crate) effort: Option<Token>,
+}
+
 #[expect(
     clippy::too_many_arguments,
-    reason = "launch spec builder takes runtime, employee, model, workspace, read-only dirs, instructions, preset, and bwrap flag"
+    reason = "launch spec builder takes runtime, employee, model choice, workspace, read-only dirs, instructions, preset, and bwrap flag"
 )]
 pub(super) fn build_session_spec_for_launch(
     runtime: RuntimeId,
     employee: &Employee,
-    model: Option<Token>,
+    choice: ModelChoice,
     workspace: SpecPath,
     read_only_dirs: Vec<SpecPath>,
     instructions: String,
@@ -62,7 +70,7 @@ pub(super) fn build_session_spec_for_launch(
     let mut spec = build_session_spec(
         runtime,
         employee,
-        model,
+        choice,
         workspace,
         read_only_dirs,
         instructions,
@@ -111,10 +119,10 @@ pub(super) fn build_launch_context(
     })
 }
 
-pub(super) fn build_session_spec(
+pub(crate) fn build_session_spec(
     runtime: RuntimeId,
     employee: &Employee,
-    model: Option<Token>,
+    choice: ModelChoice,
     workspace: SpecPath,
     read_only_dirs: Vec<SpecPath>,
     instructions: String,
@@ -132,8 +140,8 @@ pub(super) fn build_session_spec(
             description: format!("{} ({title})", employee.name),
             prompt: format!("You are {} (@{}).", employee.name, employee.handle),
         },
-        model,
-        effort: None,
+        model: choice.model,
+        effort: choice.effort,
         workspace,
         read_only_dirs,
         instructions,

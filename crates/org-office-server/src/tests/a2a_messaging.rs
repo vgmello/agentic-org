@@ -662,6 +662,7 @@ pub(super) fn hire_agent_at(
                 tools_config: Vec::new(),
                 system_prompt_markdown: Some("Be concise.".into()),
                 body: None,
+                effort: None,
             },
             reason: "a2a test hire".into(),
         },

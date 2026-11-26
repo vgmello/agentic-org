@@ -1,7 +1,7 @@
 //! Warm-session route digests (config, topology, worktree sandbox) and warm turn-permit
 //! acquisition (`doc-88` §6, `AE-04`, `AE-11`).
 
-use org_office::organization_family::records::ProviderConnection;
+use org_office::organization_family::records::{ProviderConnection, ReasoningEffort};
 use org_office::providers::PermitAcquireOutcome;
 use org_office::Office;
 use org_proto::providers::PermitAuthority;
@@ -158,21 +158,36 @@ pub(super) fn compute_route_digest(
     conn: &ProviderConnection,
     binding_rev: u64,
     resolved_model: &str,
+    effort: Option<ReasoningEffort>,
     exec_rev: u64,
 ) -> String {
     let wt_digest = compute_worktree_sandbox_digest(office, employee_id);
-    compute_route_digest_with_wt(conn, binding_rev, resolved_model, exec_rev, &wt_digest)
+    compute_route_digest_with_wt(
+        conn,
+        binding_rev,
+        resolved_model,
+        effort,
+        exec_rev,
+        &wt_digest,
+    )
 }
 
-pub(super) fn compute_route_digest_with_wt(
+/// The warm-session route digest. The agent's reasoning effort is in it by value (`TASK-181`),
+/// so a changed effort recycles a warm session even where the execution revision alone would
+/// not show it; an agent with no effort keeps the digest it had before effort existed.
+pub(crate) fn compute_route_digest_with_wt(
     conn: &ProviderConnection,
     binding_rev: u64,
     resolved_model: &str,
+    effort: Option<ReasoningEffort>,
     exec_rev: u64,
     wt_digest: &str,
 ) -> String {
+    let effort_part = effort
+        .map(|e| format!(":effort={}", e.as_str()))
+        .unwrap_or_default();
     let digest_input = format!(
-        "conn={}:rev={}:bind={}:endpoint={}:model={}:exec={}:wt={}",
+        "conn={}:rev={}:bind={}:endpoint={}:model={}{effort_part}:exec={}:wt={}",
         conn.id.as_str(),
         conn.meta.revision,
         binding_rev,
@@ -250,6 +265,7 @@ pub(crate) fn acquire_warm_permit_for_office(
             &conn,
             binding_rev,
             &resolved_model,
+            cfg.effort,
             cfg.meta.revision,
             &wt_digest,
         );

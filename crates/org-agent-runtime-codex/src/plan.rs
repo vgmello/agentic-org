@@ -1,3 +1,4 @@
+mod effort;
 mod paths;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -9,6 +10,7 @@ use org_agent_runtime::{
     StopPlan, StopSignal, StopStep, ToolCapability,
 };
 
+use self::effort::codex_reasoning_effort;
 use self::paths::{path_is_same_or_under, paths_overlap_via_alias_only};
 
 const INSTRUCTIONS_FILE: &str = "codex-instructions.md";
@@ -164,7 +166,7 @@ pub(crate) fn build_headless_plan(
     let thread_cfg = CodexThreadConfig {
         cwd: spec.workspace.as_str().to_owned(),
         model: spec.model.as_ref().map(|m| m.as_str().to_owned()),
-        effort: spec.effort.as_ref().map(|e| e.as_str().to_owned()),
+        effort: codex_reasoning_effort(spec)?.map(str::to_owned),
         sandbox_mode,
         uses_office_profile,
         writable_roots,
@@ -621,9 +623,9 @@ fn append_config_overrides(
         args.push("-c".to_owned());
         args.push(format!("model=\"{}\"", model.as_str()));
     }
-    if let Some(effort) = &spec.effort {
+    if let Some(effort) = codex_reasoning_effort(spec)? {
         args.push("-c".to_owned());
-        args.push(format!("model_reasoning_effort=\"{}\"", effort.as_str()));
+        args.push(format!("model_reasoning_effort=\"{effort}\""));
     }
     if disables_shell_tool(spec) {
         args.push("-c".to_owned());

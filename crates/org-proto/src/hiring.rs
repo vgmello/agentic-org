@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::Call;
 
+/// Every reasoning effort an agent's execution configuration may name (`TASK-181`), lowest
+/// first. Absent means the runtime's default. Anything else is refused as `InvalidRequest`.
+pub const AGENT_EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+
 /// A role record returned by `role.list` and `role.inspect`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoleRecord {
@@ -53,6 +57,9 @@ pub struct HireProposalWire {
     pub model_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_preset: Option<String>,
+    /// One of [`AGENT_EFFORT_LEVELS`]; absent keeps the runtime's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools_config: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -94,6 +101,9 @@ pub struct AgentExecutionRecord {
     #[serde(default)]
     pub tools_config: Vec<String>,
     pub permission_preset: String,
+    /// One of [`AGENT_EFFORT_LEVELS`]; absent when the runtime's default applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub enabled: bool,
     pub system_prompt_markdown: String,
     pub revision: u64,
@@ -444,6 +454,10 @@ pub struct AgentExecutionSetParams {
     pub tools_config: Vec<String>,
     #[serde(default)]
     pub permission_preset: Option<String>,
+    /// One of [`AGENT_EFFORT_LEVELS`]. A full replacement like the rest: absent (or `null`)
+    /// clears it back to the runtime's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
     pub system_prompt_markdown: String,
@@ -497,3 +511,6 @@ impl Call for ModelProfileList {
     type Params = ModelProfileListParams;
     type Result = ModelProfileListResult;
 }
+
+#[cfg(test)]
+mod tests;

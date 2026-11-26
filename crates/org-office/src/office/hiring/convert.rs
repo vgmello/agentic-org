@@ -10,7 +10,8 @@ use org_store::{Id, Outcome, Reply, StoreError};
 use crate::organization::{
     features::{OrgRejection, RejectCode, HIRE_DENIED, NOT_AUTHORIZED},
     records::{
-        self, AgentExecutionConfig, HireProposal, HireRequest, ModelProfile, PermissionPreset, Role,
+        self, AgentExecutionConfig, HireProposal, HireRequest, ModelProfile, PermissionPreset,
+        ReasoningEffort, Role,
     },
 };
 
@@ -76,6 +77,20 @@ pub(super) fn decode_reply<T: serde::de::DeserializeOwned>(reply: Reply) -> Resu
     }
 }
 
+/// The reasoning effort a request names, if any: one of `AGENT_EFFORT_LEVELS` or
+/// `InvalidRequest` (an empty string or `none` included), never a silent default.
+pub(super) fn effort_from_wire(raw: Option<&str>) -> Result<Option<ReasoningEffort>, ApiError> {
+    raw.map(|text| {
+        ReasoningEffort::parse(text).ok_or_else(|| {
+            ApiError::new(
+                ErrorCode::InvalidRequest,
+                "effort is one of low, medium, high, xhigh, max",
+            )
+        })
+    })
+    .transpose()
+}
+
 pub(super) fn proposal_from_wire(w: HireProposalWire) -> Result<HireProposal, ApiError> {
     let permission_preset = match w.permission_preset.as_deref() {
         Some(raw) => Some(PermissionPreset::parse(raw).ok_or_else(|| {
@@ -83,6 +98,7 @@ pub(super) fn proposal_from_wire(w: HireProposalWire) -> Result<HireProposal, Ap
         })?),
         None => None,
     };
+    let effort = effort_from_wire(w.effort.as_deref())?;
     Ok(HireProposal {
         name: w.name,
         handle: w.handle,
@@ -95,6 +111,7 @@ pub(super) fn proposal_from_wire(w: HireProposalWire) -> Result<HireProposal, Ap
         model_profile_id: w.model_profile_id,
         model_id: w.model_id,
         permission_preset,
+        effort,
         tools_config: w.tools_config,
         system_prompt_markdown: w.system_prompt_markdown,
         body: w.body,
@@ -114,6 +131,7 @@ fn proposal_to_wire(p: &HireProposal) -> HireProposalWire {
         model_profile_id: p.model_profile_id.clone(),
         model_id: p.model_id.clone(),
         permission_preset: p.permission_preset.map(|x| x.as_str().to_owned()),
+        effort: p.effort.map(|e| e.as_str().to_owned()),
         tools_config: p.tools_config.clone(),
         system_prompt_markdown: p.system_prompt_markdown.clone(),
         body: p.body.clone(),
@@ -199,6 +217,7 @@ pub(super) fn exec_to_wire(e: &AgentExecutionConfig) -> AgentExecutionRecord {
         model_id: e.model_id.clone(),
         tools_config: e.tools_config.clone(),
         permission_preset: e.permission_preset.as_str().to_owned(),
+        effort: e.effort.map(|x| x.as_str().to_owned()),
         enabled: e.enabled,
         system_prompt_markdown: e.system_prompt_markdown.clone(),
         revision: e.meta.revision,

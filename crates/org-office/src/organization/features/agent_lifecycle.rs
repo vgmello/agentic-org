@@ -25,7 +25,7 @@ use crate::organization::{
     ports::{OrganizationRead, TeamDependents},
     records::{
         self, AgentExecutionConfig, Employee, EmployeeKind, EmployeeStatus, Meta, ModelProfile,
-        PermissionPreset, ProviderAuthMode, ProviderConnection, Team,
+        PermissionPreset, ProviderAuthMode, ProviderConnection, ReasoningEffort, Team,
     },
 };
 
@@ -478,6 +478,10 @@ pub struct UpsertAgentExecution {
     pub model_id: String,
     pub tools_config: Vec<String>,
     pub permission_preset: PermissionPreset,
+    /// Left out of the operation fingerprint when `None`, so a retry from before `TASK-181`
+    /// still matches its receipt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<ReasoningEffort>,
     pub enabled: bool,
     pub system_prompt_markdown: String,
 }
@@ -550,6 +554,7 @@ impl Feature for UpsertAgentExecution {
             model_id: self.model_id.clone(),
             tools_config: self.tools_config.clone(),
             permission_preset: self.permission_preset,
+            effort: self.effort,
             enabled: self.enabled,
             meta,
             system_prompt_markdown: self.system_prompt_markdown.clone(),

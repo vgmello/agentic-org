@@ -14,8 +14,8 @@ use org_store::{Actor, Id};
 
 use super::super::Office;
 use super::convert::{
-    decode_reply, exec_to_wire, hire_to_wire, map_store_error, opt_id, parse_id, profile_to_wire,
-    proposal_from_wire, role_to_wire, storage_err,
+    decode_reply, effort_from_wire, exec_to_wire, hire_to_wire, map_store_error, opt_id, parse_id,
+    profile_to_wire, proposal_from_wire, role_to_wire, storage_err,
 };
 use crate::organization::{
     features::{
@@ -332,6 +332,7 @@ impl Office {
                         })?,
                         None => PermissionPreset::SafeAsk,
                     };
+                    let effort = effort_from_wire(p.effort.as_deref())?;
                     let cmd = UpsertAgentExecution {
                         employee_id: parse_id(&p.employee_id, "employee_id")?,
                         expected_revision: p.expected_version,
@@ -339,6 +340,7 @@ impl Office {
                         model_id: p.model_id,
                         tools_config: p.tools_config,
                         permission_preset: preset,
+                        effort,
                         enabled: p.enabled,
                         system_prompt_markdown: p.system_prompt_markdown,
                     };

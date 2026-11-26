@@ -108,6 +108,7 @@ fn task126_warm_permit_turns_stale_on_execution_config_revision_change_and_401_r
                 tools_config: Vec::new(),
                 system_prompt_markdown: Some("Prompt v1".into()),
                 body: Some("Work.".into()),
+                effort: None,
             },
             reason: "Test warm exec".into(),
         },
@@ -175,6 +176,7 @@ fn task126_warm_permit_turns_stale_on_execution_config_revision_change_and_401_r
             permission_preset: Some("autonomous_sandboxed".into()),
             enabled: true,
             system_prompt_markdown: "Prompt v2".into(),
+            effort: None,
         },
     )
     .unwrap();
@@ -587,6 +589,7 @@ fn task126_org_topology_invalidates_warm_digest_and_expiring_oauth_triggers_stal
                     tools_config: Vec::new(),
                     system_prompt_markdown: None,
                     body: Some("Work.".into()),
+                    effort: None,
                 },
                 reason: "Topology test hire".into(),
             },
