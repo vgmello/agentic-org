@@ -1,7 +1,9 @@
 /* Board card tooltip: hovering a card (after a short pause) or focusing its title shows a small dark label above the
-   card with the title, then the status and the ETA or closing date. It repeats what the card and its lane already
-   say, so it is hidden from assistive technology. It lives in the top layer, so the board's scroller never clips it;
+   card with the title, then the status and the ETA or closing date, but only when the card's title is clamped. The card says the same to assistive technology, so the
+   tooltip is hidden from it. It lives in the top layer, so the board's scroller never clips it;
    it stays while the pointer moves onto it, and Escape, scrolling or a click dismisses it. */
+import { bindBoardIconTips, isIconTarget } from "./board-icon-tip.js";
+
 const SHOW_DELAY = 400;
 const HIDE_DELAY = 120;
 let tip = null, card = null, showTimer = 0, hideTimer = 0, bound = false;
@@ -29,10 +31,16 @@ function place(el, target) {
   el.style.left = `${Math.round(left)}px`;
 }
 
+/* The card tooltip earns its place only when it reveals the rest of a clamped title */
+function revealsHidden(target) {
+  const title = target.querySelector(":scope > .work-item-link");
+  return title ? title.scrollHeight > title.clientHeight + 1 : false;
+}
+
 function show(target) {
   clearTimeout(showTimer);
   clearTimeout(hideTimer);
-  if (!target.isConnected || !target.dataset.boardTip) return;
+  if (!target.isConnected || !target.dataset.boardTip || !revealsHidden(target)) return;
   const el = tipElement();
   card = target;
   el.querySelector(".board-tip-title").textContent = target.querySelector(":scope > .work-item-link")?.textContent ?? "";
@@ -60,6 +68,8 @@ function onPointerOver(e) {
   if (e.pointerType === "touch") return;
   const target = boardCard(e.target);
   if (!target) return;
+  /* An icon has its own tooltip; the card's steps aside */
+  if (isIconTarget(e.target)) { if (card) hide(); return; }
   clearTimeout(hideTimer);
   if (target === card) return;
   clearTimeout(showTimer);
@@ -84,6 +94,7 @@ function onFocusIn(e) {
 export function bindBoardTips() {
   if (bound) return;
   bound = true;
+  bindBoardIconTips();
   document.addEventListener("pointerover", onPointerOver);
   document.addEventListener("pointerout", onPointerOut);
   document.addEventListener("focusin", onFocusIn);
