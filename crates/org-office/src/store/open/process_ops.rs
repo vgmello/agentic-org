@@ -158,8 +158,10 @@ impl ReadOp for LaunchProcessSnapshotRead {
 
 /// Loads, in one read, what an agent's standing process set (its home team chain) and the sets
 /// of the tasks one turn names are resolved from, so they never come from different revisions
-/// (`doc-34` §3.1). A task that no longer resolves, or whose project no longer does, is left
-/// out: the wake that named it is stale and the task has no chain to apply.
+/// (`doc-34` §3.1). A task that no longer resolves is left out: the wake that named it is stale
+/// and the task has no chain to apply. A task that resolves but whose project does not is
+/// refused (`NotFound`), as [`LaunchProcessSnapshotRead`] refuses it, never left out: its
+/// project's must-follow documents would go missing without a word.
 pub struct TaskProcessSnapshotRead {
     pub employee_id: String,
     pub task_refs: Vec<String>,
@@ -196,10 +198,17 @@ impl ReadOp for TaskProcessSnapshotRead {
             let Some(task) = read.resolve_task(task_ref)? else {
                 continue;
             };
+            // A live task whose project cannot be loaded has no chain to resolve, and dropping
+            // it would silently drop its project's must-follow rules: refuse, as a launch does.
             let project = match &task.project_id {
                 Some(pid) => match read.project(pid)? {
                     Some(project) => Some(project),
-                    None => continue,
+                    None => {
+                        return Ok(Err(ApiError::new(
+                            ErrorCode::NotFound,
+                            format!("task project `{pid}` not found"),
+                        )));
+                    }
                 },
                 None => None,
             };

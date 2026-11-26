@@ -12,7 +12,7 @@ use org_supervise::{Environment, SearchPath};
 
 use crate::instructions::{
     assemble_standing_instructions, compose_turn_objective, resolve_placement, InstructionInput,
-    Placement, TurnSender, TurnTrigger,
+    Placement, StandingInstructions, TurnSender, TurnTrigger,
 };
 use crate::preset::PresetConfig;
 use crate::runtime_registry::RuntimeRegistry;
@@ -73,7 +73,7 @@ impl SessionManager {
         home: &Path,
         workspace: &Path,
         preset_cfg: &PresetConfig,
-    ) -> Result<String, ApiError> {
+    ) -> Result<StandingInstructions, ApiError> {
         let info = self.office.info();
         let role = employee
             .role_id

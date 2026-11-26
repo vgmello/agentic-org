@@ -120,20 +120,27 @@ impl SessionManager {
     /// office state so untrusted callers cannot forge provenance.
     fn enrich_wake_provenance(&self, target: &Employee, item: &mut PendingWakeItem) {
         let sender_emp = self.office.load_employee(&item.sender_id).ok().flatten();
+        let supervisor = item.kind == WakeKind::Recovery
+            && item.sender_relation.as_deref() == Some("office_supervisor");
+        let relation = if supervisor {
+            "office_supervisor"
+        } else {
+            verified_sender_relation(&self.office, target, &item.sender_id, sender_emp.as_ref())
+        };
         if let Some(emp) = sender_emp.as_ref() {
             item.sender_name = emp.name.clone();
             item.sender_is_person = emp.kind == EmployeeKind::Person;
             item.sender_handle = (!emp.handle.is_empty()).then(|| emp.handle.clone());
         } else {
             item.sender_handle = None;
+            if !supervisor {
+                // Nothing vouches for what the caller claims: the raw ID is the name (as in
+                // `turn_sender`), and only the owner counts as a person (a claimed person
+                // would skip the hourly wake quota).
+                item.sender_is_person = relation == "owner";
+                item.sender_name = item.sender_id.clone();
+            }
         }
-        let relation = if item.kind == WakeKind::Recovery
-            && item.sender_relation.as_deref() == Some("office_supervisor")
-        {
-            "office_supervisor"
-        } else {
-            verified_sender_relation(&self.office, target, &item.sender_id, sender_emp.as_ref())
-        };
         item.sender_relation = Some(relation.to_owned());
     }
 

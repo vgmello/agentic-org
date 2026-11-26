@@ -10,7 +10,9 @@
 use std::collections::BTreeMap;
 
 use crate::model::strip_control_and_invisible;
-use crate::render::{mandatory_footprint, render_instructions, RenderError, RenderInput};
+use crate::render::{
+    mandatory_footprint, render_instructions, RenderError, RenderInput, OVERRIDABLE_CAP_BYTES,
+};
 use crate::resolve::{EffectiveEntry, EffectiveSet, Winner};
 
 /// What a task's chain changes about an agent's standing process set.
@@ -153,22 +155,16 @@ fn not_applicable_list(not_applicable: &[EffectiveEntry], several: bool) -> Stri
     out
 }
 
-/// Renders, for the turn that names the tasks in `tasks` (`(label, task set)` pairs), what each
-/// task's chain changes about the agent's `standing` set: an empty string when nothing changes.
-/// Tasks whose chains change the same documents share one section.
-///
-/// Must-follow documents that apply are rendered in full, as at launch. Everything the model then
-/// holds counts against `input.total_budget_bytes`: the standing must-follow section already in
-/// its instructions, each section's heading and not-applicable list, and the must-follow
-/// documents each section adds. When they exceed the budget the turn is refused like a launch
-/// ([`RenderError::MandatoryBudgetExceeded`], naming every must-follow document involved);
-/// overridable guidance gets only what is left.
-pub fn render_task_deltas(
+/// One section of the turn: the tasks it serves and what their chains change.
+type Section<'a> = (TaskDelta, Vec<&'a str>);
+
+/// Groups `tasks` into sections, skipping tasks that change nothing; tasks whose chains change
+/// the same documents share a section, and a label repeated in `tasks` appears once.
+fn group_sections<'a>(
     standing: &EffectiveSet,
-    tasks: &[(&str, &EffectiveSet)],
-    input: &RenderInput,
-) -> Result<String, RenderError> {
-    let mut sections: Vec<(TaskDelta, Vec<&str>)> = Vec::new();
+    tasks: &[(&'a str, &EffectiveSet)],
+) -> Vec<Section<'a>> {
+    let mut sections: Vec<Section<'a>> = Vec::new();
     for &(label, task) in tasks {
         let delta = task_delta(standing, task);
         if delta.is_empty() {
@@ -180,49 +176,112 @@ pub fn render_task_deltas(
             None => sections.push((delta, vec![label])),
         }
     }
+    sections
+}
+
+/// What a section must carry whatever the guidance: its heading, its not-applicable list, and
+/// the bytes of the must-follow documents it adds.
+struct Framed {
+    heading: String,
+    dropped: String,
+    adds_bytes: usize,
+}
+
+/// Pass 1: frames every section and measures everything the turn must deliver in full, with
+/// the standing must-follow section already in the instructions. Returns the framed sections
+/// and the bytes they and the standing section take, or refuses the turn when those alone
+/// exceed `budget_bytes`, naming every must-follow document involved.
+fn frame_sections(
+    standing: &EffectiveSet,
+    sections: &[Section<'_>],
+    budget_bytes: usize,
+) -> Result<(Vec<Framed>, usize), RenderError> {
+    let (mut required, mut titles) = mandatory_footprint(standing);
+    let mut framed = Vec::with_capacity(sections.len());
+    for (index, (delta, labels)) in sections.iter().enumerate() {
+        let heading = section_heading(labels);
+        let dropped = not_applicable_list(&delta.not_applicable, labels.len() > 1);
+        let (adds_bytes, adds_titles) = mandatory_footprint(&delta.applies);
+        titles.extend(adds_titles);
+        let between_sections = if index == 0 { 0 } else { PART_SEP.len() };
+        let before_adds = if adds_bytes == 0 { 0 } else { PART_SEP.len() };
+        required += between_sections + heading.len() + before_adds + adds_bytes + dropped.len();
+        framed.push(Framed {
+            heading,
+            dropped,
+            adds_bytes,
+        });
+    }
+    if required > budget_bytes {
+        return Err(RenderError::MandatoryBudgetExceeded {
+            required_bytes: required,
+            budget_bytes,
+            document_titles: titles,
+        });
+    }
+    Ok((framed, required))
+}
+
+/// Renders, for the turn that names the tasks in `tasks` (`(label, task set)` pairs), what each
+/// task's chain changes about the agent's `standing` set: an empty string when nothing changes.
+/// Tasks whose chains change the same documents share one section.
+///
+/// Must-follow documents that apply are rendered in full, as at launch. Everything the model then
+/// holds counts against `input.total_budget_bytes`: the standing must-follow section already in
+/// its instructions, each section's heading and not-applicable list, and the must-follow
+/// documents each section adds. When they exceed the budget the turn is refused like a launch
+/// ([`RenderError::MandatoryBudgetExceeded`], naming every must-follow document involved).
+///
+/// Overridable guidance is allocated only after that: every section draws from one allowance,
+/// at most [`OVERRIDABLE_CAP_BYTES`] (and `input.overridable_cap_bytes`) for the whole turn and
+/// never more than the budget leaves, so one task's guidance can neither crowd out a later
+/// task's must-follow documents nor multiply the cap by the number of tasks.
+pub fn render_task_deltas(
+    standing: &EffectiveSet,
+    tasks: &[(&str, &EffectiveSet)],
+    input: &RenderInput,
+) -> Result<String, RenderError> {
+    let sections = group_sections(standing, tasks);
     if sections.is_empty() {
         return Ok(String::new());
     }
-    let (mut used, mut titles) = mandatory_footprint(standing);
+    let (framed, required) = frame_sections(standing, &sections, input.total_budget_bytes)?;
+    // Pass 2: one overridable allowance for the whole turn.
+    let mut overridable_left = input
+        .overridable_cap_bytes
+        .min(OVERRIDABLE_CAP_BYTES)
+        .min(input.total_budget_bytes - required);
     let mut out = String::new();
-    for (delta, labels) in &sections {
-        let sep = if out.is_empty() { 0 } else { PART_SEP.len() };
-        let heading = section_heading(labels);
-        let dropped = not_applicable_list(&delta.not_applicable, labels.len() > 1);
-        let framing = sep + heading.len() + PART_SEP.len() + dropped.len();
-        let (adds_bytes, adds_titles) = mandatory_footprint(&delta.applies);
-        titles.extend(adds_titles);
-        let overflow = |required_bytes: usize| RenderError::MandatoryBudgetExceeded {
-            required_bytes,
-            budget_bytes: input.total_budget_bytes,
-            document_titles: titles.clone(),
-        };
-        let Some(available) = input.total_budget_bytes.checked_sub(used + framing) else {
-            return Err(overflow(used + framing + adds_bytes));
-        };
+    for ((delta, _), framed) in sections.iter().zip(&framed) {
+        // Guidance opens with one separator: after the heading, or after the must-follow
+        // documents.
+        let room = overridable_left.saturating_sub(PART_SEP.len());
         let rendered = render_instructions(
             &delta.applies,
             &RenderInput {
                 read_blobs: input.read_blobs.clone(),
-                overridable_cap_bytes: input.overridable_cap_bytes,
-                total_budget_bytes: available,
+                overridable_cap_bytes: room,
+                total_budget_bytes: framed.adds_bytes + PART_SEP.len() + room,
             },
-        )
-        .map_err(|err| match err {
-            RenderError::MandatoryBudgetExceeded { required_bytes, .. } => {
-                overflow(used + framing + required_bytes)
-            }
-        })?;
-        if sep > 0 {
+        )?;
+        // The guidance and the separator before it: inside `rendered` after must-follow
+        // documents, or the one this section adds after its heading.
+        let guidance = rendered.text.len().saturating_sub(framed.adds_bytes);
+        let after_heading = if framed.adds_bytes == 0 && guidance > 0 {
+            PART_SEP.len()
+        } else {
+            0
+        };
+        overridable_left = overridable_left.saturating_sub(guidance + after_heading);
+        if !out.is_empty() {
             out.push_str(PART_SEP);
         }
-        out.push_str(&heading);
+        out.push_str(&framed.heading);
         if !rendered.text.is_empty() {
             out.push_str(PART_SEP);
             out.push_str(&rendered.text);
         }
-        out.push_str(&dropped);
-        used = used + framing + rendered.text.len();
+        out.push_str(&framed.dropped);
     }
     Ok(out)
 }

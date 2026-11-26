@@ -4,7 +4,6 @@
 //! for the rest. Nothing per turn is in here: the turn's objective, its task and its process
 //! delta go in the turn input ([`super::compose_turn_objective`]).
 
-use org_agent_runtime::REPOSITORY_INSTRUCTIONS_HEADING;
 use org_command::CommandTable;
 
 use super::identity::Placement;
@@ -35,6 +34,22 @@ pub struct InstructionInput<'a> {
     pub workspace: &'a str,
     pub permission_preset: &'a str,
     pub sandbox_enabled: bool,
+}
+
+/// The heading that opens Part 7, the project repository's instruction files (`doc-27` §1).
+const REPOSITORY_INSTRUCTIONS_HEADING: &str = "## Project repository instructions";
+
+/// An agent's standing prompt as a [`org_agent_runtime::SessionSpec`] holds it: the office's
+/// parts and the project repository's part apart, so the runtime places the agent's identity
+/// prompt between them by structure (`SessionSpec::standing_prompt`) and no text in the
+/// organization's parts can move that boundary.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StandingInstructions {
+    /// Parts 1-6 (`SessionSpec::instructions`).
+    pub instructions: String,
+    /// Part 7, empty when the project has no instruction files
+    /// (`SessionSpec::repository_instructions`).
+    pub repository_instructions: String,
 }
 
 fn non_empty(text: Option<&str>) -> Option<&str> {
@@ -102,12 +117,13 @@ fn identity_section(input: &InstructionInput<'_>) -> String {
 /// 5. identity and boundaries: name, home team and leads by name, HR lead duties, isolation,
 ///    private home, workspace, permission preset and sandbox;
 /// 6. the agent's own prompt;
-/// 7. project repository instructions.
+/// 7. project repository instructions, returned apart
+///    ([`StandingInstructions::repository_instructions`]).
 pub fn assemble_standing_instructions(
     input: &InstructionInput<'_>,
     table: &CommandTable,
-) -> String {
-    let mut parts: Vec<String> = Vec::with_capacity(7);
+) -> StandingInstructions {
+    let mut parts: Vec<String> = Vec::with_capacity(6);
     parts.push(builtin_instructions());
     parts.push(render_command_catalogue(table));
     if let Some(processes) = non_empty(input.process_instructions) {
@@ -127,9 +143,11 @@ pub fn assemble_standing_instructions(
     if let Some(prompt) = non_empty(Some(input.agent_instructions)) {
         parts.push(format!("## Your agent prompt\n{prompt}"));
     }
-    if let Some(files) = non_empty(input.repository_instructions) {
-        // Stays last once the runtime adds the identity prompt (`SessionSpec::standing_prompt`).
-        parts.push(format!("{REPOSITORY_INSTRUCTIONS_HEADING}\n{files}"));
+    let repository_instructions = non_empty(input.repository_instructions)
+        .map(|files| format!("{REPOSITORY_INSTRUCTIONS_HEADING}\n{files}"))
+        .unwrap_or_default();
+    StandingInstructions {
+        instructions: parts.join("\n\n"),
+        repository_instructions,
     }
-    parts.join("\n\n")
 }

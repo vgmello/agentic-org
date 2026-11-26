@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use org_office::organization_family::records::{BuiltinKey, Employee};
+use org_office::organization_family::records::{BuiltinKey, Employee, EmployeeKind};
 use org_office::rules::OrgCommand;
 use org_office::{Office, TestOffice};
 use org_proto::hiring::{AgentUpdate, AgentUpdateParams};
@@ -248,11 +248,36 @@ fn a_queued_wake_badges_every_sender_as_a_direct_instruction_does() {
             Some(relation),
             "{sender}"
         );
+        let direct = mgr.turn_sender(&fx.target, sender);
         assert_eq!(
-            mgr.turn_sender(&fx.target, sender).relation,
-            relation,
+            direct.relation, relation,
             "the wake and the direct instruction agree for {sender}"
         );
+        // The name and handle are the office's, never the caller's claim.
+        assert_eq!(queued.sender_name, direct.name, "{sender}");
+        assert_eq!(queued.sender_handle, direct.handle, "{sender}");
+        let loaded = fx.office.load_employee(sender).unwrap();
+        let is_person = match loaded {
+            Some(employee) => employee.kind == EmployeeKind::Person,
+            None => relation == "owner",
+        };
+        assert_eq!(queued.sender_is_person, is_person, "{sender}");
     }
+    // A sender the office cannot load keeps none of the caller's claims: not a person (so no
+    // escape from the hourly wake quota) and named by its raw ID.
+    let queue = mgr
+        .store()
+        .read_pending_wakes(fx.target.id.as_str())
+        .unwrap()
+        .unwrap();
+    let stranger = queue
+        .items
+        .iter()
+        .find(|i| i.sender_id == fx.stranger)
+        .unwrap();
+    assert!(!stranger.sender_is_person);
+    assert_eq!(stranger.sender_name, fx.stranger);
+    assert_eq!(stranger.sender_handle, None);
+    assert_eq!(stranger.sender_relation.as_deref(), Some("unknown"));
     mgr.stop_all("done");
 }

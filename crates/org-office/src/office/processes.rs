@@ -116,7 +116,8 @@ impl Office {
     /// [`Self::render_agent_process_instructions`] without a task), rendered for the turn that
     /// names them (`doc-27` §1, `doc-34` §3.1). The standing set and every task's set come from
     /// one snapshot. `Ok(None)` when no task's chain changes anything; a task that no longer
-    /// exists is skipped. The standing must-follow section and everything the turn adds share
+    /// exists is skipped, but one whose project cannot be loaded refuses the turn (`NotFound`).
+    /// The standing must-follow section and everything the turn adds share
     /// `total_budget_bytes`; over it the turn is refused like a launch (`doc-34` Decision 4).
     pub fn render_agent_task_process_delta(
         &self,

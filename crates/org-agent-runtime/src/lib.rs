@@ -196,7 +196,6 @@ pub use session::{Control, ControlError, Decision, Output, Session};
 pub use spec::{
     AgentIdentity, LaunchContext, McpServer, PermissionMode, PermissionPolicy, Rule, RuleScope,
     SandboxSpec, SessionKind, SessionSpec, ToolCapability, CAPABILITY_PREFIX,
-    REPOSITORY_INSTRUCTIONS_HEADING,
 };
 pub use token::{
     AgentName, CommandPrefix, EnvName, InvalidValue, McpServerName, PlainId, RuleTool, RuntimeId,

@@ -362,6 +362,7 @@ mod plan_unit_tests {
             workspace: SpecPath::try_from("/workspace").unwrap(),
             read_only_dirs: vec![SpecPath::try_from("/readonly").unwrap()],
             instructions: "Standing instructions.".into(),
+            repository_instructions: String::new(),
             permission_mode: PermissionMode::AcceptEdits,
             policy: PermissionPolicy {
                 version: 1,

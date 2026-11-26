@@ -3,8 +3,8 @@
 //!
 //! - [`assemble_standing_instructions`] builds the standing prompt. Byte 0 is release-static
 //!   for every agent and turn: the built-in text, then the generated command catalogue; the
-//!   organization's processes, the role, the agent's identity, its own prompt and project
-//!   instructions follow, most shared first.
+//!   organization's processes, the role, the agent's identity and its own prompt follow, most
+//!   shared first; the project repository's instructions come back apart, to go last.
 //! - [`compose_turn_objective`] builds a turn's input; every body that comes from someone else
 //!   or from a tool sits in an untrusted-data fence with its sender.
 //! - [`verify_command_references`] dry-parses every `agent-os` command line cited in text
@@ -19,7 +19,7 @@ mod identity;
 mod objective;
 mod verify;
 
-pub use assemble::{assemble_standing_instructions, InstructionInput};
+pub use assemble::{assemble_standing_instructions, InstructionInput, StandingInstructions};
 pub use identity::{resolve_placement, LeadLink, Placement};
 pub use objective::{compose_turn_objective, TurnSender, TurnTrigger, MAX_TURN_BODY_BYTES};
 pub use org_process::{BUILTIN_INSTRUCTIONS_MAX_BYTES, CORE_RULES, HR_LEAD, MANAGED_SESSION};

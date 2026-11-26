@@ -40,8 +40,8 @@ pub use credentials::{
 };
 pub use instructions::{
     assemble_standing_instructions, compose_turn_objective, install_command_catalogue,
-    verify_command_references, CommandCatalogue, InstructionInput, TurnTrigger,
-    BUILTIN_INSTRUCTIONS_MAX_BYTES, SAME_USER_ISOLATION_NOTICE,
+    verify_command_references, CommandCatalogue, InstructionInput, StandingInstructions,
+    TurnTrigger, BUILTIN_INSTRUCTIONS_MAX_BYTES, SAME_USER_ISOLATION_NOTICE,
 };
 pub use lifecycle::spawn_wake_retry_loop;
 pub use manager::{SessionManager, SessionManagerConfig};

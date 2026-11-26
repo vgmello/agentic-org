@@ -83,6 +83,14 @@ pub struct SessionSpec {
     /// `developerInstructions` for Codex, the agent file for Antigravity). Free text that
     /// reaches a file or a protocol message: never a secret.
     pub instructions: String,
+    /// The project repository's instruction files (`doc-27` §1, Part 7), as the office composed
+    /// them. Held apart from [`instructions`](Self::instructions) so that
+    /// [`standing_prompt`](Self::standing_prompt) keeps them last by structure, whatever text
+    /// the organization's parts carry. Free text that reaches a file or a protocol message:
+    /// never a secret. Added after v1, so optional: absent when empty, which keeps every
+    /// existing spec's [`canonical_json`](Self::canonical_json) and hash.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub repository_instructions: String,
     /// How the runtime asks before acting. There is no bypass mode.
     pub permission_mode: PermissionMode,
     /// The runtime's own first line of defence, set from the office's policy.
@@ -101,35 +109,24 @@ pub struct SessionSpec {
     pub tools: Option<Vec<ToolName>>,
 }
 
-/// The heading that opens the last part of the office's [`SessionSpec::instructions`]: the
-/// project repository's instruction files (`doc-27` §1, Part 7). The office writes it on a line
-/// of its own; [`SessionSpec::standing_prompt`] keeps that part last.
-pub const REPOSITORY_INSTRUCTIONS_HEADING: &str = "## Project repository instructions";
-
 impl SessionSpec {
     /// The whole standing system prompt in static-to-volatile order (`doc-27` §1): the office's
-    /// [`instructions`](Self::instructions) first and the agent's own
-    /// [`prompt`](AgentIdentity::prompt) after them, so the release-static start of the
-    /// instructions is byte 0 of what the runtime caches. When the instructions carry the
-    /// project repository's files ([`REPOSITORY_INSTRUCTIONS_HEADING`]), the agent's prompt goes
-    /// before that part, which stays last. Empty when both are.
+    /// [`instructions`](Self::instructions) first, so the release-static start of the
+    /// instructions is byte 0 of what the runtime caches, then the agent's own
+    /// [`prompt`](AgentIdentity::prompt), then the project repository's
+    /// [`repository_instructions`](Self::repository_instructions) last. Each part is trimmed and
+    /// empty parts are left out; parts are joined by a blank line. Empty when every part is.
     pub fn standing_prompt(&self) -> String {
-        let (instructions, prompt) = (self.instructions.trim(), self.agent.prompt.trim());
-        if instructions.is_empty() || prompt.is_empty() {
-            return format!("{instructions}{prompt}");
-        }
-        let heading = format!("{REPOSITORY_INSTRUCTIONS_HEADING}\n");
-        let part_seven = if instructions.starts_with(&heading) {
-            Some(0)
-        } else {
-            instructions
-                .find(&format!("\n\n{heading}"))
-                .map(|at| at + 2)
-        };
-        match part_seven {
-            Some(at) => format!("{}{prompt}\n\n{}", &instructions[..at], &instructions[at..]),
-            None => format!("{instructions}\n\n{prompt}"),
-        }
+        [
+            self.instructions.as_str(),
+            self.agent.prompt.as_str(),
+            self.repository_instructions.as_str(),
+        ]
+        .iter()
+        .map(|part| part.trim())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
     }
 
     /// The spec's canonical JSON: the input to [`spec_hash`](Self::spec_hash), and a stable

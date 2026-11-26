@@ -1200,3 +1200,109 @@ fn standing_and_task_must_follow_text_share_one_instruction_budget() {
     );
     fx.office.close().unwrap();
 }
+
+#[test]
+fn a_live_task_whose_project_cannot_be_loaded_refuses_the_turn() {
+    let fx = seed_fixture(EngineChoice::Sqlite);
+    write_doc(
+        &fx.office,
+        WriteDocArgs {
+            caller: &fx.owner,
+            command_id: next_uuid(),
+            document_id: None,
+            kind: DocumentKindWire::Standard,
+            scope: ProcessScopeWire::Project {
+                project_id: fx.project_id.clone(),
+            },
+            key: Some("checkout-only"),
+            title: "Checkout Release Rule",
+            overridable: false,
+            body: "Tag every release.",
+            owner_employee_id: Some(fx.owner.clone()),
+            expected_revision: None,
+        },
+    )
+    .expect("project must-follow standard");
+    let task = fx
+        .office
+        .task_create(
+            &fx.owner,
+            TasksCreateParams {
+                command_id: next_uuid(),
+                task_id: next_uuid(),
+                team_id: Some(fx.owning_team.clone()),
+                project_id: Some(fx.project_id.clone()),
+                assigned_team_id: Some(fx.contributing_team.clone()),
+                assignee_id: Some(fx.contributing_agent.clone()),
+                task_type: Some("task".into()),
+                work_type: None,
+                title: "Checkout task".into(),
+                body_markdown: "Resolves against the project's chain.".into(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: Some(1),
+                labels: vec![],
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                details: None,
+            },
+        )
+        .unwrap()
+        .unwrap()
+        .task;
+    let delta = fx
+        .office
+        .render_agent_task_process_delta(&fx.contributing_agent, &[task.id.as_str()], 128 * 1024)
+        .unwrap()
+        .unwrap()
+        .expect("the project's chain differs from the home team chain");
+    assert!(delta.contains("Tag every release."), "{delta}");
+
+    // The task still resolves but its project no longer loads (the projection lost its row;
+    // a rebuild refuses that state, so only drift reaches it): the turn is refused rather than
+    // sent without the project's must-follow rules. A task that did not resolve at all would
+    // be skipped as stale instead.
+    let db = fx
+        .roots
+        .runtime
+        .join(identity().office_id.as_str())
+        .join("office.db");
+    let drift = rusqlite::Connection::open(&db).unwrap();
+    drift.pragma_update(None, "foreign_keys", false).unwrap();
+    let removed = drift
+        .execute(
+            "DELETE FROM projects WHERE id = ?1",
+            [fx.project_id.as_str()],
+        )
+        .unwrap();
+    drop(drift);
+    assert_eq!(removed, 1);
+    let refused = fx
+        .office
+        .render_agent_task_process_delta(&fx.contributing_agent, &[task.id.as_str()], 128 * 1024)
+        .unwrap()
+        .expect_err("a live task's missing project fails closed");
+    assert_eq!(refused.code, ErrorCode::NotFound);
+    assert!(
+        refused
+            .message
+            .contains(&format!("task project `{}` not found", fx.project_id)),
+        "{}",
+        refused.message
+    );
+    // A task that no longer exists is still only stale.
+    assert_eq!(
+        fx.office
+            .render_agent_task_process_delta(
+                &fx.contributing_agent,
+                &[next_uuid().as_str()],
+                128 * 1024
+            )
+            .unwrap()
+            .unwrap(),
+        None
+    );
+    fx.office.close().unwrap();
+}
