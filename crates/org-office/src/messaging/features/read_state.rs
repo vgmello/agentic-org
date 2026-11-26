@@ -1,5 +1,12 @@
 //! Per-member conversation state: read markers, mutes and reactions.
 
+use org_proto::chat::{
+    ChatMarkReadParams, ChatMarkReadResult, ChatMuteParams, ChatMuteResult, ChatReactParams,
+    ChatReactResult, MuteMode, ReactionKind,
+};
+use org_proto::ErrorCode;
+use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
+
 use crate::messaging::{
     ports::{MessagingRead, MessagingWrite},
     records::{
@@ -7,12 +14,6 @@ use crate::messaging::{
         ParticipantReactionsFile, ParticipantStateFile, SCHEMA_VERSION,
     },
 };
-use org_proto::chat::{
-    ChatMarkReadParams, ChatMarkReadResult, ChatMuteParams, ChatMuteResult, ChatReactParams,
-    ChatReactResult, MuteMode, ReactionKind,
-};
-use org_proto::ErrorCode;
-use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
 use super::{put_or_create_file, refusal, require_conversation_access};
 

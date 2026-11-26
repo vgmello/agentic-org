@@ -1,9 +1,10 @@
 //! Applying an inbound relayed handoff accept.
 
+use org_store::{Actor, Id, Outcome};
+
 use crate::error::OfficeError;
 use crate::office::satellite::placement::PlacementContext;
 use crate::office::{storage, Office};
-use org_store::{Actor, Id, Outcome};
 
 use super::inbound::{ParsedHandoffAccept, RelayedMessageOutcome};
 use super::inbound_ask::is_canonical_relayed_ask_winner;

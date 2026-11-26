@@ -1,10 +1,5 @@
 //! Replying to a message: the reply target, the DM peer check and marking the parent read.
 
-use crate::messaging::{
-    ports::{MessagingRead, MessagingWrite},
-    records::{ConversationRecord, SenderKind},
-};
-use crate::organization::records::Employee;
 use org_proto::chat::{ChatSendParams, ConversationKind};
 use org_proto::msg::{
     json_string_len, MessageLifecycleState, MsgReplyParams, KIND_DELIVERY_FAILED, KIND_REPLY,
@@ -12,6 +7,12 @@ use org_proto::msg::{
 };
 use org_proto::ErrorCode;
 use org_store::{Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
+
+use crate::messaging::{
+    ports::{MessagingRead, MessagingWrite},
+    records::{ConversationRecord, SenderKind},
+};
+use crate::organization::records::Employee;
 
 use super::channels::effective_auto_members;
 use super::conversations::all_conversations_including_auto;

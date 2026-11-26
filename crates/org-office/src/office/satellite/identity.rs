@@ -1,13 +1,9 @@
 //! The satellite's join intent (`satellite-join.v1.json`) and its persisted TLS identity:
 //! the wrapped private key, pinned Org CA, office certificate and HQ federation binding.
 
-use crate::office::{DataRoots, Office};
-use crate::{
-    error::OfficeError,
-    key::Key,
-    model::{OfficeInfo, OfficeRole},
-    private_fs::{private_dir_synced, write_private_atomic},
-};
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use org_pki::{
     cert::{cert_fingerprint_sha256, verify_office_cert, OfficeCertRole},
@@ -16,8 +12,14 @@ use org_pki::{
 };
 use org_sync_proto::Digest;
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::{Path, PathBuf};
+
+use crate::office::{DataRoots, Office};
+use crate::{
+    error::OfficeError,
+    key::Key,
+    model::{OfficeInfo, OfficeRole},
+    private_fs::{private_dir_synced, write_private_atomic},
+};
 
 pub(crate) const SATELLITE_INTENT_FILE: &str = "satellite-join.v1.json";
 

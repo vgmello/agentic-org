@@ -1,11 +1,12 @@
 //! Outbound relay of origin ask closes, handoff accepts and HQ channel-only copies.
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use org_store::Id;
+
 use crate::error::OfficeError;
 use crate::office::satellite::placement::PlacementContext;
 use crate::office::satellite::replication::OrgDeltaPayload;
 use crate::office::{storage, Office};
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use org_store::Id;
 
 use super::outbound::{PendingMessageJournalEntry, ReadConversationMembersOp, ReadConversationOp};
 

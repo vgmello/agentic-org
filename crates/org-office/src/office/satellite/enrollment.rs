@@ -1,5 +1,12 @@
 //! Satellite provisioning on disk and D25 one-command re-enrollment onto a replacement HQ.
 
+use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
+
+use org_pki::{cert::cert_fingerprint_sha256, Zeroizing};
+use org_store::{journal_dir, AnchorFacts, Id, Opening};
+use org_sync_proto::{Digest, Epoch, OfficeId};
+
 use crate::office::{
     check_roots,
     folder::{
@@ -15,11 +22,6 @@ use crate::{
     private_fs::{private_dir, tighten_dir},
     store::open::open_store,
 };
-use org_pki::{cert::cert_fingerprint_sha256, Zeroizing};
-use org_store::{journal_dir, AnchorFacts, Id, Opening};
-use org_sync_proto::{Digest, Epoch, OfficeId};
-use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
 
 use super::identity::{
     persist_satellite_tls, read_intent, validate_satellite_cert_and_key, write_intent,

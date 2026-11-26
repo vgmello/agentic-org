@@ -1,16 +1,18 @@
 //! Delivering answer candidates to participants and merging their answer state.
 
+use std::collections::BTreeMap;
+
+use org_proto::chat::DeliveredBecause;
+use org_proto::msg::MessageLifecycleState;
+use org_proto::ErrorCode;
+use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
+
 use crate::messaging::{
     ports::{MessagingRead, MessagingWrite},
     records::{self, ParticipantReceivedSnapshot, RecipientStateRecord, SCHEMA_VERSION},
 };
 use crate::organization::ports::OrganizationRead;
 use crate::organization::records::Employee;
-use org_proto::chat::DeliveredBecause;
-use org_proto::msg::MessageLifecycleState;
-use org_proto::ErrorCode;
-use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
-use std::collections::BTreeMap;
 
 use super::channels::effective_auto_members;
 use super::conversations::all_conversations_including_auto;

@@ -1,19 +1,21 @@
 //! Channels: the virtual auto channels of teams and projects, their effective members,
 //! and channel creation and membership decisions.
 
-use crate::messaging::{
-    ports::{MessagingRead, MessagingWrite},
-    records::{self, ConversationMembership, ConversationRecord, SCHEMA_VERSION},
-};
-use crate::organization::ports::OrganizationRead;
-use crate::organization::records::{Employee, TeamStatus};
+use std::collections::BTreeSet;
+
 use org_proto::chat::{
     AutoScope, ChatChannelCreateParams, ChatChannelCreateResult, ChatChannelMembershipParams,
     ChatChannelMembershipResult, ConversationKind,
 };
 use org_proto::ErrorCode;
 use org_store::{Ack, Change, CoreRead, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
-use std::collections::BTreeSet;
+
+use crate::messaging::{
+    ports::{MessagingRead, MessagingWrite},
+    records::{self, ConversationMembership, ConversationRecord, SCHEMA_VERSION},
+};
+use crate::organization::ports::OrganizationRead;
+use crate::organization::records::{Employee, TeamStatus};
 
 use super::conversations::{
     all_conversations_including_auto, find_channel, summarize_conversation,

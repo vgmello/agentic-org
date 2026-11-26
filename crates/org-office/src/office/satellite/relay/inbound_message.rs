@@ -1,8 +1,9 @@
 //! Applying an inbound relayed message: sender and conversation checks, local recipient
 //! states and wakes, and conversation-only deltas.
 
-use crate::office::satellite::placement::PlacementContext;
 use org_store::{Actor, Id};
+
+use crate::office::satellite::placement::PlacementContext;
 
 use super::inbound::{RelayedMessageOutcome, RelayedRecipientWake};
 use super::inbound_ask::attach_relayed_ask_answer;

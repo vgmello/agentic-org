@@ -1,11 +1,13 @@
 //! Authoritative `state/` snapshot capture and the cancellable paged snapshot export for
 //! joining satellites.
 
-use crate::error::OfficeError;
-use crate::office::{storage, Office};
+use std::path::{Path, PathBuf};
+
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use org_store::{DurablePath, Files};
-use std::path::{Path, PathBuf};
+
+use crate::error::OfficeError;
+use crate::office::{storage, Office};
 
 use super::replication::{sync_org_journal_locked_up_to, ConsistentStateSnapshot};
 

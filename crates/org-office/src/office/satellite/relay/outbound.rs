@@ -1,13 +1,14 @@
 //! Outbound relay: newly committed native messaging journal entries become bounded
 //! per-message relay files routed to the offices of their recipients.
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use org_store::{DurablePath, Files, Id};
+
 use crate::error::OfficeError;
 use crate::office::satellite::filters::is_replicated_journal_entry;
 use crate::office::satellite::placement::{load_placement_context_locked, PlacementContext};
 use crate::office::satellite::replication::OrgDeltaPayload;
 use crate::office::{storage, Office};
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use org_store::{DurablePath, Files, Id};
 
 use super::outbound_close::{append_hq_channel_only_relays, append_origin_close_answer_relays};
 

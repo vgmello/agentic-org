@@ -1,15 +1,16 @@
 //! Replicated `state/` application on satellites, HQ ingest of satellite work batches, and
 //! the org journal and satellite work outbox feeds into `org-sync`.
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use org_store::{Actor, DurablePath, Id, Outcome};
+use org_sync_proto::{Digest, Epoch, OfficeId};
+use serde::{Deserialize, Serialize};
+
 use crate::office::{storage, Office};
 use crate::{
     error::OfficeError, model::OfficeRole, organization::features::offices::ApplyReplicatedFiles,
     store::open::ApplyReplicatedFilesOp,
 };
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use org_store::{Actor, DurablePath, Id, Outcome};
-use org_sync_proto::{Digest, Epoch, OfficeId};
-use serde::{Deserialize, Serialize};
 
 use super::filters::is_replicated_journal_entry;
 use super::work_ingest::{validate_typed_work_files_against_hq, validate_work_file_paths};

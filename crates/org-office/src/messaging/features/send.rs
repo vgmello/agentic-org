@@ -1,6 +1,14 @@
 //! Sending a chat message: input validation, idempotent replay, the new message record and
 //! its commit.
 
+use org_proto::chat::{ChatSendParams, ChatSendResult, ConversationKind};
+use org_proto::msg::{
+    json_string_len, MessagePriority, Meta, KIND_DELIVERY_FAILED, KIND_REQUEST, MAX_BODY_BYTES,
+    MAX_ID_BYTES, MAX_META_BYTES, MAX_SUBJECT_BYTES,
+};
+use org_proto::ErrorCode;
+use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
+
 use crate::messaging::{
     mentions::{extract_mentions, MentionScan},
     ports::{MessagingRead, MessagingWrite},
@@ -11,13 +19,6 @@ use crate::messaging::{
 };
 use crate::organization::ports::OrganizationRead;
 use crate::organization::records::Employee;
-use org_proto::chat::{ChatSendParams, ChatSendResult, ConversationKind};
-use org_proto::msg::{
-    json_string_len, MessagePriority, Meta, KIND_DELIVERY_FAILED, KIND_REQUEST, MAX_BODY_BYTES,
-    MAX_ID_BYTES, MAX_META_BYTES, MAX_SUBJECT_BYTES,
-};
-use org_proto::ErrorCode;
-use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
 use super::channels::effective_auto_members;
 use super::messages::to_wire_header;

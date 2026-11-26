@@ -1,8 +1,9 @@
 //! HQ-side validation of satellite-originated work batches against HQ's organization snapshot.
 
+use org_store::{DurablePath, Id};
+
 use crate::error::OfficeError;
 use crate::office::{storage, Office};
-use org_store::{DurablePath, Id};
 
 use super::replication::is_immutable_state_path;
 

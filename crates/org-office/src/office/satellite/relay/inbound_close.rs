@@ -1,15 +1,17 @@
 //! Applying an inbound relayed origin ask close, with staged recovery when the ask has not
 //! arrived yet.
 
+use std::path::PathBuf;
+
+use org_store::{Actor, Id, Outcome};
+use serde::{Deserialize, Serialize};
+
 use crate::office::satellite::placement::PlacementContext;
 use crate::office::{storage, Office};
 use crate::{
     error::OfficeError,
     private_fs::{private_dir_synced, write_private_atomic},
 };
-use org_store::{Actor, Id, Outcome};
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 use super::inbound::{ParsedOriginAskClose, RelayedAskWithdrawal, RelayedMessageOutcome};
 use super::inbound_message::canonicalize_deterministic_auto_channel;

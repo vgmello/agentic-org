@@ -1,10 +1,11 @@
 //! The chat inbox: matching, ordering and paging of inbox items.
 
-use crate::messaging::{ports::MessagingRead, records::RecipientStateRecord};
 use org_proto::chat::{ChatInboxItem, ChatInboxParams, ChatInboxResult};
 use org_proto::msg::{is_urgent, MessageLifecycleState, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT};
 use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
+
+use crate::messaging::{ports::MessagingRead, records::RecipientStateRecord};
 
 use super::resolve_employee;
 

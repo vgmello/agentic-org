@@ -1,11 +1,12 @@
 //! Inbound relay entry point: the outcome types, and the parse, validation and assembly of a
 //! relayed delta before it is applied.
 
+use org_store::{DurablePath, Id, Outcome};
+use serde::{Deserialize, Serialize};
+
 use crate::error::OfficeError;
 use crate::office::satellite::placement::load_placement_context;
 use crate::office::{storage, Office};
-use org_store::{DurablePath, Id, Outcome};
-use serde::{Deserialize, Serialize};
 
 use super::inbound_close::{
     apply_relayed_origin_close, stage_close_recovery, CheckAskRecoveryEntitlementOp,

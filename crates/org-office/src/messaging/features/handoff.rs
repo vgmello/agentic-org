@@ -1,13 +1,14 @@
 //! Accepting a handoff request.
 
-use crate::messaging::{
-    ports::{MessagingRead, MessagingWrite},
-    records::{self, MessageRecord, ParticipantAnswerFile, RecipientStateRecord, SCHEMA_VERSION},
-};
 use org_proto::chat::{MsgAcceptParams, MsgAcceptResult};
 use org_proto::msg::{json_string_len, MessageLifecycleState, MAX_NOTE_BYTES};
 use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
+
+use crate::messaging::{
+    ports::{MessagingRead, MessagingWrite},
+    records::{self, MessageRecord, ParticipantAnswerFile, RecipientStateRecord, SCHEMA_VERSION},
+};
 
 use super::recipients::upsert_participant_snapshot;
 use super::{put_or_create_file, refusal};

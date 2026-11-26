@@ -1,15 +1,17 @@
 //! Opening (or reopening) direct and group direct messages.
 
+use std::collections::BTreeSet;
+
+use org_proto::chat::{ConversationKind, DmOpenParams, DmOpenResult};
+use org_proto::ErrorCode;
+use org_store::{Ack, Change, CoreRead, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
+
 use crate::messaging::{
     ports::{MessagingRead, MessagingWrite},
     records::{self, ConversationMembership, ConversationRecord, SCHEMA_VERSION},
 };
 use crate::organization::ports::OrganizationRead;
 use crate::organization::records::Employee;
-use org_proto::chat::{ConversationKind, DmOpenParams, DmOpenResult};
-use org_proto::ErrorCode;
-use org_store::{Ack, Change, CoreRead, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
-use std::collections::BTreeSet;
 
 use super::channels::virtual_auto_channels;
 use super::conversations::summarize_conversation;

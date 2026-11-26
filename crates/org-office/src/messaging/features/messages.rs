@@ -1,9 +1,5 @@
 //! Reading messages: message views, wire headers and channel history for a caller.
 
-use crate::messaging::{
-    ports::MessagingRead,
-    records::{ConversationRecord, MessageRecord, RecipientStateRecord},
-};
 use org_proto::chat::{
     ChatMessageView, ChatMessagesParams, ChatMessagesResult, ConversationKind,
     HandoffAcceptanceView, ReactionView,
@@ -14,6 +10,11 @@ use org_proto::msg::{
 };
 use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
+
+use crate::messaging::{
+    ports::MessagingRead,
+    records::{ConversationRecord, MessageRecord, RecipientStateRecord},
+};
 
 use super::channels::effective_auto_members;
 use super::conversations::{all_conversations_including_auto, find_channel};

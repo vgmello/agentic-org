@@ -1,6 +1,13 @@
 //! Send targets and recipients: who a message reaches and why, participant snapshots,
 //! mention candidates and per-recipient state rows.
 
+use std::collections::BTreeMap;
+
+use org_proto::chat::{ConversationKind, DeliveredBecause, MentionedMember};
+use org_proto::msg::{MessageLifecycleState, Meta};
+use org_proto::ErrorCode;
+use org_store::{Change, Id, OfficeIdentity, Refusal};
+
 use crate::messaging::{
     mentions::MentionCandidate,
     ports::MessagingRead,
@@ -10,11 +17,6 @@ use crate::messaging::{
     },
 };
 use crate::organization::records::Employee;
-use org_proto::chat::{ConversationKind, DeliveredBecause, MentionedMember};
-use org_proto::msg::{MessageLifecycleState, Meta};
-use org_proto::ErrorCode;
-use org_store::{Change, Id, OfficeIdentity, Refusal};
-use std::collections::BTreeMap;
 
 use super::conversations::{all_conversations_including_auto, find_channel};
 use super::{is_active_employee, refusal, resolve_employee};

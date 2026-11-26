@@ -1,9 +1,10 @@
 //! Classification of replicated snapshot paths, and filtering of stale snapshot work files and
 //! self-echoed HQ org events on satellites.
 
+use org_store::{DurablePath, Files, Id};
+
 use crate::error::OfficeError;
 use crate::office::{storage, Office};
-use org_store::{DurablePath, Files, Id};
 
 use super::replication::ReplicatedFileBatch;
 use super::work_ingest::ReadOfficeCodesOp;
