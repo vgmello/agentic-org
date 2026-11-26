@@ -1796,6 +1796,11 @@ fn chat_reply_enforces_oversize_snooze_clear_offboarded_dm_and_thread_mention_wa
         &ben,
         &["msg", "reply", "--id", &dm_id, "--body", "done now"],
     );
+    // Ben's DM reply wakes Ada asynchronously; wait for Ada's turn to land so it does not
+    // replace Ada's test ScopedBinding during the channel reply below.
+    let _ = node
+        .recorded
+        .wait_for_agent("ada", 1, Duration::from_secs(5));
     let inbox_all = hq
         .chat_inbox(
             &ben,
