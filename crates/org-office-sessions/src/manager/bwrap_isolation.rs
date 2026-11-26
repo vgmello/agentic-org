@@ -91,8 +91,10 @@ fn ensure_bwrap_sibling_dirs(
     for other in &sibling_ids {
         ensure_owner_only_dir(&agents_root.join(other))?;
     }
-    if let Some(sock_parent) = mgr.config.office_socket.parent().filter(|p| p.is_dir()) {
-        let short_root = sock_parent.join("t");
+    if let Some(runtime) =
+        crate::host_auth::office_runtime_dir(&mgr.config.office_socket).filter(|p| p.is_dir())
+    {
+        let short_root = runtime.join("t");
         ensure_owner_only_dir(&short_root)?;
         let own_slug = crate::host_auth::agent_tmpdir_slug(office_id, employee_id);
         for other in &sibling_ids {

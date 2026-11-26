@@ -493,6 +493,7 @@ fn agy_read_only_dirs_mounts_release_store_and_toolchain_subdirs_never_cargo_roo
     let forbidden = vec![home_dir.clone(), ws_dir.clone()];
     let ro_dirs = collect_agy_read_only_dirs(
         &shim_bin,
+        None,
         Some(rustup_dir.as_os_str().to_os_string()),
         Some(cargo_dir.as_os_str().to_os_string()),
         None,
@@ -518,6 +519,7 @@ fn agy_read_only_dirs_mounts_release_store_and_toolchain_subdirs_never_cargo_roo
     org_platform::fs::create_symlink(&symlink_cargo, &symlink_cargo.join("bin")).unwrap();
     let hostile_ro = collect_agy_read_only_dirs(
         &root,
+        None,
         Some(root.as_os_str().to_os_string()),
         Some(symlink_cargo.as_os_str().to_os_string()),
         Some(root.as_os_str().to_os_string()),

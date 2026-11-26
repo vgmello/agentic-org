@@ -316,8 +316,8 @@ fn an_office_with_nothing_listening_is_unreachable_after_a_short_retry() {
 #[test]
 fn a_server_that_accepts_but_never_answers_is_unreachable_within_the_setup_timeout() {
     let (_dir, home) = home();
-    fs::create_dir_all(home.join("run")).unwrap();
     let socket = org_proto::location::office_socket_path(&home, A).unwrap();
+    fs::create_dir_all(socket.parent().unwrap()).unwrap();
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
     let (_release, held) = std::sync::mpsc::channel::<()>();
     std::thread::spawn(move || {
@@ -340,8 +340,8 @@ fn a_server_that_accepts_but_never_answers_is_unreachable_within_the_setup_timeo
 #[test]
 fn a_plain_file_where_the_socket_should_be_is_unreachable_without_connecting() {
     let (_dir, home) = home();
-    fs::create_dir_all(home.join("run")).unwrap();
     let socket = org_proto::location::office_socket_path(&home, A).unwrap();
+    fs::create_dir_all(socket.parent().unwrap()).unwrap();
     fs::write(&socket, b"not a socket").unwrap();
     assert!(matches!(
         open_as(&home, A, "pixel"),

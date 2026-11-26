@@ -561,31 +561,37 @@ fn connect_host_in_finds_host_sock_in_the_office_home() {
 #[test]
 fn connect_office_uses_the_endpoint_or_the_location_rule_and_refuses_anything_else() {
     let home = TempDir::new().unwrap();
-    std::fs::create_dir(home.path().join("run")).unwrap();
 
-    // By the location rule: <home>/run/<last 12 chars of the id>.sock.
+    // By the location rule: <home>/run/o/<last 12 chars of the id>/s.sock.
     let id = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
     let by_rule = home
         .path()
-        .join(format!("run/{}.sock", &id[id.len() - 12..]));
+        .join(format!("run/o/{}/s.sock", &id[id.len() - 12..]));
+    std::fs::create_dir_all(by_rule.parent().unwrap()).unwrap();
     let listener = UnixListener::bind(&by_rule).unwrap();
     let accepted = std::thread::spawn(move || listener.accept().is_ok());
     Client::connect_office(&office(id, None), home.path()).unwrap();
     assert!(accepted.join().unwrap());
 
-    // By the endpoint the host gave.
-    let given = home.path().join("run/given.sock");
+    // By the endpoint the host gave, also with a trailing `/` (normalized before any check).
+    let given = home.path().join("run/o/given/s.sock");
+    std::fs::create_dir_all(given.parent().unwrap()).unwrap();
     let listener = UnixListener::bind(&given).unwrap();
-    let accepted = std::thread::spawn(move || listener.accept().is_ok());
+    let accepted =
+        std::thread::spawn(move || listener.accept().is_ok() && listener.accept().is_ok());
     let endpoint = given.to_str().unwrap();
     Client::connect_office(&office(id, Some(endpoint)), home.path()).unwrap();
+    Client::connect_office(&office(id, Some(&format!("{endpoint}/"))), home.path()).unwrap();
     assert!(accepted.join().unwrap());
 
-    // A relative endpoint, and an id that could point outside `run/`, are never followed.
+    // A relative endpoint, and an id that could point outside `run/o/<handle>/`, are never
+    // followed.
     for bad in [
         office(id, Some("relative.sock")),
+        office(id, Some("run/o/given/s.sock")),
         office("../../etc/x", None),
         office("", None),
+        office("r", None),
     ] {
         let error = Client::connect_office(&bad, home.path()).err().unwrap();
         assert!(
@@ -690,7 +696,7 @@ fn a_server_that_stops_reading_cannot_hang_a_caller_or_the_others() {
 #[test]
 fn an_endpoint_outside_the_run_folder_is_never_followed() {
     let home = TempDir::new().unwrap();
-    std::fs::create_dir(home.path().join("run")).unwrap();
+    std::fs::create_dir_all(home.path().join("run/o/h")).unwrap();
     // A live socket somewhere else that the host could point us at.
     let elsewhere = TempDir::new().unwrap();
     let target = elsewhere.path().join("x.sock");
@@ -702,9 +708,30 @@ fn an_endpoint_outside_the_run_folder_is_never_followed() {
     let attempts = [
         target.to_str().unwrap().to_owned(),
         format!("{}/../x.sock", run.display()),
+        format!("{}/o/../x.sock", run.display()),
+        format!("{}/o/h/../s.sock", run.display()),
+        format!("{}/o/h/../h/s.sock", run.display()),
         format!("{}/sub/x.sock", run.display()),
+        format!("{}/o/sub/x.sock", run.display()),
+        format!("{}/o/h/sub/s.sock", run.display()),
+        format!("{}/o/h/s.sock/x", run.display()),
         format!("{}/notasocket.txt", run.display()),
+        format!("{}/o/notasocket.txt", run.display()),
+        format!("{}/o/h/notasocket.txt", run.display()),
+        // Directly in `run/` beside `host.sock`, or directly in `run/o/` (the former layouts),
+        // is outside any office's own socket folder.
+        format!("{}/x.sock", run.display()),
+        format!("{}/o/x.sock", run.display()),
+        format!("{}/o/s.sock", run.display()),
+        format!("{}/host.sock", run.display()),
+        // A socket folder no office can have: a reserved or non-plain handle.
+        format!("{}/o/r/s.sock", run.display()),
+        format!("{}/o/t/s.sock", run.display()),
+        format!("{}/o/a.b/s.sock", run.display()),
+        format!("{}/o/host.sock/s.sock", run.display()),
         run.display().to_string(),
+        run.join("o").display().to_string(),
+        run.join("o").join("h").display().to_string(),
     ];
     for endpoint in attempts {
         let error = Client::connect_office(&office(id, Some(&endpoint)), home.path())
@@ -1037,13 +1064,15 @@ fn a_server_that_half_closes_while_a_request_is_being_written_wakes_the_caller_a
 #[test]
 fn an_endpoint_that_is_not_a_plain_socket_in_run_is_never_followed() {
     let home = TempDir::new().unwrap();
-    let run = home.path().join("run");
-    std::fs::create_dir(&run).unwrap();
+    let sockets = home.path().join("run").join("o");
+    std::fs::create_dir_all(&sockets).unwrap();
     let id = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
-    let refused = |endpoint: &std::path::Path| {
-        let error = Client::connect_office(&office(id, endpoint.to_str()), home.path())
+    let handle = &id[id.len() - 12..];
+    let refused = |home: &std::path::Path, endpoint: Option<&std::path::Path>| {
+        let endpoint = endpoint.map(|e| e.to_str().unwrap());
+        let error = Client::connect_office(&office(id, endpoint), home)
             .err()
-            .unwrap_or_else(|| panic!("followed {}", endpoint.display()));
+            .unwrap_or_else(|| panic!("followed {endpoint:?}"));
         assert!(
             matches!(error, ClientError::OfficeNotReachable),
             "{error:?}"
@@ -1051,31 +1080,43 @@ fn an_endpoint_that_is_not_a_plain_socket_in_run_is_never_followed() {
     };
 
     // Another directory level that merely looks like a socket name.
-    refused(&run.join("evil.sock").join("x.sock"));
+    refused(
+        home.path(),
+        Some(&sockets.join("evil").join("s.sock").join("s.sock")),
+    );
     // A regular file with a socket's name.
-    std::fs::write(run.join("file.sock"), b"not a socket").unwrap();
-    refused(&run.join("file.sock"));
+    std::fs::create_dir(sockets.join("file")).unwrap();
+    std::fs::write(sockets.join("file").join("s.sock"), b"not a socket").unwrap();
+    refused(home.path(), Some(&sockets.join("file").join("s.sock")));
     // A link to a live socket somewhere else.
     let elsewhere = TempDir::new().unwrap();
-    let target = elsewhere.path().join("real.sock");
+    let target = elsewhere.path().join("s.sock");
     let listener = UnixListener::bind(&target).unwrap();
     listener.set_nonblocking(true).unwrap();
-    std::os::unix::fs::symlink(&target, run.join("link.sock")).unwrap();
-    refused(&run.join("link.sock"));
+    std::fs::create_dir(sockets.join("link")).unwrap();
+    std::os::unix::fs::symlink(&target, sockets.join("link").join("s.sock")).unwrap();
+    refused(home.path(), Some(&sockets.join("link").join("s.sock")));
+
+    // The office's own socket folder `run/o/<handle>`, its office sockets folder `run/o`, or
+    // `run` itself is a link to the folder holding that live socket.
+    std::os::unix::fs::symlink(elsewhere.path(), sockets.join(handle)).unwrap();
+    refused(home.path(), None);
+    refused(home.path(), Some(&sockets.join(handle).join("s.sock")));
+    let linked_sockets = TempDir::new().unwrap();
+    std::fs::create_dir(linked_sockets.path().join("run")).unwrap();
+    let real_sockets = TempDir::new().unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), real_sockets.path().join(handle)).unwrap();
+    std::os::unix::fs::symlink(real_sockets.path(), linked_sockets.path().join("run/o")).unwrap();
+    refused(linked_sockets.path(), None);
+    let linked_run = TempDir::new().unwrap();
+    std::fs::create_dir(linked_run.path().join("o")).unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), linked_run.path().join("o").join(handle)).unwrap();
+    let other_home = TempDir::new().unwrap();
+    std::os::unix::fs::symlink(linked_run.path(), other_home.path().join("run")).unwrap();
+    refused(other_home.path(), None);
     assert!(
         listener.accept().is_err(),
-        "something connected through the link"
-    );
-
-    // `run` itself is a link to somewhere else.
-    let other_home = TempDir::new().unwrap();
-    std::os::unix::fs::symlink(elsewhere.path(), other_home.path().join("run")).unwrap();
-    let error = Client::connect_office(&office(id, None), other_home.path())
-        .err()
-        .unwrap();
-    assert!(
-        matches!(error, ClientError::OfficeNotReachable),
-        "{error:?}"
+        "something connected through a link"
     );
 }
 

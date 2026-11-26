@@ -1489,6 +1489,44 @@ fn bypass_sandbox_variants_and_acp_kind_tool_capability_fallback() {
 }
 
 #[test]
+fn the_office_socket_folder_reaches_agy_as_one_add_dir_and_the_runtime_folder_never_does() {
+    // `TASK-164`: the office lists its own `<run>/o/<handle>` (never `<run>` or `<run>/o`) among
+    // the read-only dirs so `agent-os` can connect to `<run>/o/<handle>/s.sock` inside
+    // `agy --sandbox`.
+    let run = "/run/user/1000/agentic-org";
+    let sockets = format!("{run}/o/0123456789ac");
+    let mut spec = sample_spec();
+    spec.sandbox.allowed_unix_sockets = vec![sp(&format!("{sockets}/s.sock"))];
+    spec.read_only_dirs = vec![sp("/homes/ada"), sp(&sockets)];
+    let mut resume_ctx = sample_ctx();
+    resume_ctx.resume = Some(SessionId::try_from("agy-conv-9").unwrap());
+    let runtime = AgyRuntime::new();
+    let (headless, _) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    let take_over = runtime.plan_take_over(&spec, &resume_ctx, 120, 40).unwrap();
+    for plan in [&headless, &take_over] {
+        let added: Vec<&str> = plan
+            .args
+            .windows(2)
+            .filter(|w| w[0] == "--add-dir")
+            .map(|w| w[1].as_str())
+            .collect();
+        assert_eq!(added, ["/homes/ada", sockets.as_str()], "{:?}", plan.args);
+        assert!(plan.args.contains(&"--sandbox".to_owned()));
+        for arg in &plan.args {
+            assert_ne!(arg, run, "the runtime folder itself was exposed");
+            assert_ne!(
+                *arg,
+                format!("{run}/o"),
+                "every office's sockets were exposed"
+            );
+            assert!(!arg.contains("host.sock"), "{arg}");
+            assert!(!arg.starts_with(&format!("{run}/r")), "{arg}");
+            assert!(!arg.starts_with(&format!("{run}/t")), "{arg}");
+        }
+    }
+}
+
+#[test]
 fn plan_session_and_take_over_both_reject_effort() {
     let runtime = AgyRuntime::new();
     let mut effort_spec = sample_spec();

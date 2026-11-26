@@ -34,7 +34,9 @@ impl SessionManager {
             return Vec::new();
         }
         let helper_dir = RuntimeRegistry::resolve_helper_dir(self.config.helper_dir.as_deref());
-        let forbidden = vec![
+        // The runtime folder holding the office socket (`host.sock`, `r/`, `t/`, every office's
+        // socket folder) is forbidden by `collect_agy_read_only_dirs` itself (`TASK-164`).
+        let forbidden = [
             home.to_path_buf(),
             workspace.to_path_buf(),
             self.office.folder().to_path_buf(),
@@ -43,6 +45,7 @@ impl SessionManager {
         ];
         collect_agy_read_only_dirs(
             &helper_dir,
+            Some(&self.config.office_socket),
             std::env::var_os("RUSTUP_HOME"),
             std::env::var_os("CARGO_HOME"),
             std::env::var_os("HOME"),
@@ -392,15 +395,17 @@ impl SessionManager {
         for other in &sibling_ids {
             push_glob_pattern(out, &agents_root.join(other));
         }
-        if let Some(sock_parent) = self.config.office_socket.parent() {
-            push_exact_pattern(out, &sock_parent.join("host.sock"));
-            if sock_parent.file_name().and_then(|s| s.to_str()) == Some("run") {
-                if let Some(instance_root) = sock_parent.parent() {
+        // `host.sock`, `r/` and `t/` sit in the runtime folder, beside (never inside) the office
+        // sockets folder `o/` that holds the office socket.
+        if let Some(runtime) = crate::host_auth::office_runtime_dir(&self.config.office_socket) {
+            push_exact_pattern(out, &runtime.join("host.sock"));
+            if runtime.file_name().and_then(|s| s.to_str()) == Some("run") {
+                if let Some(instance_root) = runtime.parent() {
                     push_exact_pattern(out, &instance_root.join("host.sock"));
                 }
             }
-            push_glob_pattern(out, &sock_parent.join("r"));
-            let short_root = sock_parent.join("t");
+            push_glob_pattern(out, &runtime.join("r"));
+            let short_root = runtime.join("t");
             let own_slug =
                 self_employee_id.map(|emp| crate::host_auth::agent_tmpdir_slug(office_id, emp));
             for other in &sibling_ids {
