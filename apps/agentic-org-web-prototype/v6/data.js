@@ -482,13 +482,27 @@ const PAST_SESSIONS = [
 
 const STATUSES = { task: ["To do", "In progress", "Blocked", "Done"], bug: ["New", "Triaged", "In progress", "Fixed", "Closed"], request: ["Not routed", "Rowan is scoping", "Scoped", "Approved"] };
 const ALL_STATUSES = [...new Set([...STATUSES.task, ...STATUSES.bug, ...STATUSES.request, ...W.map((w) => w.status)])];
-/* Calendar (prototype mock): upcoming meetings across projects. Today is Thu, Nov 26. */
+/* Calendar (prototype mock). Today is Thu, Nov 26 2026. Each event has a date, time range, attendees
+   (people and agents) and optionally a project or team; personal events have neither. */
+const CAL_TODAY = "2026-11-26";
+const ev = (id, date, start, end, title, attendees, extra = {}) => ({ id, date, start, end, title, attendees, ...extra });
 const EVENTS = [
-  { id: "ev1", title: "Release sign-off review", proj: "agency-v1", mon: "Nov", day: "27", when: "Tomorrow", start: "10:00", end: "10:30", attendees: ["you", "ada", "tomas", "kai"] },
-  { id: "ev2", title: "Design polish walkthrough", proj: "look-feel", mon: "Nov", day: "28", when: "Sat", start: "14:00", end: "14:45", attendees: ["you", "eden", "emery", "avery"] },
-  { id: "ev3", title: "Office sync test", proj: "office-federation", mon: "Dec", day: "01", when: "Tue", start: "11:00", end: "12:00", attendees: ["you", "rowan", "sage", "quinn"] },
-  { id: "ev4", title: "v1.0 launch go / no-go", proj: "agency-v1", mon: "Dec", day: "04", when: "Fri", start: "16:00", end: "16:30", attendees: ["you", "maya", "ada", "emery", "tomas", "rowan"] },
+  ev("ev10", "2026-11-23", "09:30", "10:00", "Platform standup", ["rowan", "kai", "sage", "quinn"], { team: "platform" }),
+  ev("ev11", "2026-11-24", "13:00", "14:00", "IA v2 critique", ["you", "eden", "emery"], { proj: "look-feel" }),
+  ev("ev12", "2026-11-25", "10:00", "11:00", "Office sync incident review", ["you", "rowan", "sage"], { proj: "office-federation" }),
+  ev("ev18", "2026-11-25", "16:00", "16:30", "Quality triage", ["tomas", "noor"], { team: "quality" }),
+  ev("ev13", "2026-11-26", "09:30", "10:00", "Platform standup", ["rowan", "kai", "sage", "quinn"], { team: "platform" }),
+  ev("ev14", "2026-11-26", "15:00", "15:30", "1:1 with Ada", ["you", "ada"]),
+  ev("ev1", "2026-11-27", "10:00", "10:30", "Release sign-off review", ["you", "ada", "tomas", "kai"], { proj: "agency-v1" }),
+  ev("ev15", "2026-11-27", "14:00", "15:00", "Quality bar sync", ["tomas", "noor", "ada"], { team: "quality" }),
+  ev("ev2", "2026-11-28", "14:00", "14:45", "Design polish walkthrough", ["you", "eden", "emery", "avery"], { proj: "look-feel" }),
+  ev("ev16", "2026-11-30", "09:30", "10:00", "Platform standup", ["rowan", "kai", "sage", "quinn"], { team: "platform" }),
+  ev("ev3", "2026-12-01", "11:00", "12:00", "Office sync test", ["you", "rowan", "sage", "quinn"], { proj: "office-federation" }),
+  ev("ev17", "2026-12-03", "13:00", "14:00", "App (Svelte) demo", ["you", "jules", "avery", "eden"], { team: "app" }),
+  ev("ev19", "2026-12-03", "16:00", "16:30", "Budget review", ["you", "maya"]),
+  ev("ev4", "2026-12-04", "16:00", "16:30", "v1.0 launch go / no-go", ["you", "maya", "ada", "emery", "tomas", "rowan"], { proj: "agency-v1" }),
 ];
+
 
 const OPEN = (w) => !["Done", "Fixed", "Closed", "Approved", "Declined"].includes(w.status);
 const NEEDS_ME_SUBS = ["Review requested", "Hand-off"];
@@ -500,6 +514,7 @@ const officeName = (o) => (OFFICES[o] ? OFFICES[o].name : "Not placed");
 export {
   A,
   ALL_STATUSES,
+  CAL_TODAY,
   CH,
   EVENTS,
   HEALTH,

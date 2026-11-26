@@ -1,3 +1,4 @@
+import { calendarHtml } from "./calendar.js";
 import { orgChartBody, orgSummary } from "./org-chart.js";
 import { CH, KNOWLEDGE, M, NOTES, OFFICES, OPEN, P, TEAMS, W } from "../data.js";
 import { activityEventTime, activityTimeline, formatTelemetryHours } from "./activity.js";
@@ -114,13 +115,14 @@ function pageTeam(id, tab = "overview") {
   const actions = hireMenu(id) + moreMenu("tmore", "More actions for " + t.name, menuItem("proto", "Edit team " + t.name, "pencil", "Edit team") + menuItem("proto", "Move team " + t.name + " (choose its parent team)", "user-group", "Move team…") + menuItem("proto", "Change manager of " + t.name, "user", "Change manager…"));
   const ws = teamWork(id);
   const tabs = linkTabs("#/teams/" + id, [
-    ["", "Overview"], ["members", "Members", t.members.length], ["work", "Work", ws.filter(OPEN).length],
+    ["", "Overview"], ["members", "Members", t.members.length], ["work", "Work", ws.filter(OPEN).length], ["calendar", "Calendar"],
     ["projects", "Projects"], ["activity", "Activity"], ["conversations", "Conversations"],
   ], tab === "overview" ? "" : tab, "Team sections");
   const header = crumbs([["#/teams", "Teams"], [null, t.name]]) + `<div class="section-header">${queueHeadline(t.name, count)}${sectionTabs(tabs, "", actions)}</div>`;
   if (tab === "overview") return header + teamOverview(id, ws);
   if (tab === "members") return header + `<section aria-labelledby="h-mem"><h2 class="team-roster-title" id="h-mem">All members</h2>${memberRows(t.members, { noTeam: true })}</section>`;
   if (tab === "work") return header + scopedWorkToolbar("team", id, ws) + scopedWorkWorkspace();
+  if (tab === "calendar") return header + calendarHtml("team", id);
   if (tab === "projects") {
     const projects = teamProjects(id);
     return header + (projects.length ? `<ul class="rows" role="list" aria-label="Team projects">${projects.map((p) => `<li class="linked"><div class="grow"><p class="rt"><a class="stretch" href="#/projects/${p}">${esc(P[p].name)}</a>${leadOf(p) ? `<span class="sec">${esc(leadTxt(p))}</span>` : ""}</p><div style="max-width:320px;margin-top:8px">${progress(p)}</div></div>${projPill(p)}</li>`).join("")}</ul>` : '<p class="empty-row">No projects for this team.</p>');
