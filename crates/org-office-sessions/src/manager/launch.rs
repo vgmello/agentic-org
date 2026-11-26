@@ -19,14 +19,16 @@ use super::environment::{
     assemble_launch_env, build_objective_text, resolve_workspace, write_owner_only_binding_file,
     SessionEnvInput,
 };
-use super::registry_guards::{check_registry_startable, ensure_live_handle_not_recovery_required};
+use super::registry_guards::{
+    check_registry_startable, ensure_live_handle_not_recovery_required, ensure_not_stopped_since,
+};
 use super::spec::{
     build_launch_context, build_session_spec_for_launch, canonical_or_spec,
     compute_launch_spec_hash, is_linux_claude_bwrap,
 };
 use super::warm::{
-    dispatch_warm_handle_turn, warm_handle_stop_reason, LaunchRouteOpts, WarmFreshness,
-    WarmHandleTurn,
+    dispatch_warm_handle_turn, warm_handle_stop_reason, LaunchRouteOpts, StartReservation,
+    WarmFreshness, WarmHandleTurn,
 };
 use super::{
     next_entropy_hex, next_uuid_v4, BindingGuard, LiveSessionHandle, PermitGuard,
@@ -35,14 +37,6 @@ use super::{
 
 /// Times a start re-plans when its warm handle is replaced while freshness checks run unlocked.
 const MAX_WARM_REVALIDATIONS: usize = 3;
-
-/// The outcome of reserving a start: a live or warm-send view, or a reserved start slot with
-/// the handle it replaces and the explicit-stop epoch at reservation (`TASK-190`).
-pub(super) struct StartReservation {
-    pub(super) live_view: Option<SessionView>,
-    pub(super) finished_handle: Option<LiveSessionHandle>,
-    pub(super) start_stop_epoch: u64,
-}
 
 /// A warm handle as seen under a brief lock: its identity (the runtime-state `Arc`) and the
 /// immutable fields the unlocked disk and SQLite freshness checks read.
@@ -290,6 +284,9 @@ impl SessionManager {
         opts: LaunchRouteOpts<'_>,
     ) -> Result<PlannedSessionLaunch, ApiError> {
         let emp_id = employee.id.as_str().to_owned();
+        // A stop that overtook this start while its watch notices were read skips admission,
+        // disk setup and the spawn (registration re-checks atomically, `TASK-190`).
+        ensure_not_stopped_since(&self.registry, &emp_id, opts.start_stop_epoch)?;
         // Before creating this agent's runtime directory or session-binding token on disk,
         // ensure no already-running Linux `bwrap` sibling lacks a mount mask for `emp_id`
         // (`TASK-166`).
@@ -506,6 +503,7 @@ impl SessionManager {
             &emp_id,
             bwrap_masked_siblings.as_ref(),
         )?;
+        ensure_not_stopped_since(&self.registry, &emp_id, start_stop_epoch)?;
         let spawned = self.spawn_and_persist(
             launch.prepared,
             &emp_id,

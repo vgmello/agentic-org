@@ -328,6 +328,7 @@ fn plan_never_emits_double_globstar_and_bwrap_never_walks_concrete_dirs() {
         pat("/work/t-1/.git/hooks/**/**"),
         pat("/work/t-1/.git/config"),
         pat("/work/t-1/sibling-a/**"),
+        pat("/work/t-1/sibling-c/*"),
     ];
     spec.sandbox.deny_read = vec![
         pat("/office/agents/sibling-a/**"),
@@ -406,6 +407,19 @@ fn plan_never_emits_double_globstar_and_bwrap_never_walks_concrete_dirs() {
     );
     assert!(deny_write.iter().any(|p| p == "/work/t-1/.git/hooks"));
     assert!(deny_write.iter().any(|p| p == "/work/t-1/sibling-a"));
+    // A direct `dir/*` write deny normalizes to the bare `dir` on every surface.
+    assert!(deny_write.iter().any(|p| p == "/work/t-1/sibling-c"));
+    for tool in ["Edit", "Write", "MultiEdit", "NotebookEdit"] {
+        let rules = settings["permissions"]["deny"].as_array().unwrap();
+        assert!(rules.contains(&serde_json::json!(format!("{tool}(//work/t-1/sibling-c)"))));
+        assert!(
+            !rules
+                .iter()
+                .filter_map(|v| v.as_str())
+                .any(|r| r.starts_with(&format!("{tool}(//work/t-1/sibling-c/"))),
+            "`dir/*` must not survive as a walked glob: {rules:?}"
+        );
+    }
     assert!(deny_read.iter().any(|p| p == "/office/agents/sibling-a"));
     assert!(deny_read.iter().any(|p| p == "/office/agents/sibling-b"));
 }

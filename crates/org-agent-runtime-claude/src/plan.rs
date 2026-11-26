@@ -400,17 +400,20 @@ fn rule_base_and_glob(base: &str) -> (Option<String>, String) {
 }
 
 /// Write denies for Claude's edit tools. Trailing `/**` is stripped before one is appended, so
-/// `dir/**/**` is never emitted (`TASK-190`). On Linux `bwrap` a concrete path gets only its
-/// exact rule: Claude 2.1.x merges these rules into `bwrap`'s write masks, and a concrete
-/// `dir/**` makes `@anthropic-ai/sandbox-runtime` walk `dir` and follow symlinks into sibling
-/// homes (`TASK-163`); the bare `dir` rule already covers everything beneath it.
+/// `dir/**/**` is never emitted (`TASK-190`). On Linux `bwrap` the path first goes through
+/// [`normalize_bwrap_pattern`] (as every other deny surface does), so a concrete `dir/**` or
+/// `dir/*` gets only its exact `dir` rule: Claude 2.1.x merges these rules into `bwrap`'s write
+/// masks, and a concrete directory glob makes `@anthropic-ai/sandbox-runtime` walk `dir` and
+/// follow symlinks into sibling homes (`TASK-163`); the bare `dir` rule covers everything
+/// beneath it.
 fn push_file_write_denies(
     deny_rules: &mut Vec<Value>,
     raw_path: &str,
     include_exact: bool,
     is_linux_bwrap: bool,
 ) {
-    let (base, _) = split_trailing_globstar(raw_path);
+    let normalized = is_linux_bwrap.then(|| normalize_bwrap_pattern(raw_path));
+    let (base, _) = split_trailing_globstar(normalized.as_deref().unwrap_or(raw_path));
     let (exact, glob) = rule_base_and_glob(base);
     let bwrap_concrete = is_linux_bwrap && is_concrete_path(base);
     for tool in ["Edit", "Write", "MultiEdit", "NotebookEdit"] {

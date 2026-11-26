@@ -1,7 +1,7 @@
 //! Start-path lock scope and stop-versus-start races (`TASK-190`): watch-notice I/O never runs
-//! under the `registry` or a handle's state lock, and an offboard that arrives while a start or
-//! a pool failover relaunch holds the start slot leaves no live session and no queued
-//! recovery wake.
+//! under the `registry` or a handle's state lock, and an offboard or pause that arrives while a
+//! cold start, a warm send or a pool failover relaunch holds the start slot leaves no live
+//! session, sends no turn and queues no recovery wake, while a paused wake stays durable.
 
 use std::sync::mpsc;
 
@@ -75,6 +75,28 @@ fn start_params(agent: &str, instruction: &str) -> MemberSessionStartParams {
         instruction: Some(instruction.to_owned()),
         workspace: None,
     }
+}
+
+/// Runs a first turn to completion so the agent's next start takes the warm path, and returns
+/// the number of turns the child has received.
+fn warm_up(mgr: &SessionManager, owner: &str, agent: &str, recorded: &PoolRecorded) -> usize {
+    mgr.start_session(owner, &start_params(agent, "first turn"))
+        .unwrap();
+    assert!(
+        wait_until(Duration::from_secs(8), || {
+            mgr.inspect_session(owner, Some(agent)).is_ok_and(|r| {
+                r.session.state == SessionState::Idle && r.session.last_reply.is_some()
+            })
+        }),
+        "the first turn must finish so the next start takes the warm path"
+    );
+    recorded.turns.lock().unwrap().len()
+}
+
+fn assert_no_live_session(mgr: &SessionManager, agent: &str) {
+    let reg = mgr.registry.lock().unwrap();
+    assert!(!reg.live.contains_key(agent), "zero live sessions");
+    assert!(!reg.starting.contains(agent), "the start slot is released");
 }
 
 fn queued_recovery_wakes(mgr: &SessionManager, agent: &str) -> usize {
@@ -269,5 +291,124 @@ fn offboard_during_a_failover_relaunch_leaves_no_live_session_and_no_recovery_wa
         "an abandoned failover never requeues its turn"
     );
     assert!(mgr.bindings().active_tokens().is_empty());
+    mgr.shutdown("test_end");
+}
+
+#[test]
+fn offboard_during_a_warm_send_sends_no_turn_and_leaves_no_live_session() {
+    let (_tmp, office, mgr, recorded, owner) = setup_office_and_manager(REPLY_SCRIPT);
+    let agent = pool_agent(&office, &owner, "warm-eve");
+    let turns_before = warm_up(&mgr, &owner, &agent, &recorded);
+    let gate = gate_watch_notices(&mgr, &agent);
+    let epoch = mgr.registry.lock().unwrap().stop_epoch(&agent);
+    let starter = {
+        let mgr = Arc::clone(&mgr);
+        let owner = owner.clone();
+        let agent = agent.clone();
+        std::thread::spawn(move || mgr.start_session(&owner, &start_params(&agent, "second turn")))
+    };
+    gate.entered
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the warm send reads its watch notices holding the start slot");
+    assert!(mgr.registry.lock().unwrap().starting.contains(&agent));
+    assert!(mgr.registry.lock().unwrap().live.contains_key(&agent));
+
+    mgr.on_agent_offboarded(&agent);
+    assert_eq!(mgr.registry.lock().unwrap().stop_epoch(&agent), epoch + 1);
+    gate.release.send(()).unwrap();
+
+    let err = starter
+        .join()
+        .unwrap()
+        .expect_err("a warm send overtaken by an offboard is refused");
+    assert_eq!(err.code, org_proto::ErrorCode::Conflict);
+    assert_eq!(
+        err.message,
+        "agent session was stopped while it was starting"
+    );
+    // The reap joined the pump thread, so any turn sent to the child is already recorded.
+    assert_eq!(
+        recorded.turns.lock().unwrap().len(),
+        turns_before,
+        "no turn reaches the child: {:?}",
+        recorded.turns.lock().unwrap()
+    );
+    assert_no_live_session(&mgr, &agent);
+    assert!(mgr.bindings().active_tokens().is_empty());
+    mgr.shutdown("test_end");
+}
+
+#[test]
+fn pause_during_a_warm_wake_send_keeps_the_durable_wakes_and_charges_no_quota() {
+    let (_tmp, office, mgr, recorded, owner) = setup_office_and_manager(REPLY_SCRIPT);
+    let agent = pool_agent(&office, &owner, "warm-fay");
+    let peer = pool_agent(&office, &owner, "warm-gus");
+    let turns_before = warm_up(&mgr, &owner, &agent, &recorded);
+    let gate = gate_watch_notices(&mgr, &agent);
+    let waker = {
+        let mgr = Arc::clone(&mgr);
+        let agent = agent.clone();
+        std::thread::spawn(move || {
+            mgr.enqueue_wake(
+                &agent,
+                PendingWakeItem {
+                    item_id: "wake-paused-1".into(),
+                    kind: WakeKind::Handoff,
+                    sender_id: peer,
+                    sender_name: "Gus".into(),
+                    sender_handle: None,
+                    sender_relation: None,
+                    sender_is_person: false,
+                    conversation_id: Some("c-pause".into()),
+                    source_id: "msg-pause-1".into(),
+                    summary: "Peer handoff during pause".into(),
+                    enqueued_at_ms: now_ms(),
+                },
+            )
+        })
+    };
+    gate.entered
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the autonomous wake takes the warm send path");
+    assert!(mgr.registry.lock().unwrap().starting.contains(&agent));
+
+    let refused = mgr
+        .stop_session(&agent, "paused")
+        .expect_err("a pause during a warm send is refused but still moves the epoch");
+    assert_eq!(refused.code, org_proto::ErrorCode::Conflict);
+    gate.release.send(()).unwrap();
+
+    assert_eq!(
+        waker.join().unwrap(),
+        WakeOutcome::Queued {
+            reason: WakeHoldReason::AdmissionRefused
+        },
+        "the paused wake is not reported as started"
+    );
+    assert_eq!(
+        recorded.turns.lock().unwrap().len(),
+        turns_before,
+        "no turn reaches the child: {:?}",
+        recorded.turns.lock().unwrap()
+    );
+    assert_no_live_session(&mgr, &agent);
+    let queue = mgr
+        .store()
+        .read_pending_wakes(&agent)
+        .unwrap()
+        .expect("the claimed wakes stay durable");
+    assert!(
+        queue
+            .items
+            .iter()
+            .any(|item| item.item_id == "wake-paused-1"),
+        "the claimed wake is preserved for resume: {:?}",
+        queue.items
+    );
+    let quota = mgr.store().read_wake_quota(&agent).unwrap();
+    assert!(
+        quota.is_none_or(|q| q.agent_wake_timestamps_ms.is_empty()),
+        "a refused wake is never charged to the wake quota"
+    );
     mgr.shutdown("test_end");
 }

@@ -254,3 +254,73 @@ fn sensitive_key_names_ignore_case_and_punctuation() {
         assert!(!is_sensitive_key(key), "{key}");
     }
 }
+
+#[test]
+fn an_escaped_quote_never_ends_a_quoted_value_early() {
+    // A `\"` inside a double-quoted `KEY="…"` value is part of the value (`TASK-190` review).
+    let raw = redact_text(r#"PASSWORD="abc\"leaked_tail" user=bob"#, &[]);
+    assert_eq!(raw, r#"PASSWORD="[REDACTED]" user=bob"#);
+    assert_clean(&raw, &["leaked_tail", "abc"]);
+    // An unclosed one fails closed to the end of its line, never beyond.
+    let open = redact_text("TOKEN=\"abc\\\"leaked_tail\nnext line", &[]);
+    assert_eq!(open, "TOKEN=\"[REDACTED]\nnext line");
+    // JSON-escaped values: a deeper `\\\"` is an escaped quote inside the value.
+    let in_json = redact_text(r#"{"cmd":"PASSWORD=\"abc\\\"leaked_tail\" next=1"}"#, &[]);
+    assert_eq!(in_json, r#"{"cmd":"PASSWORD=\"[REDACTED]\" next=1"}"#);
+    let escaped_key = redact_text(r#"{\"api_key\":\"abc\\\"leaked_tail\",\"ok\":1}"#, &[]);
+    assert_eq!(escaped_key, r#"{\"api_key\":\"[REDACTED]\",\"ok\":1}"#);
+}
+
+#[test]
+fn quoted_header_parameters_never_end_a_header_value_early() {
+    // Raw HTTP lines: quoted parameters pair up, so the whole value to the end of the line goes.
+    let digest = redact_text(
+        "Authorization: Digest username=\"alice\", response=\"9f86d081884c7d659a2feaa0c55ad015\"\nnext: visible",
+        &[],
+    );
+    assert_eq!(digest, "Authorization: [REDACTED]\nnext: visible");
+    let cookie = redact_text("Cookie: a=\"1\", sid=secretcookie123", &[]);
+    assert_eq!(cookie, "Cookie: [REDACTED]");
+    let escaped = redact_text(
+        r#"Authorization: Digest realm="r\"x", response="5ecret0042""#,
+        &[],
+    );
+    assert_eq!(escaped, "Authorization: [REDACTED]");
+
+    // JSON-embedded lines: the value ends at the JSON string's closing quote, keeping the JSON.
+    let bearer = redact_text(
+        r#"{"msg":"Authorization: Bearer topsecret","ok":true}"#,
+        &[],
+    );
+    assert_clean(&bearer, &["topsecret"]);
+    let parsed: serde_json::Value = serde_json::from_str(&bearer).expect(&bearer);
+    assert_eq!(parsed["ok"], json!(true));
+    let json_digest = redact_text(
+        r#"{"msg":"Authorization: Digest username=\"alice\", response=\"deadbeef1234\"","ok":true}"#,
+        &[],
+    );
+    assert_eq!(
+        json_digest,
+        r#"{"msg":"Authorization: [REDACTED]","ok":true}"#
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json_digest).expect(&json_digest);
+    assert_eq!(parsed["ok"], json!(true));
+    // A JSON-escaped string holding the header, with doubly escaped parameter quotes.
+    let nested = redact_text(
+        r#"{\"msg\":\"Cookie: a=\\\"1\\\", sid=secretcookie123\",\"ok\":true}"#,
+        &[],
+    );
+    assert_eq!(nested, r#"{\"msg\":\"Cookie: [REDACTED]\",\"ok\":true}"#);
+    // An unclosed parameter quote inside a JSON string stops at that string's end.
+    let unclosed = redact_text(
+        r#"{"msg":"Cookie: a=\"1, sid=secretcookie123","ok":1}"#,
+        &[],
+    );
+    assert_eq!(unclosed, r#"{"msg":"Cookie: [REDACTED]","ok":1}"#);
+    // An escaped line break outside a parameter ends the header line.
+    let lines = redact_text(r#"{"log":"Cookie: sid=abc123secret\nAccept: json"}"#, &[]);
+    assert_eq!(lines, r#"{"log":"Cookie: [REDACTED]\nAccept: json"}"#);
+    // An empty header value inside JSON redacts nothing and keeps the structure.
+    let empty = r#"{"msg":"Authorization:","ok":true}"#;
+    assert_eq!(redact_text(empty, &[]), empty);
+}

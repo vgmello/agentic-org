@@ -440,18 +440,56 @@ fn redact_header_values(input: &str) -> String {
     out
 }
 
+/// The end of a sensitive header value: the end of its line, an escaped line break, or the quote
+/// closing the (possibly JSON-escaped) string that holds the header. A quote's escape level is
+/// the trailing ones of its backslash run (`"` and `\\"` are 0, `\"` is 1, `\\\"` is 2). A quote
+/// opening a parameter (after `=`, or at the value start) pairs with the next quote of its level,
+/// and a deeper quote inside that pair is a literal, so `Digest response="…", nc=…` and
+/// `Cookie: a="1", sid=…` are redacted whole while `{"msg":"Authorization: …","ok":true}` keeps
+/// its JSON structure.
 fn header_value_end(bytes: &[u8], start: usize) -> usize {
+    let mut open: Option<u32> = None;
     let mut i = start;
     while i < bytes.len() {
-        match bytes[i] {
-            b'\n' | b'\r' => return i,
-            // An escaped line break or quote: the header sits inside a JSON-escaped string.
-            b'\\' if matches!(bytes.get(i + 1), Some(b'n' | b'r' | b'"')) => return i,
-            b'"' if closes_json_string(bytes, i) => return i,
-            _ => i += 1,
+        let run = bytes[i..].iter().take_while(|&&b| b == b'\\').count();
+        let at = i + run;
+        match bytes.get(at) {
+            Some(b'\n' | b'\r') => return at,
+            // An escaped line break outside any quoted parameter: the header sits in a JSON string.
+            Some(b'n' | b'r') if run % 2 == 1 && open.is_none() => return at - 1,
+            Some(b'"') => {}
+            _ => {
+                i = at + 1;
+                continue;
+            }
         }
+        let level = run.trailing_ones();
+        match open {
+            Some(cur) if level == cur => open = None,
+            // A deeper (more escaped) quote is a literal inside the open parameter.
+            Some(cur) if level > cur => {}
+            // A shallower quote closes the string that holds the header.
+            Some(_) => return i,
+            None if opens_header_param(bytes, start, i) && !closes_json_string(bytes, at) => {
+                open = Some(level);
+            }
+            // An unmatched escaped quote, or a raw one ending a JSON string, ends the value.
+            None if level > 0 || closes_json_string(bytes, at) => return i,
+            None => {}
+        }
+        i = at + 1;
     }
     bytes.len()
+}
+
+/// `true` when a quote starting at `idx` opens a header parameter value: it starts the header
+/// value or follows `=` (with optional blanks).
+fn opens_header_param(bytes: &[u8], value_start: usize, idx: usize) -> bool {
+    let before = bytes[value_start..idx]
+        .iter()
+        .rev()
+        .find(|b| !matches!(b, b' ' | b'\t'));
+    matches!(before, None | Some(b'='))
 }
 
 /// `true` when the `"` at `idx` ends a JSON string: what follows is the end, `,`, `}` or `]`.
@@ -519,9 +557,8 @@ fn value_span_after(input: &str, from: usize) -> Option<(usize, usize)> {
     let rest = &input[start..];
     if rest.starts_with("\\\"") {
         let body = start + 2;
-        let end = input[body..]
-            .find("\\\"")
-            .map_or_else(|| line_end(input, body), |e| body + e);
+        let end =
+            escaped_closing_quote(input.as_bytes(), body).unwrap_or_else(|| line_end(input, body));
         return Some((body, end));
     }
     if let Some(q) = rest.bytes().next().filter(|b| matches!(b, b'"' | b'\'')) {
@@ -550,6 +587,23 @@ fn closing_quote(bytes: &[u8], from: usize, quote: u8) -> Option<usize> {
             return Some(idx);
         }
         idx += 1;
+    }
+    None
+}
+
+/// Where a JSON-escaped string value (`\"…\"`) that starts at `from` ends: at the level-1 `\"`
+/// that closes it, or at a raw (level-0) `"` that closes the enclosing JSON string. A deeper
+/// quote (`\\\"`) is an escaped quote inside the value (levels as in [`header_value_end`]).
+fn escaped_closing_quote(bytes: &[u8], from: usize) -> Option<usize> {
+    let mut idx = from;
+    while idx < bytes.len() {
+        let run = bytes[idx..].iter().take_while(|&&b| b == b'\\').count();
+        match (bytes.get(idx + run), run.trailing_ones()) {
+            (Some(b'"'), 1) => return Some(idx + run - 1),
+            (Some(b'"'), 0) => return Some(idx + run),
+            (Some(_), _) => idx += run + 1,
+            (None, _) => return None,
+        }
     }
     None
 }
@@ -595,15 +649,22 @@ fn redact_env_line(line: &str) -> String {
 }
 
 fn redact_env_value(after: &str) -> (String, usize) {
-    if let Some(body) = after.strip_prefix("\\\"") {
-        return match body.find("\\\"") {
-            Some(len) => (format!("\\\"{REDACTED}\\\""), 2 + len + 2),
-            None => (format!("\\\"{REDACTED}"), after.len()),
-        };
+    if after.starts_with("\\\"") {
+        // The closing `\"` (or a raw `"` ending the JSON string) is copied by the caller.
+        let end = escaped_closing_quote(after.as_bytes(), 2).unwrap_or(after.len());
+        return (format!("\\\"{REDACTED}"), end);
     }
-    if let Some(q) = after.chars().next().filter(|c| matches!(c, '"' | '\'')) {
-        return match after[1..].find(q) {
-            Some(len) => (format!("{q}{REDACTED}{q}"), 1 + len + 1),
+    if let Some(q) = after.bytes().next().filter(|b| matches!(b, b'"' | b'\'')) {
+        // A double-quoted value honours `\"` escapes; an unclosed one fails closed to the end
+        // of the line.
+        let close = if q == b'"' {
+            closing_quote(after.as_bytes(), 1, q)
+        } else {
+            after[1..].find('\'').map(|len| 1 + len)
+        };
+        let q = char::from(q);
+        return match close {
+            Some(end) => (format!("{q}{REDACTED}{q}"), end + 1),
             None => (format!("{q}{REDACTED}"), after.len()),
         };
     }

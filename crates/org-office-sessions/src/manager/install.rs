@@ -11,6 +11,7 @@ use crate::credentials::rfc3339_now;
 use crate::pump::{run_pump, PumpCommand, PumpContext, SessionRuntimeState};
 
 use super::reap::{reap_live_handle, ReapMode};
+use super::registry_guards::STOPPED_WHILE_STARTING;
 use super::spec::build_initial_runtime_state;
 use super::{
     is_admissions_closed, LiveSessionHandle, PreparedSessionLaunch, SessionManager, StartSlotGuard,
@@ -408,10 +409,7 @@ pub(super) fn register_live_session_or_abort(
         drop(reg);
         if (bwrap_raced_unmasked || stopped_mid_start) && !shutting_down {
             let (reason, refusal) = if stopped_mid_start {
-                (
-                    "explicit_stop_during_start",
-                    "agent session was stopped while it was starting",
-                )
+                ("explicit_stop_during_start", STOPPED_WHILE_STARTING)
             } else {
                 (
                     "bwrap_sibling_race_abort",
