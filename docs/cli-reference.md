@@ -192,6 +192,18 @@ Any other key, a control character or an over-long value makes it invalid (exit 
   Read the organization's record from its office (the office command `org inspect`).
   **Use when:** checking the organization's name, identifiers and settings from the terminal.
 
+### Backup & Restore (`backup`, `restore`)
+
+- `agentic-org backup <org_id> --out <path> [--office <office_id>] [--encrypt] [--passphrase-file <path> | --passphrase-fd <fd>] [--name <instance>] [--json]`
+  Write one consistent, deterministic `.tar.gz` of the office's `<data-root>/<org_id>/durable/` folder (Org Git `state/`, `messaging/`, `recovery/` with the acceptance journal, `authority/`, `accounting/`, `budgets/`, `checkpoints/`, `blobs/` when present, `local/offices/<id>/` less `enroll-tmp/` and each agent's `runtime/` and `tmp/`), with a versioned `manifest.json` (org, office, journal incarnation and head, `created_at`, and every file's length and SHA-256). `private/task-notes.db` is carried as a consistent SQLite `VACUUM INTO` copy; the disposable `runtime/` folder never is. The office must be stopped (a held `host.lock` or `office.lock` is refused), and the archive is written owner-only and atomically and never replaces a file. `--encrypt` seals it with a passphrase (Argon2id 64 MiB, t=3, p=4 and AES-256-GCM) read from the terminal, `--passphrase-file` (owner-only) or `--passphrase-fd`, never from the command line.
+  **Use when:** taking a local safety-net backup of an organization before maintenance, an upgrade or risky work, with the office stopped (`agentic-org service stop`).
+- `agentic-org restore --verify <archive> [--to <dir>] [--passphrase-file <path> | --passphrase-fd <fd>] [--json]`
+  Verify an archive and change nothing: the encryption tag (detected from the archive's first bytes), every member against the manifest (no `..`, absolute paths, links, special, unlisted, duplicated or oversized members), SQLite's `integrity_check` on the notes copy, the journal to its recorded head, and a full rebuild of the office's projections from it in a disposable folder. `--to` also extracts the verified archive into a new or empty folder.
+  **Use when:** proving a backup actually restores before you rely on it, or inspecting its files without touching the organization.
+- `agentic-org restore <archive> --org <org_id> [--office <office_id>] [--yes] [--passphrase-file <path> | --passphrase-fd <fd>] [--name <instance>] [--json]`
+  Verify the archive in full, then replace the stopped office's durable folder with it (the previous one is kept beside it as `durable.before-restore-*`) and discard the rebuildable projections. It never resets the host's writer custody: an archive of another incarnation, behind the office's journal or off its chain is refused. Host-local custody, the host registry and accounts, and the office secrets key in the Keychain or credential store are not in a backup; moving an office to another machine is not supported in v1.
+  **Use when:** putting an organization's durable data back on this computer after it was lost or damaged, with the office stopped.
+
 ### Offices & Multi-Office Federation (`office`)
 
 - `agentic-org office list [--org <org_id>] [--login <login>] [--name <instance>] [--json]`

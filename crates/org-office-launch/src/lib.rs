@@ -173,6 +173,10 @@ pub fn refused_dir(office_home: &Path, office_id: &str) -> Option<PathBuf> {
 pub const OFFICE_FILE_NAME: &str = "office.json";
 /// The office lock, in its folder: held exactly while a server runs that office.
 pub const OFFICE_LOCK_FILE_NAME: &str = "office.lock";
+/// The host's catalog lock, in the office home: held (an exclusive `flock`) exactly while a host
+/// serves that home. An offline tool that must not run beside a host (a backup or a restore)
+/// takes it without waiting.
+pub const HOST_LOCK_FILE_NAME: &str = "host.lock";
 /// How long a starting server waits for the office lock before failing with
 /// [`FailCode::InUse`].
 pub const OFFICE_LOCK_WAIT: Duration = Duration::from_secs(10);

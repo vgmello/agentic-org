@@ -123,6 +123,7 @@ use request::same_configuration;
 pub use request::{
     configuration, Configuration, PortPrompt, Request, DEFAULT_PORT, NAMED_PORT_BASE,
 };
+pub use wire::instance_office_home;
 // Other modules' tests reach the registered instance as the commands do.
 #[cfg(test)]
 pub(crate) use wire::registered_with_origin;

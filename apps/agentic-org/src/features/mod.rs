@@ -3,6 +3,7 @@
 //! another slice.
 
 pub(crate) mod admin;
+pub(crate) mod backup;
 pub(crate) mod completion;
 pub(crate) mod context;
 pub(crate) mod office;
