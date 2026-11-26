@@ -9,6 +9,7 @@ const ALL_SUITE: Array<[string, string]> = [
   ["activity", "cozy"],
   ["projects/office-federation/activity", "report"],
   ["projects/agency-v1/insights", "report-dark"],
+  ["chat", "classic"],
 ];
 
 const SWEEP_ROUTES = [
@@ -489,12 +490,75 @@ async function checkProjectInsights(page: Page) {
   await insights.getByRole("heading", { name: "Spend over time" }).waitFor();
 }
 
+/* Chat: ask routing rule, Message entry points, conversation search, source links and the narrow thread dialog. */
+async function checkChatAsks(page: Page) {
+  const card = (mid: string) => page.locator(`.chat-needs:has(#needs-${mid})`);
+  await card("m2").getByRole("link", { name: "Review in Inbox" }).waitFor();
+  assert.equal(await card("m2").locator(".chat-needs-route").innerText(), "Decide in Inbox · high-impact release");
+  assert.equal(await card("m3").getByRole("button", { name: "Allow test access" }).count(), 1, "Low-risk ask answers inline");
+  const replyLabels = await page.locator(".chat-needs button").evaluateAll((els) => els.map((e) => e.textContent?.trim() ?? "").filter((t) => /^Reply/.test(t)));
+  assert.deepEqual(replyLabels, [], "No card button labelled Reply");
+  await card("m3").getByRole("button", { name: "Ask a follow-up" }).click();
+  await page.keyboard.type("Is the sandbox wiped?");
+  await page.keyboard.press("Control+Enter");
+  await page.locator(".chat-needs-note").waitFor();
+  assert.equal(await card("m3").getByRole("button", { name: "Allow test access" }).count(), 1, "A follow-up keeps the ask open");
+  await page.evaluate(() => { location.hash = "#/chat/dm-eden"; });
+  await page.getByRole("button", { name: "Answer…" }).click();
+  assert.equal(await page.locator('.chat-needs [data-act="send-reply"]').innerText(), "Send answer");
+}
+async function checkChatEntryPoints(page: Page) {
+  await page.evaluate(() => { location.hash = "#/chat/general"; });
+  await page.getByRole("button", { name: "New message" }).click();
+  await page.locator("#chat-to").fill("quinn");
+  await page.locator("#chat-to-list").getByRole("button", { name: /Quinn/ }).click();
+  await page.locator("#ch-title", { hasText: /^Quinn$/ }).waitFor();
+  assert.equal(new URL(page.url()).hash, "#/chat/dm-quinn");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "compose");
+  await page.locator("#chat-find").fill("rowan");
+  assert.match(await page.locator("#chat-nav").innerText(), /Kai and Rowan/);
+  await page.evaluate(() => { location.hash = "#/members/noor"; });
+  await page.locator('[data-act="go"][data-v="#/chat/dm-noor"]').click();
+  await page.locator("#ch-title", { hasText: /^Noor Haddad$/ }).waitFor(); /* their DM, not #general */
+  await page.evaluate(() => { location.hash = "#/chat/a2a-kai-rowan"; });
+  await page.locator('.msg[data-mid="k2"]').hover();
+  await page.locator('.msg[data-mid="k2"] .msg-tool[data-act="chat-dm-msg"]').click();
+  await page.locator("#ch-title", { hasText: /^Rowan$/ }).waitFor();
+  assert.equal(await page.locator(".chat-compose-src a").getAttribute("href"), "#/chat/a2a-kai-rowan/k2");
+  await page.evaluate(() => { location.hash = "#/inbox/in14"; });
+  await page.getByRole("link", { name: "Open source message" }).click();
+  await page.locator('.msg.is-linked[data-mid="x3"]').waitFor();
+}
+async function checkChatNarrow(page: Page) {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.evaluate(() => { location.hash = "#/chat/agency-v1"; });
+  await page.locator('.msg[data-mid="m2"] .msg-menu .btn').click();
+  assert.match(await page.locator("#menu-msg-m2").innerText(), /Sent Today 09:40/);
+  await page.getByRole("menuitem", { name: "Reply in thread" }).click();
+  await page.locator('.thread[role="dialog"][aria-modal="true"]').waitFor();
+  assert.ok(await page.evaluate(() => Boolean(document.querySelector(".chmain")?.closest("[inert]"))), "Background inert under the thread dialog");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-controls")), "menu-msg-m2", "Focus returns to the visible trigger");
+  await page.locator(".chat-list-btn").click();
+  await page.locator("#chat-find").fill("tomas");
+  assert.match(await page.locator("#chat-nav").innerText(), /Tomas and Sage/);
+  const heights = await page.locator("#chat-nav a").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+  assert.ok(heights.every((h) => h >= 44), "Drawer rows are touch-sized");
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+async function checkChat(page: Page) {
+  await checkChatAsks(page);
+  await checkChatEntryPoints(page);
+  await checkChatNarrow(page);
+}
+
 const ROUTE_CHECKS: Record<string, (page: Page, href: string, theme: string) => Promise<void>> = {
   inbox: (page) => checkInbox(page),
   work: (page, href) => checkWork(page, href),
   activity: (page, _href, theme) => checkActivity(page, theme),
   "projects/office-federation/activity": (page) => checkProjectActivity(page),
   "projects/agency-v1/insights": (page) => checkProjectInsights(page),
+  chat: (page) => checkChat(page),
 };
 
 async function runRouteCheck(browser: Awaited<ReturnType<typeof chromium.launch>>, baseUrl: URL, pageRoute: string, theme: string) {

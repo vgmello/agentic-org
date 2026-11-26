@@ -24,6 +24,14 @@
     --page-header-base-image: var(--ocean-header);
   }
 
+  /* Report Night: the same corner light as Graphite under the Agentic Org mark */
+  html[data-theme="report-dark"] {
+    --sidebar-top-light: rgb(255 255 255 / .12);
+    --sidebar-light-rx: 145%;
+    --sidebar-light-y: -24px;
+    --page-header-light: rgb(255 255 255 / .05);
+  }
+
   html[data-theme="report"] {
     --sidebar-top-light: rgb(255 255 255 / .96);
     --page-header-light: rgb(136 159 188 / .065);

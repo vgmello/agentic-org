@@ -1,26 +1,26 @@
-import { CH, IN, KIND, M, W, blockedOnOwner } from "../data.js";
-import { fitTextarea, workHref } from "./work.js";
-import { v4BuildButtons, v4ReplyBox } from "./home.js";
-import { inboxCommentPrefix } from "./inbox.js";
+import { CH, IN, M } from "../data.js";
+import { fitTextarea } from "./work.js";
 import { openSmartTaskComposer } from "./task-composer.js";
 import { applyPos, placeStream, replaceStream, savedPos, trackPos } from "./chat-scroll.js";
+import { ASK_CLICKS, messageNeeds, onAskKeydown, recordAskReply, resetAsks, saveAskDraft, workRef } from "./chat-asks.js";
+import { chatListHtml, needsCount, onListClick, onListInput, onListKeydown, prepareList, takeListFocus, unreadDot } from "./chat-list.js";
+import {
+  DEFAULT_CHAT, chatTitle, dmSources, inboxItem, openAsks, openDirectMessage, resolveChatId, sourceHref, sourceLabel,
+} from "./chat-model.js";
 import { render, route } from "../shell/router.js";
 import { CHAT_SEND_SHORTCUTS, S } from "../state.js";
 import {
-  av, esc, ic, joinSep, kindWord, memberIds, mlink, moreMenu, pill, plink, plural, presence, projMembers, statusLine,
+  av, esc, ic, joinSep, kindWord, memberIds, mlink, moreMenu, plink, plural, presence, projMembers, statusLine,
 } from "../ui.js";
 
-const DEFAULT_CHAT = "agency-v1";
-const GROUPS = [["channel", "Channels"], ["dm", "Direct messages"], ["a2a", "Between agents"]];
-const PRESENCE_WORD = { needs: "Waiting on you", withyou: "With you", working: "Working", paused: "Paused", available: "Available", asleep: "Asleep", offline: "Offline" };
 const chatDrafts = new Map();      /* conversation id -> unsent message */
 const threadDrafts = new Map();    /* thread root message id -> unsent thread reply */
-const askDrafts = new Map();       /* inbox item id -> unsent reply on that request */
-const dmSources = new Map();       /* DM id -> conversation the owner can link in the first message */
-const local = { askReply: null, askNote: null, search: null, linked: null };
+const local = { search: null, linked: null, details: false, threadFrom: "" };
+const OVERLAY_THREAD = "(max-width: 1279px)";
+const NARROW_LIST = "(max-width: 959px)";
+const matchesMedia = (q) => Boolean(window.matchMedia?.(q).matches);
 
 /* ---------------------------------------------------------------- names and time */
-const chatTitle = (ch) => (ch.kind === "channel" ? "#" + ch.name : ch.kind === "dm" ? M[ch.with].name : ch.name);
 const chatDocTitle = (id) => `${chatTitle(CH[id && CH[id] ? id : DEFAULT_CHAT])} · Chat`;
 const DAY_RE = /^([A-Z][a-z]{2} \d{1,2}|Yesterday),?\s*/;
 function splitTime(time) {
@@ -29,11 +29,9 @@ function splitTime(time) {
 }
 const clock = () => new Date().toTimeString().slice(0, 5);
 const authorWord = (who) => (M[who].owner ? "" : kindWord(who));
+const sentAt = (m) => splitTime(m.time).join(" ");
 
 /* ---------------------------------------------------------------- message text: T- refs and @mentions become links */
-function workRef(id) {
-  return W.some((w) => w.id === id) ? `<a class="alink chat-ref" href="${esc(workHref({ item: id }))}">${id}</a>` : id;
-}
 function mentionRef(match, name) {
   const lower = name.toLowerCase();
   const key = Object.keys(M).find((k) => k === lower || M[k].name.split(" ")[0].toLowerCase() === lower);
@@ -41,87 +39,23 @@ function mentionRef(match, name) {
 }
 const richText = (text) => esc(text).replace(/\bT-A\d+\b/g, workRef).replace(/@([A-Za-z]+)/g, mentionRef);
 
-/* ---------------------------------------------------------------- owner-waiting items inside messages */
-const inboxItem = (id) => IN.find((i) => i.id === id);
-/* Binding choices or a stated tradeoff: decided with the full Inbox context, not from a chat card. */
-const consequential = (it) => it.kind === "decision" || (it.impact || []).some(([, tone]) => tone === "warn" || tone === "bad");
-function waitingFor(it) {
-  if (/^\d/.test(it.time)) return "waiting " + it.time;
-  return it.time === "Yesterday" ? "waiting since yesterday" : "waiting since " + it.time;
-}
-function taskPhrase(it) {
-  const w = it.task && W.find((x) => x.id === it.task);
-  return w ? `<span>${blockedOnOwner(w) ? "Blocks" : "For"} ${workRef(w.id)}</span>` : "";
-}
-function needsHead(it) {
-  const state = it.handled ? pill("Handled", "gray", "check-circle") : pill("Needs you", "amber", "bell");
-  return `<p class="chat-needs-head">${state}<span>${esc(it.sub)} from ${esc(M[it.from].name)}${it.handled ? "" : " · " + waitingFor(it)}</span></p>`;
-}
-const inboxLink = (it, label, cls = "btn ghost sm") => `<a class="${cls}" href="#/inbox/${esc(it.id)}">${label}</a>`;
-function handledLine(it) {
-  return `<p class="handled chat-needs-done" id="handled-${esc(it.id)}" tabindex="-1">${ic("check-circle", "ic16")}<span>${esc(it.outcome)}</span>
-    ${inboxLink(it, "View in Inbox", "alink chat-needs-record")}</p>`;
-}
-function askReplyBox(it) {
-  const who = esc(M[it.from].name), id = esc(it.id);
-  return `<div class="reply chat-ask-reply"><label class="sr-only" for="ar-${id}">Reply to ${who}</label>
-    <textarea class="field" id="ar-${id}" rows="2" placeholder="Reply to ${who}…" aria-describedby="ar-help-${id}">${esc(askDrafts.get(it.id) || "")}</textarea>
-    <p class="chat-compose-hint" id="ar-help-${id}">Posts here and on the request. It stays open until you decide.</p>
-    <div class="actions"><button class="btn primary sm" type="button" data-act="chat-ask-send" data-id="${id}">${ic("send", "ic16")}Send reply</button><button class="btn ghost sm" type="button" data-act="chat-ask-cancel" data-id="${id}">Cancel</button></div></div>`;
-}
-function decisionControls(it) {
-  if (consequential(it)) return [inboxLink(it, `${ic("inbox", "ic16")}Review in Inbox`, "btn primary sm")];
-  const { b, guardedHtml } = v4BuildButtons(it);
-  const sep = guardedHtml && S.confirmDeny !== it.id ? '<span class="hb-act-sep" aria-hidden="true"></span>' : "";
-  return [...b, sep, guardedHtml];
-}
-function needsActions(it) {
-  if (it.handled) return handledLine(it);
-  if (S.replying === it.id) return v4ReplyBox(it);
-  if (local.askReply === it.id) return askReplyBox(it);
-  const reply = it.kind === "question" ? "" : `<button class="btn ghost sm" type="button" data-act="chat-ask-reply" data-id="${esc(it.id)}">${ic("reply", "ic16")}Reply…</button>`;
-  const open = consequential(it) ? "" : inboxLink(it, `${ic("inbox", "ic16")}<span><span class="chat-long">Open in </span>Inbox</span>`);
-  const note = local.askNote === it.id ? `<p class="chat-needs-note" role="status">${ic("check-circle", "ic14")}Reply sent to ${esc(M[it.from].name)}. The request stays open until you decide.</p>` : "";
-  return `${note}<div class="actions">${[...decisionControls(it), reply, open].join("")}</div>`;
-}
-function tradeoff(it) {
-  if (!consequential(it) || it.handled || !it.why) return "";
-  return `<details class="chat-needs-why"><summary>${ic("scale", "ic14")}Tradeoff</summary><p>${esc(it.why)}</p>${it.rec ? `<p class="chat-needs-rec">${esc(it.rec)}</p>` : ""}</details>`;
-}
-function needsCardHtml(it, msgId) {
-  const titleId = `needs-${esc(msgId)}`;
-  const meta = joinSep([
-    taskPhrase(it),
-    it.expires && !it.handled ? `<span class="pin">${ic("clock", "ic14")}${esc(it.expires)}</span>` : "",
-  ]);
-  return `<section class="chat-needs${it.handled ? " is-done" : ""}" aria-labelledby="${titleId}">
-    ${needsHead(it)}
-    <h3 class="chat-needs-q" id="${titleId}">${esc(it.what)}</h3>
-    ${meta ? `<p class="chat-needs-meta">${meta}</p>` : ""}
-    ${it.scope && !it.handled ? `<p class="chat-needs-scope">${ic("lock", "ic14")}<span>Scope: ${esc(it.scope)}</span></p>` : ""}
-    ${tradeoff(it)}
-    ${needsActions(it)}
-  </section>`;
-}
-function needsChipHtml(it) {
-  const label = it.handled ? `Handled · ${esc(it.outcome)}` : `Needs you · ${esc(KIND[it.kind].label)} in Inbox`;
-  return `<p class="chat-needs-chip${it.handled ? " is-done" : ""}"><a href="#/inbox/${esc(it.id)}">${ic(it.handled ? "check-circle" : "bell", "ic14")}<span>${label}</span>${ic("chev-right", "ic14")}</a></p>`;
-}
-function messageNeeds(m, cards) {
-  const it = inboxItem(m.needs || m.ref);
-  if (!it) return "";
-  return cards && m.needs ? needsCardHtml(it, m.id) : needsChipHtml(it);
-}
-
 /* ---------------------------------------------------------------- one message */
-function messageTools(m) {
-  const id = esc(m.id);
-  const menu = `<button role="menuitem" type="button" data-act="thread" data-id="${id}">${ic("thread", "ic20")}Reply in thread</button>`
-    + `<button role="menuitem" type="button" data-act="chat-task" data-id="${id}">${ic("clipboard", "ic20")}Turn into task</button>`;
+/* Hover tools on wide pointers; one touch-sized menu (with the message's time) on narrow or touch screens. */
+function toolButton(act, id, icon, label) {
+  return `<button class="btn ghost icon msg-tool" type="button" data-act="${act}" data-id="${id}" aria-label="${esc(label)}" title="${esc(label)}">${ic(icon, "ic16")}</button>`;
+}
+const menuEntry = (act, id, icon, label) => `<button role="menuitem" type="button" data-act="${act}" data-id="${id}">${ic(icon, "ic20")}${esc(label)}</button>`;
+function messageTools(m, readOnly) {
+  const id = esc(m.id), name = M[m.who].name;
+  const tools = readOnly
+    ? (M[m.who].owner ? [] : [["chat-dm-msg", "chat", `Message ${name} about this`]])
+    : [["thread", "thread", "Reply in thread"], ["chat-task", "clipboard", "Turn into task"]];
+  if (!tools.length) return "";
+  const time = `<p class="msg-menu-time" role="none">${ic("clock", "ic14")}Sent ${esc(sentAt(m))}</p>`;
+  const menu = time + tools.map(([act, icon, label]) => menuEntry(act, id, icon, label)).join("");
   return `<span class="msg-tools" role="group" aria-label="Message actions">
-    <button class="btn ghost icon msg-tool" type="button" data-act="thread" data-id="${id}" aria-label="Reply in thread" title="Reply in thread">${ic("thread", "ic16")}</button>
-    <button class="btn ghost icon msg-tool" type="button" data-act="chat-task" data-id="${id}" aria-label="Turn into task" title="Turn into task">${ic("clipboard", "ic16")}</button>
-    <span class="msg-menu">${moreMenu("msg-" + m.id, "Actions for message from " + M[m.who].name, menu, "ghost")}</span>
+    ${tools.map(([act, icon, label]) => toolButton(act, id, icon, label)).join("")}
+    <span class="msg-menu">${moreMenu("msg-" + m.id, `Actions for message from ${name}, ${sentAt(m)}`, menu, "ghost")}</span>
   </span>`;
 }
 const sendingStatus = () => `<span class="msg-status" role="status">Sending…</span>`;
@@ -129,9 +63,11 @@ function threadButton(m) {
   if (!m.thread || !m.thread.length) return "";
   return `<button class="thr" type="button" data-act="thread" data-id="${esc(m.id)}" aria-expanded="${S.thread === m.id}">${ic("thread", "ic16")}${plural(m.thread.length, "reply", "replies")}</button>`;
 }
+/* A DM's first message can link to the conversation or the exact message it is about. */
 function sourceLine(m) {
-  const src = m.src && CH[m.src];
-  return src ? `<p class="msg-src">${ic("eye", "ic14")}<span>About <a class="alink chat-ref" href="#/chat/${esc(m.src)}">${esc(chatTitle(src))}</a></span></p>` : "";
+  const src = typeof m.src === "string" ? { ch: m.src } : m.src;
+  if (!src || !CH[src.ch]) return "";
+  return `<p class="msg-src">${ic("eye", "ic14")}<span>About <a class="alink chat-ref" href="${esc(sourceHref(src))}">${esc(sourceLabel(src))}</a></span></p>`;
 }
 const continues = (m, prev) => prev && prev.who === m.who && splitTime(prev.time)[0] === splitTime(m.time)[0] && !prev.needs;
 function messageHead(m, time) {
@@ -145,8 +81,9 @@ function messageHtml(m, prev, opts = {}) {
   const gutter = cont ? `<span class="msg-gutter">${m.pending ? "" : `<time class="msg-time">${esc(time)}</time>`}</span>` : av(m.who, 32);
   /* A grouped message has no header, so its send status sits after the text, never in the narrow gutter. */
   const status = cont && m.pending ? sendingStatus() : "";
+  const tools = opts.tools ? messageTools(m, opts.readOnly) : "";
   return `<div class="msg${cont ? " cont" : ""}${m.pending ? " is-pending" : ""}" data-mid="${esc(m.id)}">${gutter}<div class="body">${head}
-    <p class="tx">${richText(m.text)}${status}</p>${opts.tools ? messageTools(m) : ""}
+    <p class="tx">${richText(m.text)}${status}</p>${tools}
     ${sourceLine(m)}${messageNeeds(m, opts.cards)}${threadButton(m)}</div></div>`;
 }
 /* Shared preview (project Overview) renders chips, not cards; it is called as Array.map(msgHtml). */
@@ -167,12 +104,13 @@ function streamHtml(id) {
   if (!ch.msgs.length) return emptyConversation(ch);
   const list = q ? ch.msgs.filter((m) => matches(m, q)) : ch.msgs;
   if (!list.length) return noMatches(ch, q);
+  const opts = { cards: true, tools: true, readOnly: ch.kind === "a2a" };
   let lastDay = "";
   return list.map((m, i) => {
     const [day] = splitTime(m.time);
     const divider = day !== lastDay ? `<h2 class="chat-day"><span>${esc(day)}</span></h2>` : "";
     lastDay = day;
-    return divider + messageHtml(m, i ? list[i - 1] : null, { cards: true, tools: ch.kind !== "a2a" });
+    return divider + messageHtml(m, i ? list[i - 1] : null, opts);
   }).join("");
 }
 
@@ -198,10 +136,10 @@ ${esc(o.draft || "")}</textarea>
 }
 function composeSource(id) {
   const src = dmSources.get(id);
-  if (!src || !CH[src]) return "";
-  const title = esc(chatTitle(CH[src]));
-  return `<p class="chat-compose-src">${ic("eye", "ic14")}<span>Your message will link to <a class="alink chat-ref" href="#/chat/${esc(src)}">${title}</a></span>
-    <button class="btn ghost sm" type="button" data-act="chat-src-remove" data-id="${esc(id)}" aria-label="Don't link ${title}">${ic("x", "ic16")}Remove</button></p>`;
+  if (!src || !CH[src.ch]) return "";
+  const label = esc(sourceLabel(src));
+  return `<p class="chat-compose-src">${ic("eye", "ic14")}<span>Your message will link to <a class="alink chat-ref" href="${esc(sourceHref(src))}">${label}</a></span>
+    <button class="btn ghost sm" type="button" data-act="chat-src-remove" data-id="${esc(id)}" aria-label="Don't link ${label}">${ic("x", "ic16")}Remove</button></p>`;
 }
 const chatComposer = (id, title) => composerHtml({
   form: "send", id, field: "compose", label: "Message " + title, draft: chatDrafts.get(id), button: "primary", submit: "Send", before: composeSource(id),
@@ -251,105 +189,47 @@ function sendThreadReply(form) {
   if (form.elements.also?.checked) ch.msgs.push({ id: "u" + Date.now(), ...reply });
   return true;
 }
-function openDirectMessage(who, from) {
-  const key = "dm-" + who;
-  CH[key] ||= { name: M[who].name, kind: "dm", with: who, msgs: [] };
-  if (from && CH[from]) dmSources.set(key, from);
-  return "#/chat/" + key;
-}
-
-/* ---------------------------------------------------------------- replies on a request (never a decision) */
-function saveInboxComment(id, text) {
-  try { localStorage.setItem(inboxCommentPrefix(id) + crypto.randomUUID(), JSON.stringify({ text, at: Date.now() })); } catch (e) {}
-}
-/* Posts the owner's words in the conversation where the request was asked and on the Inbox record. */
-function recordAskReply(id, text) {
-  const home = Object.values(CH).find((ch) => ch.msgs.some((m) => m.needs === id));
-  if (home) home.msgs.push({ id: "u" + Date.now(), who: "you", time: clock(), text, ref: id });
-  saveInboxComment(id, text);
-}
-function sendAskReply(id) {
-  const field = document.getElementById("ar-" + id), text = field?.value.trim();
-  if (!field) return;
-  if (!text) {
-    const hint = document.getElementById("ar-help-" + id);
-    hint.classList.add("is-error");
-    hint.textContent = "Write a reply first.";
-    field.focus();
-    return;
-  }
-  recordAskReply(id, text);
-  askDrafts.delete(id);
-  Object.assign(local, { askReply: null, askNote: id });
-  render(false);
-  document.querySelector(`[data-act="chat-ask-reply"][data-id="${CSS.escape(id)}"]`)?.focus();
-}
-function closeAskReply(id) {
-  local.askReply = null;
-  render(false);
-  document.querySelector(`[data-act="chat-ask-reply"][data-id="${CSS.escape(id)}"]`)?.focus();
-}
-
-/* ---------------------------------------------------------------- conversation list */
-/* Counts what was asked in this conversation; items only mentioned here (m.ref) are counted where they were asked. */
-function openAsks(ch) {
-  const ids = new Set(ch.msgs.map((m) => m.needs).filter(Boolean));
-  return [...ids].filter((id) => { const it = inboxItem(id); return it && !it.handled; });
-}
-function rowLead(ch) {
-  if (ch.kind === "channel") return ic("hash", "ic16");
-  return ch.kind === "dm" ? av(ch.with, 24) : ic("eye", "ic16");
-}
-/* "Needs you" is an amber bell count; unread is a dot plus bold name. Neither relies on the theme's badge style. */
-const needsCount = (n, text = "waiting on you") => `<span class="chat-attn">${ic("bell", "ic14")}${n}<span class="sr-only"> ${text}</span></span>`;
-const unreadDot = '<span class="chat-unread" aria-hidden="true"></span>';
-function rowTrail(ch, unread) {
-  const needs = openAsks(ch).length;
-  const dot = unread ? unreadDot : "";
-  if (needs) return dot + needsCount(needs);
-  if (ch.kind !== "dm") return dot;
-  const word = M[ch.with].kind === "person" ? "Person" : PRESENCE_WORD[presence(ch.with)];
-  return (word ? `<span class="chat-row-word">${word}</span>` : "") + dot;
-}
-function chatLinkHtml(k, activeId) {
-  const ch = CH[k], unread = ch.unread && k !== activeId;
-  const attrs = (k === activeId ? ' aria-current="page"' : "") + (unread ? ' class="is-unread"' : "");
-  const unreadText = unread ? `<span class="sr-only">, ${plural(ch.unread, "unread message", "unread messages")}</span>` : "";
-  return `<li><a href="#/chat/${k}"${attrs}>${rowLead(ch)}<span class="chat-row-name">${esc(ch.kind === "channel" ? ch.name : chatTitle(ch))}</span>${unreadText}${rowTrail(ch, unread)}</a></li>`;
-}
-function chatListHtml(id, open) {
-  const keys = Object.keys(CH);
-  const jumpShortcut = S.singleKey ? ' aria-keyshortcuts="#"' : "";
-  const jumpKbd = S.singleKey ? '<kbd aria-hidden="true">#</kbd>' : "";
-  const dialog = open ? ' role="dialog" aria-modal="true" aria-labelledby="chat-list-title"' : "";
-  return `<div class="chlist" id="chat-list"${dialog}>
-      <div class="chlist-head"><h2 id="chat-list-title">Conversations</h2><button class="btn ghost icon" type="button" data-act="chat-list" data-id="${id}" aria-label="Close conversations">${ic("x", "ic20")}</button></div>
-      <button class="btn ghost sm chat-jump" id="chat-jump" type="button" data-act="chat-jump"
-        aria-haspopup="dialog" aria-controls="cmdk-dialog"${jumpShortcut}>${ic("search", "ic16")}<span>Jump to conversation</span>${jumpKbd}</button>
-      <nav aria-label="Conversations">
-        ${GROUPS.map(([kind, label]) => `<h2>${label}</h2><ul>${keys.filter((k) => CH[k].kind === kind).map((k) => chatLinkHtml(k, id)).join("")}</ul>`).join("")}
-      </nav>
-    </div>`;
-}
 
 /* ---------------------------------------------------------------- header */
 function membersLink(ch) {
   if (ch.proj) return `<a class="alink" href="#/projects/${ch.proj}/team">${plural(projMembers(ch.proj).length, "member", "members")}</a>`;
   return `<a class="alink" href="#/teams/members">${plural(memberIds().length, "member", "members")}</a>`;
 }
-function dmContext(who) {
-  const m = M[who], status = m.kind === "person" ? esc(m.last || "") : statusLine(who);
-  return joinSep([`<span>${esc(m.role)}</span>`, `<span>${kindWord(who)}</span>`, status ? `<span class="chat-status">${status}</span>` : ""]);
+/* "Waiting on you" in a DM names requests raised elsewhere as "Also waiting in Inbox"; the DM's own ask is on its card. */
+function dmWaiting(who, chId) {
+  const here = new Set(openAsks(CH[chId]));
+  const elsewhere = IN.filter((i) => !i.handled && i.from === who && !here.has(i.id));
+  if (!elsewhere.length) {
+    const it = inboxItem([...here][0]), m = it && CH[chId].msgs.find((x) => x.needs === it.id);
+    return it ? `Waiting on you: <a class="alink" href="#/chat/${esc(chId)}/${esc(m.id)}">${esc(it.what)}</a>` : "";
+  }
+  const more = elsewhere.length > 1 ? ` and ${elsewhere.length - 1} more` : "";
+  return `Also waiting in Inbox: <a class="alink" href="#/inbox/${esc(elsewhere[0].id)}">${esc(elsewhere[0].what)}</a>${more}`;
 }
-function headerContext(ch) {
-  if (ch.kind === "dm") return dmContext(ch.with);
+function dmStatus(who, chId) {
+  const m = M[who];
+  if (m.kind === "person") return esc(m.last || "");
+  return presence(who) === "needs" ? dmWaiting(who, chId) : statusLine(who);
+}
+/* The parts of a conversation's context: a line under the title when wide, the Details panel when narrow. */
+function contextParts(ch, chId) {
+  if (ch.kind === "dm") {
+    const status = dmStatus(ch.with, chId);
+    return [["Role", esc(M[ch.with].role)], ["Kind", kindWord(ch.with)], ["Status", status ? `<span class="chat-status">${status}</span>` : ""]];
+  }
   /* The read-only rule is stated once, in the footer beside its actions. */
-  if (ch.kind === "a2a") return joinSep(["<span>Between agents</span>", `<span>${ch.pair.map((k) => mlink(k)).join(" and ")}</span>`]);
-  return joinSep([
-    ch.topic ? `<span class="chat-topic">${esc(ch.topic)}</span>` : "",
-    ch.proj ? `<span class="chat-proj">${ic("folder", "ic14")}${plink(ch.proj)}</span>` : "",
-    membersLink(ch),
-  ]);
+  if (ch.kind === "a2a") return [["Kind", "Between agents"], ["Agents", ch.pair.map((k) => mlink(k)).join(" and ")]];
+  return [
+    ["Topic", ch.topic ? `<span class="chat-topic">${esc(ch.topic)}</span>` : ""],
+    ["Project", ch.proj ? `<span class="chat-proj">${ic("folder", "ic14")}${plink(ch.proj)}</span>` : ""],
+    ["Members", membersLink(ch)],
+  ];
+}
+const headerContext = (ch, chId) => joinSep(contextParts(ch, chId).map(([, v]) => (v ? `<span>${v}</span>` : "")));
+function detailsPanel(ch, chId) {
+  if (!local.details) return "";
+  const rows = contextParts(ch, chId).filter(([, v]) => v).map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+  return `<dl class="chat-details" id="chat-details" aria-label="Conversation details">${rows}</dl>`;
 }
 function headerLead(ch) {
   if (ch.kind === "dm") return av(ch.with, 32);
@@ -358,6 +238,7 @@ function headerLead(ch) {
 function headerActions(id, title) {
   const open = local.search?.id === id;
   return `<div class="ph-actions chat-actions">
+      <button class="btn ghost sm chat-details-btn" type="button" data-act="chat-details" aria-expanded="${local.details}" aria-controls="chat-details">${ic("info", "ic16")}Details</button>
       <button class="btn ghost icon chat-search" type="button" data-act="chat-search" aria-expanded="${open}" aria-controls="chat-search-row" aria-label="Search in ${esc(title)}" title="Search in ${esc(title)}">${ic("search", "ic20")}</button>
     </div>`;
 }
@@ -374,10 +255,11 @@ function chatHeaderHtml(id, ch, title) {
     <div class="ph-t chat-title">
       ${headerLead(ch)}
       <div class="chat-heading"><h1 id="ch-title" tabindex="-1">${esc(title)}</h1>
-        <p class="chat-context">${headerContext(ch)}</p>
+        <p class="chat-context">${headerContext(ch, id)}</p>
       </div>
     </div>
     ${headerActions(id, title)}
+    ${detailsPanel(ch, id)}
   </header>`;
 }
 function searchRowHtml(id, title) {
@@ -397,7 +279,10 @@ function chatThreadHtml(id, root, title) {
   const replies = root.thread || [];
   const count = replies.length ? plural(replies.length, "reply", "replies") : "No replies yet";
   const list = replies.map((r, i) => messageHtml(Object.assign({ id: root.id + "-r" + i }, r), i ? replies[i - 1] : null)).join("");
-  return `<aside class="thread" aria-labelledby="chat-thread-title"><header class="side-panel-header"><div class="thread-title"><h2 id="chat-thread-title" tabindex="-1">Thread</h2><span class="muted">${esc(title)}</span></div><button class="btn ghost icon" type="button" data-act="thread-close" aria-label="Close thread">${ic("x", "ic20")}</button></header>
+  /* Where the thread covers the conversation it is a modal dialog with a scrim (made inert-outside on mount). */
+  const modal = matchesMedia(OVERLAY_THREAD) ? ' role="dialog" aria-modal="true"' : "";
+  return `<div class="thread-scrim" data-act="thread-close" data-scrim aria-hidden="true"></div>
+    <aside class="thread"${modal} aria-labelledby="chat-thread-title"><header class="side-panel-header"><div class="thread-title"><h2 id="chat-thread-title" tabindex="-1">Thread</h2><span class="muted">${esc(title)}</span></div><button class="btn ghost icon" type="button" data-act="thread-close" aria-label="Close thread">${ic("x", "ic20")}</button></header>
       <div class="msgs">${messageHtml(Object.assign({}, root, { thread: null }), null)}<p class="chat-thread-count">${count}</p>${list}</div>
       ${CH[id].kind === "a2a" ? "" : threadComposer(id, root)}</aside>`;
 }
@@ -405,39 +290,41 @@ function readOnlyFoot(id, ch) {
   const buttons = ch.pair.map((k) => `<button class="btn outline sm" type="button" data-act="chat-dm" data-id="${k}" data-v="${esc(id)}">${ic("chat", "ic16")}Message ${esc(M[k].name)}</button>`).join("");
   return `<div class="readfoot"><p>${ic("eye", "ic16")}You can read this conversation but not reply in it.</p><div class="actions">${buttons}</div></div>`;
 }
+const askJump = () => `<div class="chat-asks-jump"><button class="btn sm" type="button" data-act="chat-asks-jump" hidden>${ic("bell", "ic16")}<span></span>${ic("chev-down", "ic16 chat-up")}</button></div>`;
 
 /* ---------------------------------------------------------------- page */
 function pageChat(id) {
-  id = id && CH[id] ? id : DEFAULT_CHAT;
+  id = resolveChatId(id);
   const ch = CH[id];
   ch.unread = 0;
   if (S.chatList && S.chatList !== id) S.chatList = null;
   const root = S.thread && ch.msgs.find((m) => m.id === S.thread);
   const title = chatTitle(ch), listOpen = S.chatList === id;
-  const cls = ["chat", root ? "withthread" : "", listOpen ? "list-open" : ""].filter(Boolean).join(" ");
+  const cls = ["chat", root ? "withthread" : "", listOpen ? "list-open" : "", local.details ? "details-open" : ""].filter(Boolean).join(" ");
   return `<div class="${cls}" data-ch="${esc(id)}">
     ${chatHeaderHtml(id, ch, title)}
     ${chatListHtml(id, listOpen)}
-    <div class="chat-scrim" data-act="chat-list" data-id="${id}" aria-hidden="true"></div>
+    <div class="chat-scrim" data-act="chat-list" data-id="${id}" data-scrim aria-hidden="true"></div>
     <section class="chmain" aria-labelledby="ch-title">
       ${searchRowHtml(id, title)}
+      ${askJump()}
       <div class="msgs" aria-label="Messages" data-ch="${esc(id)}">${streamHtml(id)}</div>
       ${ch.kind === "a2a" ? readOnlyFoot(id, ch) : chatComposer(id, title)}</section>
     ${chatThreadHtml(id, root, title)}
   </div>`;
 }
 
-/* ---------------------------------------------------------------- after render: position, overlay, local controls */
+/* ---------------------------------------------------------------- after render: position, overlays, local controls */
 let inerted = [];
 function releaseInert() {
   inerted.forEach((el) => { el.inert = false; });
   inerted = [];
 }
-/* The narrow conversation list is modal: everything outside it (except its scrim) is inert. */
+/* A modal overlay (narrow conversation list, overlay thread): everything outside it but scrims is inert. */
 function inertOutside(el) {
   for (let n = el; n.parentElement && n !== document.body; n = n.parentElement) {
     for (const sib of n.parentElement.children) {
-      if (sib === n || sib.inert || sib.classList.contains("chat-scrim") || sib.tagName === "SCRIPT") continue;
+      if (sib === n || sib.inert || sib.hasAttribute("data-scrim") || sib.tagName === "SCRIPT") continue;
       sib.inert = true;
       inerted.push(sib);
     }
@@ -489,17 +376,77 @@ function turnIntoTask(t, id, mid) {
   const prompt = `${m.text}\n\nFrom ${M[m.who].name} in ${chatTitle(ch)} (${m.time}): #/chat/${id}/${m.id}`;
   openSmartTaskComposer(t, { prompt });
 }
+
+/* Earlier asks above the reading position: one button jumps to the nearest, oldest last. */
+function asksAbove(s) {
+  const top = s.getBoundingClientRect().top;
+  return [...s.querySelectorAll(":scope > .msg .chat-needs:not(.is-done)")].filter((c) => c.getBoundingClientRect().bottom < top + 8);
+}
+function syncAskJump(s) {
+  const btn = document.querySelector('[data-act="chat-asks-jump"]');
+  if (!btn) return;
+  const n = asksAbove(s).length;
+  btn.hidden = !n;
+  btn.querySelector("span").textContent = n === 1 ? "1 earlier request needs you" : `${n} earlier requests need you`;
+}
+function jumpToAsk() {
+  const s = document.querySelector(".chat .chmain .msgs"), card = s && asksAbove(s).pop();
+  if (!card) return;
+  s.scrollTop += card.closest(".msg").getBoundingClientRect().top - s.getBoundingClientRect().top - 8;
+  card.querySelector(".chat-needs-q").focus({ preventScroll: true });
+  syncAskJump(s);
+}
+function watchAsks(s) {
+  let frame = 0;
+  s.addEventListener("scroll", () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(() => syncAskJump(s)); }, { passive: true });
+  setTimeout(() => s.isConnected && syncAskJump(s), 400);
+  syncAskJump(s);
+}
+
+/* Threads: focus returns to the control that opened it, or the visible one for that message. */
+function threadOpener(t, id) {
+  const menu = t.closest(".menu");
+  if (menu) return `[aria-controls="${menu.id}"]`;
+  return t.classList.contains("thr") ? `.chmain .thr[data-id="${CSS.escape(id)}"]` : `.chmain .msg-tool[data-act="thread"][data-id="${CSS.escape(id)}"]`;
+}
+const visible = (el) => el && el.getClientRects().length > 0;
+function focusThreadOpener(id) {
+  const options = [local.threadFrom, `.chmain .thr[data-id="${CSS.escape(id)}"]`, `[aria-controls="menu-msg-${CSS.escape(id)}"]`, `.chmain .msg-tool[data-act="thread"][data-id="${CSS.escape(id)}"]`];
+  const el = options.filter(Boolean).map((sel) => document.querySelector(sel)).find(visible);
+  el?.focus();
+}
+function toggleThread(id, t) {
+  const closing = S.thread === id;
+  if (!closing) local.threadFrom = threadOpener(t, id);
+  S.thread = closing ? null : id;
+  render(false);
+  if (closing) focusThreadOpener(id);
+  else document.getElementById("chat-thread-title")?.focus();
+}
+function closeThread() {
+  const id = S.thread;
+  if (!id) return;
+  S.thread = null;
+  render(false);
+  focusThreadOpener(id);
+}
+function toggleDetails() {
+  local.details = !local.details;
+  render(false);
+  document.querySelector(".chat-details-btn")?.focus();
+}
 const CLICKS = {
-  "chat-ask-reply": (id) => {
-    Object.assign(local, { askReply: id, askNote: null });
-    S.replying = null; S.confirmDeny = null;
-    render(false);
-    document.getElementById("ar-" + id)?.focus();
-  },
-  "chat-ask-send": (id) => sendAskReply(id),
-  "chat-ask-cancel": (id) => closeAskReply(id),
+  ...ASK_CLICKS,
+  thread: (id, t) => toggleThread(id, t),
+  "thread-close": () => closeThread(),
   "chat-search": (_id, _t, chId) => toggleSearch(chId),
+  "chat-details": () => toggleDetails(),
   "chat-task": (id, t, chId) => turnIntoTask(t, chId, id),
+  "chat-asks-jump": () => jumpToAsk(),
+  "chat-dm-msg": (id, _t, chId) => {
+    const m = CH[chId].msgs.find((x) => x.id === id);
+    if (m) location.hash = openDirectMessage(m.who, { ch: chId, msg: id });
+  },
   "chat-src-remove": (id) => {
     dmSources.delete(id);
     render(false);
@@ -507,22 +454,27 @@ const CLICKS = {
   },
 };
 function onChatClick(e) {
+  onListClick(e, e.currentTarget);
   const t = e.target.closest("[data-act]"), fn = t && CLICKS[t.dataset.act];
   if (fn) fn(t.dataset.id, t, e.currentTarget.dataset.ch);
 }
 function onChatInput(e) {
   const t = e.target;
   if (t.id === "thread-compose") { threadDrafts.set(t.form.dataset.id, t.value); fitTextarea(t); }
-  else if (t.id.startsWith("ar-")) askDrafts.set(t.id.slice(3), t.value);
+  else if (t.id.startsWith("ar-")) saveAskDraft(t);
   else if (t.id === "chat-search-input" && local.search) { local.search.q = t.value; refreshSearch(document.querySelector(".chat .chmain .msgs")); }
+  else onListInput(e, e.currentTarget);
 }
 function onChatKeydown(e) {
   const t = e.target;
   if (t.id === "chat-search-input" && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); toggleSearch(local.search.id); return; }
-  if (!t.id.startsWith("ar-") || t.tagName !== "TEXTAREA") return;
-  const id = t.id.slice(3);
-  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeAskReply(id); }
-  else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); sendAskReply(id); }
+  onListKeydown(e, e.currentTarget);
+  onAskKeydown(e);
+}
+function mountOverlays(root) {
+  if (root.classList.contains("list-open")) inertOutside(root.querySelector(".chlist"));
+  const thread = root.querySelector('.thread[aria-modal="true"]');
+  if (thread) inertOutside(thread);
 }
 function mountChat() {
   releaseInert();
@@ -533,22 +485,39 @@ function mountChat() {
   markLinked(s);
   placeStream(s, q ? { top: true } : initialPos(id));
   trackPos(s);
+  watchAsks(s);
   root.addEventListener("click", onChatClick);
   root.addEventListener("input", onChatInput);
   root.addEventListener("keydown", onChatKeydown);
   fitTextarea(document.getElementById("thread-compose"));
-  if (root.classList.contains("list-open")) inertOutside(root.querySelector(".chlist"));
+  mountOverlays(root);
+  takeListFocus();
 }
-/* Leaving Chat (or the conversation) always releases the modal list's inert background. */
+
+/* "#" and the New message command open the list (as the drawer below 960 px) on its search or recipient picker. */
+function openChatList(mode) {
+  const here = route()[0] === "chat", id = here ? resolveChatId(route()[1]) : DEFAULT_CHAT;
+  prepareList(mode);
+  if (matchesMedia(NARROW_LIST)) S.chatList = id;
+  if (here) render(false);
+  else location.hash = "#/chat/" + id;
+}
+const findConversation = () => openChatList("find");
+const startNewMessage = () => openChatList("new");
+
+/* Leaving Chat (or the conversation) always releases modal overlays' inert background. */
 window.addEventListener("hashchange", () => {
   releaseInert();
-  local.askReply = null;
-  local.askNote = null;
+  resetAsks();
+  local.details = false;
 });
+/* Crossing the overlay-thread width re-renders so the thread is a dialog only where it covers the conversation. */
+window.matchMedia?.(OVERLAY_THREAD).addEventListener?.("change", () => { if (route()[0] === "chat" && S.thread) render(false); });
 
 export {
   chatDocTitle,
   chatDrafts,
+  findConversation,
   msgHtml,
   openDirectMessage,
   mountChat,
@@ -556,4 +525,5 @@ export {
   recordAskReply,
   sendChatMessage,
   sendThreadReply,
+  startNewMessage,
 };

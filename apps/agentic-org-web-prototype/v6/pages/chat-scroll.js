@@ -25,13 +25,17 @@ function scrollToEnd(s) {
   s.scrollTop = s.scrollHeight;
 }
 /* Opens on a message boundary: the boundary that wastes least, where hiding the newest lines
-   below the fold costs twice as much as leaving blank space after them. */
+   below the fold costs twice as much as leaving blank space after them. Blank space is capped
+   (a fifth of the view, at most 120 px) and so is hidden text (half that); with no boundary in
+   that window the stream opens at its end, like any chat. */
 function boundaryY(s) {
   const max = s.scrollHeight - spacerOf(s) - s.clientHeight;
   if (max <= 0) return 0;
+  const cap = Math.min(120, s.clientHeight / 5);
   let best = max, bestCost = Infinity;
   for (const el of items(s)) {
     const y = yOf(s, el) - BOUNDARY_GAP;
+    if (y > max + cap || y < max - cap / 2) continue;
     const cost = y >= max ? y - max : (max - y) * 2;
     if (cost < bestCost) { best = y; bestCost = cost; }
   }
