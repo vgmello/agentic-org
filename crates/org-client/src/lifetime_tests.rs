@@ -1,7 +1,8 @@
 use super::*;
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::net::UnixListener;
+use std::sync::mpsc;
 
 const WAIT: Duration = Duration::from_secs(10);
 
