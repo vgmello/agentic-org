@@ -236,3 +236,133 @@ fn owner_only_ancestors_and_files_enforce_uid_mode_and_no_symlinks() {
         assert!(super::create_owner_only_dir_all(evasive).is_err());
     }
 }
+
+mod owner_only_dir {
+    use std::ffi::OsStr;
+    use std::fs;
+    use std::io;
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::super::{effective_uid, OwnerOnlyDir, SymlinkOutcome};
+
+    fn owner_only(path: &std::path::Path) {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[test]
+    fn opening_refuses_a_symlink_a_foreign_mode_and_a_foreign_owner() {
+        let uid = effective_uid().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        fs::create_dir(&home).unwrap();
+        owner_only(&home);
+        OwnerOnlyDir::open(&home, uid).expect("a real owner-only directory opens");
+
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&home, &link).unwrap();
+        assert!(
+            OwnerOnlyDir::open(&link, uid).is_err(),
+            "a symlink is refused"
+        );
+
+        fs::set_permissions(&home, fs::Permissions::from_mode(0o755)).unwrap();
+        let wide = OwnerOnlyDir::open(&home, uid).unwrap_err();
+        assert_eq!(wide.kind(), io::ErrorKind::PermissionDenied);
+        owner_only(&home);
+        let foreign = OwnerOnlyDir::open(&home, uid.wrapping_add(1)).unwrap_err();
+        assert_eq!(foreign.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn a_child_is_created_owner_only_and_a_symlinked_child_is_never_followed() {
+        let uid = effective_uid().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        fs::create_dir(&home).unwrap();
+        owner_only(&home);
+        let dir = OwnerOnlyDir::open(&home, uid).unwrap();
+        dir.open_or_create_child(OsStr::new(".cargo"), uid).unwrap();
+        let mode = fs::metadata(home.join(".cargo"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o7777 & !0o700, 0, "created owner-only: {mode:o}");
+        dir.open_or_create_child(OsStr::new(".cargo"), uid)
+            .expect("an existing owner-only child reopens");
+        fs::set_permissions(home.join(".cargo"), fs::Permissions::from_mode(0o755)).unwrap();
+        dir.open_or_create_child(OsStr::new(".cargo"), uid)
+            .expect("a widened child of the same account is tightened, not refused");
+        let mode = fs::metadata(home.join(".cargo"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o7777,
+            0o700,
+            "tightened through the descriptor: {mode:o}"
+        );
+
+        let outside = root.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        owner_only(&outside);
+        fs::remove_dir(home.join(".cargo")).unwrap();
+        std::os::unix::fs::symlink(&outside, home.join(".cargo")).unwrap();
+        assert!(
+            dir.open_or_create_child(OsStr::new(".cargo"), uid).is_err(),
+            "a symlinked child is refused rather than followed"
+        );
+        for bad in ["", ".", "..", "a/b"] {
+            let err = dir.open_or_create_child(OsStr::new(bad), uid).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn symlinks_are_created_kept_replaced_and_other_entries_are_left_alone() {
+        let uid = effective_uid().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        fs::create_dir(&home).unwrap();
+        owner_only(&home);
+        let target_a = root.path().join("a");
+        let target_b = root.path().join("b");
+        fs::create_dir(&target_a).unwrap();
+        fs::create_dir(&target_b).unwrap();
+        let dir = OwnerOnlyDir::open(&home, uid).unwrap();
+        let name = OsStr::new("registry");
+
+        assert_eq!(
+            dir.ensure_symlink(name, &target_a).unwrap(),
+            SymlinkOutcome::Created
+        );
+        assert_eq!(
+            dir.ensure_symlink(name, &target_a).unwrap(),
+            SymlinkOutcome::AlreadyLinked
+        );
+        assert_eq!(
+            dir.ensure_symlink(name, &target_b).unwrap(),
+            SymlinkOutcome::Created
+        );
+        assert_eq!(fs::read_link(home.join("registry")).unwrap(), target_b);
+
+        fs::create_dir(home.join("git")).unwrap();
+        assert_eq!(
+            dir.ensure_symlink(OsStr::new("git"), &target_a).unwrap(),
+            SymlinkOutcome::RealDirectory
+        );
+        fs::write(home.join("file"), b"x").unwrap();
+        let err = dir
+            .ensure_symlink(OsStr::new("file"), &target_a)
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(home.join("file")).unwrap(), b"x");
+
+        assert!(dir.remove_symlink(name).unwrap());
+        assert!(!dir.remove_symlink(name).unwrap(), "already gone");
+        assert!(!dir.remove_symlink(OsStr::new("git")).unwrap());
+        assert!(
+            home.join("git").is_dir(),
+            "a real directory is never removed"
+        );
+    }
+}

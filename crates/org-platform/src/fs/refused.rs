@@ -109,6 +109,30 @@ pub(super) fn verify_owner_only_file(
     refused()
 }
 
+pub(super) fn open_owner_only_dir(_path: &Path, _expected_uid: u32) -> io::Result<File> {
+    refused()
+}
+
+pub(super) fn open_or_create_owner_only_child(
+    _dir: &File,
+    _name: &std::ffi::OsStr,
+    _expected_uid: u32,
+) -> io::Result<File> {
+    refused()
+}
+
+pub(super) fn ensure_symlink_at(
+    _dir: &File,
+    _name: &std::ffi::OsStr,
+    _target: &Path,
+) -> io::Result<super::SymlinkOutcome> {
+    refused()
+}
+
+pub(super) fn remove_symlink_at(_dir: &File, _name: &std::ffi::OsStr) -> io::Result<bool> {
+    refused()
+}
+
 pub(super) fn paths_case_insensitive_by_default() -> bool {
     false
 }

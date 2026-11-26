@@ -8,7 +8,6 @@ publish.workspace = true
 [dependencies]
 base64.workspace = true
 libc.workspace = true
-org-agent-cli = { path = "../org-agent-cli" }
 org-agent-runtime = { path = "../org-agent-runtime" }
 org-agent-runtime-agy = { path = "../org-agent-runtime-agy" }
 org-agent-runtime-claude = { path = "../org-agent-runtime-claude" }
@@ -25,6 +24,8 @@ serde_json.workspace = true
 zeroize = "=1.9.1"
 
 [dev-dependencies]
+# The live `agent-os` command table the tests render; production injects it from the office binary.
+org-agent-cli = { path = "../org-agent-cli" }
 org-office = { path = "../org-office", features = ["testkit"] }
 tempfile.workspace = true
 

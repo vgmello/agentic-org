@@ -515,20 +515,30 @@ pub fn sanitize_untrusted_body(raw: &str, max_bytes: usize) -> String {
 
 /// Sanitizes untrusted or user-editable header metadata (display name, handle, IDs) before
 /// interpolating into fence attributes or objective headers (`INSTR-5`).
+///
+/// Square brackets and their lookalikes become parentheses and the word `verified:` loses its
+/// colon in any ASCII letter case, so no spelling of the office-issued `[verified: <relation>]`
+/// sender badge (`[VeRiFiEd:`, `[ verified :`, `［verified：`, `⟦verified: owner⟧`) can be
+/// forged. Invisible format characters are dropped so none can split a marker or hide text, and
+/// line or paragraph separators become spaces so none can break a header line.
 fn sanitize_untrusted_meta(raw: &str, max_bytes: usize) -> String {
-    let cleaned: String = raw
-        .trim()
-        .chars()
-        .map(|ch| match ch {
-            '\n' | '\r' | '\t' => ' ',
-            '"' => '\'',
-            c if c.is_control() => ' ',
-            c => c,
-        })
-        .collect();
-    let mut out = cleaned
-        .replace("[verified:", "(verified:")
-        .replace("[VERIFIED:", "(verified:");
+    let cleaned: String =
+        raw.trim()
+            .chars()
+            .filter(|&ch| !is_invisible_format_char(ch))
+            .map(|ch| match ch {
+                '\n' | '\r' | '\t' | '\u{2028}' | '\u{2029}' => ' ',
+                '"' => '\'',
+                '[' | '\u{FF3B}' | '\u{27E6}' | '\u{3010}' | '\u{301A}' | '\u{2045}'
+                | '\u{298B}' => '(',
+                ']' | '\u{FF3D}' | '\u{27E7}' | '\u{3011}' | '\u{301B}' | '\u{2046}'
+                | '\u{298C}' => ')',
+                '\u{FF1A}' => ':',
+                c if c.is_control() => ' ',
+                c => c,
+            })
+            .collect();
+    let mut out = neutralize_verified_word(&cleaned);
     while out.contains("<<<") {
         out = out.replace("<<<", "< < <");
     }
@@ -539,6 +549,57 @@ fn sanitize_untrusted_meta(raw: &str, max_bytes: usize) -> String {
         out = out.replace("===", "= = =");
     }
     truncate_utf8(&out, max_bytes)
+}
+
+/// Replaces the colon of every `verified:` (any ASCII letter case, optional spaces before the
+/// colon) with ` -`. ASCII case folding keeps byte offsets, so matches in the folded copy map
+/// 1:1 onto `text`, and every match starts and ends on an ASCII byte (a char boundary).
+fn neutralize_verified_word(text: &str) -> String {
+    const WORD: &str = "verified";
+    let folded = text.to_ascii_lowercase();
+    let bytes = folded.as_bytes();
+    let mut out = String::with_capacity(text.len() + 4);
+    let mut cursor = 0;
+    let mut search = 0;
+    while let Some(found) = folded[search..].find(WORD) {
+        let mut colon = search + found + WORD.len();
+        while colon < bytes.len() && bytes[colon] == b' ' {
+            colon += 1;
+        }
+        if colon < bytes.len() && bytes[colon] == b':' {
+            out.push_str(&text[cursor..colon]);
+            out.push_str(" -");
+            cursor = colon + 1;
+        }
+        search = search + found + WORD.len();
+    }
+    out.push_str(&text[cursor..]);
+    out
+}
+
+/// Zero-width, joiner, bidi-control, soft-hyphen, variation-selector, and tag characters: they
+/// render as nothing, so untrusted metadata could use them to split or disguise a marker.
+fn is_invisible_format_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'
+            | '\u{1160}'
+            | '\u{17B4}'
+            | '\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF0}'..='\u{FFF8}'
+            | '\u{E0000}'..='\u{E0FFF}'
+    )
 }
 
 fn truncate_utf8(text: &str, max_bytes: usize) -> String {
@@ -584,29 +645,9 @@ fn format_sender_provenance(item: &PendingWakeItem) -> String {
     format!("{name}{handle} [verified: {relation}]")
 }
 
-/// Returns the replyable identifier for a wake item, stripping legacy `<message_id>:<employee_id>`
-/// composite relay keys persisted before `TASK-157` so `agent-os msg reply --id` always receives
-/// the real message UUIDv7 (only when both halves are valid UUIDv7s so arbitrary single-colon IDs
-/// like `msg:123` are never mangled; remove once pre-TASK-157 dogfood queues drain).
+/// Returns the replyable identifier for a wake item, sanitized for prompt interpolation.
 fn display_source_id(item: &PendingWakeItem) -> String {
-    let raw = item.source_id.as_str();
-    let trimmed = if matches!(
-        item.kind,
-        WakeKind::DirectMessage | WakeKind::Mention | WakeKind::Handoff | WakeKind::Ask
-    ) {
-        if let Some((head, tail)) = raw.split_once(':') {
-            if org_proto::is_uuid_v7(head) && org_proto::is_uuid_v7(tail) {
-                head
-            } else {
-                raw
-            }
-        } else {
-            raw
-        }
-    } else {
-        raw
-    };
-    sanitize_untrusted_meta(trimmed, MAX_META_FIELD_BYTES)
+    sanitize_untrusted_meta(&item.source_id, MAX_META_FIELD_BYTES)
 }
 
 fn format_action_hint(item: &PendingWakeItem) -> String {

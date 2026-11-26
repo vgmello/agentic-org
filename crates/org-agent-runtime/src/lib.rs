@@ -22,6 +22,9 @@
 //!   [`RateLimit`] and [`TurnOutcome`]. [`Capabilities`] says where runtimes differ.
 //! - [`encode_line`] and [`LineFramer`] are the one encoder and framer every adapter and the
 //!   pump share, so line handling can't drift between runtimes.
+//! - [`validate_plan_paths`], [`validate_standard_session_kind`],
+//!   [`expand_capability_allowlist`], [`static_env_names`] and [`runtime_env_add`] are the
+//!   pure planning rules adapters share, so a refusal reads the same in every runtime.
 //!
 //! The adapter never spawns, so `org-supervise` stays the one place that does. Adapters
 //! depend only on this crate.
@@ -158,6 +161,7 @@ mod event;
 mod line;
 mod path;
 mod plan;
+mod plan_rules;
 mod probe;
 mod runtime;
 mod session;
@@ -178,6 +182,10 @@ pub use path::{PathPattern, RelPath, SpecPath, SpecPathError};
 pub use plan::{
     CleanupPath, FileLocation, LaunchPlan, PlannedDir, PlannedFile, ProbePlan, SignalTarget, Stdio,
     StopPlan, StopSignal, StopStep,
+};
+pub use plan_rules::{
+    expand_capability_allowlist, runtime_env_add, static_env_names, validate_plan_paths,
+    validate_standard_session_kind,
 };
 pub use probe::{
     DiscoveredModel, ModelEntitlement, Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun,

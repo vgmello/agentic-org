@@ -63,6 +63,19 @@ pub trait AgentRuntime: Send + Sync {
     /// Reads a one-shot probe's output ([`ProbeRun::OneShot`]). Pure: the same output always
     /// gives the same result. (A conversation's result comes from its own session.)
     fn parse_probe(&self, probe: Probe, out: &ProbeOutput) -> ProbeResult;
+
+    /// Whether `reply`, the final assistant reply text of a turn, is this runtime's in-band
+    /// signal that its provider credentials have expired (a runtime that reports a rejected
+    /// sign-in as the turn's answer rather than as a failed turn). The office then treats
+    /// the turn as failed for expired credentials instead of delivering the text.
+    ///
+    /// Pure, no I/O: the same text always gives the same answer. It recognises only the
+    /// runtime's own short error forms, never prose that merely mentions them. The default,
+    /// for a runtime that reports expired credentials out of band, is `false`.
+    fn reply_signals_auth_expired(&self, reply: &str) -> bool {
+        let _ = reply;
+        false
+    }
 }
 
 /// Why an adapter couldn't plan a launch.

@@ -1,10 +1,15 @@
+mod paths;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use org_agent_runtime::{
+    runtime_env_add, static_env_names, validate_plan_paths, validate_standard_session_kind,
     Capabilities, EnvName, FileLocation, LaunchContext, LaunchPlan, PermissionMode, PlanError,
-    PlannedFile, RelPath, RuleScope, SessionId, SessionKind, SessionSpec, SignalTarget, SpecPath,
-    Stdio, StopPlan, StopSignal, StopStep, ToolCapability,
+    PlannedFile, RelPath, RuleScope, SessionId, SessionKind, SessionSpec, SignalTarget, Stdio,
+    StopPlan, StopSignal, StopStep, ToolCapability,
 };
+
+use self::paths::{path_is_same_or_under, paths_overlap_via_alias_only};
 
 const INSTRUCTIONS_FILE: &str = "codex-instructions.md";
 
@@ -114,20 +119,13 @@ fn effective_codex_sandbox_mode(
     Ok(sandbox_mode)
 }
 
-fn validate_session_kind(kind: &SessionKind) -> Result<(), PlanError> {
-    match kind {
-        SessionKind::Home {} | SessionKind::Task { .. } | SessionKind::OneOff { .. } => Ok(()),
-        _ => Err(PlanError::Unsupported("session kind")),
-    }
-}
-
 pub(crate) fn build_headless_plan(
     spec: &SessionSpec,
     ctx: &LaunchContext,
     caps: &Capabilities,
 ) -> Result<(LaunchPlan, CodexThreadConfig), PlanError> {
-    validate_session_kind(&spec.kind)?;
-    validate_paths(spec, ctx)?;
+    validate_standard_session_kind(&spec.kind)?;
+    validate_plan_paths(spec, ctx)?;
     validate_deny_rules(spec)?;
     validate_tool_allowlist(spec)?;
     let sandbox_mode = effective_codex_sandbox_mode(spec, caps)?;
@@ -178,7 +176,7 @@ pub(crate) fn build_headless_plan(
         program: ctx.runtime_path.clone(),
         args,
         cwd: spec.workspace.clone(),
-        env_add: build_env_add(ctx),
+        env_add: runtime_env_add(ENV_ADD, CONFIG_DIR_ENV, ctx),
         dirs: Vec::new(),
         files,
         stdio: Stdio::Piped,
@@ -207,13 +205,13 @@ pub(crate) fn build_take_over_plan(
     cols: u16,
     rows: u16,
 ) -> Result<LaunchPlan, PlanError> {
-    validate_session_kind(&spec.kind)?;
+    validate_standard_session_kind(&spec.kind)?;
     if matches!(spec.kind, SessionKind::OneOff { .. }) {
         return Err(PlanError::InvalidSpec(
             "one-off sessions cannot be taken over".to_owned(),
         ));
     }
-    validate_paths(spec, ctx)?;
+    validate_plan_paths(spec, ctx)?;
     validate_deny_rules(spec)?;
     validate_tool_allowlist(spec)?;
     let Some(resume_id) = ctx.resume.clone() else {
@@ -245,7 +243,7 @@ pub(crate) fn build_take_over_plan(
         program: ctx.runtime_path.clone(),
         args,
         cwd: spec.workspace.clone(),
-        env_add: build_env_add(ctx),
+        env_add: runtime_env_add(ENV_ADD, CONFIG_DIR_ENV, ctx),
         dirs: Vec::new(),
         files: Vec::new(),
         stdio: Stdio::Pty { cols, rows },
@@ -261,33 +259,6 @@ pub(crate) fn build_take_over_plan(
         secret_env_names: secret_env_names(),
         auth_env_names: auth_env_names(),
     })
-}
-
-fn validate_paths(spec: &SessionSpec, ctx: &LaunchContext) -> Result<(), PlanError> {
-    if spec.workspace.is_root() {
-        return Err(PlanError::InvalidSpec(
-            "workspace must not be `/`".to_owned(),
-        ));
-    }
-    if ctx.tmpdir.is_root() {
-        return Err(PlanError::InvalidSpec("tmpdir must not be `/`".to_owned()));
-    }
-    if ctx.runtime_dir.is_root() {
-        return Err(PlanError::InvalidSpec(
-            "runtime_dir must not be `/`".to_owned(),
-        ));
-    }
-    if ctx.config_dir.as_ref().is_some_and(SpecPath::is_root) {
-        return Err(PlanError::InvalidSpec(
-            "config_dir must not be `/`".to_owned(),
-        ));
-    }
-    if spec.sandbox.writable_roots.iter().any(SpecPath::is_root) {
-        return Err(PlanError::InvalidSpec(
-            "sandbox writable_roots must not include `/`".to_owned(),
-        ));
-    }
-    Ok(())
 }
 
 fn validate_deny_rules(spec: &SessionSpec) -> Result<(), PlanError> {
@@ -369,72 +340,6 @@ fn validate_codex_literal_fs_path(path: &str) -> Result<(), PlanError> {
         ));
     }
     Ok(())
-}
-
-fn canonicalize_os_alias(path: &str, is_macos: bool) -> std::borrow::Cow<'_, str> {
-    if !is_macos {
-        return std::borrow::Cow::Borrowed(path);
-    }
-    for (alias_prefix, private_prefix) in [
-        ("/var", "/private/var"),
-        ("/tmp", "/private/tmp"),
-        ("/etc", "/private/etc"),
-    ] {
-        if path == alias_prefix {
-            return std::borrow::Cow::Borrowed(private_prefix);
-        }
-        if let Some(rest) = path.strip_prefix(alias_prefix) {
-            if rest.starts_with('/') {
-                return std::borrow::Cow::Owned(format!("{private_prefix}{rest}"));
-            }
-        }
-    }
-    std::borrow::Cow::Borrowed(path)
-}
-
-fn path_is_same_or_under_literal(path: &str, base: &str) -> bool {
-    let p = path.trim_end_matches('/');
-    let b = base.trim_end_matches('/');
-    if b.is_empty() {
-        return true;
-    }
-    p == b || p.starts_with(&format!("{b}/"))
-}
-
-fn path_is_same_or_under_for_os(path: &str, base: &str, is_macos: bool) -> bool {
-    let p = canonicalize_os_alias(path.trim_end_matches('/'), is_macos);
-    let b = canonicalize_os_alias(base.trim_end_matches('/'), is_macos);
-    if b.is_empty() {
-        return true;
-    }
-    p.as_ref() == b.as_ref() || p.starts_with(&format!("{b}/"))
-}
-
-fn path_is_same_or_under(path: &str, base: &str) -> bool {
-    path_is_same_or_under_for_os(
-        path,
-        base,
-        org_platform::fs::has_macos_private_root_aliases(),
-    )
-}
-
-fn paths_overlap_via_alias_only_for_os(path: &str, base: &str, is_macos: bool) -> bool {
-    if !is_macos {
-        return false;
-    }
-    let same_or_under = path_is_same_or_under_for_os(path, base, true)
-        || path_is_same_or_under_for_os(base, path, true);
-    let literal =
-        path_is_same_or_under_literal(path, base) || path_is_same_or_under_literal(base, path);
-    same_or_under && !literal
-}
-
-fn paths_overlap_via_alias_only(path: &str, base: &str) -> bool {
-    paths_overlap_via_alias_only_for_os(
-        path,
-        base,
-        org_platform::fs::has_macos_private_root_aliases(),
-    )
 }
 
 fn access_rank(level: &str) -> u8 {
@@ -777,87 +682,26 @@ fn combine_instructions(spec: &SessionSpec) -> String {
     }
 }
 
-fn build_env_add(ctx: &LaunchContext) -> Vec<(EnvName, String)> {
-    let mut env = vec![(
-        EnvName::try_from("CODEX_DISABLE_TELEMETRY").expect("static env"),
-        "1".to_owned(),
-    )];
-    if let Some(cfg_dir) = &ctx.config_dir {
-        env.push((
-            EnvName::try_from("CODEX_HOME").expect("static env"),
-            cfg_dir.as_str().to_owned(),
-        ));
-    }
-    env
-}
+/// Codex's own switches, added to the office's environment.
+const ENV_ADD: &[(&str, &str)] = &[("CODEX_DISABLE_TELEMETRY", "1")];
+
+/// Where Codex keeps its config, set to `LaunchContext::config_dir` when given.
+const CONFIG_DIR_ENV: &str = "CODEX_HOME";
 
 pub(crate) fn auth_env_names() -> Vec<EnvName> {
-    [
+    static_env_names(&[
         "OPENAI_API_KEY",
         "CODEX_API_KEY",
         "CODEX_ACCESS_TOKEN",
         "OPENAI_BASE_URL",
-    ]
-    .into_iter()
-    .map(|name| EnvName::try_from(name).expect("static auth env"))
-    .collect()
+    ])
 }
 
 fn secret_env_names() -> Vec<EnvName> {
-    [
+    static_env_names(&[
         "OPENAI_API_KEY",
         "CODEX_API_KEY",
         "CODEX_ACCESS_TOKEN",
         "OPENAI_ORG_ID",
-    ]
-    .into_iter()
-    .map(|name| EnvName::try_from(name).expect("static secret env"))
-    .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn linux_keeps_var_and_private_var_disjoint_while_macos_detects_alias_overlap() {
-        // On Linux, `/var/lib/agent/work` and `/private/var/lib/agent` are distinct directories.
-        assert!(!path_is_same_or_under_for_os(
-            "/var/lib/agent/work",
-            "/private/var/lib/agent",
-            false
-        ));
-        assert!(!paths_overlap_via_alias_only_for_os(
-            "/var/lib/agent/work",
-            "/private/var/lib/agent",
-            false
-        ));
-        assert!(!path_is_same_or_under_for_os(
-            "/var/nested",
-            "/private",
-            false
-        ));
-
-        // On macOS, `/var` aliases `/private/var`, so both containment and alias overlap fire.
-        assert!(path_is_same_or_under_for_os(
-            "/var/lib/agent/work",
-            "/private/var/lib/agent",
-            true
-        ));
-        assert!(paths_overlap_via_alias_only_for_os(
-            "/var/lib/agent/work",
-            "/private/var/lib/agent",
-            true
-        ));
-        assert!(path_is_same_or_under_for_os(
-            "/var/nested",
-            "/private",
-            true
-        ));
-        assert!(path_is_same_or_under_for_os(
-            "/private/var/tmp/run-1",
-            "/private",
-            true
-        ));
-    }
+    ])
 }

@@ -260,6 +260,64 @@ pub fn verify_owner_only_file(
     native::verify_owner_only_file(path, expected_uid, require_exec)
 }
 
+/// What [`OwnerOnlyDir::ensure_symlink`] found at the name, or did there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SymlinkOutcome {
+    /// A symbolic link to the target was created (replacing a link to anything else).
+    Created,
+    /// A symbolic link to exactly the target was already there.
+    AlreadyLinked,
+    /// A real directory is there; it was left as it is.
+    RealDirectory,
+}
+
+/// A directory held by descriptor: opened with `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC` and
+/// verified (`fstat`) to be a real directory owned by the expected account with owner-only
+/// permissions. Its entries are then created, read and removed with `*at` calls on one plain
+/// name relative to the descriptor, so a symbolic link swapped into the path afterwards can never
+/// redirect a write outside it. Every unsupported target fails closed.
+#[derive(Debug)]
+pub struct OwnerOnlyDir {
+    dir: File,
+}
+
+impl OwnerOnlyDir {
+    /// Opens `path` (a symbolic link at its last component is refused) and verifies it.
+    pub fn open(path: &Path, expected_uid: u32) -> io::Result<Self> {
+        native::open_owner_only_dir(path, expected_uid).map(|dir| Self { dir })
+    }
+
+    /// Opens the child directory `name` (one plain component), creating it with mode `0700`
+    /// when missing, without following a symbolic link, and verifies it the same way. An
+    /// existing child owned by `expected_uid` with a wider mode is tightened to `0700` through
+    /// its descriptor; one owned by another account is refused.
+    pub fn open_or_create_child(
+        &self,
+        name: &std::ffi::OsStr,
+        expected_uid: u32,
+    ) -> io::Result<Self> {
+        native::open_or_create_owner_only_child(&self.dir, name, expected_uid)
+            .map(|dir| Self { dir })
+    }
+
+    /// Makes the entry `name` a symbolic link to `target`: a link to exactly `target` is kept, a
+    /// link to anything else is replaced, a real directory is left as it is, and any other entry
+    /// is refused ([`io::ErrorKind::AlreadyExists`]).
+    pub fn ensure_symlink(
+        &self,
+        name: &std::ffi::OsStr,
+        target: &Path,
+    ) -> io::Result<SymlinkOutcome> {
+        native::ensure_symlink_at(&self.dir, name, target)
+    }
+
+    /// Removes the entry `name` only when it is a symbolic link; `Ok(false)` when it is missing
+    /// or anything else (which is left as it is).
+    pub fn remove_symlink(&self, name: &std::ffi::OsStr) -> io::Result<bool> {
+        native::remove_symlink_at(&self.dir, name)
+    }
+}
+
 /// Whether the build target's default filesystem folds case when matching deny patterns
 /// (true on macOS APFS/HFS+, false on GNU/Linux and unsupported targets).
 pub fn paths_case_insensitive_by_default() -> bool {
