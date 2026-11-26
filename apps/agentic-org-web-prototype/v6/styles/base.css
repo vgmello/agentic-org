@@ -879,7 +879,7 @@ body.nokeys .search kbd { display: none; }
 .back { display: inline-flex; align-items: center; gap: 4px; color: var(--gray-400); font-weight: 600; font-size: var(--fs-sm); padding: 12px var(--gutter) 0; }
 .back:hover { color: var(--white); }
 /* Inline page search row (Inbox, Work) revealed by the toolbar search icon */
-.search-toggle.is-active { color: var(--white); background: var(--hover); }
+.search-toggle.is-active { color: var(--white); background: var(--tone-accent-soft); box-shadow: inset 0 0 0 1px var(--tone-accent-ring); }
 .inline-search { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
 .inline-search label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; color: var(--gray-400); }
 .inline-search input {
