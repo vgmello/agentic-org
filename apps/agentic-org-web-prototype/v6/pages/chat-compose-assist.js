@@ -48,8 +48,7 @@ const listId = (field) => `${field.id}-assist`;
 const optionId = (field, i) => `${field.id}-assist-${i}`;
 function optionHtml(field, it, i) {
   const lead = it.who ? av(it.who, 20) : `<span class="chat-assist-sym" aria-hidden="true">${it.label[0]}</span>`;
-  const label = it.who ? esc(it.label) : esc(it.label);
-  return `<li role="option" id="${optionId(field, i)}" aria-selected="${i === assist.active}" data-i="${i}">${lead}<span class="chat-assist-label">${label}</span><span class="chat-assist-hint">${esc(it.hint)}</span></li>`;
+  return `<li role="option" id="${optionId(field, i)}" aria-selected="${i === assist.active}" data-i="${i}">${lead}<span class="chat-assist-label">${esc(it.label)}</span><span class="chat-assist-hint">${esc(it.hint)}</span></li>`;
 }
 function listboxEl(field) {
   let box = document.getElementById(listId(field));
