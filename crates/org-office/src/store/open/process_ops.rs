@@ -156,6 +156,65 @@ impl ReadOp for LaunchProcessSnapshotRead {
     }
 }
 
+/// Loads, in one read, what an agent's standing process set (its home team chain) and the sets
+/// of the tasks one turn names are resolved from, so they never come from different revisions
+/// (`doc-34` §3.1). A task that no longer resolves, or whose project no longer does, is left
+/// out: the wake that named it is stale and the task has no chain to apply.
+pub struct TaskProcessSnapshotRead {
+    pub employee_id: String,
+    pub task_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskProcessSnapshot {
+    pub employee: Employee,
+    pub documents: Vec<StructureDocument>,
+    pub teams: Vec<Team>,
+    pub projects: Vec<Project>,
+    /// `(reference, task, the task's project)` for every task that still resolves, in order.
+    pub tasks: Vec<(String, TaskRecord, Option<Project>)>,
+}
+
+impl ReadOp for TaskProcessSnapshotRead {
+    type Out = Result<TaskProcessSnapshot, ApiError>;
+
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        let not_found = || {
+            ApiError::new(
+                ErrorCode::NotFound,
+                format!("employee `{}` not found", self.employee_id),
+            )
+        };
+        let Ok(emp_id) = Id::parse(&self.employee_id) else {
+            return Ok(Err(not_found()));
+        };
+        let Some(employee) = read.employee(&emp_id)? else {
+            return Ok(Err(not_found()));
+        };
+        let mut tasks = Vec::new();
+        for task_ref in &self.task_refs {
+            let Some(task) = read.resolve_task(task_ref)? else {
+                continue;
+            };
+            let project = match &task.project_id {
+                Some(pid) => match read.project(pid)? {
+                    Some(project) => Some(project),
+                    None => continue,
+                },
+                None => None,
+            };
+            tasks.push((task_ref.clone(), task, project));
+        }
+        Ok(Ok(TaskProcessSnapshot {
+            employee,
+            documents: read.structure_documents()?,
+            teams: read.teams()?,
+            projects: read.projects()?,
+            tasks,
+        }))
+    }
+}
+
 /// Creates or updates one durable `structure_documents` Markdown file (`process.write`).
 pub struct WriteStructureDocumentOp {
     pub actor: String,

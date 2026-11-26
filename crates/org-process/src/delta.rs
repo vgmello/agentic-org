@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 
 use crate::model::strip_control_and_invisible;
-use crate::render::{render_instructions, RenderError, RenderInput};
+use crate::render::{mandatory_footprint, render_instructions, RenderError, RenderInput};
 use crate::resolve::{EffectiveEntry, EffectiveSet, Winner};
 
 /// What a task's chain changes about an agent's standing process set.
@@ -88,37 +88,141 @@ pub fn task_delta(standing: &EffectiveSet, task: &EffectiveSet) -> TaskDelta {
     }
 }
 
-/// Renders `delta` for the turn that names the task `task_label`: an empty string when the
-/// task's chain changes nothing. Must-follow documents that apply are rendered in full, as at
-/// launch; when they alone exceed `input.total_budget_bytes` the turn is refused like a launch.
-pub fn render_task_delta(
-    delta: &TaskDelta,
-    task_label: &str,
+/// Separator between the parts of the task process context.
+const PART_SEP: &str = "\n\n";
+
+/// One entry by what it delivers: its ID and its winner's document, revision and content.
+type EntryIdentity<'a> = (&'a str, Option<(&'a str, u64, &'a str)>);
+
+fn entry_identities(entries: &[EffectiveEntry]) -> Vec<EntryIdentity<'_>> {
+    entries
+        .iter()
+        .map(|e| {
+            let winner = e.winner.as_ref().map(|w| {
+                (
+                    w.doc.id.as_str(),
+                    w.doc.revision,
+                    w.doc.blob_sha256.as_str(),
+                )
+            });
+            (e.entry_id.as_str(), winner)
+        })
+        .collect()
+}
+
+/// Whether two deltas change the same documents (same winners, same documents dropped), so
+/// one section can serve both tasks.
+fn same_documents(a: &TaskDelta, b: &TaskDelta) -> bool {
+    entry_identities(&a.applies.entries) == entry_identities(&b.applies.entries)
+        && entry_identities(&a.not_applicable) == entry_identities(&b.not_applicable)
+}
+
+/// `## Processes for task <label>` (or `tasks <a>, <b>`) and the line that frames the section.
+fn section_heading(labels: &[&str]) -> String {
+    let labels: Vec<String> = labels
+        .iter()
+        .map(|l| strip_control_and_invisible(l))
+        .collect();
+    if labels.len() == 1 {
+        format!(
+            "## Processes for task {}\nThis task resolves against its own chain. For work on it, the documents below apply in addition to, or in place of, your standing processes and standards.",
+            labels[0]
+        )
+    } else {
+        format!(
+            "## Processes for tasks {}\nThese tasks resolve against their own chain. For work on them, the documents below apply in addition to, or in place of, your standing processes and standards.",
+            labels.join(", ")
+        )
+    }
+}
+
+/// The standing documents a section's tasks do not apply, by title and scope (empty when none).
+fn not_applicable_list(not_applicable: &[EffectiveEntry], several: bool) -> String {
+    if not_applicable.is_empty() {
+        return String::new();
+    }
+    let these = if several { "these tasks" } else { "this task" };
+    let mut out = format!("{PART_SEP}These standing documents do not apply to {these}:\n");
+    for winner in not_applicable.iter().filter_map(|e| e.winner.as_ref()) {
+        out.push_str(&format!(
+            "- {} ({})\n",
+            strip_control_and_invisible(&winner.doc.title),
+            strip_control_and_invisible(&winner.scope_name)
+        ));
+    }
+    out
+}
+
+/// Renders, for the turn that names the tasks in `tasks` (`(label, task set)` pairs), what each
+/// task's chain changes about the agent's `standing` set: an empty string when nothing changes.
+/// Tasks whose chains change the same documents share one section.
+///
+/// Must-follow documents that apply are rendered in full, as at launch. Everything the model then
+/// holds counts against `input.total_budget_bytes`: the standing must-follow section already in
+/// its instructions, each section's heading and not-applicable list, and the must-follow
+/// documents each section adds. When they exceed the budget the turn is refused like a launch
+/// ([`RenderError::MandatoryBudgetExceeded`], naming every must-follow document involved);
+/// overridable guidance gets only what is left.
+pub fn render_task_deltas(
+    standing: &EffectiveSet,
+    tasks: &[(&str, &EffectiveSet)],
     input: &RenderInput,
 ) -> Result<String, RenderError> {
-    if delta.is_empty() {
+    let mut sections: Vec<(TaskDelta, Vec<&str>)> = Vec::new();
+    for &(label, task) in tasks {
+        let delta = task_delta(standing, task);
+        if delta.is_empty() {
+            continue;
+        }
+        match sections.iter_mut().find(|(d, _)| same_documents(d, &delta)) {
+            Some((_, labels)) if labels.contains(&label) => {}
+            Some((_, labels)) => labels.push(label),
+            None => sections.push((delta, vec![label])),
+        }
+    }
+    if sections.is_empty() {
         return Ok(String::new());
     }
-    let label = strip_control_and_invisible(task_label);
-    let mut out = format!(
-        "## Processes for task {label}\nThis task resolves against its own chain. For work on it, the documents below apply in addition to, or in place of, your standing processes and standards."
-    );
-    let rendered = render_instructions(&delta.applies, input)?;
-    if !rendered.text.is_empty() {
-        out.push_str("\n\n");
-        out.push_str(&rendered.text);
-    }
-    if !delta.not_applicable.is_empty() {
-        out.push_str("\n\nThese standing documents do not apply to this task:\n");
-        for entry in &delta.not_applicable {
-            if let Some(winner) = &entry.winner {
-                out.push_str(&format!(
-                    "- {} ({})\n",
-                    strip_control_and_invisible(&winner.doc.title),
-                    strip_control_and_invisible(&winner.scope_name)
-                ));
+    let (mut used, mut titles) = mandatory_footprint(standing);
+    let mut out = String::new();
+    for (delta, labels) in &sections {
+        let sep = if out.is_empty() { 0 } else { PART_SEP.len() };
+        let heading = section_heading(labels);
+        let dropped = not_applicable_list(&delta.not_applicable, labels.len() > 1);
+        let framing = sep + heading.len() + PART_SEP.len() + dropped.len();
+        let (adds_bytes, adds_titles) = mandatory_footprint(&delta.applies);
+        titles.extend(adds_titles);
+        let overflow = |required_bytes: usize| RenderError::MandatoryBudgetExceeded {
+            required_bytes,
+            budget_bytes: input.total_budget_bytes,
+            document_titles: titles.clone(),
+        };
+        let Some(available) = input.total_budget_bytes.checked_sub(used + framing) else {
+            return Err(overflow(used + framing + adds_bytes));
+        };
+        let rendered = render_instructions(
+            &delta.applies,
+            &RenderInput {
+                read_blobs: input.read_blobs.clone(),
+                overridable_cap_bytes: input.overridable_cap_bytes,
+                total_budget_bytes: available,
+            },
+        )
+        .map_err(|err| match err {
+            RenderError::MandatoryBudgetExceeded { required_bytes, .. } => {
+                overflow(used + framing + required_bytes)
             }
+        })?;
+        if sep > 0 {
+            out.push_str(PART_SEP);
         }
+        out.push_str(&heading);
+        if !rendered.text.is_empty() {
+            out.push_str(PART_SEP);
+            out.push_str(&rendered.text);
+        }
+        out.push_str(&dropped);
+        used = used + framing + rendered.text.len();
     }
     Ok(out)
 }

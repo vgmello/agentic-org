@@ -63,6 +63,7 @@ mod instructions_guard;
 mod launch;
 mod pool;
 mod presets;
+mod provenance;
 mod real_process;
 mod recovery;
 mod recovery_clear;

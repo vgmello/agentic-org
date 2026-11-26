@@ -7,6 +7,7 @@ use crate::{
     AgentIdentity, AgentName, Capabilities, CommandPrefix, McpServer, McpServerName, PathPattern,
     PermissionMode, PermissionPolicy, PlainId, Rule, RuleScope, RuleTool, RuntimeId, SandboxSpec,
     SessionKind, SessionSpec, SpecPath, Token, ToolCapability, ToolName,
+    REPOSITORY_INSTRUCTIONS_HEADING,
 };
 
 fn p(path: &str) -> SpecPath {
@@ -639,4 +640,27 @@ fn the_standing_prompt_puts_the_instructions_first_and_the_agent_prompt_last() {
     assert_eq!(spec.standing_prompt(), "");
     spec.agent.prompt = "You are ada.".to_owned();
     assert_eq!(spec.standing_prompt(), "You are ada.");
+}
+
+#[test]
+fn the_project_repository_instructions_stay_last_after_the_agent_prompt() {
+    let mut spec = sample_spec();
+    spec.agent.prompt = "You are ada.".to_owned();
+    spec.instructions = format!(
+        "Static rules.\n\n## Your agent prompt\nBe brief.\n\n{REPOSITORY_INSTRUCTIONS_HEADING}\nRun `make check`.\n"
+    );
+    assert_eq!(
+        spec.standing_prompt(),
+        format!(
+            "Static rules.\n\n## Your agent prompt\nBe brief.\n\nYou are ada.\n\n{REPOSITORY_INSTRUCTIONS_HEADING}\nRun `make check`."
+        )
+    );
+    // Only the part's heading line counts, and instructions that are only that part keep it last.
+    spec.instructions = format!("Mentions {REPOSITORY_INSTRUCTIONS_HEADING} inline.");
+    assert!(spec.standing_prompt().ends_with("\n\nYou are ada."));
+    spec.instructions = format!("{REPOSITORY_INSTRUCTIONS_HEADING}\nRun `make check`.");
+    assert_eq!(
+        spec.standing_prompt(),
+        format!("You are ada.\n\n{REPOSITORY_INSTRUCTIONS_HEADING}\nRun `make check`.")
+    );
 }

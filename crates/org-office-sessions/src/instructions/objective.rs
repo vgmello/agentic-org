@@ -19,7 +19,8 @@ pub const MAX_TURN_BODY_BYTES: usize = 64 * 1024;
 pub struct TurnSender {
     pub name: String,
     pub handle: Option<String>,
-    /// The office-verified relation to the agent: `owner`, `person`, `peer`, ...
+    /// The office-verified relation to the agent (`crate::provenance`): `owner`, `reports_to`,
+    /// `team_lead`, `person`, `peer`, or `unknown` for a sender the office cannot load.
     pub relation: String,
 }
 

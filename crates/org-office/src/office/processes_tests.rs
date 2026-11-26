@@ -748,7 +748,7 @@ fn projectless_task_resolves_accountable_team_and_archived_team_refuses_writes()
     // standing (home team) set: the accountable team's rule applies, the home team's does not.
     let delta = fx
         .office
-        .render_agent_task_process_delta(&fx.contributing_agent, &task.id, 128 * 1024)
+        .render_agent_task_process_delta(&fx.contributing_agent, &[task.id.as_str()], 128 * 1024)
         .unwrap()
         .unwrap()
         .expect("the task's chain differs from the home team chain");
@@ -761,12 +761,37 @@ fn projectless_task_resolves_accountable_team_and_archived_team_refuses_writes()
         "{delta}"
     );
     assert!(!delta.contains("Follow Design rules."), "{delta}");
-    let unknown = fx
+    // A task that no longer exists has no chain to apply (its wake is stale); it never hides
+    // the delta of a task named beside it.
+    let unknown = next_uuid();
+    assert_eq!(
+        fx.office
+            .render_agent_task_process_delta(
+                &fx.contributing_agent,
+                &[unknown.as_str()],
+                128 * 1024
+            )
+            .unwrap()
+            .unwrap(),
+        None
+    );
+    let beside = fx
         .office
-        .render_agent_task_process_delta(&fx.contributing_agent, &next_uuid(), 128 * 1024)
+        .render_agent_task_process_delta(
+            &fx.contributing_agent,
+            &[unknown.as_str(), task.id.as_str()],
+            128 * 1024,
+        )
         .unwrap()
-        .expect_err("an unknown task fails closed");
-    assert_eq!(unknown.code, ErrorCode::NotFound);
+        .unwrap()
+        .expect("the existing task's delta survives an unknown one");
+    assert_eq!(beside, delta);
+    let gone = fx
+        .office
+        .render_agent_task_process_delta(&next_uuid(), &[task.id.as_str()], 128 * 1024)
+        .unwrap()
+        .expect_err("a missing employee fails closed");
+    assert_eq!(gone.code, ErrorCode::NotFound);
 
     // Missing employee fails closed with NotFound rather than silently returning empty instructions.
     let missing = fx
@@ -1068,4 +1093,110 @@ fn agent_write_boundaries_idempotency_concurrency_and_skills() {
         fx.office.skill_read("nonexistent-skill").unwrap_err().code,
         ErrorCode::NotFound
     );
+}
+
+#[test]
+fn standing_and_task_must_follow_text_share_one_instruction_budget() {
+    let fx = seed_fixture(EngineChoice::Sqlite);
+    let home_body = "h".repeat(70 * 1024);
+    let task_body = "t".repeat(70 * 1024);
+    for (team, key, title, body) in [
+        (
+            &fx.contributing_team,
+            "home-heavy",
+            "Home Heavy Rule",
+            &home_body,
+        ),
+        (&fx.owning_team, "task-heavy", "Task Heavy Rule", &task_body),
+    ] {
+        write_doc(
+            &fx.office,
+            WriteDocArgs {
+                caller: &fx.owner,
+                command_id: next_uuid(),
+                document_id: None,
+                kind: DocumentKindWire::Standard,
+                scope: ProcessScopeWire::Team {
+                    team_id: team.clone(),
+                },
+                key: Some(key),
+                title,
+                overridable: false,
+                body,
+                owner_employee_id: Some(fx.owner.clone()),
+                expected_revision: None,
+            },
+        )
+        .expect("heavy must-follow standard");
+    }
+    let task = fx
+        .office
+        .task_create(
+            &fx.owner,
+            TasksCreateParams {
+                command_id: next_uuid(),
+                task_id: next_uuid(),
+                team_id: Some(fx.owning_team.clone()),
+                project_id: None,
+                assigned_team_id: Some(fx.contributing_team.clone()),
+                assignee_id: Some(fx.contributing_agent.clone()),
+                task_type: Some("task".into()),
+                work_type: None,
+                title: "Cross-team heavy task".into(),
+                body_markdown: "Both chains carry 70 KiB of must-follow text.".into(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: Some(1),
+                labels: vec![],
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                details: None,
+            },
+        )
+        .unwrap()
+        .unwrap()
+        .task;
+
+    // Each chain alone fits 128 KiB, so the launch and a launch for the task both render.
+    fx.office
+        .render_agent_process_instructions(
+            &fx.contributing_agent,
+            None,
+            None,
+            BTreeMap::new(),
+            128 * 1024,
+        )
+        .unwrap()
+        .expect("the standing set alone fits");
+    fx.office
+        .render_agent_process_instructions(
+            &fx.contributing_agent,
+            None,
+            Some(&task.id),
+            BTreeMap::new(),
+            128 * 1024,
+        )
+        .unwrap()
+        .expect("the task's set alone fits");
+
+    // The turn would hold the standing 70 KiB and the task's 70 KiB: refused, naming both.
+    let refused = fx
+        .office
+        .render_agent_task_process_delta(&fx.contributing_agent, &[task.id.as_str()], 128 * 1024)
+        .unwrap()
+        .expect_err("standing + delta must-follow text over budget fails closed");
+    assert_eq!(refused.code, ErrorCode::InvalidRequest);
+    assert!(
+        refused.message.contains("exceed instruction budget"),
+        "{}",
+        refused.message
+    );
+    assert!(
+        refused.message.contains("Home Heavy Rule") && refused.message.contains("Task Heavy Rule"),
+        "{}",
+        refused.message
+    );
+    fx.office.close().unwrap();
 }

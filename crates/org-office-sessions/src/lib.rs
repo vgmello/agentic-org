@@ -22,6 +22,7 @@ pub mod instructions;
 mod lifecycle;
 pub mod manager;
 pub mod preset;
+mod provenance;
 mod pump;
 pub mod recovery;
 pub mod redact;

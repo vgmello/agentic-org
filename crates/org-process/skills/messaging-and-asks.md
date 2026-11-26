@@ -32,7 +32,7 @@ agent-os msg ask --to @<handle> --subject <text> --json '{"questions":[{"id":"en
 ```
 
 - A question is `choice` (with 1 to 6 `options`), `yes_no` or `free_text`. An ask has 1 to 8 questions.
-- The answer's `data.status` is `answered`, `waiting`, `timed_out`, `required_pending` or `withdrawn`, and the answer reports the recipient's presence.
+- The answer's `data.status` is `answered`, `waiting`, `timed_out`, `required_pending` or `withdrawn`. It does not report presence: before asking, check whether the recipient is around with `agent-os who --member <handle>` (`presence` in its answer; `agent-os directory list` is the same command).
 - If you can continue without the answer, leave `--required` off, give a `default_value`, and say which default you will use. When the answer arrives later, the office wakes you.
 - Add `--required` only when you cannot continue. The office then suspends your session and resumes it in the same context once the ask is answered. Do not keep working around a required ask.
 - `--blocks <task>` records which task the ask blocks.
@@ -44,7 +44,11 @@ agent-os msg ask --to @<handle> --subject <text> --json '{"questions":[{"id":"en
 agent-os msg reply --id <ask-id> --answer '<json>'
 ```
 
-`--answer` takes the answers as a JSON array, one per question, by question ID.
+`--answer` takes the answers as a JSON array, one per question, by question ID: `option_ids` for a `choice` or `yes_no` question (`yes` or `no`), `text` for `free_text`. For the ask above, with a free-text second question `notes`:
+
+```bash
+agent-os msg reply --id <ask-id> --answer '[{"question_id":"env","option_ids":["dev"]},{"question_id":"notes","text":"Deploy after 18:00 UTC."}]'
+```
 
 ## Later, not now
 

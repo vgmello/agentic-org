@@ -35,7 +35,7 @@ agent-os msg reply --id <message-id> --body <text>
 ```
 
 - Reply in the thread of the message you answer, not as a new post.
-- Use `--kind announcement` only for news everyone in the channel needs.
+- Use `--kind announcement` only for news everyone in the channel needs; it requires `--reason <text>` saying why, as in `agent-os msg send --to '#<channel>' --kind announcement --reason <text> --body <text>`.
 - Mention someone with `@<handle>` in the body only when they need to act.
 - Do not post routine progress. Put it on the task instead.
 

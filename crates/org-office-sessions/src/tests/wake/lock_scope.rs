@@ -15,7 +15,7 @@ use crate::wake::PendingWakeQueueRecord;
 const UNBLOCKED_BUDGET: Duration = Duration::from_millis(500);
 
 /// A live handle whose pump commands are captured instead of run.
-fn stub_live_handle(
+pub(super) fn stub_live_handle(
     office_id: &str,
     emp_id: &str,
     state: SessionState,

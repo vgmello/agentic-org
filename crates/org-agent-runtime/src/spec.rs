@@ -101,17 +101,34 @@ pub struct SessionSpec {
     pub tools: Option<Vec<ToolName>>,
 }
 
+/// The heading that opens the last part of the office's [`SessionSpec::instructions`]: the
+/// project repository's instruction files (`doc-27` §1, Part 7). The office writes it on a line
+/// of its own; [`SessionSpec::standing_prompt`] keeps that part last.
+pub const REPOSITORY_INSTRUCTIONS_HEADING: &str = "## Project repository instructions";
+
 impl SessionSpec {
     /// The whole standing system prompt in static-to-volatile order (`doc-27` §1): the office's
     /// [`instructions`](Self::instructions) first and the agent's own
-    /// [`prompt`](AgentIdentity::prompt) last, so the release-static start of the instructions
-    /// is byte 0 of what the runtime caches. Empty when both are.
+    /// [`prompt`](AgentIdentity::prompt) after them, so the release-static start of the
+    /// instructions is byte 0 of what the runtime caches. When the instructions carry the
+    /// project repository's files ([`REPOSITORY_INSTRUCTIONS_HEADING`]), the agent's prompt goes
+    /// before that part, which stays last. Empty when both are.
     pub fn standing_prompt(&self) -> String {
-        match (self.instructions.trim(), self.agent.prompt.trim()) {
-            ("", "") => String::new(),
-            (instructions, "") => instructions.to_owned(),
-            ("", prompt) => prompt.to_owned(),
-            (instructions, prompt) => format!("{instructions}\n\n{prompt}"),
+        let (instructions, prompt) = (self.instructions.trim(), self.agent.prompt.trim());
+        if instructions.is_empty() || prompt.is_empty() {
+            return format!("{instructions}{prompt}");
+        }
+        let heading = format!("{REPOSITORY_INSTRUCTIONS_HEADING}\n");
+        let part_seven = if instructions.starts_with(&heading) {
+            Some(0)
+        } else {
+            instructions
+                .find(&format!("\n\n{heading}"))
+                .map(|at| at + 2)
+        };
+        match part_seven {
+            Some(at) => format!("{}{prompt}\n\n{}", &instructions[..at], &instructions[at..]),
+            None => format!("{instructions}\n\n{prompt}"),
         }
     }
 

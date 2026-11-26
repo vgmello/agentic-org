@@ -80,6 +80,9 @@ impl SessionManager {
 
     /// Starts or resumes a supervised session autonomously (C6 required-ask resume, C8 peer wake,
     /// C10 always-available wake). Uses the exact same runtime, binding, and sandbox path as `Run`.
+    /// `objective` is the complete turn input: queued wakes compose it, task process deltas
+    /// included, through `lifecycle::wake_turn`; `task_ref` only scopes route admission and the
+    /// turn permit.
     pub(crate) fn spawn_or_send_autonomous(
         &self,
         employee: &Employee,
@@ -90,11 +93,6 @@ impl SessionManager {
     ) -> Result<SessionView, ApiError> {
         let emp_id = employee.id.as_str();
         self.check_not_blocked(emp_id)?;
-        // A task's process delta is volatile turn input, after the objective (`doc-27` §1).
-        let objective = match self.task_process_context(emp_id, task_ref)? {
-            Some(delta) => format!("{objective}\n\n{delta}"),
-            None => objective,
-        };
         let params = MemberSessionStartParams {
             command_id: format!("auto-{}", next_entropy_hex(8)?),
             employee_id: emp_id.to_owned(),

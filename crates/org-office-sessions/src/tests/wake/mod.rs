@@ -35,6 +35,7 @@ mod lock_scope;
 mod mid_turn;
 mod queue;
 mod suspend;
+mod task_processes;
 
 #[derive(Default)]
 struct RecordedLaunches {

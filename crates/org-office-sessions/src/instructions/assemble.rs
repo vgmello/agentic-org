@@ -4,6 +4,7 @@
 //! for the rest. Nothing per turn is in here: the turn's objective, its task and its process
 //! delta go in the turn input ([`super::compose_turn_objective`]).
 
+use org_agent_runtime::REPOSITORY_INSTRUCTIONS_HEADING;
 use org_command::CommandTable;
 
 use super::identity::Placement;
@@ -127,7 +128,8 @@ pub fn assemble_standing_instructions(
         parts.push(format!("## Your agent prompt\n{prompt}"));
     }
     if let Some(files) = non_empty(input.repository_instructions) {
-        parts.push(format!("## Project repository instructions\n{files}"));
+        // Stays last once the runtime adds the identity prompt (`SessionSpec::standing_prompt`).
+        parts.push(format!("{REPOSITORY_INSTRUCTIONS_HEADING}\n{files}"));
     }
     parts.join("\n\n")
 }

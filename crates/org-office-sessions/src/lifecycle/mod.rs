@@ -2,18 +2,18 @@
 //! `C8` peer-ask/handoff/mention/answer wake-ups with hourly limit & mutual-deadlock breaker,
 //! `C10` always-available presence & human/task auto-start).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use org_office::directory::MemberRuntime;
 use org_office::organization_family::records::{Employee, EmployeeKind, EmployeeStatus};
-use org_office::Office;
 use org_proto::directory::{MemberPresence, RecipientPresence};
 use org_proto::sessions::SessionState;
 
 use crate::credentials::now_ms;
 use crate::manager::{set_waiting_messages_count, SessionManager};
+use crate::provenance::verified_sender_relation;
 use crate::pump::PumpCommand;
 use crate::wake::{PendingWakeItem, PendingWakeQueueRecord, WakeKind, WakeOutcome};
 
@@ -22,6 +22,7 @@ mod drain;
 mod hooks;
 mod usage;
 mod wake_queue;
+mod wake_turn;
 
 #[cfg(test)]
 pub(crate) use drain::{
@@ -56,8 +57,9 @@ impl Drop for DispatchWakeGuard {
 }
 
 impl SessionManager {
-    /// `true` while an office-wide or employee/task budget hold blocks new autonomous turns.
-    fn is_budget_held_for(&self, employee_id: &str, task_id: Option<&str>) -> bool {
+    /// `true` while the office-wide hold, or a budget hold on the agent or on any of
+    /// `task_refs`, blocks new autonomous turns for `employee_id`.
+    fn is_budget_held_for(&self, employee_id: &str, task_refs: &[&str]) -> bool {
         if self
             .budget_hold
             .lock()
@@ -66,10 +68,7 @@ impl SessionManager {
         {
             return true;
         }
-        self.office
-            .active_budget_holds(Some(employee_id), task_id)
-            .map(|holds| !holds.is_empty())
-            .unwrap_or(false)
+        wake_turn::office_budget_held(&self.office, employee_id, task_refs)
     }
 
     /// Enqueues or immediately dispatches an autonomous wake item for `target_employee_id`
@@ -133,7 +132,7 @@ impl SessionManager {
         {
             "office_supervisor"
         } else {
-            resolve_verified_sender_relation(&self.office, target, item, sender_emp.as_ref())
+            verified_sender_relation(&self.office, target, &item.sender_id, sender_emp.as_ref())
         };
         item.sender_relation = Some(relation.to_owned());
     }
@@ -400,78 +399,6 @@ impl SessionManager {
             status_expires_at: None,
             current_task_id: None,
         })
-    }
-}
-
-fn sender_in_reports_to_chain(office: &Office, target: &Employee, sender_id: &str) -> bool {
-    let mut visited = HashSet::new();
-    visited.insert(target.id.as_str().to_owned());
-    let mut cursor = target
-        .reports_to_employee_id
-        .as_ref()
-        .map(|id| id.as_str().to_owned());
-    while let Some(mgr_id) = cursor {
-        if mgr_id == sender_id {
-            return true;
-        }
-        if !visited.insert(mgr_id.clone()) {
-            break;
-        }
-        cursor = office
-            .load_employee(&mgr_id)
-            .ok()
-            .flatten()
-            .and_then(|e| e.reports_to_employee_id)
-            .map(|id| id.as_str().to_owned());
-    }
-    false
-}
-
-fn sender_in_ancestor_team_leads(office: &Office, target: &Employee, sender_id: &str) -> bool {
-    let Ok(snap) = office.org_snapshot() else {
-        return false;
-    };
-    let by_id: HashMap<&str, (&Option<String>, &Option<String>)> = snap
-        .teams
-        .iter()
-        .map(|t| (t.id.as_str(), (&t.lead_member_id, &t.owner_team_id)))
-        .collect();
-    let mut visited = HashSet::new();
-    let mut cursor = Some(target.home_team_id.as_str());
-    while let Some(team_id) = cursor {
-        if !visited.insert(team_id) {
-            break;
-        }
-        let Some((lead, parent)) = by_id.get(team_id) else {
-            break;
-        };
-        if lead.as_deref() == Some(sender_id) {
-            return true;
-        }
-        cursor = parent.as_deref();
-    }
-    false
-}
-
-fn resolve_verified_sender_relation(
-    office: &Office,
-    target: &Employee,
-    item: &PendingWakeItem,
-    sender_emp: Option<&Employee>,
-) -> &'static str {
-    if item.sender_id == office.owner_member_id() {
-        return "owner";
-    }
-    if sender_in_reports_to_chain(office, target, &item.sender_id) {
-        return "reports_to";
-    }
-    if sender_in_ancestor_team_leads(office, target, &item.sender_id) {
-        return "team_lead";
-    }
-    if item.sender_is_person || sender_emp.is_some_and(|e| e.kind == EmployeeKind::Person) {
-        "person"
-    } else {
-        "peer"
     }
 }
 

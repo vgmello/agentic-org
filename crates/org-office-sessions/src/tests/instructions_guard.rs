@@ -143,3 +143,107 @@ fn aliases_help_grammar_and_attach_are_understood() {
     // An unquoted `#channel` starts a shell comment: the command line loses its value.
     assert_fails("`agent-os msg send --to #general --body hi`", "--to");
 }
+
+#[test]
+fn json_placeholders_keep_every_key_and_type_so_unknown_fields_and_wrong_types_fail() {
+    // A placeholder leaf never hides the field it sits in.
+    assert_fails(
+        r#"`agent-os task list --json '{"nonexistent":"<x>"}'`"#,
+        "`nonexistent` is not a field",
+    );
+    assert_fails(
+        "```text\n{\"command\":\"task list\",\"input\":{\"nonexistent\":\"<x>\"}}\n```",
+        "`nonexistent` is not a field",
+    );
+    assert_fails(
+        r#"`agent-os task list --json='{"status":"<s>","bogus":{"deep":"<x>"}}'`"#,
+        "`bogus` is not a field",
+    );
+    // A literal of the wrong type still fails next to placeholders.
+    assert_fails(
+        r#"`agent-os task list --json '{"status":"finished","query":"<q>"}'`"#,
+        "`status` must be one of",
+    );
+    assert_fails(
+        r#"`agent-os task list --json '{"max_results":"many"}'`"#,
+        "`max_results` must be a whole number",
+    );
+    assert_fails(
+        "```text\n{\"command\":\"task list\",\"input\":{\"labels\":\"<label>\",\"max_results\":true}}\n```",
+        "`max_results` must be a whole number",
+    );
+    // JSON that is not JSON is not waved through either.
+    assert_fails(
+        "`agent-os task list --json '{\"max_results\": <n>}'`",
+        "--json",
+    );
+    // Placeholder leaves become values of their declared types; a bare placeholder is `{}`.
+    for good in [
+        r#"`agent-os task list --json '{"status":"<status>","max_results":"<n>","labels":["<label>"]}'`"#,
+        r#"`agent-os task list --json '{"labels":"<labels>","label_match":"<mode>"}'`"#,
+        "`agent-os task list --json '<json>'`",
+        "```text\n{\"command\":\"task list\",\"input\":{\"status\":\"<status>\",\"max_results\":\"<n>\"}}\n```",
+    ] {
+        assert!(problems(good).is_empty(), "{good}: {:#?}", problems(good));
+    }
+}
+
+#[test]
+fn attach_lines_are_held_to_the_rules_session_attach_applies_first() {
+    for (line, why) in [
+        (
+            r#"{"command":"task list","options":{"status":["todo"]}}"#,
+            "Option `status` in `session attach` must be a string, number, or boolean.",
+        ),
+        (
+            r#"{"command":"task list","options":{"max_results":{"n":5}}}"#,
+            "Option `max_results` in `session attach` must be a string, number, or boolean.",
+        ),
+        (
+            r#"{"command":"task list","options":["--limit","5"]}"#,
+            "`options` in `session attach` must be a JSON object.",
+        ),
+        (
+            r#"{"command":5}"#,
+            "`command` must be a string naming a resource and verb.",
+        ),
+        (
+            r#"{"command":"  "}"#,
+            "`command` must name a resource and verb",
+        ),
+    ] {
+        assert_fails(&format!("```text\n{line}\n```"), why);
+    }
+    // Scalars and booleans become flags as attach makes them; a JSON example without
+    // `command` is not an attach line.
+    for good in [
+        "```text\n{\"command\":\"task list\",\"options\":{\"status\":\"todo\",\"max_results\":5,\"limit\":null}}\n```",
+        "```text\n{\"questions\":[{\"id\":\"q1\"}]}\n```",
+    ] {
+        assert!(problems(good).is_empty(), "{good}: {:#?}", problems(good));
+    }
+}
+
+#[test]
+fn agent_os_after_a_pipe_or_list_operator_is_checked_too() {
+    for text in [
+        "`agent-os msg inbox | agent-os task frobnicate`",
+        "`cd /tmp && agent-os task frobnicate`",
+        "`true || agent-os task frobnicate`",
+        "`echo hi; agent-os task frobnicate`",
+        "`sleep 1 & agent-os task frobnicate`",
+        "```bash\nagent-os msg inbox --state unread | agent-os task frobnicate\n```",
+        "```bash\n$ git status && agent-os task frobnicate\n```",
+    ] {
+        assert_fails(text, "`task frobnicate` is not a command");
+    }
+    // Quoted operators, comments and other programs are not command lines of ours.
+    for good in [
+        r#"`agent-os msg send --to @<handle> --body 'a | b && c; d'`"#,
+        "`agent-os msg inbox # then agent-os task frobnicate`",
+        "`cargo test && git push`",
+        "```bash\nagent-os task list --status todo 2>&1 | head -5\n```",
+    ] {
+        assert!(problems(good).is_empty(), "{good}: {:#?}", problems(good));
+    }
+}

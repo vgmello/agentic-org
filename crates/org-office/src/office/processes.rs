@@ -4,18 +4,23 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use org_process::{
-    find_builtin_skill, list_builtin_skills, render_instructions, render_task_delta,
-    resolve_single_chain, task_delta, EffectiveSet, RenderInput, Rendered, SingleChainInputs,
+    find_builtin_skill, list_builtin_skills, render_instructions, render_task_deltas,
+    resolve_single_chain, EffectiveSet, RenderInput, Rendered, Scope, SingleChainInputs,
     OVERRIDABLE_CAP_BYTES,
 };
 use org_proto::processes::{
     ProcessWriteParams, ProcessWriteResult, SkillListResult, SkillReadResult, SkillSummaryWire,
 };
 use org_proto::{ApiError, ErrorCode};
+use org_store::Id;
 
 use crate::error::OfficeError;
+use crate::organization::records::Team;
+use crate::processes::records::StructureDocument;
+use crate::projects::records::Project;
 use crate::store::open::process_ops::{
-    LaunchProcessSnapshotRead, ProcessSnapshotRead, WriteStructureDocumentOp,
+    LaunchProcessSnapshotRead, ProcessSnapshotRead, TaskProcessSnapshotRead,
+    WriteStructureDocumentOp,
 };
 
 use super::{storage, Office};
@@ -107,34 +112,56 @@ impl Office {
         .map_err(|err| ApiError::new(ErrorCode::InvalidRequest, err.to_string())))
     }
 
-    /// What the task `task_ref` changes about the agent's standing set (its home team chain,
+    /// What the tasks `task_refs` change about the agent's standing set (its home team chain,
     /// [`Self::render_agent_process_instructions`] without a task), rendered for the turn that
-    /// names the task (`doc-27` §1, `doc-34` §3.1). `Ok(None)` when the task's chain changes
-    /// nothing. Must-follow documents over `total_budget_bytes` refuse like a launch.
+    /// names them (`doc-27` §1, `doc-34` §3.1). The standing set and every task's set come from
+    /// one snapshot. `Ok(None)` when no task's chain changes anything; a task that no longer
+    /// exists is skipped. The standing must-follow section and everything the turn adds share
+    /// `total_budget_bytes`; over it the turn is refused like a launch (`doc-34` Decision 4).
     pub fn render_agent_task_process_delta(
         &self,
         employee_id: &str,
-        task_ref: &str,
+        task_refs: &[&str],
         total_budget_bytes: usize,
     ) -> Result<Result<Option<String>, ApiError>, OfficeError> {
-        let standing = match self.resolve_agent_process_set(employee_id, None, None)? {
-            Ok(set) => set,
+        if task_refs.is_empty() {
+            return Ok(Ok(None));
+        }
+        let snap = match self
+            .store
+            .read(TaskProcessSnapshotRead {
+                employee_id: employee_id.to_owned(),
+                task_refs: task_refs.iter().map(|t| (*t).to_owned()).collect(),
+            })
+            .map_err(storage)?
+            .0
+        {
+            Ok(s) => s,
             Err(e) => return Ok(Err(e)),
         };
-        let task = match self.resolve_agent_process_set(employee_id, None, Some(task_ref))? {
-            Ok(set) => set,
-            Err(e) => return Ok(Err(e)),
-        };
+        let chains = ChainSources::new(&snap.teams, &snap.projects, &snap.documents);
+        let standing = chains.resolve(&snap.employee.home_team_id, None);
+        let task_sets: Vec<(&str, EffectiveSet)> = snap
+            .tasks
+            .iter()
+            .map(|(task_ref, task, project)| {
+                let set = match project {
+                    Some(proj) => chains.resolve(&proj.owner_team_id, Some(proj.id.as_str())),
+                    None => chains.resolve(&task.team_id, None),
+                };
+                (task_ref.as_str(), set)
+            })
+            .collect();
+        let tasks: Vec<(&str, &EffectiveSet)> =
+            task_sets.iter().map(|(label, set)| (*label, set)).collect();
         let input = RenderInput {
             read_blobs: BTreeMap::new(),
             overridable_cap_bytes: OVERRIDABLE_CAP_BYTES,
             total_budget_bytes,
         };
-        Ok(
-            render_task_delta(&task_delta(&standing, &task), task_ref, &input)
-                .map(|text| (!text.is_empty()).then_some(text))
-                .map_err(|err| ApiError::new(ErrorCode::InvalidRequest, err.to_string())),
-        )
+        Ok(render_task_deltas(&standing, &tasks, &input)
+            .map(|text| (!text.is_empty()).then_some(text))
+            .map_err(|err| ApiError::new(ErrorCode::InvalidRequest, err.to_string())))
     }
 
     /// The single chain for an agent's work: the project's owning chain, else the task's
@@ -158,41 +185,15 @@ impl Office {
             Ok(s) => s,
             Err(e) => return Ok(Err(e)),
         };
-        let team_chains = build_team_chains(&snap.teams);
-        let scope_names = build_scope_names(&snap.teams, &snap.projects);
-
-        let (team_chain, project_id) = if let Some(proj) = &snap.project {
-            let chain = team_chains
-                .get(&proj.owner_team_id)
-                .map(|c| c.iter().map(|i| i.as_str().to_owned()).collect())
-                .unwrap_or_else(|| vec![proj.owner_team_id.as_str().to_owned()]);
-            (chain, Some(proj.id.as_str().to_owned()))
+        let chains = ChainSources::new(&snap.teams, &snap.projects, &snap.documents);
+        Ok(Ok(if let Some(proj) = &snap.project {
+            chains.resolve(&proj.owner_team_id, Some(proj.id.as_str()))
         } else if let Some(task) = &snap.task {
             // Projectless work resolves against the task's accountable `team_id` (`doc-34` §3.1).
-            let acct = &task.team_id;
-            let chain = team_chains
-                .get(acct)
-                .map(|c| c.iter().map(|i| i.as_str().to_owned()).collect())
-                .unwrap_or_else(|| vec![acct.as_str().to_owned()]);
-            (chain, None)
+            chains.resolve(&task.team_id, None)
         } else {
-            let chain = team_chains
-                .get(&snap.employee.home_team_id)
-                .map(|c| c.iter().map(|i| i.as_str().to_owned()).collect())
-                .unwrap_or_else(|| vec![snap.employee.home_team_id.as_str().to_owned()]);
-            (chain, None)
-        };
-
-        Ok(Ok(resolve_single_chain(&SingleChainInputs {
-            team_chain,
-            project_id,
-            documents: snap
-                .documents
-                .iter()
-                .map(|d| d.to_process_input(doc_path_str(d, &team_chains)))
-                .collect(),
-            scope_names,
-        })))
+            chains.resolve(&snap.employee.home_team_id, None)
+        }))
     }
 
     /// `skill.list` (`doc-28` §3.5): lists built-in product skills.
@@ -224,6 +225,42 @@ impl Office {
             description: skill.description.to_owned(),
             source: skill.source.to_owned(),
             body_markdown: skill.body_markdown.to_owned(),
+        })
+    }
+}
+
+/// The teams, projects and documents of one snapshot, ready to resolve any single chain.
+struct ChainSources<'a> {
+    team_chains: BTreeMap<Id, Vec<Id>>,
+    scope_names: BTreeMap<Scope, String>,
+    documents: &'a [StructureDocument],
+}
+
+impl<'a> ChainSources<'a> {
+    fn new(teams: &[Team], projects: &[Project], documents: &'a [StructureDocument]) -> Self {
+        Self {
+            team_chains: build_team_chains(teams),
+            scope_names: build_scope_names(teams, projects),
+            documents,
+        }
+    }
+
+    /// The effective set for `team_id`'s chain (organization first), plus `project_id`'s layer.
+    fn resolve(&self, team_id: &Id, project_id: Option<&str>) -> EffectiveSet {
+        let team_chain = self
+            .team_chains
+            .get(team_id)
+            .map(|c| c.iter().map(|i| i.as_str().to_owned()).collect())
+            .unwrap_or_else(|| vec![team_id.as_str().to_owned()]);
+        resolve_single_chain(&SingleChainInputs {
+            team_chain,
+            project_id: project_id.map(ToOwned::to_owned),
+            documents: self
+                .documents
+                .iter()
+                .map(|d| d.to_process_input(doc_path_str(d, &self.team_chains)))
+                .collect(),
+            scope_names: self.scope_names.clone(),
         })
     }
 }

@@ -5,9 +5,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use org_agent_runtime::EnvName;
-use org_office::organization_family::records::{
-    BuiltinKey, Employee, EmployeeKind, PermissionPreset,
-};
+use org_office::organization_family::records::{BuiltinKey, Employee, PermissionPreset};
+use org_office::Office;
 use org_proto::{ApiError, ErrorCode};
 use org_supervise::{Environment, SearchPath};
 
@@ -65,9 +64,9 @@ impl SessionManager {
     }
 
     /// The agent's standing instructions (`doc-27` §1). They depend on no task: the processes
-    /// are those of the agent's home team chain, and a turn about a task carries what that task's
-    /// chain changes ([`Self::task_process_context`]), so the standing prefix stays cacheable
-    /// across turns and tasks.
+    /// are those of the agent's home team chain, and a turn about tasks carries what their
+    /// chains change ([`task_process_context`]), so the standing prefix stays cacheable across
+    /// turns and tasks.
     pub(super) fn build_instructions(
         &self,
         employee: &Employee,
@@ -143,64 +142,41 @@ impl SessionManager {
         }
     }
 
-    /// What the task `task_ref` changes about the agent's standing processes, for the turn that
-    /// names it; `None` when nothing or when the task is gone. Must-follow documents over budget
-    /// refuse the turn, as they refuse a launch (`doc-34` Decision 4).
-    pub(super) fn task_process_context(
-        &self,
-        employee_id: &str,
-        task_ref: Option<&str>,
-    ) -> Result<Option<String>, ApiError> {
-        let Some(task_ref) = task_ref.filter(|t| !t.is_empty()) else {
-            return Ok(None);
-        };
-        match self
-            .office
-            .render_agent_task_process_delta(employee_id, task_ref, PROCESS_BUDGET_BYTES)
-            .map_err(|e| ApiError::new(ErrorCode::StorageError, e.to_string()))?
-        {
-            Ok(delta) => Ok(delta),
-            Err(err) if err.code == ErrorCode::NotFound => Ok(None),
-            Err(err) => Err(err),
-        }
-    }
-
-    /// The office-verified sender of a request made by `member_id`.
-    pub(super) fn turn_sender(&self, member_id: &str) -> TurnSender {
+    /// The office-verified sender of a request `member_id` made to `target`: the same relation
+    /// a queued wake from them carries ([`crate::provenance::verified_sender_relation`]). A sender
+    /// the office cannot load keeps its raw ID as name and is badged `unknown`.
+    pub(crate) fn turn_sender(&self, target: &Employee, member_id: &str) -> TurnSender {
         let record = self.office.load_employee(member_id).ok().flatten();
-        let relation = if member_id == self.office.owner_member_id() {
-            "owner"
-        } else if record
-            .as_ref()
-            .is_some_and(|e| e.kind == EmployeeKind::Agent)
-        {
-            "peer"
-        } else {
-            "person"
-        };
+        let relation = crate::provenance::verified_sender_relation(
+            &self.office,
+            target,
+            member_id,
+            record.as_ref(),
+        )
+        .to_owned();
         match record {
             Some(employee) => TurnSender {
                 name: employee.name,
                 handle: Some(employee.handle).filter(|h| !h.is_empty()),
-                relation: relation.to_owned(),
+                relation,
             },
             None => TurnSender {
                 name: member_id.to_owned(),
                 handle: None,
-                relation: relation.to_owned(),
+                relation,
             },
         }
     }
 
     /// The turn input for an instruction `requester` sent to `employee`: a hiring request for
     /// the built-in HR lead, a direct instruction otherwise. Both are fenced as data.
-    pub(super) fn objective_text(
+    pub(crate) fn objective_text(
         &self,
         employee: &Employee,
         requester: &str,
         text: &str,
     ) -> String {
-        let sender = self.turn_sender(requester);
+        let sender = self.turn_sender(employee, requester);
         if employee.builtin_key == Some(BuiltinKey::Hr) {
             compose_turn_objective(&TurnTrigger::HrProposalRequest {
                 requester: sender,
@@ -403,6 +379,23 @@ pub(super) fn office_env_names() -> Vec<EnvName> {
     .into_iter()
     .map(|name| EnvName::try_from(name).expect("static env name"))
     .collect()
+}
+
+/// What the tasks `task_refs` change about `employee_id`'s standing processes, for the turn that
+/// names them; `None` when nothing changes (or no task still exists). The standing must-follow
+/// section and everything the turn adds share [`PROCESS_BUDGET_BYTES`]: over it, or when the
+/// processes cannot be read, the turn is refused as a launch is (`doc-34` Decision 4).
+pub(crate) fn task_process_context(
+    office: &Office,
+    employee_id: &str,
+    task_refs: &[&str],
+) -> Result<Option<String>, ApiError> {
+    if task_refs.is_empty() {
+        return Ok(None);
+    }
+    office
+        .render_agent_task_process_delta(employee_id, task_refs, PROCESS_BUDGET_BYTES)
+        .map_err(|e| ApiError::new(ErrorCode::StorageError, e.to_string()))?
 }
 
 pub(super) fn combine_agent_instructions(

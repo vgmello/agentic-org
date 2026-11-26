@@ -18,7 +18,7 @@ mod resolve;
 mod skills;
 mod write;
 
-pub use delta::{render_task_delta, task_delta, TaskDelta};
+pub use delta::{render_task_deltas, task_delta, TaskDelta};
 pub use model::{
     summarize_body, DocumentKind, DocumentStatus, ProcessKey, Scope, StructureDocInput,
 };

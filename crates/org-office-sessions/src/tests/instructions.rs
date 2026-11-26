@@ -163,8 +163,9 @@ fn two_agents_share_one_byte_identical_static_prefix_in_instructions_and_launch_
     assert!(!ada[..shared].contains("# Who you are\nYou are ada"));
 
     for (runtime, file) in [
-        ("claude", "claude-instructions.md"),
-        ("codex", "codex-instructions.md"),
+        ("claude", Some("claude-instructions.md")),
+        ("codex", Some("codex-instructions.md")),
+        ("agy", None),
     ] {
         let planned: Vec<String> = [("ada", &ada), ("bob", &bob)]
             .into_iter()
@@ -174,18 +175,33 @@ fn two_agents_share_one_byte_identical_static_prefix_in_instructions_and_launch_
             planned[0].starts_with(&static_prefix) && planned[1].starts_with(&static_prefix),
             "{runtime}: the standing prompt starts with the static prefix"
         );
-        assert!(
-            planned[0].ends_with("You are ada (@ada).")
-                && planned[1].ends_with("You are bob (@bob)."),
-            "{runtime}: the agent's own prompt comes last"
-        );
+        // Part 7, the project repository's instructions, stays last (`doc-27` §1): the
+        // runtime's identity prompt goes right before it, after the agent's own prompt.
+        for (who, prompt) in [("ada", &planned[0]), ("bob", &planned[1])] {
+            let identity = prompt
+                .find(&format!("\n\nYou are {who} (@{who}).\n\n"))
+                .unwrap_or_else(|| panic!("{runtime}: no identity prompt for {who}:\n{prompt}"));
+            let agent_prompt = prompt.find("## Your agent prompt").expect("agent prompt");
+            let part_seven = prompt
+                .find("## Project repository instructions\nREPO_SENTINEL")
+                .expect("repository instructions");
+            assert!(
+                agent_prompt < identity && identity < part_seven,
+                "{runtime}: {who}'s prompt is out of order:\n{prompt}"
+            );
+            assert!(
+                prompt.ends_with("REPO_SENTINEL: run the checks."),
+                "{runtime}: Part 7 comes last for {who}"
+            );
+        }
         assert!(common_prefix_len(&planned[0], &planned[1]) >= shared);
     }
 }
 
-/// The standing prompt `runtime` plans for agent `who`: the planned instruction file, after
-/// Claude's release-static main agent prompt when there is one.
-fn planned_prompt(runtime: &str, who: &str, instructions: String, file: &str) -> String {
+/// The standing prompt `runtime` plans for agent `who`: the planned instruction `file` (after
+/// Claude's release-static main agent prompt when there is one), or with no file (Agy) the
+/// system prompt its session sends in `session/new`.
+fn planned_prompt(runtime: &str, who: &str, instructions: String, file: Option<&str>) -> String {
     let registry = RuntimeRegistry::production();
     let adapter = registry.resolve(runtime).expect("adapter");
     let ws = SpecPath::try_from("/tmp/ws").unwrap();
@@ -228,7 +244,10 @@ fn planned_prompt(runtime: &str, who: &str, instructions: String, file: &str) ->
         resume: None,
         config_dir: None,
     };
-    let (plan, _) = adapter.plan_session(&spec, &ctx).expect("plans");
+    let (plan, session) = adapter.plan_session(&spec, &ctx).expect("plans");
+    let Some(file) = file else {
+        return session_new_system_prompt(session);
+    };
     let planned = plan
         .files
         .iter()
@@ -247,6 +266,30 @@ fn planned_prompt(runtime: &str, who: &str, instructions: String, file: &str) ->
         );
     }
     String::from_utf8(planned.contents.clone()).unwrap()
+}
+
+/// The `_meta.antigravity.systemPrompt.append` of the `session/new` line an Agy session writes
+/// once the runtime answers `initialize`.
+fn session_new_system_prompt(mut session: Box<dyn org_agent_runtime::Session>) -> String {
+    let now = std::time::Instant::now();
+    let _ = session.start(now);
+    let initialized = br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"antigravity","version":"1.5.17"}}}"#;
+    session
+        .on_line(initialized, now)
+        .into_iter()
+        .find_map(|out| match out {
+            org_agent_runtime::Output::Write(line) => {
+                let open: serde_json::Value = serde_json::from_slice(line.as_bytes()).ok()?;
+                (open["method"] == "session/new").then(|| {
+                    open["params"]["_meta"]["antigravity"]["systemPrompt"]["append"]
+                        .as_str()
+                        .expect("system prompt")
+                        .to_owned()
+                })
+            }
+            _ => None,
+        })
+        .expect("Agy opens its session with the standing prompt")
 }
 
 fn team(id: &str, name: &str, parent: Option<&str>, lead: Option<&str>) -> Team {
