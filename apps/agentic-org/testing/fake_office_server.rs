@@ -92,6 +92,8 @@
 //! `leak <key> <pid> <where>` if something that looks like a secret (64 lowercase hex digits)
 //! reached it where none may: its `argv` or an `env:<NAME>` variable.
 
+#![forbid(unsafe_code)]
+
 use std::fs::{self, File, OpenOptions};
 use std::io::Read;
 use std::io::{self, BufRead, BufReader, Write};
@@ -110,6 +112,7 @@ use org_office_launch::{
     OFFICE_FILE_NAME, OFFICE_FLAG, OFFICE_LOCK_FILE_NAME, OFFICE_LOCK_WAIT,
 };
 use org_office_launch::{Handoff, HostFirstLine, RendezvousEvent, TransferRecord};
+use org_platform::posix;
 use org_proto::frame;
 use org_proto::location::{selected_office_socket_in, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
 use org_proto::OfficeRole;
@@ -366,26 +369,22 @@ fn main() {
 /// holds `text` and has no writer left replaces descriptor 0. The host's pipe moves to
 /// another descriptor and stays open, never read, for the life of the process.
 fn replace_stdin(text: &str) {
-    let mut ends = [0 as libc::c_int; 2];
-    // SAFETY: `pipe` writes two descriptors into the array it is given.
-    if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
+    use std::io::Write;
+    let Ok((read_end, mut write_end)) = std::io::pipe() else {
+        exit(2);
+    };
+    // A first line is far below a pipe's capacity, so the write cannot block.
+    if write_end.write_all(text.as_bytes()).is_err() {
         exit(2);
     }
-    let [read_end, write_end] = ends;
-    // A first line is far below a pipe's capacity, so the write cannot block.
-    // SAFETY: `write_end` is a pipe this function made, and `text` is valid for its length.
-    let written = unsafe { libc::write(write_end, text.as_ptr().cast(), text.len()) };
-    // SAFETY: descriptors this function owns; 0 is this process's standard input. `dup`
-    // keeps the host's pipe open on a new descriptor before 0 is replaced.
-    unsafe {
-        libc::close(write_end);
-        if written != text.len() as isize
-            || libc::dup(0) < 0
-            || libc::dup2(read_end, 0) != 0
-            || libc::close(read_end) != 0
-        {
-            exit(2);
-        }
+    drop(write_end);
+    // The host's pipe stays open on a new descriptor, never read, before 0 is replaced.
+    let Ok(host) = posix::duplicate_above(std::io::stdin(), 3) else {
+        exit(2);
+    };
+    std::mem::forget(host);
+    if posix::replace_standard(posix::Standard::Input, &read_end).is_err() {
+        exit(2);
     }
 }
 
@@ -433,8 +432,7 @@ fn has_hex_run(value: &std::ffi::OsStr) -> bool {
 /// The open fds from 3 to 255, comma-separated (`-` for none).
 fn inherited_fds() -> String {
     let open: Vec<String> = (3..256)
-        // SAFETY: F_GETFD only reads an fd's flags; it fails harmlessly for a closed fd.
-        .filter(|&fd| unsafe { libc::fcntl(fd, libc::F_GETFD) } >= 0)
+        .filter(|&fd| posix::is_open(fd))
         .map(|fd| fd.to_string())
         .collect();
     if open.is_empty() {

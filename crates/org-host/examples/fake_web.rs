@@ -36,7 +36,7 @@
 //! reads, writes, `poll` and the exit.
 
 use std::io::{BufRead, Read, Write};
-use std::os::fd::{FromRawFd, IntoRawFd};
+use std::os::fd::IntoRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
@@ -44,7 +44,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use org_host_control::web::{LandlockEnforcement, LandlockStatus, WebReadyForSecrets};
-use org_platform::confinement;
+use org_platform::{confinement, posix};
 
 const ACK: &str = r#"{"v":1,"event":"fds.received","of":"handoff"}"#;
 /// What `--continue` is followed by: the control connection's descriptor, then the steps.
@@ -85,9 +85,8 @@ fn mode(path: &Path) -> u32 {
 }
 
 /// Waits `milliseconds` with `poll`, which a confined process may call.
-fn pause(milliseconds: i32) {
-    // SAFETY: no descriptor is passed; the call only waits.
-    unsafe { libc::poll(std::ptr::null_mut(), 0, milliseconds) };
+fn pause(milliseconds: u64) {
+    let _ = posix::poll(&mut [], Some(Duration::from_millis(milliseconds)));
 }
 
 /// Stays until standard input ends or 20 seconds have passed.
@@ -99,13 +98,8 @@ fn stay() {
         if left.is_zero() {
             return;
         }
-        let mut slot = libc::pollfd {
-            fd: 0,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        // SAFETY: one valid slot and a finite timeout.
-        let ready = unsafe { libc::poll(&mut slot, 1, left.as_millis() as i32) };
+        let mut slot = [posix::poll_slot(0, libc::POLLIN)];
+        let ready = posix::poll(&mut slot, Some(left)).unwrap_or(0);
         if ready > 0 && matches!(stdin.read(&mut [0u8; 64]), Ok(0) | Err(_)) {
             return;
         }
@@ -119,9 +113,11 @@ fn main() {
             let descriptor = descriptor
                 .parse()
                 .unwrap_or_else(|_| fail(90, "the control descriptor is not a number"));
-            // SAFETY: the image this one replaced left its control connection open at
-            // this number for it, and nothing else in this process owns it.
-            let control = unsafe { UnixStream::from_raw_fd(descriptor) };
+            // The image this one replaced left its control connection open at this number
+            // for it: a copy of it is this image's.
+            let control = posix::testing::adopt_inherited(descriptor)
+                .map(UnixStream::from)
+                .unwrap_or_else(|_| fail(90, "the control descriptor is not open"));
             (own_steps().0, steps.to_vec(), Some(control))
         }
         _ => {
@@ -187,16 +183,15 @@ fn main() {
                 control = Some(confined.stream);
             }
             "fork" => {
-                // SAFETY: this process has one thread; the new one goes on with the steps.
-                match unsafe { libc::fork() } {
-                    0 => {}
-                    forked if forked > 0 => {
-                        let mut status = 0;
-                        // SAFETY: waits for this process's own child.
-                        unsafe { libc::waitpid(forked, &mut status, 0) };
+                // This process has one thread; the new one goes on with the steps.
+                match posix::fork_single_threaded() {
+                    Ok(posix::Forked::Child(_)) => {}
+                    Ok(posix::Forked::Parent(forked)) => {
+                        // Waits for this process's own child.
+                        let _ = posix::reap(forked);
                         std::process::exit(0);
                     }
-                    _ => fail(96, "no fork"),
+                    Err(_) => fail(96, "no fork"),
                 }
             }
             "send" => send(&mut control, rest),
@@ -228,12 +223,11 @@ fn main() {
                 let Some(stream) = control.take() else {
                     fail(97, "no control connection to keep")
                 };
-                let descriptor = stream.into_raw_fd();
-                // SAFETY: clears close-on-exec on a descriptor this process owns, so
-                // that the next image inherits it.
-                if unsafe { libc::fcntl(descriptor, libc::F_SETFD, 0) } != 0 {
+                // Clears close-on-exec, so that the next image inherits it.
+                if posix::set_close_on_exec(&stream, false).is_err() {
                     fail(97, "the control descriptor cannot be kept");
                 }
+                let descriptor = stream.into_raw_fd();
                 let error = std::process::Command::new(&own)
                     .arg(CONTINUE)
                     .arg(descriptor.to_string())

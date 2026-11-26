@@ -33,7 +33,7 @@ fn apply_imported_to_engine<E: OfficeEngine>(
     let projectors: Vec<Box<dyn Projector<E>>> = vec![
         Box::new(OrganizationFiles::new(organization_id.clone())),
         Box::new(ProjectFiles::new(organization_id.clone())),
-        Box::new(TaskFiles::new()),
+        Box::new(TaskFiles::shared(organization_id.clone())),
         Box::new(ProcessFiles::new()),
     ];
     engine

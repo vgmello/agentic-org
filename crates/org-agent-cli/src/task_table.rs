@@ -1,6 +1,11 @@
 //! Unified v1 `task` and `checklist` command rows on the shared `org-command` grammar
 //! (`TASK-49` AC #3 `CLI-15` + `TASK-77` B4b: dependencies, searchable labels, reference/modified
 //! files, and task ordering).
+//!
+//! Each write declares the class the office answers it in (`doc-79`, `ADR-0014`): a create
+//! inside the office's reserved number block, a comment, a watch or unwatch and a checklist
+//! check are `committed`; a change that rewrites `task.md` (update, transition, assign, a
+//! dependency) or the checklist's steps (add, edit, remove, move) is `durable`.
 
 use org_command::{Ack, Command, Example, IfMatch, Kind};
 

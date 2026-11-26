@@ -12,13 +12,14 @@
 //! `org_platform::process`, which has a macOS adapter, a GNU/Linux adapter and a
 //! refusing one for every other Unix target: there the preparation check, the first
 //! step of every spawn, probe and recovery, returns that refusal before anything is
-//! started or signalled.
+//! started or signalled. Its plain POSIX calls (signals, reaping, directory-relative
+//! files) are `org_platform::posix`'s, so this crate has no `unsafe` code.
 //!
 //! All processes in the embedding program must preserve child ownership: never install
 //! SIGCHLD=SIG_IGN/SA_NOCLDWAIT or reap arbitrary children. Preparation checks the former;
 //! detecting a stolen child disarms this owner before any further signal.
 
-#![deny(unsafe_op_in_unsafe_fn)]
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![deny(clippy::disallowed_methods)]
 

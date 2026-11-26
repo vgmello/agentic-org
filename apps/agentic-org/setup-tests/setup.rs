@@ -7,7 +7,6 @@
 //! `systemd` (below) runs the same commands through the Linux service adapter itself, with
 //! stand-ins for `systemctl` and `loginctl` (`ORG_DEV_SERVICE_PROGRAMS`).
 use std::io::Read;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
@@ -130,26 +129,10 @@ impl Account {
     fn run_in_terminal(&self, args: &[&str]) -> (bool, String, String) {
         // Held from openpty until the spawn, so no other child inherits the terminal.
         let held = descriptors();
-        let (mut master, mut slave) = (-1, -1);
-        // SAFETY: openpty only writes the two descriptors; no name, termios or size.
-        let opened = unsafe {
-            libc::openpty(
-                &mut master,
-                &mut slave,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            )
-        };
-        assert_eq!(opened, 0, "openpty: {}", std::io::Error::last_os_error());
-        // SAFETY: both descriptors are new and owned only here.
-        let (master, slave) =
-            unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
-        for fd in [&master, &slave] {
-            // SAFETY: plain flag change on a descriptor this function owns. Children of
-            // parallel tests must not inherit the terminal, or its end would never be seen.
-            unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) };
-        }
+        // Both sides are close-on-exec: children of parallel tests must not inherit the
+        // terminal, or its end would never be seen.
+        let (master, slave) = org_platform::posix::testing::open_pseudo_terminal()
+            .unwrap_or_else(|error| panic!("openpty: {error}"));
         let mut command = self.command(args);
         command
             .stdin(Stdio::null())
@@ -230,8 +213,8 @@ impl Drop for Account {
             Some((String::new(), pid.trim().parse().ok()?))
         });
         for (_, pid) in self.service_pids().into_iter().chain(stand_in) {
-            // SAFETY: plain signal to a child this test's setup started.
-            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+            // A plain signal to a child this test's setup started.
+            let _ = org_platform::posix::kill(pid as libc::pid_t, libc::SIGKILL);
         }
     }
 }
@@ -281,8 +264,7 @@ fn free_port() -> u16 {
 }
 
 fn alive(pid: u32) -> bool {
-    // SAFETY: signal 0 only checks that the process exists.
-    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    org_platform::posix::process_exists(pid as libc::pid_t)
 }
 
 fn link_token(stdout: &str) -> Option<String> {
@@ -622,8 +604,8 @@ fn the_registered_account_fixture_serves_with_serve_name() {
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     assert!(registered.office_home.join("host-registry.db").exists());
-    // SAFETY: plain signal to our child.
-    unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
+    // A plain signal to our child.
+    let _ = org_platform::posix::kill(child.id() as libc::pid_t, libc::SIGTERM);
     assert!(child.wait().unwrap().success());
 }
 

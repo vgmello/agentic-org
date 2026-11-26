@@ -4,123 +4,80 @@
 //! [`PASSWORD_CANCELLED`], which callers turn into a cancellation.
 use crate::cli_error::PASSWORD_CANCELLED;
 use org_host_control::Password;
+use org_platform::posix::{self, SignalSet};
 use std::{
-    fs::OpenOptions,
+    fs::{File, OpenOptions},
     io::{Read, Write},
     os::fd::AsRawFd,
+    time::Duration,
 };
-struct Signals(libc::sigset_t);
+/// The termination and job-control signals held off while the terminal echoes nothing.
+const HELD: [libc::c_int; 5] = [
+    libc::SIGINT,
+    libc::SIGTERM,
+    libc::SIGHUP,
+    libc::SIGQUIT,
+    libc::SIGTSTP,
+];
+/// The mask this thread had before [`Signals::block`], restored when dropped.
+struct Signals(SignalSet);
 impl Signals {
     fn block() -> Result<Self, String> {
-        let mut set = std::mem::MaybeUninit::<libc::sigset_t>::zeroed();
-        let mut old = std::mem::MaybeUninit::<libc::sigset_t>::zeroed();
-        // SAFETY: `MaybeUninit::zeroed()` initializes every byte of `set` and `old`
-        // (necessary on 64-bit Linux where `pthread_sigmask` writes only the 8-byte
-        // kernel mask prefix of the 128-byte `libc::sigset_t`); `sigemptyset`,
-        // `sigaddset`, and `pthread_sigmask` take valid writable pointers and supported
-        // signal constants, and `old.assume_init()` runs only after success.
-        let old = unsafe {
-            if libc::sigemptyset(set.as_mut_ptr()) != 0 {
-                return Err("signal mask unavailable".into());
-            }
-            for signal in [
-                libc::SIGINT,
-                libc::SIGTERM,
-                libc::SIGHUP,
-                libc::SIGQUIT,
-                libc::SIGTSTP,
-            ] {
-                if libc::sigaddset(set.as_mut_ptr(), signal) != 0 {
-                    return Err("signal mask unavailable".into());
-                }
-            }
-            if libc::pthread_sigmask(libc::SIG_BLOCK, set.as_ptr(), old.as_mut_ptr()) != 0 {
-                return Err("signal mask unavailable".into());
-            }
-            old.assume_init()
-        };
+        let held = SignalSet::of(&HELD).map_err(|_| "signal mask unavailable")?;
+        let old = posix::block_signals(&held).map_err(|_| "signal mask unavailable")?;
         Ok(Self(old))
     }
     fn pending(&self) -> bool {
-        let mut set = std::mem::MaybeUninit::<libc::sigset_t>::zeroed();
-        // SAFETY: `MaybeUninit::zeroed()` initializes all bytes of `set` (including any
-        // tail bytes left untouched by Linux `sigpending`); short-circuit `||` ensures
-        // `sigismember` only reads `set` after `sigpending` returns 0.
-        unsafe {
-            libc::sigpending(set.as_mut_ptr()) != 0
-                || [
-                    libc::SIGINT,
-                    libc::SIGTERM,
-                    libc::SIGHUP,
-                    libc::SIGQUIT,
-                    libc::SIGTSTP,
-                ]
-                .iter()
-                .any(|s| libc::sigismember(set.as_ptr(), *s) == 1)
-        }
+        posix::pending_signals().map_or(true, |set| HELD.iter().any(|&s| set.contains(s)))
     }
 }
 impl Drop for Signals {
     fn drop(&mut self) {
-        // SAFETY: restoring the initialized previous mask on the same thread.
-        unsafe { libc::pthread_sigmask(libc::SIG_SETMASK, &self.0, std::ptr::null_mut()) };
+        // Restoring the previous mask on the same thread.
+        let _ = posix::set_signal_mask(&self.0);
     }
 }
-struct Restore(i32, libc::termios);
-impl Drop for Restore {
+/// The terminal's settings from before the entry, put back when dropped.
+struct Restore<'a>(&'a File, libc::termios);
+impl Drop for Restore<'_> {
     fn drop(&mut self) {
-        // SAFETY: terminal descriptor outlives guard and settings came from tcgetattr.
-        unsafe { libc::tcsetattr(self.0, libc::TCSANOW, &self.1) };
+        // The terminal outlives the guard and the settings came from it.
+        let _ = posix::set_terminal_attributes(self.0, &self.1);
     }
 }
 pub(super) fn password() -> Result<Password, String> {
     secret(b"Password: ")
 }
 pub(super) fn secret(label: &[u8]) -> Result<Password, String> {
-    let mut tty = OpenOptions::new()
+    let tty = OpenOptions::new()
         .read(true)
         .write(true)
         .open("/dev/tty")
         .map_err(|_| "password requires a controlling terminal")?;
     let signals = Signals::block()?;
-    let mut old = std::mem::MaybeUninit::<libc::termios>::uninit();
-    // SAFETY: live terminal and valid writable storage.
-    if unsafe { libc::tcgetattr(tty.as_raw_fd(), old.as_mut_ptr()) } != 0 {
-        return Err("terminal unavailable".into());
-    }
-    // SAFETY: successful tcgetattr initialized old.
-    let old = unsafe { old.assume_init() };
+    let old = posix::terminal_attributes(&tty).map_err(|_| "terminal unavailable")?;
     let mut hidden = old;
     hidden.c_lflag &= !libc::ECHO;
-    // SAFETY: live terminal and initialized settings.
-    if unsafe { libc::tcsetattr(tty.as_raw_fd(), libc::TCSANOW, &hidden) } != 0 {
-        return Err("cannot protect password entry".into());
-    }
-    let restore = Restore(tty.as_raw_fd(), old);
+    posix::set_terminal_attributes(&tty, &hidden).map_err(|_| "cannot protect password entry")?;
+    let restore = Restore(&tty, old);
+    let mut io = &tty;
     let mut bytes = Vec::new();
     let result = (|| {
-        tty.write_all(label).map_err(|_| "terminal unavailable")?;
-        tty.flush().map_err(|_| "terminal unavailable")?;
+        io.write_all(label).map_err(|_| "terminal unavailable")?;
+        io.flush().map_err(|_| "terminal unavailable")?;
         loop {
             if signals.pending() {
                 return Err(PASSWORD_CANCELLED);
             }
-            let mut poll = libc::pollfd {
-                fd: tty.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            };
-            // SAFETY: one initialized pollfd outlives poll's bounded wait.
-            let ready = unsafe { libc::poll(&mut poll, 1, 100) };
-            if ready < 0 {
-                return Err("terminal read failed");
-            }
+            let mut slot = [posix::poll_slot(tty.as_raw_fd(), libc::POLLIN)];
+            let ready = posix::poll(&mut slot, Some(Duration::from_millis(100)))
+                .map_err(|_| "terminal read failed")?;
             if ready == 0 {
                 continue;
             }
             let mut b = [0];
             // End of input (Ctrl+D at the prompt) cancels the entry, as Ctrl+C does.
-            tty.read_exact(&mut b).map_err(|error| {
+            io.read_exact(&mut b).map_err(|error| {
                 if error.kind() == std::io::ErrorKind::UnexpectedEof {
                     PASSWORD_CANCELLED
                 } else {
@@ -140,7 +97,7 @@ pub(super) fn secret(label: &[u8]) -> Result<Password, String> {
     })();
     crate::secrets::zero(&mut bytes);
     drop(restore);
-    let _ = tty.write_all(b"\n");
+    let _ = io.write_all(b"\n");
     drop(signals);
     result.map_err(str::to_owned)
 }

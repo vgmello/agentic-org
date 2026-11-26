@@ -7,7 +7,6 @@
 //! all: no identity is noted there, so nothing that needs one is allowed.
 
 use std::io;
-use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
 #[cfg(debug_assertions)]
 use std::path::PathBuf;
@@ -55,14 +54,8 @@ impl Accepted {
 
 /// How many bytes are waiting to be read on `stream` (`FIONREAD`).
 pub(crate) fn bytes_waiting(stream: &UnixStream) -> io::Result<u64> {
-    let mut waiting: libc::c_int = 0;
-    // SAFETY: a valid socket fd, and an out-value of the size FIONREAD writes.
-    let rc = unsafe { libc::ioctl(stream.as_raw_fd(), libc::FIONREAD, &mut waiting) };
-    if rc == 0 {
-        Ok(u64::try_from(waiting).unwrap_or(0))
-    } else {
-        Err(io::Error::last_os_error())
-    }
+    let waiting = org_platform::posix::bytes_waiting(stream)?;
+    Ok(u64::try_from(waiting).unwrap_or(u64::MAX))
 }
 
 /// The peer's identity now. On macOS it is the audit token the code-signing check identifies

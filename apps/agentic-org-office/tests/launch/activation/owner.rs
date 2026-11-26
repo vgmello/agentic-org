@@ -45,7 +45,7 @@ impl Live {
         transfer::send_record(
             self.session.transfer.as_ref().unwrap(),
             &record,
-            &[source.as_raw_fd()],
+            &[source.as_fd()],
         );
         // Channels this case dropped earlier are reported closed first, in order.
         let received = loop {

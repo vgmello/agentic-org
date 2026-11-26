@@ -17,6 +17,7 @@
 	import { selectDesktopSection } from '$lib/platform/shell/desktop-navigation';
 	import { navigating, page } from '$app/state';
 	import { inboxApi } from '$lib/modules/inbox/api';
+	import { clearInboxDeviceComments } from '$lib/modules/inbox/device-comments';
 	import { orgApi } from '$lib/modules/organization/api';
 	import { noteChanged } from '$lib/modules/organization/live';
 	import { liveState } from '$lib/modules/organization/live-state.svelte';
@@ -57,6 +58,8 @@
 		tessPanel.setOrganization(organizationId);
 	});
 	onDestroy(() => tessPanel.dispose());
+	const stopCommentCleanup = appSession.onSessionEnded(() => clearInboxDeviceComments());
+	onDestroy(() => stopCommentCleanup());
 	provideNotifications();
 	let shortcutsOpen = $state(false);
 	let commandBar = $state<ReturnType<typeof ExecutiveCommandBar> | undefined>();

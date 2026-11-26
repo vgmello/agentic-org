@@ -86,9 +86,8 @@ mod vector {
         }
         /// Waits for the child and returns how it ended.
         fn wait(&mut self) -> ExitStatus {
-            let mut status = 0;
-            // SAFETY: waits for this process's own child, which nothing else reaps.
-            assert_eq!(unsafe { libc::waitpid(self.pid, &mut status, 0) }, self.pid);
+            // This process's own child, which nothing else reaps.
+            let status = org_platform::posix::reap(self.pid).unwrap();
             self.reaped = true;
             ExitStatus::from_raw(status)
         }
@@ -96,8 +95,8 @@ mod vector {
     impl Drop for Running {
         fn drop(&mut self) {
             if !self.reaped {
-                // SAFETY: this process's own unreaped child: its id names nothing else.
-                unsafe { libc::kill(self.pid, libc::SIGKILL) };
+                // This process's own unreaped child: its id names nothing else.
+                let _ = org_platform::posix::kill(self.pid, libc::SIGKILL);
                 self.wait();
             }
         }

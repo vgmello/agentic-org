@@ -1,12 +1,18 @@
 //! Unix-socket I/O primitives. No protocol, storage or domain knowledge.
 //! Buffered reads check liveness periodically without imposing an idle timeout.
+//!
+//! The system calls behind them (descriptor passing, readiness, peer credentials) are
+//! `org-platform`'s (`socket::rights`, `posix`); this crate has no `unsafe` code.
 
-#![deny(unsafe_op_in_unsafe_fn)]
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod peer;
-pub mod rights;
 
+/// Nonblocking descriptor passing over Unix sockets (`SCM_RIGHTS`): `org-platform`'s.
+pub use org_platform::socket::rights;
+
+pub use org_platform::posix::{poll_readable, poll_readable_either};
 pub use peer::{effective_uid, peer_allowed, peer_pid};
 
 use std::io::{self, BufRead, BufReader, Read};
@@ -119,72 +125,6 @@ impl<
     fn consume(&mut self, amount: usize) {
         self.inner.consume(amount);
     }
-}
-
-/// Wait for bytes, EOF or a socket error on a descriptor owned by the caller.
-/// Invalid descriptors fail; interruption is returned for the caller to handle.
-pub fn poll_readable(fd: RawFd, tick: Duration) -> io::Result<bool> {
-    if fd < 0 {
-        return Err(io::Error::from_raw_os_error(libc::EBADF));
-    }
-    let mut slot = libc::pollfd {
-        fd,
-        events: libc::POLLIN,
-        revents: 0,
-    };
-    let millis = tick.as_millis().clamp(1, libc::c_int::MAX as u128) as libc::c_int;
-    // SAFETY: slot is one initialized pollfd, valid for the duration of this call.
-    let result = unsafe { libc::poll(&mut slot, 1, millis) };
-    if result < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    if slot.revents & libc::POLLNVAL != 0 {
-        return Err(io::Error::from_raw_os_error(libc::EBADF));
-    }
-    Ok(slot.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0)
-}
-
-/// Wait for bytes, EOF, or error on either of two descriptors owned by the caller (e.g. a
-/// persistent mTLS socket and a local self-pipe wake descriptor). Returns `(a_ready, b_ready)`.
-/// Zero timeout performs a non-blocking readiness check.
-pub fn poll_readable_either(
-    fd_a: RawFd,
-    fd_b: RawFd,
-    timeout: Duration,
-) -> io::Result<(bool, bool)> {
-    if fd_a < 0 || fd_b < 0 {
-        return Err(io::Error::from_raw_os_error(libc::EBADF));
-    }
-    let mut slots = [
-        libc::pollfd {
-            fd: fd_a,
-            events: libc::POLLIN,
-            revents: 0,
-        },
-        libc::pollfd {
-            fd: fd_b,
-            events: libc::POLLIN,
-            revents: 0,
-        },
-    ];
-    let millis = if timeout.is_zero() {
-        0
-    } else {
-        timeout.as_millis().clamp(1, libc::c_int::MAX as u128) as libc::c_int
-    };
-    // SAFETY: `slots` is a valid 2-element initialized `pollfd` array for the duration of this call.
-    let result = unsafe { libc::poll(slots.as_mut_ptr(), 2, millis) };
-    if result < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    if (slots[0].revents | slots[1].revents) & libc::POLLNVAL != 0 {
-        return Err(io::Error::from_raw_os_error(libc::EBADF));
-    }
-    let ready_mask = libc::POLLIN | libc::POLLHUP | libc::POLLERR;
-    Ok((
-        slots[0].revents & ready_mask != 0,
-        slots[1].revents & ready_mask != 0,
-    ))
 }
 
 #[cfg(test)]

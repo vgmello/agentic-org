@@ -1,7 +1,3 @@
-#![expect(
-    unsafe_code,
-    reason = "composition tests inspect socket flags via fcntl and send raw SCM_RIGHTS fds via libc FFI"
-)]
 //! Run the real root composition in an isolated test child, then inspect cleanup
 //! BEFORE that child's process exit can mask a forgotten service or database.
 use super::super::*;
@@ -97,13 +93,9 @@ fn probe(failure: bool) {
         let (mut stream, _) = listener.accept().unwrap();
         // Match the fake-host activation fixture: macOS accepted sockets may
         // retain the nonblocking listener flag. A socket timeout does not clear it.
-        // SAFETY: `stream` is an owned live socket; F_GETFL only queries its status flags.
-        let before = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFL) };
-        assert!(before >= 0);
+        let before = org_platform::posix::status_flags(stream.as_raw_fd()).unwrap();
         stream.set_nonblocking(false).unwrap();
-        // SAFETY: `stream` is an owned live socket; F_GETFL only queries its status flags.
-        let after = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFL) };
-        assert!(after >= 0);
+        let after = org_platform::posix::status_flags(stream.as_raw_fd()).unwrap();
         assert_eq!(after & libc::O_NONBLOCK, 0);
         eprintln!("measured root-host accepted flags: before={before} after={after}");
         stream
@@ -123,7 +115,7 @@ fn probe(failure: bool) {
         stream
             .write_all(&org_office_launch::encode_handoff(&handoff).unwrap())
             .unwrap();
-        pass_marker(&stream, worker.as_raw_fd());
+        pass_marker(&stream, std::os::fd::AsFd::as_fd(&worker));
         assert_eq!(
             org_office_launch::read_server_event(&mut reader).unwrap(),
             Some(RendezvousEvent::FdsReceived {
@@ -156,7 +148,7 @@ fn probe(failure: bool) {
             channel_id: "root-owned".into(),
         })
         .unwrap();
-        transfer::tests::send_rights(&transfer, &header, &[source.as_raw_fd()]);
+        transfer::tests::send_rights(&transfer, &header, &[std::os::fd::AsFd::as_fd(&source)]);
         assert_eq!(
             org_office_launch::read_server_event(&mut reader).unwrap(),
             Some(RendezvousEvent::FdsReceived {
@@ -236,26 +228,14 @@ fn probe(failure: bool) {
         .expect("root returned before closing the office and its lock");
     assert_eq!(reopened.stopped_cleanly(), !failure);
 }
-fn pass_marker(stream: &UnixStream, fd: std::os::fd::RawFd) {
-    let mut marker = [org_office_launch::FD_MARKER];
-    let mut data = libc::iovec {
-        iov_base: marker.as_mut_ptr().cast(),
-        iov_len: 1,
-    };
-    // SAFETY: all pointers borrow live aligned storage covering exactly one fd.
-    unsafe {
-        let space = libc::CMSG_SPACE(std::mem::size_of_val(&fd) as _) as usize;
-        let mut control = vec![0usize; space.div_ceil(std::mem::size_of::<usize>())];
-        let mut message: libc::msghdr = std::mem::zeroed();
-        message.msg_iov = &mut data;
-        message.msg_iovlen = 1;
-        message.msg_control = control.as_mut_ptr().cast();
-        message.msg_controllen = space as _;
-        let header = libc::CMSG_FIRSTHDR(&message);
-        (*header).cmsg_level = libc::SOL_SOCKET;
-        (*header).cmsg_type = libc::SCM_RIGHTS;
-        (*header).cmsg_len = libc::CMSG_LEN(std::mem::size_of_val(&fd) as _) as _;
-        std::ptr::copy_nonoverlapping(&fd, libc::CMSG_DATA(header).cast(), 1);
-        assert_eq!(libc::sendmsg(stream.as_raw_fd(), &message, 0), 1);
-    }
+fn pass_marker(stream: &UnixStream, fd: std::os::fd::BorrowedFd<'_>) {
+    // The marker byte with exactly this one borrowed live descriptor.
+    let sent = org_socket::rights::send_once(
+        std::os::fd::AsFd::as_fd(stream),
+        &[org_office_launch::FD_MARKER],
+        &[fd],
+        0,
+    )
+    .unwrap();
+    assert_eq!(sent, 1);
 }

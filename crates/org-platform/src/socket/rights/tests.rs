@@ -15,7 +15,7 @@ const MARKER: u8 = 0x3a;
 /// Whether this system sets close-on-exec with the receive, for this `recvmsg` flag,
 /// rather than under the caller's fence afterwards.
 fn atomic_close_on_exec() -> Option<libc::c_int> {
-    use org_platform::socket::{ReceivedCloseOnExec, RECEIVED_CLOSE_ON_EXEC};
+    use crate::socket::{ReceivedCloseOnExec, RECEIVED_CLOSE_ON_EXEC};
     match RECEIVED_CLOSE_ON_EXEC {
         ReceivedCloseOnExec::WithTheReceive(flag) => Some(flag),
         ReceivedCloseOnExec::UnderTheFence => None,
@@ -75,7 +75,7 @@ fn assert_cloexec(descriptor: &OwnedFd) {
 
 fn assert_closed(mut peer: UnixStream) {
     assert!(
-        crate::poll_readable(peer.as_raw_fd(), Duration::from_secs(1)).unwrap(),
+        crate::posix::poll_readable(peer.as_raw_fd(), Duration::from_secs(1)).unwrap(),
         "reported fd leaked"
     );
     assert_eq!(peer.read(&mut [0]).unwrap(), 0, "reported fd leaked");
@@ -396,7 +396,11 @@ fn fatal_paths_close_reported_fds_poison_receiver_and_return_to_caller() {
 
 fn run_fatal_child(case: &str) {
     let mut child = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "rights::tests::fatal_child", "--nocapture"])
+        .args([
+            "--exact",
+            "socket::rights::tests::fatal_child",
+            "--nocapture",
+        ])
         .env("ORG_SOCKET_FATAL_CASE", case)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

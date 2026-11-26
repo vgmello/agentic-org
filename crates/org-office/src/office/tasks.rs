@@ -85,6 +85,7 @@ impl Office {
                 actor: actor.to_owned(),
                 here: self.identity.clone(),
                 params,
+                numbering: self.store.task_numbering(),
             })
             .map_err(storage)?;
         if res.is_ok() {

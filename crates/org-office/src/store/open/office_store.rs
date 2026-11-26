@@ -8,8 +8,8 @@ use std::{
 };
 
 use org_store::{
-    EngineError, FeedPosition, Files, FilesError, Id, Projector, Status, Store, StoreError,
-    StoreParts,
+    Ack, Change, EngineError, FeedPosition, Files, FilesError, Id, Projector, Status, Store,
+    StoreError, StoreParts,
 };
 
 use super::super::sqlite::SqliteEngine;
@@ -21,7 +21,7 @@ use crate::{
     organization::projector::OrganizationFiles,
     processes::projector::ProcessFiles,
     projects::projector::ProjectFiles,
-    tasks::projector::TaskFiles,
+    tasks::{features::TaskNumbering, ports::TasksRead, projector::TaskFiles, records},
 };
 
 /// A store and the engine under it.
@@ -34,6 +34,10 @@ struct Opened<E: OfficeEngine> {
     incarnation: Id,
     /// Whether the last stop before this opening was orderly.
     stopped_cleanly: bool,
+    /// The office's task numbering (`ADR-0019`): when the last stop was not, task numbers up
+    /// to the counter's reservation may have been issued and lost, so the next task create
+    /// jumps past it, or a clean stop that comes first spends them.
+    task_numbering: Arc<TaskNumbering>,
 }
 
 enum OfficeStoreInner {
@@ -86,7 +90,8 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     let files: Arc<dyn Projector<E>> = Arc::new(OrganizationFiles::new(organization.clone()));
     let projects: Arc<dyn Projector<E>> = Arc::new(ProjectFiles::new(organization.clone()));
     let messaging: Arc<dyn Projector<E>> = Arc::new(MessagingFiles::new(organization.clone()));
-    let tasks: Arc<dyn Projector<E>> = Arc::new(TaskFiles::new());
+    let tasks: Arc<dyn Projector<E>> =
+        Arc::new(TaskFiles::new(organization.clone(), here.office_id.clone()));
     let processes: Arc<dyn Projector<E>> = Arc::new(ProcessFiles::new());
     let attachments: Arc<dyn Projector<E>> = Arc::new(AttachmentFiles::new());
     let local = OfficeLocalFiles::new(organization, here.office_id.clone());
@@ -131,6 +136,8 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     let store = Store::open(parts)?;
     let head = store.status().flushed;
     let stopped_cleanly = clean_stop::was_clean(marker.as_ref(), &here.journal_incarnation, head);
+    let (counter, _) = store.read(office_counter)?;
+    let task_numbering = Arc::new(TaskNumbering::opened(counter, stopped_cleanly));
     if marker.is_some() {
         clean_stop::remove(&config.durable_root, &here.office_id)
             .map_err(|e| marker_error(&config.durable_root, "remove", &e))?;
@@ -142,7 +149,15 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
         office: here.office_id.clone(),
         incarnation: here.journal_incarnation.clone(),
         stopped_cleanly,
+        task_numbering,
     })
+}
+
+/// This office's task counter: the projection holds this office's alone.
+fn office_counter<S: TasksRead>(
+    snapshot: &S,
+) -> Result<Option<records::OfficeTaskCounterRecord>, StoreError> {
+    Ok(snapshot.office_task_counters()?.into_iter().next())
 }
 
 fn marker_error(durable: &Path, action: &'static str, error: &std::io::Error) -> StoreError {
@@ -161,6 +176,7 @@ impl<E: OfficeEngine> Opened<E> {
         // The caller owns the store: no submission is in flight, so the head after this
         // sync is the head the store closes at.
         self.store.sync()?;
+        self.settle_task_counter()?;
         let head = self.store.status().flushed;
         self.store.close()?;
         let marker = Marker {
@@ -172,6 +188,23 @@ impl<E: OfficeEngine> Opened<E> {
             },
         };
         Ok((self.engine, marker))
+    }
+
+    /// After a stop that was not clean and no task create since, the numbers up to the
+    /// counter's reservation may have been issued and lost: they are spent, durably, before
+    /// the clean-stop marker says the next opening may trust the counter (`ADR-0019`
+    /// Decision 7). The caller owns the store, so nothing changes the counter meanwhile.
+    fn settle_task_counter(&self) -> Result<(), StoreError> {
+        let (counter, _) = self.store.read(office_counter)?;
+        let Some(settled) = counter.and_then(|c| self.task_numbering.settled(&c)) else {
+            return Ok(());
+        };
+        let path = records::counter_path(&self.office);
+        let bytes = records::encode_counter(&self.office, &settled);
+        self.store.submit(None, true, move |_| {
+            Ok(Change::new(Ack::Durable).put(path.clone(), bytes.clone()))
+        })?;
+        self.store.sync()
     }
 }
 
@@ -232,6 +265,13 @@ impl OfficeStore {
     /// drop, a fatal store or a failed close leaves none.
     pub fn stopped_cleanly(&self) -> bool {
         on_store!(self, opened => opened.stopped_cleanly)
+    }
+
+    /// The office's task numbering (`ADR-0019`), shared with task creation: whether numbers
+    /// up to the counter's `reserved_through` may have been issued by a run that did not
+    /// stop cleanly, and how far a reservation is known flushed.
+    pub fn task_numbering(&self) -> Arc<TaskNumbering> {
+        on_store!(self, opened => Arc::clone(&opened.task_numbering))
     }
 
     /// Returns when every accepted entry is flushed, confirmed and written to its files.

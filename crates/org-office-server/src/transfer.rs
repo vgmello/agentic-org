@@ -54,18 +54,13 @@ impl Service {
         })
     }
 }
-#[expect(
-    unsafe_code,
-    reason = "fatal transfer failure must terminate immediately via libc::_exit without running destructors"
-)]
 fn fatal() -> ! {
     use std::io::Write;
     let _ = io::stderr().write_all(b"agentic-org-office: fatal transfer failure\n");
     // Fatal receipt may leave unreported macOS rights. Terminate immediately,
     // with no ACK or C/atexit cleanup racing the live SQLite/OpenSSL threads.
     // SQLite's crash recovery rolls back open transactions on the next open.
-    // SAFETY: _exit terminates this process with status 1 and never returns.
-    unsafe { libc::_exit(1) }
+    org_platform::posix::exit_immediately(1)
 }
 impl Drop for Service {
     fn drop(&mut self) {

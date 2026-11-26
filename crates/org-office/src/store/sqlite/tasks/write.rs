@@ -61,6 +61,18 @@ fn put_task_details_row(
 impl TasksWrite for SqliteTx {
     fn put_task(&mut self, record: &TaskRecord) -> Result<(), EngineError> {
         let (db, scope) = self.view()?;
+        // Effective revision (`doc-79`): `max(task.md revision, latest event revision)`.
+        let latest: Option<i64> = one(
+            db,
+            "SELECT MAX(revision) FROM task_events \
+             WHERE organization_id = ?1 AND task_kind = 'task' AND task_id = ?2",
+            vec![text(scope), text(record.id.as_str())],
+            |row| row.get(0),
+        )?
+        .flatten();
+        let latest = latest.and_then(|n| u64::try_from(n).ok()).unwrap_or(0);
+        let mut meta = record.meta.to_org_meta();
+        meta.revision = meta.revision.max(latest);
         let mut values = vec![
             text(scope),
             text(record.id.as_str()),
@@ -84,7 +96,7 @@ impl TasksWrite for SqliteTx {
             opt_text_val(record.blocked_reason.as_deref()),
             opt_u64_val(record.rank_order)?,
         ];
-        meta_values(&record.meta.to_org_meta(), &mut values)?;
+        meta_values(&meta, &mut values)?;
         let columns = format!("organization_id, {TASK_COLS}, schema_version, {META}");
         put(db, "tasks", &columns, 2, values)?;
         put_record_ref(db, scope, "task", &record.id)?;
@@ -412,6 +424,18 @@ impl TasksWrite for SqliteTx {
                 text(&record.source_metadata_json),
                 text(&record.payload_sha256),
                 text(&record.resource_profile),
+            ],
+        )?;
+        // A child-only change (`doc-79`) advances the task's effective revision without
+        // rewriting `task.md`.
+        run(
+            db,
+            "UPDATE tasks SET revision = ?3 \
+             WHERE organization_id = ?1 AND id = ?2 AND revision < ?3",
+            vec![
+                text(scope),
+                text(record.task_id.as_str()),
+                whole(record.revision)?,
             ],
         )
     }

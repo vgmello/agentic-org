@@ -184,7 +184,7 @@ fn verify_durable_push_branch(
         ));
     }
     // Non-owning offices (e.g. satellites working on HQ-owned tasks, `TASK-192`) never mutate
-    // remote-owned `task.json` locally, so no durable `task_repositories` link exists yet; enforce
+    // remote-owned `task.md` locally, so no durable `task_repositories` link exists yet; enforce
     // the canonical flat `task/<KEY>-<slug>` branch shape against the office-private record.
     if !is_valid_canonical_task_branch(&task.key(), &ws.branch) {
         return Err(ApiError::new(

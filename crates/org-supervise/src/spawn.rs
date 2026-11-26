@@ -225,8 +225,8 @@ mod tests {
         child.group = true;
         let descriptors = [stdin.as_raw_fd(), stdout.as_raw_fd(), stderr.as_raw_fd()];
         for fd in descriptors {
-            // SAFETY: queries a live owned parent pipe end without altering it.
-            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            // Queries a live owned parent pipe end without altering it.
+            let flags = org_platform::posix::descriptor_flags(fd).unwrap_or(-1);
             assert!(
                 flags >= 0 && flags & libc::FD_CLOEXEC != 0,
                 "parent fd {fd} lacks CLOEXEC"
@@ -304,9 +304,9 @@ mod zombie_group_tests {
         }
         let (mut child, _stdout, _hold_input) = exited_group("exit 17");
         assert!(process::group_contains_only_leader(child.pid).unwrap());
-        // SAFETY: the held leader is still our unreaped child, reserving this group ID.
-        assert_eq!(unsafe { libc::killpg(child.pid, libc::SIGKILL) }, -1);
-        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+        // The held leader is still our unreaped child, reserving this group ID.
+        let denied = org_platform::posix::kill_group(child.pid, libc::SIGKILL).unwrap_err();
+        assert_eq!(denied.raw_os_error(), Some(libc::EPERM));
         assert_eq!(child.cleanup_and_reap(&[]).unwrap().status.code(), Some(17));
     }
 
@@ -322,8 +322,11 @@ mod zombie_group_tests {
             .read_line(&mut line)
             .unwrap();
         let member: i32 = line.trim().parse().unwrap();
-        // SAFETY: observation only of the gated fixture member in the held child group.
-        assert_eq!(unsafe { libc::getpgid(member) }, child.pid);
+        // Observation only of the gated fixture member in the held child group.
+        assert_eq!(
+            org_platform::posix::process_group(member).unwrap(),
+            child.pid
+        );
         assert!(!process::group_contains_only_leader(child.pid).unwrap());
         assert_eq!(child.cleanup_and_reap(&[]).unwrap().status.code(), Some(17));
     }

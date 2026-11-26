@@ -74,7 +74,7 @@ pub use self::providers::OfficePermitSpec;
 pub(crate) use self::satellite::check_replicated_hq_owner;
 pub use self::satellite::{
     classify_replicated_snapshot_path, export_authoritative_state_snapshot_pages,
-    is_immutable_state_path, is_stale_snapshot_task_entry, resolve_employee_office,
+    is_immutable_state_path, relocated_task_paths, resolve_employee_office,
     strip_org_core_employee_refs_typed, task_id_for_work_path, ConsistentStateSnapshot,
     ExportedSnapshotPages, OrgDeltaPayload, PendingMessageJournalBatch, PendingMessageJournalEntry,
     RelayedAskAnswer, RelayedAskWithdrawal, RelayedMessageOutcome, RelayedRecipientWake,
@@ -291,8 +291,11 @@ pub(crate) fn storage(error: StoreError) -> OfficeError {
 }
 
 impl Office {
-    #[cfg(test)]
-    pub(crate) fn sync_store(&self) -> Result<(), OfficeError> {
+    /// Returns when every accepted entry is flushed and confirmed: a test reading what the
+    /// office publishes after a `committed` write (a task create inside its reserved block,
+    /// a comment) waits for it here (`ADR-0014`, `ADR-0019`).
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn sync_store(&self) -> Result<(), OfficeError> {
         self.store.sync().map_err(storage)
     }
 

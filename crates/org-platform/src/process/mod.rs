@@ -64,6 +64,11 @@ mod refused;
 use refused as native;
 
 mod limits;
+#[cfg(all(
+    any(test, feature = "test-support"),
+    any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))
+))]
+mod raw_spawn;
 #[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
 mod shared;
 mod wrapper_signals;
@@ -543,6 +548,13 @@ pub fn spawn_piped(
         pid
     };
     Ok((pid, input.into(), output.into(), error.into()))
+}
+
+/// How many threads this process has now (`/proc/self/status` on GNU/Linux,
+/// `proc_pidinfo` on macOS), for [`crate::posix::fork_single_threaded`]. The refusing
+/// adapter refuses, and so nothing forks there.
+pub(crate) fn thread_count() -> io::Result<usize> {
+    native::thread_count()
 }
 
 /// Fill `bytes` from the kernel's random source, without blocking. An entropy pool

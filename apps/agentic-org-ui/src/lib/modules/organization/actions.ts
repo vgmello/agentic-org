@@ -1,7 +1,21 @@
 // What the org chart's dialogs do, as functions over `OrgApi`: each is a small sequence of commands, and each
 // reports every failure instead of stopping at the first (TEAM-5, TEAM-6, TEAM-7). Pure of the UI.
-import { toAppError } from '$lib/proto';
-import type { AgentRuntime, AppError, OrgSnapshot, RunMode, Schedule, Team } from '$lib/proto';
+import { isBuiltInAgent, toAppError } from '$lib/proto';
+import type {
+	AgentRuntime,
+	AppError,
+	Member,
+	OrgSnapshot,
+	RunMode,
+	Schedule,
+	Team
+} from '$lib/proto';
+
+function assertMutableAgent(member: Member, message: string): void {
+	if (isBuiltInAgent(member)) {
+		throw { source: 'api', code: 'not_authorized', message } satisfies AppError;
+	}
+}
 import { newStableId } from './commands';
 import { membersOfTeam } from './model';
 import type { OrgSession } from './session';
@@ -62,6 +76,7 @@ export async function createTeam(
 					code: 'not_found',
 					message: "That person isn't in the organization any more."
 				} satisfies AppError;
+			assertMutableAgent(m, 'Built-in agents cannot be moved to another home team.');
 			await api.command({
 				method: 'member.move',
 				params: {
@@ -533,6 +548,7 @@ export async function setAgentStatus(
 	seenVersion?: number
 ): Promise<void> {
 	const m = await currentMember(api, memberId, seenVersion);
+	assertMutableAgent(m, 'Built-in agents cannot be paused or resumed.');
 	await api.command({
 		method: 'member.set_agent_status',
 		params: { member_id: memberId, expected_version: m.version, status }
@@ -546,6 +562,7 @@ export async function offboardAgent(
 	seenVersion?: number
 ): Promise<void> {
 	const m = await currentMember(api, memberId, seenVersion);
+	assertMutableAgent(m, 'Built-in agents cannot be offboarded.');
 	await api.command({
 		method: 'member.offboard',
 		params: { member_id: memberId, expected_version: m.version }
@@ -572,6 +589,9 @@ export async function updateAgent(
 	seenVersion?: number
 ): Promise<void> {
 	const m = await currentMember(api, memberId, seenVersion);
+	if (change.name !== undefined || change.messagingName !== undefined) {
+		assertMutableAgent(m, 'Built-in agents cannot be renamed or have their handle changed.');
+	}
 	const clear = (v: string | undefined) => v !== undefined && v.trim() === '';
 	const given = (v: string | undefined) => (v !== undefined && v.trim() !== '' ? v : undefined);
 	await api.command({
@@ -633,6 +653,7 @@ export async function moveMemberToTeam(
 			code: 'not_found',
 			message: "They aren't in that team any more."
 		} satisfies AppError;
+	assertMutableAgent(current, 'Built-in agents cannot be moved to another home team.');
 	await api.command({
 		method: 'member.move',
 		params: {

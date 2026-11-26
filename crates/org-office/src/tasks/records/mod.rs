@@ -1,4 +1,14 @@
-//! Canonical durable records, path mapping, normalization, and JSON codecs for the tasks family.
+//! The tasks family's records, where each lives, and the codecs between a record and its
+//! file bytes (`doc-77`, `doc-79`, `doc-80`, `doc-84`, `ADR-0019`):
+//!
+//! - a task's folder is `state/projects/<project-id>/work/tasks/<task-id>/` for a project
+//!   task and `state/teams/<team chain>/work/tasks/<task-id>/` for a projectless one
+//!   ([`paths`]); it holds `task.md` ([`task_md`]), `comments/<comment-id>.md`,
+//!   `checklist.yaml` and `operations.yaml` ([`children`]);
+//! - a task's immutable history is `state/work-history/tasks/<task-id>/<revision>.json`,
+//!   `canonical-json/2` events ([`history`]);
+//! - an office's task counter is office-local, `local/offices/<office-id>/task-counter.yaml`
+//!   ([`children`]), never replicated and never in Git.
 
 use std::collections::BTreeSet;
 
@@ -7,11 +17,30 @@ use org_proto::tasks::{
     TASK_LABEL_MAX_LEN, TASK_MAX_FILES_PER_ROLE, TASK_MAX_LABELS,
 };
 use org_proto::{ApiError, ErrorCode};
-use org_store::{DurablePath, Id, Sha256};
+use org_store::Id;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::organization::records::{By, Meta};
+
+pub mod children;
+pub mod history;
+pub mod paths;
+pub mod task_md;
+
+pub use children::{
+    decode_checklist, decode_comment, decode_counter, decode_operations, encode_checklist,
+    encode_comment, encode_counter, encode_operations,
+};
+pub use history::{created_change, encode_event, verify_event, EventInput, MAX_EVENT_BYTES};
+pub use paths::{
+    checklist_path, comment_path, counter_path, event_path, history_folder, is_counter_path,
+    kind_of, operations_path, parse_path, task_dir_of, task_folder, task_md_path, Kind, Location,
+    TaskDir, TaskPath,
+};
+pub use task_md::{decode_task_md, encode_task_md, TaskDoc};
+
+/// The schema version of every file this family writes but its history events.
+pub const SCHEMA_VERSION: u64 = 1;
 
 /// Serializable attribution metadata on [`TaskRecord`] matching `schema.sql`'s common columns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,7 +113,10 @@ impl TaskMeta {
     }
 }
 
-/// Per-office monotonic task number counter (`work/office-task-counters/<CODE>.json`, `ADR-0019`).
+/// An office's monotonic task number counter with its durable block reservation
+/// (`local/offices/<office-id>/task-counter.yaml`, `doc-80`, `ADR-0019`):
+/// `last_number <= reserved_through`, and no number above `reserved_through` is ever issued
+/// before a new reservation is durable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OfficeTaskCounterRecord {
     pub office_code: String,
@@ -187,7 +219,9 @@ pub struct TaskRepositoryRecord {
     pub integrated_commit: Option<String>,
 }
 
-/// Core unified task record (`work/tasks/<task-id>/task.json`, `doc-77`, `TASK-49`, `TASK-77`).
+/// Core unified task record (the front matter and body of `task.md`, `doc-77`, `TASK-49`,
+/// `TASK-77`). In the projection `meta.revision` is the effective revision:
+/// `max(task.md revision, latest history event revision)` (`doc-79`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskRecord {
     pub id: Id,
@@ -242,7 +276,7 @@ impl TaskRecord {
     }
 }
 
-/// One checklist step (`work/tasks/<task-id>/checklist.json` -> `checklist_steps`).
+/// One checklist step (`checklist.yaml` -> `checklist_steps`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChecklistStepRecord {
     pub id: Id,
@@ -259,7 +293,7 @@ pub struct ChecklistStepRecord {
     pub revision: u64,
 }
 
-/// One append-only public comment (`work/tasks/<task-id>/comments/<comment-id>.json` -> `comments`).
+/// One append-only public comment (`comments/<comment-id>.md` -> `comments`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskCommentRecord {
     pub task_id: Id,
@@ -270,7 +304,7 @@ pub struct TaskCommentRecord {
     pub body_markdown: String,
 }
 
-/// One task watcher (`work/tasks/<task-id>/watchers.json` -> `watchers`).
+/// One task watcher (`operations.yaml` `watchers[]` -> `watchers`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskWatcherRecord {
     pub id: Id,
@@ -279,7 +313,7 @@ pub struct TaskWatcherRecord {
     pub watcher_id: Option<Id>,
 }
 
-/// One typed link from a task (`work/tasks/<task-id>/links.json` -> `links`).
+/// One typed link from a task (`task.md` `links[]` -> `links`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskLinkRecord {
     pub source_id: Id,
@@ -290,7 +324,8 @@ pub struct TaskLinkRecord {
     pub target_id: Id,
 }
 
-/// One immutable task history event (`work/tasks/<task-id>/events/<rev:010>.json` -> `task_events`).
+/// One immutable task history event (`state/work-history/tasks/<task-id>/<revision>.json`
+/// -> `task_events`), as verified from its `canonical-json/2` bytes ([`history`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskEventRecord {
     pub task_id: Id,
@@ -307,129 +342,6 @@ pub struct TaskEventRecord {
     pub source_metadata_json: String,
     pub payload_sha256: String,
     pub resource_profile: String,
-}
-
-impl TaskEventRecord {
-    pub fn build(
-        task_id: Id,
-        revision: u64,
-        occurred_at: String,
-        actor_id: Id,
-        operation_id: String,
-        change: &Value,
-    ) -> Result<Self, ApiError> {
-        let change_json = serde_json::to_string(change)
-            .map_err(|_| ApiError::new(ErrorCode::StorageError, "cannot encode task event"))?;
-        let rev_str = revision.to_string();
-        let hex = Sha256::of_parts(&[
-            task_id.as_str().as_bytes(),
-            b":",
-            rev_str.as_bytes(),
-            b":",
-            change_json.as_bytes(),
-        ])
-        .to_hex();
-        Ok(Self {
-            task_id,
-            revision,
-            schema_version: 2,
-            occurred_at: Some(occurred_at),
-            actor_kind: "employee".into(),
-            actor_id: Some(actor_id),
-            operation_id: Some(operation_id),
-            change_json,
-            source_metadata_json: "{}".into(),
-            payload_sha256: hex,
-            resource_profile: "selected-task-resources/1".into(),
-        })
-    }
-}
-
-/// Durable file kinds owned by [`super::projector::TaskFiles`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Kind {
-    OfficeTaskCounter(String),
-    Task(Id),
-    Checklist(Id),
-    Comment(Id, Id),
-    Watchers(Id),
-    Links(Id),
-    Event(Id, u64),
-}
-
-pub fn office_task_counter_path(office_code: &str) -> DurablePath {
-    let lower = office_code.to_ascii_lowercase();
-    DurablePath::parse(&format!("state/work/office-task-counters/{lower}.json"))
-        .expect("valid office task counter path")
-}
-
-pub fn task_path(task_id: &Id) -> DurablePath {
-    DurablePath::parse(&format!("state/work/tasks/{task_id}/task.json")).expect("valid task path")
-}
-
-pub fn checklist_path(task_id: &Id) -> DurablePath {
-    DurablePath::parse(&format!("state/work/tasks/{task_id}/checklist.json"))
-        .expect("valid checklist path")
-}
-
-pub fn comment_path(task_id: &Id, comment_id: &Id) -> DurablePath {
-    DurablePath::parse(&format!(
-        "state/work/tasks/{task_id}/comments/{comment_id}.json"
-    ))
-    .expect("valid comment path")
-}
-
-pub fn watchers_path(task_id: &Id) -> DurablePath {
-    DurablePath::parse(&format!("state/work/tasks/{task_id}/watchers.json"))
-        .expect("valid watchers path")
-}
-
-pub fn links_path(task_id: &Id) -> DurablePath {
-    DurablePath::parse(&format!("state/work/tasks/{task_id}/links.json")).expect("valid links path")
-}
-
-pub fn event_path(task_id: &Id, revision: u64) -> DurablePath {
-    DurablePath::parse(&format!(
-        "state/work/tasks/{task_id}/events/{revision:010}.json"
-    ))
-    .expect("valid event path")
-}
-
-/// Identifies a durable file owned by the tasks family.
-pub fn kind_of(path: &DurablePath) -> Option<Kind> {
-    let parts: Vec<&str> = path.as_str().split('/').collect();
-    match parts.as_slice() {
-        ["state", "work", "office-task-counters", file] => {
-            let code = file.strip_suffix(".json")?.to_ascii_uppercase();
-            if is_valid_office_code(&code) {
-                Some(Kind::OfficeTaskCounter(code))
-            } else {
-                None
-            }
-        }
-        ["state", "work", "tasks", tid, "task.json"] => Some(Kind::Task(Id::parse(tid).ok()?)),
-        ["state", "work", "tasks", tid, "checklist.json"] => {
-            Some(Kind::Checklist(Id::parse(tid).ok()?))
-        }
-        ["state", "work", "tasks", tid, "watchers.json"] => {
-            Some(Kind::Watchers(Id::parse(tid).ok()?))
-        }
-        ["state", "work", "tasks", tid, "links.json"] => Some(Kind::Links(Id::parse(tid).ok()?)),
-        ["state", "work", "tasks", tid, "comments", file] => {
-            let cid = file.strip_suffix(".json")?;
-            Some(Kind::Comment(Id::parse(tid).ok()?, Id::parse(cid).ok()?))
-        }
-        ["state", "work", "tasks", tid, "events", file] => {
-            let rev_str = file.strip_suffix(".json")?;
-            let rev = rev_str.parse::<u64>().ok()?;
-            if rev >= 1 {
-                Some(Kind::Event(Id::parse(tid).ok()?, rev))
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
 }
 
 pub fn is_valid_office_code(code: &str) -> bool {
@@ -542,14 +454,4 @@ pub fn normalize_file_paths(raw: &[String], role: &str) -> Result<Vec<String>, A
         ));
     }
     Ok(set.into_iter().collect())
-}
-
-pub fn encode_json<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
-    let mut bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
-    bytes.push(b'\n');
-    Ok(bytes)
-}
-
-pub fn decode_json<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, String> {
-    serde_json::from_slice(bytes).map_err(|e| e.to_string())
 }

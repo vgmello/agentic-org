@@ -76,6 +76,17 @@ pub(super) unsafe fn exit_this_thread() -> ! {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+pub(super) fn spawn_raw(
+    _directory: &std::path::Path,
+    _program: &std::path::Path,
+    _arguments: &[&CStr],
+    _environment: &[&CStr],
+    _new_session: bool,
+) -> io::Result<(libc::pid_t, io::PipeReader)> {
+    refused()
+}
+
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn posix_spawn_setsid() -> io::Result<libc::c_short> {
     refused()
 }
@@ -165,6 +176,10 @@ pub(super) unsafe fn add_chdir(
 pub(super) unsafe fn session_flags(
     _actions: *mut libc::posix_spawn_file_actions_t,
 ) -> io::Result<libc::c_int> {
+    refused()
+}
+
+pub(super) fn thread_count() -> io::Result<usize> {
     refused()
 }
 
@@ -283,6 +298,20 @@ mod tests {
             assert_refused(super::add_chdir(std::ptr::null_mut(), c"/"));
             assert_refused(super::session_flags(std::ptr::null_mut()));
         }
+    }
+
+    /// No thread count is known, so nothing forks; no program starts.
+    #[test]
+    fn no_thread_is_counted_and_no_program_starts() {
+        assert_refused(super::thread_count());
+        let root = std::path::Path::new("/");
+        assert_refused(super::spawn_raw(
+            root,
+            std::path::Path::new("/bin/sh"),
+            &[c"sh", c"-c", c"exit 0"],
+            &[],
+            true,
+        ));
     }
 
     #[test]

@@ -11,20 +11,19 @@
 </script>
 
 <script lang="ts">
+	import type { Component } from 'svelte';
 	import { goto, invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
 	import { Tooltip, mergeProps } from 'bits-ui';
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
-	import AddPersonSheet from '$lib/modules/organization/features/add-person/AddPersonSheet.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import { hireUrl } from '$lib/modules/employees';
-	import { newProjectUrl } from '$lib/modules/projects';
-	import { CaptureDialog, taskHref } from '$lib/modules/workitems';
+	import { hireUrl } from '$lib/modules/employees/hire';
+	import { newProjectUrl } from '$lib/modules/projects/present';
+	import { taskHref } from '$lib/modules/workitems/present';
 	import { areaCapability } from './capabilities';
 	import { focusDestinationHeading } from './focus-destination';
 	import { useShellData } from './shell-data.svelte';
-	import { NewMessageDialog } from '$lib/modules/messaging';
 	import { chatMembers } from '$lib/modules/messaging/model';
 	import { toAppError } from '$lib/proto';
 	import { orgApi } from '$lib/modules/organization/api';
@@ -49,13 +48,45 @@
 	let menuOpen = $state(false);
 	let trigger = $state<HTMLButtonElement | null>(null);
 	let snapshot = $state.raw<OrgSnapshot | undefined>();
-	let flow = $state<'work_item' | 'request' | 'message' | 'person' | undefined>();
+	let captureOpen = $state(false);
+	let captureMode = $state<'work_item' | 'request'>('work_item');
+	let messageOpen = $state(false);
+	let personOpen = $state(false);
 	let loading = $state(false);
+
+	// Loaded on demand on first open and kept mounted so dirty-close guards & bits-ui focus return stay intact.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	let CaptureDialogComp = $state.raw<Component<any> | undefined>();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	let NewMessageDialogComp = $state.raw<Component<any> | undefined>();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	let AddPersonSheetComp = $state.raw<Component<any> | undefined>();
+
+	async function startCaptureFlow(mode: 'work_item' | 'request') {
+		if (!workAvailable) {
+			void goto(resolve('/work?new=1' as '/work'));
+			return;
+		}
+		loading = true;
+		try {
+			if (!CaptureDialogComp) {
+				const mod = await import('$lib/modules/workitems/features/capture/CaptureDialog.svelte');
+				CaptureDialogComp = mod.default;
+			}
+			captureMode = mode;
+			captureOpen = true;
+		} catch (e) {
+			toast.error("Couldn't open that form", { description: toAppError(e).message });
+			trigger?.focus();
+		} finally {
+			loading = false;
+		}
+	}
 
 	/** Opens the menu; the N / Shift+N shortcut calls this. */
 	export function openMenu() {
 		if (headless) {
-			if (workAvailable) flow = 'work_item';
+			if (workAvailable) void startCaptureFlow('work_item');
 			else void goto(resolve(newProjectUrl() as '/'));
 			return;
 		}
@@ -66,12 +97,10 @@
 	export function runAction(kind: NewMenuAction) {
 		switch (kind) {
 			case 'task':
-				if (workAvailable) flow = 'work_item';
-				else void goto(resolve('/work?new=1' as '/work'));
+				void startCaptureFlow('work_item');
 				break;
 			case 'request':
-				if (workAvailable) flow = 'request';
-				else void goto(resolve('/work?new=1' as '/work'));
+				void startCaptureFlow('request');
 				break;
 			case 'project':
 				void goto(resolve(newProjectUrl() as '/'));
@@ -92,8 +121,24 @@
 	async function startOrgFlow(name: 'message' | 'person') {
 		loading = true;
 		try {
-			snapshot = (await orgApi.view(organizationId)).snapshot;
-			flow = name;
+			const [view, mod] = await Promise.all([
+				orgApi.view(organizationId),
+				name === 'message'
+					? NewMessageDialogComp
+						? Promise.resolve(undefined)
+						: import('$lib/modules/messaging/features/open-dm/NewMessageDialog.svelte')
+					: AddPersonSheetComp
+						? Promise.resolve(undefined)
+						: import('$lib/modules/organization/features/add-person/AddPersonSheet.svelte')
+			]);
+			snapshot = view.snapshot;
+			if (name === 'message') {
+				if (mod) NewMessageDialogComp = mod.default;
+				messageOpen = true;
+			} else {
+				if (mod) AddPersonSheetComp = mod.default;
+				personOpen = true;
+			}
 		} catch (e) {
 			toast.error("Couldn't open that form", { description: toAppError(e).message });
 			trigger?.focus();
@@ -107,7 +152,7 @@
 	async function openDm(ids: string[]) {
 		const { sender: chatSender } = await import('$lib/modules/messaging/api');
 		const accepted = await chatSender(organizationId)({ method: 'dm.open', members: ids });
-		flow = undefined;
+		messageOpen = false;
 		await goto(
 			resolve(
 				accepted.conversation_id
@@ -172,10 +217,10 @@
 					>Project</DropdownMenu.Item
 				>
 				{#if workAvailable}
-					<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'work_item')}
+					<DropdownMenu.Item class={itemClass} onSelect={() => void startCaptureFlow('work_item')}
 						>Work item</DropdownMenu.Item
 					>
-					<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'request')}
+					<DropdownMenu.Item class={itemClass} onSelect={() => void startCaptureFlow('request')}
 						>Request</DropdownMenu.Item
 					>
 				{/if}
@@ -197,32 +242,26 @@
 	</Tooltip.Provider>
 {/if}
 
-{#if workAvailable}
-	<CaptureDialog
-		bind:open={
-			() => flow === 'work_item' || flow === 'request',
-			(open) => {
-				if (!open) flow = undefined;
-			}
-		}
+{#if workAvailable && CaptureDialogComp}
+	<CaptureDialogComp
+		bind:open={captureOpen}
 		{organizationId}
-		initialType={flow === 'request' ? 'request' : 'task'}
-		allowTypeSwitch={flow === 'work_item'}
-		oncreated={(created) => {
+		initialType={captureMode === 'request' ? 'request' : 'task'}
+		allowTypeSwitch={captureMode === 'work_item'}
+		oncreated={(created: { ref: string }) => {
 			void shellData?.refresh();
 			void goto(resolve(taskHref(created.ref) as '/'));
 		}}
 	/>
 {/if}
 
-{#if snapshot}
-	<NewMessageDialog
-		bind:open={() => flow === 'message', (open) => (flow = open ? 'message' : undefined)}
-		members={chatMembers(snapshot)}
-		onsubmit={openDm}
-	/>
-	<AddPersonSheet
-		bind:open={() => flow === 'person', (open) => (flow = open ? 'person' : undefined)}
+{#if snapshot && NewMessageDialogComp}
+	<NewMessageDialogComp bind:open={messageOpen} members={chatMembers(snapshot)} onsubmit={openDm} />
+{/if}
+
+{#if snapshot && AddPersonSheetComp}
+	<AddPersonSheetComp
+		bind:open={personOpen}
 		snapshot={withoutFormer(snapshot)}
 		{session}
 		organization={connection.organization.name}

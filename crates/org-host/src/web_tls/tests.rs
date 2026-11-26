@@ -461,8 +461,7 @@ fn a_supplied_file_is_a_bounded_regular_file_opened_without_following_a_link() {
         .contains("not a regular file"));
     let fifo = dir.path().join("fifo");
     let path = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
-    // SAFETY: a valid NUL-terminated path.
-    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    org_platform::posix::make_fifo(&path, 0o600).unwrap();
     assert!(read_pem_file(&fifo)
         .unwrap_err()
         .contains("not a regular file"));

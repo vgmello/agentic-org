@@ -62,6 +62,8 @@
 	import type { ChatLocation, ChatPanelKind, PendingMessage } from '../../types';
 	import BrowseChannelsDialog from '../browse-channels/BrowseChannelsDialog.svelte';
 	import PinsPanel from '../pin-message/PinsPanel.svelte';
+	import { focusVisible as focusChatTarget, revealFocus } from './chat-focus';
+	import { createChatSnapshotLoader } from './chat-loader';
 	import ConversationHeader from './ConversationHeader.svelte';
 	import MessageFeed from './MessageFeed.svelte';
 
@@ -151,23 +153,8 @@
 	let sidebarDialogSelected = false;
 	let sidebarDialogOpener: HTMLElement | undefined;
 
-	function revealFocus(target: HTMLElement) {
-		const rect = target.getBoundingClientRect();
-		const x = rect.x + rect.width / 2;
-		const inset = Math.min(1, rect.height / 2);
-		const scrollMargin = Number.parseFloat(getComputedStyle(target).scrollMarginBlockStart) || 0;
-		const clippedByViewport = rect.top < scrollMargin || rect.bottom > innerHeight;
-		const covered = ![rect.top + inset, rect.bottom - inset].every((y) =>
-			target.contains(document.elementFromPoint(x, y))
-		);
-		if (clippedByViewport || covered) target.scrollIntoView({ block: 'center', inline: 'nearest' });
-	}
-
-	function focusVisible(target: HTMLElement | null | undefined) {
-		if (!target?.isConnected) return;
-		target.focus({ preventScroll: true });
-		if (compactPanels) revealFocus(target);
-	}
+	const focusVisible = (target: HTMLElement | null | undefined) =>
+		focusChatTarget(target, compactPanels);
 
 	function revealChatFocus(event: FocusEvent) {
 		const target = event.target;
@@ -300,45 +287,52 @@
 		if (!pendingPlace || page.url.href === pendingPlace.href) documentPlace = viewTitle;
 	});
 
-	async function load() {
-		try {
-			now = new Date().toISOString();
-			chat = await chatApi.snapshot(organizationId);
+	let mounted = false;
+	const loader = createChatSnapshotLoader({
+		chatApi,
+		getOrganizationId: () => organizationId,
+		hasSnapshot: () => Boolean(chat),
+		onSnapshot: (snap, nowIso) => {
+			now = nowIso;
+			chat = snap;
 			loadError = undefined;
-		} catch (e) {
-			if (!chat) loadError = toAppError(e).message;
+			if (mounted && !started && snap.state) {
+				openLocation(urlLocation(page.url.search));
+				lastSearch = page.url.search;
+				started = true;
+				shellApi.navigation(organizationId).then(
+					(n) => {
+						if (mounted) inboxCount = n.inboxOpen ?? undefined;
+					},
+					() => {
+						if (mounted) inboxCount = undefined;
+					}
+				);
+			}
+		},
+		onError: (msg) => {
+			loadError = msg;
 		}
-	}
+	});
+	const load = () => loader.load();
 
 	async function retryLoad() {
 		loadError = undefined;
 		await load();
-		if (chatState && !started) {
-			openLocation(urlLocation(page.url.search));
-			lastSearch = page.url.search;
-			started = true;
-		}
 	}
 
 	onMount(() => {
+		mounted = true;
 		const media = window.matchMedia('(width < 1280px)');
 		const syncCompactPanels = () => (compactPanels = media.matches);
 		syncCompactPanels();
 		media.addEventListener('change', syncCompactPanels);
-		void load().then(() => {
-			if (chatState) {
-				openLocation(urlLocation(page.url.search));
-				lastSearch = page.url.search;
-				started = true;
-			}
-			shellApi.navigation(organizationId).then(
-				(n) => (inboxCount = n.inboxOpen ?? undefined),
-				() => (inboxCount = undefined)
-			);
-		});
-		const stop = chatApi.subscribe(organizationId, () => void load());
+		void load();
+		const stop = chatApi.subscribe(organizationId, () => loader.scheduleLiveReload());
 		const timer = setInterval(() => void load(), 30_000);
 		return () => {
+			mounted = false;
+			loader.dispose();
 			stop();
 			clearInterval(timer);
 			media.removeEventListener('change', syncCompactPanels);

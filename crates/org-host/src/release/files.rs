@@ -11,10 +11,7 @@ use std::{
     ffi::{CStr, CString, OsStr},
     fs::File,
     io::{self, Read, Seek, Write},
-    os::{
-        fd::{AsRawFd, FromRawFd},
-        unix::{ffi::OsStrExt, fs::MetadataExt},
-    },
+    os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Component, Path},
 };
 #[derive(PartialEq, Eq)]
@@ -40,13 +37,15 @@ pub(super) fn identity(file: &File) -> Result<Identity, Error> {
         mode: m.mode(),
     })
 }
-fn owned(fd: libc::c_int) -> io::Result<File> {
-    if fd < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        // SAFETY: successful open/dup transfers this new owned descriptor.
-        Ok(unsafe { File::from_raw_fd(fd) })
-    }
+/// `name` of the retained directory `parent` opened with `flags` (and `mode` when it
+/// creates), as a file this module owns.
+fn owned_at(
+    parent: &File,
+    name: &CStr,
+    flags: libc::c_int,
+    mode: libc::mode_t,
+) -> io::Result<File> {
+    org_platform::posix::open_at(parent, name, flags, mode).map(File::from)
 }
 fn component(name: &OsStr) -> Result<CString, Error> {
     let p = Path::new(name);
@@ -64,10 +63,8 @@ fn open_at(parent: &File, name: &OsStr, directory: bool) -> Result<File, Error> 
         | libc::O_CLOEXEC
         | libc::O_NONBLOCK
         | if directory { libc::O_DIRECTORY } else { 0 };
-    // SAFETY: retained descriptor plus validated single NUL-terminated component.
-    Ok(owned(unsafe {
-        libc::openat(parent.as_raw_fd(), name.as_ptr(), flags)
-    })?)
+    // A retained descriptor plus a validated single NUL-terminated component.
+    Ok(owned_at(parent, &name, flags, 0)?)
 }
 fn directory(file: &File, final_part: bool) -> Result<(), Error> {
     let m = file.metadata()?;
@@ -98,16 +95,11 @@ impl Directory {
         }
         let name = CString::new(format!("input-{}.gz", crate::ids::generate()?))
             .map_err(|_| Error::UnsafeInput)?;
-        // SAFETY: retained private directory, module-generated single component,
-        // create-new no-follow, no caller/archive-provided output authority.
-        let mut frozen = owned(unsafe {
-            libc::openat(
-                self.0.as_raw_fd(),
-                name.as_ptr(),
-                libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-                0o600,
-            )
-        })?;
+        // A retained private directory, a module-generated single component, create-new
+        // no-follow, no caller/archive-provided output authority.
+        let flags =
+            libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        let mut frozen = owned_at(&self.0, &name, flags, 0o600)?;
         let mut total = 0_u64;
         let mut bytes = [0_u8; 64 * 1024];
         loop {
@@ -188,52 +180,13 @@ impl Directory {
         Ok(bytes)
     }
     fn names(&self, limit: usize) -> Result<BTreeSet<String>, Error> {
-        // SAFETY: reopen the retained directory itself to get an independent
-        // enumeration offset. dup would share it, making repeat verification
-        // incorrectly see EOF. The module-owned dot names no untrusted path.
-        let duplicate = owned(unsafe {
-            libc::openat(
-                self.0.as_raw_fd(),
-                c".".as_ptr(),
-                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            )
-        })?;
-        // SAFETY: `duplicate` is a newly opened directory descriptor; ownership transfers
-        // to the `DIR` handle on non-null return via `mem::forget(duplicate)` below.
-        let pointer = unsafe { libc::fdopendir(duplicate.as_raw_fd()) };
-        if pointer.is_null() {
-            return Err(io::Error::last_os_error().into());
-        }
-        std::mem::forget(duplicate);
-        struct Entries(*mut libc::DIR);
-        impl Drop for Entries {
-            fn drop(&mut self) {
-                // SAFETY: sole owner of the successful fdopendir result.
-                unsafe {
-                    libc::closedir(self.0);
-                }
-            }
-        }
-        let entries = Entries(pointer);
+        // A new open description of the retained directory itself, for an independent
+        // enumeration offset: dup would share it, making repeat verification incorrectly see
+        // EOF. The module-owned dot names no untrusted path.
         let mut names = BTreeSet::new();
-        loop {
-            org_platform::fs::set_errno(0)?;
-            // SAFETY: retained live DIR, same thread and no competing iterator.
-            let item = unsafe { libc::readdir(entries.0) };
-            if item.is_null() {
-                if io::Error::last_os_error().raw_os_error() != Some(0) {
-                    return Err(io::Error::last_os_error().into());
-                }
-                break;
-            }
-            // SAFETY: readdir supplies a NUL-terminated name valid until next call.
-            let name = unsafe { CStr::from_ptr((*item).d_name.as_ptr()) }
-                .to_str()
-                .map_err(|_| Error::UnsafeInput)?;
-            if matches!(name, "." | "..") {
-                continue;
-            }
-            if names.len() >= limit || !names.insert(name.to_owned()) {
+        for name in org_platform::posix::Entries::of(&self.0)? {
+            let name = name?.into_string().map_err(|_| Error::UnsafeInput)?;
+            if names.len() >= limit || !names.insert(name) {
                 return Err(Error::UnsafeInput);
             }
         }

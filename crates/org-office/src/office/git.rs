@@ -258,7 +258,7 @@ impl Office {
         Ok(res)
     }
 
-    /// Records a task's Git branch (and optional integrated commit) durably in `task.json`
+    /// Records a task's Git branch (and optional integrated commit) durably in `task.md`
     /// (`task_repositories` projection + immutable `task_events`).
     pub fn record_task_repository_branch(
         &self,

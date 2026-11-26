@@ -43,24 +43,43 @@ impl crate::store::open::ReadOp for ReadOfficeCodesOp {
     }
 }
 
+struct IncomingTaskCheck<'a> {
+    expected_record_id: &'a str,
+    origin_codes: &'a std::collections::BTreeSet<String>,
+    team_ids: &'a std::collections::BTreeSet<&'a str>,
+    /// The revision the batch brings each task to (`task.md`'s, or a later event's).
+    revisions: &'a std::collections::BTreeMap<Id, u64>,
+}
+
 fn validate_incoming_task_record(
     office: &Office,
     tid: &Id,
     opt_bytes: Option<&[u8]>,
-    expected_record_id: &str,
-    origin_codes: &std::collections::BTreeSet<String>,
-    team_ids: &std::collections::BTreeSet<&str>,
+    check: &IncomingTaskCheck<'_>,
 ) -> Result<String, OfficeError> {
+    let IncomingTaskCheck {
+        expected_record_id,
+        origin_codes,
+        team_ids,
+        revisions,
+    } = check;
+    let expected_record_id = *expected_record_id;
     let Some(bytes) = opt_bytes else {
         return Err(OfficeError::Invalid(
             "satellite work change cannot delete task records",
         ));
     };
-    let rec: crate::tasks::records::TaskRecord = serde_json::from_slice(bytes)
-        .map_err(|_| OfficeError::Invalid("malformed TaskRecord in satellite work"))?;
+    let rec = crate::tasks::records::decode_task_md(bytes)
+        .map_err(|_| OfficeError::Invalid("malformed task.md in satellite work"))?
+        .task;
     if rec.id != *tid {
         return Err(OfficeError::Invalid("TaskRecord id does not match path"));
     }
+    let incoming_revision = revisions
+        .get(tid)
+        .copied()
+        .unwrap_or(rec.meta.revision)
+        .max(rec.meta.revision);
     if org_proto::is_uuid_v7(expected_record_id) && rec.id.as_str() != expected_record_id {
         return Err(OfficeError::Invalid(
             "TaskRecord id does not match WorkChange record_id",
@@ -98,7 +117,10 @@ fn validate_incoming_task_record(
                 "satellite cannot overwrite task owned by another office",
             ));
         }
-        if rec.meta.revision < existing.task.revision {
+        // `task.md` carries the revision of the task's last core change; the task's
+        // effective revision may be past it by child-only changes (`doc-79`), so only the
+        // batch's own revision for the task is compared.
+        if incoming_revision < existing.task.revision {
             return Err(OfficeError::Invalid(
                 "stale TaskRecord revision rejected by HQ",
             ));
@@ -136,8 +158,21 @@ pub(super) fn validate_typed_work_files_against_hq(
     let mut incoming_task_codes: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
     let mut deferred_sidecars: Vec<Id> = Vec::new();
-    // Pass 1: validate counters and Task records before sidecars regardless of file order
-    // (e.g. `links.json` sorts before `task.json` when creating a task with `depends_on`, `TASK-52` P8-#2).
+    let refs = files.iter().map(|(p, b)| (p.as_str(), b.as_deref()));
+    let revisions: std::collections::BTreeMap<Id, u64> =
+        crate::tasks::replica::incoming_tasks(refs)
+            .map_err(|_| OfficeError::Invalid("malformed task.md in satellite work"))?
+            .into_iter()
+            .map(|(id, incoming)| (id, incoming.revision))
+            .collect();
+    let check = IncomingTaskCheck {
+        expected_record_id,
+        origin_codes: &origin_codes,
+        team_ids: &team_ids,
+        revisions: &revisions,
+    };
+    // Pass 1: validate `task.md` records before sidecars regardless of file order (`TASK-52`
+    // P8-#2). The office's task counter is office-local and never in a work change (`doc-80`).
     for (path, opt_bytes) in files {
         let dp = DurablePath::parse(path).map_err(|_| OfficeError::Invalid("invalid path"))?;
         let Some(kind) = crate::tasks::records::kind_of(&dp) else {
@@ -146,28 +181,14 @@ pub(super) fn validate_typed_work_files_against_hq(
             ));
         };
         match kind {
-            crate::tasks::records::Kind::OfficeTaskCounter(code) => {
-                if opt_bytes.is_none() || !origin_codes.contains(&code) {
-                    return Err(OfficeError::Invalid(
-                        "satellite may only update its own office task counter",
-                    ));
-                }
-            }
             crate::tasks::records::Kind::Task(tid) => {
-                let code = validate_incoming_task_record(
-                    office,
-                    &tid,
-                    opt_bytes.as_deref(),
-                    expected_record_id,
-                    &origin_codes,
-                    &team_ids,
-                )?;
+                let code =
+                    validate_incoming_task_record(office, &tid, opt_bytes.as_deref(), &check)?;
                 incoming_task_codes.insert(tid.as_str().to_owned(), code);
             }
             crate::tasks::records::Kind::Checklist(tid)
             | crate::tasks::records::Kind::Comment(tid, _)
-            | crate::tasks::records::Kind::Watchers(tid)
-            | crate::tasks::records::Kind::Links(tid)
+            | crate::tasks::records::Kind::Operations(tid)
             | crate::tasks::records::Kind::Event(tid, _) => {
                 deferred_sidecars.push(tid);
             }

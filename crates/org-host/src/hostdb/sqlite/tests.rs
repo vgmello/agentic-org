@@ -42,8 +42,8 @@ pub(super) fn checkpoint(step: u8) -> Result<(), Error> {
         }
     }
     if CRASH.with(|c| c.get() == Some(step)) {
-        // SAFETY: deliberate process death; the parent checks persisted recovery without Drop.
-        unsafe { libc::_exit(150 + i32::from(step)) };
+        // A deliberate process death; the parent checks persisted recovery without Drop.
+        org_platform::posix::exit_immediately(150 + i32::from(step));
     }
     if FAIL.with(|f| *f.borrow() == Some(step)) {
         return Err(Error::Io(io::ErrorKind::Interrupted));
@@ -799,15 +799,11 @@ fn database_fds(path: &Path) -> Vec<i32> {
     let inode = fs::metadata(path).unwrap();
     (3..4096)
         .filter(|&fd| {
-            let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-            // SAFETY: successful fstat initializes the output; failed descriptors are skipped.
-            if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
-                return false;
-            }
-            // SAFETY: fstat succeeded.
-            let stat = unsafe { stat.assume_init() };
-            stat.st_ino as u128 == u128::from(inode.ino())
-                && stat.st_dev as u128 == u128::from(inode.dev())
+            // Descriptors that are not open are skipped.
+            org_platform::posix::status_of_number(fd).is_ok_and(|stat| {
+                stat.st_ino as u128 == u128::from(inode.ino())
+                    && stat.st_dev as u128 == u128::from(inode.dev())
+            })
         })
         .collect()
 }
@@ -823,9 +819,8 @@ fn sqlite_file_descriptors_are_close_on_exec() {
         let fds = database_fds(&home.path().join(name));
         assert!(!fds.is_empty(), "SQLite owns a {name} fd");
         for fd in fds {
-            // SAFETY: F_GETFD examines a descriptor retained by this SQLite connection.
-            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-            assert_ne!(flags & libc::FD_CLOEXEC, 0, "{name}");
+            // A descriptor retained by this SQLite connection.
+            assert!(org_platform::posix::is_close_on_exec(fd).unwrap(), "{name}");
         }
     }
     drop(db);
@@ -836,19 +831,15 @@ fn sqlite_drop_releases_locks_while_a_forked_child_retains_its_fds() {
     use std::os::fd::AsRawFd;
     let (home, secrets, db) = fixture();
     let (mut release, wait) = std::os::unix::net::UnixStream::pair().unwrap();
-    let (release_fd, wait_fd) = (release.as_raw_fd(), wait.as_raw_fd());
-    // SAFETY: the child calls only async-signal-safe close/read/_exit; it never uses SQLite.
-    let pid = unsafe { libc::fork() };
-    if pid == 0 {
-        // SAFETY: retain inherited SQLite fds until the parent's close/reopen/write attempt.
-        unsafe {
-            libc::close(release_fd);
-            let mut byte = 0u8;
-            let read = libc::read(wait_fd, (&mut byte as *mut u8).cast(), 1);
-            libc::_exit(if read == 1 && byte == 1 { 0 } else { 42 });
-        }
-    }
-    assert!(pid > 0, "fork failed");
+    // The child never uses SQLite: it retains inherited SQLite fds until the parent's
+    // close/reopen/write attempt.
+    let pid = org_platform::posix::testing::fork_child(
+        org_platform::posix::testing::ForkedChild::HoldUntilByte {
+            close: release.as_raw_fd(),
+            wait: wait.as_raw_fd(),
+        },
+    )
+    .expect("fork");
     drop(wait);
     drop(db);
     let reopened = HostDb::open(home.path(), &secrets);
@@ -860,12 +851,10 @@ fn sqlite_drop_releases_locks_while_a_forked_child_retains_its_fds() {
     });
     let released = std::io::Write::write_all(&mut release, &[1]);
     drop(release);
-    let mut status = 0;
-    // SAFETY: reap exactly the child this test created, before asserting operation results.
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    // Reap exactly the child this test created, before asserting operation results.
+    let status = org_platform::posix::reap(pid);
     released.unwrap();
-    assert_eq!(waited, pid);
-    assert_eq!(status, 0);
+    assert_eq!(status.unwrap(), 0);
     assert!(reopened.is_ok(), "{:?}", reopened.err());
     assert_eq!(written.unwrap().unwrap(), 1);
 }
@@ -1010,8 +999,8 @@ fn hot_rollback_journal_refusal_preserves_the_database_and_journal() {
         c.execute_batch("PRAGMA journal_mode=DELETE; CREATE TABLE t(x); WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x<300) INSERT INTO t SELECT zeroblob(4000) FROM c;").unwrap();
         c.execute_batch("PRAGMA cache_size=1; BEGIN IMMEDIATE; UPDATE t SET x=randomblob(4000);")
             .unwrap();
-        // SAFETY: isolated child dies with a live transaction, without SQLite rollback/Drop.
-        unsafe { libc::_exit(172) };
+        // The isolated child dies with a live transaction, without SQLite rollback/Drop.
+        org_platform::posix::exit_immediately(172);
     }
     for version in [1, 0, 2, -1] {
         let home = home();
@@ -1196,8 +1185,8 @@ fn committed_wal_recovers_after_real_process_death() {
             [],
         )
         .unwrap();
-        // SAFETY: leave a committed WAL and no live connection, without a close checkpoint.
-        unsafe { libc::_exit(173) };
+        // Leave a committed WAL and no live connection, without a close checkpoint.
+        org_platform::posix::exit_immediately(173);
     }
     let home = home();
     let path = home.path().canonicalize().unwrap().join(DB);
@@ -1257,8 +1246,8 @@ fn non_directory_home_and_fifo_database_are_refused_before_sqlite() {
     use std::os::unix::ffi::OsStrExt;
     let path = home.path().join(DB);
     let cpath = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
-    // SAFETY: live NUL-terminated path; owner-only FIFO in an isolated temporary directory.
-    assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
+    // An owner-only FIFO in an isolated temporary directory.
+    org_platform::posix::make_fifo(&cpath, 0o600).unwrap();
     let mut child = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
@@ -1327,10 +1316,7 @@ fn validation_descriptors_are_close_on_exec_and_sql_errors_discard_payloads() {
     let path = home.path().join("owned");
     fs::write(&path, b"x").unwrap();
     let file = checked_file(&path, false).unwrap().unwrap();
-    // SAFETY: this retained File owns the fd and F_GETFD has no variadic argument.
-    let flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFD) };
-    assert!(flags >= 0);
-    assert_ne!(flags & libc::FD_CLOEXEC, 0);
+    assert!(org_platform::posix::is_close_on_exec(file.as_raw_fd()).unwrap());
     let input = rusqlite::Error::SqliteFailure(
         rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
         Some("private-key-and-path".into()),
@@ -1368,11 +1354,10 @@ fn restrictive_umask_still_creates_private_usable_database_and_sidecars() {
     }
     let home = home();
     let secrets = Secrets::default();
-    // SAFETY: isolated child test process; restore before assertions and temporary cleanup.
-    let previous = unsafe { libc::umask(0o777) };
+    // An isolated child test process; restore before assertions and temporary cleanup.
+    let previous = org_platform::posix::set_umask(0o777);
     let result = HostDb::create(home.path(), &secrets, &init());
-    // SAFETY: restores the child's original process mask.
-    unsafe { libc::umask(previous) };
+    org_platform::posix::set_umask(previous);
     let db = result.unwrap();
     db.connection
         .lock()
@@ -1408,34 +1393,19 @@ fn create_retains_sqlites_shared_file_lock() {
     // Probe SQLite's existing descriptor; opening a second descriptor would itself
     // risk cancelling this process's POSIX record locks when it closed.
     let fd = *database_fds(&home.path().join(DB)).first().unwrap();
-    // SAFETY: the child only uses async-signal-safe fcntl and _exit; no SQLite or allocator.
-    let pid = unsafe { libc::fork() };
-    if pid == 0 {
-        let mut lock = libc::flock {
-            l_type: libc::F_WRLCK as _,
-            l_whence: libc::SEEK_SET as _,
-            l_start: 0x4000_0002,
-            l_len: 510,
-            l_pid: 0,
-        };
-        // SAFETY: live inherited fd and initialized lock request for SQLite's SHARED range.
-        unsafe {
-            let result = libc::fcntl(fd, libc::F_GETLK, &mut lock);
-            libc::_exit(if result < 0 {
-                42
-            } else if lock.l_type == libc::F_UNLCK as libc::c_short {
-                41
-            } else {
-                0
-            });
-        }
-    }
-    assert!(pid > 0, "fork failed");
-    let mut status = 0;
-    // SAFETY: reap exactly this child before assertions or closing the probe descriptor.
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    // The child asks, of its inherited descriptor, for a write lock over SQLite's SHARED
+    // range; no SQLite or allocator runs in it.
+    let pid = org_platform::posix::testing::fork_child(
+        org_platform::posix::testing::ForkedChild::ProbeWriteLock {
+            fd,
+            start: 0x4000_0002,
+            length: 510,
+        },
+    )
+    .expect("fork");
+    // Reap exactly this child before assertions or closing the probe descriptor.
+    let status = org_platform::posix::reap(pid).unwrap();
     drop(db);
-    assert_eq!(waited, pid);
     assert_eq!(
         status,
         0,

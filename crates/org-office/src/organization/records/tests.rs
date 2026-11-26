@@ -462,9 +462,10 @@ fn a_path_names_its_record_and_nothing_else_is_this_familys() {
     }
     assert!(team_path(&[]).is_err());
     assert!(employee_path(&[], EmployeeKind::Agent, &e).is_err());
-    // Too deep for a path.
-    let deep: Vec<Id> = (0..12).map(id).collect();
-    assert!(team_path(&deep[..10]).is_ok());
+    // Too deep for a path: the deepest chain the rule allows fits (`MAX_TEAM_DEPTH`), one
+    // past what any path holds does not.
+    let deep: Vec<Id> = (0..24).map(id).collect();
+    assert!(team_path(&deep[..crate::organization::ports::MAX_TEAM_DEPTH]).is_ok());
     assert!(team_path(&deep).is_err());
 
     for other in [
