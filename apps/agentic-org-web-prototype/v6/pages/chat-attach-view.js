@@ -3,6 +3,7 @@
 import { CH, M } from "../data.js";
 import { altOf, fileFacts, fileIcon, isImage } from "./chat-attach-files.js";
 import { sentAt } from "./chat-model.js";
+import { syncOverlayHistory } from "./chat-overlays.js";
 import { esc, ic, plural } from "../ui.js";
 
 const GRID_MAX = 4;
@@ -49,7 +50,9 @@ function findMessage(chId, mid) {
   return r ? msgs.find((m) => m.id === r[1])?.thread?.[Number(r[2])] : null;
 }
 
-/* ---------------------------------------------------------------- image viewer */
+/* ---------------------------------------------------------------- image viewer
+   The viewer is Chat's top overlay: opening it adds to Chat's overlay history, so browser Back closes it first and
+   returns focus to its thumbnail (in the stream or the open thread), leaving the conversation as it was. */
 const viewer = { dialog: null, images: [], i: 0, from: "", meta: "" };
 function viewerInner() {
   const img = viewer.images[viewer.i], n = viewer.images.length;
@@ -77,7 +80,9 @@ function closeViewer() {
   d.close();
   d.remove();
   document.querySelector(viewer.from)?.focus();
+  syncOverlayHistory();
 }
+const viewerOpen = () => Boolean(viewer.dialog);
 const LB_KEYS = { ArrowLeft: () => showImage(viewer.i - 1), ArrowRight: () => showImage(viewer.i + 1), Escape: closeViewer };
 /* Tab cycles inside the viewer; a native modal dialog would otherwise let focus leave to the browser. */
 function trapTab(e) {
@@ -114,6 +119,7 @@ function openViewer(mid, t, chId) {
   t.closest(".chat").append(d);
   d.showModal();
   showImage(Number(t.dataset.i) || 0);
+  syncOverlayHistory();
 }
 
 /* ---------------------------------------------------------------- Files panel */
@@ -148,4 +154,4 @@ const filesButton = (open, title) => `<button class="btn ghost icon chat-files-b
 
 const VIEW_CLICKS = { "chat-att-view": openViewer };
 
-export { VIEW_CLICKS, attachmentNameHit, filesButton, filesPanelHtml, messageAttachmentsHtml };
+export { VIEW_CLICKS, attachmentNameHit, closeViewer, filesButton, filesPanelHtml, messageAttachmentsHtml, viewerOpen };
