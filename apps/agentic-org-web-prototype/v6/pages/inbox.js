@@ -4,7 +4,7 @@ import { findWorkItem, fitTextarea, workCommentPrefix, workHref } from "./work.j
 import { route } from "../shell/router.js";
 import { getNotifications, getRunningJobs, markNotificationRead, unreadNotificationsCount } from "../shell/topbar-utils.js";
 import { S } from "../state.js";
-import { av, displayCheckbox, esc, ic, kindWord, mlink, plink, plural, queueHeadline, recommendationCallout, showMenu, toast, unhandled } from "../ui.js";
+import { av, displayCheckbox, esc, ic, kindWord, mlink, plink, plural, queueHeadline, recommendationCallout, searchRow, searchToggle, showMenu, toast, unhandled } from "../ui.js";
 
 const INBOX_TABS = ["all", "approval", "decision", "notifications"];
 const INBOX_MORE = ["question", "problem", "suggestion", "handled"];
@@ -51,7 +51,7 @@ function inboxViewControls() {
     const hasRead = getNotifications().some((n) => n.read);
     const markAll = unread > 0 ? `<button class="btn ghost sm" type="button" data-act="notif-mark-all">Mark all read</button>` : "";
     const clearRead = hasRead ? `<button class="btn ghost sm" type="button" data-act="notif-clear-read">Clear read</button>` : "";
-    return `<div class="queue-controls notif-inbox-acts" role="group" aria-label="Notification actions">${markAll}${clearRead}</div>`;
+    return `<div class="queue-controls notif-inbox-acts" role="group" aria-label="Notification actions">${inboxSearchToggle()}${markAll}${clearRead}</div>`;
   }
   const inboxFiltered = S.inboxUrgent || S.inboxProj !== "all" || S.inboxTeam !== "all";
   const filter = showMenu("inbox-filter", [
@@ -65,8 +65,10 @@ function inboxViewControls() {
     icon: "adjustments", label: "Inbox display", active: S.inboxOrder === "date",
     footer: `<hr>${displayCheckbox("inbox-dividers", "Row dividers", S.inboxDividers)}`,
   });
-  return `<div class="queue-controls" role="group" aria-label="Inbox view controls">${filter}${display}</div>`;
+  return `<div class="queue-controls" role="group" aria-label="Inbox view controls">${inboxSearchToggle()}${filter}${display}</div>`;
 }
+const inboxSearchToggle = () => searchToggle("triage-search", "Search inbox", S.inboxQuery);
+const inboxSearchRow = () => searchRow("triage-search", "Search inbox", S.inboxQuery, "Search inbox… (Esc to close)");
 function inboxCategories() {
   const moreActive = INBOX_MORE.includes(S.inboxKind);
   const notifAlert = unreadNotificationsCount() + getRunningJobs().length > 0;
@@ -181,7 +183,7 @@ function pageInboxNotifications(selId) {
       <div class="triage-toolbar queue-toolbar" id="triage-categories">${inboxCategories()}</div>
     </header>
     <div class="triage-split">
-      <section class="triage-queue" aria-label="Notifications queue"><div class="triage-queue-summary"><span>Live &amp; recent</span><span id="triage-visible" role="status">${plural(total, "notification", "notifications")}</span></div>
+      <section class="triage-queue" aria-label="Notifications queue">${inboxSearchRow()}<div class="triage-queue-summary"><span>Live &amp; recent</span><span id="triage-visible" role="status">${plural(total, "notification", "notifications")}</span></div>
         <div id="triage-list">${inboxNotificationsQueue(list, selected)}</div>
       </section>
       <section class="triage-reading" id="triage-reading" aria-label="Notification details">${inboxNotificationDetail(selected)}</section>
@@ -201,7 +203,7 @@ function pageInbox(sel, sub) {
       <div class="triage-toolbar queue-toolbar" id="triage-categories">${inboxCategories()}</div>
     </header>
     <div class="triage-split">
-      <section class="triage-queue" aria-label="Inbox queue"><div class="triage-queue-summary"><span>${queueLabel}</span><span id="triage-visible" role="status">${plural(items.length, "item in view", "items in view")}</span></div>
+      <section class="triage-queue" aria-label="Inbox queue">${inboxSearchRow()}<div class="triage-queue-summary"><span>${queueLabel}</span><span id="triage-visible" role="status">${plural(items.length, "item in view", "items in view")}</span></div>
         <div id="triage-list">${inboxQueue(items, item)}</div>
       </section>
       <section class="triage-reading" id="triage-reading" aria-label="Item details">${item ? inboxDetail(item) : inboxEmptyDetail()}</section>

@@ -27,7 +27,10 @@ const ALL_THEMES = ["ocean", "classic", "report", "report-dark", "graphite", "co
 async function checkInbox(page: Page) {
   const categories = page.getByRole("group", { name: "Inbox queue controls" });
   const category = (name: RegExp) => categories.getByRole("button", { name });
+  const searchToggle = page.getByRole("button", { name: "Search inbox" });
+  await searchToggle.click();
   const search = page.getByRole("searchbox", { name: "Search inbox" });
+  assert.ok(await search.evaluate((input) => input === document.activeElement), "Search icon opens the row and focuses it");
   await search.press("m");
   await search.press("a");
   assert.equal(await search.inputValue(), "ma");
@@ -36,6 +39,8 @@ async function checkInbox(page: Page) {
   assert.equal(await search.inputValue(), "ma", "Escape leaves the draft search intact");
   await search.clear();
   await search.press("Escape");
+  assert.equal(await page.getByRole("searchbox", { name: "Search inbox" }).count(), 0, "Escape on an empty search closes the row");
+  assert.equal(await searchToggle.getAttribute("aria-expanded"), "false");
 
   await page.keyboard.press("m");
   await page.keyboard.press("d");

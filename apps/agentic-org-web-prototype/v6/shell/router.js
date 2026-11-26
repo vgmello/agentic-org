@@ -7,7 +7,7 @@ import { pageInbox } from "../pages/inbox.js";
 import { pageProject, pageProjects } from "../pages/projects.js";
 import { SET, notFound, pagePreferences, pageSearch, pageSettings } from "../pages/settings.js";
 import { pageMember, pageMembersDir, pageOrgChart, pageTeam, pageTeams } from "../pages/teams.js";
-import { fitTextarea, pageWork, scopedWorkQueries, scopedWorkType, setWorkPanelExpanded, showSidePanel } from "../pages/work.js";
+import { fitTextarea, pageWork, setWorkPanelExpanded, showSidePanel } from "../pages/work.js";
 import { isMacPlatform } from "./cmdk.js";
 import { endNavigationKeys } from "./keyboard.js";
 import { mountHomeProjectHint, renderBanner, renderNav } from "./sidebar.js";
@@ -26,21 +26,10 @@ const commandBar = document.getElementById("cmdk-shell");
 const pageSearchTools = document.createElement("div");
 pageSearchTools.id = "page-search-tools";
 const localSearchHost = document.getElementById("cmdk-local");
-const PAGE_SEARCH = {
-  inbox: { id: "triage-search", value: () => S.inboxQuery, label: "Search inbox", placeholder: "Search inbox…" },
-  work: { id: "work-search", value: () => S.workQuery, label: "Search this work view", placeholder: "Search work…" }
-};
+/* Header search box per page. Inbox and Work now use an inline search row (ui.js searchToggle/searchRow). */
+const PAGE_SEARCH = {};
 function resolvePageSearchConfig(currentRoute) {
-  const [page, id] = currentRoute;
-  const scope = scopedWorkType(currentRoute);
-  if (scope) {
-    return {
-      id: "scoped-work-search",
-      value: () => scopedWorkQueries.get(scope + ":" + id) ?? "",
-      label: "Search work in this view",
-      placeholder: scope === "agent" ? "Search tasks…" : "Search work…",
-    };
-  }
+  const [page] = currentRoute;
   return own(PAGE_SEARCH, page) ? PAGE_SEARCH[page] : null;
 }
 
@@ -167,7 +156,8 @@ function restoreFocusAfterRender({ main, content, r0, r1, key, focus, workPanel,
 
 function captureBeforeRender(main, content) {
   const priorBoard = main.querySelector("#work-results .board");
-  const toolbarFocus = pageSearchTools.contains(document.activeElement) ? document.activeElement.id : "";
+  const active = document.activeElement;
+  const toolbarFocus = pageSearchTools.contains(active) || active?.classList?.contains("inline-search-input") ? active.id : "";
   const toolbarCaret = toolbarFocus && document.activeElement.type === "search" ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
   return {
     priorPanel: main.querySelector("#work-panel"),

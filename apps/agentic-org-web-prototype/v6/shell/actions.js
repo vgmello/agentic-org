@@ -345,6 +345,7 @@ const CLICK_ACTIONS = {
   "search-close": () => closeCmdk(true),
   sgo: (_e, _t, _id, v) => goSearch(v),
   "chat-jump": (_e, t) => openCmdk("#", "cmd", t, false),
+  "search-toggle": (_e, _t, _id, v) => toggleInlineSearch(v),
   "search-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
   "cmdk-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
   "cmdk-open-ai": (_e, t) => openTessPanel("", t),
@@ -460,6 +461,30 @@ function handleWorkSearchInput(target) {
   S.workQuery = target.value;
   if (document.querySelector(".work-reading")) { history.replaceState(null, "", workItemHref()); render(false); }
   else refreshWorkResults();
+}
+
+/* Inline page search (Inbox, Work): toolbar icon or "/" opens the row and focuses it; Esc leaves it. */
+function focusInlineSearch(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.focus({ preventScroll: true });
+  const end = input.value.length;
+  input.setSelectionRange(end, end);
+}
+function openInlineSearch(inputId) {
+  if (!document.getElementById(inputId)) { S.searchOpen[inputId] = true; render(false); }
+  focusInlineSearch(inputId);
+}
+function closeInlineSearch(input) {
+  const inputId = input.id;
+  if (!input.value.trim()) { S.searchOpen[inputId] = false; render(false); }
+  else input.blur();
+  document.querySelector(`[data-act="search-toggle"][data-v="${CSS.escape(inputId)}"]`)?.focus({ preventScroll: true });
+}
+function toggleInlineSearch(inputId) {
+  const input = document.getElementById(inputId);
+  if (input && !input.value.trim()) closeInlineSearch(input);
+  else openInlineSearch(inputId);
 }
 
 const INPUT_BY_ID = {
@@ -721,7 +746,13 @@ function isSingleKeyBlocked(e) {
 function tryPunctuationShortcut(e) {
   if (!isPlainAltGrOrUnmodified(e)) return false;
   if (e.key === "#" && route()[0] === "chat") { e.preventDefault(); openCmdk("#", "cmd", e.target, false); return true; }
-  if (e.key === "/") { e.preventDefault(); const input = pageSearchInput(); if (input) input.focus(); else openCmdk(); return true; }
+  if (e.key === "/") {
+    e.preventDefault();
+    const inline = document.querySelector('#main [data-act="search-toggle"]');
+    const input = pageSearchInput();
+    if (inline) openInlineSearch(inline.dataset.v); else if (input) input.focus(); else openCmdk();
+    return true;
+  }
   return false;
 }
 
@@ -779,6 +810,9 @@ function handleSearchGlobalKeydown(e) {
     return true;
   }
   if (tryTessGlobalShortcut(e)) return true;
+  if (e.key === "Escape" && e.target.classList?.contains("inline-search-input")) {
+    e.preventDefault(); closeInlineSearch(e.target); return true;
+  }
   if (e.key === "Escape" && e.target === pageSearchInput()) {
     e.preventDefault(); closeCmdk(false); document.querySelector("#main h1")?.focus({ preventScroll: true }); return true;
   }

@@ -77,6 +77,12 @@ function queueHeadline(title, count, announce = false) {
   return `<div class="ph queue-headline"><div class="ph-t"><h1 tabindex="-1">${esc(title)}</h1>
     <span class="cnt queue-count"${announce ? ' role="status"' : ""}><i aria-hidden="true"></i>${esc(count)}</span></div></div>`;
 }
+/* Inline page search: a toolbar icon reveals a search row above the results ("/" opens it too). */
+const searchIsOpen = (inputId, value) => Boolean(S.searchOpen?.[inputId] || String(value ?? "").trim());
+const searchToggle = (inputId, label, value) => `<button class="btn ghost icon search-toggle${searchIsOpen(inputId, value) ? " is-active" : ""}" type="button" data-act="search-toggle" data-v="${inputId}" aria-label="${esc(label)}" title="${esc(label)} (/)" aria-expanded="${searchIsOpen(inputId, value)}" aria-controls="${inputId}-row" aria-keyshortcuts="/">${ic("search", "ic20")}</button>`;
+const searchRow = (inputId, label, value, placeholder, cls = "") => searchIsOpen(inputId, value)
+  ? `<div class="inline-search${cls ? " " + cls : ""}" id="${inputId}-row"><label>${ic("search", "ic16")}<span class="sr-only">${esc(label)}</span><input id="${inputId}" class="inline-search-input" type="search" value="${esc(value ?? "")}" placeholder="${esc(placeholder)}" autocomplete="off" spellcheck="false"></label><kbd aria-hidden="true">Esc</kbd></div>`
+  : "";
 /* Breadcrumb trail: ancestors as links, then the current page. items = [[href, label], ..., [null, currentLabel]] */
 const crumbs = (items) => `<nav class="back crumbs" aria-label="Breadcrumb"><ol>${items.map(([href, label], i) => {
   const last = i === items.length - 1;
@@ -268,6 +274,8 @@ export {
   av,
   avStack,
   crumbs,
+  searchRow,
+  searchToggle,
   displayCheckbox,
   effectiveHealth,
   empty,

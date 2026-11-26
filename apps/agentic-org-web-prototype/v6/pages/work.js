@@ -3,7 +3,7 @@ import { detailCommentDrafts, detailEvent, inboxActivityTime, localDetailRecords
 import { closeMenus } from "../shell/actions.js";
 import { own, route } from "../shell/router.js";
 import { S, qs } from "../state.js";
-import { SEP, av, displayCheckbox, esc, ic, iconWithTooltip, kindWord, memberIds, mlink, pill, plink, queueHeadline, showMenu, toast } from "../ui.js";
+import { SEP, av, displayCheckbox, esc, ic, iconWithTooltip, kindWord, memberIds, mlink, pill, plink, queueHeadline, searchRow, searchToggle, showMenu, toast } from "../ui.js";
 
 function isArchivedWork(w) {
   return !OPEN(w) && S.archiveAfterDays > 0 && w.closedDaysAgo != null && w.closedDaysAgo >= S.archiveAfterDays;
@@ -146,7 +146,14 @@ function scopedWorkMenus(type) {
     active: isWorkDisplayActive(listLayout, group, subgroup, S.scopedWorkSort, S.scopedWorkOrder),
     footer: workDisplayFooter(listLayout),
   });
-  return `<div class="queue-controls" role="group" aria-label="Work view controls">${filter}${display}</div>`;
+  return `<div class="queue-controls" role="group" aria-label="Work view controls">${scopedWorkSearch().toggle}${filter}${display}</div>`;
+}
+
+function scopedWorkSearch() {
+  const currentRoute = route(), type = scopedWorkType(currentRoute);
+  const value = type ? scopedWorkQueries.get(type + ":" + currentRoute[1]) ?? "" : "";
+  const label = "Search work in this view", placeholder = (type === "agent" ? "Search tasks…" : "Search work…") + " (Esc to close)";
+  return { toggle: searchToggle("scoped-work-search", label, value), row: searchRow("scoped-work-search", label, value, placeholder, "work-search-row") };
 }
 
 function scopedWorkToolbar(type, id, items) {
@@ -200,7 +207,7 @@ function scopedWorkResults({ type, id, key, items }) {
 function scopedWorkWorkspace() {
   const currentRoute = route();
   const view = scopedWorkView(currentRoute, scopedWorkType(currentRoute));
-  return workWorkspace(scopedWorkResults(view), view.items);
+  return workWorkspace(scopedWorkResults(view), view.items, scopedWorkSearch().row);
 }
 
 
@@ -382,9 +389,9 @@ function findWorkItem(ref, items = W) {
   return { item, parent };
 }
 
-function workWorkspace(results, items = W) {
+function workWorkspace(results, items = W, search = "") {
   const { item, parent } = findWorkItem(qs().get("item"), items);
-  return `<div id="work-results">${results}</div>${item ? workDetail(item, parent) : ""}`;
+  return `${search}<div id="work-results">${results}</div>${item ? workDetail(item, parent) : ""}`;
 }
 
 function workDetailFields(w, team, eta, priority) {
@@ -733,7 +740,7 @@ function workViewControls(group, subgroup) {
     active: isWorkDisplayActive(listLayout, group, subgroup, S.workSort, S.workOrder),
     footer: workDisplayFooter(listLayout),
   });
-  return `<div class="queue-controls" role="group" aria-label="Work view controls">${filter}${display}</div>`;
+  return `<div class="queue-controls" role="group" aria-label="Work view controls">${searchToggle("work-search", "Search work", S.workQuery)}${filter}${display}</div>`;
 }
 
 function statusOptions(statuses, selected) {
@@ -758,7 +765,7 @@ function pageWork() {
       ${workArchivedChip()}
       <button class="btn primary" id="work-new-task" type="button" data-act="work-new-task">${ic("plus", "ic16")}New task</button>
     </div>
-  </header>${workWorkspace(workResults(filtered, selection))}`;
+  </header>${workWorkspace(workResults(filtered, selection), W, searchRow("work-search", "Search work", S.workQuery, "Search work… (Esc to close)", "work-search-row"))}`;
 }
 
 function openWorkTask(trigger) {
