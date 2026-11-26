@@ -9,6 +9,7 @@ pub mod attach;
 pub mod budget_dispatch;
 pub mod budget_table;
 pub mod dispatch;
+pub mod external_auth;
 pub mod git_dispatch;
 pub mod git_table;
 pub mod help_guidance;
@@ -64,6 +65,9 @@ pub fn execute_with_office(program: &str, args: &[String], office: &mut dyn Offi
         rewritten.extend_from_slice(&args[2..]);
         normalized = rewritten;
         &normalized
+    } else if let Some(rewritten) = external_auth::operator::rewrite_positional(args) {
+        normalized = rewritten;
+        &normalized
     } else {
         args
     };
@@ -88,13 +92,18 @@ pub fn execute(args: &[String], binding: Binding) -> Output {
     execute_with_office("agent-os", args, &mut office)
 }
 
-/// Runs `agent-os` using `AGENT_OS_*` environment variables, writing the single envelope or
-/// help output to stdout and returning the exit code.
+/// Runs `agent-os`, writing the single envelope or help output to stdout and returning the exit
+/// code. `login|whoami|logout|exec` are the external lifecycle ([`external_auth`]); every other
+/// command binds through `AGENT_OS_*` environment variables, else the signed-in workspace of the
+/// working folder ([`external_auth::resolve_binding`]).
 pub fn run(args: &[String]) -> u8 {
-    if matches!(args, [a, b, ..] if a == "session" && b == "attach") {
-        return run_session_attach(args, Binding::from_env());
+    if let Some((stdout, exit_code)) = external_auth::run_lifecycle(args) {
+        return emit(&mut io::stdout().lock(), &stdout, exit_code);
     }
-    let output = execute(args, Binding::from_env());
+    if matches!(args, [a, b, ..] if a == "session" && b == "attach") {
+        return run_session_attach(args, external_auth::resolve_binding());
+    }
+    let output = execute(args, external_auth::resolve_binding());
     emit(&mut io::stdout().lock(), &output.stdout, output.exit_code)
 }
 

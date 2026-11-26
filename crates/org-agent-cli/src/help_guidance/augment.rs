@@ -117,8 +117,20 @@ pub(super) fn augment_top_help(table: &CommandTable, program: &str, help: &str) 
             }
         }
     }
+    if program == "agent-os" {
+        out.push_str(WORKSPACE_SIGN_IN_HELP);
+    }
     out
 }
+
+/// The external lifecycle verbs (`TASK-137`), which sit outside the command table.
+const WORKSPACE_SIGN_IN_HELP: &str = "
+Workspace sign-in (bring your own agent):
+  login   Sign this workspace in as an agent once a person approves (agent-os login --as @<handle>)
+  whoami  Show the agent, office, mode (managed|external), session and expiry this shell acts as
+  logout  End this workspace's external session and remove its local binding
+  exec    Run one command as an agent with a session your signed-in agentic-org approves
+";
 
 pub(super) fn augment_resource_help(
     table: &CommandTable,
