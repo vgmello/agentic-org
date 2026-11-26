@@ -226,12 +226,27 @@ function jumpToLatest() {
   last.focus({ preventScroll: true });
   syncLatestJump(s);
 }
+/* Phones: each jump is as wide as its label. Both share the row while they fit side by side; otherwise Jump to latest
+   wraps to its own row under Earlier requests, so neither label is ever clipped (320 px with "1 earlier request"). */
+/* A button's width with its whole label, even while the row has squeezed it. */
+const labelWidth = (btn) => { const t = btn.querySelector("span"); return btn.offsetWidth + t.scrollWidth - t.clientWidth; };
+function wrapJumps(s) {
+  const main = s.parentElement, ask = main.querySelector('[data-act="chat-asks-jump"]'), latest = main.querySelector('[data-act="chat-latest-jump"]');
+  if (!ask || !latest) return;
+  main.classList.remove("jumps-wrap");
+  if (ask.hidden || latest.hidden || getComputedStyle(ask).position !== "static") return;
+  const gutter = parseFloat(getComputedStyle(ask.parentElement).paddingLeft) || 16, half = (main.clientWidth - 2 * gutter - 8) / 2;
+  if (Math.max(labelWidth(ask), labelWidth(latest)) > half) main.classList.add("jumps-wrap");
+}
 function syncJumps(s) {
   syncAskJump(s);
   syncLatestJump(s);
+  wrapJumps(s);
 }
 function watchAsks(s) {
   let frame = 0;
+  const ro = new ResizeObserver(() => (s.isConnected ? syncJumps(s) : ro.disconnect()));
+  ro.observe(s.parentElement);
   s.addEventListener("scroll", () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(() => syncJumps(s)); }, { passive: true });
   setTimeout(() => s.isConnected && syncJumps(s), 400);
   setTimeout(() => s.isConnected && syncJumps(s), 1600);

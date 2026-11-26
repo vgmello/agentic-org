@@ -40,6 +40,10 @@
 .chat .chat-details-btn, .chat .chat-details { display: none; }
 #main .chat:is(.ctx-overflow, .details-open) > .chhead .chat-details-btn { display: inline-flex; }
 .chat .chat-details-btn[aria-expanded="true"] { background: var(--hover); color: var(--white); }
+/* Under 360 px the header row keeps every control whole: Details shows its icon, and its word stays its name. */
+@media (max-width: 359px) {
+  .chat .chat-details-btn .chat-details-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
 #main .chat.details-open > .chhead > .chat-details { grid-column: 1 / -1; display: grid; gap: 4px; margin-block: 6px 4px; font-size: var(--fs-sm); }
 .chat-details > div { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: 8px; }
 .chat-details dt { color: var(--gray-400); }
@@ -51,8 +55,6 @@
 .chat-readas .ic14 { flex: none; }
 /* The access label beside an agents' conversation title, shown only where the context line is hidden (< 640). */
 .chat .chat-title .chat-readas-tag { display: none; }
-/* A DM's other requests: by name when wide, one "N other requests" control when the line is constrained. */
-.chat .chat-wait-compact { display: none; }
 .chat .chat-search[aria-expanded="true"] { background: var(--hover); color: var(--white); }
 
 /* "and N more" in a DM's context line: the agent's other requests in a top-layer list. */
@@ -62,10 +64,6 @@
 .chat-pop-menu a:hover, .chat-pop-menu a:focus-visible { background: var(--hover); outline-offset: -2px; }
 .chat-pop-sub { font-size: var(--fs-xs); font-weight: 600; color: var(--gray-400); }
 .chat-pop-what { font-weight: 500; line-height: 1.4; }
-@media (max-width: 1279px) {
-  .chat .chat-context .chat-wait-full { display: none; }
-  .chat .chat-context .chat-wait-compact { display: inline; }
-}
 
 /* ---------------------------------------------------------------- attention: "Needs you" vs unread
    Own classes (not .badge) so no theme can neutralise them: amber bell count vs accent dot. */
@@ -121,6 +119,11 @@
 .chat-a2a-options [role="option"][aria-selected="true"] { color: var(--white); background: var(--hover); box-shadow: inset 3px 0 0 var(--tone-accent); }
 .chat-a2a-none { padding: 4px 8px; font-size: var(--fs-xs); color: var(--gray-400); }
 .chat .chlist .chat-a2a-clear { justify-self: start; }
+/* The picked agents stay named under the heading while the picker is closed, with their Clear. */
+.chat .chlist .chat-a2a-active { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 2px 0 2px 8px; font-size: var(--fs-xs); font-weight: 600; color: var(--tone-accent-ink); }
+.chat .chlist .chat-a2a-active > span { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.chat .chlist .chat-a2a-active .ic14 { flex: none; }
+.chat .chlist .chat-a2a-active .chat-a2a-clear { min-height: 28px; padding-inline: 8px; font-size: var(--fs-xs); }
 .chat .chlist .chat-a2a-all { justify-content: flex-start; width: 100%; margin-block-start: 2px; font-size: var(--fs-sm); color: var(--gray-400); }
 .chat .chlist .chat-a2a-all:hover { color: var(--white); }
 .chat-at { display: inline-grid; place-items: center; flex: none; font-size: var(--fs-sm); font-weight: 700; line-height: 1; color: var(--gray-400); }
@@ -269,6 +272,10 @@
 .chat-needs-why summary:hover { color: var(--white); }
 .chat-needs-why p { margin-block-start: 4px; font-size: var(--fs-sm); line-height: 1.5; color: var(--gray-300); }
 .chat-needs-why .chat-needs-rec { color: var(--white); }
+/* An inline approval's recommendation is the summary of its folded reasoning; a long one wraps beside its icon. */
+.chat-needs-more summary { align-items: flex-start; }
+.chat-needs-more summary .ic14 { flex: none; margin-block-start: 3px; }
+.chat-needs-more summary > span { min-width: 0; overflow-wrap: anywhere; }
 /* A one-tap question's context, above its answers: what the choice weighs, then the agent's recommendation. */
 .chat-needs-context { display: grid; gap: 4px; font-size: var(--fs-sm); line-height: 1.5; color: var(--gray-300); }
 .chat-needs-context .chat-needs-rec { font-weight: 600; color: var(--white); }
@@ -289,6 +296,12 @@
 .chat-compose-hint { display: flex; align-items: center; gap: 6px; min-height: 18px; font-size: var(--fs-xs); color: color-mix(in srgb, var(--gray-400) 72%, var(--gray-300)); }
 .chat-compose-hint kbd { font: inherit; font-weight: 600; color: var(--gray-300); }
 .chat-compose-hint.is-error { color: var(--tone-warn-ink); }
+/* /assign waits for an explicit Assign: the change in words, then its two buttons, wrapping on narrow screens. */
+.chat-compose-hint.is-confirm { font-size: var(--fs-sm); color: var(--gray-300); }
+.chat-assign-ask { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding-block: 4px; }
+.chat-assign-ask > .ic14 { flex: none; color: var(--gray-400); }
+.chat-assign-ask b { font-weight: 600; color: var(--white); }
+.chat-assign-ask > span { min-width: 0; flex: 1 1 14rem; overflow-wrap: anywhere; }
 .chat-compose-src { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: var(--fs-sm); color: var(--gray-300); }
 .chat-compose-src > span { display: inline-flex; align-items: center; gap: 6px; }
 /* Why a DM's agent can't run right now, beside the field it concerns. */
@@ -336,19 +349,22 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
 }
 @media (max-width: 639px) {
   /* Earlier asks and Jump to latest share one row under the stream, never over a message or a card's actions; either
-     one alone takes the whole row. The conversation column is a grid so the row can hold both. */
-  #main .chat .chmain { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto auto; column-gap: 8px; }
-  #main .chat .chmain > * { grid-column: 1 / -1; grid-row: 4; }
+     one alone is centred in the row. Each is as wide as its label; when the two don't fit side by side (chat-scroll.js
+     sets .jumps-wrap), Jump to latest wraps to the next row. The conversation column is a grid so the rows can hold them. */
+  #main .chat .chmain { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto auto auto; column-gap: 8px; }
+  #main .chat .chmain > * { grid-column: 1 / -1; grid-row: 5; }
   #main .chat .chmain > .chat-search-row { grid-row: 1; }
   #main .chat .chmain > .msgs { grid-row: 2; }
   #main .chat .chmain > .chat-drop { grid-row: 1 / -1; }
-  #main .chat .chmain > .chat-asks-jump { grid-row: 3; grid-column: 1; padding: 0 0 0 var(--gutter, 16px); }
-  #main .chat .chmain > .chat-latest-jump { grid-row: 3; grid-column: 2; padding: 0 var(--gutter, 16px) 0 0; }
+  #main .chat .chmain > .chat-asks-jump { grid-row: 3; grid-column: 1; display: flex; justify-content: flex-start; padding: 0 0 0 var(--gutter, 16px); }
+  #main .chat .chmain > .chat-latest-jump { grid-row: 3; grid-column: 2; display: flex; justify-content: flex-end; padding: 0 var(--gutter, 16px) 0 0; }
+  #main .chat .chmain.jumps-wrap > :is(.chat-asks-jump, .chat-latest-jump) { grid-column: 1 / -1; justify-content: center; padding-inline: var(--gutter, 16px); }
+  #main .chat .chmain.jumps-wrap > .chat-latest-jump { grid-row: 4; }
   #main .chat .chmain > :is(.chat-asks-jump, .chat-latest-jump):has(> .btn[hidden]) { display: none; }
-  #main .chat .chmain:has(> .chat-latest-jump > .btn[hidden]) > .chat-asks-jump { grid-column: 1 / -1; padding-inline: var(--gutter, 16px); }
-  #main .chat .chmain:has(> .chat-asks-jump > .btn[hidden]) > .chat-latest-jump { grid-column: 1 / -1; padding-inline: var(--gutter, 16px); }
+  #main .chat .chmain:has(> .chat-latest-jump > .btn[hidden]) > .chat-asks-jump { grid-column: 1 / -1; justify-content: center; padding-inline: var(--gutter, 16px); }
+  #main .chat .chmain:has(> .chat-asks-jump > .btn[hidden]) > .chat-latest-jump { grid-column: 1 / -1; justify-content: center; padding-inline: var(--gutter, 16px); }
   .chat-asks-jump, .chat-latest-jump { height: auto; }
-  .chat-asks-jump .btn, .chat-latest-jump .btn { position: static; transform: none; width: 100%; max-width: none; margin-block: 8px 0; justify-content: center; }
+  .chat-asks-jump .btn, .chat-latest-jump .btn { position: static; transform: none; width: auto; max-width: 100%; margin-block: 8px 0; justify-content: center; }
   /* The title gets its own full row; context moves behind Details. (Content here is always under 768 px, so the
      selector matches the overlay header rule's weight and wins as the later rule.) */
   #main .chat.list-overlay > .chhead, #main .chat > .chhead { grid-template-columns: var(--control-height) auto minmax(0, 1fr) auto; grid-template-areas: "menu list . actions" "title title title title" "details details details details"; gap: 4px; row-gap: 2px; }
@@ -386,7 +402,7 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
 /* Touch has no Ctrl/⌘ shortcut, so its hint goes; where a follow-up posts and that the ask stays open always show,
    as does a validation message. */
 @media (pointer: coarse) {
-  .chat-compose-hint:not(.chat-ask-dest, .is-error) { display: none; }
+  .chat-compose-hint:not(.chat-ask-dest, .is-error, .is-confirm) { display: none; }
 }
 
 /* ---------------------------------------------------------------- agent profile: conversations with other agents */
@@ -407,10 +423,11 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
   #main .chat.withthread { grid-template-columns: 240px minmax(0, 1fr) clamp(380px, var(--chat-panel-w, 34%), max(380px, 100% - 660px)); }
   #main .chat.withthread.list-overlay { grid-template-columns: minmax(0, 1fr) clamp(380px, var(--chat-panel-w, 34%), max(380px, 100% - 420px)); }
   #main .chat > aside.thread { position: relative; }
-  .chat-panel-resize { position: absolute; z-index: 2; top: 0; bottom: 0; left: -5px; width: 10px; cursor: col-resize; touch-action: none; }
-  .chat-panel-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; background: transparent; transition: background-color .12s ease; }
+  /* A 24 px hit area centred on the edge; the line and grip drawn inside it stay slim. */
+  .chat-panel-resize { position: absolute; z-index: 2; top: 0; bottom: 0; left: -12px; width: 24px; cursor: col-resize; touch-action: none; }
+  .chat-panel-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 11px; width: 2px; background: transparent; transition: background-color .12s ease; }
   /* A subtle grip, always visible, says the edge can be dragged; the edge lights up on hover, focus and drag. */
-  .chat-panel-resize::before { content: ""; position: absolute; z-index: 1; top: 50%; left: 2px; width: 6px; height: 32px; margin-block-start: -16px; border-radius: 999px; background: color-mix(in srgb, var(--gray-400) 55%, transparent); box-shadow: 0 0 0 2px var(--gray-900); transition: background-color .12s ease; }
+  .chat-panel-resize::before { content: ""; position: absolute; z-index: 1; top: 50%; left: 9px; width: 6px; height: 32px; margin-block-start: -16px; border-radius: 999px; background: color-mix(in srgb, var(--gray-400) 55%, transparent); box-shadow: 0 0 0 2px var(--gray-900); transition: background-color .12s ease; }
   .chat-panel-resize:hover::after, .chat-panel-resize:focus-visible::after, .chat.is-resizing .chat-panel-resize::after { background: var(--tone-accent); }
   .chat-panel-resize:hover::before, .chat-panel-resize:focus-visible::before, .chat.is-resizing .chat-panel-resize::before { background: var(--tone-accent); }
   .chat-panel-resize:focus-visible { outline: none; }

@@ -308,19 +308,82 @@ function runContextAction(btn, ctx) {
   return fn(ctx, btn.dataset.key) || undefined;
 }
 
-/* ---------------------------------------------------------------- task detail */
-/* Chat's message deep link, as Inbox renders it. */
-function sourceMessageLink(src) {
-  if (!src?.ch || !src.msg || !CH[src.ch]) return "";
-  return ` · <a class="alink" href="#/chat/${esc(src.ch)}/${esc(src.msg)}">Open source message</a>`;
+/* ---------------------------------------------------------------- saved snapshots (Work reload) */
+/* A task's `context` comes back from storage as untrusted data: each entry is checked field by field, links must be
+   in-app hashes, and message and file references are kept exactly as saved (e.g. "#/chat/agency-v1/m2-r1"). An entry
+   that fails is dropped; the rest load. */
+const MAX_CONTEXT = 20, MAX_LINES = 60, MAX_FILES = 20;
+const ID_RE = /^[\w-]{1,80}$/;
+const str = (v, n) => (typeof v === "string" ? v.slice(0, n) : "");
+const appHref = (v) => (typeof v === "string" && /^#\/[\w\-/?=&%.]*$/.test(v) && v.length <= 300 ? v : "");
+function savedFiles(files) {
+  if (!Array.isArray(files)) return [];
+  return files.slice(0, MAX_FILES).map((f) => ({ name: str(f?.name, 200), href: appHref(f?.href) })).filter((f) => f.name && f.href);
+}
+function savedLine(l) {
+  if (!l || typeof l !== "object") return null;
+  const files = savedFiles(l.files), href = appHref(l.href);
+  const line = { who: str(l.who, 80), time: str(l.time, 40), text: str(l.text, 4000), ...(href ? { href } : {}), ...(files.length ? { files } : {}) };
+  return line.who && (line.text || files.length) ? line : null;
+}
+function savedSource(src) {
+  if (!src || !ID_RE.test(src.ch) || (src.msg != null && !ID_RE.test(src.msg))) return null;
+  return src.msg ? { ch: src.ch, msg: src.msg } : { ch: src.ch };
+}
+function savedContextItem(c) {
+  if (!c || typeof c !== "object" || !Object.hasOwn(KIND_ICON, c.kind)) return null;
+  const title = str(c.title, 300).trim(), href = appHref(c.href);
+  if (!title || !href) return null;
+  const item = { kind: c.kind, title, preview: str(c.preview, 400), href };
+  if (c.kind !== "conversation") return item;
+  const source = savedSource(c.source);
+  const messages = (Array.isArray(c.messages) ? c.messages.slice(0, MAX_LINES) : []).map(savedLine).filter(Boolean);
+  return source ? { ...item, source, messages } : null;
+}
+function savedTaskContext(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, MAX_CONTEXT).map(savedContextItem).filter(Boolean);
 }
 
+/* ---------------------------------------------------------------- task detail */
+/* Whether an in-app link still opens what it names. Chat links name a conversation and, optionally, a message or a
+   thread reply ("<root>-r<n>"); a conversation or message that is gone (e.g. one sent in an earlier session of the
+   prototype) cannot open. Other pages are checked by their id where one is named. */
+function chatRefOpens(ch, mid) {
+  const msgs = CH[ch]?.msgs;
+  if (!msgs) return false;
+  if (!mid || msgs.some((m) => m.id === mid)) return true;
+  const r = /^(.*)-r(\d+)$/.exec(mid);
+  return Boolean(r && msgs.find((m) => m.id === r[1])?.thread?.[Number(r[2])]);
+}
+const PAGE_EXISTS = { projects: (id) => Boolean(P[id]), inbox: (id) => IN.some((i) => i.id === id), members: (id) => Boolean(M[id]), teams: (id) => Boolean(TEAMS[id]) };
+function linkOpens(href) {
+  const [page, a, b] = href.replace(/^#\//, "").split("?")[0].split("/");
+  if (page === "chat") return chatRefOpens(a, b);
+  if (page === "work") { const item = new URLSearchParams(href.split("?")[1] || "").get("item"); return !item || W.some((w) => w.id === item); }
+  return !a || !PAGE_EXISTS[page] || PAGE_EXISTS[page](a);
+}
+const unavailable = (what) => `<span class="work-ctx-gone">${ic("info", "ic14")}<span>${what} unavailable</span></span>`;
+/* Chat's message deep link, as Inbox renders it; an explicit "Source unavailable" when that message cannot open. */
+function sourceMessageLink(src) {
+  if (!src?.ch || !src.msg) return "";
+  if (!chatRefOpens(src.ch, src.msg)) return ` · ${unavailable("Source")}`;
+  return ` · <a class="alink" href="#/chat/${esc(src.ch)}/${esc(src.msg)}">Open source message</a>`;
+}
+/* A saved line's files: each still links its exact message, or names the file with "Message unavailable". */
+function detailFilesHtml(l) {
+  if (!l.files?.length) return "";
+  const one = (f) => (linkOpens(f.href) ? `<a class="alink" href="${esc(f.href)}">${esc(f.name)}</a>` : `${esc(f.name)} ${unavailable("Message")}`);
+  return `<p class="work-ctx-files">${ic("paperclip", "ic14")}<span><span class="sr-only">Attached: </span>${l.files.map(one).join(", ")}</span></p>`;
+}
 function detailContextItem(c) {
   const msgs = c.messages?.length ? `<details class="work-ctx-msgs"><summary>Show ${plural(c.messages.length, "message", "messages")}</summary>
-      <ol role="list">${c.messages.map((l) => `<li><p class="work-ctx-line-h"><b>${esc(l.who)}</b><time>${esc(l.time)}</time></p>${lineText(l)}${lineFilesHtml(l, "work-ctx-files")}</li>`).join("")}</ol>
+      <ol role="list">${c.messages.map((l) => `<li><p class="work-ctx-line-h"><b>${esc(l.who)}</b><time>${esc(l.time)}</time></p>${lineText(l)}${detailFilesHtml(l)}</li>`).join("")}</ol>
     </details>` : "";
+  const label = `${ic(KIND_ICON[c.kind] || "doc-check", "ic16")}<span>${esc(c.title)}</span>`;
+  const title = linkOpens(c.href) ? `<a class="alink" href="${esc(c.href)}">${label}</a>` : `<span class="work-ctx-title">${label}</span> ${unavailable("Source")}`;
   return `<li class="work-ctx-item">
-    <p class="work-ctx-links"><a class="alink" href="${esc(c.href)}">${ic(KIND_ICON[c.kind] || "doc-check", "ic16")}<span>${esc(c.title)}</span></a>${sourceMessageLink(c.source)}</p>
+    <p class="work-ctx-links">${title}${linkOpens(c.href) ? sourceMessageLink(c.source) : ""}</p>
     ${c.preview ? `<p class="work-ctx-preview">${esc(c.preview)}</p>` : ""}
     ${msgs}
   </li>`;
@@ -335,4 +398,4 @@ function workDetailContext(w) {
   </section>`;
 }
 
-export { closeContextPicker, contextForTask, createContextState, refreshContextResults, renderContextSection, runContextAction, workDetailContext };
+export { closeContextPicker, contextForTask, createContextState, refreshContextResults, renderContextSection, runContextAction, savedTaskContext, workDetailContext };
