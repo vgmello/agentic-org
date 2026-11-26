@@ -10,7 +10,7 @@ import { pageInsights } from "../pages/org-insights.js";
 import { mountProjectQueue, pageProject, pageProjects } from "../pages/projects.js";
 import { SET, notFound, pagePreferences, pageSearch, pageSettings } from "../pages/settings.js";
 import { pageMember, pageMembersDir, pageOrgChart, pageTeam, pageTeams } from "../pages/teams.js";
-import { fitTextarea, pageWork, setWorkPanelExpanded, showSidePanel } from "../pages/work.js";
+import { fitTextarea, mountBoard, pageWork, setWorkPanelExpanded, showSidePanel } from "../pages/work.js";
 import { isMacPlatform } from "./cmdk.js";
 import { endNavigationKeys } from "./keyboard.js";
 import { mountHomeProjectHint, renderBanner, renderNav } from "./sidebar.js";
@@ -202,6 +202,7 @@ function render(focus = true) {
   if (shell) mountAgentProfile(shell.dataset.agent, shell.dataset.tab);
   mountOrgChart(main);
   mountProjectQueue(main);
+  mountBoard(main);
   placeSearchToolbar(main, r);
   if (S.singleKey) main.querySelector("[data-page-menu]")?.setAttribute("aria-keyshortcuts", "M");
   scrollCurrentTabsIntoView(main);

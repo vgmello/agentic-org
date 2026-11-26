@@ -3472,3 +3472,17 @@ html[data-theme="report"] .assembly-release {
 .board-card-meta .board-project a:hover { color: var(--white); text-decoration: underline; }
 .board-owner-label a { text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 3px; }
 .board-owner-label a:hover { text-decoration-color: currentColor; }
+
+/* Round 3 polish */
+.bcard > .t { -webkit-line-clamp: 3; }
+.board-card-meta { flex-wrap: wrap; overflow: visible; row-gap: 0; }
+.board-card-meta .board-project a { text-decoration: underline dotted; text-decoration-color: var(--line2); text-underline-offset: 3px; }
+.board-card-meta .board-project a:focus-visible { outline: 2px solid var(--tone-accent-ink); outline-offset: 2px; border-radius: 3px; }
+.btag > span[aria-hidden] { color: var(--gray-500); margin-inline-start: 2px; }
+.board[data-more-right] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); }
+.board-lanes { flex: none; }
+.board-lanes button[aria-current="true"] { color: var(--white); background: var(--tone-accent-soft); box-shadow: inset 0 0 0 1px var(--tone-accent-ring); }
+@media (max-width: 639px) {
+  .board-status .board-need { min-height: 36px; padding-block: 8px; }
+  .board-owner-label a { padding-block: 10px; margin-block: -10px; }
+}

@@ -192,6 +192,8 @@ function pageInboxNotifications(selId) {
 }
 function pageInbox(sel, sub) {
   if (sel === "notifications") S.inboxKind = "notifications";
+  /* A link to a specific request (e.g. from a Work card) opens it even if Notifications was last open */
+  else if (sel && S.inboxKind === "notifications" && IN.some((i) => i.id === sel)) S.inboxKind = "all";
   if (S.inboxKind === "notifications") return pageInboxNotifications(sel === "notifications" ? sub : null);
   const items = inboxItems(), item = inboxSelection(items, sel);
   const queueLabel = INBOX_MORE.includes(S.inboxKind)

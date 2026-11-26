@@ -187,4 +187,7 @@ html:root[data-theme="graphite-light"] {
 
   /* Insights cards share the white card surface used on Overview */
   & :is(.insight-kpis > div, .insight-card, .insight-actions > a) { background: var(--graphite-panel); }
+
+  /* Keep the board's amber attention edge (the card shadow rule above would drop it) */
+  & .board .bcard[data-attention] { box-shadow: inset 3px 0 0 var(--tone-warn), 0 1px 2px rgb(9 9 11 / .04); }
 }
