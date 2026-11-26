@@ -395,8 +395,13 @@ async function checkReturnAfterResolve(page: Page, board: ReturnType<Page["locat
   const shown = await title.evaluate((el) => { const r = el.getBoundingClientRect(), v = el.closest(".board")!.getBoundingClientRect(); return r.top >= v.top && r.bottom <= v.bottom; });
   assert.ok(shown, "The card's title is in view");
   await page.locator('[data-act="work-preset"][data-v="needs-me"]').click();
-  await board.locator('.bcard[data-work-id="T-A146"] a.board-need').focus();
+  /* Wait for the Needs you view to render before focusing, then for the Inbox item to open */
+  await page.locator('[data-act="work-preset"][data-v="needs-me"][aria-pressed="true"]').waitFor();
+  const handoff = board.locator('.bcard[data-work-id="T-A146"] a.board-need');
+  await handoff.waitFor();
+  await handoff.focus();
   await page.keyboard.press("Enter");
+  await page.waitForURL(/#\/inbox\/in14/);
   await page.getByRole("button", { name: "Accept", exact: true }).click();
   await back.click();
   const view = page.locator('[data-act="work-preset"][data-v="needs-me"]');
