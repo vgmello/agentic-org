@@ -303,10 +303,10 @@ fn a_stop_asked_for_during_the_start_counts_the_grace_from_then() {
 #[test]
 fn a_home_too_long_for_its_sockets_refuses_to_start() {
     let home = TestHome::new();
-    // run/<12 chars>.sock adds 22 bytes: make that exceed this system's limit.
+    // run/o/<12 chars>.sock, the longest socket, adds 24 bytes: make it exceed the limit by one.
     let limit = org_platform::dirs::socket_path_limit().unwrap();
     let base = home.path();
-    let pad = limit - 22 - base.as_os_str().len();
+    let pad = limit - 23 - base.as_os_str().len();
     let long = base.join("x".repeat(pad));
     let mut config = org_host::Config::new(&long, support::fake_server());
     config.dev_key_dir = Some(home.keys_dir());
@@ -321,7 +321,7 @@ fn a_home_too_long_for_its_sockets_refuses_to_start() {
         Err(other) => panic!("{other}"),
         Ok(_) => panic!(
             "started with a {}-byte socket path",
-            long.as_os_str().len() + 22
+            long.as_os_str().len() + 24
         ),
     }
     assert!(!long.exists(), "it touched the home before refusing");

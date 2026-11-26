@@ -9,9 +9,13 @@
 //!   `/` as its working directory, so a relative path would point it at a different socket
 //!   from the client's.
 //! - The host (`org-host`, the login service) listens on `<office home>/host.sock`.
-//! - Each office server listens on `<office home>/run/<handle>.sock`, where the handle is the
-//!   last 12 characters of the office id (its random part). The host checks handles are unique,
-//!   **ignoring case**, because macOS file systems usually are case-insensitive.
+//! - Each office server listens on `<runtime>/o/<handle>.sock` ([`office_sockets_dir`]), where
+//!   `<runtime>` is the host-selected runtime folder (`<office home>/run` by default) and the
+//!   handle is the last 12 characters of the office id (its random part). The host checks
+//!   handles are unique, **ignoring case**, because macOS file systems usually are
+//!   case-insensitive. `o/` holds office sockets only, apart from the runtime folder's privileged
+//!   entries (`host.sock`, the launch rendezvous `r/`, per-agent temporary folders `t/`), so it
+//!   alone can be exposed to an agent's sandbox (`TASK-164`).
 //!
 //! Every system limits the length of a Unix socket path, and binding or connecting fails
 //! beyond that. Check with [`check_socket_path`], passing the system's limit, and report it
@@ -31,6 +35,9 @@ pub const HOST_SOCKET_FILE_NAME: &str = "host.sock";
 
 /// How many trailing characters of an office id name its socket.
 pub const OFFICE_SOCKET_HANDLE_CHARS: usize = 12;
+
+/// The folder, directly inside a runtime folder, that holds office sockets and nothing else.
+pub const OFFICE_SOCKETS_DIR_NAME: &str = "o";
 
 /// The longest office id this module takes, in characters. Ids stay opaque (a ULID today is
 /// 26); the cap only bounds what arrives over the wire.
@@ -57,29 +64,62 @@ pub fn host_socket_path(office_home: &Path) -> PathBuf {
 /// An office server's socket path inside an office home, or `None` if the office id isn't a
 /// plain id: 1 to 64 ASCII letters and digits. Ids stay opaque, so any length in that range
 /// passes, not just a ULID's 26. Office ids arrive over the wire, so this never lets one point
-/// outside `run/`.
+/// outside `run/o/`.
 pub fn office_socket_path(office_home: &Path, office_id: &str) -> Option<PathBuf> {
     office_socket_in(&office_home.join("run"), office_id)
 }
 
-/// An office socket in an explicitly selected runtime directory. This validates the
-/// opaque ID; the caller owns runtime-directory authorization and lifetime.
+/// The folder inside `runtime_dir` that holds its office sockets (`<runtime_dir>/o`). Every
+/// office socket path in this module is a direct child of it.
+pub fn office_sockets_dir(runtime_dir: &Path) -> PathBuf {
+    runtime_dir.join(OFFICE_SOCKETS_DIR_NAME)
+}
+
+/// An office socket in an explicitly selected runtime directory (`<runtime_dir>/o/<handle>.sock`).
+/// This validates the opaque ID; the caller owns runtime-directory authorization and lifetime.
 pub fn office_socket_in(runtime_dir: &Path, office_id: &str) -> Option<PathBuf> {
     if !is_plain_office_id(office_id) {
         return None;
     }
     let start = office_id.len().saturating_sub(OFFICE_SOCKET_HANDLE_CHARS);
-    let handle = &office_id[start..];
-    Some(runtime_dir.join(format!("{handle}.sock")))
+    Some(socket_named(runtime_dir, &office_id[start..]))
 }
 
 /// Additive selected carrier only. Legacy `office_socket_in` retains its exact
 /// validator; callers must already have admitted this entity's selected profile.
 pub fn selected_office_socket_in(runtime_dir: &Path, office_id: &str) -> Option<PathBuf> {
     crate::is_uuid_v7(office_id).then(|| {
-        let handle = &office_id[office_id.len() - OFFICE_SOCKET_HANDLE_CHARS..];
-        runtime_dir.join(format!("{handle}.sock"))
+        socket_named(
+            runtime_dir,
+            &office_id[office_id.len() - OFFICE_SOCKET_HANDLE_CHARS..],
+        )
     })
+}
+
+fn socket_named(runtime_dir: &Path, handle: &str) -> PathBuf {
+    office_sockets_dir(runtime_dir).join(format!("{handle}.sock"))
+}
+
+/// The runtime folder an office socket of this module's shape lives in: `Some(<runtime>)` for an
+/// absolute `<runtime>/o/<name>.sock` with plain components, `None` for any other shape (a
+/// socket directly in a folder, `..`, a relative path, or a runtime folder that is `/`). Lexical
+/// only: the caller checks the file system before trusting it.
+pub fn runtime_dir_of_office_socket(socket: &Path) -> Option<&Path> {
+    use std::path::Component;
+    let plain = socket.is_absolute()
+        && socket
+            .components()
+            .all(|c| matches!(c, Component::RootDir | Component::Normal(_)));
+    let named_sock = socket
+        .file_name()
+        .is_some_and(|name| Path::new(name).extension().is_some_and(|ext| ext == "sock"));
+    let sockets_dir = socket.parent()?;
+    if !plain || !named_sock || sockets_dir.file_name()? != OFFICE_SOCKETS_DIR_NAME {
+        return None;
+    }
+    sockets_dir
+        .parent()
+        .filter(|runtime| runtime.parent().is_some())
 }
 
 /// Whether an office id is plain: 1..=[`MAX_OFFICE_ID_CHARS`] ASCII letters and digits. It
@@ -152,7 +192,7 @@ mod tests {
         );
         assert_eq!(
             office_socket_path(Path::new("/tmp/o1"), "01M6WGY1WJCC503RXF2NS0SH83"),
-            Some(PathBuf::from("/tmp/o1/run/3RXF2NS0SH83.sock"))
+            Some(PathBuf::from("/tmp/o1/run/o/3RXF2NS0SH83.sock"))
         );
         assert_eq!(OFFICE_HOME_ENV, "ORG_OFFICE_HOME");
     }
@@ -161,7 +201,7 @@ mod tests {
     fn short_office_ids_use_the_whole_id() {
         assert_eq!(
             office_socket_path(Path::new("/h"), "abc"),
-            Some(PathBuf::from("/h/run/abc.sock"))
+            Some(PathBuf::from("/h/run/o/abc.sock"))
         );
     }
 
@@ -191,7 +231,7 @@ mod tests {
         assert!(is_plain_office_id(&at_cap));
         assert_eq!(
             office_socket_path(Path::new("/h"), &at_cap),
-            Some(PathBuf::from("/h/run/aaaaaaaaaaaa.sock"))
+            Some(PathBuf::from("/h/run/o/aaaaaaaaaaaa.sock"))
         );
         let over = "a".repeat(MAX_OFFICE_ID_CHARS + 1);
         assert!(!is_plain_office_id(&over));
@@ -244,7 +284,7 @@ mod selected_socket_tests {
         let id = "019a8928-1337-7456-8456-0123456789ac";
         assert_eq!(
             selected_office_socket_in(root, id),
-            Some(root.join("0123456789ac.sock"))
+            Some(root.join("o").join("0123456789ac.sock"))
         );
         assert!(office_socket_in(root, id).is_none());
         for bad in [
@@ -261,13 +301,77 @@ mod selected_socket_tests {
         }
         assert_eq!(
             office_socket_in(root, "opaqueLegacy123"),
-            Some(root.join("queLegacy123.sock"))
+            Some(root.join("o").join("queLegacy123.sock"))
         );
-        let name = "0123456789ac.sock";
+        let name = "o/0123456789ac.sock";
         const LIMIT: usize = 103;
         let exact = PathBuf::from(format!("/{}", "x".repeat(LIMIT - name.len() - 2)));
         assert!(check_socket_path(&selected_office_socket_in(&exact, id).unwrap(), LIMIT).is_ok());
         let over = PathBuf::from(format!("{}x", exact.display()));
         assert!(check_socket_path(&selected_office_socket_in(&over, id).unwrap(), LIMIT).is_err());
+    }
+}
+
+#[cfg(test)]
+mod office_sockets_dir_tests {
+    use std::path::Path;
+
+    use super::{
+        office_socket_in, office_socket_path, office_sockets_dir, runtime_dir_of_office_socket,
+        selected_office_socket_in, OFFICE_SOCKETS_DIR_NAME,
+    };
+
+    const SELECTED: &str = "019a8928-1337-7456-8456-0123456789ac";
+
+    #[test]
+    fn every_office_socket_is_a_direct_child_of_the_runtime_sockets_dir() {
+        let run = Path::new("/private/tmp/runtime");
+        assert_eq!(office_sockets_dir(run), run.join("o"));
+        for socket in [
+            selected_office_socket_in(run, SELECTED).unwrap(),
+            office_socket_in(run, "opaqueLegacy123").unwrap(),
+            office_socket_path(Path::new("/h"), "abc").unwrap(),
+        ] {
+            let dir = socket.parent().unwrap();
+            assert_eq!(dir.file_name().unwrap(), OFFICE_SOCKETS_DIR_NAME);
+            assert_eq!(runtime_dir_of_office_socket(&socket), dir.parent());
+        }
+        assert_eq!(
+            runtime_dir_of_office_socket(&selected_office_socket_in(run, SELECTED).unwrap()),
+            Some(run)
+        );
+        // Two bytes longer than the former `<run>/<handle>.sock`: one more than `<run>/r/<16>`.
+        let socket = selected_office_socket_in(run, SELECTED).unwrap();
+        let rendezvous = run.join("r").join("0".repeat(16));
+        assert_eq!(socket.as_os_str().len(), run.as_os_str().len() + 20);
+        assert_eq!(socket.as_os_str().len(), rendezvous.as_os_str().len() + 1);
+    }
+
+    #[test]
+    fn only_a_plain_absolute_socket_in_an_o_folder_names_a_runtime_dir() {
+        for refused in [
+            "/run/x/h.sock",     // not inside an `o` folder (the former layout)
+            "/run/h.sock",       // directly in the runtime folder
+            "/run/o/h.txt",      // not a socket name
+            "/run/o",            // the folder itself
+            "/o/h.sock",         // the runtime folder would be `/`
+            "run/o/h.sock",      // relative
+            "/run/o/../h.sock",  // traversal
+            "/run/../o/h.sock",  // traversal above the folder
+            "/run/o/sub/h.sock", // nested deeper
+            "/run/oo/h.sock",
+            "/",
+            "",
+        ] {
+            assert_eq!(
+                runtime_dir_of_office_socket(Path::new(refused)),
+                None,
+                "{refused}"
+            );
+        }
+        assert_eq!(
+            runtime_dir_of_office_socket(Path::new("/var/run/o/abc.sock")),
+            Some(Path::new("/var/run"))
+        );
     }
 }

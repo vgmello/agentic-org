@@ -41,6 +41,8 @@ use crate::wake::{
 
 #[cfg(test)]
 mod agent_os_sandbox_tests;
+#[cfg(test)]
+mod agy_socket_mount_tests;
 mod auth_guards;
 mod bwrap_isolation;
 mod environment;

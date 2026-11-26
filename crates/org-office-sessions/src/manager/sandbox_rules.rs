@@ -1,6 +1,7 @@
 //! Pure sandbox path-rule builders shared by the session sandbox planners.
 
 use std::ffi::OsString;
+use std::os::unix::fs::FileTypeExt as _;
 use std::path::{Path, PathBuf};
 
 use org_agent_runtime::{PathPattern, SpecPath};
@@ -39,12 +40,79 @@ pub(super) fn push_safe_ro_dir(
     }
 }
 
-/// Collects safe read-only directories for Agy `--sandbox` (`--add-dir`) so `agent-os` and the
-/// host Rust toolchain execute without `BypassSandbox` (`TASK-164`). Mounts only individual safe
-/// Cargo subdirs (`bin`, `registry`, `git`) — NEVER host `~/.cargo` root, `$HOME`, or any
-/// ancestor of a forbidden office/workspace directory, so secrets stay inaccessible.
+/// Privileged runtime-folder entries (`org_proto::location`): `host.sock`, the launch rendezvous
+/// `r/` and per-agent temporary folders `t/`. No Agy mount may hold or sit inside one, and the
+/// office sockets folder must never hold one.
+pub(super) const PRIVILEGED_RUNTIME_ENTRIES: [&str; 3] =
+    [org_proto::location::HOST_SOCKET_FILE_NAME, "r", "t"];
+
+/// Mounts the office sockets folder holding `office_socket` (`<run>/o`, `org_proto::location`)
+/// for Agy `--sandbox`, so `agent-os` can `connect()` to `AGENT_OS_SOCKET`: connecting to a Unix
+/// socket needs search permission on its folders and write permission on the socket inode, never
+/// a writable mount (`TASK-164`). Fails closed (mounts nothing) unless the socket is
+/// `<run>/o/<name>.sock` with `<run>` not `/`, `o` is a real owner-only folder of this account
+/// (never a link) that holds sockets only and none of the runtime folder's privileged entries
+/// (`host.sock`, `r`, `t`), and it overlaps no forbidden folder ([`push_safe_ro_dir`]). The
+/// runtime folder itself is never a candidate, so `host.sock`, `r/` and `t/` stay unmounted.
+fn push_office_sockets_dir(
+    out: &mut Vec<SpecPath>,
+    office_socket: &Path,
+    forbidden_canon: &[PathBuf],
+    host_home_canon: Option<&Path>,
+) {
+    if org_proto::location::runtime_dir_of_office_socket(office_socket).is_none() {
+        return;
+    }
+    let Some(dir) = office_socket.parent() else {
+        return;
+    };
+    // The leaf is checked unresolved (a link is refused, not followed), then resolved: ancestors
+    // may be system links (macOS `/var`), but the folder must still be an `o` below a non-root
+    // runtime folder.
+    if !holds_office_sockets_only(dir) {
+        return;
+    }
+    let Ok(resolved) = dir.canonicalize() else {
+        return;
+    };
+    let sockets_dir_name = std::ffi::OsStr::new(org_proto::location::OFFICE_SOCKETS_DIR_NAME);
+    if resolved.file_name() != Some(sockets_dir_name)
+        || resolved.parent().and_then(Path::parent).is_none()
+    {
+        return;
+    }
+    push_safe_ro_dir(out, &resolved, forbidden_canon, host_home_canon, &[]);
+}
+
+/// Whether `dir` is a real folder (not a link) owned by this account, owner-only, holding only
+/// sockets and none of [`PRIVILEGED_RUNTIME_ENTRIES`]. Any unreadable entry fails closed.
+fn holds_office_sockets_only(dir: &Path) -> bool {
+    let Ok(uid) = org_platform::fs::effective_uid() else {
+        return false;
+    };
+    if org_platform::fs::verify_owner_only_dir(dir, uid).is_err() {
+        return false;
+    }
+    std::fs::read_dir(dir).is_ok_and(|mut entries| {
+        entries.all(|entry| {
+            entry.is_ok_and(|entry| {
+                let name = entry.file_name();
+                !PRIVILEGED_RUNTIME_ENTRIES.iter().any(|p| name == *p)
+                    && entry.file_type().is_ok_and(|ft| ft.is_socket())
+            })
+        })
+    })
+}
+
+/// Collects safe read-only directories for Agy `--sandbox` (`--add-dir`) so `agent-os`, its
+/// office socket and the host Rust toolchain work without `BypassSandbox` (`TASK-164`). Mounts
+/// only individual safe Cargo subdirs (`bin`, `registry`, `git`) and the office sockets folder
+/// `<run>/o` ([`push_office_sockets_dir`]) — NEVER host `~/.cargo` root, `$HOME`, the runtime
+/// folder `<run>` (its `host.sock`, `r/`, `t/`), or any ancestor of a forbidden office/workspace
+/// directory, so secrets stay inaccessible.
 pub(crate) fn collect_agy_read_only_dirs(
     helper_dir: &Path,
+    office_socket: Option<&Path>,
     rustup_explicit: Option<OsString>,
     cargo_explicit: Option<OsString>,
     host_home: Option<OsString>,
@@ -89,6 +157,14 @@ pub(crate) fn collect_agy_read_only_dirs(
             &forbidden_canon,
             host_home_canon.as_deref(),
             &[],
+        );
+    }
+    if let Some(socket) = office_socket {
+        push_office_sockets_dir(
+            &mut out,
+            socket,
+            &forbidden_canon,
+            host_home_canon.as_deref(),
         );
     }
     if let Some(cargo) = host_rust_dir_env_from(cargo_explicit, host_home, ".cargo", forbidden) {

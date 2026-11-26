@@ -56,7 +56,7 @@ pub(crate) fn host_socket_in(home: &Path) -> Result<PathBuf, ClientError> {
 }
 
 /// Where to connect for `office`. The host's answer is untrusted input from a local
-/// process, so nothing it says can point outside `<home>/run/`.
+/// process, so nothing it says can point outside `<home>/run/o/`.
 pub(crate) fn office_socket(office: &OfficeInfo, home: &Path) -> Result<PathBuf, ClientError> {
     if !home.is_absolute() {
         return Err(ClientError::NoOfficeHome);
@@ -65,7 +65,7 @@ pub(crate) fn office_socket(office: &OfficeInfo, home: &Path) -> Result<PathBuf,
     let socket = match &office.endpoint {
         Some(endpoint) => {
             let endpoint = PathBuf::from(endpoint);
-            if !is_socket_directly_in(&endpoint, &run) {
+            if !is_socket_directly_in(&endpoint, &location::office_sockets_dir(&run)) {
                 return Err(ClientError::OfficeNotReachable);
             }
             endpoint
@@ -120,16 +120,19 @@ fn is_socket_directly_in(path: &Path, dir: &Path) -> bool {
     )
 }
 
-/// The path rules above are lexical. This looks at the file system: `run` must be a real
-/// directory (not a link to somewhere else) and the socket, if it exists, a real socket
-/// (not a link or a file), so nothing planted in the office home can redirect the connection.
-/// (It is a check, not a guarantee: the path is looked up again when connecting.)
+/// The path rules above are lexical. This looks at the file system: `run` and its office
+/// sockets folder (`run/o`) must be real directories (not links to somewhere else) and the
+/// socket, if it exists, a real socket (not a link or a file), so nothing planted in the office
+/// home can redirect the connection. (It is a check, not a guarantee: the path is looked up
+/// again when connecting.)
 fn check_not_redirected(run: &Path, socket: &Path) -> Result<(), ClientError> {
-    match std::fs::symlink_metadata(run) {
-        Ok(metadata) if metadata.file_type().is_dir() => {}
-        // Missing is fine: the connection then fails as "not running".
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
-        _ => return Err(ClientError::OfficeNotReachable),
+    for dir in [run.to_path_buf(), location::office_sockets_dir(run)] {
+        match std::fs::symlink_metadata(&dir) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            // Missing is fine: the connection then fails as "not running".
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+            _ => return Err(ClientError::OfficeNotReachable),
+        }
     }
     match std::fs::symlink_metadata(socket) {
         Ok(metadata) if metadata.file_type().is_socket() => Ok(()),

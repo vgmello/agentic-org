@@ -239,6 +239,14 @@ pub(crate) fn serve_office(
         Ok(socket) => socket,
         Err(message) => return fail(&mut control, FailCode::InvalidRequest, message),
     };
+    if let Err(error) = prepare_socket_dir(&socket) {
+        eprintln!("agentic-org-office: socket folder refused: {error}");
+        return fail(
+            &mut control,
+            FailCode::StorageError,
+            "cannot prepare the socket folder",
+        );
+    }
     let listener = match serve::bind(&socket) {
         Ok(listener) => listener,
         Err(error) => {
@@ -459,6 +467,22 @@ pub(crate) fn start_session_manager(
         }
     }
     session_manager
+}
+
+/// Makes the office sockets folder holding `socket` (`<run>/o`, `org_proto::location`) owner-only
+/// before binding: created 0700 when missing (a host-prepared runtime folder already has it; a
+/// standalone or test one may not), tightened to 0700 when it exists, and refused when it is a
+/// link or not this account's. Only the leaf is created: a missing runtime folder fails the bind.
+pub(crate) fn prepare_socket_dir(socket: &Path) -> std::io::Result<()> {
+    let dir = socket
+        .parent()
+        .ok_or_else(|| std::io::Error::other("the socket has no folder"))?;
+    match org_platform::fs::create_owner_only_dir(dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    org_platform::fs::set_owner_only_dir(dir)
 }
 
 /// The office's socket path, or why it cannot be one.

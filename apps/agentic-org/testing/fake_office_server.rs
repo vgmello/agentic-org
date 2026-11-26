@@ -946,7 +946,18 @@ fn write_office_file(dir: &Path, office: &OfficeFile) {
     }
 }
 
+/// Binds the office socket like the real server: its folder (`<run>/o`) is made owner-only
+/// first, since a fake started without a host has no prepared runtime folder.
 fn bind(path: &Path) -> UnixListener {
+    let dir = path
+        .parent()
+        .unwrap_or_else(|| fail(FailCode::StorageError));
+    match org_platform::fs::create_owner_only_dir(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(_) => fail(FailCode::StorageError),
+    }
+    org_platform::fs::set_owner_only_dir(dir).unwrap_or_else(|_| fail(FailCode::StorageError));
     let _ = fs::remove_file(path);
     let listener = UnixListener::bind(path).unwrap_or_else(|_| fail(FailCode::StorageError));
     let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));

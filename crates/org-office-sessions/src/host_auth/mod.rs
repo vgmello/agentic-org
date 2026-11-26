@@ -61,7 +61,17 @@ pub(crate) fn is_oauth_expiring(expires_at_ms: Option<u64>, now_ms: u64) -> bool
     expires_at_ms.is_some_and(|exp| now_ms.saturating_add(OAUTH_REFRESH_LEAD_MS) >= exp)
 }
 
-/// Deterministic 8-hex per-agent slug used under `<socket_parent>/t/<slug>`.
+/// The runtime folder that holds the office's privileged entries (`host.sock`, the launch
+/// rendezvous `r/`, per-agent temporary folders `t/`) beside the office sockets folder: `<run>`
+/// for an office socket at `<run>/o/<handle>.sock` (`org_proto::location`), else the socket's own
+/// folder (a socket configured outside the `o/` layout, as tests and older callers do). Every
+/// derivation of those entries from the office socket goes through here.
+pub(crate) fn office_runtime_dir(office_socket: &Path) -> Option<&Path> {
+    org_proto::location::runtime_dir_of_office_socket(office_socket)
+        .or_else(|| office_socket.parent())
+}
+
+/// Deterministic 8-hex per-agent slug used under `<runtime>/t/<slug>` ([`office_runtime_dir`]).
 pub(crate) fn agent_tmpdir_slug(office_id: &str, employee_id: &str) -> String {
     let digest = ring::digest::digest(
         &ring::digest::SHA256,
@@ -76,19 +86,20 @@ pub(crate) fn agent_tmpdir_slug(office_id: &str, employee_id: &str) -> String {
 }
 
 /// Chooses an owner-only per-agent `TMPDIR` inside the office's short runtime socket directory
-/// (`<socket_parent>/t/<8-hex>`) whenever that stays within [`MAX_SHORT_TMPDIR_BYTES`] and shorter
-/// than `durable_fallback`, avoiding Linux `ENAMETOOLONG` (`sun_path` > 108 bytes) in Claude's
-/// `bubblewrap`/`socat` sandbox while keeping `TMPDIR` out of shared `/tmp`.
+/// (`<runtime>/t/<8-hex>`, [`office_runtime_dir`]; never inside the office sockets folder `o/`)
+/// whenever that stays within [`MAX_SHORT_TMPDIR_BYTES`] and shorter than `durable_fallback`,
+/// avoiding Linux `ENAMETOOLONG` (`sun_path` > 108 bytes) in Claude's `bubblewrap`/`socat`
+/// sandbox while keeping `TMPDIR` out of shared `/tmp`.
 pub(crate) fn resolve_agent_tmpdir(
     office_socket: &Path,
     durable_fallback: &Path,
     office_id: &str,
     employee_id: &str,
 ) -> PathBuf {
-    let Some(sock_parent) = office_socket.parent() else {
+    let Some(runtime) = office_runtime_dir(office_socket) else {
         return durable_fallback.to_path_buf();
     };
-    let candidate = sock_parent
+    let candidate = runtime
         .join("t")
         .join(agent_tmpdir_slug(office_id, employee_id));
     let cand_len = candidate.as_os_str().len();

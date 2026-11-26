@@ -30,14 +30,14 @@ impl Client {
     }
 
     /// Connects to an office server on this machine, as the host listed it: by its
-    /// `endpoint` if it gave one and that is a socket inside `<home>/run/`, else by the
+    /// `endpoint` if it gave one and that is a socket inside `<home>/run/o/`, else by the
     /// rule in `org_proto::location`. `home` must be absolute.
     pub fn connect_office(office: &OfficeInfo, home: &Path) -> Result<Self, ClientError> {
         Self::connect(office_socket(office, home)?)
     }
 
     /// Connects to office `office_id` on this machine by the rule in `org_proto::location`
-    /// (`<home>/run/<handle>.sock`), without asking the host. `home` must be absolute. For a
+    /// (`<home>/run/o/<handle>.sock`), without asking the host. `home` must be absolute. For a
     /// client that knows its office's id, such as an agent's CLI (see [`agent`]).
     pub fn connect_office_id(office_id: &str, home: &Path) -> Result<Self, ClientError> {
         Self::connect(office_socket_by_id(home, office_id)?)

@@ -57,7 +57,7 @@ impl Layout {
             source,
         })?;
         // A spawn's rendezvous, `<run>/r/<16 hex>` (`supervisor::channels::Broker::bind`), is
-        // one byte longer than an office socket.
+        // one byte shorter than an office socket (`<run>/o/<12>.sock`).
         let rendezvous = self.run.join("r").join("0".repeat(16));
         for path in [&self.host_socket, &sample, &rendezvous] {
             location::check_socket_path(path, limit).map_err(|e| HostError::SocketPathTooLong {
@@ -69,9 +69,10 @@ impl Layout {
         Ok(())
     }
 
-    /// Creates the home and its `run/`, `logs/` and `offices/` folders owner-only (0700), and
-    /// tightens them if they already exist. Refuses a home or folder that isn't a real
-    /// directory owned by this user (e.g. a symlink planted by someone else).
+    /// Creates the home and its `run/` (with its office sockets folder, `run/o/`), `logs/` and
+    /// `offices/` folders owner-only (0700), and tightens them if they already exist. Refuses a
+    /// home or folder that isn't a real directory owned by this user (e.g. a symlink planted by
+    /// someone else).
     pub(crate) fn prepare(&self) -> Result<(), HostError> {
         let io = |context| move |source| HostError::Io { context, source };
         DirBuilder::new()
@@ -80,7 +81,8 @@ impl Layout {
             .create(&self.home)
             .map_err(io("creating the office home"))?;
         owner_only_dir(&self.home)?;
-        for dir in [&self.run, &self.logs, &self.offices] {
+        let office_sockets = location::office_sockets_dir(&self.run);
+        for dir in [&self.run, &office_sockets, &self.logs, &self.offices] {
             match DirBuilder::new().mode(0o700).create(dir) {
                 Ok(()) => {}
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
@@ -557,8 +559,19 @@ mod tests {
         fs::create_dir(&home).unwrap();
         fs::set_permissions(&home, fs::Permissions::from_mode(0o755)).unwrap();
         let layout = Layout::new(&home);
+        fs::create_dir(&layout.run).unwrap();
+        fs::create_dir(layout.run.join("o")).unwrap();
+        fs::set_permissions(layout.run.join("o"), fs::Permissions::from_mode(0o755)).unwrap();
         layout.prepare().unwrap();
-        for d in [&layout.home, &layout.run, &layout.logs, &layout.offices] {
+        let sockets = location::office_sockets_dir(&layout.run);
+        assert_eq!(sockets, home.join("run").join("o"));
+        for d in [
+            &layout.home,
+            &layout.run,
+            &sockets,
+            &layout.logs,
+            &layout.offices,
+        ] {
             let mode = fs::metadata(d).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o700, "{}", d.display());
         }
@@ -570,6 +583,20 @@ mod tests {
         let home = dir.path().join("home");
         fs::create_dir(&home).unwrap();
         std::os::unix::fs::symlink(dir.path(), home.join("run")).unwrap();
+        assert!(matches!(
+            Layout::new(&home).prepare(),
+            Err(HostError::UnsafeHome { .. })
+        ));
+    }
+
+    #[test]
+    fn prepare_refuses_a_symlinked_office_sockets_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let elsewhere = dir.path().join("elsewhere");
+        fs::create_dir_all(home.join("run")).unwrap();
+        fs::create_dir(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, home.join("run").join("o")).unwrap();
         assert!(matches!(
             Layout::new(&home).prepare(),
             Err(HostError::UnsafeHome { .. })
@@ -650,12 +677,12 @@ mod tests {
 
     #[test]
     fn socket_paths_are_checked_against_the_systems_limit() {
-        // The limit is 103 bytes on macOS and 107 on Linux; run/r/<16 hex>, the longest,
-        // adds 23 bytes to the home (run/<12>.sock 22).
+        // The limit is 103 bytes on macOS and 107 on Linux; run/o/<12>.sock, the longest,
+        // adds 24 bytes to the home (run/r/<16 hex> 23).
         let limit = socket_path_limit().unwrap();
-        let ok = PathBuf::from(format!("/{}", "a".repeat(limit - 24)));
+        let ok = PathBuf::from(format!("/{}", "a".repeat(limit - 25)));
         assert!(Layout::new(&ok).check_socket_paths().is_ok());
-        let long = PathBuf::from(format!("/{}", "a".repeat(limit - 23)));
+        let long = PathBuf::from(format!("/{}", "a".repeat(limit - 24)));
         match Layout::new(&long).check_socket_paths() {
             Err(HostError::SocketPathTooLong {
                 len, limit: told, ..
