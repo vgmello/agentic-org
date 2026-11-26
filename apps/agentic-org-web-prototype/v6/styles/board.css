@@ -132,7 +132,7 @@ html[data-theme="graphite-light"] .board { --bd-canvas: #fafafa; --bd-ring: #3f3
 }
 .board .bcard .board-project { display: inline-flex; min-width: 0; max-width: 100%; }
 .board .bcard .board-project > a {
-  position: relative; z-index: 1; overflow: hidden; text-overflow: ellipsis; display: inline-block; line-height: 22px;
+  position: relative; z-index: 1; overflow: hidden; text-overflow: ellipsis; display: inline-block; padding-block: 3px; line-height: 1.35;
   color: var(--bd-body); text-decoration: none;
 }
 .board .bcard .board-project > a:hover { color: var(--bd-ink); text-decoration: underline; text-underline-offset: 2px; }
@@ -231,7 +231,7 @@ html[data-theme="graphite-light"] .board { --bd-canvas: #fafafa; --bd-ring: #3f3
    margins, so the chip keeps its look and the row its height, and it never reaches over the title or the badge. */
 @media (max-width: 639px), (pointer: coarse) {
   .board .bcard .board-project { padding: 0 8px; border-radius: 6px; background: var(--bd-chip); }
-  .board .bcard .board-project > a { min-height: 44px; min-width: 44px; margin-block: -11px; padding: 11px 0; background: none; }
+  .board .bcard .board-project > a { min-height: 44px; min-width: 44px; margin-block: -11px; padding: 11px 0; line-height: 22px; background: none; }
   .board .bcard .board-owner-label a { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; padding-block: 0; margin-block: -10px; }
   .board .bcard .board-subhits a { min-height: 44px; min-width: 44px; }
   .board .bcard .board-subhits { padding-block: 0; }
