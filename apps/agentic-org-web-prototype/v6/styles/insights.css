@@ -322,11 +322,14 @@ html[data-theme="cozy"] :is(.project-insights, .team-overview, .org-insights, .o
 
 /* Graphite themes keep a monochrome UI, but charts get colour so series are easy to tell apart:
    indigo for the main series, teal for the second; the average line stays ink. */
-html[data-theme="graphite"] :is(.project-insights, .team-overview, .org-insights) { --chart-accent: #818cf8; --chart-tint: #2dd4bf; }
-html[data-theme="graphite-light"] :is(.project-insights, .team-overview, .org-insights) { --chart-accent: #6366f1; --chart-tint: #0d9488; }
-html[data-theme="graphite"] .hb-spark i { background: linear-gradient(to bottom, #818cf8, color-mix(in srgb, #818cf8 55%, transparent)); }
-html[data-theme="graphite-light"] .hb-spark i { background: linear-gradient(to bottom, #6366f1, color-mix(in srgb, #6366f1 55%, transparent)); }
+/* Graphite data colour: a muted steel blue that sits with the theme's greys and muted status tones;
+   the second series is a cool silver so pairs read apart without adding a new hue. */
+html[data-theme="graphite"] { --graphite-data: #86a9cc; --graphite-data-2: #b9c1cc; --graphite-data-deep: #5f84a8; }
+html[data-theme="graphite-light"] { --graphite-data: #3e6a94; --graphite-data-2: #8d98a6; --graphite-data-deep: #2f5479; }
+html[data-theme^="graphite"] :is(.project-insights, .team-overview, .org-insights) { --chart-accent: var(--graphite-data); --chart-tint: var(--graphite-data-2); }
+html[data-theme^="graphite"] .hb-spark i { background: linear-gradient(to bottom, var(--graphite-data), color-mix(in srgb, var(--graphite-data) 55%, transparent)); }
 /* Home summary bars in Graphite: grey read as "disabled", so progress uses the chart indigo */
-html[data-theme="graphite"] .hb-pillar-bar :is(.seg-auto, .seg-spend) { background: linear-gradient(90deg, #6366f1, #818cf8); }
-html[data-theme="graphite-light"] .hb-pillar-bar :is(.seg-auto, .seg-spend) { background: linear-gradient(90deg, #4f46e5, #6366f1); }
+html[data-theme^="graphite"] :is(.hb-pillar-bar .seg-auto, .hb-pillar-bar .seg-spend, .hb-tseg.agents) { background: linear-gradient(90deg, var(--graphite-data-deep), var(--graphite-data)); }
+html[data-theme^="graphite"] .hb-tleg.agents .hb-tleg-dot { background: var(--graphite-data); }
+html[data-theme^="graphite"] .hb-tleg.agents strong { color: var(--graphite-data); }
 .insight-card-head .insight-select { width: auto; flex: none; justify-self: end; align-self: start; }
