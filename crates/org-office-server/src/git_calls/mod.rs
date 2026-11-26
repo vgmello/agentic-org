@@ -4,12 +4,14 @@
 //! on `org-git` while the office enforces:
 //! - HTTPS / SSH only for remote repos; office-local `origin_path` for `kind: local` repos;
 //! - hardened `git ls-remote` verification before `repo.attach`;
+//! - on-demand, rate-limited `repo.fetch` of a bare cache with office-side credentials only;
 //! - per-repository locking around bare caches and isolated `task/<key>-<slug>` worktrees;
 //! - office-mediated non-force `git.push` (caller-owned task workspace only, branch from durable
 //!   `task_repositories` + runtime state, never targeting integration branches, `main`, or `master`).
 
 mod cache;
 mod credentials;
+mod fetch;
 mod push;
 mod redaction;
 mod worktree;
@@ -22,7 +24,7 @@ use org_office::git::{git_clean_home_path, OfficeGitState, RepoCacheState, TaskW
 use org_office::organization_family::records::{Repository, RepositoryKind};
 use org_office::Office;
 use org_proto::git::{
-    CacheStateWire, GitPush, RepoAttach, RepoAttachParams, RepoAttachResult, RepoList,
+    CacheStateWire, GitPush, RepoAttach, RepoAttachParams, RepoAttachResult, RepoFetch, RepoList,
     RepoListParams, RepoListResult, RepoRegister, RepoRegisterParams, RepoRegisterResult,
     RepoStatus, RepoStatusParams, RepoStatusResult, RepositoryKindWire, RepositoryRecordWire,
     WorktreeList, WorktreeListParams, WorktreeListResult, WorktreePrepare,
@@ -32,6 +34,7 @@ use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 use self::credentials::{
     record_or_verify_local_origin, resolve_remote_spec, validate_register_origin,
 };
+use self::fetch::{FetchGate, FETCH_COOLDOWN};
 use self::redaction::{map_git_error, map_office_error};
 
 /// Whether `request` belongs to the C7 Git/repository/worktree RPC family.
@@ -40,6 +43,7 @@ pub(crate) fn is_git_method(request: &Request) -> bool {
         || request.is::<RepoList>()
         || request.is::<RepoAttach>()
         || request.is::<RepoStatus>()
+        || request.is::<RepoFetch>()
         || request.is::<WorktreeList>()
         || request.is::<WorktreePrepare>()
         || request.is::<GitPush>()
@@ -52,6 +56,7 @@ pub(crate) struct GitService {
     locks: Arc<RepoLocks>,
     state: Mutex<OfficeGitState>,
     runner: Mutex<Option<GitRunner>>,
+    fetch_gate: FetchGate,
 }
 
 impl GitService {
@@ -67,6 +72,7 @@ impl GitService {
             locks: Arc::new(RepoLocks::new()),
             state: Mutex::new(loaded),
             runner: Mutex::new(None),
+            fetch_gate: FetchGate::new(FETCH_COOLDOWN),
         }
     }
 
@@ -97,6 +103,9 @@ impl GitService {
             return Some(run_call::<RepoStatus>(request, |p| {
                 self.handle_status(member, p)
             }));
+        }
+        if request.is::<RepoFetch>() {
+            return Some(run_call::<RepoFetch>(request, |p| self.handle_fetch(p)));
         }
         if request.is::<WorktreeList>() {
             return Some(run_call::<WorktreeList>(request, |p| {
@@ -346,5 +355,7 @@ fn run_call<C: Call>(
     }
 }
 
+#[cfg(test)]
+mod fetch_tests;
 #[cfg(test)]
 mod tests;
