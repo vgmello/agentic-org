@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
 	import DollarSign from '@lucide/svelte/icons/dollar-sign';
+	import Folder from '@lucide/svelte/icons/folder';
 	import Users from '@lucide/svelte/icons/users';
 	import type { ExecutiveKpis, SignalTone } from '$lib/home/model';
 
@@ -49,11 +50,24 @@
 			? 'Team capacity'
 			: `${kpis.leadsCount} ${kpis.leadsCount === 1 ? 'lead' : 'leads'} · ${kpis.specialistsCount} ${kpis.specialistsCount === 1 ? 'specialist' : 'specialists'}`
 	);
+
+	const onTrackProjects = $derived(
+		Math.max(0, kpis.projectsTotal - kpis.atRiskProjects - kpis.offTrackProjects)
+	);
+	const projectsBarOk = $derived(
+		kpis.projectsTotal > 0 ? Math.round((onTrackProjects / kpis.projectsTotal) * 100) : 0
+	);
+	const projectsBarWarn = $derived(
+		kpis.projectsTotal > 0 ? Math.round((kpis.atRiskProjects / kpis.projectsTotal) * 100) : 0
+	);
+	const projectsBarBad = $derived(
+		kpis.projectsTotal > 0 ? Math.max(0, 100 - projectsBarOk - projectsBarWarn) : 0
+	);
 </script>
 
 <section
-	class="kpi-strip grid grid-cols-1 lg:grid-cols-3"
-	aria-label="Executive overview: Financials, Team, and Delivery"
+	class="kpi-strip grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4"
+	aria-label="Executive overview: Financials, Team, Delivery, and Projects"
 >
 	<!-- Pillar 1: Financials / Monthly Spend & Budget -->
 	<article class="kpi-pillar flex flex-col gap-3" aria-labelledby="hb-pil-fin">
@@ -290,6 +304,86 @@
 			</a>
 		</div>
 	</article>
+
+	<!-- Pillar 4: Projects Portfolio -->
+	<article class="kpi-pillar flex flex-col gap-3" aria-labelledby="hb-pil-portfolio">
+		<div class="flex items-center justify-between gap-2">
+			<a
+				id="hb-pil-portfolio"
+				href={resolve('/projects')}
+				class="pillar-name inline-flex items-center gap-1.5"
+			>
+				<Folder class="size-3.5 text-[var(--exec-accent-ink)]" aria-hidden="true" />
+				<span>Projects</span>
+			</a>
+			<a href={resolve('/projects')} class={['status-pill', pillToneClass(deliveryPillTone)]}>
+				{kpis.projectsTotal === 0
+					? 'None active'
+					: kpis.projectsAttention === 0
+						? 'Healthy'
+						: `${kpis.projectsAttention} at risk`}
+			</a>
+		</div>
+		<a
+			href={resolve('/projects')}
+			class="pillar-link -m-1 flex flex-col gap-2 rounded-lg p-1"
+			title="Active projects by delivery health"
+		>
+			<div class="flex items-baseline justify-between gap-2">
+				<div class="flex items-baseline gap-1.5">
+					<span class="pillar-num">
+						{kpis.projectsTotal > 0 ? `${onTrackProjects}/${kpis.projectsTotal}` : '—'}
+					</span>
+					<span class="text-[0.8125rem] font-medium text-[var(--exec-muted)]">on track</span>
+				</div>
+				{#if kpis.projectsTotal > 0}
+					<span class="text-xs font-semibold text-[var(--exec-dim)] tabular-nums">
+						{projectsBarOk}%
+					</span>
+				{/if}
+			</div>
+			<div class="bar-track bg-bar-track" aria-hidden="true">
+				{#if projectsBarOk > 0}
+					<span class="bar-ok" style:width="{projectsBarOk}%"></span>
+				{/if}
+				{#if projectsBarWarn > 0}
+					<span class="bar-warn" style:width="{projectsBarWarn}%"></span>
+				{/if}
+				{#if projectsBarBad > 0}
+					<span class="bar-bad" style:width="{projectsBarBad}%"></span>
+				{/if}
+			</div>
+		</a>
+		<div class="pillar-sub grid grid-cols-2 gap-3 pt-2.5">
+			<a href={resolve('/projects')} class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1">
+				<span class="sub-lbl">Health</span>
+				<span class="truncate text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
+					{#if kpis.projectsTotal === 0}
+						No projects
+					{:else if kpis.atRiskProjects === 0 && kpis.offTrackProjects === 0}
+						{onTrackProjects} on track
+					{:else}
+						{kpis.atRiskProjects} risk{#if kpis.offTrackProjects > 0}
+							<span class="text-[var(--exec-bad)]"> · {kpis.offTrackProjects} off</span>
+						{/if}
+					{/if}
+				</span>
+			</a>
+			<a href={resolve('/work')} class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1">
+				<span class="sub-lbl">Open bugs</span>
+				<span class="text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
+					{kpis.openBugs}
+					{#if kpis.criticalBugs > 0}
+						<span class="ml-1 text-xs font-semibold text-[var(--exec-bad)]">
+							· {kpis.criticalBugs} crit
+						</span>
+					{:else}
+						<span class="ml-1 text-xs font-medium text-[var(--exec-muted)]">open</span>
+					{/if}
+				</span>
+			</a>
+		</div>
+	</article>
 </section>
 
 <style>
@@ -411,6 +505,9 @@
 	}
 	.bar-warn {
 		background: var(--tone-warn-bar);
+	}
+	.bar-bad {
+		background: var(--tone-bad-bar);
 	}
 	.pillar-sub {
 		border-top: 1px solid var(--exec-border);

@@ -10,8 +10,8 @@
 	import { afterNavigate, beforeNavigate, goto, invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import { toast } from 'svelte-sonner';
+	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
 	import Callout from '$lib/components/Callout.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
@@ -153,13 +153,14 @@
 
 <svelte:head><title>{title}</title></svelte:head>
 
-<!-- The one named back link, in every state: loading, failed, unavailable, not found and found. -->
+<!-- Breadcrumb trail, in every state: loading, failed, unavailable, not found and found. -->
 <div class="px-4 pt-5 min-[640px]:px-6 min-[1024px]:px-8">
-	<a
-		href={resolve('/teams')}
-		class="inline-flex min-h-6 items-center gap-1 rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
-		><ChevronLeft class="size-4 shrink-0" aria-hidden="true" />Teams</a
-	>
+	<Breadcrumbs
+		items={[
+			{ label: 'Teams', href: '/teams' },
+			{ label: detail?.team.name ?? (team.state === 'loading' ? 'Loading…' : 'Team') }
+		]}
+	/>
 </div>
 {#if team.state === 'loading'}
 	<TeamPageSkeleton />

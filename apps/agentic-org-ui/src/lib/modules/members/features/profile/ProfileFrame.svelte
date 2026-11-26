@@ -15,6 +15,7 @@
 	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
 	import Avatar from '$lib/components/Avatar.svelte';
+	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
@@ -383,11 +384,15 @@
 			{@const tabs = tabsFor(p)}
 			<div class="section-header profile-header">
 				<div class="px-4 pt-5 min-[640px]:px-6 min-[1024px]:px-8">
-					<a
-						href={resolve('/teams/members')}
-						class="inline-flex min-h-6 items-center text-sm/6 font-semibold max-[639px]:min-h-11 {linkClass}"
-						>Members</a
-					>
+					<Breadcrumbs
+						items={p.owner
+							? [{ label: 'Teams', href: '/teams' }, { label: p.name }]
+							: [
+									{ label: 'Teams', href: '/teams' },
+									{ label: 'Members', href: '/teams/members' },
+									{ label: p.name }
+								]}
+					/>
 				</div>
 				<header
 					class="profile-masthead prof flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 pt-2 pb-3 min-[640px]:px-6 min-[1024px]:px-8"

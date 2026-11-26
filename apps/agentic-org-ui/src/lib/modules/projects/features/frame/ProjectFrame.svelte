@@ -12,12 +12,12 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { mergeProps, Tooltip } from 'bits-ui';
-	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import FileText from '@lucide/svelte/icons/file-text';
 	import Layers from '@lucide/svelte/icons/layers';
 	import Package from '@lucide/svelte/icons/package';
 	import Settings from '@lucide/svelte/icons/settings';
+	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
 	import Callout from '$lib/components/Callout.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
@@ -163,13 +163,14 @@
 <svelte:head><title>{title}</title></svelte:head>
 
 <div class={['project-frame-root', isActivityTab && 'project-frame-activity']}>
-	<!-- The one named back link, in every state. -->
+	<!-- Breadcrumb trail, in every state. -->
 	<div class="shrink-0 px-4 pt-5 min-[640px]:px-6 min-[1024px]:px-8">
-		<a
-			href={resolve(PROJECTS_URL)}
-			class="inline-flex min-h-6 items-center gap-1 rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
-			><ChevronLeft class="size-4 shrink-0" aria-hidden="true" />Projects</a
-		>
+		<Breadcrumbs
+			items={[
+				{ label: 'Projects', href: PROJECTS_URL },
+				{ label: project?.name ?? (read.state === 'loading' ? 'Loading…' : 'Project') }
+			]}
+		/>
 	</div>
 	{#if read.state === 'loading'}
 		<FrameSkeleton />
@@ -374,7 +375,7 @@
 	}
 	.section-header {
 		position: relative;
-		z-index: 1;
+		z-index: 20;
 		flex: none;
 		container-type: inline-size;
 		--proj-gutter: 1rem;

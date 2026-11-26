@@ -266,7 +266,7 @@
 					/>
 				{/if}
 
-				{#if milestones.length > 0}
+				{#if milestones.length > 0 || projectCards.length > 0}
 					<HomeMilestones {milestones} {spotlightIds} onSpotJump={handleSpotJump} />
 				{/if}
 

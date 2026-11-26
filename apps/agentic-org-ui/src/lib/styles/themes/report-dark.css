@@ -122,6 +122,8 @@ html[data-ui-theme='report-dark'] {
 	--exec-notif-bg: #182230;
 	--exec-notif-border: #56667d;
 	--exec-notif-shadow: 0 22px 54px rgba(0, 0, 0, 0.52);
+	--triage-row-selected: rgba(97, 95, 255, 0.14);
+	--work-row-selected: rgba(97, 95, 255, 0.14);
 	--exec-blur: none;
 	--exec-shadow: none;
 	--exec-shadow-hi: none;

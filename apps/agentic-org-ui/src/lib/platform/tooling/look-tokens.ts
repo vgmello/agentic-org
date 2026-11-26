@@ -182,6 +182,8 @@ export const allowlist: Record<string, string> = {
 		'Classic Slate theme token definitions and flat surface palette.',
 	'src/lib/styles/themes/graphite.css':
 		'Graphite matte dark theme token definitions and neutral charcoal/silver palette.',
+	'src/lib/styles/themes/graphite-light.css':
+		'Graphite Light matte neutral theme token definitions and monochrome light palette.',
 	'src/lib/styles/themes/cozy.css':
 		'Cozy Glass warm espresso frosted glass theme, studio room backdrop, and high-contrast tokens.',
 	'src/lib/styles/themes/report.css':

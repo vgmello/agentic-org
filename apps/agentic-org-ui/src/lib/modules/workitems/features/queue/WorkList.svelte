@@ -153,88 +153,86 @@
 											<span class="work-ref">{row.ref}</span>
 										</div>
 
-										<div class="work-heading">
-											<span class="work-markers">
-												<span
-													class="work-status"
-													title="{STATUS_WORD[row.status]}{row.needsMe ? ' · Needs you' : ''}"
-													aria-hidden="true"
-												>
-													<span class="work-status-ring" data-tone={tone}>
-														{#if row.status === 'done'}
-															<svg
-																viewBox="0 0 16 16"
-																fill="none"
-																stroke="currentColor"
-																stroke-width="1.8"
-																stroke-linecap="round"
-																stroke-linejoin="round"
-															>
-																<circle cx="8" cy="8" r="6" />
-																<path d="m5.5 8.2 1.7 1.7 3.3-3.6" />
-															</svg>
-														{:else if row.status === 'in_progress'}
-															<svg
-																viewBox="0 0 16 16"
-																fill="none"
-																stroke="currentColor"
-																stroke-width="1.8"
-															>
-																<circle cx="8" cy="8" r="6" />
-																<path
-																	d="M8 2a6 6 0 0 1 0 12V2Z"
-																	fill="currentColor"
-																	stroke="none"
-																/>
-															</svg>
-														{:else if row.status === 'blocked'}
-															<svg
-																viewBox="0 0 16 16"
-																fill="none"
-																stroke="currentColor"
-																stroke-width="1.8"
-																stroke-linecap="round"
-															>
-																<circle cx="8" cy="8" r="6" />
-																<path d="M5.5 8h5" />
-															</svg>
-														{:else if row.status === 'cancelled'}
-															<svg
-																viewBox="0 0 16 16"
-																fill="none"
-																stroke="currentColor"
-																stroke-width="1.6"
-																stroke-dasharray="2.5 2"
-															>
-																<circle cx="8" cy="8" r="6" />
-															</svg>
-														{:else}
-															<svg
-																viewBox="0 0 16 16"
-																fill="none"
-																stroke="currentColor"
-																stroke-width="1.8"
-															>
-																<circle cx="8" cy="8" r="6" />
-															</svg>
-														{/if}
-													</span>
-													{#if row.needsMe}
-														<span class="work-attention-dot"></span>
+										<span class="work-markers">
+											<span
+												class="work-status"
+												title="{STATUS_WORD[row.status]}{row.needsMe ? ' · Needs you' : ''}"
+												aria-hidden="true"
+											>
+												<span class="work-status-ring" data-tone={tone}>
+													{#if row.status === 'done'}
+														<svg
+															viewBox="0 0 16 16"
+															fill="none"
+															stroke="currentColor"
+															stroke-width="1.8"
+															stroke-linecap="round"
+															stroke-linejoin="round"
+														>
+															<circle cx="8" cy="8" r="6" />
+															<path d="m5.5 8.2 1.7 1.7 3.3-3.6" />
+														</svg>
+													{:else if row.status === 'in_progress'}
+														<svg
+															viewBox="0 0 16 16"
+															fill="none"
+															stroke="currentColor"
+															stroke-width="1.8"
+														>
+															<circle cx="8" cy="8" r="6" />
+															<path d="M8 2a6 6 0 0 1 0 12V2Z" fill="currentColor" stroke="none" />
+														</svg>
+													{:else if row.status === 'blocked'}
+														<svg
+															viewBox="0 0 16 16"
+															fill="none"
+															stroke="currentColor"
+															stroke-width="1.8"
+															stroke-linecap="round"
+														>
+															<circle cx="8" cy="8" r="6" />
+															<path d="M5.5 8h5" />
+														</svg>
+													{:else if row.status === 'cancelled'}
+														<svg
+															viewBox="0 0 16 16"
+															fill="none"
+															stroke="currentColor"
+															stroke-width="1.6"
+															stroke-dasharray="2.5 2"
+														>
+															<circle cx="8" cy="8" r="6" />
+														</svg>
+													{:else}
+														<svg
+															viewBox="0 0 16 16"
+															fill="none"
+															stroke="currentColor"
+															stroke-width="1.8"
+														>
+															<circle cx="8" cy="8" r="6" />
+														</svg>
 													{/if}
 												</span>
-
-												{#if row.checklist.total > 0}
-													<span
-														class="work-criteria"
-														data-done={row.checklist.done === row.checklist.total ? '' : undefined}
-														title="{row.checklist.done} of {row.checklist.total} steps done"
-													>
-														{row.checklist.done}/{row.checklist.total}
-													</span>
+												{#if row.needsMe}
+													<span class="work-attention-dot"></span>
 												{/if}
 											</span>
 
+											{#if row.checklist.total > 0}
+												<span
+													class="work-criteria"
+													data-done={row.checklist.done === row.checklist.total ? '' : undefined}
+													title="{row.checklist.done} of {row.checklist.total} steps done"
+												>
+													{row.checklist.done}/{row.checklist.total}
+												</span>
+											{:else}
+												<span class="work-criteria is-empty" aria-hidden="true">–</span>
+											{/if}
+										</span>
+
+										<div class="work-heading">
 											<a
 												href={resolve(taskHref(row.ref) as '/')}
 												aria-label={rowSpeech(row)}
@@ -498,6 +496,8 @@
 	.work-criteria {
 		display: inline-flex;
 		align-items: center;
+		justify-content: center;
+		min-width: 2.5rem;
 		padding: 1px 6px;
 		border-radius: var(--exec-sm-radius, 4px);
 		background: var(--exec-well, var(--surface-raised));
@@ -507,6 +507,12 @@
 		font-size: 0.6875rem;
 		line-height: 1.35;
 		font-variant-numeric: tabular-nums;
+	}
+	.work-criteria.is-empty {
+		background: transparent;
+		box-shadow: none;
+		color: var(--exec-dim, var(--fg-subtle));
+		opacity: 0.55;
 	}
 	.work-criteria[data-done] {
 		color: var(--tone-ok-ink, var(--success-text));

@@ -340,6 +340,10 @@
 			projects={shellData.snapshot?.projects ?? []}
 			collapsed={sidebarCollapsed}
 			pinned={sidebarPinned}
+			tessOpen={tessPanel.open}
+			offline={showPaused}
+			onOpenSearch={() => commandBar?.openPalette()}
+			onToggleTess={() => tessPanel.toggle(uiPrefs.showTessPill)}
 			onToggleCollapse={toggleSidebarPin}
 			onMenuOpenChange={handleSidebarMenuOpenChange}
 			onPointerEnter={handleSidebarEnter}

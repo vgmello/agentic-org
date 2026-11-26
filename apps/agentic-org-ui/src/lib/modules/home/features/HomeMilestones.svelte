@@ -1,5 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { toast } from 'svelte-sonner';
+	import Calendar from '@lucide/svelte/icons/calendar';
+	import SectionHead from '$lib/components/SectionHead.svelte';
 	import type { HomeMilestone } from '$lib/home/model';
 
 	interface Props {
@@ -11,13 +14,30 @@
 	let { milestones, spotlightIds, onSpotJump }: Props = $props();
 </script>
 
-{#if milestones.length > 0}
-	<section class="horizon-panel flex flex-col gap-3" aria-labelledby="hb-hor-h">
-		<div class="flex flex-wrap items-baseline justify-between gap-2">
-			<h2 id="hb-hor-h" class="hor-title">Upcoming milestones · Next 14 days</h2>
-			<span class="hor-sub">Key deliverables &amp; sign-off checkpoints</span>
-		</div>
+<section class="horizon-panel flex flex-col gap-3" aria-labelledby="hb-hor-h">
+	<SectionHead
+		id="hb-hor-h"
+		title="Upcoming"
+		reportTitle="Upcoming Milestones · Next 14 Days"
+		count={milestones.length > 0 ? `${milestones.length} scheduled` : 'Next 14 days'}
+	>
+		{#snippet action()}
+			<button
+				type="button"
+				onclick={() => toast.info('Calendar view is coming in a future release.')}
+				class="hor-cal-btn inline-flex items-center gap-1.5 text-xs font-semibold"
+			>
+				<Calendar class="size-3.5" aria-hidden="true" />
+				<span>View calendar</span>
+			</button>
+		{/snippet}
+	</SectionHead>
 
+	{#if milestones.length === 0}
+		<p class="hor-empty text-xs text-[var(--exec-muted)]">
+			No target dates or upcoming deadlines scheduled in the next 14 days.
+		</p>
+	{:else}
 		<div class="hor-grid grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
 			{#each milestones as m (m.id)}
 				{@const canJump = Boolean(m.spotId && spotlightIds?.has(m.spotId) && onSpotJump)}
@@ -70,8 +90,8 @@
 				{/if}
 			{/each}
 		</div>
-	</section>
-{/if}
+	{/if}
+</section>
 
 <style>
 	.horizon-panel {
@@ -83,17 +103,18 @@
 		padding: var(--exec-horizon-pad);
 		border-bottom: var(--exec-section-border);
 	}
-	.hor-title {
-		font-size: 0.72rem;
-		line-height: 1rem;
-		font-weight: 650;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: var(--exec-horizon-title-ink);
+	.hor-cal-btn {
+		color: var(--exec-accent-ink);
+		cursor: pointer;
 	}
-	.hor-sub {
-		font-size: 0.75rem;
-		color: var(--exec-dim);
+	.hor-cal-btn:hover {
+		text-decoration: underline;
+	}
+	.hor-empty {
+		padding: 10px 12px;
+		border-radius: var(--exec-inset-radius);
+		background: var(--exec-hor-item-bg);
+		box-shadow: inset 0 0 0 1px var(--exec-border);
 	}
 	.hor-item {
 		padding: 10px 12px;

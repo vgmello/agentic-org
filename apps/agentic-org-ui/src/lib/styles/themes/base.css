@@ -586,3 +586,26 @@ html.light .exec-legacy-compat button.bg-primary,
 html.light .exec-legacy-compat .exec-cta:not(.exec-cta-glass) {
 	color: #ffffff;
 }
+
+/* Deterministic avatar tint tokens for light themes (e.g. Graphite Light) */
+.ao-avatar[data-tint='0'] {
+	--av-tint: #4f46e5;
+}
+.ao-avatar[data-tint='1'] {
+	--av-tint: #0284c7;
+}
+.ao-avatar[data-tint='2'] {
+	--av-tint: #059669;
+}
+.ao-avatar[data-tint='3'] {
+	--av-tint: #b45309;
+}
+.ao-avatar[data-tint='4'] {
+	--av-tint: #7c3aed;
+}
+.ao-avatar[data-tint='5'] {
+	--av-tint: #be123c;
+}
+.ao-avatar[data-tint='6'] {
+	--av-tint: #0f766e;
+}

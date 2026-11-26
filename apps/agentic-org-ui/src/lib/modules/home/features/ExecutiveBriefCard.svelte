@@ -25,9 +25,16 @@
 	];
 
 	let briefLens = $state<BriefLens>('today');
+	let briefMode = $state<'highlights' | 'full'>('highlights');
 	let briefExpanded = $state(false);
 	let briefCopied = $state(false);
 	let briefCopyTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function firstSentence(text: string): string {
+		const trimmed = text.trim();
+		const match = trimmed.match(/^.+?[.!?](?:\s|$)/);
+		return match ? match[0].trim() : trimmed;
+	}
 
 	const activeBrief = $derived(brief.lenses[briefLens]);
 	const sigHref = $derived(
@@ -127,19 +134,43 @@
 			class="brief-scroll flex min-h-0 flex-1 flex-col"
 			tabindex="0"
 		>
-			{#each activeBrief.sections as sec (sec.id)}
-				{@const split = splitLead(sec.body)}
-				<div class="brief-entry flex flex-col gap-1.5">
-					<span class={['brief-kicker', `tone-${sec.tone}`]}>{sec.kicker}</span>
-					<p class="text-[0.9375rem] leading-[1.58] text-[var(--exec-body)]">
-						{#if split}
-							<strong class="font-semibold text-[var(--exec-ink)]">{split.lead}</strong>{split.rest}
-						{:else}
-							{sec.body}
-						{/if}
+			{#if briefMode === 'highlights'}
+				{#if activeBrief.sections[0]}
+					{@const leadSec = activeBrief.sections[0]}
+					<p class="brief-lead text-[0.9375rem] leading-[1.55] text-[var(--exec-ink)]">
+						{firstSentence(leadSec.body)}
 					</p>
-				</div>
-			{/each}
+				{/if}
+				<ul class="brief-bullets flex flex-col gap-2" role="list">
+					{#each activeBrief.sections as sec (sec.id)}
+						<li class="brief-bullet-item flex items-start gap-2.5 text-[0.875rem] leading-[1.5]">
+							<span
+								class={['brief-bullet-dot mt-2 size-1.5 shrink-0 rounded-full', `tone-${sec.tone}`]}
+								aria-hidden="true"
+							></span>
+							<span class="min-w-0 flex-1 text-[var(--exec-body)]">
+								<strong class="font-semibold text-[var(--exec-ink)]">{sec.kicker}:</strong>
+								{firstSentence(sec.body)}
+							</span>
+						</li>
+					{/each}
+				</ul>
+			{:else}
+				{#each activeBrief.sections as sec (sec.id)}
+					{@const split = splitLead(sec.body)}
+					<div class="brief-entry flex flex-col gap-1.5">
+						<span class={['brief-kicker', `tone-${sec.tone}`]}>{sec.kicker}</span>
+						<p class="text-[0.9375rem] leading-[1.58] text-[var(--exec-body)]">
+							{#if split}
+								<strong class="font-semibold text-[var(--exec-ink)]">{split.lead}</strong
+								>{split.rest}
+							{:else}
+								{sec.body}
+							{/if}
+						</p>
+					</div>
+				{/each}
+			{/if}
 
 			{#if briefLens === 'today' && catchUp.length > 0}
 				<div class="brief-entry is-catchup flex flex-col gap-1.5">
@@ -205,7 +236,35 @@
 					<span class="truncate text-xs text-[var(--exec-muted)]">{sigRole}</span>
 				</span>
 			</a>
-			<div class="flex flex-wrap items-center justify-end gap-2.5">
+			<div class="flex flex-wrap items-center justify-end gap-2">
+				<div
+					class="brief-mode-seg inline-flex items-center gap-0.5 p-0.5"
+					role="group"
+					aria-label="Brief format"
+				>
+					<button
+						type="button"
+						aria-pressed={briefMode === 'highlights'}
+						onclick={() => (briefMode = 'highlights')}
+						class={[
+							'brief-mode-btn px-2 py-1 text-xs font-semibold',
+							briefMode === 'highlights' && 'is-on'
+						]}
+					>
+						Highlights
+					</button>
+					<button
+						type="button"
+						aria-pressed={briefMode === 'full'}
+						onclick={() => (briefMode = 'full')}
+						class={[
+							'brief-mode-btn px-2 py-1 text-xs font-semibold',
+							briefMode === 'full' && 'is-on'
+						]}
+					>
+						Full brief
+					</button>
+				</div>
 				{#if briefLens !== 'board'}
 					<span class="font-mono text-xs text-[var(--exec-dim)]">
 						{activeBrief.updatedLabel}
@@ -319,6 +378,36 @@
 	}
 	.brief-kicker.tone-warn {
 		color: var(--exec-warn);
+	}
+	.brief-lead {
+		font-weight: 500;
+	}
+	.brief-bullet-dot {
+		background: var(--exec-accent-ink);
+	}
+	.brief-bullet-dot.tone-ok {
+		background: var(--exec-ok);
+	}
+	.brief-bullet-dot.tone-warn {
+		background: var(--exec-warn);
+	}
+	.brief-mode-seg {
+		border-radius: var(--exec-lenses-radius);
+		background: var(--exec-well);
+		box-shadow: var(--exec-lenses-shadow);
+	}
+	.brief-mode-btn {
+		border-radius: var(--exec-sm-radius);
+		color: var(--exec-muted);
+		cursor: pointer;
+	}
+	.brief-mode-btn:hover {
+		color: var(--exec-ink);
+	}
+	.brief-mode-btn.is-on {
+		background: var(--exec-lens-on-bg);
+		color: var(--exec-lens-on-ink);
+		box-shadow: var(--exec-lens-on-shadow);
 	}
 	.catchup-row:hover {
 		background: var(--exec-surface-hi);

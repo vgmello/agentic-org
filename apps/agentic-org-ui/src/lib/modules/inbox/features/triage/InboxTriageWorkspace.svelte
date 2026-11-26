@@ -51,18 +51,22 @@
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ListFilter from '@lucide/svelte/icons/list-filter';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
+	import InlineSearchRow from '$lib/components/InlineSearchRow.svelte';
+	import InlineSearchToggle from '$lib/components/InlineSearchToggle.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { executeDecisionAction } from '$lib/home/actions';
 	import { isDenyAction } from '$lib/home/model';
 	import { accountZone } from '$lib/modules/preferences';
 	import { toAppError } from '$lib/proto';
-	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
+	import NotificationsButton from '$lib/platform/shell/NotificationsButton.svelte';
+	import { useNotifications } from '$lib/platform/shell/notifications.svelte';
 	import { isEditableTarget, singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
 	import type { ShellRefreshResult } from '$lib/platform/shell/shell-data.svelte';
 	import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import { inboxApi } from '../../api';
 	import type { InboxItem, InboxScope } from '../../types';
 	import InboxDetailPane from './InboxDetailPane.svelte';
+	import InboxNotificationsSplit from './InboxNotificationsSplit.svelte';
 	import InboxQueueList from './InboxQueueList.svelte';
 	import InboxSnoozeDialog from './InboxSnoozeDialog.svelte';
 	import { formatSnoozeError, formatSnoozeReturn } from './snooze-presets';
@@ -124,8 +128,18 @@
 	}
 
 	const wide = new MediaQuery('min-width: 960px');
+	const notifications = useNotifications();
+	const notifTotalCount = $derived(
+		(notifications?.runningJobs.length ?? 0) + (notifications?.items.length ?? 0)
+	);
+	const notifAttentionCount = $derived(
+		(notifications?.runningJobs.length ?? 0) + (notifications?.unreadCount ?? 0)
+	);
 
 	// Writable derived states stay synced with URL query params and org changes without $effect state writes.
+	let viewingNotifications = $derived(
+		(page.url.searchParams.get('tab') ?? '').trim().toLowerCase() === 'notifications'
+	);
 	let activeTab = $derived<TriageTab>(parseTriageTab(page.url.searchParams.get('tab')));
 	let selectedId = $derived<string | undefined>(page.url.searchParams.get('item') ?? undefined);
 	let mobileDetailOpen = $derived<boolean>(
@@ -136,6 +150,7 @@
 		project: page.url.searchParams.get('project') || undefined
 	});
 	let searchQuery = $state('');
+	let searchOpen = $state(false);
 	let urgentOnly = $state(false);
 	let sortOrder = $state<TriageOrder>('priority');
 	let showDividers = $state(safeReadDividers());
@@ -335,7 +350,7 @@
 	}
 
 	function syncUrl(next: {
-		tab?: TriageTab;
+		tab?: TriageTab | 'notifications';
 		item?: string | null;
 		team?: string | null;
 		project?: string | null;
@@ -346,7 +361,7 @@
 		const url = hasPending && pendingUrl ? new URL(pendingUrl) : new URL(page.url);
 		pendingBaseHref = liveHref;
 
-		const nextTab = next.tab ?? activeTab;
+		const nextTab = next.tab ?? (viewingNotifications ? 'notifications' : activeTab);
 		if (nextTab === 'all') url.searchParams.delete('tab');
 		else url.searchParams.set('tab', nextTab);
 
@@ -383,6 +398,7 @@
 
 	function selectTab(tab: TriageTab) {
 		selectionVersion += 1;
+		viewingNotifications = false;
 		activeTab = tab;
 		decliningId = undefined;
 		mobileDetailOpen = false;
@@ -395,6 +411,30 @@
 		});
 		selectedId = wide.current ? nextList[0]?.id : undefined;
 		syncUrl({ tab, item: null });
+	}
+
+	function selectNotificationsTab() {
+		selectionVersion += 1;
+		viewingNotifications = true;
+		decliningId = undefined;
+		mobileDetailOpen = false;
+		syncUrl({ tab: 'notifications', item: null });
+	}
+
+	function toggleInlineSearch() {
+		if (searchOpen && !searchQuery.trim()) {
+			searchOpen = false;
+			return;
+		}
+		searchOpen = true;
+		void tick().then(() => {
+			if (!destroyed) searchInputEl?.focus();
+		});
+	}
+
+	function closeInlineSearch() {
+		searchOpen = false;
+		document.getElementById('shell-page-title')?.focus({ preventScroll: true });
 	}
 
 	function selectItem(id: string) {
@@ -844,6 +884,7 @@
 				mobileDetailOpen = false;
 				syncUrl({ item: null });
 			}
+			searchOpen = true;
 			void tick().then(() => {
 				if (!destroyed) searchInputEl?.focus();
 			});
@@ -958,22 +999,12 @@
 						</span>
 					</div>
 
-					<div class="queue-search-wrap">
-						<InteriorSearchBar
-							bind:inputEl={searchInputEl}
-							id="triage-search-input"
-							value={searchQuery}
-							onValueChange={setSearchQuery}
-							label="Search inbox"
-							placeholder="Search inbox…"
-							onEscape={() =>
-								document.getElementById('shell-page-title')?.focus({ preventScroll: true })}
-							class="w-full"
-						/>
+					<div class="queue-headline-end">
+						<NotificationsButton />
 					</div>
 				</div>
 
-				<!-- 3 Primary Categories + More dropdown + Filter & Display icon menus -->
+				<!-- Primary Categories + Notifications + More dropdown + Search, Filter & Display icon menus -->
 				<div class="triage-toolbar queue-toolbar section-toolbar">
 					<div
 						id="triage-categories"
@@ -986,7 +1017,7 @@
 						class="primary-tab-row"
 					>
 						{#each PRIMARY_TABS as tab (tab.id)}
-							{@const isSelected = activeTab === tab.id}
+							{@const isSelected = !viewingNotifications && activeTab === tab.id}
 							<button
 								type="button"
 								data-triage-tab={tab.id}
@@ -1001,6 +1032,22 @@
 							</button>
 						{/each}
 
+						<button
+							type="button"
+							data-triage-tab="notifications"
+							data-triage-label="Notifications"
+							aria-pressed={viewingNotifications}
+							onclick={selectNotificationsTab}
+							onkeydown={handleCategoryKeydown}
+							class="queue-tab"
+						>
+							<span>Notifications</span>
+							{#if notifAttentionCount > 0}
+								<span class="queue-tab-dot" aria-hidden="true"></span>
+							{/if}
+							<span class="queue-tab-count">{notifTotalCount}</span>
+						</button>
+
 						<span class="triage-more-wrap">
 							<DropdownMenu.Root>
 								<DropdownMenu.Trigger>
@@ -1009,8 +1056,10 @@
 											{...mergeProps(props, { onkeydown: handleCategoryKeydown })}
 											type="button"
 											data-triage-more=""
-											data-current-kind={overflowActive ? '' : undefined}
-											title={overflowActive ? `Viewing ${overflowActiveLabel}` : undefined}
+											data-current-kind={!viewingNotifications && overflowActive ? '' : undefined}
+											title={!viewingNotifications && overflowActive
+												? `Viewing ${overflowActiveLabel}`
+												: undefined}
 											class="queue-tab"
 										>
 											<span>More</span>
@@ -1024,7 +1073,7 @@
 									class="triage-menu-surface w-52 motion-reduce:animate-none! motion-reduce:transition-none! motion-reduce:data-[state=closed]:animate-none! motion-reduce:data-[state=open]:animate-none!"
 								>
 									<DropdownMenu.RadioGroup
-										value={overflowActive ? activeTab : ''}
+										value={!viewingNotifications && overflowActive ? activeTab : ''}
 										onValueChange={(val) => {
 											if (val) selectTab(val as TriageTab);
 										}}
@@ -1048,6 +1097,12 @@
 					</div>
 
 					<div class="queue-controls" role="group" aria-label="Inbox view controls">
+						<InlineSearchToggle
+							open={searchOpen}
+							hasQuery={searchQuery.trim().length > 0}
+							label={viewingNotifications ? 'Search notifications' : 'Search inbox'}
+							onToggle={toggleInlineSearch}
+						/>
 						<DropdownMenu.Root bind:open={filterMenuOpen}>
 							<Tooltip.Root disabled={filterMenuOpen}>
 								<Tooltip.Trigger>
@@ -1228,11 +1283,24 @@
 						</DropdownMenu.Root>
 					</div>
 				</div>
+				{#if searchOpen || searchQuery.trim().length > 0}
+					<InlineSearchRow
+						bind:inputEl={searchInputEl}
+						id="triage-search-input"
+						value={searchQuery}
+						onValueChange={setSearchQuery}
+						label={viewingNotifications ? 'Search notifications' : 'Search inbox'}
+						placeholder={viewingNotifications ? 'Search notifications…' : 'Search inbox…'}
+						onClose={closeInlineSearch}
+					/>
+				{/if}
 			</header>
 		</Tooltip.Provider>
 
 		<!-- Split Master-Detail Body -->
-		{#if loading}
+		{#if viewingNotifications}
+			<InboxNotificationsSplit {searchQuery} {nowMs} />
+		{:else if loading}
 			<div class="triage-split flex-1" aria-busy="true" aria-label="Loading inbox">
 				<div class="triage-skeleton-col flex flex-col gap-3 p-4">
 					{#each [1, 2, 3, 4] as n (n)}
@@ -1386,12 +1454,17 @@
 	.queue-count i.is-ok {
 		background: var(--tone-ok);
 	}
-	.queue-search-wrap {
+	.queue-headline-end {
 		display: flex;
 		align-items: center;
-		min-width: 0;
-		max-width: 100%;
 		margin-inline-start: auto;
+	}
+	.queue-tab-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--tone-accent);
+		flex: none;
 	}
 	.queue-toolbar {
 		display: flex;
@@ -1520,27 +1593,6 @@
 		box-shadow: inset 0 0 0 1px var(--exec-border);
 	}
 
-	@container queue-header (min-width: 52rem) {
-		.queue-headline {
-			display: grid;
-			grid-template-columns: minmax(0, 1fr) clamp(20rem, 34cqi, 30rem);
-			align-items: center;
-		}
-		.queue-search-wrap {
-			width: 100%;
-			margin-inline: 0;
-		}
-	}
-	@container queue-header (max-width: 51.99rem) {
-		.queue-headline {
-			gap: 6px 8px;
-		}
-		.queue-search-wrap {
-			flex: 1 1 100%;
-			width: 100%;
-			margin-inline-start: 0;
-		}
-	}
 	@container queue-header (max-width: 38rem) {
 		.queue-tab {
 			gap: 4px;

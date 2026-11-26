@@ -1,6 +1,7 @@
 import { SvelteURLSearchParams } from 'svelte/reactivity';
 
-export type UiTheme = 'ocean' | 'classic' | 'graphite' | 'cozy' | 'report' | 'report-dark';
+export type UiTheme =
+	'ocean' | 'classic' | 'graphite' | 'graphite-light' | 'cozy' | 'report' | 'report-dark';
 export type UiColorScheme = 'dark' | 'light';
 
 export const UI_THEMES: readonly {
@@ -31,6 +32,14 @@ export const UI_THEMES: readonly {
 		description:
 			'Matte dark graphite surfaces, compact density, crisp hairline borders, and neutral charcoal accents.',
 		scheme: 'dark'
+	},
+	{
+		id: 'graphite-light',
+		label: 'Graphite Light',
+		shortLabel: 'G. Light',
+		description:
+			'Compact matte zinc light theme with white panels, crisp hairlines, monochrome selection, and high-contrast ink buttons.',
+		scheme: 'light'
 	},
 	{
 		id: 'cozy',
@@ -173,7 +182,7 @@ export function resolveInitialPreferences({
 		favoriteProjects,
 		singleKeyShortcuts: storedSingleKey !== '0',
 		assemblyDividers: storedAssemblyDividers === '1',
-		showTessPill: storedShowTessPill !== '0',
+		showTessPill: storedShowTessPill === '1',
 		archiveAfterDays: storedArchiveDays !== null ? normalizeArchiveAfterDays(storedArchiveDays) : 10
 	};
 }
@@ -219,7 +228,7 @@ class UiPreferencesStore {
 	favoriteProjects = $state<string[]>([]);
 	singleKeyShortcuts = $state(true);
 	assemblyDividers = $state(false);
-	showTessPill = $state(true);
+	showTessPill = $state(false);
 	archiveAfterDays = $state<ArchiveAfterDays>(10);
 	#hydrated = false;
 
