@@ -1140,3 +1140,6 @@ html[data-theme="report-dark"] .hb-cal-date { background: rgba(255, 255, 255, .0
 html[data-theme="report-dark"] :is(.hb-cal-date strong, .hb-cal-t) { color: #ffffff; }
 html[data-theme="report-dark"] .hb-cal-proj { color: #d1d5dc; }
 html[data-theme="report-dark"] :is(.hb-cal-meta, .hb-cal-date span) { color: #99a1af; }
+
+/* Report Night: selected Inbox / priority-queue row uses Classic's tinted fill */
+html[data-theme="report-dark"] :is(.triage-workspace .triage-queue, .pj-queue-pane) { --triage-row-selected: rgba(97, 95, 255, .14); }
