@@ -3739,20 +3739,13 @@ html[data-theme="report"] .assembly-release {
 body:has(.work-toolbar[data-values="hidden"]) #work-results > .board-filterbar .bsum-mode { display: inline; }
 body:has(.work-toolbar[data-values="hidden"]) #work-results > .board-filterbar[data-mode-only] { display: flex; }
 
-/* 320px: two toolbar rows. The views and New share the first; layout, search, Filter and Display take the second.
-   A zero-height break item ends the first row. Tab order stays views, layout, search, Filter, Display, New. */
+/* 320px: two toolbar rows. New follows the views in the DOM, so it shares their row; layout, search, Filter and
+   Display take the second. Calendar has moved into Display, so its empty end group leaves the flow. No CSS order. */
 @container queue-header (max-width: 23.5rem) {
-  .work-toolbar::before { content: ""; order: 2; flex-basis: 100%; height: 0; }
-  .work-toolbar > .primary-tab-row { order: 0; }
-  .work-toolbar > .work-tb-end { order: 1; }
-  .work-toolbar > :not(.primary-tab-row, .work-tb-end) { order: 3; }
+  .queue-header .work-toolbar > .work-tb-end { display: none; }
   .work-toolbar #work-new-task { padding-inline: 10px; gap: 4px; }
 }
 @container work-subbar (max-width: 23.5rem) {
-  .work-toolbar::before { content: ""; order: 2; flex-basis: 100%; height: 0; }
-  .work-toolbar > .primary-tab-row { order: 0; }
-  .work-toolbar > #work-new-task { order: 1; }
-  .work-toolbar > :not(.primary-tab-row, #work-new-task) { order: 3; }
   .work-toolbar #work-new-task { padding-inline: 10px; gap: 4px; }
   /* Same compact controls as the Work page: tighter views and layout, text triggers without their icons */
   .work-subbar-header .work-toolbar { column-gap: 6px; }

@@ -84,6 +84,7 @@ async function checkWorkBoard(page: Page) {
   const requests = page.getByRole("menu", { name: /^Requests waiting on you for / }).getByRole("menuitem");
   assert.equal(await requests.count(), asked, "A badge for several requests lists each of them");
   await page.keyboard.press("Escape");
+  for (const width of [1440, 1024, 420, 320]) await checkToolbarTabOrder(page, width);
   await checkBoardRequestMenus(page, board);
   await checkAttentionFirst(page, board);
   await checkBoardPrioritySort(page, board);
@@ -134,6 +135,35 @@ async function checkBoardCountsAndLabels(page: Page, board: ReturnType<Page["loc
   assert.match((await bug.locator(".bpri").innerText()).trim(), /^High · inferred$/, "A missing priority says it is inferred, in text");
   assert.match((await bug.locator(".bpri").getAttribute("aria-label"))!, /^No priority set, inferred High$/);
   assert.equal((await bug.locator(".bsev").innerText()).trim(), "Critical severity", "Bug severity is labelled apart from priority");
+}
+
+/* The toolbar's Tab order is its visual reading order (rows top to bottom, each left to right) at every width: no
+   control is moved visually away from its place in the DOM */
+async function checkToolbarTabOrder(page: Page, width: number) {
+  await page.setViewportSize({ width, height: 900 });
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await page.waitForTimeout(150);
+  const visual = await page.evaluate(() => {
+    const els = [...document.querySelectorAll<HTMLElement>(".work-toolbar :is(a[href], button, select, input, [tabindex])")]
+      .filter((el) => el.tabIndex >= 0 && el.getClientRects().length && !el.closest("[hidden], .menu"));
+    const rows: { cy: number; items: { id: string; left: number }[] }[] = [];
+    els.forEach((el, i) => {
+      el.dataset.tabProbe = String(i);
+      const r = el.getBoundingClientRect(), cy = r.top + r.height / 2;
+      const row = rows.find((row) => Math.abs(row.cy - cy) < 16);
+      if (row) row.items.push({ id: String(i), left: r.left }); else rows.push({ cy, items: [{ id: String(i), left: r.left }] });
+    });
+    return rows.sort((a, b) => a.cy - b.cy).flatMap((row) => row.items.sort((a, b) => a.left - b.left).map((item) => item.id));
+  });
+  assert.ok(visual.length >= 6, `The toolbar has its controls at ${width}px (${visual.length})`);
+  await page.locator('.work-toolbar [data-tab-probe="0"]').focus();
+  const tabbed = [await page.evaluate(() => (document.activeElement as HTMLElement).dataset.tabProbe)];
+  for (let i = 1; i < visual.length; i++) {
+    await page.keyboard.press("Tab");
+    tabbed.push(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.tabProbe));
+  }
+  assert.deepEqual(tabbed, visual, `Tab order follows the toolbar's visual order at ${width}px`);
+  await page.setViewportSize({ width: 1440, height: 900 });
 }
 
 /* A pending owner approval on Fixed work stays in view: it counts in Needs you, ignores the Done history window and
@@ -613,7 +643,7 @@ async function checkPhoneLaneJump(page: Page) {
   /* Let the resize settle (layout and the measured compact labels) before counting toolbar rows */
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   await page.waitForTimeout(150);
-  const rows = await page.locator(".work-toolbar > *").evaluateAll((els) => els.map((el) => el.getBoundingClientRect().top).sort((a, b) => a - b)
+  const rows = await page.locator(".work-toolbar > *").evaluateAll((els) => els.filter((el) => el.getClientRects().length).map((el) => el.getBoundingClientRect().top).sort((a, b) => a - b)
     .filter((top, i, tops) => i === 0 || top - tops[i - 1] > 20).length);
   /* Two rows at 320px: the views with New, then layout, search, Filter and Display; nothing is clipped or scrolls sideways */
   assert.equal(rows, 2, `The 320px toolbar has two rows (${rows})`);

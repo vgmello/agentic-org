@@ -53,6 +53,9 @@ function workDisplayTrigger(listLayout) {
   const mode = S.workBoardStages === "detailed" ? "Status" : "Stages";
   return { icon: "adjustments", label: `Work display, ${mode} columns`, text: "Display", sub: mode };
 }
+/* New sits right after the views in the DOM at every width, so its place in the toolbar and in the Tab order agree:
+   beside the views when they share a row (320px), and before the view controls on wider screens */
+const workNewTaskButton = () => `<button class="btn primary" id="work-new-task" type="button" data-act="work-new-task" aria-label="New task">${ic("plus", "ic16")}New<span class="work-new-word">task</span></button>`;
 const workCalendarLink = () => `<a class="btn ghost menu-textbtn work-cal-btn" href="#/calendar" aria-label="Calendar" title="Calendar">${ic("calendar-check", "ic16")}<span>Calendar</span></a>`;
 const scopedWorkQueries = new Map();
 
@@ -236,10 +239,10 @@ function scopedWorkToolbar(type, id, items) {
             data-k="scopedWorkView" data-v="${value}" aria-pressed="${activeView === value}" aria-controls="work-results"${value === "mine" ? mineHint : ""}>${label}<span data-scoped-work-count="${value}">${visibleCount(scopedWorkPresetItems(base, value, type, id), value, S.scopedWorkLayout)}</span></button>`).join("")}
         </div>
       </div>
+      ${type === "project" || type === "team" ? workNewTaskButton() : ""}
       ${workLayoutToggle("scopedWorkLayout")}
       ${scopedWorkMenus(type)}
       ${workArchivedChip(S.scopedWorkLayout)}
-      ${type === "project" || type === "team" ? `<button class="btn primary" id="work-new-task" type="button" data-act="work-new-task" aria-label="New task">${ic("plus", "ic16")}New<span class="work-new-word">task</span></button>` : ""}
     </div>
   </div>`;
 }
@@ -1425,10 +1428,11 @@ function pageWork() {
             data-v="${value}" aria-pressed="${selection.view === value}" data-menu-label="${esc(label)}">${label}<span data-work-count="${value}">${visibleCount(workPresetItems(filtered, value), value, S.workLayout)}</span></button>`).join("")}
         </div>
       </div>
+      ${workNewTaskButton()}
       ${workLayoutToggle("workLayout")}
       ${workViewControls(selection.group, selection.subgroup)}
       ${workArchivedChip(S.workLayout)}
-      <div class="work-tb-end">${workCalendarLink()}<button class="btn primary" id="work-new-task" type="button" data-act="work-new-task" aria-label="New task">${ic("plus", "ic16")}New<span class="work-new-word">task</span></button></div>
+      <div class="work-tb-end">${workCalendarLink()}</div>
     </div>
   </header>${workWorkspace(workResults(filtered, selection), W, searchRow("work-search", "Search work", S.workQuery, "Search work… (Esc to close)", "work-search-row"))}`;
 }
