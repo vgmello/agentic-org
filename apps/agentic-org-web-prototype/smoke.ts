@@ -15,19 +15,22 @@ const SWEEP_ROUTES = [
   "home", "inbox", "projects", "projects/agency-v1", "projects/agency-v1/work",
   "projects/agency-v1/insights", "projects/office-federation/activity", "projects/office-federation/team",
   "work", "chat", "chat/general", "activity",
-  "teams", "teams/platform", "teams/members", "teams/org",
+  "teams", "teams/platform", "teams/members", "teams/org-chart",
   "members/ada", "members/ada/sessions", "members/ada/journal",
   "members/ada/memory", "members/ada/knowledge", "members/ada/settings",
   "settings", "settings/offices", "settings/agents", "settings/agents/ada",
   "preferences",
 ];
 
-const ALL_THEMES = ["ocean", "classic", "report", "report-dark", "graphite", "cozy"];
+const ALL_THEMES = ["ocean", "classic", "report", "report-dark", "graphite", "graphite-light", "cozy"];
 
 async function checkInbox(page: Page) {
   const categories = page.getByRole("group", { name: "Inbox queue controls" });
   const category = (name: RegExp) => categories.getByRole("button", { name });
+  const searchToggle = page.getByRole("button", { name: "Search inbox" });
+  await searchToggle.click();
   const search = page.getByRole("searchbox", { name: "Search inbox" });
+  assert.ok(await search.evaluate((input) => input === document.activeElement), "Search icon opens the row and focuses it");
   await search.press("m");
   await search.press("a");
   assert.equal(await search.inputValue(), "ma");
@@ -36,6 +39,8 @@ async function checkInbox(page: Page) {
   assert.equal(await search.inputValue(), "ma", "Escape leaves the draft search intact");
   await search.clear();
   await search.press("Escape");
+  assert.equal(await page.getByRole("searchbox", { name: "Search inbox" }).count(), 0, "Escape on an empty search closes the row");
+  assert.equal(await searchToggle.getAttribute("aria-expanded"), "false");
 
   await page.keyboard.press("m");
   await page.keyboard.press("d");
@@ -212,7 +217,6 @@ async function checkActivity(page: Page, theme: string) {
 }
 
 async function checkProjectActivitySim(page: Page) {
-  const readiness = page.getByRole("progressbar", { name: "Project readiness" });
   const release = page.getByRole("region", { name: "Release summary" });
   const releaseReadiness = release.getByRole("progressbar", { name: "Release readiness" });
   const assemblyCycle = page.locator(".assembly-metrics [data-assembly-cycle]");
@@ -230,7 +234,6 @@ async function checkProjectActivitySim(page: Page) {
   await playback.getByRole("button", { name: "8×" }).click();
   await playback.getByRole("button", { name: "Add sample task" }).click();
   await playback.getByText("joined the queue").waitFor();
-  assert.equal(await readiness.getAttribute("max"), "5");
   assert.equal(await releaseReadiness.getAttribute("max"), "5");
   await playback.getByRole("button", { name: "Play simulation" }).click();
   await page.waitForFunction(() => document.querySelector('[data-assembly-work="T-S1"]:not([data-stage="queue"])'));
@@ -240,7 +243,6 @@ async function checkProjectActivitySim(page: Page) {
   assert.doesNotMatch((await lineEvents.textContent())!, /T-A130|T-A84/);
   assert.match((await throughput.locator(".project-throughput-metrics dd").first().textContent())!, /\d h$/);
   assert.equal(await assemblyCycle.textContent(), await throughput.locator(".project-throughput-metrics dd").first().textContent());
-  assert.equal(await releaseReadiness.getAttribute("value"), await readiness.getAttribute("value"));
   assert.match((await throughput.getByRole("listitem").last().textContent())!, /[2-9] tasks merged/);
   await simulation.press("Enter");
   await playback.getByRole("button", { name: "Reset simulation" }).click();
@@ -252,9 +254,10 @@ async function checkProjectActivitySim(page: Page) {
 async function checkProjectActivity(page: Page) {
   const assembly = page.getByRole("tab", { name: "Assembly line" });
   const feed = page.getByRole("tab", { name: "Activity feed" });
-  const readiness = page.getByRole("progressbar", { name: "Project readiness" });
   const release = page.getByRole("region", { name: "Release summary" });
   const releaseReadiness = release.getByRole("progressbar", { name: "Release readiness" });
+  /* Readiness has one home on project pages: the release strip */
+  const readiness = releaseReadiness;
   const panel = page.getByRole("complementary", { name: "Release gates" });
   const gates = page.getByRole("group", { name: "Activity sidebar tools" }).getByRole("button", { name: "Release gates" });
   await readiness.waitFor();
@@ -262,21 +265,20 @@ async function checkProjectActivity(page: Page) {
   assert.equal(await projectHeader.getByRole("progressbar").count(), 0);
   assert.doesNotMatch((await projectHeader.textContent())!, /\bDue\b|\d+ of \d+ done/);
   assert.equal(await assembly.getAttribute("aria-selected"), "true");
-  const viewControls = projectHeader.locator(".project-activity-controls");
+  assert.equal(await projectHeader.locator(".project-activity-controls").count(), 0, "View switch lives in its own toolbar row, not the tab row");
+  const viewControls = page.locator(".activity-workspace .project-activity-controls");
   const viewSettings = viewControls.getByRole("group", { name: "Activity view settings" });
   await viewControls.getByRole("tab", { name: "Assembly line", selected: true }).waitFor();
   await viewSettings.getByRole("button", { name: "Assembly line display" }).waitFor();
   const orderedRelease = page.locator(".project-header + .activity-workspace > #project-release-summary:first-child");
   await orderedRelease.waitFor();
   assert.equal(await release.count(), 1, "The release summary moved out of the Assembly line table");
-  assert.equal(await readiness.getAttribute("max"), "4");
+  assert.equal(await page.getByRole("progressbar", { name: "Project readiness" }).count(), 0, "No second readiness bar inside Activity");
   assert.equal(await releaseReadiness.getAttribute("max"), "4");
-  assert.equal(await releaseReadiness.getAttribute("value"), await readiness.getAttribute("value"));
   assert.deepEqual(await release.getByRole("link").allTextContents().then((links) => links.map((label) => label.trim())), ["File access ruling · Pending"]);
   assert.equal(await page.locator(".assembly-milestone").count(), 1);
   assert.equal(await page.locator('[data-assembly-work="T-A121"]').count(), 0);
   assert.equal(await gates.getAttribute("aria-expanded"), "true");
-  assert.match((await panel.getByRole("region", { name: "Milestones" }).textContent())!, /Office sync test.*\d+\/4 tasks · \d+\/2 features/s);
   assert.deepEqual(await panel.getByRole("region", { name: "Gate status" }).getByRole("link").allTextContents(), ["File access ruling"]);
   assert.equal(await panel.getByRole("region", { name: /^Needs a human/ }).getByRole("link", { name: "Custody lock fix" }).getAttribute("href"), "#/inbox/in2");
   assert.equal(await panel.getByRole("region", { name: "Throughput" }).getByRole("listitem").count(), 4);
@@ -297,7 +299,7 @@ async function checkProjectActivity(page: Page) {
   await readiness.waitFor();
   await projectHeader.getByRole("link", { name: "Overview", exact: true }).click();
   await page.waitForURL((address) => address.hash === "#/projects/office-federation");
-  await page.locator(".project-header + #project-release-summary + .grid2").waitFor();
+  await page.locator(".project-header + #project-release-summary + .pj-overview").waitFor();
   assert.equal(await releaseReadiness.getAttribute("max"), "4");
   await release.getByRole("link", { name: /File access ruling/ }).waitFor();
   await projectHeader.getByRole("link", { name: "Activity", exact: true }).click();

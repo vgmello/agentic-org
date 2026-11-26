@@ -333,7 +333,7 @@ function projectInsights(id) {
   const durationRows = completionTypes.map((kind) => {
     const sample = done.filter((item) => item.kind === kind);
     return { label: kind + " · " + plural(sample.length, "item", "items"), values: [insightMedian(sample.map((item) => item.lead)), insightMedian(sample.map((item) => item.cycle)), insightMedian(sample.map((item) => item.wait))] };
-  });
+  }).filter((row) => row.values.some((value) => value != null));
   const investmentUsage = investmentBy === "type" ? usage : usage.filter(({ type }) => type === "Build (R&D)");
   const investmentRows = insightRows(investmentUsage, investmentBy).map(({ label, total }) => ({
     label,

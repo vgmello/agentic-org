@@ -1,0 +1,190 @@
+/* Graphite Light: the Graphite structure (flat, compact, monochrome, no glass) on a
+   professional light palette. All Graphite rules match via [data-theme^="graphite"];
+   this file supplies light tokens and overrides the few hard-coded dark values.
+   Loaded last so equal-specificity overrides win. */
+html:root[data-theme="graphite-light"] {
+  color-scheme: light;
+  /* Surfaces (zinc neutrals) */
+  --graphite-canvas: #FAFAFA;
+  --graphite-rail: #F4F4F5;
+  --graphite-panel: #FFFFFF;
+  --graphite-raised: #FFFFFF;
+  --graphite-active: #EBEBED;
+  --graphite-primary: #18181B;
+  --graphite-primary-hi: #3F3F46;
+  --graphite-on-primary: #FFFFFF;
+  /* Gray scale is "strength" ordered: --white is the strongest ink, --gray-950 the faintest surface */
+  --gray-950: #F4F4F5;
+  --gray-900: #FFFFFF;
+  --gray-800: #FFFFFF;
+  --gray-700: #D4D4D8;
+  --gray-500: #71717A;
+  --gray-400: #52525B;
+  --gray-300: #27272A;
+  --white: #09090B;
+  --line: #E4E4E7;
+  --line2: #D4D4D8;
+  --hover: #F1F1F3;
+  --sidebar: #F4F4F5;
+  --bar-track: #E4E4E7;
+  /* Accent stays monochrome: selection and focus use ink, not a hue */
+  --tone-accent: #3F3F46;
+  --tone-accent-bar: #52525B;
+  --tone-accent-ink: #27272A;
+  --tone-accent-hover: #09090B;
+  --tone-accent-on-soft: #18181B;
+  --tone-accent-on-dark: #FFFFFF;
+  --tone-accent-solid: #18181B;
+  --tone-accent-solid-hi: #3F3F46;
+  --tone-accent-soft: rgb(24 24 27 / .05);
+  --tone-accent-soft-hi: rgb(24 24 27 / .09);
+  --tone-accent-ring: rgb(24 24 27 / .16);
+  /* Status colors: muted, AA on white, used only for meaning */
+  --tone-ok: #16A34A;
+  --tone-ok-bar: #16A34A;
+  --tone-ok-ink: #15803D;
+  --tone-ok-icon: #16A34A;
+  --tone-ok-soft: rgb(22 163 74 / .09);
+  --tone-ok-ring: rgb(22 163 74 / .26);
+  --tone-warn: #D97706;
+  --tone-warn-bar: #D97706;
+  --tone-warn-ink: #B45309;
+  --tone-warn-icon: #D97706;
+  --tone-warn-soft: rgb(217 119 6 / .10);
+  --tone-warn-ring: rgb(217 119 6 / .28);
+  --tone-bad: #DC2626;
+  --tone-bad-bar: #DC2626;
+  --tone-bad-ink: #B91C1C;
+  --tone-bad-hover: #991B1B;
+  --tone-bad-icon: #DC2626;
+  --tone-bad-soft: rgb(220 38 38 / .08);
+  --tone-bad-ring: rgb(220 38 38 / .24);
+  --tone-bad-solid: #B91C1C;
+  --tone-bad-solid-hi: #991B1B;
+  --tone-queued: #71717A;
+  --tone-queued-bar: #A1A1AA;
+  --tone-queued-ink: #52525B;
+  --bar-fill-spend: #52525B;
+  --blocker-accent-bg: rgb(24 24 27 / .03);
+  --blocker-accent-ring: var(--line2);
+  --dot-idle: #D4D4D8;
+  --dot-hover: #A1A1AA;
+  --dot-cur: #18181B;
+  --dot-urgent: #D97706;
+  --dot-cur-urgent: #B45309;
+  --dot-cleared: #16A34A;
+  /* Sidebar/header lighting used by the dark themes: flat here */
+  --sidebar-edge-shade: none;
+  --sidebar-top-light: rgb(255 255 255 / .7);
+  --page-header-light: rgb(9 9 11 / .02);
+  background: var(--graphite-canvas);
+  color: var(--white);
+
+  & #sidebar::before { box-shadow: inset -1px 0 var(--line); }
+
+  & body { color: var(--white); }
+  & .sidebar { background: var(--graphite-rail); box-shadow: inset -1px 0 var(--line); }
+  & .work-row:is(:hover, :focus-within) { background: var(--hover); }
+  & :is(.work-group-title, .grp-h) { background: var(--graphite-rail); }
+  & .sidebar :is(.nav-label, .nav-group-title, .nav-group-title .ic) { color: var(--gray-500); }
+  & .nav-item:is([aria-current="page"], .cur) { background: var(--graphite-panel); box-shadow: inset 0 0 0 1px var(--line), 0 1px 2px rgb(0 0 0 / .04); }
+  & .overlay { background: rgb(9 9 11 / .28); }
+  & :is(.menu, .sheet, .toast, .sres) { box-shadow: inset 0 0 0 1px var(--line), 0 12px 32px -8px rgb(9 9 11 / .14); }
+  & #cmdk-dialog { background: var(--graphite-panel); box-shadow: inset 0 0 0 1px var(--line2), 0 24px 64px -16px rgb(9 9 11 / .22); }
+  & :is(.cmdk-tabs, .cmdk-foot) { background: var(--graphite-rail); }
+  & :is(.cmdk-tabs, .cmdk-foot, .cmdk-in-row) { border-color: var(--line); }
+  & .cmdk-tab-grp { background: var(--graphite-canvas); box-shadow: inset 0 0 0 1px var(--line); }
+  & .cmdk-tab { color: var(--gray-400); }
+  & .cmdk-tab:hover { color: var(--white); }
+  & .cmdk-tab[aria-selected="true"] { background: var(--graphite-panel); color: var(--white); box-shadow: inset 0 0 0 1px var(--line2); }
+  & .cmdk-tab[aria-selected="true"] .ic { color: var(--white); }
+  & .cmdk-esc { background: var(--graphite-panel); color: var(--gray-400); box-shadow: inset 0 0 0 1px var(--line2); }
+  & .cmdk-esc:hover { background: var(--hover); color: var(--white); }
+
+  /* Cards: white on a light canvas, hairline border plus a whisper of depth */
+  & .hb {
+    --hb-shadow: inset 0 0 0 1px var(--line), 0 1px 2px rgb(9 9 11 / .04);
+    --hb-shadow-hi: inset 0 0 0 1px var(--line2), 0 2px 6px rgb(9 9 11 / .06);
+    --hb-body: var(--gray-400);
+    --hb-muted: var(--gray-500);
+    --hb-dim: var(--gray-500);
+  }
+  & :is(.card, .bcard, .c-entry, .k-doc) { box-shadow: inset 0 0 0 1px var(--line), 0 1px 2px rgb(9 9 11 / .04); }
+
+  /* Sidebar Tess contact and start buttons (Graphite hard-codes dark values) */
+  & .sidebar-tess-contact:hover { background: var(--hover); }
+  & .sidebar-tess-contact.is-active { background: var(--graphite-active); border-color: var(--line2); }
+  & .tess-contact-av { background: var(--graphite-panel); border-color: var(--line2); color: var(--white); }
+  & .tess-contact-star { background: var(--graphite-rail); color: var(--white); }
+  & :is(.tess-contact-dot, .tess-contact-av .start-tess-busy) { box-shadow: 0 0 0 2px var(--graphite-rail); }
+  & .start-tess { color: var(--gray-300); }
+
+  /* Panels that Graphite paints near-black */
+  & :is(.side-panel, .activity-panel, .activity-tools) { --side-panel-surface: var(--graphite-panel); }
+  & #content:has(.triage-workspace, .work-header, .activity-main[data-view="assembly"]) { background: var(--graphite-canvas); }
+  &:has(.triage-workspace) { --graphite-inbox-line: var(--line); }
+  & :is(.tess-panel, .notif-popover) { background: var(--graphite-panel); }
+  @media (hover: hover) {
+    & [data-tip]::after { background: #18181B; border-color: #18181B; color: #FAFAFA; }
+  }
+
+  /* Text that base styles hard-code as near-white */
+  & .btn.outline { background: var(--graphite-panel); color: var(--white); box-shadow: inset 0 0 0 1px var(--line2), 0 1px 2px rgb(9 9 11 / .04); }
+  & .btn.outline:hover { background: var(--hover); }
+  & :is(.hb-spot-cell-val, .hb-spot-rec) { color: var(--gray-300); }
+  & :is(.hb-blocker, .hb-blocker.sky) { color: var(--gray-300); }
+  & .h4-ctx-toggle { color: var(--gray-400); }
+  & .hb-brief-lenses button[aria-pressed="true"] { background: var(--graphite-panel); color: var(--white); box-shadow: inset 0 0 0 1px var(--line2), 0 1px 2px rgb(9 9 11 / .06); }
+  & .k-doc { background: var(--graphite-rail); }
+
+  /* Avatars: keep each person's hue, but as a soft tinted chip with a deep letter */
+  & .av {
+    color: color-mix(in oklab, var(--av-tint, #71717A) 42%, #18181B);
+    background: color-mix(in oklab, var(--av-tint, #A1A1AA) 16%, #FFFFFF);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--av-tint, #A1A1AA) 30%, #FFFFFF);
+  }
+  & .avstack .av { box-shadow: 0 0 0 2px var(--graphite-panel); }
+
+  /* Sidebar search / Tess start buttons */
+  & :is(.start-search, .start-tess) { background: var(--graphite-panel); border-color: var(--line2); color: var(--gray-400); }
+  & .start-tess { color: var(--gray-300); }
+  & :is(.start-search, .start-tess):hover { background: var(--graphite-panel); border-color: var(--gray-500); color: var(--white); }
+  & .start-tess.is-active { background: var(--graphite-active); border-color: var(--gray-500); color: var(--white); }
+
+  /* Inbox: Graphite repaints sidebar and queue near-black on this page */
+  &:has(.triage-workspace) {
+    & .sidebar { background: var(--graphite-rail); box-shadow: inset -1px 0 var(--line); }
+    & .triage-queue { --triage-row-hover: var(--hover); background: var(--graphite-panel); border-inline-end-color: var(--line); }
+  }
+
+  /* Form controls: white fields with a hairline, ink focus ring */
+  & :is(select.field, input.field, textarea, .chat .composer textarea, #compose) {
+    background: var(--graphite-panel); color: var(--white);
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+    box-shadow: inset 0 0 0 1px var(--line2), 0 1px 2px rgb(9 9 11 / .04);
+  }
+  & :is(select.field, input.field, textarea):focus-visible { outline: 2px solid rgb(9 9 11 / .18); outline-offset: 1px; box-shadow: inset 0 0 0 1px var(--gray-500); }
+  & :is(input.field, textarea)::placeholder { color: var(--gray-500); }
+  & select.field option { background: #FFFFFF; color: #09090B; }
+
+  /* Menus: white sheet, ink items */
+  & .menu button { color: var(--white); }
+  & .menu button:hover, & .menu button:focus-visible { background: var(--hover); }
+
+  /* Comment composers: one white box; the textarea inside stays borderless */
+  & .triage-comment-form { background: var(--graphite-panel); box-shadow: 0 1px 2px rgb(9 9 11 / .04); }
+  & .triage-comment-form :is(#triage-comment, #work-comment) { background: transparent; box-shadow: none; outline: none; }
+
+  /* Command palette: ink labels, quieter descriptions, neutral tags */
+  & .cmdk-opt { color: var(--gray-300); }
+  & .cmdk-opt .ic { color: var(--gray-500); }
+  & .cmdk-opt:hover, & .cmdk-opt[aria-selected="true"] { background: var(--hover); color: var(--white); box-shadow: inset 0 0 0 1px var(--line); }
+  & .cmdk-opt[aria-selected="true"] .ic { color: var(--white); }
+  & .cmdk-opt-lbl { color: var(--white); }
+  & .cmdk-opt-sub { color: var(--gray-500); }
+  & .cmdk-opt-tag { background: var(--graphite-rail); color: var(--gray-400); box-shadow: inset 0 0 0 1px var(--line); }
+  & .cmdk-empty { color: var(--gray-500); }
+
+  /* Insights cards share the white card surface used on Overview */
+  & :is(.insight-kpis > div, .insight-card, .insight-actions > a) { background: var(--graphite-panel); }
+}

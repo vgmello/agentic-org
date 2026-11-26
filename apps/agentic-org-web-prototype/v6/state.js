@@ -1,9 +1,9 @@
 /* ---------------------------------------------------------------- state */
-const S = { theme: "ocean", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
+const S = { theme: "ocean", fontStyle: "inter", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", inboxQuery: "", inboxUrgent: false, inboxOrder: "priority", replying: null, replyMode: null, workLayout: "list", workBoardStages: "detailed", focusAfter: null,
   scopedWorkView: "all", scopedWorkLayout: "list", scopedWorkStatus: "all", scopedWorkProject: "all", scopedWorkTeam: "all", scopedWorkGroup: "status", scopedWorkSubgroup: "none", scopedWorkSort: "default", scopedWorkOrder: "asc",
   actView: "assembly", actProject: "all", actFilter: "all", actPanel: null,
   projectActView: "assembly", projectActFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
-  consoleView: "activity", consoleScope: "all", consoleTools: false, agentFocusTools: false, openTraces: {}, openKnow: {}, openIdeation: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefExpanded: false, confirmDeny: null, briefCopied: false };
+  consoleView: "activity", consoleScope: "all", consoleTools: false, agentFocusTools: false, openTraces: {}, openKnow: {}, openIdeation: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefView: "highlights", searchOpen: {}, projectQuery: "", pjDecision: null, briefExpanded: false, confirmDeny: null, briefCopied: false };
 const ORG_NAME_STORE = "agentic-org.v6.organizationName";
 let orgName = "Agentic Org";
 try { orgName = localStorage.getItem(ORG_NAME_STORE)?.trim().slice(0, 80) || orgName; } catch (e) {}
@@ -23,7 +23,7 @@ S.cozyContrast = false;
 try { S.cozyContrast = localStorage.getItem(COZY_CONTRAST_STORE) === "1"; } catch (e) {}
 const THEME_OPTIONS = [
   ["ocean", "Ocean"], ["classic", "Classic"], ["report", "Report"],
-  ["report-dark", "Report Night"], ["graphite", "Graphite"], ["cozy", "Cozy Glass"]
+  ["report-dark", "Report Night"], ["graphite", "Graphite"], ["graphite-light", "Graphite Light"], ["cozy", "Cozy Glass"]
 ];
 const VALID_THEMES = new Set(THEME_OPTIONS.map(([value]) => value));
 const normalizeTheme = (t) => (t === "light" ? "report" : t);
@@ -42,7 +42,7 @@ function applyCozyContrast() {
 function applyTheme(remember = false) {
   const t = VALID_THEMES.has(normalizeTheme(S.theme)) ? normalizeTheme(S.theme) : "ocean";
   S.theme = t;
-  const isLight = t === "report";
+  const isLight = t === "report" || t === "graphite-light";
   document.documentElement.dataset.theme = t;
   document.documentElement.classList.toggle("dark", !isLight);
   document.documentElement.classList.toggle("light", isLight);
@@ -56,6 +56,44 @@ function applyTheme(remember = false) {
   }
 }
 applyTheme();
+const FONT_STORE = "agentic-org.v6.fontStyle.v5";
+const FONT_OPTIONS = [
+  ["inter", "Inter"],
+  ["noto-sans", "Noto Sans (Ellosoft)"],
+  ["instrument", "Instrument Sans"],
+  ["manrope", "Manrope"],
+  ["outfit", "Outfit"],
+  ["schibsted", "Schibsted Grotesk"],
+  ["albert", "Albert Sans"],
+  ["swiss", "Geist"],
+  ["dm-sans", "DM Sans"],
+  ["ibm-plex", "IBM Plex Sans"],
+  ["system", "SF Pro (System)"],
+  ["editorial", "Newsreader (Editorial)"],
+];
+const VALID_FONTS = new Set(FONT_OPTIONS.map(([value]) => value));
+const urlFont = new URLSearchParams(location.search).get("font");
+if (VALID_FONTS.has(urlFont)) {
+  S.fontStyle = urlFont;
+} else {
+  try {
+    const savedFont = localStorage.getItem(FONT_STORE);
+    if (VALID_FONTS.has(savedFont)) S.fontStyle = savedFont;
+  } catch (e) {}
+}
+function applyFontStyle(remember = false) {
+  const f = VALID_FONTS.has(S.fontStyle) ? S.fontStyle : "inter";
+  S.fontStyle = f;
+  document.documentElement.dataset.font = f;
+  if (!remember) return;
+  try { localStorage.setItem(FONT_STORE, f); } catch (e) {}
+  const url = new URL(location.href);
+  if (url.searchParams.has("font")) {
+    url.searchParams.delete("font");
+    history.replaceState(history.state, "", url);
+  }
+}
+applyFontStyle();
 const INBOX_DIVIDERS_STORE = "agentic-org.v6.inboxDividers";
 S.inboxDividers = false;
 try { S.inboxDividers = localStorage.getItem(INBOX_DIVIDERS_STORE) === "1"; } catch (e) {}
@@ -157,7 +195,7 @@ function applyShortcuts() {
   if (on) nav.setAttribute("aria-keyshortcuts", "S"); else nav.removeAttribute("aria-keyshortcuts");
 }
 const inTextField = (el) => !!el && (["input", "textarea", "select"].includes((el.tagName || "").toLowerCase()) || !!el.isContentEditable);
-const overlayOpen = () => !!(document.querySelector(".sheet, dialog[open], .menu:not([hidden]), .af-shell, #notif-popover:not([hidden]), #tess-panel.is-expanded:not([hidden])") || document.body.classList.contains("drawer"));
+const overlayOpen = () => !!(document.querySelector(".sheet, dialog[open], .menu:not([hidden]), .af-shell, #tess-panel.is-expanded:not([hidden])") || document.body.classList.contains("drawer"));
 const qs = () => new URLSearchParams((location.hash.split("?")[1]) || "");
 
 export {
@@ -167,6 +205,7 @@ export {
   CHAT_SEND_SHORTCUTS,
   CHAT_SEND_STORE,
   COZY_CONTRAST_STORE,
+  FONT_OPTIONS,
   INBOX_DIVIDERS_STORE,
   ORG_NAME_STORE,
   S,
@@ -177,6 +216,7 @@ export {
   WORK_DIVIDERS_STORE,
   WORK_SUBTASKS_STORE,
   applyCozyContrast,
+  applyFontStyle,
   applyNavCollapsed,
   applyShortcuts,
   applyTheme,

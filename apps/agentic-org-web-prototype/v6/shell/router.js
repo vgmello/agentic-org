@@ -1,17 +1,18 @@
 import { CH, M, P, TEAMS } from "../data.js";
 import { activityPanelResize, pageActivity, projectActivityId, refreshActivityPanel, syncAssemblySimulationTimer, updateActivityPanelScroll } from "../pages/activity.js";
 import { mountAgentProfile, stopAgentOrb } from "../pages/agent-profile.js";
+import { mountOrgChart } from "../pages/org-chart.js";
 import { pageChat } from "../pages/chat.js";
 import { pageHome } from "../pages/home.js";
 import { pageInbox } from "../pages/inbox.js";
-import { pageProject, pageProjects } from "../pages/projects.js";
+import { mountProjectQueue, pageProject, pageProjects } from "../pages/projects.js";
 import { SET, notFound, pagePreferences, pageSearch, pageSettings } from "../pages/settings.js";
 import { pageMember, pageMembersDir, pageOrgChart, pageTeam, pageTeams } from "../pages/teams.js";
-import { fitTextarea, pageWork, scopedWorkQueries, scopedWorkType, setWorkPanelExpanded, showSidePanel } from "../pages/work.js";
+import { fitTextarea, pageWork, setWorkPanelExpanded, showSidePanel } from "../pages/work.js";
 import { isMacPlatform } from "./cmdk.js";
 import { endNavigationKeys } from "./keyboard.js";
 import { mountHomeProjectHint, renderBanner, renderNav } from "./sidebar.js";
-import { syncTopbarUtils } from "./topbar-utils.js";
+import { registerNotifChangeListener, syncTopbarUtils } from "./topbar-utils.js";
 import { S, applyShortcuts, qs } from "../state.js";
 import { esc, ic } from "../ui.js";
 
@@ -23,72 +24,50 @@ const MEMBER_ALIASES = ["members", "people", "everyone"];
 const homeToolbar = document.getElementById("home-toolbar");
 const drawerButton = homeToolbar.querySelector(".menu-btn");
 const commandBar = document.getElementById("cmdk-shell");
-const topbarUtils = document.getElementById("topbar-utils");
 const pageSearchTools = document.createElement("div");
 pageSearchTools.id = "page-search-tools";
 const localSearchHost = document.getElementById("cmdk-local");
-const homeSearchField = document.getElementById("cmdk-home-field");
-const homeSearchInput = document.getElementById("cmdk-home-input");
-const homeSearchResults = document.getElementById("cmdk-home-results");
-const PAGE_SEARCH = {
-  inbox: { id: "triage-search", value: () => S.inboxQuery, label: "Search inbox", placeholder: "Search inbox…" },
-  work: { id: "work-search", value: () => S.workQuery, label: "Search this work view", placeholder: "Search work…" }
-};
+/* Header search box per page. Inbox and Work now use an inline search row (ui.js searchToggle/searchRow). */
+const PAGE_SEARCH = {};
 function resolvePageSearchConfig(currentRoute) {
-  const [page, id] = currentRoute;
-  const scope = scopedWorkType(currentRoute);
-  if (scope) {
-    return {
-      id: "scoped-work-search",
-      value: () => scopedWorkQueries.get(scope + ":" + id) ?? "",
-      label: "Search work in this view",
-      placeholder: scope === "agent" ? "Search tasks…" : "Search work…",
-    };
-  }
+  const [page] = currentRoute;
   return own(PAGE_SEARCH, page) ? PAGE_SEARCH[page] : null;
 }
 
-function attachToolbarHost(main, heading) {
+function attachToolbarHost(main, heading, hasLocalSearch) {
   if (heading) {
-    const backLink = main.firstElementChild;
-    if (backLink?.matches("a.back")) heading.prepend(backLink);
-    heading.classList.add("has-page-toolbar");
+    const backLink = main.querySelector(":scope > .back, :scope > .settings > .back");
+    if (backLink) heading.prepend(backLink);
+    heading.classList.toggle("has-page-toolbar", hasLocalSearch);
+    heading.classList.toggle("has-page-nav", !hasLocalSearch);
     heading.prepend(drawerButton);
-    heading.append(pageSearchTools);
-    pageSearchTools.append(commandBar, topbarUtils);
-  } else if (commandBar.parentElement !== homeToolbar || topbarUtils.parentElement !== homeToolbar) {
-    homeToolbar.append(drawerButton, commandBar, topbarUtils);
+    if (hasLocalSearch) {
+      heading.append(pageSearchTools);
+      pageSearchTools.append(commandBar);
+    } else if (commandBar.parentElement !== homeToolbar) {
+      homeToolbar.append(commandBar);
+    }
+  } else {
+    if (drawerButton.parentElement !== homeToolbar) homeToolbar.prepend(drawerButton);
+    if (commandBar.parentElement !== homeToolbar) homeToolbar.append(commandBar);
   }
   homeToolbar.hidden = Boolean(heading);
-}
-
-function syncHomeSearchField(isHome, workspaceSearch) {
-  homeSearchField.hidden = !isHome && !workspaceSearch;
-  if (location.hash !== S.lastRoute) homeSearchInput.value = "";
-  homeSearchInput.setAttribute("aria-label", workspaceSearch ? "Search across the workspace" : "Search, run a command, or ask Tess");
-  const fieldShortcut = document.getElementById("cmdk-home-kbd");
-  fieldShortcut.textContent = isHome ? (isMacPlatform ? "⌘K" : "Ctrl K") : "/";
-  fieldShortcut.hidden = workspaceSearch && !S.singleKey;
-  if (workspaceSearch && S.singleKey) homeSearchInput.setAttribute("aria-keyshortcuts", "/");
-  else homeSearchInput.removeAttribute("aria-keyshortcuts");
 }
 
 function placeSearchToolbar(main, currentRoute) {
   const [page] = currentRoute;
   const heading = page === "home" ? null : main.querySelector("h1")?.closest(".ph, .prof, .chhead");
   const search = resolvePageSearchConfig(currentRoute);
-  attachToolbarHost(main, heading);
-  const isHome = page === "home", workspaceSearch = Boolean(heading && !search);
-  syncHomeSearchField(isHome, workspaceSearch);
-  document.getElementById("cmdk-trigger").hidden = isHome;
-  localSearchHost.hidden = !search;
-  const showShortcut = Boolean(search) && S.singleKey;
-  localSearchHost.innerHTML = search
+  const hasLocalSearch = Boolean(heading && search);
+  attachToolbarHost(main, heading, hasLocalSearch);
+  commandBar.hidden = !hasLocalSearch;
+  localSearchHost.hidden = !hasLocalSearch;
+  const showShortcut = hasLocalSearch && S.singleKey;
+  localSearchHost.innerHTML = hasLocalSearch
     ? `<label>${ic("search", "ic16")}<span class="sr-only">${search.label}</span><input id="${search.id}" type="search" value="${esc(search.value())}" placeholder="${search.placeholder}" autocomplete="off"${showShortcut ? ' aria-keyshortcuts="/"' : ""}>${showShortcut ? '<kbd aria-hidden="true">/</kbd>' : ""}</label>`
     : "";
 }
-const pageSearchInput = () => localSearchHost.querySelector("input")
-  || (pageSearchTools.contains(homeSearchField) && !homeSearchField.hidden ? homeSearchInput : null);
+const pageSearchInput = () => (localSearchHost.hidden ? null : localSearchHost.querySelector("input"));
 
 function normalizeRouteRedirects() {
   if (/^#\/?members\/you(\/|$)/.test(location.hash)) {
@@ -111,7 +90,7 @@ function normalizeRouteRedirects() {
 
 const ROUTE_RENDERERS = {
   home: () => pageHome(),
-  inbox: (r1) => pageInbox(r1),
+  inbox: (r1, r2) => pageInbox(r1, r2),
   projects: (r1, r2) => (!r1 ? pageProjects() : own(P, r1) ? pageProject(r1, r2) : notFound()),
   work: () => pageWork(),
   chat: (r1) => pageChat(own(CH, r1) ? r1 : null),
@@ -178,7 +157,8 @@ function restoreFocusAfterRender({ main, content, r0, r1, key, focus, workPanel,
 
 function captureBeforeRender(main, content) {
   const priorBoard = main.querySelector("#work-results .board");
-  const toolbarFocus = pageSearchTools.contains(document.activeElement) ? document.activeElement.id : "";
+  const active = document.activeElement;
+  const toolbarFocus = pageSearchTools.contains(active) || active?.classList?.contains("inline-search-input") ? active.id : "";
   const toolbarCaret = toolbarFocus && document.activeElement.type === "search" ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
   return {
     priorPanel: main.querySelector("#work-panel"),
@@ -216,6 +196,8 @@ function render(focus = true) {
   const sameWorkPage = (snap.priorPanel || workPanel) && S.lastRoute?.split("?")[0] === key.split("?")[0];
   const shell = document.getElementById("agent-shell");
   if (shell) mountAgentProfile(shell.dataset.agent, shell.dataset.tab);
+  mountOrgChart(main);
+  mountProjectQueue(main);
   placeSearchToolbar(main, r);
   if (S.singleKey) main.querySelector("[data-page-menu]")?.setAttribute("aria-keyshortcuts", "M");
   scrollCurrentTabsIntoView(main);
@@ -237,10 +219,13 @@ function render(focus = true) {
   syncAssemblySimulationTimer();
 }
 
+registerNotifChangeListener(() => {
+  const r = route();
+  renderNav(r);
+  if (r[0] === "inbox") render(false);
+});
+
 export {
-  homeSearchField,
-  homeSearchInput,
-  homeSearchResults,
   own,
   pageSearchInput,
   pageSearchTools,
