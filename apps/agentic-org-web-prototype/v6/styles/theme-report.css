@@ -77,7 +77,7 @@ html[data-theme^="report"] .nav-collapse-btn:hover,
 html[data-theme^="report"] .nav-fold-btn:hover,
 html[data-theme^="report"] .nav-group-all:hover { background: #EEF1F6; color: #0B101B; }
 html[data-theme^="report"] .logo .name {
-  color: #0B101B; font-weight: 700; letter-spacing: -.025em;
+  color: #0B101B; font-weight: 700; letter-spacing: var(--ls-display);
 }
 html[data-theme^="report"] .nav-label,
 html[data-theme^="report"] .nav-group-title {
@@ -302,7 +302,7 @@ html[data-theme^="report"] .hb-pillar-name {
 }
 html[data-theme^="report"] .hb-pillar-name .ic { color: #64748B; }
 html[data-theme^="report"] .hb-pillar-num {
-  line-height: 1.05; font-weight: var(--fw-kpi); letter-spacing: -.04em; color: #0B101B;
+  line-height: 1.05; font-weight: var(--fw-kpi); letter-spacing: var(--ls-kpi); color: #0B101B;
 }
 html[data-theme^="report"] .hb-pillar-pill {
   border-radius: 3px; font-weight: 600; letter-spacing: .01em;
@@ -360,7 +360,7 @@ html[data-theme^="report"] .hb-dot-btn { width: 14px; }
 html[data-theme^="report"] .hb-dot-btn.is-cur { width: 22px; }
 html[data-theme^="report"] .hb-spot-title {
 
-  font-weight: 600; letter-spacing: -.02em; color: #0B101B;
+  font-weight: 600; letter-spacing: var(--ls-display); color: #0B101B;
 }
 html[data-theme^="report"] .hb-step-ctr { font-family: var(--font-mono); }
 html[data-theme^="report"] .hb-dot-btn::after { border-radius: 1px; height: 3px; width: 9px; }
@@ -521,7 +521,7 @@ html[data-theme^="report"] .hb-card:first-child { padding-left: 0; }
 html[data-theme^="report"] .hb-card:last-child { padding-right: 0; }
 html[data-theme^="report"] .hb-card + .hb-card { border-left: 1px solid #EEF1F6; }
 html[data-theme^="report"] .hb-card:hover { transform: none; background: transparent; box-shadow: none; }
-html[data-theme^="report"] .hb-card-name { font-weight: 700; letter-spacing: -.02em; }
+html[data-theme^="report"] .hb-card-name { font-weight: 700; letter-spacing: var(--ls-snug); }
 html[data-theme^="report"] .hb-rel-tag {
   border-radius: 3px; background: #F4F6F9; color: #475569; box-shadow: none;
   font-family: var(--font-mono);

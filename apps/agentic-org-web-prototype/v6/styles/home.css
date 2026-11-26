@@ -626,7 +626,7 @@ a.hb-pillar-hero:hover { background: rgba(186, 222, 255, .05); }
 .hb-pillar-num {
   font-family: var(--font-sans);
   font-size: clamp(1.5rem, 1.85vw, 1.95rem); line-height: 1.05; font-weight: var(--fw-kpi);
-  letter-spacing: -.04em; color: var(--hb-ink); font-variant-numeric: tabular-nums;
+  letter-spacing: var(--ls-kpi); color: var(--hb-ink); font-variant-numeric: tabular-nums;
 }
 .hb-pillar-unit { font-size: var(--fs-sm); font-weight: 500; color: var(--hb-muted); white-space: nowrap; }
 .hb-pillar-right { font-size: var(--fs-xs); font-weight: 600; color: var(--hb-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -1188,7 +1188,7 @@ html[data-theme="graphite"] .home-scroll-hint { background: var(--graphite-canva
 .hb-card:hover { background: var(--hb-surface-hi); box-shadow: var(--hb-shadow-hi); transform: translateY(-2px); }
 .hb-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .hb-card-id { display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; }
-.hb-card-name { font-size: var(--fs-md); font-weight: 600; letter-spacing: -.01em; color: var(--hb-ink); }
+.hb-card-name { font-size: var(--fs-md); font-weight: 600; letter-spacing: var(--ls-snug); color: var(--hb-ink); }
 a.hb-card-name:hover { color: var(--tone-accent-hover); }
 .hb-rel-tag {
   font-size: var(--fs-xs); font-weight: 600; font-family: var(--font-mono);
@@ -1297,7 +1297,7 @@ a.hb-card-lead:hover { color: var(--hb-ink); }
 .hb-time-hd { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .hb-time-title {
   font-size: var(--fs-md); line-height: 1.3; font-weight: 600;
-  letter-spacing: -.01em; color: var(--hb-ink);
+  letter-spacing: var(--ls-display); color: var(--hb-ink);
 }
 .hb-time-unit { font-size: var(--fs-sm); font-weight: 500; font-variant-numeric: tabular-nums; color: var(--hb-dim); }
 .hb-time-bar {

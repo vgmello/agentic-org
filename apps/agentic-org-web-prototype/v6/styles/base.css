@@ -117,7 +117,9 @@
   --fw-heading: 600;
   --fw-kpi: 350;
   --fw-item: 500;
-  --ls-display: -0.02em;
+  --ls-body: 0.01em;
+  --ls-display: 0em;
+  --ls-kpi: 0em;
   --em-style: normal;
   --fs-2xs: 0.6875rem;
   --fs-xs: 0.75rem;
@@ -127,9 +129,9 @@
   --fs-lg: 1.25rem;
   --fs-xl: clamp(1.5rem, 2.2vw, 1.875rem);
   --fs-kpi: 2.125rem;
-  --ls-tight: -0.02em;
-  --ls-snug: -0.01em;
-  --ls-normal: 0;
+  --ls-tight: 0em;
+  --ls-snug: 0.005em;
+  --ls-normal: 0.01em;
   --ls-wide: 0.06em;
   --gray-950: #030712; --gray-900: #101828; --gray-800: #1e2939; --gray-700: #364153;
   --gray-500: #6a7282; --gray-400: #99a1af; --gray-300: #d1d5dc; --white: #ffffff;
@@ -212,7 +214,7 @@ html[data-font="instrument"] {
   --fw-heading: 500;
   --fw-kpi: 400;
   --fw-item: 500;
-  --ls-display: -0.025em;
+  --ls-display: 0em;
   --em-style: normal;
 }
 html[data-font="manrope"] {
@@ -222,7 +224,7 @@ html[data-font="manrope"] {
   --fw-heading: 500;
   --fw-kpi: 350;
   --fw-item: 500;
-  --ls-display: -0.03em;
+  --ls-display: 0em;
   --em-style: normal;
 }
 html[data-font="outfit"] {
@@ -232,7 +234,7 @@ html[data-font="outfit"] {
   --fw-heading: 500;
   --fw-kpi: 350;
   --fw-item: 500;
-  --ls-display: -0.025em;
+  --ls-display: 0em;
   --em-style: normal;
 }
 html[data-font="schibsted"] {
@@ -242,7 +244,7 @@ html[data-font="schibsted"] {
   --fw-heading: 500;
   --fw-kpi: 400;
   --fw-item: 500;
-  --ls-display: -0.025em;
+  --ls-display: 0em;
   --em-style: normal;
 }
 html[data-font="albert"] {
@@ -252,7 +254,7 @@ html[data-font="albert"] {
   --fw-heading: 500;
   --fw-kpi: 350;
   --fw-item: 500;
-  --ls-display: -0.025em;
+  --ls-display: 0em;
   --em-style: normal;
 }
 html[data-font="dm-sans"] {
@@ -262,7 +264,7 @@ html[data-font="dm-sans"] {
   --fw-heading: 500;
   --fw-kpi: 400;
   --fw-item: 500;
-  --ls-display: -0.025em;
+  --ls-display: 0em;
   --em-style: normal;
 }
 html[data-font="swiss"] {
@@ -272,7 +274,7 @@ html[data-font="swiss"] {
   --fw-heading: 500;
   --fw-kpi: 350;
   --fw-item: 500;
-  --ls-display: -0.03em;
+  --ls-display: 0em;
   --em-style: normal;
 }
 html[data-font="system"] {
@@ -282,7 +284,7 @@ html[data-font="system"] {
   --fw-heading: 500;
   --fw-kpi: 350;
   --fw-item: 500;
-  --ls-display: -0.025em;
+  --ls-display: 0em;
   --em-style: normal;
 }
 html[data-font="ibm-plex"] {
@@ -292,7 +294,7 @@ html[data-font="ibm-plex"] {
   --fw-heading: 500;
   --fw-kpi: 350;
   --fw-item: 500;
-  --ls-display: -0.02em;
+  --ls-display: 0em;
   --em-style: normal;
 }
 html[data-font="humanist"] {
@@ -302,7 +304,7 @@ html[data-font="humanist"] {
   --fw-heading: 600;
   --fw-kpi: 400;
   --fw-item: 500;
-  --ls-display: -0.025em;
+  --ls-display: 0em;
   --em-style: normal;
 }
 html[data-font="editorial"] {
@@ -312,7 +314,7 @@ html[data-font="editorial"] {
   --fw-heading: 500;
   --fw-kpi: 350;
   --fw-item: 500;
-  --ls-display: -0.02em;
+  --ls-display: 0em;
   --em-style: italic;
   --fs-lg: 1.3125rem;
   --fs-xl: clamp(1.625rem, 2.35vw, 2.0625rem);
@@ -343,7 +345,7 @@ body::after {
   pointer-events: none;
   background: linear-gradient(180deg, rgba(56, 189, 248, .07) 0%, transparent 100%);
 }
-body { font-family: var(--font-sans); font-size: var(--fs-base); line-height: 1.5; -webkit-font-smoothing: antialiased; }
+body { font-family: var(--font-sans); font-size: var(--fs-base); line-height: 1.5; letter-spacing: var(--ls-body); -webkit-font-smoothing: antialiased; }
 a { color: inherit; text-decoration: none; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 h1, h2, h3, h4, p, ul, ol, dl, dd, figure { margin: 0; padding: 0; }
@@ -872,7 +874,7 @@ body.nokeys .search kbd { display: none; }
 .section + .section { border-top: 1px solid var(--line2); }
 .sec-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
 .sec-h h2 { font-size: 1rem; line-height: 1.75rem; font-weight: 600; display: flex; align-items: baseline; gap: 8px; }
-:where([data-interior-page]) .sec-h h2 { font-size: var(--section-title-size); letter-spacing: -.01em; }
+:where([data-interior-page]) .sec-h h2 { font-size: var(--section-title-size); letter-spacing: var(--ls-display); }
 :where([data-interior-page]) .section { padding-block: 24px 16px; }
 .sec-h h2 .ic20 { align-self: center; }
 .cols2 { display: grid; grid-template-columns: 1fr 1fr; }
