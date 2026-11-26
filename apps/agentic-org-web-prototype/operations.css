@@ -3130,6 +3130,10 @@ html[data-assembly-dividers] .assembly-table tbody tr:not(.assembly-milestone) +
   background: var(--tone-accent-soft);
   border-block: 1px solid var(--line2);
 }
+/* Classic and Report Night: the purple accent tint fought the table; milestone rows stay neutral */
+html:is([data-theme="classic"], [data-theme="report-dark"]) .assembly-table .assembly-milestone th { color: var(--white); background: var(--hover); }
+html:is([data-theme="classic"], [data-theme="report-dark"]) .assembly-milestone .alink { color: inherit; text-decoration: none; }
+html:is([data-theme="classic"], [data-theme="report-dark"]) .assembly-milestone .alink:hover { text-decoration: underline; }
 .assembly-milestone th > div { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .assembly-progress { display: grid; justify-items: start; gap: 2px; color: var(--gray-400); font-size: var(--fs-xs); white-space: nowrap; }
 .assembly-milestone .assembly-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-weight: 400; white-space: normal; }
