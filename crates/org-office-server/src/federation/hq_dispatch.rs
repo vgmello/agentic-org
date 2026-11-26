@@ -300,6 +300,7 @@ fn send_hq_hello(
             supported_max: 1,
             codec_max: 1,
             hq_addresses: Vec::new(),
+            owner_member_id: Some(peer.office.owner_member_id().to_owned()),
         },
     )
 }

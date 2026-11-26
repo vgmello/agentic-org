@@ -417,6 +417,8 @@ fn decide_apply_relayed_message<E: crate::store::open::OfficeEngine>(
         return Err(Refusal::invalid("relayed message already expired"));
     }
     let view = uow.view();
+    let owner = crate::organization::owner::effective_owner_id(view, &req.owner)
+        .map_err(|_| Refusal::invalid("resolve organization owner"))?;
     let employees = view
         .employees()
         .map_err(|_| Refusal::invalid("read employees"))?;
@@ -424,7 +426,7 @@ fn decide_apply_relayed_message<E: crate::store::open::OfficeEngine>(
         validate_relayed_sender(&employees, &req.ctx, &req.origin_office, &req.msg)?;
     let (conv, write_mode, active_members) = resolve_relayed_conversation(
         view,
-        &req.owner,
+        &owner,
         &req.origin_office,
         &req.ctx.hq_office_id,
         req.incoming_conv.as_ref(),
@@ -432,7 +434,7 @@ fn decide_apply_relayed_message<E: crate::store::open::OfficeEngine>(
     )?;
     let rctx = RelayedRecipientCtx {
         here: &req.here,
-        owner: &req.owner,
+        owner: &owner,
         placement: &req.ctx,
         employees: &employees,
         conv: &conv,

@@ -154,7 +154,18 @@ impl Office {
     pub fn for_test_with_real_ca(spec: TestOffice) -> Office {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let root = dir.path().canonicalize().expect("a real path");
-        let (folder, roots) = places(&root);
+        let (mut office, _, _, _) = Self::for_test_with_real_ca_in(&root, spec);
+        office._test_root = Some(dir);
+        office
+    }
+
+    /// Like [`Self::for_test_with_real_ca`], rooted in a caller-owned directory and returning the
+    /// `(DataRoots, Custody, Key)` needed to reopen the HQ via `Office::open_as_owner` in tests.
+    pub fn for_test_with_real_ca_in(
+        root: &Path,
+        spec: TestOffice,
+    ) -> (Office, DataRoots, Custody, Key) {
+        let (folder, roots) = places(root);
         let (new, binding) = request();
         let custody = custody(Arc::new(FakeCustody::new()));
         let key = Key::from_bytes([7; 32]);
@@ -163,13 +174,13 @@ impl Office {
         let office_id = new.office_id.clone();
         let mut opts = options(spec.engine);
         opts.clock = Arc::new(org_store::SystemClock);
-        let mut office = Office::provision_with(
+        let office = Office::provision_with(
             folder,
             &new,
-            Some(key),
+            Some(key.clone()),
             &binding,
-            roots,
-            custody,
+            roots.clone(),
+            custody.clone(),
             move |prior| {
                 if let Some(p) = prior {
                     return Ok(p);
@@ -196,7 +207,6 @@ impl Office {
             opts,
         )
         .expect("a real-CA test office");
-        office._test_root = Some(dir);
-        office
+        (office, roots, custody, key)
     }
 }

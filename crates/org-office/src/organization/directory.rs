@@ -3,8 +3,9 @@
 //! no clock of its own, so the same snapshot and `now` always give the same cards.
 //!
 //! Members are named as in messaging's addressing rules: `owner` first, then an exact id, then a
-//! handle ignoring case (an agent's `messaging_name`, a person's `name`). The reserved word
-//! `office` never names a member, and display names are never handles.
+//! handle ignoring case (an explicit `handle`, an agent's `messaging_name`, or a non-owner
+//! person's `name`). The reserved word `office` never names a member, and display names are never
+//! handles (including the owner's display name).
 
 use org_proto::directory::{
     CardTeam, DirectoryCard, MemberPresence, MemberRef, OfficeRef, WhoParams, WhoResult,
@@ -78,11 +79,16 @@ pub fn handle_of(member: &Member) -> Option<String> {
 /// The comparison key of a handle: the lower-cased handle/messaging_name, or name key of
 /// a person.
 fn handle_key(member: &Member) -> Option<String> {
-    if member.owner {
-        return None; // the owner's display name is not a handle; only `owner` names it
-    }
-    if let Some(handle) = &member.handle {
+    if let Some(handle) = member
+        .handle
+        .as_deref()
+        .map(trim_address)
+        .filter(|h| !h.is_empty())
+    {
         return Some(handle.to_lowercase());
+    }
+    if member.owner {
+        return None; // the owner's display name is not a handle; only `owner` or explicit handle names it
     }
     match (&member.kind, &member.agent) {
         (MemberKind::Agent, Some(agent)) => Some(agent.messaging_name.to_lowercase()),

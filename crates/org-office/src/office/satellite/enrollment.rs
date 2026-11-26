@@ -279,6 +279,7 @@ fn provision_satellite_impl(
         runtime_root: roots.runtime,
         identity: custody.identity,
         owner,
+        replicated_owner: std::sync::RwLock::new(None),
         creation,
         creation_command: intent.operation,
         secrets_key: Some(key),
@@ -363,6 +364,17 @@ fn re_enroll_satellite_impl(
     office
         .replication
         .reset_for_re_enrollment(new_hq, Digest::from_bytes(ca_fp), ep)?;
+    {
+        let _guard = office
+            .federation_io_lock
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        super::remove_replicated_hq_owner(&office.durable, &office.info.office_id)?;
+        *office
+            .replicated_owner
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = None;
+    }
     persist_satellite_tls(
         &office.durable,
         &office.info.office_id,

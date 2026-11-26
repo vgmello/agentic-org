@@ -28,7 +28,7 @@ impl Office {
     /// The organization's structure from one consistent read of the projection.
     pub fn org_snapshot(&self) -> Result<OrgSnapshot, OfficeError> {
         let read = DirectorySnapshot {
-            owner: self.owner.clone(),
+            owner: self.effective_owner_for_ops(),
         };
         Ok(self.store.read(read).map_err(storage)?.0)
     }

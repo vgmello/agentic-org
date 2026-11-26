@@ -19,6 +19,21 @@ use crate::store::open::{OfficeEngine, StoreOp};
 
 use super::unwrap_reply;
 
+fn resolve_owner_for_op(
+    read: &impl crate::organization::ports::OrganizationRead,
+    configured: &Id,
+) -> Result<Id, org_store::Refusal> {
+    crate::organization::owner::effective_owner_id(read, configured).map_err(|_| {
+        org_store::Refusal::rejected(
+            serde_json::to_vec(&ApiError::new(
+                org_proto::ErrorCode::StorageError,
+                "failed to resolve organization owner",
+            ))
+            .expect("ApiError serializes"),
+        )
+    })
+}
+
 pub struct DmOpenOp {
     pub here: OfficeIdentity,
     pub owner: Id,
@@ -33,10 +48,11 @@ impl StoreOp for DmOpenOp {
         let out = std::sync::Arc::new(std::sync::Mutex::new(None));
         let slot = std::sync::Arc::clone(&out);
         let reply = store.submit(None, false, move |uow| {
+            let owner = resolve_owner_for_op(uow.view(), &self.owner)?;
             let (change, res) = features::decide_dm_open(
                 uow,
                 &self.here,
-                &self.owner,
+                &owner,
                 &self.caller,
                 &self.params,
                 &self.now_utc,
@@ -62,10 +78,11 @@ impl StoreOp for ChannelCreateOp {
         let out = std::sync::Arc::new(std::sync::Mutex::new(None));
         let slot = std::sync::Arc::clone(&out);
         let reply = store.submit(None, false, move |uow| {
+            let owner = resolve_owner_for_op(uow.view(), &self.owner)?;
             let (change, res) = features::decide_channel_create(
                 uow,
                 &self.here,
-                &self.owner,
+                &owner,
                 &self.caller,
                 &self.params,
                 &self.now_utc,
@@ -91,9 +108,10 @@ impl StoreOp for ChannelMembershipOp {
         let out = std::sync::Arc::new(std::sync::Mutex::new(None));
         let slot = std::sync::Arc::clone(&out);
         let reply = store.submit(None, false, move |uow| {
+            let owner = resolve_owner_for_op(uow.view(), &self.owner)?;
             let (change, res) = features::decide_channel_membership(
                 uow,
-                &self.owner,
+                &owner,
                 &self.caller,
                 &self.params,
                 self.join,
@@ -121,10 +139,11 @@ impl StoreOp for ChatSendOp {
         let out = std::sync::Arc::new(std::sync::Mutex::new(None));
         let slot = std::sync::Arc::clone(&out);
         let reply = store.submit(None, false, move |uow| {
+            let owner = resolve_owner_for_op(uow.view(), &self.owner)?;
             let (change, res) = features::decide_chat_send(
                 uow,
                 &self.here,
-                &self.owner,
+                &owner,
                 &self.caller,
                 &self.params,
                 self.org_seq,
@@ -152,10 +171,11 @@ impl StoreOp for ChatReplyOp {
         let out = std::sync::Arc::new(std::sync::Mutex::new(None));
         let slot = std::sync::Arc::clone(&out);
         let reply = store.submit(None, false, move |uow| {
+            let owner = resolve_owner_for_op(uow.view(), &self.owner)?;
             let (change, res) = features::decide_chat_reply(
                 uow,
                 &self.here,
-                &self.owner,
+                &owner,
                 &self.caller,
                 &self.params,
                 self.org_seq,
@@ -182,10 +202,11 @@ impl StoreOp for ChatMarkReadOp {
         let out = std::sync::Arc::new(std::sync::Mutex::new(None));
         let slot = std::sync::Arc::clone(&out);
         let reply = store.submit(None, false, move |uow| {
+            let owner = resolve_owner_for_op(uow.view(), &self.owner)?;
             let (change, res) = features::decide_mark_read(
                 uow,
                 &self.here,
-                &self.owner,
+                &owner,
                 &self.caller,
                 &self.params,
                 &self.now_utc,
@@ -211,10 +232,11 @@ impl StoreOp for ChatMuteOp {
         let out = std::sync::Arc::new(std::sync::Mutex::new(None));
         let slot = std::sync::Arc::clone(&out);
         let reply = store.submit(None, false, move |uow| {
+            let owner = resolve_owner_for_op(uow.view(), &self.owner)?;
             let (change, res) = features::decide_mute(
                 uow,
                 &self.here,
-                &self.owner,
+                &owner,
                 &self.caller,
                 &self.params,
                 &self.now_utc,
@@ -240,10 +262,11 @@ impl StoreOp for ChatReactOp {
         let out = std::sync::Arc::new(std::sync::Mutex::new(None));
         let slot = std::sync::Arc::clone(&out);
         let reply = store.submit(None, false, move |uow| {
+            let owner = resolve_owner_for_op(uow.view(), &self.owner)?;
             let (change, res) = features::decide_react(
                 uow,
                 &self.here,
-                &self.owner,
+                &owner,
                 &self.caller,
                 &self.params,
                 &self.now_utc,
@@ -299,10 +322,11 @@ impl StoreOp for MsgAskOp {
         let out = std::sync::Arc::new(std::sync::Mutex::new(None));
         let slot = std::sync::Arc::clone(&out);
         let reply = store.submit(None, false, move |uow| {
+            let owner = resolve_owner_for_op(uow.view(), &self.owner)?;
             let (change, res) = asks::decide_msg_ask(
                 uow,
                 &self.here,
-                &self.owner,
+                &owner,
                 &self.caller,
                 &self.params,
                 self.org_seq,
@@ -331,10 +355,11 @@ impl StoreOp for ChatAnswerOp {
         let out = std::sync::Arc::new(std::sync::Mutex::new(None));
         let slot = std::sync::Arc::clone(&out);
         let reply = store.submit(None, false, move |uow| {
+            let owner = resolve_owner_for_op(uow.view(), &self.owner)?;
             let (change, res) = asks::decide_chat_answer(
                 uow,
                 &self.here,
-                &self.owner,
+                &owner,
                 &self.caller,
                 &self.params,
                 &self.reply_id,
@@ -364,10 +389,11 @@ impl StoreOp for MsgWithdrawOp {
         let out = std::sync::Arc::new(std::sync::Mutex::new(None));
         let slot = std::sync::Arc::clone(&out);
         let reply = store.submit(None, false, move |uow| {
+            let owner = resolve_owner_for_op(uow.view(), &self.owner)?;
             let (change, res) = asks::decide_msg_withdraw(
                 uow,
                 &self.here,
-                &self.owner,
+                &owner,
                 &self.caller,
                 &self.params,
                 self.org_seq,
@@ -398,10 +424,11 @@ impl StoreOp for DeliverAnswerCandidatesOp {
         let out = std::sync::Arc::new(std::sync::Mutex::new(None));
         let slot = std::sync::Arc::clone(&out);
         let reply = store.submit(None, false, move |uow| {
+            let owner = resolve_owner_for_op(uow.view(), &self.owner)?;
             let (change, delivered) = features::deliver_answer_candidates(
                 uow,
                 &self.here,
-                &self.owner,
+                &owner,
                 &self.conversation_id,
                 &self.deliveries,
                 self.org_seq,

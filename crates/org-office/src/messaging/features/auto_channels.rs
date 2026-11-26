@@ -157,6 +157,7 @@ pub(crate) fn effective_auto_members(
     conv: &ConversationRecord,
     owner: &Id,
 ) -> Result<Vec<Id>, org_store::EngineError> {
+    let owner = crate::organization::owner::effective_owner_id(read, owner)?;
     let employees = read.employees()?;
     let active: Vec<&Employee> = employees.iter().filter(|e| is_active_employee(e)).collect();
     match conv.auto_scope {
@@ -165,7 +166,7 @@ pub(crate) fn effective_auto_members(
             let tid = conv.team_id.as_ref();
             Ok(active
                 .into_iter()
-                .filter(|e| tid == Some(&e.home_team_id) || e.id == *owner)
+                .filter(|e| tid == Some(&e.home_team_id) || e.id == owner)
                 .map(|e| e.id.clone())
                 .collect())
         }
@@ -177,7 +178,7 @@ pub(crate) fn effective_auto_members(
             Ok(active
                 .into_iter()
                 .filter(|e| {
-                    e.id == *owner
+                    e.id == owner
                         || project.as_ref().is_some_and(|p| {
                             e.home_team_id == p.owner_team_id
                                 || p.contributing_team_ids.contains(&e.home_team_id)
