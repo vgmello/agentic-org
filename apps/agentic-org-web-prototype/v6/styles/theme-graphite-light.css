@@ -2,7 +2,7 @@
    professional light palette. All Graphite rules match via [data-theme^="graphite"];
    this file supplies light tokens and overrides the few hard-coded dark values.
    Loaded last so equal-specificity overrides win. */
-html[data-theme="graphite-light"] {
+html:root[data-theme="graphite-light"] {
   color-scheme: light;
   /* Surfaces (zinc neutrals) */
   --graphite-canvas: #FAFAFA;
