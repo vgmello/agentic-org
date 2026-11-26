@@ -7,9 +7,9 @@ use org_proto::org::{Member, OrgSnapshot, Position, Team};
 
 use super::*;
 use crate::instructions::{
-    assemble_standing_instructions, builtin_instructions, render_command_catalogue,
-    resolve_placement, verify_command_references, InstructionInput, LeadLink, Placement,
-    StandingInstructions, BUILTIN_INSTRUCTIONS_MAX_BYTES,
+    assemble_standing_instructions, builtin_instructions, resolve_placement,
+    verify_command_references, InstructionInput, LeadLink, Placement, StandingInstructions,
+    BUILTIN_INSTRUCTIONS_MAX_BYTES,
 };
 
 fn placement(team: &str) -> Placement {
@@ -89,16 +89,35 @@ fn built_in_text_stays_within_budget_and_every_cited_command_holds_against_the_l
 }
 
 #[test]
-fn the_catalogue_is_generated_from_the_live_table_within_its_limit() {
+fn agent_os_boot_answers_the_same_rules_and_guide_index_as_the_office() {
+    // `agent-os boot --offline` answers from the binary alone; what it carries must be what a
+    // managed session receives: the same core rules, and every built-in guide's key and
+    // description in `skill list` order.
+    assert_eq!(org_agent_cli::boot::CORE_RULES, CORE_RULES);
+    let served: Vec<(&str, &str)> = list_builtin_skills()
+        .iter()
+        .map(|skill| (skill.key, skill.description))
+        .collect();
+    assert_eq!(org_agent_cli::boot::SKILL_INDEX, served.as_slice());
+}
+
+#[test]
+fn the_standing_catalogue_is_the_live_tables_own_within_its_limit() {
     let table = live_table();
-    let catalogue = render_command_catalogue(&table);
+    let catalogue = table.catalogue();
     assert!(
         catalogue.len() <= org_command::CATALOGUE_LIMIT,
         "the launch catalogue is {} bytes",
         catalogue.len()
     );
-    for row in table.rows() {
-        let line = format!("\n{} {}: {}", row.resource, row.verb, row.summary);
+    // The one source: the standing prompt carries `CommandTable::catalogue` byte for byte, and
+    // every resource's line names each of its verbs.
+    let team = placement("Engineering");
+    let assembled = assemble_standing_instructions(&input("ada", &team, None, ""), &table);
+    assert!(assembled.instructions.contains(catalogue.trim_end()));
+    for resource in table.resources() {
+        let verbs: Vec<&str> = table.verbs(resource).iter().map(|row| row.verb).collect();
+        let line = format!("\n{resource}: {}\n", verbs.join(", "));
         assert!(catalogue.contains(&line), "missing `{line}`");
     }
 }
@@ -117,7 +136,7 @@ fn the_standing_prompt_runs_from_static_to_volatile() {
         "byte 0 is built-in"
     );
     let order = [
-        "## agent-os commands",
+        "## Commands",
         "## Standing processes and standards",
         "PROCESS_SENTINEL",
         "ROLE_SENTINEL",
@@ -164,7 +183,7 @@ fn two_agents_share_one_byte_identical_static_prefix_in_instructions_and_launch_
     let static_prefix = format!(
         "{}\n\n{}",
         builtin_instructions(),
-        render_command_catalogue(&table)
+        table.catalogue().trim_end()
     );
     assert!(
         ada.instructions.starts_with(&static_prefix)
@@ -511,13 +530,14 @@ fn command_table_or_empty_without_an_installed_catalogue_is_an_empty_table() {
     assert!(empty.rows().is_empty(), "no command rows");
     assert!(empty.resources().is_empty(), "no command resources");
     assert!(empty.find("msg", "send").is_none());
-    assert_eq!(
-        render_command_catalogue(&empty),
-        "## agent-os commands\nRun each as `agent-os <resource> <verb>`; add `--help` for its flags.",
-        "the catalogue section lists no commands"
+    assert!(
+        empty.catalogue().starts_with("## Commands\n") && empty.catalogue().lines().count() == 2,
+        "the catalogue section lists no commands: {}",
+        empty.catalogue()
     );
 
-    let live = crate::instructions::command_table_or_empty(Some(org_agent_cli::table::table));
+    let live =
+        crate::instructions::command_table_or_empty(Some(org_agent_cli::table::catalogue_table));
     assert!(
         !live.rows().is_empty(),
         "an installed catalogue is used as given"

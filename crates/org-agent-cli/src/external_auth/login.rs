@@ -26,7 +26,8 @@ Generates a workspace Ed25519 key, prints an approval code for a person to appro
 (`agentic-org agent approve <code>` or the agent's page in the web app), waits for it (--wait,
 default 120 seconds; the code itself stays valid for 10 minutes), and saves the binding outside
 Git. Afterwards every agent-os command in this folder tree acts as the agent. Approving a new
-sign-in supersedes the agent's previous external session.
+sign-in supersedes the agent's previous external session. The answer carries `boot`: who the agent
+is, the standing rules, the guides and the must-follow processes (`agent-os boot` reads them again).
 
 Example:
   agent-os login --as @ada --office 0193a5c0-0000-7000-8000-000000000001
@@ -293,8 +294,33 @@ fn run_login(args: &[String]) -> Result<Printed, Refusal> {
             "commands".into(),
             json!(crate::table::runtime_table().catalogue()),
         );
+        map.insert("boot".into(), boot_briefing(&state));
     }
     Ok(success(&data))
+}
+
+/// The bound `agent-os boot` briefing of the workspace just signed in, read over its saved binding
+/// (without the catalogue, which `commands` carries). The sign-in stands when the office cannot
+/// answer it: then `next_action` says to read it with `agent-os boot`.
+fn boot_briefing(state: &WorkspaceState) -> Value {
+    let briefing = super::binding_of(state)
+        .ok_or_else(super::not_signed_in)
+        .and_then(|binding| crate::boot::bound_briefing(&mut BoundOffice::new(binding)));
+    match briefing {
+        Ok(mut boot) => {
+            if let Value::Object(map) = &mut boot {
+                map.remove("catalogue");
+            }
+            boot
+        }
+        Err(refusal) => json!({
+            "mode": "unavailable",
+            "next_action": format!(
+                "Signed in, but the boot briefing could not be read ({}): run `agent-os boot` in this workspace before your first command.",
+                refusal.message
+            ),
+        }),
+    }
 }
 
 pub(super) fn whoami(args: &[String]) -> Printed {
@@ -305,7 +331,8 @@ pub(super) fn whoami(args: &[String]) -> Printed {
     if flags.help {
         return help(WHOAMI_HELP);
     }
-    let mut office = BoundOffice::new(super::resolve_binding());
+    let mut office = BoundOffice::new(super::resolve_binding())
+        .with_binding_requested(crate::office::env_requests_binding());
     match office.call_method(AuthWhoami::METHOD, json!({})) {
         Ok(data) => success(&data),
         Err(refusal) => failure(&refusal),

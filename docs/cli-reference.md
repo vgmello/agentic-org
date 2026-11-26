@@ -340,15 +340,33 @@ Office commands (`msg`, `task`, `who`, `team`, ...) run the same command table a
 
 Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os <resource> --help`, `agent-os <resource> <verb> --help`, `agent-os <resource> <verb> --schema`). All commands use named flags only (no positional arguments) and return a single deterministic envelope.
 
+`agent-os --help` opens with a four-line quickstart for the shell's binding state: an unbound shell points to `agent-os login --as @<handle>` and `agent-os boot --offline`; a bound one to `agent-os boot` (managed sessions already receive the rules on turn 1, so re-run it only after context compaction).
+
+Contract rules every command follows:
+
+- **Lists are pages.** Every list takes `--limit` (1 to 200, default 20) and `--cursor`; `meta.next_cursor` names the next page and, on counted lists, `meta.total` counts every match (`msg inbox` and `msg list` report no total).
+- **Acknowledgements are truthful.** `--schema` shows each write's `ack`. Organization, HR, project, task, checklist, task-note, process and `repo register|attach` writes are always `durable`; messages, channels, status lines, `repo fetch|push` and `worktree prepare` are `committed`, and `--durable` on them is refused (`unsupported`) before anything is sent.
+- **Retries are safe.** A write's office ID is the `--idempotency-key` when it is a UUIDv7 and a UUIDv7 derived from any other key, so the same key always names the same change. `unavailable`, `not_ready` and `timeout` failures of a write carry the key in `error.retry_with`.
+- **Office error details reach you.** `error.retry_after_ms` (with `rate_limited`) and `error.field` / `error.rule` (an input that broke a rule) are printed when the office reports them.
+- **Yes-or-no flags take no value.** Write the flag to turn its meaning on: `member set-hiring --allow` or `--revoke`, `process create|update --non-overridable`.
+- **Flags are never dropped.** A combination a command cannot honor (for example `msg reply --answer` with `--body`, `msg list --channel` with `--unread-only`) is refused with `invalid_request`.
+- **Shorthands are one command everywhere**: `who` = `directory list`, `task note` = `task-note`, `boot` and `instructions overview` = `session boot`, in a command line, its `--help` and `--schema`, and `session attach` lines.
+
+- `agent-os boot` (shorthand for `agent-os session boot`; also `agent-os instructions overview`)
+  One envelope with the standing rules, the grouped command catalogue, the guide index and, when bound, who you are and the must-follow (non-overridable) processes and standards that apply, whole, within 8 KiB (`mandatory_truncated` and `mandatory_omitted` name any left out, to read with `process inspect`). `--offline` (or a shell without a binding) answers from the binary alone, without the office, in at most 6 KiB; `--project <project>` adds a project's must-follow processes. When a session token or binding file is set, an office or auth failure fails the command; it never falls back to offline.
+  **Use when:** starting work outside a managed session, or after context compaction, to load the rules and catalogue in one call (`agent-os boot --format yaml`).
+
 - `agent-os msg send|ask|reply|accept|withdraw|inbox|read|list|done|defer|unsnooze|wait`
   Direct messages (DMs), channel messages, handoffs, inbox triage, and structured asks. Send a DM with `agent-os msg send --to <handle|employee_id|owner>` or browse a DM with `agent-os msg list --participant <handle>`.
   **Use when:** sending a DM or `#channel` post (`msg send`), asking typed questions/approvals with bounded wait (`msg ask`), replying in a thread or answering an ask (`msg reply`), accepting a handoff (`msg accept`), triaging your inbox (`msg inbox|read|done|defer|unsnooze`), or waiting up to 90s for a reply (`msg wait`).
+  `msg send` and `msg ask` report each recipient's presence (`recipient_presence`) and the agents woken (`woke_agents`); an ask's `meta.status` matches its `data.status` (`waiting`, `timed_out`, `suspended` for `required_pending`, `withdrawn`). Ask one question with `--prompt`, `--question-type choice|yes_no|free_text`, repeated `--option <id>[=<label>]` and `--default-value`, or several with a `questions` array in `--json` (never both).
 - `agent-os channel list|join|leave|summarize`
   Discover channels, manage manual channel membership, and summarize channel Q&A.
   **Use when:** finding available `#channels`, joining/leaving manual channels, or asking for a factual summary of recent channel messages.
 - `agent-os task create|list|inspect|update|transition|assign|comment|watch|unwatch|history|deps|dep-add|dep-remove|labels`
   Full task lifecycle, dependency graph, searchable labels, and public comments.
   **Use when:** creating, filtering, inspecting, updating, transitioning, assigning, commenting on, or linking dependencies between tasks.
+  `task list` pages with `--limit`/`--cursor` (the old `--max-results` is gone) and reports `meta.total`; `--count` answers only the total. Beyond its status, team, assignee, project, label, dependency and text filters it takes `--exclude-status <status>` (repeatable), `--unassigned` and `--modified-file <path>` (that path or any file under it).
 - `agent-os checklist add|check|edit|remove|move`
   Step-level checklist tracking on tasks.
   **Use when:** adding, checking/unchecking, editing, removing, or reordering checklist steps on a task.
@@ -374,9 +392,10 @@ Managed AI agents use the bound `agent-os` binary (`agent-os --help`, `agent-os 
 - `agent-os skill list|read`
   Built-in on-demand `agent-os` product skills: `agent-os-basics`, `tasks-create`, `tasks-execute`, `tasks-finalize`, `messaging-and-asks`, `channels`, `code-and-worktrees`, `hiring-and-directory`, `processes-and-standards`, `budgets`, `errors-and-recovery` and `batch-and-attach` (bodies in `crates/org-process/skills/`, each checked flag by flag against the live command table).
   **Use when:** discovering (`skill list`) or loading (`skill read --name <key>`) built-in operational guides on demand.
-- `agent-os session inspect|attach`
-  Self-inspection and persistent JSON-line batching over one office socket.
-  **Use when:** inspecting your live session/usage (`session inspect`) or pipelining multiple commands in one shell turn without rebinding (`session attach`).
+- `agent-os session boot|inspect|attach`
+  Boot context (`session boot`, above), self-inspection and persistent JSON-line batching over one office socket.
+  **Use when:** loading your rules and catalogue (`session boot`), inspecting your live session/usage (`session inspect`) or pipelining multiple commands in one shell turn without rebinding (`session attach`).
+  `session attach` takes no flags (exit 2 otherwise) and exits 1 with the office's hint when it cannot bind. A line has only `command`, `input` and `options`; every answer is one line of JSON, so a line with another key, a `format` other than `json`, `stdin` or `help` is refused before anything is sent.
 - `agent-os grant list`
   Effective permission preset, tool rules, and sandbox boundaries.
   **Use when:** verifying your writable roots, denied paths, and effective tool allow/deny rules.

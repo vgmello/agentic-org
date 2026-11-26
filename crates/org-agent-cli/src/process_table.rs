@@ -172,7 +172,11 @@ const PROCESS_CREATE_INPUT: &[Field] = &[
         "Status",
     ),
     Field::optional("owner", Type::String, "Accountable owner UUIDv7"),
-    Field::optional("overridable", Type::Boolean, "Allow lower overrides"),
+    Field::optional(
+        "non_overridable",
+        Type::Boolean,
+        "Make it must-follow: no lower level may replace it (default: overridable)",
+    ),
     Field::required("body", Type::String, "Markdown body"),
 ];
 
@@ -193,7 +197,11 @@ const PROCESS_UPDATE_INPUT: &[Field] = &[
         "Status",
     ),
     Field::optional("owner", Type::String, "Accountable owner UUIDv7"),
-    Field::optional("overridable", Type::Boolean, "Allow lower overrides"),
+    Field::optional(
+        "non_overridable",
+        Type::Boolean,
+        "Make it must-follow: no lower level may replace it (default: overridable)",
+    ),
     Field::required("body", Type::String, "Markdown body"),
 ];
 
@@ -266,7 +274,7 @@ pub const PROCESS_COMMANDS: &[Command] = &[
         summary: "Create process/standard",
         call: "process.write",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::No,
         },
         input: PROCESS_CREATE_INPUT,
@@ -284,7 +292,7 @@ pub const PROCESS_COMMANDS: &[Command] = &[
         summary: "Update process/standard",
         call: "process.write",
         kind: Kind::Write {
-            ack: Ack::Committed,
+            ack: Ack::Durable,
             if_match: IfMatch::Required,
         },
         input: PROCESS_UPDATE_INPUT,
