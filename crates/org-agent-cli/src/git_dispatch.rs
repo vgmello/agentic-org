@@ -442,5 +442,26 @@ mod tests {
             assert_eq!(env["ok"], false, "{args:?}: {env}");
         }
         assert_eq!(office.0.calls.len(), before);
+
+        // `--schema` declares every refusal code the command can answer.
+        let (code, env) = run(&mut office, &["repo", "fetch", "--schema"]);
+        assert_eq!(code, 0, "{env}");
+        for declared in [
+            "not_authorized",
+            "not_bound",
+            "not_found",
+            "rate_limited",
+            "storage_error",
+            "unavailable",
+            "unsupported",
+        ] {
+            assert!(
+                env["data"]["errors"]
+                    .as_array()
+                    .is_some_and(|codes| codes.iter().any(|c| c == declared)),
+                "{declared}: {env}"
+            );
+        }
+        assert_eq!(office.0.calls.len(), before);
     }
 }

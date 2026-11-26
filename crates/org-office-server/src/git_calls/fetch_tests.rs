@@ -162,6 +162,14 @@ impl Fixture {
 
     /// Attaches `core-repo` to the project and prepares the developer's task worktree.
     fn prepare_worktree(&self) -> PathBuf {
+        let task = self.attach_and_create_task();
+        let prepared = self.try_prepare(402, &task).expect("prepare worktree");
+        PathBuf::from(prepared.worktree.worktree_path)
+    }
+
+    /// Attaches `core-repo` to the project (the origin must serve `main`) and creates the
+    /// developer's task; returns the task key.
+    fn attach_and_create_task(&self) -> String {
         self.svc
             .handle_attach(
                 &self.owner,
@@ -202,19 +210,23 @@ impl Fixture {
             )
             .unwrap()
             .unwrap();
-        let prepared = self
-            .svc
-            .handle_worktree_prepare(
-                &self.dev,
-                WorktreePrepareParams {
-                    command_id: uuid(402),
-                    task: task.task.key,
-                    repository: "core-repo".into(),
-                    base_branch: None,
-                },
-            )
-            .expect("prepare worktree");
-        PathBuf::from(prepared.worktree.worktree_path)
+        task.task.key
+    }
+
+    fn try_prepare(
+        &self,
+        command: u64,
+        task: &str,
+    ) -> Result<org_proto::git::WorktreePrepareResult, org_proto::ApiError> {
+        self.svc.handle_worktree_prepare(
+            &self.dev,
+            WorktreePrepareParams {
+                command_id: uuid(command),
+                task: task.into(),
+                repository: "core-repo".into(),
+                base_branch: None,
+            },
+        )
     }
 
     fn fetch(
@@ -448,6 +460,88 @@ fn unknown_and_unreachable_repositories_fail_with_structured_redacted_errors() {
     }
 }
 
+/// Asserts one `repo.fetch` of a never-filled cache fails as `unavailable` and "not ready",
+/// never as the offline fallback that keeps a usable cache.
+fn assert_fetch_fails_unprepared(fx: &Fixture, attempt: &str) {
+    let err = fx.fetch("core-repo").unwrap_err();
+    assert_eq!(err.code, ErrorCode::Unavailable, "{attempt}: {err:?}");
+    assert!(
+        err.message.contains("not ready"),
+        "{attempt}: {}",
+        err.message
+    );
+    assert!(
+        !err.message.contains("left unchanged"),
+        "{attempt}: {}",
+        err.message
+    );
+    let status = fx.cache_state("core-repo");
+    assert_eq!(status.state, CacheStateWire::Failed, "{attempt}");
+    assert!(status.reason.is_some(), "{attempt}");
+}
+
+#[test]
+fn a_failed_first_fill_is_never_treated_as_a_usable_offline_cache() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (origin, seed) = seed_origin(tmp.path());
+    let fx = fixture(Duration::ZERO);
+    fx.register_local("core-repo", &origin, 302);
+    let task = fx.attach_and_create_task();
+    // The newly registered origin stops serving Git before the office ever filled its cache.
+    std::fs::remove_dir_all(&origin).unwrap();
+    std::fs::create_dir_all(&origin).unwrap();
+    let office_id = fx.office.info().office_id.clone();
+    let repo = fx.office.resolve_repository("core-repo").unwrap().unwrap();
+    let bare = org_office::git::bare_cache_path(fx.office.runtime_root(), &office_id, &repo.id);
+
+    assert_fetch_fails_unprepared(&fx, "first fetch");
+    // The failed fill left a `HEAD` behind; the second call must not mistake it for a cache.
+    assert!(bare.join("HEAD").is_file(), "{}", bare.display());
+    assert_fetch_fails_unprepared(&fx, "second fetch");
+
+    // `worktree.prepare` refuses the empty cache too, whether the origin is unreachable or its
+    // directory is gone so the remote cannot even be resolved.
+    let unreachable = fx.try_prepare(402, &task).unwrap_err();
+    assert_eq!(unreachable.code, ErrorCode::Unavailable, "{unreachable:?}");
+    assert_eq!(fx.cache_state("core-repo").state, CacheStateWire::Failed);
+    std::fs::remove_dir_all(&origin).unwrap();
+    let unresolved = fx.try_prepare(403, &task).unwrap_err();
+    assert_eq!(unresolved.code, ErrorCode::StorageError, "{unresolved:?}");
+    assert_eq!(fx.cache_state("core-repo").state, CacheStateWire::Failed);
+
+    // Once the origin serves Git again, the same cache directory fills and becomes `ready`.
+    std::fs::create_dir_all(&origin).unwrap();
+    git(&origin, &["init", "--bare", "--initial-branch=main"]);
+    git(
+        &seed,
+        &["push", origin.to_str().unwrap(), "HEAD:refs/heads/main"],
+    );
+    let fetched = fx
+        .fetch("core-repo")
+        .expect("fetch after the origin returns");
+    assert_eq!(fetched.state, CacheStateWire::Ready);
+    assert_eq!(fx.cache_state("core-repo").state, CacheStateWire::Ready);
+}
+
+#[test]
+fn an_unbound_connection_gets_not_bound_for_repo_fetch() {
+    let fx = fixture(Duration::ZERO);
+    let request = Request {
+        id: 9,
+        method: "repo.fetch".to_owned(),
+        principal: None,
+        params: serde_json::json!({"repository": "core-repo"}),
+    };
+    let response = fx
+        .svc
+        .dispatch(None, &request)
+        .expect("a Git family method");
+    match response.outcome {
+        Outcome::Error(err) => assert_eq!(err.code, ErrorCode::NotBound, "{err:?}"),
+        Outcome::Result(value) => panic!("an unbound repo.fetch was served: {value}"),
+    }
+}
+
 #[test]
 fn a_repeated_fetch_inside_the_cooldown_is_rate_limited_per_repository() {
     let tmp = tempfile::tempdir().unwrap();
@@ -467,6 +561,12 @@ fn a_repeated_fetch_inside_the_cooldown_is_rate_limited_per_repository() {
     let (code, env) = agent_os(&fx.svc, &fx.dev, &["repo", "fetch", "--repo", "core-repo"]);
     assert_ne!(code, 0);
     assert_eq!(env["error"]["code"], "rate_limited", "{env}");
+    let hint = env["error"]["hint"].as_str().unwrap_or_default();
+    assert_eq!(hint, hint_for(ErrorCode::RateLimited), "{env}");
+    assert!(
+        hint.contains("cooldown") && !hint.contains("--help"),
+        "{env}"
+    );
     fx.fetch("other-repo")
         .expect("an unrelated repository fetches");
 }

@@ -27,11 +27,13 @@ const WRITE_ERRORS: &[ErrorCode] = &[
 
 const FETCH_ERRORS: &[ErrorCode] = &[
     ErrorCode::InvalidRequest,
+    ErrorCode::NotAuthorized,
     ErrorCode::NotBound,
     ErrorCode::NotFound,
     ErrorCode::RateLimited,
     ErrorCode::StorageError,
     ErrorCode::Unavailable,
+    ErrorCode::Unsupported,
 ];
 
 const REPO_FIELDS: &[Field] = &[

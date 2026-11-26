@@ -26,17 +26,17 @@ pub(super) enum FetchOutcome<T> {
 }
 
 /// Runs one origin `fetch` into `bare_path` under the caller's repository lock and records the
-/// cache state: `cloning` while a missing cache is first filled, `ready` on success, `failed`
-/// unless an existing cache merely could not reach its origin. `Err` only when persisting a
-/// successful state fails.
+/// cache state: `cloning` while a cache that is not yet usable is filled, `ready` on success,
+/// `failed` unless a usable cache merely could not reach its origin. `Err` only when persisting
+/// a successful state fails.
 pub(super) fn fetch_recording_state<T>(
     svc: &GitService,
     repo: &Repository,
     bare_path: &Path,
     fetch: impl FnOnce() -> Result<T, GitError>,
 ) -> Result<FetchOutcome<T>, ApiError> {
-    let already_exists = bare_path.join("HEAD").is_file();
-    if !already_exists {
+    let usable = cache_is_usable(svc, repo, bare_path);
+    if !usable {
         record_cache_state(svc, repo, bare_path, CacheStateWire::Cloning, None);
     }
     match fetch() {
@@ -49,9 +49,7 @@ pub(super) fn fetch_recording_state<T>(
             svc.save_state_locked(&state_guard)?;
             Ok(FetchOutcome::Fetched(value))
         }
-        Err(GitError::RemoteUnavailable(detail)) if already_exists => {
-            Ok(FetchOutcome::OfflineKept(detail))
-        }
+        Err(GitError::RemoteUnavailable(detail)) if usable => Ok(FetchOutcome::OfflineKept(detail)),
         Err(err) => {
             eprintln!(
                 "agentic-org-office: cache fetch failed for {}: {}",
@@ -63,6 +61,20 @@ pub(super) fn fetch_recording_state<T>(
             Ok(FetchOutcome::Failed(err))
         }
     }
+}
+
+/// Whether the cache at `bare_path` is on disk and recorded `ready`. A failed or interrupted
+/// first fill leaves a `HEAD` behind with no usable refs, recorded `failed` or `cloning` (or
+/// not at all), so `HEAD` alone never makes a cache usable.
+fn cache_is_usable(svc: &GitService, repo: &Repository, bare_path: &Path) -> bool {
+    if !bare_path.join("HEAD").is_file() {
+        return false;
+    }
+    let state_guard = svc.state.lock().unwrap_or_else(|e| e.into_inner());
+    state_guard
+        .caches
+        .get(repo.id.as_str())
+        .is_some_and(|cache| cache.state == CacheStateWire::Ready)
 }
 
 fn cache_state(
@@ -104,7 +116,7 @@ pub(super) fn ensure_bare_cache_ready(
 ) -> Result<(), ApiError> {
     let remote = match remote {
         Ok(r) => r,
-        Err(_) if bare_path.join("HEAD").is_file() => {
+        Err(_) if cache_is_usable(svc, repo, bare_path) => {
             verify_cache_integrity(bare_path, false).map_err(map_git_error)?;
             return Ok(());
         }

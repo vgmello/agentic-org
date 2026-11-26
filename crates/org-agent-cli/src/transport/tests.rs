@@ -22,3 +22,14 @@ fn parse_cursor_accepts_non_negative_offsets_and_rejects_garbage() {
         ErrorCode::InvalidRequest
     );
 }
+
+#[test]
+fn retryable_refusals_get_a_specific_hint_not_the_flags_fallback() {
+    let fallback = hint_for(ErrorCode::InvalidRequest);
+    for code in [ErrorCode::RateLimited, ErrorCode::StorageError] {
+        assert_ne!(hint_for(code), fallback, "{code:?}");
+    }
+    assert!(hint_for(ErrorCode::RateLimited).contains("cooldown"));
+    assert!(!hint_for(ErrorCode::RateLimited).contains("--help"));
+    assert!(hint_for(ErrorCode::StorageError).contains("storage"));
+}
