@@ -20,6 +20,7 @@ mod accounting;
 #[cfg(test)]
 mod accounting_budget_tests;
 mod budgets;
+mod companions;
 mod creation;
 mod folder;
 mod git;
@@ -27,6 +28,8 @@ mod hiring;
 mod intent;
 mod invitations;
 mod messaging;
+mod opening;
+mod org;
 mod private_notes;
 #[cfg(test)]
 mod private_notes_tests;
@@ -52,15 +55,9 @@ use std::{
     },
 };
 
-use org_proto::{
-    directory::{WhoParams, WhoResult},
-    org::{CommandAccepted, OrgSnapshot},
-    ApiError, ErrorCode, OperationOutcome,
-};
-use org_store::{
-    Actor, Clock, Files, Id, OfficeIdentity, StoreError, SystemClock, WriterAuthority,
-};
+use org_store::{Clock, Files, Id, OfficeIdentity, StoreError, SystemClock, WriterAuthority};
 
+use self::companions::{open_companion_stores, CompanionOpenSpec};
 pub use self::invitations::{
     ack_message_relay_and_enqueue_receipt_checked, admit_relay_item_if_active, is_peer_revoked,
     promote_pending_removed_origin_withdrawals, publish_message_journal_relay_for_dest_checked,
@@ -73,10 +70,11 @@ pub use self::providers::OfficePermitSpec;
 pub use self::satellite::{
     classify_replicated_snapshot_path, export_authoritative_state_snapshot_pages,
     is_immutable_state_path, is_stale_snapshot_task_entry, resolve_employee_office,
-    strip_org_core_employee_refs_typed, task_id_for_work_path, ExportedSnapshotPages,
-    OrgDeltaPayload, PendingMessageJournalEntry, RelayedAskAnswer, RelayedAskWithdrawal,
-    RelayedMessageOutcome, RelayedRecipientWake, SatelliteFederationConfig, SatelliteProvisionSpec,
-    SatelliteReEnrollSpec, SatelliteTlsIdentity, SnapshotExportProgress, SnapshotPathClass,
+    strip_org_core_employee_refs_typed, task_id_for_work_path, ConsistentStateSnapshot,
+    ExportedSnapshotPages, OrgDeltaPayload, PendingMessageJournalBatch, PendingMessageJournalEntry,
+    RelayedAskAnswer, RelayedAskWithdrawal, RelayedMessageOutcome, RelayedRecipientWake,
+    ReplicatedFileBatch, SatelliteFederationConfig, SatelliteProvisionSpec, SatelliteReEnrollSpec,
+    SatelliteTlsIdentity, SnapshotExportProgress, SnapshotPathClass,
 };
 #[cfg(any(test, feature = "testkit"))]
 pub use self::testkit::TestOffice;
@@ -85,20 +83,10 @@ use crate::{
     hq_creation::{LocalRecord, PublicRecord},
     key::Key,
     model::OfficeInfo,
-    office_file,
     office_local::{read_ca, CaRecords},
-    organization::{directory, records, wire},
-    rules::OrgCommand,
-    store::open::{
-        open_store, AddPersonOp, AddProjectTeamOp, ArchiveTeamOp, CheckOp, CreateProjectOp,
-        CreateTeamOp, DeactivatePersonOp, DirectorySnapshot, EngineChoice, MovePersonOp,
-        MoveTeamOp, OfficeStanding, OfficeStore, ProjectCheckOp, ProjectInspectByRef, ProjectsList,
-        ReceiptById, RemoveProjectTeamOp, StoreConfig, TopTeamId, UpdatePersonOp, UpdateTeamOp,
-    },
-    time,
+    store::open::{EngineChoice, OfficeStanding, OfficeStore, StoreConfig},
 };
 pub use folder::LOCK_WAIT;
-use folder::{check_named_by, check_not_a_link, lock_folder, plain_folder, refuse_older_build};
 
 /// An organization's two data roots, both absolute: `<data-root>/<org-id>/durable` and
 /// `<data-root>/<org-id>/runtime`.
@@ -114,6 +102,46 @@ pub struct DataRoots {
 pub struct Custody {
     pub identity: OfficeIdentity,
     pub authority: Arc<dyn WriterAuthority>,
+}
+
+/// Roots that are absolute and plain: no `.` or `..`, and two different folders.
+pub(crate) fn check_roots(roots: &DataRoots) -> Result<(), OfficeError> {
+    let plain = |path: &Path| {
+        path.is_absolute()
+            && path.to_str().is_some()
+            && path.components().all(|c| {
+                matches!(
+                    c,
+                    std::path::Component::RootDir | std::path::Component::Normal(_)
+                )
+            })
+    };
+    if !plain(&roots.durable) || !plain(&roots.runtime) || roots.durable == roots.runtime {
+        return Err(OfficeError::Invalid(
+            "the data roots are not two plain absolute folders",
+        ));
+    }
+    // The host makes both, owner-only, when it reserves the office's custody.
+    for root in [&roots.durable, &roots.runtime] {
+        match std::fs::symlink_metadata(root) {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => return Err(OfficeError::Invalid("a data root is not a folder")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(OfficeError::Invalid("a data root is not there"));
+            }
+            Err(e) => return Err(OfficeError::storage(e)),
+        }
+    }
+    Ok(())
+}
+
+/// The office's local TLS folder: `<durable>/local/offices/<office-id>/tls`.
+pub(crate) fn tls_dir(durable_root: &Path, office_id: &str) -> PathBuf {
+    durable_root
+        .join("local")
+        .join("offices")
+        .join(office_id)
+        .join("tls")
 }
 
 /// What the office composes its store from besides the request: production uses SQLite
@@ -251,409 +279,10 @@ pub(crate) fn storage(error: StoreError) -> OfficeError {
     OfficeError::storage(error)
 }
 
-fn validate_open_binding(
-    intent: &intent::Intent,
-    info: &OfficeInfo,
-    instance: &str,
-    roots: &DataRoots,
-    custody: &Custody,
-    active_owner: Option<&str>,
-) -> Result<(Id, Id, String), OfficeError> {
-    let here = &custody.identity;
-    let bound = intent.info() == *info
-        && intent.instance == instance
-        && intent.roots() == *roots
-        && here.instance_id.as_str() == instance
-        && here.organization_id.as_str() == info.org_id
-        && here.office_id.as_str() == info.office_id;
-    if !bound {
-        return Err(OfficeError::Invalid(
-            "the office was created with other roots or another identity",
-        ));
-    }
-    if !org_proto::is_uuid_v7(&intent.owner) || !org_proto::is_uuid_v7(&intent.operation) {
-        return Err(recovery());
-    }
-    let effective_owner = active_owner.unwrap_or(&intent.owner);
-    if !org_proto::is_valid_member_id(effective_owner) {
-        return Err(OfficeError::Invalid("active owner id is invalid"));
-    }
-    let owner = Id::parse(effective_owner).map_err(|_| recovery())?;
-    let creation = Id::parse(&intent.operation).map_err(|_| recovery())?;
-    Ok((owner, creation, intent.operation.clone()))
-}
-
-pub(crate) struct CompanionStores {
-    pub private_notes: Arc<dyn crate::private_notes::PrivateNotesStore>,
-    pub accounting: Arc<dyn crate::accounting::AccountingStore>,
-    pub budgets: Arc<dyn crate::budgets::BudgetStore>,
-    pub providers: Arc<dyn crate::providers::ProviderPoolStore>,
-    pub replication: Arc<dyn crate::replication::ReplicationStore>,
-}
-
-pub(crate) struct CompanionOpenSpec<'a> {
-    pub engine: EngineChoice,
-    pub roots: &'a DataRoots,
-    pub info: &'a OfficeInfo,
-    pub identity: &'a OfficeIdentity,
-    pub hq_office_id: &'a str,
-    pub ca_digest: org_sync_proto::Digest,
-    pub epoch: u64,
-    pub initial_snapshot_required: bool,
-}
-
-pub(crate) fn open_companion_stores(
-    spec: CompanionOpenSpec<'_>,
-) -> Result<CompanionStores, OfficeError> {
-    let is_hq = spec.info.role == crate::model::OfficeRole::Hq;
-    Ok(CompanionStores {
-        private_notes: crate::store::open::open_private_notes(
-            spec.engine,
-            &spec.roots.durable,
-            is_hq,
-        )?,
-        accounting: crate::store::open::open_accounting(
-            spec.engine,
-            &spec.roots.durable,
-            &spec.roots.runtime,
-            &spec.info.office_id,
-            &spec.info.org_id,
-        )?,
-        budgets: crate::store::open::open_budgets(
-            spec.engine,
-            &spec.roots.durable,
-            &spec.roots.runtime,
-            &spec.info.office_id,
-            &spec.info.org_id,
-            is_hq,
-        )?,
-        providers: crate::store::open::open_providers(
-            spec.engine,
-            &spec.roots.durable,
-            &spec.roots.runtime,
-            &spec.info.office_id,
-            &spec.info.org_id,
-            is_hq,
-        )?,
-        replication: crate::store::open::open_replication(
-            crate::store::open::ReplicationOpenSpec {
-                engine: spec.engine,
-                durable_root: &spec.roots.durable,
-                runtime_root: &spec.roots.runtime,
-                org_id: &spec.info.org_id,
-                local_office: &spec.info.office_id,
-                hq_office: spec.hq_office_id,
-                ca_digest: spec.ca_digest,
-                epoch: spec.epoch,
-                incarnation: spec.identity.journal_incarnation.as_str(),
-                initial_snapshot_required: spec.initial_snapshot_required,
-            },
-        )?,
-    })
-}
-
-fn check_standing_on(
-    store: &OfficeStore,
-    info: &OfficeInfo,
-    identity: &OfficeIdentity,
-) -> Result<(), OfficeError> {
-    let read = OfficeStanding {
-        office: identity.office_id.clone(),
-    };
-    let (standing, _) = store.read(read).map_err(storage)?;
-    match info.role {
-        crate::model::OfficeRole::Hq => {
-            let ours = standing.organization.as_ref() == Some(&identity.organization_id);
-            if !ours || !standing.hq {
-                return Err(recovery());
-            }
-        }
-        crate::model::OfficeRole::Satellite => {
-            if let Some(org) = standing.organization.as_ref() {
-                if org != &identity.organization_id || standing.hq {
-                    return Err(OfficeError::Invalid(
-                        "satellite projection does not match its enrolled organization or role",
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Verifies writer custody against the opened projection BEFORE companion stores are opened so a
-/// refused start never bumps `durable/authority/agent-execution/coordinator.json` (`TASK-146`).
-fn check_admitted_custody_on(
-    store: &OfficeStore,
-    info: &OfficeInfo,
-    identity: &OfficeIdentity,
-    owner: &Id,
-    expected_owner: &str,
-) -> Result<(), OfficeError> {
-    let ok = match info.role {
-        crate::model::OfficeRole::Satellite => {
-            expected_owner == info.office_id
-                && identity.office_id.as_str() == info.office_id
-                && identity.organization_id.as_str() == info.org_id
-        }
-        crate::model::OfficeRole::Hq => {
-            let (snapshot, _) = store
-                .read(DirectorySnapshot {
-                    owner: owner.clone(),
-                })
-                .map_err(storage)?;
-            snapshot
-                .members
-                .into_iter()
-                .find(|member| member.owner)
-                .is_some_and(|member| member.id == expected_owner)
-        }
-    };
-    if ok {
-        Ok(())
-    } else {
-        Err(OfficeError::CustodyMismatch)
-    }
-}
-
-fn verify_store_on_open(
-    store: OfficeStore,
-    info: &OfficeInfo,
-    identity: &OfficeIdentity,
-    owner: &Id,
-    active_owner: Option<&str>,
-) -> Result<OfficeStore, OfficeError> {
-    if let Err(err) = check_standing_on(&store, info, identity) {
-        let _ = store.close();
-        return Err(err);
-    }
-    if let Some(expected_owner) = active_owner {
-        if let Err(err) = check_admitted_custody_on(&store, info, identity, owner, expected_owner) {
-            let _ = store.close();
-            return Err(err);
-        }
-    }
-    Ok(store)
-}
-
-/// Roots that are absolute and plain: no `.` or `..`, and two different folders.
-pub(crate) fn check_roots(roots: &DataRoots) -> Result<(), OfficeError> {
-    let plain = |path: &Path| {
-        path.is_absolute()
-            && path.to_str().is_some()
-            && path.components().all(|c| {
-                matches!(
-                    c,
-                    std::path::Component::RootDir | std::path::Component::Normal(_)
-                )
-            })
-    };
-    if !plain(&roots.durable) || !plain(&roots.runtime) || roots.durable == roots.runtime {
-        return Err(OfficeError::Invalid(
-            "the data roots are not two plain absolute folders",
-        ));
-    }
-    // The host makes both, owner-only, when it reserves the office's custody.
-    for root in [&roots.durable, &roots.runtime] {
-        match std::fs::symlink_metadata(root) {
-            Ok(meta) if meta.is_dir() => {}
-            Ok(_) => return Err(OfficeError::Invalid("a data root is not a folder")),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(OfficeError::Invalid("a data root is not there"));
-            }
-            Err(e) => return Err(OfficeError::storage(e)),
-        }
-    }
-    Ok(())
-}
-
 impl Office {
-    /// Opens the finished HQ in `folder` on its store: takes the office lock, reads
-    /// `office.json` and the creation intent, checks that the roots and the custody are the
-    /// ones it was created with, opens the store (replaying or rebuilding the projection),
-    /// and checks the organization, this office's role and the CA records. `key` is the
-    /// host's office secrets key, held only to unwrap the office's private keys.
-    pub fn open(
-        folder: impl Into<PathBuf>,
-        key: Option<Key>,
-        instance: &str,
-        roots: DataRoots,
-        custody: Custody,
-    ) -> Result<Office, OfficeError> {
-        Self::open_with_owner(
-            folder,
-            key,
-            instance,
-            roots,
-            custody,
-            None,
-            Options::production(),
-        )
-    }
-
-    /// Opens the finished HQ in `folder` with an explicit host-authoritative owner member ID
-    /// (supports organization ownership handover, `TASK-38` / `doc-78`, while keeping the
-    /// immutable `creation-intent.json` intact).
-    pub fn open_as_owner(
-        folder: impl Into<PathBuf>,
-        key: Option<Key>,
-        instance: &str,
-        roots: DataRoots,
-        custody: Custody,
-        active_owner: &str,
-    ) -> Result<Office, OfficeError> {
-        Self::open_with_owner(
-            folder,
-            key,
-            instance,
-            roots,
-            custody,
-            Some(active_owner),
-            Options::production(),
-        )
-    }
-
     #[cfg(test)]
     pub(crate) fn sync_store(&self) -> Result<(), OfficeError> {
         self.store.sync().map_err(storage)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn open_with(
-        folder: impl Into<PathBuf>,
-        key: Option<Key>,
-        instance: &str,
-        roots: DataRoots,
-        custody: Custody,
-        options: Options,
-    ) -> Result<Office, OfficeError> {
-        Self::open_with_owner(folder, key, instance, roots, custody, None, options)
-    }
-
-    fn open_with_owner(
-        folder: impl Into<PathBuf>,
-        key: Option<Key>,
-        instance: &str,
-        roots: DataRoots,
-        custody: Custody,
-        active_owner: Option<&str>,
-        options: Options,
-    ) -> Result<Office, OfficeError> {
-        if !org_proto::is_uuid_v7(instance) {
-            return Err(OfficeError::Invalid(
-                "instance id must be a canonical lowercase UUIDv7",
-            ));
-        }
-        check_roots(&roots)?;
-        let folder = plain_folder(folder.into())?;
-        // A link or a file where the folder goes is refused here; a missing folder is
-        // `NotFound` from `lock_folder`, which creates nothing.
-        check_not_a_link(&folder)?;
-        let lock = lock_folder(&folder, LOCK_WAIT)?;
-        refuse_older_build(&folder)?;
-        let info = office_file::read(&folder)?.ok_or(OfficeError::NotFound)?;
-        check_named_by(&folder, &info.office_id)?;
-        let (owner, creation, creation_command, hq_office_id, epoch, initial_snapshot_required) =
-            match info.role {
-                crate::model::OfficeRole::Hq => {
-                    let intent = intent::read(&folder)?.ok_or_else(intent::older_build)?;
-                    let (owner, creation, cmd) = validate_open_binding(
-                        &intent,
-                        &info,
-                        instance,
-                        &roots,
-                        &custody,
-                        active_owner,
-                    )?;
-                    (owner, creation, cmd, info.office_id.clone(), 1, false)
-                }
-                crate::model::OfficeRole::Satellite => {
-                    let sat_intent = satellite::read_intent(&folder)?
-                        .ok_or(OfficeError::Invalid("missing satellite join intent"))?;
-                    let (fallback_owner, creation, cmd) =
-                        satellite::validate_satellite_open_binding(
-                            &sat_intent,
-                            &info,
-                            instance,
-                            &roots,
-                            &custody,
-                        )?;
-                    // Bind satellite open to the admitted owner member when provided so normal
-                    // worker restart finds the replicated owner in `org_snapshot()` (`TASK-52` P2-6).
-                    let owner = active_owner
-                        .and_then(|o| Id::parse(o).ok())
-                        .unwrap_or(fallback_owner);
-                    // Prefer the single atomic `federation-identity.v1.json` generation if present
-                    // so a crash right after D25 re-enrollment reconciles join-intent & checkpoint.
-                    let (hq_id, ep) = match satellite::read_active_identity_binding(
-                        &roots.durable,
-                        &info.office_id,
-                    )? {
-                        Some(id) => (id.hq_office_id, id.epoch),
-                        None => (sat_intent.hq_office_id, sat_intent.epoch),
-                    };
-                    (owner, creation, cmd, hq_id, ep, true)
-                }
-            };
-
-        let store = open_store(&options.config(&roots, &custody)).map_err(storage)?;
-        let store = verify_store_on_open(store, &info, &custody.identity, &owner, active_owner)?;
-        let ca_digest = satellite::read_ca_digest_for_open(&roots.durable, &info, &hq_office_id);
-        let companions = open_companion_stores(CompanionOpenSpec {
-            engine: options.engine,
-            roots: &roots,
-            info: &info,
-            identity: &custody.identity,
-            hq_office_id: &hq_office_id,
-            ca_digest,
-            epoch,
-            initial_snapshot_required,
-        })?;
-        if info.role == crate::model::OfficeRole::Satellite {
-            satellite::reconcile_satellite_replication_on_open(
-                companions.replication.as_ref(),
-                &hq_office_id,
-                ca_digest,
-                epoch,
-            )?;
-        }
-        let clock_high_ms = AtomicU64::new(options.clock.now().0);
-        let office = Office {
-            folder,
-            info,
-            durable: roots.durable,
-            runtime_root: roots.runtime,
-            identity: custody.identity,
-            owner,
-            creation,
-            creation_command,
-            secrets_key: key,
-            clock: options.clock,
-            clock_high_ms,
-            runtime: crate::messaging::runtime::OfficeRuntime::new(),
-            private_notes: companions.private_notes,
-            accounting: companions.accounting,
-            budgets: companions.budgets,
-            budget_op_lock: std::sync::Mutex::new(()),
-            federation_io_lock: std::sync::Mutex::new(()),
-            revocation_lock: std::sync::Mutex::new(()),
-            snapshot_export_lock: std::sync::Mutex::new(()),
-            promoted_removed_offices: std::sync::Mutex::new(std::collections::BTreeSet::new()),
-            peer_activity_fences: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-            peer_session_stops: std::sync::Mutex::new(std::collections::BTreeMap::new()),
-            providers: companions.providers,
-            replication: companions.replication,
-            store,
-            _lock: lock,
-            #[cfg(any(test, feature = "testkit"))]
-            _test_root: None,
-        };
-        register_startup_journal_consumers(&office)?;
-        Ok(office)
-    }
-
-    fn check_standing(&self) -> Result<(), OfficeError> {
-        check_standing_on(&self.store, &self.info, &self.identity)
     }
 
     /// The HQ's CA records, checked against the creation (M1): both files there, the
@@ -696,312 +325,11 @@ impl Office {
         self.store.stopped_cleanly()
     }
 
-    /// The organization's structure from one consistent read of the projection.
-    pub fn org_snapshot(&self) -> Result<OrgSnapshot, OfficeError> {
-        let read = DirectorySnapshot {
-            owner: self.owner.clone(),
-        };
-        Ok(self.store.read(read).map_err(storage)?.0)
-    }
-
-    /// Returns the office's live runtime presence/status record for `member_id`, if any (`AVAIL-5`).
-    pub fn member_runtime(&self, member_id: &str) -> Option<directory::MemberRuntime> {
-        use directory::RuntimeView;
-        self.runtime.runtime_of(member_id)
-    }
-
-    /// `who`: the directory cards matching `params`, including live runtime presence and
-    /// unexpired self-reported status lines (`status.set`).
-    pub fn who(&self, params: &WhoParams) -> Result<Result<WhoResult, ApiError>, OfficeError> {
-        self.who_with_runtime(params, &self.runtime)
-    }
-
-    /// Like [`Self::who`], overlaying caller-provided live session presence (such as
-    /// `WaitingForAnswer`, `Busy`, or `UnableToRun` from `org-office-sessions`) on top of
-    /// stored `status.set` lines (`ASK-4`, `AVAIL-4`).
-    pub fn who_with_runtime(
-        &self,
-        params: &WhoParams,
-        runtime: &dyn directory::RuntimeView,
-    ) -> Result<Result<WhoResult, ApiError>, OfficeError> {
-        let snapshot = self.org_snapshot()?;
-        let office = directory::ThisOffice {
-            id: &self.info.office_id,
-            name: &self.info.office_name,
-        };
-        let now = time::format_rfc3339_ms(self.monotonic_now_ms());
-        let merged = OverlayRuntime {
-            primary: runtime,
-            fallback: &self.runtime,
-        };
-        Ok(directory::who(&snapshot, office, &now, &merged, params))
-    }
-
     fn monotonic_now_ms(&self) -> u64 {
         let now = self.clock.now().0;
         self.clock_high_ms
             .fetch_max(now, Ordering::Relaxed)
             .max(now)
-    }
-
-    /// Runs one organization command from `member`, the member the caller's grant is bound
-    /// to, dispatching all implemented organization-family operations on `org-store`. A
-    /// retry with the same `command_id` gets the same answer, bypassing age/skew checks.
-    pub fn submit_org(
-        &self,
-        member: &str,
-        command: OrgCommand,
-    ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
-        if member != self.owner.as_str() {
-            return Ok(Err(ApiError::new(
-                ErrorCode::NotAuthorized,
-                crate::organization::features::NOT_AUTHORIZED,
-            )));
-        }
-        let op = match wire::parse_command(member, &command, || {
-            self.store.read(TopTeamId).map(|(team, _)| team)
-        })
-        .map_err(storage)?
-        {
-            Ok(op) => op,
-            Err(refusal) => return Ok(Err(refusal)),
-        };
-        // Stored answers always replay even after the 29-day window; only unknown command IDs
-        // are subject to `expired` and `clock_skew` admission rules (unrecorded).
-        let op_id = op.operation_id().clone();
-        let (existing, _) = self
-            .store
-            .read(ReceiptById(op_id.clone()))
-            .map_err(storage)?;
-        if existing.is_none() {
-            if let Err(refusal) =
-                wire::check_command_window(op_id.as_str(), self.monotonic_now_ms())
-            {
-                return Ok(Err(refusal));
-            }
-        }
-        let here = &self.identity;
-        let owner = &self.owner;
-        let run = |op: wire::WireOp| -> Result<Result<CommandAccepted, ApiError>, StoreError> {
-            match op {
-                wire::WireOp::CreateTeam(r) => wire::team_create_answer(
-                    self.store
-                        .run(CreateTeamOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::UpdateTeam(r) => wire::changed_answer(
-                    "team.update",
-                    self.store
-                        .run(UpdateTeamOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::MoveTeam(r) => wire::changed_answer(
-                    "team.move",
-                    self.store
-                        .run(MoveTeamOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::ArchiveTeam(r) => wire::changed_answer(
-                    "team.delete",
-                    self.store
-                        .run(ArchiveTeamOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::AddPerson(r) => wire::changed_answer(
-                    "member.add_person",
-                    self.store
-                        .run(AddPersonOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::UpdatePerson(r) => wire::changed_answer(
-                    "member.update_person",
-                    self.store
-                        .run(UpdatePersonOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::MovePerson(r) => wire::changed_answer(
-                    "member.move",
-                    self.store
-                        .run(MovePersonOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::DeactivatePerson(r) => wire::changed_answer(
-                    "member.remove",
-                    self.store.run(DeactivatePersonOp::from_request(
-                        r,
-                        here.clone(),
-                        owner.clone(),
-                    )),
-                ),
-                wire::WireOp::CreateProject(r) => wire::project_create_answer(self.store.run(
-                    CreateProjectOp::from_request(r, here.clone(), owner.clone()),
-                )),
-                wire::WireOp::AddProjectTeam(r) => wire::changed_answer(
-                    "project.add_team",
-                    self.store.run(AddProjectTeamOp::from_request(
-                        r,
-                        here.clone(),
-                        owner.clone(),
-                    )),
-                ),
-                wire::WireOp::RemoveProjectTeam(r) => wire::changed_answer(
-                    "project.remove_team",
-                    self.store.run(RemoveProjectTeamOp::from_request(
-                        r,
-                        here.clone(),
-                        owner.clone(),
-                    )),
-                ),
-            }
-        };
-        run(op).map_err(storage)
-    }
-
-    /// Runs a dry-run check of one organization command from `member` through `Store::check`:
-    /// decides, frames, applies, validates, and unconditionally undoes with zero journal
-    /// entries, files, receipts, or sequence advancement.
-    pub fn check_org(
-        &self,
-        member: &str,
-        command: OrgCommand,
-    ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
-        if member != self.owner.as_str() {
-            return Ok(Err(ApiError::new(
-                ErrorCode::NotAuthorized,
-                crate::organization::features::NOT_AUTHORIZED,
-            )));
-        }
-        let op = match wire::parse_check_command(member, &command, || {
-            self.store.read(TopTeamId).map(|(team, _)| team)
-        })
-        .map_err(storage)?
-        {
-            Ok(op) => op,
-            Err(refusal) => return Ok(Err(refusal)),
-        };
-        let here = &self.identity;
-        let owner = &self.owner;
-        let run = |op: wire::WireOp| -> Result<Result<CommandAccepted, ApiError>, StoreError> {
-            match op {
-                wire::WireOp::CreateTeam(r) => wire::checked_answer(
-                    "team.create",
-                    self.store
-                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::UpdateTeam(r) => wire::checked_answer(
-                    "team.update",
-                    self.store
-                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::MoveTeam(r) => wire::checked_answer(
-                    "team.move",
-                    self.store
-                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::ArchiveTeam(r) => wire::checked_answer(
-                    "team.delete",
-                    self.store
-                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::AddPerson(r) => wire::checked_answer(
-                    "member.add_person",
-                    self.store
-                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::UpdatePerson(r) => wire::checked_answer(
-                    "member.update_person",
-                    self.store
-                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::MovePerson(r) => wire::checked_answer(
-                    "member.move",
-                    self.store
-                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::DeactivatePerson(r) => wire::checked_answer(
-                    "member.remove",
-                    self.store
-                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::CreateProject(r) => wire::checked_answer(
-                    "project.create",
-                    self.store
-                        .run(ProjectCheckOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::AddProjectTeam(r) => wire::checked_answer(
-                    "project.add_team",
-                    self.store
-                        .run(ProjectCheckOp::from_request(r, here.clone(), owner.clone())),
-                ),
-                wire::WireOp::RemoveProjectTeam(r) => wire::checked_answer(
-                    "project.remove_team",
-                    self.store
-                        .run(ProjectCheckOp::from_request(r, here.clone(), owner.clone())),
-                ),
-            }
-        };
-        run(op).map_err(storage)
-    }
-
-    /// Lists projects from a consistent snapshot of the office store (B3).
-    pub fn list_projects(
-        &self,
-        include_archived: bool,
-    ) -> Result<org_proto::projects::ProjectListResult, OfficeError> {
-        let (projects, _) = self
-            .store
-            .read(ProjectsList { include_archived })
-            .map_err(storage)?;
-        Ok(org_proto::projects::ProjectListResult {
-            projects: projects.iter().map(|p| p.to_wire()).collect(),
-        })
-    }
-
-    /// Inspects one project by UUIDv7 ID, `P-<number>`, or canonical slug (B3).
-    pub fn inspect_project(
-        &self,
-        reference: &str,
-    ) -> Result<Result<org_proto::projects::ProjectRecord, ApiError>, OfficeError> {
-        let (found, _) = self
-            .store
-            .read(ProjectInspectByRef(reference.to_owned()))
-            .map_err(storage)?;
-        Ok(found
-            .map(|p| p.to_wire())
-            .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "project not found")))
-    }
-
-    /// Reads the stored outcome of an organization command by its UUIDv7 `command_id` for
-    /// `member`. Refuses another actor's receipt and non-organization receipts as `not_found`.
-    pub fn operation(
-        &self,
-        member: &str,
-        command_id: &str,
-    ) -> Result<Result<OperationOutcome, ApiError>, OfficeError> {
-        let not_found = || ApiError::new(ErrorCode::NotFound, "operation not found");
-        if !records::is_stable_id(command_id) {
-            return Ok(Err(ApiError::new(
-                ErrorCode::InvalidRequest,
-                "command_id is not a UUIDv7 in lowercase text",
-            )));
-        }
-        let Ok(op_id) = Id::parse(command_id) else {
-            return Ok(Err(ApiError::new(
-                ErrorCode::InvalidRequest,
-                "command_id is not a UUIDv7 in lowercase text",
-            )));
-        };
-        if !records::is_stable_id(member) {
-            return Ok(Err(not_found()));
-        }
-        let Ok(actor_id) = Id::parse(member) else {
-            return Ok(Err(not_found()));
-        };
-        let (receipt, _) = self.store.read(ReceiptById(op_id)).map_err(storage)?;
-        let Some(receipt) = receipt else {
-            return Ok(Err(not_found()));
-        };
-        if !receipt.kind.starts_with("organization.")
-            || receipt.kind == "organization.create"
-            || receipt.actor != Actor::Employee(actor_id)
-        {
-            return Ok(Err(not_found()));
-        }
-        let outcome = wire::operation_outcome_from_receipt(&receipt).map_err(storage)?;
-        Ok(Ok(outcome))
     }
 
     /// Whether this office is its organization's HQ, as the projection holds it.
@@ -1113,54 +441,5 @@ impl Office {
     #[cfg(any(test, feature = "testkit"))]
     pub fn dump(&self) -> Vec<String> {
         self.store.dump()
-    }
-}
-
-/// Eagerly registers durable journal consumers before admitting writes on multi-office HQ and all
-/// satellites, while leaving standalone single-office HQ unpinned (`TASK-52` P5-#9 / P6-#7).
-fn register_startup_journal_consumers(office: &Office) -> Result<(), OfficeError> {
-    match office.info.role {
-        crate::model::OfficeRole::Hq => {
-            office.ca()?;
-            if office.is_multi_office().unwrap_or(false) {
-                let _ = office.register_replication_consumer("org-sync-hq")?;
-                let _ = office.register_replication_consumer("org-sync-message-relay")?;
-            }
-        }
-        crate::model::OfficeRole::Satellite => {
-            let _ = office.register_replication_consumer("org-sync-work-outbox")?;
-            let _ = office.register_replication_consumer("org-sync-message-relay")?;
-        }
-    }
-    Ok(())
-}
-
-struct OverlayRuntime<'a> {
-    primary: &'a dyn directory::RuntimeView,
-    fallback: &'a dyn directory::RuntimeView,
-}
-
-impl directory::RuntimeView for OverlayRuntime<'_> {
-    fn runtime_of(&self, member_id: &str) -> Option<directory::MemberRuntime> {
-        match (
-            self.primary.runtime_of(member_id),
-            self.fallback.runtime_of(member_id),
-        ) {
-            (Some(mut prim), Some(base)) => {
-                if prim.status.is_none() {
-                    prim.status = base.status;
-                    prim.status_expires_at = base.status_expires_at;
-                }
-                if prim.current_task_id.is_none() {
-                    prim.current_task_id = base.current_task_id;
-                }
-                if prim.last_seen_at.is_none() {
-                    prim.last_seen_at = base.last_seen_at;
-                }
-                Some(prim)
-            }
-            (Some(prim), None) => Some(prim),
-            (None, base) => base,
-        }
     }
 }
