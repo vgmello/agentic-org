@@ -11,7 +11,8 @@ const INBOX_COMMENTS_CALLER_KEY = 'agentic-org.inbox.comments.__caller';
 
 function ensureCallerScope(): void {
 	if (typeof window === 'undefined') return;
-	const caller = appSession.callerScope ?? 'anon';
+	const caller = appSession.callerScope;
+	if (!caller) return;
 	try {
 		const stored = window.localStorage.getItem(INBOX_COMMENTS_CALLER_KEY);
 		if (stored && stored !== caller) clearInboxDeviceComments();
