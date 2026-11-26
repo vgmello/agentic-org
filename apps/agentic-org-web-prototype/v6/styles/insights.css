@@ -163,7 +163,8 @@ html[data-theme="cozy"] :is(.project-insights, .team-overview, .org-insights, .o
 .ichart-hit:focus-visible::before { background: var(--hover); }
 .ichart-hit:focus-visible { outline-offset: -2px; }
 .ichart-bars { position: relative; z-index: 1; display: flex; flex-direction: column-reverse; gap: 2px; width: min(24px, 64%); }
-.ichart-bars i { height: calc(var(--v) * var(--chart-plot-h)); min-height: 2px; background: var(--mark); }
+.ichart-bars i { height: calc(var(--v) * var(--chart-plot-h)); min-height: 2px; background: linear-gradient(to bottom, var(--mark), color-mix(in srgb, var(--mark) 55%, transparent)); }
+.ichart-hit:is(:hover, :focus-visible) .ichart-bars i { background: var(--mark); }
 .ichart-bars i + i { height: max(2px, calc(var(--v) * var(--chart-plot-h) - 2px)); }
 .ichart-bars i:last-child { border-radius: 4px 4px 0 0; }
 .ichart-x {
@@ -187,8 +188,11 @@ html[data-theme="cozy"] :is(.project-insights, .team-overview, .org-insights, .o
   .ichart-hit[data-axis="some"] .ichart-x { display: none; }
 }
 .ichart-lines { position: absolute; z-index: 2; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-.ichart-lines polyline { fill: none; stroke: var(--mark); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-.ichart-lines polygon { fill: var(--mark); opacity: .12; stroke: none; }
+.ichart-lines g[data-tone] { color: var(--mark); }
+.ichart-lines .ichart-curve { fill: none; stroke: var(--mark); stroke-width: 2.25; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.ichart-lines .ichart-area { stroke: none; }
+/* Soft glow under the curves (screen space, so the stretched viewBox doesn't distort it) */
+.ichart-line .ichart-lines { filter: drop-shadow(0 3px 6px color-mix(in srgb, var(--chart-accent) 35%, transparent)); }
 .ichart-dot {
   position: absolute;
   z-index: 3;
@@ -299,3 +303,6 @@ html[data-theme="cozy"] :is(.project-insights, .team-overview, .org-insights, .o
   .org-compare tbody th { min-width: 9.5rem; white-space: normal; }
   .org-compare-name { flex-wrap: wrap; gap: 2px 8px; }
 }
+
+/* Horizontal bars: gradient toward the tip, rounded ends */
+.ibars-bar i { background: linear-gradient(to right, color-mix(in srgb, var(--mark) 55%, transparent), var(--mark)); border-radius: 999px; }

@@ -69,11 +69,28 @@ function runs(values) {
   });
   return out;
 }
-function paths(values, at, tone, area) {
+/* Smooth curve through the points (Catmull-Rom as cubic Béziers). Control points are clamped between their
+   neighbours' heights so the curve never overshoots a value or dips below the baseline. */
+function curve(pts) {
+  if (pts.length < 3) return pts.map(([x, y], i) => `${i ? "L" : "M"}${x},${y}`).join(" ");
+  const clamp = (v, a, b) => Math.min(Math.max(v, Math.min(a, b)), Math.max(a, b));
+  let d = `M${pts[0][0]},${pts[0][1]}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    const c1y = clamp(p1[1] + (p2[1] - p0[1]) / 6, p1[1], p2[1]), c2y = clamp(p2[1] - (p3[1] - p1[1]) / 6, p1[1], p2[1]);
+    d += ` C${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(3)},${c1y.toFixed(2)} ${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(3)},${c2y.toFixed(2)} ${p2[0]},${p2[1]}`;
+  }
+  return d;
+}
+let gradientSeq = 0;
+/* One series: an optional gradient area (strong at the line, fading to nothing at the baseline) and the curve. */
+function paths(values, at, tone, area, strength = .28) {
   return runs(values).map((run) => {
-    const points = run.map(([index, value]) => `${index + .5},${(100 - at(value) * 100).toFixed(2)}`).join(" ");
-    const wash = area && run.length > 1 ? `<polygon data-tone="${tone}" points="${run[0][0] + .5},100 ${points} ${run.at(-1)[0] + .5},100"></polygon>` : "";
-    return `${wash}<polyline data-tone="${tone}" points="${points}"></polyline>`;
+    const pts = run.map(([index, value]) => [index + .5, Number((100 - at(value) * 100).toFixed(2))]);
+    const line = curve(pts), id = `ig${++gradientSeq}`;
+    const wash = area && run.length > 1 ? `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="currentColor" stop-opacity="${strength}"></stop><stop offset="1" stop-color="currentColor" stop-opacity="0"></stop></linearGradient></defs>
+      <path class="ichart-area" fill="url(#${id})" d="${line} L${pts.at(-1)[0]},100 L${pts[0][0]},100 Z"></path>` : "";
+    return `<g data-tone="${tone}">${wash}<path class="ichart-curve" d="${line}"></path></g>`;
   }).join("");
 }
 function lineSvg(count, body) {
@@ -105,7 +122,8 @@ function lineChart({ label, series, rows, tones, format, tick, domain, area }) {
     const lines = series.map((name, s) => [tones[s], row.values[s] == null ? "Not enough data" : format(row.values[s]), series.length > 1 ? name : ""]);
     return hit(row, index, count, dots, lines);
   });
-  const svg = lineSvg(count, series.map((_, s) => paths(rows.map((row) => row.values[s]), at, tones[s], area && series.length === 1)).join(""));
+  /* Every series gets a gradient wash; a lone series a stronger one */
+  const svg = lineSvg(count, series.map((_, s) => paths(rows.map((row) => row.values[s]), at, tones[s], area !== false, series.length === 1 ? .3 : .14)).join(""));
   return `<div class="ichart-line" data-dots="${count > 12 ? "end" : "all"}">${frame(ticks, tick, `${svg}${hits(label, count, items)}`)}</div>`;
 }
 
