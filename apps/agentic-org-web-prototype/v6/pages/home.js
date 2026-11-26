@@ -658,11 +658,10 @@ function pageHome() {
   const headline = homeHeadline(st, open.filter((i) => i.expires).length, open.length);
   const metricsHtml = renderHomeMetrics(st, fleet, offTrackProjs, atRiskProjs);
   const spotlightHtml = renderHomeSpotlight({ st, queue, open, curItem: queue[S.spotIdx] || null, allQueueCleared, remainingInInbox });
-  const quickActs = st === "error" || isEmpty ? "" : `<div class="hb-quick-acts" aria-label="Quick actions"><button class="btn sm h4-cta hb-cta-glass" data-cta-tone="ocean" type="button" data-act="proto" data-v="New task"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>New task</span></span></span></button></div>`;
   const mainBody = isEmpty
     ? `<div class="hb-stage is-single">${spotlightHtml}</div>${metricsHtml}`
     : `${metricsHtml}<div class="hb-stage${st === "error" ? " is-single" : ""}">${spotlightHtml}${renderHomeCatchup(st, fleet.liveWorkingN)}</div>`;
-  return `<div class="hb"><header class="hb-hero"><div class="hb-brief"><h1 class="hb-title" tabindex="-1">${headline}</h1></div>${quickActs}</header>${mainBody}${homeProjectsSectionHtml(st, projs, queue, offTrackProjs + atRiskProjs)}${renderTaskTimeSection(st, open.length, fleet.idleSpecsN)}</div>`;
+  return `<div class="hb"><header class="hb-hero"><div class="hb-brief"><h1 class="hb-title" tabindex="-1">${headline}</h1></div></header>${mainBody}${homeProjectsSectionHtml(st, projs, queue, offTrackProjs + atRiskProjs)}${renderTaskTimeSection(st, open.length, fleet.idleSpecsN)}</div>`;
 }
 
 export {

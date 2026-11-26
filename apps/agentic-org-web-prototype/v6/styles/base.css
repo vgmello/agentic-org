@@ -547,8 +547,6 @@ code { font-family: var(--font-mono); font-size: var(--fs-xs); background: var(-
   font-family: inherit; font-size: var(--fs-xs); color: #94A3B8;
 }
 
-/* Elegant Win-Sweep CTA in Home Briefing Header */
-.hb-quick-acts { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .search {
   position: relative; display: grid; flex: 0 1 240px; width: 240px; max-width: 240px; height: 34px;
   border-radius: 999px;
