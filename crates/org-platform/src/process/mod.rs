@@ -101,6 +101,25 @@ pub fn harden_self() -> io::Result<()> {
     native::harden_self()
 }
 
+/// Sets the soft and the hard core-dump limit of this process to 0, and nothing else: for
+/// an executable that is not closed to its user's other processes ([`harden_self`]) but
+/// must never write its memory to disk (the office worker, first thing in `main`). The
+/// same call on every system.
+pub fn disable_core_dumps() -> io::Result<()> {
+    shared::no_core_dumps()
+}
+
+/// Sets this process's file mode creation mask to `077`, so that what it makes is its
+/// user's alone whatever mask started it (a container runtime starts a process with
+/// `022`). Call it before any thread exists, so that every thread has it. The same call on
+/// every system; it cannot fail.
+pub fn owner_only_umask() {
+    // SAFETY: umask has no preconditions, takes a plain mode and cannot fail.
+    unsafe {
+        libc::umask(0o077);
+    }
+}
+
 /// The parent PID of `pid`, or `None` if the process no longer exists.
 /// Fails closed with the `process` refusal on targets without an adapter.
 pub fn parent_pid(pid: libc::pid_t) -> io::Result<Option<libc::pid_t>> {

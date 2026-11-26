@@ -6,20 +6,21 @@ use std::os::unix::net::UnixStream;
 
 use org_host_control::ops::{
     FdsReceived, FdsReceivedParams, OfficeList, OfficeListParams, OfficeOpenChannel,
-    OfficeOpenChannelParams, SessionEnd, SessionGrant, SessionGrantParams, SessionParams,
+    OfficeOpenChannelParams, SessionGrant, SessionGrantParams,
 };
 use org_host_control::SessionHandle;
 use org_proto::org::{ProjectCreate, ProjectCreateParams};
 use org_proto::projects::{
-    ProjectInspect, ProjectInspectParams, ProjectList, ProjectListParams, ProjectRecord,
+    ProjectInspect, ProjectInspectParams, ProjectList, ProjectListParams, ProjectListResult,
+    ProjectRecord,
 };
 use org_proto::{
     frame, ApiError, ApiRange, Call, ErrorCode, Hello, HelloParams, OfficeRole, Principal, Request,
     Response,
 };
 
-use super::cli_session::{connect_and_sign_in, AskPassword, Target};
-use super::output::say;
+use super::cli_error::{office_refused, refused_by, HostCliError};
+use super::cli_session::{connect_cli_session, end_session, AskPassword, Target};
 use super::wire::registered;
 use crate::human::Wire;
 
@@ -27,18 +28,17 @@ use crate::human::Wire;
 pub const HELP: &str = "agentic-org project <subcommand>\n\
 Use when: listing, inspecting, or creating organization projects from the operator CLI.\n\n\
 Subcommands:\n  \
-list --login <login> [--org <org_id>] [--include-archived] [--name <instance>] [--json]\n      \
+list [--org <org_id>] [--include-archived] [--login <login>] [--name <instance>] [--json]\n      \
 List projects in an organization\n      \
 Use when: discovering active (or archived with --include-archived) projects, keys, slugs, and owning teams.\n  \
-inspect <project> --login <login> [--org <org_id>] [--name <instance>] [--json]\n      \
+inspect <project> [--org <org_id>] [--login <login>] [--name <instance>] [--json]\n      \
 Inspect one project by ID, P-<number> key, or slug\n      \
 Use when: checking one project's owning team, contributing teams, and status.\n  \
-create <name> --login <login> [--org <org_id>] [--slug <slug>] [--owner-team <team_id>] [--parent-team <team_id>] [--name <instance>] [--json]\n      \
+create <name> [--org <org_id>] [--slug <slug>] [--owner-team <team_id>] [--parent-team <team_id>] [--login <login>] [--name <instance>] [--json]\n      \
 Create a project (creates a dedicated owning team automatically unless --owner-team is given)\n      \
 Use when: starting a new project with an accountable owning team.\n\n\
-Asks for the account password at the terminal. On systems that cannot identify the host's \
-program (Linux, containers), terminal password sign-in is refused until browser-approved \
-CLI sign-in is available.";
+When --login is omitted, uses the local authless session if authentication is disabled,\n\
+or prints a browser approval link to stderr when authentication is enabled.";
 
 /// Parameters for `agentic-org project create`.
 #[derive(Debug, Clone, Default)]
@@ -48,18 +48,17 @@ pub struct ProjectCreateInput<'a> {
     pub slug: Option<&'a str>,
     pub owner_team_id: Option<&'a str>,
     pub parent_team_id: Option<&'a str>,
-    pub json: bool,
 }
 
+/// `agentic-org project list` for registered instance `instance_name`.
 pub fn project_list(
     instance_name: Option<&str>,
-    login: &str,
+    login: Option<&str>,
     org_id: Option<&str>,
     include_archived: bool,
-    json: bool,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<ProjectListResult, HostCliError> {
     let (_, id, socket) = registered(&crate::human::paths(instance_name)?, instance_name)?;
+    let mut err_out = std::io::stderr().lock();
     list(
         &Target {
             socket: &socket,
@@ -69,21 +68,20 @@ pub fn project_list(
         login,
         org_id,
         include_archived,
-        json,
         &mut crate::human::password,
-        out,
+        &mut err_out,
     )
 }
 
+/// `agentic-org project inspect` for registered instance `instance_name`.
 pub fn project_inspect(
     instance_name: Option<&str>,
-    login: &str,
+    login: Option<&str>,
     org_id: Option<&str>,
     project: &str,
-    json: bool,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<ProjectRecord, HostCliError> {
     let (_, id, socket) = registered(&crate::human::paths(instance_name)?, instance_name)?;
+    let mut err_out = std::io::stderr().lock();
     inspect(
         &Target {
             socket: &socket,
@@ -93,19 +91,19 @@ pub fn project_inspect(
         login,
         org_id,
         project,
-        json,
         &mut crate::human::password,
-        out,
+        &mut err_out,
     )
 }
 
+/// `agentic-org project create` for registered instance `instance_name`: the created project.
 pub fn project_create(
     instance_name: Option<&str>,
-    login: &str,
+    login: Option<&str>,
     input: &ProjectCreateInput<'_>,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<ProjectRecord, HostCliError> {
     let (_, id, socket) = registered(&crate::human::paths(instance_name)?, instance_name)?;
+    let mut err_out = std::io::stderr().lock();
     create(
         &Target {
             socket: &socket,
@@ -115,7 +113,7 @@ pub fn project_create(
         login,
         input,
         &mut crate::human::password,
-        out,
+        &mut err_out,
     )
 }
 
@@ -131,7 +129,7 @@ impl OfficeSession {
         wire: &mut Wire,
         session: &SessionHandle,
         org_id: Option<&str>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, HostCliError> {
         Self::open_selected(wire, session, org_id, None, false)
     }
 
@@ -139,7 +137,7 @@ impl OfficeSession {
         wire: &mut Wire,
         session: &SessionHandle,
         org_id: Option<&str>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, HostCliError> {
         Self::open_selected(wire, session, org_id, None, true)
     }
 
@@ -148,7 +146,7 @@ impl OfficeSession {
         session: &SessionHandle,
         org_id: Option<&str>,
         office_id: Option<&str>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, HostCliError> {
         Self::open_selected(wire, session, org_id, office_id, false)
     }
 
@@ -158,7 +156,7 @@ impl OfficeSession {
         org_id: Option<&str>,
         explicit_office_id: Option<&str>,
         require_hq: bool,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, HostCliError> {
         let handle = || SessionHandle::new(session.expose().into()).expect("a live handle");
         let listed = match wire.call_answer::<OfficeList>(
             &OfficeListParams {
@@ -168,49 +166,18 @@ impl OfficeSession {
             None,
         )? {
             Ok(listed) => listed,
-            Err(ErrorCode::NotFound) => return Err("organization not found".into()),
-            Err(ErrorCode::NotAuthorized) => {
-                return Err("not authorized to access this organization".into())
+            Err(code @ ErrorCode::NotFound) => {
+                return Err(HostCliError::refused(code, "organization not found"))
             }
-            Err(code) => return Err(format!("the service refused office lookup ({code:?})")),
-        };
-        if listed.offices.is_empty() {
-            return Err("no offices found for this account".into());
-        }
-        if org_id.is_none() && explicit_office_id.is_none() {
-            let distinct_orgs: std::collections::BTreeSet<&str> = listed
-                .offices
-                .iter()
-                .map(|o| o.organization_id.as_str())
-                .collect();
-            if distinct_orgs.len() > 1 {
-                return Err("multiple organizations found; pass --org <org_id>".into());
+            Err(code @ ErrorCode::NotAuthorized) => {
+                return Err(HostCliError::refused(
+                    code,
+                    "not authorized to access this organization",
+                ))
             }
-        }
-        let office_id = if let Some(requested) = explicit_office_id {
-            listed
-                .offices
-                .iter()
-                .find(|o| o.id == requested)
-                .map(|o| o.id.clone())
-                .ok_or_else(|| format!("office `{requested}` not found"))?
-        } else if require_hq {
-            listed
-                .offices
-                .iter()
-                .find(|o| o.role == OfficeRole::Hq)
-                .map(|o| o.id.clone())
-                .ok_or_else(|| {
-                    "no HQ office found on this host; run this command on the HQ instance"
-                        .to_owned()
-                })?
-        } else if let Some(hq) = listed.offices.iter().find(|o| o.role == OfficeRole::Hq) {
-            hq.id.clone()
-        } else if listed.offices.len() == 1 {
-            listed.offices[0].id.clone()
-        } else {
-            return Err("multiple offices found; pass --office <office_id>".into());
+            Err(code) => return Err(refused_by("the office lookup", code)),
         };
+        let office_id = select_office(&listed.offices, org_id, explicit_office_id, require_hq)?;
         let opened = match wire.call_answer::<OfficeOpenChannel>(
             &OfficeOpenChannelParams {
                 session: handle(),
@@ -219,11 +186,16 @@ impl OfficeSession {
             None,
         )? {
             Ok(opened) => opened,
-            Err(ErrorCode::NotFound) => return Err("office not found".into()),
-            Err(ErrorCode::NotAuthorized) => {
-                return Err("not authorized to open office channel".into())
+            Err(code @ ErrorCode::NotFound) => {
+                return Err(HostCliError::refused(code, "office not found"))
             }
-            Err(code) => return Err(format!("could not open office channel ({code:?})")),
+            Err(code @ ErrorCode::NotAuthorized) => {
+                return Err(HostCliError::refused(
+                    code,
+                    "not authorized to open office channel",
+                ))
+            }
+            Err(code) => return Err(refused_by("opening the office channel", code)),
         };
         let stream = wire.receive_office_channel()?;
         wire.call::<FdsReceived>(
@@ -233,22 +205,7 @@ impl OfficeSession {
             None,
         )?;
         let mut reader = BufReader::new(stream);
-        let mut hello = HelloParams::default();
-        hello.api = Some(ApiRange { min: 2, max: 2 });
-        hello.client = Some(format!("agentic-org {}", env!("CARGO_PKG_VERSION")));
-        let hello_req = Request::new::<Hello>(1, &hello)
-            .map_err(|_| "could not encode office hello".to_owned())?;
-        frame::write_message(reader.get_mut(), &hello_req)
-            .map_err(|_| "could not write office hello".to_owned())?;
-        let hello_reply: Response = frame::read_message(&mut reader)
-            .map_err(|_| "could not read office hello".to_owned())?
-            .ok_or_else(|| "office closed channel during hello".to_owned())?;
-        let negotiated = hello_reply
-            .into_result::<Hello>()
-            .map_err(|_| "office refused hello negotiation".to_owned())?;
-        if negotiated.api_version != 2 {
-            return Err("office negotiated unexpected protocol version".into());
-        }
+        office_hello(&mut reader)?;
         Ok(Self {
             office_id,
             channel_id: opened.channel_id,
@@ -262,7 +219,7 @@ impl OfficeSession {
         wire: &mut Wire,
         session: &SessionHandle,
         params: &C::Params,
-    ) -> Result<Result<C::Result, ApiError>, String> {
+    ) -> Result<Result<C::Result, ApiError>, HostCliError> {
         let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
         let granted = match wire.call_answer::<SessionGrant>(
             &SessionGrantParams {
@@ -273,8 +230,13 @@ impl OfficeSession {
             None,
         )? {
             Ok(granted) => granted,
-            Err(ErrorCode::NotAuthorized) => return Err("not authorized for this office".into()),
-            Err(code) => return Err(format!("could not obtain office grant ({code:?})")),
+            Err(code @ ErrorCode::NotAuthorized) => {
+                return Err(HostCliError::refused(
+                    code,
+                    "not authorized for this office",
+                ))
+            }
+            Err(code) => return Err(refused_by("the office grant", code)),
         };
         let rpc_id = self.next_id;
         self.next_id += 1;
@@ -283,12 +245,12 @@ impl OfficeSession {
         };
         let req = Request::new::<C>(rpc_id, params)
             .and_then(|r| r.with_principal(&principal))
-            .map_err(|_| "could not encode office request".to_owned())?;
+            .map_err(|_| "could not encode office request")?;
         frame::write_message(self.reader.get_mut(), &req)
-            .map_err(|_| "could not send office request".to_owned())?;
+            .map_err(|_| "could not send office request")?;
         let reply: Response = frame::read_message(&mut self.reader)
-            .map_err(|_| "could not read office reply".to_owned())?
-            .ok_or_else(|| "office closed channel before replying".to_owned())?;
+            .map_err(|_| "could not read office reply")?
+            .ok_or("office closed channel before replying")?;
         if reply.id != rpc_id {
             return Err("office reply id mismatch".into());
         }
@@ -300,82 +262,132 @@ impl OfficeSession {
     }
 }
 
-fn end_session(wire: &mut Wire, session: &SessionHandle) {
-    let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
-    let _ = wire.call::<SessionEnd>(&SessionParams { session: handle }, None);
+/// Signs in to the registered instance `instance_name` (password with `login`, else the
+/// local session or browser approval, its link on standard error), opens a channel to its
+/// HQ office (`require_hq`) or to the selected office, sends one `C` call and ends the
+/// session. The office's refusal is the inner error.
+pub(super) fn call_office<C: Call>(
+    instance_name: Option<&str>,
+    login: Option<&str>,
+    org_id: Option<&str>,
+    office_id: Option<&str>,
+    require_hq: bool,
+    params: &C::Params,
+) -> Result<Result<C::Result, ApiError>, HostCliError> {
+    let (_, id, socket) = registered(&crate::human::paths(instance_name)?, instance_name)?;
+    let target = Target {
+        socket: &socket,
+        instance_id: &id,
+        name: instance_name,
+    };
+    let mut err_out = std::io::stderr().lock();
+    let (mut wire, session) =
+        connect_cli_session(&target, login, &mut crate::human::password, &mut err_out)?;
+    let answer = (|| {
+        let mut office = if require_hq {
+            OfficeSession::open_hq(&mut wire, &session, org_id)?
+        } else {
+            OfficeSession::open_for_office(&mut wire, &session, org_id, office_id)?
+        };
+        office.call::<C>(&mut wire, &session, params)
+    })();
+    end_session(&mut wire, &session);
+    answer
 }
 
-fn format_project_line(project: &ProjectRecord) -> String {
-    let contributing = if project.contributing_team_ids.is_empty() {
-        "-".to_owned()
+/// The office a command acts on, among those the account sees: the one named, HQ, or the
+/// only one. Choosing among several organizations or offices is the person's (`Usage`).
+fn select_office(
+    offices: &[org_proto::OfficeInfo],
+    org_id: Option<&str>,
+    explicit_office_id: Option<&str>,
+    require_hq: bool,
+) -> Result<String, HostCliError> {
+    if offices.is_empty() {
+        return Err(HostCliError::refused(
+            None,
+            "no offices found for this account",
+        ));
+    }
+    if org_id.is_none() && explicit_office_id.is_none() {
+        let distinct_orgs: std::collections::BTreeSet<&str> =
+            offices.iter().map(|o| o.organization_id.as_str()).collect();
+        if distinct_orgs.len() > 1 {
+            return Err(HostCliError::usage(
+                "multiple organizations found; pass --org <org_id>",
+            ));
+        }
+    }
+    let hq = offices.iter().find(|o| o.role == OfficeRole::Hq);
+    if let Some(requested) = explicit_office_id {
+        offices
+            .iter()
+            .find(|o| o.id == requested)
+            .map(|o| o.id.clone())
+            .ok_or_else(|| HostCliError::refused(None, format!("office `{requested}` not found")))
+    } else if require_hq {
+        hq.map(|o| o.id.clone()).ok_or_else(|| {
+            HostCliError::refused(
+                None,
+                "no HQ office found on this host; run this command on the HQ instance",
+            )
+        })
+    } else if let Some(hq) = hq {
+        Ok(hq.id.clone())
+    } else if offices.len() == 1 {
+        Ok(offices[0].id.clone())
     } else {
-        project.contributing_team_ids.join(",")
-    };
-    let status = if project.archived {
-        "archived"
-    } else {
-        "active"
-    };
-    format!(
-        "{}\t{}\t{}\towner_team={}\tcontributing={}\tstatus={}\tname={}",
-        project.key,
-        project.slug,
-        project.id,
-        project.owner_team_id,
-        contributing,
-        status,
-        project.name
-    )
+        Err(HostCliError::usage(
+            "multiple offices found; pass --office <office_id>",
+        ))
+    }
+}
+
+/// Negotiates protocol version 2 on a freshly opened office channel (request ID 1).
+pub(super) fn office_hello(reader: &mut BufReader<UnixStream>) -> Result<(), HostCliError> {
+    let mut hello = HelloParams::default();
+    hello.api = Some(ApiRange { min: 2, max: 2 });
+    hello.client = Some(format!("agentic-org {}", env!("CARGO_PKG_VERSION")));
+    let request = Request::new::<Hello>(1, &hello).map_err(|_| "could not encode office hello")?;
+    frame::write_message(reader.get_mut(), &request).map_err(|_| "could not write office hello")?;
+    let reply: Response = frame::read_message(reader)
+        .map_err(|_| "could not read office hello")?
+        .ok_or("office closed channel during hello")?;
+    let negotiated = reply
+        .into_result::<Hello>()
+        .map_err(|_| "office refused hello negotiation")?;
+    if negotiated.api_version != 2 {
+        return Err("office negotiated unexpected protocol version".into());
+    }
+    Ok(())
 }
 
 pub(crate) fn list(
     target: &Target<'_>,
-    login: &str,
+    login: Option<&str>,
     org_id: Option<&str>,
     include_archived: bool,
-    json: bool,
     password: AskPassword<'_>,
-    out: &mut dyn Write,
-) -> Result<(), String> {
-    let (mut wire, session) = connect_and_sign_in(target, login, password)?;
+    prompt_out: &mut dyn Write,
+) -> Result<ProjectListResult, HostCliError> {
+    let (mut wire, session) = connect_cli_session(target, login, password, prompt_out)?;
     let answer = (|| {
         let mut office = OfficeSession::open(&mut wire, &session, org_id)?;
         office.call::<ProjectList>(&mut wire, &session, &ProjectListParams { include_archived })
     })();
     end_session(&mut wire, &session);
-    let listed = match answer? {
-        Ok(listed) => listed,
-        Err(error) => {
-            return Err(format!(
-                "the office refused project list ({:?}): {}",
-                error.code, error.message
-            ))
-        }
-    };
-    if json {
-        let encoded = serde_json::to_string_pretty(&listed)
-            .map_err(|_| "could not encode project list".to_owned())?;
-        return say(out, encoded);
-    }
-    if listed.projects.is_empty() {
-        return say(out, "No projects.");
-    }
-    for project in &listed.projects {
-        say(out, format_project_line(project))?;
-    }
-    Ok(())
+    answer?.map_err(|error| office_refused("project list", &error))
 }
 
 pub(crate) fn inspect(
     target: &Target<'_>,
-    login: &str,
+    login: Option<&str>,
     org_id: Option<&str>,
     project_ref: &str,
-    json: bool,
     password: AskPassword<'_>,
-    out: &mut dyn Write,
-) -> Result<(), String> {
-    let (mut wire, session) = connect_and_sign_in(target, login, password)?;
+    prompt_out: &mut dyn Write,
+) -> Result<ProjectRecord, HostCliError> {
+    let (mut wire, session) = connect_cli_session(target, login, password, prompt_out)?;
     let answer = (|| {
         let mut office = OfficeSession::open(&mut wire, &session, org_id)?;
         office.call::<ProjectInspect>(
@@ -387,31 +399,19 @@ pub(crate) fn inspect(
         )
     })();
     end_session(&mut wire, &session);
-    let project = match answer? {
-        Ok(project) => project,
-        Err(error) if error.code == ErrorCode::NotFound => return Err("project not found".into()),
-        Err(error) => {
-            return Err(format!(
-                "the office refused project inspect ({:?}): {}",
-                error.code, error.message
-            ))
-        }
-    };
-    if json {
-        let encoded = serde_json::to_string_pretty(&project)
-            .map_err(|_| "could not encode project".to_owned())?;
-        return say(out, encoded);
-    }
-    say(out, format_project_line(&project))
+    answer?.map_err(|error| match error.code {
+        ErrorCode::NotFound => HostCliError::refused(error.code, "project not found"),
+        _ => office_refused("project inspect", &error),
+    })
 }
 
 pub(crate) fn create(
     target: &Target<'_>,
-    login: &str,
+    login: Option<&str>,
     input: &ProjectCreateInput<'_>,
     password: AskPassword<'_>,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+    prompt_out: &mut dyn Write,
+) -> Result<ProjectRecord, HostCliError> {
     let project_id =
         crate::ids::uuid_v7().map_err(|e| format!("could not mint project id: {e}"))?;
     let command_id =
@@ -421,8 +421,8 @@ pub(crate) fn create(
     } else {
         None
     };
-    let (mut wire, session) = connect_and_sign_in(target, login, password)?;
-    let answer = (|| -> Result<Result<ProjectRecord, ApiError>, String> {
+    let (mut wire, session) = connect_cli_session(target, login, password, prompt_out)?;
+    let answer = (|| -> Result<Result<ProjectRecord, ApiError>, HostCliError> {
         let mut office = OfficeSession::open(&mut wire, &session, input.org_id)?;
         let params = ProjectCreateParams {
             project_id: project_id.clone(),
@@ -441,9 +441,8 @@ pub(crate) fn create(
             contributing_team_ids: Vec::new(),
             command_id,
         };
-        match office.call::<ProjectCreate>(&mut wire, &session, &params)? {
-            Ok(_) => {}
-            Err(error) => return Ok(Err(error)),
+        if let Err(error) = office.call::<ProjectCreate>(&mut wire, &session, &params)? {
+            return Ok(Err(error));
         }
         office.call::<ProjectInspect>(
             &mut wire,
@@ -454,53 +453,59 @@ pub(crate) fn create(
         )
     })();
     end_session(&mut wire, &session);
-    let project = match answer? {
-        Ok(project) => project,
-        Err(error) => {
-            return Err(format!(
-                "the office refused project create ({:?}): {}",
-                error.code, error.message
-            ))
-        }
-    };
-    if input.json {
-        let encoded = serde_json::to_string_pretty(&project)
-            .map_err(|_| "could not encode created project".to_owned())?;
-        return say(out, encoded);
-    }
-    say(out, format_project_line(&project))
+    answer?.map_err(|error| office_refused("project create", &error))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn office(id: &str, org: &str, role: OfficeRole) -> org_proto::OfficeInfo {
+        org_proto::OfficeInfo {
+            id: id.into(),
+            organization_id: org.into(),
+            name: "Office".into(),
+            role,
+            host: "This Computer".into(),
+            endpoint: None,
+            status: org_proto::OfficeStatus::Active,
+            status_reason: None,
+            next_restart_at: None,
+        }
+    }
+
     #[test]
-    fn format_project_line_renders_key_slug_owner_and_contributing_teams() {
-        let project = ProjectRecord {
-            id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071f1".into(),
-            number: 1,
-            key: "P-1".into(),
-            slug: "billing".into(),
-            name: "Billing".into(),
-            owner_team_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071f2".into(),
-            contributing_team_ids: vec!["0190a5d2-7c3e-7a01-8b2c-3d4e5f6071f3".into()],
-            archived: false,
-            revision: 1,
-            created_at: None,
-            updated_at: None,
+    fn the_office_is_the_named_one_hq_or_the_only_one_and_ambiguity_is_usage() {
+        use super::super::HostCliErrorKind::{Refused, Usage};
+        let hq = office("hq", "org", OfficeRole::Hq);
+        let sat = office("sat", "org", OfficeRole::Satellite);
+        let both = [hq.clone(), sat.clone()];
+        assert_eq!(select_office(&both, None, None, false).unwrap(), "hq");
+        assert_eq!(
+            select_office(&both, None, Some("sat"), false).unwrap(),
+            "sat"
+        );
+        assert_eq!(select_office(&both, None, None, true).unwrap(), "hq");
+        assert_eq!(
+            select_office(std::slice::from_ref(&sat), None, None, false).unwrap(),
+            "sat"
+        );
+        let kind = |offices: &[org_proto::OfficeInfo], explicit, hq_only| {
+            select_office(offices, None, explicit, hq_only)
+                .unwrap_err()
+                .kind
         };
-        let line = format_project_line(&project);
-        assert!(line.starts_with("P-1\tbilling\t0190a5d2-"), "{line}");
-        assert!(
-            line.contains("owner_team=0190a5d2-7c3e-7a01-8b2c-3d4e5f6071f2"),
-            "{line}"
+        assert_eq!(kind(&[], None, false), Refused);
+        assert_eq!(kind(&both, Some("missing"), false), Refused);
+        assert_eq!(kind(std::slice::from_ref(&sat), None, true), Refused);
+        let two_sats = [sat.clone(), office("sat2", "org", OfficeRole::Satellite)];
+        assert_eq!(kind(&two_sats, None, false), Usage);
+        let two_orgs = [hq, office("other", "org2", OfficeRole::Hq)];
+        assert_eq!(kind(&two_orgs, None, false), Usage);
+        assert_eq!(
+            select_office(&two_orgs, Some("org2"), None, false).unwrap(),
+            "hq"
         );
-        assert!(
-            line.contains("contributing=0190a5d2-7c3e-7a01-8b2c-3d4e5f6071f3"),
-            "{line}"
-        );
-        assert!(line.contains("status=active\tname=Billing"), "{line}");
     }
 
     #[test]
@@ -509,5 +514,8 @@ mod tests {
             HELP.matches("Use when:").count() >= 4,
             "expected command + 3 subcommand Use when cues:\n{HELP}"
         );
+        // Browser approval is the default; `--login` is optional on every subcommand.
+        assert!(!HELP.contains("--login <login> ["), "{HELP}");
+        assert!(HELP.contains("browser approval link"), "{HELP}");
     }
 }

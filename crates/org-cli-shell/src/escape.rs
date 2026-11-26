@@ -52,6 +52,15 @@ fn needs_json_escape(c: char) -> bool {
     matches!(c, '\u{7F}'..='\u{9F}' | '\u{2028}' | '\u{2029}')
 }
 
+/// [`sanitize`] for text of several lines: each line is sanitized and the line breaks
+/// (`\n`) are kept, so prose with untrusted values in it still reads as lines.
+pub fn sanitize_lines(text: &str) -> String {
+    text.split('\n')
+        .map(|line| sanitize(line).into_owned())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Already-serialized JSON with DEL, C1 and `U+2028`/`U+2029` written as `\u00XX` /
 /// ` ` escapes. JSON whitespace is ASCII, so these characters can only occur inside
 /// strings and the document parses to the identical value. Returned unchanged (no copy) when

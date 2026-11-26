@@ -35,6 +35,14 @@ fn decide(modes: &Modes, can_prompt: bool) -> Decision {
     }
 }
 
+/// Shows the cursor again once a prompt has ended, however it ended: the prompt hides it
+/// while it draws, and a Ctrl+C or Esc returns without showing it, which would leave the
+/// person's terminal without a cursor after the process exits 130.
+fn restore_cursor<T>(answer: io::Result<T>) -> io::Result<T> {
+    let _ = console::Term::stderr().show_cursor();
+    answer
+}
+
 /// A prompt's failure: Ctrl+C / Esc (`Interrupted`) is a cancellation.
 fn prompt_error(error: io::Error) -> ShellError {
     if error.kind() == io::ErrorKind::Interrupted {
@@ -57,10 +65,12 @@ pub fn confirm(
         });
     }
     sync_colors(ctx);
-    cliclack::confirm(sanitize(message))
-        .initial_value(default)
-        .interact()
-        .map_err(prompt_error)
+    restore_cursor(
+        cliclack::confirm(sanitize(message))
+            .initial_value(default)
+            .interact(),
+    )
+    .map_err(prompt_error)
 }
 
 /// Guards a destructive `action` (an imperative phrase, e.g. `remove office hq`): proceeds on
@@ -99,7 +109,7 @@ pub fn input(
     if let Some(default) = default {
         prompt = prompt.default_input(default);
     }
-    prompt.interact::<String>().map_err(prompt_error)
+    restore_cursor(prompt.interact::<String>()).map_err(prompt_error)
 }
 
 fn missing_value(message: &str) -> ShellError {

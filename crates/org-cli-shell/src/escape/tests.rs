@@ -63,3 +63,11 @@ fn json_without_controls_is_unchanged() {
     assert_eq!(same, "{\"a\":\"é\"}");
     assert_eq!(same.as_ptr(), pointer, "no copy");
 }
+
+#[test]
+fn sanitize_lines_keeps_line_breaks_and_escapes_the_rest() {
+    assert_eq!(
+        super::sanitize_lines("first \u{1b}[2J\n  second\t\u{9b}"),
+        "first \\u{1b}[2J\n  second\\u{9}\\u{9b}"
+    );
+}

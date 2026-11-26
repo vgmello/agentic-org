@@ -13,7 +13,7 @@
 use std::io::Write;
 
 use org_host_control::ops::{
-    OfficeJoin, OfficeJoinParams, OfficeList, OfficeListParams, OfficeReEnroll,
+    OfficeJoin, OfficeJoinParams, OfficeJoinResult, OfficeList, OfficeListParams, OfficeReEnroll,
     OfficeReEnrollParams, OfficeRemovePending, OfficeRemovePendingParams, OfficeRestart,
     OfficeRestartParams, SessionLocal, SessionLocalParams,
 };
@@ -21,13 +21,14 @@ use org_host_control::{
     Administrator, HostOpResult, InstanceStatus, InstanceStatusParams, InvitationTokenSecret,
     SessionHandle,
 };
-use org_proto::{Call, ErrorCode, OfficeInfo};
+use org_proto::{Call, ErrorCode, ListOfficesResult, OfficeInfo};
+use serde::Serialize;
 
+use super::cli_error::{refused_by, HostCliError};
 use super::cli_session::{
     connect_and_sign_in, connect_cli_session, connect_local_peer, end_session, AskPassword, Target,
     APPROVAL_MAX_WAIT, APPROVAL_POLL_INTERVAL,
 };
-use super::output::say;
 use super::wire::registered;
 use crate::human::Wire;
 
@@ -74,14 +75,29 @@ Use when: reconnecting an existing satellite office to a replacement HQ after Gi
 When --login is omitted, uses the local authless session if authentication is disabled,\n\
 or prints a browser approval link to stderr when authentication is enabled.";
 
+/// What `office restart` and `office remove-pending` answer once the host completed them.
+/// The keys are in the order the commands' earlier `json!` maps wrote them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OfficeOperationCompleted {
+    pub office_id: String,
+    /// The operation's ID: the same ID replays the same operation.
+    pub operation_id: String,
+    pub outcome: OfficeOperationOutcome,
+}
+
+/// How a host office operation ended; a refusal is an error, so only `completed` is left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OfficeOperationOutcome {
+    Completed,
+}
+
 /// `agentic-org office list` for registered instance `name`.
 pub fn office_list(
     name: Option<&str>,
     login: Option<&str>,
     org_id: Option<&str>,
-    json: bool,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<ListOfficesResult, HostCliError> {
     let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
     let mut err_out = std::io::stderr().lock();
     list(
@@ -92,10 +108,8 @@ pub fn office_list(
         },
         login,
         org_id,
-        json,
         &mut crate::human::password,
         &mut err_out,
-        out,
     )
 }
 
@@ -104,9 +118,7 @@ pub fn office_restart(
     name: Option<&str>,
     login: Option<&str>,
     office_id: &str,
-    json: bool,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<OfficeOperationCompleted, HostCliError> {
     let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
     let mut err_out = std::io::stderr().lock();
     restart(
@@ -117,22 +129,19 @@ pub fn office_restart(
         },
         login,
         office_id,
-        json,
         &mut crate::human::password,
         &mut err_out,
-        out,
     )
 }
 
-/// `agentic-org office join` for registered instance `name`.
+/// `agentic-org office join` for registered instance `name`: the satellite's enrollment,
+/// with its check code while HQ has not approved it.
 pub fn office_join(
     name: Option<&str>,
     login: Option<&str>,
     invitation: InvitationTokenSecret,
     consent: bool,
-    json: bool,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<OfficeJoinResult, HostCliError> {
     let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
     let target = Target {
         socket: &socket,
@@ -146,49 +155,33 @@ pub fn office_join(
         login,
         &mut crate::human::password,
         &mut err_out,
-        move |session| {
-            Ok(OfficeJoinParams {
-                session,
-                operation_id: operation_id.clone(),
-                invitation,
-                consent,
-            })
+        move |session| OfficeJoinParams {
+            session,
+            operation_id: operation_id.clone(),
+            invitation,
+            consent,
         },
     )?;
     match answer {
-        Ok(HostOpResult::Completed { result }) => {
-            if json {
-                let encoded = serde_json::to_string_pretty(&result)
-                    .map_err(|_| "could not encode office join response".to_owned())?;
-                say(out, encoded)
-            } else if let Some(code) = &result.check_code {
-                say(
-                    out,
-                    format!(
-                        "Satellite office {} ({}) join pending for organization {} ({}).\nCheck code: {code}",
-                        result.office_id, result.office_name, result.org_name, result.org_id
-                    ),
-                )
-            } else {
-                say(
-                    out,
-                    format!(
-                        "Satellite office {} ({}) joined organization {} ({}).",
-                        result.office_id, result.office_name, result.org_name, result.org_id
-                    ),
-                )
-            }
-        }
-        Ok(HostOpResult::Rejected { refusal }) => {
-            Err(format!("the host refused the join: {}", refusal.message))
-        }
+        Ok(HostOpResult::Completed { result }) => Ok(result),
+        Ok(HostOpResult::Rejected { refusal }) => Err(HostCliError::refused(
+            refusal.code,
+            format!("the host refused the join: {}", refusal.message),
+        )),
         Ok(_) => Err("the service's answer is not one this command knows".into()),
-        Err(ErrorCode::AlreadyExists) => Err("this office is already enrolled on this host".into()),
-        Err(ErrorCode::Expired) => Err("the invitation token has expired".into()),
-        Err(ErrorCode::NotAuthorized) => {
-            Err("only the instance administrator may join an office".into())
-        }
-        Err(code) => Err(format!("the service refused office join ({code:?})")),
+        Err(code @ ErrorCode::AlreadyExists) => Err(HostCliError::refused(
+            code,
+            "this office is already enrolled on this host",
+        )),
+        Err(code @ ErrorCode::Expired) => Err(HostCliError::refused(
+            code,
+            "the invitation token has expired",
+        )),
+        Err(code @ ErrorCode::NotAuthorized) => Err(HostCliError::refused(
+            code,
+            "only the instance administrator may join an office",
+        )),
+        Err(code) => Err(refused_by("the office join", code)),
     }
 }
 
@@ -197,9 +190,7 @@ pub fn office_remove_pending(
     name: Option<&str>,
     login: Option<&str>,
     office_id: &str,
-    json: bool,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<OfficeOperationCompleted, HostCliError> {
     let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
     let target = Target {
         socket: &socket,
@@ -213,38 +204,30 @@ pub fn office_remove_pending(
         login,
         &mut crate::human::password,
         &mut err_out,
-        |session| {
-            Ok(OfficeRemovePendingParams {
-                session,
-                operation_id: operation_id.clone(),
-                office_id: office_id.to_owned(),
-            })
+        |session| OfficeRemovePendingParams {
+            session,
+            operation_id: operation_id.clone(),
+            office_id: office_id.to_owned(),
         },
     )?;
     match answer {
-        Ok(HostOpResult::Completed { .. }) => {
-            if json {
-                say(
-                    out,
-                    serde_json::to_string(&serde_json::json!({
-                        "operation_id": operation_id,
-                        "office_id": office_id,
-                        "outcome": "completed",
-                    }))
-                    .map_err(|_| "could not encode response".to_owned())?,
-                )
-            } else {
-                say(out, format!("Removed pending join for office {office_id}."))
-            }
-        }
-        Ok(HostOpResult::Rejected { refusal }) => Err(format!(
-            "the host refused removing pending join: {}",
-            refusal.message
+        Ok(HostOpResult::Completed { .. }) => Ok(completed(office_id, operation_id)),
+        Ok(HostOpResult::Rejected { refusal }) => Err(HostCliError::refused(
+            refusal.code,
+            format!(
+                "the host refused removing pending join: {}",
+                refusal.message
+            ),
         )),
         Ok(_) => Err("the service's answer is not one this command knows".into()),
-        Err(ErrorCode::NotFound) => Err(format!("no pending join found for office {office_id}")),
-        Err(ErrorCode::Conflict) => Err("office join already completed".into()),
-        Err(code) => Err(format!("the service refused remove-pending ({code:?})")),
+        Err(code @ ErrorCode::NotFound) => Err(HostCliError::refused(
+            code,
+            format!("no pending join found for office {office_id}"),
+        )),
+        Err(code @ ErrorCode::Conflict) => {
+            Err(HostCliError::refused(code, "office join already completed"))
+        }
+        Err(code) => Err(refused_by("removing the pending join", code)),
     }
 }
 
@@ -255,9 +238,7 @@ pub fn office_re_enroll(
     office_id: &str,
     invitation: InvitationTokenSecret,
     consent: bool,
-    json: bool,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<OfficeJoinResult, HostCliError> {
     let (_, id, socket) = registered(&crate::human::paths(name)?, name)?;
     let target = Target {
         socket: &socket,
@@ -271,48 +252,38 @@ pub fn office_re_enroll(
         login,
         &mut crate::human::password,
         &mut err_out,
-        move |session| {
-            Ok(OfficeReEnrollParams {
-                session,
-                operation_id: operation_id.clone(),
-                office_id: office_id.to_owned(),
-                invitation,
-                consent,
-            })
+        move |session| OfficeReEnrollParams {
+            session,
+            operation_id: operation_id.clone(),
+            office_id: office_id.to_owned(),
+            invitation,
+            consent,
         },
     )?;
     match answer {
-        Ok(HostOpResult::Completed { result }) => {
-            if json {
-                let encoded = serde_json::to_string_pretty(&result)
-                    .map_err(|_| "could not encode re-enroll response".to_owned())?;
-                say(out, encoded)
-            } else if let Some(code) = &result.check_code {
-                say(
-                    out,
-                    format!(
-                        "Satellite office {} re-enrollment pending for replacement HQ {}.\nCheck code: {code}",
-                        result.office_id, result.hq_office_id
-                    ),
-                )
-            } else {
-                say(
-                    out,
-                    format!(
-                        "Satellite office {} re-enrolled onto replacement HQ {}.",
-                        result.office_id, result.hq_office_id
-                    ),
-                )
-            }
-        }
-        Ok(HostOpResult::Rejected { refusal }) => Err(format!(
-            "the host refused re-enrollment: {}",
-            refusal.message
+        Ok(HostOpResult::Completed { result }) => Ok(result),
+        Ok(HostOpResult::Rejected { refusal }) => Err(HostCliError::refused(
+            refusal.code,
+            format!("the host refused re-enrollment: {}", refusal.message),
         )),
         Ok(_) => Err("the service's answer is not one this command knows".into()),
-        Err(ErrorCode::NotFound) => Err(format!("satellite office {office_id} not found")),
-        Err(ErrorCode::Expired) => Err("the re-enrollment invitation token has expired".into()),
-        Err(code) => Err(format!("the service refused re-enroll ({code:?})")),
+        Err(code @ ErrorCode::NotFound) => Err(HostCliError::refused(
+            code,
+            format!("satellite office {office_id} not found"),
+        )),
+        Err(code @ ErrorCode::Expired) => Err(HostCliError::refused(
+            code,
+            "the re-enrollment invitation token has expired",
+        )),
+        Err(code) => Err(refused_by("the re-enrollment", code)),
+    }
+}
+
+fn completed(office_id: &str, operation_id: String) -> OfficeOperationCompleted {
+    OfficeOperationCompleted {
+        office_id: office_id.to_owned(),
+        operation_id,
+        outcome: OfficeOperationOutcome::Completed,
     }
 }
 
@@ -328,42 +299,39 @@ fn run_join_authority_call<C, F>(
     password: AskPassword<'_>,
     prompt_out: &mut dyn Write,
     build_params: F,
-) -> Result<Result<C::Result, ErrorCode>, String>
+) -> Result<Result<C::Result, ErrorCode>, HostCliError>
 where
     C: Call,
-    F: FnOnce(Option<SessionHandle>) -> Result<C::Params, String>,
+    F: FnOnce(Option<SessionHandle>) -> C::Params,
 {
     if let Some(user) = login {
         let (mut wire, session) = connect_and_sign_in(target, user, password)?;
         let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
-        let params = build_params(Some(handle))?;
-        let answer = wire.call_answer::<C>(&params, None);
+        let answer = wire.call_answer::<C>(&build_params(Some(handle)), None);
         end_session(&mut wire, &session);
-        return answer;
+        return Ok(answer?);
     }
 
     let mut wire = connect_local_peer(target)?;
     match wire.call_answer::<SessionLocal>(&SessionLocalParams {}, None)? {
         Ok(signed) => {
             let handle = SessionHandle::new(signed.session.expose().into()).expect("a live handle");
-            let params = build_params(Some(handle))?;
-            let answer = wire.call_answer::<C>(&params, None);
+            let answer = wire.call_answer::<C>(&build_params(Some(handle)), None);
             end_session(&mut wire, &signed.session);
-            return answer;
+            return Ok(answer?);
         }
         Err(ErrorCode::NotAuthorized) => {}
-        Err(code) => return Err(format!("the service refused local sign-in ({code:?})")),
+        Err(code) => return Err(refused_by("local sign-in", code)),
     }
 
     // Check open `instance.status` BEFORE building or sending secret-bearing join parameters:
     // only a fresh host with `Administrator::None` admits sessionless `local-bootstrap`.
     let status = match wire.call_answer::<InstanceStatus>(&InstanceStatusParams {}, None)? {
         Ok(status) => status,
-        Err(code) => return Err(format!("the service refused status lookup ({code:?})")),
+        Err(code) => return Err(refused_by("the status lookup", code)),
     };
     if status.administrator == Administrator::None {
-        let params = build_params(None)?;
-        return wire.call_answer::<C>(&params, None);
+        return Ok(wire.call_answer::<C>(&build_params(None), None)?);
     }
 
     // Host has an administrator and authentication is enabled: authenticate via browser approval
@@ -375,22 +343,20 @@ where
         prompt_out,
     )?;
     let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
-    let params = build_params(Some(handle))?;
-    let answer = wire.call_answer::<C>(&params, None);
+    let answer = wire.call_answer::<C>(&build_params(Some(handle)), None);
     end_session(&mut wire, &session);
-    answer
+    Ok(answer?)
 }
 
-/// Lists offices visible to the signed-in account.
+/// Lists offices visible to the signed-in account, with the remote offices of each
+/// organization's directory. No office's `endpoint` (a local socket path) is returned.
 pub(crate) fn list(
     target: &Target<'_>,
     login: Option<&str>,
     org_id: Option<&str>,
-    json: bool,
     password: AskPassword<'_>,
     prompt_out: &mut dyn Write,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<ListOfficesResult, HostCliError> {
     let (mut wire, session) = connect_cli_session(target, login, password, prompt_out)?;
     let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
     let answer = wire.call_answer::<OfficeList>(
@@ -402,37 +368,27 @@ pub(crate) fn list(
     );
     let mut listed = match answer {
         Ok(Ok(listed)) => listed,
-        Ok(Err(ErrorCode::NotFound)) => {
-            end_session(&mut wire, &session);
-            return Err("organization not found".into());
-        }
-        Ok(Err(ErrorCode::NotAuthorized)) => {
-            end_session(&mut wire, &session);
-            return Err("not authorized to list offices".into());
-        }
         Ok(Err(code)) => {
             end_session(&mut wire, &session);
-            return Err(format!("the service refused office list ({code:?})"));
+            return Err(match code {
+                ErrorCode::NotFound => HostCliError::refused(code, "organization not found"),
+                ErrorCode::NotAuthorized => {
+                    HostCliError::refused(code, "not authorized to list offices")
+                }
+                code => refused_by("the office list", code),
+            });
         }
         Err(err) => {
             end_session(&mut wire, &session);
-            return Err(err);
+            return Err(err.into());
         }
     };
     merge_remote_directory_offices(&mut wire, &session, &mut listed.offices);
     end_session(&mut wire, &session);
-    if json {
-        let encoded = serde_json::to_string_pretty(&listed)
-            .map_err(|_| "could not encode office list".to_owned())?;
-        return say(out, encoded);
+    for office in &mut listed.offices {
+        office.endpoint = None;
     }
-    if listed.offices.is_empty() {
-        return say(out, "No offices.");
-    }
-    for office in &listed.offices {
-        say(out, format_office_line(office))?;
-    }
-    Ok(())
+    Ok(listed)
 }
 
 fn merge_remote_directory_offices(
@@ -492,30 +448,14 @@ fn merge_remote_directory_offices(
     }
 }
 
-fn format_office_line(office: &OfficeInfo) -> String {
-    let mut line = format!(
-        "{}\torg={}\trole={:?}\tstatus={:?}\thost={}\tname={}",
-        office.id, office.organization_id, office.role, office.status, office.host, office.name
-    );
-    if let Some(reason) = &office.status_reason {
-        line.push_str(&format!("\treason={reason:?}"));
-    }
-    if let Some(next) = &office.next_restart_at {
-        line.push_str(&format!("\tnext_restart_at={next}"));
-    }
-    line
-}
-
 /// Requests a restart of `office_id` through `office.restart` on `host.sock`.
 pub(crate) fn restart(
     target: &Target<'_>,
     login: Option<&str>,
     office_id: &str,
-    json: bool,
     password: AskPassword<'_>,
     prompt_out: &mut dyn Write,
-    out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<OfficeOperationCompleted, HostCliError> {
     let operation_id = crate::ids::uuid_v7().map_err(|_| "no operation ID could be generated")?;
     let (mut wire, session) = connect_cli_session(target, login, password, prompt_out)?;
     let handle = SessionHandle::new(session.expose().into()).expect("a live handle");
@@ -528,66 +468,35 @@ pub(crate) fn restart(
         None,
     );
     end_session(&mut wire, &session);
+    let refused = |code, message: &str| Err(HostCliError::refused(code, message));
     match answer? {
-        Ok(HostOpResult::Completed { .. }) => {
-            if json {
-                let encoded = serde_json::to_string(&serde_json::json!({
-                    "operation_id": operation_id,
-                    "office_id": office_id,
-                    "outcome": "completed",
-                }))
-                .map_err(|_| "could not encode restart response".to_owned())?;
-                say(out, encoded)
-            } else {
-                say(out, format!("Restart requested for office {office_id}."))
-            }
-        }
-        Ok(HostOpResult::Rejected { refusal }) => {
-            Err(format!("the host refused the restart: {}", refusal.message))
-        }
+        Ok(HostOpResult::Completed { .. }) => Ok(completed(office_id, operation_id)),
+        Ok(HostOpResult::Rejected { refusal }) => Err(HostCliError::refused(
+            refusal.code,
+            format!("the host refused the restart: {}", refusal.message),
+        )),
         Ok(_) => Err("the service's answer is not one this command knows".into()),
-        Err(ErrorCode::NotFound) => Err(format!("office {office_id} not found")),
-        Err(ErrorCode::NotAuthorized) => Err(
-            "only the instance administrator or organization owner may restart an office".into(),
+        Err(code @ ErrorCode::NotFound) => refused(code, &format!("office {office_id} not found")),
+        Err(code @ ErrorCode::NotAuthorized) => refused(
+            code,
+            "only the instance administrator or organization owner may restart an office",
         ),
-        Err(ErrorCode::Conflict) => {
-            Err("the office is not offline or unavailable; no restart needed".into())
+        Err(code @ ErrorCode::Conflict) => refused(
+            code,
+            "the office is not offline or unavailable; no restart needed",
+        ),
+        Err(code @ ErrorCode::NotReady) => {
+            refused(code, "the office is still starting or being created")
         }
-        Err(ErrorCode::NotReady) => Err("the office is still starting or being created".into()),
-        Err(ErrorCode::Unavailable) => Err("a restart cannot recover this office right now".into()),
-        Err(code) => Err(format!("the service refused the restart ({code:?})")),
+        Err(code @ ErrorCode::Unavailable) => {
+            refused(code, "a restart cannot recover this office right now")
+        }
+        Err(code) => Err(refused_by("the restart", code)),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::format_office_line;
-    use org_proto::{OfficeInfo, OfficeRole, OfficeStatus, OfficeStatusReason};
-
-    #[test]
-    fn format_office_line_includes_status_reason_and_backoff_without_endpoint() {
-        let office = OfficeInfo {
-            id: "0193a5c0-0000-7000-8000-000000000002".into(),
-            organization_id: "0193a5c0-0000-7000-8000-000000000001".into(),
-            name: "HQ".into(),
-            role: OfficeRole::Hq,
-            host: "This Computer".into(),
-            endpoint: Some("/private/should-never-appear.sock".into()),
-            status: OfficeStatus::Offline,
-            status_reason: Some(OfficeStatusReason::Crashed),
-            next_restart_at: Some("2026-11-21T07:00:00Z".into()),
-        };
-        let line = format_office_line(&office);
-        assert!(line.contains(&office.id), "{line}");
-        assert!(line.contains("status=Offline"), "{line}");
-        assert!(line.contains("reason=Crashed"), "{line}");
-        assert!(
-            line.contains("next_restart_at=2026-11-21T07:00:00Z"),
-            "{line}"
-        );
-        assert!(!line.contains("should-never-appear"), "{line}");
-    }
-
     #[test]
     fn help_includes_use_when_guidance_for_every_subcommand() {
         assert!(

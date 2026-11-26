@@ -3,7 +3,7 @@
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub use crate::escape::{escape_json_controls, sanitize};
+pub use crate::escape::{escape_json_controls, sanitize, sanitize_lines};
 
 use crate::error::{ShellError, EXIT_CANCELLED};
 

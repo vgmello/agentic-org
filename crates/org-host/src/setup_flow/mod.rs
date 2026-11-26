@@ -37,7 +37,6 @@ use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
 
 use org_host_control::listen::ListenConfig;
-use org_platform::service::{ServiceManager, ServiceStatus};
 
 use crate::instance::registry::Registry;
 pub use crate::instance::setup::FederationConfig;
@@ -45,6 +44,7 @@ use crate::instance::setup::{Input, Journal, Paths, Service};
 pub use org_host_control::InvitationTokenSecret;
 
 pub mod cli_context;
+mod cli_error;
 pub(crate) mod cli_session;
 pub(crate) mod federation_command;
 #[cfg(all(feature = "test-support", debug_assertions))]
@@ -53,16 +53,20 @@ pub(crate) mod office_command;
 pub(crate) mod org_command;
 #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 pub mod seed;
+pub use cli_error::{
+    kind_of, office_refused, refused_by, wire_name, HostCliError, HostCliErrorKind, OUTPUT_CLOSED,
+};
+pub(crate) use cli_error::{sign_in_refused, PASSWORD_CANCELLED};
 pub use federation_command::{
     office_approve, office_cancel, office_decline, office_invitations, office_invite,
     office_remove, office_sync_status, OfficeInviteInput,
 };
 pub use office_command::{
     office_join, office_list, office_re_enroll, office_remove_pending, office_restart,
-    HELP as OFFICE_HELP,
+    OfficeOperationCompleted, OfficeOperationOutcome, HELP as OFFICE_HELP,
 };
 pub use org_command::{
-    org_create, org_list, validate_create_plan, OrgCreateInput, HELP as ORG_HELP,
+    org_create, org_list, validate_create_plan, OrgCreateInput, OrgCreateOutcome, HELP as ORG_HELP,
 };
 pub(crate) mod project_command;
 pub use project_command::{
@@ -71,20 +75,31 @@ pub use project_command::{
 pub(crate) mod provider_command;
 pub use provider_command::{
     provider_bind, provider_bindings, provider_create, provider_list, provider_models,
-    provider_refresh, ProviderBindInput, ProviderCreateInput, ProviderRefreshInput,
-    HELP as PROVIDER_HELP,
+    provider_refresh, ProviderBindInput, ProviderCreateInput, ProviderCreated,
+    ProviderRefreshInput, HELP as PROVIDER_HELP,
 };
 pub mod sign_in_command;
 pub use sign_in_command::{
     context_clear, context_show, context_use, open_for_command, sign_in_only,
-    ApprovedOfficeChannel, CONTEXT_HELP, SIGN_IN_HELP,
+    ApprovedOfficeChannel, ContextCleared, SignedIn, CONTEXT_HELP, SIGN_IN_HELP,
 };
 pub(crate) mod tls_command;
-pub use tls_command::{admin_tls_set, HELP as ADMIN_TLS_SET_HELP};
+pub use tls_command::{admin_tls_set, TlsPairReplaced, HELP as ADMIN_TLS_SET_HELP};
+mod service_command;
+/// The host-control types the commands answer with, so that the command line names them
+/// without depending on `org-host-control` (the `org-proto` ones it names from there).
+pub use org_host_control::ops::{OfficeJoinResult, OfficeJoinState, RecoveryState};
+pub use org_host_control::organization::{
+    CreatingOrganization, ListResult as OrganizationList, OrganizationView,
+};
+pub use org_host_control::OneTimeLinkUrl;
+pub use service_command::{service, ServiceAction, ServiceReport, ServiceState};
 mod account;
 mod adapters;
 mod address;
 mod admin_reset;
+#[cfg(test)]
+mod cli_contract_tests;
 mod credentials;
 mod output;
 mod protection;
@@ -99,18 +114,17 @@ pub(crate) use adapters::release_pin;
 pub use adapters::{platform, CredentialDirectory, Platform};
 pub(crate) use address::{choose_port, loopback};
 use address::{port_free, saved_ports, tls_preflight};
-pub use admin_reset::admin_reset;
+pub use admin_reset::{admin_reset, AdminLink, AdminResetLink};
 use credentials::{development_folder, development_keys, open_records, preflight};
 use output::{fail, say};
 pub(crate) use protection::{mode_exceptions, protection_report};
 use registration::{reserve_setup_instance, start_registered_setup};
-pub(crate) use report::{lingering_report, no_service_manager};
-use report::{report_foreground_service, report_setup_summary, service_id};
+pub(crate) use report::no_service_manager;
+use report::{report_foreground_service, report_setup_summary};
 use request::same_configuration;
 pub use request::{
     configuration, Configuration, PortPrompt, Request, DEFAULT_PORT, NAMED_PORT_BASE,
 };
-use wire::{connect, registered};
 // Other modules' tests reach the registered instance as the commands do.
 #[cfg(test)]
 pub(crate) use wire::registered_with_origin;
@@ -493,78 +507,4 @@ pub(crate) fn run_at(
         &socket,
     )
     .map(|()| None)
-}
-
-/// `agentic-org service start|stop|status`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ServiceAction {
-    Start,
-    Stop,
-    Status,
-}
-
-pub fn service(
-    name: Option<&str>,
-    manager: &dyn ServiceManager,
-    action: ServiceAction,
-    out: &mut dyn Write,
-) -> Result<(), String> {
-    let (record, id, socket) = registered(&crate::human::paths(name)?, name)?;
-    let shown = name.unwrap_or("default");
-    if record.input.service == Service::Foreground {
-        // Nothing is registered: the service manager is not asked. Whether the instance
-        // runs is what its own socket says.
-        return match action {
-            ServiceAction::Status => say(
-                out,
-                match connect(&socket, &id) {
-                    Ok(_) => "running in the foreground (no service is registered)",
-                    Err(_) => {
-                        "not running (foreground mode: it runs while agentic-org serve --setup \
-                         <file> runs)"
-                    }
-                },
-            ),
-            ServiceAction::Start | ServiceAction::Stop => Err(format!(
-                "instance \"{shown}\" runs in the foreground and has no registered service: \
-                 whoever runs agentic-org serve --setup <file> starts and stops it (in a \
-                 container, the container runtime)"
-            )),
-        };
-    }
-    let id = service_id(&id);
-    match action {
-        ServiceAction::Start => {
-            manager
-                .start(&id)
-                .map_err(|e| fail("starting the service", e))?;
-            say(out, format!("Service for \"{shown}\" started."))
-        }
-        ServiceAction::Stop => {
-            manager
-                .stop(&id)
-                .map_err(|e| fail("stopping the service", e))?;
-            say(out, format!("Service for \"{shown}\" stopped."))
-        }
-        ServiceAction::Status => {
-            let status = manager
-                .status(&id)
-                .map_err(|e| fail("reading the service", e))?;
-            say(
-                out,
-                match status {
-                    ServiceStatus::Running { pid } => format!("running (pid {pid})"),
-                    ServiceStatus::Stopped => "stopped".into(),
-                    ServiceStatus::Unloaded => "registered, not loaded".into(),
-                    ServiceStatus::NotRegistered => "not registered".into(),
-                },
-            )?;
-            if status != ServiceStatus::NotRegistered {
-                for line in lingering_report(&manager.lingering(), &user_name()) {
-                    say(out, line)?;
-                }
-            }
-            Ok(())
-        }
-    }
 }

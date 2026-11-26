@@ -3,6 +3,8 @@
 //! A thin binary: it moves its control pipe out of the way, installs a panic hook, and runs
 //! `org_office_server::run`. All logic lives in library crates.
 
+#![forbid(unsafe_code)]
+
 use std::ffi::OsStr;
 use std::io::{self, Write};
 
@@ -38,16 +40,8 @@ fn print(text: &str) -> i32 {
 
 fn main() {
     // Before startup concurrency or key material: inherited by all threads and children.
-    let limits = libc::rlimit {
-        rlim_cur: 0,
-        rlim_max: 0,
-    };
-    // SAFETY: RLIMIT_CORE accepts this valid limits structure.
-    if unsafe { libc::setrlimit(libc::RLIMIT_CORE, &limits) } != 0 {
-        eprintln!(
-            "cannot disable core dumps: {}",
-            std::io::Error::last_os_error()
-        );
+    if let Err(error) = org_platform::process::disable_core_dumps() {
+        let _ = writeln!(io::stderr(), "cannot disable core dumps: {error}");
         std::process::exit(1);
     }
 
@@ -63,7 +57,10 @@ fn main() {
     let control = match org_office_server::fdswap::take_control_pipe() {
         Ok(control) => control,
         Err(error) => {
-            eprintln!("agentic-org-office: cannot set up its descriptors: {error}");
+            let _ = writeln!(
+                io::stderr(),
+                "agentic-org-office: cannot set up its descriptors: {error}"
+            );
             std::process::exit(1);
         }
     };

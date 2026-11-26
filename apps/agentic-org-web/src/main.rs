@@ -1,5 +1,5 @@
 //! Thin single-thread process entry; secrets arrive only after confinement.
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 use std::io::{self, Write};
 use std::process::ExitCode;
 

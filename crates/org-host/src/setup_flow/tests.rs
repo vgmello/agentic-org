@@ -22,6 +22,7 @@ use super::wire::{connect_verified, wait_ready, within, HELD_FOR};
 use super::*;
 use crate::instance::registry::Registry;
 use crate::instance::setup::{FederationConfig, Input, Journal, Paths, Record, Service};
+use crate::setup_flow::HostCliErrorKind;
 use org_host_control::admin::AdminLinkResult;
 use org_host_control::listen::ListenConfig;
 use org_host_control::{InstanceStatusResult, WebState};
@@ -303,10 +304,9 @@ fn a_repeated_setup_with_an_administrator_says_where_to_sign_in() {
 
 #[test]
 fn admin_reset_off_a_terminal_refuses_with_the_spec_copy_before_anything_else() {
-    let mut out = Vec::new();
-    let refused = admin_reset(Some("no-such-instance"), None, false, &mut out).unwrap_err();
-    assert_eq!(refused, NOT_A_TERMINAL);
-    assert!(out.is_empty());
+    let refused = admin_reset(Some("no-such-instance"), None, false).unwrap_err();
+    assert_eq!(refused.message, NOT_A_TERMINAL);
+    assert_eq!(refused.kind, HostCliErrorKind::Usage);
 }
 
 /// SIGN-33: whose instance `admin reset` acts on. Root acts for the account it names (or
@@ -925,16 +925,10 @@ fn only_this_instances_own_link_is_ever_printed() {
         }
     });
     let wire = connect_verified(&socket, INSTANCE, |_| Ok(())).unwrap();
-    let mut out = Vec::new();
-    let refused = reset_over(wire, &origin, None, &mut out).unwrap_err();
+    let refused = reset_over(wire, &origin, None).unwrap_err();
     fake.join().unwrap();
-    assert_eq!(refused, NOT_THIS_INSTANCES_LINK);
-    let printed = String::from_utf8(out).unwrap();
-    assert!(
-        !printed.contains("evil") && !printed.contains('\u{1b}') && !printed.contains('\u{7}'),
-        "{printed:?}"
-    );
-    assert!(!refused.contains("evil") && !refused.contains('\u{1b}'));
+    assert_eq!(refused.message, NOT_THIS_INSTANCES_LINK);
+    assert!(!refused.message.contains("evil") && !refused.message.contains('\u{1b}'));
 }
 
 /// X5 review, second round: root's reset for the service user prints nothing that user
@@ -982,16 +976,11 @@ fn roots_reset_escapes_what_a_failed_lookup_of_the_service_users_instance_says()
         uid: crate::home::euid(),
         gid: crate::home::egid(),
     };
-    let mut out = Vec::new();
-    let refused = reset_for(me, None, || Ok(paths), &mut out).unwrap_err();
+    let refused = reset_for(me, None, || Ok(paths)).unwrap_err().message;
     assert!(refused.contains("is unavailable"), "{refused}");
     assert!(
         !refused.contains(char::is_control) && refused.contains("data\\u{1b}]0;pwned\\u{7}"),
         "{refused:?}"
-    );
-    assert!(
-        out.is_empty(),
-        "nothing is printed before the instance is found"
     );
 }
 
@@ -2314,20 +2303,14 @@ fn the_lookup_runs_in_a_child_and_only_its_answer_comes_back() {
 #[test]
 fn a_reset_of_an_instance_with_an_administrator_says_where_to_sign_in() {
     let origin = org_host_control::listen::ListenOrigin::parse("http://127.0.0.1:7420").unwrap();
-    let mut out = Vec::new();
-    let refused = answer_reset(
-        AdminLinkResult::AdministratorPresent,
-        &origin,
-        Some("lab"),
-        &mut out,
-    )
-    .unwrap_err();
+    let refused = answer_reset(AdminLinkResult::AdministratorPresent, &origin, Some("lab"))
+        .unwrap_err()
+        .message;
     assert_eq!(
         refused,
         "instance lab already has an administrator, so no registration link is issued: sign in at \
          http://127.0.0.1:7420, or run `agentic-org admin reset` again to issue a password-reset link"
     );
-    assert!(out.is_empty());
 }
 
 /// X5 review F12: setup names this user by its account name, which `admin reset --user`

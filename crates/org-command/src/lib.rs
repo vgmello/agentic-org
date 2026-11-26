@@ -17,7 +17,7 @@
 //! The library knows no socket, database or operating system, and makes no randomness. The
 //! executable supplies the office (how the caller is identified), the sources and the keys.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 mod envelope;
 mod help;

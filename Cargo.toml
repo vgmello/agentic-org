@@ -89,6 +89,9 @@ undocumented_unsafe_blocks = "warn"
 unimplemented = "warn"
 
 [workspace.dependencies]
+# The operator CLI's grammar, help and completion (apps/agentic-org only; vetted 2026-11-26).
+clap = { version = "=4.6.10", features = ["derive", "wrap_help"] }
+clap_complete = { version = "=4.6.12", features = ["unstable-dynamic"] }
 argon2 = { version = "=0.5.3", default-features = false, features = ["password-hash", "alloc", "zeroize"] }
 # Pin exact versions here; crates opt in with `x.workspace = true`.
 serde = { version = "=1.0.229", features = ["derive"] }
