@@ -78,11 +78,16 @@ pub fn handle_of(member: &Member) -> Option<String> {
 /// The comparison key of a handle: the lower-cased handle/messaging_name, or name key of
 /// a person.
 fn handle_key(member: &Member) -> Option<String> {
-    if member.owner {
-        return None; // the owner's display name is not a handle; only `owner` names it
-    }
-    if let Some(handle) = &member.handle {
+    if let Some(handle) = member
+        .handle
+        .as_deref()
+        .map(trim_address)
+        .filter(|h| !h.is_empty())
+    {
         return Some(handle.to_lowercase());
+    }
+    if member.owner {
+        return None; // the owner's display name is not a handle; only `owner` or explicit handle names it
     }
     match (&member.kind, &member.agent) {
         (MemberKind::Agent, Some(agent)) => Some(agent.messaging_name.to_lowercase()),

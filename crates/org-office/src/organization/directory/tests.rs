@@ -712,3 +712,33 @@ fn a_status_lapses_by_the_instant_not_by_the_text_of_its_time() {
     assert_eq!(status_of(Some("")), None);
     assert_eq!(status_of(None), live);
 }
+
+#[test]
+fn owner_resolves_by_owner_keyword_and_explicit_handle_but_not_display_name() {
+    let mut snapshot = org();
+    snapshot
+        .members
+        .iter_mut()
+        .find(|m| m.owner)
+        .unwrap()
+        .handle = Some("local-owner".into());
+    let member = |m: &str| {
+        who(
+            &snapshot,
+            OFFICE,
+            NOW,
+            &NothingLive,
+            &WhoParams {
+                member: Some(m.into()),
+                ..WhoParams::default()
+            },
+        )
+        .map(|r| r.members.into_iter().map(|c| c.id).collect::<Vec<_>>())
+        .map_err(|e| e.code)
+    };
+    assert_eq!(member("owner"), Ok(vec![id("OWNER")]));
+    assert_eq!(member("OWNER"), Ok(vec![id("OWNER")]));
+    assert_eq!(member("local-owner"), Ok(vec![id("OWNER")]));
+    assert_eq!(member("LOCAL-OWNER"), Ok(vec![id("OWNER")]));
+    assert_eq!(member("Vinicius"), Err(ErrorCode::NotFound));
+}

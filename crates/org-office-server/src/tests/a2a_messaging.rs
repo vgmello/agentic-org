@@ -2556,3 +2556,209 @@ fn assert_sat_worktree_rejects_hq_durable_conflicts(
         );
     }
 }
+
+#[test]
+fn task141_satellite_agent_addresses_owner_by_handle_and_receives_reply() {
+    use org_proto::chat::{ChatInbox, ChatInboxParams, ChatInboxResult};
+    use org_proto::msg::{MsgReply, MsgReplyParams};
+
+    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
+        engine: EngineChoice::Sqlite,
+    }));
+    let owner = hq.owner_member_id().to_owned();
+    let team_id = hq.org_snapshot().unwrap().teams[0].id.clone();
+    let (conn_id, profile_id) = setup_provider_on_hq(&hq, &owner);
+
+    let hq_node = LiveOfficeNode::start(Arc::clone(&hq), true, false);
+    let hq_addr = hq_node.hq_fed_addr();
+    let (_sat1_dir, sat1) = enroll_satellite(&hq, &owner, &hq_addr, "Owner Handle Sat", 51);
+    let sat1_id = sat1.info().office_id.clone();
+    assert_ne!(
+        sat1.owner_member_id(),
+        owner,
+        "satellite custody binds owner_member_id to the satellite office_id"
+    );
+
+    let ben = hire_agent_at(&hq, &owner, &team_id, &sat1_id, &profile_id, "Ben", "ben");
+    bind_provider_on_office(&sat1, sat1.owner_member_id(), &conn_id);
+    let sat1_node = LiveOfficeNode::start(Arc::clone(&sat1), false, true);
+
+    wait_until(Duration::from_secs(10), "sat1 syncs owner and Ben", || {
+        sat1.org_snapshot()
+            .is_ok_and(|s| s.members.iter().any(|m| m.id == ben))
+    });
+
+    // 1. Directory snapshot & `who` on satellite identify the replicated owner by "owner" and by
+    //    configured handle ("ana") identically to HQ.
+    let sat_snap = sat1.org_snapshot().unwrap();
+    let sat_owner = sat_snap
+        .members
+        .iter()
+        .find(|m| m.owner)
+        .expect("replicated satellite snapshot must mark the organization owner");
+    assert_eq!(sat_owner.id, owner);
+    assert_eq!(sat_owner.handle.as_deref(), Some("ana"));
+    for lookup in ["owner", "OWNER", "ana", "ANA"] {
+        let who = sat1_node.cli_ok(&ben, &["who", "--member", lookup]);
+        let arr = who.as_array().expect("who returns array of cards");
+        assert_eq!(arr.len(), 1, "satellite who --member {lookup}: {who}");
+        assert_eq!(
+            arr[0]["id"], owner,
+            "satellite who --member {lookup}: {who}"
+        );
+        assert_eq!(arr[0]["owner"], Value::Bool(true));
+    }
+
+    // 2. Satellite agent sends DM to "owner" and to configured owner handle "ana"; both succeed
+    //    into the same DM conversation and relay to HQ owner inbox.
+    let dm_by_owner = sat1_node.cli_ok(
+        &ben,
+        &[
+            "msg",
+            "send",
+            "--to",
+            "owner",
+            "--body",
+            "ping via owner handle",
+        ],
+    );
+    let dm_id = dm_by_owner["id"].as_str().unwrap().to_owned();
+    let dm_conv_id = dm_by_owner["conversation_id"].as_str().unwrap().to_owned();
+    let dm_by_cfg = sat1_node.cli_ok(
+        &ben,
+        &[
+            "msg",
+            "send",
+            "--to",
+            "ana",
+            "--body",
+            "ping via configured handle",
+        ],
+    );
+    assert_eq!(
+        dm_by_cfg["conversation_id"].as_str().unwrap(),
+        dm_conv_id,
+        "sending to 'owner' and configured handle 'ana' must target the same DM"
+    );
+    wait_until(
+        Duration::from_secs(10),
+        "HQ owner inbox receives both satellite DMs",
+        || {
+            let req = Request::new::<ChatInbox>(1, &ChatInboxParams::default()).unwrap();
+            let Outcome::Result(val) = hq_node.shared.answer_for_test(&req, &owner, true).outcome
+            else {
+                return false;
+            };
+            let page: ChatInboxResult = serde_json::from_value(val).unwrap();
+            page.items.iter().any(|i| i.id == dm_id)
+                && page
+                    .items
+                    .iter()
+                    .any(|i| i.id == dm_by_cfg["id"].as_str().unwrap())
+        },
+    );
+
+    // 3. HQ owner replies -> relays back to satellite -> Ben receives the reply and wakes.
+    let ben_before_reply = sat1_node.recorded.count_for("ben");
+    let reply_req = Request::new::<MsgReply>(
+        2,
+        &MsgReplyParams {
+            id: hq.next_uuid_v7(),
+            to_id: dm_id.clone(),
+            subject: None,
+            body: "ack from HQ owner".into(),
+            priority: None,
+            meta: Default::default(),
+        },
+    )
+    .unwrap();
+    let reply_resp = hq_node.shared.answer_for_test(&reply_req, &owner, true);
+    let Outcome::Result(reply_val) = reply_resp.outcome else {
+        panic!("HQ owner reply failed: {reply_resp:?}");
+    };
+    let reply_id = reply_val["id"].as_str().unwrap().to_owned();
+    let ben_turn =
+        sat1_node
+            .recorded
+            .wait_for_agent("ben", ben_before_reply + 1, Duration::from_secs(10));
+    assert!(
+        ben_turn.prompt.contains("ack from HQ owner"),
+        "prompt={}",
+        ben_turn.prompt
+    );
+    let ben_read = sat1_node.cli_ok(&ben, &["msg", "read", "--id", &reply_id]);
+    assert_eq!(ben_read["body"], "ack from HQ owner");
+
+    // 4. Satellite agent `msg ask --to owner` reaches HQ owner and receives owner's answer.
+    verify_sat_owner_ask_and_answer(&hq_node, &sat1_node, &owner, &ben);
+}
+
+fn verify_sat_owner_ask_and_answer(
+    hq_node: &LiveOfficeNode,
+    sat1_node: &LiveOfficeNode,
+    owner: &str,
+    ben: &str,
+) {
+    use org_proto::ask::{ChatAnswer, ChatAnswerParams, QuestionAnswer};
+    use org_proto::chat::{ChatInbox, ChatInboxParams, ChatInboxResult};
+
+    let ask_binding = sat1_node.issue_binding(ben);
+    let ask_thread = thread::spawn(move || {
+        let ask_json = json!({
+            "to": "owner",
+            "questions": [{ "id": "q1", "question_type": "yes_no", "prompt": "Proceed with deploy?" }],
+            "hold_ms": 15_000
+        })
+        .to_string();
+        let args = vec![
+            "msg".to_owned(),
+            "ask".to_owned(),
+            "--json".to_owned(),
+            ask_json,
+        ];
+        let out = org_agent_cli::execute(&args, ask_binding.binding.clone());
+        drop(ask_binding);
+        out
+    });
+    let mut ask_id = String::new();
+    wait_until(
+        Duration::from_secs(10),
+        "HQ owner inbox receives satellite ask",
+        || {
+            let req = Request::new::<ChatInbox>(3, &ChatInboxParams::default()).unwrap();
+            let Outcome::Result(val) = hq_node.shared.answer_for_test(&req, owner, true).outcome
+            else {
+                return false;
+            };
+            let page: ChatInboxResult = serde_json::from_value(val).unwrap();
+            if let Some(item) = page.items.iter().find(|i| i.kind == "request") {
+                ask_id = item.id.clone();
+                return true;
+            }
+            false
+        },
+    );
+    let ans_req = Request::new::<ChatAnswer>(
+        4,
+        &ChatAnswerParams {
+            ask_id: ask_id.clone(),
+            answers: vec![QuestionAnswer {
+                question_id: "q1".into(),
+                option_ids: vec!["yes".into()],
+                text: None,
+            }],
+            option_id: None,
+            text: Some("approved".into()),
+        },
+    )
+    .unwrap();
+    let ans_resp = hq_node.shared.answer_for_test(&ans_req, owner, true);
+    assert!(
+        matches!(ans_resp.outcome, Outcome::Result(_)),
+        "HQ owner answer failed: {ans_resp:?}"
+    );
+    let ask_out = ask_thread.join().unwrap();
+    assert_eq!(ask_out.exit_code, 0, "sat ask failed: {}", ask_out.stdout);
+    let ask_json: Value = serde_json::from_str(&ask_out.stdout).unwrap();
+    assert_eq!(ask_json["data"]["status"], "answered");
+}

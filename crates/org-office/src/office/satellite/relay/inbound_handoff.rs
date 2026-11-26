@@ -45,6 +45,7 @@ impl crate::store::open::StoreOp for ApplyRelayedHandoffAcceptOp {
 fn validate_relayed_handoff_accept_target(
     view: &impl crate::messaging::ports::MessagingRead,
     req: &ApplyRelayedHandoffAcceptOp,
+    owner: &Id,
     employees: &[crate::organization::records::Employee],
     conv: &crate::messaging::records::ConversationRecord,
     active_members: &[Id],
@@ -84,8 +85,8 @@ fn validate_relayed_handoff_accept_target(
     if msg.sender_employee_id.as_ref() == Some(&req.emp_id) {
         return Err(Refusal::invalid("handoff sender cannot accept own handoff"));
     }
-    let sender_id = msg.sender_employee_id.as_ref().unwrap_or(&req.owner);
-    let candidates = build_mention_candidates(employees, active_members, &req.owner);
+    let sender_id = msg.sender_employee_id.as_ref().unwrap_or(owner);
+    let candidates = build_mention_candidates(employees, active_members, owner);
     let scan = extract_mentions(&msg.body_markdown, &candidates);
     let reasons = collect_recipient_reasons(
         view,
@@ -113,6 +114,8 @@ fn decide_apply_relayed_handoff_accept(
     use crate::organization::records::EmployeeStatus;
     use org_store::{Ack, Change, Refusal};
 
+    let owner = crate::organization::owner::effective_owner_id(view, &req.owner)
+        .map_err(|_| Refusal::invalid("resolve organization owner"))?;
     let employees = view
         .employees()
         .map_err(|_| Refusal::invalid("read employees"))?;
@@ -141,15 +144,14 @@ fn decide_apply_relayed_handoff_accept(
     else {
         return Err(Refusal::invalid("conversation missing for handoff accept"));
     };
-    let active_members =
-        crate::messaging::features::effective_auto_members(view, &conv, &req.owner)
-            .map_err(|_| Refusal::invalid("resolve conversation members"))?;
-    if !active_members.contains(&req.emp_id) && req.emp_id != req.owner {
+    let active_members = crate::messaging::features::effective_auto_members(view, &conv, &owner)
+        .map_err(|_| Refusal::invalid("resolve conversation members"))?;
+    if !active_members.contains(&req.emp_id) && req.emp_id != owner {
         return Err(Refusal::invalid(
             "relayed handoff accepter is not an active member",
         ));
     }
-    validate_relayed_handoff_accept_target(view, req, &employees, &conv, &active_members)?;
+    validate_relayed_handoff_accept_target(view, req, &owner, &employees, &conv, &active_members)?;
     let outcome = RelayedMessageOutcome {
         conversation_id: req.cid.as_str().to_owned(),
         sender_id: req.emp_id.as_str().to_owned(),

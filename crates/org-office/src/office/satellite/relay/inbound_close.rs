@@ -127,7 +127,9 @@ fn check_ask_recovery_entitlement(
         &req.ctx.hq_office_id,
         req.incoming_conv.as_ref(),
     )?;
-    ensure_local_office_entitled(view, &conv, &req.owner, &req.ctx, &req.here.office_id)?;
+    let owner = crate::organization::owner::effective_owner_id(view, &req.owner)
+        .map_err(|_| Refusal::invalid("resolve organization owner"))?;
+    ensure_local_office_entitled(view, &conv, &owner, &req.ctx, &req.here.office_id)?;
     Ok(false)
 }
 
@@ -239,7 +241,9 @@ fn resolve_origin_close_ask(
         &req.ctx.hq_office_id,
         req.incoming_conv.as_ref(),
     )?;
-    ensure_local_office_entitled(view, &conv, &req.owner, &req.ctx, &req.here.office_id)?;
+    let owner = crate::organization::owner::effective_owner_id(view, &req.owner)
+        .map_err(|_| Refusal::invalid("resolve organization owner"))?;
+    ensure_local_office_entitled(view, &conv, &owner, &req.ctx, &req.here.office_id)?;
     Ok((inc_ask.clone(), conv_to_create, true))
 }
 
@@ -337,12 +341,14 @@ fn decide_apply_relayed_origin_close(
     };
     use org_store::{Ack, Change, Refusal};
     let (ask_msg, conv_to_create, create_ask) = resolve_origin_close_ask(view, req)?;
+    let owner = crate::organization::owner::effective_owner_id(view, &req.owner)
+        .map_err(|_| Refusal::invalid("resolve organization owner"))?;
     let is_withdrawal = crate::messaging::asks::decode_ask_answer_file(&req.answer)
         .1
         .is_some();
     let from_origin = ask_msg.origin_office_id.as_str() == req.origin_office.as_str();
     let from_hq_owner_withdrawal =
-        is_withdrawal && req.origin_office == req.ctx.hq_office_id && req.emp_id == req.owner;
+        is_withdrawal && req.origin_office == req.ctx.hq_office_id && req.emp_id == owner;
     if !from_origin && !from_hq_owner_withdrawal {
         return Err(Refusal::invalid(
             "origin-close answer must originate from the ask's origin office or HQ owner withdrawal",
