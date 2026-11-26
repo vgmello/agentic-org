@@ -53,7 +53,7 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	await page.setViewportSize({ width: 1440, height: 900 });
 
 	// Inline Home search combobox: Cmd/Ctrl+K focuses input, live filters, Escape preserves query & blocks hidden Enter, Tab closes
-	const homeCombo = page.getByRole('combobox', { name: 'Search, run a command, or ask Org AI' });
+	const homeCombo = page.getByRole('combobox', { name: 'Search, run a command, or ask Tess' });
 	await expect(homeCombo).toBeVisible();
 	await page.keyboard.press('ControlOrMeta+k');
 	await expect(homeCombo).toBeFocused();
@@ -63,7 +63,7 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	await expect(homeCombo).toHaveAttribute('aria-controls', 'exec-cmdk-home-listbox');
 	await expect(inlineListbox.getByRole('option', { name: /^Theme: Classic/ })).toBeVisible();
 	await expect(
-		inlineListbox.getByRole('option', { name: /Ask Org AI about 'Theme: Classic'/ })
+		inlineListbox.getByRole('option', { name: /Ask Tess about 'Theme: Classic'/ })
 	).toBeVisible();
 
 	// First Escape closes popup without clearing query; pressing Enter while closed does NOT execute hidden option
@@ -93,6 +93,17 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'classic');
 	await expect(page).toHaveURL(/\/home$/);
 	await expect(inlineListbox).toBeHidden();
+
+	// Escape from empty Home search exits focus so single-key `S` sidebar shortcut works immediately
+	await homeCombo.focus();
+	await expect(homeCombo).toBeFocused();
+	await homeCombo.press('Escape');
+	await expect(inlineListbox).toBeHidden();
+	await expect(homeCombo).not.toBeFocused();
+	await page.keyboard.press('s');
+	await expect(page.getByTestId('nav-key-hint')).toContainText('Sidebar');
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId('nav-key-hint')).toBeHidden();
 	await page
 		.getByRole('group', { name: 'Theme' })
 		.getByRole('button', { name: 'Ocean', exact: true })
@@ -186,14 +197,15 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 		.click();
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'ocean');
 
-	// Command bar Ask Org AI modal
+	// Command bar Ask opens persistent right-hand Tess Chief of Staff Side Panel
 	await page.getByRole('button', { name: 'Ask', exact: true }).click();
-	const dialog = page.getByRole('dialog', { name: 'Command palette and Org AI' });
-	await expect(dialog).toBeVisible();
-	await dialog.getByRole('button', { name: 'Team & office status' }).click();
-	await expect(dialog).toContainText('agents active');
-	await dialog.getByRole('button', { name: 'ESC' }).click();
-	await expect(dialog).toBeHidden();
+	const tessPanel = page.getByTestId('tess-panel');
+	await expect(tessPanel).toBeVisible();
+	await tessPanel.getByRole('button', { name: 'Budget, offices & active agents' }).click();
+	await expect(tessPanel).toContainText('agents active');
+	await expect(tessPanel).toContainText('Offline quick summary · Local data only');
+	await tessPanel.getByRole('button', { name: 'Close Tess panel' }).click();
+	await expect(tessPanel).toBeHidden();
 
 	// Inbox renders split master-detail approval & triage workspace from inboxApi
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).click();
@@ -392,9 +404,9 @@ test('Home scroll cue: keyboard-reachable before below-fold content, moves focus
 		await page.screenshot({ path: `${captureDir}/poc-home-scroll-cue-graphite.png` });
 	}
 
-	// Keyboard Tab from the last control in command bar (New button) reaches Home scroll cue before below-fold content
-	const newButton = page.getByRole('button', { name: 'New', exact: true });
-	await newButton.focus();
+	// Keyboard Tab from the last control in command bar (Ask button) reaches Home scroll cue before below-fold content
+	const askButton = page.getByRole('button', { name: 'Ask', exact: true });
+	await askButton.focus();
 	await page.keyboard.press('Tab');
 	await expect(hint).toBeFocused();
 
@@ -465,7 +477,7 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 	await expect(page.locator('.hor-item').first()).toBeVisible();
 
 	// Home inline search finds real POC work items and navigates to a real working project route (never NotBuilt)
-	const pocCombo = page.getByRole('combobox', { name: 'Search, run a command, or ask Org AI' });
+	const pocCombo = page.getByRole('combobox', { name: 'Search, run a command, or ask Tess' });
 	await pocCombo.click();
 	await pocCombo.fill('Custody lock');
 	const custodyOption = page
@@ -481,14 +493,14 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Home' }).click();
 	await expect(page).toHaveURL(/\/home$/);
 
-	// Decision Spotlight "Ask about this" opens Org AI with that decision's answer
+	// Decision Spotlight "Ask about this" opens Tess Side Panel with that decision's answer & context pill
 	await page.getByRole('button', { name: 'Ask about this' }).click();
-	const aiDialog = page.getByRole('dialog', { name: 'Command palette and Org AI' });
-	await expect(aiDialog).toBeVisible();
-	await expect(aiDialog).toContainText("Approve publishing Kai's sync update to v1.0");
-	await expect(aiDialog).toContainText('Ada recommends: approve.');
-	await aiDialog.getByRole('button', { name: 'ESC' }).click();
-	await expect(aiDialog).toBeHidden();
+	const tessPanel = page.getByTestId('tess-panel');
+	await expect(tessPanel).toBeVisible();
+	await expect(tessPanel).toContainText("Approve publishing Kai's sync update to v1.0");
+	await expect(tessPanel).toContainText('Ada recommends: approve.');
+	await tessPanel.getByRole('button', { name: 'Close Tess panel' }).click();
+	await expect(tessPanel).toBeHidden();
 
 	// Home overview does not show a "New task" CTA; deep-linking /work?new=1 opens the task dialog and strips ?new=1
 	await expect(page.getByRole('link', { name: 'New task' })).toHaveCount(0);
@@ -758,14 +770,10 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 			.getByRole('button', { name: themeLabel, exact: true })
 			.click();
 		await expect(page.locator('html')).toHaveAttribute('data-ui-theme', themeId);
-		await page.getByRole('button', { name: 'Ask', exact: true }).click();
+		await page.keyboard.press('ControlOrMeta+k');
 		const dialog = page.locator('.exec-cmdk-dialog');
 		await expect(dialog).toBeVisible();
 		await expect(dialog).toHaveCSS('border-top-color', 'rgb(131, 147, 171)');
-		await expect(dialog.locator('.exec-cmdk-tabs')).toHaveCSS(
-			'background-color',
-			'rgb(52, 68, 90)'
-		);
 		const contrast = await dialog.evaluate((el) => {
 			const parseRgb = (s: string) =>
 				(s.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number) as [number, number, number];
@@ -781,9 +789,6 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 				const l2 = lum(b);
 				return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
 			};
-			const activeTab = el.querySelector<HTMLElement>('.exec-cmdk-tab[aria-selected="true"]')!;
-			const inactiveTab = el.querySelector<HTMLElement>('.exec-cmdk-tab[aria-selected="false"]')!;
-			const tabGrp = el.querySelector<HTMLElement>('.exec-cmdk-tab-grp')!;
 			const escBtn = el.querySelector<HTMLElement>('.exec-cmdk-close')!;
 			const borderRgb = parseRgb(getComputedStyle(el).borderTopColor);
 			const pageRgb = parseRgb(
@@ -791,14 +796,6 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 			);
 			return {
 				borderVsPage: ratio(borderRgb, pageRgb),
-				activeTabText: ratio(
-					parseRgb(getComputedStyle(activeTab).color),
-					parseRgb(getComputedStyle(activeTab).backgroundColor)
-				),
-				inactiveTabText: ratio(
-					parseRgb(getComputedStyle(inactiveTab).color),
-					parseRgb(getComputedStyle(tabGrp).backgroundColor)
-				),
 				escText: ratio(
 					parseRgb(getComputedStyle(escBtn).color),
 					parseRgb(getComputedStyle(escBtn).backgroundColor)
@@ -806,8 +803,6 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 			};
 		});
 		expect(contrast.borderVsPage).toBeGreaterThanOrEqual(3.0);
-		expect(contrast.activeTabText).toBeGreaterThanOrEqual(4.5);
-		expect(contrast.inactiveTabText).toBeGreaterThanOrEqual(4.5);
 		expect(contrast.escText).toBeGreaterThanOrEqual(4.5);
 		await page.keyboard.press('Escape');
 		await expect(dialog).toBeHidden();
@@ -844,6 +839,7 @@ test('Phase 3 Work parity: unified WorkQueueView header, live search & / shortcu
 		.getByRole('tablist', { name: 'Work', exact: true })
 		.getByRole('tab', { name: /^Tasks/ })
 		.click();
+	await page.getByTestId('work-filter-btn').click();
 	await page.getByTestId('saved-filters').locator('[data-filter="all"]').click();
 
 	// Board view renders 4 columns and priority signal bars on every card
@@ -968,11 +964,11 @@ test('Phase 4B + 5B: Activity & Projects toolbars, CmdK # channel jump, Ask -> S
 
 	// CmdK `#` channel jump mode surfaces live Channels group cleanly and navigates to matching Chat conversation
 	await page.keyboard.press('ControlOrMeta+k');
-	const cmdDialog = page.getByRole('dialog', { name: 'Command palette and Org AI' });
+	const cmdDialog = page.getByRole('dialog', { name: 'Command palette' });
 	await expect(cmdDialog).toBeVisible();
 	await cmdDialog.getByRole('combobox').fill('#office');
 	await expect(
-		cmdDialog.getByRole('option', { name: /#office-federation.*Channels/ })
+		cmdDialog.getByRole('option', { name: /#office-federation.*Channel/ })
 	).toBeVisible();
 	await page.keyboard.press('Enter');
 	await expect(cmdDialog).toBeHidden();
@@ -984,7 +980,7 @@ test('Phase 4B + 5B: Activity & Projects toolbars, CmdK # channel jump, Ask -> S
 	await page.keyboard.press('#');
 	await expect(cmdDialog).toBeVisible();
 	await expect(cmdDialog.getByRole('combobox')).toHaveValue('#');
-	await expect(cmdDialog.getByRole('option', { name: /#general.*Channels/ })).toBeVisible();
+	await expect(cmdDialog.getByRole('option', { name: /#general.*Channel/ })).toBeVisible();
 	await page.keyboard.press('Escape');
 	await expect(cmdDialog).toBeHidden();
 
@@ -997,14 +993,15 @@ test('Phase 4B + 5B: Activity & Projects toolbars, CmdK # channel jump, Ask -> S
 		expect(mastheadBefore === 'none' || mastheadBefore === 'normal').toBe(true);
 	}
 
-	// Ask -> Search & Commands tab switch loads real Chat conversations on first single-event `#release-v1` query
+	// Cmd+K after Cmd+/ Ask Tess loads real Chat conversations on first single-event `#release-v1` query
 	await enterMockedOrganization(page);
 	await visit(page, '/work?mock=default');
-	await page.getByRole('button', { name: 'Ask', exact: true }).click();
+	await page.keyboard.press('ControlOrMeta+/');
+	await expect(page.getByTestId('tess-panel')).toBeVisible();
+	await page.keyboard.press('ControlOrMeta+k');
 	await expect(cmdDialog).toBeVisible();
-	await cmdDialog.getByRole('tab', { name: 'Search & Commands' }).click();
 	await cmdDialog.getByRole('combobox').fill('#release-v1');
-	await expect(cmdDialog.getByRole('option', { name: /#release-v1.*Channels/ })).toBeVisible();
+	await expect(cmdDialog.getByRole('option', { name: /#release-v1.*Channel/ })).toBeVisible();
 	await page.keyboard.press('Enter');
 	await expect(cmdDialog).toBeHidden();
 	await expect(page).toHaveURL(/\/chat\?c=c-release-v1$/);
@@ -1060,6 +1057,7 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Work' }).click();
 	await expect(page).toHaveURL(/\/work$/);
 	await page.getByRole('tab', { name: /^Tasks/ }).click();
+	await page.getByTestId('work-filter-btn').click();
 	await page.getByTestId('saved-filters').locator('[data-filter="all"]').click();
 	await expect(page.getByTestId('board-column')).toHaveCount(4);
 
@@ -1069,10 +1067,13 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 	await boardModeToggle.getByRole('button', { name: '4 stages' }).click();
 	await expect(page.getByTestId('board-column')).toHaveCount(4);
 
-	// Switch to List and verify 2-level grouping (Status -> Assignee) puts Blocked first
+	// Switch to List and verify 2-level grouping (Status -> Assignee) via Work display popover
 	await page.getByRole('group', { name: 'Layout' }).getByRole('button', { name: 'List' }).click();
-	await page.getByTestId('group-by-select').selectOption('status');
-	await page.getByTestId('subgroup-by-select').selectOption('assignee');
+	await page.getByTestId('work-display-btn').click();
+	await page.getByTestId('group-by-menu').locator('[data-group-option="status"]').click();
+	await page.getByTestId('work-display-btn').click();
+	await page.getByRole('menuitem', { name: /^Subgroup by/ }).hover();
+	await page.getByTestId('subgroup-by-menu').locator('[data-subgroup-option="assignee"]').click();
 	await expect(page.getByTestId('work-subgroup-heading').first()).toBeVisible();
 
 	// Open Work item -> right-hand sliding panel mounts over inert queue, expands/restores, traps Shift+Tab, backdrop closes
@@ -1105,9 +1106,13 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 
 	// Subgroup state resets cleanly when switching from Bugs (Severity) to Requests
 	await page.getByRole('tab', { name: /^Bugs/ }).click();
-	await page.getByTestId('subgroup-by-select').selectOption('severity');
+	await page.getByTestId('work-display-btn').click();
+	await page.getByRole('menuitem', { name: /^Subgroup by/ }).hover();
+	await page.getByTestId('subgroup-by-menu').locator('[data-subgroup-option="severity"]').click();
 	await page.getByRole('tab', { name: /^Requests/ }).click();
-	await expect(page.getByTestId('subgroup-by-select')).toHaveValue('none');
+	await page.getByTestId('work-display-btn').click();
+	await expect(page.getByRole('menuitem', { name: /^Subgroup by/ })).toContainText('None');
+	await page.keyboard.press('Escape');
 
 	// Activity: full-space Assembly Line with Readiness progress bar & collapsible Release gates dock + tooltip-first Escape
 	await page
@@ -1143,6 +1148,7 @@ test('Phase 6 (Prototype Release 3c4e3541): S/M keyboard navigation, Work slidin
 	await enterMockedOrganization(page);
 	await visit(page, '/work?mock=default');
 	await page.getByRole('tab', { name: /^Tasks/ }).click();
+	await page.getByTestId('work-filter-btn').click();
 	await page.getByTestId('saved-filters').locator('[data-filter="all"]').click();
 	await page.getByTestId('board-mode-toggle').getByRole('button', { name: '6 statuses' }).click();
 	const awaitingCol = page

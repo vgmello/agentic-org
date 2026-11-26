@@ -136,6 +136,7 @@ describe('HomeLiveState', () => {
 			expect(live.items).toBeUndefined();
 			expect(live.allowShellFallback).toBe(false);
 
+			await flushMicrotasks();
 			rejectRetry({
 				source: 'api',
 				code: 'unavailable',

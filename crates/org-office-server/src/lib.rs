@@ -16,6 +16,7 @@
 
 #![deny(unsafe_code)]
 
+mod attachment_calls;
 mod bounded;
 mod chat_calls;
 mod cost_calls;

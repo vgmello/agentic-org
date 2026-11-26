@@ -1,4 +1,7 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { orgApi } from '$lib/modules/organization/api';
+import { createHttpProcessesApi } from './http-api';
 import type {
 	DevPart,
 	DevProcessCatalogue,
@@ -64,19 +67,63 @@ export interface ProcessesApi {
 	exportDevProcess(organizationId: string, processId: string): Promise<ProcessFile>;
 }
 
-// The web API does not serve processes yet: every call refuses, and each screen says so.
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+const gatewayProcessesApi = createHttpProcessesApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal),
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	},
+	orgApi,
+	session: () => {
+		const s = signedInSession();
+		return s ? { accountAdmin: s.admin } : undefined;
+	}
+});
+
+// Production processes API backed by `/api/v1/organizations/{org}/processes/*`.
 // Under `bun run dev:mock`, e2e/fakes/modules/processes.ts stands in for this file.
-export const processesApi: ProcessesApi = {
-	view: unavailableCall,
-	document: unavailableCall,
-	editorOptions: unavailableCall,
-	create: unavailableCall,
-	update: unavailableCall,
-	devProcesses: unavailableCall,
-	devProcess: unavailableCall,
-	createDevProcess: unavailableCall,
-	writeDevPart: unavailableCall,
-	copyDevProcess: unavailableCall,
-	importDevProcess: unavailableCall,
-	exportDevProcess: unavailableCall
-};
+export const processesApi: ProcessesApi = Object.freeze<ProcessesApi>({
+	view: (organizationId, place) =>
+		signedInSession() ? gatewayProcessesApi.view(organizationId, place) : unavailableCall(),
+	document: (organizationId, documentId) =>
+		signedInSession()
+			? gatewayProcessesApi.document(organizationId, documentId)
+			: unavailableCall(),
+	editorOptions: (organizationId) =>
+		signedInSession() ? gatewayProcessesApi.editorOptions(organizationId) : unavailableCall(),
+	create: (organizationId, draft) =>
+		signedInSession() ? gatewayProcessesApi.create(organizationId, draft) : unavailableCall(),
+	update: (organizationId, documentId, draft, expectedRevision) =>
+		signedInSession()
+			? gatewayProcessesApi.update(organizationId, documentId, draft, expectedRevision)
+			: unavailableCall(),
+	devProcesses: (organizationId) =>
+		signedInSession() ? gatewayProcessesApi.devProcesses(organizationId) : unavailableCall(),
+	devProcess: (organizationId, processId) =>
+		signedInSession()
+			? gatewayProcessesApi.devProcess(organizationId, processId)
+			: unavailableCall(),
+	createDevProcess: (organizationId, key, name) =>
+		signedInSession()
+			? gatewayProcessesApi.createDevProcess(organizationId, key, name)
+			: unavailableCall(),
+	writeDevPart: (organizationId, processId, part, content, expectedRevision) =>
+		signedInSession()
+			? gatewayProcessesApi.writeDevPart(organizationId, processId, part, content, expectedRevision)
+			: unavailableCall(),
+	copyDevProcess: (organizationId, processId, key, name) =>
+		signedInSession()
+			? gatewayProcessesApi.copyDevProcess(organizationId, processId, key, name)
+			: unavailableCall(),
+	importDevProcess: (organizationId, file, key) =>
+		signedInSession()
+			? gatewayProcessesApi.importDevProcess(organizationId, file, key)
+			: unavailableCall(),
+	exportDevProcess: (organizationId, processId) =>
+		signedInSession()
+			? gatewayProcessesApi.exportDevProcess(organizationId, processId)
+			: unavailableCall()
+});

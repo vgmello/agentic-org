@@ -1,6 +1,7 @@
 import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import { orgApi } from '$lib/modules/organization/api';
+import { workItemsApi } from '$lib/modules/workitems/api';
 import { createHttpTeamsApi } from './http-api';
 import type {
 	ActivityEntry,
@@ -48,7 +49,8 @@ const gatewayTeamsApi = createHttpTeamsApi({
 		read: (path, signal) => appSession.controller().read(path, signal),
 		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
 	},
-	orgApi
+	orgApi,
+	workItemsApi
 });
 
 // Production teams API backed by `/api/v1/organizations/{org}/snapshot` and projects/team mutations.

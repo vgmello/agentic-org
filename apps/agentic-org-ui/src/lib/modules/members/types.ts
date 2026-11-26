@@ -232,6 +232,9 @@ export interface WorkRow {
 	project?: string;
 	assigneeId?: string;
 	assignee?: string;
+	reporterId?: string;
+	requestedByViewer?: boolean;
+	closedAt?: string;
 	priority?: 'urgent' | 'high' | 'medium' | 'low';
 	state: WorkState;
 }

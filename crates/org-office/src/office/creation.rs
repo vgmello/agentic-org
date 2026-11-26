@@ -339,6 +339,7 @@ impl Office {
             clock_high_ms,
             runtime: crate::messaging::runtime::OfficeRuntime::new(),
             private_notes: companions.private_notes,
+            attachments: companions.attachments,
             accounting: companions.accounting,
             budgets: companions.budgets,
             budget_op_lock: std::sync::Mutex::new(()),

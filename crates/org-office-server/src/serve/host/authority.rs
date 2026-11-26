@@ -90,6 +90,13 @@ fn requires_owner(method: &str) -> bool {
     )
 }
 
+/// The attachment calls (`TASK-98.1`): never owner-only and never a satellite operator call;
+/// a host channel serves them to any live person, and the office's `AuthorizationPolicy`
+/// decides per file (a person's private space stays theirs alone).
+fn is_member_scoped_method(method: &str) -> bool {
+    org_proto::attachments::ATTACHMENT_METHODS.contains(&method)
+}
+
 fn is_satellite_operator_method(method: &str) -> bool {
     matches!(
         method,
@@ -132,6 +139,11 @@ pub(super) fn authorize(
     }
     if requires_owner(&request.method) {
         checks.owner(&claims.member).ok_or(ErrorCode::NotAuthorized)
+    } else if is_member_scoped_method(&request.method) {
+        // Any live person: the office's attachment policy then decides file by file.
+        checks
+            .person(&claims.member)
+            .ok_or(ErrorCode::NotAuthorized)
     } else if office.role == OfficeRole::Satellite
         && is_satellite_operator_method(&request.method)
         && claims.member == office.id

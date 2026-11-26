@@ -8,7 +8,7 @@
 	import Callout from '$lib/components/Callout.svelte';
 	import DividedRow from '$lib/components/DividedRow.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import type { Member } from '$lib/proto';
+	import { isBuiltInAgent, type Member } from '$lib/proto';
 
 	let {
 		agents,
@@ -59,12 +59,12 @@
 							aria-label="Place {agent.name}…"
 							onclick={(e) => onplace(agent, e.currentTarget)}>Place…</Button
 						>{/if}
-					<Button
-						variant="outline"
-						class="max-[639px]:min-h-11"
-						aria-label="Offboard {agent.name}…"
-						onclick={(e) => onoffboard(agent, e.currentTarget)}>Offboard…</Button
-					>
+					{#if !isBuiltInAgent(agent)}<Button
+							variant="outline"
+							class="max-[639px]:min-h-11"
+							aria-label="Offboard {agent.name}…"
+							onclick={(e) => onoffboard(agent, e.currentTarget)}>Offboard…</Button
+						>{/if}
 				</span>
 			</DividedRow>
 		{/each}

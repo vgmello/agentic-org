@@ -17,6 +17,7 @@
 //! [`Engine::after_round`]: org_store::Engine::after_round
 
 pub(crate) mod accounting;
+mod attachments;
 pub(crate) mod budgets;
 mod companion;
 mod connection;
@@ -41,6 +42,7 @@ mod tasks;
 #[cfg(test)]
 mod tests;
 mod tx;
+pub(crate) mod user_space;
 
 /// One more index than this build's schema: the DDL of "another build", for the store
 /// tests that check a projection made from other DDL is replaced (STORE-3). It lives here

@@ -11,6 +11,7 @@ use super::DataRoots;
 
 pub(super) struct CompanionStores {
     pub private_notes: Arc<dyn crate::private_notes::PrivateNotesStore>,
+    pub attachments: crate::attachments::AttachmentStores,
     pub accounting: Arc<dyn crate::accounting::AccountingStore>,
     pub budgets: Arc<dyn crate::budgets::BudgetStore>,
     pub providers: Arc<dyn crate::providers::ProviderPoolStore>,
@@ -36,6 +37,12 @@ pub(super) fn open_companion_stores(
         private_notes: crate::store::open::open_private_notes(
             spec.engine,
             &spec.roots.durable,
+            is_hq,
+        )?,
+        attachments: crate::store::open::open_attachments(
+            spec.engine,
+            &spec.roots.durable,
+            &spec.info.office_id,
             is_hq,
         )?,
         accounting: crate::store::open::open_accounting(

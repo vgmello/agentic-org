@@ -47,3 +47,15 @@ pub(crate) fn execution_authority(durable_root: &Path, office_id: &str, is_hq: b
 fn office_local(durable_root: &Path, office_id: &str) -> PathBuf {
     durable_root.join("local").join("offices").join(office_id)
 }
+
+/// `<durable>/blobs/`: shared attachment bytes, content-addressed (`TASK-98.1`). Not a tree of
+/// the office store: the journal never carries it.
+pub(crate) fn shared_blobs(durable_root: &Path) -> PathBuf {
+    durable_root.join("blobs")
+}
+
+/// `<durable>/private/blobs/`: HQ's human-private attachment bytes (`TASK-98.1`); a satellite
+/// has none.
+pub(crate) fn private_blobs(durable_root: &Path) -> PathBuf {
+    private_notes(durable_root).join("blobs")
+}

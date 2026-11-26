@@ -1,6 +1,7 @@
 import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import { orgApi } from '$lib/modules/organization/api';
+import { workItemsApi } from '$lib/modules/workitems/api';
 import { createHttpMembersApi } from './http-api';
 import type {
 	ActivityEntry,
@@ -74,6 +75,7 @@ const gatewayMembersApi = createHttpMembersApi({
 		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
 	},
 	orgApi,
+	workItemsApi,
 	session: () => {
 		const s = signedInSession();
 		return s ? { accountAdmin: s.admin } : undefined;
@@ -98,15 +100,18 @@ export const membersApi: MembersApi = Object.freeze<MembersApi>({
 	sessionFile: unavailableCall,
 	role: (orgId, memberId) =>
 		signedInSession() ? gatewayMembersApi.role(orgId, memberId) : unavailableCall(),
-	runNow: unavailableCall,
-	setAllowHiring: unavailableCall,
+	runNow: (orgId, memberId, note) =>
+		signedInSession() ? gatewayMembersApi.runNow(orgId, memberId, note) : unavailableCall(),
+	setAllowHiring: (orgId, memberId, on) =>
+		signedInSession() ? gatewayMembersApi.setAllowHiring(orgId, memberId, on) : unavailableCall(),
 	moveHomeTeam: (orgId, memberId, toTeamId) =>
 		signedInSession()
 			? gatewayMembersApi.moveHomeTeam(orgId, memberId, toTeamId)
 			: unavailableCall(),
 	assignableTasks: (orgId) =>
 		signedInSession() ? gatewayMembersApi.assignableTasks(orgId) : unavailableCall(),
-	assignTask: unavailableCall,
+	assignTask: (orgId, memberId, ref) =>
+		signedInSession() ? gatewayMembersApi.assignTask(orgId, memberId, ref) : unavailableCall(),
 	inviteToSignIn: (orgId, memberId) =>
 		signedInSession() ? gatewayMembersApi.inviteToSignIn(orgId, memberId) : unavailableCall(),
 	newSignInLink: (orgId, memberId) =>

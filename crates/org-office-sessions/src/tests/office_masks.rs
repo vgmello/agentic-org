@@ -202,3 +202,62 @@ fn a_satellite_sandbox_precreates_companion_folders_but_never_private() {
         "{denied:?}"
     );
 }
+
+#[test]
+fn attachment_staging_of_this_office_and_of_every_sibling_office_is_masked() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let mgr = manager(&office);
+    let me = first_employee(&office);
+    let durable = office.durable_root().canonicalize().unwrap();
+    let offices = durable.join("local/offices");
+    let own = offices
+        .join(&office.info().office_id)
+        .join(org_office::companion_paths::ATTACHMENT_STAGING_DIR_NAME);
+    assert!(
+        companion_store_paths(&office.info().office_id)
+            .iter()
+            .any(|store| store.path.ends_with("/attachment-staging")
+                && store.kind == CompanionKind::Folder),
+        "the staging area is a companion store"
+    );
+    // Another office's uploads under the same durable root, with bytes in them.
+    let sibling = offices.join("0195a000-0000-7000-8000-0000000000aa");
+    std::fs::create_dir_all(
+        sibling.join("attachment-staging/0195a000-0000-7000-8000-0000000000ab"),
+    )
+    .unwrap();
+    std::fs::write(
+        sibling.join("attachment-staging/0195a000-0000-7000-8000-0000000000ab/data"),
+        b"someone else's upload",
+    )
+    .unwrap();
+    let empty_sibling = offices.join("0195a000-0000-7000-8000-0000000000bb");
+    std::fs::create_dir_all(&empty_sibling).unwrap();
+
+    let denied = denies(&mgr, &me);
+    for folder in [
+        own.clone(),
+        sibling.join("attachment-staging"),
+        empty_sibling.join("attachment-staging"),
+    ] {
+        let glob = format!("{}/**", folder.display());
+        assert!(denied.contains(&glob), "{glob} missing: {denied:?}");
+    }
+    assert!(!own.exists(), "denying never makes the folder");
+
+    crate::manager::ensure_bwrap_deny_dirs(&mgr, &me).unwrap();
+    assert!(
+        own.is_dir(),
+        "bwrap pre-creates the office's own staging area"
+    );
+    let mode = std::fs::metadata(&own).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+    // A sibling office's folder is masked, never made.
+    assert!(!empty_sibling.join("attachment-staging").exists());
+    let denied = denies(&mgr, &me);
+    assert!(denied.contains(&format!("{}/**", own.display())));
+    assert!(denied.contains(&format!(
+        "{}/**",
+        sibling.join("attachment-staging").display()
+    )));
+}

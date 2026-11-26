@@ -7,7 +7,7 @@ use std::collections::{BTreeSet, HashMap};
 use serde::{Deserialize, Serialize};
 
 use crate::error::BackupError;
-use crate::paths::{disposition, shown, Disposition, RelPath, NOTES_DB};
+use crate::paths::{disposition, shown, Disposition, RelPath};
 
 /// The manifest's `format`.
 pub const FORMAT: &str = "agentic-org-backup";
@@ -210,8 +210,8 @@ impl Manifest {
         {
             return Err("paths that are not sorted or not unique".into());
         }
-        // A notes sidecar or a disposable folder is never backed up: listed, it would land
-        // beside the restored data (a stale `-wal` replayed into the notes database).
+        // A private database's sidecar or a disposable folder is never backed up: listed, it
+        // would land beside the restored data (a stale `-wal` replayed into the database).
         let mut every = self
             .directories
             .iter()
@@ -245,8 +245,8 @@ impl Manifest {
     }
 
     /// No two paths that differ only in ASCII letter case (on a case-insensitive file system,
-    /// macOS's default, one would land on the other), and the private notes database under
-    /// its canonical name alone (another spelling would escape its integrity check).
+    /// macOS's default, one would land on the other), and each private database under its
+    /// canonical name alone (another spelling would escape its integrity check).
     fn check_letter_case(&self) -> Result<(), String> {
         let mut folded = HashMap::new();
         let every = self
@@ -254,11 +254,15 @@ impl Manifest {
             .iter()
             .chain(self.files.iter().map(|f| &f.path));
         for path in every {
-            if disposition(path) == Disposition::NotesDatabase && path.as_str() != NOTES_DB {
-                return Err(format!(
-                    "{}, the private notes database under another spelling than {NOTES_DB}",
-                    shown(path.as_str())
-                ));
+            if let Disposition::PrivateDatabase(db) = disposition(path) {
+                if path.as_str() != db.path() {
+                    return Err(format!(
+                        "{}, the {} under another spelling than {}",
+                        shown(path.as_str()),
+                        db.what(),
+                        db.path()
+                    ));
+                }
             }
             if let Some(other) = folded.insert(path.as_str().to_ascii_lowercase(), path) {
                 return Err(format!(

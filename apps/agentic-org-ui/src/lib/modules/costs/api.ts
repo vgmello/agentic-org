@@ -1,5 +1,10 @@
+import { orgApi } from '$lib/modules/organization/api';
+import { workItemsApi } from '$lib/modules/workitems/api';
 import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { createHttpCostsFullApi } from './http-full-api';
+import { createHttpCostsReadApi } from './http-api';
+import { createHttpInsightsReadApi } from './insights-http-api';
 import { createHttpSubscriptionUsageApi } from './subscription-http-api';
 import type {
 	AgentBudgetAction,
@@ -142,33 +147,99 @@ function signedInSession() {
 	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
 }
 
+const gatewayHttp = {
+	read: (path: string, signal?: AbortSignal) => appSession.controller().read(path, signal),
+	submit: (path: string, body: unknown, signal?: AbortSignal) =>
+		appSession.controller().submit(path, body, signal)
+};
+
+const gatewayCostsReadApi = createHttpCostsReadApi({
+	http: gatewayHttp,
+	orgApi
+});
+
+const gatewayInsightsReadApi = createHttpInsightsReadApi({
+	http: gatewayHttp,
+	orgApi,
+	costsReadApi: gatewayCostsReadApi,
+	workItemsApi
+});
+
 const gatewaySubscriptionUsageApi = createHttpSubscriptionUsageApi({
-	http: {
-		read: (path, signal) => appSession.controller().read(path, signal),
-		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	http: gatewayHttp
+});
+
+const gatewayCostsFullApi = createHttpCostsFullApi({
+	http: gatewayHttp,
+	orgApi,
+	costsReadApi: gatewayCostsReadApi,
+	session: () => {
+		const s = signedInSession();
+		return s ? { accountAdmin: s.admin } : undefined;
 	}
 });
 
-// Ledger/price/budget HTTP adapters are not wired yet; subscription usage (TASK-79) is wired to the
-// authenticated gateway and fails closed when signed out. Under `bun run dev:mock`,
-// `e2e/fakes/modules/costs.ts` stands in for this file.
-export const costsApi: CostsApi = {
-	prices: unavailableCall,
-	addPrice: unavailableCall,
-	priceOperation: unavailableCall,
-	organizationCost: unavailableCall,
-	records: unavailableCall,
-	projectInvestment: unavailableCall,
-	agentBudgets: unavailableCall,
-	projectInsights: unavailableCall,
-	projectRecords: unavailableCall,
-	organizationInsights: unavailableCall,
-	exportRecords: unavailableCall,
-	memberCost: unavailableCall,
-	memberRecords: unavailableCall,
-	setAgentBudget: unavailableCall,
-	agentBudgetAction: unavailableCall,
-	agentBudgetOperation: unavailableCall,
+// Full Costs, Budgets, Prices, Insights, and Subscription Usage gateway wiring (fails closed when signed out).
+// Under `bun run dev:mock`, `e2e/fakes/modules/costs.ts` stands in for this file.
+export const costsApi: CostsApi = Object.freeze<CostsApi>({
+	prices: (organizationId) =>
+		signedInSession() ? gatewayCostsFullApi.prices(organizationId) : unavailableCall(),
+	addPrice: (organizationId, draft) =>
+		signedInSession() ? gatewayCostsFullApi.addPrice(organizationId, draft) : unavailableCall(),
+	priceOperation: (organizationId, operationId) =>
+		signedInSession()
+			? gatewayCostsFullApi.priceOperation(organizationId, operationId)
+			: unavailableCall(),
+	organizationCost: (organizationId, period) =>
+		signedInSession()
+			? gatewayCostsFullApi.organizationCost(organizationId, period)
+			: unavailableCall(),
+	records: (organizationId, period, key, cursor) =>
+		signedInSession()
+			? gatewayCostsFullApi.records(organizationId, period, key, cursor)
+			: unavailableCall(),
+	projectInvestment: (organizationId, request) =>
+		signedInSession()
+			? gatewayCostsFullApi.projectInvestment(organizationId, request)
+			: unavailableCall(),
+	agentBudgets: (organizationId) =>
+		signedInSession() ? gatewayCostsReadApi.agentBudgets(organizationId) : unavailableCall(),
+	projectInsights: (organizationId, projectId, period) =>
+		signedInSession()
+			? gatewayInsightsReadApi.projectInsights(organizationId, projectId, period)
+			: unavailableCall(),
+	projectRecords: (organizationId, projectId, period, key, cursor) =>
+		signedInSession()
+			? gatewayCostsFullApi.projectRecords(organizationId, projectId, period, key, cursor)
+			: unavailableCall(),
+	organizationInsights: (organizationId, period) =>
+		signedInSession()
+			? gatewayInsightsReadApi.organizationInsights(organizationId, period)
+			: unavailableCall(),
+	exportRecords: (organizationId, scope, period) =>
+		signedInSession()
+			? gatewayCostsFullApi.exportRecords(organizationId, scope, period)
+			: unavailableCall(),
+	memberCost: (organizationId, memberId, request) =>
+		signedInSession()
+			? gatewayCostsFullApi.memberCost(organizationId, memberId, request)
+			: unavailableCall(),
+	memberRecords: (organizationId, memberId, request, cursor) =>
+		signedInSession()
+			? gatewayCostsFullApi.memberRecords(organizationId, memberId, request, cursor)
+			: unavailableCall(),
+	setAgentBudget: (organizationId, memberId, draft) =>
+		signedInSession()
+			? gatewayCostsFullApi.setAgentBudget(organizationId, memberId, draft)
+			: unavailableCall(),
+	agentBudgetAction: (organizationId, memberId, action) =>
+		signedInSession()
+			? gatewayCostsFullApi.agentBudgetAction(organizationId, memberId, action)
+			: unavailableCall(),
+	agentBudgetOperation: (organizationId, operationId) =>
+		signedInSession()
+			? gatewayCostsFullApi.agentBudgetOperation(organizationId, operationId)
+			: unavailableCall(),
 	subscriptionUsage: (organizationId) =>
 		signedInSession()
 			? gatewaySubscriptionUsageApi.subscriptionUsage(organizationId)
@@ -185,4 +256,4 @@ export const costsApi: CostsApi = {
 		signedInSession()
 			? gatewaySubscriptionUsageApi.revokeSubscriptionUsageCredential(organizationId, connectionId)
 			: unavailableCall()
-};
+});

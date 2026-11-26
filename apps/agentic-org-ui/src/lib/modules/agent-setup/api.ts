@@ -1,4 +1,7 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { orgApi } from '$lib/modules/organization/api';
+import { createHttpAgentSetupApi } from './http-api';
 import type { AgentSetupDetail, AgentSetupList, ExecutionEdit, RoleEdit } from './types';
 
 /**
@@ -21,11 +24,35 @@ export interface AgentSetupApi {
 	setRole(organizationId: string, memberId: string, edit: RoleEdit): Promise<AgentSetupDetail>;
 }
 
-// The web API does not serve these yet: every call refuses, and the screens say so.
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+const gatewayAgentSetupApi = createHttpAgentSetupApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal),
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	},
+	orgApi,
+	session: () => {
+		const s = signedInSession();
+		return s ? { accountAdmin: s.admin } : undefined;
+	}
+});
+
+// Production agent-setup API backed by `/api/v1/organizations/{org}/{snapshot,offices,provider-connections,model-profiles,roles,agents}`.
 // Under `bun run dev:mock`, e2e/fakes/modules/agent-setup.ts stands in for this file.
-export const agentSetupApi: AgentSetupApi = {
-	list: unavailableCall,
-	agent: unavailableCall,
-	saveExecution: unavailableCall,
-	setRole: unavailableCall
-};
+export const agentSetupApi: AgentSetupApi = Object.freeze<AgentSetupApi>({
+	list: (organizationId) =>
+		signedInSession() ? gatewayAgentSetupApi.list(organizationId) : unavailableCall(),
+	agent: (organizationId, memberId) =>
+		signedInSession() ? gatewayAgentSetupApi.agent(organizationId, memberId) : unavailableCall(),
+	saveExecution: (organizationId, memberId, edit) =>
+		signedInSession()
+			? gatewayAgentSetupApi.saveExecution(organizationId, memberId, edit)
+			: unavailableCall(),
+	setRole: (organizationId, memberId, edit) =>
+		signedInSession()
+			? gatewayAgentSetupApi.setRole(organizationId, memberId, edit)
+			: unavailableCall()
+});

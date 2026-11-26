@@ -84,6 +84,7 @@ fn run_verify(
         "files": manifest.files.len(),
         "content_bytes": manifest.content_bytes(),
         "private_notes_checked": report.private_notes_checked,
+        "private_user_space_checked": report.private_user_space_checked,
         "rebuilt": rebuilt(&report.rebuilt),
         "extracted_to": report.extracted_to.as_ref().map(|to| to.display().to_string()),
     });

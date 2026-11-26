@@ -11,11 +11,17 @@ use super::super::layout;
 use super::super::sqlite::{
     accounting::SqliteAccountingStore, budgets::SqliteBudgetStore,
     private_notes::SqlitePrivateNotesStore, providers::SqliteProviderPoolStore,
-    replication::SqliteReplicationProjection,
+    replication::SqliteReplicationProjection, user_space::SqliteUserSpaceStore,
 };
 use super::EngineChoice;
 use crate::{
     accounting::AccountingStore,
+    attachments::{
+        blobs::{BlobStore, FsBlobStore},
+        staging::StagingArea,
+        user_space::{SatelliteRefusedUserSpace, UserSpaceStore},
+        AttachmentStores,
+    },
     budgets::BudgetStore,
     error::OfficeError,
     private_fs::private_dir_synced,
@@ -51,6 +57,48 @@ pub(crate) fn open_private_notes(
             crate::private_notes::memory::MemoryPrivateNotesStore::new(),
         )),
     }
+}
+
+/// Opens the office's attachment stores (`TASK-98.1`, ADR-0037): shared blobs and the staging
+/// area on every office, folders made lazily; on HQ also the private blobs and the
+/// human-private space (`private/user-space.db`). A satellite gets the fail-closed private
+/// space and never creates `<durable-root>/private/` (`ARCH-02`).
+pub(crate) fn open_attachments(
+    engine: EngineChoice,
+    durable_root: &Path,
+    office_id: &str,
+    is_hq: bool,
+) -> Result<AttachmentStores, OfficeError> {
+    let shared: Arc<dyn BlobStore> = Arc::new(FsBlobStore::new(
+        durable_root,
+        layout::shared_blobs(durable_root),
+    ));
+    let staging = StagingArea::new(durable_root, office_id);
+    if !is_hq {
+        return Ok(AttachmentStores {
+            shared,
+            private: None,
+            staging,
+            user_space: Arc::new(SatelliteRefusedUserSpace),
+        });
+    }
+    lay_out(durable_root, &layout::private_notes(durable_root))?;
+    let user_space: Arc<dyn UserSpaceStore> = match engine {
+        EngineChoice::Sqlite => Arc::new(SqliteUserSpaceStore::open(durable_root)?),
+        #[cfg(any(test, feature = "testkit"))]
+        EngineChoice::Memory => {
+            Arc::new(crate::attachments::user_space::memory::MemoryUserSpaceStore::new())
+        }
+    };
+    Ok(AttachmentStores {
+        shared,
+        private: Some(Arc::new(FsBlobStore::new(
+            durable_root,
+            layout::private_blobs(durable_root),
+        ))),
+        staging,
+        user_space,
+    })
 }
 
 /// Opens the isolated `L2` usage & cost accounting store (`TASK-53`, `doc-87`, `ADR-0016`)

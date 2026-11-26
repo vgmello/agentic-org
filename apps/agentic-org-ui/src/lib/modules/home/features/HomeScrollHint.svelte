@@ -130,7 +130,7 @@
 		type="button"
 		data-testid="home-scroll-hint"
 		onclick={scrollDown}
-		class="home-scroll-hint-btn inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
+		class="home-scroll-hint-btn inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
 	>
 		<span>Scroll for more</span>
 		<ChevronDown class="size-4 shrink-0" aria-hidden="true" />
@@ -144,8 +144,8 @@
 		bottom: 0;
 		z-index: 20;
 		pointer-events: none;
-		padding: 12px 16px calc(8px + env(safe-area-inset-bottom));
-		background: linear-gradient(to top, var(--exec-scroll-hint-bg) 52%, transparent 100%);
+		padding: 8px 16px calc(6px + env(safe-area-inset-bottom));
+		background: var(--exec-scroll-hint-bg);
 	}
 
 	.home-scroll-hint-bar[hidden] {
@@ -156,21 +156,13 @@
 		pointer-events: auto;
 		background: var(--exec-scroll-hint-pill-bg);
 		color: var(--exec-scroll-hint-ink);
-		box-shadow:
-			inset 0 0 0 1px var(--exec-border-hi),
-			0 6px 18px -6px color-mix(in srgb, var(--shade) 45%, transparent);
 		cursor: pointer;
-		transition:
-			color 0.14s ease,
-			box-shadow 0.14s ease;
+		transition: color 0.14s ease;
 	}
 
 	.home-scroll-hint-btn:hover,
 	.home-scroll-hint-btn:focus-visible {
 		color: var(--exec-scroll-hint-ink-hover);
-		box-shadow:
-			inset 0 0 0 1px var(--tone-accent-ring),
-			0 6px 18px -6px color-mix(in srgb, var(--shade) 55%, transparent);
 	}
 
 	@media (max-width: 720px), (pointer: coarse) {

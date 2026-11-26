@@ -53,17 +53,9 @@
 		description="Owner blocks, verifications, open asks and reached budgets appear here when they wait on you."
 	/>
 {:else}
-	<ul
-		role="list"
-		class="divide-y divide-line-subtle rounded-xl bg-surface-raised outline-1 -outline-offset-1 outline-line"
-		data-testid="needs-me-list"
-	>
+	<ul role="list" class="needs-me-list" data-testid="needs-me-list">
 		{#each rows as row (row.id)}
-			<li
-				class="flex flex-wrap items-start justify-between gap-4 px-4 py-4 min-[640px]:px-6"
-				data-testid="needs-me-row"
-				data-ref={row.ref}
-			>
+			<li class="needs-me-row" data-testid="needs-me-row" data-ref={row.ref}>
 				<div class="flex min-w-0 flex-1 flex-col gap-1.5">
 					<div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs/5 text-fg-muted">
 						<span class="inline-flex items-center gap-1">
@@ -79,7 +71,7 @@
 					<a
 						href={resolve(taskHref(row.ref) as '/')}
 						onclick={(e) => handleOpen(e, row)}
-						class="text-sm/6 font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
+						class="text-[0.9375rem]/6 font-medium text-fg hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
 					>
 						{row.title}
 					</a>
@@ -99,11 +91,11 @@
 					</div>
 				</div>
 
-				<div class="flex shrink-0 flex-wrap items-center gap-3">
+				<div class="flex shrink-0 flex-wrap items-center gap-2">
 					{#if row.needsMe?.inboxItemId}
 						<a
 							href={resolve(inboxItemHref(row.needsMe.inboxItemId) as '/')}
-							class="inline-flex items-center rounded-md bg-surface-overlay px-3 py-1.5 text-sm/6 font-medium text-fg ring-1 ring-line hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
+							class="needs-me-btn needs-me-btn-secondary"
 							data-testid="needs-me-inbox-link"
 						>
 							Open Inbox item
@@ -112,7 +104,7 @@
 					<a
 						href={resolve(taskHref(row.ref) as '/')}
 						onclick={(e) => handleOpen(e, row)}
-						class="inline-flex items-center rounded-md px-3 py-1.5 text-sm/6 font-medium text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
+						class="needs-me-btn needs-me-btn-link"
 					>
 						Open {row.ref}
 					</a>
@@ -121,3 +113,66 @@
 		{/each}
 	</ul>
 {/if}
+
+<style>
+	.needs-me-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+	}
+	.needs-me-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 12px 16px;
+		padding: 14px 12px;
+		border-radius: var(--exec-ctrl-radius, 6px);
+		box-shadow: inset 0 -1px var(--exec-border, var(--line-subtle));
+		transition: background-color 110ms ease-out;
+	}
+	.needs-me-row:last-child {
+		box-shadow: none;
+	}
+	.needs-me-row:is(:hover, :focus-within) {
+		background: var(
+			--work-row-hover,
+			var(--triage-row-hover, var(--exec-btn-ghost-bg-hover, var(--surface-raised)))
+		);
+	}
+	.needs-me-btn {
+		display: inline-flex;
+		align-items: center;
+		min-height: 34px;
+		padding: 0 12px;
+		border-radius: var(--exec-ctrl-radius, 6px);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+	.needs-me-btn-secondary {
+		background: var(--exec-btn-outline-bg, var(--surface-overlay));
+		box-shadow: inset 0 0 0 1px var(--exec-btn-outline-ring, var(--line));
+		color: var(--exec-btn-outline-ink, var(--fg));
+	}
+	.needs-me-btn-secondary:hover {
+		background: var(--exec-btn-outline-bg-hover, var(--surface-raised));
+	}
+	.needs-me-btn-link {
+		color: var(--tone-accent-ink, var(--link));
+	}
+	.needs-me-btn-link:hover {
+		background: var(--exec-btn-ghost-bg-hover, var(--surface-raised));
+	}
+	.needs-me-btn:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: 2px;
+	}
+	@media (max-width: 720px), (pointer: coarse) {
+		.needs-me-btn {
+			min-height: 44px;
+		}
+	}
+</style>

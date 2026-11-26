@@ -15,8 +15,10 @@
 	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
 	import Avatar from '$lib/components/Avatar.svelte';
+	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
+	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import TabsNav from '$lib/components/TabsNav.svelte';
 	import { mobileButton } from '$lib/components/classes';
@@ -30,7 +32,7 @@
 		DropdownMenuTrigger
 	} from '$lib/components/ui/dropdown-menu';
 	import { pageTitle } from '$lib/nav';
-	import { toAppError } from '$lib/proto';
+	import { isBuiltInAgent, toAppError } from '$lib/proto';
 	import { offboardAgent, removePerson, setAgentStatus } from '$lib/modules/organization/actions';
 	import { offboardSummary } from '$lib/modules/organization/agents';
 	import { orgApi } from '$lib/modules/organization/api';
@@ -48,6 +50,8 @@
 	import { fact, factsList, factsWrap } from '../../components/facts';
 	import { FIRST_POLL_MS, LatestRead, awaitingOffice, nextPollDelay } from './pending';
 	import IdentityDialog from './IdentityDialog.svelte';
+	import AgentAnalysisOverlay from './AgentAnalysisOverlay.svelte';
+	import AgentOrbRail from './AgentOrbRail.svelte';
 	import { offboardPreview } from './identity';
 	import MoveHomeTeamDialog from './MoveHomeTeamDialog.svelte';
 	import ProfileSkeleton from './ProfileSkeleton.svelte';
@@ -114,6 +118,7 @@
 	});
 
 	let dialog = $state<ProfileAction | undefined>();
+	let analysisOpen = $state(false);
 	let opener: HTMLElement | null = null;
 	let moreButton = $state<HTMLButtonElement | null>(null);
 
@@ -379,21 +384,29 @@
 			{@const tabs = tabsFor(p)}
 			<div class="section-header profile-header">
 				<div class="px-4 pt-5 min-[640px]:px-6 min-[1024px]:px-8">
-					<a
-						href={resolve('/teams/members')}
-						class="inline-flex min-h-6 items-center text-sm/6 font-semibold max-[639px]:min-h-11 {linkClass}"
-						>Members</a
-					>
+					<Breadcrumbs
+						items={p.owner
+							? [{ label: 'Teams', href: '/teams' }, { label: p.name }]
+							: [
+									{ label: 'Teams', href: '/teams' },
+									{ label: 'Members', href: '/teams/members' },
+									{ label: p.name }
+								]}
+					/>
 				</div>
-				<header class="profile-masthead prof px-4 pt-2 pb-3 min-[640px]:px-6 min-[1024px]:px-8">
-					<div class="flex min-w-0 flex-1 flex-col gap-3 min-[640px]:flex-row min-[640px]:gap-x-4">
+				<header
+					class="profile-masthead prof flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 pt-2 pb-3 min-[640px]:px-6 min-[1024px]:px-8"
+				>
+					<div
+						class="flex min-w-0 flex-1 basis-64 flex-col gap-3 min-[640px]:flex-row min-[640px]:gap-x-4"
+					>
 						<Avatar name={p.name} class="size-10 shrink-0" />
 						<div class="min-w-0 flex-1">
 							<h2
 								id="profile-heading"
 								bind:this={nameHeading}
 								tabindex="-1"
-								class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere]"
+								class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[clamp(1.375rem,2.2vw,1.875rem)]/[1.22] font-semibold tracking-[-0.03em] text-fg [overflow-wrap:anywhere]"
 							>
 								{p.name}{p.viewer.isSelf ? ' (you)' : ''}
 								{#if p.owner}<StatusPill label="Owner" class="profile-owner-pill" />{/if}
@@ -469,6 +482,7 @@
 							</p>
 						</div>
 					</div>
+					<InteriorSearchBar class="w-full shrink-0 sm:w-[clamp(18rem,28vw,25rem)]" />
 				</header>
 				<div class="section-toolbar profile-toolbar">
 					<div
@@ -488,6 +502,13 @@
 									variant="outline"
 									size="sm"
 									class={actionBtn}
+									data-testid="agent-analysis-btn"
+									onclick={() => (analysisOpen = true)}>Analysis Mode</Button
+								>
+								<Button
+									variant="outline"
+									size="sm"
+									class={actionBtn}
 									onclick={(e) => act('run', e.currentTarget)}>Run now</Button
 								>
 							{/if}
@@ -497,15 +518,6 @@
 								class={actionBtn}
 								onclick={(e) => act('assign', e.currentTarget)}>Assign task</Button
 							>
-							{#if manage && p.kind === 'agent'}
-								<Button
-									variant="outline"
-									size="sm"
-									class="profile-pause {actionBtn}"
-									onclick={(e) => act(p.status === 'paused' ? 'resume' : 'pause', e.currentTarget)}
-									>{p.status === 'paused' ? 'Resume' : 'Pause'}</Button
-								>
-							{/if}
 							{#if manage}
 								<DropdownMenu>
 									<DropdownMenuTrigger>
@@ -541,14 +553,14 @@
 												>Move home team…</DropdownMenuItem
 											>
 										{/if}
-										{#if p.kind === 'agent'}
+										{#if p.kind === 'agent' && !isBuiltInAgent(record)}
 											<DropdownMenuSeparator />
 											<DropdownMenuItem
 												variant="destructive"
 												class="max-[639px]:min-h-11"
 												onSelect={() => act('offboard')}>Offboard…</DropdownMenuItem
 											>
-										{:else if !p.owner}
+										{:else if p.kind !== 'agent' && !p.owner}
 											<DropdownMenuSeparator />
 											<DropdownMenuItem
 												variant="destructive"
@@ -573,7 +585,22 @@
 			<h3 bind:this={tabHeading} tabindex="-1" class="sr-only">
 				{hasTab ? TAB_LABEL[tab] : `No such tab for ${p.name}`}
 			</h3>
-			{@render tabContent()}
+			{#if p.kind === 'agent'}
+				<div class="agent-shell" data-testid="agent-profile-shell">
+					<div class="agent-main min-w-0">
+						{@render tabContent()}
+					</div>
+					<AgentOrbRail profile={p} onOpenAnalysis={() => (analysisOpen = true)} />
+				</div>
+				<AgentAnalysisOverlay
+					bind:open={analysisOpen}
+					{organizationId}
+					profile={p}
+					onstarted={runRequested}
+				/>
+			{:else}
+				{@render tabContent()}
+			{/if}
 
 			{#if p.kind === 'agent'}
 				{#key opening}<RunNowDialog
@@ -756,5 +783,15 @@
 		background: var(--tone-accent-bg);
 		color: var(--tone-accent-ink);
 		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+	.agent-shell {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		align-items: start;
+	}
+	@media (min-width: 1024px) {
+		.agent-shell {
+			grid-template-columns: minmax(0, 1fr) 18.5rem;
+		}
 	}
 </style>

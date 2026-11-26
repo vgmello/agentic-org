@@ -7,13 +7,17 @@
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Loaded from '$lib/components/Loaded.svelte';
+	import SectionHead from '$lib/components/SectionHead.svelte';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { ActivityRows } from '$lib/modules/members';
 	import { devProcessHref } from '$lib/modules/processes';
 	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
 	import { formatDate } from '$lib/modules/preferences/time';
+	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { projectsApi } from '../../api';
+	import { computeProjectCycleTime } from '../../cycle-time';
 	import { investmentResource, investmentWords } from '../../investment';
 	import {
 		bugParts,
@@ -33,9 +37,17 @@
 	import SeverityMark from '../../components/SeverityMark.svelte';
 	import type { BugCounts } from '../../types';
 	import BriefText from './BriefText.svelte';
+	import ProjectAttentionSplit from './ProjectAttentionSplit.svelte';
 
 	const frame = projectFrame();
 	const p = $derived(frame.project);
+
+	let shellData: ReturnType<typeof useShellData> | undefined;
+	try {
+		shellData = useShellData();
+	} catch {
+		shellData = undefined;
+	}
 
 	const activity = new Resource(() => projectsApi.activity(frame.organizationId, frame.projectId));
 	const investment = investmentResource(() => frame.organizationId);
@@ -50,6 +62,16 @@
 	const totalTasks = $derived(countedTasks(p.tasks));
 	const pct = $derived(progressPercent(p.tasks));
 	const barTone = $derived(projectBarTone(p.tasks, p.bugs, p.archived));
+	const cycleTime = $derived(computeProjectCycleTime(shellData?.workItems ?? [], p.id));
+	const goalSummary = $derived.by(() => {
+		const raw = p.brief?.markdown?.trim();
+		if (!raw) return undefined;
+		const firstLine = raw
+			.split(/\r?\n/)
+			.map((l) => l.replace(/^#+\s*/, '').trim())
+			.find((l) => l.length > 0);
+		return firstLine && firstLine.length > 180 ? `${firstLine.slice(0, 177)}…` : firstLine;
+	});
 	const barFill: Record<ProjectBarTone, string> = {
 		ok: 'var(--tone-ok-bar)',
 		warn: 'var(--tone-warn-bar)',
@@ -101,10 +123,20 @@
 {/snippet}
 
 <div class="flex flex-col gap-5 px-4 py-5 min-[640px]:px-6 min-[1024px]:px-8">
+	{#if goalSummary}
+		<p class="pj-goal text-sm/6 text-[var(--exec-body)]">
+			<span
+				class="pj-goal-lbl mr-2 text-xs font-semibold tracking-wider text-[var(--exec-dim)] uppercase"
+				>Goal</span
+			>
+			<span>{goalSummary}</span>
+		</p>
+	{/if}
+
 	<dl
 		class={[
-			'ov-figures grid grid-cols-1 gap-3 min-[640px]:grid-cols-2',
-			money ? 'min-[1280px]:grid-cols-5' : 'min-[1280px]:grid-cols-4'
+			'ov-figures grid grid-cols-1 gap-3 min-[640px]:grid-cols-2 min-[1024px]:grid-cols-3',
+			money ? 'min-[1440px]:grid-cols-6' : 'min-[1280px]:grid-cols-5'
 		]}
 		data-testid="project-figures"
 	>
@@ -115,18 +147,21 @@
 			}
 		])}
 		{@render figure(
-			'Done',
-			String(p.tasks.done),
+			'All work',
+			totalTasks > 0 ? `${p.tasks.done}/${totalTasks}` : String(p.tasks.done),
 			[
 				{
-					text:
-						totalTasks === 0
-							? 'No tasks yet'
-							: `of ${totalTasks} ${totalTasks === 1 ? 'task' : 'tasks'}`
+					text: totalTasks === 0 ? 'No tasks yet' : `${pct}% done`
 				}
 			],
 			totalTasks > 0 ? { pct, fill: barFill[barTone] } : undefined
 		)}
+		{@render figure('Cycle time', cycleTime.closedPerDayLabel, [
+			{ text: cycleTime.medianCycleLabel },
+			...(cycleTime.deltaLabel
+				? [{ text: cycleTime.deltaLabel, warn: cycleTime.deltaTone === 'warn' }]
+				: [])
+		])}
 		{@render figure(
 			'Open bugs',
 			String(openBugs(p.bugs)),
@@ -149,6 +184,8 @@
 			)}
 		{/if}
 	</dl>
+
+	<ProjectAttentionSplit organizationId={frame.organizationId} projectId={p.id} />
 
 	{#if money?.note}
 		<p class="text-xs/5 text-fg-muted">
@@ -206,30 +243,35 @@
 		</section>
 	</div>
 
-	<section aria-labelledby="latest-heading" class="exec-card overflow-hidden">
-		<div
-			class="flex flex-wrap items-baseline justify-between gap-x-4 border-b border-line px-5 py-3.5"
-		>
-			<h4 id="latest-heading" class={h4}>Latest activity</h4>
-			<a href={resolve(projectHref(p.id, 'activity') as '/')} class="{inlineLink.sm} text-sm/6"
-				>All activity</a
-			>
-		</div>
-		<Loaded
-			resource={activity}
-			label="the latest activity"
-			error="Couldn't load the latest activity"
-			errorLevel={4}
-			rows={3}
-		>
-			{#snippet children(rows)}
-				{#if rows.length === 0}
-					<p class="px-5 py-6 text-sm/6 text-fg-muted">No activity yet.</p>
-				{:else}
-					<ActivityRows rows={sortActivityNewestFirst(rows).slice(0, 5)} />
-				{/if}
+	<section aria-labelledby="latest-heading" class="flex flex-col gap-3">
+		<SectionHead id="latest-heading" title="Recent activity" reportTitle="Latest Project Activity">
+			{#snippet action()}
+				<a
+					href={resolve(projectHref(p.id, 'activity') as '/')}
+					class="inline-flex items-center gap-0.5 text-xs font-semibold text-[var(--exec-accent-ink)]"
+				>
+					<span>All activity</span>
+					<ChevronRight class="size-3.5" aria-hidden="true" />
+				</a>
 			{/snippet}
-		</Loaded>
+		</SectionHead>
+		<div class="exec-card overflow-hidden">
+			<Loaded
+				resource={activity}
+				label="the latest activity"
+				error="Couldn't load the latest activity"
+				errorLevel={4}
+				rows={3}
+			>
+				{#snippet children(rows)}
+					{#if rows.length === 0}
+						<p class="px-5 py-6 text-sm/6 text-fg-muted">No activity yet.</p>
+					{:else}
+						<ActivityRows rows={sortActivityNewestFirst(rows).slice(0, 5)} />
+					{/if}
+				{/snippet}
+			</Loaded>
+		</div>
 	</section>
 </div>
 

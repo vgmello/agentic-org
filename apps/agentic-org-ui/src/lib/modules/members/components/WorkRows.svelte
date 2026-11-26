@@ -14,11 +14,13 @@
 		rows,
 		hideAssignee = false,
 		linked = true,
+		archivedRefs,
 		onopen
 	}: {
 		rows: WorkRow[];
 		hideAssignee?: boolean;
 		linked?: boolean;
+		archivedRefs?: ReadonlySet<string>;
 		onopen?: (row: WorkRow, triggerEl: HTMLElement | null) => void;
 	} = $props();
 
@@ -78,7 +80,12 @@
 					{/each}
 				</p>
 			</div>
-			<StatusPill label={WORK_STATE_LABELS[row.state]} class={STATE_CLASS[row.state]} />
+			<div class="flex shrink-0 items-center gap-1.5">
+				{#if archivedRefs?.has(row.ref)}
+					<StatusPill label="Archived" class="opacity-80" />
+				{/if}
+				<StatusPill label={WORK_STATE_LABELS[row.state]} class={STATE_CLASS[row.state]} />
+			</div>
 		</li>
 	{/each}
 </ul>

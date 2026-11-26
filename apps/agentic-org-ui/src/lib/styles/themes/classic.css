@@ -105,6 +105,15 @@ html[data-ui-theme='classic'] {
 	--exec-panel-sheen: none;
 	--exec-border: rgba(255, 255, 255, 0.1);
 	--exec-border-hi: rgba(255, 255, 255, 0.18);
+	--exec-scrim-bg: rgba(4, 7, 16, 0.56);
+	--exec-tess-bg: #182230;
+	--exec-tess-border: #56667d;
+	--exec-tess-radius: 12px;
+	--exec-tess-shadow: 0 24px 60px -12px rgba(2, 6, 23, 0.68);
+	--exec-tess-pill-shadow: 0 14px 36px -8px rgba(0, 0, 0, 0.52);
+	--exec-notif-bg: #182230;
+	--exec-notif-border: #56667d;
+	--exec-notif-shadow: 0 22px 54px rgba(0, 0, 0, 0.52);
 	--exec-blur: none;
 	--exec-shadow: inset 0 0 0 1px var(--exec-border);
 	--exec-shadow-hi: inset 0 0 0 1px var(--exec-border-hi);
@@ -194,6 +203,27 @@ html[data-ui-theme='classic'] {
 	--exec-cos-fade: #16202e;
 	--exec-cos-border: rgba(255, 255, 255, 0.09);
 	--exec-cos-rule: #7c86ff;
+	--exec-lens-on-bg: var(--tone-accent);
+	--exec-lens-on-ink: #ffffff;
+	--exec-lens-on-shadow: none;
+	--exec-cmdk-dialog-radius: 7px;
+	--exec-cmdk-tab-grp-radius: 5px;
+	--exec-cmdk-tab-radius: 5px;
+	--exec-cmdk-esc-radius: 5px;
+	--exec-cmdk-opt-radius: 7px;
+	--exec-cmdk-menu-bg: #182230;
+	--exec-cmdk-menu-blur: none;
+	--exec-cmdk-menu-shadow:
+		inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 24px 60px -16px rgba(0, 0, 0, 0.58);
+	--exec-cmdk-tag-bg: #243144;
+	--exec-cmdk-foot-bg: #131b27;
+	--exec-cmdk-foot-kbd-bg: #1e2939;
+	--exec-cmdk-foot-kbd-ring: rgba(255, 255, 255, 0.14);
+	--exec-cmdk-foot-kbd-ink: #d1d5dc;
+	--exec-scroll-hint-bg: #1e2939;
+	--exec-scroll-hint-pill-bg: transparent;
+	--exec-scroll-hint-ink: #99a1af;
+	--exec-scroll-hint-ink-hover: #ffffff;
 
 	--exec-nav-dot: var(--tone-warn);
 	--exec-nav-dot-halo: rgba(251, 191, 36, 0.16);
@@ -204,6 +234,8 @@ html[data-ui-theme='classic'] {
 	--side-panel-surface: #1e2939;
 	--assembly-surface: #1e2939;
 	--workspace-secondary-surface: #1b2533;
+	--triage-row-hover: rgba(255, 255, 255, 0.05);
+	--triage-row-selected: rgba(97, 95, 255, 0.16);
 }
 
 html[data-ui-theme='classic'] .exec-canvas::before {
@@ -243,25 +275,34 @@ html[data-ui-theme='classic'][data-interior-page]
 	background-image: none;
 }
 
-/* Separate the workspace command dialog from the dark page behind it (poc/v6.html ffe0e0ce) */
+html[data-ui-theme='classic'][data-interior-page] .triage-workspace {
+	background: var(--exec-bg);
+}
+
+html[data-ui-theme='classic'][data-interior-page] .triage-queue,
+html[data-ui-theme='classic'][data-interior-page] .triage-group-head {
+	background: rgba(255, 255, 255, 0.03);
+}
+
+/* Separate the workspace command dialog from the dark page behind it with crisp contrast (TASK-145) */
 html[data-ui-theme='classic'] .exec-cmdk-dialog {
 	background-color: #182230;
-	border: 1px solid #8393ab;
-	box-shadow: 0 24px 60px -16px rgba(0, 0, 0, 0.58);
+	border: 1px solid rgba(255, 255, 255, 0.16);
+	box-shadow: 0 28px 72px -12px rgba(0, 0, 0, 0.72);
 }
 
 html[data-ui-theme='classic'] .exec-cmdk-tabs {
-	background: #34445a;
-	border-bottom-color: #8b9cb3;
+	background: #131b27;
+	border-bottom-color: rgba(255, 255, 255, 0.09);
 }
 
 html[data-ui-theme='classic'] .exec-cmdk-tab-grp {
-	background: #222e41;
-	box-shadow: inset 0 0 0 1px #56667d;
+	background: #1d2839;
+	box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
 }
 
 html[data-ui-theme='classic'] .exec-cmdk-tab {
-	color: #d9e1ec;
+	color: #a7b6cc;
 }
 
 html[data-ui-theme='classic'] .exec-cmdk-tab:hover {
@@ -269,9 +310,9 @@ html[data-ui-theme='classic'] .exec-cmdk-tab:hover {
 }
 
 html[data-ui-theme='classic'] .exec-cmdk-tab[aria-selected='true'] {
-	background: #414673;
+	background: #2b3a54;
 	color: #ffffff;
-	box-shadow: inset 0 0 0 1px #93a1d8;
+	box-shadow: inset 0 0 0 1px rgba(139, 152, 255, 0.44);
 }
 
 html[data-ui-theme='classic'] .exec-cmdk-tab[aria-selected='true'] svg {
@@ -279,13 +320,13 @@ html[data-ui-theme='classic'] .exec-cmdk-tab[aria-selected='true'] svg {
 }
 
 html[data-ui-theme='classic'] .exec-cmdk-close {
-	background: #26354a;
-	color: #e5eaf1;
-	box-shadow: inset 0 0 0 1px #8999af;
+	background: #1d2839;
+	color: #d6dfec;
+	box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
 }
 
 html[data-ui-theme='classic'] .exec-cmdk-close:hover {
-	background: #41546d;
+	background: #2b3a54;
 	color: #ffffff;
 }
 

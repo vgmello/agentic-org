@@ -13,6 +13,8 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { resolve } from '$app/paths';
+	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
+	import { useShellCommand } from '$lib/platform/shell/shell-command';
 
 	let {
 		title,
@@ -23,6 +25,7 @@
 		description,
 		back,
 		actions,
+		showSearch = true,
 		class: className = ''
 	}: {
 		title: string;
@@ -36,8 +39,11 @@
 		description?: string | Snippet;
 		back?: { href: string; label: string };
 		actions?: Snippet;
+		showSearch?: boolean;
 		class?: string;
 	} = $props();
+
+	const shellCommand = useShellCommand();
 </script>
 
 <header
@@ -56,7 +62,7 @@
 				this={level === 1 ? 'h1' : 'h2'}
 				{id}
 				tabindex="-1"
-				class="flex flex-wrap items-baseline gap-x-2 text-base/7 font-semibold text-fg [overflow-wrap:anywhere] focus:outline-none"
+				class="flex flex-wrap items-baseline gap-x-2.5 text-[clamp(1.375rem,2.2vw,1.875rem)]/[1.22] font-semibold tracking-[-0.03em] text-fg [overflow-wrap:anywhere] focus:outline-none"
 			>
 				{title}
 				{#if count !== undefined}
@@ -73,6 +79,13 @@
 				<div class="mt-1 max-w-3xl text-sm/6 text-fg-muted">{@render description()}</div>
 			{/if}
 		</div>
-		{#if actions}<div class="flex flex-wrap items-center gap-3">{@render actions()}</div>{/if}
+		{#if actions || (showSearch && shellCommand)}
+			<div class="flex flex-wrap items-center justify-end gap-3">
+				{#if actions}{@render actions()}{/if}
+				{#if showSearch && shellCommand}
+					<InteriorSearchBar class="w-full sm:w-[clamp(18rem,28vw,25rem)]" />
+				{/if}
+			</div>
+		{/if}
 	</div>
 </header>

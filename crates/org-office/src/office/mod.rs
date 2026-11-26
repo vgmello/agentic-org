@@ -19,6 +19,7 @@
 mod accounting;
 #[cfg(test)]
 mod accounting_budget_tests;
+mod attachments;
 mod budgets;
 mod companions;
 mod creation;
@@ -222,6 +223,8 @@ pub struct Office {
     runtime: crate::messaging::runtime::OfficeRuntime,
     /// Isolated HQ-authoritative per-author private task notes store (`durable/private/task-notes.db`).
     private_notes: Arc<dyn crate::private_notes::PrivateNotesStore>,
+    /// Attachment bytes, staged uploads and HQ's human-private space (`TASK-98.1`).
+    attachments: crate::attachments::AttachmentStores,
     /// Isolated `L2` usage & cost accounting store (`protected/accounting.db`).
     accounting: Arc<dyn crate::accounting::AccountingStore>,
     /// Isolated `L3` budget policies, periods, notices, and holds (`protected/budgets.db`).

@@ -1,4 +1,4 @@
-//! Office service ports: federation, providers, costs, processes, Git, and tasks.
+//! Office service ports: federation, providers, costs, processes, Git, tasks and attachments.
 
 use org_proto::{ApiError, ErrorCode, Request, Response};
 
@@ -160,6 +160,34 @@ pub(super) fn tasks_rpc(request: &Request, shared: &Shared, binding: &Binding) -
     };
     if let Some(tasks) = &shared.ports.tasks {
         if let Some(response) = tasks(Some(member), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
+}
+
+pub(super) fn attachments_rpc(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+) -> Option<Response> {
+    if !crate::attachment_calls::is_attachment_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if let Some(attachments) = &shared.ports.attachments {
+        if let Some(response) = attachments(Some(member), request) {
             return Some(response);
         }
     }

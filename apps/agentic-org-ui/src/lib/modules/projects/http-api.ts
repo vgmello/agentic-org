@@ -12,6 +12,16 @@ import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgApi } from '$lib/modules/organization/api';
 import { newStableId } from '$lib/modules/organization/commands';
 import type { TeamRef } from '$lib/modules/members';
+import type { WorkItemsApi } from '$lib/modules/workitems/api';
+import type { TaskRow } from '$lib/modules/workitems/types';
+import {
+	aggregateProjectWork,
+	buildProjectActivity,
+	emptyBugCounts,
+	emptyTaskCounts,
+	readProjectConversations,
+	type ProjectWorkTotals
+} from './live-hydration';
 import { OUTCOME_UNKNOWN } from './outcome';
 import type { ProjectsApi } from './api';
 import type {
@@ -39,8 +49,6 @@ export interface GatewayProjectRecord {
 	revision: number;
 }
 
-const ZERO_TASKS = Object.freeze({ todo: 0, inProgress: 0, blocked: 0, done: 0, cancelled: 0 });
-const ZERO_BUGS = Object.freeze({ critical: 0, major: 0, minor: 0, trivial: 0, unset: 0 });
 const ZERO_FEATURES = Object.freeze({ planned: 0, inProgress: 0, live: 0 });
 
 function teamRef(team: Team | undefined, fallbackId: string): TeamRef {
@@ -77,7 +85,8 @@ function isProjectRecord(value: unknown): value is GatewayProjectRecord {
 
 function toProjectRow(
 	record: GatewayProjectRecord,
-	teamsById: ReadonlyMap<string, Team>
+	teamsById: ReadonlyMap<string, Team>,
+	totals?: ProjectWorkTotals
 ): ProjectRow {
 	return {
 		id: record.id,
@@ -87,8 +96,8 @@ function toProjectRow(
 		ownerTeam: teamRef(teamsById.get(record.owner_team_id), record.owner_team_id),
 		contributors: record.contributing_team_ids.map((id) => teamRef(teamsById.get(id), id)),
 		archived: record.archived,
-		tasks: { ...ZERO_TASKS },
-		bugs: { ...ZERO_BUGS },
+		tasks: totals ? { ...totals.tasks } : emptyTaskCounts(),
+		bugs: totals ? { ...totals.bugs } : emptyBugCounts(),
 		developmentProcess: null
 	};
 }
@@ -143,17 +152,29 @@ interface PendingCreate {
 export function createHttpProjectsApi({
 	http,
 	orgApi,
+	workItemsApi,
 	instanceId,
 	newId = defaultUuidV7,
 	newEntityId = newStableId
 }: {
 	http: GatewayHttpTransport;
 	orgApi: Pick<OrgApi, 'view' | 'command'>;
+	workItemsApi?: Pick<WorkItemsApi, 'queue'>;
 	instanceId: () => string | undefined;
 	newId?: () => string;
 	newEntityId?: () => string;
 }): ProjectsApi {
 	const pendingCreates = new Map<string, PendingCreate>();
+
+	async function safeWorkRows(organizationId: string): Promise<TaskRow[]> {
+		if (!workItemsApi) return [];
+		try {
+			const queue = await workItemsApi.queue(organizationId, { kind: 'organization' });
+			return queue.rows;
+		} catch {
+			return [];
+		}
+	}
 
 	async function readProjects(organizationId: string): Promise<GatewayProjectRecord[]> {
 		let reply: GatewayReply;
@@ -398,25 +419,29 @@ export function createHttpProjectsApi({
 
 	return Object.freeze({
 		async list(organizationId: string): Promise<ProjectsOverview> {
-			const [records, view] = await Promise.all([
+			const [records, view, workRows] = await Promise.all([
 				readProjects(organizationId),
-				orgApi.view(organizationId)
+				orgApi.view(organizationId),
+				safeWorkRows(organizationId)
 			]);
 			const teamsById = new Map(view.snapshot.teams.map((t) => [t.id, t]));
+			const totals = aggregateProjectWork(workRows);
 			return {
-				projects: records.map((r) => toProjectRow(r, teamsById)),
+				projects: records.map((r) => toProjectRow(r, teamsById, totals.get(r.id))),
 				viewer: { canCreate: true }
 			};
 		},
 
 		async project(organizationId: string, projectId: string): Promise<ProjectDetail> {
-			const [record, view] = await Promise.all([
+			const [record, view, workRows] = await Promise.all([
 				readProject(organizationId, projectId),
-				orgApi.view(organizationId)
+				orgApi.view(organizationId),
+				safeWorkRows(organizationId)
 			]);
 			const teamsById = new Map(view.snapshot.teams.map((t) => [t.id, t]));
+			const totals = aggregateProjectWork(workRows);
 			return {
-				...toProjectRow(record, teamsById),
+				...toProjectRow(record, teamsById, totals.get(record.id)),
 				revision: record.revision,
 				brief: null,
 				features: { ...ZERO_FEATURES },
@@ -443,8 +468,21 @@ export function createHttpProjectsApi({
 			};
 		},
 
-		activity: async () => [],
-		conversations: async () => [],
+		async activity(organizationId: string, projectId: string) {
+			const rows = await safeWorkRows(organizationId);
+			return buildProjectActivity(rows, projectId);
+		},
+
+		async conversations(organizationId: string, projectId: string) {
+			let slug = '';
+			try {
+				const record = await readProject(organizationId, projectId);
+				slug = record.slug;
+			} catch {
+				// Leave slug empty when project lookup fails so conversations can still match by id.
+			}
+			return readProjectConversations(http, organizationId, projectId, slug);
+		},
 
 		async teamChoices(organizationId: string): Promise<TeamChoice[]> {
 			const { snapshot } = await orgApi.view(organizationId);
@@ -465,7 +503,10 @@ export function createHttpProjectsApi({
 		create,
 		createOperation,
 		rename: unavailableCall,
-		ownerChangePreview: async () => ({ tasks: 0 }),
+		async ownerChangePreview(organizationId: string, projectId: string) {
+			const rows = await safeWorkRows(organizationId);
+			return { tasks: rows.filter((r) => r.project?.id === projectId).length };
+		},
 		setTeams,
 		setRepositories: unavailableCall,
 		processPreview: unavailableCall,

@@ -16,6 +16,8 @@ required-features = ["testkit"]
 
 [dependencies]
 base64.workspace = true
+flate2.workspace = true
+image.workspace = true
 org-docs = { path = "../org-docs" }
 org-pki = { path = "../org-pki" }
 org-process = { path = "../org-process" }

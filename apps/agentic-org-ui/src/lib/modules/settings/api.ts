@@ -1,4 +1,7 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { orgApi } from '$lib/modules/organization/api';
+import { createHttpSettingsApi } from './http-api';
 import type { GeneralSettings } from './types';
 
 /**
@@ -15,9 +18,29 @@ export interface SettingsApi {
 	): Promise<GeneralSettings>;
 }
 
-// The web API does not serve these yet: every call refuses, and each screen says so.
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+const gatewaySettingsApi = createHttpSettingsApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal),
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	},
+	orgApi,
+	session: () => {
+		const s = signedInSession();
+		return s ? { accountAdmin: s.admin, login: s.account.login } : undefined;
+	}
+});
+
+// Production settings API backed by `/api/v1/instance`, `/api/v1/organizations`, and org snapshot/access routes.
 // Under `bun run dev:mock`, e2e/fakes/modules/settings.ts stands in for this file.
-export const settingsApi: SettingsApi = {
-	general: unavailableCall,
-	handOverAdministrator: unavailableCall
-};
+export const settingsApi: SettingsApi = Object.freeze<SettingsApi>({
+	general: (organizationId) =>
+		signedInSession() ? gatewaySettingsApi.general(organizationId) : unavailableCall(),
+	handOverAdministrator: (organizationId, memberId, password) =>
+		signedInSession()
+			? gatewaySettingsApi.handOverAdministrator(organizationId, memberId, password)
+			: unavailableCall()
+});

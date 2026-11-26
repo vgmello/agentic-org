@@ -21,6 +21,7 @@
 	import { accountZone } from '$lib/modules/preferences';
 	import type { ReleaseMilestone } from '$lib/modules/releases/types';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
 	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import type { OrgSnapshot } from '$lib/proto';
 	import ActivityOpsRail from './ActivityOpsRail.svelte';
@@ -1071,7 +1072,7 @@
 								data-active={uiPrefs.assemblyDividers ? '' : undefined}
 								class="activity-icon-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 							>
-								<SlidersHorizontal class="size-4" aria-hidden="true" />
+								<SlidersHorizontal class="size-5" aria-hidden="true" />
 							</button>
 						{/snippet}
 					</Tooltip.Trigger>
@@ -1163,7 +1164,7 @@
 												data-active={streamFilter !== 'all' ? '' : undefined}
 												class="activity-icon-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
 											>
-												<ListFilter class="size-4" aria-hidden="true" />
+												<ListFilter class="size-5" aria-hidden="true" />
 											</button>
 										{/snippet}
 									</Tooltip.Trigger>
@@ -1252,8 +1253,8 @@
 					<p class="cmd-subtitle">{headerSubtitle}</p>
 				</div>
 
-				<!-- Waiting-on-you Pill (honest loading/unavailable states with visible Retry focus) -->
-				<div class="cmd-status-slot" tabindex="-1">
+				<!-- Waiting-on-you Pill + Embedded Workspace Search -->
+				<div class="cmd-status-slot flex flex-wrap items-center gap-3" tabindex="-1">
 					{#if workUnavailableReason || inboxPhase === 'error' || isHeaderRetrying}
 						<button
 							type="button"
@@ -1295,6 +1296,7 @@
 							<span>All caught up</span>
 						</span>
 					{/if}
+					<InteriorSearchBar class="w-full sm:w-[clamp(18rem,28vw,25rem)]" />
 				</div>
 			</header>
 
@@ -1613,10 +1615,10 @@
 
 	.cmd-h1 {
 		color: var(--exec-ink);
-		font-size: 1.5rem;
-		font-weight: var(--exec-h1-weight, 650);
-		letter-spacing: var(--exec-h1-tracking, -0.025em);
-		line-height: 1.2;
+		font-size: clamp(1.375rem, 2.2vw, 1.875rem);
+		font-weight: 600;
+		letter-spacing: -0.03em;
+		line-height: 1.22;
 		min-width: 0;
 		overflow-wrap: anywhere;
 	}
@@ -1779,7 +1781,7 @@
 		border-radius: var(--exec-ctrl-radius, 8px) var(--exec-ctrl-radius, 8px) 0 0;
 		background: transparent;
 		color: var(--exec-body, var(--fg-secondary));
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 		font-weight: 600;
 		white-space: nowrap;
 		cursor: pointer;

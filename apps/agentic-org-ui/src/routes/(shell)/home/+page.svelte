@@ -6,13 +6,16 @@
 	import DecisionSpotlight from '$lib/modules/home/features/DecisionSpotlight.svelte';
 	import ExecutiveBriefCard from '$lib/modules/home/features/ExecutiveBriefCard.svelte';
 	import { HomeLiveState } from '$lib/modules/home/features/home-live.svelte';
+	import { fitBelowFold } from '$lib/modules/home/features/home-fold';
 	import HomeKpiStrip from '$lib/modules/home/features/HomeKpiStrip.svelte';
 	import HomeMilestones from '$lib/modules/home/features/HomeMilestones.svelte';
 	import HomeSkeleton from '$lib/modules/home/features/HomeSkeleton.svelte';
 	import ProjectScorecard from '$lib/modules/home/features/ProjectScorecard.svelte';
 	import { officesApi } from '$lib/modules/offices/api';
 	import { layerOffices } from '$lib/modules/offices/layer';
+	import { useTessPanel } from '$lib/modules/tess/tess-panel.svelte';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import {
 		deriveCatchUpDigest,
 		deriveDecisionSpotlight,
@@ -34,6 +37,7 @@
 	const ownerMember = $derived(owner(snapshot));
 	const ownerId = $derived(ownerMember?.id ?? 'owner');
 	const shellData = useShellData();
+	const tessPanel = useTessPanel();
 
 	const live = new HomeLiveState({
 		overview: (id) => officesApi.overview(id),
@@ -126,6 +130,14 @@
 		activityRows: liveForOrg ? live.activityRows : undefined
 	});
 
+	$effect(() => {
+		const nextDomain = domain;
+		tessPanel?.setDomainContext(nextDomain);
+		return () => {
+			tessPanel?.setDomainContext(undefined);
+		};
+	});
+
 	const kpis = $derived(deriveKpiMetrics(snapshot, workItems, activeOffices, ownerId, domain));
 	const spotlight = $derived(
 		deriveDecisionSpotlight(workItems, snapshot, ownerId, live.nowMs, hydratedInboxItems)
@@ -173,7 +185,10 @@
 
 <svelte:head><title>{pageTitle('Home')}</title></svelte:head>
 
-<div class="home-page mx-auto flex w-full flex-col px-6 pt-3 pb-12 sm:px-8">
+<div
+	{@attach fitBelowFold(uiPrefs.theme)}
+	class="home-page mx-auto flex w-full flex-col px-6 pt-3 pb-12 sm:px-8"
+>
 	<!-- Zone 1: Executive Greeting Header -->
 	<section class="home-hero flex flex-wrap justify-between gap-4">
 		<div class="home-brief flex min-w-0 flex-col gap-1">
@@ -240,21 +255,25 @@
 			<ExecutiveBriefCard {brief} {catchUp} />
 		</section>
 
-		{#if projectCards.length > 0}
-			<ProjectScorecard
-				projects={projectCards}
-				attentionCount={kpis.projectsAttention}
-				{spotlightIds}
-				onSpotJump={handleSpotJump}
-			/>
-		{/if}
+		{#if projectCards.length > 0 || milestones.length > 0 || taskTime.totalOpen > 0}
+			<div class="home-below-fold flex flex-col">
+				{#if projectCards.length > 0}
+					<ProjectScorecard
+						projects={projectCards}
+						attentionCount={kpis.projectsAttention}
+						{spotlightIds}
+						onSpotJump={handleSpotJump}
+					/>
+				{/if}
 
-		{#if milestones.length > 0}
-			<HomeMilestones {milestones} {spotlightIds} onSpotJump={handleSpotJump} />
-		{/if}
+				{#if milestones.length > 0 || projectCards.length > 0}
+					<HomeMilestones {milestones} {spotlightIds} onSpotJump={handleSpotJump} />
+				{/if}
 
-		{#if taskTime.totalOpen > 0}
-			<CapacityBreakdown {taskTime} offlineOffices={kpis.offlineOffices} />
+				{#if taskTime.totalOpen > 0}
+					<CapacityBreakdown {taskTime} offlineOffices={kpis.offlineOffices} />
+				{/if}
+			</div>
 		{/if}
 	{/if}
 </div>
@@ -264,14 +283,17 @@
 		max-width: var(--exec-page-max-w);
 		gap: var(--exec-page-gap);
 	}
+	.home-below-fold {
+		gap: var(--exec-page-gap);
+	}
 	.home-hero {
 		align-items: var(--exec-hero-align);
 		padding-bottom: var(--exec-hero-pad-b);
 		border-bottom: var(--exec-hero-border);
 	}
 	.home-h1 {
-		font-size: clamp(1.375rem, 2.2vw, 1.875rem);
-		line-height: 1.22;
+		font-size: var(--exec-h1-size);
+		line-height: 1.2;
 		font-weight: var(--exec-h1-weight);
 		letter-spacing: var(--exec-h1-tracking);
 		color: var(--exec-ink);

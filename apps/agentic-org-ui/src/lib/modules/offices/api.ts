@@ -1,4 +1,6 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { createHttpOfficesOverviewApi } from './overview-http-api';
 import type { AddProgress, Issued, OfficesOverview } from './types';
 
 /** The office flows beyond the connected office: add, approve, remove, rename, place and the outboxes. */
@@ -28,9 +30,22 @@ export interface OfficesApi {
 	discardOutbox(organizationId: string, itemId: string): Promise<void>;
 }
 
-// The web API does not serve these yet: every call refuses. Under `bun run dev:mock`, e2e/fakes/modules/offices.ts stands in.
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+const gatewayOfficesOverviewApi = createHttpOfficesOverviewApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal)
+	}
+});
+
+// `overview` reads live offices from `/api/v1/organizations/{org}/offices` when signed in and fails
+// closed when signed out. Remaining office management mutations stay unavailable until their web
+// routes are wired. Under `bun run dev:mock`, e2e/fakes/modules/offices.ts stands in.
 export const officesApi: OfficesApi = {
-	overview: unavailableCall,
+	overview: (organizationId) =>
+		signedInSession() ? gatewayOfficesOverviewApi.overview(organizationId) : unavailableCall(),
 	approveJoin: unavailableCall,
 	declineJoin: unavailableCall,
 	invite: unavailableCall,

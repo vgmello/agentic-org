@@ -15,6 +15,8 @@
 	import { signOutFlow } from '$lib/platform/auth/sign-out-flow.svelte';
 	import type { Connection } from '$lib/proto';
 	import AboutDialog from './AboutDialog.svelte';
+	import { useShellCommand } from './shell-command';
+	import { uiPrefs } from './ui-preferences.svelte';
 
 	let {
 		connection,
@@ -26,6 +28,7 @@
 		onOpenChange?: (open: boolean) => void;
 	} = $props();
 
+	const shellCommand = useShellCommand();
 	let aboutOpen = $state(false);
 	const canSignOut = $derived(appSession.state.kind === 'signed-in' && appSession.authEnabled);
 	const isLocalAuthless = $derived(
@@ -110,6 +113,26 @@
 			class="min-h-9 max-[639px]:min-h-11"
 			onSelect={() => goto(resolve('/preferences'))}>Your preferences</DropdownMenu.Item
 		>
+		<DropdownMenu.CheckboxItem
+			checked={uiPrefs.showTessPill}
+			onCheckedChange={(checked) => uiPrefs.setShowTessPill(Boolean(checked))}
+			class="min-h-9 max-[639px]:min-h-11"
+		>
+			Show Tess on screen
+		</DropdownMenu.CheckboxItem>
+		{#if shellCommand?.openShortcuts}
+			<DropdownMenu.Item
+				class="flex min-h-9 items-center justify-between gap-2 max-[639px]:min-h-11"
+				onSelect={() => shellCommand.openShortcuts?.()}
+			>
+				<span>Keyboard shortcuts</span>
+				<kbd
+					class="rounded border border-line-strong px-1.5 py-0.5 font-mono text-xs text-fg-muted"
+					aria-hidden="true">?</kbd
+				>
+			</DropdownMenu.Item>
+		{/if}
+		<DropdownMenu.Separator class="bg-surface-overlay" />
 		<DropdownMenu.Item
 			class="min-h-9 max-[639px]:min-h-11"
 			onSelect={() => goto(resolve('/welcome'))}>Switch organization</DropdownMenu.Item
