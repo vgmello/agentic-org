@@ -273,7 +273,7 @@ function memberActionsHtml(id, m, agent, owner, tab) {
   const more = agent
     ? `<button role="menuitem" type="button" data-act="pause" data-id="${id}">${ic(pauseIcon, "ic20")}${pauseLabel}</button><button role="menuitem" type="button" data-act="proto" data-v="Edit ${esc(m.name)}">${ic("pencil", "ic20")}Edit</button><hr><button role="menuitem" class="danger-item" type="button" data-act="offboard" data-id="${id}">${ic("logout", "ic20")}Offboard</button>`
     : `<button role="menuitem" type="button" data-act="proto" data-v="Edit ${esc(m.name)}">${ic("pencil", "ic20")}Edit</button>`;
-  return `<button class="btn ${hasSecondaryPrimary ? "outline" : "primary"}" type="button" data-act="go" data-v="#/chat/${CH["dm-" + id] ? "dm-" + id : "general"}">${ic("chat", "ic20")}Message</button>
+  return `<button class="btn ${hasSecondaryPrimary ? "outline" : "primary"}" type="button" data-act="go" data-v="#/chat/dm-${id}">${ic("chat", "ic20")}Message</button>
       ${agent ? `<button class="btn outline" type="button" data-act="agent-focus-open" data-id="${id}">${ic("maximize", "ic20")}Analysis Mode</button>` : ""}
       <button class="btn outline" type="button" data-act="work-new-task" data-id="${id}">${ic("clipboard", "ic20")}Assign task</button>
       <div class="menu-wrap"><button class="btn outline icon" type="button" data-act="menu" data-id="more" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-more" aria-label="More actions for ${esc(m.name)}" title="More actions">${ic("ellipsis", "ic20")}</button><div class="menu" id="menu-more" role="menu" hidden>${more}</div></div>`;

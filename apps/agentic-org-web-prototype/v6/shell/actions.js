@@ -3,7 +3,7 @@ import { IN, M, OFFICES, P, TEAMS, W, blockedOnOwner } from "../data.js";
 import { activityFilterKey, activityViewKey, addAssemblySample, assemblySimulation, projectActivityId, refreshAssemblySimulation, setActivityPanel, syncAssemblySimulationTimer, updateAssemblyPlayback } from "../pages/activity.js";
 import { closeAgentFocus, isAgentFocusOpen, openAgentFocus } from "../pages/agent-focus.js";
 import { consoleSessions } from "../pages/agent-profile.js";
-import { chatDrafts, openDirectMessage, recordAskReply, sendChatMessage, sendThreadReply } from "../pages/chat.js";
+import { chatDrafts, findConversation, openDirectMessage, recordAskReply, sendChatMessage, sendThreadReply } from "../pages/chat.js";
 import { answerOrgQuestion } from "../pages/home.js";
 import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment, refreshInboxSearch, resetInboxSelection } from "../pages/inbox.js";
 import { updateProjectInsights } from "../pages/insights.js";
@@ -321,8 +321,6 @@ const CLICK_ACTIONS = {
     trigger?.focus();
   },
   "fav-proj": (_e, _t, id) => { const idx = S.favProjs.indexOf(id); if (idx >= 0) { S.favProjs.splice(idx, 1); toast(`Removed ${P[id].name} from favorites.`); } else { S.favProjs.push(id); toast(`Added ${P[id].name} to favorites.`); } render(false); },
-  thread: (_e, _t, id) => { S.thread = S.thread === id ? null : id; render(false); (S.thread ? document.getElementById("chat-thread-title") : document.querySelector(`.chmain [data-act="thread"][data-id="${CSS.escape(id)}"]`))?.focus(); },
-  "thread-close": () => document.querySelector(`.chmain [data-act="thread"][data-id="${CSS.escape(S.thread)}"]`)?.click(),
   answer: (_e, t, id, v) => {
     if (/^Ask why/i.test(v)) { toast("Prototype: your question goes to the agent; the ask stays open."); return; }
     S.answered[id] = v;
@@ -357,7 +355,6 @@ const CLICK_ACTIONS = {
   },
   "search-close": () => closeCmdk(true),
   sgo: (_e, _t, _id, v) => goSearch(v),
-  "chat-jump": (_e, t) => openCmdk("#", "cmd", t, false),
   "chat-list": (_e, _t, id) => toggleChatList(id),
   "chat-dm": (_e, _t, id, v) => { location.hash = openDirectMessage(id, v); },
   "search-toggle": (_e, _t, _id, v) => toggleInlineSearch(v),
@@ -773,7 +770,7 @@ function isSingleKeyBlocked(e) {
 
 function tryPunctuationShortcut(e) {
   if (!isPlainAltGrOrUnmodified(e)) return false;
-  if (e.key === "#" && route()[0] === "chat") { e.preventDefault(); openCmdk("#", "cmd", e.target, false); return true; }
+  if (e.key === "#" && route()[0] === "chat") { e.preventDefault(); findConversation(); return true; }
   if (e.key === "/") {
     e.preventDefault();
     const inline = document.querySelector('#main [data-act="search-toggle"]');

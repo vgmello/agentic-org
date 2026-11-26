@@ -1,5 +1,6 @@
 import { CH, IN, KIND, M, P, TEAMS, WORK_DISCUSSIONS } from "../data.js";
 import { itemActionsV4 } from "./home.js";
+import { chatTitle } from "./chat-model.js";
 import { findWorkItem, fitTextarea, workCommentPrefix, workHref } from "./work.js";
 import { route } from "../shell/router.js";
 import { getNotifications, getRunningJobs, markNotificationRead, unreadNotificationsCount } from "../shell/topbar-utils.js";
@@ -339,7 +340,7 @@ function inboxDetail(it) {
         ${it.task ? `<div><dt>Work item</dt><dd><a class="alink" href="${esc(workHref({ item: it.task }))}">${esc(it.task)}${work ? " · " + esc(work.title) : ""}</a>${inboxCopy("Copy", it.task, it.task)}</dd></div>` : ""}
         ${it.expires ? `<div><dt>Expires</dt><dd${it.handled ? "" : ' class="triage-expiry"'}>${esc(it.expires)}</dd></div>` : ""}
         <div><dt>Clears</dt><dd>${esc(it.clears || k.clears)}</dd></div>
-        ${channel ? `<div><dt>Conversation</dt><dd><a class="alink" href="#/chat/${project.channel}">#${esc(channel.name)}</a>${inboxCopy("Copy", "#" + channel.name, "#" + channel.name)}</dd></div>` : ""}
+        ${inboxConversation(it, project, channel)}
         ${it.src ? `<div><dt>Related page</dt><dd><a class="alink" href="${esc(it.src.href)}">${esc(it.src.label)}</a></dd></div>` : ""}
       </dl>
     </section>
@@ -350,6 +351,14 @@ function inboxDetail(it) {
     </div>
     ${inboxActivity(it)}
   </article>`;
+}
+/* Where the ask was raised (it.origin) when known, with a deep link to that message; else the project's channel. */
+function inboxConversation(it, project, channel) {
+  const src = it.origin && CH[it.origin.ch];
+  if (!src) return channel ? `<div><dt>Conversation</dt><dd><a class="alink" href="#/chat/${project.channel}">#${esc(channel.name)}</a>${inboxCopy("Copy", "#" + channel.name, "#" + channel.name)}</dd></div>` : "";
+  const title = src.kind === "dm" ? "Direct message with " + chatTitle(src) : chatTitle(src);
+  return `<div><dt>Conversation</dt><dd><a class="alink" href="#/chat/${esc(it.origin.ch)}">${esc(title)}</a>
+    · <a class="alink" href="#/chat/${esc(it.origin.ch)}/${esc(it.origin.msg)}">Open source message</a></dd></div>`;
 }
 function refreshInboxSearch() {
   if (S.inboxKind === "notifications") {
