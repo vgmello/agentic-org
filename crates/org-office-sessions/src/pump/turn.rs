@@ -124,6 +124,11 @@ pub(super) fn dispatch_next_turn(
     } else {
         release_active_permit(ctx);
         loop_state.permit_lease_deadline = None;
+        // The turn never started: the session marked busy when it was queued is idle again.
+        let mut st = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+        if st.state == SessionState::Running {
+            st.state = SessionState::Idle;
+        }
     }
 }
 

@@ -284,6 +284,7 @@ fn offboard_during_a_failover_relaunch_leaves_no_live_session_and_no_recovery_wa
                     reason: "rate_limited",
                     rate_limit_resets_at: None,
                     stop_epoch: epoch,
+                    partition: None,
                 },
             );
         })

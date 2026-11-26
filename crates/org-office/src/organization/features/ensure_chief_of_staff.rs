@@ -112,7 +112,7 @@ impl Feature for EnsureChiefOfStaff {
             return invalid("the team has no chain of parents to a top-level team");
         };
         let meta = Meta::created(&attributed, now);
-        let tess = chief_of_staff_record(id, handle, &team.id, meta);
+        let tess = chief_of_staff_record(id, &handle, &team.id, meta);
         let path = profile_file(&chain, tess.kind, &tess.id)?;
         let ensured = ChiefOfStaffEnsured {
             employee_id: tess.id.clone(),

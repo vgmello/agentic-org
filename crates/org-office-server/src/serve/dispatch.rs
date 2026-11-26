@@ -71,10 +71,27 @@ fn answer_with_peer(
     binding: &mut Binding,
     peer_pid: Option<libc::pid_t>,
 ) -> Response {
-    // The Chief of Staff's `caller ∩ tess` gate, before any method runs (`TASK-80.1`).
-    if let Some(refused) = super::delegation::refusal(request, shared, binding) {
-        return refused;
+    // The Chief of Staff's `caller ∩ tess` gate, before any method runs, and on what the
+    // method answers (`TASK-80.1`).
+    let delegation = match super::delegation::gate(request, shared, binding) {
+        Ok(delegation) => delegation,
+        Err(refused) => return refused,
+    };
+    let response = answer_ungated(request, shared, binding, peer_pid);
+    match delegation {
+        Some(delegation) => {
+            super::delegation::narrow(request, shared, binding, &delegation, response)
+        }
+        None => response,
     }
+}
+
+fn answer_ungated(
+    request: &Request,
+    shared: &Shared,
+    binding: &mut Binding,
+    peer_pid: Option<libc::pid_t>,
+) -> Response {
     if let Some(response) = answer_operator(request, shared, binding) {
         return response;
     }

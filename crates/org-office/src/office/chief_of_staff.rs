@@ -53,6 +53,52 @@ impl ReadOp for ReadCallerAuthority {
     }
 }
 
+/// Reads whether `caller` may hire into `team` (`ADR-0029` decision 2), for the hire calls the
+/// Chief of Staff makes while acting for `caller`.
+struct ReadCallerMayHireInto {
+    owner: Id,
+    caller: Id,
+    team: Id,
+}
+
+impl ReadOp for ReadCallerMayHireInto {
+    type Out = bool;
+
+    fn read<S: TasksRead>(self, read: &S) -> Result<bool, StoreError> {
+        let Some(caller) = read.employee(&self.caller)? else {
+            return Ok(false);
+        };
+        let owner = crate::organization::owner::effective_owner_id(read, &self.owner)?;
+        authority::may_hire_into(read, &owner, &caller, &self.team)
+    }
+}
+
+/// A hire request as the `caller ∩ tess` gate weighs it (`TASK-80.1`): the team it hires into
+/// and who filed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DelegatedHireScope {
+    pub home_team_id: String,
+    pub requested_by_employee_id: String,
+}
+
+/// Reads [`DelegatedHireScope`] of one hire request.
+struct ReadHireScope {
+    request: Id,
+}
+
+impl ReadOp for ReadHireScope {
+    type Out = Option<DelegatedHireScope>;
+
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read
+            .hire_request(&self.request)?
+            .map(|request| DelegatedHireScope {
+                home_team_id: request.home_team_id.as_str().to_owned(),
+                requested_by_employee_id: request.requested_by_employee_id.as_str().to_owned(),
+            }))
+    }
+}
+
 impl Office {
     /// The organization's built-in Chief of Staff, if she is on record.
     pub fn chief_of_staff(&self) -> Result<Option<Employee>, OfficeError> {
@@ -102,6 +148,40 @@ impl Office {
         serde_json::from_slice(&reply.bytes)
             .map(Some)
             .map_err(|_| OfficeError::Invalid("unreadable Chief of Staff bootstrap reply"))
+    }
+
+    /// Whether `caller_id`, the member the Chief of Staff acts for, may hire into `team_id`
+    /// right now (`ADR-0029` decision 2): her organization-wide reach never widens theirs. An
+    /// unknown or malformed ID may hire nowhere.
+    pub fn caller_may_hire_into(
+        &self,
+        caller_id: &str,
+        team_id: &str,
+    ) -> Result<bool, OfficeError> {
+        let (Ok(caller), Ok(team)) = (Id::parse(caller_id), Id::parse(team_id)) else {
+            return Ok(false);
+        };
+        let op = ReadCallerMayHireInto {
+            owner: self.effective_owner_for_ops(),
+            caller,
+            team,
+        };
+        Ok(self.store.read(op).map_err(storage)?.0)
+    }
+
+    /// The team a hire request hires into and who filed it; `None` for an unknown request.
+    pub fn delegated_hire_scope(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<DelegatedHireScope>, OfficeError> {
+        let Ok(request) = Id::parse(request_id) else {
+            return Ok(None);
+        };
+        Ok(self
+            .store
+            .read(ReadHireScope { request })
+            .map_err(storage)?
+            .0)
     }
 
     /// The live authority of `caller_id`, the member the Chief of Staff acts for. An unknown

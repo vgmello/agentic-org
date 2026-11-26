@@ -15,7 +15,7 @@ offboarded_at: null
 reports_to_employee_id: null
 revision: 1
 role_id: null
-role_text: null
+role_text: "Chief of Staff"
 schema_version: 1
 status: "active"
 title: "Chief of Staff"

@@ -8,7 +8,7 @@
 
 use org_store::{Id, Sha256};
 
-use super::records::{BuiltinKey, Employee, EmployeeKind, EmployeeStatus, Meta};
+use super::records::{self, BuiltinKey, Employee, EmployeeKind, EmployeeStatus, Meta};
 
 /// Her display name.
 pub const CHIEF_OF_STAFF_NAME: &str = "Tess";
@@ -16,10 +16,16 @@ pub const CHIEF_OF_STAFF_NAME: &str = "Tess";
 pub const CHIEF_OF_STAFF_TITLE: &str = "Chief of Staff";
 /// Her charter: the body of her profile, and only there.
 pub const CHIEF_OF_STAFF_CHARTER: &str = "Tactical Execution & Squad Supervisor";
-/// The handles she takes, in order: the first nobody holds yet. `tess` is her default, beside
+/// The handles she prefers, in order: the first nobody holds yet. `tess` is her default, beside
 /// the HR lead's `hr`; the others keep her provisionable when a person or agent already holds
 /// `tess`.
 pub const CHIEF_OF_STAFF_HANDLES: [&str; 3] = ["tess", "chief-of-staff", "tess-cos"];
+/// The numbered handles she falls back to after [`CHIEF_OF_STAFF_HANDLES`]:
+/// `tess-cos-2` through `tess-cos-256`, as many as her ID has derivations, so an organization
+/// whose members already hold every preferred handle still gets her.
+pub const CHIEF_OF_STAFF_NUMBERED_HANDLES: std::ops::RangeInclusive<u16> = 2..=256;
+/// The prefix of a numbered fallback handle.
+const NUMBERED_HANDLE_PREFIX: &str = "tess-cos-";
 
 /// The tag her ID is derived under (see [`chief_of_staff_id`]).
 const ID_TAG: &str = "chief_of_staff";
@@ -40,13 +46,20 @@ pub fn ensure_operation_id(organization: &Id) -> Id {
     derived_id(organization, ENSURE_OPERATION_TAG, 0)
 }
 
-/// The first of [`CHIEF_OF_STAFF_HANDLES`] that `in_use` says nobody holds, or `None` when
-/// every one is taken.
+/// The first handle that `in_use` says nobody holds: one of [`CHIEF_OF_STAFF_HANDLES`], else
+/// the first free numbered fallback (`tess-cos-2` .. `tess-cos-256`), tried in a fixed order so
+/// a retry picks the same one. `None` only when all of them are taken.
 pub fn free_handle<E>(
     mut in_use: impl FnMut(&str) -> Result<bool, E>,
-) -> Result<Option<&'static str>, E> {
+) -> Result<Option<String>, E> {
     for handle in CHIEF_OF_STAFF_HANDLES {
         if !in_use(handle)? {
+            return Ok(Some(handle.to_owned()));
+        }
+    }
+    for number in CHIEF_OF_STAFF_NUMBERED_HANDLES {
+        let handle = format!("{NUMBERED_HANDLE_PREFIX}{number}");
+        if !in_use(&handle)? {
             return Ok(Some(handle));
         }
     }
@@ -54,7 +67,8 @@ pub fn free_handle<E>(
 }
 
 /// Her record at its first revision: an active agent of `team` reporting to the owner, with
-/// hiring power on (the owner turns it off and on), and no hire request behind her.
+/// hiring power on (the owner turns it off and on), and no hire request behind her. Her role
+/// reads `Chief of Staff` (so `org.snapshot` shows it); her charter stays in the body alone.
 ///
 /// Reporting to the owner is written as reporting to no one (`reports_to_employee_id: null`),
 /// the form the wire and the standing prompt already read as "reports to the owner": she
@@ -72,7 +86,7 @@ pub fn chief_of_staff_record(id: Id, handle: &str, team: &Id, meta: Meta) -> Emp
         contact: None,
         title: Some(CHIEF_OF_STAFF_TITLE.to_owned()),
         focus: None,
-        role_text: None,
+        role_text: Some(CHIEF_OF_STAFF_TITLE.to_owned()),
         title_in_team: Some(CHIEF_OF_STAFF_TITLE.to_owned()),
         offboarded_at: None,
         may_hire: true,
@@ -83,9 +97,11 @@ pub fn chief_of_staff_record(id: Id, handle: &str, team: &Id, meta: Meta) -> Emp
 }
 
 /// A UUIDv7 derived from `seed` under `tag`: `seed`'s 48-bit timestamp, the version and
-/// variant bits, and the rest from `SHA-256(tag, attempt, seed)`.
+/// variant bits, and the rest from `SHA-256(tag, attempt, seed)`. A seed that is not a stable
+/// UUIDv7 (an `Id` admits more) lends no timestamp: the derived ID then starts at the epoch.
 fn derived_id(seed: &Id, tag: &str, attempt: u8) -> Id {
     const HEX: &[u8; 16] = b"0123456789abcdef";
+    const EPOCH_PREFIX: &str = "00000000-0000";
     let digest = Sha256::of_parts(&[
         b"agentic-org/derived-id\0",
         tag.as_bytes(),
@@ -100,8 +116,13 @@ fn derived_id(seed: &Id, tag: &str, attempt: u8) -> Id {
     let mut next = || char::from(HEX[usize::from(nibbles.next().unwrap_or(0))]);
     let seed = seed.as_str();
     let mut text = String::with_capacity(36);
-    // The seed is a UUIDv7 by type: its first 13 bytes are ASCII (`xxxxxxxx-xxxx`).
-    text.push_str(seed.get(..13).unwrap_or("00000000-0000"));
+    // Only a stable UUIDv7's first 13 bytes are its ASCII timestamp (`xxxxxxxx-xxxx`).
+    let timestamp = if records::is_stable_id(seed) {
+        seed.get(..13).unwrap_or(EPOCH_PREFIX)
+    } else {
+        EPOCH_PREFIX
+    };
+    text.push_str(timestamp);
     text.push_str("-7");
     (0..3).for_each(|_| text.push(next()));
     text.push('-');

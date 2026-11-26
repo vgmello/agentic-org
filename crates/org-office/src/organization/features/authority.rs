@@ -190,6 +190,38 @@ pub fn is_person_above_employee(
     is_person_ancestor_lead(view, actor, &target.home_team_id, !target_is_own_lead)
 }
 
+/// Whether `sender` may address or `@mention` the built-in HR lead (`HIRE-2`, ADR-0029
+/// decision 3): an active employee who may hire somewhere. The built-in Chief of Staff never
+/// may, whatever her own `may_hire`: she acts for members who may not hire and for wakes that
+/// act for nobody, so her reach would open HR to them; she hires through the hire flow,
+/// which checks the member she acts for (`TASK-80.1`).
+pub fn may_address_hr(
+    view: &impl OrganizationRead,
+    owner: &Id,
+    sender: &Employee,
+) -> Result<bool, StoreError> {
+    if sender.builtin_key == Some(BuiltinKey::ChiefOfStaff) {
+        return Ok(false);
+    }
+    may_hire_anywhere(view, owner, sender)
+}
+
+/// Whether `actor` may change `target`'s profile, execution configuration or hiring power:
+/// a person above the employee ([`is_person_above_employee`]); for a built-in member (the HR
+/// lead, the Chief of Staff) the organization's owner alone, so no team lead edits her, re-runs
+/// her on another configuration or toggles her organization-wide `may_hire` (`TASK-80.1`).
+pub fn may_manage_employee(
+    view: &impl OrganizationRead,
+    owner: &Id,
+    actor: &Employee,
+    target: &Employee,
+) -> Result<bool, StoreError> {
+    if target.builtin_key.is_some() {
+        return Ok(is_owner(owner, actor));
+    }
+    is_person_above_employee(view, owner, actor, target)
+}
+
 /// Active member count of `team_id` (every non-inactive employee, people and agents), less
 /// the built-in Chief of Staff: she was added to every organization after its teams were sized
 /// (`TASK-80.1`), so she never takes a slot a team's `max_members` was set for.

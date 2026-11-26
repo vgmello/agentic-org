@@ -233,16 +233,9 @@ impl SessionManager {
         }
     }
 
-    pub(super) fn build_environment(
-        &self,
-        input: SessionEnvInput<'_>,
-    ) -> Result<Environment, ApiError> {
-        let helper_dir = RuntimeRegistry::resolve_helper_dir(self.config.helper_dir.as_deref());
-        let captured_path =
-            std::env::var_os("PATH").unwrap_or_else(|| OsString::from("/usr/bin:/bin"));
-        let forbidden = vec![input.home.to_path_buf(), input.workspace.to_path_buf()];
-        let search_path = SearchPath::new(&helper_dir, &captured_path, &forbidden)
-            .map_err(|_| ApiError::new(ErrorCode::Unavailable, "invalid helper search path"))?;
+    /// The variables a session starts from: its home, `TMPDIR`, locale and terminal, and the
+    /// host's read-only Rust toolchain (none for an operator session, `TASK-80.1`).
+    pub(super) fn captured_env(&self, input: &SessionEnvInput<'_>) -> Vec<(OsString, OsString)> {
         let mut captured = vec![
             (
                 OsString::from("HOME"),
@@ -267,15 +260,33 @@ impl SessionManager {
             self.office.durable_root().to_path_buf(),
             self.office.runtime_root().to_path_buf(),
         ];
-        append_rust_toolchain_env(
-            &mut captured,
-            Some(input.home),
-            std::env::var_os("RUSTUP_HOME"),
-            std::env::var_os("CARGO_HOME"),
-            std::env::var_os("HOME"),
-            &rust_forbidden,
-            input.sandbox_enabled,
-        );
+        // An operator session has no repository and no Rust workflow: no toolchain, no cache
+        // links in her home (`TASK-80.1`).
+        if !input.operator {
+            append_rust_toolchain_env(
+                &mut captured,
+                Some(input.home),
+                std::env::var_os("RUSTUP_HOME"),
+                std::env::var_os("CARGO_HOME"),
+                std::env::var_os("HOME"),
+                &rust_forbidden,
+                input.sandbox_enabled,
+            );
+        }
+        captured
+    }
+
+    pub(super) fn build_environment(
+        &self,
+        input: SessionEnvInput<'_>,
+    ) -> Result<Environment, ApiError> {
+        let helper_dir = RuntimeRegistry::resolve_helper_dir(self.config.helper_dir.as_deref());
+        let captured_path =
+            std::env::var_os("PATH").unwrap_or_else(|| OsString::from("/usr/bin:/bin"));
+        let forbidden = vec![input.home.to_path_buf(), input.workspace.to_path_buf()];
+        let search_path = SearchPath::new(&helper_dir, &captured_path, &forbidden)
+            .map_err(|_| ApiError::new(ErrorCode::Unavailable, "invalid helper search path"))?;
+        let captured = self.captured_env(&input);
         let info = self.office.info();
         let (git_name, git_email) = agent_git_identity(input.employee_name, input.employee_handle);
         let context = vec![
@@ -322,27 +333,6 @@ impl SessionManager {
             .and_then(|env| env.with_context(&context))
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "could not build session env"))
     }
-}
-
-/// The built-in Chief of Staff works from her empty, repo-less private home and nowhere else
-/// (`OperatorSandboxed`, `TASK-80.1`): a session of hers that names another workspace (a
-/// repository, a worktree) is refused before anything is planned.
-pub(super) fn ensure_operator_home(
-    employee: &Employee,
-    home: &Path,
-    workspace: &Path,
-) -> Result<(), ApiError> {
-    if employee.builtin_key != Some(BuiltinKey::ChiefOfStaff) {
-        return Ok(());
-    }
-    let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
-    if workspace != home {
-        return Err(ApiError::new(
-            ErrorCode::InvalidRequest,
-            "the Chief of Staff works only from her private home",
-        ));
-    }
-    Ok(())
 }
 
 pub(super) fn resolve_workspace(home: &Path, explicit: Option<&str>) -> Result<PathBuf, ApiError> {
@@ -421,6 +411,8 @@ pub(super) struct SessionEnvInput<'a> {
     pub(super) token: &'a str,
     pub(super) binding_file: &'a Path,
     pub(super) sandbox_enabled: bool,
+    /// An operator session (`OperatorSandboxed`): no Rust toolchain environment.
+    pub(super) operator: bool,
 }
 
 pub(super) fn office_env_names() -> Vec<EnvName> {

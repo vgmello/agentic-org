@@ -52,6 +52,7 @@ mod install;
 mod launch;
 mod lifecycle_ops;
 mod office_masks;
+mod operator_home;
 mod reap;
 mod registry_guards;
 mod rpc;
@@ -69,19 +70,27 @@ pub(crate) use bwrap_isolation::{enforce_bwrap_sibling_isolation, ensure_bwrap_d
 pub(crate) use environment::task_process_context;
 #[cfg(test)]
 pub(crate) use failover::{
-    is_host_claude_subscription_refresh_eligible, requeue_contended_failover, run_failover_relaunch,
+    failover_route_opts, is_host_claude_subscription_refresh_eligible, requeue_contended_failover,
+    run_failover_relaunch,
 };
 #[cfg(test)]
 pub(crate) use install::{install_unrecovered_pre_pump_handle, PrePumpHandleMeta};
 #[cfg(test)]
 pub(crate) use lifecycle_ops::{take_clearable_live_handle, ClearableHandle};
+#[cfg(test)]
+pub(crate) use operator_home::clean_operator_rules;
 pub(crate) use reap::{reap_live_handle, ReapMode};
 #[cfg(test)]
 pub(crate) use rust_toolchain::host_rust_dir_env_from;
 #[cfg(test)]
+pub(crate) use sessions_api::autonomous_resume;
+#[cfg(test)]
 pub(crate) use spec::effective_approval_writable_roots_from;
 #[cfg(test)]
 pub(crate) use spec::{build_session_spec, ModelChoice};
+pub(crate) use warm::mark_turn_queued;
+#[cfg(test)]
+pub(crate) use warm::StartReservation;
 
 /// Configuration for [`SessionManager`].
 #[derive(Clone)]
@@ -150,6 +159,9 @@ pub(crate) struct LiveSessionHandle {
     /// Set of sibling employee IDs whose directories were pre-created and masked when this
     /// session launched under Linux Claude `bwrap` (`TASK-166`). `None` for non-bwrap sessions.
     pub bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+    /// The Chief of Staff partition this process serves, and so the caller its run acts for
+    /// (`TASK-80.1`); `None` for every other agent.
+    pub partition: Option<crate::partition::PartitionKey>,
 }
 
 #[derive(Default)]
@@ -283,6 +295,8 @@ struct PlannedSessionLaunch {
     task_ref: Option<String>,
     tried_connections: Vec<String>,
     start_stop_epoch: u64,
+    /// The Chief of Staff partition the run serves; its caller is the one the run acts for.
+    partition: Option<crate::partition::PartitionKey>,
     home: PathBuf,
     workspace_real: PathBuf,
     runtime_dir: PathBuf,
@@ -315,6 +329,8 @@ struct PreparedSessionLaunch {
     /// The explicit-stop epoch when the start slot was reserved; registration refuses the
     /// handle when a stop was accepted or refused in between (`TASK-190`).
     start_stop_epoch: u64,
+    /// The Chief of Staff partition the run serves (`TASK-80.1`).
+    partition: Option<crate::partition::PartitionKey>,
     home: PathBuf,
     tmpdir: PathBuf,
     binding_file: PathBuf,

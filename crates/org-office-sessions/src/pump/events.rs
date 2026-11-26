@@ -113,6 +113,11 @@ pub(super) fn handle_event(
             let id = runtime_session_id.as_str().to_owned();
             state.runtime_session_id = Some(id.clone());
             drop(state);
+            // The partition keeps its own conversation from the moment the runtime names it, so
+            // a stop, exit or crash of the run never loses it (`TASK-80.1`).
+            if let Some(partition) = ctx.partition.as_ref() {
+                partition.record_runtime_session(&id);
+            }
             persist_turn_update(ctx, |rec| rec.runtime_session_id = Some(id));
         }
         SessionEvent::TurnStarted { .. } => {
@@ -181,6 +186,10 @@ pub(super) fn handle_event(
             let emp_id = ctx.employee_id.clone();
             let hook = ctx.hooks.on_usage.clone();
             drop(state);
+            // How full the partition's conversation is: at 60% its next turn rotates.
+            if let Some(partition) = ctx.partition.as_ref() {
+                partition.observe_usage(usage);
+            }
             if let Some(cb) = hook {
                 cb(&emp_id, &run_id, usage);
             }
@@ -380,6 +389,7 @@ pub(super) fn evaluate_turn_failover(
         reason,
         rate_limit_resets_at: loop_state.rate_limit_resets_at.clone(),
         stop_epoch: ctx.stop_epoch,
+        partition: ctx.partition_key(),
     });
     loop_state.stop_requested = true;
     false

@@ -66,6 +66,7 @@ pub(super) fn stub_live_handle(
         active_permit: Arc::new(Mutex::new(None)),
         supports_mid_turn: false,
         bwrap_masked_siblings: None,
+        partition: None,
     };
     (handle, rx)
 }

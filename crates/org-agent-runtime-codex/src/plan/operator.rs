@@ -27,21 +27,62 @@
 //! for a trusted project: the plan trusts the workspace (the agent's repo-less private home)
 //! and rewrites the layer's files on every launch, so no stale project config survives.
 
+use std::path::Path;
+
 use org_agent_runtime::{
     validate_operator_shell, FileLocation, PlanError, PlannedDir, PlannedFile, RelPath, SessionSpec,
 };
 
 /// The project layer's folders, created in the workspace before every launch.
-const LAYER_DIRS: [&str; 2] = [".codex", ".codex/rules"];
+const LAYER_DIRS: [&str; 2] = [".codex", OPERATOR_RULES_DIR];
 /// The project layer's config: empty, so nothing but the office's `-c` overrides configures
 /// the session.
 const LAYER_CONFIG: &str = ".codex/config.toml";
-/// The execpolicy the office writes for an operator session.
+/// The workspace folder Codex loads execpolicy `.rules` files from. The office keeps exactly
+/// one file in it, [`OPERATOR_RULES_FILE_NAME`], and removes anything else before a launch.
+pub const OPERATOR_RULES_DIR: &str = ".codex/rules";
+/// The execpolicy file the office writes for an operator session, in [`OPERATOR_RULES_DIR`].
+pub const OPERATOR_RULES_FILE_NAME: &str = "office-operator.rules";
+/// [`OPERATOR_RULES_FILE_NAME`] inside [`OPERATOR_RULES_DIR`].
 const RULES_FILE: &str = ".codex/rules/office-operator.rules";
 
+/// The folders programs commonly install in. An execpolicy pattern matches the command's
+/// first word as typed, so each forbidden program is forbidden by its bare name **and** by its
+/// path in each of these (`/bin/bash`, `/usr/bin/env`, `/opt/homebrew/bin/python3`). A path
+/// elsewhere still runs only inside the read-only, office-only sandbox (layers 1-3).
+pub(crate) const PROGRAM_DIRS: &[&str] = &[
+    "/bin",
+    "/usr/bin",
+    "/usr/local/bin",
+    "/opt/homebrew/bin",
+    "/sbin",
+    "/usr/sbin",
+];
+
+/// Interpreters that also install under versioned names, with the versions the execpolicy
+/// names (it has no wildcard): `python3.12`, `python2.7`, `pypy3`, `lua5.4`, ...
+const VERSIONED_INTERPRETERS: &[(&str, &[&str])] = &[
+    (
+        "python",
+        &[
+            "2", "2.7", "3.6", "3.7", "3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14",
+        ],
+    ),
+    ("pypy", &["3"]),
+    ("perl", &["5"]),
+    ("ruby", &["2", "3"]),
+    ("php", &["7", "8"]),
+    ("lua", &["5.1", "5.2", "5.3", "5.4"]),
+];
+
+/// Interpreter families [`check`] refuses as a prefix under any versioned name, beyond the
+/// versions the execpolicy names (`python3.15`, `perl5.40`).
+const INTERPRETER_FAMILIES: &[&str] = &["python", "pypy", "perl", "ruby", "php", "lua", "node"];
+
 /// Programs an operator's shell never runs: shells and interpreters (`-c`/`-e` run anything),
-/// wrappers that run another command, privilege changers, and tools that write files or open
-/// connections. Each word is a bare program name (an execpolicy pattern's first token).
+/// wrappers that run another command, privilege changers, editors and build tools that run
+/// commands, and tools that write files or open connections. Each word is a bare program name
+/// (an execpolicy pattern's first token); [`forbidden_words`] adds their paths and versions.
 pub(crate) const FORBIDDEN_PROGRAMS: &[&str] = &[
     "bash",
     "sh",
@@ -109,7 +150,86 @@ pub(crate) const FORBIDDEN_PROGRAMS: &[&str] = &[
     "kill",
     "pkill",
     "killall",
+    "busybox",
+    "toybox",
+    "stdbuf",
+    "setsid",
+    "unbuffer",
+    "expect",
+    "tclsh",
+    "wish",
+    "mawk",
+    "nawk",
+    "gsed",
+    "gfind",
+    "nodejs",
+    "pypy",
+    "pip",
+    "pip3",
+    "pipx",
+    "uv",
+    "uvx",
+    "npm",
+    "pnpm",
+    "yarn",
+    "make",
+    "gmake",
+    "vi",
+    "vim",
+    "nvim",
+    "ex",
+    "ed",
+    "emacs",
+    "open",
+    "launchctl",
+    "systemd-run",
+    "at",
+    "crontab",
+    "screen",
+    "tmux",
+    "chroot",
+    "unshare",
+    "nsenter",
+    "strace",
+    "gdb",
+    "lldb",
+    "docker",
+    "podman",
 ];
+
+/// Whether `word`, a command's first word, names a forbidden program: by its bare name or any
+/// path to it (`/bin/bash` is `bash`), or a versioned interpreter (`python3.12`).
+pub(crate) fn is_forbidden_program(word: &str) -> bool {
+    let name = Path::new(word)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(word);
+    let versioned = |family: &&str| {
+        name.strip_prefix(family).is_some_and(|version| {
+            !version.is_empty() && version.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+        })
+    };
+    FORBIDDEN_PROGRAMS.contains(&name) || INTERPRETER_FAMILIES.iter().any(versioned)
+}
+
+/// Every first word the execpolicy forbids: each forbidden program and versioned interpreter
+/// by its bare name and by its path in each of [`PROGRAM_DIRS`], once each, in a fixed order.
+pub(crate) fn forbidden_words() -> Vec<String> {
+    let mut names: Vec<String> = FORBIDDEN_PROGRAMS.iter().map(|p| (*p).to_owned()).collect();
+    for (family, versions) in VERSIONED_INTERPRETERS {
+        names.extend(versions.iter().map(|version| format!("{family}{version}")));
+    }
+    let mut words: Vec<String> = Vec::with_capacity(names.len() * (PROGRAM_DIRS.len() + 1));
+    for name in &names {
+        let paths = PROGRAM_DIRS.iter().map(|dir| format!("{dir}/{name}"));
+        for word in std::iter::once(name.clone()).chain(paths) {
+            if !words.contains(&word) {
+                words.push(word);
+            }
+        }
+    }
+    words
+}
 
 /// Whether `spec` is an operator session whose shell this adapter turns on. A malformed
 /// operator spec is not one: [`check`] refuses it before anything is planned.
@@ -139,7 +259,7 @@ pub(crate) fn check(spec: &SessionSpec, sandbox_mode: &str) -> Result<bool, Plan
                 "operator session: a shell prefix is plain program words".to_owned(),
             ));
         }
-        if FORBIDDEN_PROGRAMS.contains(&words[0]) {
+        if is_forbidden_program(words[0]) {
             return Err(PlanError::InvalidSpec(
                 "operator session: a shell prefix names a forbidden program".to_owned(),
             ));
@@ -177,16 +297,20 @@ pub(crate) fn layer(spec: &SessionSpec) -> (Vec<PlannedDir>, Vec<PlannedFile>) {
     (dirs, files)
 }
 
-/// The execpolicy (Starlark): one `forbidden` rule over [`FORBIDDEN_PROGRAMS`], with a
-/// `match` example per program so Codex validates the rule when it loads it, and a
-/// `not_match` per operator prefix proving the prefixes stay unmatched (they run sandboxed).
+/// The execpolicy (Starlark): one `forbidden` rule over [`forbidden_words`] (every forbidden
+/// program by name, by path and by version), with a `match` example per word so Codex
+/// validates the rule when it loads it, and a `not_match` per operator prefix proving the
+/// prefixes stay unmatched (they run sandboxed).
 pub(crate) fn rules(spec: &SessionSpec) -> String {
     let quote = |word: &str| serde_json::to_string(word).expect("word encodes");
-    let programs: Vec<String> = FORBIDDEN_PROGRAMS.iter().map(|p| quote(p)).collect();
-    let matches: Vec<String> = FORBIDDEN_PROGRAMS
-        .iter()
-        .map(|p| quote(&format!("{p} x")))
-        .collect();
+    let words = forbidden_words();
+    let list = |items: &mut dyn Iterator<Item = String>| {
+        items
+            .map(|item| format!("        {item},\n"))
+            .collect::<String>()
+    };
+    let programs = list(&mut words.iter().map(|w| quote(w)));
+    let matches = list(&mut words.iter().map(|w| quote(&format!("{w} x"))));
     let not_matches: Vec<String> = spec
         .operator_shell_prefixes
         .iter()
@@ -196,17 +320,19 @@ pub(crate) fn rules(spec: &SessionSpec) -> String {
         "# Written by the office for an operator session (TASK-80.1), on every launch.\n\
          # The operator's own commands ({allowed}) have no rule: unmatched, they run inside the\n\
          # read-only, office-socket-only sandbox. An `allow` would run them outside it.\n\
-         prefix_rule(\n    pattern = [[{programs}]],\n    decision = \"forbidden\",\n    \
+         prefix_rule(\n    pattern = [[\n{programs}    ]],\n    decision = \"forbidden\",\n    \
          justification = \"An operator session runs agent-os only.\",\n    \
-         match = [{matches}],\n    not_match = [{not_matches}],\n)\n",
+         match = [\n{matches}    ],\n    not_match = [{not_matches}],\n)\n",
         allowed = spec
             .operator_shell_prefixes
             .iter()
             .map(|p| p.as_str().trim_end())
             .collect::<Vec<_>>()
             .join(", "),
-        programs = programs.join(", "),
-        matches = matches.join(", "),
         not_matches = not_matches.join(", "),
     )
 }
+
+#[cfg(test)]
+#[path = "operator_tests.rs"]
+mod tests;

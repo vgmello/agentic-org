@@ -90,6 +90,7 @@ fn test_pump_ctx(
             is_bwrap_topology_stale: None,
         },
         stop_epoch: 0,
+        partition: None,
     }
 }
 
@@ -342,4 +343,58 @@ fn pump_event_history_and_approval_views_go_through_the_redaction_choke_point() 
         ),
         other => panic!("a tool outside the allowlist must be auto-denied: {other:?}"),
     }
+}
+
+#[test]
+fn a_partitioned_run_records_its_conversation_usage_and_partition_on_failover() {
+    use crate::partition::{PartitionHandle, PartitionKey, PartitionLedger};
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = PartitionLedger::new();
+    let key = PartitionKey::tess_ask("owner-1");
+    ledger.begin_turn("emp-1", &key);
+    let mut ctx = test_pump_ctx(dir.path(), Some("conn-1".into()), None);
+    ctx.partition = Some(PartitionHandle::new(ledger.clone(), "emp-1", key.clone()));
+    let mut loop_state = PumpLoopState::new(false);
+
+    // The conversation is the partition's the moment the runtime names it.
+    let started = org_agent_runtime::SessionEvent::SessionStarted {
+        runtime_session_id: org_agent_runtime::SessionId::try_from("conv-owner").unwrap(),
+    };
+    super::events::handle_event(&started, &ctx, &mut loop_state);
+    let state = ledger.state("emp-1", &key).unwrap();
+    assert_eq!(state.runtime_session_id.as_deref(), Some("conv-owner"));
+
+    // Each turn's input is how full the conversation is.
+    let mut usage = org_agent_runtime::Usage::new(
+        org_agent_runtime::UsageScope::TurnDelta,
+        org_agent_runtime::UsageScope::TurnDelta,
+    );
+    usage.input = 90_000;
+    usage.cache_read = 30_000;
+    super::events::handle_event(
+        &org_agent_runtime::SessionEvent::Usage(usage),
+        &ctx,
+        &mut loop_state,
+    );
+    let state = ledger.state("emp-1", &key).unwrap();
+    assert_eq!(state.context_tokens, 120_000);
+    assert!(state.needs_rotation(), "60% of the assumed window");
+
+    // A failover of the run serves the same partition, so acts for the same caller.
+    loop_state.current_objective = "owner turn".into();
+    loop_state.turn_reply = Some("API Error: 401 OAuth token has expired".into());
+    let mut st = ctx.state.lock().unwrap();
+    evaluate_turn_failover(
+        &mut st,
+        &mut loop_state,
+        &ctx,
+        &org_agent_runtime::TurnOutcome::Completed,
+        &[],
+    );
+    drop(st);
+    let req = loop_state.failover_pending.as_ref().expect("a failover");
+    assert_eq!(req.partition, Some(key));
+    assert_eq!(req.acting_for_caller_id(), Some("owner-1"));
+    let stale = super::commands::build_stale_failover_request(&ctx, "queued".into());
+    assert_eq!(stale.acting_for_caller_id(), Some("owner-1"));
 }

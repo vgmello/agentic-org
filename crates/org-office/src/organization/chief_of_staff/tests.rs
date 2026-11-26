@@ -30,12 +30,50 @@ fn her_id_is_a_stable_uuid_v7_of_the_organization() {
 #[test]
 fn the_handle_falls_back_when_tess_is_taken() {
     let pick = |taken: &[&str]| free_handle::<()>(|h| Ok(taken.contains(&h))).unwrap();
-    assert_eq!(pick(&[]), Some("tess"));
-    assert_eq!(pick(&["tess"]), Some("chief-of-staff"));
-    assert_eq!(pick(&["tess", "chief-of-staff"]), Some("tess-cos"));
-    assert_eq!(pick(&CHIEF_OF_STAFF_HANDLES), None);
+    assert_eq!(pick(&[]).as_deref(), Some("tess"));
+    assert_eq!(pick(&["tess"]).as_deref(), Some("chief-of-staff"));
+    assert_eq!(
+        pick(&["tess", "chief-of-staff"]).as_deref(),
+        Some("tess-cos")
+    );
+    // Every preferred handle taken: the numbered fallbacks, in a fixed order.
+    assert_eq!(pick(&CHIEF_OF_STAFF_HANDLES).as_deref(), Some("tess-cos-2"));
+    assert_eq!(
+        pick(&["tess", "chief-of-staff", "tess-cos", "tess-cos-2"]).as_deref(),
+        Some("tess-cos-3")
+    );
     for handle in CHIEF_OF_STAFF_HANDLES {
         assert!(records::is_handle(handle), "{handle}");
+    }
+    let mut every = Vec::new();
+    for number in CHIEF_OF_STAFF_NUMBERED_HANDLES {
+        let handle = format!("tess-cos-{number}");
+        assert!(records::is_handle(&handle), "{handle}");
+        every.push(handle);
+    }
+    assert_eq!(every.len(), 255);
+    assert_eq!(every.last().map(String::as_str), Some("tess-cos-256"));
+    // Only when all 258 are held is there none.
+    let all = free_handle::<()>(|h| {
+        Ok(CHIEF_OF_STAFF_HANDLES.contains(&h) || every.iter().any(|e| e == h))
+    })
+    .unwrap();
+    assert_eq!(all, None);
+}
+
+#[test]
+fn a_derived_id_is_a_uuid_v7_even_from_a_seed_that_is_not_one() {
+    for seed in [
+        "abc",
+        "not-a-uuid-at-all-zzzz",
+        "01900000-0000-7000-8000-00000000000g",
+    ] {
+        let derived = chief_of_staff_id(&Id::parse(seed).unwrap(), 0);
+        assert!(
+            records::is_stable_id(derived.as_str()),
+            "{seed} -> {derived}"
+        );
+        assert!(derived.as_str().starts_with("00000000-0000-7"), "{derived}");
     }
 }
 
@@ -46,6 +84,7 @@ fn her_record_keeps_the_expansion_in_the_charter_alone() {
     assert_eq!(tess.name, "Tess");
     assert_eq!(tess.title.as_deref(), Some("Chief of Staff"));
     assert_eq!(tess.title_in_team.as_deref(), Some("Chief of Staff"));
+    assert_eq!(tess.role_text.as_deref(), Some("Chief of Staff"));
     assert_eq!(tess.builtin_key, Some(BuiltinKey::ChiefOfStaff));
     assert_eq!(tess.kind, EmployeeKind::Agent);
     assert!(tess.may_hire);
@@ -56,6 +95,7 @@ fn her_record_keeps_the_expansion_in_the_charter_alone() {
         assert!(!visible.contains("Tactical"), "{visible}");
     }
     assert!(!tess.title.unwrap_or_default().contains("Tactical"));
+    assert!(!tess.role_text.unwrap_or_default().contains("Tactical"));
     let bytes = records::encode_employee(&chief_of_staff_record(
         id(1),
         "tess",

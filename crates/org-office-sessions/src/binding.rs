@@ -112,8 +112,6 @@ pub enum BindingRejection {
 pub struct RunBindingRegistry {
     inner: Arc<Mutex<HashMap<String, ActiveRunBinding>>>,
     external: Arc<Mutex<HashMap<String, ActiveRunBinding>>>,
-    /// The caller the next managed run of an employee acts for, taken by [`Self::issue`].
-    delegations: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl RunBindingRegistry {
@@ -136,7 +134,9 @@ impl RunBindingRegistry {
         Ok(out)
     }
 
-    /// Issues and stores a new run binding for `employee_id` rooted at `root_pid`.
+    /// Issues and stores a new run binding for `employee_id` rooted at `root_pid`, acting for
+    /// `acting_for_caller_id` (`TASK-80.1`): the session manager passes the caller of the very
+    /// launch it issues for (a Chief of Staff run's partition), and `None` for every other run.
     /// Replaces any older binding for the same `employee_id`.
     pub fn issue(
         &self,
@@ -144,39 +144,21 @@ impl RunBindingRegistry {
         run_id: impl Into<String>,
         session_id: impl Into<String>,
         root_pid: libc::pid_t,
+        acting_for_caller_id: Option<&str>,
     ) -> Result<ActiveRunBinding, String> {
         let token = Self::mint_token()?;
-        let employee_id = employee_id.into();
-        // The delegation is taken atomically with the issue: the run acts for its caller from
-        // its first call, and a later run without one acts for nobody.
-        let acting_for_caller_id = self
-            .delegations
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(&employee_id);
         let binding = ActiveRunBinding {
             token,
-            employee_id,
+            employee_id: employee_id.into(),
             run_id: run_id.into(),
             session_id: session_id.into(),
             mode: BindingMode::Managed { root_pid },
             accepted_commands: Vec::new(),
-            acting_for_caller_id,
+            acting_for_caller_id: acting_for_caller_id.map(str::to_owned),
         };
         let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         map.insert(binding.employee_id.clone(), binding.clone());
         Ok(binding)
-    }
-
-    /// Names the member the **next** managed run of `employee_id` acts for (`None`: nobody),
-    /// replacing any earlier delegation not yet taken. Only the office's session manager calls
-    /// it, with the verified caller of the run it is about to start.
-    pub fn delegate_next_run(&self, employee_id: &str, caller_id: Option<&str>) {
-        let mut map = self.delegations.lock().unwrap_or_else(|p| p.into_inner());
-        match caller_id {
-            Some(caller) => map.insert(employee_id.to_owned(), caller.to_owned()),
-            None => map.remove(employee_id),
-        };
     }
 
     /// The member `employee_id`'s live managed run acts for, if it holds a live binding that

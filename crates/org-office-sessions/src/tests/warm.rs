@@ -442,6 +442,7 @@ fn task126_recycle_stale_warm_handle_atomicity_and_stale_failover_non_drop() {
                 active_permit: Arc::clone(&permit),
                 supports_mid_turn: false,
                 bwrap_masked_siblings: None,
+                partition: None,
             },
         );
     }
@@ -520,6 +521,7 @@ fn task126_recycle_stale_warm_handle_atomicity_and_stale_failover_non_drop() {
             reason: "warm_route_stale",
             rate_limit_resets_at: None,
             stop_epoch: 0,
+            partition: None,
         },
     );
     {
@@ -681,7 +683,7 @@ fn task126_org_topology_invalidates_warm_digest_and_expiring_oauth_triggers_stal
         Arc::clone(&office),
         SessionManagerConfig::production(office.durable_root().join("sock")),
     );
-    let hooks = mgr.build_pump_hooks(&emp_a, "digest".into(), Some(1), None);
+    let hooks = mgr.build_pump_hooks(&emp_a, "digest".into(), Some(1), None, false);
     let acquire = hooks.on_permit_acquire.expect("permit acquire hook");
     let err = acquire("conn-1", None).expect_err("expiring OAuth must fail warm permit acquire");
     assert!(

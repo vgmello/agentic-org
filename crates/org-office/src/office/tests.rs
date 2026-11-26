@@ -32,6 +32,8 @@ use crate::{
     structure::wire,
 };
 
+#[path = "chief_of_staff_hardening_tests.rs"]
+mod chief_of_staff_hardening_tests;
 #[path = "chief_of_staff_tests.rs"]
 mod chief_of_staff_tests;
 #[path = "hiring_tests.rs"]

@@ -9,7 +9,7 @@ use org_store::{Actor, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 use serde::Serialize;
 
 use super::{
-    authority::{admit_active_employee, is_person_above_employee},
+    authority::{admit_active_employee, may_manage_employee},
     changed, invalid,
     shared::{check_revision, profile_file, reject, touched},
     stable, Feature, Op, RejectCode, NOT_AUTHORIZED,
@@ -63,7 +63,9 @@ where
     let Some(target) = view.employee(&command.id)? else {
         return reject(RejectCode::NotFound, "no such employee");
     };
-    if !is_person_above_employee(view, owner, &admitted.actor, &target)? {
+    // A built-in member's hiring power (the Chief of Staff's reaches every team) is the
+    // owner's alone to change (`TASK-80.1`).
+    if !may_manage_employee(view, owner, &admitted.actor, &target)? {
         return invalid(NOT_AUTHORIZED);
     }
     if target.status == EmployeeStatus::Inactive {

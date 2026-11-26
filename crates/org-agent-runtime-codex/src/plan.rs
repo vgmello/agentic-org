@@ -2,6 +2,8 @@ mod effort;
 mod operator;
 mod paths;
 
+pub use operator::{OPERATOR_RULES_DIR, OPERATOR_RULES_FILE_NAME};
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use org_agent_runtime::{

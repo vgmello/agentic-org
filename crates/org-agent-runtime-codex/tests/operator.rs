@@ -167,6 +167,10 @@ fn a_malformed_operator_spec_is_refused() {
 fn an_operator_prefix_that_is_a_shell_or_not_a_plain_word_is_refused() {
     for prefix in [
         "bash",
+        "/bin/bash",
+        "/usr/bin/env agent-os",
+        "/opt/homebrew/bin/python3",
+        "python3.12",
         "env agent-os",
         "agent-os;rm",
         "agent-os $(id)",

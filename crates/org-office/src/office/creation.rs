@@ -189,7 +189,7 @@ impl Office {
         material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
     ) -> Result<Office, OfficeError> {
         let options = Options::production();
-        Self::seed_with(
+        let office = Self::seed_with(
             folder.into(),
             new,
             Some(key),
@@ -199,7 +199,12 @@ impl Office {
             SeedMode::Import(Box::new(load_import)),
             material,
             options,
-        )
+        )?;
+        // An organization exported before the built-in Chief of Staff existed gets her now,
+        // not at the next open (`TASK-80.1`). Best effort, as at open: a failure leaves the
+        // organization as imported, and the next open tries again.
+        let _ = office.ensure_chief_of_staff();
+        Ok(office)
     }
 
     #[expect(

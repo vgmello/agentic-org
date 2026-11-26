@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 
-use org_office::organization_family::records::EmployeeStatus;
+use org_office::organization_family::records::{BuiltinKey, EmployeeStatus};
 use org_office::Office;
 use org_proto::sessions::SessionState;
 
@@ -237,6 +237,9 @@ pub(super) fn commit_wake_send_locked(
         None => (None, None),
     };
     if tx.send(PumpCommand::SendTurn(objective)).is_ok() {
+        if let Some(handle) = reg.live.get(employee_id) {
+            crate::manager::mark_turn_queued(&handle.state);
+        }
         return (true, redundant_pid);
     }
     let rollback_pid = installed_pid.and_then(|pid| {
@@ -398,7 +401,9 @@ pub(super) fn claim_live_drain_batch(
         return None;
     }
     let emp = ctx.office.load_employee(employee_id).ok().flatten()?;
-    if emp.status != EmployeeStatus::Active {
+    // The Chief of Staff's live process acts for the member whose turn it ran: a wake never
+    // drains into it (`TASK-80.1`); her queue starts through the partition-checked path.
+    if emp.status != EmployeeStatus::Active || emp.builtin_key == Some(BuiltinKey::ChiefOfStaff) {
         return None;
     }
     let ts = now_ms();

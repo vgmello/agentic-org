@@ -303,5 +303,5 @@ fn chief_of_staff_at_creation(
     let Some(handle) = handle else {
         return invalid("no handle is free for the Chief of Staff");
     };
-    Ok(chief_of_staff_record(id, handle, team, meta.clone()))
+    Ok(chief_of_staff_record(id, &handle, team, meta.clone()))
 }

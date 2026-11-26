@@ -48,7 +48,7 @@ fn binding_file_is_owner_only_and_removed_on_guard_drop() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("session-binding-run-1.v1");
     let bindings = RunBindingRegistry::new();
-    let issued = bindings.issue("emp-1", "run-1", "sess-1", 0).unwrap();
+    let issued = bindings.issue("emp-1", "run-1", "sess-1", 0, None).unwrap();
     {
         let _guard = BindingGuard::new(&bindings, "emp-1", "run-1", &file);
         write_owner_only_binding_file(&file, issued.expose_token()).unwrap();
@@ -896,4 +896,42 @@ fn bwrap_pruned_claude_plan_has_no_double_globstar_and_no_concrete_sibling_globs
         assert!(emitted.iter().any(|p| p == sibling_rel), "{emitted:?}");
         assert!(emitted.iter().any(|p| p == hooks_rel), "{emitted:?}");
     }
+}
+
+#[test]
+fn an_operator_session_starts_with_no_rust_toolchain() {
+    use std::sync::Arc;
+    let office = Arc::new(org_office::Office::for_test(
+        org_office::TestOffice::default(),
+    ));
+    let sock = tempfile::tempdir().unwrap();
+    let mgr = super::SessionManager::new(
+        Arc::clone(&office),
+        super::SessionManagerConfig::production(sock.path().join("office.sock")),
+    );
+    let home = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let binding = tmp.path().join("binding");
+    let captured = mgr.captured_env(&super::environment::SessionEnvInput {
+        home: home.path(),
+        workspace: home.path(),
+        tmpdir: tmp.path(),
+        employee_id: "tess",
+        employee_name: "Tess",
+        employee_handle: "tess",
+        session_id: "sess-1",
+        token: "token",
+        binding_file: &binding,
+        sandbox_enabled: true,
+        operator: true,
+    });
+    let names: Vec<String> = captured
+        .iter()
+        .map(|(name, _)| name.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["HOME", "TMPDIR", "LANG", "TERM"]);
+    assert!(
+        !home.path().join(".cargo").exists(),
+        "no cache links in her home"
+    );
 }

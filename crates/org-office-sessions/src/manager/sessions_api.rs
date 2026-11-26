@@ -16,6 +16,7 @@ use crate::pump::PumpCommand;
 use super::lifecycle_ops::reap_replaced_handle;
 use super::spec::canonical_or_spec;
 use super::views::overlay_durable_wake_state;
+use super::warm::LaunchRouteOpts;
 use super::{next_entropy_hex, SessionManager, StartSlotGuard};
 
 impl SessionManager {
@@ -43,7 +44,7 @@ impl SessionManager {
         self.clear_persisted_stall_only(emp_id);
 
         // The Chief of Staff answers each caller in their own partition (`TASK-80.1`).
-        let partition = self.enter_partition(&employee, Some(actor_member_id))?;
+        let partition = Self::turn_partition(&employee, Some(actor_member_id));
         // Composed once, for a live session and a new one alike: an owner instruction the HQ
         // proxied (`hq_attested_owner`) is badged `owner` either way.
         let objective = params.instruction.as_deref().map(|text| {
@@ -54,6 +55,7 @@ impl SessionManager {
             objective.clone(),
             None,
             params.workspace.as_deref(),
+            partition.as_ref(),
         )?;
         if let Some(view) = reservation.live_view {
             return Ok(view);
@@ -64,22 +66,16 @@ impl SessionManager {
         self.clear_persisted_stall_only(emp_id);
         let tokens = self.bindings.active_tokens();
         let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+        let turn = reservation.partition_turn.as_ref();
         let _ = self.store.append_history(
             emp_id,
-            &turn_trigger_entry(actor_member_id, &params.command_id, partition.as_ref()),
+            &turn_trigger_entry(actor_member_id, &params.command_id, turn),
             &refs,
         );
-        let resume = partition
-            .as_ref()
-            .and_then(|turn| turn.resume_runtime_session_id.as_deref());
-        let prepared = self.prepare_and_spawn_raw(
-            &employee,
-            params,
-            objective.unwrap_or_default(),
-            resume,
-            None,
-            reservation.start_stop_epoch,
-        )?;
+        let resume = turn.and_then(|turn| turn.resume_runtime_session_id.as_deref());
+        let opts = LaunchRouteOpts::fresh(resume, None, reservation.start_stop_epoch, partition);
+        let prepared =
+            self.prepare_and_spawn_raw(&employee, params, objective.unwrap_or_default(), opts)?;
         self.install_live_session(prepared, slot)
     }
 
@@ -88,6 +84,11 @@ impl SessionManager {
     /// `objective` is the complete turn input: queued wakes compose it, task process deltas
     /// included, through `lifecycle::wake_turn`; `task_ref` only scopes route admission and the
     /// turn permit.
+    ///
+    /// The Chief of Staff's autonomous turns act for nobody, in her `tess:wake` partition
+    /// (`TASK-80.1`): they resume only that partition's own conversation, never the one
+    /// `resume_runtime_session_id` names (the last run's or a suspended run's, which may be a
+    /// member's), and never reuse a process serving a member's partition.
     pub(crate) fn spawn_or_send_autonomous(
         &self,
         employee: &Employee,
@@ -98,20 +99,20 @@ impl SessionManager {
     ) -> Result<SessionView, ApiError> {
         let emp_id = employee.id.as_str();
         self.check_not_blocked(emp_id)?;
-        // A Chief of Staff turn with no caller runs in her `tess:wake` partition, acting for
-        // nobody, never in a member's conversation (`TASK-80.1`).
-        let partition = self.enter_partition(employee, None)?;
-        let resume_runtime_session_id = resume_runtime_session_id.or(partition
-            .as_ref()
-            .and_then(|turn| turn.resume_runtime_session_id.as_deref()));
+        let partition = Self::turn_partition(employee, None);
         let params = MemberSessionStartParams {
             command_id: format!("auto-{}", next_entropy_hex(8)?),
             employee_id: emp_id.to_owned(),
             instruction: Some(objective.clone()),
             workspace: None,
         };
-        let reservation =
-            self.reserve_start_or_send(employee, Some(objective.clone()), task_ref, None)?;
+        let reservation = self.reserve_start_or_send(
+            employee,
+            Some(objective.clone()),
+            task_ref,
+            None,
+            partition.as_ref(),
+        )?;
         if let Some(view) = reservation.live_view {
             let tokens = self.bindings.active_tokens();
             let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
@@ -124,14 +125,14 @@ impl SessionManager {
         let tokens = self.bindings.active_tokens();
         let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
         let _ = self.store.append_history(emp_id, &trigger_entry, &refs);
-        let prepared = self.prepare_and_spawn_raw(
-            employee,
-            &params,
-            objective,
+        let resume = autonomous_resume(
+            reservation.partition_turn.as_ref(),
+            partition.is_some(),
             resume_runtime_session_id,
-            task_ref,
-            reservation.start_stop_epoch,
-        )?;
+        );
+        let opts =
+            LaunchRouteOpts::fresh(resume, task_ref, reservation.start_stop_epoch, partition);
+        let prepared = self.prepare_and_spawn_raw(employee, &params, objective, opts)?;
         self.install_live_session(prepared, slot)
     }
 
@@ -474,6 +475,20 @@ pub(super) fn parse_decision(
             "decision must be `allow_once`, `allow_always`, or `deny`",
         )),
     }
+}
+
+/// The conversation an autonomous start resumes: for the Chief of Staff (`partitioned`) only her
+/// partition's own, from the partition ledger, and never `requested` (the last run's or a
+/// suspended run's, which may be a member's); for anyone else, `requested` (`TASK-80.1`).
+pub(crate) fn autonomous_resume<'a>(
+    partition_turn: Option<&'a crate::partition::PartitionTurn>,
+    partitioned: bool,
+    requested: Option<&'a str>,
+) -> Option<&'a str> {
+    if partitioned {
+        return partition_turn.and_then(|turn| turn.resume_runtime_session_id.as_deref());
+    }
+    requested
 }
 
 /// The history entry of a person's `Run`: who asked, and for the Chief of Staff the partition

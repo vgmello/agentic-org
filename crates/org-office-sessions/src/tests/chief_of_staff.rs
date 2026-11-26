@@ -227,28 +227,25 @@ fn she_works_only_from_her_private_home() {
 }
 
 #[test]
-fn a_run_acts_for_the_caller_that_started_it_and_no_other() {
+fn a_run_acts_for_exactly_the_caller_its_launch_names() {
     let reg = RunBindingRegistry::new();
-    reg.delegate_next_run("tess", Some("owner-1"));
-    let run = reg.issue("tess", "run-1", "sess-1", 0).unwrap();
+    let run = reg
+        .issue("tess", "run-1", "sess-1", 0, Some("owner-1"))
+        .unwrap();
     assert_eq!(run.acting_for_caller_id.as_deref(), Some("owner-1"));
     assert_eq!(reg.acting_for_caller_id("tess").as_deref(), Some("owner-1"));
     assert_eq!(reg.acting_for_caller_id("someone-else"), None);
-    // The delegation was taken by that run: the next one acts for nobody.
+    // Each run carries its own caller: a later run of another partition acts for its own, and
+    // nothing a start records for one run can reach another.
     reg.revoke("tess", None);
     assert_eq!(reg.acting_for_caller_id("tess"), None);
-    let next = reg.issue("tess", "run-2", "sess-2", 0).unwrap();
-    assert_eq!(next.acting_for_caller_id, None);
-    // A cleared delegation is gone; another employee's never reaches her.
-    reg.delegate_next_run("tess", Some("member-2"));
-    reg.delegate_next_run("tess", None);
-    reg.delegate_next_run("hr", Some("member-2"));
-    assert_eq!(
-        reg.issue("tess", "run-3", "sess-3", 0)
-            .unwrap()
-            .acting_for_caller_id,
-        None
-    );
+    let next = reg
+        .issue("tess", "run-2", "sess-2", 0, Some("member-2"))
+        .unwrap();
+    assert_eq!(next.acting_for_caller_id.as_deref(), Some("member-2"));
+    let wake = reg.issue("tess", "run-3", "sess-3", 0, None).unwrap();
+    assert_eq!(wake.acting_for_caller_id, None);
+    assert_eq!(reg.acting_for_caller_id("tess"), None);
     // An external lease never acts for anyone.
     let lease = reg.issue_external("tess", "ext-1", u64::MAX).unwrap();
     assert_eq!(lease.acting_for_caller_id, None);
@@ -256,50 +253,26 @@ fn a_run_acts_for_the_caller_that_started_it_and_no_other() {
 }
 
 #[test]
-fn each_caller_gets_a_partition_and_the_next_run_acts_for_them() {
+fn each_caller_gets_a_partition_and_no_one_else_has_one() {
     let f = fixture();
     let tess = f.office.chief_of_staff().unwrap().unwrap();
-    let owner_turn = f
-        .manager
-        .enter_partition(&tess, Some(&f.owner))
-        .unwrap()
-        .expect("her partition");
-    assert_eq!(owner_turn.key, PartitionKey::tess_ask(&f.owner));
-    assert_eq!(
-        (owner_turn.turn, owner_turn.resume_runtime_session_id),
-        (1, None)
-    );
-    let run = f
-        .manager
-        .bindings()
-        .issue(&f.tess, "run-1", "sess-1", 0)
-        .unwrap();
-    assert_eq!(run.acting_for_caller_id.as_deref(), Some(f.owner.as_str()));
-
+    let owner = SessionManager::turn_partition(&tess, Some(&f.owner)).expect("hers");
+    assert_eq!(owner, PartitionKey::tess_ask(&f.owner));
+    assert_eq!(owner.caller_id(), Some(f.owner.as_str()));
     let member = "0190a5d2-7c3e-7a01-8b2c-3d4e5f60aaaa";
-    let member_turn = f
-        .manager
-        .enter_partition(&tess, Some(member))
-        .unwrap()
-        .unwrap();
-    assert_eq!(member_turn.key.as_str(), format!("tess:ask:{member}"));
-    assert_eq!(member_turn.resume_runtime_session_id, None);
-    let wake = f.manager.enter_partition(&tess, None).unwrap().unwrap();
-    assert_eq!(wake.key, PartitionKey::tess_wake());
-
-    // Anyone else has no partition, and their runs act for nobody.
+    let theirs = SessionManager::turn_partition(&tess, Some(member)).unwrap();
+    assert_eq!(theirs.as_str(), format!("tess:ask:{member}"));
+    assert_eq!(
+        SessionManager::turn_partition(&tess, None),
+        Some(PartitionKey::tess_wake())
+    );
+    // Anyone else has no partition, and so their runs act for nobody.
     let hr = f.office.list_employees().unwrap();
     let hr = hr
         .iter()
         .find(|e| e.builtin_key == Some(BuiltinKey::Hr))
         .unwrap();
-    assert_eq!(f.manager.enter_partition(hr, Some(&f.owner)).unwrap(), None);
-    let hr_run = f
-        .manager
-        .bindings()
-        .issue(hr.id.as_str(), "run-h", "sess-h", 0)
-        .unwrap();
-    assert_eq!(hr_run.acting_for_caller_id, None);
+    assert_eq!(SessionManager::turn_partition(hr, Some(&f.owner)), None);
 }
 
 #[test]
@@ -318,4 +291,60 @@ fn she_never_signs_in_from_an_external_workspace() {
         .unwrap_err();
     assert_eq!(refused.code, org_proto::ErrorCode::NotAuthorized);
     assert!(refused.message.contains("only inside the office"));
+
+    // No later step of a sign-in is ever hers either, even with a login on record for her.
+    let only_inside = |err: org_proto::ApiError| {
+        err.code == org_proto::ErrorCode::NotAuthorized
+            && err.message.contains("only inside the office")
+    };
+    let challenge = f
+        .manager
+        .external_challenge(
+            &f.tess,
+            "sess-1",
+            org_proto::external_auth::ChallengePurpose::Exchange,
+        )
+        .unwrap_err();
+    assert!(only_inside(challenge));
+    let exchange = f
+        .manager
+        .external_exchange(
+            &f.tess,
+            &org_proto::external_auth::SignedChallengeParams {
+                member: f.tess.clone(),
+                session_id: "sess-1".into(),
+                nonce: "n".into(),
+                signature_ed25519_b64: "s".into(),
+            },
+        )
+        .unwrap_err();
+    assert!(only_inside(exchange));
+    let (_, code) = f
+        .manager
+        .external
+        .pending
+        .lock()
+        .unwrap()
+        .insert(
+            new_uuid_v7(),
+            &f.tess,
+            "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+            "laptop",
+            crate::credentials::now_ms(),
+        )
+        .unwrap();
+    let approve = f
+        .manager
+        .external_approve(
+            &f.owner,
+            &org_proto::external_auth::MemberExternalApproveParams {
+                command_id: None,
+                code,
+                ttl_secs: None,
+                takeover: false,
+            },
+        )
+        .unwrap_err();
+    assert!(only_inside(approve));
+    assert!(f.manager.external_lease(&f.tess).is_none());
 }

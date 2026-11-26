@@ -309,34 +309,3 @@ impl serve::ExternalAuthPort for ExternalAuth {
         self.0.external_binding_active(member_id, session_id)
     }
 }
-
-/// The built-in Chief of Staff's delegation for the server's `caller ∩ tess` gate
-/// (`TASK-80.1`): for her (and only her) the member her live run acts for, from its run binding
-/// in RAM, with that member's authority read live. Her ID never changes (she is never
-/// offboarded), so it is looked up once and then compared without a read.
-pub(crate) fn chief_of_staff_delegation(
-    office: &Arc<Office>,
-    session_manager: &Arc<org_office_sessions::SessionManager>,
-) -> serve::DelegationFn {
-    let office = Arc::clone(office);
-    let sessions = Arc::clone(session_manager);
-    let known = std::sync::OnceLock::<String>::new();
-    Box::new(move |member| {
-        let tess = match known.get() {
-            Some(id) => id.as_str(),
-            None => {
-                let found = office.chief_of_staff().ok().flatten()?;
-                known.get_or_init(|| found.id.to_string()).as_str()
-            }
-        };
-        if member != tess {
-            return None;
-        }
-        let caller_id = sessions.bindings().acting_for_caller_id(member);
-        let caller = caller_id
-            .as_deref()
-            .map(|caller| office.caller_authority(caller).unwrap_or_default())
-            .unwrap_or_default();
-        Some(serve::Delegation { caller_id, caller })
-    })
-}

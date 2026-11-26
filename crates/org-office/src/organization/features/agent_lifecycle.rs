@@ -12,7 +12,7 @@ use serde::Serialize;
 use super::{
     authority::{
         admit_active_employee, check_team_capacity, is_owner, is_person_above_employee,
-        is_person_ancestor_lead,
+        is_person_ancestor_lead, may_manage_employee,
     },
     changed, invalid,
     shared::{
@@ -74,7 +74,7 @@ impl Feature for UpdateAgent {
         let Some(agent) = view.employee(&self.id)? else {
             return reject(RejectCode::NotFound, "no such agent");
         };
-        if !is_person_above_employee(view, owner, &admitted.actor, &agent)? {
+        if !may_manage_employee(view, owner, &admitted.actor, &agent)? {
             return invalid(NOT_AUTHORIZED);
         }
         if agent.kind != EmployeeKind::Agent {
@@ -500,7 +500,7 @@ impl Feature for UpsertAgentExecution {
         let Some(agent) = view.employee(&self.employee_id)? else {
             return reject(RejectCode::NotFound, "no such agent");
         };
-        if !is_person_above_employee(view, owner, &admitted.actor, &agent)? {
+        if !may_manage_employee(view, owner, &admitted.actor, &agent)? {
             return invalid(NOT_AUTHORIZED);
         }
         if agent.kind != EmployeeKind::Agent {

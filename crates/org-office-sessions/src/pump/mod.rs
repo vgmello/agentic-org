@@ -113,6 +113,18 @@ pub(crate) struct FailoverRequest {
     pub rate_limit_resets_at: Option<String>,
     /// The failed run's [`PumpContext::stop_epoch`]: a later explicit stop abandons the failover.
     pub stop_epoch: u64,
+    /// The Chief of Staff partition the failed run served (`TASK-80.1`): its relaunch serves the
+    /// same one and so acts for exactly the same caller ([`Self::acting_for_caller_id`]).
+    pub partition: Option<crate::partition::PartitionKey>,
+}
+
+impl FailoverRequest {
+    /// The member the failed run (and so its relaunch) acts for; `None` for nobody.
+    pub(crate) fn acting_for_caller_id(&self) -> Option<&str> {
+        self.partition
+            .as_ref()
+            .and_then(crate::partition::PartitionKey::caller_id)
+    }
 }
 pub(crate) type FailoverHook = Arc<dyn Fn(FailoverRequest) + Send + Sync>;
 /// Returns `true` when this Linux `bwrap` session's masked sibling set is stale because a new
@@ -225,6 +237,16 @@ pub(crate) struct PumpContext {
     /// The employee's explicit-stop epoch when this run was installed
     /// ([`crate::manager::SessionRegistry::stop_epoch`]), carried into every [`FailoverRequest`].
     pub stop_epoch: u64,
+    /// The Chief of Staff partition this run serves (`TASK-80.1`): the run records its
+    /// conversation and context use there, and carries it into every [`FailoverRequest`].
+    pub partition: Option<crate::partition::PartitionHandle>,
+}
+
+impl PumpContext {
+    /// The partition this run serves, for a [`FailoverRequest`].
+    pub(crate) fn partition_key(&self) -> Option<crate::partition::PartitionKey> {
+        self.partition.as_ref().map(|p| p.key().clone())
+    }
 }
 
 enum ReaderMsg {

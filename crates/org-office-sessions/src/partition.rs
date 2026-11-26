@@ -26,6 +26,10 @@ pub const TESS_WAKE_PARTITION: &str = "tess:wake";
 pub const ROTATE_AFTER_TURNS: u32 = 20;
 /// The share of the context window, in percent, at which a partition rotates.
 pub const ROTATE_AT_CONTEXT_PERCENT: u64 = 60;
+/// The context window assumed when the runtime does not report one: the smallest window of
+/// the models the office runs (200k tokens). Too small a guess only rotates earlier, which is
+/// always safe.
+pub const DEFAULT_CONTEXT_WINDOW_TOKENS: u64 = 200_000;
 
 /// A partition of the Chief of Staff's sessions.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -176,6 +180,54 @@ impl PartitionLedger {
     pub fn state(&self, employee_id: &str, key: &PartitionKey) -> Option<PartitionState> {
         let map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         map.get(&(employee_id.to_owned(), key.clone())).cloned()
+    }
+}
+
+/// One run's partition, as its pump sees it: the run records the conversation it holds the
+/// moment the runtime names it (so stopping, exiting or crashing never loses a caller's
+/// conversation) and how much of the context window each turn fills (so the partition rotates
+/// at [`ROTATE_AT_CONTEXT_PERCENT`]).
+#[derive(Clone)]
+pub struct PartitionHandle {
+    ledger: PartitionLedger,
+    employee_id: String,
+    key: PartitionKey,
+}
+
+impl PartitionHandle {
+    pub fn new(ledger: PartitionLedger, employee_id: impl Into<String>, key: PartitionKey) -> Self {
+        Self {
+            ledger,
+            employee_id: employee_id.into(),
+            key,
+        }
+    }
+
+    /// The partition the run serves.
+    pub fn key(&self) -> &PartitionKey {
+        &self.key
+    }
+
+    /// Records the runtime conversation the run holds (`SessionStarted`).
+    pub fn record_runtime_session(&self, runtime_session_id: &str) {
+        self.ledger
+            .record_runtime_session(&self.employee_id, &self.key, runtime_session_id);
+    }
+
+    /// Records a turn's usage as the context its conversation fills: every input token the
+    /// turn sent (fresh, cache read and cache written). A turn of several model calls counts
+    /// each call's input, so it can only overstate, and an overstatement only rotates sooner.
+    pub fn observe_usage(&self, usage: &org_agent_runtime::Usage) {
+        let context = usage
+            .input
+            .saturating_add(usage.cache_read)
+            .saturating_add(usage.cache_write);
+        self.ledger.observe_context(
+            &self.employee_id,
+            &self.key,
+            context,
+            Some(DEFAULT_CONTEXT_WINDOW_TOKENS),
+        );
     }
 }
 
