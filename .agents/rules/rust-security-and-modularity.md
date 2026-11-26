@@ -1,4 +1,7 @@
 ---
+trigger: glob
+globs: "**/*.rs, **/Cargo.toml, .github/large-files.allow"
+description: Rust production file-size ceiling, single security choke-points, POSIX/UTF-8/redaction/concurrency self-check, and LNX-5 platform gate
 paths:
   - "**/*.rs"
   - "**/Cargo.toml"
@@ -103,7 +106,7 @@ concern below has **one** implementation, and every call site goes through it:
   from outside the process goes through it before it is logged, persisted, returned in an
   error or sent over the wire. That covers subprocess stdout/stderr, provider and git
   output, error chains, transcripts and headers. Example: `org-office-sessions`'
-  `transcript/redact.rs` (`redact_text`, `redact_json`). Extend the choke-point; never add
+  `src/redact.rs` (`redact_text`, `redact_json`). Extend the choke-point; never add
   a local `replace`/regex scrub beside it.
 - **Live-handle and process teardown.** One function reaps a live session or process handle
   and releases its slots. Everything that can end a handle calls that one function: stop,
