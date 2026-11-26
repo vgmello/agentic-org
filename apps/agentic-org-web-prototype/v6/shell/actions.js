@@ -3,7 +3,7 @@ import { IN, M, OFFICES, P, TEAMS, W, blockedOnOwner } from "../data.js";
 import { activityFilterKey, activityViewKey, addAssemblySample, assemblySimulation, projectActivityId, refreshAssemblySimulation, setActivityPanel, syncAssemblySimulationTimer, updateAssemblyPlayback } from "../pages/activity.js";
 import { closeAgentFocus, isAgentFocusOpen, openAgentFocus } from "../pages/agent-focus.js";
 import { consoleSessions } from "../pages/agent-profile.js";
-import { chatDrafts, sendChatMessage } from "../pages/chat.js";
+import { chatDrafts, openDirectMessage, sendChatMessage, sendThreadReply } from "../pages/chat.js";
 import { answerOrgQuestion } from "../pages/home.js";
 import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment, refreshInboxSearch, resetInboxSelection } from "../pages/inbox.js";
 import { updateProjectInsights } from "../pages/insights.js";
@@ -112,6 +112,14 @@ function toggleStoredFlag(stateKey, attr, storeKey, t, invertAttr = false) {
   document.documentElement.toggleAttribute(attr, invertAttr ? !S[stateKey] : S[stateKey]);
   t.setAttribute("aria-checked", String(S[stateKey]));
   try { localStorage.setItem(storeKey, S[stateKey] ? "1" : "0"); } catch (e) {}
+}
+
+/* Chat conversation list below 960px: an overlay opened from the header. */
+function toggleChatList(id) {
+  const open = S.chatList !== id;
+  S.chatList = open ? id : null;
+  render(false);
+  (open ? document.querySelector('.chlist [aria-current="page"]') : document.querySelector(".chat-list-btn"))?.focus();
 }
 
 function handleSendReply(id) {
@@ -352,6 +360,8 @@ const CLICK_ACTIONS = {
   "search-close": () => closeCmdk(true),
   sgo: (_e, _t, _id, v) => goSearch(v),
   "chat-jump": (_e, t) => openCmdk("#", "cmd", t, false),
+  "chat-list": (_e, _t, id) => toggleChatList(id),
+  "chat-dm": (_e, _t, id) => { location.hash = openDirectMessage(id); },
   "search-toggle": (_e, _t, _id, v) => toggleInlineSearch(v),
   "search-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
   "cmdk-open": (_e, t) => openCmdk(pageSearchInput()?.value || "", "cmd", t),
@@ -597,11 +607,17 @@ document.addEventListener("submit", (e) => {
     return;
   }
   if (e.target.dataset.form === "send") sendChatMessage(e.target);
+  if (e.target.dataset.form === "thread-send" && sendThreadReply(e.target)) { render(false); document.getElementById("thread-compose")?.focus(); }
 });
 
+const CHAT_COMPOSERS = new Set(["compose", "thread-compose"]);
+function isChatSendKey(e) {
+  if (!CHAT_COMPOSERS.has(e.target.id) || e.key !== "Enter" || e.altKey || e.shiftKey) return false;
+  return (e.ctrlKey && S.chatSend !== "command") || (e.metaKey && S.chatSend !== "control");
+}
+
 function handleComposerKeydown(e) {
-  if (e.target.id === "compose" && e.key === "Enter" && !e.altKey && !e.shiftKey
-      && ((e.ctrlKey && S.chatSend !== "command") || (e.metaKey && S.chatSend !== "control"))) {
+  if (isChatSendKey(e)) {
     e.preventDefault(); if (!e.repeat) e.target.form.requestSubmit(); return true;
   }
   if (e.target.id === "work-comment" && (e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -662,6 +678,7 @@ function handleOpenMenuKeydown(e, openMenu) {
 }
 
 function dismissLocalEscapeTarget(e) {
+  if (S.chatList && e.target.closest?.(".chat.list-open .chlist")) { e.preventDefault(); toggleChatList(S.chatList); return true; }
   if (e.target.tagName === "TEXTAREA" && /^r-/.test(e.target.id || "")) {
     const c = document.querySelector(`[data-act="cancel-reply"][data-id="${CSS.escape(e.target.id.slice(2))}"]`);
     if (c) { e.preventDefault(); c.click(); return true; }

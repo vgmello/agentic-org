@@ -1688,8 +1688,6 @@ body.agent-focus-open #content { overflow: hidden; }
   .settings-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 4px var(--gutter) 8px; border-bottom: 1px solid var(--line); }
   .settings-picker label { color: var(--gray-300); font-weight: 600; }
   .settings-picker select { flex: 1; min-width: min(100%, 12rem); max-width: 100%; }
-  .chat, .chat.withthread { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; height: auto; }
-  .chlist { border-right: 0; }
 }
 @media (min-width: 640px) and (max-width: 959px) {
   .sidebar { width: 64px; padding: 0 8px; gap: 12px; overflow: visible; }

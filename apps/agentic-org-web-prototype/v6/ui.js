@@ -335,6 +335,8 @@ export {
   projPill,
   queueHeadline,
   itemActions,
+  itemActionButtons,
+  itemReplyComposer,
   recommendationCallout,
   sectionTabs,
   seg,
