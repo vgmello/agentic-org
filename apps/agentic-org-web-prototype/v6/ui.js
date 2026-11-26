@@ -40,7 +40,7 @@ function av(id, size = 32, mode = false) {
   const p = mode ? presence(id) : null;
   const dot = p && p !== "unknown" ? `<span class="avdot p-${p}"></span>` : "";
   const tip = dot && mode === "tip";
-  return `<span class="av av${size}" style="color:${TINTS[hash(id) % 7]}" aria-hidden="true"${tip ? ` title="${esc(m.name)} · ${PRES[p].label}"` : ""}>${esc(initials(m.name))}${dot}</span>${tip ? `<span class="sr-only">(${PRES[p].label})</span>` : ""}`;
+  return `<span class="av av${size}" style="--av-tint:${TINTS[hash(id) % 7]}" aria-hidden="true"${tip ? ` title="${esc(m.name)} · ${PRES[p].label}"` : ""}>${esc(initials(m.name))}${dot}</span>${tip ? `<span class="sr-only">(${PRES[p].label})</span>` : ""}`;
 }
 const pill = (text, tone = "gray", icon = null, chip = false) => `<span class="pill t-${tone}${chip ? " chip" : ""}">${icon ? ic(icon, "ic14") : ""}${esc(text)}</span>`;
 const presPill = (id, profile = false) => { const p = presence(id); return p && (p !== "unknown" || profile) ? pill(PRES[p].label, PRES[p].tone, PRES[p].icon) : ""; };

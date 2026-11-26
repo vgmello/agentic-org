@@ -208,7 +208,7 @@ function agentOverviewTab(id, m, avail, myW, myActs) {
     : `<p class="muted">${avail.active ? "Not working on anything right now." : esc(avail.reason)}</p>`;
   const latestHtml = lastEntry ? `<div class="k-doc" style="margin-top:16px">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">
-              <span style="font-weight:600;color:#fff;display:inline-flex;align-items:center;gap:6px">${ic("terminal", "ic16")}Latest session output</span>
+              <span style="font-weight:600;color:var(--white);display:inline-flex;align-items:center;gap:6px">${ic("terminal", "ic16")}Latest session output</span>
               <a class="link" style="font-size:0.75rem" href="#/members/${id}/sessions">Open Sessions${ic("chev-right", "ic16")}</a>
             </div>
             <p class="muted" style="font-size:0.75rem;margin-bottom:6px">${esc(M[lastEntry.from] ? M[lastEntry.from].name : lastEntry.from)} · ${esc(lastEntry.time)} — “${esc(lastEntry.text)}”</p>

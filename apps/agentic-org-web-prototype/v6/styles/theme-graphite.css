@@ -1,5 +1,5 @@
 /* Graphite: matte surfaces, compact lists and restrained color. */
-html[data-theme="graphite"] {
+html[data-theme^="graphite"] {
   --graphite-canvas: #161718;
   --graphite-rail: var(--graphite-canvas);
   --graphite-panel: #1b1d20;
@@ -216,7 +216,7 @@ html[data-theme="graphite"] {
     & :is(.hb-pillars, .hb-stage, .hb-bento) { gap: 12px; }
   }
 }
-html:is([data-theme="classic"], [data-theme="graphite"]) {
+html:is([data-theme="classic"], [data-theme^="graphite"]) {
   --radius-md: 5px;
   --radius-lg: 7px;
 
@@ -226,7 +226,7 @@ html:is([data-theme="classic"], [data-theme="graphite"]) {
   & :is(.cmdk-dialog, .menu, .toast, .sres,
     .hb-pillar, .hb-spot, .hb-catchup, .hb-card, .hb-time, .hb-cal, .hb-skel-card, .hb-ai-brief) { border-radius: var(--radius-lg); }
 }
-html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) {
+html:is([data-theme="ocean"], [data-theme="classic"], [data-theme^="graphite"]) {
   & .hb-stage:not(.is-single) > .hb-spot {
     padding-block: clamp(1.5rem, 2vw, 1.875rem);
     gap: 18px;

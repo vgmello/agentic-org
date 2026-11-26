@@ -945,7 +945,7 @@ body.nokeys .search kbd { display: none; }
 .health .ic16 { margin-top: 2px; }
 
 /* Avatars and presence dots */
-.av { position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center; border-radius: 99px; background: var(--gray-800); font-weight: 600; box-shadow: inset 0 0 0 1px var(--line2); aspect-ratio: 1 / 1; align-self: center; }
+.av { color: var(--av-tint, inherit); position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center; border-radius: 99px; background: var(--gray-800); font-weight: 600; box-shadow: inset 0 0 0 1px var(--line2); aspect-ratio: 1 / 1; align-self: center; }
 .av24 { width: 24px; height: 24px; min-width: 24px; min-height: 24px; font-size: var(--fs-2xs); font-weight: 600; letter-spacing: -0.02em; }
 .av32 { width: 32px; height: 32px; min-width: 32px; min-height: 32px; font-size: var(--fs-xs); }
 .av40 { width: 40px; height: 40px; min-width: 40px; min-height: 40px; font-size: var(--fs-base); }
@@ -1033,6 +1033,9 @@ html[data-hide-work-subtasks] .work-subtasks { display: none; }
   white-space: nowrap;
 }
 .work-criteria.is-complete { color: var(--tone-ok-ink); }
+/* Fixed-width counter column in list rows so every title starts at the same x */
+.work-markers .work-criteria { display: inline-block; min-width: 3.25ch; }
+.work-criteria.is-empty { color: var(--gray-500); }
 .work-status, .work-priority-mark {
   position: relative; display: inline-flex; flex: none; align-items: center;
   justify-content: center; width: 1rem; height: 1rem; color: var(--gray-400);

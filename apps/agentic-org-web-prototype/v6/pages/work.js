@@ -237,8 +237,10 @@ function workPriority(priority) {
   return `<span class="work-priority-mark" data-level="${Math.min(rank ?? 0, 3)}" role="img" aria-label="${label}" title="${label}"><span></span><span></span><span></span></span>`;
 }
 
-function workCriteria(criteria, id) {
-  if (!criteria?.length) return "";
+function workCriteria(criteria, id, placeholder = false) {
+  if (!criteria?.length) {
+    return placeholder ? `<span class="work-criteria is-empty" data-work-progress="${esc(id)}" title="No acceptance criteria"><span aria-hidden="true">–</span><span class="sr-only">No acceptance criteria</span></span>` : "";
+  }
   const done = criteria.filter((item) => item.done).length;
   const label = `${done} of ${criteria.length} acceptance criteria complete`;
   return `<span class="work-criteria${done === criteria.length ? " is-complete" : ""}" data-work-progress="${esc(id)}" title="${label}"><span aria-hidden="true">${done}/${criteria.length}</span><span class="sr-only">${label}</span></span>`;
@@ -283,7 +285,7 @@ function workRow(w, isSubtask = false, hideOwner = false) {
     <div class="work-summary">
       <span class="work-ident">${workPriority(w.pri)}<span class="work-ref">${esc(w.id)}</span></span>
       <span class="work-heading">
-        <span class="work-markers">${workStatus(w.status, showsNeedsYou(w))}${workCriteria(w.criteria, w.id)}</span>
+        <span class="work-markers">${workStatus(w.status, showsNeedsYou(w))}${workCriteria(w.criteria, w.id, true)}</span>
         <span>${workTitle(w, "work-title")}${workRowBadges(w)}</span>
       </span>
     </div>

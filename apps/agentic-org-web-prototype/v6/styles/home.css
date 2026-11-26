@@ -1212,11 +1212,11 @@ a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 
 .hb-proj-head h2 { font-family: var(--font-display); font-size: var(--section-title-size); font-weight: var(--fw-heading); letter-spacing: var(--ls-display); font-optical-sizing: auto; color: var(--hb-ink); }
 .hb-proj-head span { font-size: var(--fs-sm); color: var(--hb-muted); }
 .hb-proj-head h2 span { font-size: inherit; color: inherit; }
-html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) .hb-proj-head-l {
+html:is([data-theme="ocean"], [data-theme="classic"], [data-theme^="graphite"]) .hb-proj-head-l {
   flex-wrap: wrap; gap: 4px 10px;
 }
-html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) .hb-proj-head h2 { font-size: var(--section-title-size); }
-html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) .hb-proj-head-l > span { font-size: var(--fs-md); }
+html:is([data-theme="ocean"], [data-theme="classic"], [data-theme^="graphite"]) .hb-proj-head h2 { font-size: var(--section-title-size); }
+html:is([data-theme="ocean"], [data-theme="classic"], [data-theme^="graphite"]) .hb-proj-head-l > span { font-size: var(--fs-md); }
 .hb-proj-head .link { color: var(--tone-accent-ink); }
 .hb-proj-head .link:hover { color: var(--tone-accent-hover); }
 .content:has(+ .home-scroll-hint:not([hidden])) { height: calc(100% - var(--home-hint-height)); }
@@ -1235,7 +1235,7 @@ html:is([data-theme="ocean"], [data-theme="classic"], [data-theme="graphite"]) .
   font-weight: 500;
 }
 html[data-theme="ocean"] .home-scroll-hint { background: transparent; }
-html[data-theme="graphite"] .home-scroll-hint { background: var(--graphite-canvas); }
+html[data-theme^="graphite"] .home-scroll-hint { background: var(--graphite-canvas); }
 .hb-bento { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .hb-card {
   position: relative; display: flex; flex-direction: column; gap: 14px;

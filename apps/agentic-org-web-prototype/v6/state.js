@@ -23,7 +23,7 @@ S.cozyContrast = false;
 try { S.cozyContrast = localStorage.getItem(COZY_CONTRAST_STORE) === "1"; } catch (e) {}
 const THEME_OPTIONS = [
   ["ocean", "Ocean"], ["classic", "Classic"], ["report", "Report"],
-  ["report-dark", "Report Night"], ["graphite", "Graphite"], ["cozy", "Cozy Glass"]
+  ["report-dark", "Report Night"], ["graphite", "Graphite"], ["graphite-light", "Graphite Light"], ["cozy", "Cozy Glass"]
 ];
 const VALID_THEMES = new Set(THEME_OPTIONS.map(([value]) => value));
 const normalizeTheme = (t) => (t === "light" ? "report" : t);
@@ -42,7 +42,7 @@ function applyCozyContrast() {
 function applyTheme(remember = false) {
   const t = VALID_THEMES.has(normalizeTheme(S.theme)) ? normalizeTheme(S.theme) : "ocean";
   S.theme = t;
-  const isLight = t === "report";
+  const isLight = t === "report" || t === "graphite-light";
   document.documentElement.dataset.theme = t;
   document.documentElement.classList.toggle("dark", !isLight);
   document.documentElement.classList.toggle("light", isLight);

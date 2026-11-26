@@ -22,7 +22,7 @@ const SWEEP_ROUTES = [
   "preferences",
 ];
 
-const ALL_THEMES = ["ocean", "classic", "report", "report-dark", "graphite", "cozy"];
+const ALL_THEMES = ["ocean", "classic", "report", "report-dark", "graphite", "graphite-light", "cozy"];
 
 async function checkInbox(page: Page) {
   const categories = page.getByRole("group", { name: "Inbox queue controls" });

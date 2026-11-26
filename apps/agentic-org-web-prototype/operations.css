@@ -5,7 +5,7 @@
     --page-header-light: rgb(198 220 248 / .045);
   }
 
-  html[data-theme="graphite"] {
+  html[data-theme^="graphite"] {
     --sidebar-edge-shade: linear-gradient(to left, rgb(0 0 0 / .37), transparent 4px);
     --sidebar-top-light: rgb(255 255 255 / .12);
     --sidebar-light-rx: 145%;
@@ -300,7 +300,7 @@ html[data-theme="report-dark"] {
   --toolbar-seg-active-bg: #263447;
   --toolbar-seg-active-border: rgb(255 255 255 / .16);
 }
-html[data-theme="graphite"] {
+html[data-theme^="graphite"] {
   --toolbar-seg-bg: var(--graphite-canvas);
   --toolbar-seg-border: var(--line2);
   --toolbar-seg-active-bg: var(--graphite-active);
@@ -515,7 +515,7 @@ html[data-theme="classic"] {
   --stc-shadow: 0 20px 48px -12px rgb(0 0 0 / .58);
   --stc-radius: 7px;
 }
-html[data-theme="graphite"] {
+html[data-theme^="graphite"] {
   --stc-surface: var(--graphite-raised, #202226);
   --stc-well: var(--graphite-canvas, #161718);
   --stc-chip-bg: rgb(255 255 255 / .05);
@@ -1109,18 +1109,18 @@ html[data-theme="report"] .banner-select { background: #FFFFFF; border-color: #C
   animation: tess-pulse 1.4s ease-in-out infinite;
 }
 .start-search.is-offline { opacity: .65; cursor: not-allowed; }
-html[data-theme="graphite"] :is(.start-search, .start-tess) {
+html[data-theme^="graphite"] :is(.start-search, .start-tess) {
   background: #1f2228;
   border-color: #383c45;
   color: #b4b9c3;
 }
-html[data-theme="graphite"] .start-tess { color: #e2e6ef; }
-html[data-theme="graphite"] :is(.start-search, .start-tess):hover {
+html[data-theme^="graphite"] .start-tess { color: #e2e6ef; }
+html[data-theme^="graphite"] :is(.start-search, .start-tess):hover {
   background: #282c34;
   border-color: #545a68;
   color: #ffffff;
 }
-html[data-theme="graphite"] .start-tess.is-active {
+html[data-theme^="graphite"] .start-tess.is-active {
   background: #353a45;
   border-color: #646c7d;
   color: #ffffff;
@@ -1243,22 +1243,22 @@ html[data-theme="report"] .start-tess.is-active { background: #EEF2FF; border-co
   background: var(--gray-900);
   border: 1px solid var(--line);
 }
-html[data-theme="graphite"] .sidebar-tess-contact:hover { background: #23262c; }
-html[data-theme="graphite"] .sidebar-tess-contact.is-active {
+html[data-theme^="graphite"] .sidebar-tess-contact:hover { background: #23262c; }
+html[data-theme^="graphite"] .sidebar-tess-contact.is-active {
   background: #303540;
   border-color: #626a7b;
 }
-html[data-theme="graphite"] .tess-contact-av {
+html[data-theme^="graphite"] .tess-contact-av {
   background: #282c35;
   border-color: #464c5a;
   color: #e2e6ef;
 }
-html[data-theme="graphite"] .tess-contact-star {
+html[data-theme^="graphite"] .tess-contact-star {
   background: #191b20;
   color: #e2e6ef;
 }
-html[data-theme="graphite"] .tess-contact-dot,
-html[data-theme="graphite"] .tess-contact-av .start-tess-busy { box-shadow: 0 0 0 2px #191b20; }
+html[data-theme^="graphite"] .tess-contact-dot,
+html[data-theme^="graphite"] .tess-contact-av .start-tess-busy { box-shadow: 0 0 0 2px #191b20; }
 html[data-theme="report"] .sidebar-tess-contact { color: #334155; }
 html[data-theme="report"] .sidebar-tess-contact:hover { background: #F4F6F9; }
 html[data-theme="report"] .sidebar-tess-contact.is-active {
@@ -1364,7 +1364,7 @@ html[data-theme="report"] .tess-contact-av .start-tess-busy { box-shadow: 0 0 0 
   gap: 6px;
 }
 .notif-inbox-item.is-unread .triage-title { color: var(--white); }
-html[data-theme="graphite"]:has(.triage-workspace) .notif-inbox-item .notif-row-ic {
+html[data-theme^="graphite"]:has(.triage-workspace) .notif-inbox-item .notif-row-ic {
   grid-area: 1 / 1 / span 2;
   align-self: center;
   width: 30px;
@@ -1676,35 +1676,35 @@ html[data-theme="report-dark"] .tess-panel {
   border-color: #56667d;
   border-radius: 12px;
 }
-html[data-theme="graphite"] .tess-panel,
-html[data-theme="graphite"] .notif-popover {
+html[data-theme^="graphite"] .tess-panel,
+html[data-theme^="graphite"] .notif-popover {
   background: #2c3037;
   border-color: #525866;
   border-radius: 12px;
   box-shadow: 0 24px 60px -10px rgb(0 0 0 / .78), inset 0 1px 0 rgb(255 255 255 / .08);
 }
-html[data-theme="graphite"] .tess-panel.is-minimized {
+html[data-theme^="graphite"] .tess-panel.is-minimized {
   border-radius: 999px;
   background: #30353e;
   border-color: #5a6170;
 }
-html[data-theme="graphite"] .tess-panel.is-minimized:hover {
+html[data-theme^="graphite"] .tess-panel.is-minimized:hover {
   background: #383e49;
   border-color: #70788a;
 }
-html[data-theme="graphite"] .tess-panel :is(.cmp-tess-who > .ic, .cmp-dock-btn .ic) {
+html[data-theme^="graphite"] .tess-panel :is(.cmp-tess-who > .ic, .cmp-dock-btn .ic) {
   color: #e2e6ef;
 }
-html[data-theme="graphite"] .tess-panel .tess-input-capsule {
+html[data-theme^="graphite"] .tess-panel .tess-input-capsule {
   background: #23262c;
   border-color: #464c58;
 }
-html[data-theme="graphite"] .tess-panel .tess-input-capsule:focus-within { border-color: #70788a; }
-html[data-theme="graphite"] .tess-panel .tess-q {
+html[data-theme^="graphite"] .tess-panel .tess-input-capsule:focus-within { border-color: #70788a; }
+html[data-theme^="graphite"] .tess-panel .tess-q {
   background: #3a404c;
   border: 0;
 }
-html[data-theme="graphite"] .tess-panel .tess-return-btn.is-ready {
+html[data-theme^="graphite"] .tess-panel .tess-return-btn.is-ready {
   background: #e2e6ef;
   color: #161718;
 }
@@ -1822,7 +1822,7 @@ html[data-theme="graphite"] .tess-panel .tess-return-btn.is-ready {
   .sidebar [data-tip]::after { right: auto; left: 0; }
   [data-tip]:is(:hover, :focus-visible)::after { opacity: 1; transform: translateY(0); }
   html[data-theme="report"] [data-tip]::after { background: #0B101B; color: #FFFFFF; border-color: #0B101B; }
-  html[data-theme="graphite"] [data-tip]::after { background: #363b45; border-color: #5b6272; }
+  html[data-theme^="graphite"] [data-tip]::after { background: #363b45; border-color: #5b6272; }
 }
 
 /* Keyboard Shortcuts Help Overlay */
@@ -2697,7 +2697,7 @@ html:is([data-theme="classic"], [data-theme="report-dark"])[data-interior-page]
 @media (min-width: 960px) and (max-width: calc(46rem + 264px)) {
   body:not(.nav-collapsed) .work-panel .work-panel-expand.btn { display: none; }
 }
-html[data-theme="graphite"] :is(.side-panel, .activity-panel, .activity-tools) { --side-panel-surface: #18191a; }
+html[data-theme^="graphite"] :is(.side-panel, .activity-panel, .activity-tools) { --side-panel-surface: #18191a; }
 html[data-theme="report"] :is(.side-panel, .activity-panel, .activity-tools) { --side-panel-surface: var(--gray-800); }
 html[data-theme="cozy"] :is(.side-panel, .activity-panel, .activity-tools) { --side-panel-surface: #352b22; }
 html[data-theme="cozy"] body.a11y-mode :is(.side-panel, .activity-panel, .activity-tools) { --side-panel-surface: #1a1512; }
@@ -2750,10 +2750,10 @@ html[data-theme="cozy"] body.a11y-mode :is(.side-panel, .activity-panel, .activi
 }
 
 /* Graphite uses the same matte canvas for work, inbox, and assembly. */
-html[data-theme="graphite"] { --assembly-surface: transparent; }
-html[data-theme="graphite"] #content:has(.triage-workspace, .work-header, .activity-main[data-view="assembly"]) { background: #18191a; }
+html[data-theme^="graphite"] { --assembly-surface: transparent; }
+html[data-theme^="graphite"] #content:has(.triage-workspace, .work-header, .activity-main[data-view="assembly"]) { background: #18191a; }
 
-html[data-theme="graphite"]:has(.triage-workspace) {
+html[data-theme^="graphite"]:has(.triage-workspace) {
   --graphite-inbox-line: #262728;
 
   & .sidebar {
