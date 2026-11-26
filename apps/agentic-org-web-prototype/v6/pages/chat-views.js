@@ -5,13 +5,18 @@ import { CH, M } from "../data.js";
 import { av, esc, ic, plural } from "../ui.js";
 import { chatTitle } from "./chat-model.js";
 
-/* Prototype rule (a guess until @-mentions exist in the data): an ask raised to the owner, or the owner named. */
-const namesOwner = (m) => m.who !== "you" && (Boolean(m.needs) || /\bowner\b/i.test(m.text));
-
+/* Mentions come from explicit data only: an ask raised to the owner (`needs`), or the owner among a message's
+   `mentions`, in a post or a thread reply. Prose such as "I asked the owner" is not a mention. */
+const addressesOwner = (m) => m.who !== "you" && (Boolean(m.needs) || Boolean(m.mentions?.includes("you")));
+function mentionItems(ch) {
+  return CH[ch].msgs.flatMap((m) => [
+    ...(addressesOwner(m) ? [{ ch, m }] : []),
+    ...(m.thread || []).flatMap((r, i) => (addressesOwner(r) ? [{ ch, m: r, root: m, reply: i }] : [])),
+  ]);
+}
 function viewItems(kind) {
-  return Object.keys(CH).flatMap((ch) => CH[ch].msgs
-    .filter((m) => (kind === "mentions" ? namesOwner(m) : m.thread && m.thread.length))
-    .map((m) => ({ ch, m })));
+  if (kind === "mentions") return Object.keys(CH).flatMap(mentionItems);
+  return Object.keys(CH).flatMap((ch) => CH[ch].msgs.filter((m) => m.thread && m.thread.length).map((m) => ({ ch, m })));
 }
 const CHAT_VIEWS = {
   mentions: { title: "Mentions", icon: "at", about: "Messages that ask you something or name you", empty: "Nothing mentions you yet." },
@@ -19,12 +24,16 @@ const CHAT_VIEWS = {
 };
 const isChatView = (id) => Object.hasOwn(CHAT_VIEWS, id || "");
 
-function itemHead(ch, m) {
-  return `<p class="chat-view-head">${av(m.who, 24)}<b>${esc(M[m.who].name)}</b><span>in ${esc(chatTitle(CH[ch]))}</span><time>${esc(m.time)}</time></p>`;
+function itemHead(ch, m, root) {
+  const where = root ? `in a thread on ${M[root.who].name}'s message in ${chatTitle(CH[ch])}` : `in ${chatTitle(CH[ch])}`;
+  return `<p class="chat-view-head">${av(m.who, 24)}<b>${esc(M[m.who].name)}</b><span>${esc(where)}</span><time>${esc(m.time)}</time></p>`;
 }
-function mentionItem({ ch, m }) {
-  return `<li class="chat-view-item">${itemHead(ch, m)}<p class="chat-view-text">${esc(m.text)}</p>
-    <a class="btn ghost sm" href="#/chat/${esc(ch)}/${esc(m.id)}">${ic("chev-right", "ic16")}Open message</a></li>`;
+/* A thread reply opens its thread on that reply; a post opens the message. */
+function mentionItem({ ch, m, root, reply }) {
+  const open = root
+    ? `<button class="btn ghost sm" type="button" data-act="chat-open-thread" data-ch="${esc(ch)}" data-id="${esc(root.id)}" data-hit="${reply}">${ic("thread", "ic16")}Open in thread</button>`
+    : `<a class="btn ghost sm" href="#/chat/${esc(ch)}/${esc(m.id)}">${ic("chev-right", "ic16")}Open message</a>`;
+  return `<li class="chat-view-item">${itemHead(ch, m, root)}<p class="chat-view-text">${esc(m.text)}</p>${open}</li>`;
 }
 function threadItem({ ch, m }) {
   const last = m.thread[m.thread.length - 1];

@@ -75,14 +75,32 @@ function markStuckDays(s) {
   const top = s.getBoundingClientRect().top;
   for (const d of s.querySelectorAll(":scope > .chat-day")) d.classList.toggle("is-stuck", s.scrollTop > 0 && d.getBoundingClientRect().top - top < 1);
 }
+/* When the reading position cuts into a message, its author line stays visible: the header sticks under the day
+   band (.is-cut) until the message scrolls away, or until the reader scrolls back to its start. */
+const viewTop = (s) => s.getBoundingClientRect().top + bandOf(s);
+function markCut(s) {
+  s.style.setProperty("--chat-band", bandOf(s) + "px");
+  for (const el of s.querySelectorAll(":scope > .msg.is-cut")) el.classList.remove("is-cut");
+  const top = viewTop(s);
+  const cut = [...s.querySelectorAll(":scope > .msg:not(.cont)")].find((m) => {
+    const r = m.getBoundingClientRect();
+    return r.top < top - 1 && r.bottom > top + 32;
+  });
+  cut?.classList.add("is-cut");
+}
+function releaseCut(s) {
+  const el = s.querySelector(":scope > .msg.is-cut");
+  if (el && el.getBoundingClientRect().top >= viewTop(s) - 1) el.classList.remove("is-cut");
+}
 function applyPos(s, pos) {
   placeAt(s, pos);
   markStuckDays(s);
+  markCut(s);
 }
 const savedPos = (id) => positions.get(id);
 const savePos = (id, pos) => positions.set(id, pos);
 function trackPos(s) {
-  s.addEventListener("scroll", () => { positions.set(s.dataset.ch, readPos(s)); markStuckDays(s); }, { passive: true });
+  s.addEventListener("scroll", () => { positions.set(s.dataset.ch, readPos(s)); markStuckDays(s); releaseCut(s); }, { passive: true });
 }
 /* Places the stream and keeps that placement while fonts, styles and avatars settle,
    until the reader scrolls or the page has been still for a moment. */

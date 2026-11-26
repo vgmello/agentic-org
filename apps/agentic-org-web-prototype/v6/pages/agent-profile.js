@@ -1,4 +1,5 @@
-import { M, OFFICES, P, PAST_SESSIONS } from "../data.js";
+import { CH, M, OFFICES, P, PAST_SESSIONS } from "../data.js";
+import { agentConversations } from "./chat-model.js";
 import { S } from "../state.js";
 import { SEP, av, esc, ic, iconWithTooltip, pill, plural, toast } from "../ui.js";
 
@@ -887,6 +888,20 @@ function agentRailContextHtml(sess, canCompact) {
     </div>`;
 }
 
+/* Conversations with other agents: every agents' conversation this agent is in, newest first, each opening in Chat
+   (read as the owner). */
+function agentConversationRow(aid, k) {
+  const ch = CH[k], other = ch.pair.find((x) => x !== aid) || aid, last = ch.msgs[ch.msgs.length - 1];
+  return `<li><a class="c-a2a-row" href="#/chat/${esc(k)}">${av(other, 24)}<span class="c-a2a-who">With ${esc(M[other].name)}</span>${last ? `<time class="c-a2a-time">${esc(last.time)}</time>` : ""}</a></li>`;
+}
+function agentConversationsHtml(aid) {
+  const keys = agentConversations(aid);
+  const body = keys.length
+    ? `<ul class="c-a2a-list">${keys.map((k) => agentConversationRow(aid, k)).join("")}</ul>`
+    : `<p class="muted c-a2a-empty">No conversations with other agents yet.</p>`;
+  return `<section class="c-rail-sec c-a2a" aria-labelledby="c-a2a-h"><div class="c-sec-hd"><h2 class="c-lbl" id="c-a2a-h">Conversations with other agents</h2></div>${body}</section>`;
+}
+
 function agentRailHtml(aid, tab) {
   const m = M[aid], sess = getConsoleSession(aid), avail = agentSessionAvailability(aid);
   const st = sess.busy || avail.active ? sess.status : { state: avail.state, detail: avail.title.toLowerCase() };
@@ -906,6 +921,7 @@ function agentRailHtml(aid, tab) {
     </div>
     ${agentRailNowHtml(curNow, avail, avail.active && (sess.busy || !!sess.current))}
     ${agentRailContextHtml(sess, avail.active && !sess.busy)}
+    ${agentConversationsHtml(aid)}
   </aside>`;
 }
 

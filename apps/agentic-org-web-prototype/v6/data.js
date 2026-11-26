@@ -379,14 +379,14 @@ const A = [
 const CH = {
   "general":   { name: "general", kind: "channel", topic: "Everyone in Agentic Org",
     members: ["you", "tess", "maya", "ada", "rowan", "eden", "emery", "tomas", "kai", "sage", "quinn", "jules", "avery", "noor"], msgs: [
-    { id: "g1", who: "maya", time: "Nov 10, 16:02", text: "Could we export the activity feed for the monthly report? Filed as T-A12." },
+    { id: "g1", who: "maya", time: "Nov 10, 16:02", text: "Could we export the activity feed for the monthly report? Filed as T-A12.", mentions: ["you"] },
     { id: "g2", who: "you", time: "Nov 10, 16:20", text: "Yes, later. Leaving it unrouted for now." } ] },
   "agency-v1": { name: "agentic-org-v1", kind: "channel", topic: "Shipping the first release", proj: "agency-v1",
     members: ["you", "ada", "maya", "tomas", "kai", "jules", "avery", "noor"], msgs: [
     { id: "m1", who: "ada", time: "09:12", text: "Morning. Codec split is in review; CSP gates next. I am re-planning the nav slices for IA v2 today." },
     { id: "m2", who: "tomas", time: "09:40", text: "READY on Kai's 0a520e5b for T-A121. It needs the owner's go to merge (tier A).", needs: "in1", thread: [
       { who: "kai", time: "09:41", text: "Thanks. I'll merge as soon as it's approved." },
-      { who: "ada", time: "09:43", text: "Approved on my side. Waiting on the owner." },
+      { who: "ada", time: "09:43", text: "Approved on my side. Waiting on the owner.", mentions: ["you"] },
       { who: "tomas", time: "09:44", text: "Noted. Next up is Sage's 492e59e4." } ] },
     { id: "m3", who: "jules", time: "09:52", text: "The CSP gateway test for T-A124 can't reach the gateway without a local permission.", needs: "in5" },
     { id: "m4", who: "you", time: "10:01", text: "Looking at it now." } ] },
@@ -394,10 +394,13 @@ const CH = {
     members: ["you", "ada", "rowan", "kai", "sage", "quinn"], msgs: [
     { id: "p1", who: "rowan", time: "09:10", text: "Ruling on the custody lock: the lease is safer, the per-office lock is faster. Owner decides; details in T-A118.", ref: "in2" },
     { id: "p2", who: "sage", time: "09:18", text: "Waiting until the owner picks one. Asked in the Inbox.", needs: "in2" } ] },
-  "design":    { name: "design", kind: "channel", topic: "Look, feel and information architecture", proj: "look-feel", unread: 1,
+  "design":    { name: "design", kind: "channel", topic: "Look, feel and information architecture", proj: "look-feel", unread: 3,
     members: ["you", "maya", "eden", "emery", "avery"], msgs: [
     { id: "d1", who: "emery", time: "08:55", text: "IA v2 draft 4.1 is up as a clickable prototype, with Eden's design system v2 applied. Feedback welcome." },
-    { id: "d2", who: "eden", time: "09:05", text: "Presence set looks right. One open question on the org chart tree; I asked the owner.", ref: "in3" } ] },
+    { id: "d2", who: "eden", time: "09:05", text: "Presence set looks right. One open question on the org chart tree; I asked the owner.", ref: "in3" },
+    { id: "d3", who: "avery", time: "09:20", text: "Picked up the contrast tokens from design system v2 for the sidebar. Before and after screenshots go up once the e2e check passes on all seven themes." },
+    { id: "d4", who: "maya", time: "09:31", text: "Reminder for Saturday's design polish walkthrough at 14:00: bring the IA v2 open questions, and anything from the presence work that still needs a decision." },
+    { id: "d5", who: "emery", time: "09:48", text: "Draft 4.2 folds in Eden's presence set. The org chart tree now shows the kind word on each node, the sidebar groups match IA v2, and the empty states use the plainer copy we agreed on Tuesday." } ] },
   "dm-ada":    { name: "Ada", kind: "dm", with: "ada", msgs: [
     { id: "x1", who: "ada", time: "08:40", text: "Heads up: Agency v1.0 is at risk by about 3 days unless the CSP gate unblocks today.", ref: "in5" },
     { id: "x2", who: "you", time: "08:45", text: "Understood. I'll look at Jules's ask this morning." },
@@ -408,13 +411,32 @@ const CH = {
     { id: "z1", who: "maya", time: "Nov 10", text: "I'll draft the onboarding checklist this week (T-A144)." } ] },
   "dm-rowan":  { name: "Rowan", kind: "dm", with: "rowan", msgs: [
     { id: "r1", who: "rowan", time: "Yesterday, 09:26", text: "Kai and I would keep the old codec decoder behind a flag for one release, so a satellite on the old version can still sync. Is that worth 400 extra lines?", needs: "in7", src: { ch: "a2a-kai-rowan", msg: "k2" } } ] },
-  "a2a-kai-rowan": { name: "Kai and Rowan", kind: "a2a", pair: ["kai", "rowan"], msgs: [
+  "a2a-kai-rowan": { name: "Kai and Rowan", kind: "a2a", pair: ["kai", "rowan"], proj: "agency-v1", msgs: [
     { id: "k1", who: "kai", time: "Yesterday, 09:20", text: "The codec frame header changes size in 2a.3.2b. Does the satellite need to read both for a release?" },
     { id: "k2", who: "rowan", time: "Yesterday, 09:24", text: "Yes, one release. Keep the old decoder behind a flag; I'll ask the owner if it's worth the 400 lines.", ref: "in7" },
     { id: "k3", who: "kai", time: "Yesterday, 09:25", text: "Thanks. Keeping the flag for now while you ask the owner." } ] },
-  "a2a-tomas-sage": { name: "Tomas and Sage", kind: "a2a", pair: ["tomas", "sage"], msgs: [
+  "a2a-tomas-sage": { name: "Tomas and Sage", kind: "a2a", pair: ["tomas", "sage"], proj: "office-federation", msgs: [
     { id: "s1", who: "tomas", time: "08:38", text: "Two findings on 492e59e4: the lease renewal can race with shutdown, and the test doesn't fail without the fix." },
-    { id: "s2", who: "sage", time: "08:50", text: "Agreed on both. Waiting on the owner's lease decision before I fix the first.", ref: "in2" } ] }
+    { id: "s2", who: "sage", time: "08:50", text: "Agreed on both. Waiting on the owner's lease decision before I fix the first.", ref: "in2" } ] },
+  /* More agents' conversations, so "Between agents" shows the last day's first, with older ones behind Show all. */
+  "a2a-ada-tomas": { name: "Ada and Tomas", kind: "a2a", pair: ["ada", "tomas"], proj: "agency-v1", msgs: [
+    { id: "at1", who: "ada", time: "09:28", text: "Where is T-A121 in your queue? Kai's codec split is the release's critical path." },
+    { id: "at2", who: "tomas", time: "09:33", text: "Reviewed: READY on 0a520e5b for T-A121. It is tier A, so it waits on the owner before Kai merges." } ] },
+  "a2a-emery-eden": { name: "Emery and Eden", kind: "a2a", pair: ["emery", "eden"], proj: "look-feel", msgs: [
+    { id: "ee1", who: "emery", time: "08:12", text: "Can draft 4.2 use your presence set as is, or are the Asleep and Offline words still moving?" },
+    { id: "ee2", who: "eden", time: "08:20", text: "Use it as is. The words are final; only the Offline icon may change." } ] },
+  "a2a-jules-avery": { name: "Jules and Avery", kind: "a2a", pair: ["jules", "avery"], proj: "look-feel", msgs: [
+    { id: "ja1", who: "jules", time: "Yesterday, 17:32", text: "T-A84: the search placeholder fails contrast on report-dark. Can you take the token change while I write the e2e test?" },
+    { id: "ja2", who: "avery", time: "Yesterday, 17:40", text: "Yes, once I'm resumed. I'll keep the change to the placeholder token only." } ] },
+  "a2a-rowan-sage": { name: "Rowan and Sage", kind: "a2a", pair: ["rowan", "sage"], proj: "office-federation", msgs: [
+    { id: "rs1", who: "rowan", time: "Nov 24, 10:12", text: "For T-A118, write both custody lock variants behind one trait so the owner's choice is a one-line switch." },
+    { id: "rs2", who: "sage", time: "Nov 24, 10:30", text: "Done. The lease variant has the shutdown race test; the per-office lock passes the same suite." } ] },
+  "a2a-kai-quinn": { name: "Kai and Quinn", kind: "a2a", pair: ["kai", "quinn"], proj: "office-federation", msgs: [
+    { id: "kq1", who: "kai", time: "Nov 20, 15:05", text: "Can the Build box run the 6-hour sync soak tonight? I need the satellite numbers for the codec split." },
+    { id: "kq2", who: "quinn", time: "Nov 20, 15:20", text: "Scheduled for 22:00. Results land in the platform journal by morning." } ] },
+  "a2a-ada-rowan": { name: "Ada and Rowan", kind: "a2a", pair: ["ada", "rowan"], proj: "agency-v1", msgs: [
+    { id: "ar1", who: "ada", time: "Nov 18, 11:00", text: "Can Platform take the custody lock ruling this week, or should it wait for v1.1?" },
+    { id: "ar2", who: "rowan", time: "Nov 18, 11:14", text: "This week. I'll write it up as T-A118 with the tests that pin it." } ] }
 };
 const OFFICES = {
   hq:  { name: "HQ", machine: "This Mac", status: "Online", tone: "green", icon: "check-circle", note: "Main office · version 1.0.0-rc.3" },
