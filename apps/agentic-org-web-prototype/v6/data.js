@@ -506,11 +506,13 @@ const EVENTS = [
 
 
 const OPEN = (w) => !["Done", "Fixed", "Closed", "Approved", "Declined"].includes(w.status);
-const NEEDS_ME_SUBS = ["Review requested", "Hand-off"];
 const blockedOnOwner = (w) => w.status === "Blocked" && w.waitsOn === "you";
-/* Needs the owner: blocked on you, a review/hand-off waiting on you, or open Critical work nobody is assigned to */
-const needsMe = (w) => OPEN(w) && (blockedOnOwner(w) || (!w.who && w.pri === "Critical")
-  || IN.some((i) => !i.handled && i.task === w.id && NEEDS_ME_SUBS.includes(i.sub)));
+/* Open Inbox asks linked to a work item that only the owner can clear: approvals, decisions, questions,
+   suggestions, and problems that ask the owner to assign someone. Plain problem reports are not asks. */
+const ownerAsks = (w) => IN.filter((i) => !i.handled && i.task === w.id && (i.kind !== "problem" || i.assign));
+/* Needs the owner: blocked on you, an open linked ask, or open Critical work nobody is assigned to.
+   Work's Needs you filter, card badge and badge destination all read these same pending owner actions. */
+const needsMe = (w) => OPEN(w) && (blockedOnOwner(w) || (!w.who && w.pri === "Critical") || ownerAsks(w).length > 0);
 
 const officeName = (o) => (OFFICES[o] ? OFFICES[o].name : "Not placed");
 
@@ -538,4 +540,5 @@ export {
   blockedOnOwner,
   needsMe,
   officeName,
+  ownerAsks,
 };

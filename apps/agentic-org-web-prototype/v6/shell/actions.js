@@ -8,7 +8,7 @@ import { answerOrgQuestion } from "../pages/home.js";
 import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment, refreshInboxSearch, resetInboxSelection } from "../pages/inbox.js";
 import { updateProjectInsights } from "../pages/insights.js";
 import { removeTeam } from "../pages/projects.js";
-import { addIdeationComment, changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkCounts, refreshWorkResults, scopedWorkQueries, scopedWorkResults, scopedWorkType, scopedWorkView, selectWorkView, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
+import { addIdeationComment, changeWorkCriterion, closeWorkPanel, createWorkTask, fitTextarea, jumpToBoardLane, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkResults, refreshWorkResults, scopedWorkQueries, scopedWorkType, scopedWorkView, selectWorkView, setWorkPanelExpanded, toggleBoardDone, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
 import { openSmartTaskComposer } from "../pages/task-composer.js";
 import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, goSearch, narrowSearch, openCmdk, renderCmdk, runCmdkItem, setCmdkMode } from "./cmdk.js";
 import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRemove, openHealth, openShortcutsHelp, setSheetReturn } from "./dialogs.js";
@@ -233,7 +233,7 @@ const CLICK_ACTIONS = {
   menu: (_e, t, id) => {
     const m = document.getElementById("menu-" + id), open = m.hidden;
     closeMenus(m.id); m.hidden = !open; t.setAttribute("aria-expanded", String(open));
-    if (open) m.querySelector("button")?.focus();
+    if (open) m.querySelector('[role^="menuitem"], button')?.focus();
   },
   proto: (_e, t, _id, v) => {
     const mm = t.closest(".menu"); closeMenus();
@@ -289,12 +289,8 @@ const CLICK_ACTIONS = {
   "work-comment-focus": () => document.getElementById("work-comment")?.focus(),
   "inbox-reopen": (_e, _t, id) => { const item = IN.find((c) => c.id === id); if (item?.handled) { if (item.reopen) item.reopen(); else reopenInboxItem(item); } },
   set: (_e, t, _id, v) => handleSetAction(t, v),
-  "board-done": () => { S.workBoardAllDone = !S.workBoardAllDone; render(false); document.querySelector(".bcol-older")?.focus({ preventScroll: true }); },
-  "board-lane": (_e, _t, _id, v) => {
-    const board = document.querySelector(".board"), col = board?.querySelectorAll(".bcol")[Number(v)];
-    if (col) board.scrollTo({ left: col.offsetLeft - parseFloat(getComputedStyle(board).scrollPaddingInlineStart || "0"), behavior: "smooth" });
-    document.querySelectorAll(".board-lanes button").forEach((b, i) => (i === Number(v) ? b.setAttribute("aria-current", "true") : b.removeAttribute("aria-current")));
-  },
+  "board-done": (_e, t) => toggleBoardDone(t),
+  "board-lane": (_e, _t, _id, v) => jumpToBoardLane(v),
   "cozy-contrast": (_e, t) => { S.cozyContrast = !S.cozyContrast; try { localStorage.setItem(COZY_CONTRAST_STORE, S.cozyContrast ? "1" : "0"); } catch (e) {} applyCozyContrast(); t.setAttribute("aria-checked", String(S.cozyContrast)); },
   "work-expand-detail": (_e, t) => { const panel = t.closest("dialog"); setWorkPanelExpanded(panel, !panel.hasAttribute("data-expanded")); },
   "agent-focus-open": (_e, t, id) => { if (id) openAgentFocus(id, t); },
@@ -519,8 +515,7 @@ const INPUT_BY_ID = {
   "scoped-work-search": (target) => {
     const currentRoute = route(), view = scopedWorkView(currentRoute, scopedWorkType(currentRoute));
     scopedWorkQueries.set(view.key, target.value);
-    document.getElementById("work-results").innerHTML = scopedWorkResults(view);
-    refreshScopedWorkCounts(view);
+    refreshScopedWorkResults(view);
   },
   "work-search": handleWorkSearchInput,
   "o-name": (target) => target.setCustomValidity(""),
