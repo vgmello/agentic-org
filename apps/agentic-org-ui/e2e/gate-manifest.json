@@ -590,13 +590,13 @@
 		},
 		{
 			"from": "src/lib/platform/shell/NewMenu.svelte",
-			"to": "src/lib/modules/{organization/features/add-person/AddPersonSheet.svelte,employees/index.ts,messaging/{index,model,api}.ts}",
-			"why": "The top-bar New menu opens the existing creation flows (work item, request, message, hire, add a person) without owning them; their categories keep their specs, and the shell journeys open the menu."
+			"to": "src/lib/modules/{organization/features/add-person/AddPersonSheet.svelte,employees/hire.ts,messaging/{features/open-dm/NewMessageDialog.svelte,model.ts,api.ts}}",
+			"why": "The top-bar New menu opens the existing creation flows lazily (work item, request, message, hire, add a person) via direct non-barrel imports to keep the shell bundle lean; their categories keep their specs, and the shell journeys open the menu."
 		},
 		{
 			"from": "src/lib/platform/shell/ExecutiveCommandBar.svelte",
-			"to": "src/lib/modules/messaging/{index,api}.ts",
-			"why": "CmdK # channel jump lazily reads live Chat conversation records via messaging/api (mirroring NewMenu) and types from messaging/index without statically bundling chat mocks; the chat and shell-look specs cover it."
+			"to": "src/lib/modules/messaging/{types,api}.ts",
+			"why": "CmdK # channel jump lazily reads live Chat conversation records via messaging/api (mirroring NewMenu) and types from messaging/types without importing the messaging barrel or chat mocks; the chat and shell-look specs cover it."
 		},
 		{
 			"from": "e2e/*.spec.ts",
@@ -708,7 +708,8 @@
 			"scripts/check-format.ts",
 			"scripts/format-baseline.json",
 			".prettierrc.json",
-			".prettierignore"
+			".prettierignore",
+			"large-files.allow"
 		],
 		"noImpact": [
 			"../agent-os/**",

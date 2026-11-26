@@ -22,11 +22,14 @@ html[data-ui-theme='graphite-light'] {
 	--bar-track: #e4e4e7;
 
 	--tone-accent: #3f3f46;
-	--tone-accent-bar: #52525b;
+	--tone-accent-bar: #5f84a8;
 	--tone-accent-hi: #09090b;
 	--tone-accent-ink: #27272a;
 	--tone-accent-bg: rgb(24 24 27 / 0.05);
 	--tone-accent-ring: rgb(24 24 27 / 0.16);
+	--chart-series-1: #5f84a8;
+	--chart-series-2: #9cb5ce;
+	--page-header-light: rgba(95, 132, 168, 0.07);
 
 	--tone-ok: #16a34a;
 	--tone-ok-bar: #16a34a;

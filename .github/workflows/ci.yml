@@ -220,6 +220,51 @@ jobs:
           FILE_SIZE_RATCHET_BASE="$base" \
             cargo test --locked -p org-platform --test file_size_ratchet -- --include-ignored --nocapture
 
+  # TASK-225: apps/agentic-org-ui/large-files.allow may only shrink relative to the branch base.
+  ui-large-files-list:
+    name: UI large files list only shrinks
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .node-version
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+      - name: Install UI dependencies
+        working-directory: apps/agentic-org-ui
+        run: bun install --frozen-lockfile
+      - name: Compare UI large-files.allow with base
+        working-directory: apps/agentic-org-ui
+        env:
+          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$PR_BASE" ]; then
+            base="$PR_BASE"
+          elif [ "$GITHUB_REF" = "refs/heads/main" ] || [ "$GITHUB_REF" = "refs/heads/v1" ]; then
+            base="$BEFORE"
+          elif git rev-parse --verify origin/v1 >/dev/null 2>&1; then
+            base="$(git merge-base HEAD origin/v1)" || {
+              echo "This branch shares no history with v1."; exit 1; }
+          elif git rev-parse --verify origin/main >/dev/null 2>&1; then
+            base="$(git merge-base HEAD origin/main)" || {
+              echo "This branch shares no history with main."; exit 1; }
+          else
+            echo "No base branch ref available to compare with."; exit 0
+          fi
+          case "$base" in
+            ""|0000000000000000000000000000000000000000)
+              echo "No base commit to compare with."; exit 0 ;;
+          esac
+          UI_FILE_SIZE_RATCHET_BASE="$base" \
+            bunx --no-install vitest run src/lib/platform/tooling/file-size-ratchet.test.ts
+
   # ADR-0017 LNX-2: the container image built from deploy/container and checked in real containers
   # by deploy/container/lnx2.sh, which builds the image itself. This job only builds what the
   # script needs (the UI, and the Linux executables with deploy/container/build.sh, in the Rust

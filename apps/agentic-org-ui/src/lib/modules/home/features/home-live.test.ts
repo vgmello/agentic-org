@@ -18,6 +18,11 @@ vi.mock('$lib/modules/work', () => ({
 		snapshot: (...args: unknown[]) => workSnapshot(...args)
 	}
 }));
+vi.mock('$lib/modules/work/client', () => ({
+	workApi: {
+		snapshot: (...args: unknown[]) => workSnapshot(...args)
+	}
+}));
 vi.mock('$lib/modules/inbox/api', () => ({
 	inboxApi: {
 		list: (...args: unknown[]) => inboxList(...args)
