@@ -288,3 +288,171 @@ fn private_notes_never_emit_live_events_until_explicit_publish() {
     ));
     assert_eq!(notifications.load(Ordering::Relaxed), before + 1);
 }
+
+fn list(
+    svc: &TaskService,
+    owner: &str,
+    params: TasksListParams,
+) -> Result<TasksListResultView, ErrorCode> {
+    let request = Request::new::<TasksList>(90, &params).unwrap();
+    match svc.dispatch(Some(owner), &request).unwrap().outcome {
+        Outcome::Result(v) => {
+            let listed: org_proto::tasks::TasksListResult = serde_json::from_value(v).unwrap();
+            Ok(TasksListResultView {
+                keys: listed.tasks.into_iter().map(|t| t.key).collect(),
+                total: listed.total,
+            })
+        }
+        Outcome::Error(e) => Err(e.code),
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct TasksListResultView {
+    keys: Vec<String>,
+    total: u64,
+}
+
+fn view(keys: &[&str], total: u64) -> Result<TasksListResultView, ErrorCode> {
+    Ok(TasksListResultView {
+        keys: keys.iter().map(|k| (*k).to_owned()).collect(),
+        total,
+    })
+}
+
+#[test]
+fn task_list_filters_by_excluded_status_assignee_and_modified_file_and_pages_with_a_total() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = office.owner_member_id().to_owned();
+    let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+    let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+    let svc = TaskService::new(Arc::clone(&office), live, None);
+    for (n, file, assignee) in [
+        (1u64, "src/a/x.rs", Some(owner.clone())),
+        (2, "src/ab.rs", None),
+        (3, "docs/y.md", None),
+    ] {
+        let create = Request::new::<TasksCreate>(
+            n,
+            &TasksCreateParams {
+                command_id: uuid(100 + n),
+                task_id: uuid(200 + n),
+                team_id: Some(root_team.clone()),
+                project_id: None,
+                assigned_team_id: None,
+                assignee_id: assignee,
+                task_type: Some("task".into()),
+                work_type: None,
+                title: format!("Task {n}"),
+                body_markdown: String::new(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: vec![],
+                reference_files: vec![],
+                modified_files: vec![file.into()],
+                depends_on: vec![],
+                details: None,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            svc.dispatch(Some(&owner), &create).unwrap().outcome,
+            Outcome::Result(_)
+        ));
+    }
+    let by_number = || TasksListParams {
+        sort: TaskSortMode::Number,
+        ..Default::default()
+    };
+    assert_eq!(
+        list(
+            &svc,
+            &owner,
+            TasksListParams {
+                unassigned: true,
+                ..by_number()
+            }
+        ),
+        view(&["T-A2", "T-A3"], 2)
+    );
+    // A directory names the files under it, component-wise: `src/a` is not `src/ab.rs`.
+    assert_eq!(
+        list(
+            &svc,
+            &owner,
+            TasksListParams {
+                modified_file: Some("./src/a/".into()),
+                ..by_number()
+            }
+        ),
+        view(&["T-A1"], 1)
+    );
+    assert_eq!(
+        list(
+            &svc,
+            &owner,
+            TasksListParams {
+                exclude_status: vec![TaskStatus::Todo],
+                ..by_number()
+            }
+        ),
+        view(&[], 0)
+    );
+    // Pages: the total counts every match, filtered here or by the office.
+    assert_eq!(
+        list(
+            &svc,
+            &owner,
+            TasksListParams {
+                offset: Some(1),
+                limit: Some(1),
+                ..by_number()
+            }
+        ),
+        view(&["T-A2"], 3)
+    );
+    assert_eq!(
+        list(
+            &svc,
+            &owner,
+            TasksListParams {
+                unassigned: true,
+                offset: Some(1),
+                limit: Some(5),
+                ..by_number()
+            }
+        ),
+        view(&["T-A3"], 2)
+    );
+    assert_eq!(
+        list(
+            &svc,
+            &owner,
+            TasksListParams {
+                limit: Some(0),
+                ..by_number()
+            }
+        ),
+        view(&[], 3)
+    );
+    for refused in [
+        TasksListParams {
+            status: Some(TaskStatus::Todo),
+            exclude_status: vec![TaskStatus::Todo],
+            ..by_number()
+        },
+        TasksListParams {
+            unassigned: true,
+            assignee_id: Some(owner.clone()),
+            ..by_number()
+        },
+        TasksListParams {
+            modified_file: Some("../etc".into()),
+            ..by_number()
+        },
+    ] {
+        assert_eq!(list(&svc, &owner, refused), Err(ErrorCode::InvalidRequest));
+    }
+}

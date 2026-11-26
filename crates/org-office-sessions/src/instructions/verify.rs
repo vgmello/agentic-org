@@ -241,7 +241,9 @@ fn is_shell_operator(word: &str) -> bool {
 }
 
 /// The arguments `agent-os session attach` builds for one JSON line, by the same rules as
-/// `org-agent-cli`'s `attach`: the command's words, `input` as `--json`, and `options` as flags.
+/// `org-agent-cli`'s `attach`: the command's words, `input` as `--json`, and `options` as flags;
+/// a key other than `command`, `input` and `options`, a `format` other than json, `stdin` and
+/// `help` are refused there before the table reads the line, so here too.
 /// `None` for a JSON line without `command` (an example, not an attach line); `Err` with
 /// attach's own message for a line it refuses before the table.
 fn attach_line_args(line: &str) -> Option<Result<Vec<String>, String>> {
@@ -249,6 +251,14 @@ fn attach_line_args(line: &str) -> Option<Result<Vec<String>, String>> {
         return None;
     };
     let command = object.get("command")?;
+    if let Some(key) = object
+        .keys()
+        .find(|key| !["command", "input", "options"].contains(&key.as_str()))
+    {
+        return Some(Err(format!(
+            "`{key}` is not a key of a `session attach` line; a line has only `command`, `input` and `options`."
+        )));
+    }
     let Some(command) = command.as_str() else {
         return Some(Err(
             "`command` must be a string naming a resource and verb.".into(),
@@ -273,6 +283,19 @@ fn attach_line_args(line: &str) -> Option<Result<Vec<String>, String>> {
                 } else {
                     format!("--{}", key.replace('_', "-"))
                 };
+                let refused = match (flag.as_str(), value) {
+                    (_, Value::Bool(false) | Value::Null) => None,
+                    ("--format", Value::String(format)) if format == "json" => None,
+                    ("--format", _) => Some("`session attach` answers every line in JSON"),
+                    ("--stdin", _) => Some(
+                        "`stdin` is refused: standard input carries the `session attach` lines",
+                    ),
+                    ("--help" | "-h", _) => Some("`help` is refused in `session attach`"),
+                    _ => None,
+                };
+                if let Some(why) = refused {
+                    return Some(Err(why.to_owned()));
+                }
                 match value {
                     Value::Bool(true) => args.push(flag),
                     Value::Bool(false) | Value::Null => {}
@@ -292,22 +315,6 @@ fn attach_line_args(line: &str) -> Option<Result<Vec<String>, String>> {
         }
     }
     Some(Ok(args))
-}
-
-/// `who` and `task note` as the command line rewrites them (`org-agent-cli`).
-fn expand_aliases(args: &[String]) -> Vec<String> {
-    match args {
-        [who, rest @ ..] if who == "who" => ["directory".to_owned(), "list".to_owned()]
-            .into_iter()
-            .chain(rest.iter().cloned())
-            .collect(),
-        [task, note, rest @ ..] if task == "task" && note == "note" => {
-            std::iter::once("task-note".to_owned())
-                .chain(rest.iter().cloned())
-                .collect()
-        }
-        _ => args.to_vec(),
-    }
 }
 
 fn is_placeholder(word: &str) -> bool {
@@ -483,7 +490,8 @@ fn check_line(line: &CitedLine, table: &CommandTable) -> Option<String> {
     if let Some(why) = &line.refused {
         return Some(why.clone());
     }
-    let args = expand_aliases(&line.args);
+    // The table's own shorthands (`who`, `task note`, `boot`), as `agent-os` reads them.
+    let args = table.expand(&line.args).into_owned();
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     match words.as_slice() {
         [] | ["--version" | "-V" | "--help" | "-h"] => return None,

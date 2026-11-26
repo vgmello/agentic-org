@@ -99,8 +99,22 @@ pub struct TasksListParams {
     pub query: Option<String>,
     #[serde(default)]
     pub sort: TaskSortMode,
+    /// At most this many tasks, after `offset`. `Some(0)` answers only `total`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// Leave out tasks in any of these statuses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_status: Vec<TaskStatus>,
+    /// Only tasks no employee is assigned to (`assignee_id` absent).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unassigned: bool,
+    /// Only tasks whose `modified_files` name this path, or a file under it as a directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_file: Option<String>,
+    /// Skip this many matching tasks, in the sort order, before the page starts. `total` still
+    /// counts every match, so a client pages with `offset + tasks.len() < total`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

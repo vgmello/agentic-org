@@ -2,6 +2,7 @@
 //! catalogue and the contract tests are all generated from the rows. Adding a command is adding
 //! a row: nothing in the parser changes.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -22,10 +23,22 @@ impl fmt::Display for TableError {
 
 impl std::error::Error for TableError {}
 
+/// A shorthand: the words a command line may start with in place of a command's
+/// (`who` for `directory list`). The table rewrites them before it reads a line, so a shorthand
+/// is the same command for a call, its `--help` and `--schema`, and every reader of the table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Alias {
+    /// The words written, such as `["who"]` or `["task", "note"]`.
+    pub words: &'static [&'static str],
+    /// The words they stand for: a resource and a verb, or a resource alone.
+    pub command: &'static [&'static str],
+}
+
 /// The commands that exist. A command that is not in the table does not exist.
 #[derive(Debug, Clone)]
 pub struct CommandTable {
     rows: Vec<&'static Command>,
+    aliases: &'static [Alias],
 }
 
 impl CommandTable {
@@ -46,7 +59,7 @@ impl CommandTable {
         for row in &rows {
             check_row(row).map_err(|problem| TableError(format!("`{}`: {problem}", row.name())))?;
         }
-        Ok(Self { rows })
+        Ok(Self { rows, aliases: &[] })
     }
 
     /// The same table without the checks, for an executable's start: a common command does
@@ -56,7 +69,35 @@ impl CommandTable {
     pub fn unchecked(domains: &[&'static [Command]]) -> Self {
         let mut rows: Vec<&'static Command> = domains.iter().flat_map(|rows| rows.iter()).collect();
         rows.sort_by_key(|row| (row.resource, row.verb));
-        Self { rows }
+        Self { rows, aliases: &[] }
+    }
+
+    /// The same table with `aliases` read as the commands they stand for ([`Self::expand`]).
+    pub fn with_aliases(mut self, aliases: &'static [Alias]) -> Self {
+        self.aliases = aliases;
+        self
+    }
+
+    /// The shorthands of the table.
+    pub fn aliases(&self) -> &'static [Alias] {
+        self.aliases
+    }
+
+    /// `args` with a leading shorthand replaced by the words it stands for; any other line as
+    /// it is.
+    pub fn expand<'a>(&self, args: &'a [String]) -> Cow<'a, [String]> {
+        let found = self.aliases.iter().find(|alias| {
+            args.len() >= alias.words.len()
+                && alias.words.iter().zip(args).all(|(word, arg)| arg == word)
+        });
+        let Some(alias) = found else {
+            return Cow::Borrowed(args);
+        };
+        let rest = &args[alias.words.len()..];
+        let mut out = Vec::with_capacity(alias.command.len() + rest.len());
+        out.extend(alias.command.iter().map(|word| (*word).to_owned()));
+        out.extend_from_slice(rest);
+        Cow::Owned(out)
     }
 
     /// Every row, in name order.

@@ -2,7 +2,8 @@
 //! untrusted content fenced (`doc-27` §1, `FC-171`, `INSTR-4, 5, 7, 8, 12, 15, 21`).
 //!
 //! - [`assemble_standing_instructions`] builds the standing prompt. Byte 0 is release-static
-//!   for every agent and turn: the built-in text, then the generated command catalogue; the
+//!   for every agent and turn: the built-in text, then the live table's own grouped catalogue
+//!   (`CommandTable::catalogue`, the one source of it); the
 //!   organization's processes, the role, the agent's identity and its own prompt follow, most
 //!   shared first; the project repository's instructions come back apart, to go last.
 //! - [`compose_turn_objective`] builds a turn's input; every body that comes from someone else
@@ -61,10 +62,6 @@ pub(crate) fn command_table_or_empty(catalogue: Option<CommandCatalogue>) -> Com
 /// Notice surfaced to both the agent and the UI when running under the same OS user (`FC-102`).
 pub const SAME_USER_ISOLATION_NOTICE: &str = "This agent runs in a private 0700 home directory under the host's OS user account; OS-level cross-user isolation is not active on this host. Do not read or modify files outside your workspace and private home.";
 
-/// The heading and first line of the generated command catalogue.
-const CATALOGUE_HEADING: &str =
-    "## agent-os commands\nRun each as `agent-os <resource> <verb>`; add `--help` for its flags.";
-
 /// The built-in standing text every managed agent starts with, release-static: the core rules,
 /// then managed-session behavior (`INSTR-4`, at most [`BUILTIN_INSTRUCTIONS_MAX_BYTES`]).
 pub fn builtin_instructions() -> String {
@@ -73,14 +70,4 @@ pub fn builtin_instructions() -> String {
         CORE_RULES.trim_end(),
         MANAGED_SESSION.trim_end()
     )
-}
-
-/// The launch catalogue generated from the live `org-command` table: one line per command, at
-/// most [`org_command::CATALOGUE_LIMIT`] bytes with its heading (`INSTR-5`, `INSTR-7`).
-pub fn render_command_catalogue(table: &CommandTable) -> String {
-    let lines = table.catalogue();
-    if lines.is_empty() {
-        return CATALOGUE_HEADING.to_owned();
-    }
-    format!("{CATALOGUE_HEADING}\n{}", lines.trim_end())
 }

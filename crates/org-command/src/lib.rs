@@ -33,10 +33,10 @@ pub mod testkit;
 pub use envelope::{code_name, envelope_schema};
 pub use help::CATALOGUE_LIMIT;
 pub use node::Node;
-pub use office::{Answer, KeySource, Office, Refusal, Request, Sources, Status};
+pub use office::{Answer, KeySource, Office, Refusal, RefusalDetails, Request, Sources, Status};
 pub use parse::{DEFAULT_LIMIT, MAX_INPUT_BYTES, MAX_LIMIT, MAX_YAML_INPUT_BYTES};
 pub use row::{Ack, Command, Example, Field, IfMatch, Kind, Type};
-pub use table::{CommandTable, TableError};
+pub use table::{Alias, CommandTable, TableError};
 
 use org_proto::ErrorCode;
 use parse::{Format, Parsed};
@@ -162,8 +162,12 @@ pub fn run(
             if refusal.operation_id.is_none() {
                 refusal.operation_id = key.map(str::to_owned);
             }
-            // Repeating the call with the same key is what can succeed (design 2.4).
-            if let (ErrorCode::Unavailable | ErrorCode::NotReady, Some(key)) = (refusal.code, key) {
+            // Repeating the call with the same key is what can succeed (design 2.4). A timeout
+            // is the same: the office may have made the change, and only the same key makes a
+            // repeat safe.
+            if let (ErrorCode::Unavailable | ErrorCode::NotReady | ErrorCode::Timeout, Some(key)) =
+                (refusal.code, key)
+            {
                 refusal
                     .retry_with
                     .get_or_insert_with(Map::new)
@@ -212,8 +216,12 @@ pub fn run(
         Format::Compact => {
             let mut out = data.to_compact(&columns);
             // `compact` prints `data` alone, except when the caller cannot act without `meta`:
-            // the command did not complete, or there is another page.
-            if answer.status != Status::Completed || answer.next_cursor.is_some() {
+            // the command did not complete, there is another page, or a list that reports its
+            // total printed no line (`task list --count`, or nothing matched).
+            let counted_nothing =
+                answer.total.is_some() && matches!(&data, Node::List(items) if items.is_empty());
+            if answer.status != Status::Completed || answer.next_cursor.is_some() || counted_nothing
+            {
                 out.push_str(&format!("meta: {}\n", meta.to_one_line()));
             }
             out

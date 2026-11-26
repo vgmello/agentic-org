@@ -5,12 +5,12 @@
 //! [`crate::transport`]; it is re-exported here so `dispatch::OfficeTransport` and friends
 //! keep their paths. This module routes a request to a slice, and no slice imports it.
 
-use org_command::{Ack, Answer, KeySource, Office, Request};
+use org_command::{Answer, Office, Request};
 use org_proto::org::{CommandAccepted, CommandStatus};
 use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
 
-use crate::keys::UuidV7KeySource;
+use crate::transport::{command_id, refuse_durable, write_ack};
 pub use crate::transport::{derive_uuid_v7, hint_for, OfficeTransport, Refusal, TransportOffice};
 
 mod read;
@@ -33,11 +33,13 @@ impl<T: OfficeTransport> Office for TransportOffice<T> {
     }
 }
 
-/// Dispatches one parsed `org-command` [`Request`] over `transport`.
+/// Dispatches one parsed `org-command` [`Request`] over `transport`. A `--durable` the command
+/// cannot honor is refused here, before any slice sends anything ([`refuse_durable`]).
 pub fn execute<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    refuse_durable(request)?;
     if let Some(outcome) = crate::hiring_dispatch::try_execute(transport, request) {
         return outcome;
     }
@@ -99,14 +101,17 @@ fn send_write<T: OfficeTransport + ?Sized>(
     if request.dry_run {
         params.insert("dry_run".into(), json!(true));
     } else {
-        let key = request.idempotency_key.as_deref().ok_or_else(|| {
-            Refusal::new(
+        if request.idempotency_key.is_none() {
+            return Err(Refusal::new(
                 ErrorCode::InvalidRequest,
                 "Write is missing an idempotency key.",
-                "Pass --idempotency-key <uuidv7> or let the CLI mint one.",
-            )
-        })?;
-        params.insert("command_id".into(), json!(key));
+                "Pass --idempotency-key <key> or let the CLI make one.",
+            ));
+        }
+        params.insert(
+            "command_id".into(),
+            json!(command_id(request, "org-command")?),
+        );
     }
     let raw = match transport.call_method(method, Value::Object(params)) {
         Ok(value) => value,
@@ -138,11 +143,7 @@ fn send_write<T: OfficeTransport + ?Sized>(
     let mut answer = Answer::completed(Value::Object(data));
     if !request.dry_run {
         answer.operation_id = request.idempotency_key.clone();
-        answer.ack = Some(if request.durable {
-            Ack::Durable
-        } else {
-            Ack::Committed
-        });
+        answer.ack = Some(write_ack(request));
     }
     Ok(answer)
 }
@@ -175,19 +176,7 @@ fn attach_conflict_retry_with<T: OfficeTransport + ?Sized>(
 }
 
 fn entity_id(request: &Request, field: &str, domain: &str) -> Result<String, Refusal> {
-    if let Some(explicit) = opt_str(request, field) {
-        return Ok(explicit.to_owned());
-    }
-    Ok(derived_or_fresh_id(request, domain))
-}
-
-fn derived_or_fresh_id(request: &Request, domain: &str) -> String {
-    if let Some(key) = &request.idempotency_key {
-        derive_uuid_v7(domain, key)
-    } else {
-        let mut keys = UuidV7KeySource;
-        keys.new_key()
-    }
+    crate::transport::entity_id(request, opt_str(request, field), domain)
 }
 
 fn require_str<'a>(request: &'a Request, field: &str) -> Result<&'a str, Refusal> {

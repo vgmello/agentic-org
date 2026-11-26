@@ -18,7 +18,7 @@ Each call prints exactly one JSON envelope:
 
 - `ok` says whether the call succeeded. `data` is the record or list the command declares.
 - `meta.revision` is the record's revision after a write; pass it as `--if-match` on your next change of that record.
-- `meta.next_cursor` means there is another page: repeat the call with `--cursor <value>`. `--limit` sets the page size, from 1 to 200.
+- Every list answers one page: `--limit` sets its size, from 1 to 200 (default 20). `meta.next_cursor` means there is another page: repeat the call with `--cursor <value>`. `meta.total` counts every match.
 - `meta.waiting_messages` counts messages waiting for you: check `agent-os msg inbox` at your next pause.
 - On failure `error` has `code`, `message`, `hint` and sometimes `retry_with`. See the `errors-and-recovery` guide.
 

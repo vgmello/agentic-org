@@ -25,14 +25,20 @@ A handoff passes work to someone: `agent-os msg send --to @<handle> --kind hando
 
 ## Structured asks
 
-An ask is a typed question with a bounded wait. Its questions are structure, so they go in `--json`:
+An ask is a typed question with a bounded wait. Ask one question with flags:
 
 ```bash
-agent-os msg ask --to @<handle> --subject <text> --json '{"questions":[{"id":"env","question_type":"choice","prompt":"Which environment?","options":[{"id":"dev","label":"Dev"},{"id":"prod","label":"Prod"}],"default_value":"dev"}]}'
+agent-os msg ask --to @<handle> --prompt 'Which environment?' --question-type choice --option dev=Dev --option prod=Prod --default-value dev
 ```
 
-- A question is `choice` (with 1 to 6 `options`), `yes_no` or `free_text`. An ask has 1 to 8 questions.
-- The answer's `data.status` is `answered`, `waiting`, `timed_out`, `required_pending` or `withdrawn`. It does not report presence: before asking, check whether the recipient is around with `agent-os who --member <handle>` (`presence` in its answer; `agent-os directory list` is the same command).
+Several questions are structure and go in `--json` instead, never mixed with `--prompt`:
+
+```bash
+agent-os msg ask --to @<handle> --json '{"questions":[{"id":"q1","question_type":"yes_no","prompt":"Ship?"},{"id":"q2","question_type":"free_text","prompt":"Why not?"}]}'
+```
+
+- A question is `choice` (with 1 to 6 options), `yes_no` or `free_text`. An ask has 1 to 8 questions.
+- The answer's `data.status` is `answered`, `waiting`, `timed_out`, `required_pending` or `withdrawn`, and `meta.status` agrees with it. `data.recipient_presence` gives each recipient's presence when you asked and `data.woke_agents` the agents the office woke; `msg send` reports both too. To check before asking, use `agent-os who --member <handle>`.
 - If you can continue without the answer, leave `--required` off, give a `default_value`, and say which default you will use. When the answer arrives later, the office wakes you.
 - Add `--required` only when you cannot continue. The office then suspends your session and resumes it in the same context once the ask is answered. Do not keep working around a required ask.
 - `--blocks <task>` records which task the ask blocks.
