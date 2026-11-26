@@ -1,11 +1,12 @@
 //! Resolving the organization's effective owner employee ID from a consistent organization read.
 //!
 //! On HQ, an office's configured `owner` is already the owner's employee UUIDv7 (including after
-//! ownership handover via `Office::open_as_owner`). On a replicated satellite office, local writer
-//! custody binds `Office::owner` to the satellite's own `office_id`, so directory snapshots,
-//! messaging handle resolution (`"owner"`), auto-channel membership, and inbound/outbound relay
-//! checks must resolve the replicated organization owner's employee ID from the committed
-//! HQ-authoritative organization records (`TASK-141`).
+//! ownership handover via `Office::open_as_owner`). On a replicated satellite office, HQ sends its
+//! authoritative `owner_member_id` on every mTLS `Hello` handshake (persisted durably in
+//! `hq-owner.v1.json` and passed into ops via `Office::effective_owner_for_ops`). When a pre-upgrade
+//! satellite has not yet received an explicit `owner_member_id` from HQ, local writer custody binds
+//! `configured_owner` to the satellite's own `office_id`; ONLY in that verified `OfficeRole::Satellite`
+//! case does [`effective_owner_id`] fall back to HQ-signed audit metadata (`TASK-141`).
 
 use org_store::{EngineError, Id};
 
@@ -16,17 +17,18 @@ use super::{
 
 /// Returns the organization's effective owner employee ID for `read`.
 ///
-/// Resolution priority (deterministic, fail-closed on storage errors):
-/// 1. If `configured_owner` matches an employee record in `read` (always true on HQ, including
-///    after ownership handover), return `configured_owner` directly.
-/// 2. Check the enrolled satellite office record `read.office(configured_owner)` (`updated_by`,
-///    then `created_by`) for an active person — only the organization owner can register a
-///    satellite office at HQ.
-/// 3. Check the HQ office record (`OfficeRole::Hq`), then the organization record
-///    (`read.organization()`), for an active person in `updated_by` then `created_by`.
-/// 4. Check the top-level team (`number == 1`) `lead_employee_id` and `meta` for an active person.
-/// 5. If the organization has exactly one active person, return that person's ID.
-/// 6. Otherwise (e.g. a freshly provisioned satellite before its initial HQ snapshot), return
+/// Resolution priority (deterministic, fail-closed on storage errors and non-satellite inputs):
+/// 1. If `configured_owner` matches an employee record in `read` (always true on HQ and on
+///    satellites that have received HQ's authoritative `owner_member_id` via `Hello`), return
+///    `configured_owner` directly. (If that employee was deactivated, downstream callers skip
+///    inactive employees and fail closed instead of resurrecting an ex-owner.)
+/// 2. Gate legacy metadata fallback strictly on `configured_owner` naming a replicated
+///    `OfficeRole::Satellite` record. Any non-employee, non-satellite ID (such as a corrupted HQ
+///    owner binding or pre-snapshot satellite) returns `configured_owner` unchanged (fail closed).
+/// 3. Legacy pre-upgrade satellite fallback: check `updated_by` then `created_by` on the satellite
+///    office record, the HQ office record, the organization record, and top-level team #1's audit
+///    `meta` (never `team.lead_employee_id`, which any non-owner can hold).
+/// 4. If the organization has exactly one active person, return that person's ID; otherwise return
 ///    `configured_owner`.
 pub fn effective_owner_id(
     read: &impl OrganizationRead,
@@ -35,10 +37,14 @@ pub fn effective_owner_id(
     if read.employee(configured_owner)?.is_some() {
         return Ok(configured_owner.clone());
     }
-    if let Some(office) = read.office(configured_owner)? {
-        if let Some(id) = active_person_from_meta(read, &office.meta)? {
-            return Ok(id);
-        }
+    let Some(sat_office) = read
+        .office(configured_owner)?
+        .filter(|office| office.role == OfficeRole::Satellite)
+    else {
+        return Ok(configured_owner.clone());
+    };
+    if let Some(id) = active_person_from_meta(read, &sat_office.meta)? {
+        return Ok(id);
     }
     if let Some(hq) = read
         .offices()?
@@ -55,11 +61,6 @@ pub fn effective_owner_id(
         }
     }
     if let Some(team) = read.team_by_number(1)? {
-        if let Some(lead) = team.lead_employee_id.as_ref() {
-            if is_active_person(read, lead)? {
-                return Ok(lead.clone());
-            }
-        }
         if let Some(id) = active_person_from_meta(read, &team.meta)? {
             return Ok(id);
         }
@@ -158,14 +159,18 @@ mod tests {
             .unwrap();
         // Handover case: configured_owner is employee 2, not creator 1.
         assert_eq!(effective_owner_id(&tx, &id(2)).unwrap(), id(2));
+
+        // Deactivated explicit owner still short-circuits (fails closed downstream rather than
+        // resurrecting another active person).
+        tx.put_employee(&person(2, "successor", EmployeeStatus::Inactive, 10))
+            .unwrap();
+        assert_eq!(effective_owner_id(&tx, &id(2)).unwrap(), id(2));
     }
 
     #[test]
-    fn satellite_resolves_owner_from_office_and_org_metadata_with_multiple_people() {
+    fn non_satellite_non_employee_configured_owner_fails_closed() {
         let mut tx = MemoryEngine::new().begin().unwrap();
         tx.put_employee(&person(1, "alice", EmployeeStatus::Active, 10))
-            .unwrap();
-        tx.put_employee(&person(2, "bob", EmployeeStatus::Active, 10))
             .unwrap();
         tx.put_office(&office(
             100,
@@ -174,24 +179,59 @@ mod tests {
             meta(By::Employee(id(1)), By::Employee(id(1))),
         ))
         .unwrap();
-        // Satellite enrolled by successor Bob (updated_by beats created_by and HQ meta).
+        // Neither a random unknown ID nor the HQ office ID triggers satellite metadata fallback.
+        assert_eq!(effective_owner_id(&tx, &id(999)).unwrap(), id(999));
+        assert_eq!(effective_owner_id(&tx, &id(100)).unwrap(), id(100));
+    }
+
+    #[test]
+    fn satellite_never_infers_owner_from_team_one_lead() {
+        let mut tx = MemoryEngine::new().begin().unwrap();
+        tx.put_employee(&person(1, "alice", EmployeeStatus::Inactive, 10))
+            .unwrap();
+        tx.put_employee(&person(2, "bob", EmployeeStatus::Active, 10))
+            .unwrap();
+        tx.put_employee(&person(3, "charlie", EmployeeStatus::Active, 10))
+            .unwrap();
         tx.put_office(&office(
             200,
             "sat",
             OfficeRole::Satellite,
-            meta(By::Employee(id(1)), By::Employee(id(2))),
+            meta(By::Employee(id(1)), By::Employee(id(1))),
         ))
         .unwrap();
+        tx.put_team(&Team {
+            id: id(10),
+            name: "Core".into(),
+            number: 1,
+            parent_team_id: None,
+            // Non-owner Charlie appointed Team #1 lead must NEVER be elevated to owner.
+            lead_employee_id: Some(id(3)),
+            status: TeamStatus::Active,
+            max_members: DEFAULT_MAX_MEMBERS,
+            meta: meta(By::Employee(id(1)), By::Employee(id(2))),
+        })
+        .unwrap();
+        // Resolves Bob from team.meta.updated_by, NOT Charlie from lead_employee_id.
         assert_eq!(effective_owner_id(&tx, &id(200)).unwrap(), id(2));
 
-        // If Bob is deactivated, falls back to active creator Alice.
-        tx.put_employee(&person(2, "bob", EmployeeStatus::Inactive, 10))
-            .unwrap();
-        assert_eq!(effective_owner_id(&tx, &id(200)).unwrap(), id(1));
+        // Even with system-attributed team meta, lead_employee_id Charlie is never selected.
+        tx.put_team(&Team {
+            id: id(10),
+            name: "Core".into(),
+            number: 1,
+            parent_team_id: None,
+            lead_employee_id: Some(id(3)),
+            status: TeamStatus::Active,
+            max_members: DEFAULT_MAX_MEMBERS,
+            meta: meta(By::System, By::System),
+        })
+        .unwrap();
+        assert_eq!(effective_owner_id(&tx, &id(200)).unwrap(), id(200));
     }
 
     #[test]
-    fn satellite_falls_back_through_org_top_team_sole_person_and_empty_store() {
+    fn satellite_legacy_meta_fallback_resolves_sat_hq_org_and_sole_person() {
         let mut tx = MemoryEngine::new().begin().unwrap();
         // Pre-snapshot empty store returns configured_owner unchanged.
         assert_eq!(effective_owner_id(&tx, &id(200)).unwrap(), id(200));
@@ -200,24 +240,17 @@ mod tests {
             .unwrap();
         tx.put_employee(&person(2, "bob", EmployeeStatus::Active, 10))
             .unwrap();
-        // Ambiguous with 2 active people and no metadata -> returns configured_owner.
+        tx.put_office(&office(
+            200,
+            "sat",
+            OfficeRole::Satellite,
+            meta(By::System, By::System),
+        ))
+        .unwrap();
+        // Ambiguous with 2 active people and system meta -> fails closed to satellite ID.
         assert_eq!(effective_owner_id(&tx, &id(200)).unwrap(), id(200));
 
-        // Top team #1 lead resolves owner when office/org metadata is system-attributed.
-        tx.put_team(&Team {
-            id: id(10),
-            name: "Core".into(),
-            number: 1,
-            parent_team_id: None,
-            lead_employee_id: Some(id(1)),
-            status: TeamStatus::Active,
-            max_members: DEFAULT_MAX_MEMBERS,
-            meta: meta(By::System, By::System),
-        })
-        .unwrap();
-        assert_eq!(effective_owner_id(&tx, &id(200)).unwrap(), id(1));
-
-        // Organization metadata takes priority over top-team lead.
+        // Organization metadata resolves Bob.
         tx.put_organization(&Organization {
             id: id(50),
             slug: "acme".into(),
@@ -228,5 +261,30 @@ mod tests {
         })
         .unwrap();
         assert_eq!(effective_owner_id(&tx, &id(200)).unwrap(), id(2));
+
+        // HQ metadata takes priority over org metadata.
+        tx.put_office(&office(
+            100,
+            "hq",
+            OfficeRole::Hq,
+            meta(By::Employee(id(1)), By::Employee(id(1))),
+        ))
+        .unwrap();
+        assert_eq!(effective_owner_id(&tx, &id(200)).unwrap(), id(1));
+
+        // Satellite office updated_by takes priority over HQ metadata.
+        tx.put_office(&office(
+            200,
+            "sat",
+            OfficeRole::Satellite,
+            meta(By::Employee(id(1)), By::Employee(id(2))),
+        ))
+        .unwrap();
+        assert_eq!(effective_owner_id(&tx, &id(200)).unwrap(), id(2));
+
+        // When Bob is deactivated, satellite meta falls back to active creator Alice.
+        tx.put_employee(&person(2, "bob", EmployeeStatus::Inactive, 10))
+            .unwrap();
+        assert_eq!(effective_owner_id(&tx, &id(200)).unwrap(), id(1));
     }
 }

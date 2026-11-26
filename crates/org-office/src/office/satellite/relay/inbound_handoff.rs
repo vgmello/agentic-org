@@ -186,7 +186,7 @@ pub(super) fn apply_relayed_handoff_accept(
         .store
         .run(ApplyRelayedHandoffAcceptOp {
             operation_id: op_id,
-            owner: office.owner.clone(),
+            owner: office.effective_owner_for_ops(),
             ctx,
             origin_office: origin_office.to_owned(),
             cid: parsed.cid,

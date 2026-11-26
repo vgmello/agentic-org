@@ -3,8 +3,9 @@
 //! no clock of its own, so the same snapshot and `now` always give the same cards.
 //!
 //! Members are named as in messaging's addressing rules: `owner` first, then an exact id, then a
-//! handle ignoring case (an agent's `messaging_name`, a person's `name`). The reserved word
-//! `office` never names a member, and display names are never handles.
+//! handle ignoring case (an explicit `handle`, an agent's `messaging_name`, or a non-owner
+//! person's `name`). The reserved word `office` never names a member, and display names are never
+//! handles (including the owner's display name).
 
 use org_proto::directory::{
     CardTeam, DirectoryCard, MemberPresence, MemberRef, OfficeRef, WhoParams, WhoResult,

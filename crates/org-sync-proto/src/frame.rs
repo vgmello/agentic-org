@@ -69,6 +69,10 @@ pub enum SyncFrame {
         codec_max: u32,
         #[serde(default)]
         hq_addresses: Vec<String>,
+        /// HQ-authoritative active owner employee UUIDv7 (`TASK-141`), populated by HQ on Hello
+        /// so satellites track ownership across handovers without guessing from audit metadata.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner_member_id: Option<String>,
     },
 
     // --- Organization replication (HQ -> Satellite) ---

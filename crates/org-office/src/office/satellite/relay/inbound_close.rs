@@ -197,6 +197,7 @@ impl crate::store::open::StoreOp for ApplyRelayedOriginCloseOp {
 fn resolve_origin_close_ask(
     view: &impl crate::messaging::ports::MessagingRead,
     req: &ApplyRelayedOriginCloseOp,
+    owner: &Id,
 ) -> Result<
     (
         crate::messaging::records::MessageRecord,
@@ -241,9 +242,7 @@ fn resolve_origin_close_ask(
         &req.ctx.hq_office_id,
         req.incoming_conv.as_ref(),
     )?;
-    let owner = crate::organization::owner::effective_owner_id(view, &req.owner)
-        .map_err(|_| Refusal::invalid("resolve organization owner"))?;
-    ensure_local_office_entitled(view, &conv, &owner, &req.ctx, &req.here.office_id)?;
+    ensure_local_office_entitled(view, &conv, owner, &req.ctx, &req.here.office_id)?;
     Ok((inc_ask.clone(), conv_to_create, true))
 }
 
@@ -340,9 +339,9 @@ fn decide_apply_relayed_origin_close(
         conversation_path, encode_json, message_path, participant_answer_path,
     };
     use org_store::{Ack, Change, Refusal};
-    let (ask_msg, conv_to_create, create_ask) = resolve_origin_close_ask(view, req)?;
     let owner = crate::organization::owner::effective_owner_id(view, &req.owner)
         .map_err(|_| Refusal::invalid("resolve organization owner"))?;
+    let (ask_msg, conv_to_create, create_ask) = resolve_origin_close_ask(view, req, &owner)?;
     let is_withdrawal = crate::messaging::asks::decode_ask_answer_file(&req.answer)
         .1
         .is_some();
@@ -425,7 +424,7 @@ pub(super) fn apply_relayed_origin_close(
         .run(ApplyRelayedOriginCloseOp {
             operation_id: op_id,
             here: office.identity.clone(),
-            owner: office.owner.clone(),
+            owner: office.effective_owner_for_ops(),
             ctx,
             origin_office: origin_office.to_owned(),
             incoming_conv: conv,

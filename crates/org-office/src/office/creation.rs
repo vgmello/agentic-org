@@ -331,6 +331,7 @@ impl Office {
             runtime_root: roots.runtime,
             identity: here,
             owner,
+            replicated_owner: std::sync::RwLock::new(None),
             creation,
             creation_command,
             secrets_key: key,

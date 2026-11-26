@@ -118,6 +118,81 @@ struct AtomicSatelliteIdentityFile {
     wrapped_key_b64: String,
 }
 
+/// Durable HQ-authoritative owner employee ID received by a satellite on mTLS `Hello` (`TASK-141`).
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplicatedHqOwnerFile {
+    v: u32,
+    org_id: String,
+    hq_office_id: String,
+    owner_member_id: String,
+}
+
+fn replicated_hq_owner_path(durable_root: &Path, office_id: &str) -> PathBuf {
+    durable_root
+        .join("local")
+        .join("offices")
+        .join(office_id)
+        .join("hq-owner.v1.json")
+}
+
+pub(crate) fn read_replicated_hq_owner(
+    durable_root: &Path,
+    office_id: &str,
+    org_id: &str,
+    hq_office_id: &str,
+) -> Result<Option<org_store::Id>, OfficeError> {
+    let path = replicated_hq_owner_path(durable_root, office_id);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let bytes = fs::read(&path).map_err(OfficeError::storage)?;
+    let parsed: ReplicatedHqOwnerFile = serde_json::from_slice(&bytes)
+        .map_err(|_| OfficeError::Invalid("malformed replicated HQ owner file"))?;
+    if parsed.v != 1 {
+        return Err(OfficeError::Invalid(
+            "unsupported replicated HQ owner file version",
+        ));
+    }
+    if parsed.org_id != org_id || parsed.hq_office_id != hq_office_id {
+        return Ok(None);
+    }
+    if !org_proto::is_valid_member_id(&parsed.owner_member_id)
+        || parsed.owner_member_id == office_id
+    {
+        return Err(OfficeError::Invalid("invalid replicated HQ owner id"));
+    }
+    org_store::Id::parse(&parsed.owner_member_id)
+        .map(Some)
+        .map_err(|_| OfficeError::Invalid("invalid replicated HQ owner id"))
+}
+
+pub(crate) fn write_replicated_hq_owner(
+    durable_root: &Path,
+    office_id: &str,
+    org_id: &str,
+    hq_office_id: &str,
+    owner_member_id: &org_store::Id,
+) -> Result<(), OfficeError> {
+    let path = replicated_hq_owner_path(durable_root, office_id);
+    if let Some(parent) = path.parent() {
+        private_dir_synced(durable_root, parent).map_err(OfficeError::storage)?;
+    }
+    let record = ReplicatedHqOwnerFile {
+        v: 1,
+        org_id: org_id.to_owned(),
+        hq_office_id: hq_office_id.to_owned(),
+        owner_member_id: owner_member_id.as_str().to_owned(),
+    };
+    let bytes = serde_json::to_vec_pretty(&record).map_err(OfficeError::storage)?;
+    write_private_atomic(&path, &bytes).map_err(OfficeError::storage)
+}
+
+pub(crate) fn remove_replicated_hq_owner(durable_root: &Path, office_id: &str) {
+    let path = replicated_hq_owner_path(durable_root, office_id);
+    let _ = fs::remove_file(path);
+}
+
 pub(crate) fn read_active_identity_binding(
     durable_root: &Path,
     office_id: &str,

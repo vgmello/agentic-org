@@ -322,7 +322,7 @@ fn apply_validated_relayed_message(
                 .store
                 .run(CheckAskRecoveryEntitlementOp {
                     here: office.identity.clone(),
-                    owner: office.owner.clone(),
+                    owner: office.effective_owner_for_ops(),
                     ctx,
                     origin_office: origin_office.to_owned(),
                     incoming_conv: conv.clone(),
@@ -355,7 +355,7 @@ fn apply_validated_relayed_message(
         .run(ApplyRelayedMessageOp {
             operation_id: op_id,
             here: office.identity.clone(),
-            owner: office.owner.clone(),
+            owner: office.effective_owner_for_ops(),
             origin_office: origin_office.to_owned(),
             now_ms,
             ctx,

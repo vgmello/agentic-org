@@ -149,7 +149,7 @@ fn route_message_destinations(
         .store
         .run(ReadConversationMembersOp {
             conv: conv.clone(),
-            owner: office.owner.clone(),
+            owner: office.effective_owner_for_ops(),
         })
         .map_err(storage)?;
     let local_office_id = office.info.office_id.as_str();

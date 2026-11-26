@@ -742,3 +742,22 @@ fn owner_resolves_by_owner_keyword_and_explicit_handle_but_not_display_name() {
     assert_eq!(member("LOCAL-OWNER"), Ok(vec![id("OWNER")]));
     assert_eq!(member("Vinicius"), Err(ErrorCode::NotFound));
 }
+
+#[test]
+fn owner_explicit_handle_collision_fails_closed_as_ambiguous() {
+    let mut snapshot = org();
+    snapshot
+        .members
+        .iter_mut()
+        .find(|m| m.owner)
+        .unwrap()
+        .handle = Some("ana".into());
+    assert_eq!(resolve_member(&snapshot, "ana"), Err(AmbiguousHandle));
+    // Keyword `owner` still resolves unambiguously when there is a single owner.
+    assert_eq!(
+        resolve_member(&snapshot, "owner")
+            .unwrap()
+            .map(|m| m.id.as_str()),
+        Some(id("OWNER").as_str())
+    );
+}

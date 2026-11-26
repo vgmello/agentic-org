@@ -283,6 +283,16 @@ impl Office {
                 epoch,
             )?;
         }
+        let replicated_owner = if info.role == crate::model::OfficeRole::Satellite {
+            satellite::read_replicated_hq_owner(
+                &roots.durable,
+                &info.office_id,
+                &info.org_id,
+                &hq_office_id,
+            )?
+        } else {
+            None
+        };
         let clock_high_ms = AtomicU64::new(options.clock.now().0);
         let office = Office {
             folder,
@@ -291,6 +301,7 @@ impl Office {
             runtime_root: roots.runtime,
             identity: custody.identity,
             owner,
+            replicated_owner: std::sync::RwLock::new(replicated_owner),
             creation,
             creation_command,
             secrets_key: key,
