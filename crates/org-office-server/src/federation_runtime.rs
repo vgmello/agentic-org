@@ -253,11 +253,20 @@ pub(crate) fn start_optional_satellite_sync(
         .ok()
 }
 
+/// The callback a committed cross-office write fires: it asks the office store to flush the
+/// buffered entry now (`TASK-140`; a `chat.send` is `Ack::Buffered`, so without it the relay
+/// publisher, which reads only confirmed entries, waits out the group-flush interval on every
+/// hop), then wakes the satellite's persistent sync and every HQ peer session.
 pub(crate) fn build_sync_wake_fn(
+    office: &Arc<Office>,
     sat_sync_wake: Arc<SatSyncWake>,
     hq_fed_slot: HqFederationSlot,
 ) -> Arc<dyn Fn() + Send + Sync> {
+    let office = Arc::downgrade(office);
     Arc::new(move || {
+        if let Some(office) = office.upgrade() {
+            office.request_store_flush();
+        }
         sat_sync_wake.notify();
         if let Some(hq) = hq_fed_slot.get() {
             hq.notify_all_peers();

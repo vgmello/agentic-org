@@ -236,6 +236,11 @@ impl OfficeStore {
         on_store!(self, opened => opened.store.sync())
     }
 
+    /// Asks the store to flush its buffered entries now and returns at once (`TASK-140`).
+    pub fn request_flush(&self) {
+        on_store!(self, opened => opened.store.request_flush())
+    }
+
     /// Registers a durable journal consumer watermark (`ARCH-03` / `TASK-52`) so segment
     /// compaction never discards entries this consumer has not yet acknowledged.
     pub fn register_consumer(&self, consumer_id: &str) -> Result<u64, StoreError> {

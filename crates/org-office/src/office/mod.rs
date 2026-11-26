@@ -290,6 +290,14 @@ impl Office {
         self.store.sync().map_err(storage)
     }
 
+    /// Asks the office store to flush and confirm its buffered journal entries now instead of
+    /// after the group-flush interval, without blocking the caller (`TASK-140`). Federation
+    /// calls it when a cross-office write is waiting on the journal (a sync wake, a pending
+    /// relay pipeline) so the entry the relay publisher reads is confirmed in milliseconds.
+    pub fn request_store_flush(&self) {
+        self.store.request_flush();
+    }
+
     /// The HQ's CA records, checked against the creation (M1): both files there, the
     /// package the key record names, the same public key, organization and operation.
     fn ca(&self) -> Result<CaRecords, OfficeError> {

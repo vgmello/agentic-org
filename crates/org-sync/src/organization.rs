@@ -234,69 +234,137 @@ pub fn apply(
     event: OrgEvent,
 ) -> Result<OrgOutput, SyncError> {
     let peer = peer.identity();
+    store.transact(Arc::new(move |tx| apply_in(tx, &peer, &event)))
+}
+
+/// Applies consecutive events from the HQ `peer` in ONE store transaction, each exactly as
+/// [`apply`] would, so a burst costs one durable commit instead of one per event
+/// (`TASK-140`). Returns one output per event applied, in order; stops after the first output
+/// that is not an `Ack` (a gap, a required snapshot), committing the events before it, as
+/// separate [`apply`] calls would. An `Err` from any event aborts the whole transaction:
+/// nothing is committed, and a caller that needs the events before it applied replays them
+/// one at a time with [`apply`].
+pub fn apply_batch(
+    store: &dyn OrgStore,
+    peer: &dyn VerifiedPeer,
+    events: Vec<OrgEvent>,
+) -> Result<Vec<OrgOutput>, SyncError> {
+    if events.is_empty() {
+        return Ok(Vec::new());
+    }
+    let peer = peer.identity();
+    // An attempt may run more than once; the outputs of the one that committed are kept.
+    let outputs = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&outputs);
     store.transact(Arc::new(move |tx| {
-        let mut current = tx.checkpoint()?;
-        current.validate()?;
-        if event.org_id != current.org_id
-            || peer.org_id != current.org_id
-            || peer.office_id != current.hq_office
-            || peer.role != PeerRole::Hq
-            || peer.authority != current.highest_epoch
-            || event.position.epoch != current.highest_epoch
-        {
-            return Err(Refusal::NotAuthorized.into());
-        }
-        event.validate()?;
-        if !tx.supports_protocol(current.protocol_level)?
-            || !versions::codec_supported(current.protocol_level, &event.codec)
-            || !tx.supports_codec(&event.codec)?
-        {
-            return Err(Refusal::UnsupportedVersion.into());
-        }
-        if !current.restore_pending && tx.requires_initial_snapshot()? {
-            return Ok(OrgOutput::SnapshotRequired);
-        }
-        let retained = if event.position.epoch == current.position.epoch
-            && event.position.seq < current.position.seq
-        {
-            tx.digest_at(event.position)?
-        } else {
-            None
-        };
-        let order = ordering::order_event(
-            current.ordering(),
-            EventHead {
-                position: event.position,
-                previous: event.previous,
-                digest: event.digest,
-            },
-            retained,
-        );
-        match order {
-            ApplyOrder::Apply(next) => {
-                tx.apply_event(&event).map_err(classify_apply_error)?;
-                current.position = next.position;
-                current.digest = next.digest;
-                tx.record_event(&event, &current)?;
-                Ok(OrgOutput::Ack {
-                    position: current.position,
-                    digest: current.digest,
-                    duplicate: false,
-                })
+        let mut done = Vec::with_capacity(events.len());
+        for event in &events {
+            let output = apply_in(tx, &peer, event)?;
+            let more = matches!(output, OrgOutput::Ack { .. });
+            done.push(output);
+            if !more {
+                break;
             }
-            ApplyOrder::Duplicate => Ok(OrgOutput::Ack {
+        }
+        let last = done.last().cloned().ok_or(Refusal::InvariantFailure)?;
+        *sink.lock().unwrap_or_else(|p| p.into_inner()) = done;
+        Ok(last)
+    }))?;
+    let mut outputs = outputs.lock().unwrap_or_else(|p| p.into_inner());
+    Ok(std::mem::take(&mut *outputs))
+}
+
+/// The store-free gates [`apply`] runs first on every event, in its order: a valid checkpoint
+/// (`InvariantFailure`); this organization's HQ `peer` at the checkpoint's authority epoch,
+/// sending an event of this organization in that epoch (`NotAuthorized`); a well-formed event,
+/// with a nonzero sequence and a payload within [`MAX_PAYLOAD_BYTES`] (`InvalidInput`) and its
+/// own digest (`IntegrityFailure`); a codec the checkpoint's protocol level allows
+/// (`UnsupportedVersion`); no restore fence (`RestorePending`). [`apply`] then asks the store
+/// for protocol and codec support and any initial snapshot owed, and orders the event.
+///
+/// The one implementation of these gates: a caller that verifies events before staging their
+/// side effects (a satellite writing an event's files ahead of [`apply_batch`]) calls it to
+/// refuse, before anything is written, exactly what [`apply`] would refuse, with the same
+/// refusal.
+pub fn verify_pre_apply(
+    current: &OrgCheckpoint,
+    peer: &PeerIdentity,
+    event: &OrgEvent,
+) -> Result<(), Refusal> {
+    current.validate()?;
+    if event.org_id != current.org_id
+        || peer.org_id != current.org_id
+        || peer.office_id != current.hq_office
+        || peer.role != PeerRole::Hq
+        || peer.authority != current.highest_epoch
+        || event.position.epoch != current.highest_epoch
+    {
+        return Err(Refusal::NotAuthorized);
+    }
+    event.validate()?;
+    if !versions::codec_supported(current.protocol_level, &event.codec) {
+        return Err(Refusal::UnsupportedVersion);
+    }
+    if current.restore_pending {
+        return Err(Refusal::RestorePending);
+    }
+    Ok(())
+}
+
+/// The body of [`apply`]: one event from `peer` inside an open transaction.
+fn apply_in(
+    tx: &mut dyn OrgTxn,
+    peer: &PeerIdentity,
+    event: &OrgEvent,
+) -> Result<OrgOutput, SyncError> {
+    let mut current = tx.checkpoint()?;
+    verify_pre_apply(&current, peer, event)?;
+    if !tx.supports_protocol(current.protocol_level)? || !tx.supports_codec(&event.codec)? {
+        return Err(Refusal::UnsupportedVersion.into());
+    }
+    if tx.requires_initial_snapshot()? {
+        return Ok(OrgOutput::SnapshotRequired);
+    }
+    let retained = if event.position.epoch == current.position.epoch
+        && event.position.seq < current.position.seq
+    {
+        tx.digest_at(event.position)?
+    } else {
+        None
+    };
+    let order = ordering::order_event(
+        current.ordering(),
+        EventHead {
+            position: event.position,
+            previous: event.previous,
+            digest: event.digest,
+        },
+        retained,
+    );
+    match order {
+        ApplyOrder::Apply(next) => {
+            tx.apply_event(event).map_err(classify_apply_error)?;
+            current.position = next.position;
+            current.digest = next.digest;
+            tx.record_event(event, &current)?;
+            Ok(OrgOutput::Ack {
                 position: current.position,
                 digest: current.digest,
-                duplicate: true,
-            }),
-            ApplyOrder::Gap { after } => Ok(OrgOutput::Gap { after }),
-            ApplyOrder::SnapshotRequired => Ok(OrgOutput::SnapshotRequired),
-            ApplyOrder::RestorePending => Err(Refusal::RestorePending.into()),
-            ApplyOrder::StaleEpoch => Err(Refusal::NotAuthorized.into()),
-            ApplyOrder::Divergence => Err(Refusal::Divergence.into()),
-            ApplyOrder::InvalidPosition => Err(Refusal::InvalidInput.into()),
+                duplicate: false,
+            })
         }
-    }))
+        ApplyOrder::Duplicate => Ok(OrgOutput::Ack {
+            position: current.position,
+            digest: current.digest,
+            duplicate: true,
+        }),
+        ApplyOrder::Gap { after } => Ok(OrgOutput::Gap { after }),
+        ApplyOrder::SnapshotRequired => Ok(OrgOutput::SnapshotRequired),
+        ApplyOrder::RestorePending => Err(Refusal::RestorePending.into()),
+        ApplyOrder::StaleEpoch => Err(Refusal::NotAuthorized.into()),
+        ApplyOrder::Divergence => Err(Refusal::Divergence.into()),
+        ApplyOrder::InvalidPosition => Err(Refusal::InvalidInput.into()),
+    }
 }
 
 fn classify_apply_error(error: SyncError) -> SyncError {

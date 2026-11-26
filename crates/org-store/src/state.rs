@@ -67,6 +67,9 @@ pub(crate) struct Flow {
     pub(crate) closing: bool,
     pub(crate) writer_done: bool,
     pub(crate) sync_wanted: bool,
+    /// A caller asked for the unflushed entries to be flushed now rather than at the end
+    /// of the flush interval ([`crate::Store::request_flush`]); cleared by the flusher.
+    pub(crate) flush_now: bool,
     pub(crate) holding_back: bool,
     /// Submitted, not yet taken by the writer.
     pub(crate) queued: usize,

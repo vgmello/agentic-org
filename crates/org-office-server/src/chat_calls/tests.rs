@@ -88,7 +88,7 @@ impl LiveOfficeFixture {
         ));
         let sat_wake = Arc::new(SatSyncWake::default());
         let hq_fed_slot: HqFederationSlot = Arc::default();
-        let sync_wake = build_sync_wake_fn(sat_wake, Arc::clone(&hq_fed_slot));
+        let sync_wake = build_sync_wake_fn(&office, sat_wake, Arc::clone(&hq_fed_slot));
         let messaging = build_messaging_ports(
             &office,
             &live,

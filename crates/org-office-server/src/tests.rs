@@ -1,5 +1,6 @@
 mod a2a_live_three_runtimes;
 mod a2a_messaging;
+mod org_event_bursts;
 mod transfer_composition;
 
 use std::path::Path;
