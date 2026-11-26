@@ -22,7 +22,7 @@ use super::{
     now_ms, HqPermitRequest, HqPermitResponse, InboundCallbacks, InboundDeliveryNotifier,
     RelayedWake, SatelliteSyncSession, StaticPeer, WakeRelayHandler, FIRST_FRAME_DEADLINE,
 };
-use crate::federation_link::org_events::apply_satellite_org_event_frame;
+use crate::federation_link::org_events::{apply_satellite_org_event_frames, ORG_EVENT_BATCH_MAX};
 
 impl SatelliteSyncSession {
     /// Connects to HQ using this satellite's persisted Org-CA-pinned mTLS credentials, verifies
@@ -118,19 +118,36 @@ impl SatelliteSyncSession {
             },
         )
         .map_err(|e| format!("failed sending OrgGap: {e}"))?;
+        // Events arrive back to back up to the closing `Pong`: apply them in verified batches
+        // rather than one durable commit each (`TASK-140`), and always apply the ones already
+        // received before reporting a later failure, as applying each on arrival did.
         let mut applied = 0usize;
+        let mut burst = Vec::new();
         loop {
-            match read_correlated_frame_opts(self, FIRST_FRAME_DEADLINE, None, false)? {
-                Some(ev @ SyncFrame::OrgEvent { .. }) => {
-                    if apply_satellite_org_event_frame(&self.office, &self.hq_peer, ev)? {
-                        applied += 1;
+            match read_correlated_frame_opts(self, FIRST_FRAME_DEADLINE, None, false) {
+                Ok(Some(ev @ SyncFrame::OrgEvent { .. })) => {
+                    burst.push(ev);
+                    if burst.len() >= ORG_EVENT_BATCH_MAX {
+                        applied += self.apply_org_event_burst(&mut burst)?;
                     }
                 }
-                Some(SyncFrame::Pong { .. }) => break,
-                other => return Err(format!("unexpected frame during org event pull: {other:?}")),
+                Ok(Some(SyncFrame::Pong { .. })) => {
+                    applied += self.apply_org_event_burst(&mut burst)?;
+                    return Ok(applied);
+                }
+                other => {
+                    self.apply_org_event_burst(&mut burst)?;
+                    return Err(match other {
+                        Err(e) => e,
+                        Ok(other) => format!("unexpected frame during org event pull: {other:?}"),
+                    });
+                }
             }
         }
-        Ok(applied)
+    }
+
+    fn apply_org_event_burst(&self, burst: &mut Vec<SyncFrame>) -> Result<usize, String> {
+        apply_satellite_org_event_frames(&self.office, &self.hq_peer, std::mem::take(burst))
     }
 
     /// Pushes all pending local work outbox entries to HQ (draining any un-enqueued local satellite

@@ -372,6 +372,19 @@ fn verify_d25_reenroll_and_revocation(
     )
     .unwrap();
     let new_hq_id = "0195a000-0000-7000-8000-000000000088";
+    // Record a replicated HQ owner before D25 re-enrollment and verify re-enrollment durably
+    // removes `hq-owner.v1.json` and clears in-memory state (`TASK-141`).
+    sat_reopened
+        .record_replicated_hq_owner(&hq.info().office_id, owner)
+        .unwrap();
+    let hq_owner_file = sat_reopened
+        .durable
+        .join("local")
+        .join("offices")
+        .join(&tok2.office_id)
+        .join("hq-owner.v1.json");
+    assert!(hq_owner_file.is_file());
+    assert_eq!(sat_reopened.effective_owner_for_ops().as_str(), owner);
     sat_reopened
         .re_enroll_satellite(SatelliteReEnrollSpec {
             org_id: org_id.to_owned(),
@@ -383,6 +396,18 @@ fn verify_d25_reenroll_and_revocation(
             new_office_key_der: Zeroizing::new(new_sat_key.local_der().to_vec()),
         })
         .unwrap();
+    assert!(
+        !hq_owner_file.exists(),
+        "D25 re-enrollment must remove stale hq-owner.v1.json"
+    );
+    assert_eq!(
+        sat_reopened.effective_owner_for_ops().as_str(),
+        sat_reopened.owner_member_id()
+    );
+    // A racing Hello from the old HQ must be rejected against the new HQ checkpoint.
+    assert!(sat_reopened
+        .record_replicated_hq_owner(&hq.info().office_id, owner)
+        .is_err());
     let status = sat_reopened.sync_status().unwrap();
     assert_eq!(status.hq_office, new_hq_id);
     assert!(status.initial_snapshot_required);
@@ -679,4 +704,90 @@ fn snapshot_export_fails_closed_on_corrupt_channel_and_invalid_filename() {
         msg_link_err.is_err(),
         "symlink durable/messaging parent must fail snapshot export closed"
     );
+}
+
+#[test]
+fn replicated_hq_owner_file_fails_closed_on_corrupt_tampered_symlink_dir_and_oversized() {
+    use crate::office::satellite::{
+        read_replicated_hq_owner, remove_replicated_hq_owner, write_replicated_hq_owner,
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    let durable = tmp.path();
+    let org_id = "0195a000-0000-7000-8000-000000000010";
+    let other_org = "0195a000-0000-7000-8000-000000000011";
+    let sat_id = "0195a000-0000-7000-8000-000000000020";
+    let hq_id = "0195a000-0000-7000-8000-000000000030";
+    let new_hq_id = "0195a000-0000-7000-8000-000000000031";
+    let owner_id = Id::parse("0195a000-0000-7000-8000-000000000040").unwrap();
+    let file_path = durable
+        .join("local")
+        .join("offices")
+        .join(sat_id)
+        .join("hq-owner.v1.json");
+
+    // Absent directory/file returns Ok(None).
+    assert_eq!(
+        read_replicated_hq_owner(durable, sat_id, org_id, hq_id).unwrap(),
+        None
+    );
+
+    // Valid write/read roundtrip; D25 hq_office_id mismatch returns Ok(None).
+    write_replicated_hq_owner(durable, sat_id, org_id, hq_id, &owner_id).unwrap();
+    assert_eq!(
+        read_replicated_hq_owner(durable, sat_id, org_id, hq_id).unwrap(),
+        Some(owner_id.clone())
+    );
+    assert_eq!(
+        read_replicated_hq_owner(durable, sat_id, org_id, new_hq_id).unwrap(),
+        None
+    );
+    // Foreign org_id MUST fail closed (never downgrade to None).
+    assert!(read_replicated_hq_owner(durable, sat_id, other_org, hq_id).is_err());
+
+    // Corrupt JSON, wrong version, owner == office_id, owner == hq_id, and oversized (>4 KiB) fail closed.
+    for bad in [
+        b"{not-json".to_vec(),
+        format!(
+            r#"{{"v":2,"org_id":"{org_id}","hq_office_id":"{hq_id}","owner_member_id":"{owner_id}"}}"#
+        )
+        .into_bytes(),
+        format!(
+            r#"{{"v":1,"org_id":"{org_id}","hq_office_id":"{hq_id}","owner_member_id":"{sat_id}"}}"#
+        )
+        .into_bytes(),
+        format!(
+            r#"{{"v":1,"org_id":"{org_id}","hq_office_id":"{hq_id}","owner_member_id":"{hq_id}"}}"#
+        )
+        .into_bytes(),
+        vec![b' '; 5000],
+    ] {
+        std::fs::write(&file_path, bad).unwrap();
+        assert!(read_replicated_hq_owner(durable, sat_id, org_id, hq_id).is_err());
+    }
+
+    // Symlink (pointing to a valid file or dangling) MUST fail closed.
+    let target = tmp.path().join("outside-owner.json");
+    std::fs::write(
+        &target,
+        format!(
+            r#"{{"v":1,"org_id":"{org_id}","hq_office_id":"{hq_id}","owner_member_id":"{owner_id}"}}"#
+        ),
+    )
+    .unwrap();
+    std::fs::remove_file(&file_path).unwrap();
+    std::os::unix::fs::symlink(&target, &file_path).unwrap();
+    assert!(read_replicated_hq_owner(durable, sat_id, org_id, hq_id).is_err());
+    std::fs::remove_file(&file_path).unwrap();
+
+    // Directory in place of hq-owner.v1.json MUST fail closed.
+    std::fs::create_dir(&file_path).unwrap();
+    assert!(read_replicated_hq_owner(durable, sat_id, org_id, hq_id).is_err());
+    std::fs::remove_dir(&file_path).unwrap();
+
+    // Durable remove succeeds when file exists and is idempotent when already absent.
+    write_replicated_hq_owner(durable, sat_id, org_id, hq_id, &owner_id).unwrap();
+    remove_replicated_hq_owner(durable, sat_id).unwrap();
+    assert!(!file_path.exists());
+    remove_replicated_hq_owner(durable, sat_id).unwrap();
 }

@@ -9,10 +9,23 @@ use org_sync_proto::SyncFrame;
 
 use super::{is_proxied_session_method, SatSyncWake, MAX_SATELLITE_RPC_WORKERS};
 
-struct WorkerSlot(Arc<AtomicUsize>);
+/// One of the satellite's `MAX_SATELLITE_RPC_WORKERS` RPC worker slots, released on drop.
+pub(super) struct WorkerSlot(Arc<AtomicUsize>);
 impl Drop for WorkerSlot {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+impl WorkerSlot {
+    /// Takes a slot from `active_workers`, the budget shared by every connection of the
+    /// satellite's persistent sync loop (`TASK-174` AC #2), or `None` when all are busy.
+    pub(super) fn try_acquire(active_workers: &Arc<AtomicUsize>) -> Option<Self> {
+        if active_workers.fetch_add(1, Ordering::AcqRel) >= MAX_SATELLITE_RPC_WORKERS {
+            active_workers.fetch_sub(1, Ordering::AcqRel);
+            return None;
+        }
+        Some(Self(Arc::clone(active_workers)))
     }
 }
 
@@ -63,7 +76,6 @@ pub(crate) fn spawn_satellite_session_rpc(
     let replies = Arc::clone(ctx.replies);
     let sat_wake = Arc::clone(ctx.sat_wake);
     let sessions = Weak::clone(ctx.sessions);
-    let active_workers = Arc::clone(ctx.active_workers);
     let push_reply = move |req_id: String, outcome: Outcome| {
         replies
             .lock()
@@ -81,8 +93,7 @@ pub(crate) fn spawn_satellite_session_rpc(
         );
         return;
     }
-    if active_workers.fetch_add(1, Ordering::AcqRel) >= MAX_SATELLITE_RPC_WORKERS {
-        active_workers.fetch_sub(1, Ordering::AcqRel);
+    let Some(slot) = WorkerSlot::try_acquire(ctx.active_workers) else {
         push_reply(
             request_id,
             Outcome::Error(ApiError::new(
@@ -91,8 +102,7 @@ pub(crate) fn spawn_satellite_session_rpc(
             )),
         );
         return;
-    }
-    let slot = WorkerSlot(active_workers);
+    };
     let replies_err = Arc::clone(ctx.replies);
     let wake_err = Arc::clone(ctx.sat_wake);
     let err_req_id = request_id.clone();

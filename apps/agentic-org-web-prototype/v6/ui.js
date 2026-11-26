@@ -78,9 +78,9 @@ function queueHeadline(title, count, announce = false) {
     <span class="cnt queue-count"${announce ? ' role="status"' : ""}><i aria-hidden="true"></i>${esc(count)}</span></div></div>`;
 }
 /* Section header shared by Home, project Overview and other pages. repTitle swaps the label in Report themes. */
-function sectionHead({ id, title, repTitle = title, count = "", right = "", cls = "" }) {
+function sectionHead({ id, title, repTitle = title, count = "", right = "", cls = "", level = "h2" }) {
   const label = repTitle === title ? title : `<span class="lbl-std">${title}</span><span class="lbl-rep">${repTitle}</span>`;
-  return `<div class="sec-head${cls ? " " + cls : ""}"><div class="sec-head-l"><h2 id="${id}">${label}</h2>${count ? `<span class="sec-head-count">${count}</span>` : ""}</div>${right}</div>`;
+  return `<div class="sec-head${cls ? " " + cls : ""}"><div class="sec-head-l"><${level} id="${id}">${label}</${level}>${count ? `<span class="sec-head-count">${count}</span>` : ""}</div>${right}</div>`;
 }
 /* Inline page search: a toolbar icon reveals a search row above the results ("/" opens it too). */
 const searchIsOpen = (inputId, value) => Boolean(S.searchOpen?.[inputId] || String(value ?? "").trim());

@@ -255,7 +255,7 @@ fn route_origin_close_destinations(
         .store
         .run(ReadConversationMembersOp {
             conv: conv.clone(),
-            owner: office.owner.clone(),
+            owner: office.effective_owner_for_ops(),
         })
         .map_err(storage)?;
     let dests: std::collections::BTreeSet<String> = members

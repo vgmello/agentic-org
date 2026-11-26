@@ -33,6 +33,7 @@ pub fn position(generation: u64) -> Position {
 /// the creator, as the creation binding names them (document 04).
 pub fn project(read: &impl ProjectsRead, owner: &Id) -> Result<OrgSnapshot, EngineError> {
     let generation = read.generation()?;
+    let owner = crate::organization::owner::effective_owner_id(read, owner)?;
     let teams = read
         .teams()?
         .into_iter()
@@ -71,7 +72,7 @@ pub fn project(read: &impl ProjectsRead, owner: &Id) -> Result<OrgSnapshot, Engi
             .get(employee.id.as_str())
             .map(String::as_str)
             .or(hq_office_id.as_deref());
-        members.push(member(employee, owner, agent_office_id, exec.as_ref()));
+        members.push(member(employee, &owner, agent_office_id, exec.as_ref()));
     }
     let project_records = read.projects()?;
     let mut projects = Vec::with_capacity(project_records.len());

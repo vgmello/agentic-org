@@ -162,7 +162,7 @@ fn multi_office_mtls_enrollment_snapshot_offline_convergence_relay_revocation_an
             &owner,
             org_office::rules::OrgCommand::TeamCreate(org_proto::org::TeamCreateParams {
                 command_id: team_cmd_id,
-                team_id,
+                team_id: team_id.clone(),
                 name: "Replicated Engineering".into(),
                 owner_team_id: None,
             }),
@@ -176,6 +176,40 @@ fn multi_office_mtls_enrollment_snapshot_offline_convergence_relay_revocation_an
         assert!(
             sat_teams.iter().any(|t| t.name == "Replicated Engineering"),
             "satellite org_snapshot must contain HQ-replicated team; got {sat_teams:?}"
+        );
+
+        // TASK-140: a catch-up burst of more than one batch of HQ events (one per task)
+        // applies in verified batches and converges exactly.
+        let burst: Vec<String> = (0..70)
+            .map(|n| create_hq_task(&hq, &owner, &team_id, &format!("Burst task {n}")))
+            .collect();
+        let journal_head = sat
+            .journal_entries_after(0)
+            .last()
+            .map_or(0, |entry| entry.ordinal());
+        let pulled = session.pull_org_events().unwrap();
+        assert!(pulled >= burst.len(), "pulled {pulled}");
+        // One replicated-files operation per batch of up to 64 events, not one per event.
+        let applies = sat.journal_entries_after(journal_head).len();
+        assert!(
+            applies <= 4,
+            "{applies} journal entries for {pulled} events"
+        );
+        assert_eq!(
+            sat.sync_status().unwrap().seq,
+            hq.sync_status().unwrap().seq,
+            "the satellite reaches HQ's organization position"
+        );
+        for task_id in &burst {
+            assert!(
+                sat.task_inspect(task_id).unwrap().is_ok(),
+                "replicated task {task_id} is on the satellite"
+            );
+        }
+        assert_eq!(
+            session.pull_org_events().unwrap(),
+            0,
+            "nothing left to apply"
         );
     }
 
@@ -568,4 +602,36 @@ fn multi_office_mtls_enrollment_snapshot_offline_convergence_relay_revocation_an
         "replacement HQ must receive preserved offline satellite task after D25 re-enrollment"
     );
     rep_server.stop();
+}
+
+/// Creates a task at HQ in `team_id` and returns its ID.
+fn create_hq_task(hq: &Office, owner: &str, team_id: &str, title: &str) -> String {
+    let task_id = hq.next_uuid_v7();
+    hq.task_create(
+        owner,
+        org_proto::tasks::TasksCreateParams {
+            command_id: hq.next_uuid_v7(),
+            task_id: task_id.clone(),
+            team_id: Some(team_id.to_owned()),
+            project_id: None,
+            assigned_team_id: None,
+            assignee_id: None,
+            task_type: None,
+            work_type: None,
+            title: title.into(),
+            body_markdown: "Created at HQ".into(),
+            priority: None,
+            effort: None,
+            severity: None,
+            rank_order: None,
+            labels: Vec::new(),
+            reference_files: Vec::new(),
+            modified_files: Vec::new(),
+            depends_on: Vec::new(),
+            details: None,
+        },
+    )
+    .unwrap()
+    .unwrap();
+    task_id
 }

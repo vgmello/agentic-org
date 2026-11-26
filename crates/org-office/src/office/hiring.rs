@@ -229,7 +229,7 @@ impl Office {
         let (allowed, _) = self
             .store
             .read(CheckHrMessageAccess {
-                owner: self.owner.clone(),
+                owner: self.effective_owner_for_ops(),
                 sender: sender_id,
                 target: target.to_owned(),
             })

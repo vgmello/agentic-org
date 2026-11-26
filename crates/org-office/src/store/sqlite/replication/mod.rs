@@ -1,7 +1,7 @@
 //! SQLite projection of the durable replication state (`TASK-52`, `FC-145`, `ADR-0018` `ENG-3`).
 //!
-//! The durable source of truth, `<durable>/local/offices/<office_id>/replication/state.v1.json`,
-//! is engine-independent: [`DurableReplicationStore`] keeps it for every engine (`TASK-172`).
+//! The durable source of truth, `<durable>/local/offices/<office_id>/replication/state.v1.json`
+//! and the event log it names, is engine-independent: [`DurableReplicationStore`] keeps it for every engine (`TASK-172`).
 //! This adapter adds the rebuildable SQLite projection at
 //! `<runtime>/<office_id>/protected/replication.db`, reconciled via
 //! [`super::companion::open_and_reconcile_companion_db`].
@@ -23,7 +23,8 @@ mod projection;
 mod tests;
 
 use self::projection::{
-    project_into_sqlite, REPLICATION_ADAPTER_FORMAT, REPLICATION_DDL, REPLICATION_PRAGMAS,
+    project_change_into_sqlite, project_into_sqlite, REPLICATION_ADAPTER_FORMAT, REPLICATION_DDL,
+    REPLICATION_PRAGMAS,
 };
 
 /// The SQLite engine's [`ReplicationProjection`]: `replication.db` under the office's
@@ -60,5 +61,13 @@ impl SqliteReplicationProjection {
 impl ReplicationProjection for SqliteReplicationProjection {
     fn project(&mut self, data: &ReplicationCoreData) -> Result<(), OfficeError> {
         project_into_sqlite(&mut self.conn, data)
+    }
+
+    fn project_change(
+        &mut self,
+        before: &ReplicationCoreData,
+        after: &ReplicationCoreData,
+    ) -> Result<(), OfficeError> {
+        project_change_into_sqlite(&mut self.conn, before, after)
     }
 }
