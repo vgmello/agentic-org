@@ -37,9 +37,11 @@ pub(crate) struct AgySessionConfig {
 
 pub(crate) fn map_permission_mode(mode: PermissionMode) -> Result<ExpectedMode, PlanError> {
     match mode {
+        // Real `agy 1.5.17` ACP reports `modes.currentModeId = "default"`
+        // ("Ask before edits and commands, per your permission settings.").
         PermissionMode::Ask => Ok(ExpectedMode {
             cli_flag: None,
-            reported_name: "ask",
+            reported_name: "default",
         }),
         PermissionMode::AcceptEdits => Ok(ExpectedMode {
             cli_flag: Some("accept-edits"),

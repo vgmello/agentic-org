@@ -630,12 +630,18 @@ fn handle_current_mode_update(
     let mut out = vec![Output::Event(SessionEvent::ModeChanged {
         mode: Some(mode.to_owned()),
     })];
-    if is_banned_mode(mode) && !matches!(s.phase, Phase::Closing | Phase::Failed | Phase::Ended) {
+    let escalated_accept_edits =
+        s.cfg.expected_mode.reported_name == "default" && mode.eq_ignore_ascii_case("accept-edits");
+    if (is_banned_mode(mode) || escalated_accept_edits)
+        && !matches!(s.phase, Phase::Closing | Phase::Failed | Phase::Ended)
+    {
         s.phase = Phase::Closing;
         s.handshake_deadline = None;
         out.push(Output::Event(SessionEvent::Notice {
             kind: NoticeKind::Warning,
-            text: format!("Agy ACP switched to banned permission mode `{mode}`; stopping session"),
+            text: format!(
+                "Agy ACP switched to disallowed permission mode `{mode}`; stopping session"
+            ),
         }));
         if let Some(sid) = s.session_id.as_ref() {
             out.push(encode_session_cancel(sid.as_str()));

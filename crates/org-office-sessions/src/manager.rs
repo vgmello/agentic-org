@@ -2084,6 +2084,7 @@ impl SessionManager {
         ];
         append_rust_toolchain_env(
             &mut captured,
+            Some(input.home),
             std::env::var_os("RUSTUP_HOME"),
             std::env::var_os("CARGO_HOME"),
             std::env::var_os("HOME"),
@@ -3632,11 +3633,13 @@ fn build_session_spec_for_launch(
         preset_cfg,
     )?;
     if linux_claude_bwrap {
-        // Keep `spec.policy.deny` and `preset_cfg.policy.deny` 100% complete (enforced by
-        // Claude `permissions.deny` and `decide_escalation_with_roots`), while pruning absent
-        // paths from Linux `bwrap` `sandbox.deny_read`/`deny_write` so `@anthropic-ai/sandbox-runtime`
-        // never materializes permanent 0-byte `0444` files on the host (`TASK-144`).
-        prune_nonexistent_bwrap_denies(&mut spec.sandbox);
+        // Keep `preset_cfg.policy.deny` 100% complete in `SessionManager` (enforced by
+        // `decide_escalation_with_roots` over `--permission-mode manual` on every tool call),
+        // while pruning absent concrete paths from Linux Claude's `spec.sandbox` and
+        // `spec.policy.deny` so Claude 2.1.x `@anthropic-ai/sandbox-runtime` (`bwrap`), which
+        // merges `permissions.deny` into `bwrap` mounts, never materializes permanent 0-byte
+        // `0444` files on the host (`TASK-144`).
+        prune_nonexistent_bwrap_denies(&mut spec.sandbox, &mut spec.policy);
     }
     Ok(spec)
 }
@@ -3718,20 +3721,83 @@ struct SessionEnvInput<'a> {
     sandbox_enabled: bool,
 }
 
+fn ensure_readonly_cache_symlink(link_path: &Path, target: &Path) -> bool {
+    if !target.is_dir() {
+        return false;
+    }
+    match std::fs::symlink_metadata(link_path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            if std::fs::read_link(link_path).ok().as_deref() == Some(target) {
+                return true;
+            }
+            let _ = std::fs::remove_file(link_path);
+        }
+        Ok(_) => return true, // Real directory/file already exists in agent home; leave untouched.
+        Err(_) => {}
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link_path).is_ok()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (link_path, target);
+        false
+    }
+}
+
+/// Links host read-only Rust cache subdirs (`registry`, `git`, `.rustup`) into an isolated agent
+/// home (`TASK-159`) without ever linking host Cargo credentials or config files (`credentials*`,
+/// `config*`). Returns the writable `<agent_home>/.cargo` path when linked so Cargo can write
+/// `.package-cache` inside the sandbox and still finds caches even when a runtime scrubs
+/// `CARGO_HOME` (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`).
+pub(crate) fn link_host_rust_caches(
+    agent_home: &Path,
+    rustup_dir: Option<&Path>,
+    cargo_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(rustup) = rustup_dir {
+        let _ = ensure_readonly_cache_symlink(&agent_home.join(".rustup"), rustup);
+    }
+    let host_cargo = cargo_dir?;
+    let agent_cargo = agent_home.join(".cargo");
+    if ensure_owner_only_dir(&agent_cargo).is_err() {
+        return None;
+    }
+    let linked_registry =
+        ensure_readonly_cache_symlink(&agent_cargo.join("registry"), &host_cargo.join("registry"));
+    let _ = ensure_readonly_cache_symlink(&agent_cargo.join("git"), &host_cargo.join("git"));
+    linked_registry.then_some(agent_cargo)
+}
+
 fn append_rust_toolchain_env(
     captured: &mut Vec<(OsString, OsString)>,
+    agent_home: Option<&Path>,
     rustup_explicit: Option<OsString>,
     cargo_explicit: Option<OsString>,
     host_home: Option<OsString>,
     forbidden: &[PathBuf],
     sandbox_enabled: bool,
 ) {
-    if let Some(dir) =
-        host_rust_dir_env_from(rustup_explicit, host_home.clone(), ".rustup", forbidden)
-    {
+    let host_rustup =
+        host_rust_dir_env_from(rustup_explicit, host_home.clone(), ".rustup", forbidden);
+    let host_cargo = host_rust_dir_env_from(cargo_explicit, host_home, ".cargo", forbidden);
+    let linked_cargo = agent_home.and_then(|home| {
+        link_host_rust_caches(
+            home,
+            host_rustup.as_deref().map(Path::new),
+            host_cargo.as_deref().map(Path::new),
+        )
+    });
+    if let Some(dir) = host_rustup {
         captured.push((OsString::from("RUSTUP_HOME"), dir));
     }
-    if let Some(dir) = host_rust_dir_env_from(cargo_explicit, host_home, ".cargo", forbidden) {
+    if let Some(agent_cargo) = linked_cargo {
+        captured.push((OsString::from("CARGO_HOME"), agent_cargo.into_os_string()));
+        if sandbox_enabled {
+            captured.push((OsString::from("CARGO_NET_OFFLINE"), OsString::from("true")));
+        }
+    } else if let Some(dir) = host_cargo {
         captured.push((OsString::from("CARGO_HOME"), dir));
         if sandbox_enabled {
             captured.push((OsString::from("CARGO_NET_OFFLINE"), OsString::from("true")));
@@ -3811,13 +3877,22 @@ fn pattern_exists_for_bwrap(pat: &PathPattern) -> bool {
     std::fs::symlink_metadata(prefix).is_ok()
 }
 
-/// Drops non-existent concrete paths from Linux `bwrap` `sandbox.deny_read` and `sandbox.deny_write`
-/// so `@anthropic-ai/sandbox-runtime` never materializes permanent 0-byte `0444` files on the host
-/// (`TASK-144`). Callers must leave `policy.deny` untouched so tool-level denies and the approval
-/// bridge retain 100% coverage of absent future paths.
-pub(crate) fn prune_nonexistent_bwrap_denies(sandbox: &mut SandboxSpec) {
+/// Drops non-existent concrete paths from Linux Claude `bwrap` `sandbox.deny_read`,
+/// `sandbox.deny_write`, and `policy.deny` `RuleScope::Path` entries so Claude Code's
+/// `@anthropic-ai/sandbox-runtime` (which merges both `sandbox.filesystem` and `permissions.deny`
+/// into `bwrap` mounts) never materializes permanent 0-byte `0444` files on the host (`TASK-144`).
+/// Callers must leave `preset_cfg.policy.deny` untouched so `SessionManager`'s approval bridge
+/// (`decide_escalation_with_roots`) retains 100% coverage of absent/future paths on every tool call.
+pub(crate) fn prune_nonexistent_bwrap_denies(
+    sandbox: &mut SandboxSpec,
+    policy: &mut org_agent_runtime::PermissionPolicy,
+) {
     sandbox.deny_read.retain(pattern_exists_for_bwrap);
     sandbox.deny_write.retain(pattern_exists_for_bwrap);
+    policy.deny.retain(|rule| match &rule.scope {
+        org_agent_runtime::RuleScope::Path(pat) => pattern_exists_for_bwrap(pat),
+        _ => true,
+    });
 }
 
 fn office_env_names() -> Vec<EnvName> {
@@ -4251,7 +4326,8 @@ mod manager_helper_tests {
         apply_worktree_sandbox_rules(&mut preset_cfg, &[], &[absent_hooks_pat]);
 
         let mut sandbox = preset_cfg.sandbox.clone();
-        prune_nonexistent_bwrap_denies(&mut sandbox);
+        let mut spec_policy = preset_cfg.policy.clone();
+        prune_nonexistent_bwrap_denies(&mut sandbox, &mut spec_policy);
 
         let deny_read: Vec<&str> = sandbox.deny_read.iter().map(PathPattern::as_str).collect();
         let deny_write: Vec<&str> = sandbox.deny_write.iter().map(PathPattern::as_str).collect();
@@ -4263,7 +4339,9 @@ mod manager_helper_tests {
         assert!(!deny_write.iter().any(|p| p.contains("repo.git/hooks")));
         assert!(!deny_write.iter().any(|p| p.contains(".git/hooks")));
 
-        // Policy deny rules remain 100% intact for both Claude `permissions.deny` and approval bridge.
+        // On Linux Claude `bwrap`, `spec_policy.deny` also omits absent concrete paths so
+        // Claude Code 2.1.x never feeds them into `bwrap` (which creates 0-byte `0444` stubs),
+        // while `preset_cfg.policy` stays 100% intact for `decide_escalation_with_roots`.
         let spec = SessionSpec {
             runtime: RuntimeId::try_from("claude").unwrap(),
             kind: SessionKind::Home {},
@@ -4278,7 +4356,7 @@ mod manager_helper_tests {
             read_only_dirs: Vec::new(),
             instructions: String::new(),
             permission_mode: preset_cfg.permission_mode,
-            policy: preset_cfg.policy.clone(),
+            policy: spec_policy,
             sandbox,
             mcp_servers: Default::default(),
             tools: preset_cfg.allowed_tools.clone(),
@@ -4315,9 +4393,10 @@ mod manager_helper_tests {
             .iter()
             .filter_map(serde_json::Value::as_str)
             .collect();
-        assert!(perm_denies.contains(&format!("Read(/{})", absent_journal.display()).as_str()));
-        assert!(perm_denies.contains(&format!("Read(/{}/**)", absent_sibling.display()).as_str()));
-        assert!(perm_denies.contains(&format!("Write(/{}/**)", absent_hooks.display()).as_str()));
+        assert!(perm_denies.contains(&format!("Read(/{})", existing_db.display()).as_str()));
+        assert!(!perm_denies.contains(&format!("Read(/{})", absent_journal.display()).as_str()));
+        assert!(!perm_denies.contains(&format!("Read(/{}/**)", absent_sibling.display()).as_str()));
+        assert!(!perm_denies.contains(&format!("Write(/{}/**)", absent_hooks.display()).as_str()));
 
         let mut write_req = ApprovalRequest::new(
             ApprovalId::new("req-absent-sibling"),
@@ -4342,16 +4421,28 @@ mod manager_helper_tests {
     }
 
     #[test]
-    fn cargo_net_offline_is_set_only_when_cargo_home_forwarded_in_sandboxed_session() {
+    fn cargo_net_offline_and_zero_copy_rust_cache_symlinks_never_expose_credentials() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let cargo_dir = root.join("host-cargo");
+        let rustup_dir = root.join("host-rustup");
         let helper_dir = root.join("helpers");
         let home_dir = root.join("home");
         let ws_dir = root.join("ws");
-        for d in [&cargo_dir, &helper_dir, &home_dir, &ws_dir] {
+        for d in [
+            &cargo_dir,
+            &cargo_dir.join("registry"),
+            &cargo_dir.join("git"),
+            &rustup_dir,
+            &helper_dir,
+            &home_dir,
+            &ws_dir,
+        ] {
             std::fs::create_dir_all(d).unwrap();
         }
+        std::fs::write(cargo_dir.join("credentials"), b"secret-1").unwrap();
+        std::fs::write(cargo_dir.join("credentials.toml"), b"secret-2").unwrap();
+        std::fs::write(cargo_dir.join("config.toml"), b"host-config").unwrap();
         let search = SearchPath::new(
             &helper_dir,
             std::ffi::OsStr::new("/usr/bin"),
@@ -4362,7 +4453,8 @@ mod manager_helper_tests {
         let mut sandboxed = Vec::new();
         append_rust_toolchain_env(
             &mut sandboxed,
-            None,
+            Some(&home_dir),
+            Some(rustup_dir.as_os_str().to_os_string()),
             Some(cargo_dir.as_os_str().to_os_string()),
             None,
             &[home_dir.clone(), ws_dir.clone()],
@@ -4371,11 +4463,32 @@ mod manager_helper_tests {
         assert!(sandboxed
             .iter()
             .any(|(k, v)| k == "CARGO_NET_OFFLINE" && v == "true"));
+        assert!(sandboxed
+            .iter()
+            .any(|(k, v)| k == "CARGO_HOME" && v == home_dir.join(".cargo").as_os_str()));
         assert!(Environment::new(search, &sandboxed).is_ok());
+
+        // Safe cache dirs are symlinked; credentials and config are NEVER linked into agent home.
+        assert_eq!(
+            std::fs::read_link(home_dir.join(".cargo").join("registry")).unwrap(),
+            cargo_dir.join("registry")
+        );
+        assert_eq!(
+            std::fs::read_link(home_dir.join(".cargo").join("git")).unwrap(),
+            cargo_dir.join("git")
+        );
+        assert_eq!(
+            std::fs::read_link(home_dir.join(".rustup")).unwrap(),
+            rustup_dir
+        );
+        assert!(!home_dir.join(".cargo").join("credentials").exists());
+        assert!(!home_dir.join(".cargo").join("credentials.toml").exists());
+        assert!(!home_dir.join(".cargo").join("config.toml").exists());
 
         let mut unsandboxed = Vec::new();
         append_rust_toolchain_env(
             &mut unsandboxed,
+            None,
             None,
             Some(cargo_dir.as_os_str().to_os_string()),
             None,

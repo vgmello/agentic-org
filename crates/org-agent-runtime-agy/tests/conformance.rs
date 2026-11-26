@@ -994,8 +994,33 @@ fn opening_mode_mismatch_auth_error_and_resume_failure_scoping() {
     let spec = sample_spec();
     let now = Instant::now();
 
+    // Real `agy 1.5.17` ACP reports `modes.currentModeId = "default"` for Ask mode.
+    let (_, mut s_default) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    let _ = s_default.start(now);
+    let _ = s_default.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"version":"1.5.17"}}}"#,
+        now,
+    );
+    let ready_default = s_default.on_line(
+        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-def","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":"default"}}}"#,
+        now,
+    );
+    assert!(ready_default.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::Ready {
+            permission_mode: Some(m),
+            ..
+        }) if m == "default"
+    )));
+    // Runtime drift from `default` into `accept-edits` must fast-stop the session.
+    let drift = s_default.on_line(
+        br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"current_mode_update","currentModeId":"accept-edits"}}}"#,
+        now,
+    );
+    assert!(drift.iter().any(|o| matches!(o, Output::CloseStdin)));
+
     // Banned or mismatched `modes.currentModeId` in `session/new` fails closed with ModeMismatch.
-    for bad_mode in ["yolo", "auto", "accept-edits"] {
+    for bad_mode in ["yolo", "auto", "accept-edits", "ask"] {
         let (_, mut s_bad) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
         let _ = s_bad.start(now);
         let _ = s_bad.on_line(

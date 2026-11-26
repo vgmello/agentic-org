@@ -1590,6 +1590,26 @@ mod task115_mid_turn_tests {
         assert!(obj.contains("= = = END OFFICE MID-TURN NOTICE = = ="));
         assert_eq!(obj.matches("<<<END_UNTRUSTED_MESSAGE>>>").count(), 1);
 
+        // TASK-157: legacy composite `<message_id>:<employee_id>` source_id renders only the
+        // replyable `<message_id>` in prompt header and `agent-os msg reply --id` hint.
+        let mut legacy = make_item(
+            "relay-1",
+            WakeKind::Handoff,
+            "owner",
+            true,
+            Some("c1"),
+            "Execute T-A4",
+            101,
+        );
+        legacy.source_id =
+            "01a21542-587c-7862-a03a-4adccc15e4d9:e67f5d6d-ffac-7b04-9f01-eb996babed96".into();
+        let legacy_obj = compose_coalesced_wake_objective(std::slice::from_ref(&legacy), &[]);
+        assert!(legacy_obj.contains("agent-os msg reply --id 01a21542-587c-7862-a03a-4adccc15e4d9"));
+        assert!(
+            !legacy_obj.contains("01a21542-587c-7862-a03a-4adccc15e4d9:e67f5d6d"),
+            "composite employee suffix must not leak into wake prompt: {legacy_obj}"
+        );
+
         // Multi-byte UTF-8 body truncation stays strictly <= MAX_WAKE_ITEM_BODY_BYTES.
         let huge = "🦀".repeat(1_000);
         let big_item = make_item(

@@ -61,7 +61,21 @@ const DIRECTORY_CARD_FIELDS: &[Field] = &[
     Field::optional("role_title", Type::String, "Agent role title"),
     Field::required(
         "presence",
-        Type::Enum(&["online", "working", "idle", "asleep", "offline", "unknown"]),
+        Type::Enum(&[
+            "online",
+            "available",
+            "busy",
+            "working",
+            "idle",
+            "needs_you",
+            "waiting_for_answer",
+            "paused",
+            "unable_to_run",
+            "with_you",
+            "asleep",
+            "offline",
+            "unknown",
+        ]),
         "Current presence",
     ),
     Field::required(
@@ -638,5 +652,38 @@ mod tests {
             checked >= 40,
             "expected at least 40 write commands, checked {checked}"
         );
+    }
+
+    #[test]
+    fn directory_card_presence_enum_covers_all_member_presence_variants() {
+        let presence_field = DIRECTORY_CARD_FIELDS
+            .iter()
+            .find(|f| f.name == "presence")
+            .expect("presence field in DIRECTORY_CARD_FIELDS");
+        let allowed = match presence_field.ty {
+            Type::Enum(values) => values,
+            other => panic!("expected Type::Enum for presence, got {other:?}"),
+        };
+        for variant in [
+            org_proto::directory::MemberPresence::Online,
+            org_proto::directory::MemberPresence::Available,
+            org_proto::directory::MemberPresence::Busy,
+            org_proto::directory::MemberPresence::Idle,
+            org_proto::directory::MemberPresence::NeedsYou,
+            org_proto::directory::MemberPresence::WaitingForAnswer,
+            org_proto::directory::MemberPresence::Paused,
+            org_proto::directory::MemberPresence::UnableToRun,
+            org_proto::directory::MemberPresence::WithYou,
+            org_proto::directory::MemberPresence::Asleep,
+            org_proto::directory::MemberPresence::Offline,
+            org_proto::directory::MemberPresence::Unknown,
+        ] {
+            let wire = serde_json::to_value(variant).unwrap();
+            let wire_str = wire.as_str().unwrap();
+            assert!(
+                allowed.contains(&wire_str),
+                "DIRECTORY_CARD_FIELDS presence enum missing `{wire_str}`"
+            );
+        }
     }
 }
