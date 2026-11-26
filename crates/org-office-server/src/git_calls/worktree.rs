@@ -192,21 +192,33 @@ fn prepare_worktree_locked(
         &repo.id,
     );
     let created = create_worktree(runner, bare_path, &wt_path, &branch, &base_commit, false)?;
-    if let Err(err) = svc
+    let has_local_task_write = match svc
         .office
-        .record_task_repository_branch(
-            member,
-            command_id,
-            &ctx.task.id,
-            &repo.id,
-            branch.clone(),
-            None,
-        )
-        .map_err(map_office_error)
-        .and_then(|inner| inner)
+        .has_local_task_write_authority_for_code(&ctx.task.office_code)
     {
-        rollback_created_worktree(runner, bare_path, &created.worktree_path, &branch);
-        return Ok(Err(err));
+        Ok(allowed) => allowed,
+        Err(err) => {
+            rollback_created_worktree(runner, bare_path, &created.worktree_path, &branch);
+            return Ok(Err(map_office_error(err)));
+        }
+    };
+    if has_local_task_write {
+        if let Err(err) = svc
+            .office
+            .record_task_repository_branch(
+                member,
+                command_id,
+                &ctx.task.id,
+                &repo.id,
+                branch.clone(),
+                None,
+            )
+            .map_err(map_office_error)
+            .and_then(|inner| inner)
+        {
+            rollback_created_worktree(runner, bare_path, &created.worktree_path, &branch);
+            return Ok(Err(err));
+        }
     }
     let ws_record = TaskWorkspaceRecord {
         office_id,

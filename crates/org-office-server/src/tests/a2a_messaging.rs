@@ -2065,3 +2065,264 @@ fn task140_persistent_mtls_low_latency_and_task143_hq_session_proxy_end_to_end()
     assert_proxied_session_ops_succeed(&hq_node, &hq, &owner, &ben, &sat1_id);
     assert_proxied_session_auth_and_disconnect(&hq_node, &mut sat1_node, &hq, &owner, &ada, &ben);
 }
+
+#[test]
+fn task192_satellite_worktree_prepare_and_push_on_hq_task_preserves_persistent_sync() {
+    use crate::git_calls::GitService;
+    use crate::live::LiveEvents;
+    use org_proto::git::{
+        GitPush, GitPushParams, RepoAttach, RepoAttachParams, RepoRegister, RepoRegisterParams,
+        RepositoryKindWire, WorktreePrepare, WorktreePrepareParams, WorktreePrepareResult,
+    };
+    use org_proto::org::ProjectCreateParams;
+    use org_proto::tasks::{TaskStatus, TasksCreateParams, TasksTransitionParams};
+    use std::process::Command;
+
+    let run_git = |dir: &std::path::Path, args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .args(args)
+            .output()
+            .expect("spawn git");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+
+    let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
+        engine: EngineChoice::Sqlite,
+    }));
+    let owner = hq.owner_member_id().to_owned();
+    let team_id = hq.org_snapshot().unwrap().teams[0].id.clone();
+    let (_conn_id, profile_id) = setup_provider_on_hq(&hq, &owner);
+    let hq_node = LiveOfficeNode::start(Arc::clone(&hq), true, false);
+    let hq_addr = hq_node.hq_fed_addr();
+
+    let (_sat_dir, sat1) = enroll_satellite(&hq, &owner, &hq_addr, "SatWorktree", 19);
+    let sat1_id = sat1.info().office_id.clone();
+    let ben = hire_agent_at(&hq, &owner, &team_id, &sat1_id, &profile_id, "Ben", "ben");
+    let sat1_node = LiveOfficeNode::start(Arc::clone(&sat1), false, true);
+
+    // Seed a real local bare origin repository and attach it to a project on HQ.
+    let origin_tmp = tempfile::tempdir().unwrap();
+    let bare = origin_tmp.path().join("origin.git");
+    std::fs::create_dir_all(&bare).unwrap();
+    run_git(&bare, &["init", "--bare", "--initial-branch=main"]);
+    let seed = origin_tmp.path().join("seed");
+    std::fs::create_dir_all(&seed).unwrap();
+    run_git(&seed, &["init", "--initial-branch=main"]);
+    run_git(&seed, &["config", "user.name", "Seed"]);
+    run_git(&seed, &["config", "user.email", "seed@example.test"]);
+    std::fs::write(seed.join("README.md"), "# Seed\n").unwrap();
+    run_git(&seed, &["add", "README.md"]);
+    run_git(&seed, &["commit", "-m", "initial"]);
+    run_git(&seed, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    run_git(&seed, &["push", "origin", "main"]);
+
+    let project_id = hq.next_uuid_v7();
+    let proj_params: ProjectCreateParams = serde_json::from_value(serde_json::json!({
+        "command_id": hq.next_uuid_v7(),
+        "project_id": project_id,
+        "name": "Core",
+        "slug": "core",
+        "owner_team_id": team_id,
+        "contributing_team_ids": [],
+    }))
+    .unwrap();
+    hq.submit_org(
+        &owner,
+        org_office::rules::OrgCommand::ProjectCreate(proj_params),
+    )
+    .unwrap()
+    .unwrap();
+    let hq_git = GitService::new(
+        Arc::clone(&hq),
+        Arc::new(LiveEvents::for_owner(Box::new(|| {}), owner.clone())),
+    );
+    let repo_id = hq.next_uuid_v7();
+    let reg_req = Request::new::<RepoRegister>(
+        1,
+        &RepoRegisterParams {
+            command_id: hq.next_uuid_v7(),
+            repository_id: repo_id.clone(),
+            key: Some("sat-repo".into()),
+            kind: RepositoryKindWire::Local,
+            remote_url: None,
+            origin_path: Some(bare.to_string_lossy().into_owned()),
+        },
+    )
+    .unwrap();
+    let reg_resp = hq_git.dispatch(Some(&owner), &reg_req).unwrap();
+    assert!(
+        matches!(reg_resp.outcome, Outcome::Result(_)),
+        "HQ repo register failed: {reg_resp:?}"
+    );
+    let att_req = Request::new::<RepoAttach>(
+        2,
+        &RepoAttachParams {
+            command_id: hq.next_uuid_v7(),
+            project: project_id.clone(),
+            repository: repo_id.clone(),
+            integration_branch: "main".into(),
+        },
+    )
+    .unwrap();
+    let att_resp = hq_git.dispatch(Some(&owner), &att_req).unwrap();
+    assert!(
+        matches!(att_resp.outcome, Outcome::Result(_)),
+        "HQ repo attach failed: {att_resp:?}"
+    );
+
+    let created_task = hq
+        .task_create(
+            &owner,
+            TasksCreateParams {
+                command_id: hq.next_uuid_v7(),
+                task_id: hq.next_uuid_v7(),
+                team_id: Some(team_id),
+                assigned_team_id: None,
+                project_id: Some(project_id),
+                task_type: Some("task".into()),
+                work_type: None,
+                title: "Satellite worktree sync test".into(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: Vec::new(),
+                assignee_id: Some(ben.clone()),
+                body_markdown: "test body".into(),
+                reference_files: Vec::new(),
+                modified_files: Vec::new(),
+                depends_on: Vec::new(),
+                details: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let task_id = created_task.task.id.clone();
+    hq_node.hq_fed.as_ref().unwrap().handle().notify_all_peers();
+
+    wait_until(Duration::from_secs(10), "sat1 syncs HQ task & repo", || {
+        sat1.task_inspect(&task_id).is_ok_and(|r| r.is_ok())
+            && sat1.resolve_repository(&repo_id).is_ok_and(|r| r.is_some())
+    });
+
+    // AC #1: Direct `record_task_repository_branch` on satellite for HQ-owned task fails closed.
+    let task_id_parsed = org_store::Id::parse(&task_id).unwrap();
+    let repo_id_parsed = org_store::Id::parse(&repo_id).unwrap();
+    let direct_err = sat1
+        .record_task_repository_branch(
+            &ben,
+            &sat1.next_uuid_v7(),
+            &task_id_parsed,
+            &repo_id_parsed,
+            "task/T-A1-forbidden".into(),
+            None,
+        )
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(direct_err.code, org_proto::ErrorCode::NotAuthorized);
+    assert_eq!(sat1.sync_status().unwrap().pending_work_count, 0);
+
+    // Bind the local origin path on sat1 and prepare the worktree as @ben on sat1.
+    sat1.write_local_repo_origin(&repo_id_parsed, bare.to_str().unwrap())
+        .unwrap();
+    let sat_git = GitService::new(
+        Arc::clone(&sat1),
+        Arc::new(LiveEvents::for_owner(Box::new(|| {}), owner.clone())),
+    );
+    let prep_req = Request::new::<WorktreePrepare>(
+        3,
+        &WorktreePrepareParams {
+            command_id: sat1.next_uuid_v7(),
+            task: task_id.clone(),
+            repository: "sat-repo".into(),
+            base_branch: None,
+        },
+    )
+    .unwrap();
+    let prep_resp = sat_git.dispatch(Some(&ben), &prep_req).unwrap();
+    let Outcome::Result(prep_val) = prep_resp.outcome else {
+        panic!("satellite worktree prepare for HQ-owned task failed: {prep_resp:?}");
+    };
+    let prepared: WorktreePrepareResult = serde_json::from_value(prep_val).unwrap();
+    assert!(
+        prepared
+            .worktree
+            .branch
+            .starts_with(&format!("task/{}-", created_task.task.key)),
+        "unexpected branch: {}",
+        prepared.worktree.branch
+    );
+    // AC #2: No local task.json mutation and zero work_outbox pollution on sat1.
+    assert_eq!(sat1.sync_status().unwrap().pending_work_count, 0);
+    assert_eq!(
+        sat1.task_inspect(&task_id).unwrap().unwrap().task.revision,
+        1
+    );
+
+    // AC #4: Satellite agent commits in worktree and runs git.push without mutating HQ task.json.
+    let wt_dir = std::path::PathBuf::from(&prepared.worktree.worktree_path);
+    std::fs::write(wt_dir.join("satellite.txt"), "from sat1\n").unwrap();
+    run_git(&wt_dir, &["add", "satellite.txt"]);
+    run_git(
+        &wt_dir,
+        &[
+            "-c",
+            "user.name=Ben",
+            "-c",
+            "user.email=ben@example.test",
+            "commit",
+            "-m",
+            "satellite commit",
+        ],
+    );
+    let push_req = Request::new::<GitPush>(
+        4,
+        &GitPushParams {
+            task: task_id.clone(),
+            repository: Some("sat-repo".into()),
+        },
+    )
+    .unwrap();
+    let push_resp = sat_git.dispatch(Some(&ben), &push_req).unwrap();
+    assert!(
+        matches!(push_resp.outcome, Outcome::Result(_)),
+        "satellite git.push failed: {push_resp:?}"
+    );
+
+    // AC #3: HQ updates the same task to Done (emitting events/0000000002.json); sat1 replicates
+    // cleanly with zero immutable-event collision and HQ->sat1 session proxy stays healthy.
+    hq.task_transition(
+        &owner,
+        TasksTransitionParams {
+            command_id: hq.next_uuid_v7(),
+            task: task_id.clone(),
+            expected_revision: 1,
+            status: TaskStatus::Done,
+            blocked_reason: None,
+            resolution: Some("Merged".into()),
+            note: None,
+        },
+    )
+    .unwrap()
+    .unwrap();
+    hq_node.hq_fed.as_ref().unwrap().handle().notify_all_peers();
+
+    wait_until(
+        Duration::from_secs(5),
+        "sat1 replicates HQ task done transition cleanly",
+        || {
+            sat1.task_inspect(&task_id)
+                .is_ok_and(|r| r.is_ok_and(|t| t.task.status == TaskStatus::Done))
+        },
+    );
+    assert_eq!(sat1.sync_status().unwrap().pending_work_count, 0);
+    assert_proxied_session_ops_succeed(&hq_node, &hq, &owner, &ben, &sat1_id);
+    drop(sat1_node);
+}

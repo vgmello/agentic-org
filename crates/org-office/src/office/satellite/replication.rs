@@ -13,7 +13,9 @@ use crate::{
 };
 
 use super::filters::is_replicated_journal_entry;
-use super::work_ingest::{validate_typed_work_files_against_hq, validate_work_file_paths};
+use super::work_ingest::{
+    validate_typed_work_files_against_hq, validate_work_file_paths, ReadOfficeCodesOp,
+};
 use super::ReplicatedFileBatch;
 
 impl Office {
@@ -303,6 +305,12 @@ fn sync_satellite_work_outbox_locked(office: &Office) -> Result<usize, OfficeErr
     if entries.is_empty() {
         return Ok(0);
     }
+    let (codes, _) = office.store.read(ReadOfficeCodesOp).map_err(storage)?;
+    let local_codes: std::collections::BTreeSet<String> = codes
+        .into_iter()
+        .filter(|c| c.office_id == office.identity.office_id)
+        .map(|c| c.code)
+        .collect();
     let incarnation = office.identity.journal_incarnation.as_str().to_owned();
     let codec = org_sync_proto::Codec::new("org.native.changes", 1)
         .map_err(|_| OfficeError::Invalid("codec"))?;
@@ -315,17 +323,20 @@ fn sync_satellite_work_outbox_locked(office: &Office) -> Result<usize, OfficeErr
         }
         let from_replication = is_replicated_journal_entry(&entry, office.replication.as_ref());
         if !from_replication {
-            let files: Vec<(String, Option<String>)> = entry
+            let task_versions: Vec<(&DurablePath, Option<&[u8]>)> = entry
                 .versions()
                 .filter(|fv| crate::tasks::records::kind_of(fv.path).is_some())
-                .map(|fv| {
-                    (
-                        fv.path.as_str().to_owned(),
-                        fv.bytes.map(|b| STANDARD.encode(b)),
-                    )
-                })
+                .map(|fv| (fv.path, fv.bytes))
                 .collect();
-            if !files.is_empty() {
+            if !task_versions.is_empty()
+                && is_locally_owned_satellite_work_entry(office, &local_codes, &task_versions)
+            {
+                let files: Vec<(String, Option<String>)> = task_versions
+                    .into_iter()
+                    .map(|(path, bytes)| {
+                        (path.as_str().to_owned(), bytes.map(|b| STANDARD.encode(b)))
+                    })
+                    .collect();
                 let record_id =
                     extract_primary_task_id(&files).unwrap_or_else(|| format!("task-ord-{ord}"));
                 let payloads = chunk_org_delta_payloads(files)?;
@@ -346,6 +357,64 @@ fn sync_satellite_work_outbox_locked(office: &Office) -> Result<usize, OfficeErr
         office.advance_replication_consumer("org-sync-work-outbox", last_ordinal)?;
     }
     Ok(enqueued)
+}
+
+/// Belt-and-suspenders guard (`TASK-192`) ensuring a satellite never enqueues a `WorkChange`
+/// touching another office's task or task counter (which HQ would reject and stall sync).
+fn is_locally_owned_satellite_work_entry(
+    office: &Office,
+    local_codes: &std::collections::BTreeSet<String>,
+    versions: &[(&DurablePath, Option<&[u8]>)],
+) -> bool {
+    if local_codes.is_empty() {
+        return false;
+    }
+    let mut verified_tasks = std::collections::BTreeSet::new();
+    let mut sidecar_tasks = Vec::new();
+    for (path, bytes) in versions {
+        match crate::tasks::records::kind_of(path) {
+            Some(crate::tasks::records::Kind::OfficeTaskCounter(code)) => {
+                if !local_codes.contains(&code) {
+                    return false;
+                }
+            }
+            Some(crate::tasks::records::Kind::Task(tid)) => {
+                let Some(raw) = bytes else {
+                    return false;
+                };
+                let Ok(rec) = serde_json::from_slice::<crate::tasks::records::TaskRecord>(raw)
+                else {
+                    return false;
+                };
+                if !local_codes.contains(&rec.office_code) {
+                    return false;
+                }
+                verified_tasks.insert(tid);
+            }
+            Some(
+                crate::tasks::records::Kind::Checklist(tid)
+                | crate::tasks::records::Kind::Comment(tid, _)
+                | crate::tasks::records::Kind::Watchers(tid)
+                | crate::tasks::records::Kind::Links(tid)
+                | crate::tasks::records::Kind::Event(tid, _),
+            ) => sidecar_tasks.push(tid),
+            None => return false,
+        }
+    }
+    for tid in sidecar_tasks {
+        if verified_tasks.contains(&tid) {
+            continue;
+        }
+        let locally_owned = office
+            .task_inspect(tid.as_str())
+            .ok()
+            .and_then(Result::ok)
+            .is_some_and(|res| local_codes.contains(&res.task.office_code));
+        if !locally_owned {
+            return false;
+        }
+    }
+    true
 }
 
 fn extract_primary_task_id(files: &[(String, Option<String>)]) -> Option<String> {

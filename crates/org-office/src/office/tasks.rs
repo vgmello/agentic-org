@@ -28,7 +28,7 @@ use crate::tasks::features::TaskWriteOutcome;
 /// - A satellite may only locally mutate tasks whose `office_code` belongs to that satellite.
 /// - HQ may locally mutate tasks owned by HQ OR recovered tasks whose `office_code` was retired
 ///   (e.g. R1/D25 lost-HQ replacement), while refusing edits to tasks owned by an active satellite.
-fn ensure_local_task_write_authority(
+pub(super) fn ensure_local_task_write_authority(
     office: &Office,
     task_ref: &str,
 ) -> Result<Result<(), ApiError>, OfficeError> {
@@ -57,6 +57,18 @@ fn ensure_local_task_write_authority(
 }
 
 impl Office {
+    /// Returns whether this office holds local write authority for a task numbered with
+    /// `task_office_code` (`TASK-52`, `TASK-192`).
+    pub fn has_local_task_write_authority_for_code(
+        &self,
+        task_office_code: &str,
+    ) -> Result<bool, OfficeError> {
+        if self.info.role == OfficeRole::Hq && !self.is_multi_office().unwrap_or(false) {
+            return Ok(true);
+        }
+        crate::office::satellite::has_local_task_write_authority(self, task_office_code)
+    }
+
     pub fn task_create(
         &self,
         actor: &str,

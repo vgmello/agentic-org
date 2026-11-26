@@ -269,7 +269,11 @@ impl Office {
         branch: String,
         integrated_commit: Option<String>,
     ) -> Result<Result<(), ApiError>, OfficeError> {
-        self.store
+        if let Err(err) = super::tasks::ensure_local_task_write_authority(self, task_id.as_str())? {
+            return Ok(Err(err));
+        }
+        let res = self
+            .store
             .run(RecordTaskRepoBranchOp {
                 actor: actor.to_owned(),
                 command_id: command_id.to_owned(),
@@ -278,7 +282,11 @@ impl Office {
                 branch,
                 integrated_commit,
             })
-            .map_err(storage)
+            .map_err(storage)?;
+        if res.is_ok() {
+            let _ = self.sync_satellite_work_outbox();
+        }
+        Ok(res)
     }
 
     /// Stores the office-local `origin_path` for a `kind: local` repository.
