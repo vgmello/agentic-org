@@ -326,8 +326,8 @@ html[data-theme="cozy"] :is(.project-insights, .team-overview, .org-insights, .o
    indigo for the main series, teal for the second; the average line stays ink. */
 /* Graphite data colour: a muted steel blue that sits with the theme's greys and muted status tones;
    the second series is a cool silver so pairs read apart without adding a new hue. */
-html[data-theme="graphite"] { --graphite-data: #86a9cc; --graphite-data-2: #b9c1cc; --graphite-data-deep: #5f84a8; }
-html[data-theme="graphite-light"] { --graphite-data: #3e6a94; --graphite-data-2: #8d98a6; --graphite-data-deep: #2f5479; }
+html[data-theme="graphite"] { --graphite-data: #86a9cc; --graphite-data-2: #a9c6e4; --graphite-data-deep: #5f84a8; }
+html[data-theme="graphite-light"] { --graphite-data: #3e6a94; --graphite-data-2: #7d9cc0; --graphite-data-deep: #2f5479; }
 html[data-theme^="graphite"] :is(.project-insights, .team-overview, .org-insights) { --chart-accent: var(--graphite-data); --chart-tint: var(--graphite-data-2); }
 html[data-theme^="graphite"] .hb-spark i { background: linear-gradient(to bottom, var(--graphite-data), color-mix(in srgb, var(--graphite-data) 55%, transparent)); }
 /* Home summary bars in Graphite: grey read as "disabled", so progress uses the chart indigo */

@@ -143,7 +143,7 @@ html[data-theme="classic"] {
      indicators, charts, selection and actions. Text-bearing fills use the deeper solid step. */
   --classic-blue: #86a9cc;
   --classic-blue-deep: #5f84a8;
-  --classic-blue-2: #b9c1cc;
+  --classic-blue-2: #a9c6e4;
   --tone-accent: var(--classic-blue);
   --tone-accent-bar: linear-gradient(90deg, var(--classic-blue-deep), var(--classic-blue));
   --tone-accent-ink: #a9c3de;
