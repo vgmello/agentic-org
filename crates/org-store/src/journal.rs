@@ -35,10 +35,12 @@ use crate::{
 
 mod append;
 mod entry;
+mod inspect;
 mod open;
 mod segment;
 
 pub use entry::positions_between;
+pub use inspect::Inspection;
 
 /// The largest framed entry.
 pub const MAX_ENTRY_BYTES: usize = 16 * 1024 * 1024;

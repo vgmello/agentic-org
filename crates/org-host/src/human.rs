@@ -175,6 +175,14 @@ fn session(handle: &SessionHandle) -> SessionHandle {
 pub(crate) fn password() -> Result<Password, String> {
     terminal::password()
 }
+
+/// Reads one secret line from the controlling terminal with echo off, after showing `label`
+/// (a backup passphrase). Never reads standard input or the environment; end of input or a
+/// pending interrupt cancels the entry. The copy returned is zeroed when dropped.
+pub fn terminal_secret(label: &str) -> Result<zeroize::Zeroizing<String>, String> {
+    let secret = terminal::secret(label.as_bytes())?;
+    Ok(zeroize::Zeroizing::new(secret.expose().to_owned()))
+}
 /// A development build may place every instance under an explicit application base,
 /// `ORG_DEV_ACCOUNT_BASE` (absolute), with the user temp base `<base>/temp`: tests and dev runs
 /// then never touch the account's real `Library` folders. A release build refuses the variable.

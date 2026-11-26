@@ -63,7 +63,7 @@ pub use operations::{
 use crate::tasks::ports::{TasksEngine, TasksRead};
 
 /// The file of an office's projection, under `<runtime-root>/<office-id>/`.
-const PROJECTION_FILE: &str = "office.db";
+pub(crate) const PROJECTION_FILE: &str = "office.db";
 
 /// Which engine holds the projection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

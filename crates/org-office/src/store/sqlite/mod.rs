@@ -26,6 +26,7 @@ mod engine;
 mod messaging;
 mod organization;
 pub(crate) mod private_notes;
+pub(crate) mod private_notes_copy;
 mod processes;
 mod projects;
 pub(crate) mod providers;

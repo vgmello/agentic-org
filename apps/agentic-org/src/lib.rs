@@ -274,6 +274,8 @@ fn dispatch(top: TopCommand, ctx: &mut ExecutionContext) -> Result<(), CliError>
         TopCommand::Provider(args) => provider::run(args, ctx),
         TopCommand::Release(args) => release::run(args, ctx),
         TopCommand::Service(args) => service::run(args, ctx),
+        TopCommand::Backup(args) => backup::backup(args, ctx),
+        TopCommand::Restore(args) => backup::restore(args, ctx),
         TopCommand::Recovery(pass) => recovery::run(pass.args, ctx),
         TopCommand::Status(args) => status::run(args, ctx),
         TopCommand::Completion(args) => completion::run(args, cli::command(), ctx),

@@ -27,11 +27,13 @@ dependencies = [
  "clap_complete",
  "libc",
  "org-agent-cli",
+ "org-backup",
  "org-cli-shell",
  "org-client",
  "org-command",
  "org-host",
  "org-host-control",
+ "org-office",
  "org-office-launch",
  "org-platform",
  "org-proto",
@@ -1149,6 +1151,27 @@ dependencies = [
  "org-agent-runtime",
  "org-platform",
  "serde_json",
+]
+
+[[package]]
+name = "org-backup"
+version = "0.0.0"
+dependencies = [
+ "argon2",
+ "flate2",
+ "org-office",
+ "org-office-launch",
+ "org-platform",
+ "org-proto",
+ "org-store",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror",
+ "zeroize",
 ]
 
 [[package]]
