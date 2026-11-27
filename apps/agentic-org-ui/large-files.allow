@@ -7,9 +7,6 @@ src/lib/modules/costs/features/insights/OrganizationInsightsView.svelte 729
 src/lib/modules/costs/features/insights/ProjectInsightsView.svelte 837
 src/lib/modules/costs/features/member-cost/MemberCostView.svelte 714
 src/lib/modules/costs/http-full-api.ts 1016
-src/lib/modules/docs/features/detail/DocumentPage.svelte 1423
-src/lib/modules/docs/features/list/DocsTab.svelte 954
-src/lib/modules/features/features/detail/FeaturePage.svelte 1094
 src/lib/modules/home/features/DecisionSpotlight.svelte 877
 src/lib/modules/members/features/profile/AgentAnalysisOverlay.svelte 959
 src/lib/modules/members/features/profile/ProfileFrame.svelte 797
