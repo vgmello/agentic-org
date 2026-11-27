@@ -18,6 +18,22 @@
 #main .chat .chat-att-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: left top; }
 #main .chat .chat-att-thumb .chat-att-icon { width: 40px; height: 40px; }
 
+/* ---------------------------------------------------------------- references: "Image 1" tags and inline chips
+   A tag labels an attachment in the tray and under a sent message; a chip is the same label inside the message's
+   text, where the owner typed it. Hovering or focusing one marks the other (.is-ref-hit). */
+#main .chat .chat-att-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#main .chat .chat-att-line .chat-att-name { min-width: 0; }
+#main .chat .chat-att-tag { flex: none; padding: 0 6px; border-radius: var(--radius-md); font-size: var(--fs-xs); font-weight: 600; line-height: 1.6; white-space: nowrap; color: var(--tone-accent-ink); background: var(--tone-accent-soft); }
+#main .chat .chat-ref-chip { display: inline-flex; align-items: center; gap: 4px; margin-inline: 1px; padding: 0 6px; border: 0; border-radius: var(--radius-md); font: inherit; font-size: .92em; font-weight: 600; line-height: 1.5; white-space: nowrap; vertical-align: baseline; cursor: pointer; text-decoration: none; color: var(--tone-accent-ink); background: var(--tone-accent-soft); box-shadow: inset 0 0 0 1px transparent; transition: box-shadow .12s ease, background-color .12s ease; }
+#main .chat .chat-ref-chip .ic14 { flex: none; }
+#main .chat .chat-ref-chip:is(:hover, .is-ref-hit) { box-shadow: inset 0 0 0 1px var(--tone-accent-ring); background: color-mix(in srgb, var(--tone-accent) 22%, transparent); }
+#main .chat .chat-ref-chip:focus-visible { outline: 2px solid var(--tone-accent); outline-offset: 2px; }
+#main .chat :is(.chat-att-img, .chat-att-file).is-ref-hit { outline: 2px solid var(--tone-accent); outline-offset: 2px; }
+/* A labelled caption wraps the name under its tag on a narrow tile, so the name keeps its distinguishing end. */
+#main .chat .chat-att-img .chat-att-cap { flex-wrap: wrap; row-gap: 2px; }
+#main .chat .chat-att-img .chat-att-cap .chat-att-tag { margin-block-start: 1px; }
+#main .chat .chat-att-img .chat-att-cap .chat-att-tag + .chat-att-cap-name { flex: 1 1 7rem; }
+
 /* ---------------------------------------------------------------- composer: Attach, tray, errors */
 #main .chat .chat-att-wrap { display: contents; }
 #main .chat .chat-compose-row > .chat-attach-btn { flex: none; width: var(--control-height); min-width: var(--control-height); height: var(--control-height); color: var(--gray-400); }
@@ -51,14 +67,24 @@
 #main .chat .chat-att-grid { display: grid; gap: 4px; width: min(100%, 360px); }
 #main .chat .chat-att-grid:not([data-n="1"]) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 #main .chat .chat-att-grid[data-n="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); width: min(100%, 420px); }
-#main .chat .chat-att-img { position: relative; display: block; padding: 0; overflow: hidden; border: 0; border-radius: var(--radius-lg); cursor: zoom-in; background: color-mix(in srgb, var(--white) 6%, transparent); box-shadow: 0 1px 3px rgb(0 0 0 / .14); }
-#main .chat .chat-att-grid:not([data-n="1"]) .chat-att-img { aspect-ratio: 16 / 10; }
+/* A tile is the image with its file name under it; a corner badge says it opens larger. */
+#main .chat .chat-att-img { position: relative; display: flex; flex-direction: column; min-width: 0; padding: 0; overflow: hidden; border: 0; border-radius: var(--radius-lg); cursor: zoom-in; text-align: start; background: color-mix(in srgb, var(--white) 6%, transparent); box-shadow: 0 1px 3px rgb(0 0 0 / .14), inset 0 0 0 1px var(--line2); }
+#main .chat .chat-att-frame { position: relative; display: block; min-height: 0; overflow: hidden; }
+#main .chat .chat-att-grid:not([data-n="1"]) .chat-att-frame { aspect-ratio: 16 / 10; }
 /* Screenshots are read from the top-left, so a cropped tile keeps that corner. */
 #main .chat .chat-att-img img { display: block; width: 100%; height: 100%; max-height: 280px; object-fit: cover; object-position: left top; }
 /* One image keeps its own size up to the grid's width, never upscaled; a tiny one stays a 44px target. */
-#main .chat .chat-att-grid[data-n="1"] .chat-att-img { justify-self: start; display: grid; place-items: center; min-width: 44px; min-height: 44px; max-width: 100%; }
+#main .chat .chat-att-grid[data-n="1"] .chat-att-img { justify-self: start; min-width: 44px; min-height: 44px; max-width: 100%; }
 #main .chat .chat-att-grid[data-n="1"] .chat-att-img img { width: auto; max-width: 100%; height: auto; object-fit: contain; }
 #main .chat .chat-att-img:hover img { filter: brightness(1.06); }
+#main .chat .chat-att-zoom { position: absolute; top: 6px; right: 6px; display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: var(--radius-md); color: var(--white); background: color-mix(in srgb, var(--gray-950) 68%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--white) 18%, transparent); opacity: .9; transition: opacity .12s ease; }
+#main .chat .chat-att-img:is(:hover, :focus-visible) .chat-att-zoom { opacity: 1; background: var(--gray-950); }
+#main .chat .chat-att-cap { display: flex; align-items: flex-start; gap: 6px; min-width: 0; padding: 4px 8px 5px; font-size: var(--fs-xs); line-height: 1.4; color: var(--gray-300); }
+#main .chat .chat-att-cap .ic14 { flex: none; margin-block-start: 1px; color: var(--gray-400); }
+/* Up to two lines, broken anywhere, so a narrow tile keeps the end of the name ("…-before.png", "…-after.png") that
+   tells similar files apart. */
+#main .chat .chat-att-cap-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; min-width: 0; overflow: hidden; overflow-wrap: anywhere; }
+#main .chat .chat-att-img:hover .chat-att-cap-name { color: var(--white); text-decoration: underline; text-underline-offset: 2px; }
 #main .chat .chat-att-img:focus-visible { outline: 2px solid var(--tone-accent); outline-offset: 2px; }
 #main .chat .chat-att-more { position: absolute; inset: 0; display: grid; place-items: center; font-size: var(--fs-lg); font-weight: 700; color: var(--white); background: color-mix(in srgb, var(--gray-950) 62%, transparent); }
 #main .chat .chat-att-files { display: grid; gap: 6px; }
@@ -120,5 +146,5 @@
   #main .chat .chat-lb-next { right: calc(50% - 52px); }
 }
 @media (prefers-reduced-motion: reduce) {
-  #main .chat .chat-att-bar > span { transition: none; }
+  #main .chat .chat-att-bar > span, #main .chat .chat-ref-chip { transition: none; }
 }

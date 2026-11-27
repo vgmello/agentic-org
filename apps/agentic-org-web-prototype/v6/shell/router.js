@@ -1,5 +1,6 @@
 import { M, P, TEAMS } from "../data.js";
 import { activityPanelResize, pageActivity, projectActivityId, refreshActivityPanel, syncAssemblySimulationTimer, updateActivityPanelScroll } from "../pages/activity.js";
+import { a2aRedirect, mountAgentConversations } from "../pages/agent-conversations.js";
 import { mountAgentProfile, stopAgentOrb } from "../pages/agent-profile.js";
 import { mountOrgChart } from "../pages/org-chart.js";
 import { pageCalendar } from "../pages/calendar-page.js";
@@ -72,23 +73,32 @@ function placeSearchToolbar(main, currentRoute) {
 }
 const pageSearchInput = () => (localSearchHost.hidden ? null : localSearchHost.querySelector("input"));
 
+/* Old or shorthand addresses, each replaced in place (in order) by the address that now shows it. */
+function consoleRedirect() {
+  if (!/^#\/?console(\/|$)/.test(location.hash)) return null;
+  const cr = route();
+  const aid = cr[1] && own(M, cr[1]) && M[cr[1]].kind === "agent" ? cr[1] : S.consoleAgent;
+  return `#/members/${aid}/sessions`;
+}
+function teamItemRedirect(r) {
+  return r[0] === "teams" && own(TEAMS, r[1]) && !r[2] && qs().has("item") ? `#/teams/${encodeURIComponent(r[1])}/work?${qs()}` : null;
+}
+const REDIRECTS = [
+  () => (/^#\/?members\/you(\/|$)/.test(location.hash) ? "#/home" : null),
+  consoleRedirect,
+  /* Agents' conversations are read in an agent's page; old Chat links to them land there. */
+  () => a2aRedirect(route(), S.lastRoute),
+  () => teamItemRedirect(route()),
+];
+function replaceHash(target) {
+  try { history.replaceState(null, "", target); return true; } catch (e) { location.hash = target; return false; }
+}
 function normalizeRouteRedirects() {
-  if (/^#\/?members\/you(\/|$)/.test(location.hash)) {
-    try { history.replaceState(null, "", "#/home"); } catch (e) { location.hash = "#/home"; return null; }
+  for (const rule of REDIRECTS) {
+    const target = rule();
+    if (target && !replaceHash(target)) return null;
   }
-  if (/^#\/?console(\/|$)/.test(location.hash)) {
-    const cr = route();
-    const aid = cr[1] && own(M, cr[1]) && M[cr[1]].kind === "agent" ? cr[1] : S.consoleAgent;
-    const target = `#/members/${aid}/sessions`;
-    try { history.replaceState(null, "", target); } catch (e) { location.hash = target; return null; }
-  }
-  let r = route();
-  if (r[0] === "teams" && own(TEAMS, r[1]) && !r[2] && qs().has("item")) {
-    const target = `#/teams/${encodeURIComponent(r[1])}/work?${qs()}`;
-    try { history.replaceState(null, "", target); } catch (e) { location.hash = target; return null; }
-    r = route();
-  }
-  return r;
+  return route();
 }
 
 const ROUTE_RENDERERS = {
@@ -101,7 +111,7 @@ const ROUTE_RENDERERS = {
   insights: () => pageInsights(),
   calendar: () => pageCalendar(),
   teams: (r1, r2) => (MEMBER_ALIASES.includes(r1) ? pageMembersDir() : r1 === "org-chart" ? pageOrgChart() : !r1 ? pageTeams() : own(TEAMS, r1) ? pageTeam(r1, r2) : notFound()),
-  members: (r1, r2) => (own(M, r1) ? pageMember(r1, r2) : notFound()),
+  members: (r1, r2, r3) => (own(M, r1) ? pageMember(r1, r2, r3) : notFound()),
   settings: (r1, r2) => (!r1 || SET.some(([k]) => k === r1) ? pageSettings(r1, own(M, r2) ? r2 : null) : notFound()),
   preferences: () => pagePreferences(),
   search: () => pageSearch(qs().get("q") || ""),
@@ -215,11 +225,12 @@ function render(focus = true) {
   document.documentElement.toggleAttribute("data-interior-page", r0 !== "home");
   const main = document.getElementById("main"), content = document.getElementById("content"), key = location.hash;
   const snap = captureBeforeRender(main, content);
-  main.innerHTML = (ROUTE_RENDERERS[r0] || notFound)(r1, r2);
+  main.innerHTML = (ROUTE_RENDERERS[r0] || notFound)(r1, r2, r[3]);
   const workPanel = main.querySelector("#work-panel");
   const sameWorkPage = (snap.priorPanel || workPanel) && S.lastRoute?.split("?")[0] === key.split("?")[0];
   const shell = document.getElementById("agent-shell");
   if (shell) mountAgentProfile(shell.dataset.agent, shell.dataset.tab);
+  mountAgentConversations(main, r);
   mountOrgChart(main);
   mountProjectQueue(main);
   mountBoard(main);

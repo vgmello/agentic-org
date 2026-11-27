@@ -7,7 +7,7 @@ use org_proto::sessions::SessionState;
 
 use crate::credentials::now_ms;
 
-use super::commands::{build_stale_failover_request, release_active_permit};
+use super::commands::{build_stale_failover_request, release_active_permit, take_pending_turns};
 use super::events::apply_outputs;
 use super::{persist_turn_update, MidTurnStageOutcome, PumpContext, PumpLoopState};
 
@@ -63,11 +63,13 @@ pub(super) fn ensure_permit_for_turn(
         }
         Err(reason) if reason.starts_with("WARM_ROUTE_STALE") => PermitCheck::StaleWarm,
         Err(reason) => {
+            // Every queued turn is refused with this one; a turn queued since stays (and keeps
+            // the session busy) for the next dispatch.
+            let refused = std::mem::take(&mut loop_state.pending_turns);
             let mut st = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
             st.last_error = Some(reason);
-            if st.state == SessionState::Running {
-                st.state = SessionState::Idle;
-            }
+            st.dequeue_turns(refused.len());
+            st.settle_idle();
             PermitCheck::Refused
         }
     }
@@ -89,17 +91,18 @@ pub(super) fn dispatch_next_turn(
     match ensure_permit_for_turn(ctx, loop_state) {
         PermitCheck::Ready => {}
         PermitCheck::StaleWarm => {
-            let objective = std::mem::take(&mut loop_state.pending_turns).join("\n\n");
+            let objective = take_pending_turns(ctx, loop_state).join("\n\n");
             loop_state.failover_pending = Some(build_stale_failover_request(ctx, objective));
             loop_state.stop_requested = true;
             return;
         }
-        PermitCheck::Refused => {
-            loop_state.pending_turns.clear();
-            return;
-        }
+        PermitCheck::Refused => return,
     }
     let text = loop_state.pending_turns.remove(0);
+    ctx.state
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .dequeue_turns(1);
     let objective_for_disk = text.clone();
     loop_state.current_objective = text.clone();
     loop_state.turn_reply = None;
@@ -124,6 +127,12 @@ pub(super) fn dispatch_next_turn(
     } else {
         release_active_permit(ctx);
         loop_state.permit_lease_deadline = None;
+        // The turn never started: the session marked busy when it was queued is idle again,
+        // unless another turn is queued behind it.
+        ctx.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .settle_idle();
     }
 }
 

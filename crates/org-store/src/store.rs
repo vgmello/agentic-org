@@ -12,7 +12,7 @@ use std::{
 };
 
 use crate::{
-    change::{Change, Clock, DurablePath, Operation, Refusal},
+    change::{Change, Clock, Operation, Refusal},
     changes::{ChangeStream, Resync},
     custody::{OfficeIdentity, WriterAuthority},
     disk::{Disk, RealDisk},
@@ -21,6 +21,7 @@ use crate::{
     flusher,
     hooks::{Hooks, NoHooks},
     journal::{AnchorFacts, Entry},
+    path::DurablePath,
     sequences::FeedPosition,
     state::{Core, Flow, Limits, Reply},
     writer::{self, Job, UnitOfWork},

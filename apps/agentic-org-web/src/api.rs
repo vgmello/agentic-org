@@ -9,12 +9,14 @@
 //! browser's address comes from the accepted socket ([`PeerAddress`]), never a
 //! header. Nothing else forwards to the host or a local socket.
 mod account_routes;
+mod attachment_routes;
 mod chat_routes;
 mod cost_routes;
 mod git_routes;
 mod hiring_routes;
 mod hq_context;
 mod instance_routes;
+mod note_routes;
 mod office_routes;
 mod open_routes;
 mod org_routes;
@@ -162,11 +164,13 @@ pub enum Route {
     Sessions(session_routes::SessionRoute),
     Chat(chat_routes::ChatRoute),
     Tasks(task_routes::TaskRoute),
+    Notes(note_routes::NoteRoute),
     Git(git_routes::GitRoute),
     Process(process_routes::ProcessRoute),
     Cost(cost_routes::CostRoute),
     Provider(provider_routes::ProviderRoute),
     OfficeFederation(office_routes::OfficeFederationRoute),
+    Attachments(attachment_routes::AttachmentRoute),
 }
 
 pub enum Call {
@@ -203,11 +207,13 @@ pub enum Call {
     Sessions(session_routes::SessionCall),
     Chat(chat_routes::ChatCall),
     Tasks(task_routes::TaskCall),
+    Notes(note_routes::NoteCall),
     Git(git_routes::GitCall),
     Process(process_routes::ProcessCall),
     Cost(cost_routes::CostCall),
     Provider(provider_routes::ProviderCall),
     OfficeFederation(office_routes::OfficeFederationCall),
+    Attachments(attachment_routes::AttachmentCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.

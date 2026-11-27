@@ -5,8 +5,8 @@ use rusqlite::{Connection, Row};
 
 use crate::messaging::records::{
     parse_auto_scope, parse_conversation_kind, parse_delivered_because, parse_lifecycle,
-    parse_priority, ConversationMembership, ConversationPin, ConversationRecord,
-    MessageAttachmentRecord, MessageRecord, RecipientStateRecord, SenderKind, SCHEMA_VERSION,
+    parse_priority, ConversationMembership, ConversationPin, ConversationRecord, MessageRecord,
+    RecipientStateRecord, SenderKind, SCHEMA_VERSION,
 };
 
 use super::super::organization::{all, id, number, optional_id, text};
@@ -139,21 +139,7 @@ pub(super) fn attach_attachments(
     scope: &str,
     mut msg: MessageRecord,
 ) -> Result<MessageRecord, EngineError> {
-    msg.attachments = all(
-        db,
-        "SELECT id, content_ref, media_type, byte_count, content_sha256 \
-         FROM message_attachments WHERE organization_id = ?1 AND message_id = ?2 ORDER BY id",
-        vec![text(scope), text(&msg.id)],
-        |row| {
-            Ok(MessageAttachmentRecord {
-                id: row.get(0)?,
-                content_ref: row.get(1)?,
-                media_type: row.get(2)?,
-                byte_count: number(row, 3)?,
-                content_sha256: row.get(4)?,
-            })
-        },
-    )?;
+    msg.attachments = super::files::message_files(db, scope, &msg)?;
     Ok(msg)
 }
 

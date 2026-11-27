@@ -10,6 +10,7 @@
 //!   `application/octet-stream`, and any file whose magic bytes say something other than its
 //!   declared type ([`sniff`]).
 
+pub mod clean;
 pub mod image;
 pub mod ooxml;
 pub mod pdf;
@@ -21,6 +22,7 @@ use org_proto::attachments::{
 };
 use org_proto::{ApiError, ErrorCode};
 
+pub use self::clean::check_clean;
 pub use self::image::{model_derivative, ModelDerivative};
 
 /// One allowed media type.
@@ -135,6 +137,16 @@ impl MediaType {
         }
     }
 
+    /// The types an upload may be declared as and still be kept as `self`: an animated WebP
+    /// is kept as GIF, and a still PNG or WebP too large once re-encoded is kept as JPEG.
+    const fn kept_from(self) -> &'static [MediaType] {
+        match self {
+            Self::Gif => &[Self::Webp],
+            Self::Jpeg => &[Self::Png, Self::Webp],
+            _ => &[],
+        }
+    }
+
     /// The type a caller declares: lowercase, parameters dropped except `charset=utf-8` on a
     /// text type. A blocked or unknown type is `unsupported`.
     pub fn parse_declared(declared: &str) -> Result<Self, ApiError> {
@@ -191,6 +203,28 @@ pub fn check_filename(name: &str, media: MediaType) -> Result<String, ApiError> 
         )));
     }
     Ok(name.to_owned())
+}
+
+/// The name of a file an office keeps as `media` (another office's record): exactly one plain
+/// name, as [`check_filename`] leaves it, with an extension of `media` or of a type an upload
+/// is kept as `media` from (`photo.png` kept as JPEG). `evil.html` or `dropper.exe` named
+/// `text/plain` is refused.
+pub fn check_kept_filename(name: &str, media: MediaType) -> Result<(), ApiError> {
+    let mut checked = check_filename(name, media);
+    for source in media.kept_from() {
+        if checked.is_err() {
+            if let Ok(name) = check_filename(name, *source) {
+                checked = Ok(name);
+            }
+        }
+    }
+    if checked? != name {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "filename: must be one plain file name",
+        ));
+    }
+    Ok(())
 }
 
 /// A file the office accepted, as it keeps it.

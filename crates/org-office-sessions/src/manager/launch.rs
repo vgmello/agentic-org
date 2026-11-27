@@ -1,23 +1,26 @@
 //! Session launch: admission, route planning, warm reuse checks, and spawn + persist.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-use org_office::organization_family::records::Employee;
+use org_office::organization_family::records::{Employee, PermissionPreset};
 use org_proto::sessions::{MemberSessionStartParams, SessionState, SessionView};
 use org_proto::{ApiError, ErrorCode};
 use org_supervise::SessionMark;
 
 use crate::credentials::rfc3339_now;
+use crate::partition::{PartitionKey, PartitionTurn};
 use crate::pump::{PumpCommand, SessionRuntimeState};
 use crate::recovery::{ActiveTurnRecord, PendingStartRecord};
 use crate::subagents::{build_general_subagent_definition, write_subagent_definition};
 
 use super::bwrap_isolation::has_unmasked_bwrap_sibling_in_office;
+use super::chief_of_staff::partition_switch_reason;
 use super::environment::{
     assemble_launch_env, resolve_workspace, write_owner_only_binding_file, SessionEnvInput,
 };
+use super::operator_home::ensure_operator_home;
 use super::registry_guards::{
     check_registry_startable, ensure_live_handle_not_recovery_required, ensure_not_stopped_since,
 };
@@ -69,12 +72,17 @@ impl SessionManager {
     /// watch-notice I/O runs under `registry` or a handle's state lock (`TASK-190`, rules §3.4):
     /// the handle is snapshotted under a brief lock, checked unlocked, then re-validated by
     /// identity under the lock before anything is decided.
-    pub(super) fn reserve_start_or_send(
+    ///
+    /// A Chief of Staff turn names its `partition` (`TASK-80.1`): whether the live process
+    /// serves it is decided in that same critical section, and the turn is counted in the
+    /// partition only once the slot (or the warm send) is this start's.
+    pub(crate) fn reserve_start_or_send(
         &self,
         employee: &Employee,
         objective: Option<String>,
         task_ref: Option<&str>,
         requested_workspace: Option<&str>,
+        partition: Option<&PartitionKey>,
     ) -> Result<StartReservation, ApiError> {
         let emp_id = employee.id.as_str();
         // Load the lease cache now, so the check under the registry lock below never misses it.
@@ -90,6 +98,7 @@ impl SessionManager {
                 freshness,
                 objective.is_some(),
                 requested_workspace,
+                partition,
             )?;
             match decision {
                 None => continue,
@@ -98,6 +107,7 @@ impl SessionManager {
                         live_view: Some(*view),
                         finished_handle: None,
                         start_stop_epoch: 0,
+                        partition_turn: None,
                     });
                 }
                 Some(StartDecision::Cold {
@@ -108,10 +118,12 @@ impl SessionManager {
                         live_view: None,
                         finished_handle: finished,
                         start_stop_epoch,
+                        partition_turn: self.begin_partition_turn(emp_id, partition),
                     });
                 }
                 Some(StartDecision::WarmSend(target)) => {
-                    return dispatch_warm_handle_turn(
+                    let partition_turn = self.begin_partition_turn(emp_id, partition);
+                    let mut reservation = dispatch_warm_handle_turn(
                         self,
                         WarmHandleTurn {
                             emp_id,
@@ -124,7 +136,9 @@ impl SessionManager {
                             text: objective.unwrap_or_default(),
                             start_stop_epoch: target.start_stop_epoch,
                         },
-                    );
+                    )?;
+                    reservation.partition_turn = partition_turn;
+                    return Ok(reservation);
                 }
             }
         }
@@ -132,6 +146,16 @@ impl SessionManager {
             ErrorCode::Conflict,
             "agent session changed while the start was being planned; retry",
         ))
+    }
+
+    /// Counts a Chief of Staff turn in `partition`, rotating it first when due; called only
+    /// while this start holds the employee's start slot.
+    fn begin_partition_turn(
+        &self,
+        emp_id: &str,
+        partition: Option<&PartitionKey>,
+    ) -> Option<PartitionTurn> {
+        partition.map(|key| self.partitions.begin_turn(emp_id, key))
     }
 
     fn snapshot_warm_handle(&self, emp_id: &str) -> Result<Option<WarmHandleSnapshot>, ApiError> {
@@ -176,6 +200,7 @@ impl SessionManager {
         freshness: Option<WarmFreshness>,
         wants_turn: bool,
         requested_workspace: Option<&str>,
+        partition: Option<&PartitionKey>,
     ) -> Result<Option<StartDecision>, ApiError> {
         let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
         check_registry_startable(&reg, emp_id)?;
@@ -206,8 +231,15 @@ impl SessionManager {
         };
         let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
         ensure_live_handle_not_recovery_required(&state)?;
-        let stop_reason =
-            warm_handle_stop_reason(handle, requested_workspace, state.state, freshness);
+        // A Chief of Staff process serving another partition (or due to rotate) is stopped
+        // when idle and refused when busy, here, with the slot not yet taken (`TASK-80.1`).
+        let switch = match partition {
+            Some(key) => partition_switch_reason(&self.partitions, emp_id, handle, &state, key)?,
+            None => None,
+        };
+        let stop_reason = switch.or_else(|| {
+            warm_handle_stop_reason(handle, requested_workspace, state.state, freshness)
+        });
         if stop_reason.is_none() && is_warm_state_reusable(state.state) {
             if !wants_turn {
                 return Ok(Some(StartDecision::LiveView(Box::new(state.to_view()))));
@@ -246,19 +278,8 @@ impl SessionManager {
         employee: &Employee,
         params: &MemberSessionStartParams,
         objective: String,
-        resume_runtime_session_id: Option<&str>,
-        task_ref: Option<&str>,
-        start_stop_epoch: u64,
+        opts: LaunchRouteOpts<'_>,
     ) -> Result<PreparedSessionLaunch, ApiError> {
-        let opts = LaunchRouteOpts {
-            resume_runtime_session_id,
-            task_ref,
-            is_failover_switch: false,
-            oauth_refresh_attempted: false,
-            excluded_connections: HashSet::new(),
-            tried_connections: Vec::new(),
-            start_stop_epoch,
-        };
         let objective = self.prepend_watch_notices(employee.id.as_str(), objective);
         let planned = self.plan_session_launch(employee, params, opts)?;
         self.issue_and_spawn_launch(objective, planned)
@@ -283,6 +304,7 @@ impl SessionManager {
             .ensure_private_home(&emp_id)
             .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not prepare agent home"))?;
         let workspace_real = resolve_workspace(&home, params.workspace.as_deref())?;
+        ensure_operator_home(employee, &home, &workspace_real)?;
         let workspace_spec = canonical_or_spec(&workspace_real)?;
 
         let admitted = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
@@ -318,7 +340,7 @@ impl SessionManager {
 
         let preset_cfg = self.build_employee_preset_cfg(
             &emp_id,
-            admitted.preset,
+            PermissionPreset::effective_for(employee.builtin_key, admitted.preset),
             admitted.sandbox_enabled,
             &workspace_spec,
             true,
@@ -401,6 +423,7 @@ impl SessionManager {
             task_ref: opts.task_ref.map(str::to_owned),
             tried_connections: opts.tried_connections,
             start_stop_epoch: opts.start_stop_epoch,
+            partition: opts.partition,
             home,
             workspace_real,
             runtime_dir,
@@ -440,6 +463,7 @@ impl SessionManager {
             task_ref,
             tried_connections,
             start_stop_epoch,
+            partition,
             home,
             workspace_real,
             runtime_dir,
@@ -453,9 +477,12 @@ impl SessionManager {
         } = planned;
         let mut permit_guard =
             PermitGuard::new(&self.office, self.config.hq_permits.as_deref(), permit);
+        // The run acts for the caller of the partition it was launched for, named on this very
+        // launch, and for nobody when it has none (`TASK-80.1`).
+        let acting_for = partition.as_ref().and_then(PartitionKey::caller_id);
         let binding = self
             .bindings
-            .issue(&emp_id, &run_id, &session_id, 0)
+            .issue(&emp_id, &run_id, &session_id, 0, acting_for)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "could not mint session token"))?;
         let binding_file = runtime_dir.join(format!("session-binding-{run_id}.v1"));
         let mut binding_guard = BindingGuard::new(&self.bindings, &emp_id, &run_id, &binding_file);
@@ -471,6 +498,7 @@ impl SessionManager {
             token: binding.expose_token(),
             binding_file: &binding_file,
             sandbox_enabled: preset_cfg.sandbox.enabled,
+            operator: !preset_cfg.operator_shell_prefixes.is_empty(),
         })?;
         let mark = SessionMark::new(mark_str.clone())
             .map_err(|_| ApiError::new(ErrorCode::StorageError, "invalid session mark"))?;
@@ -529,6 +557,7 @@ impl SessionManager {
             task_ref,
             tried_connections,
             start_stop_epoch,
+            partition,
             home,
             tmpdir,
             binding_file,

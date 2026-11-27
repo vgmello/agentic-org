@@ -1,6 +1,7 @@
 //! `ReadOp` wrappers for asks, the owner inbox, channels, conversations and messages.
 
 use org_proto::ask::ChatWaitAskResult;
+use org_proto::attachments::AttachmentMeta;
 use org_proto::chat::{
     ChatChannelsParams, ChatChannelsResult, ChatConversationsParams, ChatConversationsResult,
     ChatInboxParams, ChatInboxResult, ChatMessagesParams, ChatMessagesResult,
@@ -12,6 +13,7 @@ use org_store::{Id, StoreError};
 use crate::messaging::{
     asks::{self, AskCard},
     features::{self, to_wire_header, ChannelCatchup},
+    files,
     records::{ConversationRecord, MessageRecord},
 };
 use crate::store::open::ReadOp;
@@ -46,6 +48,8 @@ pub struct OwnerInboxEntry {
     pub header: MessageHeader,
     pub body: String,
     pub card: Option<AskCard>,
+    /// The message's files (`TASK-98.2`).
+    pub attachments: Vec<AttachmentMeta>,
 }
 
 pub struct OpenOwnerInboxRead {
@@ -83,10 +87,16 @@ impl ReadOp for OpenOwnerInboxRead {
             }
             let seq = resolve_local_seq(snapshot, &msg)?;
             let header = to_wire_header(&msg, Some(&st), seq);
+            let attachments = files::metas(
+                &msg.attachments,
+                &msg.created_at,
+                msg.sender_employee_id.as_ref(),
+            );
             entries.push(OwnerInboxEntry {
                 header,
                 body: msg.body_markdown,
                 card,
+                attachments,
             });
         }
         entries.sort_by(|a, b| {

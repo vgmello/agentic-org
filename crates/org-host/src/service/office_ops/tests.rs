@@ -10,7 +10,7 @@ use org_host_control::{
 use org_office_launch::OfficeFile;
 use org_proto::{CallError, ErrorCode, Hello, OfficeRole};
 
-use crate::service::{authentication::hash_password, listener, tests as service_tests};
+use crate::{authentication::hash_password, control_listener, service::tests as service_tests};
 
 fn office_file(org_id: &str, office_id: &str, org_name: &str) -> OfficeFile {
     OfficeFile::new(
@@ -52,7 +52,7 @@ fn sign_in_native(
 #[test]
 fn office_list_and_restart_enforce_authority_scoping_and_idempotency() {
     let home = tempfile::tempdir().unwrap();
-    let (_root, authentication, _) = crate::service::authentication::tests::fixture();
+    let (_root, authentication, _) = crate::authentication::tests::fixture();
     let (db, _) = authentication.provisioning_storage();
     let now = super::browser_now_ms().unwrap();
     let verifier =
@@ -90,7 +90,7 @@ fn office_list_and_restart_enforce_authority_scoping_and_idempotency() {
     let offices = service.offices.clone();
 
     let (host_stream, peer_stream) = std::os::unix::net::UnixStream::pair().unwrap();
-    let _local = listener::LocalConnection::start(host_stream, Arc::new(service)).unwrap();
+    let _local = control_listener::LocalConnection::start(host_stream, Arc::new(service)).unwrap();
     peer_stream
         .set_read_timeout(Some(std::time::Duration::from_secs(10)))
         .unwrap();
@@ -224,7 +224,7 @@ fn browser_office_restart_and_sessionless_calls_enforce_boundaries() {
     use std::io::{BufRead, Write};
 
     let home = tempfile::tempdir().unwrap();
-    let (_root, authentication, _) = crate::service::authentication::tests::fixture();
+    let (_root, authentication, _) = crate::authentication::tests::fixture();
     let (db, _) = authentication.provisioning_storage();
     let now = super::browser_now_ms().unwrap();
     let verifier =
@@ -397,7 +397,8 @@ fn browser_office_restart_and_sessionless_calls_enforce_boundaries() {
     local_service.instance_id = Some(crate::ids::uuid_v7().unwrap());
     let local_offices = local_service.offices.clone();
     let (host_stream, peer_stream) = std::os::unix::net::UnixStream::pair().unwrap();
-    let _local = listener::LocalConnection::start(host_stream, Arc::new(local_service)).unwrap();
+    let _local =
+        control_listener::LocalConnection::start(host_stream, Arc::new(local_service)).unwrap();
     peer_stream
         .set_read_timeout(Some(std::time::Duration::from_secs(10)))
         .unwrap();
@@ -432,7 +433,7 @@ fn browser_office_restart_and_sessionless_calls_enforce_boundaries() {
 #[test]
 fn satellite_admin_sees_and_restarts_unlinked_satellite_only() {
     let home = tempfile::tempdir().unwrap();
-    let (_root, authentication, _) = crate::service::authentication::tests::fixture();
+    let (_root, authentication, _) = crate::authentication::tests::fixture();
     let (db, _) = authentication.provisioning_storage();
     let now = super::browser_now_ms().unwrap();
     let verifier =
@@ -467,7 +468,7 @@ fn satellite_admin_sees_and_restarts_unlinked_satellite_only() {
     let offices = service.offices.clone();
 
     let (host_stream, peer_stream) = std::os::unix::net::UnixStream::pair().unwrap();
-    let _local = listener::LocalConnection::start(host_stream, Arc::new(service)).unwrap();
+    let _local = control_listener::LocalConnection::start(host_stream, Arc::new(service)).unwrap();
     peer_stream
         .set_read_timeout(Some(std::time::Duration::from_secs(10)))
         .unwrap();
@@ -595,7 +596,7 @@ fn browser_office_restart_refuses_unlinked_satellite_for_admin() {
     };
 
     let home = tempfile::tempdir().unwrap();
-    let (_root, authentication, _) = crate::service::authentication::tests::fixture();
+    let (_root, authentication, _) = crate::authentication::tests::fixture();
     let (db, _) = authentication.provisioning_storage();
     let now = super::browser_now_ms().unwrap();
     let verifier =

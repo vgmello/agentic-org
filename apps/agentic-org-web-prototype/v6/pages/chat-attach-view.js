@@ -2,6 +2,7 @@
    conversation's Files panel, where each file links to its message. */
 import { CH, M } from "../data.js";
 import { altOf, fileFacts, fileIcon, isImage } from "./chat-attach-files.js";
+import { refTag, sentLabels } from "./chat-attach-refs.js";
 import { sentAt } from "./chat-model.js";
 import { syncOverlayHistory } from "./chat-overlays.js";
 import { esc, ic, plural } from "../ui.js";
@@ -9,21 +10,24 @@ import { esc, ic, plural } from "../ui.js";
 const GRID_MAX = 4;
 
 /* ---------------------------------------------------------------- in a message */
-function imageTile(m, img, i, all) {
+/* A label ("Image 1") shows only where the message's text refers to its attachments. */
+const refAttr = (ref) => (ref ? ` data-ref="${esc(ref)}"` : "");
+function imageTile(m, img, i, all, ref) {
   const extra = i === GRID_MAX - 1 && all.length > GRID_MAX ? all.length - GRID_MAX : 0;
   const pos = all.length > 1 ? `, ${i + 1} of ${all.length}` : "";
-  const label = `Open image ${altOf(img)}${pos}${extra ? `, and ${extra} more` : ""}`;
-  return `<button class="chat-att-img" type="button" data-act="chat-att-view" data-id="${esc(m.id)}" data-i="${i}" aria-label="${esc(label)}">
-    <img src="${esc(img.url)}" alt="${esc(altOf(img))}" loading="lazy" decoding="async">${extra ? `<span class="chat-att-more" aria-hidden="true">+${extra}</span>` : ""}</button>`;
+  const label = `Open image ${ref ? `${ref}, ` : ""}${altOf(img)}${pos}${extra ? `, and ${extra} more` : ""}`;
+  return `<button class="chat-att-img" type="button" data-act="chat-att-view" data-id="${esc(m.id)}" data-i="${i}"${refAttr(ref)} aria-label="${esc(label)}">
+    <span class="chat-att-frame"><img src="${esc(img.url)}" alt="${esc(altOf(img))}" loading="lazy" decoding="async"><span class="chat-att-zoom" aria-hidden="true">${ic("maximize", "ic14")}</span>${extra ? `<span class="chat-att-more" aria-hidden="true">+${extra}</span>` : ""}</span>
+    <span class="chat-att-cap" aria-hidden="true">${ref ? refTag(ref) : ic("image", "ic14")}<span class="chat-att-cap-name">${esc(img.name)}</span></span></button>`;
 }
-function imageGrid(m, images) {
+function imageGrid(m, images, refs) {
   if (!images.length) return "";
   const shown = images.slice(0, GRID_MAX);
-  return `<div class="chat-att-grid" data-n="${shown.length}">${shown.map((img, i) => imageTile(m, img, i, images)).join("")}</div>`;
+  return `<div class="chat-att-grid" data-n="${shown.length}">${shown.map((img, i) => imageTile(m, img, i, images, refs?.get(img))).join("")}</div>`;
 }
-function fileCard(f) {
-  return `<div class="chat-att-file">${fileIcon(f)}
-    <span class="chat-att-meta"><span class="chat-att-name" title="${esc(f.name)}">${esc(f.name)}</span><span class="chat-att-sub">${esc(fileFacts(f))}</span></span>
+function fileCard(f, ref) {
+  return `<div class="chat-att-file"${refAttr(ref)}>${fileIcon(f)}
+    <span class="chat-att-meta"><span class="chat-att-line">${refTag(ref)}<span class="chat-att-name" title="${esc(f.name)}">${esc(f.name)}</span></span><span class="chat-att-sub">${esc(fileFacts(f))}</span></span>
     <span class="chat-att-actions">
       <a class="btn ghost sm" href="${esc(f.url)}" download="${esc(f.name)}" aria-label="Download ${esc(f.name)}">${ic("download", "ic16")}<span class="chat-att-word">Download</span></a>
       <a class="btn ghost sm" href="${esc(f.url)}" target="_blank" rel="noopener" aria-label="Open ${esc(f.name)} in a new tab">${ic("open", "ic16")}<span class="chat-att-word">Open</span></a>
@@ -34,9 +38,9 @@ function messageAttachmentsHtml(m, chId) {
   const files = m.files || [];
   if (!files.length) return "";
   if (!chId) return `<p class="msg-src">${ic("paperclip", "ic14")}<span>${plural(files.length, "attachment", "attachments")}</span></p>`;
-  const images = files.filter(isImage), others = files.filter((f) => !isImage(f));
-  const cards = others.length ? `<div class="chat-att-files">${others.map(fileCard).join("")}</div>` : "";
-  return `<div class="chat-atts">${imageGrid(m, images)}${cards}</div>`;
+  const images = files.filter(isImage), others = files.filter((f) => !isImage(f)), refs = sentLabels(m);
+  const cards = others.length ? `<div class="chat-att-files">${others.map((f) => fileCard(f, refs?.get(f))).join("")}</div>` : "";
+  return `<div class="chat-atts">${imageGrid(m, images, refs)}${cards}</div>`;
 }
 const attachmentNameHit = (m, q) => (m.files || []).some((f) => f.name.toLowerCase().includes(q) || altOf(f).toLowerCase().includes(q));
 
@@ -112,7 +116,7 @@ function openViewer(mid, t, chId) {
   const d = document.createElement("dialog");
   d.className = "chat-lightbox";
   d.setAttribute("aria-labelledby", "chat-lb-title");
-  Object.assign(viewer, { dialog: d, images, from: `${t.closest("aside.thread") ? "aside.thread" : ".chmain"} [data-act="chat-att-view"][data-id="${CSS.escape(mid)}"][data-i="${t.dataset.i}"]`, meta: `${M[m.who].name} · ${sentAt(m)}` });
+  Object.assign(viewer, { dialog: d, images, from: `${t.closest("aside.thread") ? "aside.thread" : ".chmain"} [data-act="${t.dataset.act}"][data-id="${CSS.escape(mid)}"][data-i="${t.dataset.i}"]`, meta: `${M[m.who].name} · ${sentAt(m)}` });
   d.addEventListener("keydown", onViewerKeydown);
   d.addEventListener("click", onViewerClick);
   d.addEventListener("cancel", (e) => { e.preventDefault(); closeViewer(); });
@@ -161,6 +165,7 @@ function filesPanelHtml(ch, chId, title, o) {
 }
 const filesButton = (open, title) => `<button class="btn ghost icon chat-files-btn" type="button" data-act="chat-files" aria-expanded="${open}" aria-controls="chat-files" aria-label="Files in ${esc(title)}" title="Files in ${esc(title)}">${ic("files", "ic20")}</button>`;
 
-const VIEW_CLICKS = { "chat-att-view": openViewer };
+/* An inline reference ("Image 1" in the text) opens the same viewer, and focus returns to it. */
+const VIEW_CLICKS = { "chat-att-view": openViewer, "chat-att-ref": openViewer };
 
 export { VIEW_CLICKS, attachmentNameHit, closeViewer, filesButton, filesPanelHtml, messageAttachmentsHtml, viewerOpen };

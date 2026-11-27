@@ -107,7 +107,9 @@ fn try_route_organization_subroutes(
         .or_else(|| super::process_routes::try_route(api, request, org, tail, get, post, query))
         .or_else(|| super::cost_routes::try_route(api, request, org, tail, get, post, query))
         .or_else(|| super::chat_routes::try_route(api, request, org, tail, get, post, query))
+        .or_else(|| super::note_routes::try_route(api, request, org, tail, post, query))
         .or_else(|| super::task_routes::try_route(api, request, org, tail, get, post, query))
+        .or_else(|| super::attachment_routes::try_route(api, request, org, tail, get, post, query))
 }
 
 pub(super) fn route_organization(

@@ -1,10 +1,13 @@
 //! Engine-independent read and write ports for the unified tasks family (`TASK-49`, `TASK-77`).
 
+use std::collections::BTreeMap;
+
 use org_store::{Engine, EngineError, Id};
 
 use crate::messaging::ports::{MessagingRead, MessagingWrite};
 use crate::processes::ports::{ProcessesRead, ProcessesWrite};
 
+use super::query::{TaskHistoryOutline, TaskListPage, TaskListQuery, TaskRollup};
 use super::records::{
     parse_task_key, ChecklistStepRecord, OfficeTaskCounterRecord, TaskCommentRecord,
     TaskEventRecord, TaskLinkRecord, TaskRecord, TaskWatcherRecord,
@@ -42,6 +45,16 @@ pub trait TasksRead: MessagingRead + ProcessesRead {
     fn all_task_links(&self) -> Result<Vec<TaskLinkRecord>, EngineError>;
     /// Immutable task history events in ascending `revision` order (`doc-84`).
     fn task_events(&self, task_id: &Id) -> Result<Vec<TaskEventRecord>, EngineError>;
+    /// The page of tasks `query` matches, in its order, and how many match in all
+    /// (`TASK-105`). The engine filters, orders, counts and pages, so a page costs the same
+    /// few reads however many tasks the organization holds.
+    fn task_page(&self, query: &TaskListQuery) -> Result<TaskListPage, EngineError>;
+    /// The list rollup of each of `ids`, read for all of them at once (`TASK-105`). An ID
+    /// with no children and no links, or of no task, maps to the default rollup.
+    fn task_rollups(&self, ids: &[Id]) -> Result<BTreeMap<Id, TaskRollup>, EngineError>;
+    /// Every task's history outline, by task ID, read at once for a rebuild's checks
+    /// (`TASK-105`, `doc-79`). Tasks with no history are absent.
+    fn task_history_outlines(&self) -> Result<BTreeMap<Id, TaskHistoryOutline>, EngineError>;
 
     /// Resolves a task by canonical UUIDv7 ID or office-coded `T-<CODE><N>` reference.
     fn resolve_task(&self, reference: &str) -> Result<Option<TaskRecord>, EngineError> {

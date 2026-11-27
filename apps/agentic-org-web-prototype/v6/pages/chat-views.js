@@ -3,7 +3,7 @@
    Threads: messages continued in a thread, in conversations the owner can read. */
 import { CH, M } from "../data.js";
 import { av, esc, ic, plural } from "../ui.js";
-import { chatTitle } from "./chat-model.js";
+import { chatTitle, listedConversations } from "./chat-model.js";
 
 /* Mentions come from explicit data only: an ask raised to the owner (`needs`), or the owner among a message's
    `mentions`, in a post or a thread reply. Prose such as "I asked the owner" is not a mention. */
@@ -14,9 +14,11 @@ function mentionItems(ch) {
     ...(m.thread || []).flatMap((r, i) => (addressesOwner(r) ? [{ ch, m: r, root: m, reply: i }] : [])),
   ]);
 }
+/* Channels and DMs only: agents' conversations are read from an agent's page. */
 function viewItems(kind) {
-  if (kind === "mentions") return Object.keys(CH).flatMap(mentionItems);
-  return Object.keys(CH).flatMap((ch) => CH[ch].msgs.filter((m) => m.thread && m.thread.length).map((m) => ({ ch, m })));
+  const keys = listedConversations();
+  if (kind === "mentions") return keys.flatMap(mentionItems);
+  return keys.flatMap((ch) => CH[ch].msgs.filter((m) => m.thread && m.thread.length).map((m) => ({ ch, m })));
 }
 const CHAT_VIEWS = {
   mentions: { title: "Mentions", icon: "at", about: "Messages that ask you something or name you", empty: "Nothing mentions you yet." },

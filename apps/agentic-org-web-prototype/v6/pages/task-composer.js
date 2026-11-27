@@ -3,8 +3,9 @@ import { own, render, route } from "../shell/router.js";
 import { finishBackgroundJob, startBackgroundJob } from "../shell/topbar-utils.js";
 import { S } from "../state.js";
 import { av, esc, ic, memberIds, toast } from "../ui.js";
-import { closeContextPicker, contextForTask, createContextState, refreshContextResults, renderContextSection, runContextAction } from "./task-context.js";
-import { persistCreatedWorkTask, workHref, workSelection } from "./work.js";
+import { closeContextPicker, contextForTask, contextSummaryHtml, createContextState, refreshContextResults, renderContextSection, runContextAction } from "./task-context.js";
+import { clearWorkFilterState, persistCreatedWorkTask, workHref, workSelection } from "./work.js";
+import { singleValue } from "./work-filter.js";
 
 const TASK_TYPES = [
   ["task", "Task"],
@@ -486,7 +487,7 @@ function renderComposerFooter(state) {
     return `<div class="stc-foot"><span class="stc-hint">Pick a task above to assign immediately</span><div class="stc-foot-actions"><button class="btn outline" type="button" data-stc="toggle-assign-existing">New intake instead</button></div></div>`;
   }
   const offline = S.homeState === "offline";
-  return `<div class="stc-foot">
+  return `${contextSummaryHtml(state.ctx)}<div class="stc-foot">
     <label class="stc-more-toggle"><button class="switch" type="button" role="switch" aria-checked="${state.createMore}" data-stc="toggle-more"></button><span>Create more</span></label>
     <div class="stc-foot-actions">
       <button class="btn ${offline ? "primary" : "outline"}" type="button" data-stc="create-raw" title="Create immediately without Tess (⌘⇧↵)">Create as-is</button>
@@ -583,7 +584,7 @@ function commitRawTaskNow() {
   const [page] = route();
   closeComposerNow();
   if (page === "work") {
-    Object.assign(S, { workQuery: "", workStatus: "all", workProject: "all", workTeam: "all" });
+    clearWorkFilterState();
     location.hash = workHref({ ...workSelection(), view: "all", item: created.id });
   } else {
     render(false);
@@ -711,7 +712,7 @@ function inferProjectFromRoute(page, id, projects) {
     const teamProj = projects.find(([, pr]) => pr.teams.includes(id));
     return { proj: teamProj ? teamProj[0] : "none", team: id };
   }
-  const proj = isActiveProject(S.workProject) ? S.workProject : projects[0][0];
+  const only = singleValue("workProject"), proj = isActiveProject(only) ? only : projects[0][0];
   return { proj, team: defaultTeamForProject(proj) };
 }
 

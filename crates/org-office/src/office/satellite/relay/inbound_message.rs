@@ -245,22 +245,22 @@ struct RelayedRecipientDeliveries {
     local_delivered_headers: Vec<org_proto::msg::MessageHeader>,
 }
 
-fn relayed_wake_kind_for_message(
+pub(super) fn relayed_wake_kind_for_message(
     conv_kind: org_proto::chat::ConversationKind,
-    msg: &crate::messaging::records::MessageRecord,
+    msg_kind: &str,
     target_id: &str,
     delivered_because: org_proto::chat::DeliveredBecause,
     is_mentioned: bool,
     open_question_asker_id: Option<&str>,
 ) -> Option<&'static str> {
     use org_proto::chat::{ConversationKind, DeliveredBecause};
-    if msg.kind == "announcement" {
+    if msg_kind == "announcement" {
         return None;
     }
-    if msg.kind == org_proto::msg::KIND_REQUEST {
+    if msg_kind == org_proto::msg::KIND_REQUEST {
         return Some("ask");
     }
-    if msg.kind == "handoff"
+    if msg_kind == "handoff"
         && (delivered_because == DeliveredBecause::Addressed
             || matches!(conv_kind, ConversationKind::Dm | ConversationKind::GroupDm))
     {
@@ -269,11 +269,12 @@ fn relayed_wake_kind_for_message(
     if open_question_asker_id == Some(target_id) {
         return Some("ask_answer");
     }
-    if delivered_because == DeliveredBecause::Mention || is_mentioned {
-        return Some("mention");
-    }
+    // A DM is a direct message even when it `@mentions` the recipient (`TASK-80.1`).
     if matches!(conv_kind, ConversationKind::Dm | ConversationKind::GroupDm) {
         return Some("direct_message");
+    }
+    if delivered_because == DeliveredBecause::Mention || is_mentioned {
+        return Some("mention");
     }
     None
 }
@@ -347,7 +348,7 @@ fn attach_relayed_recipient_states(
                 .any(|m| m.employee_id == emp_id.as_str());
             if let Some(wake_kind) = relayed_wake_kind_for_message(
                 ctx.conv.kind,
-                ctx.msg,
+                &ctx.msg.kind,
                 emp_id.as_str(),
                 because,
                 is_mentioned,

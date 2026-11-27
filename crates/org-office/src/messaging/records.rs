@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 
+use org_proto::attachments::ArtifactStatus;
 use org_proto::chat::{AutoScope, ConversationKind, DeliveredBecause, MuteMode, ReactionKind};
 use org_proto::msg::{MessageLifecycleState, MessagePriority, Meta};
 use org_store::{DurablePath, Id, Sha256};
@@ -234,14 +235,35 @@ pub struct ConversationRecord {
     pub pins: Vec<ConversationPin>,
 }
 
-/// Immutable attachment metadata embedded in a message file (`doc-90`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Immutable attachment metadata embedded in a message file, or in a participant's answer
+/// file (`doc-90`, `TASK-98.2`). The bytes are the shared blob `content_ref` names
+/// (`blobs/sha256/<aa>/<bb>/<sha256>`); `id` is the binding's own attachment ID.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageAttachmentRecord {
     pub id: String,
     pub content_ref: String,
     pub media_type: String,
     pub byte_count: u64,
     pub content_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub artifact_status: ArtifactStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uploaded_by_employee_id: Option<Id>,
+    /// When the file was bound; a message's files share the message's `created_at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
 }
 
 /// Immutable `messages/<message-id>.json` envelope (`doc-90`).
@@ -448,6 +470,9 @@ pub struct ParticipantAnswerFile {
     pub reason: Option<String>,
     #[serde(default)]
     pub answer: Option<Value>,
+    /// The answer's files (`TASK-98.2`), projected into `message_answer_attachments`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<MessageAttachmentRecord>,
 }
 
 /// Classification of a durable path owned by `MessagingFiles`.

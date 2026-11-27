@@ -581,6 +581,7 @@ mod conformance {
             body: "hello".into(),
             meta: Meta::new(),
             reply_to: None,
+            attachment_ids: Vec::new(),
         };
         let first = mailbox.send(ADA_ID, params(PAT_ID)).unwrap();
         directory.remove(PAT_ID, POSITION);

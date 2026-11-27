@@ -24,8 +24,8 @@ use org_proto::{frame, ApiError, Call, HelloParams, Request};
 use rustls::pki_types::{pem::PemObject, CertificateDer, ServerName};
 use sha2::Digest;
 
+use crate::authentication::hash_password;
 use crate::hostdb::{HostDb, HostDbInit};
-use crate::service::authentication::hash_password;
 use crate::web_process_tests::{fixture_config, host_at};
 use crate::Host;
 

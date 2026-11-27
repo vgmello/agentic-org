@@ -1,10 +1,11 @@
 use serde_json::{json, Value};
 
 use org_agent_runtime::{
-    expand_capability_allowlist, runtime_env_add, static_env_names, validate_plan_paths,
-    validate_standard_session_kind, Capabilities, EnvName, FileLocation, LaunchContext, LaunchPlan,
-    PermissionMode, PlanError, PlannedDir, RelPath, Rule, RuleScope, SessionId, SessionKind,
-    SessionSpec, SignalTarget, Stdio, StopPlan, StopSignal, StopStep, ToolCapability,
+    expand_capability_allowlist, runtime_env_add, static_env_names, validate_operator_shell,
+    validate_plan_paths, validate_standard_session_kind, Capabilities, EnvName, FileLocation,
+    LaunchContext, LaunchPlan, PermissionMode, PlanError, PlannedDir, RelPath, Rule, RuleScope,
+    SessionId, SessionKind, SessionSpec, SignalTarget, Stdio, StopPlan, StopSignal, StopStep,
+    ToolCapability,
 };
 
 const APP_DATA_DIR_REL: &str = "antigravity-cli";
@@ -129,6 +130,9 @@ pub(crate) fn build_headless_plan(
 ) -> Result<(LaunchPlan, AgySessionConfig), PlanError> {
     validate_standard_session_kind(&spec.kind)?;
     validate_plan_paths(spec, ctx)?;
+    // An operator session (`TASK-80.1`) is the read-only preset with its shell confined to
+    // its prefixes, which this runtime's own rules and the office's approval bridge enforce.
+    validate_operator_shell(spec)?;
     validate_deny_rules(&spec.policy.deny)?;
     if spec.effort.is_some() {
         return Err(PlanError::Unsupported("effort"));
@@ -212,6 +216,9 @@ pub(crate) fn build_take_over_plan(
         ));
     }
     validate_plan_paths(spec, ctx)?;
+    // An operator session (`TASK-80.1`) is the read-only preset with its shell confined to
+    // its prefixes, which this runtime's own rules and the office's approval bridge enforce.
+    validate_operator_shell(spec)?;
     validate_deny_rules(&spec.policy.deny)?;
     if spec.effort.is_some() {
         return Err(PlanError::Unsupported("effort"));
@@ -378,6 +385,7 @@ mod plan_unit_tests {
             },
             mcp_servers: Default::default(),
             tools: None,
+            operator_shell_prefixes: Vec::new(),
         }
     }
 

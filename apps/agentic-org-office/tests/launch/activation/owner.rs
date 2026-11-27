@@ -195,6 +195,8 @@ fn inbox_real_hq_registration_is_owner_only_read_only_and_changes_epoch_on_resta
         team: None,
         cursor: None,
         limit: None,
+        has_file: None,
+        has_image: None,
     };
     assert_eq!(
         api_code(client.call::<InboxList>(&params).unwrap_err()),
@@ -509,6 +511,7 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
         body: "hello".into(),
         meta: Default::default(),
         reply_to: None,
+        attachment_ids: Vec::new(),
     };
     let inbox = MsgInboxParams {
         include_all: true,

@@ -4,12 +4,10 @@
 //! for an `https` listener, the administrator's `tls.set` (`crate::web_tls`).
 
 mod administration;
-pub(crate) mod authentication;
 mod browser;
 mod browser_sessions;
 mod cli_approvals;
 mod dispatch;
-pub(crate) mod listener;
 mod local_access;
 mod multi_person;
 mod native_org;
@@ -17,17 +15,24 @@ mod office_join;
 mod office_ops;
 pub(crate) mod organizations;
 mod reply;
-mod request;
 mod session_office;
 mod sessions;
+
+// The handler steps the control listener's channel-lifecycle tests drive directly.
+#[cfg(test)]
+pub(crate) use browser::deliver_channel;
+#[cfg(test)]
+pub(crate) use reply::secret_response;
+#[cfg(test)]
+pub(crate) use sessions::acknowledge_descriptors;
 
 use std::sync::Arc;
 
 use org_host_control::WebState;
 
+use crate::authentication::Authentication;
 use crate::broadcast::Broadcast;
 use crate::offices::Offices;
-use authentication::Authentication;
 
 pub(crate) struct Service {
     offices: Arc<Offices>,

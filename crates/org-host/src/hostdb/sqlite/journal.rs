@@ -84,6 +84,10 @@ impl HostDb {
         Ok(Write::Committed(stored))
     }
     /// Startup calls this only after staged-create reconciliation/abandon has finished.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "startup does not prune verifiers yet")
+    )]
     pub(crate) fn prune(&self, wall_ms: i64) -> Result<usize, Error> {
         let mut db = self.connection.lock().map_err(|_| Error::Unsafe)?;
         let tx = immediate(&mut db)?;
@@ -94,6 +98,10 @@ impl HostDb {
 }
 
 /// The caller's account mutation and verifier invalidation share its IMMEDIATE transaction.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no account change invalidates verifiers yet")
+)]
 pub(crate) fn delete_verifiers(tx: &Transaction<'_>, created_account: &str) -> Result<(), Error> {
     tx.execute(
         "DELETE FROM op_verifiers WHERE created_account=?1",

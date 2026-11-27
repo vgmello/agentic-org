@@ -31,10 +31,14 @@ impl SessionManager {
         let exec = self.office.load_agent_execution(employee_id).map_err(|_| {
             ApiError::new(ErrorCode::StorageError, "could not read execution config")
         })?;
-        Ok(match exec {
-            Some(cfg) => (cfg.permission_preset, true),
-            None => (PermissionPreset::SafeAsk, true),
-        })
+        let stored = exec.map_or(PermissionPreset::SafeAsk, |cfg| cfg.permission_preset);
+        let builtin_key = self
+            .office
+            .load_employee(employee_id)
+            .ok()
+            .flatten()
+            .and_then(|employee| employee.builtin_key);
+        Ok((PermissionPreset::effective_for(builtin_key, stored), true))
     }
 
     pub(super) fn prepare_run_dirs(
@@ -95,8 +99,14 @@ impl SessionManager {
             .ok()
             .flatten()
             .map(|cfg| cfg.system_prompt_markdown);
+        // The Chief of Staff's profile body is her charter for people to read; her duties are
+        // her guidance (Part 5), so the charter never reaches her prompt (`TASK-80.1`).
+        let profile_body = match employee.builtin_key {
+            Some(BuiltinKey::ChiefOfStaff) => "",
+            _ => employee.body.as_str(),
+        };
         let combined_agent_instructions =
-            combine_agent_instructions(&employee.body, exec_prompt.as_deref());
+            combine_agent_instructions(profile_body, exec_prompt.as_deref());
         let placement = self.placement_of(employee);
         let table = crate::instructions::command_table_or_empty(self.config.command_catalogue);
         let input = InstructionInput {
@@ -113,6 +123,7 @@ impl SessionManager {
             agent_instructions: &combined_agent_instructions,
             repository_instructions: None,
             is_hr_lead: employee.builtin_key == Some(BuiltinKey::Hr),
+            is_chief_of_staff: employee.builtin_key == Some(BuiltinKey::ChiefOfStaff),
             private_home: &home.display().to_string(),
             workspace: &workspace.display().to_string(),
             permission_preset: preset_cfg.preset.as_str(),
@@ -222,16 +233,9 @@ impl SessionManager {
         }
     }
 
-    pub(super) fn build_environment(
-        &self,
-        input: SessionEnvInput<'_>,
-    ) -> Result<Environment, ApiError> {
-        let helper_dir = RuntimeRegistry::resolve_helper_dir(self.config.helper_dir.as_deref());
-        let captured_path =
-            std::env::var_os("PATH").unwrap_or_else(|| OsString::from("/usr/bin:/bin"));
-        let forbidden = vec![input.home.to_path_buf(), input.workspace.to_path_buf()];
-        let search_path = SearchPath::new(&helper_dir, &captured_path, &forbidden)
-            .map_err(|_| ApiError::new(ErrorCode::Unavailable, "invalid helper search path"))?;
+    /// The variables a session starts from: its home, `TMPDIR`, locale and terminal, and the
+    /// host's read-only Rust toolchain (none for an operator session, `TASK-80.1`).
+    pub(super) fn captured_env(&self, input: &SessionEnvInput<'_>) -> Vec<(OsString, OsString)> {
         let mut captured = vec![
             (
                 OsString::from("HOME"),
@@ -256,15 +260,33 @@ impl SessionManager {
             self.office.durable_root().to_path_buf(),
             self.office.runtime_root().to_path_buf(),
         ];
-        append_rust_toolchain_env(
-            &mut captured,
-            Some(input.home),
-            std::env::var_os("RUSTUP_HOME"),
-            std::env::var_os("CARGO_HOME"),
-            std::env::var_os("HOME"),
-            &rust_forbidden,
-            input.sandbox_enabled,
-        );
+        // An operator session has no repository and no Rust workflow: no toolchain, no cache
+        // links in her home (`TASK-80.1`).
+        if !input.operator {
+            append_rust_toolchain_env(
+                &mut captured,
+                Some(input.home),
+                std::env::var_os("RUSTUP_HOME"),
+                std::env::var_os("CARGO_HOME"),
+                std::env::var_os("HOME"),
+                &rust_forbidden,
+                input.sandbox_enabled,
+            );
+        }
+        captured
+    }
+
+    pub(super) fn build_environment(
+        &self,
+        input: SessionEnvInput<'_>,
+    ) -> Result<Environment, ApiError> {
+        let helper_dir = RuntimeRegistry::resolve_helper_dir(self.config.helper_dir.as_deref());
+        let captured_path =
+            std::env::var_os("PATH").unwrap_or_else(|| OsString::from("/usr/bin:/bin"));
+        let forbidden = vec![input.home.to_path_buf(), input.workspace.to_path_buf()];
+        let search_path = SearchPath::new(&helper_dir, &captured_path, &forbidden)
+            .map_err(|_| ApiError::new(ErrorCode::Unavailable, "invalid helper search path"))?;
+        let captured = self.captured_env(&input);
         let info = self.office.info();
         let (git_name, git_email) = agent_git_identity(input.employee_name, input.employee_handle);
         let context = vec![
@@ -389,6 +411,8 @@ pub(super) struct SessionEnvInput<'a> {
     pub(super) token: &'a str,
     pub(super) binding_file: &'a Path,
     pub(super) sandbox_enabled: bool,
+    /// An operator session (`OperatorSandboxed`): no Rust toolchain environment.
+    pub(super) operator: bool,
 }
 
 pub(super) fn office_env_names() -> Vec<EnvName> {

@@ -10,11 +10,12 @@ use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
 use crate::messaging::{
+    files::{check_message_files, Binding, MessageFiles, MESSAGE_SCOPE},
     mentions::{extract_mentions, MentionScan},
     ports::{MessagingRead, MessagingWrite},
     records::{
-        self, ConversationMembership, ConversationRecord, MessageRecord, RecipientStateRecord,
-        SenderKind, SCHEMA_VERSION,
+        self, ConversationMembership, ConversationRecord, MessageAttachmentRecord, MessageRecord,
+        RecipientStateRecord, SenderKind, SCHEMA_VERSION,
     },
 };
 use crate::organization::ports::OrganizationRead;
@@ -93,6 +94,7 @@ fn validate_chat_send_inputs(params: &ChatSendParams) -> Result<MessagePriority,
             "invalid message kind for send",
         ));
     }
+    check_message_files(&params.id, &params.body, &params.attachment_ids)?;
     if params.kind == "announcement" && params.reason.as_deref().is_none_or(|r| r.trim().is_empty())
     {
         return Err(refusal(
@@ -122,6 +124,7 @@ fn check_chat_send_replay(
     sender: &Employee,
     employees: &[Employee],
     params: &ChatSendParams,
+    files: &MessageFiles,
     priority: MessagePriority,
     now_utc: &str,
 ) -> Result<Option<(Change, ChatSendCommitted)>, Refusal> {
@@ -149,6 +152,13 @@ fn check_chat_send_replay(
         || existing.reply_to_message_id != params.reply_to
         || existing.also_in_channel != params.also_in_channel
         || stored_meta != expected_meta
+        || !files.matches(
+            &existing.attachments,
+            &here.organization_id,
+            MESSAGE_SCOPE,
+            &existing.id,
+            &existing.created_at,
+        )
     {
         return Err(refusal(
             ErrorCode::AlreadyExists,
@@ -234,6 +244,7 @@ fn build_new_message_record(
     priority: MessagePriority,
     meta: Meta,
     thread_root_id: Option<String>,
+    attachments: Vec<MessageAttachmentRecord>,
     origin_seq: u64,
     org_seq: u64,
     now_utc: &str,
@@ -264,7 +275,7 @@ fn build_new_message_record(
         org_epoch: 1,
         org_sequence: org_seq,
         content_sha256: String::new(),
-        attachments: Vec::new(),
+        attachments,
         mailbox_content_hash: None,
     };
     record.content_sha256 = record.compute_content_sha256();
@@ -289,6 +300,7 @@ fn build_send_commit_change(
     priority: MessagePriority,
     scan: MentionScan,
     thread_root_id: Option<String>,
+    attachments: Vec<MessageAttachmentRecord>,
     org_seq: u64,
     now_utc: &str,
 ) -> Result<(Change, ChatSendCommitted), Refusal> {
@@ -326,6 +338,7 @@ fn build_send_commit_change(
         priority,
         meta,
         thread_root_id.clone(),
+        attachments,
         origin_seq,
         org_seq,
         now_utc,
@@ -402,12 +415,17 @@ fn build_send_commit_change(
     ))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "send decision takes explicit transaction, identity, caller, params, files, and clock inputs"
+)]
 pub fn decide_chat_send<E>(
     uow: &UnitOfWork<'_, E>,
     here: &OfficeIdentity,
     owner: &Id,
     caller: &Id,
     params: &ChatSendParams,
+    files: &MessageFiles,
     org_seq: u64,
     now_utc: &str,
 ) -> Result<(Change, ChatSendCommitted), Refusal>
@@ -432,6 +450,7 @@ where
         sender,
         &employees,
         params,
+        files,
         priority,
         now_utc,
     )? {
@@ -490,6 +509,14 @@ where
         .filter_map(|m| Id::parse(&m.employee_id).ok())
         .collect();
     check_hr_access(uow.view(), &employees, owner, caller, mentioned_ids)?;
+    let attachments = files.bind(&Binding {
+        organization_id: &here.organization_id,
+        conversation: &conv,
+        members: &active_members,
+        scope: MESSAGE_SCOPE,
+        key: &params.id,
+        created_at: now_utc,
+    })?;
 
     build_send_commit_change(
         uow.view(),
@@ -505,6 +532,7 @@ where
         priority,
         scan,
         thread_root_id,
+        attachments,
         org_seq,
         now_utc,
     )

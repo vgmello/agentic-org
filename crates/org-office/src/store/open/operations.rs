@@ -596,7 +596,7 @@ impl ReadOp for CheckHrMessageAccess {
             return Ok(false);
         };
         let owner = crate::organization::owner::effective_owner_id(read, &self.owner)?;
-        crate::organization::features::authority::may_hire_anywhere(read, &owner, sender)
+        crate::organization::features::authority::may_address_hr(read, &owner, sender)
     }
 }
 

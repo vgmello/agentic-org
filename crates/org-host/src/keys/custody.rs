@@ -9,7 +9,7 @@
 //! **The release directory store** (Linux, where the setup record names a credential
 //! directory, in every build): owner-only files
 //! `<credential directory>/office-keys/<office id>.key`, each the key's 32 bytes, in the
-//! credential directory the host opened and checked at its start (`release_store`). It is the
+//! credential directory the host opened and checked at its start (`credential_store_root`). It is the
 //! platform's directory store below that directory, held by this host alone.
 //!
 //! **The development store** (debug builds without a recorded credential directory):
@@ -61,7 +61,7 @@ const RELEASE_ITEMS: ReleaseItems<'static> = ReleaseItems {
 };
 
 /// The same item store as the host declares it when it opens the release directory
-/// (`release_store`): its directory, its suffix, and this view's name rule, so that only
+/// (`credential_store_root`): its directory, its suffix, and this view's name rule, so that only
 /// what this view would list is counted as a key there.
 pub(crate) const RELEASE_ITEM_STORE: ItemStore<'static> = ItemStore {
     directory: RELEASE_ITEMS.directory,

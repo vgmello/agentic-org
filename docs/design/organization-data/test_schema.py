@@ -1030,7 +1030,7 @@ class PrivateNoteSchemaTests(unittest.TestCase):
         for author in ("ana", "reporter"):
             insert(self.db, "private_note_authors", organization_id="org", author_id=author)
         insert(self.db, "private_note_tasks", organization_id="org", task_id="task")
-        insert(self.db, "private_task_notes", organization_id="org", id="note", schema_version=1, revision=1,
+        insert(self.db, "private_notes", organization_id="org", id="note", schema_version=1, revision=1,
                task_id="task", author_id="ana", body_markdown="Private draft",
                created_at="2026-11-15T12:00:00.000Z", updated_at="2026-11-15T12:00:00.000Z")
         self.db.commit()
@@ -1049,34 +1049,34 @@ class PrivateNoteSchemaTests(unittest.TestCase):
         self.assertEqual(self.db.execute("PRAGMA foreign_key_check").fetchall(), [])
 
     def test_unregistered_task_or_author_and_cross_org_notes_fail(self):
-        original=dict(self.db.execute("SELECT * FROM private_task_notes").fetchone())
+        original=dict(self.db.execute("SELECT * FROM private_notes").fetchone())
         for changes in ({"task_id":"missing"},{"author_id":"missing"},{"organization_id":"another"}):
             with self.subTest(changes=changes), self.assertRaises(sqlite3.IntegrityError):
-                insert(self.db, "private_task_notes", **(original | {"id":"other"} | changes))
+                insert(self.db, "private_notes", **(original | {"id":"other"} | changes))
             self.db.rollback()
 
     def test_note_identity_author_and_revision_are_guarded(self):
         for change in ("author_id='reporter',revision=2", "task_id='missing',revision=2", "id='other',revision=2", "revision=3"):
             with self.subTest(change=change), self.assertRaises(sqlite3.IntegrityError):
-                self.db.execute(f"UPDATE private_task_notes SET {change}")
+                self.db.execute(f"UPDATE private_notes SET {change}")
             self.db.rollback()
         with self.assertRaises(sqlite3.IntegrityError):
-            self.db.execute("INSERT OR REPLACE INTO private_task_notes SELECT * FROM private_task_notes")
+            self.db.execute("INSERT OR REPLACE INTO private_notes SELECT * FROM private_notes")
         self.db.rollback()
 
     def test_note_survives_task_deletion_and_note_tombstone_cannot_resurrect(self):
         self.db.execute("UPDATE private_note_tasks SET is_deleted=1")
-        self.db.execute("UPDATE private_task_notes SET revision=2,body_markdown=NULL,deleted_at='2026-11-15T13:00:00.000Z',updated_at='2026-11-15T13:00:00.000Z'")
+        self.db.execute("UPDATE private_notes SET revision=2,body_markdown=NULL,deleted_at='2026-11-15T13:00:00.000Z',updated_at='2026-11-15T13:00:00.000Z'")
         self.db.commit()
-        self.assertIsNone(self.db.execute("SELECT body_markdown FROM private_task_notes").fetchone()[0])
-        for statement in ("UPDATE private_task_notes SET revision=3,deleted_at=NULL,body_markdown='restored'", "DELETE FROM private_task_notes"):
+        self.assertIsNone(self.db.execute("SELECT body_markdown FROM private_notes").fetchone()[0])
+        for statement in ("UPDATE private_notes SET revision=3,deleted_at=NULL,body_markdown='restored'", "DELETE FROM private_notes"):
             with self.assertRaises(sqlite3.IntegrityError):
                 self.db.execute(statement)
             self.db.rollback()
 
     def test_receipt_retains_original_result_after_later_edit(self):
         self.receipt()
-        self.db.execute("UPDATE private_task_notes SET revision=2,body_markdown='Edited'")
+        self.db.execute("UPDATE private_notes SET revision=2,body_markdown='Edited'")
         self.db.commit()
         self.assertEqual(self.db.execute("SELECT result_revision FROM private_note_command_receipts").fetchone()[0], 1)
         for statement in ("INSERT OR REPLACE INTO private_note_command_receipts SELECT * FROM private_note_command_receipts", "UPDATE private_note_command_receipts SET result_revision=2"):
@@ -1088,10 +1088,10 @@ class PrivateNoteSchemaTests(unittest.TestCase):
         self.receipt(command="publish", state="pending", shared_comment_id="comment-1", finished_at=None)
         self.db.commit()
         with self.assertRaises(sqlite3.IntegrityError):
-            self.db.execute("UPDATE private_task_notes SET revision=2,body_markdown='Changed'")
+            self.db.execute("UPDATE private_notes SET revision=2,body_markdown='Changed'")
         self.db.rollback()
         self.db.execute("UPDATE private_note_command_receipts SET state='completed',finished_at='2026-11-15T13:00:00.000Z'")
-        self.db.execute("UPDATE private_task_notes SET revision=2,body_markdown='Changed'")
+        self.db.execute("UPDATE private_notes SET revision=2,body_markdown='Changed'")
         self.db.commit()
 
     def test_receipt_cannot_impersonate_another_author(self):
@@ -1099,8 +1099,104 @@ class PrivateNoteSchemaTests(unittest.TestCase):
             self.receipt(author_id="reporter")
         self.db.rollback()
 
+    def note(self, note_id, **overrides):
+        fields = dict(organization_id="org", id=note_id, schema_version=1, revision=1, task_id=None,
+                      author_id="ana", kind="decision", title="Use WAL", body_markdown="Because",
+                      created_at="2026-11-15T12:00:00.000Z", updated_at="2026-11-15T12:00:00.000Z")
+        fields.update(overrides)
+        insert(self.db, "private_notes", **fields)
+
+    def test_a_note_may_stand_outside_any_task_but_a_named_task_must_be_mirrored(self):
+        self.note("free", project_id="project")
+        self.db.commit()
+        self.assertEqual(self.db.execute("PRAGMA foreign_key_check").fetchall(), [])
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.note("orphan", task_id="missing")
+        self.db.rollback()
+        for change in ("task_id='task'", "project_id='other'", "project_id=NULL"):
+            assert_refused(self, self.db, "private note identity, revision or deletion conflict",
+                           f"UPDATE private_notes SET {change},revision=2 WHERE id='free'")
+
+    def test_kind_is_note_plan_or_decision_and_the_author_may_change_it(self):
+        self.assertEqual(self.db.execute("SELECT kind FROM private_notes WHERE id='note'").fetchone()[0], "note")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.note("memo", kind="memo")
+        self.db.rollback()
+        self.db.execute("UPDATE private_notes SET kind='plan',revision=2 WHERE id='note'")
+        self.db.execute("UPDATE private_notes SET kind='decision',title='Decided',revision=3 WHERE id='note'")
+        self.db.commit()
+
+    def test_an_active_decision_has_a_title_and_text_fields_are_bounded(self):
+        for overrides in ({"title": None}, {"title": "   "}, {"title": "t" * 201},
+                          {"why": "w" * 2001}, {"alternatives": "a" * 2001}, {"why": " "}):
+            with self.subTest(overrides=overrides), self.assertRaises(sqlite3.IntegrityError):
+                self.note("bounded", **overrides)
+            self.db.rollback()
+        self.note("bounded", title="é" * 200, why="é" * 2000, alternatives="a" * 2000)
+        self.note("plain-note", kind="note", title=None)
+        self.db.commit()
+
+    def test_tags_follow_the_label_grammar_cap_at_eight_and_need_an_active_note(self):
+        for tag in ("Upper", "-lead", "trail-", "two words", "x" * 65, ""):
+            with self.subTest(tag=tag), self.assertRaises(sqlite3.IntegrityError):
+                insert(self.db, "private_note_tags", organization_id="org", note_id="note", tag=tag)
+            self.db.rollback()
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "private_note_tags", organization_id="org", note_id="missing", tag="arch")
+        self.db.rollback()
+        for n in range(8):
+            insert(self.db, "private_note_tags", organization_id="org", note_id="note", tag=f"t{n}.a:b/c_d")
+        self.db.commit()
+        assert_refused(self, self.db, "a private note carries at most 8 tags", lambda: insert(
+            self.db, "private_note_tags", organization_id="org", note_id="note", tag="ninth"))
+        assert_refused(self, self.db, "private note tags are replaced, never updated", lambda: self.db.execute(
+            "UPDATE private_note_tags SET tag='renamed' WHERE note_id='note' AND tag='t0.a:b/c_d'"))
+
+    def test_a_tombstone_clears_every_private_field_and_tag(self):
+        self.note("decided", why="Private why", alternatives="Private options")
+        insert(self.db, "private_note_tags", organization_id="org", note_id="decided", tag="arch")
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):  # a tombstone may not keep its title
+            self.db.execute("UPDATE private_notes SET revision=2,body_markdown=NULL,why=NULL,alternatives=NULL,"
+                            "deleted_at='2026-11-15T13:00:00.000Z',updated_at='2026-11-15T13:00:00.000Z' "
+                            "WHERE id='decided'")
+        self.db.rollback()
+        self.db.execute("UPDATE private_notes SET revision=2,title=NULL,why=NULL,alternatives=NULL,body_markdown=NULL,"
+                        "deleted_at='2026-11-15T13:00:00.000Z',updated_at='2026-11-15T13:00:00.000Z' WHERE id='decided'")
+        self.db.commit()
+        row = self.db.execute("SELECT kind,title,why,alternatives,body_markdown FROM private_notes "
+                              "WHERE id='decided'").fetchone()
+        self.assertEqual(tuple(row), ("decision", None, None, None, None))
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM private_note_tags").fetchone()[0], 0)
+        assert_refused(self, self.db, "tags belong only to an active private note", lambda: insert(
+            self.db, "private_note_tags", organization_id="org", note_id="decided", tag="late"))
+
+    def test_only_a_task_note_can_be_published(self):
+        self.note("free")
+        self.db.commit()
+        assert_refused(self, self.db, "private receipt must match note author and accepted revision",
+                       lambda: self.receipt(operation_id="publish-free", command="publish", note_id="free",
+                                            shared_comment_id="comment-free"))
+        self.receipt(operation_id="publish-task", command="publish", shared_comment_id="comment-task")
+        self.db.commit()
+
+    def test_recall_queries_use_the_author_kind_and_tag_indexes(self):
+        def plan_lines(conn, sql, params=()):
+            return [row[3] for row in conn.execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall()]
+
+        by_kind = "\n".join(plan_lines(
+            self.db,
+            "SELECT id, title FROM private_notes WHERE organization_id=? AND author_id=? AND kind=? "
+            "AND deleted_at IS NULL ORDER BY updated_at DESC",
+            ("org", "ana", "decision"),
+        ))
+        self.assertIn("private_notes_by_author_kind", by_kind)
+        by_tag = "\n".join(plan_lines(
+            self.db, "SELECT note_id FROM private_note_tags WHERE organization_id=? AND tag=?", ("org", "arch")))
+        self.assertIn("private_note_tags_by_tag", by_tag)
+
     def test_a_private_note_author_is_an_employee_id_with_no_kind(self):
-        for table in ("private_note_authors", "private_task_notes", "private_note_command_receipts"):
+        for table in ("private_note_authors", "private_notes", "private_note_command_receipts"):
             with self.subTest(table=table):
                 columns = [row[1] for row in self.db.execute(f"PRAGMA table_xinfo({table})")]
                 self.assertIn("author_id", columns)
@@ -1538,6 +1634,31 @@ class GapPreservationTests(unittest.TestCase):
         self.db.commit()
         assert_refused(self, self.db, "UNIQUE constraint failed: employees", lambda: insert(
             self.db, "employees", **hr, id="hr-2", handle="hr-2", name="HR 2"))
+
+    def test_the_built_in_chief_of_staff_is_one_agent_that_may_hold_the_hiring_permission(self):
+        cos = dict(organization_id="org", schema_version=1, revision=1, kind="agent", home_team_id="payments",
+                   builtin_key="chief_of_staff")
+        for bad in (dict(kind="person"), dict(builtin_key="ceo"), dict(builtin_key="Chief_Of_Staff"),
+                    dict(builtin_key="")):
+            with self.subTest(bad=bad):
+                assert_refused(self, self.db, "CHECK constraint failed", lambda: insert(
+                    self.db, "employees", **(cos | bad), id="bad", handle="bad", name="Bad"))
+        # Unlike the HR lead, the Chief of Staff may hold may_hire (the owner turns it off and on).
+        insert(self.db, "employees", **cos, id="tess", handle="tess", name="Tess", may_hire=1)
+        self.db.commit()
+        self.db.execute("UPDATE employees SET may_hire=0 WHERE id='tess'")
+        self.db.execute("UPDATE employees SET may_hire=1 WHERE id='tess'")
+        self.db.commit()
+        for may_hire in (0, 1):
+            with self.subTest(may_hire=may_hire):
+                assert_refused(self, self.db, "UNIQUE constraint failed: employees", lambda: insert(
+                    self.db, "employees", **cos, id="tess-2", handle="tess-2", name="Tess 2", may_hire=may_hire))
+        # One of each built-in lives beside the other: the two indexes are separate.
+        insert(self.db, "employees", organization_id="org", schema_version=1, revision=1, kind="agent",
+               home_team_id="payments", builtin_key="hr", may_hire=0, id="hr", handle="hr", name="HR")
+        self.db.commit()
+        assert_refused(self, self.db, "UNIQUE constraint failed: employees",
+                       "UPDATE employees SET builtin_key='chief_of_staff' WHERE id='hr'")
 
     def test_an_affected_feature_is_in_the_task_project(self):
         feature = dict(organization_id="org", schema_version=1, revision=1, title="F", status="planned")
@@ -2364,6 +2485,17 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
             (self.db, "usage_by_release_time",
              "SELECT id FROM usage_records WHERE organization_id=? AND release_id=? ORDER BY occurred_at",
              ("org", "rel")),
+            # TASK-105: an open-scope page of a project's or a team's tasks, in the default order.
+            (self.db, "tasks_open_by_project",
+             "SELECT t.id, t.title FROM tasks t WHERE t.organization_id=? AND t.project_id=? "
+             "AND t.status NOT IN ('done', 'cancelled') "
+             "ORDER BY t.rank_order IS NULL, t.rank_order, t.office_code, t.number, t.id LIMIT 50",
+             ("org", "project")),
+            (self.db, "tasks_open_by_team",
+             "SELECT t.id, t.title FROM tasks t WHERE t.organization_id=? AND t.team_id=? "
+             "AND t.status NOT IN ('done', 'cancelled') "
+             "ORDER BY t.rank_order IS NULL, t.rank_order, t.office_code, t.number, t.id LIMIT 50",
+             ("org", "team")),
         ]
         msg_db = database("messaging-schema.sql")
         self.addCleanup(msg_db.close)
@@ -2381,14 +2513,17 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
             with self.subTest(index=expected_index):
                 joined = "\n".join(plan_lines(conn, sql, params))
                 self.assertIn(expected_index, joined)
+                if expected_index.startswith("tasks_open_by_"):
+                    # The open-task partial indexes hold the default order: no sort step.
+                    self.assertNotIn("TEMP B-TREE", joined)
 
-        # ADR-0031 person read on private_task_notes uses private_notes_by_task.
+        # ADR-0031 person read on private_notes uses private_notes_by_task.
         private = sqlite3.connect(":memory:")
         self.addCleanup(private.close)
         private.executescript((ROOT / "private-notes-schema.sql").read_text())
         private_plan = "\n".join(plan_lines(
             private,
-            "SELECT id, author_id, body_markdown FROM private_task_notes "
+            "SELECT id, author_id, body_markdown FROM private_notes "
             "WHERE organization_id=? AND task_id=? AND deleted_at IS NULL ORDER BY updated_at",
             ("org", "task"),
         ))
@@ -2614,14 +2749,14 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         insert(private, "private_note_tasks", organization_id="org", task_id="task")
         private.commit()
         assert_refused(self, private, "new private note must start active at revision 1", lambda: insert(
-            private, "private_task_notes", organization_id="org", id="n-bad-rev", schema_version=1, revision=2,
+            private, "private_notes", organization_id="org", id="n-bad-rev", schema_version=1, revision=2,
             task_id="task", author_id="ana", body_markdown="bad",
             created_at="2026-11-21T00:00:00Z", updated_at="2026-11-21T00:00:00Z"))
         assert_refused(self, private, "new private note must start active at revision 1", lambda: insert(
-            private, "private_task_notes", organization_id="org", id="n-bad-del", schema_version=1, revision=1,
+            private, "private_notes", organization_id="org", id="n-bad-del", schema_version=1, revision=1,
             task_id="task", author_id="ana", body_markdown=None,
             created_at="2026-11-21T00:00:00Z", updated_at="2026-11-21T00:00:00Z", deleted_at="2026-11-21T00:00:00Z"))
-        insert(private, "private_task_notes", organization_id="org", id="n1", schema_version=1, revision=1,
+        insert(private, "private_notes", organization_id="org", id="n1", schema_version=1, revision=1,
                task_id="task", author_id="ana", body_markdown="good",
                created_at="2026-11-21T00:00:00Z", updated_at="2026-11-21T00:00:00Z")
         insert(private, "private_note_command_receipts", organization_id="org", author_id="ana",
