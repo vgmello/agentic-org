@@ -9,16 +9,11 @@ import type { AppError } from '$lib/proto';
 import type { InboxApi } from './api';
 import type { InboxAction, InboxItem, InboxKind, InboxPerson, InboxRequest } from './types';
 
-type Rec = Record<string, unknown>;
+import { asNum, asRec, asStr, type Rec } from '$lib/platform/http/decode';
 
 const KINDS: ReadonlySet<string> = new Set(['approval', 'question', 'decision', 'problem']);
 const ACTIONS: ReadonlySet<string> = new Set(['approve', 'deny', 'reply', 'choose', 'dismiss']);
 
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
-const asNum = (v: unknown): number | undefined =>
-	typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 const optField = <K extends string, V>(key: K, value: V | undefined): Partial<Record<K, V>> =>
 	value === undefined ? {} : ({ [key]: value } as Partial<Record<K, V>>);
 const msToIso = (v: unknown): string | undefined => {

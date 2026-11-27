@@ -1,10 +1,11 @@
 // Pure presentation helpers for the compact Work list view (ported from poc/v6.html).
+import type { WorkStatusRingTone } from '$lib/components/pills';
 import type { Priority, WorkItemSummary } from '$lib/proto';
 import { BUG_STATUS_LABEL } from './bugs';
 import type { WorkTab } from './saved';
 import { STATUS_LABEL } from './tasks';
 
-export type WorkStatusRingTone = 'active' | 'done' | 'blocked' | 'review' | 'neutral';
+export type { WorkStatusRingTone };
 export type PriorityLevel = 'high' | 'medium' | 'low';
 export type PriorityMeterTone = 'strong' | 'neutral';
 export type ProjectDotTone = 'accent' | 'ok' | 'warn' | 'queued' | 'bad';

@@ -13,7 +13,7 @@
 	import PauseCircle from '@lucide/svelte/icons/pause-circle';
 	import X from '@lucide/svelte/icons/x';
 	import { toast } from 'svelte-sonner';
-	import type { WorkStatusRingTone } from '$lib/modules/work/compact';
+	import type { WorkStatusRingTone } from './pills';
 
 	let {
 		itemId,

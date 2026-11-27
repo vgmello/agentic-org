@@ -7,8 +7,7 @@
 	import Clock from '@lucide/svelte/icons/clock';
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import SectionHead from '$lib/components/SectionHead.svelte';
-	import { executeDecisionAction } from '$lib/home/actions';
-	import { deriveTriageItems, type TriageItem } from '$lib/modules/inbox';
+	import { deriveTriageItems, executeDecisionAction, type TriageItem } from '$lib/modules/inbox';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { toAppError } from '$lib/proto';
 
