@@ -167,6 +167,7 @@ impl Fixture {
             conversation_id: Some("dm-bea-tess".into()),
             source_id: format!("msg-{id}"),
             summary: "Bea: what is the owner planning?".into(),
+            attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
         }
     }
@@ -553,6 +554,7 @@ fn failover(f: &Fixture, partition: Option<PartitionKey>) -> FailoverRequest {
         failed_run_id: "run-live".into(),
         failed_connection_id: "conn-1".into(),
         objective: "Owner: draft the board update".into(),
+        attachment_ids: Vec::new(),
         workspace: None,
         task_ref: None,
         tried_connections: vec!["conn-1".into()],
@@ -705,6 +707,7 @@ fn wake_item(
         conversation_id: Some(format!("conv-of-{id}")),
         source_id: format!("msg-{id}"),
         summary: summary.into(),
+        attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
     }
 }
@@ -801,7 +804,7 @@ fn queued_dms_of_different_senders_never_share_a_turn_or_a_conversation() {
         let turns: Vec<String> = cmds
             .into_iter()
             .filter_map(|c| match c {
-                PumpCommand::SendTurn(text) => Some(text),
+                PumpCommand::SendTurn(turn) => Some(turn.text),
                 _ => None,
             })
             .collect();
@@ -878,7 +881,7 @@ fn turns_sent_to(f: &Fixture, partition: PartitionKey) -> Vec<String> {
     assert!(stop_reasons(&cmds).is_empty(), "never switched");
     cmds.into_iter()
         .filter_map(|c| match c {
-            PumpCommand::SendTurn(text) => Some(text),
+            PumpCommand::SendTurn(turn) => Some(turn.text),
             _ => None,
         })
         .collect()
@@ -1011,7 +1014,7 @@ fn her_required_ask_never_suspends_her_and_a_dm_answer_runs_in_the_answerers_par
     );
     assert!(cmds
         .iter()
-        .any(|c| matches!(c, PumpCommand::SendTurn(text) if text.contains(ANSWER))));
+        .any(|c| matches!(c, PumpCommand::SendTurn(turn) if turn.text.contains(ANSWER))));
     assert!(f.queued().is_empty());
     assert!(f
         .manager

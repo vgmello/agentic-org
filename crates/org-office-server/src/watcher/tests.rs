@@ -1064,6 +1064,7 @@ impl AgentRuntime for WatchScriptedRuntime {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,
+            image_input: org_agent_runtime::ImageInputMode::StagedFileOnly,
             interrupt_in_band: false,
             idle_interrupt_ends_turn: false,
             approval_bridge: false,

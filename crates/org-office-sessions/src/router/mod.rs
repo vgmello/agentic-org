@@ -32,6 +32,8 @@ pub(crate) use warm_permit::{compute_route_digest_with_wt, compute_worktree_sand
 pub(crate) struct AdmittedRoute {
     pub adapter: Arc<dyn AgentRuntime>,
     pub model_token: Option<Token>,
+    /// Whether the discovered model supports vision/image inputs (`TASK-98.3`).
+    pub model_supports_vision: bool,
     /// The agent's reasoning effort (`TASK-181`) as the session spec's token, in the office's
     /// names; each runtime adapter maps it onto its own. `None` keeps the runtime's default.
     pub effort: Option<Token>,
@@ -288,7 +290,7 @@ fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOut
             cooldown_until: None,
         });
     }
-    let (binding_rev, resolved_model) =
+    let (binding_rev, resolved_model, model_supports_vision) =
         match check_local_readiness(ctx.office, &conn, ctx.model_id, ctx.now_ms)? {
             Ok(v) => v,
             Err(reason) => {
@@ -363,6 +365,7 @@ fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOut
             employee_id: ctx.employee_id,
             preset: ctx.preset,
             resolved_model: &resolved_model,
+            model_supports_vision,
             profile_key: ctx.profile_key,
             effort: ctx.effort,
             binding_rev,
@@ -414,6 +417,7 @@ pub(crate) fn select_and_admit_route(
         return Ok(AdmittedRoute {
             adapter,
             model_token: None,
+            model_supports_vision: true,
             effort: None,
             auth_mode: None,
             auth_env: Vec::new(),
@@ -510,7 +514,7 @@ fn check_local_readiness(
     conn: &ProviderConnection,
     target_model: &str,
     now_ms: u64,
-) -> Result<Result<(u64, String), &'static str>, ApiError> {
+) -> Result<Result<(u64, String, bool), &'static str>, ApiError> {
     let cid = conn.id.as_str();
     let binding = office
         .load_connection_binding(cid)
@@ -541,7 +545,10 @@ fn check_local_readiness(
             && !m.is_stale(now_ms)
     });
     match matched {
-        Some(m) => Ok(Ok((binding.revision, m.driver_model_id))),
+        Some(m) => {
+            let vision = crate::turn_attachments::model_supports_vision(&m.capabilities_json);
+            Ok(Ok((binding.revision, m.driver_model_id, vision)))
+        }
         None => Ok(Err("MODEL_UNVERIFIED")),
     }
 }
@@ -550,6 +557,7 @@ struct AdmitParams<'a> {
     employee_id: &'a str,
     preset: PermissionPreset,
     resolved_model: &'a str,
+    model_supports_vision: bool,
     profile_key: &'a str,
     effort: Option<ReasoningEffort>,
     binding_rev: u64,
@@ -568,6 +576,7 @@ fn finalize_admitted_connection(
         employee_id,
         preset,
         resolved_model,
+        model_supports_vision,
         profile_key,
         effort,
         binding_rev,
@@ -615,6 +624,7 @@ fn finalize_admitted_connection(
     Ok(AdmittedRoute {
         adapter,
         model_token,
+        model_supports_vision,
         effort: effort_token,
         auth_mode: Some(conn.auth_mode),
         auth_env,

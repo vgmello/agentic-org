@@ -562,6 +562,7 @@ fn handshake_validates_sandbox_policy_resume_failure_and_empty_agents() {
         .control(
             Control::Send {
                 text: "hello".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -645,6 +646,7 @@ fn turn_error_recovery_multistep_usage_escalations_unknown_server_req_and_rate_l
         .control(
             Control::Send {
                 text: "fail first".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -672,6 +674,7 @@ fn turn_error_recovery_multistep_usage_escalations_unknown_server_req_and_rate_l
         .control(
             Control::Send {
                 text: "second turn".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -770,6 +773,7 @@ fn turn_error_recovery_multistep_usage_escalations_unknown_server_req_and_rate_l
         .control(
             Control::Send {
                 text: "crash".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -1343,6 +1347,7 @@ fn task115_codex_native_steer_gates_active_turn_id_and_tracks_rpc_ack_or_error()
             Control::DeliverMidTurn {
                 delivery_id: "d-idle".into(),
                 text: "msg".into(),
+                images: Vec::new(),
             },
             now
         ),
@@ -1351,13 +1356,20 @@ fn task115_codex_native_steer_gates_active_turn_id_and_tracks_rpc_ack_or_error()
 
     // Start turn; BEFORE `turn/started` arrives, active_turn_id is None -> NotReady (no write!).
     let _ = session
-        .control(Control::Send { text: "go".into() }, now)
+        .control(
+            Control::Send {
+                text: "go".into(),
+                images: Vec::new(),
+            },
+            now,
+        )
         .unwrap();
     assert_eq!(
         session.control(
             Control::DeliverMidTurn {
                 delivery_id: "d-early".into(),
                 text: "too early".into(),
+                images: Vec::new(),
             },
             now
         ),
@@ -1374,6 +1386,7 @@ fn task115_codex_native_steer_gates_active_turn_id_and_tracks_rpc_ack_or_error()
             Control::DeliverMidTurn {
                 delivery_id: "d-ok".into(),
                 text: "peer steer".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -1404,6 +1417,7 @@ fn task115_codex_native_steer_gates_active_turn_id_and_tracks_rpc_ack_or_error()
             Control::DeliverMidTurn {
                 delivery_id: "d-err".into(),
                 text: "stale".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -1435,6 +1449,7 @@ fn task115_codex_native_steer_gates_active_turn_id_and_tracks_rpc_ack_or_error()
             Control::DeliverMidTurn {
                 delivery_id: "d-race".into(),
                 text: "race".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -1520,4 +1535,105 @@ fn every_office_effort_level_maps_onto_codex_reasoning_effort() {
             "{unknown}"
         );
     }
+}
+
+#[test]
+fn codex_emits_local_image_items_on_turn_start_and_turn_steer_with_read_only_dir() {
+    use org_agent_runtime::{ImageInputMode, TurnImage};
+
+    let runtime = CodexRuntime::new();
+    assert_eq!(
+        runtime.capabilities().image_input,
+        ImageInputMode::LocalPath
+    );
+
+    let mut spec = sample_spec();
+    let att_dir = SpecPath::try_from("/office/agents/ada/runtime/attachments").unwrap();
+    spec.read_only_dirs.push(att_dir.clone());
+    let (plan, mut session) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    assert!(
+        plan.args
+            .iter()
+            .any(|arg| arg.contains(att_dir.as_str()) && arg.contains("read")),
+        "Codex permissions profile must mount read_only_dirs as read: {:?}",
+        plan.args
+    );
+
+    let now = Instant::now();
+    let _ = session.start(now);
+    let _ = session.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"codex","version":"0.172.0"}}}"#,
+        now,
+    );
+    let _ = session.on_line(&thread_ok_reply("thr_img_1"), now);
+
+    let img_path = SpecPath::try_from("/office/agents/ada/runtime/attachments/t1/a1.png").unwrap();
+    let out = session
+        .control(
+            Control::Send {
+                text: "Check image".into(),
+                images: vec![TurnImage::local_path("image/png", img_path.clone())],
+            },
+            now,
+        )
+        .expect("Codex turn/start accepts localImage");
+    let Output::Write(line) = &out[0] else {
+        panic!("expected turn/start write")
+    };
+    let req: serde_json::Value = serde_json::from_slice(line.as_bytes()).unwrap();
+    assert_eq!(req["method"], "turn/start");
+    assert_eq!(
+        req["params"]["input"],
+        serde_json::json!([
+            { "type": "text", "text": "Check image" },
+            { "type": "localImage", "path": img_path.as_str() }
+        ])
+    );
+    assert!(
+        !String::from_utf8_lossy(line.as_bytes()).contains("base64"),
+        "Codex must never emit base64 in turn/start"
+    );
+
+    // Emit turn/started so turn/steer is accepted with localImage too.
+    let _ = session.on_line(
+        br#"{"jsonrpc":"2.0","method":"turn/started","params":{"turn":{"id":"turn_img_1"}}}"#,
+        now,
+    );
+    let steer_path =
+        SpecPath::try_from("/office/agents/ada/runtime/attachments/mt1/a2.jpg").unwrap();
+    let steer_out = session
+        .control(
+            Control::DeliverMidTurn {
+                delivery_id: "steer-img-1".into(),
+                text: "Mid-turn image".into(),
+                images: vec![TurnImage::local_path("image/jpeg", steer_path.clone())],
+            },
+            now,
+        )
+        .expect("Codex turn/steer accepts localImage");
+    let Output::Write(steer_line) = &steer_out[0] else {
+        panic!("expected turn/steer write")
+    };
+    let steer_req: serde_json::Value = serde_json::from_slice(steer_line.as_bytes()).unwrap();
+    assert_eq!(steer_req["method"], "turn/steer");
+    assert_eq!(
+        steer_req["params"]["input"],
+        serde_json::json!([
+            { "type": "text", "text": "Mid-turn image" },
+            { "type": "localImage", "path": steer_path.as_str() }
+        ])
+    );
+
+    // InlineBase64 on turn/steer is refused cleanly without mutating state.
+    assert_eq!(
+        session.control(
+            Control::DeliverMidTurn {
+                delivery_id: "steer-bad".into(),
+                text: "bad".into(),
+                images: vec![TurnImage::inline_bytes("image/png", b"raw")],
+            },
+            now
+        ),
+        Err(ControlError::Unsupported)
+    );
 }

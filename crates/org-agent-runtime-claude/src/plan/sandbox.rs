@@ -25,6 +25,12 @@ pub(super) fn build_sandbox_json(spec: &SessionSpec, ctx: &LaunchContext) -> Val
         .iter()
         .map(|p| p.as_str().to_owned())
         .collect();
+    for dir in &spec.read_only_dirs {
+        let path = dir.as_str();
+        if !deny_write.iter().any(|p| p == path) {
+            deny_write.push(path.to_owned());
+        }
+    }
     let mut deny_read: Vec<String> = spec
         .sandbox
         .deny_read

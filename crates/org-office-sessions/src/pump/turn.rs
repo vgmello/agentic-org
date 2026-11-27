@@ -2,13 +2,17 @@
 
 use std::time::{Duration, Instant};
 
-use org_agent_runtime::Control;
+use org_agent_runtime::{Control, ImageInputMode, MidTurnDelivery};
 use org_proto::sessions::SessionState;
 
 use crate::credentials::now_ms;
+use crate::turn_attachments::{
+    prepare_turn_attachments, purge_turn_dir, PrepareTurnAttachmentsRequest,
+};
 
 use super::commands::{build_stale_failover_request, release_active_permit, take_pending_turns};
 use super::events::apply_outputs;
+use super::queue::merge_queued_turns;
 use super::{persist_turn_update, MidTurnStageOutcome, PumpContext, PumpLoopState};
 
 pub(super) enum PermitCheck {
@@ -94,41 +98,77 @@ pub(super) fn dispatch_next_turn(
     match ensure_permit_for_turn(ctx, loop_state) {
         PermitCheck::Ready => {}
         PermitCheck::StaleWarm => {
-            let objective = take_pending_turns(ctx, loop_state).join("\n\n");
-            loop_state.failover_pending = Some(build_stale_failover_request(ctx, objective));
+            let (objective, attachment_ids) =
+                merge_queued_turns(take_pending_turns(ctx, loop_state));
+            loop_state.failover_pending =
+                Some(build_stale_failover_request(ctx, objective, attachment_ids));
             loop_state.stop_requested = true;
             return;
         }
         PermitCheck::Refused => return,
     }
-    let text = loop_state.pending_turns.remove(0);
+    let queued = loop_state.pending_turns.remove(0);
     loop_state.front_is_steer = false;
     ctx.state
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .dequeue_turns(1);
-    let objective_for_disk = text.clone();
-    loop_state.current_objective = text.clone();
+    let next_seq = loop_state.turns_dispatched.saturating_add(1);
+    let stage_turn_id = if queued.force_text_only {
+        format!("{}-t{next_seq}-fb", ctx.run_id)
+    } else {
+        format!("{}-t{next_seq}", ctx.run_id)
+    };
+    let prepared = prepare_turn_attachments(PrepareTurnAttachmentsRequest {
+        employee_id: &ctx.employee_id,
+        turn_id: &stage_turn_id,
+        base_text: queued.text.clone(),
+        attachment_ids: &queued.attachment_ids,
+        image_input_mode: ctx.runtime.capabilities().image_input,
+        allow_protocol_images: true,
+        model_supports_vision: ctx.model_supports_vision,
+        force_text_only: queued.force_text_only,
+        attachments_root: &ctx.attachments_root,
+        resolver: ctx.attachment_resolver.as_ref(),
+    });
+    let objective_for_disk = queued.text.clone();
+    let attachment_ids_for_disk = queued.attachment_ids.clone();
+    loop_state.current_objective = queued.text;
+    loop_state.current_attachment_ids = queued.attachment_ids;
+    loop_state.current_turn_staged_id = prepared.staged_turn_id.clone();
+    loop_state.current_turn_had_protocol_images = prepared.had_protocol_images;
+    loop_state.current_turn_image_fallback_retried = queued.force_text_only;
     loop_state.turn_reply = None;
     loop_state.had_external_effect = false;
     loop_state.accepted_commands_baseline = ctx.bindings.accepted_commands(&ctx.employee_id).len();
     loop_state.rate_limited = false;
     loop_state.rate_limit_resets_at = None;
     loop_state.last_permit_renew = Instant::now();
-    if let Ok(outs) = session.control(Control::Send { text }, Instant::now()) {
+    let ctrl = Control::Send {
+        text: prepared.text,
+        images: prepared.images,
+    };
+    if let Ok(outs) = session.control(ctrl, Instant::now()) {
         loop_state.turn_active = true;
-        loop_state.turns_dispatched = loop_state.turns_dispatched.saturating_add(1);
+        loop_state.turns_dispatched = next_seq;
         loop_state.in_flight_delivery = None;
+        loop_state.in_flight_delivery_staged_id = None;
+        loop_state.mid_turn_staged_ids.clear();
         loop_state.mid_turn_total_this_turn = 0;
         loop_state.mid_turn_agent_this_turn = 0;
         loop_state.mid_turn_dirty = true;
         loop_state.mid_turn_next_check = None;
         persist_turn_update(ctx, |rec| {
             rec.objective = objective_for_disk;
+            rec.attachment_ids = attachment_ids_for_disk;
             rec.active = true;
         });
         apply_outputs(outs, stdin, ctx, loop_state, session);
     } else {
+        if let Some(tid) = loop_state.current_turn_staged_id.take() {
+            purge_turn_dir(&ctx.attachments_root, &tid);
+        }
+        loop_state.current_turn_had_protocol_images = false;
         release_active_permit(ctx);
         loop_state.permit_lease_deadline = None;
         // The turn never started: the session marked busy when it was queued is idle again,
@@ -189,20 +229,45 @@ pub(super) fn maybe_deliver_mid_turn(
             loop_state.mid_turn_next_check = Some(Instant::now() + dur);
         }
         MidTurnStageOutcome::Ready(batch) => {
+            let caps = ctx.runtime.capabilities();
+            let allow_protocol_images = caps.image_input == ImageInputMode::LocalPath
+                && caps.mid_turn_delivery == MidTurnDelivery::NativeSteer;
+            let stage_id = format!("{}-{}", ctx.run_id, batch.delivery_id);
+            let prepared = prepare_turn_attachments(PrepareTurnAttachmentsRequest {
+                employee_id: &ctx.employee_id,
+                turn_id: &stage_id,
+                base_text: batch.text.clone(),
+                attachment_ids: &batch.attachment_ids,
+                image_input_mode: caps.image_input,
+                allow_protocol_images,
+                model_supports_vision: ctx.model_supports_vision,
+                force_text_only: false,
+                attachments_root: &ctx.attachments_root,
+                resolver: ctx.attachment_resolver.as_ref(),
+            });
             let ctrl = Control::DeliverMidTurn {
                 delivery_id: batch.delivery_id.clone(),
-                text: batch.text.clone(),
+                text: prepared.text,
+                images: prepared.images,
             };
             match session.control(ctrl, Instant::now()) {
                 Ok(outs) => {
                     loop_state.in_flight_delivery = Some(batch);
+                    loop_state.in_flight_delivery_staged_id = prepared.staged_turn_id;
                     apply_outputs(outs, stdin, ctx, loop_state, session);
                 }
                 Err(org_agent_runtime::ControlError::NotReady) => {
+                    if let Some(tid) = prepared.staged_turn_id {
+                        purge_turn_dir(&ctx.attachments_root, &tid);
+                    }
                     loop_state.mid_turn_next_check =
                         Some(Instant::now() + MID_TURN_NOT_READY_RETRY);
                 }
-                Err(_) => {}
+                Err(_) => {
+                    if let Some(tid) = prepared.staged_turn_id {
+                        purge_turn_dir(&ctx.attachments_root, &tid);
+                    }
+                }
             }
         }
     }

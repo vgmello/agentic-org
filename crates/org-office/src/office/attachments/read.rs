@@ -16,6 +16,7 @@ use crate::attachments::media::{self, MediaType, ModelDerivative};
 use crate::attachments::records::AttachmentRecord;
 use crate::attachments::remote::{bytes_unavailable, BlobPull};
 use crate::attachments::user_space::satellite_refusal;
+use crate::attachments::DeliveryAttachmentPayload;
 use crate::authz::PrincipalContext;
 use crate::error::OfficeError;
 use crate::office::storage;
@@ -235,6 +236,39 @@ impl Office {
         }))
     }
 
+    /// Reads and hash-verifies all bytes of an already-authorized `record`, pulling a shared
+    /// blob from HQ on a satellite when `pull` is supplied and the blob is not cached locally.
+    fn read_authorized_blob_all(
+        &self,
+        record: &AttachmentRecord,
+        max_bytes: u64,
+        pull: Option<BlobPull<'_>>,
+    ) -> Answer<Vec<u8>> {
+        if record.scope() == AttachmentScope::UserPrivate && self.attachments.private.is_none() {
+            return Ok(Err(satellite_refusal()));
+        }
+        let bytes = match self.local_blob_all(record, max_bytes)? {
+            Some(bytes) => bytes,
+            None => match pull.filter(|_| self.may_pull(record)) {
+                None => {
+                    return Ok(Err(bytes_unavailable(
+                        "the attachment's bytes are not on this office",
+                    )))
+                }
+                Some(pull) => match self.pull_shared_blob(record, pull)? {
+                    Ok(bytes) => bytes,
+                    Err(refusal) => return Ok(Err(refusal)),
+                },
+            },
+        };
+        if ContentHash::of(&bytes) != record.content_sha256 {
+            return Err(OfficeError::Invalid(
+                "an attachment blob does not match its hash",
+            ));
+        }
+        Ok(Ok(bytes))
+    }
+
     /// The bounded copy of a readable image a model reads (at most 1568 px on its longest
     /// side and 1 MiB), made from the stored bytes.
     pub fn attachment_model_derivative(
@@ -242,6 +276,19 @@ impl Office {
         actor: &str,
         attachment_id: &str,
     ) -> Answer<ModelDerivative> {
+        Ok(self
+            .attachment_model_derivative_with(actor, attachment_id, None)?
+            .map(|(_, derivative)| derivative))
+    }
+
+    /// Bounded model derivative for an image attachment, optionally pulling missing shared bytes
+    /// from HQ on a satellite (`TASK-98.3`, `TASK-98.6`).
+    pub fn attachment_model_derivative_with(
+        &self,
+        actor: &str,
+        attachment_id: &str,
+        pull: Option<BlobPull<'_>>,
+    ) -> Answer<(AttachmentRecord, ModelDerivative)> {
         let caller = match self.attachment_caller(actor)? {
             Ok(caller) => caller,
             Err(refusal) => return Ok(Err(refusal)),
@@ -255,19 +302,69 @@ impl Office {
                 "only images have a model derivative",
             )));
         };
-        if record.scope() == AttachmentScope::UserPrivate && self.attachments.private.is_none() {
-            return Ok(Err(satellite_refusal()));
+        let bytes = match self.read_authorized_blob_all(&record, media.max_bytes(), pull)? {
+            Ok(bytes) => bytes,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        match media::model_derivative(media, &bytes) {
+            Ok(derivative) => Ok(Ok((record, derivative))),
+            Err(err) => Ok(Err(err)),
         }
-        let Some(bytes) = self.local_blob_all(&record, media.max_bytes())? else {
-            return Ok(Err(bytes_unavailable(
-                "the attachment's bytes are not on this office",
+    }
+
+    /// Resolves one policy-authorized attachment for model turn delivery (`TASK-98.3`):
+    /// - Allowlisted images return their bounded [`ModelDerivative`] (`<= 1568px`, `<= 1 MiB`).
+    /// - Allowlisted documents return raw bytes when `record.byte_count <= remaining_doc_budget`,
+    ///   or `bytes: None` when staging would exceed the caller's per-turn eager staging budget
+    ///   (without loading or pulling the oversized blob).
+    pub fn attachment_read_for_delivery_with(
+        &self,
+        actor: &str,
+        attachment_id: &str,
+        remaining_doc_budget: u64,
+        pull: Option<BlobPull<'_>>,
+    ) -> Answer<DeliveryAttachmentPayload> {
+        let caller = match self.attachment_caller(actor)? {
+            Ok(caller) => caller,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        let record = match self.readable(&caller, attachment_id)? {
+            Ok(record) => record,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        let Some(media) = MediaType::from_mime(&record.mime_type) else {
+            return Ok(Err(media::unsupported(
+                "attachment media type is not allowlisted for model delivery",
             )));
         };
-        if ContentHash::of(&bytes) != record.content_sha256 {
-            return Err(OfficeError::Invalid(
-                "an attachment blob does not match its hash",
-            ));
+        if media.is_image() {
+            let bytes = match self.read_authorized_blob_all(&record, media.max_bytes(), pull)? {
+                Ok(bytes) => bytes,
+                Err(refusal) => return Ok(Err(refusal)),
+            };
+            return match media::model_derivative(media, &bytes) {
+                Ok(derivative) => Ok(Ok(DeliveryAttachmentPayload::Image { record, derivative })),
+                Err(err) => Ok(Err(err)),
+            };
         }
-        Ok(media::model_derivative(media, &bytes))
+        if record.byte_count > media.max_bytes() {
+            return Ok(Err(media::unsupported(
+                "document attachment exceeds per-file size limit",
+            )));
+        }
+        if record.byte_count > remaining_doc_budget {
+            return Ok(Ok(DeliveryAttachmentPayload::Document {
+                record,
+                bytes: None,
+            }));
+        }
+        let bytes = match self.read_authorized_blob_all(&record, media.max_bytes(), pull)? {
+            Ok(bytes) => bytes,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        Ok(Ok(DeliveryAttachmentPayload::Document {
+            record,
+            bytes: Some(bytes),
+        }))
     }
 }

@@ -69,6 +69,7 @@ pub(super) struct WarmHandleTurn<'a> {
     pub(super) route_digest: String,
     pub(super) active_permit: Arc<Mutex<Option<(String, u64)>>>,
     pub(super) text: String,
+    pub(super) attachment_ids: Vec<String>,
     pub(super) start_stop_epoch: u64,
 }
 
@@ -172,7 +173,7 @@ pub(super) fn dispatch_warm_handle_turn(
         &turn.tx,
         &turn.state,
         turn.start_stop_epoch,
-        text,
+        crate::pump::QueuedTurn::new(text, turn.attachment_ids),
         slot_guard,
     ) {
         FencedSend::Delivered => Ok(StartReservation {
@@ -223,7 +224,7 @@ fn send_turn_fenced<'a>(
     tx: &Sender<PumpCommand>,
     state: &Mutex<SessionRuntimeState>,
     start_stop_epoch: u64,
-    text: String,
+    turn: crate::pump::QueuedTurn,
     slot_guard: StartSlotGuard<'a>,
 ) -> FencedSend<'a> {
     let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
@@ -235,7 +236,7 @@ fn send_turn_fenced<'a>(
         drop(reg);
         return FencedSend::Draining(slot_guard);
     }
-    if crate::pump::queue_turn(state, tx, text) {
+    if crate::pump::queue_turn_with_attachments(state, tx, turn) {
         slot_guard.release_locked(&mut reg);
         return FencedSend::Delivered;
     }

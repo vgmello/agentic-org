@@ -141,6 +141,9 @@ pub struct PendingWakeItem {
     pub source_id: String,
     pub summary: String,
     pub enqueued_at_ms: u64,
+    /// Lightweight IDs of bound attachments carried by this wake (`TASK-98.3`). Never base64.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<String>,
 }
 
 /// Durable per-agent pending-start queue persisted in `pending-wakes.v1.json` (`LIVE-4`).
@@ -235,6 +238,35 @@ pub struct PendingAskAnswer {
     pub answered_at: String,
     #[serde(default)]
     pub asked_by_subagent: bool,
+    /// Lightweight IDs of bound attachments carried by this answer (`TASK-98.3`). Never base64.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<String>,
+}
+
+/// Collects deduplicated attachment IDs from a batch of wake items in queue order (`TASK-98.3`).
+pub(crate) fn collect_wake_attachment_ids(items: &[PendingWakeItem]) -> Vec<String> {
+    let mut out = Vec::new();
+    for item in items {
+        for id in &item.attachment_ids {
+            if !id.is_empty() && !out.contains(id) {
+                out.push(id.clone());
+            }
+        }
+    }
+    out
+}
+
+/// Collects deduplicated attachment IDs from a batch of ask answers in order (`TASK-98.3`).
+pub(crate) fn collect_answer_attachment_ids(answers: &[PendingAskAnswer]) -> Vec<String> {
+    let mut out = Vec::new();
+    for ans in answers {
+        for id in &ans.attachment_ids {
+            if !id.is_empty() && !out.contains(id) {
+                out.push(id.clone());
+            }
+        }
+    }
+    out
 }
 
 /// Durable required-ask suspension record persisted in `suspended-asks.v1.json` (`ASK-6`).

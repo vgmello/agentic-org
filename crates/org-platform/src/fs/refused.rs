@@ -77,6 +77,10 @@ pub(super) fn write_owner_only_file(_path: &Path, _bytes: &[u8]) -> io::Result<(
     refused()
 }
 
+pub(super) fn write_owner_read_only_file(_path: &Path, _bytes: &[u8]) -> io::Result<()> {
+    refused()
+}
+
 pub(super) fn open_nofollow_ro(_path: &Path) -> io::Result<File> {
     refused()
 }
@@ -207,6 +211,10 @@ mod tests {
         assert_refused(super::create_owner_only_dir(&dir.path().join("a")));
         assert_refused(super::create_owner_only_dir_all(&dir.path().join("a/b")));
         assert_refused(super::write_owner_only_file(&dir.path().join("f"), b"x"));
+        assert_refused(super::write_owner_read_only_file(
+            &dir.path().join("ro"),
+            b"x",
+        ));
         assert_refused(super::open_nofollow_ro(&dir.path().join("f")));
         assert_refused(super::create_symlink(dir.path(), &dir.path().join("l")));
         assert_refused(super::effective_uid());

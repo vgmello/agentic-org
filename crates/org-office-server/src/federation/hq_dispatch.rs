@@ -362,6 +362,7 @@ fn handle_hq_wake_notify(
                         sender_is_person,
                         conversation_id,
                         summary,
+                        attachment_ids: Vec::new(),
                         ask_answer: None,
                         ask_withdrawal: None,
                     });

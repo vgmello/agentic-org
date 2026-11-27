@@ -217,6 +217,14 @@ pub fn write_owner_only_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     native::write_owner_only_file(path, bytes)
 }
 
+/// Create a new regular file at `path` (`O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK`,
+/// initial mode `0600`), write `bytes`, and tighten its descriptor to owner read-only mode `0400`
+/// via `fchmod`. Never overwrites an existing entry or follows a symlink. Every unsupported target
+/// fails closed.
+pub fn write_owner_read_only_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    native::write_owner_read_only_file(path, bytes)
+}
+
 /// Open an existing regular file read-only without following symlinks or blocking on FIFOs
 /// (`O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`). Every unsupported target fails closed.
 pub fn open_nofollow_ro(path: &Path) -> io::Result<File> {

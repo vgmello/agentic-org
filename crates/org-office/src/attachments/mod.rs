@@ -33,7 +33,47 @@ mod tests;
 mod transfer_tests;
 pub mod user_space;
 
+use std::fmt;
 use std::sync::Arc;
+
+/// Policy-authorized, hash-verified attachment payload ready for model turn delivery (`TASK-98.3`).
+///
+/// `Debug` never prints raw image or document bytes.
+#[derive(Clone)]
+pub enum DeliveryAttachmentPayload {
+    /// Allowlisted image with its bounded model derivative (`<= 1568px`, `<= 1 MiB`).
+    Image {
+        record: records::AttachmentRecord,
+        derivative: media::ModelDerivative,
+    },
+    /// Allowlisted document (`PDF`, `DOCX`, `XLSX`, `MD`, `TXT`, `CSV`, `JSON` <= 25 MiB).
+    /// `bytes` is `None` when staging this document would exceed the caller's remaining per-turn
+    /// eager staging budget (so callers fall back to `agent-os file fetch --id <id>` without
+    /// pulling or loading the blob into memory).
+    Document {
+        record: records::AttachmentRecord,
+        bytes: Option<Vec<u8>>,
+    },
+}
+
+impl fmt::Debug for DeliveryAttachmentPayload {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Image { record, derivative } => f
+                .debug_struct("DeliveryAttachmentPayload::Image")
+                .field("id", &record.id)
+                .field("media_type", &derivative.media.mime())
+                .field("derivative_bytes", &derivative.bytes.len())
+                .finish(),
+            Self::Document { record, bytes } => f
+                .debug_struct("DeliveryAttachmentPayload::Document")
+                .field("id", &record.id)
+                .field("mime_type", &record.mime_type)
+                .field("staged_bytes", &bytes.as_ref().map(Vec::len))
+                .finish(),
+        }
+    }
+}
 
 /// The stores an office keeps its attachments in, beside its journal.
 pub(crate) struct AttachmentStores {

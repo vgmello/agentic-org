@@ -123,6 +123,28 @@ pub(super) fn write_owner_only_file(path: &Path, bytes: &[u8]) -> io::Result<()>
     file.write_all(bytes)
 }
 
+pub(super) fn write_owner_read_only_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path)?;
+    if !file.metadata()?.file_type().is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} is not a regular file", path.display()),
+        ));
+    }
+    file.write_all(bytes)?;
+    // SAFETY: `file` is an open descriptor owned by this function; `fchmod` operates on that
+    // exact inode with no path lookup or symlink race.
+    if unsafe { libc::fchmod(file.as_raw_fd(), libc::S_IRUSR) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 pub(super) fn open_nofollow_ro(path: &Path) -> io::Result<File> {
     let file = OpenOptions::new()
         .read(true)

@@ -53,6 +53,25 @@ impl SessionManager {
         )
     }
 
+    /// Appends the stable `<runtime_dir>/attachments` directory to `read_only_dirs` for every
+    /// runtime (Claude, Codex, Agy) so staged `0400` turn attachments are readable without ever
+    /// rotating `spec_hash()` across turns (`TASK-98.3` AC #2 & AC #3).
+    pub(super) fn append_attachments_read_only_dir(
+        read_only_dirs: &mut Vec<SpecPath>,
+        attachments_root: &Path,
+    ) {
+        let resolved = attachments_root
+            .canonicalize()
+            .unwrap_or_else(|_| canonicalize_with_tail(attachments_root));
+        if let Some(spec) = resolved
+            .to_str()
+            .and_then(|s| SpecPath::try_from(s).ok())
+            .filter(|spec| !read_only_dirs.contains(spec))
+        {
+            read_only_dirs.push(spec);
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn denied_office_globs(&self) -> Vec<PathPattern> {
         self.denied_office_globs_for(None)

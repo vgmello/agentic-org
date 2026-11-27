@@ -15,7 +15,26 @@ use super::approval::handle_approval_request;
 use super::commands::{finalize_drained_stop, merge_stop_preserve};
 use super::events::{evaluate_turn_failover, redact_event_into_history};
 use super::turn::{ensure_permit_for_turn, PermitCheck};
-use super::{PumpContext, PumpHooks, PumpLoopState, SessionRuntimeState};
+use super::{PumpContext, PumpHooks, PumpLoopState, QueuedTurn, SessionRuntimeState};
+
+struct NoopAttachmentResolver;
+
+impl crate::turn_attachments::TurnAttachmentResolver for NoopAttachmentResolver {
+    fn resolve_for_turn(
+        &self,
+        _employee_id: &str,
+        _attachment_id: &str,
+        _remaining_doc_budget: u64,
+    ) -> Result<
+        Result<org_office::attachments::DeliveryAttachmentPayload, org_proto::ApiError>,
+        org_office::OfficeError,
+    > {
+        Ok(Err(org_proto::ApiError::new(
+            org_proto::ErrorCode::NotFound,
+            "not found in pump unit test",
+        )))
+    }
+}
 
 fn test_pump_ctx(
     dir: &std::path::Path,
@@ -94,6 +113,9 @@ fn test_pump_ctx(
         stop_epoch: 0,
         partition: None,
         stream: None,
+        attachments_root: dir.join("attachments"),
+        model_supports_vision: true,
+        attachment_resolver: Arc::new(NoopAttachmentResolver),
     }
 }
 
@@ -123,7 +145,9 @@ fn finalize_drained_stop_preserves_recycle_pending_turns_and_clears_on_user_stop
     );
 
     // Simulate recycle Stop arriving before SendTurn in the same drain pass.
-    loop_state.pending_turns.push("queued-wake".into());
+    loop_state
+        .pending_turns
+        .push(QueuedTurn::new("queued-wake".into(), vec!["att-1".into()]));
     finalize_drained_stop(
         merge_stop_preserve(None, "warm_route_stale"),
         &ctx,
@@ -136,10 +160,13 @@ fn finalize_drained_stop_preserves_recycle_pending_turns_and_clears_on_user_stop
         .expect("recycle stop must preserve pending_turns into failover_pending");
     assert_eq!(req.reason, "warm_route_stale");
     assert_eq!(req.objective, "queued-wake");
+    assert_eq!(req.attachment_ids, vec!["att-1".to_owned()]);
     assert_eq!(req.oauth_token_fp.as_deref(), Some("deadbeefcafebabe"));
 
     // Non-recycle Stop (e.g. user stop / shutdown) clears failover_pending.
-    loop_state.pending_turns.push("discard-on-user-stop".into());
+    loop_state
+        .pending_turns
+        .push(QueuedTurn::text_only("discard-on-user-stop".into()));
     finalize_drained_stop(
         merge_stop_preserve(Some(true), "user_stop"),
         &ctx,
@@ -178,8 +205,13 @@ fn evaluate_turn_failover_coalesces_queued_pending_turns() {
     let ctx = test_pump_ctx(dir.path(), Some("conn-1".into()), None);
     let mut loop_state = PumpLoopState::new(false);
     loop_state.current_objective = "turn-1".into();
-    loop_state.pending_turns.push("turn-2".into());
-    loop_state.pending_turns.push("turn-3".into());
+    loop_state.current_attachment_ids = vec!["att-a".into()];
+    loop_state
+        .pending_turns
+        .push(QueuedTurn::new("turn-2".into(), vec!["att-b".into()]));
+    loop_state
+        .pending_turns
+        .push(QueuedTurn::new("turn-3".into(), vec!["att-a".into()]));
     loop_state.turn_reply = Some("API Error: 401 OAuth token has expired".into());
 
     let mut st = ctx.state.lock().unwrap();
@@ -199,6 +231,10 @@ fn evaluate_turn_failover_coalesces_queued_pending_turns() {
         .expect("401 failover must produce FailoverRequest");
     assert_eq!(req.reason, "auth_expired");
     assert_eq!(req.objective, "turn-1\n\nturn-2\n\nturn-3");
+    assert_eq!(
+        req.attachment_ids,
+        vec!["att-a".to_owned(), "att-b".to_owned()]
+    );
     assert_eq!(req.oauth_token_fp.as_deref(), Some("deadbeefcafebabe"));
 }
 
@@ -398,7 +434,7 @@ fn a_partitioned_run_records_its_conversation_usage_and_partition_on_failover() 
     let req = loop_state.failover_pending.as_ref().expect("a failover");
     assert_eq!(req.partition, Some(key));
     assert_eq!(req.acting_for_caller_id(), Some("owner-1"));
-    let stale = super::commands::build_stale_failover_request(&ctx, "queued".into());
+    let stale = super::commands::build_stale_failover_request(&ctx, "queued".into(), Vec::new());
     assert_eq!(stale.acting_for_caller_id(), Some("owner-1"));
 }
 
@@ -461,7 +497,10 @@ fn a_refused_permit_forgets_every_queued_turn_and_settles_idle() {
     let mut ctx = test_pump_ctx(dir.path(), Some("conn-1".into()), None);
     ctx.hooks.on_permit_acquire = Some(Arc::new(|_, _| Err("POOL_EXHAUSTED: [busy]".into())));
     let mut loop_state = PumpLoopState::new(false);
-    loop_state.pending_turns = vec!["a".into(), "b".into()];
+    loop_state.pending_turns = vec![
+        QueuedTurn::text_only("a".into()),
+        QueuedTurn::text_only("b".into()),
+    ];
     ctx.state.lock().unwrap().queued_turns = 2;
     assert!(matches!(
         ensure_permit_for_turn(&ctx, &mut loop_state),
@@ -478,7 +517,7 @@ fn a_refused_permit_forgets_every_queued_turn_and_settles_idle() {
         st.state = SessionState::Running;
         st.queued_turns = 2;
     }
-    loop_state.pending_turns = vec!["c".into()];
+    loop_state.pending_turns = vec![QueuedTurn::text_only("c".into())];
     assert!(matches!(
         ensure_permit_for_turn(&ctx, &mut loop_state),
         PermitCheck::Refused
@@ -569,20 +608,28 @@ fn steers_queue_at_the_front_fold_together_and_keep_the_queued_count_exact() {
     st.state = SessionState::Idle;
     // Two ordinary turns and two steers queued, each counted once by its sender.
     st.queued_turns = 4;
-    loop_state.pending_turns = vec!["ordinary-1".into(), "ordinary-2".into()];
+    loop_state.pending_turns = vec![
+        QueuedTurn::text_only("ordinary-1".into()),
+        QueuedTurn::text_only("ordinary-2".into()),
+    ];
     loop_state.queue_steer_turn(&mut st, "steer-a".into());
     loop_state.queue_steer_turn(&mut st, "steer-b".into());
-    assert_eq!(
-        loop_state.pending_turns,
-        ["steer-a\n\nsteer-b", "ordinary-1", "ordinary-2"]
-    );
+    let texts: Vec<&str> = loop_state
+        .pending_turns
+        .iter()
+        .map(|t| t.text.as_str())
+        .collect();
+    assert_eq!(texts, ["steer-a\n\nsteer-b", "ordinary-1", "ordinary-2"]);
     assert_eq!(st.queued_turns, 3, "the folded steer runs as one turn");
 
     // A steer the runtime never confirmed is counted again and keeps the session busy.
     loop_state.requeue_steer(&mut st, "steer-c".into());
     assert_eq!(st.queued_turns, 3);
     assert_eq!(st.state, SessionState::Running);
-    assert_eq!(loop_state.pending_turns[0], "steer-a\n\nsteer-b\n\nsteer-c");
+    assert_eq!(
+        loop_state.pending_turns[0].text,
+        "steer-a\n\nsteer-b\n\nsteer-c"
+    );
     drop(st);
 
     let taken = loop_state.take_queued_turns();
@@ -592,8 +639,15 @@ fn steers_queue_at_the_front_fold_together_and_keep_the_queued_count_exact() {
     let mut st = ctx.state.lock().unwrap();
     // One ordinary turn and one steer, each counted once.
     st.queued_turns = 2;
-    loop_state.pending_turns.push("ordinary-3".into());
+    loop_state
+        .pending_turns
+        .push(QueuedTurn::text_only("ordinary-3".into()));
     loop_state.queue_steer_turn(&mut st, "steer-d".into());
-    assert_eq!(loop_state.pending_turns, ["steer-d", "ordinary-3"]);
+    let texts: Vec<&str> = loop_state
+        .pending_turns
+        .iter()
+        .map(|t| t.text.as_str())
+        .collect();
+    assert_eq!(texts, ["steer-d", "ordinary-3"]);
     assert_eq!(st.queued_turns, 2);
 }

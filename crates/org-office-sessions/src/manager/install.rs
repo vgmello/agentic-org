@@ -35,6 +35,7 @@ impl SessionManager {
             run_id,
             runtime,
             supports_mid_turn,
+            model_supports_vision,
             bwrap_masked_siblings,
             connection_id,
             route_digest,
@@ -47,8 +48,10 @@ impl SessionManager {
             tried_connections,
             start_stop_epoch,
             partition,
+            attachments_root,
             binding_file,
             objective,
+            attachment_ids,
             spawned,
             session,
             lifecycle,
@@ -97,6 +100,9 @@ impl SessionManager {
                     partition: partition.as_ref().map(|key| key.as_str().to_owned()),
                 },
             )),
+            attachments_root,
+            model_supports_vision,
+            attachment_resolver: Arc::clone(&self.attachment_resolver),
         };
         let pre_pump_meta = PrePumpHandleMeta {
             tx: tx.clone(),
@@ -114,8 +120,12 @@ impl SessionManager {
             ensure_pre_pump_isolation(self, &emp_id, spawned, session, pump_ctx, pre_pump_meta)?;
         // Enqueue the initial turn BEFORE starting the pump thread so `run_pump` always sees
         // Turn 1 immediately upon `Ready` without transitioning `Starting -> Idle` prematurely.
-        if !objective.is_empty() {
-            let _ = crate::pump::queue_turn(&runtime_state, &tx, objective);
+        if !objective.is_empty() || !attachment_ids.is_empty() {
+            let _ = crate::pump::queue_turn_with_attachments(
+                &runtime_state,
+                &tx,
+                crate::pump::QueuedTurn::new(objective, attachment_ids),
+            );
         }
         let thread = spawn_pump_thread(
             self,

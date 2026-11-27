@@ -518,7 +518,13 @@ fn handles_unsolicited_background_wakeup_and_rate_limits() {
         })
     )));
     assert_eq!(
-        session.control(Control::Send { text: "hi".into() }, now),
+        session.control(
+            Control::Send {
+                text: "hi".into(),
+                images: Vec::new()
+            },
+            now
+        ),
         Err(ControlError::Busy)
     );
 
@@ -562,7 +568,13 @@ fn classifies_sandbox_bypass_and_permission_change_escalations_and_dedups_aborte
         now,
     );
     let _ = session
-        .control(Control::Send { text: "run".into() }, now)
+        .control(
+            Control::Send {
+                text: "run".into(),
+                images: Vec::new(),
+            },
+            now,
+        )
         .unwrap();
 
     // Two content blocks with the SAME message id should be deduplicated, not double-counted.
@@ -904,6 +916,7 @@ fn enforces_agent_description_remote_control_init_tools_and_unknown_tool_escalat
         .control(
             Control::Send {
                 text: "check".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -1045,6 +1058,7 @@ fn preserves_idle_background_usage_tracks_streaming_msg_ids_and_handles_idle_edg
         .control(
             Control::Send {
                 text: "next user turn".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -1101,6 +1115,7 @@ fn preserves_idle_background_usage_tracks_streaming_msg_ids_and_handles_idle_edg
         .control(
             Control::Send {
                 text: "racing send".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -1308,6 +1323,7 @@ fn send_turn(session: &mut dyn org_agent_runtime::Session) {
         .control(
             Control::Send {
                 text: "work".into(),
+                images: Vec::new(),
             },
             Instant::now(),
         )
@@ -1810,6 +1826,7 @@ fn l7_a_send_keeps_waiting_on_approval_while_background_approvals_are_pending() 
         .control(
             Control::Send {
                 text: "next".into(),
+                images: Vec::new(),
             },
             Instant::now(),
         )
@@ -2117,6 +2134,7 @@ fn task115_step_hook_registers_post_tool_use_delivers_additional_context_and_fai
             Control::DeliverMidTurn {
                 delivery_id: "idle-1".into(),
                 text: "nope".into(),
+                images: Vec::new(),
             },
             now
         ),
@@ -2127,6 +2145,7 @@ fn task115_step_hook_registers_post_tool_use_delivers_additional_context_and_fai
         .control(
             Control::Send {
                 text: "work".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -2154,6 +2173,7 @@ fn task115_step_hook_registers_post_tool_use_delivers_additional_context_and_fai
             Control::DeliverMidTurn {
                 delivery_id: "del-42".into(),
                 text: "URGENT PEER NOTICE".into(),
+                images: Vec::new(),
             },
             now
         )
@@ -2164,6 +2184,7 @@ fn task115_step_hook_registers_post_tool_use_delivers_additional_context_and_fai
             Control::DeliverMidTurn {
                 delivery_id: "del-43".into(),
                 text: "second".into(),
+                images: Vec::new(),
             },
             now
         ),
@@ -2199,6 +2220,7 @@ fn task115_step_hook_registers_post_tool_use_delivers_additional_context_and_fai
             Control::DeliverMidTurn {
                 delivery_id: "del-appr".into(),
                 text: "HOLD WHILE APPROVAL PENDING".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -2243,6 +2265,7 @@ fn task115_step_hook_registers_post_tool_use_delivers_additional_context_and_fai
             Control::DeliverMidTurn {
                 delivery_id: "del-late".into(),
                 text: "late".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -2337,4 +2360,123 @@ fn unknown_effort_level_fails_closed_in_headless_and_take_over_plans() {
         .position(|a| a == "--effort")
         .expect("--effort");
     assert_eq!(plan.args[at + 1], "max", "{:?}", plan.args);
+}
+
+#[test]
+fn claude_emits_capped_inline_base64_image_blocks_and_read_only_dir_denies() {
+    use org_agent_runtime::{ImageInputMode, TurnImage};
+
+    let runtime = ClaudeRuntime::new();
+    assert_eq!(
+        runtime.capabilities().image_input,
+        ImageInputMode::InlineBase64
+    );
+
+    let mut spec = sample_spec();
+    let att_dir = SpecPath::try_from("/office/agents/ada/runtime/attachments").unwrap();
+    spec.read_only_dirs.push(att_dir.clone());
+    let (plan, mut session) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+
+    // `read_only_dirs` appears in `--add-dir` AND write denies in settings.json.
+    assert!(
+        plan.args
+            .windows(2)
+            .any(|w| w[0] == "--add-dir" && w[1] == att_dir.as_str()),
+        "read_only_dirs must be passed as --add-dir: {:?}",
+        plan.args
+    );
+    let settings_file = plan
+        .files
+        .iter()
+        .find(|f| f.rel_path.as_str().ends_with("settings.json"))
+        .expect("settings.json planned");
+    let settings: serde_json::Value = serde_json::from_slice(&settings_file.contents).unwrap();
+    let deny_list = settings["permissions"]["deny"]
+        .as_array()
+        .expect("permissions.deny array");
+    assert!(
+        deny_list
+            .iter()
+            .filter_map(|v| v.as_str())
+            .any(|r| r.contains(att_dir.as_str()) && r.starts_with("Write(")),
+        "read_only_dirs must be write-denied in permissions.deny: {deny_list:?}"
+    );
+
+    let now = Instant::now();
+    let _ = session.start(now);
+    let _ = session.on_line(
+        br#"{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":["ac-dev-ada"],"current_permission_mode":"default"}}}"#,
+        now,
+    );
+
+    // 5 inline images -> capped at 4 inline image blocks + 1 text block; >1 MiB image skipped.
+    let mut images = vec![
+        TurnImage::inline_bytes("image/png", b"img-1"),
+        TurnImage::inline_bytes("image/jpeg", b"img-2"),
+        TurnImage::inline_bytes("image/png", b"img-3"),
+        TurnImage::inline_bytes("image/jpeg", b"img-4"),
+        TurnImage::inline_bytes("image/png", b"img-5-overflow"),
+    ];
+    let out = session
+        .control(
+            Control::Send {
+                text: "Inspect screenshots".into(),
+                images: std::mem::take(&mut images),
+            },
+            now,
+        )
+        .expect("inline images accepted");
+    let Output::Write(line) = &out[0] else {
+        panic!("expected write output")
+    };
+    let frame: serde_json::Value = serde_json::from_slice(line.as_bytes()).unwrap();
+    let blocks = frame["message"]["content"]
+        .as_array()
+        .expect("content array");
+    assert_eq!(blocks.len(), 5, "4 image blocks + 1 text block: {blocks:?}");
+    for (idx, mime) in ["image/png", "image/jpeg", "image/png", "image/jpeg"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(blocks[idx]["type"], "image");
+        assert_eq!(blocks[idx]["source"]["type"], "base64");
+        assert_eq!(blocks[idx]["source"]["media_type"], mime);
+        assert!(!blocks[idx]["source"]["data"].as_str().unwrap().is_empty());
+    }
+    assert_eq!(blocks[4]["type"], "text");
+    assert_eq!(blocks[4]["text"], "Inspect screenshots");
+
+    // StepHook DeliverMidTurn rejects protocol images cleanly without mutating state.
+    assert_eq!(
+        session.control(
+            Control::DeliverMidTurn {
+                delivery_id: "d-img".into(),
+                text: "mid".into(),
+                images: vec![TurnImage::inline_bytes("image/png", b"x")],
+            },
+            now
+        ),
+        Err(ControlError::Unsupported)
+    );
+
+    // Finish turn, then verify an oversized (>1 MiB) image falls back cleanly to text string.
+    let _ = session.on_line(
+        br#"{"type":"result","subtype":"success","is_error":false,"result":"ok"}"#,
+        now,
+    );
+    let oversized = TurnImage::inline_base64("image/png", "AAAA".into(), 1024 * 1024 + 1);
+    let out2 = session
+        .control(
+            Control::Send {
+                text: "text fallback".into(),
+                images: vec![oversized],
+            },
+            now,
+        )
+        .expect("oversized inline image degrades cleanly to text");
+    let Output::Write(line2) = &out2[0] else {
+        panic!("expected write output")
+    };
+    let frame2: serde_json::Value = serde_json::from_slice(line2.as_bytes()).unwrap();
+    assert_eq!(frame2["message"]["content"], "text fallback");
 }

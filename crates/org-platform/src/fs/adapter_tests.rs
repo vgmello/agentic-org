@@ -296,6 +296,24 @@ fn owner_only_ancestors_and_files_enforce_uid_mode_and_no_symlinks() {
     assert!(super::open_nofollow_ro(&secret).is_ok());
     assert!(super::open_nofollow_ro(&host_dir).is_err());
 
+    // `write_owner_read_only_file` creates a fresh 0400 file and refuses overwrites/symlinks.
+    let staged = host_dir.join("staged.png");
+    super::write_owner_read_only_file(&staged, b"image-bytes").unwrap();
+    assert_eq!(
+        fs::symlink_metadata(&staged).unwrap().mode() & 0o7777,
+        0o400
+    );
+    assert_eq!(fs::read(&staged).unwrap(), b"image-bytes");
+    assert_eq!(
+        super::write_owner_read_only_file(&staged, b"overwrite")
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::AlreadyExists
+    );
+    let ro_link = host_dir.join("staged-link.png");
+    super::create_symlink(&staged, &ro_link).unwrap();
+    assert!(super::write_owner_read_only_file(&ro_link, b"nope").is_err());
+
     // `..` traversal outside `stop_at`, mismatched `stop_at`, and trailing `/` or `/.` on
     // symlinked directories MUST all fail closed (`TASK-167`, `TASK-168`).
     let outside = directory.path().join("outside-0700");

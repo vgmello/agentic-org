@@ -1,7 +1,7 @@
 //! The office's controls: send, deliver mid-turn, and answer an approval.
 
 use org_agent_runtime::{
-    Activity, ApprovalId, ControlError, Decision, NoticeKind, Output, SessionEvent,
+    Activity, ApprovalId, ControlError, Decision, NoticeKind, Output, SessionEvent, TurnImage,
 };
 
 use crate::protocol::{
@@ -11,12 +11,19 @@ use crate::protocol::{
 
 use super::{is_opening, AgySession, Phase, PromptSlot};
 
-pub(super) fn control_send(s: &mut AgySession, text: String) -> Result<Vec<Output>, ControlError> {
+pub(super) fn control_send(
+    s: &mut AgySession,
+    text: String,
+    images: Vec<TurnImage>,
+) -> Result<Vec<Output>, ControlError> {
     if is_opening(s.phase) {
         return Err(ControlError::NotReady);
     }
     if s.phase == Phase::Busy {
         return Err(ControlError::Busy);
+    }
+    if !images.is_empty() {
+        return Err(ControlError::Unsupported);
     }
     let Some(sid) = s.session_id.clone() else {
         return Err(ControlError::NotReady);
@@ -47,12 +54,16 @@ pub(super) fn control_deliver_mid_turn(
     s: &mut AgySession,
     delivery_id: String,
     text: String,
+    images: Vec<TurnImage>,
 ) -> Result<Vec<Output>, ControlError> {
     if is_opening(s.phase) {
         return Err(ControlError::NotReady);
     }
     if s.phase == Phase::Idle {
         return Err(ControlError::InvalidState);
+    }
+    if !images.is_empty() {
+        return Err(ControlError::Unsupported);
     }
     if s.prompt_chain.is_empty() {
         return Err(ControlError::NotReady);

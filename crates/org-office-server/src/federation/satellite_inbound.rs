@@ -108,6 +108,7 @@ fn dispatch_inbound_relay_frame(
                     sender_is_person,
                     conversation_id,
                     summary,
+                    attachment_ids: Vec::new(),
                     ask_answer: None,
                     ask_withdrawal: None,
                 })
@@ -352,6 +353,7 @@ fn handle_persistent_inbound_frame(
                 sender_is_person,
                 conversation_id,
                 summary,
+                attachment_ids: Vec::new(),
                 ask_answer: None,
                 ask_withdrawal: None,
             },

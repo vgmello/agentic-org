@@ -32,8 +32,9 @@ pub use operator::{
 };
 
 use crate::{
-    ApprovalId, Capabilities, Control, ControlError, Decision, ExitInfo, LaunchContext, LaunchPlan,
-    MidTurnDelivery, Output, Session, SessionEvent, SessionSpec, MAX_LINE_BYTES,
+    ApprovalId, Capabilities, Control, ControlError, Decision, ExitInfo, ImageInputMode,
+    LaunchContext, LaunchPlan, MidTurnDelivery, Output, Session, SessionEvent, SessionSpec,
+    SpecPath, TurnImage, MAX_LINE_BYTES,
 };
 
 /// Runtime lines that walk a session through one turn: what the runtime would write to stdout,
@@ -101,7 +102,114 @@ pub fn check_all(
     check_ended_once_and_last(make, script, now);
     check_answer_after_cancel(make, script, now);
     check_mid_turn_delivery(make, script, caps, now);
+    check_image_input(make, script, caps, now);
     check_usage_before_turn_end(make, script, now);
+}
+
+/// Multimodal image input contract (`TASK-98.3`): matches declared [`Capabilities::image_input`],
+/// accepting the matching [`TurnImage`] source and refusing mismatches with
+/// [`ControlError::Unsupported`] without emitting protocol frames.
+pub fn check_image_input(
+    make: &mut dyn FnMut() -> Box<dyn Session>,
+    script: &Script,
+    caps: &Capabilities,
+    now: Instant,
+) {
+    let inline = TurnImage::inline_bytes("image/png", b"\x89PNG\r\n\x1a\n");
+    let local = TurnImage::local_path(
+        "image/png",
+        SpecPath::try_from("/tmp/agentic-org-testkit/img.png").expect("valid test SpecPath"),
+    );
+    match caps.image_input {
+        ImageInputMode::InlineBase64 => {
+            let mut s = make();
+            open(s.as_mut(), script, now);
+            assert_eq!(
+                s.control(
+                    Control::Send {
+                        text: "wrong mode".into(),
+                        images: vec![local],
+                    },
+                    now
+                ),
+                Err(ControlError::Unsupported),
+                "image rule broken: InlineBase64 runtime must refuse LocalPath TurnImage"
+            );
+            let out = s
+                .control(
+                    Control::Send {
+                        text: "see image".into(),
+                        images: vec![inline],
+                    },
+                    now,
+                )
+                .expect("InlineBase64 runtime accepts InlineBase64 TurnImage");
+            let wrote_inline = out.iter().any(|o| match o {
+                Output::Write(line) => {
+                    let s = String::from_utf8_lossy(line.as_bytes());
+                    s.contains("\"base64\"") && s.contains("\"image/png\"")
+                }
+                _ => false,
+            });
+            assert!(
+                wrote_inline,
+                "image rule broken: InlineBase64 runtime did not emit base64 image block: {out:?}"
+            );
+        }
+        ImageInputMode::LocalPath => {
+            let mut s = make();
+            open(s.as_mut(), script, now);
+            assert_eq!(
+                s.control(
+                    Control::Send {
+                        text: "wrong mode".into(),
+                        images: vec![inline],
+                    },
+                    now
+                ),
+                Err(ControlError::Unsupported),
+                "image rule broken: LocalPath runtime must refuse InlineBase64 TurnImage"
+            );
+            let out = s
+                .control(
+                    Control::Send {
+                        text: "see image".into(),
+                        images: vec![local],
+                    },
+                    now,
+                )
+                .expect("LocalPath runtime accepts LocalPath TurnImage");
+            let wrote_local = out.iter().any(|o| match o {
+                Output::Write(line) => {
+                    let s = String::from_utf8_lossy(line.as_bytes());
+                    s.contains("/tmp/agentic-org-testkit/img.png") && !s.contains("iVBOR")
+                }
+                _ => false,
+            });
+            assert!(
+                wrote_local,
+                "image rule broken: LocalPath runtime did not emit local path without base64: {out:?}"
+            );
+        }
+        ImageInputMode::StagedFileOnly | ImageInputMode::None => {
+            let mut s = make();
+            open(s.as_mut(), script, now);
+            for img in [inline, local] {
+                assert_eq!(
+                    s.control(
+                        Control::Send {
+                            text: "no protocol images".into(),
+                            images: vec![img],
+                        },
+                        now
+                    ),
+                    Err(ControlError::Unsupported),
+                    "image rule broken: {:?} runtime must refuse raw protocol TurnImage",
+                    caps.image_input
+                );
+            }
+        }
+    }
 }
 
 /// Rule 1 with an approval pending: a normal [`Control::Send`] still returns
@@ -763,6 +871,7 @@ fn varied_exit(i: usize) -> ExitInfo {
 fn send() -> Control {
     Control::Send {
         text: "org-agent-runtime testkit".to_owned(),
+        images: Vec::new(),
     }
 }
 
@@ -770,6 +879,7 @@ fn deliver_mid_turn(id: &str) -> Control {
     Control::DeliverMidTurn {
         delivery_id: id.to_owned(),
         text: "org-agent-runtime mid-turn notice".to_owned(),
+        images: Vec::new(),
     }
 }
 

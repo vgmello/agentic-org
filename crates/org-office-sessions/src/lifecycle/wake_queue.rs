@@ -211,9 +211,11 @@ impl SessionManager {
             "at": rfc3339_now(),
         });
         let task_ref = assigned_task_refs(&matching).first().copied();
-        match self.spawn_or_send_autonomous(
+        let attachment_ids = crate::wake::collect_wake_attachment_ids(&matching);
+        match self.spawn_or_send_autonomous_with_attachments(
             employee,
             objective,
+            attachment_ids,
             susp.runtime_session_id.as_deref(),
             task_ref,
             trigger,
@@ -345,9 +347,11 @@ impl SessionManager {
             "at": rfc3339_now(),
         });
         let task_ref = assigned_task_refs(&queue.items).first().copied();
-        match self.spawn_or_send_autonomous(
+        let attachment_ids = crate::wake::collect_wake_attachment_ids(&queue.items);
+        match self.spawn_or_send_autonomous_with_attachments(
             employee,
             objective,
+            attachment_ids,
             resume_rsid.as_deref(),
             task_ref,
             trigger,

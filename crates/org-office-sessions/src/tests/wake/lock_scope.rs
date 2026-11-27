@@ -85,6 +85,7 @@ fn person_wake(id: &str, sender: &str, summary: &str) -> PendingWakeItem {
         conversation_id: Some("dm-1".into()),
         source_id: format!("msg-{id}"),
         summary: summary.into(),
+        attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
     }
 }
@@ -221,9 +222,10 @@ fn task170_wake_for_b_completes_while_a_is_blocked_in_hq_permit_rpc_and_a_keeps_
     let sent = a_commands
         .recv_timeout(Duration::from_secs(5))
         .expect("A's drained turn is sent");
-    let PumpCommand::SendTurn(objective) = sent else {
+    let PumpCommand::SendTurn(turn) = sent else {
         panic!("expected SendTurn for A");
     };
+    let objective = turn.text;
     assert!(objective.contains("First queued for A"), "{objective}");
     assert!(!objective.contains("Second for A"), "{objective}");
     let remaining = mgr.store.read_pending_wakes(&a).unwrap().unwrap();

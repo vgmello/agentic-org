@@ -118,6 +118,10 @@ pub struct SessionManagerConfig {
     /// `production` resolves them from `HOME` ([`sandbox_rules::agent_os_state_roots_from`]);
     /// this crate's unit tests start with none, so no test writes under the real account.
     pub agent_os_state_roots: Vec<PathBuf>,
+    /// Optional consumer-owned attachment payload resolver (`TASK-98.3`). When `None`, defaults to
+    /// [`crate::turn_attachments::LocalOfficeAttachmentResolver`]; satellites wire a
+    /// federation-backed resolver in `org-office-server`.
+    pub attachment_resolver: Option<Arc<dyn crate::turn_attachments::TurnAttachmentResolver>>,
 }
 
 impl SessionManagerConfig {
@@ -144,6 +148,7 @@ impl SessionManagerConfig {
                     cfg!(debug_assertions),
                 )
             },
+            attachment_resolver: None,
         }
     }
 }
@@ -286,6 +291,7 @@ struct PlannedSessionLaunch {
     runtime_id: String,
     runtime: Arc<dyn org_agent_runtime::AgentRuntime>,
     supports_mid_turn: bool,
+    model_supports_vision: bool,
     bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
     connection_id: Option<String>,
     route_digest: String,
@@ -302,6 +308,7 @@ struct PlannedSessionLaunch {
     home: PathBuf,
     workspace_real: PathBuf,
     runtime_dir: PathBuf,
+    attachments_root: PathBuf,
     tmpdir: PathBuf,
     preset_cfg: PresetConfig,
     spec_hash: String,
@@ -318,6 +325,7 @@ struct PreparedSessionLaunch {
     runtime_id: String,
     runtime: Arc<dyn org_agent_runtime::AgentRuntime>,
     supports_mid_turn: bool,
+    model_supports_vision: bool,
     bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
     connection_id: Option<String>,
     route_digest: String,
@@ -334,11 +342,13 @@ struct PreparedSessionLaunch {
     /// The Chief of Staff partition the run serves (`TASK-80.1`).
     partition: Option<crate::partition::PartitionKey>,
     home: PathBuf,
+    attachments_root: PathBuf,
     tmpdir: PathBuf,
     binding_file: PathBuf,
     preset_cfg: PresetConfig,
     spec_hash: String,
     objective: String,
+    attachment_ids: Vec<String>,
     persisted_stalls: u32,
     spawned: org_supervise::Spawned,
     session: Box<dyn org_agent_runtime::Session>,
@@ -399,6 +409,7 @@ pub type WatchNoticeProvider = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 pub struct SessionManager {
     pub(crate) office: Arc<Office>,
     pub(crate) config: SessionManagerConfig,
+    pub(crate) attachment_resolver: Arc<dyn crate::turn_attachments::TurnAttachmentResolver>,
     pub(crate) store: SessionStore,
     pub(crate) bindings: RunBindingRegistry,
     /// The Chief of Staff's per-caller partitions (`TASK-80.1`).
@@ -445,9 +456,15 @@ impl SessionManager {
             Arc::clone(&config.enrollment_driver),
             config.enrollment_timeout,
         );
+        let attachment_resolver = config.attachment_resolver.clone().unwrap_or_else(|| {
+            Arc::new(crate::turn_attachments::LocalOfficeAttachmentResolver::new(
+                Arc::clone(&office),
+            ))
+        });
         Self {
             office,
             config,
+            attachment_resolver,
             store,
             bindings: RunBindingRegistry::new(),
             partitions: crate::partition::PartitionLedger::new(),
@@ -628,6 +645,10 @@ impl SessionManager {
         &self,
         oracle: &dyn ProcessExitOracle,
     ) -> io::Result<RecoveryReport> {
+        crate::turn_attachments::purge_office_stale_attachments(
+            self.office.durable_root(),
+            &self.office.info().office_id,
+        );
         let report = self.store.recover_on_startup(oracle)?;
         *self
             .startup_recovery
