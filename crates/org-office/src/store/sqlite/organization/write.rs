@@ -6,12 +6,12 @@ use rusqlite::types::Value;
 use super::super::SqliteTx;
 use super::rows::office_code_row;
 use super::{
-    all, meta_values, optional, optional_id_value, put, put_record_ref, run, text, whole, View,
-    AGENT_EXEC, EMPLOYEE, META, MODEL_PROFILE, OFFICE, ORGANIZATION, PROVIDER_CONN, REPOSITORY,
-    ROLE, TEAM, TEAM_SCOPE,
+    all, meta_values, optional, optional_id_value, put, put_record_ref, run, text, update, whole,
+    View, AGENT_EXEC, EMPLOYEE, META, MODEL_PROFILE, OFFICE, ORGANIZATION, PROVIDER_CONN,
+    REPOSITORY, ROLE, TEAM, TEAM_SCOPE,
 };
 use crate::organization::{
-    ports::OrganizationWrite,
+    ports::{OrganizationRead, OrganizationWrite},
     records::{
         yaml::canonical_json, AgentExecutionConfig, BuiltinKey, Employee, HireRequest,
         ModelProfile, Office, OfficeCode, Organization, ProviderConnection, Repository, Role, Team,
@@ -222,6 +222,16 @@ impl OrganizationWrite for SqliteTx {
     }
 
     fn put_hire_request(&mut self, record: &HireRequest) -> Result<(), EngineError> {
+        // Re-projecting an unchanged hire request (e.g. during a satellite snapshot resync that
+        // re-sends an already-stored terminal hire request) must be a no-op rather than running
+        // `ON CONFLICT ... DO UPDATE`, which fires SQLite's `hire_request_terminal_immutable`
+        // BEFORE UPDATE trigger. Any actual change still runs the UPDATE so the SQLite trigger
+        // enforces terminal immutability fail-closed (`TASK-243`).
+        if let Some(existing) = self.hire_request(&record.id)? {
+            if existing == *record {
+                return Ok(());
+            }
+        }
         let (db, scope) = self.view()?;
         let proposal_val = serde_json::to_value(&record.proposal)
             .map_err(|e| EngineError::new(format!("proposal json: {e}")))?;
@@ -284,6 +294,10 @@ impl OrganizationWrite for SqliteTx {
     }
 
     fn put_provider_connection(&mut self, record: &ProviderConnection) -> Result<(), EngineError> {
+        let existing = self.provider_connection(&record.id)?;
+        if existing.as_ref() == Some(record) {
+            return Ok(());
+        }
         let (db, scope) = self.view()?;
         let mut values = vec![
             text(scope),
@@ -301,7 +315,11 @@ impl OrganizationWrite for SqliteTx {
         ];
         meta_values(&record.meta, &mut values)?;
         let columns = format!("organization_id, {PROVIDER_CONN}, schema_version, {META}");
-        put(db, "provider_connections", &columns, 2, values)
+        if existing.is_some() {
+            update(db, "provider_connections", &columns, 2, values)
+        } else {
+            put(db, "provider_connections", &columns, 2, values)
+        }
     }
 
     fn remove_provider_connection(&mut self, id: &Id) -> Result<(), EngineError> {

@@ -666,3 +666,53 @@ fn validation_refuses_a_file_outside_the_folder_its_parent_chain_names() {
         String::from(records::employee_path(&[id(TOP)], EmployeeKind::Agent, &id(HR)).unwrap())
     );
 }
+
+#[test]
+fn terminal_hire_request_reprojection_allows_identical_and_refuses_mutation() {
+    use crate::organization::records::{HireProposal, HireRequest, HireState};
+
+    let mut tx = seeded();
+    let agent = employee(0x50, "worker", EmployeeKind::Agent, TOP);
+    put_employee(&mut tx, &[TOP], &agent);
+
+    let ts = "2023-11-14T22:13:20.000Z".to_owned();
+    let req = HireRequest {
+        id: id(0x51),
+        revision: 2,
+        state: HireState::Hired,
+        requested_by_employee_id: id(ANA),
+        home_team_id: id(TOP),
+        role_id: None,
+        proposal: HireProposal {
+            name: "Worker".into(),
+            handle: "worker".into(),
+            ..HireProposal::default()
+        },
+        reason: "Original hire reason".into(),
+        confirmed_at: Some(ts.clone()),
+        closed_reason: None,
+        employee_id: Some(id(0x50)),
+        failed_step: None,
+        created_at: ts.clone(),
+        updated_at: ts,
+    };
+    let path = records::hire_request_path(&[id(TOP)], &req.id).unwrap();
+    let bytes = records::encode_hire_request(&req);
+    put(&mut tx, &path, &bytes).unwrap();
+    check(&tx).unwrap();
+
+    // Re-projecting the exact same terminal hire request succeeds cleanly.
+    put(&mut tx, &path, &bytes).unwrap();
+    check(&tx).unwrap();
+    assert_eq!(tx.hire_request(&req.id).unwrap(), Some(req.clone()));
+
+    // Mutating any field on the terminal hire request fails closed.
+    let mut mutated = req.clone();
+    mutated.reason = "Tampered hire reason".into();
+    let err = put(&mut tx, &path, &records::encode_hire_request(&mutated)).unwrap_err();
+    assert!(
+        err.reason.contains("terminal hire request is immutable"),
+        "{err:?}"
+    );
+    assert_eq!(tx.hire_request(&req.id).unwrap(), Some(req));
+}

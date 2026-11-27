@@ -56,3 +56,5 @@ pub fn is_immutable_state_path(path: &str) -> bool {
 
 #[cfg(test)]
 mod replicated_kind_tests;
+#[cfg(test)]
+mod snapshot_resync_tests;

@@ -315,7 +315,16 @@ impl OrganizationWrite for MemoryTx {
     }
 
     fn put_hire_request(&mut self, record: &HireRequest) -> Result<(), EngineError> {
-        self.table_mut::<OrganizationTables>()?
+        let tables = self.table_mut::<OrganizationTables>()?;
+        if let Some(existing) = tables.hire_requests.get(&record.id) {
+            if existing.state.is_terminal() {
+                if existing == record {
+                    return Ok(());
+                }
+                return Err(EngineError::new("terminal hire request is immutable"));
+            }
+        }
+        tables
             .hire_requests
             .insert(record.id.clone(), record.clone());
         Ok(())

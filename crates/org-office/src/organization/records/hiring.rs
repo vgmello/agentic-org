@@ -45,6 +45,12 @@ impl HireState {
     pub fn parse(text: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|s| s.as_str() == text)
     }
+
+    /// Whether this state is terminal (`doc-78`, `schema.sql` `hire_request_terminal_immutable`):
+    /// once `hired`, `withdrawn`, or `failed`, the hire request record is immutable.
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Hired | Self::Withdrawn | Self::Failed)
+    }
 }
 
 /// Permission preset on an agent's `execution.md` (`ADR-0032`, `doc-88` §3).

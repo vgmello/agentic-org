@@ -215,6 +215,36 @@ pub(super) fn put(
     run(db, &sql, values)
 }
 
+/// Updates the non-key columns of an existing row matched by its first `key` columns.
+/// Used for tables with `BEFORE INSERT` triggers (such as `provider_connections`) so updating
+/// an existing row runs the `UPDATE` triggers instead of firing `BEFORE INSERT` on conflict.
+pub(super) fn update(
+    db: &Connection,
+    table: &str,
+    columns: &str,
+    key: usize,
+    values: Vec<Value>,
+) -> Result<(), EngineError> {
+    let names: Vec<&str> = columns.split(',').map(str::trim).collect();
+    debug_assert_eq!(names.len(), values.len(), "{table}");
+    let sets: Vec<String> = names[key..]
+        .iter()
+        .enumerate()
+        .map(|(i, name)| format!("{name} = ?{}", key + i + 1))
+        .collect();
+    let predicate: Vec<String> = names[..key]
+        .iter()
+        .enumerate()
+        .map(|(i, name)| format!("{name} = ?{}", i + 1))
+        .collect();
+    let sql = format!(
+        "UPDATE {table} SET {} WHERE {}",
+        sets.join(", "),
+        predicate.join(" AND "),
+    );
+    run(db, &sql, values)
+}
+
 fn by_values(by: &By, values: &mut Vec<Value>) {
     let (kind, id) = match by {
         By::Employee(id) => ("employee", Some(id.as_str())),
