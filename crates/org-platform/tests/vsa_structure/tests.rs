@@ -1,19 +1,16 @@
-//! Synthetic crates held in memory: each check catches the violation it exists for, and each
-//! way around it found in review (`TASK-213` pass 2) is closed.
+//! Synthetic crates held in memory: each check catches the violation it exists for. The ways
+//! around the checks found in review are in `bypasses.rs`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use proc_macro2::{TokenStream, TokenTree};
-
 use super::graph::{cycles, is_test_path, load_target, Target};
-use super::parse::{requires_test, scan, Head};
+use super::parse::requires_test;
 use super::rules::{
-    agent_cli_violations, cycle_violations, layout_violations, office_reach_ins,
-    operator_cli_violations,
+    agent_cli_violations, cycle_violations, office_reach_ins, operator_cli_violations,
 };
 
-fn load(root: &str, files: &[(&str, &str)]) -> Result<Target, String> {
+pub(super) fn load(root: &str, files: &[(&str, &str)]) -> Result<Target, String> {
     let files: BTreeMap<PathBuf, String> = files
         .iter()
         .map(|(p, s)| (PathBuf::from(p), (*s).to_owned()))
@@ -22,11 +19,11 @@ fn load(root: &str, files: &[(&str, &str)]) -> Result<Target, String> {
     load_target(Path::new(root), &read)
 }
 
-fn target(root: &str, files: &[(&str, &str)]) -> Target {
+pub(super) fn target(root: &str, files: &[(&str, &str)]) -> Target {
     load(root, files).expect("the synthetic crate loads")
 }
 
-fn agent(files: &[(&str, &str)]) -> Vec<String> {
+pub(super) fn agent(files: &[(&str, &str)]) -> Vec<String> {
     let t = target("cli/src/lib.rs", files);
     let paths: Vec<PathBuf> = files.iter().map(|(p, _)| PathBuf::from(p)).collect();
     agent_cli_violations(&t, &paths)
@@ -37,7 +34,7 @@ const FEATURES: &str = "pub(crate) mod auth; pub(crate) mod work;";
 
 /// A clean agent CLI (`registry`, `runtime::input`, the `auth` and `work` slices) with
 /// `changed` files replaced or added.
-fn agent_with(changed: &[(&'static str, &'static str)]) -> Vec<String> {
+pub(super) fn agent_with(changed: &[(&'static str, &'static str)]) -> Vec<String> {
     let mut files: BTreeMap<&str, &str> = [
         ("cli/src/lib.rs", CLEAN_LIB),
         ("cli/src/registry.rs", ""),
@@ -56,7 +53,7 @@ fn agent_with(changed: &[(&'static str, &'static str)]) -> Vec<String> {
     agent(&files.into_iter().collect::<Vec<_>>())
 }
 
-fn assert_names(found: &[String], expected: &[&str]) {
+pub(super) fn assert_names(found: &[String], expected: &[&str]) {
     assert_eq!(found.len(), expected.len(), "{found:#?}");
     for (finding, path) in found.iter().zip(expected) {
         assert!(finding.contains(path), "`{path}` in {found:#?}");
@@ -390,298 +387,4 @@ fn test_only_code_is_never_production() {
     );
     assert!(cycles(&t.graph()).is_empty());
     assert_eq!(t.references.len(), 1, "{:?}", t.references);
-}
-
-// ---------------------------------------------------------------------------------------------
-// The ways around the checks found in review, each closed
-
-#[test]
-fn a_use_group_is_read_once_with_its_prefix() {
-    let tokens: TokenStream =
-        "use super::{super::work::Row, self::x::{Y}}; m!(pub(in crate::a) z);"
-            .parse()
-            .unwrap();
-    let tokens: Vec<TokenTree> = tokens.into_iter().collect();
-    let mut named = Vec::new();
-    scan(&tokens, &mut named);
-    let found: Vec<(Head, String, bool)> = named
-        .into_iter()
-        .map(|n| (n.path.head, n.path.segments.join("::"), n.restriction))
-        .collect();
-    assert_eq!(
-        found,
-        [
-            (Head::Up(2), "work::Row".to_owned(), false),
-            (Head::Up(1), "x::Y".to_owned(), false),
-            (Head::Root, "a".to_owned(), true),
-        ]
-    );
-}
-
-#[test]
-fn super_inside_a_use_group_climbs_from_the_prefix() {
-    let found = agent_with(&[
-        ("cli/src/features/auth/mod.rs", "mod sub;"),
-        (
-            "cli/src/features/auth/sub.rs",
-            "use super::{super::work::Row};
-             use super::{self as me, super::super::registry::Table};",
-        ),
-    ]);
-    assert_names(
-        &found,
-        &["crate::features::work::Row", "crate::registry::Table"],
-    );
-}
-
-#[test]
-fn module_aliases_and_globs_are_followed() {
-    let changed = [
-        (
-            "cli/src/features/auth/mod.rs",
-            "use crate::features; use crate::features as f;
-             fn g() { features::work::Row::new(); f::work::go(); }",
-        ),
-        (
-            "cli/src/features/work/mod.rs",
-            "use super::*; pub struct Row; fn g() { auth::x(); }",
-        ),
-    ];
-    assert_names(
-        &agent_with(&changed),
-        &[
-            "names `crate::features`)",
-            "names `crate::features`)",
-            "crate::features::work::Row::new",
-            "crate::features::work::go",
-            "names `crate::features`)",
-            "crate::features::auth::x",
-        ],
-    );
-    let t = target(
-        "x/src/lib.rs",
-        &[
-            ("x/src/lib.rs", "mod a; mod b;"),
-            ("x/src/a.rs", "use crate::*; fn f() { b::B::new(); }"),
-            ("x/src/b.rs", "pub struct B; fn g() { crate::a::f(); }"),
-        ],
-    );
-    assert_eq!(cycles(&t.graph()), vec![vec!["a".to_owned(), "b".into()]]);
-    assert_names(
-        &layout_violations(&t),
-        &["glob-imports the crate module `crate`"],
-    );
-}
-
-#[test]
-fn a_test_item_or_inline_module_on_the_same_line_hides_nothing() {
-    let found = agent_with(&[(
-        "cli/src/features/auth/mod.rs",
-        "#[cfg(test)] const _T: () = (); use crate::features::work::Row;
-         mod m {} use super::work::Row as R2;
-         #[cfg(test)] mod t {} use crate::registry::X;
-         #[cfg(test)] fn t2() { crate::registry::x(); }",
-    )]);
-    assert_names(
-        &found,
-        &[
-            "crate::features::work::Row",
-            "crate::features::work::Row",
-            "crate::registry::X",
-        ],
-    );
-}
-
-#[test]
-fn modules_in_bodies_are_placed_and_a_path_past_the_root_fails() {
-    let found = agent_with(&[
-        (
-            "cli/src/features/auth/mod.rs",
-            "mod sub; impl X { fn f() { #[path = \"sneaky.rs\"] mod sneaky; } }
-             const C: () = { mod k { fn z() { crate::features::work::Row; } } };",
-        ),
-        (
-            "cli/src/features/auth/sub.rs",
-            "pub fn leak() { mod inner { pub fn go() { super::super::super::super::registry::secret(); } } }",
-        ),
-        (
-            "cli/src/features/auth/sneaky.rs",
-            "pub fn s() { crate::registry::x(); }",
-        ),
-    ]);
-    assert_names(
-        &found,
-        &[
-            "crate::features::auth::k` names `crate::features::work::Row",
-            "crate::registry::x",
-            "crate::features::auth::sub::inner` names `crate::registry::secret",
-        ],
-    );
-    for (source, error) in [
-        ("fn f() { super::super::y(); }", "past the crate root"),
-        ("use super::super::*;", "past the crate root"),
-        ("macro_rules! m { () => { mod hidden {} } }", "cannot place"),
-    ] {
-        let loaded = load(
-            "x/src/lib.rs",
-            &[("x/src/lib.rs", "mod a;"), ("x/src/a.rs", source)],
-        );
-        let failure = loaded.expect_err(source);
-        assert!(failure.contains("x/src/a.rs:1:"), "{failure}");
-        assert!(failure.contains(error), "{failure}");
-    }
-}
-
-#[test]
-fn root_re_exports_resolve_through_self_globs_and_raw_names() {
-    let t = target(
-        "x/src/lib.rs",
-        &[
-            (
-                "x/src/lib.rs",
-                "mod a; mod b; mod model; mod r#type;
-                 pub use self::b::B; pub use model::*; pub use r#type::Kind;",
-            ),
-            (
-                "x/src/a.rs",
-                "pub struct A; fn f() { crate::B::new(); crate::Info::new(); }",
-            ),
-            ("x/src/b.rs", "pub struct B; fn g() { crate::Kind::One; }"),
-            ("x/src/model.rs", "pub struct Info; fn h() { crate::a::A; }"),
-            (
-                "x/src/type.rs",
-                "pub enum Kind { One } fn k() { crate::b::B; }",
-            ),
-        ],
-    );
-    assert_eq!(
-        cycles(&t.graph()),
-        vec![
-            vec!["a".to_owned(), "model".into()],
-            vec!["b".to_owned(), "type".into()]
-        ]
-    );
-    assert!(layout_violations(&t).is_empty(), "the crate root may glob");
-}
-
-#[test]
-fn an_extern_crate_self_alias_is_the_crate_root() {
-    let found = agent_with(&[
-        (
-            "cli/src/lib.rs",
-            "extern crate self as me; mod features; mod registry; mod runtime;",
-        ),
-        (
-            "cli/src/features/auth/mod.rs",
-            "fn f() { me::features::work::Row::new(); } use me::registry;",
-        ),
-    ]);
-    assert_names(
-        &found,
-        &["crate::features::work::Row::new", "crate::registry"],
-    );
-}
-
-#[test]
-fn a_macro_group_after_pub_is_a_path_unless_it_is_a_visibility() {
-    let found = agent_with(&[
-        (
-            "cli/src/features/auth/mod.rs",
-            "m!(pub (crate::features::work::Row)); pub(crate) fn a() {} pub(super) fn b() {}
-             pub(in crate::features) fn c() {} pub(self) fn d() {}",
-        ),
-        (
-            "cli/src/features/work/mod.rs",
-            "pub struct Row; pub(in crate::features::auth) fn e() {}",
-        ),
-    ]);
-    assert_names(
-        &found,
-        &[
-            "crate::features::work::Row",
-            "names `crate::features::auth`",
-        ],
-    );
-}
-
-#[test]
-fn a_test_file_name_needs_a_test_cfg() {
-    let t = target(
-        "t/src/lib.rs",
-        &[
-            (
-                "t/src/lib.rs",
-                "mod testing; #[cfg(any(test, feature = \"testkit\"))] mod testkit;
-                 #[cfg(all(feature = \"test-support\", debug_assertions))] pub mod test_support;
-                 #[cfg(not(test))] mod tests; mod checks_tests; #[cfg(test)] mod wake_tests;",
-            ),
-            ("t/src/testing.rs", ""),
-            ("t/src/testkit.rs", ""),
-            ("t/src/test_support.rs", ""),
-            ("t/src/tests.rs", ""),
-            ("t/src/checks_tests.rs", ""),
-        ],
-    );
-    assert_names(
-        &layout_violations(&t),
-        &["mod testing", "mod tests", "mod checks_tests"],
-    );
-}
-
-#[test]
-fn include_and_a_path_out_of_the_module_directory_are_caught() {
-    let t = target(
-        "t/src/lib.rs",
-        &[
-            (
-                "t/src/lib.rs",
-                "mod a; mod feat; include!(\"gen.rs\"); #[cfg(test)] fn t() { include!(\"x.rs\"); }",
-            ),
-            (
-                "t/src/a.rs",
-                "#[path = \"a/ok.rs\"] mod ok; #[path = \"../b.rs\"] mod up; #[path = \"sibling.rs\"] mod sib;",
-            ),
-            ("t/src/a/ok.rs", ""),
-            ("t/b.rs", ""),
-            ("t/src/sibling.rs", ""),
-            ("t/src/feat/mod.rs", "mod auth;"),
-            (
-                "t/src/feat/auth/mod.rs",
-                "#[path = \"../work/rows.rs\"] mod rows; mod inner { #[path = \"deep.rs\"] mod deep; }",
-            ),
-            ("t/src/feat/work/rows.rs", ""),
-            ("t/src/feat/auth/inner/deep.rs", ""),
-        ],
-    );
-    let mut found = layout_violations(&t);
-    found.sort();
-    assert_names(
-        &found,
-        &[
-            "t/b.rs from outside",
-            "t/src/sibling.rs from outside",
-            "rows.rs from outside",
-            "`include!`",
-        ],
-    );
-}
-
-#[test]
-fn only_the_crate_root_glob_imports_a_crate_module() {
-    let t = target(
-        "g/src/lib.rs",
-        &[
-            ("g/src/lib.rs", "mod a; mod b; fn run() { use b::*; c(); }"),
-            (
-                "g/src/a.rs",
-                "use crate::*; use super::b::*; pub enum Kind { One } use self::Kind::*;
-                 use std::collections::*;",
-            ),
-            ("g/src/b.rs", "pub fn c() {}"),
-        ],
-    );
-    assert_names(
-        &layout_violations(&t),
-        &["the crate module `crate`", "the crate module `crate::b`"],
-    );
 }

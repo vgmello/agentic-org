@@ -1,14 +1,23 @@
-//! Reading one source file: what `syn` says of its structure, and the paths its tokens name.
+//! The reader's shared vocabulary: how a written path starts, how a scope is named, and what an
+//! item's attributes say (`cfg`, `#[path]`).
 //!
 //! Every extent is a pair of `proc_macro2` line/column positions, so two items on one line are
 //! told apart. An extent the reader cannot work out is an error, never "to the end of the file".
 
-use std::collections::{BTreeMap, BTreeSet};
-
-use proc_macro2::{Delimiter, LineColumn, Spacing, TokenStream, TokenTree};
+use proc_macro2::{LineColumn, TokenStream, TokenTree};
 
 /// Cargo features that exist only for tests: a module gated on one may use a test file name.
 const TEST_FEATURES: [&str; 2] = ["testkit", "test-support"];
+
+/// Strict and reserved keywords of Rust 2021 that never start or continue a path (`crate`,
+/// `self`, `super` and `Self` do).
+const KEYWORDS: [&str; 47] = [
+    "as", "async", "await", "break", "const", "continue", "dyn", "else", "enum", "extern", "false",
+    "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref",
+    "return", "static", "struct", "trait", "true", "type", "unsafe", "use", "where", "while",
+    "abstract", "become", "box", "do", "final", "macro", "override", "priv", "try", "typeof",
+    "unsized", "virtual", "yield",
+];
 
 /// How a written path starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,11 +26,14 @@ pub enum Head {
     Root,
     /// `self::` (zero) or as many `super::` (after an optional `self::`).
     Up(usize),
-    /// A plain name (the first segment), which the module's own names resolve.
+    /// A plain name (the first segment), which the scope's own names resolve.
     Local,
+    /// `::name::`, a crate of the extern prelude (the crate itself when `name` is an
+    /// `extern crate self` alias).
+    Extern,
 }
 
-/// A path as written in a module.
+/// A path as written in a scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Written {
     pub head: Head,
@@ -30,13 +42,35 @@ pub struct Written {
 
 /// A path being read segment by segment.
 #[derive(Debug, Clone, Default)]
-struct Building {
-    head: Option<Head>,
-    segments: Vec<String>,
+pub struct Building {
+    pub head: Option<Head>,
+    pub segments: Vec<String>,
 }
 
 impl Building {
-    fn push(&mut self, word: &str) {
+    /// A path after a leading `::`.
+    pub fn extern_prelude() -> Self {
+        Self {
+            head: Some(Head::Extern),
+            segments: Vec::new(),
+        }
+    }
+
+    /// A `use` path: from the extern prelude after a leading `::`.
+    pub fn of_use(item: &syn::ItemUse) -> Self {
+        if item.leading_colon.is_some() {
+            Self::extern_prelude()
+        } else {
+            Self::default()
+        }
+    }
+
+    /// Only `self` and `super` read so far: another `super` still climbs.
+    pub fn climbing(&self) -> bool {
+        matches!(self.head, Some(Head::Up(_))) && self.segments.is_empty()
+    }
+
+    pub fn push(&mut self, word: &str) {
         match (self.head, word) {
             (None, "crate") => self.head = Some(Head::Root),
             (None, "self") => self.head = Some(Head::Up(0)),
@@ -55,7 +89,7 @@ impl Building {
         }
     }
 
-    fn done(self) -> Option<Written> {
+    pub fn done(self) -> Option<Written> {
         self.head.map(|head| Written {
             head,
             segments: self.segments,
@@ -70,6 +104,34 @@ pub fn unraw(word: &impl ToString) -> String {
         Some(bare) => bare.to_owned(),
         None => word,
     }
+}
+
+/// Whether `word` is a keyword that is never part of a path (a raw `r#use` is a name).
+pub fn is_keyword(word: &proc_macro2::Ident) -> bool {
+    KEYWORDS.contains(&word.to_string().as_str())
+}
+
+// ---------------------------------------------------------------------------------------------
+// Scopes
+
+/// The scope-path segment of a block that binds names (a body, a `const` block, a group of a
+/// macro): `{line:column}` of its opening brace, which no Rust name can be. A block's scope path
+/// is the scope it is in plus its segment; a module declared in a block is that plus its name.
+pub fn marker(at: LineColumn) -> String {
+    format!("{{{}:{}}}", at.line, at.column)
+}
+
+pub fn is_marker(segment: &str) -> bool {
+    segment.starts_with('{')
+}
+
+/// The module a scope is: the scope path without its trailing block segments.
+pub fn module_of(scope: &[String]) -> &[String] {
+    let end = scope
+        .iter()
+        .rposition(|segment| !is_marker(segment))
+        .map_or(0, |last| last + 1);
+    &scope[..end]
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -105,9 +167,16 @@ pub fn requires_test(predicate: TokenStream) -> bool {
     requires(predicate, &[])
 }
 
+/// Whether an attribute path is the single name `name` (`r#name` included).
+fn named(path: &syn::Path, name: &str) -> bool {
+    path.leading_colon.is_none()
+        && path.segments.len() == 1
+        && unraw(&path.segments[0].ident) == name
+}
+
 fn cfg_requires(attrs: &[syn::Attribute], features: &[&str]) -> bool {
     attrs.iter().any(|attr| match &attr.meta {
-        syn::Meta::List(list) if list.path.is_ident("cfg") => {
+        syn::Meta::List(list) if named(&list.path, "cfg") => {
             requires(list.tokens.clone(), features)
         }
         _ => false,
@@ -120,7 +189,7 @@ pub fn test_only(attrs: &[syn::Attribute]) -> bool {
 }
 
 /// Whether a `mod` is compiled only for tests or a test-only feature.
-fn gated_for_tests(attrs: &[syn::Attribute]) -> bool {
+pub fn gated_for_tests(attrs: &[syn::Attribute]) -> bool {
     cfg_requires(attrs, &TEST_FEATURES)
 }
 
@@ -140,20 +209,55 @@ pub fn split_commas(stream: TokenStream) -> Vec<TokenStream> {
         .collect()
 }
 
-fn path_attr(attrs: &[syn::Attribute]) -> Option<String> {
-    attrs.iter().find_map(|attr| match &attr.meta {
-        syn::Meta::NameValue(pair) if pair.path.is_ident("path") => match &pair.value {
-            syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Str(text),
-                ..
-            }) => Some(text.value()),
-            _ => None,
-        },
-        _ => None,
+/// What the attributes of a `mod` say of where its file is.
+#[derive(Debug, Default)]
+pub struct PathAttrs {
+    /// Each `#[path]`: its text, or `None` when it is not a string literal.
+    pub direct: Vec<Option<String>>,
+    /// A `cfg_attr` (at any depth) adds a `path`.
+    pub wrapped: bool,
+}
+
+pub fn path_attrs(attrs: &[syn::Attribute]) -> PathAttrs {
+    let mut out = PathAttrs::default();
+    for attr in attrs {
+        if named(attr.path(), "path") {
+            out.direct.push(match &attr.meta {
+                syn::Meta::NameValue(syn::MetaNameValue {
+                    value:
+                        syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Str(text),
+                            ..
+                        }),
+                    ..
+                }) => Some(text.value()),
+                _ => None,
+            });
+        } else if let syn::Meta::List(list) = &attr.meta {
+            if named(&list.path, "cfg_attr") {
+                out.wrapped |= wraps_path(list.tokens.clone());
+            }
+        }
+    }
+    out
+}
+
+/// Whether the attributes of `cfg_attr(predicate, attribute, ..)` hold a `path`, nested
+/// `cfg_attr`s included.
+fn wraps_path(tokens: TokenStream) -> bool {
+    split_commas(tokens).into_iter().skip(1).any(|attr| {
+        let attr: Vec<TokenTree> = attr.into_iter().collect();
+        match attr.as_slice() {
+            [TokenTree::Ident(word), ..] if unraw(word) == "path" => true,
+            [TokenTree::Ident(word), TokenTree::Group(inner)] if unraw(word) == "cfg_attr" => {
+                wraps_path(inner.stream())
+            }
+            _ => false,
+        }
     })
 }
 
-fn item_attrs(item: &syn::Item) -> &[syn::Attribute] {
+pub fn item_attrs(item: &syn::Item) -> &[syn::Attribute] {
     use syn::Item;
     match item {
         Item::Const(i) => &i.attrs,
@@ -175,8 +279,8 @@ fn item_attrs(item: &syn::Item) -> &[syn::Attribute] {
     }
 }
 
-/// The name an item defines in its module's namespace (child modules included).
-fn item_name(item: &syn::Item) -> Option<String> {
+/// The name an item defines in its scope's namespace (child modules included).
+pub fn item_name(item: &syn::Item) -> Option<String> {
     use syn::Item;
     let ident = match item {
         Item::Const(i) => &i.ident,
@@ -196,7 +300,7 @@ fn item_name(item: &syn::Item) -> Option<String> {
 }
 
 /// Where an item ends: the end of its closing brace or semicolon.
-fn item_end(item: &syn::Item) -> Option<LineColumn> {
+pub fn item_end(item: &syn::Item) -> Option<LineColumn> {
     use syn::Item;
     let semi_end = |semi: &syn::token::Semi| semi.span.end();
     let fields_end = |fields: &syn::Fields, semi: &Option<syn::token::Semi>| match (fields, semi) {
@@ -233,522 +337,5 @@ fn item_end(item: &syn::Item) -> Option<LineColumn> {
         Item::Union(i) => Some(i.fields.brace_token.span.close().end()),
         Item::Use(i) => Some(semi_end(&i.semi_token)),
         _ => None,
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
-// The structure of a file
-
-/// A `use` in a module: what it binds or glob-imports.
-#[derive(Debug, Clone)]
-pub struct Use {
-    pub path: Written,
-    pub public: bool,
-    pub at: LineColumn,
-}
-
-/// What one module of a file defines and binds.
-#[derive(Debug, Default)]
-pub struct Names {
-    /// Names of the items it defines, child modules included.
-    pub items: BTreeSet<String>,
-    /// `use` bindings (in item lists and in bodies) by the name they bind.
-    pub uses: BTreeMap<String, Use>,
-    /// `use path::*`.
-    pub globs: Vec<Use>,
-}
-
-/// A `mod name;` whose body is another file.
-#[derive(Debug)]
-pub struct ChildDecl {
-    /// The inline modules it is declared in, within the file.
-    pub inline: Vec<String>,
-    pub name: String,
-    pub path_attr: Option<String>,
-    /// Its `cfg` holds only for tests or a test-only feature.
-    pub test_gated: bool,
-    pub at: LineColumn,
-}
-
-/// What `syn` gives of one file.
-#[derive(Debug, Default)]
-pub struct FileItems {
-    pub children: Vec<ChildDecl>,
-    /// Inline modules (in item lists and in bodies): path within the file and brace extent.
-    pub inline: Vec<(Vec<String>, LineColumn, LineColumn)>,
-    /// Extents of test-only items.
-    tests: Vec<(LineColumn, LineColumn)>,
-    /// What each module of the file binds, by its path within the file.
-    pub names: BTreeMap<Vec<String>, Names>,
-    /// `pub mod` items (inline or not) of the file's own module.
-    pub pub_mods: Vec<(String, LineColumn)>,
-    /// Names bound by `extern crate self as <name>`.
-    pub aliases: BTreeSet<String>,
-    /// Every `mod` keyword the walk accounts for.
-    placed: BTreeSet<LineColumn>,
-}
-
-impl FileItems {
-    pub fn read(file: &syn::File) -> Result<Self, String> {
-        let mut out = Self::default();
-        out.names.insert(Vec::new(), Names::default());
-        for item in &file.items {
-            out.item(item, &[], false)?;
-        }
-        Ok(out)
-    }
-
-    /// Whether `at` is in test-only code.
-    pub fn in_test(&self, at: LineColumn) -> bool {
-        self.tests
-            .iter()
-            .any(|(start, end)| *start <= at && at < *end)
-    }
-
-    /// The innermost inline module holding `at`, as a path within the file.
-    pub fn module_at(&self, at: LineColumn) -> &[String] {
-        self.inline
-            .iter()
-            .filter(|(_, start, end)| *start <= at && at < *end)
-            .max_by_key(|(_, start, _)| *start)
-            .map_or(&[], |(path, _, _)| path.as_slice())
-    }
-
-    /// Whether the `mod` keyword at `at` was accounted for.
-    pub fn placed(&self, at: LineColumn) -> bool {
-        self.placed.contains(&at)
-    }
-
-    fn names_mut(&mut self, module: &[String]) -> &mut Names {
-        self.names.entry(module.to_vec()).or_default()
-    }
-
-    fn test_item(
-        &mut self,
-        attrs: &[syn::Attribute],
-        end: Option<LineColumn>,
-    ) -> Result<(), String> {
-        let start = attrs[0].pound_token.span.start();
-        let end = end.ok_or_else(|| {
-            format!(
-                ":{}:{}: a test-only item whose end cannot be found",
-                start.line,
-                start.column + 1
-            )
-        })?;
-        self.tests.push((start, end));
-        Ok(())
-    }
-
-    fn item(&mut self, item: &syn::Item, module: &[String], in_body: bool) -> Result<(), String> {
-        use syn::Item;
-        let attrs = item_attrs(item);
-        if test_only(attrs) {
-            if let Item::Mod(m) = item {
-                self.placed.insert(m.mod_token.span.start());
-            }
-            return self.test_item(attrs, item_end(item));
-        }
-        if !in_body {
-            if let Some(name) = item_name(item) {
-                self.names_mut(module).items.insert(name);
-            }
-        }
-        match item {
-            Item::Mod(m) => return self.module(m, module, in_body),
-            Item::Fn(f) => return self.block(&f.block, module),
-            Item::Const(c) => return self.expr(&c.expr, module),
-            Item::Static(s) => return self.expr(&s.expr, module),
-            Item::Impl(i) => {
-                for member in &i.items {
-                    self.impl_item(member, module)?;
-                }
-            }
-            Item::Trait(t) => {
-                for member in &t.items {
-                    self.trait_item(member, module)?;
-                }
-            }
-            Item::Use(u) if u.leading_colon.is_none() => {
-                let public = matches!(u.vis, syn::Visibility::Public(_));
-                let at = u.use_token.span.start();
-                self.use_tree(&u.tree, Building::default(), module, public, at);
-            }
-            Item::ExternCrate(e) if e.ident == "self" => {
-                if let Some((_, alias)) = &e.rename {
-                    self.aliases.insert(unraw(alias));
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn module(&mut self, m: &syn::ItemMod, module: &[String], in_body: bool) -> Result<(), String> {
-        let name = unraw(&m.ident);
-        let at = m.mod_token.span.start();
-        self.placed.insert(at);
-        if module.is_empty() && !in_body && matches!(m.vis, syn::Visibility::Public(_)) {
-            self.pub_mods.push((name.clone(), at));
-        }
-        match &m.content {
-            Some((brace, content)) => {
-                let mut path = module.to_vec();
-                path.push(name);
-                let extent = (brace.span.open().start(), brace.span.close().end());
-                self.inline.push((path.clone(), extent.0, extent.1));
-                self.names_mut(&path);
-                for item in content {
-                    self.item(item, &path, false)?;
-                }
-            }
-            None => self.children.push(ChildDecl {
-                inline: module.to_vec(),
-                name,
-                path_attr: path_attr(&m.attrs),
-                test_gated: gated_for_tests(&m.attrs),
-                at,
-            }),
-        }
-        Ok(())
-    }
-
-    fn impl_item(&mut self, member: &syn::ImplItem, module: &[String]) -> Result<(), String> {
-        match member {
-            syn::ImplItem::Fn(f) if test_only(&f.attrs) => {
-                self.test_item(&f.attrs, Some(f.block.brace_token.span.close().end()))
-            }
-            syn::ImplItem::Fn(f) => self.block(&f.block, module),
-            syn::ImplItem::Const(c) if test_only(&c.attrs) => {
-                self.test_item(&c.attrs, Some(c.semi_token.span.end()))
-            }
-            syn::ImplItem::Const(c) => self.expr(&c.expr, module),
-            syn::ImplItem::Type(t) if test_only(&t.attrs) => {
-                self.test_item(&t.attrs, Some(t.semi_token.span.end()))
-            }
-            _ => Ok(()),
-        }
-    }
-
-    fn trait_item(&mut self, member: &syn::TraitItem, module: &[String]) -> Result<(), String> {
-        match member {
-            syn::TraitItem::Fn(f) if test_only(&f.attrs) => {
-                let end = match (&f.default, &f.semi_token) {
-                    (Some(block), _) => Some(block.brace_token.span.close().end()),
-                    (None, Some(semi)) => Some(semi.span.end()),
-                    (None, None) => None,
-                };
-                self.test_item(&f.attrs, end)
-            }
-            syn::TraitItem::Fn(syn::TraitItemFn {
-                default: Some(block),
-                ..
-            }) => self.block(block, module),
-            syn::TraitItem::Const(syn::TraitItemConst {
-                attrs,
-                default: Some((_, expr)),
-                ..
-            }) if !test_only(attrs) => self.expr(expr, module),
-            _ => Ok(()),
-        }
-    }
-
-    fn block(&mut self, block: &syn::Block, module: &[String]) -> Result<(), String> {
-        for stmt in &block.stmts {
-            match stmt {
-                syn::Stmt::Item(item) => self.item(item, module, true)?,
-                syn::Stmt::Local(local) => {
-                    if let Some(init) = &local.init {
-                        self.expr(&init.expr, module)?;
-                        if let Some((_, diverge)) = &init.diverge {
-                            self.expr(diverge, module)?;
-                        }
-                    }
-                }
-                syn::Stmt::Expr(expr, _) => self.expr(expr, module)?,
-                syn::Stmt::Macro(_) => {}
-            }
-        }
-        Ok(())
-    }
-
-    /// Walks the blocks of an expression for items (a `mod` or `use` in a closure, a branch..).
-    /// A `mod` this misses is caught as unplaced, so the walk need not be complete.
-    fn expr(&mut self, expr: &syn::Expr, module: &[String]) -> Result<(), String> {
-        use std::iter::once;
-        use syn::Expr as E;
-        fn boxed(e: &Option<Box<syn::Expr>>) -> Vec<&syn::Expr> {
-            e.as_deref().into_iter().collect()
-        }
-        let (blocks, exprs): (Vec<&syn::Block>, Vec<&syn::Expr>) = match expr {
-            E::Array(e) => (vec![], e.elems.iter().collect()),
-            E::Assign(e) => (vec![], vec![&*e.left, &*e.right]),
-            E::Async(e) => (vec![&e.block], vec![]),
-            E::Await(e) => (vec![], vec![&*e.base]),
-            E::Binary(e) => (vec![], vec![&*e.left, &*e.right]),
-            E::Block(e) => (vec![&e.block], vec![]),
-            E::Break(e) => (vec![], boxed(&e.expr)),
-            E::Call(e) => (vec![], once(&*e.func).chain(&e.args).collect()),
-            E::Cast(e) => (vec![], vec![&*e.expr]),
-            E::Closure(e) => (vec![], vec![&*e.body]),
-            E::Const(e) => (vec![&e.block], vec![]),
-            E::Field(e) => (vec![], vec![&*e.base]),
-            E::ForLoop(e) => (vec![&e.body], vec![&*e.expr]),
-            E::Group(e) => (vec![], vec![&*e.expr]),
-            E::If(e) => {
-                let otherwise = e.else_branch.iter().map(|(_, x)| &**x);
-                (
-                    vec![&e.then_branch],
-                    once(&*e.cond).chain(otherwise).collect(),
-                )
-            }
-            E::Index(e) => (vec![], vec![&*e.expr, &*e.index]),
-            E::Let(e) => (vec![], vec![&*e.expr]),
-            E::Loop(e) => (vec![&e.body], vec![]),
-            E::Match(e) => {
-                let arms = e.arms.iter().flat_map(|arm| {
-                    let guard = arm.guard.iter().map(|(_, g)| &**g);
-                    guard.chain(once(&*arm.body))
-                });
-                (vec![], once(&*e.expr).chain(arms).collect())
-            }
-            E::MethodCall(e) => (vec![], once(&*e.receiver).chain(&e.args).collect()),
-            E::Paren(e) => (vec![], vec![&*e.expr]),
-            E::Range(e) => (
-                vec![],
-                [&e.start, &e.end].into_iter().flat_map(boxed).collect(),
-            ),
-            E::Reference(e) => (vec![], vec![&*e.expr]),
-            E::Repeat(e) => (vec![], vec![&*e.expr, &*e.len]),
-            E::Return(e) => (vec![], boxed(&e.expr)),
-            E::Struct(e) => {
-                let fields = e.fields.iter().map(|f| &f.expr);
-                (vec![], fields.chain(e.rest.as_deref()).collect())
-            }
-            E::Try(e) => (vec![], vec![&*e.expr]),
-            E::TryBlock(e) => (vec![&e.block], vec![]),
-            E::Tuple(e) => (vec![], e.elems.iter().collect()),
-            E::Unary(e) => (vec![], vec![&*e.expr]),
-            E::Unsafe(e) => (vec![&e.block], vec![]),
-            E::While(e) => (vec![&e.body], vec![&*e.cond]),
-            E::Yield(e) => (vec![], boxed(&e.expr)),
-            _ => (vec![], vec![]),
-        };
-        for block in blocks {
-            self.block(block, module)?;
-        }
-        exprs.into_iter().try_for_each(|e| self.expr(e, module))
-    }
-
-    fn use_tree(
-        &mut self,
-        tree: &syn::UseTree,
-        mut path: Building,
-        module: &[String],
-        public: bool,
-        at: LineColumn,
-    ) {
-        let bind = |name: String, path: Building, names: &mut Names| {
-            if let Some(path) = path.done() {
-                names.uses.insert(name, Use { path, public, at });
-            }
-        };
-        match tree {
-            syn::UseTree::Path(p) => {
-                path.push(&unraw(&p.ident));
-                self.use_tree(&p.tree, path, module, public, at);
-            }
-            syn::UseTree::Name(n) => {
-                let word = unraw(&n.ident);
-                // `x::{self}` binds `x`.
-                let name = if word == "self" {
-                    path.segments.last().cloned()
-                } else {
-                    path.push(&word);
-                    Some(word)
-                };
-                if let Some(name) = name {
-                    bind(name, path, self.names_mut(module));
-                }
-            }
-            syn::UseTree::Rename(r) => {
-                let word = unraw(&r.ident);
-                if word != "self" {
-                    path.push(&word);
-                }
-                let name = unraw(&r.rename);
-                if name != "_" {
-                    bind(name, path, self.names_mut(module));
-                }
-            }
-            syn::UseTree::Glob(_) => {
-                if let Some(path) = path.done() {
-                    let glob = Use { path, public, at };
-                    self.names_mut(module).globs.push(glob);
-                }
-            }
-            syn::UseTree::Group(group) => {
-                for tree in &group.items {
-                    self.use_tree(tree, path.clone(), module, public, at);
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
-// The paths the tokens name
-
-/// A path the tokens name and where it starts; `restriction` for the path of `pub(in path)`.
-#[derive(Debug)]
-pub struct Named {
-    pub at: LineColumn,
-    pub path: Written,
-    pub restriction: bool,
-}
-
-/// `::` at `index`.
-fn colons(tokens: &[TokenTree], index: usize) -> bool {
-    matches!(
-        (tokens.get(index), tokens.get(index + 1)),
-        (Some(TokenTree::Punct(a)), Some(TokenTree::Punct(b)))
-            if a.as_char() == ':' && a.spacing() == Spacing::Joint && b.as_char() == ':'
-    )
-}
-
-fn punct(token: Option<&TokenTree>, c: char) -> Option<&proc_macro2::Punct> {
-    match token {
-        Some(TokenTree::Punct(p)) if p.as_char() == c => Some(p),
-        _ => None,
-    }
-}
-
-/// Whether the ident at `at` starts a path: `name::` not after `::`, a method's `.` or a macro
-/// variable's `$` (except `$crate`).
-fn path_start(tokens: &[TokenTree], at: usize) -> bool {
-    let TokenTree::Ident(word) = &tokens[at] else {
-        return false;
-    };
-    if !colons(tokens, at + 1) || (at >= 2 && colons(tokens, at - 2)) {
-        return false;
-    }
-    let before = at.checked_sub(1).and_then(|i| tokens.get(i));
-    if punct(before, '.').is_some() {
-        // `..crate::X` is a range; `x.name::<T>()` is a method.
-        let range = at.checked_sub(2).and_then(|i| punct(tokens.get(i), '.'));
-        return range.is_some_and(|dot| dot.spacing() == Spacing::Joint);
-    }
-    punct(before, '$').is_none() || word == "crate"
-}
-
-/// The group of `pub(..)` as a visibility restriction: `Some(path tokens)` for `in path`,
-/// `Some([])` for `crate`, `self` and `super`, `None` for anything else (a macro's argument).
-fn restriction(group: &proc_macro2::Group) -> Option<Vec<TokenTree>> {
-    if group.delimiter() != Delimiter::Parenthesis {
-        return None;
-    }
-    let tokens: Vec<TokenTree> = group.stream().into_iter().collect();
-    match tokens.as_slice() {
-        [TokenTree::Ident(word)] if word == "crate" || word == "self" || word == "super" => {
-            Some(Vec::new())
-        }
-        [TokenTree::Ident(word), rest @ ..] if word == "in" && !rest.is_empty() => {
-            let simple = rest.iter().all(|token| match token {
-                TokenTree::Ident(_) => true,
-                TokenTree::Punct(p) => p.as_char() == ':',
-                _ => false,
-            });
-            simple.then(|| rest.to_vec())
-        }
-        _ => None,
-    }
-}
-
-/// The paths a path or `use` tree starting at `at` names, and the index after it: a `{..}`
-/// group is read here with the prefix (and its `super`s) it extends, never on its own.
-fn read_path(tokens: &[TokenTree], mut at: usize, mut path: Building) -> (Vec<Written>, usize) {
-    loop {
-        match tokens.get(at) {
-            Some(TokenTree::Ident(word)) => {
-                path.push(&unraw(word));
-                if !colons(tokens, at + 1) {
-                    return (path.done().into_iter().collect(), at + 1);
-                }
-                at += 3;
-            }
-            Some(TokenTree::Group(group))
-                if group.delimiter() == Delimiter::Brace && path.head.is_some() =>
-            {
-                let mut out = Vec::new();
-                for part in split_commas(group.stream()) {
-                    let part: Vec<TokenTree> = part.into_iter().collect();
-                    out.extend(read_path(&part, 0, path.clone()).0);
-                }
-                return (out, at + 1);
-            }
-            _ => return (path.done().into_iter().collect(), at),
-        }
-    }
-}
-
-/// Every path `tokens` name, in `use` trees, signatures, bodies and macro definitions alike.
-pub fn scan(tokens: &[TokenTree], out: &mut Vec<Named>) {
-    let mut at = 0;
-    while at < tokens.len() {
-        match &tokens[at] {
-            TokenTree::Group(group) => {
-                let inner: Vec<TokenTree> = group.stream().into_iter().collect();
-                scan(&inner, out);
-            }
-            TokenTree::Ident(word) if word == "pub" => {
-                let group = match tokens.get(at + 1) {
-                    Some(TokenTree::Group(group)) => restriction(group),
-                    _ => None,
-                };
-                if let Some(path) = group {
-                    let start = word.span().start();
-                    let (paths, _) = read_path(&path, 0, Building::default());
-                    out.extend(paths.into_iter().map(|path| Named {
-                        at: start,
-                        path,
-                        restriction: true,
-                    }));
-                    at += 2;
-                    continue;
-                }
-            }
-            TokenTree::Ident(word) if path_start(tokens, at) => {
-                let start = word.span().start();
-                let (paths, end) = read_path(tokens, at, Building::default());
-                out.extend(paths.into_iter().map(|path| Named {
-                    at: start,
-                    path,
-                    restriction: false,
-                }));
-                at = end;
-                continue;
-            }
-            _ => {}
-        }
-        at += 1;
-    }
-}
-
-/// Where `tokens` hold a `mod` keyword, and where an `include!`.
-pub fn sites(tokens: &[TokenTree], mods: &mut Vec<LineColumn>, includes: &mut Vec<LineColumn>) {
-    for (index, token) in tokens.iter().enumerate() {
-        match token {
-            TokenTree::Group(group) => {
-                let inner: Vec<TokenTree> = group.stream().into_iter().collect();
-                sites(&inner, mods, includes);
-            }
-            TokenTree::Ident(word) if word == "mod" => mods.push(word.span().start()),
-            TokenTree::Ident(word)
-                if word == "include" && punct(tokens.get(index + 1), '!').is_some() =>
-            {
-                includes.push(word.span().start());
-            }
-            _ => {}
-        }
     }
 }

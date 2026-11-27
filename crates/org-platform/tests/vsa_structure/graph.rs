@@ -6,7 +6,9 @@ use std::path::{Component, Path, PathBuf};
 
 use proc_macro2::{LineColumn, TokenStream, TokenTree};
 
-use super::parse::{self, FileItems, Head, Named, Use, Written};
+use super::items::{ChildDecl, FileItems, Use};
+use super::parse::{self, is_marker, module_of, Head, Written};
+use super::scan::{self, Named};
 
 /// How deep a chain of `use` bindings and globs is followed (`rustc` refuses cyclic ones).
 const BINDING_DEPTH: usize = 32;
@@ -23,7 +25,7 @@ pub struct Module {
 /// A crate-internal path a module names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reference {
-    /// The naming module's path.
+    /// The naming module's path (a module declared in a body has its block's segment).
     pub from: Vec<String>,
     pub file: PathBuf,
     pub at: LineColumn,
@@ -40,13 +42,16 @@ pub struct Binding {
     pub at: LineColumn,
 }
 
-/// What one module defines and binds.
+/// What one module or block defines and binds.
 #[derive(Debug, Default)]
 pub struct Scope {
     pub items: BTreeSet<String>,
-    /// Its loaded child modules.
+    /// Its loaded child modules (a block's are the modules declared in it).
     pub children: BTreeSet<String>,
-    pub uses: BTreeMap<String, Binding>,
+    /// The children declared `pub`.
+    pub public_children: BTreeSet<String>,
+    /// Every path each name may stand for (`cfg` alternatives bind a name more than once).
+    pub uses: BTreeMap<String, Vec<Binding>>,
     pub globs: Vec<Binding>,
 }
 
@@ -54,13 +59,16 @@ pub struct Scope {
 #[derive(Debug, Default)]
 pub struct Target {
     pub root: PathBuf,
+    /// Every module of an item list (not one declared in a body).
     pub modules: Vec<Module>,
-    /// Every loaded module (file, inline or in a body) by path.
+    /// Every loaded module (file, inline or in a body) and every block that binds names, by
+    /// scope path.
     pub scopes: BTreeMap<Vec<String>, Scope>,
     pub references: Vec<Reference>,
     /// `pub mod` items of the root file (inline or not).
     pub root_pub_mods: Vec<(String, LineColumn)>,
-    /// Layout rules broken while reading: test file names, `#[path]`, `include!`.
+    /// Layout rules broken while reading: test file names, `#[path]`, `include!`, a name bound
+    /// twice in one scope.
     pub problems: Vec<String>,
     /// Names bound by `extern crate self as <name>`: the crate root.
     aliases: BTreeSet<String>,
@@ -114,7 +122,7 @@ fn child_dir(file: &Path, root_like: bool) -> PathBuf {
 struct Parsed {
     file: PathBuf,
     module: Vec<String>,
-    source: String,
+    tokens: Vec<TokenTree>,
     items: FileItems,
 }
 
@@ -137,8 +145,12 @@ pub fn load_target(root: &Path, read: Read<'_>) -> Result<Target, String> {
         if parse::test_only(&syntax.attrs) {
             continue;
         }
-        let items =
-            FileItems::read(&syntax).map_err(|error| format!("{}{error}", file.display()))?;
+        let tokens: TokenStream = source
+            .parse()
+            .map_err(|error| format!("{}: {error}", file.display()))?;
+        let tokens: Vec<TokenTree> = tokens.into_iter().collect();
+        let items = FileItems::read(&syntax, &tokens)
+            .map_err(|error| format!("{}{error}", file.display()))?;
         for child in &items.children {
             if let Some(next) = target.child(&file, &module, child, read)? {
                 pending.push(next);
@@ -148,7 +160,7 @@ pub fn load_target(root: &Path, read: Read<'_>) -> Result<Target, String> {
         parsed.push(Parsed {
             file,
             module,
-            source,
+            tokens,
             items,
         });
     }
@@ -156,7 +168,7 @@ pub fn load_target(root: &Path, read: Read<'_>) -> Result<Target, String> {
         target.scan(file)?;
     }
     for (module, scope) in &target.scopes {
-        for binding in scope.uses.values().chain(&scope.globs) {
+        for binding in scope.uses.values().flatten().chain(&scope.globs) {
             target
                 .absolute(module, &binding.path)
                 .map_err(|error| format!("{}: {error}", site(&binding.file, binding.at)))?;
@@ -177,13 +189,15 @@ impl Target {
         &mut self,
         file: &Path,
         module: &[String],
-        child: &parse::ChildDecl,
+        child: &ChildDecl,
         read: Read<'_>,
     ) -> Result<Option<(PathBuf, Vec<String>)>, String> {
+        // A block is no directory: a `mod x;` in a body needs a `#[path]` from the file's own.
+        let inline: Vec<&String> = child.scope.iter().filter(|s| !is_marker(s)).collect();
         let mut base = child_dir(file, module.is_empty());
-        base.extend(child.inline.iter());
+        base.extend(inline.iter());
         let candidates = match &child.path_attr {
-            Some(p) if child.inline.is_empty() => {
+            Some(p) if inline.is_empty() => {
                 vec![file.parent().unwrap_or(Path::new("")).join(p)]
             }
             Some(p) => vec![base.join(p)],
@@ -225,28 +239,39 @@ impl Target {
             ));
         }
         let mut path = module.to_vec();
-        path.extend(child.inline.iter().cloned());
+        path.extend(child.scope.iter().cloned());
         path.push(child.name.clone());
         Ok(Some((found, path)))
     }
 
-    /// Records a file's modules and what each binds.
+    /// Records a file's modules and what each of its scopes binds.
     fn add_file(&mut self, file: &Path, module: &[String], items: &FileItems) {
-        let inline = items.inline.iter().map(|(inline, _, _)| {
+        let key = |inner: &[String]| {
             let mut path = module.to_vec();
-            path.extend(inline.iter().cloned());
+            path.extend(inner.iter().cloned());
             path
-        });
-        for path in std::iter::once(module.to_vec()).chain(inline) {
+        };
+        let inline = items.inline.iter().map(|m| (key(&m.key), m.public));
+        for (path, public) in std::iter::once((module.to_vec(), false)).chain(inline) {
             if let Some((name, parent)) = path.split_last() {
                 let parent = self.scopes.entry(parent.to_vec()).or_default();
                 parent.children.insert(name.clone());
+                if public {
+                    parent.public_children.insert(name.clone());
+                }
             }
             self.scopes.entry(path.clone()).or_default();
-            self.modules.push(Module {
-                path,
-                file: file.to_path_buf(),
-            });
+            // A module declared in a body is no module of the tree: nothing outside names it.
+            if !path.iter().any(|segment| is_marker(segment)) {
+                self.modules.push(Module {
+                    path,
+                    file: file.to_path_buf(),
+                });
+            }
+        }
+        for child in items.children.iter().filter(|child| child.public) {
+            let parent = self.scopes.entry(key(&child.scope)).or_default();
+            parent.public_children.insert(child.name.clone());
         }
         let binding = |found: &Use| Binding {
             path: found.path.clone(),
@@ -254,15 +279,18 @@ impl Target {
             file: file.to_path_buf(),
             at: found.at,
         };
-        for (inline, names) in &items.names {
-            let mut path = module.to_vec();
-            path.extend(inline.iter().cloned());
-            let scope = self.scopes.entry(path).or_default();
+        for (inner, names) in &items.names {
+            let scope = self.scopes.entry(key(inner)).or_default();
             scope.items.extend(names.items.iter().cloned());
             for (name, found) in &names.uses {
-                scope.uses.insert(name.clone(), binding(found));
+                let bound = scope.uses.entry(name.clone()).or_default();
+                bound.extend(found.iter().map(binding));
             }
             scope.globs.extend(names.globs.iter().map(binding));
+        }
+        for (at, problem) in &items.problems {
+            self.problems
+                .push(format!("{}: {problem}", site(file, *at)));
         }
         if module.is_empty() {
             self.root_pub_mods.extend(items.pub_mods.iter().cloned());
@@ -272,14 +300,9 @@ impl Target {
 
     /// Records every crate-internal path a production file names.
     fn scan(&mut self, file: &Parsed) -> Result<(), String> {
-        let tokens: TokenStream = file
-            .source
-            .parse()
-            .map_err(|error| format!("{}: {error}", file.file.display()))?;
-        let tokens: Vec<TokenTree> = tokens.into_iter().collect();
-        let items = &file.items;
+        let (tokens, items) = (&file.tokens, &file.items);
         let (mut mods, mut includes) = (Vec::new(), Vec::new());
-        parse::sites(&tokens, &mut mods, &mut includes);
+        scan::sites(tokens, &mut mods, &mut includes);
         if let Some(at) = mods
             .iter()
             .find(|at| !items.placed(**at) && !items.in_test(**at))
@@ -296,7 +319,7 @@ impl Target {
             ));
         }
         let mut named = Vec::new();
-        parse::scan(&tokens, &mut named);
+        scan::scan(tokens, &mut named);
         for Named {
             at,
             path,
@@ -306,44 +329,39 @@ impl Target {
             if items.in_test(at) {
                 continue;
             }
-            let mut from = file.module.clone();
-            from.extend(items.module_at(at).iter().cloned());
-            let found = self
-                .absolute(&from, &path)
-                .map_err(|error| format!("{}: {error}", site(&file.file, at)))?;
-            let Some(absolute) = found else {
-                continue;
-            };
-            // `pub(in path)` names an ancestor, which `rustc` checks; anything else is a path.
-            if restriction && from.starts_with(&absolute) {
-                continue;
+            let mut scope = file.module.clone();
+            scope.extend(items.scope_at(at).iter().cloned());
+            let error = |error: String| format!("{}: {error}", site(&file.file, at));
+            let from = module_of(&scope).to_vec();
+            for absolute in self.absolute(&scope, &path).map_err(error)? {
+                // `pub(in path)` names an ancestor, which `rustc` checks; anything else is a
+                // path.
+                if restriction && from.starts_with(&absolute) {
+                    continue;
+                }
+                for to in self.resolve(&absolute).map_err(error)? {
+                    self.references.push(Reference {
+                        from: from.clone(),
+                        file: file.file.clone(),
+                        at,
+                        to,
+                    });
+                }
             }
-            let to = self
-                .resolve(&absolute)
-                .map_err(|error| format!("{}: {error}", site(&file.file, at)))?;
-            self.references.push(Reference {
-                from,
-                file: file.file.clone(),
-                at,
-                to,
-            });
         }
         Ok(())
     }
 
-    /// The crate path `path` stands for when written in `module`; `None` when it leaves the
-    /// crate (another crate, the prelude, a generic parameter).
-    pub fn absolute(
-        &self,
-        module: &[String],
-        path: &Written,
-    ) -> Result<Option<Vec<String>>, String> {
-        self.absolute_at(module, path, 0, true)
+    /// Every crate path `path` may stand for when written in `scope` (a module or a block):
+    /// one, or one per `cfg` alternative of a name on the way; none when it leaves the crate
+    /// (another crate, the prelude, a generic parameter).
+    pub fn absolute(&self, scope: &[String], path: &Written) -> Result<Vec<Vec<String>>, String> {
+        self.absolute_at(scope, path, 0, true)
     }
 
-    /// The path `to` reaches: each segment after a module is followed through that module's
+    /// Every path `to` reaches: each segment after a module is followed through that module's
     /// `use` bindings and globs (re-exports, inline facades); the first item ends it.
-    pub fn resolve(&self, to: &[String]) -> Result<Vec<String>, String> {
+    pub fn resolve(&self, to: &[String]) -> Result<Vec<Vec<String>>, String> {
         self.resolve_at(to, 0, true)
     }
 
@@ -351,109 +369,168 @@ impl Target {
     /// level: what a glob reaches never consults globs again).
     fn absolute_at(
         &self,
-        module: &[String],
+        scope: &[String],
         path: &Written,
         depth: usize,
         globs: bool,
-    ) -> Result<Option<Vec<String>>, String> {
+    ) -> Result<Vec<Vec<String>>, String> {
         match path.head {
-            Head::Root => Ok(Some(path.segments.clone())),
-            Head::Up(supers) if supers > module.len() => Err(format!(
-                "a path climbs {supers} modules from `{}`, past the crate root",
-                display_path(module)
-            )),
+            Head::Root => Ok(vec![path.segments.clone()]),
+            // `::name` is a crate of the extern prelude: this one only through an alias.
+            Head::Extern => Ok(match path.segments.split_first() {
+                Some((first, rest)) if self.aliases.contains(first) => vec![rest.to_vec()],
+                _ => Vec::new(),
+            }),
             Head::Up(supers) => {
-                let mut to = module[..module.len() - supers].to_vec();
+                let mut to = climb(scope, supers).ok_or_else(|| {
+                    format!(
+                        "a path climbs {supers} modules from `{}`, past the crate root",
+                        display_path(module_of(scope))
+                    )
+                })?;
                 to.extend(path.segments.iter().cloned());
-                Ok(Some(to))
+                Ok(vec![to])
             }
             Head::Local => {
                 let Some((first, rest)) = path.segments.split_first() else {
-                    return Ok(None);
+                    return Ok(Vec::new());
                 };
-                let found = self.lookup(module, first, depth, globs)?;
-                Ok(found.map(|mut to| {
-                    to.extend(rest.iter().cloned());
-                    to
-                }))
+                let found = self.lookup(scope, first, depth, globs)?;
+                Ok(extend(found, rest))
             }
         }
     }
 
-    /// What a plain `name` stands for in `module`: its `use` binding, its own item or child
-    /// module, the crate itself (`extern crate self as name`), or a name its globs import.
+    /// What a plain `name` may stand for in `scope`: what the scope binds, else what each block
+    /// around it binds out to its module (a module never sees the blocks around it), else the
+    /// crate itself (`extern crate self as name`).
     fn lookup(
         &self,
-        module: &[String],
+        scope: &[String],
         name: &str,
         depth: usize,
         globs: bool,
-    ) -> Result<Option<Vec<String>>, String> {
+    ) -> Result<Vec<Vec<String>>, String> {
         if depth > BINDING_DEPTH {
-            return Ok(None);
+            return Ok(Vec::new());
         }
-        let Some(scope) = self.scopes.get(module) else {
-            return Ok(None);
-        };
-        // A `use` never resolves through itself (`use serde_json;` names the crate).
-        let binding = scope.uses.get(name).filter(|binding| {
-            binding.path.head != Head::Local
-                || binding.path.segments.first().map(String::as_str) != Some(name)
-        });
-        if let Some(binding) = binding {
-            return self.absolute_at(module, &binding.path, depth + 1, globs);
-        }
-        if scope.items.contains(name) || scope.children.contains(name) {
-            let mut own = module.to_vec();
-            own.push(name.to_owned());
-            return Ok(Some(own));
-        }
-        if self.aliases.contains(name) {
-            return Ok(Some(Vec::new()));
-        }
-        for glob in scope.globs.iter().filter(|_| globs) {
-            let Some(source) = self.absolute_at(module, &glob.path, depth + 1, false)? else {
-                continue;
-            };
-            let source = self.resolve_at(&source, depth + 1, false)?;
-            if let Some(found) = self.lookup(&source, name, depth + 1, false)? {
-                return Ok(Some(found));
+        let mut key = scope.to_vec();
+        loop {
+            if let Some(found) = self.lookup_in(&key, name, depth, globs)? {
+                return Ok(found);
             }
+            match key.last() {
+                Some(last) if is_marker(last) => key.pop(),
+                _ => break,
+            };
         }
-        Ok(None)
+        Ok(if self.aliases.contains(name) {
+            vec![Vec::new()]
+        } else {
+            Vec::new()
+        })
     }
 
-    fn resolve_at(&self, to: &[String], depth: usize, globs: bool) -> Result<Vec<String>, String> {
-        let mut path = to.to_vec();
-        'expand: for _ in 0..BINDING_DEPTH {
+    /// `name` in the one scope `key`: its `use` bindings and its own item or child module (a
+    /// type and a value may share a name), else a name its globs import. `None` when the scope
+    /// does not bind it; an empty list when it binds it only to something outside the crate.
+    fn lookup_in(
+        &self,
+        key: &[String],
+        name: &str,
+        depth: usize,
+        globs: bool,
+    ) -> Result<Option<Vec<Vec<String>>>, String> {
+        let Some(scope) = self.scopes.get(key) else {
+            return Ok(None);
+        };
+        let around = key.split_last().filter(|(last, _)| is_marker(last));
+        let (mut found, mut bound) = (Vec::new(), false);
+        for binding in scope.uses.get(name).into_iter().flatten() {
+            let path = &binding.path;
+            let first = path.segments.first().map(String::as_str);
+            if path.head != Head::Local || first != Some(name) {
+                bound = true;
+                found.extend(self.absolute_at(key, path, depth + 1, globs)?);
+            } else if let Some((_, around)) = around {
+                // `use x;` (or `use x::y as x;`) never resolves through itself: in a block it
+                // names the `x` around the block; in a module, another crate.
+                bound = true;
+                let outer = self.lookup(around, name, depth + 1, globs)?;
+                found.extend(extend(outer, &path.segments[1..]));
+            }
+        }
+        if scope.items.contains(name) || scope.children.contains(name) {
+            bound = true;
+            found.push(key.iter().cloned().chain([name.to_owned()]).collect());
+        }
+        if bound {
+            return Ok(Some(found));
+        }
+        for glob in scope.globs.iter().filter(|_| globs) {
+            for source in self.absolute_at(key, &glob.path, depth + 1, false)? {
+                for source in self.resolve_at(&source, depth + 1, false)? {
+                    found.extend(
+                        self.lookup_in(&source, name, depth + 1, false)?
+                            .into_iter()
+                            .flatten(),
+                    );
+                }
+            }
+        }
+        Ok((!found.is_empty()).then_some(found))
+    }
+
+    fn resolve_at(
+        &self,
+        to: &[String],
+        depth: usize,
+        globs: bool,
+    ) -> Result<Vec<Vec<String>>, String> {
+        let mut done = Vec::new();
+        let mut pending = vec![(to.to_vec(), 0)];
+        while let Some((path, expansions)) = pending.pop() {
             let mut module: Vec<String> = Vec::new();
+            let (mut ends, mut next) = (true, Vec::new());
             for (index, segment) in path.iter().enumerate() {
                 let child = self.scopes.get(&module);
-                if child.is_some_and(|scope| scope.children.contains(segment)) {
+                // Only the modules of item lists are children; a block's segment is in a path
+                // found through a name the block binds.
+                let block = is_marker(segment) && {
+                    let mut block = module.clone();
+                    block.push(segment.clone());
+                    self.scopes.contains_key(&block)
+                };
+                if block || child.is_some_and(|scope| scope.children.contains(segment)) {
                     module.push(segment.clone());
                     continue;
                 }
-                let own = |found: &[String]| {
+                let own = |found: &Vec<String>| {
                     found.len() == module.len() + 1
                         && found.starts_with(&module)
                         && found.last() == Some(segment)
                 };
-                match self.lookup(&module, segment, depth + 1, globs)? {
-                    Some(found) if !own(&found) => {
-                        let mut expanded = found;
-                        expanded.extend(path[index + 1..].iter().cloned());
-                        path = expanded;
-                        continue 'expand;
-                    }
-                    _ => return Ok(path),
-                }
+                let found = if expansions < BINDING_DEPTH {
+                    self.lookup(&module, segment, depth + 1, globs)?
+                } else {
+                    Vec::new()
+                };
+                let (own, others): (Vec<_>, Vec<_>) = found.into_iter().partition(own);
+                ends = !own.is_empty() || others.is_empty();
+                next = extend(others, &path[index + 1..]);
+                break;
             }
-            return Ok(path);
+            pending.extend(next.into_iter().map(|path| (path, expansions + 1)));
+            if ends {
+                done.push(path);
+            }
         }
-        Ok(path)
+        done.sort();
+        done.dedup();
+        Ok(done)
     }
 
-    /// Whether `path` is a loaded module.
+    /// Whether `path` is a loaded module (or block).
     pub fn is_module(&self, path: &[String]) -> bool {
         self.scopes.contains_key(path)
     }
@@ -476,7 +553,7 @@ impl Target {
             let (Some(from), Some(to)) = (reference.from.first(), reference.to.first()) else {
                 continue;
             };
-            if to != from && tops.contains(to) {
+            if to != from && tops.contains(from) && tops.contains(to) {
                 graph.entry(from.clone()).or_default().insert(to.clone());
             }
         }
@@ -484,12 +561,39 @@ impl Target {
     }
 }
 
-/// `crate::a::b` (`crate` for the root).
+/// Each of `found` followed by `rest`.
+fn extend(found: Vec<Vec<String>>, rest: &[String]) -> Vec<Vec<String>> {
+    found
+        .into_iter()
+        .map(|mut path| {
+            path.extend(rest.iter().cloned());
+            path
+        })
+        .collect()
+}
+
+/// The module of `scope` and `supers` modules up: a block is no module, so `self` and `super`
+/// in a block name the module it is in (and its parent).
+fn climb(scope: &[String], supers: usize) -> Option<Vec<String>> {
+    let mut module = module_of(scope).to_vec();
+    for _ in 0..supers {
+        module.pop()?;
+        module.truncate(module_of(&module).len());
+    }
+    Some(module)
+}
+
+/// `crate::a::b` (`crate` for the root; a block's segment is left out).
 pub fn display_path(path: &[String]) -> String {
-    if path.is_empty() {
+    let named: Vec<&str> = path
+        .iter()
+        .map(String::as_str)
+        .filter(|segment| !is_marker(segment))
+        .collect();
+    if named.is_empty() {
         "crate".to_owned()
     } else {
-        format!("crate::{}", path.join("::"))
+        format!("crate::{}", named.join("::"))
     }
 }
 

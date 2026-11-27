@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::graph::{cycles, display_path, site, Reference, Target};
+use super::parse::{is_marker, module_of, Written};
 use crate::{
     AGENT_CLI_LAYER_NAMES, AGENT_CLI_LAYER_SUFFIXES, AGENT_CLI_PRIVATE, OPERATOR_COMPOSERS,
 };
@@ -17,29 +18,36 @@ fn at(reference: &Reference) -> String {
     )
 }
 
-/// Every crate: no `include!`, no `#[path]` out of the declaring module's directory, no
-/// production module under a test file name, and no glob import of a crate module outside the
-/// crate root (the composition root), so every module names what it imports.
+/// Every crate path `path`, written in `scope`, may reach (none when it cannot be resolved).
+fn reaches(target: &Target, scope: &[String], path: &Written) -> Vec<Vec<String>> {
+    let absolute = target.absolute(scope, path).unwrap_or_default();
+    let resolved = absolute
+        .iter()
+        .map(|to| target.resolve(to).unwrap_or_default());
+    resolved.flatten().collect()
+}
+
+/// Every crate: no `include!` (nor a `use` of `include`), no `#[path]` out of the declaring
+/// module's directory, on an inline module or inside `cfg_attr`, no production module under a
+/// test file name, and no glob import of a crate module outside the crate root (the composition
+/// root), so every module names what it imports.
 pub fn layout_violations(target: &Target) -> Vec<String> {
     let mut out = target.problems.clone();
     for (module, scope) in &target.scopes {
-        if module.is_empty() {
+        // The root's bodies may glob too; a module declared in one may not.
+        if module_of(module).is_empty() {
             continue;
         }
         for glob in &scope.globs {
-            let Ok(Some(source)) = target.absolute(module, &glob.path) else {
-                continue;
-            };
-            let Ok(source) = target.resolve(&source) else {
-                continue;
-            };
-            if target.is_module(&source) {
-                out.push(format!(
-                    "{}: `{}` glob-imports the crate module `{}`; name what it uses (only the crate root may glob a module)",
-                    site(&glob.file, glob.at),
-                    display_path(module),
-                    display_path(&source)
-                ));
+            for source in reaches(target, module, &glob.path) {
+                if target.is_module(&source) {
+                    out.push(format!(
+                        "{}: `{}` glob-imports the crate module `{}`; name what it uses (only the crate root may glob a module)",
+                        site(&glob.file, glob.at),
+                        display_path(module),
+                        display_path(&source)
+                    ));
+                }
             }
         }
     }
@@ -106,33 +114,66 @@ pub fn agent_cli_violations(target: &Target, files: &[PathBuf]) -> Vec<String> {
     out
 }
 
-/// `pub use` in the agent CLI's `lib.rs` that re-exports a whole internal tier
-/// (`pub use runtime;`, `pub use crate::registry as r;`) or globs anything inside one.
+/// The modules other crates can name: the root, each `pub mod` of one, and each module a
+/// `pub use` (or `pub use ..::*`) of one re-exports.
+fn public_modules(target: &Target) -> BTreeSet<Vec<String>> {
+    let mut reached = BTreeSet::from([Vec::new()]);
+    let mut pending = vec![Vec::new()];
+    while let Some(module) = pending.pop() {
+        let Some(scope) = target.scopes.get(&module) else {
+            continue;
+        };
+        let mut next: Vec<Vec<String>> = scope
+            .public_children
+            .iter()
+            .map(|child| module.iter().chain([child]).cloned().collect())
+            .collect();
+        let uses = scope.uses.values().flatten();
+        for binding in uses.chain(&scope.globs).filter(|b| b.public) {
+            next.extend(
+                reaches(target, &module, &binding.path)
+                    .into_iter()
+                    .filter(|to| target.is_module(to) && !to.iter().any(|s| is_marker(s))),
+            );
+        }
+        for module in next {
+            if reached.insert(module.clone()) {
+                pending.push(module);
+            }
+        }
+    }
+    reached
+}
+
+/// `pub use` in a module other crates can name (the agent CLI's `lib.rs`, a `pub mod` of it,
+/// a module it re-exports) that re-exports a whole internal tier (`pub use runtime;`,
+/// `pub use crate::registry as r;`) or globs anything inside one.
 fn private_re_exports(target: &Target) -> Vec<String> {
     let mut out = Vec::new();
     let private = |path: &[String]| {
         path.first()
             .is_some_and(|tier| AGENT_CLI_PRIVATE.contains(&tier.as_str()))
     };
+    let public = public_modules(target);
     for (module, scope) in &target.scopes {
-        let uses = scope.uses.values().map(|binding| (binding, false));
+        if !public.contains(module) {
+            continue;
+        }
+        let uses = scope
+            .uses
+            .values()
+            .flatten()
+            .map(|binding| (binding, false));
         let globs = scope.globs.iter().map(|binding| (binding, true));
-        for (binding, glob) in uses.chain(globs) {
-            if !binding.public || binding.file != target.root {
-                continue;
-            }
-            let Ok(Some(to)) = target.absolute(module, &binding.path) else {
-                continue;
-            };
-            let Ok(to) = target.resolve(&to) else {
-                continue;
-            };
-            if private(&to) && (glob || to.len() == 1) {
-                out.push(format!(
-                    "{}: `pub use` re-exports all of `{}`, an internal tier; re-export the narrow items instead",
-                    site(&binding.file, binding.at),
-                    display_path(&to)
-                ));
+        for (binding, glob) in uses.chain(globs).filter(|(binding, _)| binding.public) {
+            for to in reaches(target, module, &binding.path) {
+                if private(&to) && (glob || to.len() == 1) {
+                    out.push(format!(
+                        "{}: `pub use` re-exports all of `{}`, an internal tier; re-export the narrow items instead",
+                        site(&binding.file, binding.at),
+                        display_path(&to)
+                    ));
+                }
             }
         }
     }
@@ -183,26 +224,44 @@ fn office_families(target: &Target) -> BTreeSet<String> {
         .collect()
 }
 
-/// The top-level module that owns an `org-office` file for invariant 4, if any.
-fn office_owner(target: &Target, families: &BTreeSet<String>, file: &Path) -> Option<String> {
-    let src = target.root.parent()?;
-    let relative = file.strip_prefix(src).ok()?;
+/// The families that own a reference of `org-office` for invariant 4: the family of its module
+/// (`<family>/mod.rs` and `<family>.rs` alike), the family whose directory its file is in (a
+/// module loaded there through `#[path]`), and for a store operation file
+/// (`store/open/<name>_ops.rs`) the top-level module `<name>`, `<name>s` or `<name>es`.
+fn office_owners(
+    target: &Target,
+    families: &BTreeSet<String>,
+    reference: &Reference,
+) -> BTreeSet<String> {
+    let mut owners: BTreeSet<String> = reference
+        .from
+        .first()
+        .filter(|top| families.contains(*top))
+        .cloned()
+        .into_iter()
+        .collect();
+    let src = target.root.parent().unwrap_or(Path::new(""));
+    let Ok(relative) = reference.file.strip_prefix(src) else {
+        return owners;
+    };
     let parts: Vec<String> = relative
         .components()
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect();
     if parts.len() >= 2 && families.contains(&parts[0]) {
-        return Some(parts[0].clone());
+        owners.insert(parts[0].clone());
     }
     if parts.len() >= 3 && parts[0] == "store" && parts[1] == "open" {
         let stem = parts[2].strip_suffix(".rs").unwrap_or(&parts[2]);
-        let name = stem.strip_suffix("_ops")?;
-        let tops = target.top_level();
-        return [name.to_owned(), format!("{name}s"), format!("{name}es")]
-            .into_iter()
-            .find(|candidate| tops.contains(candidate));
+        if let Some(name) = stem.strip_suffix("_ops") {
+            let tops = target.top_level();
+            let owner = [name.to_owned(), format!("{name}s"), format!("{name}es")]
+                .into_iter()
+                .find(|candidate| tops.contains(candidate));
+            owners.extend(owner);
+        }
     }
-    None
+    owners
 }
 
 /// Invariant 4: every `(file, domain)` reach into another family's `features`.
@@ -210,11 +269,10 @@ pub fn office_reach_ins(target: &Target) -> BTreeSet<(String, String)> {
     let families = office_families(target);
     let mut out = BTreeSet::new();
     for reference in &target.references {
-        let Some(owner) = office_owner(target, &families, &reference.file) else {
-            continue;
-        };
+        let owners = office_owners(target, &families, reference);
         let to = &reference.to;
-        if to.len() >= 2 && to[1] == "features" && families.contains(&to[0]) && to[0] != owner {
+        let reach_in = to.len() >= 2 && to[1] == "features" && families.contains(&to[0]);
+        if reach_in && !owners.is_empty() && !owners.contains(&to[0]) {
             out.insert((reference.file.display().to_string(), to[0].clone()));
         }
     }

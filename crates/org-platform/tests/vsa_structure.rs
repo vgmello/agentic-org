@@ -4,17 +4,23 @@
 //! The test reads the production modules of every crate target of the workspace (`src/lib.rs`,
 //! `src/main.rs` and `src/bin/*.rs` of each `crates/*` and `apps/*` package). `syn` gives each
 //! file's modules (`mod x;`, `#[path]`, `r#` names, inline `mod x { .. }`, also inside function,
-//! `impl`, `const` and `static` bodies), the `use` bindings and globs of each module, and the
-//! exact line/column extent of every test-only item (`#[cfg(test)]`, `#![cfg(test)]`). The
-//! file's tokens give every path it names: `crate::..`, `$crate::..`, `super::..`, `self::..`
-//! (also `super::` inside a `use` group), and plain `name::..` whose `name` the module binds
-//! (`use crate::tasks as t;`, a glob, `extern crate self as me;`), in `use` trees, signatures,
-//! bodies and macro definitions alike. Each path is resolved from the crate root through the
-//! `use` bindings of every module it passes (root re-exports, inline facades such as
-//! `org-office`'s `organization_family`, globs). Test files are left out by name (`tests`,
-//! `*_tests`, `*-tests`, `testing`, `testkit`, `test_support`, as `file_size_ratchet` decides)
-//! only when their `mod` is gated on `test` or a test-only feature. Whatever the reader cannot
-//! place (a path climbing past the root, a `mod` inside a macro, an item without an end) fails.
+//! `impl`, `const` and `static` bodies), the `use` bindings and globs of each module and of each
+//! block (a body, a `const` block, a discriminant, an array length), and the exact line/column
+//! extent of every test-only item (`#[cfg(test)]`, `#![cfg(test)]`). A block is a scope of its
+//! own: a `use` or `mod` in a body never shadows its module's names, and a module declared in a
+//! body is no child of its module. The tokens add the `use` items `syn` never reads (in macro
+//! bodies and calls) and give every path the file names: `crate::..`, `$crate::..`, `super::..`,
+//! `self::..` (also `super::` inside a `use` group), `::name::..` (the crate itself through
+//! `extern crate self as name`), and plain `name::..` whose `name` the block or module binds
+//! (`use crate::tasks as t;`, a glob, `cfg` alternatives, each of which counts), in `use` trees,
+//! signatures, bodies and macro definitions alike. A `{..}` after `name::` or a `pub(..)` that is
+//! not a whole `use` tree or visibility is scanned as tokens. Each path is resolved from the crate
+//! root through the `use` bindings of every module it passes (root re-exports, inline facades
+//! such as `org-office`'s `organization_family`, globs). Test files are left out by name
+//! (`tests`, `*_tests`, `*-tests`, `testing`, `testkit`, `test_support`, as `file_size_ratchet`
+//! decides) only when their `mod` is gated on `test` or a test-only feature. Whatever the reader
+//! cannot place or follow (a path climbing past the root, a `mod` inside a macro, an item without
+//! an end, a `use` in a macro call that shadows a name bound outside it) fails.
 //!
 //! It enforces five invariants:
 //!
@@ -22,7 +28,8 @@
 //!    (`table`, `dispatch`, `*_table`, `*_dispatch`, `help_guidance`, `aliases`); `runtime` names
 //!    nothing outside `runtime`; each `features::<domain>` names only itself and `runtime` (no
 //!    other domain, bare `features`, `registry` or crate-root item); `lib.rs` declares no
-//!    `pub mod features|runtime|registry` and re-exports none of them whole.
+//!    `pub mod features|runtime|registry`, and no module other crates can name (`lib.rs`, a
+//!    `pub mod` of one, a module one re-exports) re-exports one of them whole.
 //! 2. **`apps/agentic-org` is a 1:1 VSA:** only the crate root, `cli` (the composition root) and
 //!    `features` name `features`; no `features::<a>` names `features::<b>` or bare `features`.
 //! 3. **Intra-crate module cycles only shrink:** the strongly connected components (two or more
@@ -30,23 +37,31 @@
 //!    cycle that grows or shrinks, and a listed cycle that is gone all fail: the entry is changed
 //!    or removed in the same change, so the list always says what is left.
 //! 4. **`org-office` domains do not reach into each other's `features`:** a file of a journaled
-//!    family (a top-level module with a `features` module), or a store operation file
+//!    family (a top-level module with a `features` module, as `<family>/mod.rs` or
+//!    `<family>.rs`, or a file in its directory), or a store operation file
 //!    (`store/open/<name>_ops.rs`, owned by the top-level module `<name>` or `<name>s`), naming
 //!    another family's `features::*` is exactly [`OFFICE_REACH_INS`], which only shrinks.
-//! 5. **Every module is where its file says:** no `include!`, no `#[path]` outside the declaring
-//!    module's own directory, no production module under a test file name, and no glob import of
-//!    a crate module outside the crate root.
+//! 5. **Every module is where its file says:** no `include!` (`r#include!`, or a `use` of
+//!    `include` under another name), no `#[path]` outside the declaring module's own directory,
+//!    on an inline module or inside `cfg_attr`, no production module under a test file name, and
+//!    no glob import of a crate module outside the crate root.
 //!
 //! To print what the scan finds: `VSA_STRUCTURE_PRINT=1 cargo test -p org-platform --test
 //! vsa_structure -- --nocapture`.
 
 // A test target's root resolves `mod x;` beside itself; its modules live in `vsa_structure/`.
+#[path = "vsa_structure/bypasses.rs"]
+mod bypasses;
 #[path = "vsa_structure/graph.rs"]
 mod graph;
+#[path = "vsa_structure/items.rs"]
+mod items;
 #[path = "vsa_structure/parse.rs"]
 mod parse;
 #[path = "vsa_structure/rules.rs"]
 mod rules;
+#[path = "vsa_structure/scan.rs"]
+mod scan;
 #[path = "vsa_structure/tests.rs"]
 mod tests;
 
@@ -83,14 +98,9 @@ const KNOWN_CYCLES: &[(&str, &[&str])] = &[
     ),
     ("crates/org-agent-runtime/src/lib.rs", &["path", "token"]),
     (
-        "crates/org-host/src/lib.rs",
-        &["admin", "recovery", "service"],
-    ),
-    (
         "crates/org-office-sessions/src/lib.rs",
         &["external", "lifecycle", "manager", "pump", "recovery"],
     ),
-    ("crates/org-store/src/lib.rs", &["change", "error"]),
     ("crates/org-supervise/src/lib.rs", &["child", "stop"]),
 ];
 
