@@ -58,6 +58,7 @@ fn task_service_dispatches_create_list_dependencies_and_transition() {
             modified_files: vec!["src/a.rs".into()],
             depends_on: vec![],
             details: None,
+            dod: None,
         },
     )
     .unwrap();
@@ -89,6 +90,7 @@ fn task_service_dispatches_create_list_dependencies_and_transition() {
             modified_files: vec![],
             depends_on: vec![res1.task.key.clone()],
             details: None,
+            dod: None,
         },
     )
     .unwrap();
@@ -160,6 +162,8 @@ fn task_service_dispatches_create_list_dependencies_and_transition() {
             blocked_reason: None,
             resolution: None,
             note: None,
+            done_anyway_reason: None,
+            final_summary: None,
         },
     )
     .unwrap();
@@ -222,6 +226,7 @@ fn private_notes_never_emit_live_events_until_explicit_publish() {
             modified_files: vec![],
             depends_on: vec![],
             details: None,
+            dod: None,
         },
     )
     .unwrap();
@@ -460,6 +465,7 @@ fn task_list_filters_by_excluded_status_assignee_and_modified_file_and_pages_wit
                 modified_files: vec![file.into()],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         )
         .unwrap();
@@ -593,6 +599,7 @@ fn task_list_answers_a_status_scope_and_done_since_through_the_office_query() {
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         )
         .unwrap();
@@ -615,6 +622,8 @@ fn task_list_answers_a_status_scope_and_done_since_through_the_office_query() {
                 blocked_reason: None,
                 resolution: None,
                 note: None,
+                done_anyway_reason: None,
+                final_summary: None,
             },
         )
         .unwrap();
@@ -672,4 +681,203 @@ fn task_list_answers_a_status_scope_and_done_since_through_the_office_query() {
     ] {
         assert_eq!(list(&svc, &owner, refused), Err(ErrorCode::InvalidRequest));
     }
+}
+
+/// One dispatched call's answer: its result, or the refusal's code.
+fn answer<C: Call>(
+    svc: &TaskService,
+    member: &str,
+    params: &C::Params,
+) -> Result<C::Result, ErrorCode>
+where
+    C::Result: serde::de::DeserializeOwned,
+{
+    let request = Request::new::<C>(1, params).unwrap();
+    match svc.dispatch(Some(member), &request).unwrap().outcome {
+        Outcome::Result(v) => Ok(serde_json::from_value(v).unwrap()),
+        Outcome::Error(e) => Err(e.code),
+    }
+}
+
+fn create_params(n: u64, team: Option<&str>, project: Option<&str>) -> TasksCreateParams {
+    TasksCreateParams {
+        command_id: uuid(n),
+        task_id: uuid(n + 1),
+        team_id: team.map(str::to_owned),
+        project_id: project.map(str::to_owned),
+        assigned_team_id: None,
+        assignee_id: None,
+        task_type: None,
+        work_type: None,
+        title: format!("Task {n}"),
+        body_markdown: String::new(),
+        priority: None,
+        effort: None,
+        severity: None,
+        rank_order: None,
+        labels: vec![],
+        reference_files: vec![],
+        modified_files: vec![],
+        depends_on: vec![],
+        details: None,
+        dod: None,
+    }
+}
+
+#[test]
+fn task_service_serves_default_definitions_of_done_the_closing_gate_and_final_summaries() {
+    use org_office::rules::OrgCommand;
+    use org_proto::org::ProjectCreateParams;
+    use org_proto::tasks::{
+        OrganizationDefaultDodGetParams, OrganizationDefaultDodResult,
+        OrganizationDefaultDodSetParams, ProjectDefaultDodSetParams, TasksFinalSummaryParams,
+    };
+
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = office.owner_member_id().to_owned();
+    let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+    let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+    let svc = TaskService::new(Arc::clone(&office), live, None);
+
+    let get = OrganizationDefaultDodGetParams {};
+    let org: OrganizationDefaultDodResult =
+        answer::<OrganizationDefaultDodGet>(&svc, &owner, &get).unwrap();
+    assert_eq!(org.default_dod, None);
+    let set = |n: u64, revision: u64, items: Vec<&str>| OrganizationDefaultDodSetParams {
+        command_id: uuid(n),
+        expected_revision: revision,
+        default_dod: Some(items.into_iter().map(str::to_owned).collect()),
+    };
+    // Owner only: anyone else, member or not, is refused.
+    let stranger = uuid(3000);
+    let refused =
+        answer::<OrganizationDefaultDodSet>(&svc, &stranger, &set(3001, org.revision, vec!["x"]));
+    assert_eq!(refused.unwrap_err(), ErrorCode::NotAuthorized);
+    let bad =
+        answer::<OrganizationDefaultDodSet>(&svc, &owner, &set(3002, org.revision, vec!["a\nb"]));
+    assert_eq!(bad.unwrap_err(), ErrorCode::InvalidRequest);
+    let many: Vec<String> = (0..26).map(|i| format!("item {i}")).collect();
+    let many = set(
+        3003,
+        org.revision,
+        many.iter().map(String::as_str).collect(),
+    );
+    assert_eq!(
+        answer::<OrganizationDefaultDodSet>(&svc, &owner, &many).unwrap_err(),
+        ErrorCode::TooLarge
+    );
+    let stale =
+        answer::<OrganizationDefaultDodSet>(&svc, &owner, &set(3004, org.revision + 7, vec!["x"]));
+    assert_eq!(stale.unwrap_err(), ErrorCode::Conflict);
+    let changed = answer::<OrganizationDefaultDodSet>(
+        &svc,
+        &owner,
+        &set(3005, org.revision, vec![" Tests pass "]),
+    )
+    .unwrap();
+    assert_eq!(changed.default_dod, Some(vec!["Tests pass".to_owned()]));
+    assert_eq!(changed.revision, org.revision + 1);
+    assert_eq!(
+        answer::<OrganizationDefaultDodGet>(&svc, &owner, &get).unwrap(),
+        changed
+    );
+
+    // A project that opts out of the organization's default.
+    let project = uuid(3010);
+    office
+        .submit_org(
+            &owner,
+            OrgCommand::ProjectCreate(ProjectCreateParams {
+                command_id: uuid(3011),
+                project_id: project.clone(),
+                name: "Ledger".into(),
+                key: None,
+                description: None,
+                teams: vec![],
+                general_area_id: String::new(),
+                general_area_name: None,
+                repo: None,
+                integration_branch: None,
+                slug: None,
+                owner_team_id: Some(root_team.clone()),
+                create_team_id: None,
+                parent_team_id: None,
+                contributing_team_ids: vec![],
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    let opt_out = ProjectDefaultDodSetParams {
+        command_id: uuid(3012),
+        project: project.clone(),
+        expected_revision: 1,
+        default_dod: Some(vec![]),
+    };
+    let record = answer::<ProjectDefaultDodSet>(&svc, &owner, &opt_out).unwrap();
+    assert_eq!(record.default_dod, Some(vec![]));
+    let missing = ProjectDefaultDodSetParams {
+        project: "P-99".into(),
+        command_id: uuid(3013),
+        ..opt_out.clone()
+    };
+    assert_eq!(
+        answer::<ProjectDefaultDodSet>(&svc, &owner, &missing).unwrap_err(),
+        ErrorCode::NotFound
+    );
+
+    let in_project =
+        answer::<TasksCreate>(&svc, &owner, &create_params(3020, None, Some(&project)))
+            .unwrap()
+            .task;
+    assert_eq!(in_project.dod_total, 0);
+    let task = answer::<TasksCreate>(&svc, &owner, &create_params(3022, Some(&root_team), None))
+        .unwrap()
+        .task;
+    assert_eq!((task.dod_total, task.dod_done), (1, 0));
+
+    // Completing with the copied step unticked is refused over RPC, unless a reason is given.
+    let close = |n: u64, revision: u64, reason: Option<&str>| TasksTransitionParams {
+        command_id: uuid(n),
+        task: task.key.clone(),
+        expected_revision: revision,
+        status: TaskStatus::Done,
+        blocked_reason: None,
+        resolution: None,
+        note: None,
+        done_anyway_reason: reason.map(str::to_owned),
+        final_summary: Some("Closed with the docs waived".into()),
+    };
+    let gated = answer::<TasksTransition>(&svc, &owner, &close(3030, task.revision, None));
+    assert_eq!(gated.unwrap_err(), ErrorCode::ChecklistIncomplete);
+    let closed =
+        answer::<TasksTransition>(&svc, &owner, &close(3031, task.revision, Some("Waived")))
+            .unwrap()
+            .task;
+    assert_eq!(closed.status, TaskStatus::Done);
+    assert_eq!(
+        closed
+            .details
+            .and_then(|d| d.done_anyway)
+            .map(|d| d.reason)
+            .as_deref(),
+        Some("Waived")
+    );
+    assert_eq!(
+        closed.final_summary.as_ref().map(|s| s.text.as_str()),
+        Some("Closed with the docs waived")
+    );
+
+    let summary = TasksFinalSummaryParams {
+        command_id: uuid(3040),
+        task: task.key.clone(),
+        expected_revision: closed.revision,
+        final_summary: "Shipped; docs follow in T-A9".into(),
+    };
+    let summarized = answer::<TasksFinalSummary>(&svc, &owner, &summary)
+        .unwrap()
+        .task;
+    let written = summarized.final_summary.expect("summary");
+    assert_eq!(written.text, "Shipped; docs follow in T-A9");
+    assert_eq!(written.by_id, owner);
+    assert_eq!(summarized.revision, closed.revision + 1);
 }

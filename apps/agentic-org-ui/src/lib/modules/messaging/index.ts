@@ -46,7 +46,10 @@ export {
 	unreadIn,
 	whoOf,
 	type BrowseRow,
-	type ChatView
+	type ChatView,
+	type ComposerState,
+	type ConversationView,
+	type Sidebar
 } from './model';
 export type {
 	AskOption,
@@ -55,6 +58,7 @@ export type {
 	ChatCallStatus,
 	ChatMessage,
 	ChatSnapshot,
+	ChatState,
 	Conversation,
 	MuteMode,
 	QuestionAnswer,

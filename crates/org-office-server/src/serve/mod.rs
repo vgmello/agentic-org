@@ -168,6 +168,9 @@ pub type ProcessesFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + 
 /// Dispatches the project documentation tree's `docs.*` RPCs (`TASK-55`).
 pub type DocsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
+/// Dispatches unified cross-entity `search.query` (`TASK-91`).
+pub type SearchFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
 /// Dispatches L2/L3 usage, cost accounting, and budget RPCs (`TASK-53`).
 pub type CostsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
@@ -223,6 +226,9 @@ pub struct OfficePorts {
     /// The project documentation tree's `docs.*` dispatcher (`TASK-55`). `None`: they answer
     /// `unknown_method`.
     pub docs: Option<DocsFn>,
+    /// Unified cross-entity search (`TASK-91`). `None`: `search.query` answers
+    /// `unknown_method`.
+    pub search: Option<SearchFn>,
     /// L2/L3 usage, cost accounting, and budget controls dispatcher (`TASK-53`).
     pub costs: Option<CostsFn>,
     /// L4 provider pools, office bindings, discovery, readiness, and quota dispatcher (`TASK-54`).

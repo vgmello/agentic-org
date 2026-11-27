@@ -108,6 +108,7 @@ fn harness() -> Harness {
                 modified_files: Vec::new(),
                 depends_on: Vec::new(),
                 details: None,
+                dod: None,
             },
         )
         .unwrap()
@@ -1391,6 +1392,7 @@ fn p1_3_ui_present_rejects_entity_route_mismatch_deep_unverified_routes_and_unsa
         "/tasks#javascript:alert(1)",
         "/%2e%2e/x",
         "/tasks foo",
+        "/tasks//evil",
     ] {
         assert_eq!(
             h.call::<UiPresent>(
@@ -1669,5 +1671,167 @@ fn p1_4_p2_6_suggestion_store_enforces_size_control_chars_list_cap_and_caller_is
                 .is_ok(),
             "caller `{caller}` pending proposal must not be evicted"
         );
+    }
+}
+
+#[test]
+fn pass3_non_tess_dm_fails_closed_and_builtin_move_status_rejected() {
+    let h = harness();
+
+    // Create a private 1:1 DM between Owner and Bob (excluding Tess) and post a message inside it.
+    let owner_bob_dm_id = h
+        .office
+        .dm_open(
+            &h.owner,
+            DmOpenParams {
+                participants: vec![h.bob.clone()],
+                name: None,
+                conversation_id: None,
+            },
+        )
+        .unwrap()
+        .unwrap()
+        .conversation
+        .id;
+    let owner_bob_msg_id = send_dm_msg(&h.office, &h.owner, &owner_bob_dm_id, "Private 1:1 note");
+    let nonexistent_msg_id = next_id();
+
+    // P1: Enforce true `caller ∩ tess` intersection — private non-Tess DM `{owner, bob}` MUST fail
+    // closed for `msg send`, `channel mark-read`, and `msg done` when Tess acts for Owner OR Bob,
+    // with zero message-existence oracle.
+    for caller in [h.owner.as_str(), h.bob.as_str()] {
+        h.set_acting(Some(caller));
+
+        assert_eq!(
+            h.call::<SuggestionCreate>(
+                &h.tess,
+                &SuggestionCreateParams {
+                    command: "msg send".into(),
+                    input: map(json!({"to": owner_bob_dm_id, "body": "probe"})),
+                    summary: "Send to non-Tess DM".into(),
+                    rationale: None,
+                    expected_revision: None,
+                    ttl_seconds: None,
+                    dry_run: false,
+                },
+            )
+            .unwrap_err(),
+            ErrorCode::NotAuthorized,
+            "msg send to non-Tess DM must fail closed for caller `{caller}`"
+        );
+
+        assert_eq!(
+            h.call::<SuggestionCreate>(
+                &h.tess,
+                &SuggestionCreateParams {
+                    command: "channel mark-read".into(),
+                    input: map(json!({"channel": owner_bob_dm_id})),
+                    summary: "Mark non-Tess DM read".into(),
+                    rationale: None,
+                    expected_revision: None,
+                    ttl_seconds: None,
+                    dry_run: false,
+                },
+            )
+            .unwrap_err(),
+            ErrorCode::NotAuthorized,
+            "channel mark-read on non-Tess DM must fail closed for caller `{caller}`"
+        );
+
+        let done_dm_err = h
+            .call_err::<SuggestionCreate>(
+                &h.tess,
+                &SuggestionCreateParams {
+                    command: "msg done".into(),
+                    input: map(json!({"id": owner_bob_msg_id})),
+                    summary: "Mark non-Tess DM msg done".into(),
+                    rationale: None,
+                    expected_revision: None,
+                    ttl_seconds: None,
+                    dry_run: false,
+                },
+            )
+            .unwrap_err();
+        let done_missing_err = h
+            .call_err::<SuggestionCreate>(
+                &h.tess,
+                &SuggestionCreateParams {
+                    command: "msg done".into(),
+                    input: map(json!({"id": nonexistent_msg_id})),
+                    summary: "Mark nonexistent msg done".into(),
+                    rationale: None,
+                    expected_revision: None,
+                    ttl_seconds: None,
+                    dry_run: false,
+                },
+            )
+            .unwrap_err();
+        assert_eq!(done_dm_err.code, ErrorCode::NotFound);
+        assert_eq!(done_dm_err.code, done_missing_err.code);
+        assert_eq!(done_dm_err.message, done_missing_err.message);
+    }
+
+    // P2-A: Built-in agents (Tess, HR) must also be rejected for `agent move`, `agent pause`,
+    // and `agent resume` during preflight (matching `agent_lifecycle.rs`).
+    h.set_acting(Some(&h.owner));
+    let dest_team = next_id();
+    h.office
+        .submit_org(
+            &h.owner,
+            OrgCommand::TeamCreate(TeamCreateParams {
+                command_id: next_id(),
+                team_id: dest_team.clone(),
+                name: "TargetTeam".into(),
+                owner_team_id: None,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    let hr_id = h
+        .office
+        .list_employees()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.builtin_key == Some(org_office::organization_family::records::BuiltinKey::Hr))
+        .expect("built-in HR")
+        .id
+        .to_string();
+    for builtin in [h.tess.as_str(), "tess", hr_id.as_str(), "hr"] {
+        assert_eq!(
+            h.call::<SuggestionCreate>(
+                &h.tess,
+                &SuggestionCreateParams {
+                    command: "agent move".into(),
+                    input: map(json!({"member": builtin, "to_team_id": dest_team})),
+                    summary: "Move built-in".into(),
+                    rationale: None,
+                    expected_revision: Some(1),
+                    ttl_seconds: None,
+                    dry_run: false,
+                },
+            )
+            .unwrap_err(),
+            ErrorCode::NotAuthorized,
+            "built-in `{builtin}` must never pass agent move preflight"
+        );
+        for cmd in ["agent pause", "agent resume"] {
+            assert_eq!(
+                h.call::<SuggestionCreate>(
+                    &h.tess,
+                    &SuggestionCreateParams {
+                        command: cmd.into(),
+                        input: map(json!({"member": builtin})),
+                        summary: format!("{cmd} built-in"),
+                        rationale: None,
+                        expected_revision: Some(1),
+                        ttl_seconds: None,
+                        dry_run: false,
+                    },
+                )
+                .unwrap_err(),
+                ErrorCode::NotAuthorized,
+                "built-in `{builtin}` must never pass `{cmd}` preflight"
+            );
+        }
     }
 }

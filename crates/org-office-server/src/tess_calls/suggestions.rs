@@ -53,53 +53,35 @@ impl SuggestionStore {
         }
     }
 
+    fn remove_first(&mut self, pred: impl Fn(&StoredSuggestion) -> bool) -> bool {
+        self.entries
+            .iter()
+            .position(pred)
+            .is_some_and(|pos| self.entries.remove(pos).is_some())
+    }
+
     fn insert(&mut self, entry: StoredSuggestion, now_ms: u64) -> Result<(), ApiError> {
         self.expire_due(now_ms);
         let caller = entry.view.for_caller_id.as_str();
-        while self
-            .entries
-            .iter()
-            .filter(|e| e.view.for_caller_id == caller)
-            .count()
-            >= MAX_SUGGESTIONS_PER_CALLER
-        {
-            if let Some(pos) = self.entries.iter().position(|e| {
-                e.view.for_caller_id == caller && e.view.status != SuggestionStatus::Pending
-            }) {
-                self.entries.remove(pos);
-            } else if let Some(pos) = self
-                .entries
-                .iter()
-                .position(|e| e.view.for_caller_id == caller)
+        let is_caller = |e: &StoredSuggestion| e.view.for_caller_id == caller;
+        let is_closed = |e: &StoredSuggestion| e.view.status != SuggestionStatus::Pending;
+        while self.entries.iter().filter(|e| is_caller(e)).count() >= MAX_SUGGESTIONS_PER_CALLER {
+            if !self.remove_first(|e| is_caller(e) && is_closed(e)) && !self.remove_first(is_caller)
             {
-                self.entries.remove(pos);
-            } else {
                 break;
             }
         }
         while self.entries.len() >= MAX_STORED_SUGGESTIONS {
-            if let Some(pos) = self.entries.iter().position(|e| {
-                e.view.for_caller_id == caller && e.view.status != SuggestionStatus::Pending
-            }) {
-                self.entries.remove(pos);
-            } else if let Some(pos) = self
-                .entries
-                .iter()
-                .position(|e| e.view.status != SuggestionStatus::Pending)
+            if self.remove_first(|e| is_caller(e) && is_closed(e))
+                || self.remove_first(is_closed)
+                || self.remove_first(is_caller)
             {
-                self.entries.remove(pos);
-            } else if let Some(pos) = self
-                .entries
-                .iter()
-                .position(|e| e.view.for_caller_id == caller)
-            {
-                self.entries.remove(pos);
-            } else {
-                return Err(ApiError::new(
-                    ErrorCode::RateLimited,
-                    "suggestion store is full of active pending proposals; wait for existing suggestions to be resolved or expire",
-                ));
+                continue;
             }
+            return Err(ApiError::new(
+                ErrorCode::RateLimited,
+                "suggestion store is full of active pending proposals; wait for existing suggestions to be resolved or expire",
+            ));
         }
         self.entries.push_back(entry);
         Ok(())
@@ -328,44 +310,20 @@ pub(super) fn handle_withdraw(
     context: &CallerContext,
     params: SuggestionWithdrawParams,
 ) -> Result<SuggestionActionResult, ApiError> {
-    let CallerContext::TessActingFor { .. } = context else {
+    if !matches!(context, CallerContext::TessActingFor { .. }) {
         return Err(ApiError::new(
             ErrorCode::NotAuthorized,
             "only the Chief of Staff acting for the caller may withdraw a suggestion",
         ));
-    };
-    let reason = params
-        .reason
-        .as_deref()
-        .map(|r| validate_text("reason", r, MAX_SUGGESTION_SUMMARY_BYTES, false))
-        .transpose()?;
-    let now_ms = svc.now_ms();
-    let mut store = svc.suggestions.lock().unwrap_or_else(|p| p.into_inner());
-    store.expire_due(now_ms);
-    let entry = store
-        .entries
-        .iter_mut()
-        .find(|e| e.view.id == params.suggestion_id && SuggestionStore::visible_to(e, context))
-        .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "suggestion not found"))?;
-    if entry.view.status != SuggestionStatus::Pending {
-        return Err(ApiError::new(
-            ErrorCode::Conflict,
-            format!(
-                "suggestion is already `{}` and cannot be withdrawn",
-                entry.view.status.as_str()
-            ),
-        ));
     }
-    let mut updated = entry.view.clone();
-    updated.status = SuggestionStatus::Withdrawn;
-    updated.resolved_at = Some(timestamp_rfc3339(now_ms));
-    updated.close_reason = reason;
-    if !params.dry_run {
-        entry.view = updated.clone();
-    }
-    Ok(SuggestionActionResult {
-        suggestion: updated,
-    })
+    close_suggestion(
+        svc,
+        context,
+        &params.suggestion_id,
+        params.reason.as_deref(),
+        SuggestionStatus::Withdrawn,
+        params.dry_run,
+    )
 }
 
 pub(super) fn handle_dismiss(
@@ -373,15 +331,31 @@ pub(super) fn handle_dismiss(
     context: &CallerContext,
     params: SuggestionDismissParams,
 ) -> Result<SuggestionActionResult, ApiError> {
-    let CallerContext::HumanCaller { .. } = context else {
+    if !matches!(context, CallerContext::HumanCaller { .. }) {
         return Err(ApiError::new(
             ErrorCode::NotAuthorized,
             "only the addressed human caller may dismiss a suggestion",
         ));
-    };
-    let reason = params
-        .reason
-        .as_deref()
+    }
+    close_suggestion(
+        svc,
+        context,
+        &params.suggestion_id,
+        params.reason.as_deref(),
+        SuggestionStatus::Dismissed,
+        false,
+    )
+}
+
+fn close_suggestion(
+    svc: &TessService,
+    context: &CallerContext,
+    suggestion_id: &str,
+    raw_reason: Option<&str>,
+    target_status: SuggestionStatus,
+    dry_run: bool,
+) -> Result<SuggestionActionResult, ApiError> {
+    let reason = raw_reason
         .map(|r| validate_text("reason", r, MAX_SUGGESTION_SUMMARY_BYTES, false))
         .transpose()?;
     let now_ms = svc.now_ms();
@@ -390,22 +364,27 @@ pub(super) fn handle_dismiss(
     let entry = store
         .entries
         .iter_mut()
-        .find(|e| e.view.id == params.suggestion_id && SuggestionStore::visible_to(e, context))
+        .find(|e| e.view.id == suggestion_id && SuggestionStore::visible_to(e, context))
         .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "suggestion not found"))?;
     if entry.view.status != SuggestionStatus::Pending {
         return Err(ApiError::new(
             ErrorCode::Conflict,
             format!(
-                "suggestion is already `{}` and cannot be dismissed",
-                entry.view.status.as_str()
+                "suggestion is already `{}` and cannot be {}",
+                entry.view.status.as_str(),
+                target_status.as_str()
             ),
         ));
     }
-    entry.view.status = SuggestionStatus::Dismissed;
-    entry.view.resolved_at = Some(timestamp_rfc3339(now_ms));
-    entry.view.close_reason = reason;
+    let mut updated = entry.view.clone();
+    updated.status = target_status;
+    updated.resolved_at = Some(timestamp_rfc3339(now_ms));
+    updated.close_reason = reason;
+    if !dry_run {
+        entry.view = updated.clone();
+    }
     Ok(SuggestionActionResult {
-        suggestion: entry.view.clone(),
+        suggestion: updated,
     })
 }
 

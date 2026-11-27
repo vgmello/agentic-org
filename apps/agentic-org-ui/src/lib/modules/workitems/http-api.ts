@@ -6,8 +6,6 @@ import {
 	type GatewayHttpTransport,
 	type GatewayReply
 } from '$lib/platform/http/gateway-errors';
-import { formatUuidV7 } from '$lib/platform/http/clock';
-import { readOperationId } from '$lib/platform/http/wire';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgApi } from '$lib/modules/organization/api';
 import { isOpen, normalizeRef } from './present';
@@ -15,102 +13,39 @@ import {
 	buildChoices,
 	buildOrgLookup,
 	buildViewer,
-	mapPrivateNote,
 	mapTaskDetail,
 	mapTaskLink,
 	mapTaskRow,
 	type OrgLookup,
-	type WirePrivateNote,
 	type WireProject,
 	type WireTaskInspect,
 	type WireTaskView
 } from './wire-map';
+import {
+	buildClosePayload,
+	buildCreateBody,
+	defaultUuidV7,
+	inferTaskField,
+	isWireProject,
+	isWireTaskView,
+	normalizeUuidV7,
+	type PendingIds
+} from './http-api-payloads';
+import { createWorkItemNotesHandlers } from './http-api-notes';
 import type { WorkItemsApi } from './api';
 import type {
 	AssignmentChange,
 	Choices,
-	CloseAs,
 	FixHow,
 	NewTask,
 	Priority,
-	PrivateNote,
-	PrivateNotesFeed,
 	Severity,
 	TaskDetail,
-	TaskField,
 	TaskLink,
 	TaskRow,
-	TaskStatus,
 	WorkQueue,
 	WorkScope
 } from './types';
-
-function defaultUuidV7(): string {
-	return formatUuidV7(Date.now(), globalThis.crypto.getRandomValues(new Uint8Array(10)));
-}
-
-function normalizeUuidV7(candidate: string, fallback: () => string): string {
-	try {
-		return readOperationId(candidate);
-	} catch {
-		return readOperationId(fallback());
-	}
-}
-
-function inferTaskField(error: AppError): TaskField | undefined {
-	const msg = error.message.toLowerCase();
-	if (msg.includes('title')) return 'title';
-	if (msg.includes('team')) return 'team';
-	if (msg.includes('project')) return 'project';
-	if (msg.includes('blocked')) return 'reason';
-	if (msg.includes('step')) return 'step';
-	return undefined;
-}
-
-function isWireProject(v: unknown): v is WireProject {
-	if (!v || typeof v !== 'object') return false;
-	const p = v as Partial<WireProject>;
-	return (
-		typeof p.id === 'string' &&
-		typeof p.number === 'number' &&
-		typeof p.name === 'string' &&
-		typeof p.owner_team_id === 'string' &&
-		typeof p.archived === 'boolean'
-	);
-}
-
-function isWireTaskView(v: unknown): v is WireTaskView {
-	if (!v || typeof v !== 'object') return false;
-	const t = v as Partial<WireTaskView>;
-	return (
-		typeof t.id === 'string' &&
-		typeof t.key === 'string' &&
-		typeof t.revision === 'number' &&
-		typeof t.team_id === 'string' &&
-		typeof t.title === 'string' &&
-		typeof t.status === 'string'
-	);
-}
-
-function isWirePrivateNote(v: unknown): v is WirePrivateNote {
-	if (!v || typeof v !== 'object') return false;
-	const n = v as Partial<WirePrivateNote>;
-	return (
-		typeof n.id === 'string' &&
-		typeof n.task_id === 'string' &&
-		typeof n.author_id === 'string' &&
-		typeof n.revision === 'number' &&
-		typeof n.body_markdown === 'string' &&
-		typeof n.created_at === 'string' &&
-		typeof n.updated_at === 'string' &&
-		typeof n.editable === 'boolean'
-	);
-}
-
-interface PendingIds {
-	commandId: string;
-	entityId: string;
-}
 
 /**
  * Production HTTP adapter for `/api/v1/organizations/{org}/tasks*` and private task notes.
@@ -230,72 +165,15 @@ export function createHttpWorkItemsApi({
 		return res as unknown as WireTaskInspect;
 	}
 
-	function buildCreateDetails(draft: NewTask): Record<string, unknown> | undefined {
-		if (draft.type === 'bug' && draft.bug) {
-			return {
-				what_happened: draft.bug.whatHappened || undefined,
-				expected: draft.bug.expected || undefined,
-				steps: draft.bug.steps || undefined,
-				environment: draft.bug.environment || undefined,
-				severity_confirmed: false,
-				reopen_count: 0
-			};
-		}
-		if (draft.type === 'request') {
-			return {
-				request_text: draft.description || undefined,
-				severity_confirmed: false,
-				reopen_count: 0
-			};
-		}
-		return undefined;
-	}
-
-	function buildCreateBody(draft: NewTask, ids: PendingIds): Record<string, unknown> {
-		const dependsOn = [draft.fixesTaskId, draft.relatesToTaskId].filter(
-			(v): v is string => typeof v === 'string' && v.length > 0
-		);
-		const details = buildCreateDetails(draft);
-		const body: Record<string, unknown> = {
-			command_id: ids.commandId,
-			task_id: ids.entityId,
-			type: draft.type,
-			title: draft.title,
-			body_markdown: draft.description,
-			priority: draft.priority
-		};
-		if (draft.projectId) body.project_id = draft.projectId;
-		else body.team_id = draft.teamId;
-		if (draft.assignedTeamId) body.assigned_team_id = draft.assignedTeamId;
-		if (draft.assigneeId) body.assignee_id = draft.assigneeId;
-		if (draft.severity) body.severity = draft.severity;
-		if (dependsOn.length > 0) body.depends_on = dependsOn;
-		if (details) body.details = details;
-		return body;
-	}
-
-	function buildClosePayload(change: CloseAs): {
-		status: TaskStatus;
-		resolution: string;
-		note?: string;
-	} {
-		if (change.as === 'done') return { status: 'done', resolution: 'completed' };
-		if (change.as === 'duplicate') {
-			return {
-				status: 'cancelled',
-				resolution: 'duplicate',
-				note: `Duplicate of ${normalizeRef(change.originalRef)}`
-			};
-		}
-		if (change.as === 'wont_fix' || change.as === 'cant_reproduce') {
-			return { status: 'cancelled', resolution: change.as, note: change.reason };
-		}
-		return {
-			status: 'cancelled',
-			resolution: 'cancelled',
-			...(change.reason ? { note: change.reason } : {})
-		};
-	}
+	const notesHandlers = createWorkItemNotesHandlers({
+		orgBase,
+		readJson,
+		postJson,
+		loadLookup,
+		resolveIds,
+		clearPendingOp: (opId) => pendingOps.delete(opId),
+		viewerContext
+	});
 
 	return Object.freeze<WorkItemsApi>({
 		async queue(organizationId: string, scope: WorkScope): Promise<WorkQueue> {
@@ -555,101 +433,7 @@ export function createHttpWorkItemsApi({
 			);
 		},
 
-		async notes(organizationId, taskId): Promise<PrivateNotesFeed> {
-			const [res, { lookup }] = await Promise.all([
-				readJson(
-					`${orgBase(organizationId)}/tasks/${encodeURIComponent(taskId)}/notes`,
-					'Private notes could not be loaded.'
-				),
-				loadLookup(organizationId)
-			]);
-			const notes = Array.isArray(res.notes)
-				? res.notes.filter(isWirePrivateNote).map((n) => mapPrivateNote(n, lookup))
-				: [];
-			const viewer = buildViewer(lookup, viewerContext(organizationId));
-			return { notes, canWrite: Boolean(viewer.employee) };
-		},
-
-		async addNote(organizationId, taskId, change): Promise<PrivateNote> {
-			const ids = resolveIds(change.operationId);
-			const [res, { lookup }] = await Promise.all([
-				postJson(
-					`${orgBase(organizationId)}/tasks/notes/add`,
-					{
-						command_id: ids.commandId,
-						task: taskId,
-						note_id: ids.entityId,
-						body_markdown: change.body
-					},
-					'Could not save private note.'
-				),
-				loadLookup(organizationId)
-			]);
-			pendingOps.delete(change.operationId);
-			if (!isWirePrivateNote(res.note)) {
-				throw {
-					source: 'api',
-					code: 'unavailable',
-					message: 'The saved private note could not be read.'
-				} satisfies AppError;
-			}
-			return mapPrivateNote(res.note, lookup);
-		},
-
-		async editNote(organizationId, _taskId, noteId, change): Promise<PrivateNote> {
-			const ids = resolveIds(change.operationId);
-			const [res, { lookup }] = await Promise.all([
-				postJson(
-					`${orgBase(organizationId)}/tasks/notes/update`,
-					{
-						command_id: ids.commandId,
-						note_id: noteId,
-						expected_revision: change.expectedRevision,
-						body_markdown: change.body
-					},
-					'Could not update private note.'
-				),
-				loadLookup(organizationId)
-			]);
-			pendingOps.delete(change.operationId);
-			if (!isWirePrivateNote(res.note)) {
-				throw {
-					source: 'api',
-					code: 'unavailable',
-					message: 'The updated private note could not be read.'
-				} satisfies AppError;
-			}
-			return mapPrivateNote(res.note, lookup);
-		},
-
-		async deleteNote(organizationId, _taskId, noteId, change): Promise<void> {
-			const ids = resolveIds(change.operationId);
-			await postJson(
-				`${orgBase(organizationId)}/tasks/notes/remove`,
-				{
-					command_id: ids.commandId,
-					note_id: noteId,
-					expected_revision: change.expectedRevision
-				},
-				'Could not delete private note.'
-			);
-			pendingOps.delete(change.operationId);
-		},
-
-		async publishNote(organizationId, _taskId, noteId, change): Promise<void> {
-			const ids = resolveIds(change.operationId);
-			await postJson(
-				`${orgBase(organizationId)}/tasks/notes/publish`,
-				{
-					command_id: ids.commandId,
-					note_id: noteId,
-					expected_revision: change.expectedRevision,
-					comment_id: ids.entityId
-				},
-				'Could not publish private note.'
-			);
-			pendingOps.delete(change.operationId);
-		},
+		...notesHandlers,
 
 		async markFixed(
 			organizationId,

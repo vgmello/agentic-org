@@ -7,12 +7,13 @@ use org_command::Refusal;
 use org_proto::external_auth::{
     AuthLoginPoll, AuthLoginPollParams, AuthLoginPollResult, AuthLoginRequest,
     AuthLoginRequestParams, AuthLoginRequestResult, AuthLogout, AuthWhoami, ChallengePurpose,
-    ExternalLoginState, MAX_WORKSPACE_LABEL_BYTES,
+    ExternalLoginState,
 };
 use org_proto::{Call, Empty, ErrorCode};
 use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
+use super::bind::default_label_for;
 use super::client::{self, call, Target};
 use super::store::{self, TokenFile, WorkspaceBinding, WorkspaceState};
 use super::{failure, print, success, Flags, LifecycleError, LoginHooks, Printed};
@@ -66,17 +67,7 @@ fn help(text: &str) -> Printed {
 }
 
 fn label_for(root: &Path) -> String {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let label = store::tilde_path(root, home.as_deref());
-    if label.len() <= MAX_WORKSPACE_LABEL_BYTES {
-        return label;
-    }
-    // Keep the end of the path (its most telling part) within the byte budget.
-    let mut start = label.len() - (MAX_WORKSPACE_LABEL_BYTES - '…'.len_utf8());
-    while !label.is_char_boundary(start) {
-        start += 1;
-    }
-    format!("…{}", &label[start..])
+    default_label_for(root)
 }
 
 fn workspace_root(flag: Option<&str>) -> Result<PathBuf, Refusal> {

@@ -11,7 +11,7 @@ use super::super::{
 use super::hydrate::{hydrate, Owners};
 use super::list::{page, rollups};
 use super::rows::{comment_row, counter_row, event_row, link_row, step_row, task_row, watcher_row};
-use super::{fetch, fetch_one, TASK_COLS};
+use super::{fetch, fetch_one, STEP_ORDER, TASK_COLS};
 use crate::tasks::{
     ports::TasksRead,
     query::{TaskHistoryOutline, TaskListPage, TaskListQuery, TaskRollup},
@@ -136,16 +136,14 @@ macro_rules! sqlite_tasks_read {
 
             fn checklist_steps(&self, task_id: &Id) -> Result<Vec<ChecklistStepRecord>, EngineError> {
                 let (db, scope) = self.view()?;
-                fetch(
-                    db,
+                let sql = format!(
                     "SELECT id, position, text, required, done, linked_task_id, \
-                     checked_by_employee_id, checked_at, revision \
+                     checked_by_employee_id, checked_at, revision, section \
                      FROM checklist_steps \
                      WHERE organization_id = ?1 AND target_kind = 'task' AND target_id = ?2 \
-                     ORDER BY position",
-                    vec![text(scope), text(task_id.as_str())],
-                    step_row,
-                )
+                     ORDER BY {STEP_ORDER}"
+                );
+                fetch(db, &sql, vec![text(scope), text(task_id.as_str())], step_row)
             }
 
             fn task_comments(&self, task_id: &Id) -> Result<Vec<TaskCommentRecord>, EngineError> {

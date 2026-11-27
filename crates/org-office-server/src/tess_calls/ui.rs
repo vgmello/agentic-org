@@ -14,7 +14,7 @@ use org_proto::tess::{
 use org_proto::{ApiError, ErrorCode, Outcome, Request};
 
 use super::preflight::HIRE_NOT_VISIBLE;
-use super::{CallerContext, TessService};
+use super::{unavailable, CallerContext, TessService};
 
 /// Explicit static allowlist of top-level in-app views permitted without a verified entity target.
 const STATIC_TOP_LEVEL_ROUTES: &[&str] = &[
@@ -87,29 +87,22 @@ pub(super) fn handle_present(
 }
 
 fn check_bounds(params: &UiPresentParams) -> Result<(), ApiError> {
-    if params.follow_ups.len() > MAX_UI_FOLLOW_UPS {
-        return Err(ApiError::new(
-            ErrorCode::InvalidRequest,
-            format!("`follow_ups` may contain at most {MAX_UI_FOLLOW_UPS} items"),
-        ));
-    }
-    if params.entity_links.len() > MAX_UI_ENTITY_LINKS {
-        return Err(ApiError::new(
-            ErrorCode::InvalidRequest,
-            format!("`entity_links` may contain at most {MAX_UI_ENTITY_LINKS} items"),
-        ));
-    }
-    if params.metrics.len() > MAX_UI_METRICS {
-        return Err(ApiError::new(
-            ErrorCode::InvalidRequest,
-            format!("`metrics` may contain at most {MAX_UI_METRICS} items"),
-        ));
-    }
-    if params.navigation.len() > MAX_UI_NAVIGATION {
-        return Err(ApiError::new(
-            ErrorCode::InvalidRequest,
-            format!("`navigation` may contain at most {MAX_UI_NAVIGATION} items"),
-        ));
+    for (field, len, max) in [
+        ("follow_ups", params.follow_ups.len(), MAX_UI_FOLLOW_UPS),
+        (
+            "entity_links",
+            params.entity_links.len(),
+            MAX_UI_ENTITY_LINKS,
+        ),
+        ("metrics", params.metrics.len(), MAX_UI_METRICS),
+        ("navigation", params.navigation.len(), MAX_UI_NAVIGATION),
+    ] {
+        if len > max {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                format!("`{field}` may contain at most {max} items"),
+            ));
+        }
     }
     Ok(())
 }
@@ -140,7 +133,7 @@ fn clean_text(field: &str, raw: &str) -> Result<String, ApiError> {
 fn clean_route(raw: &str) -> Result<String, ApiError> {
     let route = clean_text("route", raw)?;
     if !route.starts_with('/')
-        || route.starts_with("//")
+        || route.contains("//")
         || route.contains("..")
         || route.contains("://")
         || route.contains('\\')
@@ -285,10 +278,10 @@ fn verify_task(
     raw_id: &str,
     custom_label: Option<String>,
 ) -> Result<UiEntityLink, ApiError> {
-    let inspected = svc.office().task_inspect(raw_id).map_err(|err| {
-        crate::logged("tess_calls.ui_task", &err);
-        ApiError::new(ErrorCode::Unavailable, "unable to verify task")
-    })??;
+    let inspected = svc
+        .office()
+        .task_inspect(raw_id)
+        .map_err(|e| unavailable("tess_calls.ui_task", &e, "unable to verify task"))??;
     Ok(UiEntityLink {
         kind: UiEntityKind::Task,
         id: inspected.task.id,
@@ -303,10 +296,10 @@ fn verify_project(
     raw_id: &str,
     custom_label: Option<String>,
 ) -> Result<UiEntityLink, ApiError> {
-    let project = svc.office().inspect_project(raw_id).map_err(|err| {
-        crate::logged("tess_calls.ui_project", &err);
-        ApiError::new(ErrorCode::Unavailable, "unable to verify project")
-    })??;
+    let project = svc
+        .office()
+        .inspect_project(raw_id)
+        .map_err(|e| unavailable("tess_calls.ui_project", &e, "unable to verify project"))??;
     Ok(UiEntityLink {
         kind: UiEntityKind::Project,
         id: project.id,
@@ -321,10 +314,10 @@ fn verify_team(
     raw_id: &str,
     custom_label: Option<String>,
 ) -> Result<UiEntityLink, ApiError> {
-    let snap = svc.office().org_snapshot().map_err(|err| {
-        crate::logged("tess_calls.ui_team", &err);
-        ApiError::new(ErrorCode::Unavailable, "unable to verify team")
-    })?;
+    let snap = svc
+        .office()
+        .org_snapshot()
+        .map_err(|e| unavailable("tess_calls.ui_team", &e, "unable to verify team"))?;
     let team = snap
         .teams
         .into_iter()
@@ -344,10 +337,10 @@ fn verify_member(
     raw_id: &str,
     custom_label: Option<String>,
 ) -> Result<UiEntityLink, ApiError> {
-    let snap = svc.office().org_snapshot().map_err(|err| {
-        crate::logged("tess_calls.ui_member", &err);
-        ApiError::new(ErrorCode::Unavailable, "unable to verify member")
-    })?;
+    let snap = svc
+        .office()
+        .org_snapshot()
+        .map_err(|e| unavailable("tess_calls.ui_member", &e, "unable to verify member"))?;
     let needle = raw_id.strip_prefix('@').unwrap_or(raw_id);
     let member = snap
         .members
@@ -429,13 +422,13 @@ fn verify_process(
         offset: Some(0),
         revision: None,
     };
-    let shown = svc
-        .office()
-        .process_show(caller_id, params)
-        .map_err(|err| {
-            crate::logged("tess_calls.ui_process", &err);
-            ApiError::new(ErrorCode::Unavailable, "unable to verify process document")
-        })??;
+    let shown = svc.office().process_show(caller_id, params).map_err(|e| {
+        unavailable(
+            "tess_calls.ui_process",
+            &e,
+            "unable to verify process document",
+        )
+    })??;
     Ok(UiEntityLink {
         kind: UiEntityKind::Process,
         route: format!("/processes/{}", shown.document.id),
@@ -459,10 +452,7 @@ fn verify_channel(
                 include_archived: true,
             },
         )
-        .map_err(|err| {
-            crate::logged("tess_calls.ui_channel", &err);
-            ApiError::new(ErrorCode::Unavailable, "unable to verify channel")
-        })??;
+        .map_err(|e| unavailable("tess_calls.ui_channel", &e, "unable to verify channel"))??;
     let needle = raw_id.strip_prefix('#').unwrap_or(raw_id);
     // Only visible channels — never link private DMs through `ui.present`.
     let channel = listed
@@ -496,10 +486,10 @@ fn verify_office(
     raw_id: &str,
     custom_label: Option<String>,
 ) -> Result<UiEntityLink, ApiError> {
-    let offices = svc.office().list_org_offices().map_err(|err| {
-        crate::logged("tess_calls.ui_office", &err);
-        ApiError::new(ErrorCode::Unavailable, "unable to verify office")
-    })?;
+    let offices = svc
+        .office()
+        .list_org_offices()
+        .map_err(|e| unavailable("tess_calls.ui_office", &e, "unable to verify office"))?;
     let office = offices
         .into_iter()
         .find(|o| o.id.as_str() == raw_id || o.slug.eq_ignore_ascii_case(raw_id))
@@ -530,10 +520,7 @@ fn verify_budget(
                 ..BudgetGetParams::default()
             },
         )
-        .map_err(|err| {
-            crate::logged("tess_calls.ui_budget", &err);
-            ApiError::new(ErrorCode::Unavailable, "unable to verify budget")
-        })??;
+        .map_err(|e| unavailable("tess_calls.ui_budget", &e, "unable to verify budget"))??;
     let budget = result.budget.ok_or_else(|| {
         ApiError::new(
             ErrorCode::NotFound,
@@ -570,18 +557,18 @@ fn verify_hire(
     let scope = svc
         .office()
         .delegated_hire_scope(raw_id)
-        .map_err(|err| {
-            crate::logged("tess_calls.ui_hire", &err);
-            ApiError::new(ErrorCode::Unavailable, "unable to verify hire request")
-        })?
+        .map_err(|e| unavailable("tess_calls.ui_hire", &e, "unable to verify hire request"))?
         .ok_or_else(|| ApiError::new(ErrorCode::NotFound, HIRE_NOT_VISIBLE))?;
     if !authority.is_owner {
         let allowed = svc
             .office()
             .caller_may_hire_into(caller_id, &scope.home_team_id)
-            .map_err(|err| {
-                crate::logged("tess_calls.ui_hire_scope", &err);
-                ApiError::new(ErrorCode::Unavailable, "unable to verify hiring scope")
+            .map_err(|e| {
+                unavailable(
+                    "tess_calls.ui_hire_scope",
+                    &e,
+                    "unable to verify hiring scope",
+                )
             })?;
         if !allowed {
             return Err(ApiError::new(ErrorCode::NotFound, HIRE_NOT_VISIBLE));

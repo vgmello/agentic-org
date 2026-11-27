@@ -6,7 +6,7 @@ use org_proto::{ApiError, ErrorCode, Outcome, Request};
 use serde_json::{Map, Value};
 
 use super::{PreflightContext, PreflightOutcome, HIRE_NOT_VISIBLE};
-use crate::tess_calls::TessService;
+use crate::tess_calls::{unavailable, TessService};
 
 pub(super) fn preflight_hire(
     svc: &TessService,
@@ -89,9 +89,12 @@ fn preflight_existing_hire(
         let may_hire = svc
             .office()
             .caller_may_hire_into(ctx.caller_id, &record.home_team_id)
-            .map_err(|err| {
-                crate::logged("tess_calls.may_hire_into", &err);
-                ApiError::new(ErrorCode::Unavailable, "unable to check hiring scope")
+            .map_err(|e| {
+                unavailable(
+                    "tess_calls.may_hire_into",
+                    &e,
+                    "unable to check hiring scope",
+                )
             })?;
         let owns_draft = record.requested_by_employee_id == ctx.caller_id
             || svc.draft_caller(req_id).as_deref() == Some(ctx.caller_id);
@@ -155,9 +158,12 @@ fn check_caller_hire_team(
     ctx: &PreflightContext<'_>,
     team_id: &str,
 ) -> Result<(), ApiError> {
-    let snap = svc.office().org_snapshot().map_err(|err| {
-        crate::logged("tess_calls.org_snapshot", &err);
-        ApiError::new(ErrorCode::Unavailable, "unable to inspect organization")
+    let snap = svc.office().org_snapshot().map_err(|e| {
+        unavailable(
+            "tess_calls.org_snapshot",
+            &e,
+            "unable to inspect organization",
+        )
     })?;
     if !snap.teams.iter().any(|t| t.id == team_id) {
         return Err(ApiError::new(
@@ -171,9 +177,12 @@ fn check_caller_hire_team(
     let ok = svc
         .office()
         .caller_may_hire_into(ctx.caller_id, team_id)
-        .map_err(|err| {
-            crate::logged("tess_calls.may_hire_into", &err);
-            ApiError::new(ErrorCode::Unavailable, "unable to check hiring scope")
+        .map_err(|e| {
+            unavailable(
+                "tess_calls.may_hire_into",
+                &e,
+                "unable to check hiring scope",
+            )
         })?;
     if !ok {
         return Err(ApiError::new(

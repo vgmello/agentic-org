@@ -1,44 +1,38 @@
 <script lang="ts">
 	import { onDestroy, type Snippet } from 'svelte';
-	import { resolve } from '$app/paths';
-	import { mergeProps, Tooltip } from 'bits-ui';
-	import Activity from '@lucide/svelte/icons/activity';
-	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
-	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
+	import { Tooltip } from 'bits-ui';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
-	import ChevronRight from '@lucide/svelte/icons/chevron-right';
-	import Flag from '@lucide/svelte/icons/flag';
-	import Layers from '@lucide/svelte/icons/layers';
-	import ListFilter from '@lucide/svelte/icons/list-filter';
-	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import { badgeInitials as initialsOf } from '$lib/format';
 	import { activityApi } from '$lib/modules/activity/api';
-	import type { ActivityQuery, ActivityRow } from '$lib/modules/activity/types';
+	import type { ActivityQuery } from '$lib/modules/activity/types';
 	import { inboxApi } from '$lib/modules/inbox/api';
-	import type { InboxItem } from '$lib/modules/inbox/types';
 	import type { ActivityEntry } from '$lib/modules/members';
 	import { accountZone } from '$lib/modules/preferences';
 	import type { ReleaseMilestone } from '$lib/modules/releases/types';
 	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
-	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
-	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import type { OrgSnapshot } from '$lib/proto';
+	import ActivityDockControls from './ActivityDockControls.svelte';
+	import ActivityLiveBanner from './ActivityLiveBanner.svelte';
 	import ActivityOpsRail from './ActivityOpsRail.svelte';
+	import ActivityPortfolioHeader from './ActivityPortfolioHeader.svelte';
+	import ActivityProjectToolbar from './ActivityProjectToolbar.svelte';
 	import ActivityStreamPanel from './ActivityStreamPanel.svelte';
 	import AssemblyLineMatrix from './AssemblyLineMatrix.svelte';
+	import { ActivityFeedController } from './activity-feed-controller.svelte';
+	import {
+		attachPanelEscapeListener,
+		buildExtraLineEvents,
+		extractWorkErrorMessage,
+		mergeProjectStreamEntries,
+		moveProjectViewTabFocus,
+		observeScrollOverflow,
+		scrollPanelByPage
+	} from './activity-project-merge';
 	import {
 		deriveActivityCommandCenter,
 		deriveDecisionStreamEntries,
-		extractWorkRefsFromText,
-		mergeLiveActivityRows,
 		type FeedPhase,
-		type LineEventEntry,
-		type StreamEntry,
 		type StreamFilterTab
 	} from './assembly-model';
-
-	const FEED_LIMIT = 200;
 
 	let {
 		organizationId,
@@ -73,70 +67,44 @@
 	let filterMenuOpen = $state(false);
 	let projectScope = $state<string>('all');
 	let streamFilter = $state<StreamFilterTab>('all');
-	let activityRows = $state.raw<ActivityRow[] | undefined>(undefined);
-	let feedPhase = $state<FeedPhase>('loading');
-	let feedError = $state<string | undefined>(undefined);
-	let feedMore = $state(0);
-	let feedRetrySeq = $state(0);
-	let decisionRows = $state.raw<ActivityRow[] | undefined>(undefined);
-	let decisionPhase = $state<FeedPhase>('loading');
-	let decisionError = $state<string | undefined>(undefined);
-	let decisionMore = $state(0);
-	let decisionRetrySeq = $state(0);
-	let directInboxItems = $state.raw<InboxItem[] | undefined>(undefined);
-	let inboxPhase = $state<FeedPhase>('loading');
-	let inboxSubRetrySeq = $state(0);
-	let activitySubRetrySeq = $state(0);
-	let inboxSubFailedOrg = $state<string | undefined>(undefined);
-	let activitySubFailedOrg = $state<string | undefined>(undefined);
-	let inboxCatchupFailedOrg = $state<string | undefined>(undefined);
-	let activityCatchupFailedOrg = $state<string | undefined>(undefined);
-	let decisionCatchupFailedOrg = $state<string | undefined>(undefined);
-	let reconnectingOrg = $state<string | undefined>(undefined);
-	let headerRetryActive = $state(false);
-	let shellRefreshing = $state(false);
-	let nowMs = $state(Date.now());
-
-	let bufferedAllRows: ActivityRow[] = [];
-	let bufferedDecisionRows: ActivityRow[] = [];
-	let inboxInFlight = false;
-	let pendingInboxReconcile = false;
-	let mainInFlight = false;
-	let pendingMainReconcile = false;
-	let decisionInFlight = false;
-	let pendingDecisionReconcile = false;
-	let reconnectPendingInboxSub = false;
-	let reconnectPendingActivitySub = false;
-	let reconnectPendingInboxFetch = false;
-	let reconnectPendingMainFetch = false;
-	let reconnectPendingDecisionFetch = false;
-	let shellRefreshSeq = 0;
+	let focusedProjectView = $state<'assembly' | 'feed' | null>(null);
 	let destroyed = false;
 
-	const inboxSubFailed = $derived(inboxSubFailedOrg === organizationId);
-	const activitySubFailed = $derived(activitySubFailedOrg === organizationId);
-	const catchupFailed = $derived(
-		inboxCatchupFailedOrg === organizationId ||
-			activityCatchupFailedOrg === organizationId ||
-			(viewMode === 'feed' &&
-				streamFilter === 'decision' &&
-				decisionCatchupFailedOrg === organizationId)
+	const shellReady = $derived(
+		shellData.loaded && shellData.loadedOrganizationId === organizationId
 	);
-	const isReconnecting = $derived(reconnectingOrg === organizationId);
-	const showLiveBanner = $derived(
-		inboxSubFailed || activitySubFailed || catchupFailed || isReconnecting
+	const workUnavailableReason = $derived(
+		shellReady && shellData.workError ? extractWorkErrorMessage(shellData.workError) : undefined
+	);
+	const workPhase = $derived<FeedPhase>(
+		!shellReady ? 'loading' : workUnavailableReason ? 'error' : 'ready'
+	);
+	const liveSnapshot = $derived(shellReady && shellData.snapshot ? shellData.snapshot : snapshot);
+	const workItems = $derived(workPhase === 'ready' ? shellData.workItems : []);
+	const activeProjectIds = $derived(
+		new Set((liveSnapshot.projects ?? []).filter((p) => !p.archived).map((p) => p.id))
+	);
+	const effectiveProjectScope = $derived(
+		lockedProjectId
+			? lockedProjectId
+			: projectScope === 'all' || activeProjectIds.has(projectScope)
+				? projectScope
+				: 'all'
+	);
+	const activeAllQuery = $derived<ActivityQuery>(
+		effectiveProjectScope !== 'all'
+			? { kind: 'all', project: effectiveProjectScope }
+			: { kind: 'all' }
+	);
+	const activeDecisionQuery = $derived<ActivityQuery>(
+		effectiveProjectScope !== 'all'
+			? { kind: 'decision', project: effectiveProjectScope }
+			: { kind: 'decision' }
 	);
 
 	function restoreFocusIfBannerDismissing(id: string) {
 		if (destroyed || typeof document === 'undefined' || id !== organizationId) return;
-		const stillVisible =
-			reconnectingOrg === id ||
-			inboxSubFailedOrg === id ||
-			activitySubFailedOrg === id ||
-			inboxCatchupFailedOrg === id ||
-			activityCatchupFailedOrg === id ||
-			(viewMode === 'feed' && streamFilter === 'decision' && decisionCatchupFailedOrg === id);
-		if (stillVisible) return;
+		if (feed.isBannerStillVisible(id)) return;
 		const active = document.activeElement;
 		if (active instanceof HTMLElement && active.closest('.cmd-live-banner')) {
 			const fallbackTarget =
@@ -149,43 +117,48 @@
 		}
 	}
 
-	function maybeFinishReconnect(id: string) {
-		if (destroyed || reconnectingOrg !== id) return;
-		if (
-			reconnectPendingInboxSub ||
-			reconnectPendingActivitySub ||
-			reconnectPendingInboxFetch ||
-			reconnectPendingMainFetch ||
-			reconnectPendingDecisionFetch
-		) {
-			return;
-		}
-		reconnectingOrg = undefined;
-		restoreFocusIfBannerDismissing(id);
-	}
+	const feed = new ActivityFeedController({
+		getOrganizationId: () => organizationId,
+		getActiveAllQuery: () => activeAllQuery,
+		getActiveDecisionQuery: () => activeDecisionQuery,
+		isDecisionTabActive: () => viewMode === 'feed' && streamFilter === 'decision',
+		refreshShell: () => shellData.refresh(),
+		onBannerMayDismiss: restoreFocusIfBannerDismissing
+	});
+
+	const inboxItems = $derived(feed.inboxPhase === 'ready' ? (feed.directInboxItems ?? []) : []);
+	const inboxSubFailed = $derived(feed.inboxSubFailedOrg === organizationId);
+	const activitySubFailed = $derived(feed.activitySubFailedOrg === organizationId);
+	const catchupFailed = $derived(
+		feed.inboxCatchupFailedOrg === organizationId ||
+			feed.activityCatchupFailedOrg === organizationId ||
+			(viewMode === 'feed' &&
+				streamFilter === 'decision' &&
+				feed.decisionCatchupFailedOrg === organizationId)
+	);
+	const isReconnecting = $derived(feed.reconnectingOrg === organizationId);
+	const showLiveBanner = $derived(
+		inboxSubFailed || activitySubFailed || catchupFailed || isReconnecting
+	);
 
 	onDestroy(() => {
 		destroyed = true;
+		feed.dispose();
 		onRegisterToolbar?.(undefined);
 	});
 
 	$effect(() => {
 		if (!isProjectMode || !onRegisterToolbar) return;
 		onRegisterToolbar(projectToolbarControls);
-		return () => {
-			onRegisterToolbar(undefined);
-		};
+		return () => onRegisterToolbar(undefined);
 	});
 
-	// Keep waiting-on-people elapsed times and relative timestamps current while the dock is visible.
 	$effect(() => {
 		if (!panelOpen || typeof window === 'undefined') return;
 		const timer = window.setInterval(() => {
-			nowMs = Date.now();
+			feed.nowMs = Date.now();
 		}, 30_000);
-		return () => {
-			window.clearInterval(timer);
-		};
+		return () => window.clearInterval(timer);
 	});
 
 	function updatePanelScrollMore() {
@@ -193,9 +166,8 @@
 			hasMorePanelScroll = false;
 			return;
 		}
-		const remaining =
-			panelScrollEl.scrollHeight - panelScrollEl.scrollTop - panelScrollEl.clientHeight;
-		const next = remaining > 12;
+		const next =
+			panelScrollEl.scrollHeight - panelScrollEl.scrollTop - panelScrollEl.clientHeight > 12;
 		if (!next && hasMorePanelScroll && typeof document !== 'undefined') {
 			const active = document.activeElement;
 			if (active instanceof HTMLElement && active.classList.contains('activity-panel-more')) {
@@ -203,15 +175,6 @@
 			}
 		}
 		hasMorePanelScroll = next;
-	}
-
-	function scrollPanelMore() {
-		if (!panelScrollEl) return;
-		const step = Math.max(180, Math.round(panelScrollEl.clientHeight * 0.72));
-		const reduced =
-			typeof window !== 'undefined' &&
-			window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-		panelScrollEl.scrollBy({ top: step, behavior: reduced ? 'auto' : 'smooth' });
 	}
 
 	$effect(() => {
@@ -226,528 +189,78 @@
 			hasMorePanelScroll = false;
 			return;
 		}
-		const check = () => updatePanelScrollMore();
-		check();
-		el.addEventListener('scroll', check, { passive: true });
-		const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(check) : undefined;
-		const observeChildren = () => {
-			if (!ro) return;
-			ro.observe(el);
-			for (const child of el.children) {
-				ro.observe(child);
-			}
-		};
-		observeChildren();
-		const mo =
-			typeof MutationObserver !== 'undefined'
-				? new MutationObserver(() => {
-						observeChildren();
-						check();
-					})
-				: undefined;
-		mo?.observe(el, { childList: true, subtree: true });
-		const raf = requestAnimationFrame(check);
-		return () => {
-			cancelAnimationFrame(raf);
-			el.removeEventListener('scroll', check);
-			ro?.disconnect();
-			mo?.disconnect();
-		};
+		return observeScrollOverflow(el, updatePanelScrollMore);
 	});
-
-	const shellReady = $derived(
-		shellData.loaded && shellData.loadedOrganizationId === organizationId
-	);
-
-	const workUnavailableReason = $derived.by<string | undefined>(() => {
-		if (!shellReady || !shellData.workError) return undefined;
-		const err = shellData.workError;
-		if (err instanceof Error && err.message) return err.message;
-		if (
-			typeof err === 'object' &&
-			err !== null &&
-			'message' in err &&
-			typeof (err as { message: unknown }).message === 'string'
-		) {
-			return (err as { message: string }).message;
-		}
-		return 'Could not load work items from the office.';
-	});
-
-	const workPhase = $derived<FeedPhase>(
-		!shellReady ? 'loading' : workUnavailableReason ? 'error' : 'ready'
-	);
-
-	const liveSnapshot = $derived(shellReady && shellData.snapshot ? shellData.snapshot : snapshot);
-
-	const workItems = $derived(workPhase === 'ready' ? shellData.workItems : []);
-	const inboxItems = $derived(inboxPhase === 'ready' ? (directInboxItems ?? []) : []);
-
-	const activeProjectIds = $derived(
-		new Set((liveSnapshot.projects ?? []).filter((p) => !p.archived).map((p) => p.id))
-	);
-
-	const effectiveProjectScope = $derived(
-		lockedProjectId
-			? lockedProjectId
-			: projectScope === 'all' || activeProjectIds.has(projectScope)
-				? projectScope
-				: 'all'
-	);
-
-	const activeAllQuery = $derived<ActivityQuery>(
-		effectiveProjectScope !== 'all'
-			? { kind: 'all', project: effectiveProjectScope }
-			: { kind: 'all' }
-	);
-
-	const activeDecisionQuery = $derived<ActivityQuery>(
-		effectiveProjectScope !== 'all'
-			? { kind: 'decision', project: effectiveProjectScope }
-			: { kind: 'decision' }
-	);
-
-	// Race-guarded direct Inbox fetch + live subscription so approvals stay current.
-	let inboxLoadSeq = 0;
-
-	function fetchInbox(id: string, showLoading: boolean) {
-		const seq = ++inboxLoadSeq;
-		inboxInFlight = true;
-		if (showLoading) {
-			pendingInboxReconcile = false;
-			inboxPhase = 'loading';
-			directInboxItems = undefined;
-		}
-		void inboxApi
-			.list(id)
-			.then((items) => {
-				if (seq !== inboxLoadSeq || id !== organizationId || destroyed) return;
-				directInboxItems = items;
-				inboxPhase = 'ready';
-				if (inboxCatchupFailedOrg === id) {
-					inboxCatchupFailedOrg = undefined;
-					restoreFocusIfBannerDismissing(id);
-				}
-			})
-			.catch(() => {
-				if (seq !== inboxLoadSeq || id !== organizationId || destroyed) return;
-				if (!showLoading && pendingInboxReconcile) return;
-				directInboxItems = undefined;
-				inboxPhase = 'error';
-				if (!showLoading) inboxCatchupFailedOrg = id;
-			})
-			.finally(() => {
-				if (seq !== inboxLoadSeq || id !== organizationId || destroyed) return;
-				inboxInFlight = false;
-				if (pendingInboxReconcile) {
-					pendingInboxReconcile = false;
-					fetchInbox(id, false);
-				} else {
-					reconnectPendingInboxFetch = false;
-					maybeFinishReconnect(id);
-					if (!shellRefreshing) {
-						headerRetryActive = false;
-					}
-				}
-			});
-	}
-
-	function scheduleInboxReconcile(id: string) {
-		if (inboxInFlight) {
-			pendingInboxReconcile = true;
-		} else {
-			fetchInbox(id, false);
-		}
-	}
 
 	$effect(() => {
 		const id = organizationId;
 		void accountZone.ensure(id);
-		fetchInbox(id, true);
-		return () => {
-			inboxLoadSeq += 1;
-			shellRefreshSeq += 1;
-			inboxInFlight = false;
-			pendingInboxReconcile = false;
-			reconnectPendingInboxSub = false;
-			reconnectPendingActivitySub = false;
-			reconnectPendingInboxFetch = false;
-			reconnectPendingMainFetch = false;
-			reconnectPendingDecisionFetch = false;
-			headerRetryActive = false;
-			shellRefreshing = false;
-		};
+		feed.fetchInbox(id, true);
+		return () => feed.resetInboxScope();
 	});
 
 	$effect(() => {
 		const id = organizationId;
-		const subRetry = inboxSubRetrySeq;
-		void subRetry;
+		void feed.inboxSubRetrySeq;
 		let cancelled = false;
 		let unsub: (() => void) | undefined;
 		void inboxApi
 			.subscribe(id, () => {
-				if (!cancelled) scheduleInboxReconcile(id);
+				if (!cancelled) feed.scheduleInboxReconcile(id);
 			})
 			.then((stop) => {
-				if (cancelled) {
-					stop();
-					return;
+				if (cancelled) stop();
+				else {
+					unsub = stop;
+					feed.onInboxSubscribed(id);
 				}
-				if (inboxSubFailedOrg === id) {
-					inboxSubFailedOrg = undefined;
-					restoreFocusIfBannerDismissing(id);
-				}
-				unsub = stop;
-				if (reconnectingOrg === id) {
-					reconnectPendingInboxFetch = true;
-				}
-				reconnectPendingInboxSub = false;
-				// Reconcile once without preempting an in-flight initial Inbox load.
-				scheduleInboxReconcile(id);
-				maybeFinishReconnect(id);
 			})
 			.catch(() => {
-				if (cancelled || destroyed) return;
-				inboxSubFailedOrg = id;
-				reconnectPendingInboxSub = false;
-				maybeFinishReconnect(id);
+				if (!cancelled) feed.onInboxSubscribeFailed(id);
 			});
-
 		return () => {
 			cancelled = true;
 			unsub?.();
 		};
 	});
 
-	// Race-guarded API-level project-scoped `kind: 'all'` feed load (feeds stream, assembly, and 7d throughput).
-	let loadSeq = 0;
-
-	function fetchMainFeed(
-		id: string,
-		query: ActivityQuery,
-		showLoading: boolean,
-		preserveBuffer = false
-	) {
-		const seq = ++loadSeq;
-		mainInFlight = true;
-		if (!preserveBuffer) {
-			bufferedAllRows = [];
-		}
-		if (showLoading) {
-			pendingMainReconcile = false;
-			feedPhase = 'loading';
-			feedError = undefined;
-			feedMore = 0;
-			activityRows = undefined;
-		}
-
-		void activityApi
-			.feed(id, query, FEED_LIMIT)
-			.then((res) => {
-				if (seq !== loadSeq || id !== organizationId || destroyed) return;
-				// Treat the fresh server snapshot as the authoritative baseline and replay only live arrivals buffered during this request.
-				const merged = mergeLiveActivityRows(
-					res.rows,
-					bufferedAllRows,
-					query,
-					FEED_LIMIT,
-					res.more
-				);
-				bufferedAllRows = [];
-				activityRows = merged.rows;
-				feedMore = merged.more;
-				feedPhase = 'ready';
-				feedError = undefined;
-				if (activityCatchupFailedOrg === id) {
-					activityCatchupFailedOrg = undefined;
-					restoreFocusIfBannerDismissing(id);
-				}
-				nowMs = Date.now();
-				// Close buffering synchronously in the same turn as draining so live arrivals cannot be lost.
-				mainInFlight = false;
-				if (pendingMainReconcile) {
-					pendingMainReconcile = false;
-					fetchMainFeed(id, activeAllQuery, false);
-				} else {
-					reconnectPendingMainFetch = false;
-					maybeFinishReconnect(id);
-				}
-			})
-			.catch((err: unknown) => {
-				if (seq !== loadSeq || id !== organizationId || destroyed) return;
-				if (!showLoading && feedPhase === 'ready') {
-					const merged = mergeLiveActivityRows(
-						activityRows ?? [],
-						bufferedAllRows,
-						query,
-						FEED_LIMIT,
-						feedMore
-					);
-					bufferedAllRows = [];
-					if (merged.changed) {
-						activityRows = merged.rows;
-						feedMore = merged.more;
-						nowMs = Date.now();
-					}
-					mainInFlight = false;
-					if (pendingMainReconcile) {
-						pendingMainReconcile = false;
-						fetchMainFeed(id, activeAllQuery, false);
-					} else {
-						activityCatchupFailedOrg = id;
-						reconnectPendingMainFetch = false;
-						maybeFinishReconnect(id);
-					}
-					return;
-				}
-				if (pendingMainReconcile) {
-					// Carry buffered live arrivals forward into the queued same-scope recovery fetch.
-					pendingMainReconcile = false;
-					fetchMainFeed(id, activeAllQuery, false, true);
-					return;
-				}
-				bufferedAllRows = [];
-				mainInFlight = false;
-				activityRows = undefined;
-				feedMore = 0;
-				feedPhase = 'error';
-				feedError =
-					err instanceof Error && err.message ? err.message : 'Could not load the activity feed.';
-				if (!showLoading) activityCatchupFailedOrg = id;
-				nowMs = Date.now();
-				reconnectPendingMainFetch = false;
-				maybeFinishReconnect(id);
-			});
-	}
-
 	$effect(() => {
 		const id = organizationId;
 		const query = activeAllQuery;
-		const retryToken = feedRetrySeq;
-		void retryToken;
-
-		fetchMainFeed(id, query, true);
-		return () => {
-			loadSeq += 1;
-			mainInFlight = false;
-			pendingMainReconcile = false;
-			bufferedAllRows = [];
-		};
+		void feed.feedRetrySeq;
+		feed.fetchMainFeed(id, query, true);
+		return () => feed.resetMainScope();
 	});
-
-	// Dedicated `kind: 'decision'` fetch when Decisions tab is active (matchesQuery excludes decisions from `all`).
-	let decisionLoadSeq = 0;
-
-	function fetchDecisionFeed(
-		id: string,
-		query: ActivityQuery,
-		showLoading: boolean,
-		preserveBuffer = false
-	) {
-		const seq = ++decisionLoadSeq;
-		decisionInFlight = true;
-		if (!preserveBuffer) {
-			bufferedDecisionRows = [];
-		}
-		if (showLoading) {
-			pendingDecisionReconcile = false;
-			decisionPhase = 'loading';
-			decisionError = undefined;
-			decisionMore = 0;
-			decisionRows = undefined;
-		}
-
-		void activityApi
-			.feed(id, query, FEED_LIMIT)
-			.then((res) => {
-				if (seq !== decisionLoadSeq || id !== organizationId || destroyed) return;
-				// Authoritative server snapshot baseline + live arrivals buffered during this request.
-				const merged = mergeLiveActivityRows(
-					res.rows,
-					bufferedDecisionRows,
-					query,
-					FEED_LIMIT,
-					res.more
-				);
-				bufferedDecisionRows = [];
-				decisionRows = merged.rows;
-				decisionMore = merged.more;
-				decisionPhase = 'ready';
-				decisionError = undefined;
-				if (decisionCatchupFailedOrg === id) {
-					decisionCatchupFailedOrg = undefined;
-					restoreFocusIfBannerDismissing(id);
-				}
-				nowMs = Date.now();
-				// Close buffering synchronously in the same turn as draining so live arrivals cannot be lost.
-				decisionInFlight = false;
-				if (pendingDecisionReconcile && viewMode === 'feed' && streamFilter === 'decision') {
-					pendingDecisionReconcile = false;
-					fetchDecisionFeed(id, activeDecisionQuery, false);
-				} else {
-					pendingDecisionReconcile = false;
-					reconnectPendingDecisionFetch = false;
-					maybeFinishReconnect(id);
-				}
-			})
-			.catch((err: unknown) => {
-				if (seq !== decisionLoadSeq || id !== organizationId || destroyed) return;
-				if (!showLoading && decisionPhase === 'ready') {
-					const merged = mergeLiveActivityRows(
-						decisionRows ?? [],
-						bufferedDecisionRows,
-						query,
-						FEED_LIMIT,
-						decisionMore
-					);
-					bufferedDecisionRows = [];
-					if (merged.changed) {
-						decisionRows = merged.rows;
-						decisionMore = merged.more;
-						nowMs = Date.now();
-					}
-					decisionInFlight = false;
-					if (pendingDecisionReconcile && viewMode === 'feed' && streamFilter === 'decision') {
-						pendingDecisionReconcile = false;
-						fetchDecisionFeed(id, activeDecisionQuery, false);
-					} else {
-						pendingDecisionReconcile = false;
-						decisionCatchupFailedOrg = id;
-						reconnectPendingDecisionFetch = false;
-						maybeFinishReconnect(id);
-					}
-					return;
-				}
-				if (pendingDecisionReconcile && viewMode === 'feed' && streamFilter === 'decision') {
-					// Carry buffered live arrivals forward into the queued same-scope recovery fetch.
-					pendingDecisionReconcile = false;
-					fetchDecisionFeed(id, activeDecisionQuery, false, true);
-					return;
-				}
-				pendingDecisionReconcile = false;
-				bufferedDecisionRows = [];
-				decisionInFlight = false;
-				decisionRows = undefined;
-				decisionMore = 0;
-				decisionPhase = 'error';
-				decisionError =
-					err instanceof Error && err.message ? err.message : 'Could not load decisions.';
-				if (!showLoading) decisionCatchupFailedOrg = id;
-				nowMs = Date.now();
-				reconnectPendingDecisionFetch = false;
-				maybeFinishReconnect(id);
-			});
-	}
 
 	$effect(() => {
 		const id = organizationId;
 		const query = activeDecisionQuery;
 		const active = viewMode === 'feed' && streamFilter === 'decision';
-		const retryToken = decisionRetrySeq;
-		void retryToken;
+		void feed.decisionRetrySeq;
 		if (!active) return;
-
-		fetchDecisionFeed(id, query, true);
-		return () => {
-			decisionLoadSeq += 1;
-			decisionInFlight = false;
-			pendingDecisionReconcile = false;
-			bufferedDecisionRows = [];
-			if (reconnectPendingDecisionFetch) {
-				reconnectPendingDecisionFetch = false;
-				maybeFinishReconnect(id);
-			}
-		};
+		feed.fetchDecisionFeed(id, query, true);
+		return () => feed.resetDecisionScope(id);
 	});
 
-	// Live activity subscription buffers arrivals during any in-flight load/reconcile, upserts by ID,
-	// filters via matchesQuery, tracks evictions, and reconciles cleanly once registered without preempting initial loads.
 	$effect(() => {
 		const id = organizationId;
-		const subRetry = activitySubRetrySeq;
-		void subRetry;
+		void feed.activitySubRetrySeq;
 		let cancelled = false;
 		let unsub: (() => void) | undefined;
-
 		void activityApi
 			.subscribe(id, (row) => {
-				if (cancelled) return;
-
-				if (mainInFlight) {
-					bufferedAllRows.push(row);
-				} else if (feedPhase === 'ready') {
-					const merged = mergeLiveActivityRows(
-						activityRows ?? [],
-						[row],
-						activeAllQuery,
-						FEED_LIMIT,
-						feedMore
-					);
-					if (merged.changed) {
-						activityRows = merged.rows;
-						feedMore = merged.more;
-						nowMs = Date.now();
-					}
-				}
-
-				if (viewMode === 'feed' && streamFilter === 'decision') {
-					if (decisionInFlight) {
-						bufferedDecisionRows.push(row);
-					} else if (decisionPhase === 'ready') {
-						const mergedDec = mergeLiveActivityRows(
-							decisionRows ?? [],
-							[row],
-							activeDecisionQuery,
-							FEED_LIMIT,
-							decisionMore
-						);
-						if (mergedDec.changed) {
-							decisionRows = mergedDec.rows;
-							decisionMore = mergedDec.more;
-							nowMs = Date.now();
-						}
-					}
-				}
+				if (!cancelled) feed.handleLiveRow(row);
 			})
 			.then((stop) => {
-				if (cancelled) {
-					stop();
-					return;
+				if (cancelled) stop();
+				else {
+					unsub = stop;
+					feed.onActivitySubscribed(id);
 				}
-				if (activitySubFailedOrg === id) {
-					activitySubFailedOrg = undefined;
-					restoreFocusIfBannerDismissing(id);
-				}
-				unsub = stop;
-				const trackingReconnect = reconnectingOrg === id;
-				// Reconcile after initial load settles (never preempt an in-flight initial snapshot; also recovers from transient initial error).
-				if (mainInFlight) {
-					if (trackingReconnect) reconnectPendingMainFetch = true;
-					pendingMainReconcile = true;
-				} else if (feedPhase === 'ready' || feedPhase === 'error') {
-					if (trackingReconnect) reconnectPendingMainFetch = true;
-					fetchMainFeed(id, activeAllQuery, false);
-				}
-				if (viewMode === 'feed' && streamFilter === 'decision') {
-					if (decisionInFlight) {
-						if (trackingReconnect) reconnectPendingDecisionFetch = true;
-						pendingDecisionReconcile = true;
-					} else if (decisionPhase === 'ready' || decisionPhase === 'error') {
-						if (trackingReconnect) reconnectPendingDecisionFetch = true;
-						fetchDecisionFeed(id, activeDecisionQuery, false);
-					}
-				}
-				reconnectPendingActivitySub = false;
-				maybeFinishReconnect(id);
 			})
 			.catch(() => {
-				if (cancelled || destroyed) return;
-				activitySubFailedOrg = id;
-				reconnectPendingActivitySub = false;
-				maybeFinishReconnect(id);
+				if (!cancelled) feed.onActivitySubscribeFailed(id);
 			});
-
 		return () => {
 			cancelled = true;
 			unsub?.();
@@ -760,102 +273,54 @@
 			organizationName,
 			workItems,
 			inboxItems,
-			activityRows: activityRows ?? [],
+			activityRows: feed.activityRows ?? [],
 			projectScope: effectiveProjectScope,
 			scopedTeamIds,
 			ownerId: shellData.ownerId,
-			feedPhase,
-			feedMore,
+			feedPhase: feed.feedPhase,
+			feedMore: feed.feedMore,
 			workPhase,
-			inboxPhase,
-			nowMs
+			inboxPhase: feed.inboxPhase,
+			nowMs: feed.nowMs
 		})
 	);
 
 	const decisionEntries = $derived(
 		deriveDecisionStreamEntries({
 			snapshot: liveSnapshot,
-			decisionRows: decisionRows ?? [],
+			decisionRows: feed.decisionRows ?? [],
 			workItems,
 			inboxItems,
 			projectScope: effectiveProjectScope,
 			ownerId: shellData.ownerId,
-			decisionPhase,
+			decisionPhase: feed.decisionPhase,
 			workPhase,
-			inboxPhase
+			inboxPhase: feed.inboxPhase
 		})
 	);
 
-	function projectEntryNeedsYou(entry: ActivityEntry): boolean {
-		const refs = extractWorkRefsFromText(entry.text);
-		if (refs.length === 0) return false;
-		if (workPhase === 'ready' && refs.some((ref) => model.actionableWorkRefs.has(ref))) {
-			return true;
-		}
-		if (inboxPhase === 'ready' && refs.some((ref) => model.openInboxWorkRefs.has(ref))) {
-			return true;
-		}
-		return false;
-	}
-
-	function toneFromProjectEntry(entry: ActivityEntry, needsYou: boolean): LineEventEntry['tone'] {
-		if (needsYou) return 'warn';
-		const lower = `${entry.kind} ${entry.text}`.toLowerCase();
-		if (lower.includes('fail') || lower.includes('block') || lower.includes('denied')) return 'bad';
-		if (
-			lower.includes('done') ||
-			lower.includes('merg') ||
-			lower.includes('finish') ||
-			lower.includes('approved')
-		) {
-			return 'ok';
-		}
-		return '';
-	}
-
-	const extraLineEvents = $derived.by<LineEventEntry[]>(() =>
-		extraProjectActivity.map((entry) => {
-			const needsYou = projectEntryNeedsYou(entry);
-			return {
-				id: `proj-act-${entry.id}`,
-				at: entry.at,
-				tone: toneFromProjectEntry(entry, needsYou),
-				text: entry.actor ? `${entry.actor} ${entry.text}` : entry.text
-			};
-		})
+	const extraLineEvents = $derived(
+		buildExtraLineEvents(
+			extraProjectActivity,
+			workPhase,
+			feed.inboxPhase,
+			model.actionableWorkRefs,
+			model.openInboxWorkRefs
+		)
 	);
 
-	const mergedStreamEntries = $derived.by<StreamEntry[]>(() => {
-		if (extraProjectActivity.length === 0) return model.streamEntries;
-		const seen: Record<string, true> = {};
-		for (const e of model.streamEntries) seen[`${e.at}|${e.text}`] = true;
-		const projectLabel = model.selectedProject?.name ?? organizationName;
-		const extras: StreamEntry[] = [];
-		for (const entry of extraProjectActivity) {
-			const key = `${entry.at}|${entry.text}`;
-			if (Object.hasOwn(seen, key)) continue;
-			seen[key] = true;
-			const needsYou = projectEntryNeedsYou(entry);
-			const tone = toneFromProjectEntry(entry, needsYou);
-			extras.push({
-				id: `proj-stream-${entry.id}`,
-				kind: 'work',
-				kindLabel: entry.kind || 'Work',
-				actorName: entry.actor || 'Team',
-				actorInitials: initialsOf(entry.actor || 'Team'),
-				actorKind: 'person',
-				text: entry.text,
-				projects: projectLabel ? [projectLabel] : [],
-				at: entry.at,
-				tone: tone || 'accent',
-				href: lockedProjectId ? `/projects/${encodeURIComponent(lockedProjectId)}/work` : '/work',
-				needsYou
-			});
-		}
-		return [...model.streamEntries, ...extras].sort(
-			(a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0)
-		);
-	});
+	const mergedStreamEntries = $derived(
+		mergeProjectStreamEntries({
+			baseEntries: model.streamEntries,
+			extraProjectActivity,
+			projectLabel: model.selectedProject?.name ?? organizationName,
+			lockedProjectId,
+			workPhase,
+			inboxPhase: feed.inboxPhase,
+			actionableWorkRefs: model.actionableWorkRefs,
+			openInboxWorkRefs: model.openInboxWorkRefs
+		})
+	);
 
 	const headerSubtitle = $derived(
 		!shellReady
@@ -864,347 +329,48 @@
 				? `Work pipeline unavailable in ${organizationName}`
 				: model.scopeSubtitle
 	);
-
 	const isHeaderRetrying = $derived(
-		headerRetryActive && (shellRefreshing || !shellReady || inboxPhase === 'loading')
+		feed.headerRetryActive && (feed.shellRefreshing || !shellReady || feed.inboxPhase === 'loading')
 	);
 
-	function retryFeed() {
-		if (activitySubFailed) {
-			activitySubRetrySeq += 1;
-		}
-		feedRetrySeq += 1;
-	}
-
-	function retryDecisions() {
-		if (activitySubFailed) {
-			activitySubRetrySeq += 1;
-		}
-		decisionRetrySeq += 1;
-	}
-
-	function reconnectLiveUpdates(event: MouseEvent) {
+	function handleReconnect(event: MouseEvent) {
 		if (isReconnecting) return;
-		const id = organizationId;
-		reconnectingOrg = id;
-		// Keep a visible focus indicator on the persistent banner while the action button becomes busy/disabled.
 		(event.currentTarget as HTMLElement | null)?.closest<HTMLElement>('.cmd-live-banner')?.focus();
-
-		if (inboxSubFailed) {
-			reconnectPendingInboxSub = true;
-			inboxSubRetrySeq += 1;
-		} else if (inboxCatchupFailedOrg === id) {
-			reconnectPendingInboxFetch = true;
-			scheduleInboxReconcile(id);
-		}
-
-		if (activitySubFailed) {
-			reconnectPendingActivitySub = true;
-			activitySubRetrySeq += 1;
-		} else {
-			if (activityCatchupFailedOrg === id) {
-				reconnectPendingMainFetch = true;
-				if (mainInFlight) {
-					pendingMainReconcile = true;
-				} else {
-					fetchMainFeed(id, activeAllQuery, false);
-				}
-			}
-			if (decisionCatchupFailedOrg === id && viewMode === 'feed' && streamFilter === 'decision') {
-				reconnectPendingDecisionFetch = true;
-				if (decisionInFlight) {
-					pendingDecisionReconcile = true;
-				} else {
-					fetchDecisionFeed(id, activeDecisionQuery, false);
-				}
-			}
-		}
-
-		maybeFinishReconnect(id);
-	}
-
-	function retryShellAndInbox() {
-		const id = organizationId;
-		if (inboxSubFailed) {
-			inboxSubRetrySeq += 1;
-		}
-		if (activitySubFailed) {
-			activitySubRetrySeq += 1;
-		}
-		fetchInbox(id, true);
-		const refreshSeq = ++shellRefreshSeq;
-		shellRefreshing = true;
-		void shellData.refresh().finally(() => {
-			if (destroyed || id !== organizationId || refreshSeq !== shellRefreshSeq) return;
-			shellRefreshing = false;
-			if (!inboxInFlight) headerRetryActive = false;
-		});
+		feed.reconnectLiveUpdates();
 	}
 
 	function handleHeaderRetry(event: MouseEvent) {
 		if (isHeaderRetrying) return;
-		headerRetryActive = true;
-		const slot = (event.currentTarget as HTMLElement | null)?.closest<HTMLElement>(
-			'.cmd-status-slot'
-		);
-		// Keep a visible focus indicator on the persistent status wrapper while the Retry button becomes busy/disabled.
-		slot?.focus();
-		retryShellAndInbox();
+		feed.headerRetryActive = true;
+		(event.currentTarget as HTMLElement | null)?.closest<HTMLElement>('.cmd-status-slot')?.focus();
+		feed.retryShellAndInbox();
 	}
 
-	const streamTabs: { id: StreamFilterTab; label: string }[] = [
-		{ id: 'all', label: 'All' },
-		{ id: 'needs_you', label: 'Needs you' },
-		{ id: 'work', label: 'Work' },
-		{ id: 'run', label: 'Runs' },
-		{ id: 'decision', label: 'Decisions' },
-		{ id: 'conversation', label: 'Chat' },
-		{ id: 'org', label: 'Org' }
-	];
-
-	function handleStreamTabKeydown(event: KeyboardEvent, index: number) {
-		let nextIndex: number;
-		if (event.key === 'ArrowRight') {
-			nextIndex = (index + 1) % streamTabs.length;
-		} else if (event.key === 'ArrowLeft') {
-			nextIndex = (index - 1 + streamTabs.length) % streamTabs.length;
-		} else if (event.key === 'Home') {
-			nextIndex = 0;
-		} else if (event.key === 'End') {
-			nextIndex = streamTabs.length - 1;
-		} else {
-			return;
-		}
-
-		event.preventDefault();
-		const targetTab = streamTabs[nextIndex];
-		streamFilter = targetTab.id;
-		const tablist = (event.currentTarget as HTMLElement | null)?.closest('[role="tablist"]');
-		tablist?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
+	function handleProjectViewKeydown(event: KeyboardEvent) {
+		const nextMode = moveProjectViewTabFocus(event);
+		if (nextMode) focusedProjectView = nextMode;
 	}
 
 	function attachReleasePanelEscape() {
-		// Bubble-phase window listener runs after Bits UI's document-level EscapeLayer so open tooltips
-		// consume the first Escape and a second Escape collapses the Release gates dock.
-		const onEscapeKey = (event: KeyboardEvent) => {
-			if (
-				event.defaultPrevented ||
-				event.isComposing ||
-				event.keyCode === 229 ||
-				event.key !== 'Escape' ||
-				event.repeat ||
-				!panelOpen
-			) {
-				return;
+		return attachPanelEscapeListener(
+			() => panelOpen,
+			() => {
+				panelOpen = false;
+				toolsBtnEl?.focus();
 			}
-			const target = event.target;
-			if (
-				!(target instanceof Element) ||
-				!target.closest('#activity-release-panel, .activity-tools')
-			) {
-				return;
-			}
-			event.preventDefault();
-			panelOpen = false;
-			toolsBtnEl?.focus();
-		};
-		window.addEventListener('keydown', onEscapeKey);
-		return () => {
-			window.removeEventListener('keydown', onEscapeKey);
-		};
-	}
-	let focusedProjectView = $state<'assembly' | 'feed' | null>(null);
-
-	function handleProjectViewKeydown(event: KeyboardEvent) {
-		if (
-			event.altKey ||
-			event.ctrlKey ||
-			event.metaKey ||
-			event.shiftKey ||
-			(event.key !== 'ArrowLeft' &&
-				event.key !== 'ArrowRight' &&
-				event.key !== 'Home' &&
-				event.key !== 'End')
-		) {
-			return;
-		}
-		const current = event.currentTarget as HTMLButtonElement | null;
-		const group = current?.closest('[role="tablist"], .activity-view-tabs');
-		if (!current || !group) return;
-		const buttons = [...group.querySelectorAll<HTMLButtonElement>('[data-project-view]')];
-		const index = buttons.indexOf(current);
-		if (index < 0 || buttons.length === 0) return;
-		event.preventDefault();
-		const nextIdx =
-			event.key === 'Home'
-				? 0
-				: event.key === 'End'
-					? buttons.length - 1
-					: (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
-		// Manual activation: move focus + roving tabindex from the focused control; Enter/Space activates it.
-		const nextBtn = buttons[nextIdx];
-		const nextMode = nextBtn?.dataset.projectView as 'assembly' | 'feed' | undefined;
-		if (nextMode) focusedProjectView = nextMode;
-		nextBtn?.focus();
-	}
-
-	function handleProjectViewFocusOut(event: FocusEvent) {
-		const container = event.currentTarget as HTMLElement | null;
-		const related = event.relatedTarget;
-		if (!container || !(related instanceof Node) || !container.contains(related)) {
-			focusedProjectView = null;
-		}
+		);
 	}
 </script>
 
-{#snippet assemblyDisplayMenu()}
-	<DropdownMenu.Root bind:open={displayMenuOpen}>
-		<Tooltip.Root delayDuration={250} ignoreNonKeyboardFocus disabled={displayMenuOpen}>
-			<DropdownMenu.Trigger>
-				{#snippet child({ props: menuProps })}
-					<Tooltip.Trigger>
-						{#snippet child({ props: tipProps })}
-							<button
-								{...mergeProps(menuProps, tipProps)}
-								type="button"
-								aria-label="Assembly line display"
-								data-testid="assembly-display-btn"
-								data-active={uiPrefs.assemblyDividers ? '' : undefined}
-								class="activity-icon-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-							>
-								<SlidersHorizontal class="size-5" aria-hidden="true" />
-							</button>
-						{/snippet}
-					</Tooltip.Trigger>
-				{/snippet}
-			</DropdownMenu.Trigger>
-			<Tooltip.Portal>
-				<Tooltip.Content
-					side="bottom"
-					sideOffset={6}
-					escapeKeydownBehavior="defer-otherwise-close"
-					class="activity-tooltip-content"
-				>
-					Assembly line display
-				</Tooltip.Content>
-			</Tooltip.Portal>
-		</Tooltip.Root>
-		<DropdownMenu.Content align="end" class="triage-menu-surface w-48">
-			<DropdownMenu.Label>Display</DropdownMenu.Label>
-			<DropdownMenu.CheckboxItem
-				checked={uiPrefs.assemblyDividers}
-				onCheckedChange={(checked) => uiPrefs.setAssemblyDividers(Boolean(checked))}
-				data-testid="assembly-row-dividers-toggle"
-				class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-			>
-				Row dividers
-			</DropdownMenu.CheckboxItem>
-		</DropdownMenu.Content>
-	</DropdownMenu.Root>
-{/snippet}
-
 {#snippet projectToolbarControls()}
-	<Tooltip.Provider delayDuration={200} ignoreNonKeyboardFocus>
-		<div class="project-activity-controls" data-testid="project-activity-controls">
-			<div
-				class="project-view-tabs"
-				role="tablist"
-				aria-label="Project activity view"
-				onfocusout={handleProjectViewFocusOut}
-			>
-				<button
-					type="button"
-					role="tab"
-					id="project-view-tab-assembly"
-					aria-controls="project-view-panel-assembly"
-					data-project-view="assembly"
-					aria-selected={viewMode === 'assembly'}
-					tabindex={(focusedProjectView ?? viewMode) === 'assembly' ? 0 : -1}
-					onfocus={() => (focusedProjectView = 'assembly')}
-					onclick={() => (viewMode = 'assembly')}
-					onkeydown={handleProjectViewKeydown}
-					class="project-view-tab min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-				>
-					<Layers class="project-view-ic size-3.5" aria-hidden="true" />
-					<span>Assembly line</span>
-				</button>
-				<button
-					type="button"
-					role="tab"
-					id="project-view-tab-feed"
-					aria-controls="project-view-panel-feed"
-					data-project-view="feed"
-					aria-selected={viewMode === 'feed'}
-					tabindex={(focusedProjectView ?? viewMode) === 'feed' ? 0 : -1}
-					onfocus={() => (focusedProjectView = 'feed')}
-					onclick={() => (viewMode = 'feed')}
-					onkeydown={handleProjectViewKeydown}
-					class="project-view-tab min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-				>
-					<Activity class="project-view-ic size-3.5" aria-hidden="true" />
-					<span>Activity feed</span>
-				</button>
-			</div>
-
-			<div class="queue-controls" role="group" aria-label="Activity view settings">
-				{#if viewMode === 'assembly'}
-					{@render assemblyDisplayMenu()}
-				{:else}
-					<DropdownMenu.Root bind:open={filterMenuOpen}>
-						<Tooltip.Root delayDuration={250} ignoreNonKeyboardFocus disabled={filterMenuOpen}>
-							<DropdownMenu.Trigger>
-								{#snippet child({ props: menuProps })}
-									<Tooltip.Trigger>
-										{#snippet child({ props: tipProps })}
-											<button
-												{...mergeProps(menuProps, tipProps)}
-												type="button"
-												aria-label="Filter activity"
-												data-testid="project-feed-filter-btn"
-												data-active={streamFilter !== 'all' ? '' : undefined}
-												class="activity-icon-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-											>
-												<ListFilter class="size-5" aria-hidden="true" />
-											</button>
-										{/snippet}
-									</Tooltip.Trigger>
-								{/snippet}
-							</DropdownMenu.Trigger>
-							<Tooltip.Portal>
-								<Tooltip.Content
-									side="bottom"
-									sideOffset={6}
-									escapeKeydownBehavior="defer-otherwise-close"
-									class="activity-tooltip-content"
-								>
-									Filter activity
-								</Tooltip.Content>
-							</Tooltip.Portal>
-						</Tooltip.Root>
-						<DropdownMenu.Content align="end" class="triage-menu-surface w-48">
-							<DropdownMenu.Label>Event type</DropdownMenu.Label>
-							<DropdownMenu.RadioGroup
-								value={streamFilter}
-								onValueChange={(val) => {
-									if (val) streamFilter = val as StreamFilterTab;
-								}}
-							>
-								{#each streamTabs as tab (tab.id)}
-									<DropdownMenu.RadioItem
-										value={tab.id}
-										closeOnSelect={true}
-										class="min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-									>
-										<span>{tab.label}</span>
-									</DropdownMenu.RadioItem>
-								{/each}
-							</DropdownMenu.RadioGroup>
-						</DropdownMenu.Content>
-					</DropdownMenu.Root>
-				{/if}
-			</div>
-		</div>
-	</Tooltip.Provider>
+	<ActivityProjectToolbar
+		bind:viewMode
+		bind:streamFilter
+		bind:displayMenuOpen
+		bind:filterMenuOpen
+		bind:focusedProjectView
+		onViewKeydown={handleProjectViewKeydown}
+	/>
 {/snippet}
 
 <div
@@ -1213,194 +379,33 @@
 	{@attach attachReleasePanelEscape}
 >
 	{#if showLiveBanner}
-		<div class="cmd-live-banner" role="status" tabindex="-1">
-			<span class="cmd-live-text">
-				<AlertTriangle class="size-3.5 shrink-0" aria-hidden="true" />
-				<span>
-					{#if isReconnecting}
-						Reconnecting live updates…
-					{:else if inboxSubFailed || activitySubFailed}
-						Live updates paused
-					{:else}
-						Live catch-up failed — snapshots may be stale
-					{/if}
-				</span>
-			</span>
-			<button
-				type="button"
-				disabled={isReconnecting}
-				aria-busy={isReconnecting}
-				onclick={reconnectLiveUpdates}
-				class="cmd-live-reconnect min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-			>
-				{#if isReconnecting}
-					Reconnecting…
-				{:else if inboxSubFailed || activitySubFailed}
-					Reconnect
-				{:else}
-					Retry
-				{/if}
-			</button>
-		</div>
+		<ActivityLiveBanner
+			{isReconnecting}
+			subFailed={inboxSubFailed || activitySubFailed}
+			onReconnect={handleReconnect}
+		/>
 	{/if}
 
-	<!-- Command Center Section Header & Aligned Toolbar (Portfolio mode only; Project mode uses ProjectFrame toolbar) -->
 	{#if !isProjectMode}
-		<div class="section-header activity-header">
-			<header class="ph cmd-header">
-				<div class="ph-t cmd-title-group">
-					<h1 id="shell-page-title" tabindex="-1" class="cmd-h1 focus:outline-none">Activity</h1>
-					<p class="cmd-subtitle">{headerSubtitle}</p>
-				</div>
-
-				<!-- Waiting-on-you Pill + Embedded Workspace Search -->
-				<div class="cmd-status-slot flex flex-wrap items-center gap-3" tabindex="-1">
-					{#if workUnavailableReason || inboxPhase === 'error' || isHeaderRetrying}
-						<button
-							type="button"
-							disabled={isHeaderRetrying}
-							aria-busy={isHeaderRetrying}
-							onclick={handleHeaderRetry}
-							class="cmd-needs-pill is-warn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-						>
-							<AlertTriangle class="size-3.5" aria-hidden="true" />
-							<span>
-								{#if isHeaderRetrying}
-									Retrying…
-								{:else if workUnavailableReason}
-									Retry work load
-								{:else}
-									Inbox unavailable
-								{/if}
-							</span>
-						</button>
-					{:else if !shellReady || inboxPhase === 'loading'}
-						<span
-							class="cmd-needs-pill is-neutral min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-						>
-							<span>Loading status…</span>
-						</span>
-					{:else if model.needsYouCount > 0}
-						<a
-							href={resolve('/inbox')}
-							class="cmd-needs-pill is-warn min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-						>
-							<span class="cmd-needs-dot" aria-hidden="true"></span>
-							<span class="tabular-nums">{model.needsYouCount} need you</span>
-						</a>
-					{:else}
-						<span
-							class="cmd-needs-pill is-ok min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-						>
-							<CheckCircle2 class="size-3.5" aria-hidden="true" />
-							<span>All caught up</span>
-						</span>
-					{/if}
-					<InteriorSearchBar class="w-full sm:w-[clamp(18rem,28vw,25rem)]" />
-				</div>
-			</header>
-
-			<Tooltip.Provider delayDuration={200} ignoreNonKeyboardFocus>
-				<div class="section-toolbar activity-toolbar">
-					<!-- Primary View Tabs: Assembly line (FIRST, active by default) | Activity (SECOND) -->
-					<div class="primary-tab-row" data-page-menu>
-						<div class="activity-view-tabs" role="group" aria-label="Activity view">
-							<button
-								type="button"
-								data-menu-label="Assembly line"
-								data-project-view="assembly"
-								aria-pressed={viewMode === 'assembly'}
-								onclick={() => (viewMode = 'assembly')}
-								onkeydown={handleProjectViewKeydown}
-								class={[
-									'cmd-toggle-btn queue-tab min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
-									viewMode === 'assembly' && 'is-on'
-								]}
-							>
-								<Layers class="size-3.5" aria-hidden="true" />
-								<span>Assembly line</span>
-							</button>
-							<button
-								type="button"
-								data-menu-label="Activity"
-								data-project-view="feed"
-								aria-pressed={viewMode === 'feed'}
-								onclick={() => (viewMode = 'feed')}
-								onkeydown={handleProjectViewKeydown}
-								class={[
-									'cmd-toggle-btn queue-tab min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11',
-									viewMode === 'feed' && 'is-on'
-								]}
-							>
-								<Activity class="size-3.5" aria-hidden="true" />
-								<span>Activity</span>
-							</button>
-						</div>
-					</div>
-
-					<!-- Project Scope Select -->
-					<div class="cmd-select-wrap activity-scope">
-						<select
-							aria-label="Project scope"
-							value={effectiveProjectScope}
-							onchange={(event) => (projectScope = event.currentTarget.value)}
-							class="cmd-select min-h-9 [@media(width<=720px)]:min-h-11 [@media(pointer:coarse)]:min-h-11"
-						>
-							<option value="all">
-								All projects ({model.activeProjects.length} active)
-							</option>
-							{#each model.activeProjects as project (project.id)}
-								<option value={project.id}>
-									{project.name}{#if project.key}
-										· {project.key}{/if}
-								</option>
-							{/each}
-						</select>
-						<ChevronDown class="cmd-select-chevron size-3.5" aria-hidden="true" />
-					</div>
-
-					{#if viewMode === 'assembly'}
-						<div class="activity-toolbar-end">
-							{@render assemblyDisplayMenu()}
-						</div>
-					{:else}
-						<!-- WAI-ARIA Tabs Pattern with roving tabindex and Arrow/Home/End navigation -->
-						<div
-							class="tabs activity-stream-tabs"
-							role="tablist"
-							aria-label="Filter activity stream"
-						>
-							{#each streamTabs as tab, index (tab.id)}
-								<button
-									type="button"
-									role="tab"
-									id={`activity-tab-${tab.id}`}
-									tabindex={streamFilter === tab.id ? 0 : -1}
-									aria-selected={streamFilter === tab.id}
-									aria-controls={`activity-panel-${tab.id}`}
-									onclick={() => (streamFilter = tab.id)}
-									onkeydown={(event) => handleStreamTabKeydown(event, index)}
-									class={[
-										'activity-stream-tab min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11',
-										streamFilter === tab.id && 'is-active'
-									]}
-								>
-									<span>{tab.label}</span>
-									{#if tab.id === 'needs_you' && model.streamNeedsYouCount > 0}
-										<span class="activity-stream-badge tabular-nums"
-											>{model.streamNeedsYouCount}</span
-										>
-									{/if}
-								</button>
-							{/each}
-						</div>
-					{/if}
-				</div>
-			</Tooltip.Provider>
-		</div>
+		<ActivityPortfolioHeader
+			{headerSubtitle}
+			{shellReady}
+			{workUnavailableReason}
+			inboxPhase={feed.inboxPhase}
+			{isHeaderRetrying}
+			needsYouCount={model.needsYouCount}
+			streamNeedsYouCount={model.streamNeedsYouCount}
+			activeProjects={model.activeProjects}
+			{effectiveProjectScope}
+			bind:viewMode
+			bind:streamFilter
+			bind:displayMenuOpen
+			onProjectScopeChange={(scope) => (projectScope = scope)}
+			onHeaderRetry={handleHeaderRetry}
+			onViewKeydown={handleProjectViewKeydown}
+		/>
 	{/if}
 
-	<!-- Collapsible Release Gates Dock + Slim Tool Rail (poc/operations.css 53728c05) -->
 	<Tooltip.Provider delayDuration={150} ignoreNonKeyboardFocus>
 		<div class="activity-body" data-panel-open={panelOpen ? '' : undefined}>
 			<div
@@ -1425,10 +430,10 @@
 						{model}
 						loading={!shellReady}
 						unavailableReason={workUnavailableReason}
-						{inboxPhase}
+						inboxPhase={feed.inboxPhase}
 						projectScope={isProjectMode}
 						hasActivityEntries={extraLineEvents.length > 0 || model.lineEvents.length > 0}
-						onRetry={retryShellAndInbox}
+						onRetry={() => feed.retryShellAndInbox()}
 					/>
 				{:else}
 					<div class="activity-stream-pad">
@@ -1436,23 +441,23 @@
 							entries={mergedStreamEntries}
 							{decisionEntries}
 							needsYouCount={model.streamNeedsYouCount}
-							openInboxCount={inboxPhase === 'ready' ? model.openInboxCount : 0}
+							openInboxCount={feed.inboxPhase === 'ready' ? model.openInboxCount : 0}
 							actionableWorkCount={workPhase === 'ready' ? model.actionableWorkCount : 0}
 							bottleneck={model.bottleneck}
 							bind:activeFilter={streamFilter}
 							showTabs={false}
 							projectScope={isProjectMode}
-							{nowMs}
-							{feedPhase}
-							{feedError}
-							{feedMore}
-							{decisionPhase}
-							{decisionError}
-							{decisionMore}
-							{inboxPhase}
+							nowMs={feed.nowMs}
+							feedPhase={feed.feedPhase}
+							feedError={feed.feedError}
+							feedMore={feed.feedMore}
+							decisionPhase={feed.decisionPhase}
+							decisionError={feed.decisionError}
+							decisionMore={feed.decisionMore}
+							inboxPhase={feed.inboxPhase}
 							{workPhase}
-							onRetry={retryFeed}
-							onRetryDecisions={retryDecisions}
+							onRetry={() => feed.retryFeed()}
+							onRetryDecisions={() => feed.retryDecisions()}
 						/>
 					</div>
 				{/if}
@@ -1472,47 +477,23 @@
 					aria-label="Release gates sidebar contents"
 					tabindex="0"
 				>
-					<div class="side-panel-header">
-						<h2>Release gates</h2>
-						<Tooltip.Root delayDuration={250} ignoreNonKeyboardFocus>
-							<Tooltip.Trigger>
-								{#snippet child({ props })}
-									<button
-										{...props}
-										type="button"
-										aria-label="Hide release gates"
-										onclick={() => {
-											panelOpen = false;
-											toolsBtnEl?.focus();
-										}}
-										class="activity-tool-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-									>
-										<ChevronRight class="size-4" aria-hidden="true" />
-									</button>
-								{/snippet}
-							</Tooltip.Trigger>
-							<Tooltip.Portal>
-								<Tooltip.Content
-									side="left"
-									sideOffset={6}
-									escapeKeydownBehavior="defer-otherwise-close"
-									class="activity-tooltip-content"
-								>
-									Hide release gates
-								</Tooltip.Content>
-							</Tooltip.Portal>
-						</Tooltip.Root>
-					</div>
-
+					<ActivityDockControls
+						{panelOpen}
+						mode="header"
+						onClose={() => {
+							panelOpen = false;
+							toolsBtnEl?.focus();
+						}}
+					/>
 					<ActivityOpsRail
 						{model}
 						loading={!shellReady}
 						unavailableReason={workUnavailableReason}
 						embedded
 						projectScope={isProjectMode}
-						{inboxPhase}
+						inboxPhase={feed.inboxPhase}
 						zone={accountZone.zone}
-						{nowMs}
+						nowMs={feed.nowMs}
 						{extraLineEvents}
 						{releaseMilestones}
 					/>
@@ -1523,44 +504,19 @@
 					class="activity-panel-more"
 					data-testid="activity-panel-more"
 					hidden={!panelOpen || !hasMorePanelScroll}
-					onclick={scrollPanelMore}
+					onclick={() => scrollPanelByPage(panelScrollEl)}
 				>
 					<span>Scroll for more</span>
 					<ChevronDown class="size-3.5" aria-hidden="true" />
 				</button>
 			</aside>
 
-			<div class="activity-tools">
-				<Tooltip.Root delayDuration={250} ignoreNonKeyboardFocus>
-					<Tooltip.Trigger>
-						{#snippet child({ props })}
-							<button
-								{...props}
-								bind:this={toolsBtnEl}
-								type="button"
-								aria-expanded={panelOpen}
-								aria-controls="activity-release-panel"
-								aria-label={panelOpen ? 'Hide release gates' : 'Show release gates'}
-								data-testid="activity-gates-toggle"
-								onclick={() => (panelOpen = !panelOpen)}
-								class="activity-tool-btn min-h-9 min-w-9 [@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-							>
-								<Flag class="size-4" aria-hidden="true" />
-							</button>
-						{/snippet}
-					</Tooltip.Trigger>
-					<Tooltip.Portal>
-						<Tooltip.Content
-							side="left"
-							sideOffset={6}
-							escapeKeydownBehavior="defer-otherwise-close"
-							class="activity-tooltip-content"
-						>
-							{panelOpen ? 'Hide release gates' : 'Show release gates'}
-						</Tooltip.Content>
-					</Tooltip.Portal>
-				</Tooltip.Root>
-			</div>
+			<ActivityDockControls
+				{panelOpen}
+				bind:toolsBtnEl
+				mode="rail"
+				onToggle={() => (panelOpen = !panelOpen)}
+			/>
 		</div>
 	</Tooltip.Provider>
 </div>
@@ -1579,347 +535,17 @@
 		padding: 0;
 		container: activity / inline-size;
 	}
-
 	@media (min-width: 640px) {
 		.cmd-page {
 			--activity-gutter: 32px;
 		}
 	}
-
 	@media (max-width: 720px), (pointer: coarse) {
 		.cmd-page {
 			--activity-gutter: 16px;
 			--control-height: 44px;
 		}
 	}
-
-	.section-header {
-		position: relative;
-		z-index: 1;
-		flex: none;
-		container-type: inline-size;
-	}
-
-	.cmd-header {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 10px 20px;
-		padding: 14px var(--activity-gutter) 8px;
-	}
-
-	.cmd-title-group {
-		min-width: 0;
-	}
-
-	.cmd-h1 {
-		color: var(--exec-ink);
-		font-size: clamp(1.375rem, 2.2vw, 1.875rem);
-		font-weight: 600;
-		letter-spacing: -0.03em;
-		line-height: 1.22;
-		min-width: 0;
-		overflow-wrap: anywhere;
-	}
-
-	.cmd-subtitle {
-		margin-top: 4px;
-		color: var(--fg-secondary);
-		font-size: 0.875rem;
-		line-height: 1.4;
-		min-width: 0;
-		overflow-wrap: anywhere;
-	}
-
-	.section-toolbar {
-		position: relative;
-		display: flex;
-		flex-wrap: wrap;
-		align-items: stretch;
-		gap: 6px 12px;
-		padding: 4px var(--activity-gutter) 1px;
-		border-block-end: 1px solid var(--line);
-	}
-
-	.section-toolbar > :not(.primary-tab-row) {
-		align-self: center;
-		margin-block: 4px;
-	}
-
-	.primary-tab-row {
-		position: relative;
-		display: flex;
-		align-items: stretch;
-		min-inline-size: 0;
-		max-inline-size: 100%;
-	}
-
-	.primary-tab-row::after {
-		content: '';
-		position: absolute;
-		inset-block-start: 100%;
-		inset-inline-start: calc(-1 * var(--activity-gutter));
-		inline-size: 100cqi;
-		border-block-start: 1px solid var(--line);
-		pointer-events: none;
-	}
-
-	.activity-view-tabs {
-		display: flex;
-		align-items: stretch;
-		gap: 4px;
-	}
-
-	.activity-stream-tabs {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 4px 12px;
-		min-width: 0;
-		max-width: 100%;
-		padding-inline: 0;
-		box-shadow: none;
-	}
-
-	.activity-stream-tab {
-		position: relative;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 6px;
-		padding: 0 8px;
-		border: 0;
-		border-bottom: 2px solid transparent;
-		background: transparent;
-		color: var(--fg-secondary);
-		font-size: 0.8125rem;
-		font-weight: 550;
-		white-space: nowrap;
-		cursor: pointer;
-	}
-
-	.activity-stream-tab:hover {
-		color: var(--exec-ink);
-	}
-
-	.activity-stream-tab:focus-visible {
-		outline: 2px solid var(--focus);
-		outline-offset: -2px;
-	}
-
-	.activity-stream-tab.is-active {
-		color: var(--exec-ink);
-		border-bottom-color: var(--tone-accent);
-	}
-
-	.activity-stream-badge {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-width: 18px;
-		padding: 1px 6px;
-		border-radius: var(--exec-pill-radius, 999px);
-		background: var(--exec-warn-bg);
-		box-shadow: inset 0 0 0 1px var(--exec-warn-ring);
-		color: var(--exec-warn);
-		font-size: 0.6875rem;
-		font-weight: 650;
-	}
-
-	.cmd-body {
-		display: flex;
-		flex-direction: column;
-		gap: 18px;
-		min-width: 0;
-		padding: 18px var(--activity-gutter) 0;
-	}
-
-	.cmd-select-wrap {
-		position: relative;
-		display: inline-flex;
-		align-items: center;
-		max-width: 100%;
-	}
-
-	.cmd-select {
-		appearance: none;
-		max-width: 100%;
-		padding: 0 32px 0 12px;
-		border: 1px solid var(--line-strong);
-		border-radius: var(--exec-ctrl-radius, 8px);
-		background-color: var(--exec-well);
-		color: var(--exec-ink);
-		font-size: 0.8125rem;
-		font-weight: 550;
-		cursor: pointer;
-	}
-
-	.cmd-select:hover {
-		background-color: var(--exec-surface-hi);
-	}
-
-	.cmd-select:focus-visible {
-		outline: 2px solid var(--focus);
-		outline-offset: 1px;
-	}
-
-	.cmd-select-wrap :global(.cmd-select-chevron) {
-		position: absolute;
-		right: 10px;
-		color: var(--fg-secondary);
-		pointer-events: none;
-	}
-
-	.cmd-toggle-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 6px 12px 5px;
-		border: 1px solid transparent;
-		border-block-end-width: 2px;
-		border-radius: var(--exec-ctrl-radius, 8px) var(--exec-ctrl-radius, 8px) 0 0;
-		background: transparent;
-		color: var(--exec-body, var(--fg-secondary));
-		font-size: 0.875rem;
-		font-weight: 600;
-		white-space: nowrap;
-		cursor: pointer;
-	}
-
-	.cmd-toggle-btn:hover {
-		background: var(--exec-btn-ghost-bg-hover, var(--surface-raised));
-		color: var(--exec-ink);
-	}
-
-	.cmd-toggle-btn:focus-visible {
-		outline: 2px solid var(--focus);
-		outline-offset: -4px;
-	}
-
-	.cmd-toggle-btn.is-on {
-		border-block-end-color: var(--tone-accent-ink);
-		color: var(--exec-ink);
-	}
-
-	.cmd-status-slot {
-		display: inline-flex;
-		border-radius: var(--exec-pill-radius, 999px);
-	}
-
-	.cmd-status-slot:focus {
-		outline: 2px solid var(--focus);
-		outline-offset: 2px;
-	}
-
-	.cmd-needs-pill {
-		display: inline-flex;
-		align-items: center;
-		gap: 7px;
-		padding: 0 12px;
-		border: 0;
-		border-radius: var(--exec-pill-radius, 999px);
-		font-size: 0.8125rem;
-		font-weight: 600;
-		white-space: nowrap;
-		text-decoration: none;
-	}
-
-	button.cmd-needs-pill {
-		cursor: pointer;
-	}
-
-	.cmd-needs-pill.is-neutral {
-		background: var(--exec-well);
-		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
-		color: var(--fg-secondary);
-	}
-
-	.cmd-needs-pill.is-warn {
-		background: var(--exec-warn-bg);
-		box-shadow: inset 0 0 0 1px var(--exec-warn-ring);
-		color: var(--exec-warn);
-	}
-
-	.cmd-needs-pill.is-warn:hover {
-		box-shadow: inset 0 0 0 1.5px var(--exec-warn);
-	}
-
-	.cmd-needs-pill.is-ok {
-		background: var(--exec-ok-bg);
-		box-shadow: inset 0 0 0 1px var(--exec-ok-ring);
-		color: var(--exec-ok);
-	}
-
-	.cmd-needs-pill:focus-visible {
-		outline: 2px solid var(--focus);
-		outline-offset: 2px;
-	}
-
-	.cmd-needs-dot {
-		width: 7px;
-		height: 7px;
-		border-radius: 999px;
-		background: var(--exec-warn);
-		flex-shrink: 0;
-	}
-
-	.cmd-live-banner {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 8px 12px;
-		padding: 6px 12px;
-		border: 1px solid var(--exec-border-hi);
-		border-radius: var(--exec-ctrl-radius, 8px);
-		background: var(--exec-well);
-		color: var(--exec-body);
-		font-size: 0.8125rem;
-	}
-
-	.cmd-live-banner:focus {
-		outline: 2px solid var(--focus);
-		outline-offset: 2px;
-	}
-
-	.cmd-live-text {
-		display: inline-flex;
-		align-items: center;
-		gap: 7px;
-		color: var(--exec-warn);
-		font-weight: 550;
-	}
-
-	.cmd-live-reconnect {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0 12px;
-		border: 1px solid var(--line-strong);
-		border-radius: var(--exec-ctrl-radius, 8px);
-		background: var(--exec-surface);
-		color: var(--tone-accent-ink);
-		font-size: 0.8125rem;
-		font-weight: 600;
-		cursor: pointer;
-	}
-
-	.cmd-live-reconnect:disabled {
-		opacity: 0.72;
-		cursor: wait;
-	}
-
-	.cmd-live-reconnect:hover {
-		background: var(--exec-surface-hi);
-		color: var(--exec-ink);
-	}
-
-	.cmd-live-reconnect:focus-visible {
-		outline: 2px solid var(--focus);
-		outline-offset: 2px;
-	}
-
 	.activity-body {
 		display: grid;
 		flex: 1 1 auto;
@@ -1931,133 +557,28 @@
 		grid-template-areas: 'main panel tools';
 		--activity-panel-padding: clamp(14px, 2cqi, 22px);
 	}
-
 	.activity-body[data-panel-open] {
 		grid-template-columns: minmax(0, 1fr) clamp(17rem, 27%, 24rem) calc(
 				var(--control-height, 36px) + 16px
 			);
 	}
-
-	.activity-toolbar-end {
-		display: flex;
-		align-items: center;
-		margin-inline-start: auto;
-	}
-
-	.project-activity-controls {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 6px;
-		max-inline-size: 100%;
-	}
-
-	.project-view-tabs {
-		display: flex;
-		align-items: center;
-		gap: 2px;
-		padding-inline-start: 8px;
-		border-inline-start: 1px solid var(--line);
-	}
-
-	.project-view-tab {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 0 10px;
-		border: 1px solid transparent;
-		border-radius: var(--exec-ctrl-radius, 6px);
-		background: transparent;
-		color: var(--fg-secondary);
-		font-size: 0.8125rem;
-		font-weight: 600;
-		white-space: nowrap;
-		cursor: pointer;
-	}
-
-	.project-view-tab:hover {
-		background: var(--surface-raised);
-		color: var(--fg);
-	}
-
-	.project-view-tab[aria-selected='true'] {
-		background: var(--surface-raised);
-		border-color: var(--line-strong);
-		color: var(--fg);
-	}
-
-	.project-view-tab:focus-visible {
-		outline: 2px solid var(--focus);
-		outline-offset: -2px;
-	}
-
-	@media (max-width: 640px) {
-		.project-view-tab {
-			padding-inline: 8px;
-		}
-		.project-view-tab :global(.project-view-ic) {
-			display: none;
-		}
-	}
-
-	.activity-icon-btn {
-		position: relative;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		border: 0;
-		border-radius: var(--exec-ctrl-radius, 6px);
-		background: transparent;
-		color: var(--fg-secondary);
-		cursor: pointer;
-	}
-
-	.activity-icon-btn:hover,
-	.activity-icon-btn[aria-expanded='true'] {
-		background: var(--surface-raised);
-		color: var(--fg);
-	}
-
-	.activity-icon-btn[data-active] {
-		color: var(--tone-accent-ink);
-	}
-
-	.activity-icon-btn[data-active]::after {
-		content: '';
-		position: absolute;
-		inset: 5px 5px auto auto;
-		width: 5px;
-		height: 5px;
-		border-radius: 50%;
-		background: currentColor;
-	}
-
-	.activity-icon-btn:focus-visible {
-		outline: 2px solid var(--focus);
-		outline-offset: 2px;
-	}
-
 	.activity-main,
 	.activity-panel-scroll {
 		min-width: 0;
 		overflow: auto;
 		overscroll-behavior: contain;
 	}
-
 	.activity-main {
 		grid-area: main;
 		max-width: 100%;
 	}
-
 	.activity-main[data-view='assembly'] {
 		display: flex;
 		flex-direction: column;
 	}
-
 	.activity-stream-pad {
 		padding: 18px var(--activity-gutter) 32px;
 	}
-
 	.activity-panel {
 		grid-area: panel;
 		display: grid;
@@ -2070,23 +591,19 @@
 		border-inline-start: 1px solid var(--line);
 		box-shadow: var(--activity-panel-shadow);
 	}
-
 	.activity-body[data-panel-open] .activity-panel {
 		visibility: visible;
 	}
-
 	.activity-panel-scroll {
 		overflow-x: hidden;
 		scrollbar-width: thin;
 		scrollbar-color: var(--fg-secondary) transparent;
 		scroll-padding-block-end: var(--control-height, 36px);
 	}
-
 	.activity-panel-scroll:focus-visible {
 		outline: 2px solid var(--focus);
 		outline-offset: -2px;
 	}
-
 	.activity-panel-more:not([hidden]) {
 		position: absolute;
 		z-index: 2;
@@ -2104,75 +621,13 @@
 		font-weight: 550;
 		cursor: pointer;
 	}
-
 	.activity-panel-more:hover {
 		color: var(--exec-ink);
 	}
-
 	.activity-panel-more:focus-visible {
 		outline: 2px solid var(--focus);
 		outline-offset: -2px;
 	}
-
-	.side-panel-header {
-		position: sticky;
-		inset-block-start: 0;
-		z-index: 1;
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 8px;
-		padding: 8px var(--activity-panel-padding);
-		border-block-end: 1px solid var(--line);
-		background: var(--side-panel-surface, var(--exec-surface));
-	}
-
-	.side-panel-header h2 {
-		margin: 0;
-		color: var(--exec-ink);
-		font-size: 0.9375rem;
-		font-weight: 650;
-	}
-
-	.activity-tools {
-		grid-area: tools;
-		z-index: 2;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 4px;
-		padding-block: 8px;
-		border-inline-start: 1px solid var(--line);
-		background: var(--side-panel-surface, var(--exec-surface));
-	}
-
-	.activity-tool-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		border: 0;
-		border-radius: var(--exec-ctrl-radius, 6px);
-		background: transparent;
-		color: var(--fg-secondary);
-		cursor: pointer;
-	}
-
-	.activity-tool-btn:hover {
-		background: var(--exec-well);
-		color: var(--exec-ink);
-	}
-
-	.activity-tool-btn[aria-expanded='true'] {
-		background: var(--exec-well);
-		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1px var(--line-strong);
-	}
-
-	.activity-tool-btn:focus-visible {
-		outline: 2px solid var(--focus);
-		outline-offset: 1px;
-	}
-
 	:global(.activity-tooltip-content) {
 		z-index: 60;
 		padding: 4px 8px;
@@ -2186,7 +641,6 @@
 		box-shadow: var(--tooltip-shadow);
 		pointer-events: none;
 	}
-
 	@container activity (max-width: 42.5rem) {
 		.activity-body,
 		.activity-body[data-panel-open] {
@@ -2196,63 +650,24 @@
 				'main tools'
 				'panel tools';
 		}
-
 		.activity-body[data-panel-open] {
 			grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
 		}
-
 		.activity-panel {
 			border-inline-start: 0;
 			border-block-start: 1px solid var(--line);
 			box-shadow: none;
 		}
 	}
-
 	@media (prefers-reduced-motion: no-preference) {
 		.activity-body {
 			transition: grid-template-columns 220ms cubic-bezier(0.2, 0.7, 0.25, 1);
 		}
-
 		.activity-panel {
 			transition: visibility 0s 220ms;
 		}
-
 		.activity-body[data-panel-open] .activity-panel {
 			transition-delay: 0s;
-		}
-	}
-
-	@media (width < 40rem) {
-		.cmd-select-wrap {
-			flex: 1 1 100%;
-		}
-		.cmd-select {
-			width: 100%;
-		}
-	}
-
-	:global(html[data-ui-theme^='report']) .activity-toolbar {
-		border-block-end: 1.5px solid var(--report-masthead-rule);
-	}
-
-	@media (forced-colors: active) {
-		.cmd-toggle-btn {
-			border-block-end-color: Canvas;
-		}
-		.cmd-toggle-btn.is-on,
-		.activity-stream-tab.is-active {
-			border-block-end-color: Highlight;
-		}
-		.project-view-tab[aria-selected='true'] {
-			background: Highlight;
-			border-color: Highlight;
-			color: HighlightText;
-		}
-		.cmd-needs-pill,
-		.cmd-live-banner,
-		.cmd-live-reconnect,
-		.activity-tool-btn[aria-expanded='true'] {
-			border: 1px solid CanvasText;
 		}
 	}
 </style>

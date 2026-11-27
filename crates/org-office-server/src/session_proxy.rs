@@ -294,6 +294,15 @@ impl serve::ExternalAuthPort for ExternalAuth {
         self.0.external_approve(actor, params)
     }
 
+    fn bind(
+        &self,
+        actor: &str,
+        employee_id: &str,
+        params: &ext::MemberExternalBindParams,
+    ) -> Result<ext::ExternalSessionView, org_proto::ApiError> {
+        self.0.external_bind(actor, employee_id, params)
+    }
+
     fn sessions(
         &self,
         actor: &str,

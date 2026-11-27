@@ -714,3 +714,21 @@ fn real_office_mutation_policy_restricts_replies_to_caller_direct_dm_and_blocks_
         }
     }
 }
+
+#[test]
+fn search_query_is_never_admitted_for_chief_of_staff_even_for_the_owner() {
+    use super::{access, allowed, Access};
+    let w = world();
+    assert_eq!(access("search.query"), Access::Never);
+    for delegation in [
+        w.acting_for(&w.owner),
+        w.acting_for(&w.bob),
+        Delegation::default(),
+    ] {
+        assert!(
+            !allowed(access("search.query"), &delegation),
+            "search.query must be refused by gate() for {:?}",
+            delegation.caller_id
+        );
+    }
+}

@@ -5,19 +5,21 @@
 //!   only (`peer_allowed`); each connection has a call budget, the office an office-wide budget
 //!   per kind of call ([`super::auth_limits`]); the port's books are bounded.
 //! - `auth.whoami`: a bound connection's member, mode (`managed`|`external`) and expiries.
-//! - `member.external_approve|sessions|revoke`: operator calls, only through a verified grant
+//! - `member.external_approve|bind|sessions|revoke`: operator calls, only through a verified grant
 //!   (a person or the owner, on a host channel). An agent on the office socket, managed or
-//!   external, can never approve, list or revoke a lease.
+//!   external, can never approve, bind, list or revoke a lease.
 //! - An externally bound connection may only make the organization's collaboration calls
 //!   ([`external_may_call`]): never host administration, provider credentials or raw data.
 
+use std::path::{Component, Path};
 use std::time::Instant;
 
 use org_proto::external_auth::{
     AuthChallenge, AuthChallengeResult, AuthExchange, AuthExchangeResult, AuthLoginPoll,
     AuthLoginPollResult, AuthLoginRequest, AuthLoginRequestParams, AuthLoginRequestResult,
     AuthLogout, AuthLogoutResult, AuthWhoami, AuthWhoamiResult, ChallengePurpose,
-    ExternalSessionView, MemberExternalApprove, MemberExternalApproveParams, MemberExternalRevoke,
+    ExternalSessionView, MemberExternalApprove, MemberExternalApproveParams, MemberExternalBind,
+    MemberExternalBindParams, MemberExternalBindResult, MemberExternalRevoke,
     MemberExternalRevokeResult, MemberExternalSessions, MemberExternalSessionsResult,
     SignedChallengeParams,
 };
@@ -61,6 +63,12 @@ pub trait ExternalAuthPort: Send + Sync {
         &self,
         actor: &str,
         params: &MemberExternalApproveParams,
+    ) -> Result<ExternalSessionView, ApiError>;
+    fn bind(
+        &self,
+        actor: &str,
+        employee_id: &str,
+        params: &MemberExternalBindParams,
     ) -> Result<ExternalSessionView, ApiError>;
     fn sessions(
         &self,
@@ -300,7 +308,7 @@ fn operator_target(shared: &Shared, reference: &str) -> Result<String, ApiError>
     }
 }
 
-/// Answers `member.external_approve|sessions|revoke`; `None` for any other method.
+/// Answers `member.external_approve|bind|sessions|revoke`; `None` for any other method.
 pub(super) fn answer_operator(
     request: &Request,
     shared: &Shared,
@@ -314,6 +322,7 @@ pub(super) fn answer_operator(
     };
     Some(match op {
         OperatorOp::Approve => operator_approve(request, shared, actor, port),
+        OperatorOp::Bind => operator_bind(request, shared, actor, port),
         OperatorOp::Sessions => operator_sessions(request, shared, actor, port),
         OperatorOp::Revoke => operator_revoke(request, shared, actor, port),
     })
@@ -321,6 +330,7 @@ pub(super) fn answer_operator(
 
 enum OperatorOp {
     Approve,
+    Bind,
     Sessions,
     Revoke,
 }
@@ -329,6 +339,8 @@ impl OperatorOp {
     fn from_request(request: &Request) -> Option<Self> {
         if request.is::<MemberExternalApprove>() {
             Some(Self::Approve)
+        } else if request.is::<MemberExternalBind>() {
+            Some(Self::Bind)
         } else if request.is::<MemberExternalSessions>() {
             Some(Self::Sessions)
         } else if request.is::<MemberExternalRevoke>() {
@@ -348,7 +360,7 @@ fn authorize_operator_call<'a>(
         return Err(error(
             id,
             ErrorCode::NotAuthorized,
-            "only a signed-in person may approve, list or revoke external agent sessions",
+            "only a signed-in person may approve, bind, list or revoke external agent sessions",
         ));
     }
     let actor = binding.member().ok_or_else(|| internal(id))?;
@@ -375,6 +387,47 @@ fn operator_approve(
                 close_after_approval(shared, view);
             }
             reply::<MemberExternalApprove>(request.id, outcome)
+        }
+        Err(refusal) => refusal,
+    }
+}
+
+fn office_socket_for_bind(shared: &Shared) -> Option<String> {
+    let endpoint = shared
+        .hello
+        .office
+        .as_ref()
+        .and_then(|o| o.office.endpoint.as_deref())?;
+    if endpoint.is_empty() || endpoint.contains('\0') {
+        return None;
+    }
+    let path = Path::new(endpoint);
+    let plain = path.is_absolute()
+        && path
+            .components()
+            .all(|c| matches!(c, Component::RootDir | Component::Normal(_)));
+    plain.then(|| endpoint.to_owned())
+}
+
+fn operator_bind(
+    request: &Request,
+    shared: &Shared,
+    actor: &str,
+    port: &dyn ExternalAuthPort,
+) -> Response {
+    match params::<MemberExternalBind>(request) {
+        Ok(p) => {
+            let outcome = operator_target(shared, &p.employee_id)
+                .and_then(|target| port.bind(actor, &target, &p))
+                .map(|view| {
+                    close_after_approval(shared, &view);
+                    MemberExternalBindResult {
+                        office_id: shared.office_id.clone(),
+                        office_socket: office_socket_for_bind(shared),
+                        session: view,
+                    }
+                });
+            reply::<MemberExternalBind>(request.id, outcome)
         }
         Err(refusal) => refusal,
     }

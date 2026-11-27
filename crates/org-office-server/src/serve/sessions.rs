@@ -6,7 +6,7 @@ use super::auth::Binding;
 use super::org::{notify_agent_stop_on_lifecycle, project_read, revoke_bound_member};
 use super::rpc::{
     attachments_rpc, costs_rpc, docs_rpc, federation_rpc, git_rpc, processes_rpc, providers_rpc,
-    tasks_rpc, tess_rpc,
+    search_rpc, tasks_rpc, tess_rpc,
 };
 use super::shared::Shared;
 
@@ -111,6 +111,7 @@ pub(super) fn project_or_hiring(
         .or_else(|| git_rpc(request, shared, binding))
         .or_else(|| processes_rpc(request, shared, binding))
         .or_else(|| docs_rpc(request, shared, binding))
+        .or_else(|| search_rpc(request, shared, binding))
         .or_else(|| costs_rpc(request, shared, binding, delegation))
         .or_else(|| providers_rpc(request, shared, binding, delegation))
         .or_else(|| federation_rpc(request, shared, binding))

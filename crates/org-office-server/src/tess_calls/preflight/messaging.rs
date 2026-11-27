@@ -1,12 +1,45 @@
 //! Live caller-visibility preflight for messaging `suggestion.create` targets (`chat.*`, `msg.*`),
 //! mirroring `serve::delegation::scope` so non-visible conversations or DMs never pass preflight.
 
+use std::collections::HashSet;
+
 use org_proto::chat::{ChatConversationsParams, ConversationKind, ConversationSummary};
 use org_proto::{ApiError, ErrorCode};
 use serde_json::{Map, Value};
 
 use super::{PreflightContext, PreflightOutcome};
-use crate::tess_calls::TessService;
+use crate::tess_calls::{unavailable, TessService};
+
+fn non_empty_str<'a>(
+    input: &'a Map<String, Value>,
+    keys: &[&str],
+    missing: &str,
+) -> Result<&'a str, ApiError> {
+    keys.iter()
+        .find_map(|k| input.get(*k))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ApiError::new(ErrorCode::InvalidRequest, missing))
+}
+
+fn list_all_conversations(
+    svc: &TessService,
+    member_id: &str,
+    tag: &str,
+    err_msg: &str,
+) -> Result<Vec<ConversationSummary>, ApiError> {
+    Ok(svc
+        .office()
+        .list_conversations(
+            member_id,
+            ChatConversationsParams {
+                include_archived: true,
+            },
+        )
+        .map_err(|e| unavailable(tag, &e, err_msg))??
+        .conversations)
+}
 
 pub(super) fn is_messaging_target_call(call: &str) -> bool {
     matches!(
@@ -30,17 +63,10 @@ pub(super) fn preflight_messaging(
     call: &str,
     input: &Map<String, Value>,
 ) -> Result<PreflightOutcome, ApiError> {
-    let visible = caller_visible_conversations(svc, ctx.caller_id)?;
+    let visible = caller_visible_conversations(svc, ctx.caller_id, ctx.tess_id)?;
     match call {
         "chat.send" | "chat.ask" => {
-            let to = input
-                .get("to")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| {
-                    ApiError::new(ErrorCode::InvalidRequest, "missing recipient `to`")
-                })?;
+            let to = non_empty_str(input, &["to"], "missing recipient `to`")?;
             verify_send_target(svc, ctx, &visible, to)?;
             if call == "chat.send" {
                 if let Some(reply_to) = input.get("reply_to").and_then(Value::as_str) {
@@ -50,15 +76,11 @@ pub(super) fn preflight_messaging(
             Ok(PreflightOutcome::ok(call, "messaging target verified"))
         }
         "chat.mark_read" => {
-            let target = input
-                .get("channel")
-                .or_else(|| input.get("conversation_id"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| {
-                    ApiError::new(ErrorCode::InvalidRequest, "missing target conversation")
-                })?;
+            let target = non_empty_str(
+                input,
+                &["channel", "conversation_id"],
+                "missing target conversation",
+            )?;
             if !visible.iter().any(|c| c.id == target) {
                 verify_channel_named(svc, ctx.tess_id, &visible, target)?;
             }
@@ -72,14 +94,7 @@ pub(super) fn preflight_messaging(
             Ok(PreflightOutcome::ok(call, "conversation target verified"))
         }
         "chat.channel_join" | "chat.channel_leave" => {
-            let channel = input
-                .get("channel")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| {
-                    ApiError::new(ErrorCode::InvalidRequest, "missing target channel")
-                })?;
+            let channel = non_empty_str(input, &["channel"], "missing target channel")?;
             let by_id = visible
                 .iter()
                 .any(|c| c.kind == ConversationKind::Channel && c.id == channel);
@@ -89,14 +104,7 @@ pub(super) fn preflight_messaging(
             Ok(PreflightOutcome::ok(call, "channel target verified"))
         }
         "msg.accept" | "msg.defer" | "msg.done" | "msg.unsnooze" | "msg.withdraw" => {
-            let msg_id = input
-                .get("id")
-                .or_else(|| input.get("ask_id"))
-                .and_then(Value::as_str)
-                .filter(|s| !s.trim().is_empty())
-                .ok_or_else(|| {
-                    ApiError::new(ErrorCode::InvalidRequest, "missing target message ID")
-                })?;
+            let msg_id = non_empty_str(input, &["id", "ask_id"], "missing target message ID")?;
             verify_message_visible(svc, &visible, msg_id)?;
             Ok(PreflightOutcome::ok(call, "message target verified"))
         }
@@ -107,23 +115,30 @@ pub(super) fn preflight_messaging(
 fn caller_visible_conversations(
     svc: &TessService,
     caller_id: &str,
+    tess_id: &str,
 ) -> Result<Vec<ConversationSummary>, ApiError> {
-    let listed = svc
-        .office()
-        .list_conversations(
-            caller_id,
-            ChatConversationsParams {
-                include_archived: true,
-            },
-        )
-        .map_err(|err| {
-            crate::logged("tess_calls.visible_conversations", &err);
-            ApiError::new(ErrorCode::Unavailable, "unable to inspect conversations")
-        })??;
-    Ok(listed
-        .conversations
+    let caller_convs = list_all_conversations(
+        svc,
+        caller_id,
+        "tess_calls.visible_conversations",
+        "unable to inspect conversations",
+    )?;
+    let tess_visible_ids: HashSet<String> = list_all_conversations(
+        svc,
+        tess_id,
+        "tess_calls.tess_conversations",
+        "unable to inspect conversations",
+    )?
+    .into_iter()
+    .map(|c| c.id)
+    .collect();
+    Ok(caller_convs
         .into_iter()
-        .filter(|c| c.kind == ConversationKind::Channel || is_active_member(c, caller_id))
+        .filter(|c| {
+            tess_visible_ids.contains(&c.id)
+                && (c.kind == ConversationKind::Channel
+                    || (is_active_member(c, caller_id) && is_active_member(c, tess_id)))
+        })
         .collect())
 }
 
@@ -144,9 +159,12 @@ fn verify_send_target(
         return Ok(());
     }
     if !to.starts_with('#') {
-        let resolved = svc.office().resolve_member_id(to).map_err(|err| {
-            crate::logged("tess_calls.resolve_member", &err);
-            ApiError::new(ErrorCode::Unavailable, "unable to resolve recipient")
+        let resolved = svc.office().resolve_member_id(to).map_err(|e| {
+            unavailable(
+                "tess_calls.resolve_member",
+                &e,
+                "unable to resolve recipient",
+            )
         })?;
         if let Some(member_id) = resolved {
             if member_id == ctx.caller_id {
@@ -168,29 +186,21 @@ fn verify_channel_named(
     reference: &str,
 ) -> Result<(), ApiError> {
     let needle = reference.trim_start_matches('#').to_lowercase();
-    let hers = svc
-        .office()
-        .list_conversations(
-            tess_id,
-            ChatConversationsParams {
-                include_archived: true,
-            },
-        )
-        .map_err(|err| {
-            crate::logged("tess_calls.tess_conversations", &err);
-            ApiError::new(ErrorCode::Unavailable, "unable to inspect channels")
-        })??;
-    let named: Vec<String> = hers
-        .conversations
-        .into_iter()
-        .filter(|c| {
-            c.kind == ConversationKind::Channel
-                && c.name
-                    .as_deref()
-                    .is_some_and(|n| n.to_lowercase() == needle)
-        })
-        .map(|c| c.id)
-        .collect();
+    let named: Vec<String> = list_all_conversations(
+        svc,
+        tess_id,
+        "tess_calls.tess_conversations",
+        "unable to inspect channels",
+    )?
+    .into_iter()
+    .filter(|c| {
+        c.kind == ConversationKind::Channel
+            && c.name
+                .as_deref()
+                .is_some_and(|n| n.to_lowercase() == needle)
+    })
+    .map(|c| c.id)
+    .collect();
     if !named.is_empty()
         && named.iter().all(|id| {
             visible
@@ -211,13 +221,13 @@ fn verify_message_visible(
     visible: &[ConversationSummary],
     msg_id: &str,
 ) -> Result<(), ApiError> {
-    let conv_id = svc
-        .office()
-        .message_conversation_id(msg_id)
-        .map_err(|err| {
-            crate::logged("tess_calls.message_conversation", &err);
-            ApiError::new(ErrorCode::Unavailable, "unable to inspect target message")
-        })?;
+    let conv_id = svc.office().message_conversation_id(msg_id).map_err(|e| {
+        unavailable(
+            "tess_calls.message_conversation",
+            &e,
+            "unable to inspect target message",
+        )
+    })?;
     if conv_id
         .as_deref()
         .is_some_and(|cid| visible.iter().any(|c| c.id == cid))

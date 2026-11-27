@@ -13,7 +13,7 @@ mod ui;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use org_office::{CallerAuthority, Office};
+use org_office::{CallerAuthority, Office, OfficeError};
 use org_proto::tess::{
     SuggestionCreate, SuggestionDismiss, SuggestionInspect, SuggestionList, SuggestionWithdraw,
     UiPresent,
@@ -151,46 +151,39 @@ impl TessService {
         bytes[7] = (seq & 0xff) as u8;
         bytes[8] = 0x80 | ((seq >> 56) as u8 & 0x3f);
         bytes[9..16].copy_from_slice(&seq.to_be_bytes()[1..8]);
+        let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         format!(
-            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            bytes[0],
-            bytes[1],
-            bytes[2],
-            bytes[3],
-            bytes[4],
-            bytes[5],
-            bytes[6],
-            bytes[7],
-            bytes[8],
-            bytes[9],
-            bytes[10],
-            bytes[11],
-            bytes[12],
-            bytes[13],
-            bytes[14],
-            bytes[15],
+            "{}-{}-{}-{}-{}",
+            &hex[0..8],
+            &hex[8..12],
+            &hex[12..16],
+            &hex[16..20],
+            &hex[20..32]
         )
     }
 
     fn resolve_context(&self, member_id: &str) -> Result<CallerContext, ApiError> {
-        let tess_id = match self.office.chief_of_staff() {
-            Ok(Some(tess)) => Some(tess.id.to_string()),
-            Ok(None) => None,
-            Err(err) => {
-                crate::logged("tess_calls.chief_of_staff", &err);
-                return Err(ApiError::new(
-                    ErrorCode::Unavailable,
+        let tess_id = self
+            .office
+            .chief_of_staff()
+            .map_err(|e| {
+                unavailable(
+                    "tess_calls.chief_of_staff",
+                    &e,
                     "unable to verify Chief of Staff identity",
-                ));
-            }
-        };
+                )
+            })?
+            .map(|tess| tess.id.to_string());
         if tess_id.as_deref() == Some(member_id) {
             let Some(caller_id) = (self.acting_for)(member_id) else {
                 return Ok(CallerContext::TessWake);
             };
-            let authority = self.office.caller_authority(&caller_id).map_err(|err| {
-                crate::logged("tess_calls.caller_authority", &err);
-                ApiError::new(ErrorCode::Unavailable, "unable to verify caller authority")
+            let authority = self.office.caller_authority(&caller_id).map_err(|e| {
+                unavailable(
+                    "tess_calls.caller_authority",
+                    &e,
+                    "unable to verify caller authority",
+                )
             })?;
             if !(authority.active && authority.is_person) {
                 return Err(ApiError::new(
@@ -204,9 +197,12 @@ impl TessService {
                 authority,
             });
         }
-        let authority = self.office.caller_authority(member_id).map_err(|err| {
-            crate::logged("tess_calls.member_authority", &err);
-            ApiError::new(ErrorCode::Unavailable, "unable to verify member authority")
+        let authority = self.office.caller_authority(member_id).map_err(|e| {
+            unavailable(
+                "tess_calls.member_authority",
+                &e,
+                "unable to verify member authority",
+            )
         })?;
         if authority.active && authority.is_person {
             Ok(CallerContext::HumanCaller {
@@ -220,6 +216,11 @@ impl TessService {
             ))
         }
     }
+}
+
+pub(super) fn unavailable(tag: &str, err: &OfficeError, msg: &str) -> ApiError {
+    crate::logged(tag, err);
+    ApiError::new(ErrorCode::Unavailable, msg)
 }
 
 fn run_call<C: Call>(

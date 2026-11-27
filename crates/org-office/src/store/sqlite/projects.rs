@@ -18,7 +18,8 @@ use super::{
     SqliteSnapshot, SqliteTx,
 };
 
-const PROJECT: &str = "id, number, slug, name, owner_team_id, archived, development_process_id";
+const PROJECT: &str =
+    "id, number, slug, name, owner_team_id, archived, development_process_id, default_dod_json";
 const PROJECT_SCOPE: &str =
     "scope_kind = 'organization' AND scope_id = ?1 AND entity_kind = 'project'";
 
@@ -34,7 +35,8 @@ fn project_row(row: &Row<'_>) -> rusqlite::Result<Project> {
         development_process_id: optional_id(row, 6)?,
         contributing_team_ids: Vec::new(),
         repositories: Vec::new(),
-        meta: meta(row, 7)?,
+        default_dod: super::organization::default_dod(row, 7)?,
+        meta: meta(row, 8)?,
     })
 }
 
@@ -203,6 +205,7 @@ impl ProjectsWrite for SqliteTx {
             text(record.owner_team_id.as_str()),
             Value::Integer(i64::from(record.archived)),
             optional_id_value(record.development_process_id.as_ref()),
+            super::organization::default_dod_value(record.default_dod.as_ref()),
         ];
         meta_values(&record.meta, &mut values)?;
         let columns = format!("organization_id, {PROJECT}, schema_version, {META}");

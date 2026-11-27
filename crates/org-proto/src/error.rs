@@ -93,8 +93,9 @@ pub enum ErrorCode {
     NotBound,
     /// A task was to be completed while required checklist steps are unticked and no reason to
     /// complete it anyway was given; the message names the steps. Clients branch on it ("Mark
-    /// done anyway…"). The retired phase-1 `task.set_status` answered it; the web gateway still
-    /// maps it. A build that doesn't know it reads it as [`ErrorCode::Unknown`].
+    /// done anyway…"). `tasks.transition` answers it (`TASK-88`), and the web gateway's task
+    /// routes answer it as `409`. A build that doesn't know it reads it as
+    /// [`ErrorCode::Unknown`].
     ChecklistIncomplete,
     /// `hello` offered no version this server speaks, or a connection that needs a v2
     /// `hello` didn't start with one (X-02 §3). The server closes the connection after it and

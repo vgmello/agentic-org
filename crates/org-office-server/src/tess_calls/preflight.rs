@@ -13,7 +13,7 @@ use serde_json::{json, Map, Value};
 
 use self::hiring::preflight_hire;
 use self::messaging::{is_messaging_target_call, preflight_messaging};
-use super::TessService;
+use super::{unavailable, TessService};
 use crate::serve::delegation::Access;
 
 /// Uniform refusal text for missing or cross-team hire requests (prevents existence oracles).
@@ -225,9 +225,12 @@ fn preflight_agent_target(
         .ok_or_else(|| {
             ApiError::new(ErrorCode::InvalidRequest, "missing target agent member ID")
         })?;
-    let snap = svc.office().org_snapshot().map_err(|err| {
-        crate::logged("tess_calls.org_snapshot", &err);
-        ApiError::new(ErrorCode::Unavailable, "unable to inspect organization")
+    let snap = svc.office().org_snapshot().map_err(|e| {
+        unavailable(
+            "tess_calls.org_snapshot",
+            &e,
+            "unable to inspect organization",
+        )
     })?;
     let resolved_id = snap
         .members
@@ -242,9 +245,12 @@ fn preflight_agent_target(
     let employee = svc
         .office()
         .load_employee(resolved_id)
-        .map_err(|err| {
-            crate::logged("tess_calls.load_employee", &err);
-            ApiError::new(ErrorCode::Unavailable, "unable to inspect target employee")
+        .map_err(|e| {
+            unavailable(
+                "tess_calls.load_employee",
+                &e,
+                "unable to inspect target employee",
+            )
         })?
         .ok_or_else(|| {
             ApiError::new(
@@ -258,11 +264,18 @@ fn preflight_agent_target(
             "target member is not an agent",
         ));
     }
-    if call == "member.agent_offboard" && employee.builtin_key.is_some() {
-        return Err(ApiError::new(
-            ErrorCode::NotAuthorized,
-            "built-in agents cannot be offboarded",
-        ));
+    if employee.builtin_key.is_some()
+        && matches!(
+            call,
+            "member.agent_move" | "member.agent_set_status" | "member.agent_offboard"
+        )
+    {
+        let reason = match call {
+            "member.agent_move" => "built-in agents cannot be moved out of the top-level team",
+            "member.agent_set_status" => "built-in agents cannot be paused or resumed",
+            _ => "built-in agents cannot be offboarded",
+        };
+        return Err(ApiError::new(ErrorCode::NotAuthorized, reason));
     }
     if let Some(expected) = expected_revision {
         if employee.meta.revision != expected {
@@ -300,9 +313,12 @@ fn preflight_team_target(
         .or_else(|| input.get("team_id"))
         .and_then(Value::as_str)
         .ok_or_else(|| ApiError::new(ErrorCode::InvalidRequest, "missing target team ID"))?;
-    let snap = svc.office().org_snapshot().map_err(|err| {
-        crate::logged("tess_calls.org_snapshot", &err);
-        ApiError::new(ErrorCode::Unavailable, "unable to inspect organization")
+    let snap = svc.office().org_snapshot().map_err(|e| {
+        unavailable(
+            "tess_calls.org_snapshot",
+            &e,
+            "unable to inspect organization",
+        )
     })?;
     let team = snap.teams.iter().find(|t| t.id == team_id).ok_or_else(|| {
         ApiError::new(
@@ -340,15 +356,21 @@ fn preflight_task(
 ) -> Result<PreflightOutcome, ApiError> {
     if call == "tasks.create" {
         if let Some(project) = input.get("project").and_then(Value::as_str) {
-            svc.office().inspect_project(project).map_err(|err| {
-                crate::logged("tess_calls.inspect_project", &err);
-                ApiError::new(ErrorCode::Unavailable, "unable to inspect target project")
+            svc.office().inspect_project(project).map_err(|e| {
+                unavailable(
+                    "tess_calls.inspect_project",
+                    &e,
+                    "unable to inspect target project",
+                )
             })??;
         }
         if let Some(team) = input.get("team").and_then(Value::as_str) {
-            let snap = svc.office().org_snapshot().map_err(|err| {
-                crate::logged("tess_calls.org_snapshot", &err);
-                ApiError::new(ErrorCode::Unavailable, "unable to inspect target team")
+            let snap = svc.office().org_snapshot().map_err(|e| {
+                unavailable(
+                    "tess_calls.org_snapshot",
+                    &e,
+                    "unable to inspect target team",
+                )
             })?;
             if !snap.teams.iter().any(|t| t.id == team || t.name == team) {
                 return Err(ApiError::new(
@@ -362,9 +384,12 @@ fn preflight_task(
     let Some(task_ref) = input.get("task").and_then(Value::as_str) else {
         return Ok(PreflightOutcome::ok(call, "schema verified"));
     };
-    let inspected = svc.office().task_inspect(task_ref).map_err(|err| {
-        crate::logged("tess_calls.task_inspect", &err);
-        ApiError::new(ErrorCode::Unavailable, "unable to inspect target task")
+    let inspected = svc.office().task_inspect(task_ref).map_err(|e| {
+        unavailable(
+            "tess_calls.task_inspect",
+            &e,
+            "unable to inspect target task",
+        )
     })??;
     if let Some(expected) = expected_revision {
         if inspected.task.revision != expected {
@@ -407,10 +432,10 @@ fn preflight_org_command(
     };
     svc.office()
         .check_org(caller_id, parsed.command)
-        .map_err(|err| {
-            crate::logged("tess_calls.check_org", &err);
-            ApiError::new(
-                ErrorCode::Unavailable,
+        .map_err(|e| {
+            unavailable(
+                "tess_calls.check_org",
+                &e,
                 "unable to run organization preflight check",
             )
         })??;

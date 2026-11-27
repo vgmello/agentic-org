@@ -6,6 +6,7 @@ mod federation_blob_hardening;
 mod federation_blobs;
 mod org_event_bursts;
 mod task_replication;
+mod team_move_snapshot;
 mod transfer_composition;
 
 use std::path::Path;

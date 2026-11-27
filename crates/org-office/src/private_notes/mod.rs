@@ -2,7 +2,9 @@
 //! decisions (`TASK-50`, `TASK-111` ADEC-1/2, `L8`, `ADR-0031`, `doc-79` PN-01..06).
 //!
 //! Private notes NEVER enter `durable/state/`, `durable/journal/`, `office.db`, shared task
-//! events, `LiveEvents`, Git, search, feeds, inbox, summaries, or other agents' turn inputs. The
+//! events, `LiveEvents`, Git, shared search, feeds, inbox, summaries, or other agents' turn
+//! inputs. Only HQ's disposable private search index reads them (`TASK-91`,
+//! `store/sqlite/search/private.rs`), applying this module's `ADR-0031` visibility. The
 //! storage adapter (`SqlitePrivateNotesStore` in `src/store/sqlite/private_notes.rs`, or
 //! [`memory::MemoryPrivateNotesStore`] in tests) owns the isolated HQ-authoritative database at
 //! `<durable-root>/private/task-notes.db` (`doc-79` §Private Task Notes).

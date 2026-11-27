@@ -11,7 +11,7 @@ mod schema;
 
 use org_command::{Answer, CommandTable, Request};
 
-pub(crate) use agent_sessions::rewrite_positional;
+pub(crate) use agent_sessions::{rewrite_positional, OPERATOR_VERBS};
 
 use crate::runtime::domain::Domain;
 use crate::runtime::transport::{OfficeTransport, Refusal};

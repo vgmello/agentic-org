@@ -23,6 +23,7 @@ mod open_routes;
 mod org_routes;
 mod process_routes;
 mod provider_routes;
+mod search_routes;
 mod session_routes;
 mod task_routes;
 
@@ -169,6 +170,7 @@ pub enum Route {
     Git(git_routes::GitRoute),
     Process(process_routes::ProcessRoute),
     Docs(doc_routes::DocRoute),
+    Search(search_routes::SearchRoute),
     Cost(cost_routes::CostRoute),
     Provider(provider_routes::ProviderRoute),
     OfficeFederation(office_routes::OfficeFederationRoute),
@@ -213,6 +215,7 @@ pub enum Call {
     Git(git_routes::GitCall),
     Process(process_routes::ProcessCall),
     Docs(doc_routes::DocCall),
+    Search(search_routes::SearchCall),
     Cost(cost_routes::CostCall),
     Provider(provider_routes::ProviderCall),
     OfficeFederation(office_routes::OfficeFederationCall),

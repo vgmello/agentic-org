@@ -25,11 +25,12 @@ pub use runtime::binding::{api_refusal, Binding};
 pub use runtime::office::{BoundOffice, WorkspaceConnector};
 pub use runtime::transport::{hint_for, OfficeTransport, Refusal, TransportOffice};
 
-/// External ("bring your own agent") workspace sign-in (`TASK-137`): the office-socket calls
-/// and key of a workspace ([`external_auth::client`]), its saved state
-/// ([`external_auth::store`]), and the `agentic-org` words `agent-os exec` approves with.
+/// External ("bring your own agent") workspace sign-in (`TASK-137`, `TASK-211`): direct
+/// operator binding ([`external_auth::bind`]), the office-socket calls and key of a workspace
+/// ([`external_auth::client`]), its saved state ([`external_auth::store`]), and the
+/// `agentic-org` words `agent-os exec` approves with.
 pub mod external_auth {
-    pub use crate::features::auth::{client, operator_approve_args, store};
+    pub use crate::features::auth::{bind, client, operator_approve_args, store};
 }
 
 use features::auth;
