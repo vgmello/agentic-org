@@ -49,6 +49,7 @@ mod process_calls;
 mod provider_calls;
 mod provider_refresh;
 mod revocations;
+mod search_calls;
 mod serve;
 mod session_proxy;
 mod signals;

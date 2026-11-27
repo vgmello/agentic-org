@@ -165,6 +165,9 @@ pub type GitFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send +
 /// Dispatches C5 organization processes, standards, and built-in skills RPCs (`TASK-44`).
 pub type ProcessesFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
+/// Dispatches unified cross-entity `search.query` (`TASK-91`).
+pub type SearchFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
 /// Dispatches L2/L3 usage, cost accounting, and budget RPCs (`TASK-53`).
 pub type CostsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
@@ -214,6 +217,9 @@ pub struct OfficePorts {
     pub git: Option<GitFn>,
     /// C5 organization processes, standards, and built-in skills dispatcher (`TASK-44`).
     pub processes: Option<ProcessesFn>,
+    /// Unified cross-entity search (`TASK-91`). `None`: `search.query` answers
+    /// `unknown_method`.
+    pub search: Option<SearchFn>,
     /// L2/L3 usage, cost accounting, and budget controls dispatcher (`TASK-53`).
     pub costs: Option<CostsFn>,
     /// L4 provider pools, office bindings, discovery, readiness, and quota dispatcher (`TASK-54`).

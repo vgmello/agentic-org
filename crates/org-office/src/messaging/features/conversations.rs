@@ -102,6 +102,38 @@ pub(super) fn all_conversations_including_auto(
     Ok(all)
 }
 
+/// Whether `caller` may read `conv`'s messages: every channel, and a DM or group DM whose
+/// active (effective) member the caller is, or any of them for the organization's owner. The
+/// one rule every read of messages applies (`chat.messages`, channel summaries, search).
+pub(crate) fn may_read(
+    read: &impl MessagingRead,
+    owner: &Id,
+    caller: &Id,
+    conv: &ConversationRecord,
+) -> Result<bool, org_store::EngineError> {
+    if conv.kind == ConversationKind::Channel || caller == owner {
+        return Ok(true);
+    }
+    Ok(effective_auto_members(read, conv, owner)?.contains(caller))
+}
+
+/// Every conversation (the virtual auto channels included) whose messages `caller` may read,
+/// by [`may_read`].
+pub fn readable_conversations(
+    read: &impl MessagingRead,
+    owner: &Id,
+    caller: &Id,
+    now_utc: &str,
+) -> Result<Vec<ConversationRecord>, org_store::EngineError> {
+    let mut readable = Vec::new();
+    for conv in all_conversations_including_auto(read, now_utc)? {
+        if may_read(read, owner, caller, &conv)? {
+            readable.push(conv);
+        }
+    }
+    Ok(readable)
+}
+
 pub fn list_channels(
     read: &impl MessagingRead,
     viewer: &Id,

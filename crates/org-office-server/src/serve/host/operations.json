@@ -165,6 +165,7 @@
   {"method":"role.inspect","policy":"serve"},
   {"method":"role.list","policy":"serve"},
   {"method":"role.update","policy":"serve"},
+  {"method":"search.query","policy":"serve"},
   {"method":"skill.list","policy":"serve"},
   {"method":"skill.read","policy":"serve"},
   {"method":"status.set","policy":"invalid_request"},

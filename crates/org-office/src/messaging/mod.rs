@@ -17,3 +17,6 @@ pub mod records;
 pub mod runtime;
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;
+
+/// The conversations a member may read, by the one rule every read of messages applies.
+pub use features::readable_conversations;

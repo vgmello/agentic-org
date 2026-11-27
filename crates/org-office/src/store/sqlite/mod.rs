@@ -35,6 +35,7 @@ mod receipts;
 mod references;
 pub(crate) mod replication;
 mod schema;
+pub(crate) mod search;
 mod snapshot;
 #[cfg(test)]
 mod spike;
@@ -474,6 +475,10 @@ impl SqliteTx {
     /// committed, the diverged pair is NOT returned to `self.home` (poisoning further writes
     /// until reopened/rebuilt) and `EngineError::ended` is returned (`TASK-97` / `ARCH-04`).
     fn finish(mut self, cursor: &Cursor) -> Result<(Connection, Connection), EngineError> {
+        if !self.db().is_autocommit() && !self.msg_db().is_autocommit() {
+            // The search documents this transaction's changes queued, rebuilt inside it.
+            search::refresh(&self)?;
+        }
         let db = self.db();
         let msg_db = self.msg_db();
         if db.is_autocommit() || msg_db.is_autocommit() {

@@ -45,6 +45,9 @@ pub(crate) mod recorded;
 mod satellite;
 #[cfg(test)]
 mod satellite_tests;
+mod search;
+#[cfg(test)]
+mod search_tests;
 mod tasks;
 #[cfg(any(test, feature = "testkit"))]
 mod testkit;
@@ -226,6 +229,8 @@ pub struct Office {
     runtime: crate::messaging::runtime::OfficeRuntime,
     /// Isolated HQ-authoritative per-author private task notes store (`durable/private/task-notes.db`).
     private_notes: Arc<dyn crate::private_notes::PrivateNotesStore>,
+    /// The private notes' disposable search index (HQ only; `TASK-91`).
+    private_search: Arc<dyn crate::search::ports::PrivateNotesSearch>,
     /// Attachment bytes, staged uploads and HQ's human-private space (`TASK-98.1`).
     attachments: crate::attachments::AttachmentStores,
     /// Isolated `L2` usage & cost accounting store (`protected/accounting.db`).

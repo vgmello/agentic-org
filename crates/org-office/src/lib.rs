@@ -78,6 +78,8 @@ pub mod projects;
 pub mod providers;
 pub mod replication;
 pub mod rules;
+/// Unified cross-entity search (`TASK-91`): its consumer-owned ports, documents and ranking.
+pub mod search;
 mod store;
 mod structure;
 pub mod tasks;
