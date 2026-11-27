@@ -357,6 +357,7 @@ fn multi_office_mtls_enrollment_snapshot_offline_convergence_relay_revocation_an
                 sender_is_person: false,
                 conversation_id: None,
                 summary: "Forged".into(),
+                attachment_ids: Vec::new(),
                 ask_answer: None,
                 ask_withdrawal: None,
             })
@@ -374,6 +375,7 @@ fn multi_office_mtls_enrollment_snapshot_offline_convergence_relay_revocation_an
                 sender_is_person: false,
                 conversation_id: None,
                 summary: "Task 99 ready".into(),
+                attachment_ids: Vec::new(),
                 ask_answer: None,
                 ask_withdrawal: None,
             })

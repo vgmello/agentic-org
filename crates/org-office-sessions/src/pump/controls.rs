@@ -118,6 +118,7 @@ pub(super) fn steer(
             Control::DeliverMidTurn {
                 delivery_id: request.delivery_id.clone(),
                 text: request.notice.clone(),
+                images: Vec::new(),
             },
             Instant::now(),
         )

@@ -242,6 +242,7 @@ fn a_busy_warm_session_drains_every_assigned_tasks_must_follow_processes() {
     else {
         panic!("expected SendTurn");
     };
+    let turn = turn.text;
     assert!(turn.starts_with("You have 2 waiting items"), "{turn}");
     assert_carries_processes(&turn, &[&ledger, &billing]);
     assert!(

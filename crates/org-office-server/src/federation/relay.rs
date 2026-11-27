@@ -66,6 +66,7 @@ fn emit_local_wakes_for_delivered_message(
             sender_is_person: outcome.sender_is_person,
             conversation_id: Some(outcome.conversation_id.clone()),
             summary: String::new(),
+            attachment_ids: Vec::new(),
             ask_answer: None,
             ask_withdrawal: Some(w.clone()),
         })
@@ -86,6 +87,7 @@ fn emit_local_wakes_for_delivered_message(
             sender_is_person: outcome.sender_is_person,
             conversation_id: Some(outcome.conversation_id.clone()),
             summary: ans.answer_summary.clone(),
+            attachment_ids: ans.attachment_ids.clone(),
             ask_answer: Some(ans.clone()),
             ask_withdrawal: None,
         })
@@ -97,6 +99,11 @@ fn emit_local_wakes_for_delivered_message(
     if outcome.message_id.is_empty() || outcome.local_recipient_wakes.is_empty() {
         return true;
     }
+    let msg_attachment_ids: Vec<String> = outcome
+        .delivered_message
+        .as_ref()
+        .map(|m| m.attachments.iter().map(|a| a.id.clone()).collect())
+        .unwrap_or_default();
     let answered_asker = outcome.answered_ask.as_ref().map(|a| a.asker_id.as_str());
     for wake in &outcome.local_recipient_wakes {
         if answered_asker == Some(wake.employee_id.as_str()) {
@@ -115,6 +122,7 @@ fn emit_local_wakes_for_delivered_message(
             sender_is_person: outcome.sender_is_person,
             conversation_id: Some(outcome.conversation_id.clone()),
             summary: outcome.summary.clone(),
+            attachment_ids: msg_attachment_ids.clone(),
             ask_answer: None,
             ask_withdrawal: None,
         })

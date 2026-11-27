@@ -6,7 +6,7 @@
 //! A leaf module: it depends on nothing else in the crate.
 
 /// Maximum UTF-8 byte budget for one sanitized header/provenance metadata token (`INSTR-5`).
-pub(crate) const MAX_META_FIELD_BYTES: usize = 96;
+pub const MAX_META_FIELD_BYTES: usize = 96;
 
 /// Neutralizes fence-breakout tokens and caps untrusted text to `max_bytes` UTF-8 bytes (`INSTR-5`).
 ///
@@ -50,7 +50,7 @@ fn fold_fence_char(ch: char) -> char {
 /// `[verified: <relation>]` sender badge (`[VeRiFiEd:`, `[ verified :`, `［verified：`,
 /// `⦍verified\u{200A}: owner⦎`, `〔verified∶ owner〕`) can be forged. Invisible format characters
 /// are dropped so none can split a marker or hide text.
-pub(crate) fn sanitize_untrusted_meta(raw: &str, max_bytes: usize) -> String {
+pub fn sanitize_untrusted_meta(raw: &str, max_bytes: usize) -> String {
     let cleaned: String = raw
         .trim()
         .chars()

@@ -109,7 +109,7 @@ pub(crate) fn recycle_stale_warm_handle_in(
 pub(super) fn try_send_wake_on_live_handle(
     employee_id: &str,
     queue_task_id: Option<&str>,
-    objective: String,
+    turn: crate::pump::QueuedTurn,
     ctx: &TurnEndDrainCtx,
 ) -> Result<bool, WakeHoldReason> {
     let handle_info = {
@@ -190,7 +190,7 @@ pub(super) fn try_send_wake_on_live_handle(
         &tx,
         &active_permit,
         acquired_permit,
-        objective,
+        turn,
     );
     if let Some(pid) = release_pid {
         crate::router::release_turn_permit_any(&ctx.office, ctx.hq_permits.as_deref(), &pid);
@@ -205,7 +205,7 @@ pub(super) fn commit_wake_send_locked(
     tx: &std::sync::mpsc::Sender<PumpCommand>,
     active_permit: &Arc<Mutex<Option<(String, u64)>>>,
     acquired_permit: Option<(String, u64)>,
-    objective: String,
+    turn: crate::pump::QueuedTurn,
 ) -> (bool, Option<String>) {
     let reg = registry.lock().unwrap_or_else(|p| p.into_inner());
     let live = (!reg.draining && !reg.shutting_down && !reg.starting.contains(employee_id))
@@ -238,7 +238,7 @@ pub(super) fn commit_wake_send_locked(
     };
     // Counted and marked busy before the send, in the `registry` critical section that checked
     // the run is still live (`TASK-80.1`).
-    if crate::pump::queue_turn(&handle.state, tx, objective) {
+    if crate::pump::queue_turn_with_attachments(&handle.state, tx, turn) {
         return (true, redundant_pid);
     }
     let rollback_pid = installed_pid.and_then(|pid| {
@@ -342,7 +342,7 @@ pub(super) fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEn
     let sent = try_send_wake_on_live_handle(
         employee_id,
         claim.task_id.as_deref(),
-        claim.objective.clone(),
+        crate::pump::QueuedTurn::new(claim.objective.clone(), claim.attachment_ids.clone()),
         ctx,
     );
     commit_live_drain(employee_id, ctx, &claim, sent);
@@ -366,6 +366,7 @@ pub(crate) fn drain_into_live_pump_with_acquirer(
 pub(super) struct LiveDrainClaim {
     pub(super) item_ids: HashSet<String>,
     pub(super) objective: String,
+    pub(super) attachment_ids: Vec<String>,
     pub(super) task_id: Option<String>,
     pub(super) person_triggered: bool,
     pub(super) trigger: serde_json::Value,
@@ -453,9 +454,11 @@ pub(super) fn claim_live_drain_batch(
         "waited_ms": queue.held_since_ms.map(|since| ts.saturating_sub(since)),
         "at": rfc3339_now(),
     });
+    let attachment_ids = crate::wake::collect_wake_attachment_ids(&queue.items);
     Some(LiveDrainClaim {
         item_ids: queue.items.iter().map(|i| i.item_id.clone()).collect(),
         objective,
+        attachment_ids,
         task_id,
         person_triggered,
         trigger,

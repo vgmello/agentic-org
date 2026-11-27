@@ -161,6 +161,33 @@ impl SessionManager {
         task_id: &str,
         task_title: &str,
     ) -> WakeOutcome {
+        self.on_task_assigned_with_attachments(
+            assignee_id,
+            actor_id,
+            actor_name,
+            actor_is_person,
+            task_id,
+            task_title,
+            Vec::new(),
+        )
+    }
+
+    /// Attachment-aware variant of [`Self::on_task_assigned`] threading lightweight attachment IDs
+    /// bound to the task (`TASK-98.3` AC #6).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "task assignment wake takes assignee, actor metadata, task key/title, and attachment ids"
+    )]
+    pub fn on_task_assigned_with_attachments(
+        &self,
+        assignee_id: &str,
+        actor_id: &str,
+        actor_name: &str,
+        actor_is_person: bool,
+        task_id: &str,
+        task_title: &str,
+        attachment_ids: Vec<String>,
+    ) -> WakeOutcome {
         let item = PendingWakeItem {
             item_id: format!("task:{task_id}:{assignee_id}"),
             kind: WakeKind::TaskAssignment,
@@ -172,6 +199,7 @@ impl SessionManager {
             conversation_id: None,
             source_id: task_id.to_owned(),
             summary: format!("Task `{task_id}` assigned to you: {task_title}"),
+            attachment_ids,
             enqueued_at_ms: now_ms(),
         };
         self.enqueue_wake(assignee_id, item)

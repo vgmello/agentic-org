@@ -5,7 +5,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use org_office::organization_family::records::{Employee, EmployeeStatus};
+use org_office::organization_family::records::{BuiltinKey, Employee, EmployeeStatus};
+use org_proto::chat::ConversationKind;
 use org_proto::sessions::SessionState;
 
 use crate::binding::RunBindingRegistry;
@@ -108,7 +109,7 @@ impl SessionManager {
         asked_by_subagent: bool,
         satisfied_active_waiter: bool,
     ) -> WakeOutcome {
-        self.on_ask_answered_durable(
+        self.on_ask_answered_with_attachments(
             asker_id,
             ask_id,
             question_summary,
@@ -116,6 +117,36 @@ impl SessionManager {
             (answered_by_id, answered_by_name, answered_by_person),
             asked_by_subagent,
             satisfied_active_waiter,
+            &[],
+        )
+    }
+
+    /// Attachment-aware variant of [`Self::on_ask_answered`] threading lightweight attachment IDs
+    /// bound to the answer (`TASK-98.3`).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "public attachment-aware ask-answered hook takes explicit asker, ask, summaries, responder, flags, and attachment ids"
+    )]
+    pub fn on_ask_answered_with_attachments(
+        &self,
+        asker_id: &str,
+        ask_id: &str,
+        question_summary: &str,
+        answer_summary: &str,
+        responder: (&str, &str, bool),
+        asked_by_subagent: bool,
+        satisfied_active_waiter: bool,
+        attachment_ids: &[String],
+    ) -> WakeOutcome {
+        self.on_ask_answered_durable_with_attachments(
+            asker_id,
+            ask_id,
+            question_summary,
+            answer_summary,
+            responder,
+            asked_by_subagent,
+            satisfied_active_waiter,
+            attachment_ids,
         )
         .unwrap_or(WakeOutcome::Ignored)
     }
@@ -137,6 +168,34 @@ impl SessionManager {
         asked_by_subagent: bool,
         satisfied_active_waiter: bool,
     ) -> Result<WakeOutcome, String> {
+        self.on_ask_answered_durable_with_attachments(
+            asker_id,
+            ask_id,
+            question_summary,
+            answer_summary,
+            responder,
+            asked_by_subagent,
+            satisfied_active_waiter,
+            &[],
+        )
+    }
+
+    /// Attachment-aware durable variant of [`Self::on_ask_answered_durable`] (`TASK-98.3`).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "durable attachment-aware ask-answered hook takes explicit asker, ask, summaries, responder, flags, and attachment ids"
+    )]
+    pub fn on_ask_answered_durable_with_attachments(
+        &self,
+        asker_id: &str,
+        ask_id: &str,
+        question_summary: &str,
+        answer_summary: &str,
+        responder: (&str, &str, bool),
+        asked_by_subagent: bool,
+        satisfied_active_waiter: bool,
+        attachment_ids: &[String],
+    ) -> Result<WakeOutcome, String> {
         let (answered_by_id, answered_by_name, answered_by_person) = responder;
         let suspended_resume = {
             let _lock = self.employee_locks.lock(asker_id);
@@ -149,6 +208,7 @@ impl SessionManager {
                 question_summary,
                 answer_summary,
                 (answered_by_name, asked_by_subagent),
+                attachment_ids,
             )?
         };
         if suspended_resume {
@@ -171,6 +231,7 @@ impl SessionManager {
             conversation_id: self.office.message_conversation_id(ask_id).ok().flatten(),
             source_id: ask_id.to_owned(),
             summary: format!("Question: {question_summary}\nAnswer: {answer_summary}"),
+            attachment_ids: attachment_ids.to_vec(),
             enqueued_at_ms: now_ms(),
         };
         self.enqueue_wake_durable(asker_id, item)
@@ -298,9 +359,31 @@ impl SessionManager {
             "waited_ms": waited_ms,
             "at": rfc3339_now(),
         });
-        match self.spawn_or_send_autonomous(
+        // Never stage DM/GroupDm (or unknown-conversation) answer attachments into the Chief of
+        // Staff's shared `tess:wake` partition (`TASK-80.1`, `TASK-98.3`): keep only attachments
+        // whose ask belongs to a public channel (fail closed).
+        let eligible_answers: Vec<PendingAskAnswer> =
+            if employee.builtin_key == Some(BuiltinKey::ChiefOfStaff) {
+                susp.pending_resume_answers
+                    .iter()
+                    .filter(|ans| {
+                        self.office
+                            .message_conversation_id(&ans.ask_id)
+                            .ok()
+                            .flatten()
+                            .and_then(|cid| self.office.conversation_kind(&cid).ok().flatten())
+                            == Some(ConversationKind::Channel)
+                    })
+                    .cloned()
+                    .collect()
+            } else {
+                susp.pending_resume_answers.clone()
+            };
+        let attachment_ids = crate::wake::collect_answer_attachment_ids(&eligible_answers);
+        match self.spawn_or_send_autonomous_with_attachments(
             employee,
             objective,
+            attachment_ids,
             susp.runtime_session_id.as_deref(),
             None,
             trigger,
@@ -385,6 +468,10 @@ impl SessionManager {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal helper persists one answered ask with its responder metadata and attachment ids"
+)]
 pub(super) fn record_suspended_ask_answer_locked(
     store: &SessionStore,
     bindings: &RunBindingRegistry,
@@ -393,6 +480,7 @@ pub(super) fn record_suspended_ask_answer_locked(
     question_summary: &str,
     answer_summary: &str,
     responder: (&str, bool),
+    attachment_ids: &[String],
 ) -> Result<bool, String> {
     let (answered_by_name, asked_by_subagent) = responder;
     let Some(mut susp) = store
@@ -416,6 +504,7 @@ pub(super) fn record_suspended_ask_answer_locked(
         answered_by: answered_by_name.to_owned(),
         answered_at: rfc3339_now(),
         asked_by_subagent: ask_entry.asked_by_subagent || asked_by_subagent,
+        attachment_ids: attachment_ids.to_vec(),
     };
     if !susp
         .pending_resume_answers

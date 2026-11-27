@@ -68,6 +68,7 @@ fn wake_store_redacts_pending_wakes_and_suspended_asks() {
         conversation_id: None,
         source_id: "src-1".into(),
         summary: corpus.text.clone(),
+        attachment_ids: Vec::new(),
         enqueued_at_ms: 1,
     });
     store.write_pending_wakes_redacted(&queue, &[]).unwrap();
@@ -97,6 +98,7 @@ fn wake_store_redacts_pending_wakes_and_suspended_asks() {
             answered_by: "owner".into(),
             answered_at: crate::credentials::rfc3339_now(),
             asked_by_subagent: false,
+            attachment_ids: Vec::new(),
         }],
         hold_reason: None,
         held_since_ms: None,

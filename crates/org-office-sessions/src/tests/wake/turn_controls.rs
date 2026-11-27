@@ -166,7 +166,7 @@ impl Session for ControlsSession {
 
     fn control(&mut self, cmd: Control, _now: Instant) -> Result<Vec<Output>, ControlError> {
         match cmd {
-            Control::Send { text } => {
+            Control::Send { text, .. } => {
                 if self.busy {
                     return Err(ControlError::Busy);
                 }
@@ -180,7 +180,9 @@ impl Session for ControlsSession {
                     }),
                 ])
             }
-            Control::DeliverMidTurn { delivery_id, text } => match self.mode {
+            Control::DeliverMidTurn {
+                delivery_id, text, ..
+            } => match self.mode {
                 SteerMode::NativeButRefuses => Err(ControlError::NeedsInterrupt),
                 _ if !self.busy => Err(ControlError::InvalidState),
                 SteerMode::StepHook => {
@@ -224,6 +226,7 @@ impl AgentRuntime for ControlsRuntime {
                 SteerMode::StepHook => MidTurnDelivery::StepHook,
                 SteerMode::Native | SteerMode::NativeButRefuses => MidTurnDelivery::NativeSteer,
             },
+            image_input: org_agent_runtime::ImageInputMode::StagedFileOnly,
             interrupt_in_band: true,
             idle_interrupt_ends_turn: false,
             approval_bridge: true,
@@ -678,6 +681,7 @@ fn a_staged_wake_is_never_delivered_into_a_turn_being_interrupted() {
         conversation_id: Some("dm-oa".into()),
         source_id: "msg-int-1".into(),
         summary: "Check the deploy after this".into(),
+        attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
     };
     assert_eq!(
@@ -872,6 +876,7 @@ fn a_steer_is_fenced_untrusted_data_that_cannot_break_out_of_its_notice() {
         conversation_id: None,
         source_id: "steer-1".into(),
         summary: hostile.into(),
+        attachment_ids: Vec::new(),
         enqueued_at_ms: 0,
     };
     let (notice, turn) = crate::wake::compose_person_steer(&steer);

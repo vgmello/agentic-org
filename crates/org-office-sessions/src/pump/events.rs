@@ -10,20 +10,41 @@ use org_proto::sessions::SessionState;
 use crate::credentials::rfc3339_now;
 use crate::redact::redact_text;
 use crate::subagents::BackgroundKind;
+use crate::turn_attachments::{is_provider_image_rejection_error, purge_turn_dir};
 
 use super::activity::track_activity;
 use super::approval::handle_approval_request;
+use super::queue::{dedup_attachment_ids, merge_queued_turns, QueuedTurn};
 use super::{
     persist_turn_update, FailoverRequest, PumpContext, PumpLoopState, SessionRuntimeState,
 };
 
-pub(super) fn rollback_failed_write_delivery(loop_state: &mut PumpLoopState, delivery_id: &str) {
+pub(super) fn rollback_failed_write_delivery(
+    ctx: &PumpContext,
+    loop_state: &mut PumpLoopState,
+    delivery_id: &str,
+) {
     if loop_state
         .in_flight_delivery
         .as_ref()
         .is_some_and(|b| b.delivery_id == delivery_id)
     {
         loop_state.in_flight_delivery = None;
+        if let Some(tid) = loop_state.in_flight_delivery_staged_id.take() {
+            purge_turn_dir(&ctx.attachments_root, &tid);
+        }
+    }
+}
+
+fn purge_active_turn_attachments(ctx: &PumpContext, loop_state: &mut PumpLoopState) {
+    if let Some(tid) = loop_state.current_turn_staged_id.take() {
+        purge_turn_dir(&ctx.attachments_root, &tid);
+    }
+    if let Some(tid) = loop_state.in_flight_delivery_staged_id.take() {
+        purge_turn_dir(&ctx.attachments_root, &tid);
+    }
+    for tid in std::mem::take(&mut loop_state.mid_turn_staged_ids) {
+        purge_turn_dir(&ctx.attachments_root, &tid);
     }
 }
 
@@ -64,7 +85,7 @@ pub(super) fn apply_outputs(
             org_agent_runtime::Output::Event(mut event) => {
                 if write_failed {
                     if let SessionEvent::MidTurnDelivered { delivery_id } = &event {
-                        rollback_failed_write_delivery(loop_state, delivery_id);
+                        rollback_failed_write_delivery(ctx, loop_state, delivery_id);
                         continue;
                     }
                 }
@@ -144,6 +165,9 @@ pub(super) fn handle_event(
                 .then(|| loop_state.in_flight_delivery.take())
                 .flatten();
             if let Some(batch) = matched {
+                if let Some(tid) = loop_state.in_flight_delivery_staged_id.take() {
+                    loop_state.mid_turn_staged_ids.push(tid);
+                }
                 loop_state.mid_turn_total_this_turn =
                     loop_state.mid_turn_total_this_turn.saturating_add(1);
                 if batch.has_agent_item {
@@ -173,6 +197,9 @@ pub(super) fn handle_event(
                 .is_some_and(|b| b.delivery_id == *delivery_id)
             {
                 loop_state.in_flight_delivery = None;
+                if let Some(tid) = loop_state.in_flight_delivery_staged_id.take() {
+                    purge_turn_dir(&ctx.attachments_root, &tid);
+                }
             }
             // A refused steer runs as the next turn instead (`TASK-103`).
             if let Some(at) = loop_state
@@ -288,6 +315,9 @@ pub(super) fn handle_turn_ended(
     outcome: &org_agent_runtime::TurnOutcome,
     errors: &[String],
 ) {
+    // Immediately purge every ephemeral turn-scoped `0400` attachment file staged for this turn
+    // (including any mid-turn deliveries) as soon as the turn finishes (`TASK-98.3` AC #3).
+    purge_active_turn_attachments(ctx, loop_state);
     // A turn a person interrupted (`TASK-103`) ends as they asked: its errors are expected, it
     // never fails over to another connection (or blocks on recovery), and an approval it was
     // waiting on is moot. The warm process lives on for the next turn.
@@ -306,8 +336,17 @@ pub(super) fn handle_turn_ended(
     for (_, text) in std::mem::take(&mut loop_state.in_flight_steers) {
         loop_state.requeue_steer(state, text);
     }
-    let failover_blocked_recovery =
-        !interrupted && evaluate_turn_failover(state, loop_state, ctx, outcome, errors);
+    let retried_text_only = !interrupted
+        && maybe_retry_image_rejection_text_only(state, loop_state, ctx, outcome, errors);
+    loop_state.current_turn_had_protocol_images = false;
+    loop_state.current_turn_image_fallback_retried = false;
+    loop_state.current_turn_remaining_staging_budget =
+        crate::turn_attachments::MAX_DOC_STAGING_BYTES_PER_TURN;
+    loop_state.current_turn_remaining_attachment_slots =
+        crate::turn_attachments::MAX_ATTACHMENTS_PER_TURN;
+    let failover_blocked_recovery = !interrupted
+        && !retried_text_only
+        && evaluate_turn_failover(state, loop_state, ctx, outcome, errors);
     if interrupted {
         state.pending_approvals.clear();
         if state.state == SessionState::WaitingApproval {
@@ -404,21 +443,27 @@ pub(super) fn evaluate_turn_failover(
         tried.push(conn_id.clone());
     }
     let mut objective = loop_state.current_objective.clone();
+    let mut attachment_ids = loop_state.current_attachment_ids.clone();
     if loop_state.has_queued_turns() {
         let queued = loop_state.take_queued_turns();
         state.dequeue_turns(queued.len());
-        let queued = queued.join("\n\n");
-        if objective.is_empty() {
-            objective = queued;
-        } else {
-            objective = format!("{objective}\n\n{queued}");
+        let (queued_text, queued_atts) = merge_queued_turns(queued);
+        if !queued_text.is_empty() {
+            if objective.is_empty() {
+                objective = queued_text;
+            } else {
+                objective = format!("{objective}\n\n{queued_text}");
+            }
         }
+        attachment_ids.extend(queued_atts);
     }
+    let attachment_ids = dedup_attachment_ids(attachment_ids);
     loop_state.failover_pending = Some(FailoverRequest {
         employee_id: ctx.employee_id.clone(),
         failed_run_id: ctx.run_id.clone(),
         failed_connection_id: conn_id.clone(),
         objective,
+        attachment_ids,
         workspace: ctx.workspace.clone(),
         task_ref: ctx.task_ref.clone(),
         tried_connections: tried,
@@ -431,4 +476,60 @@ pub(super) fn evaluate_turn_failover(
     });
     loop_state.stop_requested = true;
     false
+}
+
+/// When a turn that carried protocol-level images fails BEFORE any side effect because the
+/// provider/model rejected image input, re-queues the turn once in `force_text_only` mode so
+/// the agent still receives the text, untrusted manifest, and read-only `staged_path` (`AC #4`).
+fn maybe_retry_image_rejection_text_only(
+    state: &mut SessionRuntimeState,
+    loop_state: &mut PumpLoopState,
+    ctx: &PumpContext,
+    outcome: &org_agent_runtime::TurnOutcome,
+    errors: &[String],
+) -> bool {
+    if !loop_state.current_turn_had_protocol_images
+        || loop_state.current_turn_image_fallback_retried
+        || loop_state.current_attachment_ids.is_empty()
+        || matches!(outcome, org_agent_runtime::TurnOutcome::Interrupted)
+    {
+        return false;
+    }
+    if matches!(outcome, org_agent_runtime::TurnOutcome::Completed) && errors.is_empty() {
+        return false;
+    }
+    let turn_cmds = ctx.bindings.accepted_commands(&ctx.employee_id).len();
+    let has_effects =
+        loop_state.had_external_effect || turn_cmds > loop_state.accepted_commands_baseline;
+    if has_effects {
+        return false;
+    }
+    let mut all_errors = errors.to_vec();
+    if let org_agent_runtime::TurnOutcome::Failed { reason } = outcome {
+        all_errors.push(reason.clone());
+    }
+    if !is_provider_image_rejection_error(&all_errors, loop_state.turn_reply.as_deref()) {
+        return false;
+    }
+    loop_state.pending_turns.insert(
+        0,
+        QueuedTurn {
+            text: loop_state.current_objective.clone(),
+            attachment_ids: loop_state.current_attachment_ids.clone(),
+            force_text_only: true,
+        },
+    );
+    loop_state.front_is_steer = false;
+    state.queued_turns = state.queued_turns.saturating_add(1);
+    if state.state == SessionState::Idle {
+        state.state = SessionState::Running;
+    }
+    state.last_error = None;
+    let note = serde_json::json!({
+        "type": "image_fallback_retry",
+        "attachment_count": loop_state.current_attachment_ids.len(),
+        "at": rfc3339_now(),
+    });
+    let _ = ctx.store.append_history(&ctx.employee_id, &note, &[]);
+    true
 }

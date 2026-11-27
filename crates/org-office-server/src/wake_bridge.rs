@@ -73,6 +73,12 @@ pub(crate) fn on_chat_send_committed(
         return (Vec::new(), presence);
     }
     let (sender_name, sender_is_person) = sender_meta(office, sender_id);
+    let attachment_ids: Vec<String> = committed
+        .message
+        .attachments
+        .iter()
+        .map(|a| a.id.clone())
+        .collect();
     let ts = now_ms();
     let mut woke = Vec::new();
     for (recip_id, state) in &committed.recipients {
@@ -98,6 +104,7 @@ pub(crate) fn on_chat_send_committed(
             conversation_id: Some(committed.result.conversation_id.clone()),
             source_id: committed.message.id.clone(),
             summary: committed.message.body_markdown.clone(),
+            attachment_ids: attachment_ids.clone(),
             enqueued_at_ms: ts,
         };
         if sessions.enqueue_wake(target_id, item) == WakeOutcome::Started {
@@ -201,6 +208,12 @@ pub(crate) fn on_chat_ask_committed(
         );
     }
 
+    let attachment_ids: Vec<String> = committed
+        .message
+        .attachments
+        .iter()
+        .map(|a| a.id.clone())
+        .collect();
     let mut woke = Vec::new();
     for (recip_id, _) in &committed.recipients {
         let target_id = recip_id.as_str();
@@ -218,6 +231,7 @@ pub(crate) fn on_chat_ask_committed(
             conversation_id: Some(committed.result.conversation_id.clone()),
             source_id: committed.result.ask_id.clone(),
             summary: question_summary.clone(),
+            attachment_ids: attachment_ids.clone(),
             enqueued_at_ms: ts,
         };
         if sessions.enqueue_wake(target_id, item) == WakeOutcome::Started {
@@ -240,16 +254,22 @@ pub(crate) fn on_chat_answer_committed(
         return;
     };
     let (responder_name, responder_is_person) = sender_meta(office, responder_id);
-    let _ = sessions.on_ask_answered(
+    let attachment_ids: Vec<String> = committed
+        .result
+        .answer
+        .attachments
+        .iter()
+        .map(|a| a.id.clone())
+        .collect();
+    let _ = sessions.on_ask_answered_with_attachments(
         asker_id,
         &committed.result.ask_id,
         &committed.question_summary,
         &committed.answer_summary,
-        responder_id,
-        &responder_name,
-        responder_is_person,
+        (responder_id, &responder_name, responder_is_person),
         false,
         satisfied_active_waiter,
+        &attachment_ids,
     );
 }
 

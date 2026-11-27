@@ -169,6 +169,8 @@ pub(crate) fn finalize_child(
         ),
     };
     let _ = session.on_exit(exit_info, Instant::now());
+    // Purge every leftover turn-scoped staged attachment directory on child exit/crash/stop (`TASK-98.3` AC #3).
+    crate::turn_attachments::purge_all_stale_turn_dirs(&ctx.attachments_root);
     let mut state = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
     let _ = state.backgrounds.reap_all(rfc3339_now());
     if !cleanup_verified {
