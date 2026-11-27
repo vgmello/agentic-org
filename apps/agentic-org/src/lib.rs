@@ -293,6 +293,10 @@ fn dispatch(top: TopCommand, ctx: &mut ExecutionContext) -> Result<(), CliError>
         TopCommand::Restore(args) => backup::restore(args, ctx),
         TopCommand::Recovery(pass) => recovery::run(pass.args, ctx),
         TopCommand::Status(args) => status::run(args, ctx),
+        TopCommand::Logs(args) => diagnostics::logs(args, ctx),
+        TopCommand::Doctor(args) => diagnostics::doctor(args, ctx),
+        TopCommand::Support(args) => diagnostics::support(args, ctx),
+        TopCommand::Uninstall(args) => diagnostics::uninstall(args, ctx),
         TopCommand::Completion(args) => completion::run(args, cli::command(), ctx),
         _ => Err(CliError::usage("this command runs over the office channel")),
     }

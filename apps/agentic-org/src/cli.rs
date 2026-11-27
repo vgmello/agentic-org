@@ -6,8 +6,8 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use org_cli_shell::context::{ColorMode, Modes};
 
 use crate::args::PassArgs;
-use crate::features::{admin, backup, completion, context, office, org, project, provider};
-use crate::features::{release, service, sign_in, status};
+use crate::features::{admin, backup, completion, context, diagnostics, office, org, project};
+use crate::features::{provider, release, service, sign_in, status};
 
 const ABOUT: &str = "Agentic Org\n\
 Use when: operating a computer's Agentic Org host, organizations, offices, or signed-in \
@@ -141,6 +141,22 @@ pub(crate) enum TopCommand {
     /// Use when: checking which instance and office commands act on before running them.
     #[command(verbatim_doc_comment)]
     Status(status::StatusArgs),
+    /// Show recent secret-redacted host and office operational logs
+    /// Use when: inspecting recent host or office stderr logs safely without leaking tokens or keys.
+    #[command(verbatim_doc_comment)]
+    Logs(diagnostics::LogsArgs),
+    /// Run read-only host, runtime, security, and organization-state integrity diagnostics
+    /// Use when: diagnosing host permissions, registry markers, sockets, AppArmor, or durable org state.
+    #[command(verbatim_doc_comment)]
+    Doctor(diagnostics::DoctorArgs),
+    /// Build a deterministic, secret-redacted JSON diagnostic bundle
+    /// Use when: collecting shareable troubleshooting diagnostics without exposing keys or databases.
+    #[command(verbatim_doc_comment)]
+    Support(diagnostics::SupportArgs),
+    /// Cleanly uninstall an instance and clear host-registry.created
+    /// Use when: removing a stopped instance's runtime, setup, and registry markers before a fresh setup.
+    #[command(verbatim_doc_comment)]
+    Uninstall(diagnostics::UninstallArgs),
     /// Print the shell completion script
     /// Use when: enabling <TAB> completion of commands, flags, instances and organizations.
     #[command(verbatim_doc_comment)]
@@ -265,6 +281,7 @@ impl TopCommand {
             Self::Admin(args) => args.yes(),
             Self::Service(args) => args.yes(),
             Self::Restore(args) => args.yes(),
+            Self::Uninstall(args) => args.yes(),
             _ => false,
         }
     }
