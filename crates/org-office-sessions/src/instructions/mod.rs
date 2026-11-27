@@ -11,8 +11,6 @@
 //! - [`verify_command_references`] dry-parses every `agent-os` command line cited in text
 //!   against the live command table: the drift guard of all built-in text.
 
-use std::sync::OnceLock;
-
 use org_command::CommandTable;
 
 mod assemble;
@@ -31,22 +29,13 @@ pub use verify::{cited_command_lines, verify_command_references};
 /// Produces the live `agent-os` command table rendered into standing instructions (`INSTR-5`).
 pub type CommandCatalogue = fn() -> CommandTable;
 
-static INSTALLED_COMMAND_CATALOGUE: OnceLock<CommandCatalogue> = OnceLock::new();
-
-/// Installs the process-wide `agent-os` command catalogue. The office binary's composition root
-/// calls this once, before the server starts, with the CLI's own table builder, so this crate
-/// never links the CLI implementation (`TASK-171`). Returns `false` when one was already set.
-pub fn install_command_catalogue(catalogue: CommandCatalogue) -> bool {
-    INSTALLED_COMMAND_CATALOGUE.set(catalogue).is_ok()
-}
-
-/// The catalogue installed by [`install_command_catalogue`], if any.
+/// Returns the static `agent-os` command catalogue (`TASK-254`).
 pub fn installed_command_catalogue() -> Option<CommandCatalogue> {
-    INSTALLED_COMMAND_CATALOGUE.get().copied()
+    Some(org_command_catalogue::catalogue_table)
 }
 
-/// The live command table from `catalogue`, or an empty one. A composition root that never
-/// installed a catalogue is reported once on stderr, so agents' missing command list is visible.
+/// The live command table from `catalogue`, or an empty one. A caller that explicitly passes
+/// `None` is reported once on stderr, so agents' missing command list is visible.
 pub(crate) fn command_table_or_empty(catalogue: Option<CommandCatalogue>) -> CommandTable {
     static REPORTED_MISSING: std::sync::atomic::AtomicBool =
         std::sync::atomic::AtomicBool::new(false);

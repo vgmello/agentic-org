@@ -1,0 +1,18 @@
+[package]
+name = "org-command-catalogue"
+description = "Pure declarative agent-os command catalogue, schemas, aliases, and mutation policies."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+org-command = { path = "../org-command" }
+org-proto = { path = "../org-proto" }
+
+[dev-dependencies]
+org-command = { path = "../org-command", features = ["testkit"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

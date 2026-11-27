@@ -1,9 +1,9 @@
-//! Field schemas and error sets for `agent-os file` (`TASK-98.4`).
+//! Declarative command rows for `file upload|list|inspect|fetch|update|render`.
 
-use org_command::{Field, Type};
+use org_command::{Ack, Command, Example, Field, IfMatch, Kind, Type};
 use org_proto::ErrorCode;
 
-pub(super) const READ_ERRORS: &[ErrorCode] = &[
+const READ_ERRORS: &[ErrorCode] = &[
     ErrorCode::InvalidRequest,
     ErrorCode::NotFound,
     ErrorCode::NotAuthorized,
@@ -11,7 +11,7 @@ pub(super) const READ_ERRORS: &[ErrorCode] = &[
     ErrorCode::Unavailable,
 ];
 
-pub(super) const WRITE_ERRORS: &[ErrorCode] = &[
+const WRITE_ERRORS: &[ErrorCode] = &[
     ErrorCode::InvalidRequest,
     ErrorCode::AlreadyExists,
     ErrorCode::NotFound,
@@ -28,7 +28,7 @@ const STATUSES: &[&str] = &["draft", "review", "final", "superseded", "archived"
 const RENDER_FORMATS: &[&str] = &["pdf"];
 const RENDER_STATUSES: &[&str] = &["draft", "review", "final"];
 
-pub(super) const FILE_FIELDS: &[Field] = &[
+const FILE_FIELDS: &[Field] = &[
     Field::required("id", Type::String, "Attachment UUIDv7"),
     Field::required(
         "scope",
@@ -60,7 +60,7 @@ pub(super) const FILE_FIELDS: &[Field] = &[
     Field::required("content_sha256", Type::String, "Stored SHA-256 hex digest"),
 ];
 
-pub(super) const FILE_UPLOAD_INPUT: &[Field] = &[
+const FILE_UPLOAD_INPUT: &[Field] = &[
     Field::required(
         "path",
         Type::String,
@@ -94,7 +94,7 @@ pub(super) const FILE_UPLOAD_INPUT: &[Field] = &[
     ),
 ];
 
-pub(super) const FILE_LIST_INPUT: &[Field] = &[
+const FILE_LIST_INPUT: &[Field] = &[
     Field::optional(
         "scope",
         Type::Enum(SCOPES),
@@ -104,15 +104,14 @@ pub(super) const FILE_LIST_INPUT: &[Field] = &[
     Field::optional("task", Type::String, "Task UUIDv7 or T-<CODE><N> key"),
 ];
 
-pub(super) const FILE_ID_INPUT: &[Field] =
-    &[Field::required("id", Type::String, "Attachment UUIDv7")];
+const FILE_ID_INPUT: &[Field] = &[Field::required("id", Type::String, "Attachment UUIDv7")];
 
-pub(super) const FILE_FETCH_INPUT: &[Field] = &[
+const FILE_FETCH_INPUT: &[Field] = &[
     Field::required("id", Type::String, "Attachment UUIDv7"),
     Field::required("output", Type::String, "Writable local output file path"),
 ];
 
-pub(super) const FILE_FETCH_OUTPUT: &[Field] = &[
+const FILE_FETCH_OUTPUT: &[Field] = &[
     Field::required("id", Type::String, "Attachment UUIDv7"),
     Field::required("output", Type::String, "Canonical path written"),
     Field::required("byte_count", Type::Integer, "Bytes written"),
@@ -123,7 +122,7 @@ pub(super) const FILE_FETCH_OUTPUT: &[Field] = &[
     ),
 ];
 
-pub(super) const FILE_UPDATE_INPUT: &[Field] = &[
+const FILE_UPDATE_INPUT: &[Field] = &[
     Field::required("id", Type::String, "Attachment UUIDv7"),
     Field::optional("title", Type::String, "Updated title (1..=160 chars)"),
     Field::optional(
@@ -134,7 +133,7 @@ pub(super) const FILE_UPDATE_INPUT: &[Field] = &[
     Field::optional("status", Type::Enum(STATUSES), "Updated artifact status"),
 ];
 
-pub(super) const FILE_RENDER_INPUT: &[Field] = &[
+const FILE_RENDER_INPUT: &[Field] = &[
     Field::required(
         "from",
         Type::String,
@@ -187,7 +186,7 @@ pub(super) const FILE_RENDER_INPUT: &[Field] = &[
     ),
 ];
 
-pub(super) const FILE_RENDER_OUTPUT: &[Field] = &[
+const FILE_RENDER_OUTPUT: &[Field] = &[
     Field::optional(
         "attachment_id",
         Type::String,
@@ -212,6 +211,112 @@ pub(super) const FILE_RENDER_OUTPUT: &[Field] = &[
     ),
 ];
 
-pub(super) const FILE_EXAMPLE_JSON: &str = r#"{"id":"0193a5c0-0000-7000-8000-000000000500","scope":"shared","target_kind":"organization","filename":"spec.md","mime_type":"text/markdown","byte_count":42,"title":"Spec","artifact_status":"final","uploaded_by_employee_id":"0193a5c0-0000-7000-8000-000000000020","created_at":"2026-11-27T00:00:00.000Z","updated_at":"2026-11-27T00:00:00.000Z","content_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
+const FILE_EXAMPLE_JSON: &str = r#"{"id":"0193a5c0-0000-7000-8000-000000000500","scope":"shared","target_kind":"organization","filename":"spec.md","mime_type":"text/markdown","byte_count":42,"title":"Spec","artifact_status":"final","uploaded_by_employee_id":"0193a5c0-0000-7000-8000-000000000020","created_at":"2026-11-27T00:00:00.000Z","updated_at":"2026-11-27T00:00:00.000Z","content_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
 
-pub(super) const FILE_RENDER_EXAMPLE_JSON: &str = r#"{"attachment_id":"0193a5c0-0000-7000-8000-000000000500","canonical_url":"/api/v1/organizations/0193a5c0-0000-7000-8000-000000000001/attachments/0193a5c0-0000-7000-8000-000000000500","page_count":2,"byte_count":4096,"content_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
+const FILE_RENDER_EXAMPLE_JSON: &str = r#"{"attachment_id":"0193a5c0-0000-7000-8000-000000000500","canonical_url":"/api/v1/organizations/0193a5c0-0000-7000-8000-000000000001/attachments/0193a5c0-0000-7000-8000-000000000500","page_count":2,"byte_count":4096,"content_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
+
+/// The `file` command rows.
+pub const COMMANDS: &[Command] = &[
+    Command {
+        resource: "file",
+        verb: "upload",
+        summary: "Upload and attach a file",
+        call: "attachment.attach",
+        kind: Kind::Write {
+            ack: Ack::Durable,
+            if_match: IfMatch::No,
+        },
+        input: FILE_UPLOAD_INPUT,
+        content_field: None,
+        output: FILE_FIELDS,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"path":"spec.md","scope":"org","title":"Spec"}"#,
+            output: FILE_EXAMPLE_JSON,
+        },
+    },
+    Command {
+        resource: "file",
+        verb: "list",
+        summary: "List files in a scope",
+        call: "attachment.list",
+        kind: Kind::List,
+        input: FILE_LIST_INPUT,
+        content_field: None,
+        output: FILE_FIELDS,
+        errors: READ_ERRORS,
+        example: Example {
+            input: r#"{"scope":"org"}"#,
+            output: r#"[{"id":"0193a5c0-0000-7000-8000-000000000500","scope":"shared","target_kind":"organization","filename":"spec.md","mime_type":"text/markdown","byte_count":42,"title":"Spec","artifact_status":"final","uploaded_by_employee_id":"0193a5c0-0000-7000-8000-000000000020","created_at":"2026-11-27T00:00:00.000Z","updated_at":"2026-11-27T00:00:00.000Z","content_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}]"#,
+        },
+    },
+    Command {
+        resource: "file",
+        verb: "inspect",
+        summary: "Inspect file metadata",
+        call: "attachment.inspect",
+        kind: Kind::Read,
+        input: FILE_ID_INPUT,
+        content_field: None,
+        output: FILE_FIELDS,
+        errors: READ_ERRORS,
+        example: Example {
+            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000500"}"#,
+            output: FILE_EXAMPLE_JSON,
+        },
+    },
+    Command {
+        resource: "file",
+        verb: "fetch",
+        summary: "Download a file locally",
+        call: "attachment.read_chunk",
+        kind: Kind::Read,
+        input: FILE_FETCH_INPUT,
+        content_field: None,
+        output: FILE_FETCH_OUTPUT,
+        errors: READ_ERRORS,
+        example: Example {
+            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000500","output":"spec.md"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000500","output":"spec.md","byte_count":42,"content_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#,
+        },
+    },
+    Command {
+        resource: "file",
+        verb: "update",
+        summary: "Update file metadata",
+        call: "attachment.update_meta",
+        kind: Kind::Write {
+            ack: Ack::Durable,
+            if_match: IfMatch::No,
+        },
+        input: FILE_UPDATE_INPUT,
+        content_field: None,
+        output: FILE_FIELDS,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000500","title":"Final spec","status":"final"}"#,
+            output: FILE_EXAMPLE_JSON,
+        },
+    },
+    Command {
+        resource: "file",
+        verb: "render",
+        summary: "Render Markdown/HTML to PDF",
+        call: "attachment.render",
+        kind: Kind::Write {
+            ack: Ack::Durable,
+            if_match: IfMatch::No,
+        },
+        input: FILE_RENDER_INPUT,
+        content_field: None,
+        output: FILE_RENDER_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"from":"report.md","to":"pdf","scope":"org","title":"Report"}"#,
+            output: FILE_RENDER_EXAMPLE_JSON,
+        },
+    },
+];
+
+/// All command row slices in the files domain.
+pub const ALL: &[&[Command]] = &[COMMANDS];

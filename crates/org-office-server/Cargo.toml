@@ -30,8 +30,8 @@ org-office-launch = { path = "../org-office-launch" }
 org-office-sessions = { path = "../org-office-sessions" }
 # The default office home and the socket path limit of the build target.
 org-platform = { path = "../org-platform" }
-# Shared declarative `agent-os` command table, `MutationPolicy`, and input validator (`TASK-80.4`).
-org-agent-cli = { path = "../org-agent-cli" }
+# Shared declarative `agent-os` command table and `MutationPolicy` (`TASK-80.4`, `TASK-254`).
+org-command-catalogue = { path = "../org-command-catalogue" }
 org-tess = { path = "../org-tess" }
 libc.workspace = true
 ring = "=0.17.14"
@@ -41,6 +41,7 @@ hmac.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+org-agent-cli = { path = "../org-agent-cli" }
 org-agent-runtime = { path = "../org-agent-runtime" }
 org-sync = { path = "../org-sync" }
 org-office = { path = "../org-office", features = ["testkit"] }

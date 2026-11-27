@@ -34,7 +34,7 @@
 //! acting for nobody (a wake) gets only the open class, and no DM at all. When the office
 //! cannot read what the gate needs, every bound member is refused (fail closed).
 
-use org_agent_cli::MutationPolicy;
+use org_command_catalogue::MutationPolicy;
 use org_proto::ask::ChatAnswer;
 use org_proto::chat::{ChatReact, ConversationKind, ConversationSummary};
 use org_proto::msg::MsgReply;
@@ -253,7 +253,7 @@ pub(crate) fn access(method: &str) -> Access {
 /// `agent-os` [`org_command::CommandTable`] first and failing closed to `ConfirmRequired` for any
 /// unknown method.
 pub(super) fn mutation_policy_for_rpc(method: &str) -> MutationPolicy {
-    if let Some(policy) = org_agent_cli::runtime_table().mutation_policy_for_call(method) {
+    if let Some(policy) = org_command_catalogue::runtime_table().mutation_policy_for_call(method) {
         return policy;
     }
     if NON_CLI_READ_ONLY.contains(&method) {

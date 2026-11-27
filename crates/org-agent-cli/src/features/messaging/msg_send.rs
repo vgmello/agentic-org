@@ -1,7 +1,7 @@
 //! `msg send|reply|done|defer|unsnooze`: sending and replying to messages, answering an ask,
 //! and triaging the inbox.
 
-use org_command::{Ack, Answer, Command, Example, IfMatch, Kind, Refusal, Request};
+use org_command::{Answer, Refusal, Request};
 use org_proto::attachments::MESSAGE_ATTACHMENTS_MAX;
 use org_proto::chat::ChatSendResult;
 use org_proto::msg::SendResult;
@@ -9,11 +9,6 @@ use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
 
 use super::msg_ask::write_msg_answer;
-use super::schema::{
-    MSG_DEFER_INPUT, MSG_DEFER_OUTPUT, MSG_DONE_INPUT, MSG_DONE_OUTPUT, MSG_REPLY_INPUT,
-    MSG_REPLY_OUTPUT, MSG_SEND_INPUT, MSG_SEND_OUTPUT, MSG_UNSNOOZE_INPUT, MSG_UNSNOOZE_OUTPUT,
-    WRITE_ERRORS,
-};
 use super::{insert_delivery, message_id_for, with_ack};
 use crate::runtime::domain::CommandCue;
 use crate::runtime::file_transfer::resolve_attach_ids;
@@ -21,100 +16,6 @@ use crate::runtime::input::{
     decode_err, insert_opt, opt_bool, opt_str, opt_str_list, reject_dry_run, require_str,
 };
 use crate::runtime::transport::OfficeTransport;
-
-/// The `msg send`, `msg reply`, `msg done`, `msg defer` and `msg unsnooze` rows.
-pub(super) const COMMANDS: &[Command] = &[
-    Command {
-        resource: "msg",
-        verb: "send",
-        summary: "Send DM or #channel message",
-        call: "chat.send",
-        kind: Kind::Write {
-            ack: Ack::Committed,
-            if_match: IfMatch::No,
-        },
-        input: MSG_SEND_INPUT,
-        content_field: Some("body"),
-        output: MSG_SEND_OUTPUT,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r##"{"to":"#general","body":"Status update for @ada"}"##,
-            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000101","conversation_id":"0193a5c0-0000-7000-8000-000000000100","thread_id":"0193a5c0-0000-7000-8000-000000000101","local_seq":1,"origin_seq":1,"mentions":[{"employee_id":"0193a5c0-0000-7000-8000-000000000004","handle":"ada","display_name":"Ada"}],"unmatched_mentions":[],"recipient_presence":[{"member_id":"0193a5c0-0000-7000-8000-000000000004","presence":"asleep"}],"woke_agents":["0193a5c0-0000-7000-8000-000000000004"]}"#,
-        },
-    },
-    Command {
-        resource: "msg",
-        verb: "reply",
-        summary: "Reply to message or ask",
-        call: "msg.reply",
-        kind: Kind::Write {
-            ack: Ack::Committed,
-            if_match: IfMatch::No,
-        },
-        input: MSG_REPLY_INPUT,
-        content_field: Some("body"),
-        output: MSG_REPLY_OUTPUT,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000101","body":"On it."}"#,
-            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000102","thread_id":"0193a5c0-0000-7000-8000-000000000101","local_seq":2,"origin_seq":2}"#,
-        },
-    },
-    Command {
-        resource: "msg",
-        verb: "done",
-        summary: "Mark inbox message done",
-        call: "msg.done",
-        kind: Kind::Write {
-            ack: Ack::Committed,
-            if_match: IfMatch::No,
-        },
-        input: MSG_DONE_INPUT,
-        content_field: None,
-        output: MSG_DONE_OUTPUT,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000101"}"#,
-            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000101","state":"done","resolved_at":"2026-11-21T12:03:00.000Z"}"#,
-        },
-    },
-    Command {
-        resource: "msg",
-        verb: "defer",
-        summary: "Snooze or defer a message",
-        call: "msg.defer",
-        kind: Kind::Write {
-            ack: Ack::Committed,
-            if_match: IfMatch::No,
-        },
-        input: MSG_DEFER_INPUT,
-        content_field: None,
-        output: MSG_DEFER_OUTPUT,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000101","after_task":true}"#,
-            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000101","state":"snoozed","triage_gen":1,"snooze_after_task":true}"#,
-        },
-    },
-    Command {
-        resource: "msg",
-        verb: "unsnooze",
-        summary: "Un-snooze a message early",
-        call: "msg.unsnooze",
-        kind: Kind::Write {
-            ack: Ack::Committed,
-            if_match: IfMatch::No,
-        },
-        input: MSG_UNSNOOZE_INPUT,
-        content_field: None,
-        output: MSG_UNSNOOZE_OUTPUT,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000101"}"#,
-            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000101","state":"unread","triage_gen":2}"#,
-        },
-    },
-];
 
 /// `Use when:` guidance of each `msg` command here.
 pub(super) const CUES: &[CommandCue] = &[

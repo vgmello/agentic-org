@@ -57,7 +57,7 @@ fn input<'a>(
 }
 
 fn live_table() -> org_command::CommandTable {
-    org_agent_cli::table()
+    org_command_catalogue::table()
 }
 
 fn common_prefix_len(a: &str, b: &str) -> usize {
@@ -598,7 +598,8 @@ fn command_table_or_empty_without_an_installed_catalogue_is_an_empty_table() {
         empty.catalogue()
     );
 
-    let live = crate::instructions::command_table_or_empty(Some(org_agent_cli::catalogue_table));
+    let live =
+        crate::instructions::command_table_or_empty(Some(org_command_catalogue::catalogue_table));
     assert!(
         !live.rows().is_empty(),
         "an installed catalogue is used as given"

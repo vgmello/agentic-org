@@ -4,7 +4,7 @@
 mod hiring;
 mod messaging;
 
-use org_agent_cli::{Command, MutationPolicy};
+use org_command_catalogue::{Command, MutationPolicy};
 use org_office::organization_family::records::EmployeeKind;
 use org_office::rules::OrgCommand;
 use org_office::CallerAuthority;
@@ -21,7 +21,7 @@ use super::{unavailable, DelegationAccess as Access, TessService};
 pub(super) const HIRE_NOT_VISIBLE: &str = "hire request not found or not visible to caller";
 
 /// V1 allowlisted target RPC methods that Tess may propose for human confirmation.
-const ALLOWED_SUGGESTION_CALLS: &[&str] = &[
+pub(crate) const ALLOWED_SUGGESTION_CALLS: &[&str] = &[
     "chat.ask",
     "chat.channel_create",
     "chat.channel_join",
@@ -116,7 +116,7 @@ pub(super) fn resolve_target_command(raw: &str) -> Result<&'static Command, ApiE
             "`command` must name a target `<resource> <verb>` command",
         ));
     }
-    let table = org_agent_cli::runtime_table();
+    let table = org_command_catalogue::runtime_table();
     let expanded = table.expand(&words);
     let [resource, verb] = expanded.as_ref() else {
         return Err(ApiError::new(

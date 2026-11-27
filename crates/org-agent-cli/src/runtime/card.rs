@@ -1,9 +1,10 @@
 //! The directory card: the one view of an employee (`who`) that several slices print —
 //! `person inspect` and `team inspect` (organization), `agent inspect` (hiring) and
-//! `directory list` / `who` (organization). Its schema and its rendering live here once, so
-//! the slices share the view without naming each other.
+//! `directory list` / `who` (organization). Its rendering lives here once, so the slices share
+//! the view without naming each other; its declarative schema lives in
+//! `org_command_catalogue::shared`.
 
-use org_command::{Answer, Field, Refusal, Request, Type};
+use org_command::{Answer, Refusal, Request};
 use org_proto::directory::{DirectoryCard, WhoResult};
 use org_proto::org::MemberKind;
 use org_proto::ErrorCode;
@@ -11,65 +12,6 @@ use serde_json::{json, Map, Value};
 
 use crate::runtime::input::{decode_err, require_str};
 use crate::runtime::transport::OfficeTransport;
-
-const CARD_TEAM_FIELDS: &[Field] = &[
-    Field::required("id", Type::String, "Team ID"),
-    Field::required("name", Type::String, "Team name"),
-    Field::optional("title_in_team", Type::String, "Employee title in the team"),
-];
-
-const CARD_TEAM_TYPE: Type = Type::Object(CARD_TEAM_FIELDS);
-
-/// The full directory card, with the employee's teams.
-pub(crate) const DIRECTORY_CARD_FIELDS: &[Field] = &[
-    Field::required("id", Type::String, "Employee ID"),
-    Field::required("name", Type::String, "Display name"),
-    Field::optional("handle", Type::String, "Addressing handle"),
-    Field::required(
-        "kind",
-        Type::Enum(&["person", "agent", "unknown"]),
-        "Employee kind",
-    ),
-    Field::required("owner", Type::Boolean, "Whether this member is the owner"),
-    Field::optional(
-        "agent_status",
-        Type::Enum(&["active", "paused", "offboarded", "unknown"]),
-        "Agent lifecycle status",
-    ),
-    Field::optional("role_title", Type::String, "Agent role title"),
-    Field::required(
-        "presence",
-        Type::Enum(&[
-            "online",
-            "available",
-            "busy",
-            "idle",
-            "needs_you",
-            "waiting_for_answer",
-            "paused",
-            "unable_to_run",
-            "with_you",
-            "asleep",
-            "offline",
-            "unknown",
-        ]),
-        "Current presence",
-    ),
-    Field::required(
-        "teams",
-        Type::List(&CARD_TEAM_TYPE),
-        "Team membership cards",
-    ),
-];
-
-pub(crate) const DIRECTORY_CARD_TYPE: Type = Type::Object(DIRECTORY_CARD_FIELDS);
-
-/// The input of `person inspect` and `agent inspect`.
-pub(crate) const MEMBER_INSPECT_INPUT: &[Field] = &[Field::required(
-    "member",
-    Type::String,
-    "Employee ID, handle, or owner",
-)];
 
 /// The card as a command prints it; each row's schema keeps the fields it declares.
 pub(crate) fn card_value(card: &DirectoryCard) -> Value {

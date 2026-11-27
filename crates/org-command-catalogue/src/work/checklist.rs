@@ -1,9 +1,9 @@
-//! Command rows, schemas, examples, and guidance for `checklist` (`TASK-49`, `TASK-90`).
+//! Declarative rows for `checklist list|add|check|edit|remove|move`.
 
 use org_command::{Ack, Command, Example, Field, IfMatch, Kind, Type};
 
-use super::schema::{READ_ERRORS, STRING_TYPE, WRITE_ERRORS};
-use crate::runtime::domain::CommandCue;
+use super::schema::{READ_ERRORS, WRITE_ERRORS};
+use crate::shared::STRING_TYPE;
 
 const INTEGER_TYPE: Type = Type::Integer;
 const SECTION_VALUES: &[&str] = &["acceptance", "dod", "work"];
@@ -205,7 +205,7 @@ const CHECKLIST_STEP_RECEIPT_EXAMPLE_JSON: &str = r#"{"task_id":"0193a5c0-0000-7
 const CHECKLIST_REMOVE_EXAMPLE_JSON: &str = r#"{"task_id":"0193a5c0-0000-7000-8000-000000000100","key":"T-A1","revision":2,"progress":{"total":0,"done":0,"required_total":0,"required_done":0,"acceptance":{"total":0,"done":0,"required_total":0,"required_done":0},"dod":{"total":0,"done":0,"required_total":0,"required_done":0},"work":{"total":0,"done":0,"required_total":0,"required_done":0}},"removed_step_id":"0193a5c0-0000-7000-8000-000000000200"}"#;
 
 /// The `checklist` rows.
-pub(super) const COMMANDS: &[Command] = &[
+pub const CHECKLIST_COMMANDS: &[Command] = &[
     Command {
         resource: "checklist",
         verb: "list",
@@ -311,38 +311,4 @@ pub(super) const COMMANDS: &[Command] = &[
             output: CHECKLIST_STEP_RECEIPT_EXAMPLE_JSON,
         },
     },
-];
-
-/// `Use when:` guidance of each `checklist` command.
-pub(super) const CUES: &[CommandCue] = &[
-    (
-        "checklist",
-        "add",
-        "appending one or more steps (repeat `--text`, optional `--section`) to a task's checklist.",
-    ),
-    (
-        "checklist",
-        "check",
-        "marking checklist step(s) done (or `--undone`) by `--step-id` or `--section` + `--index` with `--if-match`.",
-    ),
-    (
-        "checklist",
-        "edit",
-        "updating a step's wording or `--required`/`--optional` flag by `--step-id` or `--section` + `--index` with `--if-match`.",
-    ),
-    (
-        "checklist",
-        "list",
-        "listing checklist progress and 1-based ordinals (filter with `--section` or `--unchecked`) without fetching task body or history.",
-    ),
-    (
-        "checklist",
-        "move",
-        "reordering a checklist step to a zero-based `--position` (or `--to-section`) by `--step-id` or `--section` + `--index` with `--if-match`.",
-    ),
-    (
-        "checklist",
-        "remove",
-        "deleting an obsolete checklist step by `--step-id` or `--section` + `--index` with `--if-match`.",
-    ),
 ];

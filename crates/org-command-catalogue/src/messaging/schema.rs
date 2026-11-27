@@ -1,9 +1,9 @@
-//! The messaging slice's error lists and the field schema the `msg` rows share (send, reply,
-//! inbox, read, list, done, defer, unsnooze, wait); `msg ask`, `channel` and `status` keep theirs
-//! in their own files.
+//! Shared field schemas and error sets for the messaging domain.
 
 use org_command::{Field, Type};
 use org_proto::ErrorCode;
+
+use crate::shared::STRING_TYPE;
 
 pub(super) const READ_ERRORS: &[ErrorCode] = &[
     ErrorCode::InvalidRequest,
@@ -26,8 +26,6 @@ pub(super) const WRITE_ERRORS: &[ErrorCode] = &[
     ErrorCode::Unavailable,
 ];
 
-pub(super) const STRING_TYPE: Type = Type::String;
-
 pub(super) const MENTION_FIELDS: &[Field] = &[
     Field::required("employee_id", Type::String, "Mentioned employee UUIDv7"),
     Field::required("handle", Type::String, "Mentioned employee handle"),
@@ -39,6 +37,37 @@ pub(super) const MENTION_FIELDS: &[Field] = &[
 ];
 
 pub(super) const MENTION_TYPE: Type = Type::Object(MENTION_FIELDS);
+
+const RECIPIENT_PRESENCE_ITEM: &[Field] = &[
+    Field::required("member_id", Type::String, "Recipient employee UUIDv7"),
+    Field::required(
+        "presence",
+        Type::String,
+        "Recipient presence when sent (e.g. available, busy, asleep, offline)",
+    ),
+    Field::optional("detail", Type::String, "What the presence means right now"),
+    Field::optional(
+        "away_since",
+        Type::String,
+        "RFC 3339 UTC time the recipient went away",
+    ),
+];
+
+const RECIPIENT_PRESENCE_TYPE: Type = Type::Object(RECIPIENT_PRESENCE_ITEM);
+
+/// Each recipient's presence when the message or ask was sent.
+pub(super) const RECIPIENT_PRESENCE_FIELD: Field = Field::required(
+    "recipient_presence",
+    Type::List(&RECIPIENT_PRESENCE_TYPE),
+    "Each recipient's presence when sent (empty when none was reported)",
+);
+
+/// The agents the office woke to handle the message or ask.
+pub(super) const WOKE_AGENTS_FIELD: Field = Field::required(
+    "woke_agents",
+    Type::List(&STRING_TYPE),
+    "Agent employee UUIDv7s the office woke for it",
+);
 
 pub(super) const MSG_SEND_INPUT: &[Field] = &[
     Field::required(
@@ -108,38 +137,6 @@ pub(super) const MSG_SEND_OUTPUT: &[Field] = &[
     RECIPIENT_PRESENCE_FIELD,
     WOKE_AGENTS_FIELD,
 ];
-
-const RECIPIENT_PRESENCE_ITEM: &[Field] = &[
-    Field::required("member_id", Type::String, "Recipient employee UUIDv7"),
-    Field::required(
-        "presence",
-        Type::String,
-        "Recipient presence when sent (e.g. available, busy, asleep, offline)",
-    ),
-    Field::optional("detail", Type::String, "What the presence means right now"),
-    Field::optional(
-        "away_since",
-        Type::String,
-        "RFC 3339 UTC time the recipient went away",
-    ),
-];
-
-const RECIPIENT_PRESENCE_TYPE: Type = Type::Object(RECIPIENT_PRESENCE_ITEM);
-
-/// Each recipient's presence when the message or ask was sent, so a sender knows who will see
-/// it soon.
-pub(super) const RECIPIENT_PRESENCE_FIELD: Field = Field::required(
-    "recipient_presence",
-    Type::List(&RECIPIENT_PRESENCE_TYPE),
-    "Each recipient's presence when sent (empty when none was reported)",
-);
-
-/// The agents the office woke to handle the message or ask.
-pub(super) const WOKE_AGENTS_FIELD: Field = Field::required(
-    "woke_agents",
-    Type::List(&STRING_TYPE),
-    "Agent employee UUIDv7s the office woke for it",
-);
 
 pub(super) const MSG_REPLY_INPUT: &[Field] = &[
     Field::required("id", Type::String, "Message or ask ID being replied to"),

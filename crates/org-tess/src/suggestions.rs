@@ -3,7 +3,7 @@
 
 use std::collections::VecDeque;
 
-use org_agent_cli::IfMatch;
+use org_command_catalogue::{Command, IfMatch};
 use org_proto::tess::{
     SuggestionActionResult, SuggestionCreateParams, SuggestionCreateResult,
     SuggestionDismissParams, SuggestionInspectParams, SuggestionInspectResult,
@@ -174,7 +174,7 @@ struct ValidatedCreate {
     summary: String,
     rationale: Option<String>,
     ttl_secs: u64,
-    row: &'static org_agent_cli::Command,
+    row: &'static Command,
 }
 
 fn validate_create_params(params: &SuggestionCreateParams) -> Result<ValidatedCreate, ApiError> {
@@ -209,7 +209,7 @@ fn validate_create_params(params: &SuggestionCreateParams) -> Result<ValidatedCr
         ));
     }
     let row = resolve_target_command(&params.command)?;
-    if let Err(problem) = org_agent_cli::validate_input(row, &params.input) {
+    if let Err(problem) = org_command_catalogue::validate_input(row, &params.input) {
         return Err(ApiError::new(
             ErrorCode::InvalidRequest,
             format!("invalid target input for `{}`: {problem}", row.name()),

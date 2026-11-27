@@ -3,11 +3,12 @@
 
 use std::collections::BTreeSet;
 
-use org_command::{Answer, IfMatch, Kind, Office, Request, Type, CATALOGUE_LIMIT};
+use org_command::{Answer, IfMatch, Kind, MutationPolicy, Office, Request, Type, CATALOGUE_LIMIT};
+use org_command_catalogue::shared::DIRECTORY_CARD_FIELDS;
+use org_command_catalogue::POLICY_OVERRIDES;
 use serde_json::{json, Value};
 
 use super::*;
-use crate::runtime::card::DIRECTORY_CARD_FIELDS;
 use crate::runtime::domain::{command_cue, resource_cue};
 use crate::runtime::transport::{OfficeTransport, TransportOffice};
 use crate::SESSION_ATTACH_HELP;
@@ -458,9 +459,18 @@ fn every_agent_os_help_tier_and_alias_includes_use_when_guidance() {
 #[test]
 fn the_table_has_every_row_of_every_slice_once_and_dispatch_owns_each() {
     let live = table();
+    let domain_rows: usize = DOMAINS
+        .iter()
+        .flat_map(|domain| domain.commands.iter().copied())
+        .map(<[_]>::len)
+        .sum();
+    assert_eq!(live.rows().len(), domain_rows);
     assert_eq!(
         live.rows().len(),
-        rows().iter().map(|r| r.len()).sum::<usize>()
+        org_command_catalogue::rows()
+            .iter()
+            .map(|r| r.len())
+            .sum::<usize>()
     );
     assert_eq!(
         live.rows().len(),

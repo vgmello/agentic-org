@@ -1,6 +1,6 @@
 //! Message reads: inbox, one message, list and waits.
 
-use org_command::{Answer, Command, Example, Kind, Refusal, Request};
+use org_command::{Answer, Refusal, Request};
 use org_proto::ask::{AskStatus, ChatWaitAskResult, MAX_SHORT_HOLD_MS};
 use org_proto::chat::{ChatInboxResult, ChatMessageView, ChatMessagesResult};
 use org_proto::msg::{HeaderPage, MsgReadResult, MsgWaitResult, MAX_WAIT_MS};
@@ -8,78 +8,10 @@ use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
 
 use super::msg_ask::{ask_meta_status, insert_ask_outcome_fields};
-use super::schema::{
-    MSG_INBOX_INPUT, MSG_INBOX_ITEM_FIELDS, MSG_LIST_INPUT, MSG_LIST_ITEM_FIELDS, MSG_READ_INPUT,
-    MSG_READ_OUTPUT, MSG_WAIT_INPUT, MSG_WAIT_OUTPUT, READ_ERRORS,
-};
 use super::{parse_u64_cursor, AskOutcomeRef};
 use crate::runtime::domain::CommandCue;
 use crate::runtime::input::{decode_err, insert_opt, opt_bool, opt_str, opt_u64};
 use crate::runtime::transport::OfficeTransport;
-
-/// The `msg inbox`, `msg read`, `msg list` and `msg wait` rows.
-pub(super) const COMMANDS: &[Command] = &[
-    Command {
-        resource: "msg",
-        verb: "inbox",
-        summary: "List inbox items and delivery reasons",
-        call: "chat.inbox",
-        kind: Kind::List,
-        input: MSG_INBOX_INPUT,
-        content_field: None,
-        output: MSG_INBOX_ITEM_FIELDS,
-        errors: READ_ERRORS,
-        example: Example {
-            input: "{}",
-            output: r#"[{"id":"0193a5c0-0000-7000-8000-000000000101","conversation_id":"0193a5c0-0000-7000-8000-000000000100","thread_id":"0193a5c0-0000-7000-8000-000000000101","from_member_id":"0193a5c0-0000-7000-8000-000000000002","from_display_name":"Owner","kind":"msg","priority":"normal","urgent":false,"created_at":"2026-11-21T12:00:00.000Z","state":"unread","delivered_because":"mention","local_seq":1}]"#,
-        },
-    },
-    Command {
-        resource: "msg",
-        verb: "read",
-        summary: "Read message or claim next unread",
-        call: "msg.read",
-        kind: Kind::Read,
-        input: MSG_READ_INPUT,
-        content_field: None,
-        output: MSG_READ_OUTPUT,
-        errors: READ_ERRORS,
-        example: Example {
-            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000101"}"#,
-            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000101","thread_id":"0193a5c0-0000-7000-8000-000000000101","from_member_id":"0193a5c0-0000-7000-8000-000000000002","from_display_name":"Owner","to_member_id":"0193a5c0-0000-7000-8000-000000000004","kind":"msg","priority":"normal","body":"Hello","state":"read","created_at":"2026-11-21T12:00:00.000Z"}"#,
-        },
-    },
-    Command {
-        resource: "msg",
-        verb: "list",
-        summary: "List channel, DM, or thread messages",
-        call: "chat.messages",
-        kind: Kind::List,
-        input: MSG_LIST_INPUT,
-        content_field: None,
-        output: MSG_LIST_ITEM_FIELDS,
-        errors: READ_ERRORS,
-        example: Example {
-            input: r##"{"channel":"#general"}"##,
-            output: r#"[{"id":"0193a5c0-0000-7000-8000-000000000101","thread_id":"0193a5c0-0000-7000-8000-000000000101","from_member_id":"0193a5c0-0000-7000-8000-000000000002","from_display_name":"Owner","kind":"msg","priority":"normal","body":"Hello","created_at":"2026-11-21T12:00:00.000Z"}]"#,
-        },
-    },
-    Command {
-        resource: "msg",
-        verb: "wait",
-        summary: "Wait for message or ask (<=90s)",
-        call: "msg.wait",
-        kind: Kind::Read,
-        input: MSG_WAIT_INPUT,
-        content_field: None,
-        output: MSG_WAIT_OUTPUT,
-        errors: READ_ERRORS,
-        example: Example {
-            input: r#"{"timeout_ms":5000}"#,
-            output: r#"{"woken":false}"#,
-        },
-    },
-];
 
 /// `Use when:` guidance of each `msg` command here.
 pub(super) const CUES: &[CommandCue] = &[

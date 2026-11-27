@@ -7,8 +7,7 @@ mod context;
 mod inspect;
 mod skills;
 
-use org_command::{Alias, Answer, Command, CommandTable, Request, Type};
-use org_proto::ErrorCode;
+use org_command::{Answer, CommandTable, Request};
 
 pub use attach::SESSION_ATTACH_HELP;
 pub(crate) use attach::{run_attach_loop, usage_refusal, wants_help};
@@ -22,19 +21,13 @@ use crate::runtime::transport::{OfficeTransport, Refusal};
 
 /// The session slice as the registry composes it.
 pub(crate) const DOMAIN: Domain = Domain {
-    commands: &[CONTEXT_COMMANDS, inspect::COMMANDS],
+    commands: org_command_catalogue::session::ALL,
     resources: &[
         ("grant", "inspecting effective permission presets, tool rules, and sandbox boundaries for an agent."),
         ("session", "loading your rules and catalogue (`agent-os context`), inspecting agent session state/usage, or batching commands over a persistent socket (`session attach`)."),
     ],
     cues: &[CONTEXT_CUES, inspect::CUES, inspect::GRANT_CUES],
     dispatch,
-};
-
-/// `context` is `session context`.
-pub(crate) const CONTEXT_ALIAS: Alias = Alias {
-    words: &["context"],
-    command: &["session", "context"],
 };
 
 /// `session attach`, which `agent-os` runs outside the table, in `agent-os session --help`.
@@ -50,18 +43,6 @@ pub(crate) const OPERATOR_RESOURCES: &[ResourceCue] = &[(
     "session",
     "inspecting agent session state, workspace paths, stall status, and usage.",
 )];
-
-pub(super) const READ_ERRORS: &[ErrorCode] = &[
-    ErrorCode::InvalidRequest,
-    ErrorCode::NotAuthorized,
-    ErrorCode::NotBound,
-    ErrorCode::NotFound,
-    ErrorCode::Unavailable,
-];
-
-pub(super) const STRING_TYPE: Type = Type::String;
-
-const CONTEXT_COMMANDS: &[Command] = &[context::SESSION_CONTEXT];
 
 /// `Use when:` guidance of each `session` command here.
 const CONTEXT_CUES: &[CommandCue] = &[

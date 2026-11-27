@@ -11,7 +11,7 @@
 //!   [`MANDATORY_LIMIT`]. A binding that does not work fails the command: it never falls back to
 //!   offline.
 
-use org_command::{Answer, Command, Example, Field, Kind, Refusal, Request, Type};
+use org_command::{Answer, Refusal, Request};
 use org_proto::directory::{DirectoryCard, WhoResult};
 use org_proto::external_auth::{AuthWhoami, AuthWhoamiResult, SessionMode};
 use org_proto::org::MemberKind;
@@ -24,140 +24,8 @@ use org_proto::{Call, ErrorCode};
 use serde_json::{json, Map, Value};
 
 use super::skills::SKILL_INDEX;
-use super::{READ_ERRORS, STRING_TYPE};
 use crate::runtime::input::opt_str;
 use crate::runtime::transport::OfficeTransport;
-
-const CONTEXT_INPUT: &[Field] = &[
-    Field::optional(
-        "project",
-        Type::String,
-        "Also the must-follow processes of this project (UUIDv7, P-<number> key or slug)",
-    ),
-    Field::optional(
-        "offline",
-        Type::Boolean,
-        "Answer from this build alone, without the office: rules, catalogue and skills",
-    ),
-];
-
-const IDENTITY_TEAM_FIELDS: &[Field] = &[
-    Field::required("id", Type::String, "Team ID"),
-    Field::required("name", Type::String, "Team name"),
-    Field::optional("title_in_team", Type::String, "Title in the team"),
-];
-
-const IDENTITY_TEAM_TYPE: Type = Type::Object(IDENTITY_TEAM_FIELDS);
-
-const IDENTITY_FIELDS: &[Field] = &[
-    Field::required("id", Type::String, "Your employee ID"),
-    Field::required("name", Type::String, "Your display name"),
-    Field::optional("handle", Type::String, "Your handle (@handle)"),
-    Field::required(
-        "kind",
-        Type::Enum(&["person", "agent", "unknown"]),
-        "Employee kind",
-    ),
-    Field::optional("role_title", Type::String, "Your role title"),
-    Field::required(
-        "teams",
-        Type::List(&IDENTITY_TEAM_TYPE),
-        "Your teams, home team first",
-    ),
-];
-
-const SKILL_INDEX_FIELDS: &[Field] = &[
-    Field::required("key", Type::String, "Pass to `skill read --name`"),
-    Field::required("description", Type::String, "What the guide covers"),
-];
-
-const SKILL_INDEX_TYPE: Type = Type::Object(SKILL_INDEX_FIELDS);
-
-const MANDATORY_FIELDS: &[Field] = &[
-    Field::required("id", Type::String, "Document ID"),
-    Field::optional("key", Type::String, "Document key"),
-    Field::required(
-        "kind",
-        Type::Enum(&["process", "standard"]),
-        "Process or standard",
-    ),
-    Field::required(
-        "level",
-        Type::String,
-        "Where it is set: organization, team or project",
-    ),
-    Field::optional(
-        "scope_name",
-        Type::String,
-        "The team or project it is set for",
-    ),
-    Field::required("title", Type::String, "Title"),
-    Field::required("revision", Type::Integer, "Document revision"),
-    Field::required("body", Type::String, "The whole Markdown text, never cut"),
-];
-
-const MANDATORY_TYPE: Type = Type::Object(MANDATORY_FIELDS);
-
-const CONTEXT_OUTPUT: &[Field] = &[
-    Field::required(
-        "mode",
-        Type::Enum(&["offline", "managed", "external"]),
-        "offline: this build alone; managed: office-started session; external: bound external workspace",
-    ),
-    Field::optional(
-        "identity",
-        Type::Object(IDENTITY_FIELDS),
-        "Who you are (bound only)",
-    ),
-    Field::required(
-        "rules",
-        Type::String,
-        "The standing rules for your session mode",
-    ),
-    Field::required(
-        "catalogue",
-        Type::String,
-        "Every command, grouped by resource",
-    ),
-    Field::required(
-        "skills",
-        Type::List(&SKILL_INDEX_TYPE),
-        "Built-in guides: read one with `skill read --name <key>`",
-    ),
-    Field::optional(
-        "mandatory",
-        Type::List(&MANDATORY_TYPE),
-        "Must-follow (non-overridable) processes and standards that apply to you, whole (bound only)",
-    ),
-    Field::optional(
-        "mandatory_truncated",
-        Type::Boolean,
-        "Whether must-follow documents were left out to stay within 8 KiB (bound only)",
-    ),
-    Field::optional(
-        "mandatory_omitted",
-        Type::List(&STRING_TYPE),
-        "The key (or ID) of each must-follow document left out; read each with `process inspect`",
-    ),
-    Field::required("next_action", Type::String, "What to do next"),
-];
-
-/// The `session context` row.
-pub(super) const SESSION_CONTEXT: Command = Command {
-    resource: "session",
-    verb: "context",
-    summary: "Load rules, catalogue, skills and must-follow processes",
-    call: "session.context",
-    kind: Kind::Read,
-    input: CONTEXT_INPUT,
-    content_field: None,
-    output: CONTEXT_OUTPUT,
-    errors: READ_ERRORS,
-    example: Example {
-        input: r#"{"offline":true}"#,
-        output: r###"{"mode":"offline","rules":"# How you work here","catalogue":"## Commands","skills":[{"key":"agent-os-basics","description":"Command grammar."}],"next_action":"Run `agent-os context` without --offline."}"###,
-    },
-};
 
 /// The standing rules of every managed agent: the same file `org-process` builds into a managed
 /// session's standing instructions.

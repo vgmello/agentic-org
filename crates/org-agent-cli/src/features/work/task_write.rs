@@ -1,7 +1,7 @@
 //! The `task` writes: `task create|update|transition|assign|comment|watch|unwatch|dep-add|
 //! dep-remove`.
 
-use org_command::{Ack, Answer, Command, Example, IfMatch, Kind, Refusal, Request};
+use org_command::{Answer, Refusal, Request};
 use org_proto::attachments::{TASK_ATTACHMENTS_MAX, TASK_COMMENT_ATTACHMENTS_MAX};
 use org_proto::tasks::{
     PatchField, TaskPriority, TaskStatus, TasksAddDependency, TasksAddDependencyParams,
@@ -13,11 +13,6 @@ use org_proto::tasks::{
 use org_proto::{Call, ErrorCode};
 use serde_json::json;
 
-use super::schema::{
-    TASK_ASSIGN_INPUT, TASK_COMMENT_INPUT, TASK_COMMENT_OUTPUT, TASK_CREATE_INPUT,
-    TASK_DEP_MUTATION_INPUT, TASK_EXAMPLE_JSON, TASK_FIELDS, TASK_REF_INPUT, TASK_TRANSITION_INPUT,
-    TASK_UPDATE_INPUT, WRITE_ERRORS,
-};
 use super::{cmd_id, task_to_row, unreadable};
 use crate::runtime::domain::CommandCue;
 use crate::runtime::file_transfer::resolve_attach_ids;
@@ -26,172 +21,6 @@ use crate::runtime::input::{
     write_answer,
 };
 use crate::runtime::transport::OfficeTransport;
-
-/// The `task` write rows.
-pub(super) const COMMANDS: &[Command] = &[
-    Command {
-        resource: "task",
-        verb: "create",
-        summary: "Create a task, bug, or request",
-        call: "tasks.create",
-        kind: Kind::Write {
-            ack: Ack::Durable,
-            if_match: IfMatch::No,
-        },
-        input: TASK_CREATE_INPUT,
-        content_field: Some("body"),
-        output: TASK_FIELDS,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"title":"Implement auth","team_id":"0193a5c0-0000-7000-8000-000000000010","order":10,"labels":["backend","security"]}"#,
-            output: TASK_EXAMPLE_JSON,
-        },
-    },
-    Command {
-        resource: "task",
-        verb: "update",
-        summary: "Update task fields, labels, files, or order",
-        call: "tasks.update",
-        kind: Kind::Write {
-            ack: Ack::Durable,
-            if_match: IfMatch::Required,
-        },
-        input: TASK_UPDATE_INPUT,
-        content_field: Some("body"),
-        output: TASK_FIELDS,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"task":"T-A1","order":1,"add_labels":["p0"]}"#,
-            output: TASK_EXAMPLE_JSON,
-        },
-    },
-    Command {
-        resource: "task",
-        verb: "transition",
-        summary: "Change task status",
-        call: "tasks.transition",
-        kind: Kind::Write {
-            ack: Ack::Durable,
-            if_match: IfMatch::Required,
-        },
-        input: TASK_TRANSITION_INPUT,
-        content_field: None,
-        output: TASK_FIELDS,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"task":"T-A1","status":"in_progress"}"#,
-            output: TASK_EXAMPLE_JSON,
-        },
-    },
-    Command {
-        resource: "task",
-        verb: "assign",
-        summary: "Assign task team or employee",
-        call: "tasks.assign",
-        kind: Kind::Write {
-            ack: Ack::Durable,
-            if_match: IfMatch::Required,
-        },
-        input: TASK_ASSIGN_INPUT,
-        content_field: None,
-        output: TASK_FIELDS,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"task":"T-A1","assignee_id":"0193a5c0-0000-7000-8000-000000000020"}"#,
-            output: TASK_EXAMPLE_JSON,
-        },
-    },
-    Command {
-        resource: "task",
-        verb: "comment",
-        summary: "Add a public task comment",
-        call: "tasks.comment",
-        kind: Kind::Write {
-            ack: Ack::Durable,
-            if_match: IfMatch::No,
-        },
-        input: TASK_COMMENT_INPUT,
-        content_field: Some("body"),
-        output: TASK_COMMENT_OUTPUT,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"task":"T-A1","body":"Ready for review."}"#,
-            output: r#"{"task_id":"0193a5c0-0000-7000-8000-000000000100","key":"T-A1","revision":2,"comment":{"id":"0193a5c0-0000-7000-8000-000000000300","position":0,"author_id":"0193a5c0-0000-7000-8000-000000000020","created_at":"2026-11-22T00:00:00.000Z","body_markdown":"Ready for review."}}"#,
-        },
-    },
-    Command {
-        resource: "task",
-        verb: "watch",
-        summary: "Watch a task",
-        call: "tasks.watch",
-        kind: Kind::Write {
-            ack: Ack::Durable,
-            if_match: IfMatch::No,
-        },
-        input: TASK_REF_INPUT,
-        content_field: None,
-        output: TASK_FIELDS,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"task":"T-A1"}"#,
-            output: TASK_EXAMPLE_JSON,
-        },
-    },
-    Command {
-        resource: "task",
-        verb: "unwatch",
-        summary: "Stop watching a task",
-        call: "tasks.unwatch",
-        kind: Kind::Write {
-            ack: Ack::Durable,
-            if_match: IfMatch::No,
-        },
-        input: TASK_REF_INPUT,
-        content_field: None,
-        output: TASK_FIELDS,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"task":"T-A1"}"#,
-            output: TASK_EXAMPLE_JSON,
-        },
-    },
-    Command {
-        resource: "task",
-        verb: "dep-add",
-        summary: "Add task dependency",
-        call: "tasks.add_dependency",
-        kind: Kind::Write {
-            ack: Ack::Durable,
-            if_match: IfMatch::No,
-        },
-        input: TASK_DEP_MUTATION_INPUT,
-        content_field: None,
-        output: TASK_FIELDS,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"task":"T-A2","depends_on":"T-A1"}"#,
-            output: TASK_EXAMPLE_JSON,
-        },
-    },
-    Command {
-        resource: "task",
-        verb: "dep-remove",
-        summary: "Remove task dependency",
-        call: "tasks.remove_dependency",
-        kind: Kind::Write {
-            ack: Ack::Durable,
-            if_match: IfMatch::No,
-        },
-        input: TASK_DEP_MUTATION_INPUT,
-        content_field: None,
-        output: TASK_FIELDS,
-        errors: WRITE_ERRORS,
-        example: Example {
-            input: r#"{"task":"T-A2","depends_on":"T-A1"}"#,
-            output: TASK_EXAMPLE_JSON,
-        },
-    },
-];
 
 /// `Use when:` guidance of each `task` command here.
 pub(super) const CUES: &[CommandCue] = &[

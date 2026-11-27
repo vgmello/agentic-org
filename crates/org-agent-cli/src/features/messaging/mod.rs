@@ -1,13 +1,12 @@
-//! The messaging slice: `msg` (12 verbs), `channel` (5, with the `TASK-99` catch-up ladder) and
-//! `status` (2) (B6, `TASK-45`), each command's row, guidance and handler in its file; the
-//! field schema the `msg` files share is in [`schema`].
+//! The messaging slice: `msg` (12 verbs), `channel` (6, with the `TASK-99` catch-up ladder) and
+//! `status` (2) (B6, `TASK-45`), with handlers and guidance in each file and declarative rows in
+//! `org_command_catalogue::messaging`.
 
 mod channel;
 mod msg_ask;
 mod msg_ask_input;
 mod msg_read;
 mod msg_send;
-mod schema;
 mod status;
 
 use org_command::{Answer, CommandTable, Request};
@@ -21,13 +20,7 @@ use crate::runtime::transport::{command_id, write_ack, OfficeTransport, Refusal}
 
 /// The messaging slice as the registry composes it.
 pub(crate) const DOMAIN: Domain = Domain {
-    commands: &[
-        msg_send::COMMANDS,
-        msg_ask::COMMANDS,
-        msg_read::COMMANDS,
-        channel::COMMANDS,
-        status::COMMANDS,
-    ],
+    commands: org_command_catalogue::messaging::ALL,
     resources: &[
         ("channel", "listing visible channels and what is new in them, joining/leaving manual channels, marking a channel read, or summarizing channel Q&A and catch-ups."),
         ("msg", "sending DMs or channel posts, asking structured questions, triaging your inbox, or waiting for replies."),

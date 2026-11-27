@@ -1,6 +1,6 @@
 //! The work slice: `task` (14 verbs), `checklist` (6) and `task-note` (6, shorthand
-//! `task note`) (`TASK-49` `CLI-15`, `TASK-77` B4b, `TASK-90`), each command's row, guidance and
-//! handler in its file; the task schema the files share is in [`schema`].
+//! `task note`) (`TASK-49` `CLI-15`, `TASK-77` B4b, `TASK-90`), with handlers and guidance in each
+//! file and declarative rows in `org_command_catalogue::work`.
 //!
 //! Each write declares the class the office answers it in (`doc-79`, `ADR-0014`): a create
 //! inside the office's reserved number block, a comment, a watch or unwatch and a checklist
@@ -8,13 +8,11 @@
 //! dependency) or the checklist's steps (add, edit, remove, move) is `durable`.
 
 mod checklist;
-mod checklist_schema;
-mod schema;
 mod task_note;
 mod task_read;
 mod task_write;
 
-use org_command::{Alias, Answer, CommandTable, Request};
+use org_command::{Answer, CommandTable, Request};
 use org_proto::tasks::TaskView;
 use org_proto::ErrorCode;
 use serde_json::{json, Map, Value};
@@ -25,12 +23,7 @@ use crate::runtime::transport::{OfficeTransport, Refusal};
 
 /// The work slice as the registry composes it.
 pub(crate) const DOMAIN: Domain = Domain {
-    commands: &[
-        task_write::COMMANDS,
-        task_read::COMMANDS,
-        checklist_schema::COMMANDS,
-        task_note::COMMANDS,
-    ],
+    commands: org_command_catalogue::work::ALL,
     resources: &[
         ("checklist", "listing, adding, checking, editing, removing, or moving steps on a task's checklist."),
         ("task", "creating, filtering, inspecting, updating, transitioning, assigning, commenting on, or linking task dependencies."),
@@ -39,14 +32,11 @@ pub(crate) const DOMAIN: Domain = Domain {
     cues: &[
         task_write::CUES,
         task_read::CUES,
-        checklist_schema::CUES,
+        checklist::CUES,
         task_note::CUES,
     ],
     dispatch,
 };
-
-/// `task note <verb>` is `task-note <verb>`.
-pub(crate) const TASK_NOTE_ALIAS: Alias = task_note::TASK_NOTE_ALIAS;
 
 fn dispatch(
     transport: &mut dyn OfficeTransport,

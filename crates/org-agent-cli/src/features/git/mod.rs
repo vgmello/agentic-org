@@ -1,11 +1,10 @@
-//! The Git slice: `repo` and `worktree` (C7, `TASK-51`, `TASK-173`), each command's row,
-//! guidance and handler in its resource's file.
+//! The Git slice: `repo` and `worktree` (C7, `TASK-51`, `TASK-173`), with handlers and guidance
+//! in each resource's file and declarative rows in `org_command_catalogue::git`.
 
 mod repo;
 mod worktree;
 
-use org_command::{Answer, CommandTable, Request, Type};
-use org_proto::ErrorCode;
+use org_command::{Answer, CommandTable, Request};
 
 use crate::runtime::domain::Domain;
 use crate::runtime::input::command_id;
@@ -13,7 +12,7 @@ use crate::runtime::transport::{OfficeTransport, Refusal};
 
 /// The Git slice as the registry composes it.
 pub(crate) const DOMAIN: Domain = Domain {
-    commands: &[repo::COMMANDS, worktree::COMMANDS],
+    commands: org_command_catalogue::git::ALL,
     resources: &[
         ("repo", "registering or listing Git repositories, attaching them to projects, checking cache readiness, fetching new origin branches, or pushing task branches."),
         ("worktree", "listing or preparing isolated per-task Git worktrees before making code changes."),
@@ -21,38 +20,6 @@ pub(crate) const DOMAIN: Domain = Domain {
     cues: &[repo::CUES, worktree::CUES],
     dispatch,
 };
-
-const STRING_TYPE: Type = Type::String;
-
-const READ_ERRORS: &[ErrorCode] = &[
-    ErrorCode::InvalidRequest,
-    ErrorCode::NotBound,
-    ErrorCode::NotFound,
-    ErrorCode::Unavailable,
-];
-
-const WRITE_ERRORS: &[ErrorCode] = &[
-    ErrorCode::InvalidRequest,
-    ErrorCode::InvalidName,
-    ErrorCode::NotAuthorized,
-    ErrorCode::NotBound,
-    ErrorCode::NotFound,
-    ErrorCode::AlreadyExists,
-    ErrorCode::Conflict,
-    ErrorCode::OperationReused,
-    ErrorCode::Unavailable,
-];
-
-const FETCH_ERRORS: &[ErrorCode] = &[
-    ErrorCode::InvalidRequest,
-    ErrorCode::NotAuthorized,
-    ErrorCode::NotBound,
-    ErrorCode::NotFound,
-    ErrorCode::RateLimited,
-    ErrorCode::StorageError,
-    ErrorCode::Unavailable,
-    ErrorCode::Unsupported,
-];
 
 fn dispatch(
     transport: &mut dyn OfficeTransport,
