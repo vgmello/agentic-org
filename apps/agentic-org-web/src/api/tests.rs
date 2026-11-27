@@ -2318,3 +2318,6 @@ fn role_inspect_route_requires_canonical_uuidv7_before_reaching_office() {
     assert_eq!(valid.status, StatusCode::SERVICE_UNAVAILABLE);
     assert!(calls.methods().contains(&"organization.list".to_owned()));
 }
+
+#[path = "tests/attachments.rs"]
+mod attachments;
