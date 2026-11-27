@@ -125,7 +125,7 @@ impl BoundOffice {
             return Err(Refusal::new(
                 ErrorCode::NotAuthorized,
                 "agent-os requires a run binding from its office.",
-                "Run agent-os inside an office-started agent session with AGENT_OS_SESSION_TOKEN and AGENT_OS_SOCKET (or AGENT_OS_OFFICE) set.",
+                "Local human operators should use `agentic-org <command>` (or `agentic-org sign-in`). For an external agent workspace, sign in with `agent-os login --as @<handle>`. Managed agent sessions run inside an office-started session with AGENT_OS_SESSION_TOKEN and AGENT_OS_SOCKET (or AGENT_OS_OFFICE) set.",
             ));
         }
         let client = if let Some(socket) = &self.binding.socket {

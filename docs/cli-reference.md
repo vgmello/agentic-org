@@ -316,9 +316,9 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org agent revoke @<handle> [<session_id>]` (also `--member`, `--session`)
   End an agent's external lease at once: its fast tokens stop working, its connections close, and its held wakes run again as managed turns. Pausing or offboarding the agent revokes it too.
   **Use when:** cutting off an external agent session immediately (a lost laptop, a finished pairing session).
-- `agentic-org team list|inspect|create|update`
-  Discover, inspect, or create organization teams over an approved office channel.
-  **Use when:** finding a `team_id` before hiring agents or creating projects.
+- `agentic-org team list|inspect|create|update|move|archive|set-limit|request-limit|limit-requests|decide-limit`
+  Discover, inspect, create, or manage organization teams and member-cap limits over an approved office channel. Team leads can request a `max_members` increase (`team request-limit --team <id> --max-members <n> --reason "..."`) routed to their manager, who lists (`team limit-requests`) and approves or denies it (`team decide-limit --request <id> --approve|--deny --if-match <rev>`).
+  **Use when:** finding a `team_id`, creating a sub-team, or raising/requesting a team's `max_members` limit before hiring or moving agents.
 - `agentic-org role list|inspect|create|update`
   Discover, inspect, or create role catalog entries over an approved office channel.
   **Use when:** inspecting or authoring reusable role definitions before hiring agents.

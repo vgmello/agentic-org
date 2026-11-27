@@ -83,6 +83,7 @@ pub(crate) fn id_in_use(
         || view.employee(id)?.is_some()
         || view.role(id)?.is_some()
         || view.hire_request(id)?.is_some()
+        || view.team_limit_request(id)?.is_some()
         || view.provider_connection(id)?.is_some()
         || view.model_profile(id)?.is_some()
         || view.project_exists(id)?
@@ -124,141 +125,69 @@ pub(crate) fn team_file(chain: &[Id]) -> Result<DurablePath, Refusal> {
     records::team_path(chain).or_else(|_| reject(RejectCode::InvalidRequest, TOO_DEEP))
 }
 
-/// Every operation of the organization stream. The one place their acknowledgement classes are
-/// declared (ADR-0014).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Op {
-    CreateOrganization,
-    ImportOrganization,
-    CreateTeam,
-    UpdateTeam,
-    SetTeamMaxMembers,
-    MoveTeam,
-    ArchiveTeam,
-    AddPerson,
-    UpdatePerson,
-    MovePerson,
-    DeactivatePerson,
-    SetMayHire,
-    CreateRole,
-    UpdateRole,
-    DraftHire,
-    ConfirmHire,
-    HireAgent,
-    WithdrawHire,
-    UpdateAgent,
-    MoveAgent,
-    SetAgentStatus,
-    OffboardAgent,
-    UpsertAgentExecution,
-    CreateProviderConnection,
-    UpdateProviderConnection,
-    CreateModelProfile,
-    UpdateModelProfile,
-    SetWatchingModel,
-    CreateProject,
-    AddProjectTeam,
-    RemoveProjectTeam,
-    RegisterRepository,
-    AttachProjectRepository,
-    RegisterSatelliteOffice,
-    ApplyReplicatedFiles,
-    EnsureChiefOfStaff,
-    SetOrganizationDefaultDod,
-    SetProjectDefaultDod,
-}
+macro_rules! define_ops {
+    ($($variant:ident => $kind:literal),+ $(,)?) => {
+        /// Every operation of the organization stream. The one place their acknowledgement classes
+        /// are declared (ADR-0014).
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        pub enum Op { $($variant),+ }
 
-impl Op {
-    pub const ALL: [Op; 38] = [
-        Op::CreateOrganization,
-        Op::ImportOrganization,
-        Op::CreateTeam,
-        Op::UpdateTeam,
-        Op::SetTeamMaxMembers,
-        Op::MoveTeam,
-        Op::ArchiveTeam,
-        Op::AddPerson,
-        Op::UpdatePerson,
-        Op::MovePerson,
-        Op::DeactivatePerson,
-        Op::SetMayHire,
-        Op::CreateRole,
-        Op::UpdateRole,
-        Op::DraftHire,
-        Op::ConfirmHire,
-        Op::HireAgent,
-        Op::WithdrawHire,
-        Op::UpdateAgent,
-        Op::MoveAgent,
-        Op::SetAgentStatus,
-        Op::OffboardAgent,
-        Op::UpsertAgentExecution,
-        Op::CreateProviderConnection,
-        Op::UpdateProviderConnection,
-        Op::CreateModelProfile,
-        Op::UpdateModelProfile,
-        Op::SetWatchingModel,
-        Op::CreateProject,
-        Op::AddProjectTeam,
-        Op::RemoveProjectTeam,
-        Op::RegisterRepository,
-        Op::AttachProjectRepository,
-        Op::RegisterSatelliteOffice,
-        Op::ApplyReplicatedFiles,
-        Op::EnsureChiefOfStaff,
-        Op::SetOrganizationDefaultDod,
-        Op::SetProjectDefaultDod,
-    ];
+        impl Op {
+            pub const ALL: &'static [Op] = &[$(Op::$variant),+];
 
-    /// Structure changes answer only once durable (ADR-0014).
-    pub const fn ack(self) -> Ack {
-        Ack::Durable
-    }
+            /// Structure changes answer only once durable (ADR-0014).
+            pub const fn ack(self) -> Ack { Ack::Durable }
 
-    /// The kind a receipt records.
-    pub const fn kind(self) -> &'static str {
-        match self {
-            Op::CreateOrganization => "organization.create",
-            Op::ImportOrganization => "organization.import",
-            Op::CreateTeam => "organization.create_team",
-            Op::UpdateTeam => "organization.update_team",
-            Op::SetTeamMaxMembers => "organization.set_team_max_members",
-            Op::MoveTeam => "organization.move_team",
-            Op::ArchiveTeam => "organization.archive_team",
-            Op::AddPerson => "organization.add_person",
-            Op::UpdatePerson => "organization.update_person",
-            Op::MovePerson => "organization.move_person",
-            Op::DeactivatePerson => "organization.deactivate_person",
-            Op::SetMayHire => "organization.set_may_hire",
-            Op::CreateRole => "organization.create_role",
-            Op::UpdateRole => "organization.update_role",
-            Op::DraftHire => "organization.draft_hire",
-            Op::ConfirmHire => "organization.confirm_hire",
-            Op::HireAgent => "organization.hire_agent",
-            Op::WithdrawHire => "organization.withdraw_hire",
-            Op::UpdateAgent => "organization.update_agent",
-            Op::MoveAgent => "organization.move_agent",
-            Op::SetAgentStatus => "organization.set_agent_status",
-            Op::OffboardAgent => "organization.offboard_agent",
-            Op::UpsertAgentExecution => "organization.upsert_agent_execution",
-            Op::CreateProviderConnection => "organization.create_provider_connection",
-            Op::UpdateProviderConnection => "organization.update_provider_connection",
-            Op::CreateModelProfile => "organization.create_model_profile",
-            Op::UpdateModelProfile => "organization.update_model_profile",
-            Op::SetWatchingModel => "organization.set_watching_model",
-            Op::CreateProject => "organization.create_project",
-            Op::AddProjectTeam => "organization.add_project_team",
-            Op::RemoveProjectTeam => "organization.remove_project_team",
-            Op::RegisterRepository => "organization.register_repository",
-            Op::AttachProjectRepository => "organization.attach_project_repository",
-            Op::RegisterSatelliteOffice => "organization.register_satellite_office",
-            Op::ApplyReplicatedFiles => "organization.apply_replicated_files",
-            Op::EnsureChiefOfStaff => "organization.ensure_chief_of_staff",
-            Op::SetOrganizationDefaultDod => "organization.set_default_dod",
-            Op::SetProjectDefaultDod => "organization.set_project_default_dod",
+            /// The kind a receipt records.
+            pub const fn kind(self) -> &'static str {
+                match self { $(Op::$variant => $kind),+ }
+            }
         }
-    }
+    };
 }
+
+define_ops!(
+    CreateOrganization => "organization.create",
+    ImportOrganization => "organization.import",
+    CreateTeam => "organization.create_team",
+    UpdateTeam => "organization.update_team",
+    SetTeamMaxMembers => "organization.set_team_max_members",
+    RequestTeamLimitIncrease => "organization.request_team_limit_increase",
+    DecideTeamLimitRequest => "organization.decide_team_limit_request",
+    MoveTeam => "organization.move_team",
+    ArchiveTeam => "organization.archive_team",
+    AddPerson => "organization.add_person",
+    UpdatePerson => "organization.update_person",
+    MovePerson => "organization.move_person",
+    DeactivatePerson => "organization.deactivate_person",
+    SetMayHire => "organization.set_may_hire",
+    CreateRole => "organization.create_role",
+    UpdateRole => "organization.update_role",
+    DraftHire => "organization.draft_hire",
+    ConfirmHire => "organization.confirm_hire",
+    HireAgent => "organization.hire_agent",
+    WithdrawHire => "organization.withdraw_hire",
+    UpdateAgent => "organization.update_agent",
+    MoveAgent => "organization.move_agent",
+    SetAgentStatus => "organization.set_agent_status",
+    OffboardAgent => "organization.offboard_agent",
+    UpsertAgentExecution => "organization.upsert_agent_execution",
+    CreateProviderConnection => "organization.create_provider_connection",
+    UpdateProviderConnection => "organization.update_provider_connection",
+    CreateModelProfile => "organization.create_model_profile",
+    UpdateModelProfile => "organization.update_model_profile",
+    SetWatchingModel => "organization.set_watching_model",
+    CreateProject => "organization.create_project",
+    AddProjectTeam => "organization.add_project_team",
+    RemoveProjectTeam => "organization.remove_project_team",
+    RegisterRepository => "organization.register_repository",
+    AttachProjectRepository => "organization.attach_project_repository",
+    RegisterSatelliteOffice => "organization.register_satellite_office",
+    ApplyReplicatedFiles => "organization.apply_replicated_files",
+    EnsureChiefOfStaff => "organization.ensure_chief_of_staff",
+    SetOrganizationDefaultDod => "organization.set_default_dod",
+    SetProjectDefaultDod => "organization.set_project_default_dod",
+);
 
 /// Which rule refused an admitted change, as the wire contract names its codes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -280,6 +209,8 @@ pub enum RejectCode {
 pub struct OrgRejection {
     pub code: RejectCode,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 /// The reply of a completed change to one team, employee, or project.
@@ -341,6 +272,21 @@ pub(crate) fn reject<T>(code: RejectCode, message: impl Into<String>) -> Result<
     let rejection = OrgRejection {
         code,
         message: message.into(),
+        hint: None,
+    };
+    Err(Refusal::rejected(reply(&rejection)))
+}
+
+/// Like [`reject`], attaching an actionable client hint.
+pub(crate) fn reject_with_hint<T>(
+    code: RejectCode,
+    message: impl Into<String>,
+    hint: impl Into<String>,
+) -> Result<T, Refusal> {
+    let rejection = OrgRejection {
+        code,
+        message: message.into(),
+        hint: Some(hint.into()),
     };
     Err(Refusal::rejected(reply(&rejection)))
 }

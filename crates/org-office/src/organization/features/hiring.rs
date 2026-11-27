@@ -9,7 +9,10 @@ use org_store::{Actor, Change, Engine, Id, OfficeIdentity, Refusal, Timestamp, U
 use serde::{Deserialize, Serialize};
 
 use super::{
-    authority::{admit_active_employee, check_team_capacity, is_owner, may_hire_into, HIRE_DENIED},
+    authority::{
+        admit_active_employee, check_team_capacity, is_owner, may_hire_into, CapacityOp,
+        HIRE_DENIED,
+    },
     invalid, reply,
     shared::{check_revision, id_in_use, profile_file, reject, TOO_DEEP},
     stable, Feature, Op, RejectCode,
@@ -166,7 +169,7 @@ impl Feature for DraftHire {
         if !team.is_active() {
             return reject(RejectCode::InvalidRequest, "the team is archived");
         }
-        check_team_capacity(view, &team)?;
+        check_team_capacity(view, owner, &admitted.actor, &team, CapacityOp::Hire)?;
         if let Some(role) = &self.role {
             if view.role(role)?.is_none() {
                 return reject(RejectCode::NotFound, "no such role");
@@ -255,7 +258,7 @@ impl Feature for ConfirmHire {
         if !team.is_active() {
             return reject(RejectCode::InvalidRequest, "the team is archived");
         }
-        check_team_capacity(view, &team)?;
+        check_team_capacity(view, owner, &admitted.actor, &team, CapacityOp::Hire)?;
         if let Some(role) = &req.role_id {
             if view.role(role)?.is_none() {
                 return reject(RejectCode::NotFound, "no such role");
@@ -363,7 +366,7 @@ impl Feature for HireAgent {
         if !team.is_active() {
             return reject(RejectCode::InvalidRequest, "the team is archived");
         }
-        check_team_capacity(view, &team)?;
+        check_team_capacity(view, owner, &admitted.actor, &team, CapacityOp::Hire)?;
         if let Some(role) = &self.role {
             if view.role(role)?.is_none() {
                 return reject(RejectCode::NotFound, "no such role");

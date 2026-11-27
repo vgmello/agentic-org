@@ -15,7 +15,7 @@ use org_office::organization_family::{
     records::{
         canonical_json, AgentExecutionConfig, BuiltinKey, Employee, HireRequest, ModelProfile,
         Office, OfficeCode, Organization, ProviderConnection, Repository, Role, Team,
-        TeamAllocation, TeamCounter, WatchingModelSetting,
+        TeamAllocation, TeamCounter, TeamLimitRequest, WatchingModelSetting,
     },
 };
 
@@ -263,6 +263,44 @@ impl OrganizationWrite for SqliteTx {
     fn remove_hire_request(&mut self, id: &Id) -> Result<(), EngineError> {
         let (db, scope) = self.view()?;
         let sql = "DELETE FROM hire_requests WHERE organization_id = ?1 AND id = ?2";
+        run(db, sql, vec![text(scope), text(id.as_str())])
+    }
+
+    fn put_team_limit_request(&mut self, record: &TeamLimitRequest) -> Result<(), EngineError> {
+        if let Some(existing) = self.team_limit_request(&record.id)? {
+            if existing == *record {
+                return Ok(());
+            }
+        }
+        let (db, scope) = self.view()?;
+        let values = vec![
+            text(scope),
+            text(record.id.as_str()),
+            Value::Integer(1),
+            whole(record.revision)?,
+            text(record.state.as_str()),
+            text(record.team_id.as_str()),
+            text(record.requested_by_employee_id.as_str()),
+            text(record.approver_employee_id.as_str()),
+            whole(record.current_max_members)?,
+            whole(record.requested_max_members)?,
+            text(&record.reason),
+            optional(record.decision_reason.as_deref()),
+            optional_id_value(record.decided_by_employee_id.as_ref()),
+            optional(record.decided_at.as_deref()),
+            text(&record.created_at),
+            text(&record.updated_at),
+        ];
+        let columns = "organization_id, id, schema_version, revision, state, team_id, \
+                       requested_by_employee_id, approver_employee_id, current_max_members, \
+                       requested_max_members, reason, decision_reason, decided_by_employee_id, \
+                       decided_at, created_at, updated_at";
+        put(db, "team_limit_requests", columns, 2, values)
+    }
+
+    fn remove_team_limit_request(&mut self, id: &Id) -> Result<(), EngineError> {
+        let (db, scope) = self.view()?;
+        let sql = "DELETE FROM team_limit_requests WHERE organization_id = ?1 AND id = ?2";
         run(db, sql, vec![text(scope), text(id.as_str())])
     }
 

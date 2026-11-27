@@ -6,18 +6,19 @@ use super::super::{SqliteSnapshot, SqliteTx};
 use super::rows::{
     agent_execution_row, employee_row, hire_request_row, model_profile_base_row, office_code_row,
     office_row, organization_row, profile_connections, provider_connection_row, record_ref_row,
-    repository_row, role_row, team_allocation_row, team_counter_row, team_row, watching_model_row,
+    repository_row, role_row, team_allocation_row, team_counter_row, team_limit_request_row,
+    team_row, watching_model_row,
 };
 use super::{
     all, one, select, text, whole, View, AGENT_EXEC, EMPLOYEE, HIRE_REQUEST, META, MODEL_PROFILE,
-    OFFICE, ORGANIZATION, PROVIDER_CONN, REPOSITORY, ROLE, TEAM, TEAM_SCOPE,
+    OFFICE, ORGANIZATION, PROVIDER_CONN, REPOSITORY, ROLE, TEAM, TEAM_LIMIT_REQUEST, TEAM_SCOPE,
 };
 use org_office::organization_family::{
     ports::{OrganizationRead, RecordRef},
     records::{
         AgentExecutionConfig, Employee, HireRequest, ModelProfile, Office, OfficeCode,
         Organization, ProviderConnection, Repository, Role, Team, TeamAllocation, TeamCounter,
-        WatchingModelSetting,
+        TeamLimitRequest, WatchingModelSetting,
     },
 };
 
@@ -121,6 +122,29 @@ macro_rules! sqlite_read {
                      WHERE organization_id = ?1 ORDER BY id"
                 );
                 all(db, &sql, vec![text(scope)], hire_request_row)
+            }
+
+            fn team_limit_request(&self, id: &Id) -> Result<Option<TeamLimitRequest>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = format!(
+                    "SELECT {TEAM_LIMIT_REQUEST} FROM team_limit_requests \
+                     WHERE organization_id = ?1 AND id = ?2"
+                );
+                one(
+                    db,
+                    &sql,
+                    vec![text(scope), text(id.as_str())],
+                    team_limit_request_row,
+                )
+            }
+
+            fn team_limit_requests(&self) -> Result<Vec<TeamLimitRequest>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = format!(
+                    "SELECT {TEAM_LIMIT_REQUEST} FROM team_limit_requests \
+                     WHERE organization_id = ?1 ORDER BY id"
+                );
+                all(db, &sql, vec![text(scope)], team_limit_request_row)
             }
 
             fn agent_execution(

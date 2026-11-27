@@ -78,6 +78,14 @@ fn map_receipt_to_org_changes(
     members: &BTreeMap<&str, &org_proto::Member>,
     projects: &BTreeMap<&str, &org_proto::Project>,
 ) -> Vec<OrgChange> {
+    if kind == "organization.decide_team_limit_request" {
+        return reply
+            .get("team_revision")
+            .and_then(|_| reply.get("team_id").and_then(|v| v.as_str()))
+            .and_then(|tid| teams.get(tid))
+            .map(|t| vec![OrgChange::TeamUpserted { team: (*t).clone() }])
+            .unwrap_or_default();
+    }
     let entity_id = reply
         .get("id")
         .or_else(|| reply.get("employee_id"))

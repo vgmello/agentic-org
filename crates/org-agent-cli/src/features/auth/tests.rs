@@ -294,3 +294,15 @@ fn client_sanitizers_reject_bidi_line_separators_and_omit_oversized_or_unclean_w
         );
     }
 }
+
+#[test]
+fn not_signed_in_hint_mentions_both_agent_os_login_and_agentic_org() {
+    let refusal = super::not_signed_in();
+    assert_eq!(refusal.code, ErrorCode::NotAuthorized);
+    assert!(
+        refusal.hint.contains("agent-os login --as @<handle>"),
+        "{}",
+        refusal.hint
+    );
+    assert!(refusal.hint.contains("agentic-org"), "{}", refusal.hint);
+}

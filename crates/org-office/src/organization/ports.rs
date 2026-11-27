@@ -11,7 +11,8 @@ use org_store::{CoreRead, DurablePath, Engine, EngineError, Id, StoreError};
 
 use super::records::{
     AgentExecutionConfig, Employee, HireRequest, ModelProfile, Office, OfficeCode, Organization,
-    ProviderConnection, Repository, Role, Team, TeamAllocation, TeamCounter, WatchingModelSetting,
+    ProviderConnection, Repository, Role, Team, TeamAllocation, TeamCounter, TeamLimitRequest,
+    WatchingModelSetting,
 };
 
 /// The deepest team tree a chain is followed through. A path cannot hold more.
@@ -56,6 +57,9 @@ pub trait OrganizationRead: CoreRead {
     fn hire_request(&self, id: &Id) -> Result<Option<HireRequest>, EngineError>;
     /// In order of ID.
     fn hire_requests(&self) -> Result<Vec<HireRequest>, EngineError>;
+    fn team_limit_request(&self, id: &Id) -> Result<Option<TeamLimitRequest>, EngineError>;
+    /// In order of ID.
+    fn team_limit_requests(&self) -> Result<Vec<TeamLimitRequest>, EngineError>;
     fn agent_execution(
         &self,
         employee_id: &Id,
@@ -122,6 +126,8 @@ pub trait OrganizationWrite: OrganizationRead {
     fn remove_employee(&mut self, id: &Id) -> Result<(), EngineError>;
     fn put_hire_request(&mut self, record: &HireRequest) -> Result<(), EngineError>;
     fn remove_hire_request(&mut self, id: &Id) -> Result<(), EngineError>;
+    fn put_team_limit_request(&mut self, record: &TeamLimitRequest) -> Result<(), EngineError>;
+    fn remove_team_limit_request(&mut self, id: &Id) -> Result<(), EngineError>;
     fn put_agent_execution(&mut self, record: &AgentExecutionConfig) -> Result<(), EngineError>;
     fn remove_agent_execution(&mut self, employee_id: &Id) -> Result<(), EngineError>;
     fn put_provider_connection(&mut self, record: &ProviderConnection) -> Result<(), EngineError>;

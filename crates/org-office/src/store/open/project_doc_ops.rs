@@ -79,126 +79,75 @@ where
         .map_err(|e| StoreError::Invalid(format!("corrupt documentation reply: {e}")))
 }
 
-/// `docs.index` on one snapshot.
-pub struct DocsIndexRead {
-    pub caller: String,
-    pub params: DocsIndexParams,
+macro_rules! docs_read_op {
+    ($name:ident, $params:ty, $res:ty, $func:path) => {
+        pub struct $name {
+            pub caller: String,
+            pub params: $params,
+        }
+        impl ReadOp for $name {
+            type Out = Result<$res, ApiError>;
+            fn read<S: ProjectDocsRead>(self, snapshot: &S) -> Answer<$res> {
+                settle($func(snapshot, &self.caller, &self.params))
+            }
+        }
+    };
 }
 
-impl ReadOp for DocsIndexRead {
-    type Out = Result<DocsIndexResult, ApiError>;
+macro_rules! docs_write_op {
+    ($name:ident, $method:literal, $params:ty, |$uow:ident, $caller:ident, $p:ident| $body:expr) => {
+        pub struct $name {
+            pub caller: String,
+            pub params: $params,
+        }
+        impl StoreOp for $name {
+            type Out = Answer<DocsWriteResult>;
+            fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+                let op =
+                    match operation($method, &self.params.command_id, &self.caller, &self.params) {
+                        Ok(op) => op,
+                        Err(error) => return Ok(Err(error)),
+                    };
+                let Self {
+                    caller: $caller,
+                    params: $p,
+                } = self;
+                submit(store, op, move |$uow| ($body).map_err(refusal))
+            }
+        }
+    };
+}
 
-    fn read<S: ProjectDocsRead>(self, snapshot: &S) -> Answer<DocsIndexResult> {
-        settle(read::index(snapshot, &self.caller, &self.params))
+docs_read_op!(DocsIndexRead, DocsIndexParams, DocsIndexResult, read::index);
+docs_read_op!(DocsListRead, DocsListParams, DocsListResult, read::list);
+docs_read_op!(
+    DocsInspectRead,
+    DocsInspectParams,
+    DocsInspectResult,
+    read::inspect
+);
+
+docs_write_op!(
+    DocsCreateOp,
+    "docs.create",
+    DocsCreateParams,
+    |uow, caller, params| {
+        let id = derive_id("project-doc", &params.command_id, uow.now().0);
+        create::decide(uow.view(), uow.now(), &caller, &params, id)
     }
-}
-
-/// `docs.list` on one snapshot.
-pub struct DocsListRead {
-    pub caller: String,
-    pub params: DocsListParams,
-}
-
-impl ReadOp for DocsListRead {
-    type Out = Result<DocsListResult, ApiError>;
-
-    fn read<S: ProjectDocsRead>(self, snapshot: &S) -> Answer<DocsListResult> {
-        settle(read::list(snapshot, &self.caller, &self.params))
-    }
-}
-
-/// `docs.inspect` on one snapshot.
-pub struct DocsInspectRead {
-    pub caller: String,
-    pub params: DocsInspectParams,
-}
-
-impl ReadOp for DocsInspectRead {
-    type Out = Result<DocsInspectResult, ApiError>;
-
-    fn read<S: ProjectDocsRead>(self, snapshot: &S) -> Answer<DocsInspectResult> {
-        settle(read::inspect(snapshot, &self.caller, &self.params))
-    }
-}
-
-/// `docs.create`.
-pub struct DocsCreateOp {
-    pub caller: String,
-    pub params: DocsCreateParams,
-}
-
-impl StoreOp for DocsCreateOp {
-    type Out = Answer<DocsWriteResult>;
-
-    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
-        let op = match operation(
-            "docs.create",
-            &self.params.command_id,
-            &self.caller,
-            &self.params,
-        ) {
-            Ok(op) => op,
-            Err(error) => return Ok(Err(error)),
-        };
-        let Self { caller, params } = self;
-        submit(store, op, move |uow| {
-            let id = derive_id("project-doc", &params.command_id, uow.now().0);
-            create::decide(uow.view(), uow.now(), &caller, &params, id).map_err(refusal)
-        })
-    }
-}
-
-/// `docs.update`.
-pub struct DocsUpdateOp {
-    pub caller: String,
-    pub params: DocsUpdateParams,
-}
-
-impl StoreOp for DocsUpdateOp {
-    type Out = Answer<DocsWriteResult>;
-
-    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
-        let op = match operation(
-            "docs.update",
-            &self.params.command_id,
-            &self.caller,
-            &self.params,
-        ) {
-            Ok(op) => op,
-            Err(error) => return Ok(Err(error)),
-        };
-        let Self { caller, params } = self;
-        submit(store, op, move |uow| {
-            update::decide_update(uow.view(), uow.now(), &caller, &params).map_err(refusal)
-        })
-    }
-}
-
-/// `docs.move`.
-pub struct DocsMoveOp {
-    pub caller: String,
-    pub params: DocsMoveParams,
-}
-
-impl StoreOp for DocsMoveOp {
-    type Out = Answer<DocsWriteResult>;
-
-    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
-        let op = match operation(
-            "docs.move",
-            &self.params.command_id,
-            &self.caller,
-            &self.params,
-        ) {
-            Ok(op) => op,
-            Err(error) => return Ok(Err(error)),
-        };
-        let Self { caller, params } = self;
-        submit(store, op, move |uow| {
-            update::decide_move(uow.view(), uow.now(), &caller, &params).map_err(refusal)
-        })
-    }
-}
+);
+docs_write_op!(
+    DocsUpdateOp,
+    "docs.update",
+    DocsUpdateParams,
+    |uow, caller, params| { update::decide_update(uow.view(), uow.now(), &caller, &params) }
+);
+docs_write_op!(
+    DocsMoveOp,
+    "docs.move",
+    DocsMoveParams,
+    |uow, caller, params| { update::decide_move(uow.view(), uow.now(), &caller, &params) }
+);
 
 /// `docs.put_media`: the caller is authorized on a snapshot before a byte of the asset is
 /// decoded, so an outsider or an inactive caller never reaches the image decoder; then the
