@@ -323,7 +323,7 @@ function inboxDetail(it) {
       <p class="triage-from">
         <span>From:</span>
         <span class="triage-from-member">
-          <a class="alink" href="#/members/${esc(it.from)}" aria-describedby="triage-from-role">${esc(m.name)}</a>
+          <a class="alink" href="#/members/${esc(it.from)}" data-person="${esc(it.from)}" aria-describedby="triage-from-role">${esc(m.name)}</a>
           <span class="triage-from-card">
             ${av(it.from, 32)}
             <span><strong aria-hidden="true">${esc(m.name)}</strong><span id="triage-from-role">${esc(m.role)} · ${kindWord(it.from)}</span></span>

@@ -212,14 +212,14 @@ function answerBlockerQuestion(t, blocked, in1) {
   const v1Only = /v1/.test(t);
   const scoped = v1Only ? blocked.filter((b) => b.proj === "agency-v1") : blocked;
   const describe = (b) => b.id === "T-A118"
-    ? `${spotLinkHtml("in2", "file-access choice")} for <a href="#/members/sage">Sage</a> <em>(Office federation)</em>`
+    ? `${spotLinkHtml("in2", "file-access choice")} for <a href="#/members/sage" data-person="sage">Sage</a> <em>(Office federation)</em>`
     : b.id === "T-A124"
-      ? `${spotLinkHtml("in5", "local test access")} for <a href="#/members/jules">Jules</a> (security checks)`
+      ? `${spotLinkHtml("in5", "local test access")} for <a href="#/members/jules" data-person="jules">Jules</a> (security checks)`
       : `<a href="#/projects/${b.proj}/work">${esc(b.title)}</a>`;
   const syncPending = Boolean(in1 && !in1.handled);
   const syncLi = syncPending
-    ? `<li><strong>Release sign-off:</strong> <a href="#/members/kai">Kai</a>'s v1.0 sync update passed all 412 checks and awaits your ${spotLinkHtml("in1", "approval")}.</li>`
-    : `<li><strong>Release sign-off:</strong> <a href="#/members/kai">Kai</a>'s v1.0 sync update is approved.</li>`;
+    ? `<li><strong>Release sign-off:</strong> <a href="#/members/kai" data-person="kai">Kai</a>'s v1.0 sync update passed all 412 checks and awaits your ${spotLinkHtml("in1", "approval")}.</li>`
+    : `<li><strong>Release sign-off:</strong> <a href="#/members/kai" data-person="kai">Kai</a>'s v1.0 sync update is approved.</li>`;
   const pendingN = scoped.length + (syncPending ? 1 : 0);
   return `<strong>${plural(pendingN, "decision is", "decisions are")} holding up ${v1Only ? "Agentic Org v1.0" : "active work"}:</strong><ul class="cmdk-ai-list">${scoped.map((b) => `<li><strong>Access request:</strong> ${describe(b)}.</li>`).join("")}${syncLi}</ul>`;
 }
@@ -238,10 +238,10 @@ const ORG_QA_HANDLERS = [
   [/horizon|schedule|slip|pace|milestone|standard|promote|14 day|release/, ({ in2, in17, v1Pending }) => answerHorizonQuestion(in2, in17, v1Pending)],
   [/block|slow|v1|ship|merge/, ({ t, blocked, in1 }) => answerBlockerQuestion(t, blocked, in1)],
   [/cycle|first-pass|accept|rework|hitl|human|quality|autonom|metric|kpi|turnaround|revision|deliver/, () => `Last 7 days delivery quality: <strong>Approved first try 84%</strong> (+6%), <strong>Avg. turnaround 18m</strong> (-14% faster), <strong>19 tasks delivered</strong> (+4 vs prior week), and <strong>78% autonomous</strong> (22% needed your input). Monthly spend sits at <strong>$142 / $210</strong>.`],
-  [/budget|spend|cost|\$|dollar|office|fleet|offline|jules|noor|health|pool|headroom|idle|spin|capacity/, () => `<strong>Monthly spend is $142 of $210 (68%, ~$204 forecast)</strong> — averaging <strong>$7.45 per completed task</strong> (-11%), with <strong>74% AI capacity available</strong>. <a href="#/members/jules">Jules</a> is paused at its monthly cap (<a href="#/settings/agents/jules">raise cap</a>). Team: <strong>11 agents</strong> (7 active · 3 idle: <a href="#/members/jules">Jules</a>, <a href="#/members/avery">Avery</a>, <a href="#/members/noor">Noor</a> · 1 offline: <a href="#/members/quinn">Quinn</a> on Build box office).`],
-  [/run|overnight|happen|catch|digest|summary|activity|away/, ({ finishedRuns }) => `In the last 4 hours: <strong>${plural(finishedRuns.length, "autonomous session", "autonomous sessions")}</strong> completed. <a href="#/members/ada">Ada</a> &amp; <a href="#/members/maya">Maya</a> drafted v1.0 release notes &amp; onboarding; <a href="#/members/avery">Avery</a> shipped 2 UI polish tasks; <a href="#/members/sage">Sage</a> prepared the reconnect fix. <a href="#/activity">Open activity log</a>.`],
-  [/federation|sage|lock|satellite|access/, ({ in2 }) => `<a href="#/projects/office-federation">Office federation</a> is <strong>Off track (20%)</strong>: the Build box office went offline after sleep (reconnect fix is ready to <a href="#/inbox/in11">verify</a>)${in2 && !in2.handled ? `, and <a href="#/members/sage">Sage</a> is waiting on your ${spotLinkHtml("in2", "file-access choice")} (Sage &amp; Rowan recommend timed access)` : `, and your file-access choice is locked in`}.`],
-  [/need|urgent|priority|first|inbox|ada|hire/, ({ open }) => { const urg = open.filter((i) => i.expires); return `<strong>${open.length} items need you</strong> (${urg.length} time-sensitive). ${urg.length ? `Start with ${urg.map((u) => spotLinkHtml(u.id, u.what)).join(" and ")}.` : "No urgent deadlines remaining."} <a href="#/members/ada">Ada</a> also requested hiring a QA specialist to speed up reviews.`; }],
+  [/budget|spend|cost|\$|dollar|office|fleet|offline|jules|noor|health|pool|headroom|idle|spin|capacity/, () => `<strong>Monthly spend is $142 of $210 (68%, ~$204 forecast)</strong> — averaging <strong>$7.45 per completed task</strong> (-11%), with <strong>74% AI capacity available</strong>. <a href="#/members/jules" data-person="jules">Jules</a> is paused at its monthly cap (<a href="#/settings/agents/jules">raise cap</a>). Team: <strong>11 agents</strong> (7 active · 3 idle: <a href="#/members/jules" data-person="jules">Jules</a>, <a href="#/members/avery">Avery</a>, <a href="#/members/noor">Noor</a> · 1 offline: <a href="#/members/quinn">Quinn</a> on Build box office).`],
+  [/run|overnight|happen|catch|digest|summary|activity|away/, ({ finishedRuns }) => `In the last 4 hours: <strong>${plural(finishedRuns.length, "autonomous session", "autonomous sessions")}</strong> completed. <a href="#/members/ada" data-person="ada">Ada</a> &amp; <a href="#/members/maya">Maya</a> drafted v1.0 release notes &amp; onboarding; <a href="#/members/avery">Avery</a> shipped 2 UI polish tasks; <a href="#/members/sage" data-person="sage">Sage</a> prepared the reconnect fix. <a href="#/activity">Open activity log</a>.`],
+  [/federation|sage|lock|satellite|access/, ({ in2 }) => `<a href="#/projects/office-federation">Office federation</a> is <strong>Off track (20%)</strong>: the Build box office went offline after sleep (reconnect fix is ready to <a href="#/inbox/in11">verify</a>)${in2 && !in2.handled ? `, and <a href="#/members/sage" data-person="sage">Sage</a> is waiting on your ${spotLinkHtml("in2", "file-access choice")} (Sage &amp; Rowan recommend timed access)` : `, and your file-access choice is locked in`}.`],
+  [/need|urgent|priority|first|inbox|ada|hire/, ({ open }) => { const urg = open.filter((i) => i.expires); return `<strong>${open.length} items need you</strong> (${urg.length} time-sensitive). ${urg.length ? `Start with ${urg.map((u) => spotLinkHtml(u.id, u.what)).join(" and ")}.` : "No urgent deadlines remaining."} <a href="#/members/ada" data-person="ada">Ada</a> also requested hiring a QA specialist to speed up reviews.`; }],
 ];
 
 function answerOrgQuestion(rawQ) {
@@ -262,7 +262,7 @@ function answerOrgQuestion(rawQ) {
   const in1 = byId("in1"), in5 = byId("in5"), in2 = byId("in2"), in17 = byId("in17");
   const ctx = { t, open, blocked, finishedRuns, in1, in2, in17, v1Pending: [in1, in5].filter((i) => i && !i.handled) };
   const match = ORG_QA_HANDLERS.find(([rx]) => rx.test(t));
-  const html = match ? match[1](ctx) : `Right now <strong>${open.length} decisions</strong> wait in <a href="#/inbox">Inbox</a>, <strong>${blocked.length} work items</strong> are waiting on you, <strong>1 of 2 offices</strong> is online, and <a href="#/members/kai">Kai</a> is working with you. Try asking about <em>v1.0 blockers</em>, <em>upcoming milestones</em>, or <em>budget &amp; capacity</em>.`;
+  const html = match ? match[1](ctx) : `Right now <strong>${open.length} decisions</strong> wait in <a href="#/inbox">Inbox</a>, <strong>${blocked.length} work items</strong> are waiting on you, <strong>1 of 2 offices</strong> is online, and <a href="#/members/kai" data-person="kai">Kai</a> is working with you. Try asking about <em>v1.0 blockers</em>, <em>upcoming milestones</em>, or <em>budget &amp; capacity</em>.`;
   return { q, html };
 }
 

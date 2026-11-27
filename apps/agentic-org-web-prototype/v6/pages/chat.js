@@ -49,7 +49,7 @@ function mentionRef(match, name) {
   const lower = name.toLowerCase();
   if (lower === "here") return `<span class="chat-here">@here</span>`;
   const key = Object.keys(M).find((k) => k === lower || M[k].name.split(" ")[0].toLowerCase() === lower);
-  return key && !M[key].owner ? `<a class="alink chat-ref" href="#/members/${key}">@${esc(M[key].name)}</a>` : match;
+  return key && !M[key].owner ? `<a class="alink chat-ref" href="#/members/${key}" data-person="${key}">@${esc(M[key].name)}</a>` : match;
 }
 const richText = (text) => esc(text).replace(/\bT-A\d+\b/g, workRef).replace(/@([A-Za-z]+)/g, mentionRef);
 

@@ -4,6 +4,7 @@ import { applyNavCollapsed } from "./state.js";
 import "./shell/dialogs.js";
 import "./shell/actions.js";
 import "./shell/sidebar.js";
+import "./pages/person-panel.js";
 
 applyNavCollapsed();
 if (!location.hash) {
