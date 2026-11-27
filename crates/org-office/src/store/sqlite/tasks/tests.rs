@@ -18,7 +18,7 @@ use super::list::{filter, page_statement};
 use super::statements;
 use crate::tasks::features::{decode_refusal, inspect_task, list_tasks};
 use crate::tasks::ports::{TasksRead, TasksWrite};
-use crate::tasks::query::{TaskListQuery, TaskStatusSet};
+use crate::tasks::query::{LabelFilter, TaskListQuery, TaskStatusSet};
 use crate::tasks::records::{
     ChecklistStepRecord, TaskCommentRecord, TaskDetailsRecord, TaskEventRecord, TaskLinkRecord,
     TaskMeta, TaskRecord, TaskRepositoryRecord, TaskWatcherRecord,
@@ -698,4 +698,84 @@ fn an_invalid_done_since_is_refused_before_any_statement() {
     .expect_err("refused");
     assert_eq!(decode_refusal(&refused).code, ErrorCode::InvalidRequest);
     assert_eq!(statements::run(), before);
+}
+
+/// `done_since` reads `updated_at` by the one RFC 3339 rule on both engines (`ENG-1`):
+/// sub-millisecond digits are cut, never rounded; a lowercase `t`/`z` reads; a date, a time
+/// with no offset and `now` are no time; any offset RFC 3339 allows reads, past `±14:00` too.
+#[test]
+fn done_since_reads_updated_at_by_the_reference_rule_on_both_engines() {
+    let times = [
+        "2026-11-20T00:00:00.2505Z",
+        "2026-11-20t00:00:00z",
+        "2026-11-20",
+        "2026-11-20T00:00:00",
+        "now",
+        "2026-11-19T23:00:00-20:00",
+        "2026-11-20T00:00:00.251Z",
+    ];
+    let (engine, _dir) = sqlite();
+    let memory = MemoryEngine::new();
+    let mut on_sqlite = engine.begin().unwrap();
+    let mut in_memory = memory.begin().unwrap();
+    for (n, at) in (1..).zip(times) {
+        let mut done = task(n);
+        done.status = TaskStatus::Done;
+        done.meta.updated_at = Some(at.to_owned());
+        on_sqlite.put_task(&done).expect("a task row");
+        in_memory.put_task(&done).expect("a task");
+    }
+    for (since, kept) in [
+        ("2026-11-20T00:00:00.251Z", [6, 7].as_slice()),
+        ("2026-11-19T00:00:00Z", [1, 2, 6, 7].as_slice()),
+    ] {
+        let params = scoped(Some(TaskStatusScope::Closed), Some(since));
+        let sqlite = list_tasks(&on_sqlite, &params).expect("an answer");
+        assert_eq!(sqlite, list_tasks(&in_memory, &params).unwrap(), "{since}");
+        let mut numbers: Vec<u64> = sqlite.tasks.iter().map(|task| task.number).collect();
+        numbers.sort_unstable();
+        assert_eq!(numbers, kept, "{since}");
+    }
+}
+
+/// An empty label set is vacuous for `all` and empty for `any`, on both engines alike.
+#[test]
+fn an_empty_label_filter_matches_as_the_reference_scan_does() {
+    let (engine, _dir) = sqlite();
+    let memory = MemoryEngine::new();
+    let mut on_sqlite = engine.begin().unwrap();
+    let mut in_memory = memory.begin().unwrap();
+    seed(&mut on_sqlite, 1..=20);
+    seed(&mut in_memory, 1..=20);
+    for (mode, total) in [(LabelMatchMode::All, 20), (LabelMatchMode::Any, 0)] {
+        let query = TaskListQuery {
+            labels: Some(LabelFilter {
+                labels: Vec::new(),
+                mode,
+            }),
+            ..TaskListQuery::default()
+        };
+        let sqlite = on_sqlite.task_page(&query).expect("a page");
+        let reference = in_memory.task_page(&query).expect("a page");
+        assert_eq!(sqlite.total, total, "{mode:?}");
+        assert_eq!(sqlite, reference, "{mode:?}");
+    }
+}
+
+/// A repeated ID gets one rollup, its links listed once, however the IDs fall into chunks.
+#[test]
+fn repeated_ids_roll_up_once_across_chunks() {
+    let (engine, _dir) = sqlite();
+    let memory = MemoryEngine::new();
+    let mut on_sqlite = engine.begin().unwrap();
+    let mut in_memory = memory.begin().unwrap();
+    seed(&mut on_sqlite, 1..=24);
+    seed(&mut in_memory, 1..=24);
+    let ids: Vec<Id> = (0..3 * super::CHUNK as u64)
+        .map(|n| id(1, 1 + n % 24))
+        .collect();
+    let sqlite = on_sqlite.task_rollups(&ids).unwrap();
+    assert_eq!(sqlite, in_memory.task_rollups(&ids).unwrap());
+    assert_eq!(sqlite[&id(1, 12)].depends_on, vec![id(1, 10), id(1, 11)]);
+    assert_eq!(sqlite[&id(1, 11)].dependents, vec![id(1, 12)]);
 }

@@ -7,8 +7,10 @@
 //! - an open scope is written `status NOT IN ('done', 'cancelled')` verbatim, the term of the
 //!   partial indexes `tasks_open_by_project` and `tasks_open_by_team`, whose columns are the
 //!   default order, so an open page is read in order straight from the index;
-//! - `done_since` compares instants: `updated_at` is read as Unix milliseconds by SQLite's
-//!   date functions, never compared as text (`...00Z` and `...00.000Z` are one instant);
+//! - `done_since` compares instants: `updated_at` is read as Unix milliseconds by
+//!   `rfc3339_ms`, the connection's binding of the reference scan's own RFC 3339 parser, never
+//!   compared as text (`...00Z` and `...00.000Z` are one instant) and never by SQLite's date
+//!   functions, which round sub-millisecond digits and read times RFC 3339 refuses;
 //! - text search is ASCII-lowercase substring search (`lower`, `instr`), never `LIKE`, so `%`
 //!   and `_` in a query are plain characters;
 //! - a `modified_file` path matches itself and the paths under it by whole components.
@@ -27,10 +29,6 @@ use crate::tasks::query::{LabelFilter, TaskListPage, TaskListQuery, TaskRollup, 
 
 /// The open statuses, as the open-task partial indexes state them.
 const OPEN: &str = "t.status NOT IN ('done', 'cancelled')";
-
-/// `t.updated_at` as Unix milliseconds, or `NULL` when it is no time SQLite reads.
-const UPDATED_MS: &str = "(CAST(strftime('%s', t.updated_at) AS INTEGER) * 1000 \
-     + CAST(substr(strftime('%f', t.updated_at), 4) AS INTEGER))";
 
 /// A `WHERE` clause over `tasks t` and the values it binds; `?1` is the organization.
 pub(super) struct Clause {
@@ -176,7 +174,9 @@ fn statuses(clause: &mut Clause, query: &TaskListQuery) -> Result<(), EngineErro
     if let Some(since) = query.done_since_ms {
         if set.contains(TaskStatus::Done) {
             let at = clause.bind(whole(since)?);
-            clause.and(&format!("(t.status <> 'done' OR {UPDATED_MS} >= {at})"));
+            clause.and(&format!(
+                "(t.status <> 'done' OR rfc3339_ms(t.updated_at) >= {at})"
+            ));
         }
     }
     Ok(())
@@ -189,8 +189,11 @@ fn carries(clause: &mut Clause, filter: &LabelFilter) {
              AND l.task_id = t.id AND l.label = {at})"
         )
     };
+    // No labels: every task carries all of none, and none carries any of none.
     if filter.labels.is_empty() {
-        clause.and("0");
+        if filter.mode == LabelMatchMode::Any {
+            clause.and("0");
+        }
         return;
     }
     let terms: Vec<String> = filter
@@ -230,7 +233,9 @@ pub(super) fn rollups(
         .iter()
         .map(|id| (id.clone(), TaskRollup::default()))
         .collect();
-    for chunk in ids.chunks(CHUNK) {
+    // Each ID once, so a repeated ID can neither repeat links nor split across chunks.
+    let unique: Vec<Id> = out.keys().cloned().collect();
+    for chunk in unique.chunks(CHUNK) {
         let mut values = vec![text(scope)];
         let targets = id_list(chunk, &mut values);
         let steps = fetch(
@@ -291,10 +296,6 @@ pub(super) fn rollups(
         for (task, source) in downstream {
             out.entry(task).or_default().dependents.push(source);
         }
-    }
-    for rollup in out.values_mut() {
-        rollup.depends_on.dedup();
-        rollup.dependents.dedup();
     }
     Ok(out)
 }

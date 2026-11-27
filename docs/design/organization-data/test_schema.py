@@ -2392,6 +2392,9 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
             with self.subTest(index=expected_index):
                 joined = "\n".join(plan_lines(conn, sql, params))
                 self.assertIn(expected_index, joined)
+                if expected_index.startswith("tasks_open_by_"):
+                    # The open-task partial indexes hold the default order: no sort step.
+                    self.assertNotIn("TEMP B-TREE", joined)
 
         # ADR-0031 person read on private_task_notes uses private_notes_by_task.
         private = sqlite3.connect(":memory:")
