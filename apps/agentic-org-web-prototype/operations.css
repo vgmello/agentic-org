@@ -3099,7 +3099,10 @@ html[data-assembly-dividers] .assembly-table tbody tr:not(.assembly-milestone) +
 .assembly-table small { display: block; color: var(--gray-400); font-size: var(--fs-xs); font-weight: 400; }
 /* Assembly rows read like the Work list (TASK-242): a feature is a task title (size, weight, colour) over a muted
    line, and a milestone is a group header ("To do 7"): semibold small text with its muted progress beside it. */
-.assembly-table tbody tr:not(.assembly-milestone) > th { color: var(--white); font-size: var(--fs-md); font-weight: var(--fw-item); line-height: 1.4; }
+.assembly-table tbody tr:not(.assembly-milestone) > th { color: var(--white); font-size: var(--fs-sm); font-weight: 500; line-height: 1.45; }
+/* Column headers are quiet labels, not bold titles (owner): one size across the table, hierarchy from weight/colour */
+#main .assembly-table thead th { color: var(--gray-300); font-size: var(--fs-sm); font-weight: 500; line-height: 1.45; }
+#main .assembly-table thead th small { color: var(--gray-400); }
 .assembly-table tbody tr:not(.assembly-milestone) > th > small { margin-block-start: 2px; line-height: 1.5; }
 .assembly-table .assembly-milestone th {
   color: var(--white);
