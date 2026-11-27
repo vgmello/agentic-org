@@ -335,3 +335,144 @@ fn closed_stdout_is_reported() {
     let result = context.render_list(&offices(), &Value::Null, &ListView::default());
     assert!(matches!(result, Err(ShellError::OutputClosed)));
 }
+
+#[test]
+fn eighty_column_tty_table_protects_distinguishing_handles_over_low_priority_columns() {
+    let table = Table {
+        headers: vec![
+            "id".into(),
+            "handle".into(),
+            "name".into(),
+            "role".into(),
+            "status".into(),
+            "office".into(),
+            "team_id".into(),
+            "updated".into(),
+            "notes".into(),
+        ],
+        rows: vec![
+            Row {
+                id: "0193a5c0-0000-7000-8000-000000000001".into(),
+                cells: vec![
+                    Cell::id("0193a5c0-0000-7000-8000-000000000001"),
+                    Cell::name("@backend"),
+                    Cell::name("Backend Agent"),
+                    Cell::plain("Backend Engineer"),
+                    Cell::status("online", Style::Active),
+                    Cell::dim("hq-macbook-pro"),
+                    Cell::dim("0193a5c0-0000-7000-8000-0000000000aa"),
+                    Cell::dim("2026-11-27 14:00 UTC"),
+                    Cell::plain("API and database services"),
+                ],
+            },
+            Row {
+                id: "0193a5c0-0000-7000-8000-000000000002".into(),
+                cells: vec![
+                    Cell::id("0193a5c0-0000-7000-8000-000000000002"),
+                    Cell::name("@backend-2"),
+                    Cell::name("Backend Agent 2"),
+                    Cell::plain("Backend Engineer"),
+                    Cell::status("online", Style::Active),
+                    Cell::dim("worker-eu-linux"),
+                    Cell::dim("0193a5c0-0000-7000-8000-0000000000aa"),
+                    Cell::dim("2026-11-27 14:01 UTC"),
+                    Cell::plain("Replication and worker queue"),
+                ],
+            },
+        ],
+    };
+    let (mut context, streams) = captured(never_color(), tty(Some(80)), &[]);
+    context
+        .render_table(&table, &Value::Null, &ListView::default())
+        .unwrap();
+    let text = streams.stdout.text();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 3, "{text}");
+    assert!(
+        lines.iter().all(|line| line.chars().count() <= 80),
+        "exceeded 80 columns:\n{text}"
+    );
+    assert!(
+        lines[1].contains("@backend") && !lines[1].contains("@backend-2"),
+        "row 1 must show full @backend:\n{text}"
+    );
+    assert!(
+        lines[2].contains("@backend-2"),
+        "row 2 must keep full @backend-2 distinguishable (never bac...):\n{text}"
+    );
+    assert!(
+        lines[1].contains("Backend Agent") && lines[2].contains("Backend Agent 2"),
+        "names must stay distinguishable:\n{text}"
+    );
+    assert!(
+        !lines[0].contains("NOTES") && !lines[0].contains("UPDATED"),
+        "low-priority columns should elide before truncating handles:\n{text}"
+    );
+}
+
+#[test]
+fn agent_harness_pty_emits_untruncated_json_while_pipe_preserves_tsv() {
+    let table = Table {
+        headers: vec!["id".into(), "handle".into(), "notes".into()],
+        rows: vec![
+            Row {
+                id: "1".into(),
+                cells: vec![
+                    Cell::id("0193a5c0-0000-7000-8000-000000000001"),
+                    Cell::name("@backend"),
+                    Cell::plain("x".repeat(120)),
+                ],
+            },
+            Row {
+                id: "2".into(),
+                cells: vec![
+                    Cell::id("0193a5c0-0000-7000-8000-000000000002"),
+                    Cell::name("@backend-2"),
+                    Cell::plain("y".repeat(120)),
+                ],
+            },
+        ],
+    };
+    let payload = json!([
+        {"id": "0193a5c0-0000-7000-8000-000000000001", "handle": "@backend", "notes": "x".repeat(120)},
+        {"id": "0193a5c0-0000-7000-8000-000000000002", "handle": "@backend-2", "notes": "y".repeat(120)}
+    ]);
+
+    // 80-col PTY under CLAUDECODE -> untruncated single-line JSON!
+    let (mut ctx, streams) = captured(Modes::default(), tty(Some(80)), &[("CLAUDECODE", "1")]);
+    ctx.render_table(&table, &payload, &ListView::default())
+        .unwrap();
+    let stdout = streams.stdout.text();
+    assert_eq!(
+        stdout.lines().count(),
+        1,
+        "compact JSON in harness PTY: {stdout}"
+    );
+    let parsed: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(parsed, payload);
+
+    // Non-TTY pipe under CLAUDECODE -> preserves untruncated TSV!
+    let (mut ctx, streams) = captured(Modes::default(), Terminal::piped(), &[("CLAUDECODE", "1")]);
+    ctx.render_table(&table, &payload, &ListView::default())
+        .unwrap();
+    let tsv = streams.stdout.text();
+    assert!(
+        tsv.contains("@backend\t") && tsv.contains("@backend-2\t"),
+        "{tsv}"
+    );
+    assert!(tsv.contains(&"x".repeat(120)), "piped TSV is untruncated");
+
+    // AGENT_OS_FORMAT=yaml on TTY renders valid escaped YAML!
+    let (mut ctx, streams) = captured(
+        Modes::default(),
+        tty(Some(80)),
+        &[(crate::context::OUTPUT_FORMAT_ENV, "yaml")],
+    );
+    ctx.render_table(&table, &payload, &ListView::default())
+        .unwrap();
+    let yaml = streams.stdout.text();
+    assert!(
+        yaml.contains("handle: \"@backend\"") && yaml.contains("handle: \"@backend-2\""),
+        "{yaml}"
+    );
+}

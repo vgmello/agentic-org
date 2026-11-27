@@ -3,7 +3,7 @@
 //! declared next to its slice (`features/<noun>/mod.rs`).
 
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
-use org_cli_shell::context::{ColorMode, Modes};
+use org_cli_shell::context::{ColorMode, Modes, OutputFormat};
 
 use crate::args::PassArgs;
 use crate::features::{admin, backup, completion, context, diagnostics, office, org, project};
@@ -51,6 +51,28 @@ pub(crate) enum ColorArg {
     Never,
 }
 
+/// `--format`.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FormatArg {
+    Json,
+    Compact,
+    Yaml,
+    Tsv,
+    Table,
+}
+
+impl FormatArg {
+    pub(crate) fn into_shell(self) -> OutputFormat {
+        match self {
+            Self::Json => OutputFormat::Json,
+            Self::Compact => OutputFormat::Compact,
+            Self::Yaml => OutputFormat::Yaml,
+            Self::Tsv => OutputFormat::Tsv,
+            Self::Table => OutputFormat::Table,
+        }
+    }
+}
+
 /// The flags every command takes.
 #[derive(Args, Debug, Default)]
 #[command(next_help_heading = "Global Options")]
@@ -61,6 +83,15 @@ pub(crate) struct GlobalArgs {
     /// Print only IDs, one per line
     #[arg(short, long, global = true, conflicts_with = "json")]
     pub(crate) quiet: bool,
+    /// Output format (overrides AGENT_OS_FORMAT): json, compact, yaml, tsv or table
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        value_name = "FORMAT",
+        conflicts_with_all = ["json", "quiet"]
+    )]
+    pub(crate) format: Option<FormatArg>,
     /// Never prompt; fail instead when a value or a confirmation is missing
     #[arg(long, global = true)]
     pub(crate) no_input: bool,
@@ -273,6 +304,35 @@ impl TopCommand {
         Some((name, &pass.args))
     }
 
+    /// Mutable counterpart of [`Self::office_resource`] for hoisting post-subcommand output flags
+    /// (`--json`, `-q`, `--format`) before dispatching over the signed-in office channel.
+    pub(crate) fn office_resource_mut(&mut self) -> Option<(&'static str, &mut Vec<String>)> {
+        let (name, pass) = match self {
+            Self::Msg(p) => ("msg", p),
+            Self::Channel(p) => ("channel", p),
+            Self::Hr(p) => ("hr", p),
+            Self::Agent(p) => ("agent", p),
+            Self::Team(p) => ("team", p),
+            Self::Role(p) => ("role", p),
+            Self::Person(p) => ("person", p),
+            Self::Who(p) => ("who", p),
+            Self::Directory(p) => ("directory", p),
+            Self::Member(p) => ("member", p),
+            Self::Repo(p) => ("repo", p),
+            Self::Worktree(p) => ("worktree", p),
+            Self::Task(p) => ("task", p),
+            Self::Checklist(p) => ("checklist", p),
+            Self::TaskNote(p) => ("task-note", p),
+            Self::Session(p) => ("session", p),
+            Self::Grant(p) => ("grant", p),
+            Self::Process(p) => ("process", p),
+            Self::Skill(p) => ("skill", p),
+            Self::Budget(p) => ("budget", p),
+            _ => return None,
+        };
+        Some((name, &mut pass.args))
+    }
+
     /// `--yes` of a destructive command.
     fn yes(&self) -> bool {
         match self {
@@ -309,6 +369,7 @@ impl Cli {
         Modes {
             json: self.global.json,
             quiet: self.global.quiet,
+            format: self.global.format.map(FormatArg::into_shell),
             dry_run: self.global.dry_run,
             no_input: self.global.no_input,
             yes: self.command.as_ref().is_some_and(TopCommand::yes),

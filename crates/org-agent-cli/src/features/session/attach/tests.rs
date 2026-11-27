@@ -382,7 +382,13 @@ fn true_is_a_bare_flag_for_yes_or_no_flags_only() {
     let args = parse_line_args(table, line).expect("parsed");
     assert_eq!(
         args,
-        ["status", "set", "--json", r#"{"text":"ok"}"#, "--dry-run"]
+        [
+            "status",
+            "set",
+            "--input-json",
+            r#"{"text":"ok"}"#,
+            "--dry-run"
+        ]
     );
     let mut office = recording();
     let envelopes = attach_lines(&format!("{line}\n"), &mut office);

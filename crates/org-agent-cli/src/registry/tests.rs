@@ -94,7 +94,7 @@ fn every_write_command_honors_dry_run_without_live_side_effects() {
         checked += 1;
         let mut args = vec![cmd.resource.to_owned(), cmd.verb.to_owned()];
         if !cmd.input.is_empty() {
-            args.push("--json".to_owned());
+            args.push("--input-json".to_owned());
             args.push(cmd.example.input.to_owned());
         }
         args.push("--dry-run".to_owned());

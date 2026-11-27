@@ -280,7 +280,7 @@ fn attach_line_args(line: &str, table: &CommandTable) -> Option<Result<Vec<Strin
     }
     let row = table.command_for(&args);
     if let Some(input) = object.get("input").filter(|v| !v.is_null()) {
-        args.push("--json".to_owned());
+        args.push("--input-json".to_owned());
         args.push(input.to_string());
     }
     match object.get("options").filter(|v| !v.is_null()) {
@@ -457,10 +457,10 @@ fn fill_placeholders(command: &Command, args: &[String]) -> Vec<String> {
             Some((name, value)) => (name, Some(value)),
             None => (flag, None),
         };
-        if name == "json" {
+        if name == "input-json" {
             match (inline, args.get(at)) {
                 (Some(value), _) => {
-                    out.push(format!("--json={}", fill_json_option(command, value)))
+                    out.push(format!("--input-json={}", fill_json_option(command, value)))
                 }
                 (None, Some(value)) => {
                     at += 1;

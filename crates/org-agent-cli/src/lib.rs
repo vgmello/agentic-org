@@ -36,39 +36,104 @@ pub mod external_auth {
 use features::auth;
 use runtime::help::quickstart;
 
+/// Reads `AGENT_OS_FORMAT` from the process environment (preserving non-UTF-8 as lossy text so
+/// invalid values fail closed instead of being silently ignored).
+fn env_format() -> Option<String> {
+    std::env::var_os(org_command::OUTPUT_FORMAT_ENV).map(|raw| raw.to_string_lossy().into_owned())
+}
+
+/// Normalizes leading `--json` (before a command, shorthand, positional shorthand, or `--help`)
+/// alongside shorthands and operator positional rewrites so every downstream helper sees the
+/// canonical `[resource, verb, ...]` shape.
+fn prepare_args(args: &[String]) -> Cow<'_, [String]> {
+    let leading_json = args.first().is_some_and(|a| a == "--json");
+    if !leading_json || args.len() == 1 || args.get(1).is_some_and(|a| a == "--json") {
+        let expanded = registry::normalize_args(args);
+        return match registry::rewrite_positional(&expanded) {
+            Some(rewritten) => Cow::Owned(rewritten),
+            None => expanded,
+        };
+    }
+    let tail = &args[1..];
+    if matches!(tail, [flag] if is_help_flag(flag)) {
+        return Cow::Owned(tail.to_vec());
+    }
+    let expanded = registry::normalize_args(tail);
+    let mut effective = match registry::rewrite_positional(&expanded) {
+        Some(rewritten) => rewritten,
+        None => expanded.into_owned(),
+    };
+    let table = registry::runtime_table();
+    if effective.len() == 2 && !table.verbs(&effective[0]).is_empty() && is_help_flag(&effective[1])
+    {
+        return Cow::Owned(effective);
+    }
+    let Some(command) = effective
+        .first()
+        .zip(effective.get(1))
+        .and_then(|(resource, verb)| table.find(resource, verb))
+    else {
+        return Cow::Borrowed(args);
+    };
+    if !runtime::help::asks_for_help(command, &effective[2..]) {
+        effective.insert(2, "--json".to_owned());
+    }
+    Cow::Owned(effective)
+}
+
 /// Runs the shared `org-command` table against any supplied [`Office`] implementation
 /// (either a bound agent socket or a grant-bound person host channel). A shorthand (`who`,
 /// `task note`, `context`) is read as its command.
 pub fn execute_with_office(program: &str, args: &[String], office: &mut dyn Office) -> Output {
+    execute_with_office_and_env(program, args, office, None)
+}
+
+/// Like [`execute_with_office`], applying an explicit `AGENT_OS_FORMAT` environment value when
+/// neither `--json` nor `--format` is passed on the command line.
+pub fn execute_with_office_and_env(
+    program: &str,
+    args: &[String],
+    office: &mut dyn Office,
+    env_format: Option<&str>,
+) -> Output {
     if matches!(args, [flag] if flag == "--version" || flag == "-V") {
         return Output {
             stdout: format!("{program} {}\n", env!("CARGO_PKG_VERSION")),
             exit_code: 0,
         };
     }
-    let expanded = registry::normalize_args(args);
-    // `agent approve <code>` and the other operator verbs read their bare words as named flags.
-    let effective_args = match registry::rewrite_positional(&expanded) {
-        Some(rewritten) => Cow::Owned(rewritten),
-        None => expanded,
-    };
+    let effective_args = prepare_args(args);
     let mut sources = runtime::sources::StdSources;
     let mut keys = runtime::keys::UuidV7KeySource;
-    let output = registry::run_command(program, &effective_args, &mut sources, &mut keys, office);
+    let output = registry::run_command_with_env(
+        program,
+        &effective_args,
+        &mut sources,
+        &mut keys,
+        office,
+        env_format,
+    );
     registry::augment_help(program, &effective_args, output)
 }
 
 /// Runs `agent-os` with the supplied command-line arguments and binding, returning the
 /// formatted stdout text and process exit code.
 pub fn execute(args: &[String], binding: Binding) -> Output {
-    execute_bound(args, &mut auth::office_for(binding))
+    execute_bound(args, &mut auth::office_for(binding), None)
 }
 
 /// Runs `agent-os` over `office`; `agent-os --help` opens with the quickstart of the shell's
 /// binding state.
-fn execute_bound(args: &[String], office: &mut BoundOffice) -> Output {
-    let mut output = execute_with_office("agent-os", args, &mut TransportOffice(&mut *office));
-    if output.exit_code == 0 && matches!(args, [flag] if is_help_flag(flag)) {
+fn execute_bound(args: &[String], office: &mut BoundOffice, env_format: Option<&str>) -> Output {
+    let mut output = execute_with_office_and_env(
+        "agent-os",
+        args,
+        &mut TransportOffice(&mut *office),
+        env_format,
+    );
+    let top_help = matches!(args, [flag] if is_help_flag(flag))
+        || matches!(args, [a, flag] if a == "--json" && is_help_flag(flag));
+    if output.exit_code == 0 && top_help {
         output.stdout = format!("{}\n{}", quickstart(office.is_bound()), output.stdout);
     }
     output
@@ -89,7 +154,8 @@ pub fn run(args: &[String]) -> u8 {
     if matches!(args, [a, b, ..] if a == "session" && b == "attach") {
         return run_session_attach(args, auth::env_office());
     }
-    let output = execute_bound(args, &mut auth::env_office());
+    let env_fmt = env_format();
+    let output = execute_bound(args, &mut auth::env_office(), env_fmt.as_deref());
     emit(&mut io::stdout().lock(), &output.stdout, output.exit_code)
 }
 

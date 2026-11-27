@@ -1098,3 +1098,204 @@ fn release_install_json_reports_unread_services_in_its_output_only() {
     );
     assert!(said.contains("[DRY-RUN]"), "{said}");
 }
+
+#[test]
+fn task_212_agent_os_format_precedence_and_json_before_after_subcommand() {
+    let sandbox = Sandbox::new();
+    sandbox.save_context(Some("lab"), OFFICE);
+
+    // 1. AGENT_OS_FORMAT=json produces valid JSON on stdout even without `--json` flag.
+    let env_json = sandbox
+        .command(&["context", "show"])
+        .env("AGENT_OS_FORMAT", " JSON ")
+        .output()
+        .unwrap();
+    assert_eq!(
+        env_json.status.code(),
+        Some(0),
+        "{}",
+        text(&env_json.stderr)
+    );
+    let parsed: Value = serde_json::from_slice(&env_json.stdout).unwrap();
+    assert_eq!(parsed["office_id"], OFFICE);
+    assert_eq!(parsed["instance_name"], "lab");
+
+    // 2. AGENT_OS_FORMAT=yaml and compact work on host commands.
+    let env_yaml = sandbox
+        .command(&["context", "show"])
+        .env("AGENT_OS_FORMAT", "yaml")
+        .output()
+        .unwrap();
+    assert_eq!(
+        env_yaml.status.code(),
+        Some(0),
+        "{}",
+        text(&env_yaml.stderr)
+    );
+    let yaml_text = text(&env_yaml.stdout);
+    assert!(
+        yaml_text.contains(&format!("office_id: \"{OFFICE}\""))
+            || yaml_text.contains(&format!("office_id: {OFFICE}")),
+        "{yaml_text}"
+    );
+
+    let env_compact = sandbox
+        .command(&["context", "show"])
+        .env("AGENT_OS_FORMAT", "compact")
+        .output()
+        .unwrap();
+    assert_eq!(
+        env_compact.status.code(),
+        Some(0),
+        "{}",
+        text(&env_compact.stderr)
+    );
+    let compact_text = text(&env_compact.stdout);
+    assert!(
+        compact_text.contains(&format!("office_id: {OFFICE}")),
+        "{compact_text}"
+    );
+
+    // 3. Explicit CLI flags (--json, -q, --format) beat AGENT_OS_FORMAT (even invalid env).
+    let flag_quiet = sandbox
+        .command(&["context", "show", "-q"])
+        .env("AGENT_OS_FORMAT", "json")
+        .output()
+        .unwrap();
+    assert_eq!(
+        flag_quiet.status.code(),
+        Some(0),
+        "{}",
+        text(&flag_quiet.stderr)
+    );
+    assert_eq!(text(&flag_quiet.stdout), format!("{OFFICE}\n"));
+
+    let flag_json = sandbox
+        .command(&["--json", "context", "show"])
+        .env("AGENT_OS_FORMAT", "bogus")
+        .output()
+        .unwrap();
+    assert_eq!(
+        flag_json.status.code(),
+        Some(0),
+        "{}",
+        text(&flag_json.stderr)
+    );
+    let parsed: Value = serde_json::from_slice(&flag_json.stdout).unwrap();
+    assert_eq!(parsed["office_id"], OFFICE);
+
+    let flag_format = sandbox
+        .command(&["context", "show", "--format", "tsv"])
+        .env("AGENT_OS_FORMAT", "json")
+        .output()
+        .unwrap();
+    assert_eq!(
+        flag_format.status.code(),
+        Some(0),
+        "{}",
+        text(&flag_format.stderr)
+    );
+    assert!(
+        text(&flag_format.stdout).contains(&format!("office_id\t{OFFICE}")),
+        "{}",
+        text(&flag_format.stdout)
+    );
+
+    // 4. Invalid AGENT_OS_FORMAT without explicit CLI flag exits 2 cleanly.
+    let bad_env = sandbox
+        .command(&["context", "show"])
+        .env("AGENT_OS_FORMAT", "xml")
+        .output()
+        .unwrap();
+    assert_eq!(bad_env.status.code(), Some(2));
+    assert!(
+        text(&bad_env.stderr).contains("AGENT_OS_FORMAT") && text(&bad_env.stderr).contains("xml"),
+        "{}",
+        text(&bad_env.stderr)
+    );
+
+    // 5. Non-TTY pipe under agent-harness marker preserves piped TSV when AGENT_OS_FORMAT is unset.
+    let piped_harness = sandbox
+        .command(&["context", "show"])
+        .env("CLAUDECODE", "1")
+        .output()
+        .unwrap();
+    assert_eq!(
+        piped_harness.status.code(),
+        Some(0),
+        "{}",
+        text(&piped_harness.stderr)
+    );
+    assert!(
+        text(&piped_harness.stdout).contains(&format!("office_id\t{OFFICE}")),
+        "piped output must preserve TSV: {}",
+        text(&piped_harness.stdout)
+    );
+
+    // 5b. Real PTY under agent-harness marker emits untruncated JSON instead of a human card;
+    //     plain human PTY emits the human detail card.
+    let mut pty_harness_cmd = sandbox.command(&["context", "show"]);
+    pty_harness_cmd.env("CLAUDECODE", "1");
+    let mut pty_harness = Terminal::start(pty_harness_cmd);
+    let harness_out = pty_harness.read_until("}", Duration::from_secs(10));
+    assert_eq!(wait(&mut pty_harness.child), Some(0), "{harness_out}");
+    let parsed_pty: Value = serde_json::from_str(harness_out.trim()).unwrap_or_else(|err| {
+        panic!("expected JSON on agent-harness PTY, got {harness_out:?}: {err}")
+    });
+    assert_eq!(parsed_pty["office_id"], OFFICE);
+
+    let mut pty_human = Terminal::start(sandbox.command(&["context", "show"]));
+    let human_out = pty_human.read_until(INSTANCE_ID, Duration::from_secs(10));
+    assert_eq!(wait(&mut pty_human.child), Some(0), "{human_out}");
+    assert!(
+        serde_json::from_str::<Value>(human_out.trim()).is_err(),
+        "human PTY should render detail card, not JSON: {human_out:?}"
+    );
+    assert!(
+        human_out.contains("OFFICE_ID") && human_out.contains(OFFICE),
+        "{human_out}"
+    );
+
+    // 6. `--json` works BOTH before and after office subcommands (`directory list --json` vs
+    //    `--json directory list`, `task list --json` vs `--json task list`), producing identical
+    //    structured JSON error envelopes when offline (exit 1, never usage error exit 2).
+    for cmd in [&["directory", "list"][..], &["task", "list"]] {
+        let mut before_args = vec!["--json"];
+        before_args.extend_from_slice(cmd);
+        let mut after_args = cmd.to_vec();
+        after_args.push("--json");
+        let before = sandbox.run(&before_args);
+        let after = sandbox.run(&after_args);
+        assert_eq!(before.status.code(), after.status.code());
+        assert_eq!(
+            before.status.code(),
+            Some(1),
+            "must reach host channel (exit 1), never usage error: {}",
+            text(&before.stderr)
+        );
+        assert_eq!(before.stdout, after.stdout);
+        assert!(before.stderr.is_empty(), "{}", text(&before.stderr));
+        assert!(after.stderr.is_empty(), "{}", text(&after.stderr));
+        let env_before: Value = serde_json::from_slice(&before.stdout).unwrap_or_else(|e| {
+            panic!(
+                "expected JSON envelope on stdout: {e}: {}",
+                text(&before.stdout)
+            )
+        });
+        let env_after: Value = serde_json::from_slice(&after.stdout).unwrap_or_else(|e| {
+            panic!(
+                "expected JSON envelope on stdout: {e}: {}",
+                text(&after.stdout)
+            )
+        });
+        assert_eq!(env_before["ok"], false);
+        assert_eq!(env_before["error"]["code"], env_after["error"]["code"]);
+    }
+
+    // 7. `--json` after office subcommand with `--help` still prints help cleanly (exit 0).
+    let help = sandbox.run(&["task", "list", "--help"]);
+    assert_eq!(help.status.code(), Some(0));
+    let help_text = text(&help.stdout);
+    assert!(help_text.contains("--input-json"), "{help_text}");
+    assert!(help_text.contains("--json"), "{help_text}");
+}

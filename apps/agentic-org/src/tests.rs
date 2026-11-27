@@ -249,3 +249,64 @@ fn the_host_and_the_shell_name_the_same_config_variable() {
         org_cli_shell::paths::CONFIG_DIR_ENV
     );
 }
+
+#[test]
+fn office_flag_hoisting_handles_json_before_and_after_subcommand_and_preserves_values() {
+    let owned = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+
+    // Bare `--json` after an office subcommand is hoisted cleanly.
+    let (cleaned, hoisted) =
+        crate::hoist_office_words(&owned(&["member", "list", "--json"])).unwrap();
+    assert_eq!(cleaned, owned(&["member", "list"]));
+    assert!(hoisted.json);
+
+    // `--json` as the value of a value-taking flag stays untouched (never hoisted).
+    let (cleaned, hoisted) =
+        crate::hoist_office_words(&owned(&["msg", "send", "--to", "ada", "--body", "--json"]))
+            .unwrap();
+    assert_eq!(
+        cleaned,
+        owned(&["msg", "send", "--to", "ada", "--body", "--json"])
+    );
+    assert!(!hoisted.json);
+
+    // `--json` after `--` stays untouched.
+    let (cleaned, hoisted) =
+        crate::hoist_office_words(&owned(&["task", "list", "--", "--json"])).unwrap();
+    assert_eq!(cleaned, owned(&["task", "list", "--", "--json"]));
+    assert!(!hoisted.json);
+
+    // `--input-json <object>` stays attached while trailing `--json` is hoisted.
+    let (cleaned, hoisted) = crate::hoist_office_words(&owned(&[
+        "task",
+        "list",
+        "--input-json",
+        r#"{"status":"open"}"#,
+        "--json",
+    ]))
+    .unwrap();
+    assert_eq!(
+        cleaned,
+        owned(&["task", "list", "--input-json", r#"{"status":"open"}"#])
+    );
+    assert!(hoisted.json);
+
+    // `--json=<object>` is refused with guidance pointing to `--input-json`.
+    let err = crate::hoist_office_words(&owned(&["task", "list", "--json={}"]))
+        .err()
+        .expect("refused");
+    assert!(err.to_string().contains("--input-json"), "{err}");
+
+    // `--format table` and `--format=tsv` hoist to shell OutputFormat; `--format yaml` passes through.
+    let (cleaned, hoisted) =
+        crate::hoist_office_words(&owned(&["task", "list", "--format", "table"])).unwrap();
+    assert_eq!(cleaned, owned(&["task", "list"]));
+    assert_eq!(
+        hoisted.format,
+        Some(org_cli_shell::context::OutputFormat::Table)
+    );
+    let (cleaned, hoisted) =
+        crate::hoist_office_words(&owned(&["task", "list", "--format=yaml"])).unwrap();
+    assert_eq!(cleaned, owned(&["task", "list", "--format=yaml"]));
+    assert!(hoisted.table_format);
+}

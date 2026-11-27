@@ -27,7 +27,10 @@ use std::io::{self, Write};
 
 use clap::error::ErrorKind;
 use clap::FromArgMatches;
-use org_cli_shell::context::{prescan, resolve_color, ExecutionContext, Modes, Prescan};
+use org_cli_shell::context::{
+    parse_env_format, prescan, resolve_color, resolve_output_format, ExecutionContext, Modes,
+    OutputFormat, Prescan, OUTPUT_FORMAT_ENV,
+};
 use org_cli_shell::error::{render_diagnostic, EXIT_FAILURE};
 use org_cli_shell::terminal::{sanitize, Terminal};
 
@@ -124,10 +127,18 @@ pub fn run(args: Vec<OsString>) -> u8 {
         Ok(cli) => cli,
         Err(error) => return clap_answer(&error, &pre),
     };
-    let mut ctx = ExecutionContext::detect(cli.modes());
-    org_cli_shell::prompt::sync_colors(&ctx);
+    let explicit = ExplicitOutput {
+        json: cli.global.json,
+        quiet: cli.global.quiet,
+        format: cli.global.format.map(cli::FormatArg::into_shell),
+        table_format: false,
+        dry_run: cli.global.dry_run,
+    };
+    let mut modes = cli.modes();
     let Some(top) = cli.command else {
         // `agentic-org` alone: its help, colored as standard output is (`--color always`).
+        let mut ctx = ExecutionContext::detect(modes);
+        org_cli_shell::prompt::sync_colors(&ctx);
         let help = cli::command().render_help();
         let text = if ctx.stdout_color() {
             help.ansi().to_string()
@@ -136,6 +147,26 @@ pub fn run(args: Vec<OsString>) -> u8 {
         };
         return write_or_closed(&mut ctx, &text);
     };
+    let (top, explicit, passthrough_meta) = match prepare_modes(top, explicit, &mut modes) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            let mut ctx = ExecutionContext::detect(modes);
+            return ctx.report(&error);
+        }
+    };
+    if !passthrough_meta && !explicit.has_output_override() {
+        if let Err(bad) = parse_env_format(&|name| std::env::var_os(name)) {
+            let mut ctx = ExecutionContext::detect(modes);
+            let error = CliError::usage(format!(
+                "{OUTPUT_FORMAT_ENV} must be json, compact, yaml, tsv or table, not `{}`",
+                sanitize(&bad)
+            ))
+            .with_help("Unset AGENT_OS_FORMAT or override with --format, --json, or -q.");
+            return ctx.report(&error);
+        }
+    }
+    let mut ctx = ExecutionContext::detect(modes);
+    org_cli_shell::prompt::sync_colors(&ctx);
     // Ctrl+C restores the cursor and exits 130. Not for `serve`, which blocks its stop
     // signals itself, nor while the host may read a password or a recovery code: that
     // prompt blocks the signals on its own thread to restore the terminal first, and a
@@ -143,7 +174,7 @@ pub fn run(args: Vec<OsString>) -> u8 {
     if !matches!(top, TopCommand::Serve(_)) && !top.reads_a_secret() {
         org_cli_shell::terminal::install_interrupt_handler();
     }
-    match dispatch(top, &mut ctx) {
+    match dispatch(top, &explicit, passthrough_meta, &mut ctx) {
         Ok(()) => 0,
         Err(error) => ctx.report(&error),
     }
@@ -157,12 +188,13 @@ fn write_or_closed(ctx: &mut ExecutionContext, text: &str) -> u8 {
 }
 
 /// Help, the version, or a command line clap refused: help and the version on standard
-/// output; a refusal as a JSON envelope on standard error under `--json`, or clap's own
-/// message (sanitized) otherwise; exit 2.
+/// output; a refusal as a JSON envelope on standard error under `--json` (or `AGENT_OS_FORMAT=json`
+/// / agent-harness PTY), or clap's own message (sanitized) otherwise; exit 2.
 fn clap_answer(error: &clap::Error, pre: &Prescan) -> u8 {
     let modes = Modes {
         json: pre.json,
         quiet: pre.quiet,
+        format: pre.format,
         color: pre.color.unwrap_or_default(),
         no_color: pre.no_color,
         ..Modes::default()
@@ -184,7 +216,9 @@ fn clap_answer(error: &clap::Error, pre: &Prescan) -> u8 {
     }
     let rendered = error.render().to_string();
     let mut err = io::stderr();
-    if pre.json {
+    let json_errors = pre.json
+        || (!pre.quiet && resolve_output_format(&modes, &terminal, &env) == OutputFormat::Json);
+    if json_errors {
         let mut lines = rendered.lines().filter(|line| !line.trim().is_empty());
         let (message, help) = if error.kind() == ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
         {
@@ -212,35 +246,57 @@ fn clap_answer(error: &clap::Error, pre: &Prescan) -> u8 {
     u8::try_from(error.exit_code()).unwrap_or(EXIT_FAILURE)
 }
 
+/// Output/preview flags passed explicitly on the CLI (before or after the subcommand), kept
+/// distinct from `AGENT_OS_FORMAT` / agent-harness PTY defaults so `serve`/`setup`/`recovery`
+/// only refuse explicit CLI flags and explicit flags cleanly beat `AGENT_OS_FORMAT`.
+#[derive(Clone, Copy, Debug, Default)]
+struct ExplicitOutput {
+    json: bool,
+    quiet: bool,
+    format: Option<OutputFormat>,
+    /// True when an office command carried `--format <json|yaml|compact|...>` inside its words.
+    table_format: bool,
+    dry_run: bool,
+}
+
+impl ExplicitOutput {
+    fn has_output_override(self) -> bool {
+        self.json || self.quiet || self.format.is_some() || self.table_format
+    }
+}
+
 /// `serve`, `setup` and `recovery` report in prose and have no preview; `sign-in` signs in
-/// and saves its context: a global flag they cannot honour is refused, never ignored.
-fn refuse_unsupported_modes(top: &TopCommand, ctx: &ExecutionContext) -> Result<(), CliError> {
+/// and saves its context: an explicit global flag they cannot honour is refused, never ignored.
+fn refuse_unsupported_modes(top: &TopCommand, explicit: &ExplicitOutput) -> Result<(), CliError> {
     let (name, refused): (&str, &[(&str, bool)]) = match top {
         TopCommand::Serve(_) => (
             "serve",
             &[
-                ("--json", ctx.modes().json),
-                ("--quiet", ctx.modes().quiet),
-                ("--dry-run", ctx.modes().dry_run),
+                ("--json", explicit.json),
+                ("--quiet", explicit.quiet),
+                ("--format", explicit.format.is_some()),
+                ("--dry-run", explicit.dry_run),
             ],
         ),
         TopCommand::Setup(_) => (
             "setup",
             &[
-                ("--json", ctx.modes().json),
-                ("--quiet", ctx.modes().quiet),
-                ("--dry-run", ctx.modes().dry_run),
+                ("--json", explicit.json),
+                ("--quiet", explicit.quiet),
+                ("--format", explicit.format.is_some()),
+                ("--dry-run", explicit.dry_run),
             ],
         ),
         TopCommand::Recovery(_) => (
             "recovery",
             &[
-                ("--json", ctx.modes().json),
-                ("--quiet", ctx.modes().quiet),
-                ("--dry-run", ctx.modes().dry_run),
+                ("--json", explicit.json),
+                ("--quiet", explicit.quiet),
+                ("--format", explicit.format.is_some()),
+                ("--dry-run", explicit.dry_run),
             ],
         ),
-        TopCommand::SignIn(_) => ("sign-in", &[("--dry-run", ctx.modes().dry_run)]),
+        TopCommand::SignIn(_) => ("sign-in", &[("--dry-run", explicit.dry_run)]),
         _ => return Ok(()),
     };
     match refused.iter().find(|(_, given)| *given) {
@@ -250,18 +306,304 @@ fn refuse_unsupported_modes(top: &TopCommand, ctx: &ExecutionContext) -> Result<
     }
 }
 
-fn dispatch(top: TopCommand, ctx: &mut ExecutionContext) -> Result<(), CliError> {
+/// Whether `TopCommand::Agent(pass)` names one of the operator-local clap verbs
+/// (`agent bind|renew|sessions`) rather than an office command table verb.
+fn is_local_agent_verb(args: &[String]) -> bool {
+    matches!(
+        args.first().map(String::as_str),
+        Some("bind" | "renew" | "sessions")
+    )
+}
+
+fn resource_and_verb(words: &[String]) -> Option<(&str, &str)> {
+    match words {
+        [a, b, v, ..] if a == "task" && b == "note" => Some(("task-note", v.as_str())),
+        [a, ..] if a == "who" => Some(("directory", "list")),
+        [r, v, ..] => Some((r.as_str(), v.as_str())),
+        _ => None,
+    }
+}
+
+fn command_path_words(words: &[String]) -> usize {
+    match words {
+        [a, ..] if a == "who" => 1,
+        [a, b, ..] if a == "task" && b == "note" => 3,
+        _ => 2,
+    }
+}
+
+fn office_flag_takes_value(words: &[String], flag_name: &str) -> bool {
+    if matches!(
+        flag_name,
+        "format"
+            | "fields"
+            | "limit"
+            | "cursor"
+            | "input-json"
+            | "input-file"
+            | "input-format"
+            | "idempotency-key"
+            | "if-match"
+            | "instance"
+            | "office"
+            | "color"
+            | "name"
+    ) {
+        return true;
+    }
+    let Some((resource, verb)) = resource_and_verb(words) else {
+        return false;
+    };
+    if resource == "hr" && verb == "hire" && flag_name == "bind-workspace" {
+        return true;
+    }
+    org_agent_cli::runtime_table()
+        .find(resource, verb)
+        .is_some_and(|cmd| cmd.flag_takes_value(flag_name) == Some(true))
+}
+
+#[derive(Default)]
+struct HoistedFlags {
+    json: bool,
+    quiet: bool,
+    format: Option<OutputFormat>,
+    table_format: bool,
+    passthrough_meta: bool,
+}
+
+/// Scans `words` (`<resource> [<verb>] ...`) respecting `--` and value-taking flags, stripping
+/// bare `--json`, `-q`/`--quiet`, and shell-only `--format table|tsv` into [`HoistedFlags`].
+pub(crate) fn hoist_office_words(
+    words: &[String],
+) -> Result<(Vec<String>, HoistedFlags), CliError> {
+    let mut out = Vec::with_capacity(words.len());
+    let mut hoisted = HoistedFlags::default();
+    let mut idx = 0;
+    let mut after_terminator = false;
+    let mut awaiting_value = false;
+    while let Some(arg) = words.get(idx) {
+        idx += 1;
+        if awaiting_value {
+            awaiting_value = false;
+            out.push(arg.clone());
+            continue;
+        }
+        if after_terminator {
+            out.push(arg.clone());
+            continue;
+        }
+        if arg == "--" {
+            after_terminator = true;
+            out.push(arg.clone());
+            continue;
+        }
+        if arg == "--json" {
+            hoisted.json = true;
+            continue;
+        }
+        if arg.starts_with("--json=") {
+            return Err(CliError::usage(
+                "--json is a yes-or-no flag for JSON output and takes no value; pass a JSON object with --input-json <object>",
+            ));
+        }
+        if arg == "-q" || arg == "--quiet" {
+            hoisted.quiet = true;
+            continue;
+        }
+        if arg == "--help" || arg == "-h" || arg == "--schema" || arg == "--version" {
+            hoisted.passthrough_meta = true;
+            out.push(arg.clone());
+            continue;
+        }
+        if arg == "--format" {
+            if let Some(next) = words.get(idx) {
+                match OutputFormat::parse(next) {
+                    Some(fmt @ (OutputFormat::Table | OutputFormat::Tsv)) => {
+                        idx += 1;
+                        hoisted.format = Some(fmt);
+                        continue;
+                    }
+                    _ => {
+                        hoisted.table_format = true;
+                        awaiting_value = true;
+                        out.push(arg.clone());
+                        continue;
+                    }
+                }
+            }
+            hoisted.table_format = true;
+            out.push(arg.clone());
+            continue;
+        }
+        if let Some(val) = arg.strip_prefix("--format=") {
+            match OutputFormat::parse(val) {
+                Some(fmt @ (OutputFormat::Table | OutputFormat::Tsv)) => {
+                    hoisted.format = Some(fmt);
+                    continue;
+                }
+                _ => {
+                    hoisted.table_format = true;
+                    out.push(arg.clone());
+                    continue;
+                }
+            }
+        }
+        if let Some(flag_name) = arg.strip_prefix("--") {
+            if !flag_name.contains('=') && office_flag_takes_value(words, flag_name) {
+                awaiting_value = true;
+            }
+        }
+        out.push(arg.clone());
+    }
+    Ok((out, hoisted))
+}
+
+fn merge_hoisted(
+    hoisted: HoistedFlags,
+    explicit: &mut ExplicitOutput,
+    modes: &mut Modes,
+) -> Result<bool, CliError> {
+    if hoisted.passthrough_meta {
+        return Ok(true);
+    }
+    explicit.json |= hoisted.json;
+    explicit.quiet |= hoisted.quiet;
+    explicit.table_format |= hoisted.table_format;
+    if let Some(fmt) = hoisted.format {
+        explicit.format = Some(fmt);
+    }
+    let has_any_format = explicit.format.is_some() || explicit.table_format;
+    if explicit.json && explicit.quiet {
+        return Err(CliError::usage(
+            "--quiet and --json cannot be used together",
+        ));
+    }
+    if explicit.quiet && has_any_format {
+        return Err(CliError::usage(
+            "--quiet and --format cannot be used together",
+        ));
+    }
+    if explicit.json && has_any_format {
+        return Err(CliError::usage(
+            "--json and --format cannot be used together",
+        ));
+    }
+    modes.json = explicit.json;
+    modes.quiet = explicit.quiet;
+    modes.format = explicit.format;
+    Ok(false)
+}
+
+/// Scans `args` of a local clap verb (`agent bind|renew|sessions`) for explicit output/help flags
+/// without modifying `args`, so `-q` or `--json` cleanly overrides `AGENT_OS_FORMAT`.
+fn scan_local_agent_flags(args: &[String]) -> HoistedFlags {
+    let mut found = HoistedFlags::default();
+    let mut skip_next = false;
+    for arg in args.iter().skip(1) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if arg == "--" {
+            break;
+        }
+        match arg.as_str() {
+            "--help" | "-h" => found.passthrough_meta = true,
+            "--json" => found.json = true,
+            "-q" | "--quiet" => found.quiet = true,
+            "--member" | "--workspace" | "--ttl" | "--label" | "--session" | "--limit"
+            | "--history-limit" | "--name" | "--instance" | "--office" | "--color" => {
+                skip_next = true;
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+fn prepare_modes(
+    mut top: TopCommand,
+    mut explicit: ExplicitOutput,
+    modes: &mut Modes,
+) -> Result<(TopCommand, ExplicitOutput, bool), CliError> {
+    if let TopCommand::Agent(pass) = &top {
+        if is_local_agent_verb(&pass.args) {
+            let found = scan_local_agent_flags(&pass.args);
+            let passthrough = merge_hoisted(found, &mut explicit, modes)?;
+            return Ok((top, explicit, passthrough));
+        }
+    }
+    if let Some((resource, pass_args)) = top.office_resource_mut() {
+        let mut full = Vec::with_capacity(pass_args.len() + 1);
+        full.push(resource.to_owned());
+        full.extend(pass_args.iter().cloned());
+        let (cleaned, hoisted) = hoist_office_words(&full)?;
+        *pass_args = cleaned.into_iter().skip(1).collect();
+        let passthrough = merge_hoisted(hoisted, &mut explicit, modes)?;
+        return Ok((top, explicit, passthrough));
+    }
+    if let TopCommand::Org(args) = &top {
+        if let Some(words) = args.office_words() {
+            let (_, hoisted) = hoist_office_words(&words)?;
+            let passthrough = merge_hoisted(hoisted, &mut explicit, modes)?;
+            return Ok((top, explicit, passthrough));
+        }
+    }
+    if let TopCommand::SignIn(args) = &top {
+        if !args.command().is_empty() {
+            let (_, hoisted) = hoist_office_words(args.command())?;
+            let passthrough = merge_hoisted(hoisted, &mut explicit, modes)?;
+            return Ok((top, explicit, passthrough));
+        }
+    }
+    Ok((top, explicit, false))
+}
+
+/// Injects `--format yaml|compact` after the command path of an office command when `ctx` resolved
+/// to YAML or Compact (via `--format` before the subcommand or `AGENT_OS_FORMAT`), without
+/// touching `--help`, `--schema`, `--version`, or incomplete command paths.
+fn apply_office_output_format(
+    mut words: Vec<String>,
+    explicit: &ExplicitOutput,
+    passthrough_meta: bool,
+    ctx: &ExecutionContext,
+) -> Vec<String> {
+    if passthrough_meta || explicit.table_format || ctx.modes().quiet {
+        return words;
+    }
+    let path_len = command_path_words(&words);
+    if words.len() < path_len {
+        return words;
+    }
+    let fmt = match ctx.output_format() {
+        OutputFormat::Yaml => Some("yaml"),
+        OutputFormat::Compact => Some("compact"),
+        OutputFormat::Json | OutputFormat::Tsv | OutputFormat::Table => None,
+    };
+    if let Some(fmt) = fmt {
+        words.splice(path_len..path_len, ["--format".to_owned(), fmt.to_owned()]);
+    }
+    words
+}
+
+fn dispatch(
+    top: TopCommand,
+    explicit: &ExplicitOutput,
+    passthrough_meta: bool,
+    ctx: &mut ExecutionContext,
+) -> Result<(), CliError> {
     use features::*;
-    refuse_unsupported_modes(&top, ctx)?;
+    refuse_unsupported_modes(&top, explicit)?;
     if let TopCommand::Agent(pass) = &top {
         if let Some(outcome) = agent::try_run(&pass.args, ctx) {
             return outcome;
         }
     }
     if let Some((resource, words)) = top.office_resource() {
-        let words = std::iter::once(resource.to_owned())
+        let words: Vec<String> = std::iter::once(resource.to_owned())
             .chain(words.iter().cloned())
             .collect();
+        let words = apply_office_output_format(words, explicit, passthrough_meta, ctx);
         return sign_in::office_proxy::run(words, ctx);
     }
     match top {
@@ -281,7 +623,11 @@ fn dispatch(top: TopCommand, ctx: &mut ExecutionContext) -> Result<(), CliError>
         TopCommand::Context(args) => context::run(args, ctx),
         TopCommand::Admin(args) => admin::run(args, ctx),
         TopCommand::Org(args) => match args.office_words() {
-            Some(words) => sign_in::office_proxy::run(words, ctx),
+            Some(words) => {
+                let (cleaned, _) = hoist_office_words(&words)?;
+                let cleaned = apply_office_output_format(cleaned, explicit, passthrough_meta, ctx);
+                sign_in::office_proxy::run(cleaned, ctx)
+            }
             None => org::run(args, ctx),
         },
         TopCommand::Office(args) => office::run(args, ctx),

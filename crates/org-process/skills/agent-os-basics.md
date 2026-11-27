@@ -41,7 +41,7 @@ Put long bodies in a file and pass `--input-file <path>`; it fills the command's
 agent-os task comment --task <task> --input-file <path>
 ```
 
-`--json <object>` gives the whole input, or the part the flags do not give, as one JSON object. Fields with structure, such as the questions of an ask, can only be given that way.
+`--input-json <object>` gives the whole input, or the part the flags do not give, as one JSON object. Fields with structure, such as the questions of an ask, can only be given that way.
 
 ## Writes
 

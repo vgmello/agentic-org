@@ -110,7 +110,7 @@ fn flags_and_json_give_the_same_input() {
     let row = table.find("sample", "create").expect("the row");
     let example: Map<String, Value> = serde_json::from_str(row.example.input).expect("example");
     let mut flat = example.clone();
-    // A field with structure has no flag: it is given in --json beside the flags.
+    // A field with structure has no flag: it is given in --input-json beside the flags.
     let structure =
         json!({"owner": flat.remove("owner"), "extra": flat.remove("extra")}).to_string();
     let request = sent(
@@ -129,7 +129,7 @@ fn flags_and_json_give_the_same_input() {
             "a b",
             "--labels=yes",
             "--urgent",
-            "--json",
+            "--input-json",
             &structure,
         ],
     );
@@ -151,7 +151,7 @@ fn flags_and_json_give_the_same_input() {
             "create",
             "--title",
             "A",
-            "--json",
+            "--input-json",
             r#"{"title":"A"}"#,
         ],
     );
@@ -162,7 +162,7 @@ fn flags_and_json_give_the_same_input() {
             "create",
             "--title",
             "A",
-            "--json",
+            "--input-json",
             r#"{"title":"B"}"#,
         ],
     );
@@ -222,8 +222,8 @@ fn a_line_that_cannot_be_read_is_refused_with_what_to_do() {
             "is not a field name",
         ),
         (
-            &["sample", "ping", "--json", "{}"],
-            "--json is for a command with input",
+            &["sample", "ping", "--input-json", "{}"],
+            "--input-json is for a command with input",
         ),
         (
             &["sample", "ping", "--stdin"],
@@ -260,28 +260,33 @@ fn a_line_that_cannot_be_read_is_refused_with_what_to_do() {
             "`owner` has structure",
         ),
         (
-            &["sample", "create", "--title", "A", "--json", "[1]"],
-            "--json must be one JSON object",
+            &["sample", "create", "--title", "A", "--input-json", "[1]"],
+            "--input-json must be one JSON object",
         ),
         (
-            &["sample", "create", "--title", "A", "--json", "{"],
-            "--json is not JSON",
+            &["sample", "create", "--title", "A", "--input-json", "{"],
+            "--input-json is not JSON",
         ),
         (
-            &["sample", "create", "--json", r#"{"title":1}"#],
+            &["sample", "create", "--input-json", r#"{"title":1}"#],
             "`title` must be text",
         ),
         (
             &[
                 "sample",
                 "create",
-                "--json",
+                "--input-json",
                 r#"{"title":"A","owner":{"name":"x"}}"#,
             ],
             "`owner.id` is required",
         ),
         (
-            &["sample", "create", "--json", r#"{"title":"A","nope":1}"#],
+            &[
+                "sample",
+                "create",
+                "--input-json",
+                r#"{"title":"A","nope":1}"#,
+            ],
             "`nope` is not a field",
         ),
         (
@@ -746,7 +751,7 @@ fn help_is_text_at_three_levels_and_never_calls_the_office() {
     // that value: the line is read as written, and here it lacks the required --title.
     for line in [
         &["sample", "create", "--body", "--help"][..],
-        &["sample", "create", "--json", "--help"],
+        &["sample", "create", "--input-json", "--help"],
         &["sample", "create", "--format", "--help"],
         &["sample", "list", "--limit", "--help"],
         &["sample", "create", "--title", "A", "--help=yes"],
@@ -803,12 +808,12 @@ fn command_help_ends_with_its_example_as_one_line_a_shell_reads_back() {
         "{example}"
     );
     // A list repeats its flag, a yes-or-no is bare, text a shell would split is quoted and
-    // fields with structure go in one --json object, in name order.
+    // fields with structure go in one --input-json object, in name order.
     for part in [
         "--body 'Short body'",
         "--labels 'a b' --labels yes",
         "--urgent",
-        r#"--json '{"extra":{"a":[null],"z":1},"owner":{"id":"E-1","name":"Ada"}}'"#,
+        r#"--input-json '{"extra":{"a":[null],"z":1},"owner":{"id":"E-1","name":"Ada"}}'"#,
     ] {
         assert!(example.contains(part), "`{part}` is not in {example}");
     }
@@ -824,8 +829,9 @@ fn command_help_ends_with_its_example_as_one_line_a_shell_reads_back() {
         "{}",
         inspect.stdout
     );
-    let words = org_command::testkit::shell_words("a 'b c' 'it'\\''s' --json '{\"k\":\"v\"}'");
-    assert_eq!(words, ["a", "b c", "it's", "--json", r#"{"k":"v"}"#]);
+    let words =
+        org_command::testkit::shell_words("a 'b c' 'it'\\''s' --input-json '{\"k\":\"v\"}'");
+    assert_eq!(words, ["a", "b c", "it's", "--input-json", r#"{"k":"v"}"#]);
 }
 
 #[test]
@@ -1168,13 +1174,13 @@ fn what_a_command_reads_is_bounded() {
         message.contains("--stdin is longer than the 65536 bytes"),
         "{message}"
     );
-    // The value of --json has the limit of a JSON file.
+    // The value of --input-json has the limit of a JSON file.
     let long = format!(r#"{{"title":"{}"}}"#, "x".repeat(MAX_INPUT_BYTES));
     let message = message_of(
-        &["sample", "create", "--json", &long],
+        &["sample", "create", "--input-json", &long],
         &mut StubSources::default(),
     );
-    assert!(message.contains("--json is longer"), "{message}");
+    assert!(message.contains("--input-json is longer"), "{message}");
 }
 
 #[test]
@@ -1521,7 +1527,7 @@ fn a_whole_number_is_read_the_same_from_a_flag_and_from_json() {
             &["sample", "create", "--title", "A", "--priority", number],
         );
         let json = format!(r#"{{"title":"A","priority":{number}}}"#);
-        let by_json = sent(&table, &["sample", "create", "--json", &json]);
+        let by_json = sent(&table, &["sample", "create", "--input-json", &json]);
         assert_eq!(by_flag.input, by_json.input, "{number}");
         assert_eq!(by_flag.input["priority"].to_string(), number);
         // Both ways at once are the same value, not two.
@@ -1534,7 +1540,7 @@ fn a_whole_number_is_read_the_same_from_a_flag_and_from_json() {
                 "A",
                 "--priority",
                 number,
-                "--json",
+                "--input-json",
                 &json,
             ],
         );
@@ -1559,7 +1565,7 @@ fn a_whole_number_is_read_the_same_from_a_flag_and_from_json() {
             &[
                 "sample",
                 "create",
-                "--json",
+                "--input-json",
                 r#"{"title":"A","priority":1.5}"#,
             ],
             "`priority` must be a whole number",
@@ -1568,7 +1574,7 @@ fn a_whole_number_is_read_the_same_from_a_flag_and_from_json() {
             &[
                 "sample",
                 "create",
-                "--json",
+                "--input-json",
                 r#"{"title":"A","priority":1e300}"#,
             ],
             "`priority` must be a whole number",
@@ -1586,7 +1592,7 @@ fn a_whole_number_is_read_the_same_from_a_flag_and_from_json() {
             "create",
             "--priority",
             "2",
-            "--json",
+            "--input-json",
             r#"{"title":"A","priority":2.0}"#,
         ],
     );
@@ -1628,9 +1634,9 @@ fn a_name_given_twice_in_one_object_is_refused() {
         ),
     ] {
         let expected = format!("gives `{key}` twice in one object");
-        let message = refused(&table, &["sample", "create", "--json", json]);
+        let message = refused(&table, &["sample", "create", "--input-json", json]);
         assert!(
-            message.contains(&format!("--json {expected}")),
+            message.contains(&format!("--input-json {expected}")),
             "{json}: {message}"
         );
         let mut sources = StubSources {
@@ -1661,7 +1667,7 @@ fn a_name_given_twice_in_one_object_is_refused() {
         &[
             "sample",
             "create",
-            "--json",
+            "--input-json",
             r#"{"title":"\"title\":","body":"{\"title\":1,\"title\":2}","owner":{"id":"E-1"},"extra":[{"id":1},{"id":2},["title","title"]]}"#,
         ],
     );
@@ -1941,11 +1947,11 @@ fn a_refused_line_names_the_fields_given_only_in_json() {
     let table = sample_table();
     let hint = refused(&table, &["sample", "create", "--owner", "x"]);
     assert!(
-        hint.contains("Fields given in --json: owner, extra."),
+        hint.contains("Fields given in --input-json: owner, extra."),
         "{hint}"
     );
     let hint = refused(&table, &["sample", "inspect", "--nope", "x"]);
-    assert!(!hint.contains("Fields given in --json"), "{hint}");
+    assert!(!hint.contains("Fields given in --input-json"), "{hint}");
 }
 
 static SAMPLE_ALIASES: &[Alias] = &[
@@ -2090,4 +2096,124 @@ fn conflict_refusal_serializes_structured_conflict_and_validates_against_envelop
         envelope["error"]["conflict"]["current_summary"]["title"],
         "Updated"
     );
+}
+
+#[test]
+fn json_output_switch_works_before_and_after_subcommand_and_honors_env_format_precedence() {
+    let table = sample_table().with_aliases(SAMPLE_ALIASES);
+    let run_env = |line: &[&str], env: Option<&str>| {
+        let mut sources = StubSources::default();
+        let mut keys = StubKeys::default();
+        let mut office = StubOffice::default();
+        org_command::run_with_env_format(
+            &table,
+            "agent-os",
+            &args(line),
+            &mut sources,
+            &mut keys,
+            &mut office,
+            env,
+        )
+    };
+
+    // 1. AGENT_OS_FORMAT=yaml and compact (case-insensitive, trimmed) apply when no CLI flag is set.
+    let yaml = run_env(&["sample", "list"], Some("  YAML "));
+    assert_eq!(yaml.exit_code, 0, "{}", yaml.stdout);
+    assert!(yaml.stdout.starts_with("ok: true\n"), "{}", yaml.stdout);
+
+    let compact = run_env(&["sample", "list"], Some("Compact"));
+    assert_eq!(compact.exit_code, 0, "{}", compact.stdout);
+    assert!(!compact.stdout.starts_with('{'), "{}", compact.stdout);
+
+    // 2. Bare `--json` before OR after subcommand (and before shorthands) beats AGENT_OS_FORMAT.
+    for line in [
+        &["--json", "sample", "list"][..],
+        &["sample", "list", "--json"],
+        &["--json", "ls"],
+        &["ls", "--json"],
+        &["--json", "sample", "ping"],
+        &["sample", "ping", "--json"],
+    ] {
+        let out = run_env(line, Some("yaml"));
+        assert_eq!(out.exit_code, 0, "{line:?}: {}", out.stdout);
+        let env = json_envelope(&out, &format!("{line:?}"));
+        assert_eq!(env["ok"], json!(true), "{line:?}");
+    }
+
+    // 3. Explicit --format or --json beats even an invalid AGENT_OS_FORMAT.
+    let out = run_env(&["sample", "list", "--format", "compact"], Some("bogus"));
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let out = run_env(&["--json", "sample", "list"], Some("bogus"));
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert_eq!(json_envelope(&out, "leading --json")["ok"], json!(true));
+
+    // 4. Invalid AGENT_OS_FORMAT without explicit CLI flag exits 2 cleanly with JSON error envelope.
+    for bad in ["xml", "table", "tsv"] {
+        let out = run_env(&["sample", "list"], Some(bad));
+        assert_eq!(out.exit_code, 2, "bad={bad}: {}", out.stdout);
+        let env = json_envelope(&out, bad);
+        assert_eq!(env["error"]["code"], json!("invalid_request"));
+        assert!(
+            env["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("AGENT_OS_FORMAT")),
+            "{env}"
+        );
+    }
+
+    // 5. Empty / whitespace AGENT_OS_FORMAT defaults to JSON.
+    for empty in ["", "   "] {
+        let out = run_env(&["sample", "list"], Some(empty));
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        assert_eq!(json_envelope(&out, "empty env")["ok"], json!(true));
+    }
+
+    // 6. Conflicting --json + --format yaml, duplicate --json, and --json=<value> are refused.
+    for (line, expected) in [
+        (
+            &["--json", "sample", "list", "--format", "yaml"][..],
+            "--json cannot be combined with --format",
+        ),
+        (
+            &["sample", "list", "--json", "--format", "compact"],
+            "--json cannot be combined with --format",
+        ),
+        (
+            &["--json", "sample", "list", "--json"],
+            "--json is given twice",
+        ),
+        (
+            &["--json", "--json", "sample", "list"],
+            "--json is given twice",
+        ),
+        (
+            &["sample", "create", "--json={\"title\":\"A\"}"],
+            "--input-json",
+        ),
+        (
+            &["--json={\"title\":\"A\"}", "sample", "create"],
+            "--input-json",
+        ),
+    ] {
+        let out = run_env(line, None);
+        assert_eq!(out.exit_code, 2, "{line:?}: {}", out.stdout);
+        let env = json_envelope(&out, &format!("{line:?}"));
+        let msg = env["error"]["message"].as_str().unwrap_or("");
+        assert!(msg.contains(expected), "{line:?}: {msg}");
+    }
+
+    // 7. --json before --help still renders help (exit 0).
+    for help_line in [
+        &["--json", "--help"][..],
+        &["--json", "sample", "--help"],
+        &["--json", "sample", "list", "--help"],
+    ] {
+        let out = run_env(help_line, Some("bogus"));
+        assert_eq!(out.exit_code, 0, "{help_line:?}: {}", out.stdout);
+        assert!(
+            out.stdout.starts_with("Usage: "),
+            "{help_line:?}: {}",
+            out.stdout
+        );
+    }
 }

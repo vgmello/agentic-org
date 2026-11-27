@@ -170,7 +170,7 @@ fn parse_line_args(table: &CommandTable, raw: &str) -> Result<Vec<String>, Strin
     if let Some(input) = obj.get("input").filter(|v| !v.is_null()) {
         let json = serde_json::to_string(input)
             .map_err(|_| "Could not serialize `input` as JSON.".to_owned())?;
-        args.push("--json".into());
+        args.push("--input-json".into());
         args.push(json);
     }
     if let Some(opt_val) = obj.get("options").filter(|v| !v.is_null()) {

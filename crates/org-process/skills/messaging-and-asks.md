@@ -31,10 +31,10 @@ An ask is a typed question with a bounded wait. Ask one question with flags:
 agent-os msg ask --to @<handle> --prompt 'Which environment?' --question-type choice --option dev=Dev --option prod=Prod --default-value dev
 ```
 
-Several questions are structure and go in `--json` instead, never mixed with `--prompt`:
+Several questions are structure and go in `--input-json` instead, never mixed with `--prompt`:
 
 ```bash
-agent-os msg ask --to @<handle> --json '{"questions":[{"id":"q1","question_type":"yes_no","prompt":"Ship?"},{"id":"q2","question_type":"free_text","prompt":"Why not?"}]}'
+agent-os msg ask --to @<handle> --input-json '{"questions":[{"id":"q1","question_type":"yes_no","prompt":"Ship?"},{"id":"q2","question_type":"free_text","prompt":"Why not?"}]}'
 ```
 
 - A question is `choice` (with 1 to 6 options), `yes_no` or `free_text`. An ask has 1 to 8 questions.

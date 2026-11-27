@@ -34,7 +34,10 @@ pub use envelope::{code_name, envelope_schema};
 pub use help::CATALOGUE_LIMIT;
 pub use node::Node;
 pub use office::{Answer, KeySource, Office, Refusal, RefusalDetails, Request, Sources, Status};
-pub use parse::{DEFAULT_LIMIT, MAX_INPUT_BYTES, MAX_LIMIT, MAX_YAML_INPUT_BYTES};
+pub use parse::{
+    parse_env_format, Format, DEFAULT_LIMIT, MAX_INPUT_BYTES, MAX_LIMIT, MAX_YAML_INPUT_BYTES,
+    OUTPUT_FORMAT_ENV,
+};
 pub use row::{Ack, Command, Example, Field, IfMatch, Kind, MutationPolicy, Type};
 pub use table::{Alias, CommandTable, PolicyOverride, TableError};
 
@@ -46,7 +49,7 @@ pub fn validate_input(command: &Command, input: &Map<String, Value>) -> Result<(
 }
 
 use org_proto::ErrorCode;
-use parse::{Format, Parsed};
+use parse::Parsed;
 use serde_json::{Map, Value};
 
 /// What a command prints on standard output, and the exit code: 0 when `ok` is true, 1 when it
@@ -106,7 +109,7 @@ pub fn check(
     args: &[String],
     sources: &mut dyn Sources,
 ) -> Result<(), Refusal> {
-    match parse::parse(table, program, args, sources) {
+    match parse::parse(table, program, args, sources, None) {
         Ok(_) => Ok(()),
         Err(usage) => Err(Refusal::new(
             ErrorCode::InvalidRequest,
@@ -116,9 +119,7 @@ pub fn check(
     }
 }
 
-/// Runs one command line. `program` is the executable's name, for help and hints; `args` are
-/// the arguments after it. The command line is read first: one that cannot be read is answered
-/// with `invalid_request` and exit code 2, and neither the key source nor the office is called.
+/// Runs one command line with no ambient environment format override.
 pub fn run(
     table: &CommandTable,
     program: &str,
@@ -127,7 +128,24 @@ pub fn run(
     keys: &mut dyn KeySource,
     office: &mut dyn Office,
 ) -> Output {
-    let mut invocation = match parse::parse(table, program, args, sources) {
+    run_with_env_format(table, program, args, sources, keys, office, None)
+}
+
+/// Runs one command line. `program` is the executable's name, for help and hints; `args` are
+/// the arguments after it; `env_format` is the raw value of `AGENT_OS_FORMAT` when set (used when
+/// neither `--json` nor `--format` is passed on the command line). The command line is read first:
+/// one that cannot be read is answered with `invalid_request` and exit code 2, and neither the
+/// key source nor the office is called.
+pub fn run_with_env_format(
+    table: &CommandTable,
+    program: &str,
+    args: &[String],
+    sources: &mut dyn Sources,
+    keys: &mut dyn KeySource,
+    office: &mut dyn Office,
+    env_format: Option<&str>,
+) -> Output {
+    let mut invocation = match parse::parse(table, program, args, sources, env_format) {
         Ok(Parsed::Help(text)) => {
             return Output {
                 stdout: text,

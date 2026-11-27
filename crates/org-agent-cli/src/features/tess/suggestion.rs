@@ -61,7 +61,7 @@ fn read_input_object(request: &Request) -> Result<Map<String, Value>, Refusal> {
         Some(_) => Err(Refusal::new(
             ErrorCode::InvalidRequest,
             "`input` must be a JSON object matching the target command's input schema.",
-            "Pass target fields inside `--json '{\"input\":{...}}'`.",
+            "Pass target fields inside `--input-json '{\"input\":{...}}'`.",
         )),
     }
 }
