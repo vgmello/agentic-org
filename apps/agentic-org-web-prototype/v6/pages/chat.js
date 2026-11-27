@@ -8,7 +8,7 @@ import { ASK_CLICKS, answerableHere, messageNeeds, onAskKeydown, resetAsks, save
 import { CHAT_VIEWS, chatViewHtml, isChatView } from "./chat-views.js";
 import { bindOverlays, syncOverlayHistory } from "./chat-overlays.js";
 import {
-  PRESENCE_WORD, chatListHtml, needsCount, onListClick, onListInput, onListKeydown, prepareList, takeListFocus, unreadDot,
+  PRESENCE_WORD, chatListHtml, needsCount, onListClick, onListInput, onListKeydown, prepareList, syncPicking, takeListFocus, unreadDot,
 } from "./chat-list.js";
 import { endVisit, markAllRead, newFromId, startVisit, watchUnread } from "./chat-read.js";
 import { listIsOverlay, watchListMode } from "./chat-layout.js";
@@ -436,14 +436,18 @@ function dmRequests(who, chId) {
   const here = openAsks(CH[chId]);
   return { here, elsewhere: IN.filter((i) => !i.handled && i.from === who && !here.includes(i.id)) };
 }
-/* A DM whose agent waits on you leads with what can be answered here, linked to its card, then "N in Inbox" opening
-   the list of the agent's other requests. The header summary and Details say exactly the same, in the same order. */
+/* "1 in this DM · 2 more requests ▾": what can be answered here, linked to its card, then the agent's other requests
+   (all of which are also in Inbox) as a menu. Without a card here, the menu says "2 requests in Inbox". The header
+   summary and Details use the same words, in the same order. */
+function elsewhereWord(here, elsewhere, short) {
+  if (!here.length) return `${plural(elsewhere.length, "request", "requests")} in Inbox`;
+  return short ? `${elsewhere.length} more` : `${elsewhere.length} more ${elsewhere.length === 1 ? "request" : "requests"}`;
+}
 function dmWaiting(who, chId, slot, short = false) {
   const { here, elsewhere } = dmRequests(who, chId), parts = [];
   const card = here.length && CH[chId].msgs.find((x) => x.needs === here[0]);
-  const hereWord = short ? `${here.length} here` : `${plural(here.length, "request", "requests")} here`;
-  if (card) parts.push(`<a class="alink chat-here-link" href="#/chat/${esc(chId)}/${esc(card.id)}"${short ? ` aria-label="${esc(plural(here.length, "request", "requests"))} here"` : ""}>${hereWord}</a>`);
-  if (elsewhere.length) parts.push(requestsMenu(elsewhere, who, slot, `${elsewhere.length} in Inbox`));
+  if (card) parts.push(`<a class="alink chat-here-link" href="#/chat/${esc(chId)}/${esc(card.id)}" aria-label="${esc(plural(here.length, "request", "requests"))} in this DM">${here.length} in this DM</a>`);
+  if (elsewhere.length) parts.push(requestsMenu(elsewhere, who, slot, `${elsewhereWord(here, elsewhere, short)}${ic("chev-down", "ic14 chat-more-chev")}`));
   return parts.join(" · ");
 }
 function dmStatus(who, chId, slot) {
@@ -477,7 +481,7 @@ function dmSummary(who) {
   if (presence(who) !== "needs") return [word, m.role];
   const { here, elsewhere } = dmRequests(who, `dm-${who}`);
   if (!here.length && !elsewhere.length) return [word, m.role];
-  return [here.length ? plural(here.length, "request", "requests") + " here" : "", elsewhere.length ? `${elsewhere.length} in Inbox` : ""];
+  return [here.length ? `${here.length} in this DM` : "", elsewhere.length ? elsewhereWord(here, elsewhere, false) : ""];
 }
 function summaryParts(ch) {
   if (ch.kind === "dm") return dmSummary(ch.with);
@@ -995,6 +999,7 @@ function mountChat() {
   mountThread(root);
   fitTextarea(document.getElementById("thread-compose"));
   mountOverlays(root);
+  syncPicking(root);
   bindPanelResize(root);
   watchContext(root);
   watchListMode(root, onListModeCross);
