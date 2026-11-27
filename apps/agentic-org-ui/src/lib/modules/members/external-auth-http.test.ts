@@ -523,12 +523,22 @@ describe('external-auth-present helpers', () => {
 			},
 			version: 1
 		};
+		const customTessBuiltinKey: Member = {
+			id: KAI_ID,
+			kind: 'agent',
+			name: 'Tess Custom',
+			handle: 'tess',
+			builtin_key: 'custom',
+			version: 1
+		};
 		expect(canUseExternalSignIn(hrMember)).toBe(false);
 		expect(canUseExternalSignIn(tessMember)).toBe(false);
 		expect(canUseExternalSignIn(tessLegacyRole)).toBe(false);
 		expect(canUseExternalSignIn(undefined, { kind: 'agent', handle: 'tess-cos' })).toBe(false);
 		expect(canUseExternalSignIn(undefined, { kind: 'agent', handle: 'hr' })).toBe(false);
 		expect(canUseExternalSignIn(customAgent)).toBe(true);
+		// Trusts explicit non-built-in `builtin_key` exclusively even when handle is `tess`.
+		expect(canUseExternalSignIn(customTessBuiltinKey)).toBe(true);
 
 		const membersById = buildMemberNameMap([{ id: ALEX_ID, name: 'Alex Rivera', handle: 'alex' }]);
 		expect(resolveExternalAuthActor(ALEX_ID, membersById)).toBe('Alex Rivera');
@@ -542,27 +552,45 @@ describe('external-auth-present helpers', () => {
 		expect(lastUnknown).not.toContain(UNKNOWN_ID);
 	});
 
-	it('aborts and rejects stale dialog approval submissions after close, request switch, or unmount (M4)', () => {
+	it('aborts and rejects stale dialog approval submissions after close, target switch, or unmount while staying stable across Enter-code candidate polls (M4)', () => {
 		const guard = createApprovalSubmissionGuard();
 		const org1 = '0193a5c0-0000-7000-8000-000000000001';
+		const org2 = '0193a5c0-0000-7000-8000-000000000002';
+		const agent1 = '0193a5c0-0000-7000-8000-000000000010';
+		const agent2 = '0193a5c0-0000-7000-8000-000000000011';
 		const req1 = '0193a5c0-0000-7000-8000-000000000201';
 		const req2 = '0193a5c0-0000-7000-8000-000000000202';
 
-		// Close (`cancel`) aborts in-flight submission and marks it stale.
+		// Enter-code mode uses stable `pending?.request_id ?? expectedEmployeeId` (`agent1`), so a
+		// background `pendingCandidates` refresh for the same agent does NOT invalidate the submit.
+		const tPoll = guard.begin(org1, agent1);
+		expect(guard.isCurrent(tPoll, org1, agent1)).toBe(true);
+		expect(guard.finish(tPoll)).toBe(true);
+		// Second finish returns `false` (already cleared).
+		expect(guard.finish(tPoll)).toBe(false);
+
+		// Close (`cancel`) aborts in-flight submission, marks it stale, and `finish` returns `false`.
 		const t1 = guard.begin(org1, req1);
 		expect(guard.isCurrent(t1, org1, req1)).toBe(true);
 		guard.cancel();
 		expect(t1.abort.signal.aborted).toBe(true);
 		expect(guard.isCurrent(t1, org1, req1)).toBe(false);
+		expect(guard.finish(t1)).toBe(false);
 
-		// Request switch marks in-flight submission stale.
+		// Prop switch (card/member/org change while still open): `isCurrent` is `false`, yet
+		// `finish(token)` returns `true` so the dialog always clears `busy = false` without deadlock.
 		const t2 = guard.begin(org1, req1);
 		expect(guard.isCurrent(t2, org1, req2)).toBe(false);
+		expect(guard.isCurrent(t2, org2, req1)).toBe(false);
+		expect(guard.isCurrent(t2, org1, agent2)).toBe(false);
+		expect(guard.finish(t2)).toBe(true);
 
 		// Unmount (`destroy`) aborts in-flight submission and marks all subsequent checks stale.
+		const t3 = guard.begin(org1, req1);
 		guard.destroy();
-		expect(t2.abort.signal.aborted).toBe(true);
-		expect(guard.isCurrent(t2, org1, req1)).toBe(false);
+		expect(t3.abort.signal.aborted).toBe(true);
+		expect(guard.isCurrent(t3, org1, req1)).toBe(false);
+		expect(guard.finish(t3)).toBe(false);
 	});
 
 	it('classifies familiarity badges, expiring-soon (<24h), countdowns, and 429 retry seconds', () => {

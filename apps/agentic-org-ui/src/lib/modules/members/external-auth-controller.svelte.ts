@@ -182,6 +182,9 @@ export class ExternalAuthController {
 			}
 			return result;
 		} catch (err) {
+			if (abort.signal.aborted && err instanceof DOMException && err.name === 'AbortError') {
+				throw err;
+			}
 			const parsed = asExternalAuthError(err, fallbackMessage);
 			if (
 				recordError &&

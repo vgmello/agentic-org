@@ -358,4 +358,40 @@ describe('ExternalAuthController', () => {
 
 		controller.dispose();
 	});
+
+	it('rethrows original AbortError DOMException on aborted renew/revoke without setting actionError', async () => {
+		const abortErr = new DOMException('Aborted', 'AbortError');
+		const renew = vi.fn<ExternalAuthApi['renew']>((_orgId, _memId, _input, signal) => {
+			return new Promise<ExternalSessionView>((_resolve, reject) => {
+				signal?.addEventListener('abort', () => reject(abortErr), { once: true });
+			});
+		});
+		const revoke = vi.fn<ExternalAuthApi['revoke']>((_orgId, _memId, _input, signal) => {
+			return new Promise<{ employee_id: string; revoked: boolean }>((_resolve, reject) => {
+				signal?.addEventListener('abort', () => reject(abortErr), { once: true });
+			});
+		});
+		let fireSessionEnded: (() => void) | undefined;
+		const controller = new ExternalAuthController({
+			api: createStubApi({ renew, revoke }),
+			onSessionEnded: (listener) => {
+				fireSessionEnded = listener;
+				return () => {};
+			}
+		});
+
+		await controller.load(ORG_A, MEM_A);
+		const renewPromise = controller.renew(ORG_A, MEM_A, { session_id: 'sess-1' });
+		fireSessionEnded?.();
+		await expect(renewPromise).rejects.toBe(abortErr);
+		expect(controller.actionError).toBeUndefined();
+		expect(controller.busyAction).toBeUndefined();
+
+		await controller.load(ORG_A, MEM_A);
+		const revokePromise = controller.revoke(ORG_A, MEM_A, { session_id: 'sess-1' });
+		controller.dispose();
+		await expect(revokePromise).rejects.toBe(abortErr);
+		expect(controller.actionError).toBeUndefined();
+		expect(controller.busyAction).toBeUndefined();
+	});
 });

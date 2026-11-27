@@ -201,6 +201,14 @@
 		await refreshAfterMutation();
 	}
 
+	function isCurrentTarget(targetOrg: string, targetMemberId: string): boolean {
+		return !destroyed && organizationId === targetOrg && profile.id === targetMemberId;
+	}
+
+	function isAbortError(err: unknown): boolean {
+		return err instanceof DOMException && err.name === 'AbortError';
+	}
+
 	async function handleRenew() {
 		if (!activeLease || controller.busyAction || isBuiltIn) return;
 		const targetOrg = organizationId;
@@ -216,17 +224,16 @@
 				},
 				{ recordActionError: false }
 			);
-			if (destroyed || organizationId !== targetOrg || profile.id !== targetMemberId) return;
+			if (!isCurrentTarget(targetOrg, targetMemberId)) return;
 			nowMs = Date.now();
 			toast.success(`Renewed external lease for ${targetName} (+7d).`, {
 				description: `Expires ${formatExternalAuthTime(renewed.expires_at)}`
 			});
 		} catch (err) {
 			if (
-				destroyed ||
-				organizationId !== targetOrg ||
-				profile.id !== targetMemberId ||
-				(err instanceof DOMException && err.name === 'AbortError')
+				!isCurrentTarget(targetOrg, targetMemberId) ||
+				appSession.state.kind !== 'signed-in' ||
+				isAbortError(err)
 			) {
 				return;
 			}
@@ -238,17 +245,21 @@
 	}
 
 	async function confirmRevoke() {
+		const targetOrg = organizationId;
+		const targetMemberId = profile.id;
+		const targetName = profile.name;
 		const res = await controller.revoke(
-			organizationId,
-			profile.id,
+			targetOrg,
+			targetMemberId,
 			{ ...(activeLease ? { session_id: activeLease.session_id } : {}) },
 			{ reload: !onChanged, recordActionError: false }
 		);
+		if (!isCurrentTarget(targetOrg, targetMemberId)) return;
 		nowMs = Date.now();
 		toast.success(
 			res.revoked
-				? `Revoked external lease for ${profile.name}.`
-				: `No active external lease remained for ${profile.name}.`
+				? `Revoked external lease for ${targetName}.`
+				: `No active external lease remained for ${targetName}.`
 		);
 		if (onChanged) await refreshAfterMutation();
 	}

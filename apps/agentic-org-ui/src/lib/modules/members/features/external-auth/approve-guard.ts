@@ -1,21 +1,22 @@
 // Pure submission-race guard for `ExternalAuthApproveDialog` (`TASK-249`).
 // Aborts stale in-flight approvals on dialog close, target switch, or unmount, and gates every
-// post-await UI update on matching `(abort, organizationId, requestId)` + live mount state.
+// post-await UI update on matching `(abort, organizationId, targetKey)` + live mount state.
 
 export interface ApprovalSubmissionToken {
 	readonly abort: AbortController;
 	readonly targetOrg: string;
-	readonly targetReqId: string | undefined;
+	readonly targetKey: string | undefined;
 }
 
 export interface ApprovalSubmissionGuard {
-	begin(targetOrg: string, targetReqId: string | undefined): ApprovalSubmissionToken;
+	begin(targetOrg: string, targetKey: string | undefined): ApprovalSubmissionToken;
 	isCurrent(
 		token: ApprovalSubmissionToken,
 		currentOrg: string,
-		currentReqId: string | undefined
+		currentKey: string | undefined
 	): boolean;
-	finish(token: ApprovalSubmissionToken): void;
+	/** Clears `token` if still active; returns `true` iff this token owned the active slot. */
+	finish(token: ApprovalSubmissionToken): boolean;
 	cancel(): void;
 	destroy(): void;
 }
@@ -30,12 +31,12 @@ export function createApprovalSubmissionGuard(): ApprovalSubmissionGuard {
 	}
 
 	return {
-		begin(targetOrg: string, targetReqId: string | undefined): ApprovalSubmissionToken {
+		begin(targetOrg: string, targetKey: string | undefined): ApprovalSubmissionToken {
 			cancel();
 			const token: ApprovalSubmissionToken = {
 				abort: new AbortController(),
 				targetOrg,
-				targetReqId
+				targetKey
 			};
 			active = token;
 			return token;
@@ -43,18 +44,20 @@ export function createApprovalSubmissionGuard(): ApprovalSubmissionGuard {
 		isCurrent(
 			token: ApprovalSubmissionToken,
 			currentOrg: string,
-			currentReqId: string | undefined
+			currentKey: string | undefined
 		): boolean {
 			return (
 				active === token &&
 				!destroyed &&
 				!token.abort.signal.aborted &&
 				currentOrg === token.targetOrg &&
-				currentReqId === token.targetReqId
+				currentKey === token.targetKey
 			);
 		},
-		finish(token: ApprovalSubmissionToken): void {
-			if (active === token) active = undefined;
+		finish(token: ApprovalSubmissionToken): boolean {
+			if (active !== token) return false;
+			active = undefined;
+			return true;
 		},
 		cancel,
 		destroy(): void {

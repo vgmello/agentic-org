@@ -45,7 +45,7 @@
 		ExternalSessionView,
 		PendingExternalAuthView
 	} from '../../external-auth-types';
-	import { createApprovalSubmissionGuard } from './approve-guard';
+	import { createApprovalSubmissionGuard, type ApprovalSubmissionToken } from './approve-guard';
 
 	let {
 		open = $bindable(false),
@@ -230,6 +230,20 @@
 		}
 	}
 
+	function currentSubmissionKey(): string | undefined {
+		return pending?.request_id ?? expectedEmployeeId;
+	}
+
+	function settleSubmission(token: ApprovalSubmissionToken): boolean {
+		const current = submissionGuard.isCurrent(token, organizationId, currentSubmissionKey());
+		if (submissionGuard.finish(token)) busy = false;
+		if (!current) {
+			if (open) code = '';
+			return false;
+		}
+		return true;
+	}
+
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
 		if (busy) return;
@@ -237,8 +251,7 @@
 		if (!normalizedCode) return;
 
 		const targetOrg = organizationId;
-		const targetReqId = resolution.matched?.request_id ?? pending?.request_id;
-		const token = submissionGuard.begin(targetOrg, targetReqId);
+		const token = submissionGuard.begin(targetOrg, currentSubmissionKey());
 		busy = true;
 		errorMessage = undefined;
 		const requestTakeover = needsTakeover && takeoverConfirmed;
@@ -251,29 +264,13 @@
 				token.abort.signal
 			);
 		} catch (err) {
-			const current = submissionGuard.isCurrent(
-				token,
-				organizationId,
-				resolution.matched?.request_id ?? pending?.request_id
-			);
-			submissionGuard.finish(token);
-			if (!current) return;
-			busy = false;
-			applySubmitError(err);
+			if (settleSubmission(token)) applySubmitError(err);
 			return;
 		}
 
-		const current = submissionGuard.isCurrent(
-			token,
-			organizationId,
-			resolution.matched?.request_id ?? pending?.request_id
-		);
-		submissionGuard.finish(token);
-		if (!current) return;
-
+		if (!settleSubmission(token)) return;
 		// Immediately wipe the one-time approval code and close before running post-approval refresh.
 		code = '';
-		busy = false;
 		open = false;
 		await notifyApproved(session);
 	}
