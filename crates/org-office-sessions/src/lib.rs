@@ -59,6 +59,7 @@ pub use manager::{
     SandboxVerifyContext, SessionManager, SessionManagerConfig, TaskWorktreePreparer,
     WorktreeSandboxRefreshOutcome, MID_TURN_SANDBOX_REFRESH_HINT,
 };
+pub use pump::is_allow_always_eligible;
 pub use recovery::{
     ActiveTurnRecord, PendingStartRecord, ProcessExitOracle, RecoveryAction, RecoveryReport,
     SessionStore, StallWatchdog, DEFAULT_STALL_TIMEOUT, MAX_CONSECUTIVE_STALLS,

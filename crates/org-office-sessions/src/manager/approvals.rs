@@ -3,10 +3,12 @@
 
 use std::sync::Arc;
 
-use org_proto::sessions::{PendingApprovalView, SessionState};
+use org_proto::sessions::SessionState;
 use org_proto::ApiError;
 
+use crate::pump::{is_allow_always_eligible, PendingApprovalEntry};
 use crate::redact::redact_text;
+use crate::redact::sanitize::sanitize_single_line_display;
 
 use super::SessionManager;
 
@@ -26,6 +28,14 @@ pub struct PendingToolApproval {
     pub escalation: String,
     pub reason: Option<String>,
     pub requested_at: String,
+    pub allow_always_eligible: bool,
+}
+
+impl PendingToolApproval {
+    /// Returns `true` when the owner may safely choose `allow_always` for this approval (`P2-1`).
+    pub fn allows_always(&self) -> bool {
+        self.allow_always_eligible && is_allow_always_eligible(&self.escalation, &self.tool)
+    }
 }
 
 impl SessionManager {
@@ -98,7 +108,7 @@ impl SessionManager {
 
 fn snapshot_waiting_approvals(
     state: &std::sync::Mutex<crate::pump::SessionRuntimeState>,
-) -> Option<(String, Option<String>, Vec<PendingApprovalView>)> {
+) -> Option<(String, Option<String>, Vec<PendingApprovalEntry>)> {
     let guard = state.lock().unwrap_or_else(|p| p.into_inner());
     if guard.state != SessionState::WaitingApproval || guard.pending_approvals.is_empty() {
         return None;
@@ -114,20 +124,29 @@ fn to_pending_tool_approval(
     employee_id: &str,
     office_id: &str,
     run_id: Option<&str>,
-    view: PendingApprovalView,
+    entry: PendingApprovalEntry,
     active_tokens: &[&str],
 ) -> PendingToolApproval {
+    let safe_tool = sanitize_single_line_display(&redact_text(&entry.view.tool, active_tokens));
+    let allow_always_eligible = entry
+        .allow_always_tool
+        .as_ref()
+        .is_some_and(|rule_tool| rule_tool.as_str() == safe_tool)
+        && is_allow_always_eligible(&entry.view.escalation, &safe_tool);
     PendingToolApproval {
         employee_id: employee_id.to_owned(),
         office_id: office_id.to_owned(),
         run_id: run_id.map(str::to_owned),
-        approval_id: view.approval_id,
-        tool: redact_text(&view.tool, active_tokens),
-        escalation: view.escalation,
-        reason: view
+        approval_id: entry.view.approval_id,
+        tool: safe_tool,
+        escalation: entry.view.escalation,
+        reason: entry
+            .view
             .reason
             .as_deref()
-            .map(|reason| redact_text(reason, active_tokens)),
-        requested_at: view.requested_at,
+            .map(|reason| sanitize_single_line_display(&redact_text(reason, active_tokens)))
+            .filter(|reason| !reason.is_empty()),
+        requested_at: entry.view.requested_at,
+        allow_always_eligible,
     }
 }

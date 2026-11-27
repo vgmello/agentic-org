@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use org_agent_runtime::{Decision, Frame, LineFramer, PermissionPolicy, ToolName};
 use org_office::organization_family::records::PermissionPreset;
-use org_proto::sessions::{PendingApprovalView, SessionState, SessionView};
+use org_proto::sessions::{SessionState, SessionView};
 use org_supervise::StopMode;
 
 use crate::binding::RunBindingRegistry;
@@ -31,8 +31,9 @@ mod tests;
 mod turn;
 
 use activity::settle_activity_idle;
+pub use approval::is_allow_always_eligible;
 use approval::{begin_pump_teardown, check_and_handle_stall};
-pub(crate) use approval::{finalize_child, remove_pending_approval_locked};
+pub(crate) use approval::{finalize_child, remove_pending_approval_locked, PendingApprovalEntry};
 use commands::{
     drain_commands, enqueue_background_wakes, mark_active_permit_release_pending,
     release_active_permit,
@@ -187,7 +188,7 @@ pub(crate) struct SessionRuntimeState {
     pub last_reply: Option<String>,
     pub last_error: Option<String>,
     pub backgrounds: BackgroundRegistry,
-    pub pending_approvals: Vec<PendingApprovalView>,
+    pub pending_approvals: Vec<PendingApprovalEntry>,
     pub policy: PermissionPolicy,
     pub preset: PermissionPreset,
     pub allowed_tools: Option<Vec<ToolName>>,
@@ -240,7 +241,11 @@ impl SessionRuntimeState {
             last_reply: self.last_reply.clone(),
             last_error: self.last_error.clone(),
             background_tasks: self.backgrounds.views(),
-            pending_approvals: self.pending_approvals.clone(),
+            pending_approvals: self
+                .pending_approvals
+                .iter()
+                .map(|entry| entry.view.clone())
+                .collect(),
             usage: self.backgrounds.usage(),
             suspended_on_asks: self.suspended_on_asks.clone(),
             waiting_for_member_id: self.waiting_for_member_id.clone(),

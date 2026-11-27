@@ -969,3 +969,247 @@ fn crafted_tool_secrets_are_redacted_and_filters_and_keyset_pagination_preserve_
     assert_eq!(page2.items.len(), 1);
     assert_ne!(page1.items[0].reference, page2.items[0].reference);
 }
+
+fn assert_no_control_ansi_or_bidi(text: &str, label: &str) {
+    assert!(
+        !text.chars().any(char::is_control),
+        "{label} contains control char: {text:?}"
+    );
+    assert!(
+        !text.contains('\x1b') && !text.contains("[31m") && !text.contains("\u{009B}"),
+        "{label} contains ANSI/C1 sequence: {text:?}"
+    );
+    assert!(
+        !text.chars().any(|c| matches!(
+            c,
+            '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{2069}'
+                | '\u{FEFF}'
+        )),
+        "{label} contains invisible/BiDi char: {text:?}"
+    );
+}
+
+#[test]
+fn adversarial_control_ansi_c1_and_bidi_in_tool_and_reason_are_stripped_from_summary_and_context() {
+    let hostile_tool = "\x1b[31mBash\r\nSpoof\x00\u{009B}31m\u{202E}evil\x1b[0m";
+    let fx = ApprovalInboxFixture::new(vec![ScriptedApproval {
+        id: "apr-hostile-1".into(),
+        tool: hostile_tool.into(),
+        escalation: Escalation::None,
+        capability: Some(ToolCapability::Shell),
+        input: json!({}),
+    }]);
+
+    fx.start_agent_turn();
+    fx.wait_for_approvals(1);
+
+    let page = fx.owner_inbox_page();
+    let item = page
+        .items
+        .iter()
+        .find(|i| i.reference.ends_with(":apr-hostile-1"))
+        .expect("hostile approval present");
+    assert_no_control_ansi_or_bidi(&item.summary, "live summary");
+    let ctx = item.context.as_deref().expect("escalation reason present");
+    assert_no_control_ansi_or_bidi(ctx, "live context");
+    assert!(item.summary.contains("Bash Spoofevil"), "{}", item.summary);
+    assert_eq!(approval_decisions(item), vec!["allow_once", "deny"]);
+
+    // Direct defense-in-depth check on build_approval_inbox_item for both tool and reason.
+    let direct = super::build_approval_inbox_item(
+        "office-1",
+        &org_office_sessions::PendingToolApproval {
+            employee_id: fx.agent_id.clone(),
+            office_id: "office-1".into(),
+            run_id: Some("run-1".into()),
+            approval_id: "apr-direct-1".into(),
+            tool: "\x1b[31mFake\r\nTool\x00\u{009B}31m\u{202E}x".into(),
+            escalation: "none".into(),
+            reason: Some(
+                "\x1b[31mReason\r\nline2\t\x00\u{009B}31m\u{202E}\u{200B}\u{2066}\u{FEFF}end"
+                    .into(),
+            ),
+            requested_at: "2026-11-27T00:00:00.000Z".into(),
+            allow_always_eligible: false,
+        },
+        None,
+    );
+    assert_no_control_ansi_or_bidi(&direct.summary, "direct summary");
+    assert_no_control_ansi_or_bidi(
+        direct.context.as_deref().expect("direct context"),
+        "direct context",
+    );
+    assert_eq!(direct.context.as_deref(), Some("Reason line2 end"));
+}
+
+fn shell_approval(id: &str, tool: &str) -> ScriptedApproval {
+    ScriptedApproval {
+        id: id.into(),
+        tool: tool.into(),
+        escalation: Escalation::None,
+        capability: Some(ToolCapability::Shell),
+        input: json!({}),
+    }
+}
+
+#[test]
+fn wildcard_capability_and_invalid_tool_names_omit_allow_always_and_refuse_allow_always_decision() {
+    let disallowed = [
+        ("apr-star", "*"),
+        ("apr-cap", "cap:shell"),
+        ("apr-invalid", "Bash(rm -rf /)"),
+        ("apr-ansi-bash", "\x1b[31mBash\x1b[0m"),
+    ];
+    let mut scripted: Vec<ScriptedApproval> = disallowed
+        .iter()
+        .map(|(id, tool)| shell_approval(id, tool))
+        .collect();
+    scripted.push(shell_approval("apr-valid-bash", "Bash"));
+    let fx = ApprovalInboxFixture::new(scripted);
+
+    fx.start_agent_turn();
+    fx.wait_for_approvals(disallowed.len() + 1);
+    for entry in fx.sessions.pending_approvals_for(&fx.owner_id).unwrap() {
+        assert_eq!(entry.escalation, "none", "unexpected escalation: {entry:?}");
+    }
+
+    let page = fx.owner_inbox_page();
+    let valid = page
+        .items
+        .iter()
+        .find(|i| i.reference.ends_with(":apr-valid-bash"))
+        .expect("valid Bash approval present");
+    assert_eq!(
+        approval_decisions(valid),
+        vec!["allow_once", "allow_always", "deny"]
+    );
+
+    for (id, tool) in disallowed {
+        let item = page
+            .items
+            .iter()
+            .find(|i| i.reference.ends_with(&format!(":{id}")))
+            .unwrap_or_else(|| panic!("missing item for {id} ({tool:?})"));
+        assert_eq!(approval_decisions(item), vec!["allow_once", "deny"]);
+        let err = fx
+            .sessions
+            .decide_approval(&fx.owner_id, &fx.agent_id, id, "allow_always", None)
+            .expect_err("allow_always decision must fail closed for disallowed tool");
+        assert_eq!(err.code, ErrorCode::InvalidRequest);
+    }
+    assert_eq!(
+        fx.sessions
+            .pending_approvals_for(&fx.owner_id)
+            .unwrap()
+            .len(),
+        disallowed.len() + 1
+    );
+}
+
+#[test]
+fn duplicate_approval_request_id_deduplicates_in_pending_approvals_and_inbox_counts() {
+    let fx = ApprovalInboxFixture::new(vec![
+        ScriptedApproval {
+            id: "apr-dup-1".into(),
+            tool: "Bash".into(),
+            escalation: Escalation::None,
+            capability: Some(ToolCapability::Shell),
+            input: json!({ "command": "echo 1" }),
+        },
+        ScriptedApproval {
+            id: "apr-dup-1".into(),
+            tool: "Read".into(),
+            escalation: Escalation::None,
+            capability: Some(ToolCapability::Read),
+            input: json!({}),
+        },
+    ]);
+
+    fx.start_agent_turn();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let pending = fx.sessions.pending_approvals_for(&fx.owner_id).unwrap();
+        if pending.len() == 1 && pending[0].tool == "Read" {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let pending = fx.sessions.pending_approvals_for(&fx.owner_id).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].approval_id, "apr-dup-1");
+    assert_eq!(pending[0].tool, "Read");
+
+    let page = fx.owner_inbox_page();
+    assert_eq!(page.counts.approvals, 1);
+    let items: Vec<_> = page
+        .items
+        .iter()
+        .filter(|i| i.source == "tool_approval")
+        .collect();
+    assert_eq!(items.len(), 1);
+}
+
+#[test]
+fn empty_pending_approvals_still_fails_closed_on_snapshot_error_and_deactivated_owner() {
+    let fx = ApprovalInboxFixture::new(Vec::new());
+    assert!(fx
+        .sessions
+        .pending_approvals_for(&fx.owner_id)
+        .unwrap()
+        .is_empty());
+
+    // 1. Storage error from org_snapshot() fails closed even when pending_approvals is empty.
+    let failing_source = PendingApprovalsInboxSource::with_snapshot_for_test(
+        Arc::clone(&fx.office),
+        Arc::clone(&fx.sessions),
+        Box::new(|| {
+            Err(org_proto::ApiError::new(
+                ErrorCode::StorageError,
+                "injected snapshot failure",
+            ))
+        }),
+    );
+    let err = failing_source
+        .read_for_caller(&fx.owner_id, &open_query())
+        .err()
+        .expect("snapshot failure must fail closed even when empty");
+    assert_eq!(err.code, ErrorCode::StorageError);
+    assert!(failing_source.read(&open_query()).is_err());
+
+    let degraded_hq = crate::inbox::Hq {
+        sources: vec![Arc::new(failing_source)],
+        clock: crate::inbox::Clock::new("degraded-approvals".into()),
+        list_office: None,
+    };
+    let page = degraded_hq
+        .list(InboxListParams {
+            state: InboxState::Open,
+            kinds: None,
+            project: None,
+            team: None,
+            cursor: None,
+            limit: None,
+            has_image: None,
+            has_file: None,
+        })
+        .unwrap();
+    assert_eq!(page.degraded, ["tool_approvals"]);
+
+    // 2. Deactivated / missing owner in org_snapshot() returns NotAuthorized even when empty.
+    let mut deactivated_snap = fx.office.org_snapshot().unwrap();
+    deactivated_snap.members.retain(|m| m.id != fx.owner_id);
+    let deactivated_source = PendingApprovalsInboxSource::with_snapshot_for_test(
+        Arc::clone(&fx.office),
+        Arc::clone(&fx.sessions),
+        Box::new(move || Ok(deactivated_snap.clone())),
+    );
+    let err = deactivated_source
+        .read_for_caller(&fx.owner_id, &open_query())
+        .err()
+        .expect("deactivated owner must fail closed even when empty");
+    assert_eq!(err.code, ErrorCode::NotAuthorized);
+    assert!(deactivated_source.read(&open_query()).is_err());
+}

@@ -127,14 +127,29 @@ fn apply_unredacted_approval(
     let (ctrl, escalated) = {
         let mut state = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
         state.watchdog.record_activity(Instant::now());
-        let before = state.pending_approvals.len();
         let ctrl = handle_approval_request(&mut state, raw_req, active_tokens);
-        (ctrl, state.pending_approvals.len() > before)
+        let escalated = ctrl.is_none();
+        (ctrl, escalated)
     };
     if escalated {
         notify_approval_changed(ctx);
     }
     ctrl
+}
+
+fn handle_turn_started(state: &mut SessionRuntimeState, loop_state: &mut PumpLoopState) -> bool {
+    if !loop_state.turn_active {
+        loop_state.in_flight_delivery = None;
+        loop_state.mid_turn_total_this_turn = 0;
+        loop_state.mid_turn_agent_this_turn = 0;
+    }
+    loop_state.turn_active = true;
+    loop_state.turn_reply = None;
+    loop_state.mid_turn_dirty = true;
+    let cleared = !state.pending_approvals.is_empty();
+    state.pending_approvals.clear();
+    state.state = SessionState::Running;
+    cleared
 }
 
 pub(super) fn handle_event(
@@ -161,16 +176,11 @@ pub(super) fn handle_event(
             persist_turn_update(ctx, |rec| rec.runtime_session_id = Some(id));
         }
         SessionEvent::TurnStarted { .. } => {
-            if !loop_state.turn_active {
-                loop_state.in_flight_delivery = None;
-                loop_state.mid_turn_total_this_turn = 0;
-                loop_state.mid_turn_agent_this_turn = 0;
-            }
-            loop_state.turn_active = true;
-            loop_state.turn_reply = None;
-            loop_state.mid_turn_dirty = true;
-            state.state = SessionState::Running;
+            let cleared = handle_turn_started(&mut state, loop_state);
             drop(state);
+            if cleared {
+                notify_approval_changed(ctx);
+            }
             persist_turn_update(ctx, |rec| rec.active = true);
         }
         SessionEvent::MidTurnDelivered { delivery_id } => {
@@ -326,15 +336,15 @@ pub(super) fn handle_tool_or_approval_event(
         }
         SessionEvent::Usage(usage) => state.backgrounds.record_usage(usage),
         SessionEvent::ApprovalRequested(req) => {
-            let before = state.pending_approvals.len();
             let ctrl = handle_approval_request(state, req, &[]);
-            return (ctrl, state.pending_approvals.len() > before);
+            let escalated = ctrl.is_none();
+            return (ctrl, escalated);
         }
         SessionEvent::ApprovalCancelled { id } => {
             let before = state.pending_approvals.len();
             state
                 .pending_approvals
-                .retain(|p| p.approval_id != id.as_str());
+                .retain(|p| p.view.approval_id != id.as_str());
             if state.pending_approvals.is_empty() && state.state == SessionState::WaitingApproval {
                 state.state = SessionState::Running;
                 loop_state.mid_turn_dirty = true;
@@ -385,16 +395,14 @@ pub(super) fn handle_turn_ended(
     let failover_blocked_recovery = !interrupted
         && !retried_text_only
         && evaluate_turn_failover(state, loop_state, ctx, outcome, errors);
-    let cleared_approvals = if interrupted {
-        let had = !state.pending_approvals.is_empty();
-        state.pending_approvals.clear();
-        if state.state == SessionState::WaitingApproval {
-            state.state = SessionState::Running;
-        }
-        had
-    } else {
-        false
-    };
+    // No tool approval outlives its turn (`TASK-102` P1-2): clear unconditionally and restore
+    // `WaitingApproval -> Running` before settling idle while leaving `RecoveryRequired` /
+    // `StallLocked` intact.
+    let cleared_approvals = !state.pending_approvals.is_empty();
+    state.pending_approvals.clear();
+    if state.state == SessionState::WaitingApproval {
+        state.state = SessionState::Running;
+    }
     // A turn queued behind this one keeps the session busy until it is dispatched.
     state.settle_idle();
     persist_turn_update(ctx, |rec| {

@@ -15,29 +15,56 @@ use org_proto::inbox::{
 };
 use org_proto::sessions::MemberSessionApprovalDecide;
 use org_proto::{ApiError, Call, ErrorCode, Member, MemberKind, OrgSnapshot};
+use org_redact::sanitize::sanitize_single_line_display;
 use serde_json::{json, Map};
 
 use super::{Query, Source, SourceFailure, SourceRead};
 
 const DENY_REASON_MAX_CHARS: u32 = 500;
 
+type SnapshotFn = Box<dyn Fn() -> Result<OrgSnapshot, ApiError> + Send + Sync>;
+
 /// Owner Inbox source exposing live `SessionState::WaitingApproval` tool escalations.
 pub(crate) struct PendingApprovalsInboxSource {
     office: Arc<Office>,
     sessions: Arc<SessionManager>,
     office_id: String,
-    owner_member_id: String,
+    snapshot_fn: SnapshotFn,
 }
 
 impl PendingApprovalsInboxSource {
     pub(crate) fn new(office: Arc<Office>, sessions: Arc<SessionManager>) -> Self {
         let office_id = office.info().office_id.clone();
-        let owner_member_id = office.owner_member_id().to_owned();
+        let snapshot_office = Arc::clone(&office);
+        let snapshot_fn: SnapshotFn = Box::new(move || {
+            snapshot_office.org_snapshot().map_err(|error| {
+                crate::logged("inbox.tool_approvals", &error);
+                ApiError::new(
+                    ErrorCode::StorageError,
+                    "organization snapshot unavailable for tool approvals",
+                )
+            })
+        });
         Self {
             office,
             sessions,
             office_id,
-            owner_member_id,
+            snapshot_fn,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_snapshot_for_test(
+        office: Arc<Office>,
+        sessions: Arc<SessionManager>,
+        snapshot_fn: SnapshotFn,
+    ) -> Self {
+        let office_id = office.info().office_id.clone();
+        Self {
+            office,
+            sessions,
+            office_id,
+            snapshot_fn,
         }
     }
 
@@ -49,20 +76,14 @@ impl PendingApprovalsInboxSource {
         query: &Query<'_>,
     ) -> Result<SourceRead, ApiError> {
         let approvals = self.sessions.pending_approvals_for(caller_id)?;
+        let snapshot = (self.snapshot_fn)()?;
+        ensure_live_owner_in_snapshot(&snapshot, caller_id)?;
         if approvals.is_empty() {
             return Ok(SourceRead {
                 items: Vec::new(),
                 counts: InboxCounts::default(),
             });
         }
-        let snapshot = self.office.org_snapshot().map_err(|error| {
-            crate::logged("inbox.tool_approvals", &error);
-            ApiError::new(
-                ErrorCode::StorageError,
-                "organization snapshot unavailable for tool approvals",
-            )
-        })?;
-        ensure_live_owner_in_snapshot(&snapshot, caller_id)?;
         let count = approvals.len() as u64;
         let counts = InboxCounts {
             approvals: count,
@@ -91,7 +112,8 @@ impl Source for PendingApprovalsInboxSource {
     }
 
     fn read(&self, query: &Query<'_>) -> Result<SourceRead, SourceFailure> {
-        self.read_for_caller(&self.owner_member_id, query)
+        let owner_member_id = self.office.effective_owner_member_id();
+        self.read_for_caller(&owner_member_id, query)
             .map_err(|_| SourceFailure)
     }
 }
@@ -166,19 +188,29 @@ fn build_approval_inbox_item(
     approval: &PendingToolApproval,
     member: Option<&Member>,
 ) -> InboxItem {
-    let safe_tool = org_redact::redact_text(&approval.tool, &[]);
-    let employee_name = member.map_or("Agent", |m| m.name.as_str());
+    let safe_tool = sanitize_single_line_display(&org_redact::redact_text(&approval.tool, &[]));
+    let display_tool = if safe_tool.is_empty() {
+        "unknown tool"
+    } else {
+        safe_tool.as_str()
+    };
+    let safe_name = sanitize_single_line_display(member.map_or("Agent", |m| m.name.as_str()));
+    let employee_name = if safe_name.is_empty() {
+        "Agent"
+    } else {
+        safe_name.as_str()
+    };
     let summary = match approval.escalation.as_str() {
         "permission_change" => {
-            format!("{employee_name} requests permission change for {safe_tool}")
+            format!("{employee_name} requests permission change for {display_tool}")
         }
-        "none" => format!("{employee_name} requests approval to use {safe_tool}"),
-        _ => format!("{employee_name} requests escalated approval for {safe_tool}"),
+        "none" => format!("{employee_name} requests approval to use {display_tool}"),
+        _ => format!("{employee_name} requests escalated approval for {display_tool}"),
     };
     let context = approval
         .reason
         .as_deref()
-        .map(|reason| org_redact::redact_text(reason, &[]))
+        .map(|reason| sanitize_single_line_display(&org_redact::redact_text(reason, &[])))
         .filter(|reason| !reason.is_empty());
     InboxItem {
         reference: format!(
@@ -213,7 +245,7 @@ fn build_approval_actions(approval: &PendingToolApproval) -> Vec<Action> {
         "allow_once",
         None,
     )];
-    if approval.escalation == "none" {
+    if approval.allows_always() {
         actions.push(approval_call_action(
             "Allow always",
             approval,

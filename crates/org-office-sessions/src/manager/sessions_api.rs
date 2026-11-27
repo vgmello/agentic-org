@@ -449,18 +449,10 @@ impl SessionManager {
             let pending = guard
                 .pending_approvals
                 .iter()
-                .find(|p| p.approval_id == approval_id)
+                .find(|p| p.view.approval_id == approval_id)
                 .cloned()
                 .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "approval request not found"))?;
-            if decision_str == "allow_always" && pending.escalation != "none" {
-                return Err(ApiError::new(
-                    ErrorCode::InvalidRequest,
-                    "allow_always is forbidden for escalated approval requests; use allow_once or deny",
-                ));
-            }
-            let allow_always_tool = (decision_str == "allow_always"
-                && pending.escalation == "none")
-                .then_some(pending.tool);
+            let allow_always_tool = resolve_allow_always_tool(decision_str, &pending)?;
             if handle
                 .tx
                 .send(PumpCommand::AnswerApproval {
@@ -490,6 +482,30 @@ impl SessionManager {
         }
         Ok(view)
     }
+}
+
+fn resolve_allow_always_tool(
+    decision_str: &str,
+    pending: &crate::pump::PendingApprovalEntry,
+) -> Result<Option<String>, ApiError> {
+    if decision_str != "allow_always" {
+        return Ok(None);
+    }
+    if pending.view.escalation != "none" {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "allow_always is forbidden for escalated approval requests; use allow_once or deny",
+        ));
+    }
+    let Some(rule_tool) = pending.allow_always_tool.as_ref().filter(|tool| {
+        crate::pump::is_allow_always_eligible(&pending.view.escalation, tool.as_str())
+    }) else {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "allow_always is forbidden for wildcard, capability, or invalid tool names; use allow_once or deny",
+        ));
+    };
+    Ok(Some(rule_tool.as_str().to_owned()))
 }
 
 pub(super) fn parse_decision(

@@ -66,6 +66,124 @@ pub fn sanitize_untrusted_meta(raw: &str, max_bytes: usize) -> String {
     truncate_utf8(&out, max_bytes)
 }
 
+/// Strips ANSI/ECMA-48 escape sequences, all C0/DEL/C1 control characters, and invisible/BiDi
+/// format characters, collapsing whitespace and line breaks into single ASCII spaces and trimming
+/// the result for safe single-line display (`TASK-102`).
+pub fn sanitize_single_line_display(raw: &str) -> String {
+    let stripped = strip_ansi_sequences(raw);
+    let mut out = String::with_capacity(stripped.len());
+    let mut pending_space = false;
+    for ch in stripped.chars() {
+        if is_invisible_format_char(ch) {
+            continue;
+        }
+        if is_single_line_break_or_space(ch) {
+            pending_space = !out.is_empty();
+            continue;
+        }
+        if ch.is_control() {
+            continue;
+        }
+        if pending_space {
+            out.push(' ');
+            pending_space = false;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn is_single_line_break_or_space(ch: char) -> bool {
+    matches!(
+        ch,
+        '\r' | '\n' | '\t' | '\u{000B}' | '\u{000C}' | '\u{0085}' | '\u{2028}' | '\u{2029}'
+    ) || ch.is_whitespace()
+}
+
+/// Strips 7-bit (`ESC`) and 8-bit C1 (`\u{009B}` CSI, `\u{009D}` OSC, `\u{0090}`/`\u{0098}`/
+/// `\u{009E}`/`\u{009F}` ST-terminated) ANSI/ECMA-48 escape sequences.
+fn strip_ansi_sequences(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\x1B' => skip_esc_sequence(&mut chars),
+            '\u{009B}' => skip_csi_sequence(&mut chars),
+            '\u{009D}' => skip_st_sequence(&mut chars, true),
+            '\u{0090}' | '\u{0098}' | '\u{009E}' | '\u{009F}' => {
+                skip_st_sequence(&mut chars, false);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn skip_esc_sequence(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    match chars.peek().copied() {
+        Some('[') => {
+            chars.next();
+            skip_csi_sequence(chars);
+        }
+        Some(']') => {
+            chars.next();
+            skip_st_sequence(chars, true);
+        }
+        Some('P' | 'X' | '^' | '_') => {
+            chars.next();
+            skip_st_sequence(chars, false);
+        }
+        Some(c) if ('\x20'..='\x2F').contains(&c) => {
+            while chars
+                .peek()
+                .is_some_and(|&n| ('\x20'..='\x2F').contains(&n))
+            {
+                chars.next();
+            }
+            if chars
+                .peek()
+                .is_some_and(|&n| ('\x30'..='\x7E').contains(&n))
+            {
+                chars.next();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn skip_csi_sequence(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    while chars
+        .peek()
+        .is_some_and(|&c| ('\x30'..='\x3F').contains(&c))
+    {
+        chars.next();
+    }
+    while chars
+        .peek()
+        .is_some_and(|&c| ('\x20'..='\x2F').contains(&c))
+    {
+        chars.next();
+    }
+    if chars
+        .peek()
+        .is_some_and(|&c| ('\x40'..='\x7E').contains(&c))
+    {
+        chars.next();
+    }
+}
+
+fn skip_st_sequence(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, allow_bel: bool) {
+    while let Some(c) = chars.next() {
+        if (allow_bel && c == '\x07') || c == '\u{009C}' {
+            return;
+        }
+        if c == '\x1B' && chars.peek() == Some(&'\\') {
+            chars.next();
+            return;
+        }
+    }
+}
+
 /// Breaks every triple-delimiter sequence so no variant of `<<<UNTRUSTED_MESSAGE...>>>`,
 /// `<<<END_UNTRUSTED_MESSAGE>>>`, `=== OFFICE MID-TURN NOTICE ===`, or
 /// `=== END OFFICE MID-TURN NOTICE ===` can escape the untrusted data fence.
@@ -260,7 +378,10 @@ fn truncate_utf8(text: &str, max_bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{sanitize_untrusted_body, sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
+    use super::{
+        sanitize_single_line_display, sanitize_untrusted_body, sanitize_untrusted_meta,
+        MAX_META_FIELD_BYTES,
+    };
 
     fn meta(raw: &str) -> String {
         sanitize_untrusted_meta(raw, MAX_META_FIELD_BYTES)
@@ -487,5 +608,26 @@ mod tests {
         assert!(out.len() <= MAX_META_FIELD_BYTES, "{}", out.len());
         assert!(out.ends_with("… [truncated]"));
         assert_eq!(sanitize_untrusted_body("ééé", 3), "é");
+    }
+
+    #[test]
+    fn single_line_display_strips_ansi_controls_and_bidi_while_collapsing_whitespace() {
+        let hostile = concat!(
+            "  \x1b[31mBash\x1b[0m\r\n",
+            "\t\x1b]8;;https://evil.example\x07click\x1b]8;;\x07",
+            "\x00\x7f\u{0080}\u{009B}31mred\u{009D}osc\u{009C}",
+            "\u{200B}\u{200F}\u{202A}\u{202E}\u{2060}\u{2069}\u{FEFF}",
+            "\u{0085}\u{2028}ok\u{2029}✓ é  "
+        );
+        let cleaned = sanitize_single_line_display(hostile);
+        assert_eq!(cleaned, "Bash clickred ok ✓ é");
+        assert!(!cleaned.chars().any(char::is_control));
+        assert!(!cleaned.contains('\x1b'));
+        assert!(!cleaned.contains("[31m"));
+        assert!(!cleaned.contains("https://evil.example"));
+        assert_eq!(
+            sanitize_single_line_display("  \x1b[31m\r\n\t\x00\u{009B}0m\u{202E}  "),
+            ""
+        );
     }
 }
