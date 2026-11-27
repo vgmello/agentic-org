@@ -26,6 +26,8 @@ use org_proto::{ApiError, Call, ErrorCode, Outcome, Request, Response};
 
 use crate::live::LiveEvents;
 
+mod search_filter;
+
 fn is_task_core_method(request: &Request) -> bool {
     request.is::<TasksCreate>()
         || request.is::<TasksList>()
@@ -159,8 +161,11 @@ impl TaskService {
             }));
         }
         if request.is::<TasksList>() {
-            // Every filter, the order and the page are the office's query (`TASK-105`).
-            return Some(run_call::<TasksList>(request, |p| self.office.task_list(p)));
+            // Structured filters, ordering and paging stay on the office's query (`TASK-105`),
+            // while non-empty `--query` routes through the FTS5 `search.query` index (`TASK-91`).
+            return Some(run_call::<TasksList>(request, |p| {
+                search_filter::list_tasks_with_query(&self.office, member, p)
+            }));
         }
         if request.is::<TasksInspect>() {
             return Some(self.dispatch_inspect(request));

@@ -93,7 +93,7 @@ fn attach_rejects_non_object_options_and_wraps_help_as_single_line_json() {
         r#"{"command":"task note add","input":{"task":"T-A1","text":"plan"}}"#,
     )
     .unwrap();
-    assert_eq!(parsed[0], "task-note");
+    assert_eq!(parsed[0], "note");
     assert_eq!(parsed[1], "add");
 }
 
@@ -243,7 +243,8 @@ fn shorthands_mean_the_same_command_in_attach() {
     for (line, words) in [
         (r#"{"command":"who"}"#, vec!["directory", "list"]),
         (r#"{"command":"context"}"#, vec!["session", "context"]),
-        (r#"{"command":"task note list"}"#, vec!["task-note", "list"]),
+        (r#"{"command":"task note list"}"#, vec!["note", "list"]),
+        (r#"{"command":"task-note list"}"#, vec!["note", "list"]),
     ] {
         let args = parse_line_args(crate::registry::runtime_table(), line).unwrap();
         assert_eq!(&args[..words.len()], words.as_slice(), "{line}");

@@ -25,7 +25,7 @@ use crate::runtime::transport::OfficeTransport;
 /// `Use when:` guidance of each `task` command here.
 pub(super) const CUES: &[CommandCue] = &[
     ("task", "assign", "assigning or clearing a task's responsible team or employee (requires `--if-match`)."),
-    ("task", "comment", "posting a public update, review note, or handoff visible to everyone on the task (use `task-note` for private notes)."),
+    ("task", "comment", "posting a public update, review note, or handoff visible to everyone on the task (use `note` for private notes and decisions)."),
     ("task", "create", "creating a new task, bug, or request with initial priority, labels, files, or dependencies."),
     ("task", "dep-add", "recording that a task depends on an upstream prerequisite task."),
     ("task", "dep-remove", "removing a direct dependency link between two tasks."),

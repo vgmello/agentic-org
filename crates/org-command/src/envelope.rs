@@ -46,6 +46,9 @@ pub(crate) fn success_meta(answer: &Answer, dry_run: bool, key: Option<&str>) ->
     if let Some(total) = answer.total {
         meta.push(("total".to_owned(), Node::Number(total.into())));
     }
+    if let Some(coverage) = &answer.coverage {
+        meta.push(("coverage".to_owned(), Node::from_value(coverage)));
+    }
     if let Some(count) = answer.waiting_messages.filter(|&n| n > 0) {
         meta.push(("waiting_messages".to_owned(), Node::Number(count.into())));
     }
@@ -133,6 +136,29 @@ pub fn envelope_schema() -> Value {
                     "revision": {"type": "integer", "minimum": 0},
                     "next_cursor": {"type": "string"},
                     "total": {"type": "integer", "minimum": 0},
+                    "coverage": {
+                        "type": "object",
+                        "required": ["searched"],
+                        "additionalProperties": false,
+                        "properties": {
+                            "searched": {
+                                "type": "array",
+                                "items": {"type": "string"}
+                            },
+                            "omitted": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "required": ["source", "reason"],
+                                    "additionalProperties": false,
+                                    "properties": {
+                                        "source": {"type": "string"},
+                                        "reason": {"type": "string"}
+                                    }
+                                }
+                            }
+                        }
+                    },
                     "waiting_messages": {"type": "integer", "minimum": 1},
                     "dry_run": {"type": "boolean"}
                 }

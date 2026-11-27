@@ -219,6 +219,14 @@ impl OfficeTransport for BoundOffice {
             .then_some(org_proto::external_auth::SessionMode::External)
     }
 
+    fn active_task(&self) -> Option<String> {
+        self.binding.active_task.clone()
+    }
+
+    fn active_project(&self) -> Option<String> {
+        self.binding.active_project.clone()
+    }
+
     fn take_waiting_messages(&mut self) -> Option<u32> {
         self.waiting_messages.take()
     }

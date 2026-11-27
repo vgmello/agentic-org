@@ -111,6 +111,7 @@ const EXTERNAL_CALLS: &[&str] = &[
     "org.snapshot",
     "project.list",
     "project.inspect",
+    "search.query",
     "skill.list",
     "skill.read",
     "process.show",

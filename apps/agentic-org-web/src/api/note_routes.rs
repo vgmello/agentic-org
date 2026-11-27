@@ -1,15 +1,20 @@
 //! Browser HTTP routes for private notes, plans and decisions (`TASK-50`, `TASK-111` ADEC-4,
 //! `ADR-0031`), forwarded to the organization's HQ office, which alone holds them:
 //!
+//! - `GET  /api/v1/organizations/{org}/members/{member_id}/decisions` lists a member's private
+//!   working decisions;
+//! - `GET  /api/v1/organizations/{org}/notes` lists visible private notes across tasks;
+//! - `GET  /api/v1/organizations/{org}/notes/{note_id}` reads one;
+//! - `POST /api/v1/organizations/{org}/notes/{add|update|remove|publish}` writes;
 //! - `GET  /api/v1/organizations/{org}/tasks/{task}/notes` lists a task's visible notes;
 //! - `GET  /api/v1/organizations/{org}/tasks/notes/{note_id}` reads one;
-//! - `POST /api/v1/organizations/{org}/tasks/notes/{add|update|remove|publish}` writes;
-//! - `GET  /api/v1/organizations/{org}/members/{member_id}/decisions` lists a member's private
-//!   working decisions.
+//! - `POST /api/v1/organizations/{org}/tasks/notes/{add|update|remove|publish}` writes.
 //!
-//! The office decides visibility from the caller's own employee: an active person reads every
-//! author's notes, an agent only its own, and only the author writes. This slice never widens
-//! that and never caches an answer.
+//! Strict `ADR-0031` privacy: every route requires a verified browser session cookie and its
+//! proof header (`CallerAuth::Pair`, never sign-in-less mode). The office decides visibility from
+//! the caller's own employee: an active person reads every author's notes, an agent only its own,
+//! and only the author writes. This slice never widens that, never logs private note content, and
+//! never caches an answer.
 
 use hyper::{http::request::Parts, Method, StatusCode};
 use org_proto::private_notes::{
@@ -53,9 +58,9 @@ fn valid_org_id(id: &str) -> Result<(), ApiReply> {
         .ok_or_else(invalid)
 }
 
-/// A task reference or text filter: present, and at most 128 bytes.
+/// A task reference or text filter: non-blank, at most 128 bytes, and free of NUL bytes.
 fn valid_ref(value: &str) -> Result<(), ApiReply> {
-    if value.is_empty() || value.len() > 128 {
+    if value.trim().is_empty() || value.len() > 128 || value.contains('\0') {
         return Err(invalid());
     }
     Ok(())
@@ -108,17 +113,19 @@ fn decode_query_value(raw: &str) -> Result<String, ApiReply> {
     String::from_utf8(out).map_err(|_| invalid())
 }
 
-/// Which list a query string belongs to: a task's notes, or a member's decisions.
+/// Which list a query string belongs to: cross-task notes, one task's notes, or a member's
+/// decisions.
 #[derive(Clone, Copy)]
 enum ListScope {
+    All,
     Task,
     Decisions,
 }
 
-/// Parses a notes list query. A task list takes `author_id` and `kind`; the decisions list
-/// takes `task_id` instead (its author and kind are the path's). IDs are canonical UUIDv7s,
-/// `limit` is 1 to 500, text filters are 1 to 128 bytes, and each key comes at most once.
-/// Anything else is refused before the request leaves this process.
+/// Parses a notes list query. `All` accepts every filter; `Task` takes `author_id` and `kind`
+/// (its task is the path's); `Decisions` takes `task_id`/`task` (its author and kind are the
+/// path's). IDs are canonical UUIDv7s, `limit` is 1 to 500, text filters are 1 to 128 bytes
+/// without NUL, and each key comes at most once. Anything else is refused before leaving here.
 fn parse_list_query(
     scope: ListScope,
     query: Option<&str>,
@@ -136,11 +143,18 @@ fn parse_list_query(
         seen.push(key);
         let value = decode_query_value(raw)?;
         match (scope, key) {
-            (ListScope::Task, "author_id") => params.author_id = Some(checked(value, valid_uuid)?),
-            (ListScope::Task, "kind") => {
+            (ListScope::All | ListScope::Task, "author_id") => {
+                params.author_id = Some(checked(value, valid_uuid)?);
+            }
+            (ListScope::All | ListScope::Task, "kind") => {
                 params.kind = Some(PrivateNoteKind::parse(&value).ok_or_else(invalid)?);
             }
-            (ListScope::Decisions, "task_id") => params.task = Some(checked(value, valid_ref)?),
+            (ListScope::All | ListScope::Decisions, "task_id" | "task") => {
+                if params.task.is_some() {
+                    return Err(invalid());
+                }
+                params.task = Some(checked(value, valid_ref)?);
+            }
             (_, "project_id") => params.project_id = Some(checked(value, valid_uuid)?),
             (_, "tag") => params.tag = Some(checked(value, valid_ref)?),
             (_, "since") => params.since = Some(checked(value, valid_ref)?),
@@ -180,10 +194,28 @@ fn routed(
     build: impl FnOnce(CallerAuth, String) -> Result<NoteRoute, ApiReply>,
 ) -> Option<Result<Route, ApiReply>> {
     Some((|| {
-        let pair = api.caller_auth(request)?;
+        // Strict ADR-0031 privacy: always require an authenticated browser session cookie
+        // paired with its proof header; never allow sign-in-less mode.
+        let pair = CallerAuth::Pair(api.pair(request)?);
         valid_org_id(org)?;
         Ok(Route::Notes(build(pair, org.to_owned())?))
     })())
+}
+
+fn route_note_post_action(
+    api: &SessionApi,
+    request: &Parts,
+    org: &str,
+    action: &str,
+) -> Option<Result<Route, ApiReply>> {
+    let build: fn(CallerAuth, String) -> NoteRoute = match action {
+        "add" => NoteRoute::Add,
+        "update" => NoteRoute::Update,
+        "remove" => NoteRoute::Remove,
+        "publish" => NoteRoute::Publish,
+        _ => return Some(Err(not_found())),
+    };
+    routed(api, request, org, |pair, org| Ok(build(pair, org)))
 }
 
 /// Attempts to route private notes paths under `/api/v1/organizations/{org}/...`.
@@ -203,16 +235,19 @@ pub(super) fn try_route(
             Ok(NoteRoute::List(pair, org, Box::new(params)))
         }),
         ["members", _, "decisions"] => Some(Err(invalid())),
-        ["tasks", "notes", action] if post => {
-            let build: fn(CallerAuth, String) -> NoteRoute = match *action {
-                "add" => NoteRoute::Add,
-                "update" => NoteRoute::Update,
-                "remove" => NoteRoute::Remove,
-                "publish" => NoteRoute::Publish,
-                _ => return Some(Err(not_found())),
-            };
-            routed(api, request, org, |pair, org| Ok(build(pair, org)))
-        }
+        ["notes"] if is_get => routed(api, request, org, |pair, org| {
+            let params =
+                parse_list_query(ListScope::All, raw_query, PrivateNoteListParams::default())?;
+            Ok(NoteRoute::List(pair, org, Box::new(params)))
+        }),
+        ["notes"] => Some(Err(invalid())),
+        ["notes", action] if post => route_note_post_action(api, request, org, action),
+        ["notes", note_id] if is_get && !query => routed(api, request, org, |pair, org| {
+            valid_uuid(note_id)?;
+            Ok(NoteRoute::Get(pair, org, (*note_id).to_owned()))
+        }),
+        ["notes", ..] => Some(Err(invalid())),
+        ["tasks", "notes", action] if post => route_note_post_action(api, request, org, action),
         ["tasks", "notes", note_id] if is_get && !query => {
             routed(api, request, org, |pair, org| {
                 valid_uuid(note_id)?;

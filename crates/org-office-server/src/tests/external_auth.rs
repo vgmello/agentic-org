@@ -168,6 +168,7 @@ fn token_binding(w: &World, member: &str, token: &str) -> Binding {
         session_token: Some(token.to_owned()),
         agent_id: Some(member.to_owned()),
         external_state: None,
+        ..Binding::default()
     }
 }
 
@@ -368,6 +369,7 @@ fn external_agent_lifecycle_over_the_real_office_socket() {
         session_token: Some(token.clone()),
         agent_id: Some(w.ada.clone()),
         external_state: Some(state.dir().to_path_buf()),
+        ..Binding::default()
     };
     let (code, who) = agent_os(&w, workspace.clone(), &["who"]);
     assert_eq!(code, 0, "refresh after token loss: {who}");
@@ -752,6 +754,7 @@ fn binding_from_workspace_state(state: &WorkspaceState) -> Binding {
         session_token: None,
         agent_id: Some(saved.member_id),
         external_state: Some(state.dir().to_path_buf()),
+        ..Binding::default()
     }
 }
 

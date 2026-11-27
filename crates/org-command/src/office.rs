@@ -87,6 +87,8 @@ pub struct Answer {
     pub waiting_messages: Option<u32>,
     /// For a list: how many records match across every page (`meta.total`).
     pub total: Option<u64>,
+    /// Optional search coverage metadata (`meta.coverage`: `{searched, omitted?}`).
+    pub coverage: Option<Value>,
 }
 
 impl Answer {
@@ -101,6 +103,7 @@ impl Answer {
             next_cursor: None,
             waiting_messages: None,
             total: None,
+            coverage: None,
         }
     }
 }

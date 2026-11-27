@@ -487,7 +487,7 @@ mod tests {
             let answered = ask(forwarded, &ctx, &mut office);
             assert_eq!(answered.output.exit_code, 2, "{}", answered.output.stdout);
             assert!(
-                answered.output.stdout.contains("`task-note` needs a verb"),
+                answered.output.stdout.contains("`note` needs a verb"),
                 "{}",
                 answered.output.stdout
             );

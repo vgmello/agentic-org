@@ -86,6 +86,22 @@ fn note_meta(meta: &Value, ctx: &mut ExecutionContext) {
     if let Some(cursor) = meta["next_cursor"].as_str() {
         ctx.note(&format!("More results: add --cursor {cursor}"));
     }
+    if let Some(omitted) = meta["coverage"]["omitted"]
+        .as_array()
+        .filter(|items| !items.is_empty())
+    {
+        let summary: Vec<String> = omitted
+            .iter()
+            .filter_map(|item| {
+                let source = item["source"].as_str()?;
+                let reason = item["reason"].as_str()?;
+                Some(format!("{source} ({reason})"))
+            })
+            .collect();
+        if !summary.is_empty() {
+            ctx.note(&format!("Omitted from search: {}", summary.join(", ")));
+        }
+    }
 }
 
 /// The columns of a list: the command's declared output fields, or the first item's keys.

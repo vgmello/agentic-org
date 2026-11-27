@@ -318,6 +318,7 @@ pub(crate) fn binding_of(state: &store::WorkspaceState) -> Option<Binding> {
         session_token: token,
         agent_id: Some(binding.member_id),
         external_state: Some(state.dir().to_path_buf()),
+        ..Binding::default()
     })
 }
 

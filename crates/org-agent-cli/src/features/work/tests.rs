@@ -1100,3 +1100,298 @@ fn task_90_surgical_checklist_fields_pruning_and_task_update_cli() {
     assert_eq!(env["error"]["conflict"]["current_revision"], 4);
     assert_eq!(env["error"]["conflict"]["events_since"][0]["revision"], 3);
 }
+
+#[test]
+fn note_adec3_autobind_standalone_turn40_recall_update_and_legacy_aliases() {
+    struct NoteMock {
+        seen: Vec<(String, Value)>,
+        active_task: Option<String>,
+        active_project: Option<String>,
+    }
+
+    fn wire_note(id: &str, task_id: Option<&str>, body: Option<&str>) -> Value {
+        let mut obj = json!({
+            "id": id,
+            "task_id": task_id,
+            "project_id": "0193a5c0-0000-7000-8000-000000000050",
+            "author_id": "0193a5c0-0000-7000-8000-000000000020",
+            "revision": 1,
+            "kind": "decision",
+            "title": "Use FTS5 for task query",
+            "why": "Avoid full-table scans on large backlogs",
+            "alternatives": "Client-side substring scan",
+            "tags": ["search", "shortcut"],
+            "created_at": "2026-11-26T00:00:00.000Z",
+            "updated_at": "2026-11-26T00:00:00.000Z",
+            "editable": true
+        });
+        if let Some(body) = body {
+            obj["body_markdown"] = json!(body);
+        }
+        obj
+    }
+
+    impl OfficeTransport for NoteMock {
+        fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
+            self.seen.push((method.to_owned(), params.clone()));
+            match method {
+                "project.inspect" => Ok(json!({
+                    "id": "0193a5c0-0000-7000-8000-000000000050",
+                    "number": 1,
+                    "key": "P-1",
+                    "slug": "core",
+                    "name": "Core",
+                    "owner_team_id": "0193a5c0-0000-7000-8000-000000000010",
+                    "revision": 1
+                })),
+                "who" => Ok(json!({
+                    "members": [{
+                        "id": "0193a5c0-0000-7000-8000-000000000020",
+                        "handle": "ada",
+                        "name": "Ada",
+                        "kind": "agent",
+                        "owner": false,
+                        "agent_status": "active",
+                        "role_title": "Engineer",
+                        "presence": "online"
+                    }]
+                })),
+                "tasks.notes.add" => {
+                    let task_id = params
+                        .get("task")
+                        .and_then(Value::as_str)
+                        .map(|_| "0193a5c0-0000-7000-8000-000000000100");
+                    Ok(json!({
+                        "note": wire_note("0193a5c0-0000-7000-8000-000000000401", task_id, Some("Full body"))
+                    }))
+                }
+                "tasks.notes.list" => {
+                    let fields = params
+                        .get("fields")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    let wants_body = fields.is_empty()
+                        || fields.iter().any(|v| v.as_str() == Some("body_markdown"));
+                    let body = wants_body.then_some("HUGE_BODY_NEVER_FETCHED_BY_DEFAULT");
+                    Ok(json!({
+                        "notes": [
+                            wire_note("0193a5c0-0000-7000-8000-000000000401", Some("0193a5c0-0000-7000-8000-000000000100"), body),
+                            wire_note("0193a5c0-0000-7000-8000-000000000402", None, body)
+                        ],
+                        "total": 2,
+                        "next_cursor": "2026-11-26T00:00:00.000Z~0193a5c0-0000-7000-8000-000000000402"
+                    }))
+                }
+                "tasks.notes.get" => Ok(json!({
+                    "note": wire_note("0193a5c0-0000-7000-8000-000000000401", None, Some("Full body text"))
+                })),
+                "tasks.notes.update" => Ok(json!({
+                    "note": wire_note("0193a5c0-0000-7000-8000-000000000401", None, Some("Updated"))
+                })),
+                _ => panic!("unexpected RPC: {method}"),
+            }
+        }
+
+        fn active_task(&self) -> Option<String> {
+            self.active_task.clone()
+        }
+
+        fn active_project(&self) -> Option<String> {
+            self.active_project.clone()
+        }
+    }
+
+    let run = |office: &mut TransportOffice<NoteMock>, words: &[&str]| {
+        let args: Vec<String> = words.iter().map(|s| (*s).to_owned()).collect();
+        crate::execute_with_office("agent-os", &args, office)
+    };
+
+    let mut office = TransportOffice(NoteMock {
+        seen: Vec::new(),
+        active_task: Some("T-A1".into()),
+        active_project: Some("P-1".into()),
+    });
+
+    // 1. Low-friction `note add`: only `--text` required; auto-binds active task from env.
+    let out = run(
+        &mut office,
+        &[
+            "note",
+            "add",
+            "--kind",
+            "decision",
+            "--title",
+            "Use FTS5 for task query",
+            "--why",
+            "Avoid full-table scans",
+            "--alternatives",
+            "Substring scan",
+            "--tag",
+            "search",
+            "--tag",
+            "shortcut",
+            "--text",
+            "Details of the FTS5 choice.",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let sent = &office.0.seen.last().unwrap().1;
+    assert_eq!(sent["task"], "T-A1");
+    assert_eq!(sent["kind"], "decision");
+    assert_eq!(sent["title"], "Use FTS5 for task query");
+    assert_eq!(sent["why"], "Avoid full-table scans");
+    assert_eq!(sent["alternatives"], "Substring scan");
+    assert_eq!(sent["tags"], json!(["search", "shortcut"]));
+
+    // 2. `--standalone` skips active task, auto-resolves active project `P-1` -> UUIDv7,
+    // and strips `null` `task_id` from output so org-command conforms cleanly.
+    let out = run(
+        &mut office,
+        &["note", "add", "--standalone", "--text", "Cross-task note"],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let sent = &office.0.seen.last().unwrap().1;
+    assert!(sent.get("task").is_none(), "{sent}");
+    assert_eq!(sent["project_id"], "0193a5c0-0000-7000-8000-000000000050");
+    let env: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert!(env["data"].get("task_id").is_none(), "{}", out.stdout);
+
+    // 3. Default `note list` omits `body_markdown` server-side (<1 KiB Turn-40 recall) and
+    // resolves `--project P-1` and `--author @ada`.
+    let out = run(
+        &mut office,
+        &[
+            "note",
+            "list",
+            "--kind",
+            "decision",
+            "--project",
+            "P-1",
+            "--author",
+            "@ada",
+            "--tag",
+            "search",
+            "--since",
+            "2026-11-26T00:00:00Z",
+            "--limit",
+            "5",
+            "--format",
+            "compact",
+            "--fields",
+            "id,title,why,tags",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    assert!(
+        out.stdout.len() < 1024,
+        "Turn-40 recall too big: {}",
+        out.stdout.len()
+    );
+    assert!(!out.stdout.contains("HUGE_BODY"), "{}", out.stdout);
+    let sent = &office.0.seen.last().unwrap().1;
+    assert_eq!(sent["project_id"], "0193a5c0-0000-7000-8000-000000000050");
+    assert_eq!(sent["author_id"], "0193a5c0-0000-7000-8000-000000000020");
+    assert_eq!(sent["kind"], "decision");
+    assert_eq!(sent["tag"], "search");
+    assert_eq!(sent["fields"], json!(["title", "why", "tags"]));
+
+    // 4. Default `note list` with no `--fields` explicitly requests non-body fields only.
+    let out = run(&mut office, &["note", "list", "--kind", "decision"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let sent = &office.0.seen.last().unwrap().1;
+    assert_eq!(
+        sent["fields"],
+        json!(["title", "why", "alternatives", "tags"])
+    );
+    let env: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(env["meta"]["total"], 2);
+    assert!(env["data"][0].get("body_markdown").is_none());
+
+    // 5. `note list --count` returns empty data and `meta.total` with minimal wire fields.
+    let out = run(&mut office, &["note", "list", "--count"]);
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let env: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(env["data"], json!([]));
+    assert_eq!(env["meta"]["total"], 2);
+    assert!(env["meta"].get("next_cursor").is_none());
+
+    // 6. Legacy `task-note get` & `task note get` rewrite to `note inspect` cleanly.
+    for line in [
+        &[
+            "note",
+            "inspect",
+            "--id",
+            "0193a5c0-0000-7000-8000-000000000401",
+        ][..],
+        &[
+            "task-note",
+            "get",
+            "--id",
+            "0193a5c0-0000-7000-8000-000000000401",
+        ],
+        &[
+            "task",
+            "note",
+            "get",
+            "--id",
+            "0193a5c0-0000-7000-8000-000000000401",
+        ],
+    ] {
+        let out = run(&mut office, line);
+        assert_eq!(out.exit_code, 0, "{line:?}: {}", out.stdout);
+        let env: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(env["data"]["body_markdown"], "Full body text");
+    }
+
+    // 7. Partial `note update` works without `--text`; empty patch refused.
+    let out = run(
+        &mut office,
+        &[
+            "note",
+            "update",
+            "--id",
+            "0193a5c0-0000-7000-8000-000000000401",
+            "--if-match",
+            "1",
+            "--title",
+            "Refined title",
+            "--tag",
+            "verified",
+        ],
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let sent = &office.0.seen.last().unwrap().1;
+    assert_eq!(sent["title"], "Refined title");
+    assert_eq!(sent["tags"], json!(["verified"]));
+    assert!(sent.get("body_markdown").is_none());
+
+    // 8. Refusals: `--private` / `--shared` / `--author` rejected on write; `--standalone` + `--task` refused; empty update refused.
+    for bad in [
+        &["note", "add", "--text", "x", "--private"][..],
+        &["note", "add", "--text", "x", "--shared"],
+        &["note", "add", "--text", "x", "--author", "@ada"],
+        &[
+            "note",
+            "add",
+            "--text",
+            "x",
+            "--standalone",
+            "--task",
+            "T-A1",
+        ],
+        &["note", "add", "--text", "x", "--standalone", "--checkpoint"],
+        &["note", "list", "--count", "--cursor", "c1"],
+        &[
+            "note",
+            "update",
+            "--id",
+            "0193a5c0-0000-7000-8000-000000000401",
+            "--if-match",
+            "1",
+        ],
+    ] {
+        let out = run(&mut office, bad);
+        assert_ne!(out.exit_code, 0, "{bad:?}: {}", out.stdout);
+    }
+}
