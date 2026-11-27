@@ -62,12 +62,10 @@ const ORG_ITEMS = [
   ["processes", "#/processes", "Processes", "refresh"],
   ["standards", "#/processes/standards", "Standards", "scale"],
   ["dev-processes", "#/dev-processes", "Development processes", "files"],
-  ["updates", "#/updates", "Updates", "download"],
 ];
 function orgCurrent(key, r0, r1) {
   if (key === "teams") return r0 === "teams" || r0 === "members";
-  if (key === "settings") return (r0 === "settings" && r1 !== "updates") || r0 === "preferences";
-  if (key === "updates") return r0 === "updates" || (r0 === "settings" && r1 === "updates");
+  if (key === "settings") return r0 === "settings" || r0 === "preferences";
   if (key === "processes") return r0 === "processes" && r1 !== "standards";
   if (key === "standards") return r0 === "processes" && r1 === "standards";
   return r0 === key;

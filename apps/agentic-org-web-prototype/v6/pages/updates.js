@@ -6,7 +6,9 @@ import { M, OFFICES } from "../data.js";
 import { HISTORY, LATEST, QUEUED, RELEASES, RUNS, STEPS, heldBack, isLatest, officeAgents, officeState, releaseOf, FAILURES } from "../updates-data.js";
 import { av, esc, hdr, ic, pill, plural } from "../ui.js";
 
-const VIEWS = [["", "Offices"], ["releases", "Releases"], ["history", "History"]];
+const VIEWS = [["", "Offices"], ["releases", "Releases"], ["history", "Update history"]];
+/* Updates are part of Offices (owner): Settings › Offices lists each office with its version and update actions */
+const OFFICES_HREF = "#/settings/offices";
 /* Order as on Offices (doc-44 §6.1): HQ, offices on HQ's machine, then the others A–Z */
 const officeKeys = () => Object.keys(OFFICES).sort((a, b) => (OFFICES[a].role === "HQ" ? -1 : OFFICES[b].role === "HQ" ? 1 : OFFICES[a].name.localeCompare(OFFICES[b].name)));
 const updatable = () => officeKeys().filter((k) => OFFICES[k].status === "Online" && ["available", "failed"].includes(officeState(k)));
@@ -122,13 +124,13 @@ function historyRow(h) {
 
 function toolbar(view) {
   const counts = { "": Object.keys(OFFICES).length, releases: RELEASES.length, history: HISTORY.length };
-  const tabs = VIEWS.map(([v, l]) => `<a class="queue-tab" href="#/updates${v ? `/${v}` : ""}"${v === view ? ' aria-current="page"' : ""}>${l}<span>${counts[v]}</span></a>`).join("");
+  const tabs = VIEWS.map(([v, l]) => `<a class="queue-tab" href="${OFFICES_HREF}${v ? `/${v}` : ""}"${v === view ? ' aria-current="page"' : ""}>${l}<span>${counts[v]}</span></a>`).join("");
   const n = updatable().length;
   const all = n ? `<button class="btn primary" type="button" data-upd-act="confirm-all">${ic("download", "ic16")}Update all offices<span class="upd-n">${n}</span></button>` : "";
   return `<div class="work-subbar-header proc-subbar"><div class="work-toolbar queue-toolbar proc-toolbar upd-toolbar">
       <div class="primary-tab-row"><nav class="queue-tabs" aria-label="Updates views">${tabs}</nav></div>
       <div class="queue-controls" role="group" aria-label="Release checks"><button class="btn ghost" type="button" data-upd-act="check">${ic("refresh", "ic16")}Check now</button></div>
-      <div class="proc-toolbar-end">${all}</div>
+      <div class="proc-toolbar-end"><button class="btn outline" type="button" data-act="proto" data-v="Add an office">${ic("plus", "ic16")}Add an office</button>${all}</div>
     </div></div>`;
 }
 
@@ -140,12 +142,14 @@ function bodyFor(view) {
     <p class="upd-foot">Shown from HQ. Statuses include last-seen information.${queued ? " An offline office's update stays queued until it connects." : ""} On the machine itself: ${cmd("agentic-org upgrade --name default")}.</p>`;
 }
 
-function pageUpdates(sub) {
+/* Settings › Offices: offices with their versions and updates, releases and update history (header + body for the
+   settings frame) */
+function officesSection(sub) {
   const view = VIEWS.some(([v]) => v === sub) ? sub : "";
-  const n = updatable().length;
-  const header = hdr("Updates", n ? `${plural(n, "office", "offices")} can update to ${LATEST}` : `Agentic Org ${LATEST} is the latest release`);
-  const intro = `<p class="desc proc-note">Each office runs on an instance of Agentic Org. Updating an office switches its instance to a new release; other instances on the same machine keep theirs.</p>`;
-  return `<div class="settings org-standalone upd-page">${header}<div class="settings-body">${intro}${toolbar(view)}<div class="plan-results proc-results upd-results" id="upd-results">${bodyFor(view)}</div></div></div>`;
+  const n = updatable().length, online = Object.values(OFFICES).filter((o) => o.status === "Online").length;
+  const header = hdr("Offices", `${plural(Object.keys(OFFICES).length, "office", "offices")} · ${online} online${n ? ` · ${plural(n, "office", "offices")} can update to ${LATEST}` : ""}`);
+  const intro = `<p class="desc proc-note">Where your agents run. Each office runs on an instance of Agentic Org; updating an office switches its instance to a new release, and other instances on the same machine keep theirs.</p>`;
+  return { header, body: `<div class="upd-page">${intro}${toolbar(view)}<div class="plan-results proc-results upd-results" id="upd-results">${bodyFor(view)}</div></div>` };
 }
 
-export { STATUS, cmd, officeKeys, pageUpdates, progressHtml, statusChip, statusKey, upgradeCmd, updatable };
+export { STATUS, cmd, officeKeys, officesSection, progressHtml, statusChip, statusKey, upgradeCmd, updatable };

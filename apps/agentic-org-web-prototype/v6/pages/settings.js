@@ -4,6 +4,7 @@ import { searchResults } from "../shell/cmdk.js";
 import { ARCHIVE_DAY_OPTIONS, CHAT_SEND_SHORTCUTS, FONT_OPTIONS, S, THEME_OPTIONS, getOrgName } from "../state.js";
 import { settingsProcesses } from "./processes.js";
 import { pageDevProcesses } from "./dev-processes.js";
+import { officesSection } from "./updates.js";
 import { SEP, av, avStack, crumbs, empty, esc, hdr, ic, mlink, pill, plural, presPill, seg } from "../ui.js";
 
 const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["access", "Members and access", "key"], ["appearance", "Appearance", "adjustments"]];
@@ -38,11 +39,7 @@ function pageSettings(sec = "general", sub) {
     <div><label for="o-owner">Owner</label><input class="field" id="o-owner" value="You" disabled></div><div><label for="o-data">Data location</label><input class="field" id="o-data" value="This Mac · HQ office" disabled><p class="help">Change where things run in Offices.</p></div>
     <div><button class="btn primary" type="submit">Save changes</button></div></form>`;
   else if (sec === "offices") {
-    header = hdr("Offices", `${plural(Object.keys(OFFICES).length, "office", "offices")} · ${Object.values(OFFICES).filter((o) => o.status === "Online").length} online`);
-    body = `<p class="desc">Where your agents run. HQ is this Mac; another office syncs with it.</p><ul class="rows settings-rows" role="list" style="margin-top:8px">${Object.entries(OFFICES).map(([k, o]) => {
-    const here = agents.filter((a) => M[a].setup.office === k);
-    return `<li>${ic("office", "ic20 chev")}<div class="grow"><p class="rt">${esc(o.name)}<span class="sec">${esc(o.machine)}</span></p><div class="meta"><span>${esc(o.note)}</span>${SEP}<span>${plural(here.length, "agent", "agents")}: ${here.map((a) => mlink(a)).join(", ")}</span></div><div style="margin-top:8px">${avStack(here, 10)}</div></div>${pill(o.status, o.tone, o.icon)}</li>`;
-  }).join("")}</ul><div class="section"><button class="btn outline" type="button" data-act="proto" data-v="Add an office">${ic("plus", "ic20")}Add an office</button></div>`;
+    ({ header, body } = officesSection(sub));
   } else if (sec === "agents" && M[sub]?.kind === "agent") {
     const agent = M[sub];
     header = crumbs([["#/settings", "Settings"], ["#/settings/agents", "Agent setup"], [null, agent.name]]) + hdr(agent.name, esc(agent.role) + " · Agent setup", `<a class="btn outline" href="#/members/${sub}/sessions">${ic("terminal", "ic20")}Sessions</a><a class="btn outline" href="#/members/${sub}">${ic("user", "ic20")}View profile</a>`);

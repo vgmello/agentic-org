@@ -10,7 +10,8 @@ import { pageInbox } from "../pages/inbox.js";
 import { pageInsights } from "../pages/org-insights.js";
 import { mountProjectQueue, pageProject, pageProjects } from "../pages/projects.js";
 import { processesTitle } from "../pages/processes.js";
-import { pageUpdates } from "../pages/updates.js";
+/* Updates are part of Settings › Offices (owner); old Updates links land there */
+function redirectToOffices(sub) { location.replace(`#/settings/offices${sub === "releases" || sub === "history" ? "/" + sub : ""}`); return ""; }
 import { SET, notFound, pageOrgProcesses, pagePreferences, pageSearch, pageSettings } from "../pages/settings.js";
 import { pageMember, pageMembersDir, pageOrgChart, pageTeam, pageTeams } from "../pages/teams.js";
 import { boardPlace, fitTextarea, mountBoard, mountWorkToolbar, pageWork, restoreBoardPlace, setWorkPanelExpanded, settleWorkResults, showSidePanel, workPanelOpener } from "../pages/work.js";
@@ -115,10 +116,10 @@ const ROUTE_RENDERERS = {
   teams: (r1, r2) => (MEMBER_ALIASES.includes(r1) ? pageMembersDir() : r1 === "org-chart" || !r1 ? pageOrgChart() : r1 === "all" ? pageTeams() : own(TEAMS, r1) ? pageTeam(r1, r2) : notFound()),
   members: (r1, r2, r3) => (own(M, r1) ? pageMember(r1, r2, r3) : notFound()),
   /* Updates moved out of Settings (TASK-250); the old address still opens it */
-  settings: (r1, r2) => (r1 === "updates" ? pageUpdates(r2) : r1 === "processes" || r1 === "dev-processes" ? pageOrgProcesses(r1, r2) : !r1 || SET.some(([k]) => k === r1) ? pageSettings(r1, own(M, r2) ? r2 : null) : notFound()),
+  settings: (r1, r2) => (r1 === "updates" ? redirectToOffices(r2) : r1 === "offices" ? pageSettings("offices", r2) : r1 === "processes" || r1 === "dev-processes" ? pageOrgProcesses(r1, r2) : !r1 || SET.some(([k]) => k === r1) ? pageSettings(r1, own(M, r2) ? r2 : null) : notFound()),
   processes: (r1) => pageOrgProcesses("processes", r1),
   "dev-processes": () => pageOrgProcesses("dev-processes"),
-  updates: (r1) => pageUpdates(r1),
+  updates: (r1) => redirectToOffices(r1),
   preferences: () => pagePreferences(),
   search: () => pageSearch(qs().get("q") || ""),
 };
@@ -208,7 +209,6 @@ function syncActivityScopeState(r0, projectId) {
 function pageTitle(r0, r1) {
   if (r0 === "members" && own(M, r1)) return M[r1].name;
   if (r0 === "processes" || (r0 === "settings" && r1 === "processes")) return processesTitle(); /* "<place> · Processes" (PROC-32) */
-  if (r0 === "settings" && r1 === "updates") return TITLES.updates;
   if (r0 === "chat") return chatDocTitle(r1); /* Chat resolves conversations and its Mentions and Threads views */
   return TITLES[r0] || "Not found";
 }
