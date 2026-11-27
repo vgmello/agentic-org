@@ -55,7 +55,7 @@ fn inspect(office: &Office, actor: &str, id: &str) -> AttachmentView {
 }
 
 /// Sets a project's `archived` flag through the journal, as an archiving command would.
-struct ArchiveProject(Id);
+pub(super) struct ArchiveProject(pub(super) Id);
 
 fn archived<S: TasksRead + AttachmentsRead>(view: &S, id: &Id) -> Result<Change, Refusal> {
     let mut project = view.project(id)?.expect("the project");

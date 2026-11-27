@@ -1,8 +1,9 @@
 //! Message chat calls: `chat.send` and its committed finish, `msg.reply`, `msg.accept`, and `msg.done`.
 
 use crate::live::Live;
-use org_proto::chat::{header_only_received, ChatSend, MsgAccept};
-use org_proto::{Call, ErrorCode, Request, Response};
+use org_proto::chat::{header_only_received, ChatSend, ChatSendParams, ChatSendResult, MsgAccept};
+use org_proto::msg::{MsgSend, SendResult};
+use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
 use super::{invalid_params, ok_reply, storage_err, ChatService};
 
@@ -42,30 +43,78 @@ impl ChatService {
         }
     }
 
-    pub(super) fn handle_chat_send(&self, member: &str, request: &Request) -> Response {
-        let Ok(params) = request.params::<ChatSend>() else {
-            return invalid_params(request.id, ChatSend::METHOD);
-        };
+    /// Sends as `chat.send` does: the HR guard, the commit, then wakes and live events.
+    /// `Err(None)` is a storage failure (logged).
+    fn send_now(
+        &self,
+        member: &str,
+        params: ChatSendParams,
+    ) -> Result<ChatSendResult, Option<ApiError>> {
         if !params.to.trim().starts_with('#') {
             match self.office.check_hr_message_allowed(member, &params.to) {
                 Ok(Ok(())) => {}
-                Ok(Err(refusal)) => return Response::error(request.id, refusal),
+                Ok(Err(refusal)) => return Err(Some(refusal)),
                 Err(error) => {
                     crate::logged("chat.send.hr_guard", &error);
-                    return storage_err(request.id);
+                    return Err(None);
                 }
             }
         }
         match self.office.chat_send(member, params) {
             Ok(Ok(mut committed)) => {
                 self.finish_chat_send_committed(member, &mut committed);
-                ok_reply::<ChatSend>(request.id, &committed.result)
+                Ok(committed.result)
             }
-            Ok(Err(refusal)) => Response::error(request.id, refusal),
+            Ok(Err(refusal)) => Err(Some(refusal)),
             Err(error) => {
                 crate::logged("chat.send", &error);
-                storage_err(request.id)
+                Err(None)
             }
+        }
+    }
+
+    pub(super) fn handle_chat_send(&self, member: &str, request: &Request) -> Response {
+        let Ok(params) = request.params::<ChatSend>() else {
+            return invalid_params(request.id, ChatSend::METHOD);
+        };
+        match self.send_now(member, params) {
+            Ok(result) => ok_reply::<ChatSend>(request.id, &result),
+            Err(Some(refusal)) => Response::error(request.id, refusal),
+            Err(None) => storage_err(request.id),
+        }
+    }
+
+    /// `msg.send` naming files (`TASK-98.2`): the bare mailbox binds none, so the message goes
+    /// as `chat.send` sends it and is answered as `msg.send`.
+    pub(super) fn handle_msg_send(&self, member: &str, request: &Request) -> Response {
+        let Ok(params) = request.params::<MsgSend>() else {
+            return invalid_params(request.id, MsgSend::METHOD);
+        };
+        let send = ChatSendParams {
+            id: params.id,
+            to: params.to,
+            kind: params.kind,
+            priority: params.priority,
+            subject: params.subject,
+            body: params.body,
+            meta: params.meta,
+            reply_to: params.reply_to,
+            also_in_channel: false,
+            reason: None,
+            attachment_ids: params.attachment_ids,
+        };
+        match self.send_now(member, send) {
+            Ok(result) => ok_reply::<MsgSend>(
+                request.id,
+                &SendResult {
+                    id: result.id,
+                    thread_id: result.thread_id,
+                    local_seq: result.local_seq,
+                    origin_seq: result.origin_seq,
+                },
+            ),
+            Err(Some(refusal)) => Response::error(request.id, refusal),
+            Err(None) => storage_err(request.id),
         }
     }
 
@@ -136,6 +185,8 @@ impl ChatService {
                             thread_id: None,
                             cursor: None,
                             limit: Some(100),
+                            has_file: None,
+                            has_image: None,
                         },
                     )
                     .ok()

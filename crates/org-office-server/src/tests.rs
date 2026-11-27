@@ -2,6 +2,8 @@ mod a2a_live_three_runtimes;
 mod a2a_messaging;
 mod chief_of_staff_replication;
 mod external_auth;
+mod federation_blob_hardening;
+mod federation_blobs;
 mod org_event_bursts;
 mod task_replication;
 mod transfer_composition;

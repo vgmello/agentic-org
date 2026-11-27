@@ -15,6 +15,8 @@ pub(crate) struct FederationRuntime {
     sat_stop: Arc<AtomicBool>,
     sat_wake: Arc<SatSyncWake>,
     sat_thread: Option<std::thread::JoinHandle<()>>,
+    /// The satellite's shared-file outbox shipper (`TASK-98.6`).
+    blob_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl FederationRuntime {
@@ -36,6 +38,8 @@ impl FederationRuntime {
             Some(Arc::clone(&feed_wake)),
         )?;
         hq_listening.store(hq.is_some(), Ordering::SeqCst);
+        let blob_thread =
+            federation::spawn_satellite_blob_shipper(office, &sat_stop, Arc::clone(&sat_wake));
         let sat_thread = start_optional_satellite_sync(
             office,
             &sat_stop,
@@ -50,6 +54,7 @@ impl FederationRuntime {
             sat_thread,
             sat_stop,
             sat_wake,
+            blob_thread,
         })
     }
 
@@ -64,6 +69,9 @@ impl FederationRuntime {
         self.sat_stop.store(true, Ordering::SeqCst);
         self.sat_wake.notify();
         if let Some(handle) = self.sat_thread {
+            let _ = handle.join();
+        }
+        if let Some(handle) = self.blob_thread {
             let _ = handle.join();
         }
     }

@@ -18,6 +18,8 @@ use org_store::Id;
 
 use crate::inbox::{Query, Source, SourceFailure, SourceRead};
 
+mod actions;
+
 /// Production `org-mailbox` storage adapter backed by `org_office::Office` (`org-store`).
 pub(crate) struct OfficeMailboxStore {
     office: Arc<Office>,
@@ -296,7 +298,8 @@ impl Source for MailboxInboxSource {
                 && query.kinds.is_none_or(|kinds| kinds.contains(&item.kind))
                 && query.project.is_none()
                 && query.team.is_none()
-                && query.after.is_none_or(|after| after.admits(&item));
+                && query.after.is_none_or(|after| after.admits(&item))
+                && query.admits_files(&item);
             if include {
                 items.push(item);
             }
@@ -316,6 +319,9 @@ fn build_inbox_item(office_id: &str, entry: org_office::OwnerInboxEntry) -> Inbo
         },
     };
     let created_at_ms = org_office::parse_rfc3339_ms(&header.created_at);
+    // An office notice (a `delivery_failed`, say) is never replied to.
+    let replyable = header.from_member_id != org_proto::msg::OFFICE_SENDER
+        && header.kind != org_proto::msg::KIND_DELIVERY_FAILED;
     let Some(card) = entry.card else {
         let summary = header
             .subject
@@ -342,9 +348,16 @@ fn build_inbox_item(office_id: &str, entry: org_office::OwnerInboxEntry) -> Inbo
             outcome: None,
             clears: InboxClears::Answered,
             dismissable: true,
-            actions: vec![open_action],
+            actions: replyable
+                .then(|| actions::reply(&header.id))
+                .into_iter()
+                .chain([open_action])
+                .collect(),
+            attachments: entry.attachments,
         };
     };
+    let mut inline = actions::ask(&header.id, &card);
+    inline.push(open_action);
     let kind = if card.approval {
         InboxKind::Approval
     } else if card.questions.len() == 1 && !card.options.is_empty() {
@@ -384,6 +397,10 @@ fn build_inbox_item(office_id: &str, entry: org_office::OwnerInboxEntry) -> Inbo
         outcome: None,
         clears: InboxClears::Answered,
         dismissable: !card.required,
-        actions: vec![open_action],
+        actions: inline,
+        attachments: entry.attachments,
     }
 }
+
+#[cfg(test)]
+mod tests;

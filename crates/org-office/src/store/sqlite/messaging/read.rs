@@ -4,7 +4,7 @@ use org_store::{EngineError, Id};
 use rusqlite::{params, OptionalExtension};
 
 use crate::messaging::{
-    ports::MessagingRead,
+    ports::{BoundMessageFile, MessagingRead},
     records::{
         parse_mute_mode, parse_reaction, ConversationPreferenceRecord,
         ConversationReadMarkerRecord, ConversationRecord, MessageReactionRecord, MessageRecord,
@@ -18,6 +18,7 @@ use super::super::{
     SqliteSnapshot, SqliteTx,
 };
 
+use super::files::{answer_files, message_file};
 use super::rows::{
     attach_attachments, attach_conversation_children, conversation_row, foreign_col, message_row,
     recipient_state_row, MSG_SELECT, STATE_SELECT,
@@ -239,7 +240,7 @@ macro_rules! sqlite_messaging_read {
                 message_id: &str,
             ) -> Result<Option<ParticipantAnswerFile>, EngineError> {
                 let (db, scope) = self.msg_view()?;
-                one(
+                let found = one(
                     db,
                     "SELECT organization_id, conversation_id, message_id, employee_id, revision, \
                      accepted_by, accepted_at, reason, answer_json \
@@ -265,9 +266,16 @@ macro_rules! sqlite_messaging_read {
                             accepted_at: row.get(6)?,
                             reason: row.get(7)?,
                             answer,
+                            attachments: Vec::new(),
                         })
                     },
-                )
+                )?;
+                let Some(mut answer) = found else {
+                    return Ok(None);
+                };
+                answer.attachments =
+                    answer_files(db, scope, &answer.message_id, &answer.employee_id)?;
+                Ok(Some(answer))
             }
 
             fn max_origin_sequence(
@@ -336,6 +344,14 @@ macro_rules! sqlite_messaging_read {
                     })
                     .map_err(|e| failed(db, "reading message local_seq", &e))?;
                 Ok(val.map(|v| v.max(0) as u64))
+            }
+
+            fn message_file(
+                &self,
+                attachment_id: &str,
+            ) -> Result<Option<BoundMessageFile>, EngineError> {
+                let (db, scope) = self.msg_view()?;
+                message_file(db, scope, attachment_id)
             }
         }
     )+};
