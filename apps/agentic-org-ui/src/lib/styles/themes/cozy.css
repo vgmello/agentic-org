@@ -313,16 +313,6 @@ html[data-ui-theme='cozy'] {
 	--exec-nav-dot-halo: rgba(232, 169, 78, 0.18);
 	--exec-nav-dot-ring: #241e19;
 
-	/* Home scroll cue — transparent fade matching POC cozy.css */
-	--exec-scroll-hint-bg: linear-gradient(
-		to top,
-		rgba(44, 36, 30, 0.62) 0%,
-		rgba(44, 36, 30, 0.22) 60%,
-		transparent 100%
-	);
-	--exec-scroll-hint-pill-bg: transparent;
-	--exec-scroll-hint-ink: #c6bab0;
-	--exec-scroll-hint-ink-hover: #faf6f0;
 	--exec-lens-on-bg: rgba(110, 196, 199, 0.16);
 	--exec-lens-on-ink: #faf6f0;
 	--exec-lens-on-shadow: inset 0 0 0 1px rgba(158, 223, 224, 0.45);
@@ -417,10 +407,6 @@ html[data-ui-theme='cozy'][data-cozy-contrast='high'] {
 	--exec-notif-blur: none;
 
 	--exec-cos-fade: #1a1512;
-	--exec-scroll-hint-bg: rgba(26, 21, 18, 0.94);
-	--exec-scroll-hint-pill-bg: transparent;
-	--exec-scroll-hint-ink: #ffffff;
-	--exec-scroll-hint-ink-hover: #ffffff;
 	--side-panel-surface: #1a1512;
 	--triage-row-hover: rgba(255, 248, 240, 0.12);
 	--triage-row-selected: rgba(39, 87, 83, 0.72);

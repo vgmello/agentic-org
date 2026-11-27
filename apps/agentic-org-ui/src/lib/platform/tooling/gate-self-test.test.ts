@@ -11,7 +11,7 @@ const SRC_LIB = resolve(UI_ROOT, 'src/lib');
 // Use real tracked file paths for lintText() so typescript-eslint's projectService resolves tsconfig.
 const PLATFORM_TS_TARGET = 'src/lib/platform/workspace/shell-command.ts';
 const MODULE_TS_TARGET = 'src/lib/modules/home/model/brief.ts';
-const MODULE_SVELTE_TARGET = 'src/lib/modules/home/features/HomeScrollHint.svelte';
+const MODULE_SVELTE_TARGET = 'src/lib/modules/home/features/HomeThroughputSparkline.svelte';
 
 const eslint = new ESLint({ cwd: UI_ROOT });
 

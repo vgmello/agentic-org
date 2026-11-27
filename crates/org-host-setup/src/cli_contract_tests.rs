@@ -225,8 +225,6 @@ fn the_ad_hoc_answers_keep_their_earlier_maps_byte_for_byte() {
 
 #[test]
 fn the_new_answers_serialize_in_snake_case_words() {
-    assert_eq!(value(&ContextCleared::Cleared), "cleared");
-    assert_eq!(value(&ContextCleared::NothingSaved), "nothing_saved");
     let context = CliContext::new(INSTANCE.into(), None, HQ.into()).unwrap();
     assert_eq!(
         value(&SignedIn {

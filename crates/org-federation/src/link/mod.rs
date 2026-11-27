@@ -1,14 +1,14 @@
 //! The mTLS federation link primitives shared by the federation listener and client
-//! (`federation`), the satellite's persistent stream (`federation_stream`) and snapshot
+//! (`federation`), the satellite's persistent stream (`stream`) and snapshot
 //! transfer (`snapshot_transfer`): the satellite session, the HQ peer writer ([`hq_peer`]),
 //! org-event application ([`org_events`]), the relay callbacks, deterministic IDs and frame
 //! deadlines.
 //!
-//! A leaf below all three: it imports none of them, so `federation -> {federation_stream,
-//! snapshot_transfer} -> federation_link` is a DAG.
+//! A leaf below all three: it imports none of them, so `federation -> {stream,
+//! snapshot_transfer} -> link` is a DAG.
 
 pub(crate) mod hq_peer;
-pub mod org_events;
+pub(crate) mod org_events;
 
 use std::collections::VecDeque;
 use std::net::TcpStream;
@@ -78,7 +78,7 @@ pub struct SatelliteSyncSession {
     pub(crate) pending_inbound: VecDeque<SyncFrame>,
 }
 
-pub type SnapshotFileBatch = Vec<(String, Option<Vec<u8>>)>;
+pub(crate) type SnapshotFileBatch = Vec<(String, Option<Vec<u8>>)>;
 
 /// Deterministic valid canonical lowercase RFC 9562 UUIDv7 derived from an idempotent replication key
 /// so crash-recovery replays deduplicate cleanly in `org-store` (`TASK-52` H-7/H-10).

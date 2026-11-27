@@ -335,6 +335,10 @@ class UiPreferencesStore {
 		return this.#hydrated;
 	}
 
+	get isReport(): boolean {
+		return this.theme === 'report' || this.theme === 'report-dark';
+	}
+
 	setTheme(next: UiTheme): void {
 		const normalized = normalizeUiTheme(next);
 		if (!normalized) return;

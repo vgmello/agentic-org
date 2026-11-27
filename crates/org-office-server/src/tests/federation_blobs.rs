@@ -32,7 +32,8 @@ use org_sync_proto::{blob_digest, SyncFrame};
 
 use super::a2a_messaging::enroll_satellite;
 use crate::attachment_calls::dispatch_attachment_rpc;
-use crate::federation::{ship_blob_outbox, HqBlobRemote, HqFederationServer, SatelliteSyncSession};
+use crate::federation::{HqBlobRemote, HqFederationServer, SatelliteSyncSession};
+use org_federation::testkit::{read_correlated_frame, ship_blob_outbox, write_frame, OutboxFlush};
 
 mod message_files;
 
@@ -277,7 +278,7 @@ fn federation_ships_a_satellite_image_and_multi_chunk_pdf_to_hq_and_drains_the_o
     assert_eq!(sat.attachment_blob_cache().count().unwrap(), 2);
     assert_eq!(
         ship_blob_outbox(sat, None, 1 << 30).unwrap(),
-        crate::federation::OutboxFlush::default()
+        OutboxFlush::default()
     );
 }
 
@@ -440,10 +441,9 @@ pub(super) fn exchange(
     frame: &SyncFrame,
     request_id: &str,
 ) -> SyncFrame {
-    session.write_frame(frame).unwrap();
+    write_frame(session, frame).unwrap();
     loop {
-        let reply = session
-            .read_correlated_frame(Duration::from_secs(15), None)
+        let reply = read_correlated_frame(session, Duration::from_secs(15), None)
             .unwrap()
             .expect("HQ answers");
         let named = match &reply {

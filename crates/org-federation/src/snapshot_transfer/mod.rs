@@ -43,7 +43,7 @@ const MAX_NATIVE_BATCH_BYTES: usize = 8 * 1024 * 1024;
 const TIER_BIT_ORG_STRUCT: u16 = 1 << 0;
 const TIER_BIT_ORG_EMP: u16 = 1 << 1;
 
-type SnapshotFileBatch = Vec<(String, Option<Vec<u8>>)>;
+use crate::link::SnapshotFileBatch;
 
 fn create_private_dir(path: &Path) -> std::io::Result<()> {
     org_platform::fs::create_owner_only_dir_all(path)

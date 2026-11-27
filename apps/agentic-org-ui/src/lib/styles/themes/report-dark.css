@@ -239,10 +239,6 @@ html[data-ui-theme='report-dark'] {
 	--exec-cmdk-foot-kbd-bg: #1e2939;
 	--exec-cmdk-foot-kbd-ring: rgba(255, 255, 255, 0.14);
 	--exec-cmdk-foot-kbd-ink: #d1d5dc;
-	--exec-scroll-hint-bg: #1e2939;
-	--exec-scroll-hint-pill-bg: transparent;
-	--exec-scroll-hint-ink: #99a1af;
-	--exec-scroll-hint-ink-hover: #ffffff;
 
 	/* Unread rail dot */
 	--exec-nav-dot: var(--tone-warn);

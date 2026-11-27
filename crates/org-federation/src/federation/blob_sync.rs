@@ -79,7 +79,7 @@ const CANCELLED: &str = "blob shipping cancelled by shutdown";
 impl SatelliteSyncSession {
     /// The next blob frame HQ sends for `request_id`, skipping anything else it pushes; a
     /// shutdown (`stop`) ends the wait within one socket read slice.
-    pub fn read_blob_reply(
+    pub(crate) fn read_blob_reply(
         &mut self,
         request_id: &str,
         stop: Option<&AtomicBool>,
@@ -105,7 +105,7 @@ impl SatelliteSyncSession {
     /// refuses, or whose bytes here are missing or damaged, stays in the outbox for a later
     /// pass (counted as refused) and never holds up the files after it; a broken session or a
     /// shutdown ends the pass with an error.
-    pub fn flush_blob_outbox(
+    pub(crate) fn flush_blob_outbox(
         &mut self,
         cache_max_bytes: u64,
         stop: Option<&AtomicBool>,

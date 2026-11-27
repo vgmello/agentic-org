@@ -26,7 +26,7 @@ mod directory;
 mod doc_calls;
 mod failure;
 pub mod fdswap;
-pub use org_federation as federation;
+pub(crate) use org_federation as federation;
 mod federation_calls;
 #[cfg(test)]
 pub(crate) use org_federation::testkit::federation_link;
@@ -126,13 +126,6 @@ fn parse_args(args: &[String]) -> Result<Mode, &'static str> {
         [flag] if flag == INSPECT_IMPORT_FLAG => Ok(Mode::InspectImport),
         _ => Err(USAGE),
     }
-}
-
-/// Runs the server with an empty (fail-closed) runtime registry and returns its exit code.
-/// Production composition roots (`apps/agentic-org-office`) MUST call [`run_with_runtimes`] with
-/// explicitly constructed runtime adapters.
-pub fn run(args: &[String], control: ControlPipe) -> i32 {
-    run_with_runtimes(args, control, org_office_sessions::RuntimeRegistry::empty())
 }
 
 /// Runs the server with an explicit composition-root [`org_office_sessions::RuntimeRegistry`] and

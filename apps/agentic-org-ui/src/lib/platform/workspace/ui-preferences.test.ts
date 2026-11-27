@@ -227,10 +227,17 @@ describe('ui preferences and 7-theme selection', () => {
 		try {
 			expect(() => uiPrefs.hydrate('')).not.toThrow();
 			expect(uiPrefs.theme).toBe('ocean');
+			expect(uiPrefs.isReport).toBe(false);
 			expect(uiPrefs.cozyHighContrast).toBe(false);
+
+			expect(() => uiPrefs.hydrate('?theme=report')).not.toThrow();
+			expect(uiPrefs.isReport).toBe(true);
+			expect(() => uiPrefs.hydrate('?theme=report-dark')).not.toThrow();
+			expect(uiPrefs.isReport).toBe(true);
 
 			expect(() => uiPrefs.hydrate('?theme=graphite')).not.toThrow();
 			expect(uiPrefs.theme).toBe('graphite');
+			expect(uiPrefs.isReport).toBe(false);
 			expect(() => uiPrefs.setCozyHighContrast(true)).not.toThrow();
 			expect(uiPrefs.cozyHighContrast).toBe(true);
 			uiPrefs.setCozyHighContrast(false);

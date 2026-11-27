@@ -1,6 +1,6 @@
 //! The engine boundary (ADR-0018 ENG-1) for the office:
 //!
-//! - `rusqlite` is a dependency of `org-office-sqlite` and `org-host` alone (never `org-office`);
+//! - `rusqlite` is a dependency of `org-office-sqlite` and `org-host-sqlite` alone (never `org-office` or `org-host`);
 //! - inside `crates/org-office`, zero Rust files (library, tests, benches, examples,
 //!   build script) may name `rusqlite` or hold SQL, and zero `.sql` files may exist.
 //!   The allowlist is empty: there is nothing in `org-office` to excuse.
@@ -377,7 +377,7 @@ fn fixture(name: &str) -> String {
 }
 
 #[test]
-fn only_the_office_sqlite_adapter_and_the_host_depend_on_the_engines_crate() {
+fn only_the_dedicated_sqlite_adapter_crates_depend_on_the_engines_crate() {
     let root = workspace();
     let mut dependents = Vec::new();
     let manifests = files(&root, |name| name == "Cargo.toml");
