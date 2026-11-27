@@ -1,0 +1,19 @@
+{
+	"lastPassSha": "dc1da8fb5",
+	"lastPassDate": "2026-11-27",
+	"auditor": "claude-opus-5-5 (xhigh)",
+	"overall": 9.15,
+	"scores": {
+		"security": 9.3,
+		"reactivity": 9.2,
+		"architecture": 9.1,
+		"bundle": 9.0,
+		"designA11y": 9.2,
+		"maintainability": 9.1
+	},
+	"cadence": {
+		"maxUiCommits": 10,
+		"maxDaysWithUiChanges": 14,
+		"maxChangedUiLines": 1500
+	}
+}

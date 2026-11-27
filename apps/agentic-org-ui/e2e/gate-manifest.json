@@ -705,7 +705,10 @@
 			"bundle-budget.json",
 			"cross-module-features.allow",
 			"layer-exceptions.allow",
-			"suppressions.allow"
+			"suppressions.allow",
+			"audit-checkpoint.json",
+			"scripts/check-audit-cadence.ts",
+			"scripts/run-ui-audit.sh"
 		],
 		"noImpact": [
 			"../agent-os/**",
