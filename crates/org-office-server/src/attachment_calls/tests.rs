@@ -39,7 +39,11 @@ fn uuid() -> String {
 }
 
 /// Sends one typed call through the dispatcher, checking the reply fits a frame.
-fn call<C: Call>(office: &Office, member: &str, params: &C::Params) -> Result<C::Result, ApiError> {
+fn call<C: Call>(
+    office: &Arc<Office>,
+    member: &str,
+    params: &C::Params,
+) -> Result<C::Result, ApiError> {
     let request = Request::new::<C>(9, params).unwrap();
     let line = serde_json::to_vec(&request).unwrap();
     assert!(
@@ -58,7 +62,7 @@ fn call<C: Call>(office: &Office, member: &str, params: &C::Params) -> Result<C:
     }
 }
 
-fn hire_agent(office: &Office, owner: &str) -> String {
+fn hire_agent(office: &Arc<Office>, owner: &str) -> String {
     let root = office.org_snapshot().unwrap().teams[0].id.clone();
     let employee_id = uuid();
     let request = Request::new::<HrHire>(
@@ -98,7 +102,12 @@ fn payload() -> Vec<u8> {
     out
 }
 
-fn upload(office: &Office, member: &str, filename: &str, bytes: &[u8]) -> Result<String, ApiError> {
+fn upload(
+    office: &Arc<Office>,
+    member: &str,
+    filename: &str,
+    bytes: &[u8],
+) -> Result<String, ApiError> {
     let begun = call::<AttachmentUploadBegin>(
         office,
         member,
@@ -135,7 +144,7 @@ fn upload(office: &Office, member: &str, filename: &str, bytes: &[u8]) -> Result
 }
 
 fn attach(
-    office: &Office,
+    office: &Arc<Office>,
     member: &str,
     upload_id: &str,
     kind: AttachmentTargetKind,
@@ -157,7 +166,7 @@ fn attach(
     .map(|r| r.attachment.id)
 }
 
-fn read(office: &Office, member: &str, id: &str) -> Result<Vec<u8>, ApiError> {
+fn read(office: &Arc<Office>, member: &str, id: &str) -> Result<Vec<u8>, ApiError> {
     let mut out = Vec::new();
     let mut chunks = 0;
     loop {
@@ -184,7 +193,7 @@ fn read(office: &Office, member: &str, id: &str) -> Result<Vec<u8>, ApiError> {
 #[test]
 fn all_nine_attachment_rpcs_work_end_to_end_on_both_engines() {
     for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
-        let office = Office::for_test(TestOffice { engine });
+        let office = Arc::new(Office::for_test(TestOffice { engine }));
         let owner = office.owner_member_id().to_owned();
         let agent = hire_agent(&office, &owner);
         let bytes = payload();
@@ -318,7 +327,7 @@ fn all_nine_attachment_rpcs_work_end_to_end_on_both_engines() {
 
 #[test]
 fn unbound_bad_and_foreign_requests_are_refused_by_the_dispatcher() {
-    let office = Office::for_test(TestOffice::default());
+    let office = Arc::new(Office::for_test(TestOffice::default()));
     let request = Request::new::<AttachmentInspect>(
         3,
         &AttachmentInspectParams {
@@ -348,4 +357,51 @@ fn unbound_bad_and_foreign_requests_are_refused_by_the_dispatcher() {
         };
         assert!(is_attachment_method(&request), "{method}");
     }
+}
+
+#[test]
+fn only_an_attach_that_bound_a_file_wakes_the_outbox_shipper() {
+    let office = Arc::new(Office::for_test(TestOffice {
+        engine: EngineChoice::Memory,
+    }));
+    let owner = office.owner_member_id().to_owned();
+    let upload_id = upload(&office, &owner, "wake.csv", b"a,b\n1,2\n").unwrap();
+    let attach_request = |upload_id: &str| {
+        Request::new::<AttachmentAttach>(
+            11,
+            &AttachmentAttachParams {
+                command_id: uuid(),
+                upload_id: Some(upload_id.into()),
+                source_attachment_id: None,
+                target_kind: AttachmentTargetKind::Organization,
+                target_id: None,
+                title: None,
+                description: None,
+                artifact_status: None,
+            },
+        )
+        .unwrap()
+    };
+    let bound = attach_request(&upload_id);
+    let response = dispatch_attachment_rpc(&office, Some(&owner), &bound).unwrap();
+    assert!(bound_a_file(&bound, &response), "{response:?}");
+    // A refused attach (that upload is bound and gone now) and any other call wake nothing.
+    let refused = attach_request(&upload_id);
+    let response = dispatch_attachment_rpc(&office, Some(&owner), &refused).unwrap();
+    assert!(matches!(response.outcome, Outcome::Error(_)));
+    assert!(!bound_a_file(&refused, &response));
+    let list = Request::new::<org_proto::attachments::AttachmentList>(
+        12,
+        &AttachmentListParams {
+            target_kind: Some(AttachmentTargetKind::Organization),
+            target_id: None,
+            scope: Some(AttachmentScope::Shared),
+            limit: None,
+            cursor: None,
+        },
+    )
+    .unwrap();
+    let response = dispatch_attachment_rpc(&office, Some(&owner), &list).unwrap();
+    assert!(matches!(response.outcome, Outcome::Result(_)));
+    assert!(!bound_a_file(&list, &response));
 }

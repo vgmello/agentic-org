@@ -2413,3 +2413,6 @@ fn turn_control_routes_check_the_pair_origin_id_and_body_before_reaching_the_off
     }
     assert!(calls.methods().contains(&"organization.list".to_owned()));
 }
+
+#[path = "tests/attachments.rs"]
+mod attachments;

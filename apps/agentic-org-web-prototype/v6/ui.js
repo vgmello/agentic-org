@@ -40,13 +40,14 @@ function av(id, size = 32, mode = false) {
   const p = mode ? presence(id) : null;
   const dot = p && p !== "unknown" ? `<span class="avdot p-${p}"></span>` : "";
   const tip = dot && mode === "tip";
-  return `<span class="av av${size}" style="--av-tint:${TINTS[hash(id) % 7]}" aria-hidden="true"${tip ? ` title="${esc(m.name)} · ${PRES[p].label}"` : ""}>${esc(initials(m.name))}${dot}</span>${tip ? `<span class="sr-only">(${PRES[p].label})</span>` : ""}`;
+  const person = m.owner ? "" : ` data-person="${esc(id)}"`;
+  return `<span class="av av${size}" style="--av-tint:${TINTS[hash(id) % 7]}" aria-hidden="true"${person}${tip ? ` title="${esc(m.name)} · ${PRES[p].label}"` : ""}>${esc(initials(m.name))}${dot}</span>${tip ? `<span class="sr-only">(${PRES[p].label})</span>` : ""}`;
 }
 const pill = (text, tone = "gray", icon = null, chip = false) => `<span class="pill t-${tone}${chip ? " chip" : ""}">${icon ? ic(icon, "ic14") : ""}${esc(text)}</span>`;
 const presPill = (id, profile = false) => { const p = presence(id); return p && (p !== "unknown" || profile) ? pill(PRES[p].label, PRES[p].tone, PRES[p].icon) : ""; };
 const presInline = (id) => { const p = presence(id); return p && p !== "unknown" ? `<span class="pin c-${PRES[p].tone}">${ic(PRES[p].icon, "ic14")}${PRES[p].label}</span>` : ""; };
 const kindWord = (id) => (M[id].owner ? "Owner" : M[id].kind === "agent" ? "Agent" : "Person");
-const mlink = (id, cls = "alink") => !M[id] ? "Unassigned" : M[id].owner ? esc(M[id].name) : `<a class="${cls}" href="#/members/${id}">${esc(M[id].name)}</a>`;
+const mlink = (id, cls = "alink") => !M[id] ? "Unassigned" : M[id].owner ? esc(M[id].name) : `<a class="${cls}" href="#/members/${id}" data-person="${esc(id)}">${esc(M[id].name)}</a>`;
 const plink = (p) => `<a class="alink" href="#/projects/${p}">${esc(P[p].name)}</a>`;
 const joinSep = (parts) => parts.filter(Boolean).join(SEP);
 
@@ -137,12 +138,13 @@ function menuTrigger({ icon, label, active, focusTooltip, text, sub, count, tool
   }
   return { triggerAttrs: 'class="btn textbtn"', triggerContent: `Show <span class="cur">${esc(cur.length ? cur.join(", ") : "all")}</span>${ic("chev-down", "ic16 muted")}` };
 }
-function showMenu(id, groups, { align = "", icon, label, active, focusTooltip = false, footer = "", text = "", sub = "", count = 0 } = {}) {
+/* popover: the menu opens in the top layer (shell/popover-menu.js), above sticky and scrolling content below it */
+function showMenu(id, groups, { align = "", icon, label, active, focusTooltip = false, footer = "", text = "", sub = "", count = 0, popover = false } = {}) {
   const cur = groups.map(([k, , opts]) => { const o = opts.find((x) => String(x[0]) === String(S[k])); return o && o[0] !== "all" ? o[1] : null; }).filter(Boolean);
   const tooltip = focusTooltip ? "" : ` title="${esc(label)}"`;
   const { triggerAttrs, triggerContent } = menuTrigger({ icon, label, active, focusTooltip, text, sub, count, tooltip, cur });
   return `<div class="menu-wrap"><button ${triggerAttrs} type="button" data-act="menu" data-id="${id}" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-${id}">${triggerContent}</button>
-    <div class="menu ${align}" id="menu-${id}" role="menu"${label ? ` aria-label="${esc(label)}"` : ""} hidden>${groups.map(([k, title, opts], gi) => `${gi ? "<hr>" : ""}<p class="menu-h" id="mh-${id}-${gi}">${esc(title)}</p><div role="group" aria-labelledby="mh-${id}-${gi}">${opts.map(([v, l, n]) => { const on = String(S[k]) === String(v); return `<button role="menuitemradio" aria-checked="${on}" type="button" data-act="set" data-k="${k}" data-v="${v}">${on ? ic("check", "ic20") : '<span class="spacer20" aria-hidden="true"></span>'}<span style="flex:1">${esc(l)}</span>${n != null ? `<span class="muted tnum">${n}</span>` : ""}</button>`; }).join("")}</div>`).join("")}${footer}</div></div>`;
+    <div class="menu ${align}${popover ? " top-layer-menu" : ""}" id="menu-${id}" role="menu"${label ? ` aria-label="${esc(label)}"` : ""}${popover ? ' popover="manual"' : ""} hidden>${groups.map(([k, title, opts], gi) => `${gi ? "<hr>" : ""}<p class="menu-h" id="mh-${id}-${gi}">${esc(title)}</p><div role="group" aria-labelledby="mh-${id}-${gi}">${opts.map(([v, l, n]) => { const on = String(S[k]) === String(v); return `<button role="menuitemradio" aria-checked="${on}" type="button" data-act="set" data-k="${k}" data-v="${v}">${on ? ic("check", "ic20") : '<span class="spacer20" aria-hidden="true"></span>'}<span style="flex:1">${esc(l)}</span>${n != null ? `<span class="muted tnum">${n}</span>` : ""}</button>`; }).join("")}</div>`).join("")}${footer}</div></div>`;
 }
 const empty = (icon, title, text, cls = "", action = "") => `<div class="empty ${cls}">${ic(icon, "ic48")}<h3>${esc(title)}</h3><p>${esc(text)}</p>${action ? `<div style="margin-top:24px">${action}</div>` : ""}</div>`;
 const skel = (n, label, avatar = true) => `<div class="skel" aria-busy="true"><span class="sr-only">${esc(label)}</span>${Array.from({ length: n }, (_, i) => `<div class="skel-row" aria-hidden="true">${avatar ? '<span class="skel-c"></span>' : ""}<span style="flex:1;display:flex;flex-direction:column;gap:8px"><span class="skel-b" style="width:${60 - i * 8}%"></span><span class="skel-b" style="width:${35 + i * 5}%;height:10px"></span></span></div>`).join("")}</div>`;

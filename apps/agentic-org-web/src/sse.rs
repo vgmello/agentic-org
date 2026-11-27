@@ -58,6 +58,14 @@ impl From<Full<Bytes>> for WebBody {
     }
 }
 
+impl WebBody {
+    /// A body fed from `receiver` (an attachment download's chunks); it ends when the
+    /// sender drops.
+    pub(crate) fn channel(receiver: mpsc::Receiver<Bytes>) -> Self {
+        Self::Stream(SseBody::new(receiver))
+    }
+}
+
 impl Body for WebBody {
     type Data = Bytes;
     type Error = Infallible;

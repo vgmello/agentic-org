@@ -18,6 +18,7 @@ use super::{
     SqliteSnapshot, SqliteTx,
 };
 
+mod files;
 mod mirror;
 mod read;
 mod rows;
@@ -65,9 +66,11 @@ CREATE TABLE messaging_answers (
   answer_json TEXT,
   PRIMARY KEY (organization_id, message_id, employee_id)
 ) STRICT;
+CREATE INDEX messaging_message_files_by_id ON message_attachments(organization_id, id);
+CREATE INDEX messaging_answer_files_by_id ON message_answer_attachments(organization_id, id);
 ";
 
-const MESSAGING_ADAPTER_FORMAT: u32 = 1;
+const MESSAGING_ADAPTER_FORMAT: u32 = 2;
 
 pub(super) fn messaging_db_path(office_db_path: &Path) -> PathBuf {
     let dir = office_db_path

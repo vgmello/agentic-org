@@ -9,16 +9,16 @@ use org_proto::private_notes::{
     TasksNotesRemoveParams, TasksNotesUpdate, TasksNotesUpdateParams,
 };
 use org_proto::tasks::{
-    LabelMatchMode, TaskSortMode, TaskStatus, TasksAddDependency, TasksAddDependencyParams,
-    TasksAssign, TasksAssignParams, TasksChecklistAdd, TasksChecklistAddParams,
-    TasksChecklistCheck, TasksChecklistCheckParams, TasksChecklistEdit, TasksChecklistEditParams,
-    TasksChecklistMove, TasksChecklistMoveParams, TasksChecklistRemove, TasksChecklistRemoveParams,
-    TasksComment, TasksCommentParams, TasksComments, TasksCommentsParams, TasksCreate,
-    TasksCreateParams, TasksDependencies, TasksDependenciesParams, TasksHistory,
-    TasksHistoryParams, TasksInspect, TasksInspectParams, TasksLabels, TasksLabelsParams,
-    TasksList, TasksListParams, TasksRemoveDependency, TasksRemoveDependencyParams,
-    TasksTransition, TasksTransitionParams, TasksUnwatch, TasksUnwatchParams, TasksUpdate,
-    TasksUpdateParams, TasksWatch, TasksWatchParams,
+    LabelMatchMode, TaskSortMode, TaskStatus, TaskStatusScope, TasksAddDependency,
+    TasksAddDependencyParams, TasksAssign, TasksAssignParams, TasksChecklistAdd,
+    TasksChecklistAddParams, TasksChecklistCheck, TasksChecklistCheckParams, TasksChecklistEdit,
+    TasksChecklistEditParams, TasksChecklistMove, TasksChecklistMoveParams, TasksChecklistRemove,
+    TasksChecklistRemoveParams, TasksComment, TasksCommentParams, TasksComments,
+    TasksCommentsParams, TasksCreate, TasksCreateParams, TasksDependencies,
+    TasksDependenciesParams, TasksHistory, TasksHistoryParams, TasksInspect, TasksInspectParams,
+    TasksLabels, TasksLabelsParams, TasksList, TasksListParams, TasksRemoveDependency,
+    TasksRemoveDependencyParams, TasksTransition, TasksTransitionParams, TasksUnwatch,
+    TasksUnwatchParams, TasksUpdate, TasksUpdateParams, TasksWatch, TasksWatchParams,
 };
 use org_proto::web::{ReadResponse, WebError, WebErrorCode};
 use serde_json::Value;
@@ -183,6 +183,11 @@ fn parse_list_query(query: Option<&str>) -> Result<TasksListParams, ApiReply> {
                 };
             }
             "limit" => params.limit = Some(v.parse::<u32>().map_err(|_| invalid())?),
+            // `TASK-105`: the office validates `done_since` as RFC 3339 and refuses it otherwise.
+            "status_scope" => {
+                params.status_scope = Some(TaskStatusScope::parse(&v).ok_or_else(invalid)?);
+            }
+            "done_since" => params.done_since = Some(v),
             _ => return Err(invalid()),
         }
     }
@@ -608,6 +613,19 @@ mod tests {
         assert!(parse_list_query(Some("unknown=1")).is_err());
         assert!(parse_list_query(Some("status=bogus")).is_err());
         assert!(parse_list_query(Some("sort=random")).is_err());
+
+        // `TASK-105`: the lifecycle scope and the done-since instant pass through.
+        let board = parse_list_query(Some(
+            "status_scope=open&done_since=2026-11-20T00%3A00%3A00Z&project_id=p",
+        ))
+        .ok()
+        .expect("valid board query");
+        assert_eq!(board.status_scope, Some(TaskStatusScope::Open));
+        assert_eq!(board.done_since.as_deref(), Some("2026-11-20T00:00:00Z"));
+        assert_eq!(board.project_id.as_deref(), Some("p"));
+        assert_eq!(parse_list_query(None).ok().unwrap().status_scope, None);
+        assert!(parse_list_query(Some("status_scope=recent")).is_err());
+        assert!(parse_list_query(Some("status_scope=Open")).is_err());
 
         let lp = parse_labels_query(Some("q=sec"))
             .ok()

@@ -3,11 +3,12 @@
 import { CH, M } from "../data.js";
 import { S } from "../state.js";
 import { av, esc, ic, kindWord, plural, presence } from "../ui.js";
-import { chatTitle, findConversations, matchReason, openAsks, openDirectMessage, recipients } from "./chat-model.js";
+import { chatTitle, findConversations, listedConversations, matchReason, openAsks, openDirectMessage, recipients } from "./chat-model.js";
 import { viewLinks } from "./chat-views.js";
-import { A2A_CLICKS, a2aSectionHtml, lastPicked, onA2AInput, onA2AKeydown } from "./chat-a2a.js";
 
-const GROUPS = [["channel", "Channels"], ["dm", "Direct messages"], ["a2a", "Between agents"]];
+/* Agents' conversations are not listed here: the owner reads them from an agent's page ("Conversations with other
+   agents"); a link to one still opens it in Chat, read-only. */
+const GROUPS = [["channel", "Channels"], ["dm", "Direct messages"]];
 const PRESENCE_WORD = { needs: "Waiting on you", withyou: "With you", working: "Working", paused: "Paused", available: "Available", asleep: "Asleep", offline: "Offline" };
 const list = { q: "", picker: false, to: "", focusAfter: "" };
 
@@ -19,24 +20,27 @@ function rowLead(ch) {
   if (ch.kind === "channel") return ic("hash", "ic16");
   return ch.kind === "dm" ? av(ch.with, 24) : ic("eye", "ic16");
 }
-function rowTrail(ch, unread, when = "") {
-  const needs = openAsks(ch).length;
-  const dot = (when ? `<time class="chat-row-when">${esc(when)}</time>` : "") + (unread ? unreadDot : "");
-  if (needs) return dot + needsCount(needs);
-  if (ch.kind !== "dm") return dot;
+/* A DM's presence word, under or beside the name; a row with requests shows its count instead. */
+function rowWord(ch) {
+  if (ch.kind !== "dm" || openAsks(ch).length) return "";
   const word = M[ch.with].kind === "person" ? "Person" : PRESENCE_WORD[presence(ch.with)];
-  return (word ? `<span class="chat-row-word">${word}</span>` : "") + dot;
+  return word ? `<span class="chat-row-word">${word}</span>` : "";
+}
+/* The row's end: its last-active time, then two fixed slots (the request count, the unread dot), so dots and counts
+   line up from row to row whichever of them a row has. */
+function rowTrail(ch, unread) {
+  const needs = openAsks(ch).length;
+  return `<span class="chat-row-attn">${needs ? needsCount(needs) : ""}</span><span class="chat-row-dot">${unread ? unreadDot : ""}</span>`;
 }
 /* `why`: while finding, what matched when the name doesn't show it (a project, a task id, a message's words). */
-function chatLinkHtml(k, activeId, why = "", when = "") {
+function chatLinkHtml(k, activeId, why = "") {
   const ch = CH[k], unread = ch.unread && k !== activeId;
   const attrs = (k === activeId ? ' aria-current="page"' : "") + (unread ? ' class="is-unread"' : "");
   const unreadText = unread ? `<span class="sr-only">, ${plural(ch.unread, "unread message", "unread messages")}</span>` : "";
   const reason = why ? `<span class="chat-row-why"><span class="sr-only">, </span>${esc(why)}</span>` : "";
-  return `<li><a href="#/chat/${k}"${attrs}>${rowLead(ch)}<span class="chat-row-name">${esc(ch.kind === "channel" ? ch.name : chatTitle(ch))}${reason}</span>${unreadText}${rowTrail(ch, unread, when)}</a></li>`;
+  return `<li><a href="#/chat/${k}"${attrs}>${rowLead(ch)}<span class="chat-row-main"><span class="chat-row-name">${esc(ch.kind === "channel" ? ch.name : chatTitle(ch))}${reason}</span>${rowWord(ch)}</span>${unreadText}${rowTrail(ch, unread)}</a></li>`;
 }
 function groupHtml(kind, label, rows, activeId, q) {
-  if (kind === "a2a" && !q) return rows.length ? a2aSectionHtml(rows, activeId, (k, when) => chatLinkHtml(k, activeId, "", when)) : "";
   return rows.length ? `<h2>${label}</h2><ul>${rows.map((k) => chatLinkHtml(k, activeId, q ? matchReason(CH[k], q) : "")).join("")}</ul>` : "";
 }
 function recipientButton(k, act = "chat-to") {
@@ -50,7 +54,7 @@ function noConversation(q) {
 }
 function navInner(activeId) {
   const q = list.q.trim().toLowerCase();
-  const keys = q ? findConversations(q) : Object.keys(CH);
+  const keys = q ? findConversations(q) : listedConversations();
   if (!keys.length) return noConversation(q);
   return (q ? "" : viewLinks(activeId)) + GROUPS.map(([kind, label]) => groupHtml(kind, label, keys.filter((k) => CH[k].kind === kind), activeId, q)).join("");
 }
@@ -94,9 +98,28 @@ function rerenderList(root, focusId) {
   el.outerHTML = chatListHtml(root.dataset.ch, open);
   document.getElementById(focusId)?.focus();
 }
+/* While the recipient picker is open, the message has no destination yet: the conversation behind it steps back
+   (inert, its composer suspended) and the main pane says "Choose a recipient" until a choice or Cancel. */
+function syncPicking(root) {
+  const main = root.querySelector(".chmain");
+  if (!main) return;
+  const on = list.picker && Boolean(CH[root.dataset.ch]);
+  root.classList.toggle("is-picking", on);
+  main.querySelector(":scope > .chat-picking")?.remove();
+  for (const el of main.children) el.inert = on;
+  if (!on) return;
+  const from = chatTitle(CH[root.dataset.ch]);
+  main.insertAdjacentHTML("afterbegin", `<div class="chat-picking" role="status">
+      <span class="chat-picking-ic">${ic("pencil", "ic20")}</span>
+      <h2 class="chat-picking-t">Choose a recipient</h2>
+      <p class="chat-picking-p">Pick a person or agent under <b>To</b> to start a direct message. Messages to ${esc(from)} are paused until you choose or cancel.</p>
+      <button class="btn ghost sm" type="button" data-act="chat-new-cancel">Cancel new message</button>
+    </div>`);
+}
 function setPicker(root, on) {
   Object.assign(list, { picker: on, to: "" });
   rerenderList(root, on ? "chat-to" : "chat-new");
+  syncPicking(root);
 }
 /* Opens the DM with the composer focused. When that DM is already open the hash would not change, so the
    caller closes the picker and drawer in place ("same-conversation"). */
@@ -123,38 +146,10 @@ function chooseConversation(e, link) {
   e.stopPropagation();
   return "same-conversation";
 }
-/* "Between agents" is the list's last section: while its picker is open the list scrolls just enough to show the
-   section whole (or from its heading down), so the picked names and their conversations are in view together. */
-function revealA2A(nav) {
-  const head = nav.querySelector("#chat-a2a-head");
-  if (!head || !nav.querySelector("#chat-a2a-filter")) return;
-  const headTop = head.getBoundingClientRect().top - nav.getBoundingClientRect().top + nav.scrollTop;
-  nav.scrollTop = Math.max(nav.scrollTop, Math.min(headTop - 4, nav.scrollHeight - nav.clientHeight));
-}
-/* The agents' section's controls re-render the list in place and keep focus on the control used. */
-function repaintA2A(root, focusId) {
-  const nav = root.querySelector("#chat-nav"), top = nav.scrollTop;
-  nav.innerHTML = navInner(root.dataset.ch);
-  nav.scrollTop = top;
-  revealA2A(nav);
-  document.getElementById(focusId)?.focus({ preventScroll: true });
-}
-function onA2AClick(root, t) {
-  repaintA2A(root, A2A_CLICKS[t.dataset.act](t.dataset.id));
-  return "handled";
-}
-/* Enter picks the highlighted agent, Backspace in the empty field removes the last one, Escape closes the picker. */
-function onPickerKeydown(e, root) {
-  const r = onA2AKeydown(e);
-  if (r === "close") repaintA2A(root, A2A_CLICKS["chat-a2a-filter"]());
-  else if (r === "remove") repaintA2A(root, A2A_CLICKS["chat-a2a-agent"](lastPicked()));
-  else if (r) repaintA2A(root, A2A_CLICKS["chat-a2a-agent"](r));
-}
 function onListClick(e, root) {
   const link = e.target.closest("#chat-nav a");
   if (link) return chooseConversation(e, link);
   const t = e.target.closest("[data-act]");
-  if (t && A2A_CLICKS[t.dataset.act]) return onA2AClick(root, t);
   const fn = t && LIST_CLICKS[t.dataset.act];
   return fn ? fn(root, t.dataset.id) : "";
 }
@@ -167,12 +162,11 @@ function onListInput(e, root) {
   } else if (t.id === "chat-to") {
     list.to = t.value;
     root.querySelector("#chat-to-list").innerHTML = pickerList();
-  } else if (t.id === "chat-a2a-q") onA2AInput(t);
+  }
 }
 /* Escape clears the filter, then closes the picker; only an empty list field lets Escape close the drawer. */
 function onListKeydown(e, root) {
   const t = e.target;
-  if (t.id === "chat-a2a-q") { onPickerKeydown(e, root); return; }
   if (e.key === "Escape" && t.id === "chat-to") { e.preventDefault(); e.stopPropagation(); setPicker(root, false); return; }
   if (e.key === "Escape" && t.id === "chat-find" && list.q) { e.preventDefault(); e.stopPropagation(); list.q = ""; rerenderList(root, "chat-find"); return; }
   if (e.key === "Enter" && (t.id === "chat-find" || t.id === "chat-to")) {
@@ -200,6 +194,7 @@ export {
   onListInput,
   onListKeydown,
   prepareList,
+  syncPicking,
   takeListFocus,
   unreadDot,
 };

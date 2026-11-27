@@ -38,6 +38,7 @@ fn an_owner_dm_mentioning_tess_wakes_her_as_a_direct_message() {
                     "@{} confidential: the acquisition closes Friday",
                     tess.handle
                 ),
+                attachment_ids: Vec::new(),
                 meta: Default::default(),
                 reply_to: None,
                 also_in_channel: false,

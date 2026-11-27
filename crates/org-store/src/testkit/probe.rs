@@ -9,10 +9,11 @@ use std::sync::{
 };
 
 use crate::{
-    change::{Ack, Actor, Change, DurablePath, Id, Operation, Refusal, Sha256},
+    change::{Ack, Actor, Change, Id, Operation, Refusal, Sha256},
     custody::OfficeIdentity,
     engine::{CoreRead, Engine, Projector},
     error::ProjectionError,
+    path::DurablePath,
     sequences::Stream,
     testkit::{
         harness::{Command, FamilyScript},

@@ -2,8 +2,8 @@
 
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
-use super::listener;
-use super::listener::Connection;
+use crate::control_listener;
+use crate::control_listener::Connection;
 
 pub(crate) fn secret_response(connection: &Connection, id: u64, result: &impl serde::Serialize) {
     #[derive(serde::Serialize)]
@@ -32,7 +32,7 @@ pub(crate) fn secret_response(connection: &Connection, id: u64, result: &impl se
         let mut bytes = Vec::with_capacity(count.0 + 1);
         if serde_json::to_writer(&mut bytes, &value).is_ok() {
             bytes.push(b'\n');
-            connection.send_secret_line(listener::SecretLine::new(bytes));
+            connection.send_secret_line(control_listener::SecretLine::new(bytes));
             return;
         }
         crate::secrets::zero(&mut bytes);

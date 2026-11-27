@@ -135,6 +135,7 @@ where
         accepted_at: None,
         reason: authoritative_close.then(|| "origin-close".to_owned()),
         answer: Some(serde_json::to_value(&envelope).expect("envelope serializes")),
+        attachments: Vec::new(),
     };
     let path = records::participant_answer_path(&ask.conversation_id, caller, &ask.id);
     let change = put_or_create_file(

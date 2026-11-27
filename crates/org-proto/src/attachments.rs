@@ -16,6 +16,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::Call;
 
+mod meta;
+
+pub use meta::{
+    check_attachment_ids, has_content, is_image_mime, AttachmentFilter, AttachmentMeta,
+    MESSAGE_ATTACHMENTS_MAX,
+};
+
 /// Largest decoded chunk an upload or a read moves in one call (512 KiB).
 pub const ATTACHMENT_CHUNK_MAX_BYTES: u32 = 512 * 1024;
 /// Largest base64 text a chunk may take on the wire: `4 * ceil(512 KiB / 3)`.

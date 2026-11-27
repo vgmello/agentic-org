@@ -94,8 +94,10 @@ impl Source for OrgSource {
                             id: member.id.clone(),
                         },
                     }],
+                    attachments: Vec::new(),
                 };
-                if query.after.is_none_or(|after| after.admits(&item)) {
+                if query.after.is_none_or(|after| after.admits(&item)) && query.admits_files(&item)
+                {
                     items.push(item);
                 }
             }

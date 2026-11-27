@@ -9,7 +9,8 @@ import { answerOrgQuestion } from "../pages/home.js";
 import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment, refreshInboxSearch, resetInboxSelection } from "../pages/inbox.js";
 import { updateProjectInsights } from "../pages/insights.js";
 import { removeTeam } from "../pages/projects.js";
-import { addIdeationComment, boardPlace, changeWorkCriterion, focusRevealedWork, shownWorkIds, closeWorkPanel, createWorkTask, fitTextarea, jumpToBoardLane, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkResults, refreshWorkResults, scopedWorkQueries, scopedWorkType, scopedWorkView, selectWorkView, setDoneHistory, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
+import { reopenFilterMenu, showFilterPanel, toggleFacetValue } from "../pages/work-filter.js";
+import { addIdeationComment, boardPlace, clearWorkFilterState, changeWorkCriterion, focusRevealedWork, shownWorkIds, closeWorkPanel, createWorkTask, fitTextarea, jumpToBoardLane, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkResults, refreshWorkResults, scopedWorkQueries, scopedWorkType, scopedWorkView, selectWorkView, setDoneHistory, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
 import { openSmartTaskComposer } from "../pages/task-composer.js";
 import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, goSearch, narrowSearch, openCmdk, renderCmdk, runCmdkItem, setCmdkMode } from "./cmdk.js";
 import { rememberBoardExit, returnToBoard } from "./board-return.js";
@@ -106,7 +107,7 @@ function handle(id, outcome, assignee = null, text = "") {
   });
   applyHandleToWork(w, it, outcome, assignee);
   it.reopen = makeReopenCallback(it, w, prevW, w ? workSnapshot(w) : null, prevSpotIdx);
-  toast(`${outcome}. ${M[it.from].name} has been notified.`, "check-circle", it.reopen);
+  toast(`${it.receipts?.[outcome] || outcome}. ${M[it.from].name} has been notified.`, "check-circle", it.reopen);
   if (inInbox) advanceInboxAfterHandle(id, it, next);
   if (route()[0] === "home") advanceSpotlightAfterHandle();
   render(false);
@@ -138,13 +139,10 @@ function closeMenus(except) {
 
 /* Zero results: clear filters and search for the current Work view, then return to the Filter control */
 function clearWorkFilters() {
-  if (document.getElementById("work-results")?.dataset.scope) {
-    const r = route();
-    Object.assign(S, { scopedWorkStatus: "all", scopedWorkProject: "all", scopedWorkTeam: "all" });
-    scopedWorkQueries.delete(scopedWorkType(r) + ":" + r[1]);
-  } else {
-    Object.assign(S, { workQuery: "", workStatus: "all", workProject: "all", workTeam: "all" });
-  }
+  const r = route(), type = document.getElementById("work-results")?.dataset.scope ? scopedWorkType(r) : null;
+  closeMenus();
+  clearWorkFilterState(type);
+  if (type) scopedWorkQueries.delete(type + ":" + r[1]);
   render(false);
   document.querySelector('[aria-controls="menu-scoped-work-filter"], [aria-controls="menu-work-filter"]')?.focus();
   toast("Filters cleared.");
@@ -341,6 +339,14 @@ const CLICK_ACTIONS = {
     focusRevealedWork(before);
   },
   "work-clear-filters": () => clearWorkFilters(),
+  /* Multi-select Filter: a facet opens its values; a value toggles and the menu stays open on it */
+  "work-filter-facet": (_e, t, _id, v) => showFilterPanel(t.closest(".menu"), v),
+  "work-filter-toggle": (_e, t, _id, v) => {
+    const menu = t.closest(".menu"), id = menu.id.replace(/^menu-/, ""), panel = menu.dataset.panel;
+    toggleFacetValue(t.dataset.k, v);
+    render(false);
+    reopenFilterMenu(id, panel, v);
+  },
   "board-lane": (_e, _t, _id, v) => jumpToBoardLane(v),
   "cozy-contrast": (_e, t) => { S.cozyContrast = !S.cozyContrast; try { localStorage.setItem(COZY_CONTRAST_STORE, S.cozyContrast ? "1" : "0"); } catch (e) {} applyCozyContrast(); t.setAttribute("aria-checked", String(S.cozyContrast)); },
   "work-expand-detail": (_e, t) => { const panel = t.closest("dialog"); setWorkPanelExpanded(panel, !panel.hasAttribute("data-expanded")); },
@@ -614,16 +620,10 @@ document.addEventListener("mousedown", (e) => {
   if (e.target.closest?.(".cmdk-home-results .cmdk-opt, :is(.queue-header, .work-subbar-header, .section-toolbar) .menu button")) e.preventDefault();
 });
 
-function resetInboxSenderPreview(e) {
-  const sender = e.target.closest?.(".triage-from-member[data-preview-dismissed]");
-  if (sender && !sender.contains(e.relatedTarget)) delete sender.dataset.previewDismissed;
-}
-document.addEventListener("pointerover", resetInboxSenderPreview);
 document.addEventListener("pointerdown", () => endNavigationKeys());
 document.addEventListener("focusin", (e) => {
   const activeNavKeys = getNavigationKeys();
   if (activeNavKeys && !activeNavKeys.scope.contains(e.target)) endNavigationKeys();
-  resetInboxSenderPreview(e);
   if (e.target.closest && !e.target.closest(".menu-wrap")) closeMenus();
 });
 
@@ -744,8 +744,6 @@ function dismissLocalEscapeTarget(e) {
   }
   if (e.target.matches("#triage-comment")) { e.preventDefault(); document.querySelector(".triage-header h1").focus({ preventScroll: true }); return true; }
   if (S.actPanel && e.target.closest("#activity-panel, .activity-tools")) { e.preventDefault(); setActivityPanel(null); return true; }
-  const sender = document.querySelector(".triage-from-member:is(:hover, :focus-within):not([data-preview-dismissed])");
-  if (sender) { sender.dataset.previewDismissed = ""; e.preventDefault(); return true; }
   return false;
 }
 

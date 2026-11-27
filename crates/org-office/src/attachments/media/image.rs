@@ -240,6 +240,14 @@ fn decode_still(raw: &[u8], media: MediaType) -> Result<DynamicImage, ApiError> 
     Ok(image)
 }
 
+/// The orientation a still image's metadata asks for: none when it carries no EXIF.
+pub(crate) fn orientation(media: MediaType, raw: &[u8]) -> Result<Orientation, ApiError> {
+    let mut reader = ImageReader::with_format(Cursor::new(raw), format_of(media)?);
+    reader.limits(limits());
+    let mut decoder = reader.into_decoder().map_err(decode_error)?;
+    Ok(decoder.orientation().unwrap_or(Orientation::NoTransforms))
+}
+
 /// A still image in its own format, or as JPEG when that alone fits the cap.
 fn keep_still(image: DynamicImage, media: MediaType) -> Result<ValidatedFile, ApiError> {
     let cap = image_cap();

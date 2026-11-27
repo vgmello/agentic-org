@@ -138,6 +138,7 @@ impl ChatService {
         if !is_chat_method(request)
             && !request.is::<org_proto::msg::MsgDone>()
             && !request.is::<org_proto::msg::MsgReply>()
+            && !request.is::<org_proto::msg::MsgSend>()
         {
             return None;
         }
@@ -282,6 +283,9 @@ impl ChatService {
         }
         if request.is::<org_proto::msg::MsgReply>() {
             return Some(self.handle_msg_reply(member, request));
+        }
+        if request.is::<org_proto::msg::MsgSend>() {
+            return Some(self.handle_msg_send(member, request));
         }
         None
     }

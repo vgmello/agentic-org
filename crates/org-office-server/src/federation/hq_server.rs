@@ -166,6 +166,12 @@ impl HqFederationServer {
         HqFederationHandle::new(Arc::clone(&self.peers))
     }
 
+    /// The registry of this server's satellite sessions (tests).
+    #[cfg(test)]
+    pub(crate) fn peers(&self) -> &Arc<HqPeerRegistry> {
+        &self.peers
+    }
+
     /// Durably enqueues a cross-office frame for delivery to a connected satellite office.
     pub fn queue_for_satellite(
         &self,

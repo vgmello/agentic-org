@@ -1,4 +1,4 @@
-import { CH, IN, M, OFFICES, W } from "../data.js";
+import { CH, IN, M, OFFICES, P, W } from "../data.js";
 import { fitTextarea } from "./work.js";
 import { openSmartTaskComposer } from "./task-composer.js";
 import {
@@ -8,14 +8,14 @@ import { ASK_CLICKS, answerableHere, messageNeeds, onAskKeydown, resetAsks, save
 import { CHAT_VIEWS, chatViewHtml, isChatView } from "./chat-views.js";
 import { bindOverlays, syncOverlayHistory } from "./chat-overlays.js";
 import {
-  PRESENCE_WORD, chatListHtml, needsCount, onListClick, onListInput, onListKeydown, prepareList, takeListFocus, unreadDot,
+  PRESENCE_WORD, chatListHtml, needsCount, onListClick, onListInput, onListKeydown, prepareList, syncPicking, takeListFocus, unreadDot,
 } from "./chat-list.js";
 import { endVisit, markAllRead, newFromId, startVisit, watchUnread } from "./chat-read.js";
 import { listIsOverlay, watchListMode } from "./chat-layout.js";
 import { bindPanelResize, panelWidthStyle } from "./chat-panel-width.js";
 import { closeAssist, mentionsIn, onAssistKeydown, parseCommand, recheckAssist, updateAssist } from "./chat-compose-assist.js";
 import {
-  DEFAULT_CHAT, chatTitle, dmSources, inboxItem, openAsks, openDirectMessage, resolveChatId, sentAt, sourceHref, sourceLabel, splitTime,
+  DEFAULT_CHAT, chatTitle, dmSources, inboxItem, listedConversations, openAsks, openDirectMessage, resolveChatId, sentAt, sourceHref, sourceLabel, splitTime,
 } from "./chat-model.js";
 import "./chat-attach-seed.js";
 import { THREAD_SUM_CLICKS, markRoot, rootOpen, setRootOpen, threadSummaryHtml } from "./chat-thread-sum.js";
@@ -49,7 +49,7 @@ function mentionRef(match, name) {
   const lower = name.toLowerCase();
   if (lower === "here") return `<span class="chat-here">@here</span>`;
   const key = Object.keys(M).find((k) => k === lower || M[k].name.split(" ")[0].toLowerCase() === lower);
-  return key && !M[key].owner ? `<a class="alink chat-ref" href="#/members/${key}">@${esc(M[key].name)}</a>` : match;
+  return key && !M[key].owner ? `<a class="alink chat-ref" href="#/members/${key}" data-person="${key}">@${esc(M[key].name)}</a>` : match;
 }
 const richText = (text) => esc(text).replace(/\bT-A\d+\b/g, workRef).replace(/@([A-Za-z]+)/g, mentionRef);
 
@@ -171,22 +171,29 @@ function streamHtml(id) {
 }
 
 /* ---------------------------------------------------------------- composers */
-function shortcutHint() {
+/* The main composer's idle hint also says what @ and / open; it steps aside once the owner starts typing. */
+const toolsHint = `<span class="chat-hint-tools"><kbd>@</kbd> Mention · <kbd>/</kbd> Commands</span>`;
+function shortcutHint(tools = false) {
   const keys = { either: "Ctrl/⌘", control: "Ctrl", command: "⌘" }[S.chatSend] || "Ctrl/⌘";
-  return `<span class="sr-only">Enter adds a new line. ${CHAT_SEND_SHORTCUTS[S.chatSend].label} sends.</span><span aria-hidden="true"><kbd>${keys}</kbd> <kbd>Enter</kbd> to send · <kbd>Enter</kbd> new line</span>`;
+  return `${tools ? toolsHint : ""}<span class="sr-only">Enter adds a new line. ${CHAT_SEND_SHORTCUTS[S.chatSend].label} sends.</span><span class="chat-hint-keys" aria-hidden="true"><kbd>${keys}</kbd> <kbd>Enter</kbd> to send · <kbd>Enter</kbd> new line</span>`;
 }
 /* While the main composer holds a / command, its submit button names what the command does next. */
-/* Phones keep the verb ("Review"); the button's name is always the whole label. */
-const COMMAND_SUBMIT = { assign: ["Review", " assignment"], task: ["Create", " task"], ask: ["Send", " question"], files: ["Show", " files"] };
+/* Phones keep the verb ("Create"), except "Review assignment", which keeps its whole label; the button's name is
+   always the whole label. */
+const COMMAND_SUBMIT = { assign: ["Review assignment", ""], task: ["Create", " task"], ask: ["Send", " question"], files: ["Show", " files"] };
 function submitLabel(text, base) {
   const cmd = base === "Send" && parseCommand(text || "");
   return (cmd && !cmd.unknown && COMMAND_SUBMIT[cmd.name]) || [base, ""];
 }
+/* A label phones show whole ("Review assignment"): on a narrow composer the field takes its own line above it. */
+const isLongSubmit = ([verb]) => verb.length > 8;
 const submitInner = ([verb, rest]) => (rest ? `${verb}<span class="chat-long">${rest}</span>` : verb);
 function syncSubmitLabel(field) {
+  field.form?.classList.toggle("has-text", Boolean(field.value));
   const label = field.form?.querySelector(".chat-submit-label");
   if (!label) return;
   const parts = submitLabel(field.value, "Send");
+  field.form.classList.toggle("has-long-submit", isLongSubmit(parts));
   label.innerHTML = submitInner(parts);
   if (parts[1]) label.parentElement.setAttribute("aria-label", parts.join(""));
   else label.parentElement.removeAttribute("aria-label");
@@ -198,7 +205,8 @@ function submitButton(o, shortcut) {
 /* Main and thread composers share markup, the send hint and empty-send validation. */
 function composerHtml(o) {
   const shortcut = CHAT_SEND_SHORTCUTS[S.chatSend];
-  return `<form class="compose chat-compose${o.cls || ""}" data-form="${o.form}" data-id="${esc(o.id)}"${o.ch ? ` data-ch="${esc(o.ch)}"` : ""}>
+  const long = isLongSubmit(submitLabel(o.draft, o.submit)) ? " has-long-submit" : "";
+  return `<form class="compose chat-compose${o.cls || ""}${o.draft ? " has-text" : ""}${long}" data-form="${o.form}" data-id="${esc(o.id)}"${o.ch ? ` data-ch="${esc(o.ch)}"` : ""}>
     ${o.before || ""}${o.note ? `<p class="chat-compose-note" id="${o.field}-note">${o.note}</p>` : ""}
     ${trayHtml(o.attach)}
     <div class="chat-compose-row">
@@ -208,7 +216,7 @@ function composerHtml(o) {
 ${esc(o.draft || "")}</textarea>
       ${submitButton(o, shortcut)}
     </div>
-    <p class="chat-compose-hint" id="${o.field}-help" aria-live="polite">${shortcutHint()}</p>
+    <p class="chat-compose-hint" id="${o.field}-help" aria-live="polite">${shortcutHint(o.form === "send")}</p>
     ${o.after || ""}
   </form>`;
 }
@@ -254,7 +262,7 @@ function resetHint(form) {
   form.classList.remove("is-confirming");
   const hint = form.querySelector(".chat-compose-hint");
   hint.classList.remove("is-error", "is-confirm");
-  hint.innerHTML = shortcutHint();
+  hint.innerHTML = shortcutHint(form.dataset.form === "send");
 }
 function showEmptySendHint(form, field, text = "Write a message or attach a file first.") {
   const hint = form.querySelector(".chat-compose-hint");
@@ -285,13 +293,12 @@ function clearComposer(id, field) {
   fitTextarea(field);
   syncSubmitLabel(field);
 }
-/* /task what to do: a task whose prompt is those words, with this conversation's latest messages as context (the
-   task-context excerpt). The composer keeps "/task …" until the task is created, so cancelling loses nothing. */
+/* /task what to do: a task whose prompt is those words. The conversation's latest messages are offered as context,
+   not attached: free text may be about something else, so the owner opts in ("Add the latest messages"). Turn into
+   task, on a chosen message, attaches that message instead. The composer keeps "/task …" until the task is created,
+   so cancelling loses nothing. */
 function taskFromConversation(id, field, text = "") {
-  const ch = CH[id], last = [...ch.msgs].reverse().find((m) => !m.pending);
-  const opts = { prompt: text, proj: ch.proj, onCreated: () => clearComposer(id, field) };
-  if (last) opts.excerpt = { ch: id, mid: last.id };
-  openSmartTaskComposer(field, opts);
+  openSmartTaskComposer(field, { prompt: text, proj: CH[id].proj, onCreated: () => clearComposer(id, field) });
 }
 /* /files opens the Files panel; any words after it stay in the composer. */
 function filesCommand(id, field, text = "") {
@@ -413,8 +420,20 @@ function sendThreadReply(form) {
 function confirmThreadSent(id, root, reply, copy) {
   reply.pending = false;
   const i = root.thread.indexOf(reply), el = document.querySelector(`aside.thread .msgs > [data-mid="${CSS.escape(root.id + "-r" + i)}"]`);
-  if (el) el.outerHTML = threadReplyHtml(id, root, i);
+  if (el) swapKeepingFocus(el, threadReplyHtml(id, root, i));
   if (copy) confirmSent(id, copy);
+}
+/* Redraws a reply once its send confirms; a reply the reader was taken to (and focused) keeps its focus and mark. */
+function swapKeepingFocus(el, html) {
+  const focused = document.activeElement === el, label = el.getAttribute("aria-label"), linked = el.classList.contains("is-linked");
+  el.insertAdjacentHTML("afterend", html);
+  const next = el.nextElementSibling;
+  el.remove();
+  if (linked) next.classList.add("is-linked");
+  if (!focused) return;
+  Object.assign(next, { tabIndex: -1 });
+  if (label) next.setAttribute("aria-label", label);
+  next.focus({ preventScroll: true });
 }
 
 /* ---------------------------------------------------------------- header */
@@ -436,14 +455,18 @@ function dmRequests(who, chId) {
   const here = openAsks(CH[chId]);
   return { here, elsewhere: IN.filter((i) => !i.handled && i.from === who && !here.includes(i.id)) };
 }
-/* A DM whose agent waits on you leads with what can be answered here, linked to its card, then "N in Inbox" opening
-   the list of the agent's other requests. The header summary and Details say exactly the same, in the same order. */
+/* "1 in this DM · 2 more requests ▾": what can be answered here, linked to its card, then the agent's other requests
+   (all of which are also in Inbox) as a menu. Without a card here, the menu says "2 requests in Inbox". The header
+   summary and Details use the same words, in the same order. */
+function elsewhereWord(here, elsewhere, short) {
+  if (!here.length) return `${plural(elsewhere.length, "request", "requests")} in Inbox`;
+  return short ? `${elsewhere.length} more` : `${elsewhere.length} more ${elsewhere.length === 1 ? "request" : "requests"}`;
+}
 function dmWaiting(who, chId, slot, short = false) {
   const { here, elsewhere } = dmRequests(who, chId), parts = [];
   const card = here.length && CH[chId].msgs.find((x) => x.needs === here[0]);
-  const hereWord = short ? `${here.length} here` : `${plural(here.length, "request", "requests")} here`;
-  if (card) parts.push(`<a class="alink chat-here-link" href="#/chat/${esc(chId)}/${esc(card.id)}"${short ? ` aria-label="${esc(plural(here.length, "request", "requests"))} here"` : ""}>${hereWord}</a>`);
-  if (elsewhere.length) parts.push(requestsMenu(elsewhere, who, slot, `${elsewhere.length} in Inbox`));
+  if (card) parts.push(`<a class="alink chat-here-link" href="#/chat/${esc(chId)}/${esc(card.id)}" aria-label="${esc(plural(here.length, "request", "requests"))} in this DM">${here.length} in this DM</a>`);
+  if (elsewhere.length) parts.push(requestsMenu(elsewhere, who, slot, `${elsewhereWord(here, elsewhere, short)}${ic("chev-down", "ic14 chat-more-chev")}`));
   return parts.join(" · ");
 }
 function dmStatus(who, chId, slot) {
@@ -465,25 +488,37 @@ function contextParts(ch, chId, slot = "ctx") {
     ["Members", membersLink(ch)],
   ];
 }
-const headerContext = (ch, chId) => joinSep(contextParts(ch, chId).map(([, v]) => (v ? `<span>${v}</span>` : "")));
+/* The description sits on the title line ("#agentic-org-v1 | Shipping the first release"); the row under the title
+   keeps the rest (project and members, a DM's kind and status). Details keeps every part. */
+const DESCRIPTION_PART = { channel: "Topic", dm: "Role", a2a: "Kind" };
+function description(ch) {
+  if (ch.kind === "dm") return M[ch.with].role || "";
+  return ch.kind === "a2a" ? "Between agents" : ch.topic || "";
+}
+const headerContext = (ch, chId) => joinSep(contextParts(ch, chId).filter(([k]) => k !== DESCRIPTION_PART[ch.kind]).map(([, v]) => (v ? `<span>${v}</span>` : "")));
+/* "Title | description": a thin divider, then the muted description, which wraps rather than truncating. */
+function titleLine(title, desc) {
+  const rest = desc ? `<span class="chat-desc-sep" aria-hidden="true"></span><p class="chat-desc">${esc(desc)}</p>` : "";
+  return `<div class="chat-titleline"><h1 id="ch-title" tabindex="-1">${esc(title)}</h1>${rest}</div>`;
+}
 /* Plain words for when the full context line would be cut off: no links, so nothing clipped is focusable;
    Details holds the full line with its links. */
-/* An agent's summary leads with its status, so the actionable part survives the narrowest header: "Waiting on you · 2"
-   (its open requests) needs nothing more; otherwise the status, then the role. Details keeps role and links. */
+/* An agent's summary leads with its status, so the actionable part survives the narrowest header: "1 in this DM ·
+   2 more requests" needs nothing more; otherwise the status. The role is the title line's description. */
 function dmSummary(who) {
   const m = M[who];
-  if (m.kind === "person") return [m.role, m.last];
+  if (m.kind === "person") return [m.last];
   const word = PRESENCE_WORD[presence(who)];
-  if (presence(who) !== "needs") return [word, m.role];
+  if (presence(who) !== "needs") return [word];
   const { here, elsewhere } = dmRequests(who, `dm-${who}`);
-  if (!here.length && !elsewhere.length) return [word, m.role];
-  return [here.length ? plural(here.length, "request", "requests") + " here" : "", elsewhere.length ? `${elsewhere.length} in Inbox` : ""];
+  if (!here.length && !elsewhere.length) return [word];
+  return [here.length ? `${here.length} in this DM` : "", elsewhere.length ? elsewhereWord(here, elsewhere, false) : ""];
 }
 function summaryParts(ch) {
   if (ch.kind === "dm") return dmSummary(ch.with);
-  if (ch.kind === "a2a") return ["Reading as the owner", "Between agents"];
+  if (ch.kind === "a2a") return ["Reading as the owner"];
   const n = channelMembers(ch).length;
-  return [ch.topic, n ? plural(n, "member", "members") : ""];
+  return [ch.proj ? P[ch.proj].name : "", n ? plural(n, "member", "members") : ""];
 }
 const headerSummary = (ch) => esc(summaryParts(ch).filter(Boolean).join(" · "));
 function detailsPanel(ch, chId) {
@@ -506,8 +541,9 @@ function headerActions(id, title) {
 /* Asks waiting in other conversations, each counted once; unread elsewhere shows as a dot. */
 function listButton(id) {
   const here = new Set(CH[id] ? openAsks(CH[id]) : []);
-  const elsewhere = new Set(Object.keys(CH).filter((k) => k !== id).flatMap((k) => openAsks(CH[k])).filter((x) => !here.has(x))).size;
-  const unread = Object.keys(CH).some((k) => k !== id && CH[k].unread);
+  const others = listedConversations().filter((k) => k !== id);
+  const elsewhere = new Set(others.flatMap((k) => openAsks(CH[k])).filter((x) => !here.has(x))).size;
+  const unread = others.some((k) => CH[k].unread);
   /* The name always begins with the visible word, whatever the width hides; the badge and dot are described in it. */
   const name = ["Conversations", elsewhere ? plural(elsewhere, "request", "requests") + " waiting on you in other conversations" : "", unread ? "unread messages" : ""].filter(Boolean).join(", ");
   const badge = elsewhere ? `<span aria-hidden="true">${needsCount(elsewhere)}</span>` : "";
@@ -522,12 +558,18 @@ function requestsTag(ch, chId) {
   const parts = dmWaiting(ch.with, chId, "tag", true);
   return parts ? `<span class="chat-req-tag">${ic("bell", "ic14")}<span>${parts}</span></span>` : "";
 }
+/* An agents' conversation is reached from an agent's page; its header leads back there. */
+function backToAgent(ch) {
+  if (ch.kind !== "a2a") return "";
+  const who = ch.pair.includes(S.chatA2AFrom) ? S.chatA2AFrom : ch.pair[0];
+  return `<a class="chat-back" href="#/members/${esc(who)}">${ic("chev-left", "ic16")}Back to ${esc(M[who].name)}</a>`;
+}
 function chatHeaderHtml(id, ch, title) {
   return `<header class="ph chhead">
     ${listButton(id)}
     <div class="ph-t chat-title">
       ${headerLead(ch)}
-      <div class="chat-heading"><h1 id="ch-title" tabindex="-1">${esc(title)}</h1>
+      <div class="chat-heading">${backToAgent(ch)}${titleLine(title, description(ch))}
         <p class="chat-context"><span class="chat-ctx-full">${headerContext(ch, id)}</span><span class="chat-ctx-summary">${headerSummary(ch)}</span></p>
       </div>
       ${readAsTag(ch)}${requestsTag(ch, id)}
@@ -583,8 +625,9 @@ function readOnlyFoot(id, ch) {
   const buttons = ch.pair.map((k) => `<button class="btn outline sm" type="button" data-act="chat-dm" data-id="${k}" data-v="${esc(id)}">${ic("chat", "ic16")}DM ${esc(M[k].name)}</button>`).join("");
   return `<div class="readfoot"><p>${ic("eye", "ic16")}You can't reply here. To weigh in, message ${ch.pair.map((k) => esc(M[k].name)).join(" or ")}.</p><div class="actions">${buttons}</div></div>`;
 }
-const askJump = () => `<div class="chat-asks-jump"><button class="btn sm" type="button" data-act="chat-asks-jump" hidden>${ic("bell", "ic16")}<span></span>${ic("chev-down", "ic16 chat-up")}</button></div>`;
-const latestJump = () => `<div class="chat-latest-jump"><button class="btn sm" type="button" data-act="chat-latest-jump" aria-label="Jump to latest" hidden>${ic("chev-down", "ic16")}<span><span class="chat-jump-long">Jump to latest</span><span class="chat-jump-short">Latest</span></span></button></div>`;
+/* Earlier asks: a row above the stream naming the nearest one; newer messages: a row below it counting them. */
+const askJump = () => `<div class="chat-asks-jump"><button class="btn sm" type="button" data-act="chat-asks-jump" hidden>${ic("bell", "ic16")}<span class="chat-jump-label"><span class="chat-jump-count"></span><span class="chat-jump-what"></span></span>${ic("chev-down", "ic16 chat-up")}</button></div>`;
+const latestJump = () => `<div class="chat-latest-jump"><button class="btn sm" type="button" data-act="chat-latest-jump" hidden>${ic("chev-down", "ic16")}<span class="chat-jump-n"></span></button></div>`;
 
 /* ---------------------------------------------------------------- page */
 /* A source link (#/chat/<ch>/<msg>) opens the unfiltered stream on that exact message, once per navigation: every
@@ -625,7 +668,7 @@ function pageChatView(kind) {
   if (S.chatList && S.chatList !== kind) S.chatList = null;
   const view = CHAT_VIEWS[kind];
   const header = `<header class="ph chhead">${listButton(kind)}
-    <div class="ph-t chat-title"><div class="chat-heading"><h1 id="ch-title" tabindex="-1">${esc(view.title)}</h1><p class="chat-context">${esc(view.about)}</p></div></div></header>`;
+    <div class="ph-t chat-title"><div class="chat-heading">${titleLine(view.title, view.about)}</div></div></header>`;
   return chatFrame(kind, [], header, chatViewHtml(kind));
 }
 function pageChat(id) {
@@ -919,17 +962,32 @@ function mountOverlays(root) {
   if (panel) inertOutside(panel);
 }
 /* When the full context line under the title would be cut off, the header shows a plain summary instead and offers
-   Details with the full line (always below 640 px, by CSS). The full line stays laid out, hidden, for measuring. */
+   Details with the full line (always below 640 px, by CSS). The full line stays laid out, hidden, for measuring.
+   Swapping the lines resizes the observed element, so the swap waits for the next frame: changing it inside the
+   observer callback raised "ResizeObserver loop completed with undelivered notifications" while the app nav
+   animated (the Bun dev overlay showed it at 1024 px). */
 function watchContext(root) {
   const ctx = root.querySelector(".chhead .chat-context"), full = ctx?.querySelector(".chat-ctx-full");
   if (!full || !root.querySelector(".chat-details-btn")) return;
-  const measure = () => {
+  const measure = () => { root.classList.toggle("ctx-overflow", full.scrollWidth > full.clientWidth + 1); placeDescription(root); };
+  let frame = 0;
+  const ro = new ResizeObserver(() => {
     if (!ctx.isConnected) { ro.disconnect(); return; }
-    root.classList.toggle("ctx-overflow", full.scrollWidth > full.clientWidth + 1);
-  };
-  const ro = new ResizeObserver(measure);
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(measure);
+  });
   ro.observe(ctx);
   measure();
+}
+/* The description stays beside the title while it fits there in two lines. When it would take more (or wraps under
+   the title anyway), .desc-below puts it under the title at full width and drops the divider, which would dangle.
+   Measured beside the title first. */
+function placeDescription(root) {
+  const h1 = root.querySelector(".chat-titleline > h1"), desc = root.querySelector(".chat-titleline > .chat-desc");
+  if (!desc) return;
+  root.classList.remove("desc-below");
+  const twoLines = 2 * parseFloat(getComputedStyle(desc).lineHeight) + 2;
+  root.classList.toggle("desc-below", desc.offsetTop >= h1.offsetTop + h1.offsetHeight - 2 || desc.offsetHeight > twoLines);
 }
 /* The open thread takes its landing once; while searching, matches in its replies are marked as in the stream. */
 function mountThread(root) {
@@ -990,6 +1048,7 @@ function mountChat() {
   mountThread(root);
   fitTextarea(document.getElementById("thread-compose"));
   mountOverlays(root);
+  syncPicking(root);
   bindPanelResize(root);
   watchContext(root);
   watchListMode(root, onListModeCross);

@@ -11,11 +11,11 @@ use org_host_control::HostOpResult;
 use org_proto::web::ListenScheme;
 use org_proto::{ApiError, ErrorCode, Request, Response};
 
-use super::authentication::Authentication;
 use super::browser_sessions::{browser_now_ms, finish_ended_browser_sessions};
-use super::listener::Connection;
 use super::reply::ok;
 use super::Service;
+use crate::authentication::Authentication;
+use crate::control_listener::Connection;
 
 pub(super) fn handle_local_session(
     authentication: &Authentication,

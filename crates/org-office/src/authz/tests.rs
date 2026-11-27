@@ -100,6 +100,29 @@ fn facts() -> Facts {
             ParentFacts::Message {
                 members: members(&[PERSON, AGENT]),
                 sender_id: Some(AGENT.into()),
+                open: false,
+            },
+        )
+        .with(
+            ResourceRef::Message("channel".into()),
+            ParentFacts::Message {
+                members: members(&[AGENT]),
+                sender_id: Some(AGENT.into()),
+                open: true,
+            },
+        )
+        .with(
+            ResourceRef::Conversation("dm".into()),
+            ParentFacts::Conversation {
+                members: members(&[PERSON, AGENT]),
+                open: false,
+            },
+        )
+        .with(
+            ResourceRef::Conversation("channel".into()),
+            ParentFacts::Conversation {
+                members: members(&[AGENT]),
+                open: true,
             },
         )
         .with(
@@ -108,7 +131,8 @@ fn facts() -> Facts {
                 answerer_id: PERSON.into(),
             },
             ParentFacts::AskAnswer {
-                members: members(&[PERSON, OWNER]),
+                members: members(&[PERSON, OTHER_PERSON]),
+                open: false,
             },
         )
 }
@@ -225,9 +249,15 @@ fn attachments_inherit_their_parents_read_rule() {
     let on_dm = attachment(ResourceRef::Message("dm".into()), AGENT);
     policy.can_read(&person(), &on_dm).unwrap();
     policy.can_read(&agent(), &on_dm).unwrap();
+    // The owner supervises every conversation, as `chat.messages` lets them (`TASK-98.2`).
+    policy.can_read(&owner(), &on_dm).unwrap();
     // Not a member of the conversation: the file does not exist for them.
-    assert!(is_not_found(policy.can_read(&owner(), &on_dm)));
     assert!(is_not_found(policy.can_read(&other_person(), &on_dm)));
+    // A channel's files are every employee's to read, as its messages are.
+    let on_channel = attachment(ResourceRef::Message("channel".into()), AGENT);
+    for caller in [owner(), person(), other_person(), agent()] {
+        policy.can_read(&caller, &on_channel).unwrap();
+    }
 
     let on_answer = attachment(
         ResourceRef::AskAnswer {
@@ -236,6 +266,7 @@ fn attachments_inherit_their_parents_read_rule() {
         },
         PERSON,
     );
+    policy.can_read(&other_person(), &on_answer).unwrap();
     policy.can_read(&owner(), &on_answer).unwrap();
     assert!(is_not_found(policy.can_read(&agent(), &on_answer)));
 
@@ -294,7 +325,8 @@ fn writing_a_parent_follows_its_owner_team_or_author() {
     let dm = ResourceRef::Message("dm".into());
     policy.can_write(&agent(), &dm).unwrap();
     assert!(is_not_authorized(policy.can_write(&person(), &dm)));
-    assert!(is_not_found(policy.can_write(&owner(), &dm)));
+    assert!(is_not_authorized(policy.can_write(&owner(), &dm)));
+    assert!(is_not_found(policy.can_write(&other_person(), &dm)));
     policy
         .can_write(&agent(), &ResourceRef::Task("t1".into()))
         .unwrap();
@@ -360,9 +392,9 @@ fn re_attaching_needs_read_on_the_source_and_write_on_the_target() {
     // A DM file cannot leave the conversation through someone outside it.
     let dm_file = attachment(ResourceRef::Message("dm".into()), AGENT);
     assert!(is_not_found(policy.can_attach(
-        &owner(),
+        &other_person(),
         &dm_file,
-        &project
+        &ResourceRef::Organization
     )));
     // Nothing is attached to a file.
     assert!(is_not_authorized(policy.can_attach(
@@ -391,4 +423,46 @@ fn a_facts_failure_never_allows_and_surfaces_as_storage() {
         Denied::NotFound.into_api().unwrap().code,
         ErrorCode::NotFound
     );
+}
+
+#[test]
+fn files_go_into_a_conversation_only_with_a_member_of_it_or_the_owner() {
+    let facts = facts();
+    let policy = AuthorizationPolicy::new(&facts);
+    let dm = ResourceRef::Conversation("dm".into());
+    policy.can_attach(&agent(), &staged(AGENT), &dm).unwrap();
+    policy.can_attach(&person(), &staged(PERSON), &dm).unwrap();
+    policy.can_attach(&owner(), &staged(OWNER), &dm).unwrap();
+    // Someone else's staged upload never exists for the caller, whoever they are.
+    assert!(is_not_found(policy.can_attach(
+        &person(),
+        &staged(AGENT),
+        &dm
+    )));
+    assert!(is_not_found(policy.can_attach(
+        &owner(),
+        &staged(AGENT),
+        &dm
+    )));
+    // A stranger to a DM is not told it exists.
+    assert!(is_not_found(policy.can_attach(
+        &other_person(),
+        &staged(OTHER_PERSON),
+        &dm
+    )));
+    // Anyone reads a channel, but only its members post files in it.
+    let channel = ResourceRef::Conversation("channel".into());
+    policy
+        .can_attach(&agent(), &staged(AGENT), &channel)
+        .unwrap();
+    assert!(is_not_authorized(policy.can_attach(
+        &person(),
+        &staged(PERSON),
+        &channel
+    )));
+    assert!(is_not_found(policy.can_attach(
+        &person(),
+        &staged(PERSON),
+        &ResourceRef::Conversation("gone".into())
+    )));
 }

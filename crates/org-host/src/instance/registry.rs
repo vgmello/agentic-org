@@ -170,6 +170,7 @@ fn office_handles<'de, D: serde::Deserializer<'de>>(
 }
 
 impl Config {
+    #[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
     fn validate_rebind(&self, binding: &Binding, actual: Identity) -> Result<(), Error> {
         if self.binding.identity != binding.identity && self.binding.identity != actual {
             return Err(Error::RebindRecoveryRequired {
@@ -234,15 +235,21 @@ pub(crate) struct Instance {
 /// Managed roots prepared while the instance owns its full-root lock.
 pub(crate) struct InstancePaths {
     pub(crate) office_home: PathBuf,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "nothing reads the agents root yet")
+    )]
     pub(crate) agents: PathBuf,
 }
 
 /// Confirmation is bound to these values. It must use OS presence or an interactive TTY.
+#[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
 pub(crate) struct RebindPreview {
     binding: Binding,
     actual: Identity,
 }
 
+#[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
 impl RebindPreview {
     pub(crate) fn description(&self) -> String {
         format!(
@@ -256,6 +263,7 @@ impl RebindPreview {
     }
 }
 
+#[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
 struct RebindSnapshot {
     phase: Phase,
     config: ControlFile,
@@ -271,6 +279,7 @@ impl Registry {
 
     /// Library use case only until agentic-org can expose the signed/interactive CLI.
     /// Preflight and confirmation hold no locks. Revalidation takes registry, then root.
+    #[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
     pub(crate) fn rebind(
         &self,
         name: Option<&str>,
@@ -279,6 +288,7 @@ impl Registry {
         self.rebind_after_config(name, confirm, || Ok(()))
     }
 
+    #[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
     fn rebind_after_config(
         &self,
         name: Option<&str>,

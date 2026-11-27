@@ -11,6 +11,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::ask::{AskAnswerRecord, AskWithdrawalRecord};
+use crate::attachments::AttachmentMeta;
 use crate::calls::Call;
 use crate::directory::MemberPresenceChangedData;
 use crate::inbox::InboxChangedData;
@@ -218,6 +219,9 @@ pub struct ChatInboxItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub local_seq: u64,
+    /// The message's files (`TASK-98.2`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentMeta>,
 }
 
 /// One full message inside a conversation, including reactions and handoff acceptance.
@@ -259,6 +263,9 @@ pub struct ChatMessageView {
     pub latest_reply_at: Option<String>,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub attachment_count: u64,
+    /// The message's files (`TASK-98.2`); kept in a headers-only read too.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentMeta>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mentions: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -431,6 +438,10 @@ pub struct ChatSendParams {
     /// Required when `kind == "announcement"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Up to [`crate::attachments::MESSAGE_ATTACHMENTS_MAX`] of the caller's committed staged
+    /// uploads, bound to the message (`TASK-98.2`). With files, `body` may be empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<String>,
 }
 
 fn default_kind() -> String {
@@ -445,6 +456,7 @@ impl fmt::Debug for ChatSendParams {
             .field("kind", &self.kind)
             .field("body_len", &self.body.len())
             .field("meta_keys", &self.meta.len())
+            .field("attachments", &self.attachment_ids.len())
             .finish()
     }
 }
@@ -506,12 +518,23 @@ pub struct ChatMessagesParams {
     /// Omit `body` and `meta`; answer a one-line `snippet` and `body_bytes` instead.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub headers_only: bool,
+    /// `has:image`: only messages with (`true`) or without (`false`) an image file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_image: Option<bool>,
+    /// `has:file`: only messages with (`true`) or without (`false`) a document file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_file: Option<bool>,
 }
 
 impl ChatMessagesParams {
     /// Whether this is a delta read (`since_read` or `after_id`): oldest first, forward pages.
     pub fn is_delta(&self) -> bool {
         self.since_read || self.after_id.is_some()
+    }
+
+    /// The read's `has:image` / `has:file` filter.
+    pub fn attachment_filter(&self) -> crate::attachments::AttachmentFilter {
+        crate::attachments::AttachmentFilter::new(self.has_image, self.has_file)
     }
 }
 
@@ -558,6 +581,12 @@ pub struct ChatInboxParams {
     pub cursor: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// `has:image`: only items whose message has (`true`) or lacks (`false`) an image file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_image: Option<bool>,
+    /// `has:file`: only items whose message has (`true`) or lacks (`false`) a document file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_file: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

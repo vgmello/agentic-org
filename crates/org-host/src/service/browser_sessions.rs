@@ -3,8 +3,8 @@
 
 use org_proto::{ApiError, ErrorCode};
 
-use super::authentication::{self, Authentication};
-use super::listener::Connection;
+use crate::authentication::{self, Authentication};
+use crate::control_listener::Connection;
 
 pub(super) fn browser_now_ms() -> Result<i64, ApiError> {
     authentication::wall_ms().and_then(|ms| {

@@ -282,6 +282,7 @@ fn assert_presence_delivery_and_inbox_hints(
             reply_to: None,
             also_in_channel: false,
             reason: None,
+            attachment_ids: Vec::new(),
         })
         .unwrap();
     assert_eq!(sent.id, msg_id);
@@ -320,6 +321,8 @@ fn assert_presence_delivery_and_inbox_hints(
             team: None,
             cursor: None,
             limit: None,
+            has_file: None,
+            has_image: None,
         })
         .unwrap();
     assert_eq!(
@@ -351,6 +354,7 @@ fn assert_no_duplicate_or_unaddressed_hints(
             reply_to: None,
             also_in_channel: false,
             reason: None,
+            attachment_ids: Vec::new(),
         })
         .unwrap();
     assert!(
@@ -377,6 +381,7 @@ fn assert_no_duplicate_or_unaddressed_hints(
             reply_to: None,
             also_in_channel: false,
             reason: None,
+            attachment_ids: Vec::new(),
         })
         .unwrap();
     assert!(
@@ -540,6 +545,7 @@ fn b6_agent_os_commands_session_attach_and_ack1_latency_over_real_office() {
                 reply_to: None,
                 also_in_channel: false,
                 reason: None,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap()
@@ -665,6 +671,7 @@ fn b6_non_owner_grant_caller_cannot_read_other_members_private_messages() {
                 reply_to: None,
                 also_in_channel: false,
                 reason: None,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap()
@@ -776,6 +783,8 @@ fn b7_msg_ask_short_hold_wait_answer_withdraw_and_live_inbox_surfacing() {
             team: None,
             cursor: None,
             limit: None,
+            has_file: None,
+            has_image: None,
         })
         .unwrap();
     assert_eq!(inbox_open.counts.approvals, 1, "{inbox_open:?}");
@@ -821,6 +830,7 @@ fn b7_msg_ask_short_hold_wait_answer_withdraw_and_live_inbox_surfacing() {
             ],
             option_id: None,
             text: None,
+            attachment_ids: Vec::new(),
         },
     )
     .unwrap();
@@ -851,6 +861,8 @@ fn b7_msg_ask_short_hold_wait_answer_withdraw_and_live_inbox_surfacing() {
             team: None,
             cursor: None,
             limit: None,
+            has_file: None,
+            has_image: None,
         })
         .unwrap();
     assert_eq!(inbox_after.counts.approvals, 0, "{inbox_after:?}");
@@ -897,6 +909,7 @@ fn sample_yes_no_ask(id: String, to: &str, hold_ms: u64, addressed_to: Option<St
             blocks: None,
             approval: false,
             meta: Default::default(),
+            attachment_ids: Vec::new(),
         },
     )
     .unwrap()
@@ -991,6 +1004,8 @@ fn b7_open_ask_stays_in_owner_inbox_after_msg_read() {
             team: None,
             cursor: None,
             limit: None,
+            has_file: None,
+            has_image: None,
         })
         .unwrap();
     assert!(
@@ -1026,6 +1041,7 @@ fn free_text_ask_req(id: &str, to: &str, body: Option<&str>, prompt: String) -> 
             blocks: None,
             approval: false,
             meta: Default::default(),
+            attachment_ids: Vec::new(),
         },
     )
     .unwrap()
@@ -1057,6 +1073,7 @@ fn b7_self_mention_does_not_self_address_and_oversized_card_or_answers_refused()
                 }],
                 option_id: None,
                 text: None,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap()
@@ -1121,6 +1138,7 @@ fn c10_who_reports_available_presence_and_send_returns_presence_without_waking_o
             reply_to: None,
             also_in_channel: false,
             reason: None,
+            attachment_ids: Vec::new(),
         },
     )
     .unwrap();
@@ -1148,6 +1166,7 @@ fn c10_who_reports_available_presence_and_send_returns_presence_without_waking_o
             reply_to: None,
             also_in_channel: false,
             reason: None,
+            attachment_ids: Vec::new(),
         },
     )
     .unwrap();
@@ -1176,6 +1195,8 @@ fn open_owner_inbox_count(fx: &LiveOfficeFixture) -> u64 {
             team: None,
             cursor: None,
             limit: None,
+            has_file: None,
+            has_image: None,
         },
     )
     .unwrap();
@@ -1289,6 +1310,7 @@ fn task81_snooze_unsnooze_resurface_access_and_live_hints() {
             reply_to: None,
             also_in_channel: false,
             reason: None,
+            attachment_ids: Vec::new(),
         },
     )
     .unwrap();
@@ -2017,3 +2039,5 @@ fn task103_events_poll_streams_coalesced_agent_activity_and_keeps_tess_detail_fo
     );
     assert!(again.activity_changes.is_empty());
 }
+
+mod files;
