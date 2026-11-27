@@ -1,10 +1,10 @@
 //! Vendor-agnostic runtime adapter registry (`AGENTS.md` Rule 1, `TASK-42`, `TASK-83`,
 //! `TASK-216`, `TASK-255`).
 //!
-//! Concrete vendor adapters (`ClaudeRuntime`, `CodexRuntime`, `AgyRuntime`) are explicitly
-//! injected by the composition root (`apps/agentic-org-office`) via
-//! [`RuntimeRegistry::with_adapters`]. Zero process-global state is held; any unregistered or
-//! unknown runtime ID fails closed.
+//! Concrete vendor adapters (`ClaudeRuntime`, `CodexRuntime`, `AgyRuntime`, `GeminiRuntime`,
+//! `KimiRuntime`, `PiRuntime`) are explicitly injected by the composition root
+//! (`apps/agentic-org-office`) via [`RuntimeRegistry::with_adapters`]. Zero process-global state
+//! is held; any unregistered or unknown runtime ID fails closed.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -79,15 +79,19 @@ impl RuntimeRegistry {
         Self::with_adapters([
             Arc::new(org_agent_runtime_claude::ClaudeRuntime::new()) as Arc<dyn AgentRuntime>,
             Arc::new(org_agent_runtime_codex::CodexRuntime::new()) as Arc<dyn AgentRuntime>,
-            Arc::new(org_agent_runtime_agy::AgyRuntime::new()) as Arc<dyn AgentRuntime>,
+            Arc::new(org_agent_runtime_acp::AgyRuntime::new()) as Arc<dyn AgentRuntime>,
+            Arc::new(org_agent_runtime_acp::GeminiRuntime::new()) as Arc<dyn AgentRuntime>,
+            Arc::new(org_agent_runtime_acp::KimiRuntime::new()) as Arc<dyn AgentRuntime>,
+            Arc::new(org_agent_runtime_acp::PiRuntime::new()) as Arc<dyn AgentRuntime>,
         ])
     }
 
     /// Registers or replaces an adapter and optional explicit binary path.
     ///
     /// Also indexes the adapter's canonical ID and every alias returned by
-    /// [`AgentRuntime::aliases`] (ASCII case-insensitively). The first registered adapter
-    /// becomes the default adapter for [`Self::default_adapter`].
+    /// [`AgentRuntime::aliases`] (ASCII case-insensitively). Canonical IDs are never clobbered
+    /// by another adapter's alias. The first registered adapter becomes the default adapter for
+    /// [`Self::default_adapter`].
     pub fn register(&mut self, adapter: Arc<dyn AgentRuntime>, binary_override: Option<PathBuf>) {
         let key = adapter.id().as_str().to_owned();
         let canonical_lower = key.to_ascii_lowercase();
@@ -95,8 +99,14 @@ impl RuntimeRegistry {
         for alias in adapter.aliases() {
             let trimmed = alias.trim();
             if !trimmed.is_empty() {
-                self.aliases
-                    .insert(trimmed.to_ascii_lowercase(), key.clone());
+                let alias_lower = trimmed.to_ascii_lowercase();
+                let collides_with_canonical = self
+                    .adapters
+                    .keys()
+                    .any(|existing| existing.eq_ignore_ascii_case(&alias_lower));
+                if !collides_with_canonical {
+                    self.aliases.insert(alias_lower, key.clone());
+                }
             }
         }
         if self.default_id.is_none() {
@@ -203,10 +213,10 @@ fn find_binary_in_dirs(dirs: impl IntoIterator<Item = PathBuf>, binary: &str) ->
     dirs.into_iter()
         .map(|dir| dir.join(binary))
         .filter(|candidate| candidate.is_file())
-        .find_map(|candidate| candidate.canonicalize().ok())
+        .find_map(|candidate| candidate.canonicalize().ok().filter(|p| p.is_file()))
 }
 
-fn resolve_binary_in_dirs(
+pub(crate) fn resolve_binary_in_dirs(
     binary: &str,
     explicit_search_path: Option<&str>,
     env_path: Option<&std::ffi::OsStr>,
@@ -292,6 +302,12 @@ mod tests {
         assert_eq!(reg.resolve("gpt").unwrap().id().as_str(), "codex");
         assert_eq!(reg.resolve("google").unwrap().id().as_str(), "agy");
         assert_eq!(reg.resolve("antigravity").unwrap().id().as_str(), "agy");
+        assert_eq!(reg.resolve("gemini").unwrap().id().as_str(), "gemini");
+        assert_eq!(reg.resolve("gemini-cli").unwrap().id().as_str(), "gemini");
+        assert_eq!(reg.resolve("kimi").unwrap().id().as_str(), "kimi");
+        assert_eq!(reg.resolve("moonshot").unwrap().id().as_str(), "kimi");
+        assert_eq!(reg.resolve("pi").unwrap().id().as_str(), "pi");
+        assert_eq!(reg.resolve("pi-acp").unwrap().id().as_str(), "pi");
         assert!(matches!(
             reg.resolve("unknown-vendor"),
             Err(RuntimeRegistryError::UnknownRuntime(_))
@@ -328,6 +344,31 @@ mod tests {
         assert_eq!(agy.auth_env_var(true, "tok"), Some("AGY_AUTH_TOKEN"));
         assert_eq!(agy.auth_env_var(false, "AIza"), Some("GEMINI_API_KEY"));
         assert_eq!(agy.transcript_parser().unwrap().format_id(), "agy");
+
+        let gemini = reg.resolve("gemini").unwrap();
+        assert_eq!(gemini.host_profile().host_config_subdir, Some(".gemini"));
+        assert!(!gemini.host_profile().config_credential_files.is_empty());
+        assert!(!gemini.host_profile().host_credential_files.is_empty());
+        assert_eq!(gemini.endpoint_env_var(), Some("GOOGLE_GEMINI_BASE_URL"));
+        assert_eq!(gemini.auth_env_var(true, "tok"), Some("GEMINI_OAUTH_TOKEN"));
+        assert_eq!(gemini.auth_env_var(false, "AIza"), Some("GEMINI_API_KEY"));
+        assert_eq!(gemini.transcript_parser().unwrap().format_id(), "gemini");
+
+        let kimi = reg.resolve("kimi").unwrap();
+        assert_eq!(kimi.host_profile().host_config_subdir, Some(".kimi"));
+        assert!(!kimi.host_profile().config_credential_files.is_empty());
+        assert_eq!(kimi.endpoint_env_var(), Some("KIMI_BASE_URL"));
+        assert_eq!(kimi.auth_env_var(true, "tok"), Some("KIMI_OAUTH_TOKEN"));
+        assert_eq!(kimi.auth_env_var(false, "sk-kimi"), Some("KIMI_API_KEY"));
+        assert_eq!(kimi.transcript_parser().unwrap().format_id(), "kimi");
+
+        let pi = reg.resolve("pi").unwrap();
+        assert_eq!(pi.host_profile().host_config_subdir, Some(".pi"));
+        assert!(!pi.host_profile().config_credential_files.is_empty());
+        assert_eq!(pi.endpoint_env_var(), Some("PI_BASE_URL"));
+        assert_eq!(pi.auth_env_var(true, "tok"), Some("PI_OAUTH_TOKEN"));
+        assert_eq!(pi.auth_env_var(false, "sk-pi"), Some("PI_API_KEY"));
+        assert_eq!(pi.transcript_parser().unwrap().format_id(), "pi");
     }
 
     #[test]

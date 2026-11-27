@@ -178,7 +178,7 @@ echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"t1","st
 
     let mut registry = RuntimeRegistry::production();
     registry.register(
-        Arc::new(org_agent_runtime_agy::AgyRuntime::new()),
+        Arc::new(org_agent_runtime_acp::AgyRuntime::new()),
         Some(fake_agy),
     );
     registry.register(
@@ -408,7 +408,7 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
     );
     let mut registry = RuntimeRegistry::production();
     registry.register(
-        Arc::new(org_agent_runtime_agy::AgyRuntime::new()),
+        Arc::new(org_agent_runtime_acp::AgyRuntime::new()),
         Some(fake_agy),
     );
     let mut cfg = SessionManagerConfig::production(tmp.path().join("office.sock"));
@@ -551,7 +551,7 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
     );
     let mut registry = RuntimeRegistry::production();
     registry.register(
-        Arc::new(org_agent_runtime_agy::AgyRuntime::new()),
+        Arc::new(org_agent_runtime_acp::AgyRuntime::new()),
         Some(fake_agy),
     );
     let mut cfg = SessionManagerConfig::production(tmp.path().join("office.sock"));

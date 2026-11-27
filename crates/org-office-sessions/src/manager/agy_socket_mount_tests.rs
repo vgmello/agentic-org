@@ -354,7 +354,7 @@ fn manager(rt: &Runtime, helper_dir: PathBuf) -> (SessionManager, String) {
 }
 
 fn agy_mounts(rt: &Runtime, mgr: &SessionManager) -> Vec<PathBuf> {
-    let agy = org_agent_runtime_agy::AgyRuntime::new();
+    let agy = org_agent_runtime_acp::AgyRuntime::new();
     mgr.collect_session_read_only_dirs(&agy, &rt.root.join("home"), &rt.root.join("ws"), true)
         .iter()
         .map(|spec| PathBuf::from(spec.as_str()))
@@ -386,7 +386,7 @@ fn the_session_manager_mounts_its_own_socket_folder_for_agy_only_and_keeps_runti
     let (mgr, me) = manager(&rt, rt.root.join("no-helpers"));
     let home = rt.root.join("home");
     let ws = rt.root.join("ws");
-    let agy = org_agent_runtime_agy::AgyRuntime::new();
+    let agy = org_agent_runtime_acp::AgyRuntime::new();
 
     let mounts = agy_mounts(&rt, &mgr);
     assert!(mounts.contains(&rt.own), "{mounts:?}");

@@ -11,7 +11,7 @@ use org_agent_runtime::{
     RuleScope, RuleTool, RuntimeId, SandboxSpec, SessionEvent, SessionId, SessionKind, SessionSpec,
     SpecPath, StartFailure, Token, ToolCapability, ToolName, TurnOutcome,
 };
-use org_agent_runtime_agy::AgyRuntime;
+use org_agent_runtime_acp::AgyRuntime;
 
 fn sp(s: &str) -> SpecPath {
     SpecPath::try_from(s).unwrap()

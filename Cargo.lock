@@ -59,7 +59,7 @@ dependencies = [
  "hmac",
  "libc",
  "org-agent-runtime",
- "org-agent-runtime-agy",
+ "org-agent-runtime-acp",
  "org-agent-runtime-claude",
  "org-agent-runtime-codex",
  "org-client",
@@ -1229,11 +1229,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "org-agent-runtime-agy"
+name = "org-agent-runtime-acp"
 version = "0.0.0"
 dependencies = [
  "org-agent-runtime",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -1621,7 +1622,7 @@ dependencies = [
  "libc",
  "org-agent-cli",
  "org-agent-runtime",
- "org-agent-runtime-agy",
+ "org-agent-runtime-acp",
  "org-agent-runtime-claude",
  "org-agent-runtime-codex",
  "org-command",

@@ -21,6 +21,21 @@ fn endpoint_env_mapping_and_failover_classification_rules() {
             "https://gemini.example.com/v1".into()
         )
     );
+    assert_eq!(
+        endpoint_env_for(&runtimes, "gemini", "https://gemini.example.com/v1").unwrap(),
+        (
+            "GOOGLE_GEMINI_BASE_URL",
+            "https://gemini.example.com/v1".into()
+        )
+    );
+    assert_eq!(
+        endpoint_env_for(&runtimes, "kimi", "https://kimi.example.com/v1").unwrap(),
+        ("KIMI_BASE_URL", "https://kimi.example.com/v1".into())
+    );
+    assert_eq!(
+        endpoint_env_for(&runtimes, "pi", "https://pi.example.com/v1").unwrap(),
+        ("PI_BASE_URL", "https://pi.example.com/v1".into())
+    );
     assert!(endpoint_env_for(&runtimes, "claude", "http://169.254.169.254/latest").is_err());
     assert!(endpoint_env_for(&runtimes, "claude", "ftp://bad.example.com").is_err());
 

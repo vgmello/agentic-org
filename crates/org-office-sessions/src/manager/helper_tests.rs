@@ -458,10 +458,23 @@ fn pattern_exists_for_bwrap_preserves_root_glob_and_agy_credential_denies_match_
         &mut agy_denies,
     );
     if std::env::var_os("HOME").is_some() {
-        for rel in org_agent_runtime_agy::AGY_CONFIG_CREDENTIAL_FILES {
+        for rel in org_agent_runtime_acp::AGY_CONFIG_CREDENTIAL_FILES {
             assert!(
                 agy_denies.iter().any(|p| p.as_str().ends_with(rel)),
                 "missing agy credential deny for `{rel}`: {agy_denies:?}"
+            );
+        }
+        for rel in org_agent_runtime_acp::GEMINI_CONFIG_CREDENTIAL_FILES
+            .iter()
+            .chain(org_agent_runtime_acp::GEMINI_HOST_CREDENTIAL_FILES)
+            .chain(org_agent_runtime_acp::KIMI_CONFIG_CREDENTIAL_FILES)
+            .chain(org_agent_runtime_acp::KIMI_HOST_CREDENTIAL_FILES)
+            .chain(org_agent_runtime_acp::PI_CONFIG_CREDENTIAL_FILES)
+            .chain(org_agent_runtime_acp::PI_HOST_CREDENTIAL_FILES)
+        {
+            assert!(
+                agy_denies.iter().any(|p| p.as_str().ends_with(rel)),
+                "missing ACP runtime credential deny for `{rel}`: {agy_denies:?}"
             );
         }
     }
@@ -582,7 +595,7 @@ fn agy_read_only_dirs_mounts_release_store_and_toolchain_subdirs_never_cargo_roo
         resume: None,
         config_dir: None,
     };
-    let (plan, _) = org_agent_runtime_agy::AgyRuntime::new()
+    let (plan, _) = org_agent_runtime_acp::AgyRuntime::new()
         .plan_session(&spec, &ctx)
         .unwrap();
     for expected in [
@@ -1185,7 +1198,7 @@ fn agy_sandbox_and_policy_block_cross_runtime_host_credentials() {
         Some(CredentialDenyFixture::sp(&fx.fake_home.join(".gemini"))),
     ] {
         let agy_ctx = fx.launch_ctx("/usr/local/bin/agy", None, agy_cfg);
-        assert!(org_agent_runtime_agy::AgyRuntime::new()
+        assert!(org_agent_runtime_acp::AgyRuntime::new()
             .plan_session(&agy_spec, &agy_ctx)
             .is_ok());
     }

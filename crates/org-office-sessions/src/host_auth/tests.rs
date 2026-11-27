@@ -162,7 +162,10 @@ fn allows_host_subscription_auth_blocks_oauth_injected_runtimes_and_enforces_mod
 
     let claude = org_agent_runtime_claude::ClaudeRuntime::new();
     let codex = org_agent_runtime_codex::CodexRuntime::new();
-    let agy = org_agent_runtime_agy::AgyRuntime::new();
+    let agy = org_agent_runtime_acp::AgyRuntime::new();
+    let gemini = org_agent_runtime_acp::GeminiRuntime::new();
+    let kimi = org_agent_runtime_acp::KimiRuntime::new();
+    let pi = org_agent_runtime_acp::PiRuntime::new();
 
     // OAuth-injected runtimes (Claude) NEVER fall back to ambient host credentials.
     assert!(claude.host_profile().uses_host_oauth_token_injection);
@@ -203,6 +206,9 @@ fn allows_host_subscription_auth_blocks_oauth_injected_runtimes_and_enforces_mod
     ));
     assert!(host_config_dir_for(codex.host_profile().host_config_subdir, false).is_none());
     assert!(host_config_dir_for(agy.host_profile().host_config_subdir, false).is_none());
+    assert!(host_config_dir_for(gemini.host_profile().host_config_subdir, false).is_none());
+    assert!(host_config_dir_for(kimi.host_profile().host_config_subdir, false).is_none());
+    assert!(host_config_dir_for(pi.host_profile().host_config_subdir, false).is_none());
 }
 
 #[test]

@@ -9,10 +9,10 @@ use crate::protocol::{
     encode_session_prompt, AcpUsage,
 };
 
-use super::{is_opening, AgySession, Phase, PromptSlot};
+use super::{is_opening, AcpSession, Phase, PromptSlot};
 
 pub(super) fn control_send(
-    s: &mut AgySession,
+    s: &mut AcpSession,
     text: String,
     images: Vec<TurnImage>,
 ) -> Result<Vec<Output>, ControlError> {
@@ -29,6 +29,7 @@ pub(super) fn control_send(
         return Err(ControlError::NotReady);
     };
     let req_id = s.alloc_id();
+    let first_turn_system = s.pending_first_turn_prompt.take();
     s.prompt_chain = vec![PromptSlot {
         req_id,
         delivery_id: None,
@@ -41,7 +42,7 @@ pub(super) fn control_send(
     s.saw_confirmed_usage = false;
     s.streamed_usage = None;
     Ok(vec![
-        encode_session_prompt(req_id, sid.as_str(), &text),
+        encode_session_prompt(req_id, sid.as_str(), first_turn_system.as_deref(), &text),
         Output::Event(SessionEvent::TurnStarted {
             turn_id: None,
             solicited: true,
@@ -51,7 +52,7 @@ pub(super) fn control_send(
 }
 
 pub(super) fn control_deliver_mid_turn(
-    s: &mut AgySession,
+    s: &mut AcpSession,
     delivery_id: String,
     text: String,
     images: Vec<TurnImage>,
@@ -77,11 +78,16 @@ pub(super) fn control_deliver_mid_turn(
         delivery_id: Some(delivery_id),
         acked: false,
     });
-    Ok(vec![encode_session_prompt(new_id, sid.as_str(), &text)])
+    Ok(vec![encode_session_prompt(
+        new_id,
+        sid.as_str(),
+        None,
+        &text,
+    )])
 }
 
 pub(super) fn control_answer(
-    s: &mut AgySession,
+    s: &mut AcpSession,
     request_id: ApprovalId,
     decision: Decision,
 ) -> Result<Vec<Output>, ControlError> {
@@ -110,7 +116,10 @@ pub(super) fn control_answer(
             if use_allow {
                 out.push(Output::Event(SessionEvent::Notice {
                     kind: NoticeKind::Warning,
-                    text: "Agy ACP permission request offered no one-shot allow option; failed closed with cancel".to_owned(),
+                    text: format!(
+                        "{} ACP permission request offered no one-shot allow option; failed closed with cancel",
+                        s.display_name()
+                    ),
                 }));
             }
         }

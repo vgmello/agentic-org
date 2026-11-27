@@ -99,16 +99,44 @@ impl EnrollmentDriver for CliEnrollmentDriver {
                 ),
             }),
             "google" => {
+                let is_gemini_cli = provider.eq_ignore_ascii_case("gemini")
+                    || provider.eq_ignore_ascii_case("gemini-cli");
+                let (auth_url, message) = if is_gemini_cli {
+                    (
+                        "https://aistudio.google.com/app/apikey",
+                        "Authenticate with Gemini CLI in your browser and paste the returned authorization code or API key.",
+                    )
+                } else {
+                    (
+                        "https://antigravity.google/auth",
+                        "Authenticate with Antigravity (agy) in your browser and paste the returned authorization code or API key.",
+                    )
+                };
                 Ok(EnrollmentPrompt {
                     state: EnrollmentState::AwaitingCode,
-                    auth_url: Some("https://antigravity.google/auth".to_owned()),
+                    auth_url: Some(auth_url.to_owned()),
                     device_code: None,
-                    message: Some(
-                        "Authenticate with Antigravity (agy) in your browser and paste the returned authorization code or API key."
-                            .to_owned(),
-                    ),
+                    message: Some(message.to_owned()),
                 })
             }
+            "kimi" | "kimi-cli" | "kimi-code" | "moonshot" => Ok(EnrollmentPrompt {
+                state: EnrollmentState::AwaitingCode,
+                auth_url: Some("https://platform.moonshot.ai/console/api-keys".to_owned()),
+                device_code: None,
+                message: Some(
+                    "Authenticate with Kimi Code CLI and paste the returned OAuth token or API key."
+                        .to_owned(),
+                ),
+            }),
+            "pi" | "pi-acp" | "pi-coding-agent" => Ok(EnrollmentPrompt {
+                state: EnrollmentState::AwaitingCode,
+                auth_url: None,
+                device_code: None,
+                message: Some(
+                    "Paste the API key or OAuth token for your configured Pi ACP provider."
+                        .to_owned(),
+                ),
+            }),
             _ => Err(EnrollmentVaultError::InvalidInput(format!(
                 "unsupported enrollment provider `{provider}`"
             ))),

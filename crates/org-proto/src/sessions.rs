@@ -370,6 +370,9 @@ pub enum TranscriptFormat {
     Claude,
     Codex,
     Agy,
+    Gemini,
+    Kimi,
+    Pi,
     #[serde(other)]
     Unknown,
 }

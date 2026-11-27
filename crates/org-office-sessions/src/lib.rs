@@ -52,6 +52,10 @@ pub use credentials::{
     EnrollmentOutcome, EnrollmentPrompt, EnrollmentVaultError,
 };
 pub use external::{ExternalLeaseRecord, EXTERNAL_LEASE_VERSION};
+pub use host_auth::{
+    detect_installed_runtimes, detect_installed_runtimes_from, require_installed_runtime,
+    DetectedRuntime,
+};
 pub use lifecycle::spawn_wake_retry_loop;
 pub use manager::{
     LocalOsSandbox, PreparedWorktreeNotice, SandboxConfinementMode, SandboxPlan,

@@ -1,257 +1,58 @@
-use serde_json::{json, Value};
+//! Fail-closed permission mode checks, tool classification, sandbox-bypass detection, and errors.
+
+use serde_json::Value;
 
 use org_agent_runtime::{
-    encode_line, ApprovalId, ApprovalKind, ApprovalRequest, Escalation, LimitKind, NoticeKind,
-    Output, SessionEvent, ToolCapability, TurnOutcome,
+    ApprovalId, ApprovalKind, ApprovalRequest, Escalation, LimitKind, NoticeKind, Output,
+    SessionEvent, ToolCapability, TurnOutcome,
 };
 
-#[derive(Debug, Clone, Default)]
-pub(crate) struct AcpUsage {
-    pub(crate) input: u64,
-    pub(crate) output: u64,
-    pub(crate) cache_read: u64,
-    pub(crate) cache_write: u64,
-    pub(crate) reasoning: u64,
-}
-
-impl AcpUsage {
-    pub(crate) fn add_assign(&mut self, other: &AcpUsage) {
-        self.input = self.input.saturating_add(other.input);
-        self.output = self.output.saturating_add(other.output);
-        self.cache_read = self.cache_read.saturating_add(other.cache_read);
-        self.cache_write = self.cache_write.saturating_add(other.cache_write);
-        self.reasoning = self.reasoning.saturating_add(other.reasoning);
-    }
-
-    pub(crate) fn merge_max(&mut self, other: &AcpUsage) {
-        self.input = self.input.max(other.input);
-        self.output = self.output.max(other.output);
-        self.cache_read = self.cache_read.max(other.cache_read);
-        self.cache_write = self.cache_write.max(other.cache_write);
-        self.reasoning = self.reasoning.max(other.reasoning);
-    }
-
-    pub(crate) fn is_zero(&self) -> bool {
-        self.input == 0
-            && self.output == 0
-            && self.cache_read == 0
-            && self.cache_write == 0
-            && self.reasoning == 0
-    }
-}
-
-/// Returns the non-null JSON-RPC `error` payload, if present.
-pub(crate) fn rpc_error(val: &Value) -> Option<&Value> {
-    val.get("error").filter(|v| !v.is_null())
-}
-
-/// Returns the non-null JSON-RPC `result` payload, if present.
-pub(crate) fn rpc_result(val: &Value) -> Option<&Value> {
-    val.get("result").filter(|v| !v.is_null())
-}
-
-/// Returns the first non-null JSON string across `candidates`, avoiding `null` short-circuiting.
-pub(crate) fn first_str<'a>(candidates: &[Option<&'a Value>]) -> Option<&'a str> {
-    candidates.iter().find_map(|c| c.and_then(Value::as_str))
-}
-
-/// Returns the first non-null JSON `u64` across `candidates`, defaulting to `0`.
-pub(crate) fn first_u64(candidates: &[Option<&Value>]) -> u64 {
-    candidates
-        .iter()
-        .find_map(|c| c.and_then(Value::as_u64))
-        .unwrap_or(0)
-}
+use super::{first_str, first_u64, AcpUsage};
 
 /// Returns `true` for ACP permission modes that bypass office approval enforcement.
 pub(crate) fn is_banned_mode(mode: &str) -> bool {
     matches!(
         mode.trim().to_ascii_lowercase().as_str(),
-        "yolo" | "bypasspermissions" | "danger-full-access" | "auto"
+        "yolo"
+            | "bypasspermissions"
+            | "danger-full-access"
+            | "auto"
+            | "full-auto"
+            | "auto_approve"
+            | "auto-approve"
+            | "dontask"
+            | "dont-ask"
+            | "allow-all"
+            | "allow_all"
+            | "unrestricted"
     )
-}
-
-/// Converts a JSON-RPC request/response `id` (string or integer) into a stable lookup key.
-pub(crate) fn rpc_id_key(id: &Value) -> Option<String> {
-    match id {
-        Value::String(s) if !s.is_empty() => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        _ => None,
-    }
-}
-
-pub(crate) fn encode_initialize(req_id: u64) -> Output {
-    let line = encode_line(&json!({
-        "jsonrpc": "2.0",
-        "id": req_id,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": 1,
-            "clientCapabilities": {},
-            "clientInfo": {
-                "name": "agentic-org",
-                "version": env!("CARGO_PKG_VERSION"),
-            },
-        },
-    }))
-    .expect("initialize JSON-RPC encodes");
-    Output::Write(line)
-}
-
-pub(crate) fn encode_session_open(
-    req_id: u64,
-    cwd: &str,
-    mcp_servers: &[Value],
-    system_prompt_append: Option<&str>,
-    resume_session_id: Option<&str>,
-) -> Output {
-    let mut params = json!({
-        "cwd": cwd,
-        "mcpServers": mcp_servers,
-    });
-    if let Some(prompt) = system_prompt_append {
-        params["_meta"] = json!({
-            "antigravity": {
-                "systemPrompt": {
-                    "append": prompt,
-                }
-            }
-        });
-    }
-    let method = match resume_session_id {
-        Some(sid) => {
-            params["sessionId"] = Value::String(sid.to_owned());
-            "session/resume"
-        }
-        None => "session/new",
-    };
-    let line = encode_line(&json!({
-        "jsonrpc": "2.0",
-        "id": req_id,
-        "method": method,
-        "params": params,
-    }))
-    .expect("session open JSON-RPC encodes");
-    Output::Write(line)
-}
-
-pub(crate) fn encode_set_mode(req_id: u64, session_id: &str, mode_id: &str) -> Output {
-    let line = encode_line(&json!({
-        "jsonrpc": "2.0",
-        "id": req_id,
-        "method": "session/set_mode",
-        "params": {
-            "sessionId": session_id,
-            "modeId": mode_id,
-        },
-    }))
-    .expect("session/set_mode JSON-RPC encodes");
-    Output::Write(line)
-}
-
-pub(crate) fn encode_set_model(req_id: u64, session_id: &str, model_id: &str) -> Output {
-    let line = encode_line(&json!({
-        "jsonrpc": "2.0",
-        "id": req_id,
-        "method": "session/set_model",
-        "params": {
-            "sessionId": session_id,
-            "modelId": model_id,
-        },
-    }))
-    .expect("session/set_model JSON-RPC encodes");
-    Output::Write(line)
-}
-
-pub(crate) fn encode_session_prompt(req_id: u64, session_id: &str, text: &str) -> Output {
-    let line = encode_line(&json!({
-        "jsonrpc": "2.0",
-        "id": req_id,
-        "method": "session/prompt",
-        "params": {
-            "sessionId": session_id,
-            "prompt": [{ "type": "text", "text": text }],
-        },
-    }))
-    .expect("session/prompt JSON-RPC encodes");
-    Output::Write(line)
-}
-
-pub(crate) fn encode_session_cancel(session_id: &str) -> Output {
-    let line = encode_line(&json!({
-        "jsonrpc": "2.0",
-        "method": "session/cancel",
-        "params": { "sessionId": session_id },
-    }))
-    .expect("session/cancel notification encodes");
-    Output::Write(line)
-}
-
-pub(crate) fn encode_session_close(req_id: u64, session_id: &str) -> Output {
-    let line = encode_line(&json!({
-        "jsonrpc": "2.0",
-        "id": req_id,
-        "method": "session/close",
-        "params": { "sessionId": session_id },
-    }))
-    .expect("session/close JSON-RPC encodes");
-    Output::Write(line)
-}
-
-pub(crate) fn encode_permission_selected(raw_id: &Value, option_id: &str) -> Output {
-    let line = encode_line(&json!({
-        "jsonrpc": "2.0",
-        "id": raw_id,
-        "result": {
-            "outcome": {
-                "outcome": "selected",
-                "optionId": option_id,
-            }
-        }
-    }))
-    .expect("permission selected response encodes");
-    Output::Write(line)
-}
-
-pub(crate) fn encode_permission_cancelled(raw_id: &Value) -> Output {
-    let line = encode_line(&json!({
-        "jsonrpc": "2.0",
-        "id": raw_id,
-        "result": {
-            "outcome": {
-                "outcome": "cancelled",
-            }
-        }
-    }))
-    .expect("permission cancelled response encodes");
-    Output::Write(line)
-}
-
-pub(crate) fn encode_jsonrpc_error(raw_id: &Value, code: i64, message: &str) -> Output {
-    let line = encode_line(&json!({
-        "jsonrpc": "2.0",
-        "id": raw_id,
-        "error": {
-            "code": code,
-            "message": message,
-        }
-    }))
-    .expect("jsonrpc error encodes");
-    Output::Write(line)
 }
 
 pub(crate) fn classify_tool_capability(tool: &str) -> Option<ToolCapability> {
     match tool.to_ascii_lowercase().as_str() {
-        "read_file" | "view_file" => Some(ToolCapability::Read),
-        "list_dir" | "find_by_name" | "grep_search" => Some(ToolCapability::Search),
+        "read_file" | "view_file" | "read" | "read_many_files" | "readfile" => {
+            Some(ToolCapability::Read)
+        }
+        "list_dir"
+        | "list_directory"
+        | "find_by_name"
+        | "grep_search"
+        | "search_file_content"
+        | "glob"
+        | "grep"
+        | "ls"
+        | "find" => Some(ToolCapability::Search),
         "write_file"
         | "edit_file"
         | "write"
         | "edit"
         | "delete_file"
         | "replace_file_content"
-        | "multi_replace_file_content" => Some(ToolCapability::Edit),
-        "run_command" | "bash" | "shell" => Some(ToolCapability::Shell),
+        | "multi_replace_file_content"
+        | "replace"
+        | "writefile"
+        | "strreplacefile" => Some(ToolCapability::Edit),
+        "run_command" | "run_shell_command" | "bash" | "shell" => Some(ToolCapability::Shell),
         "invoke_subagent" | "spawn_subagent" | "subagent" => Some(ToolCapability::Subagent),
         _ => None,
     }
@@ -259,14 +60,17 @@ pub(crate) fn classify_tool_capability(tool: &str) -> Option<ToolCapability> {
 
 pub(crate) fn classify_tool_kind(tool: &str) -> ApprovalKind {
     match tool.to_ascii_lowercase().as_str() {
-        "run_command" | "bash" | "shell" => ApprovalKind::Command,
+        "run_command" | "run_shell_command" | "bash" | "shell" => ApprovalKind::Command,
         "write_file"
         | "edit_file"
         | "write"
         | "edit"
         | "delete_file"
         | "replace_file_content"
-        | "multi_replace_file_content" => ApprovalKind::FileChange,
+        | "multi_replace_file_content"
+        | "replace"
+        | "writefile"
+        | "strreplacefile" => ApprovalKind::FileChange,
         "set_permission_mode"
         | "exitplanmode"
         | "enterplanmode"
@@ -274,12 +78,18 @@ pub(crate) fn classify_tool_kind(tool: &str) -> ApprovalKind {
         | "enter_plan_mode" => ApprovalKind::Permissions,
         "read_file"
         | "view_file"
+        | "read_many_files"
+        | "readfile"
         | "list_dir"
+        | "list_directory"
         | "find_by_name"
         | "grep_search"
+        | "search_file_content"
         | "glob"
         | "grep"
         | "read"
+        | "ls"
+        | "find"
         | "webfetch"
         | "websearch"
         | "invoke_subagent"
@@ -291,7 +101,7 @@ pub(crate) fn classify_tool_kind(tool: &str) -> ApprovalKind {
     }
 }
 
-pub(crate) fn classify_acp_kind_str(kind: Option<&str>) -> Option<ToolCapability> {
+fn classify_acp_kind_str(kind: Option<&str>) -> Option<ToolCapability> {
     match kind.map(str::to_ascii_lowercase).as_deref() {
         Some("read") => Some(ToolCapability::Read),
         Some("search") => Some(ToolCapability::Search),
@@ -387,7 +197,7 @@ fn input_requests_sandbox_bypass(input: &Value) -> bool {
     false
 }
 
-pub(crate) fn classify_escalation(tool: &str, kind: ApprovalKind, input: &Value) -> Escalation {
+fn classify_escalation(tool: &str, kind: ApprovalKind, input: &Value) -> Escalation {
     if tool.eq_ignore_ascii_case("SandboxNetworkAccess") || input_requests_sandbox_bypass(input) {
         return Escalation::SandboxBypass;
     }
@@ -567,27 +377,34 @@ pub(crate) fn classify_rpc_error_outcome(err: &Value) -> (TurnOutcome, Vec<Strin
     (outcome, vec![msg])
 }
 
-pub(crate) fn parse_stderr_line(text: &str) -> Option<Output> {
+pub(crate) fn parse_stderr_line(
+    display_name: &str,
+    structured_prefix: Option<&str>,
+    text: &str,
+) -> Option<Output> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return None;
     }
-    if let Some(rest) = trimmed.strip_prefix("AGY_ERROR:") {
-        if let Ok(val) = serde_json::from_str::<Value>(rest.trim()) {
-            let code = val.get("code").and_then(Value::as_str).unwrap_or("error");
-            let msg = val
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("Agy structured error");
-            let kind = if code.eq_ignore_ascii_case("retry") {
-                NoticeKind::Retry
-            } else {
-                NoticeKind::Warning
-            };
-            return Some(Output::Event(SessionEvent::Notice {
-                kind,
-                text: format!("{code}: {msg}"),
-            }));
+    if let Some(prefix) = structured_prefix {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            if let Ok(val) = serde_json::from_str::<Value>(rest.trim()) {
+                let code = val.get("code").and_then(Value::as_str).unwrap_or("error");
+                let fallback = format!("{display_name} structured error");
+                let msg = val
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&fallback);
+                let kind = if code.eq_ignore_ascii_case("retry") {
+                    NoticeKind::Retry
+                } else {
+                    NoticeKind::Warning
+                };
+                return Some(Output::Event(SessionEvent::Notice {
+                    kind,
+                    text: format!("{code}: {msg}"),
+                }));
+            }
         }
     }
     Some(Output::Event(SessionEvent::Notice {

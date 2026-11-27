@@ -13,6 +13,7 @@ use super::doctor_host::{
     check_credentials_dir, check_instance_layout, check_permissions, check_registry_consistency,
     check_release_pin, check_sockets,
 };
+use super::doctor_runtimes::check_cli_runtimes;
 pub(crate) use super::doctor_types::{CheckStatus, DoctorCheck};
 use super::org_integrity_checks::check_org_state;
 use super::paths::{discover_offices, resolve_instance, DiscoveredOffice};
@@ -82,6 +83,7 @@ pub(crate) fn collect_doctor(
     if let Some(check) = check_linux_apparmor_userns() {
         checks.push(check);
     }
+    check_cli_runtimes(&mut checks);
 
     let summary = DoctorSummary {
         pass: checks

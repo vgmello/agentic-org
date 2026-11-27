@@ -1,5 +1,4 @@
-//! JSON-RPC responses: routed to the handshake or to the turn's `session/prompt` slots, and
-//! how a turn finishes.
+//! JSON-RPC responses: routed to the handshake or to the turn's `session/prompt` slots.
 
 use serde_json::Value;
 
@@ -14,9 +13,9 @@ use super::handshake::{
     handle_init_response, handle_session_open_response, handle_set_mode_response,
     handle_set_model_response,
 };
-use super::{AgySession, Phase};
+use super::{AcpSession, Phase};
 
-pub(super) fn handle_rpc_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
+pub(super) fn handle_rpc_response(s: &mut AcpSession, val: &Value) -> Vec<Output> {
     let Some(req_id) = val.get("id").and_then(Value::as_u64) else {
         return Vec::new();
     };
@@ -38,7 +37,7 @@ pub(super) fn handle_rpc_response(s: &mut AgySession, val: &Value) -> Vec<Output
     Vec::new()
 }
 
-fn handle_prompt_slot_response(s: &mut AgySession, idx: usize, val: &Value) -> Vec<Output> {
+fn handle_prompt_slot_response(s: &mut AcpSession, idx: usize, val: &Value) -> Vec<Output> {
     if let Some(err) = rpc_error(val) {
         return handle_prompt_slot_error(s, idx, err);
     }
@@ -55,8 +54,6 @@ fn handle_prompt_slot_response(s: &mut AgySession, idx: usize, val: &Value) -> V
         }));
     }
     if idx < s.prompt_chain.len() {
-        // Live `agy 1.5.17` resolves a superseded prompt immediately when a mid-turn steer
-        // arrives and transfers turn ownership to the next surviving slot without aborting tools.
         let next = &mut s.prompt_chain[idx];
         if !next.acked {
             if let Some(did) = next.delivery_id.clone() {
@@ -86,7 +83,7 @@ fn handle_prompt_slot_response(s: &mut AgySession, idx: usize, val: &Value) -> V
     out
 }
 
-fn handle_prompt_slot_error(s: &mut AgySession, idx: usize, err: &Value) -> Vec<Output> {
+fn handle_prompt_slot_error(s: &mut AcpSession, idx: usize, err: &Value) -> Vec<Output> {
     let slot = s.prompt_chain.remove(idx);
     let mut out = Vec::new();
     if let Some(did) = slot.delivery_id.filter(|_| !slot.acked) {
@@ -96,7 +93,6 @@ fn handle_prompt_slot_error(s: &mut AgySession, idx: usize, err: &Value) -> Vec<
         }));
     }
     if !s.prompt_chain.is_empty() {
-        // Another live prompt slot still owns this turn; keep `Phase::Busy` until it settles.
         return out;
     }
     if let Some(text) = s.flush_assistant_text() {
@@ -111,7 +107,7 @@ fn handle_prompt_slot_error(s: &mut AgySession, idx: usize, err: &Value) -> Vec<
 }
 
 pub(super) fn finish_turn(
-    s: &mut AgySession,
+    s: &mut AcpSession,
     outcome: TurnOutcome,
     errors: Vec<String>,
     out: &mut Vec<Output>,

@@ -52,6 +52,7 @@ use crate::subagents::{
     BackgroundRegistry,
 };
 
+mod acp_isolation;
 mod approval;
 mod approval_bridge;
 mod bwrap;

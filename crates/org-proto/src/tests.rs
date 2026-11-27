@@ -1101,6 +1101,9 @@ fn agent_runtime_and_status_tolerate_values_from_a_newer_build() {
         (json!("claude_code"), AgentRuntime::ClaudeCode),
         (json!("codex"), AgentRuntime::Codex),
         (json!("antigravity"), AgentRuntime::Antigravity),
+        (json!("gemini"), AgentRuntime::Gemini),
+        (json!("kimi"), AgentRuntime::Kimi),
+        (json!("pi"), AgentRuntime::Pi),
         (json!({"other": "zed"}), AgentRuntime::Other("zed".into())),
         (json!("some_future_runtime"), AgentRuntime::Unknown),
     ] {

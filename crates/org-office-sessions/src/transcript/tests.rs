@@ -288,8 +288,19 @@ fn pass1_redaction_and_parser_edge_cases() {
     let codex_parser = codex_rt.transcript_parser().unwrap();
     let claude_rt = org_agent_runtime_claude::ClaudeRuntime::new();
     let claude_parser = claude_rt.transcript_parser().unwrap();
-    let agy_rt = org_agent_runtime_agy::AgyRuntime::new();
+    let agy_rt = org_agent_runtime_acp::AgyRuntime::new();
     let agy_parser = agy_rt.transcript_parser().unwrap();
+    for (rt, expected_fmt) in [
+        (
+            &org_agent_runtime_acp::GeminiRuntime::new() as &dyn org_agent_runtime::AgentRuntime,
+            "gemini",
+        ),
+        (&org_agent_runtime_acp::KimiRuntime::new(), "kimi"),
+        (&org_agent_runtime_acp::PiRuntime::new(), "pi"),
+    ] {
+        let parser = rt.transcript_parser().expect("ACP transcript parser");
+        assert_eq!(parser.format_id(), expected_fmt);
+    }
 
     // Medium #2: Codex item.started ignored, cumulative total_token_usage maxed (not summed), unique raw-* IDs.
     let codex_edge = [
