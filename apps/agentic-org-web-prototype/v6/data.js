@@ -11,8 +11,8 @@ const M = {
   kai:   { name: "Kai", kind: "agent", tier: "specialist", role: "Rust Developer", teams: ["platform"], mgr: "ada", live: "withyou", task: "Codec split 2a.3.2b", proj: "agency-v1", goal: "2a.3.2b merged into v1 with the full suite green", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-software-engineer-kai" } },
   sage:  { name: "Sage", kind: "agent", tier: "specialist", role: "Rust Developer", teams: ["platform"], mgr: "ada", live: "working", task: "Custody lock fix", proj: "office-federation", goal: "Lock fix merged after the owner picks lease or per-office lock", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-software-engineer-sage" } },
   quinn: { name: "Quinn", kind: "agent", tier: "specialist", role: "Rust Developer", teams: ["platform"], mgr: "ada", live: "asleep", task: "", proj: "office-federation", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "On a schedule (weekdays 09:00)", office: "sat", home: "projects/ac/agents/ac-software-engineer-quinn" } },
-  jules: { name: "Jules", kind: "agent", tier: "specialist", role: "Svelte Developer", teams: ["app"], mgr: "ada", live: "asleep", budgetCapped: true, task: "Search placeholder contrast (T-A84)", proj: "look-feel", goal: "T-A84 fixed with an e2e test that fails before the fix", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-software-engineer-jules" } },
-  avery: { name: "Avery", kind: "agent", tier: "specialist", role: "Svelte Developer", teams: ["app"], mgr: "ada", live: "available", paused: true, task: "", proj: "look-feel", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-software-engineer-avery" } },
+  jules: { name: "Jules", kind: "agent", tier: "specialist", role: "Svelte Developer", teams: ["app"], mgr: "ada", live: "asleep", budgetCapped: true, task: "Search placeholder contrast (T-A84)", proj: "look-feel", goal: "T-A84 fixed with an e2e test that fails before the fix", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "studio", home: "projects/ac/agents/ac-software-engineer-jules" } },
+  avery: { name: "Avery", kind: "agent", tier: "specialist", role: "Svelte Developer", teams: ["app"], mgr: "ada", live: "available", paused: true, task: "", proj: "look-feel", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "linux", home: "projects/ac/agents/ac-software-engineer-avery" } },
   noor:  { name: "Noor Haddad", kind: "agent", tier: "specialist", role: "Support Engineer", teams: ["quality"], mgr: "tomas", live: "asleep", task: "", proj: null, setup: { runtime: "Claude Code", model: "Claude Sonnet", how: "Wakes when called", office: null, home: "projects/ac/agents/ac-support-engineer-noor", needs: "not placed in an office" } }
 };
 const TEAMS = {
@@ -443,9 +443,17 @@ const CH = {
     { id: "ar1", who: "ada", time: "Nov 18, 11:00", text: "Can Platform take the custody lock ruling this week, or should it wait for v1.1?" },
     { id: "ar2", who: "rowan", time: "Nov 18, 11:14", text: "This week. I'll write it up as T-A118 with the tests that pin it." } ] }
 };
+/* Update fields (Updates, TASK-250): an office runs on one instance, and the release pin is per instance (doc-70).
+   update: "current" | "available" | "queued" (offline) | "failed"; checked is when its instance last checked for a release. */
 const OFFICES = {
-  hq:  { name: "HQ", machine: "This Mac", status: "Online", tone: "green", icon: "check-circle", note: "Main office · version 1.0.0-rc.3" },
-  sat: { name: "Build box", machine: "mac-mini-2 (satellite)", status: "Offline", tone: "outline", icon: "offline", note: "Last seen 2 hours ago · syncs with HQ" }
+  hq:     { name: "HQ", machine: "This Mac", status: "Online", tone: "green", icon: "check-circle", note: "Main office · version 1.0.0",
+            role: "HQ", instance: "default", host: "this-mac", version: "1.0.0", update: "current", checked: "Today 09:12" },
+  studio: { name: "Studio Mac", machine: "studio-mac (satellite)", status: "Online", tone: "green", icon: "check-circle", note: "From 192.168.1.31 · syncs with HQ",
+            role: "Office", instance: "default", host: "studio-mac", version: "1.0.0-rc.4", update: "available", checked: "Today 09:15" },
+  linux:  { name: "Linux runner", machine: "ci-runner-01 (satellite, Linux)", status: "Online", tone: "green", icon: "check-circle", note: "From 10.0.4.12 · syncs with HQ",
+            role: "Office", instance: "runner", host: "ci-runner-01", version: "1.0.0-rc.4", update: "failed", checked: "Today 08:40" },
+  sat:    { name: "Build box", machine: "mac-mini-2 (satellite)", status: "Offline", tone: "outline", icon: "offline", note: "Last seen 2 hours ago · syncs with HQ",
+            role: "Office", instance: "default", host: "mac-mini-2", version: "1.0.0-rc.2", update: "queued", checked: "Today 07:02" }
 };
 const NOTES = {
   default: (id) => ({

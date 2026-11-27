@@ -6,7 +6,7 @@ import { settingsProcesses } from "./processes.js";
 import { pageDevProcesses } from "./dev-processes.js";
 import { SEP, av, avStack, crumbs, empty, esc, hdr, ic, mlink, pill, plural, presPill, seg } from "../ui.js";
 
-const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["access", "Members and access", "key"], ["updates", "Updates", "download"], ["appearance", "Appearance", "adjustments"]];
+const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["access", "Members and access", "key"], ["appearance", "Appearance", "adjustments"]];
 const health = (a) => (M[a].offboarded ? "Offboarded" : M[a].setup.needs ? "Needs setup: " + M[a].setup.needs : M[a].paused ? "Paused" : "Ready");
 const healthMark = (a) => { const h = health(a); const [icon, tone] = h === "Ready" ? ["check-circle", "green"] : (h === "Paused" || h === "Offboarded") ? ["pause", "gray"] : ["wrench", "amber"]; return pill(h, tone, icon); };
 function settingsFrame(active, header, content) {
@@ -38,7 +38,7 @@ function pageSettings(sec = "general", sub) {
     <div><label for="o-owner">Owner</label><input class="field" id="o-owner" value="You" disabled></div><div><label for="o-data">Data location</label><input class="field" id="o-data" value="This Mac · HQ office" disabled><p class="help">Change where things run in Offices.</p></div>
     <div><button class="btn primary" type="submit">Save changes</button></div></form>`;
   else if (sec === "offices") {
-    header = hdr("Offices", "2 offices · 1 online");
+    header = hdr("Offices", `${plural(Object.keys(OFFICES).length, "office", "offices")} · ${Object.values(OFFICES).filter((o) => o.status === "Online").length} online`);
     body = `<p class="desc">Where your agents run. HQ is this Mac; another office syncs with it.</p><ul class="rows settings-rows" role="list" style="margin-top:8px">${Object.entries(OFFICES).map(([k, o]) => {
     const here = agents.filter((a) => M[a].setup.office === k);
     return `<li>${ic("office", "ic20 chev")}<div class="grow"><p class="rt">${esc(o.name)}<span class="sec">${esc(o.machine)}</span></p><div class="meta"><span>${esc(o.note)}</span>${SEP}<span>${plural(here.length, "agent", "agents")}: ${here.map((a) => mlink(a)).join(", ")}</span></div><div style="margin-top:8px">${avStack(here, 10)}</div></div>${pill(o.status, o.tone, o.icon)}</li>`;
@@ -59,7 +59,6 @@ function pageSettings(sec = "general", sub) {
     const [icon, description] = {
       roles: ["id", "Roles define what each agent does."],
       access: ["key", "Members and access manages who can use this organization."],
-      updates: ["download", "Updates installs new versions of Agentic Org."],
     }[sec];
     body = empty(icon, "Not available in this prototype", description);
   }
