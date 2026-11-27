@@ -65,6 +65,14 @@ pub(super) fn set_owner_only_dir(_path: &Path) -> io::Result<()> {
     refused()
 }
 
+pub(super) fn set_owner_read_only_dir(_path: &Path) -> io::Result<()> {
+    refused()
+}
+
+pub(super) fn set_owner_read_only_dir_handle(_dir: &File) -> io::Result<()> {
+    refused()
+}
+
 pub(super) fn create_owner_only_dir(_path: &Path) -> io::Result<()> {
     refused()
 }
@@ -74,6 +82,18 @@ pub(super) fn create_owner_only_dir_all(_path: &Path) -> io::Result<()> {
 }
 
 pub(super) fn write_owner_only_file(_path: &Path, _bytes: &[u8]) -> io::Result<()> {
+    refused()
+}
+
+pub(super) fn write_owner_read_only_file(_path: &Path, _bytes: &[u8]) -> io::Result<()> {
+    refused()
+}
+
+pub(super) fn write_owner_read_only_file_at(
+    _dir: &File,
+    _name: &std::ffi::OsStr,
+    _bytes: &[u8],
+) -> io::Result<()> {
     refused()
 }
 
@@ -122,6 +142,14 @@ pub(super) fn verify_owner_only_file(
 }
 
 pub(super) fn open_owner_only_dir(_path: &Path, _expected_uid: u32) -> io::Result<File> {
+    refused()
+}
+
+pub(super) fn open_owner_only_child(
+    _dir: &File,
+    _name: &std::ffi::OsStr,
+    _expected_uid: u32,
+) -> io::Result<File> {
     refused()
 }
 
@@ -216,9 +244,20 @@ mod tests {
         unsupported(super::require_disk(&directory, Path::new("/")));
         let dir = tempfile::tempdir().unwrap();
         assert_refused(super::set_owner_only_dir(dir.path()));
+        assert_refused(super::set_owner_read_only_dir(dir.path()));
+        assert_refused(super::set_owner_read_only_dir_handle(&directory));
         assert_refused(super::create_owner_only_dir(&dir.path().join("a")));
         assert_refused(super::create_owner_only_dir_all(&dir.path().join("a/b")));
         assert_refused(super::write_owner_only_file(&dir.path().join("f"), b"x"));
+        assert_refused(super::write_owner_read_only_file(
+            &dir.path().join("ro"),
+            b"x",
+        ));
+        assert_refused(super::write_owner_read_only_file_at(
+            &directory,
+            std::ffi::OsStr::new("ro"),
+            b"x",
+        ));
         assert_refused(super::open_nofollow_ro(&dir.path().join("f")));
         assert_refused(super::open_regular_beneath(dir.path(), Path::new("f")));
         assert_refused(super::write_regular_beneath(
@@ -248,6 +287,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let held = File::open(dir.path()).unwrap();
         assert_refused(super::open_owner_only_dir(dir.path(), 0));
+        assert_refused(super::open_owner_only_child(
+            &held,
+            std::ffi::OsStr::new("child"),
+            0,
+        ));
         assert_refused(super::open_or_create_owner_only_child(
             &held,
             std::ffi::OsStr::new("child"),

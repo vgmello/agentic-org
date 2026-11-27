@@ -392,7 +392,10 @@ impl Session for EchoSession {
                 }
                 Err(ControlError::Busy)
             }
-            Control::Send { text, .. } => {
+            Control::Send { text, images } => {
+                if !images.is_empty() {
+                    return Err(ControlError::Unsupported);
+                }
                 self.state = State::Busy;
                 Ok(vec![
                     Self::write(json!({"type": "user", "text": text})),
@@ -639,6 +642,7 @@ impl AgentRuntime for EchoRuntime {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,
+            image_input: org_agent_runtime::ImageInputMode::None,
             interrupt_in_band: true,
             idle_interrupt_ends_turn: false,
             approval_bridge: true,
@@ -857,7 +861,13 @@ fn a_session_runs_a_turn_through_the_port() {
     assert_eq!(hello.as_bytes(), b"{\"type\":\"hello\"}\n");
     assert_eq!(session.next_deadline(), Some(t0 + OPEN_TIMEOUT));
     assert_eq!(
-        session.control(Control::Send { text: "hi".into() }, t0),
+        session.control(
+            Control::Send {
+                text: "hi".into(),
+                images: Vec::new(),
+            },
+            t0
+        ),
         Err(ControlError::NotReady)
     );
 
@@ -872,6 +882,7 @@ fn a_session_runs_a_turn_through_the_port() {
         .control(
             Control::Send {
                 text: "line\u{2028}two".into(),
+                images: Vec::new(),
             },
             t0,
         )
@@ -890,6 +901,7 @@ fn a_session_runs_a_turn_through_the_port() {
         session.control(
             Control::Send {
                 text: "more".into(),
+                images: Vec::new(),
             },
             t0
         ),
@@ -900,6 +912,7 @@ fn a_session_runs_a_turn_through_the_port() {
             Control::DeliverMidTurn {
                 delivery_id: "d-1".into(),
                 text: "more".into(),
+                images: Vec::new(),
             },
             t0
         ),
@@ -1112,7 +1125,10 @@ fn ready_session(now: Instant) -> (Box<dyn Session>, LineFramer) {
 }
 
 fn send(text: &str) -> Control {
-    Control::Send { text: text.into() }
+    Control::Send {
+        text: text.into(),
+        images: Vec::new(),
+    }
 }
 
 /// The fake's fixture lines for the testkit: `ready` opens, the Send alone starts the turn,

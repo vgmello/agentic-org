@@ -636,3 +636,384 @@ fn a_list_whose_scope_contradicts_its_target_kind_is_refused_not_reinterpreted()
         Ok(0)
     );
 }
+
+#[test]
+fn delivery_read_refuses_user_private_unauthorized_dm_and_enforces_chief_of_staff_caller_intersection(
+) {
+    use crate::attachments::{DeliveryAttachmentPayload, DeliveryScope};
+    use org_proto::chat::{ChatSendParams, DmOpenParams};
+    use org_proto::org::MemberRemoveParams;
+
+    for engine in ENGINES {
+        let fx = Fixture::new(engine);
+        let office = &fx.office;
+        let tess = office
+            .chief_of_staff()
+            .unwrap()
+            .expect("built-in Chief of Staff")
+            .id
+            .to_string();
+
+        // 1. `user_private` attachment: refused for ordinary agents AND for Tess (even acting for Owner).
+        let priv_up = upload(office, &fx.owner, "diary.txt", "text/plain", b"owner-only").unwrap();
+        let priv_att = attach_upload(
+            office,
+            &fx.owner,
+            &priv_up.upload_id,
+            AttachmentTargetKind::UserPrivate,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            office
+                .attachment_read_for_delivery_with(
+                    &fx.agent,
+                    &priv_att.id,
+                    &DeliveryScope::None,
+                    u64::MAX,
+                    None
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound,
+            "agent must never read user_private via delivery read"
+        );
+        assert_eq!(
+            office
+                .attachment_read_for_delivery_with(
+                    &tess,
+                    &priv_att.id,
+                    &DeliveryScope::ActingForPerson(fx.owner.clone()),
+                    u64::MAX,
+                    None
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound,
+            "Chief of Staff must never read owner user_private even when acting for owner"
+        );
+
+        // 2. Bob (`fx.person`) <-> Tess DM with a document attachment.
+        let _ = office
+            .dm_open(
+                &fx.person,
+                DmOpenParams {
+                    participants: vec![tess.clone()],
+                    name: None,
+                    conversation_id: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let bob_up = upload(
+            office,
+            &fx.person,
+            "bob-secret.txt",
+            "text/plain",
+            b"private bob notes",
+        )
+        .unwrap();
+        let bob_msg = office
+            .chat_send(
+                &fx.person,
+                ChatSendParams {
+                    id: next_uuid(),
+                    to: tess.clone(),
+                    kind: org_proto::msg::KIND_MSG.into(),
+                    priority: None,
+                    subject: None,
+                    body: "Strictly between Bob and Tess".into(),
+                    attachment_ids: vec![bob_up.upload_id],
+                    meta: Default::default(),
+                    reply_to: None,
+                    also_in_channel: false,
+                    reason: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let bob_dm_att_id = bob_msg.message.attachments[0].id.clone();
+
+        // Ordinary agent outside Bob<->Tess DM is refused.
+        assert_eq!(
+            office
+                .attachment_read_for_delivery_with(
+                    &fx.outsider_agent,
+                    &bob_dm_att_id,
+                    &DeliveryScope::None,
+                    u64::MAX,
+                    None
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound,
+            "non-participant agent must be refused DM attachment"
+        );
+
+        // Chief of Staff acting for Bob (active Person participant) succeeds!
+        let ok_for_bob = office
+            .attachment_read_for_delivery_with(
+                &tess,
+                &bob_dm_att_id,
+                &DeliveryScope::ActingForPerson(fx.person.clone()),
+                u64::MAX,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            ok_for_bob,
+            DeliveryAttachmentPayload::Document {
+                bytes: Some(ref b),
+                ..
+            } if b == b"private bob notes"
+        ));
+
+        // Clamping check: remaining_budget smaller than file returns `bytes: None` without error.
+        let clamped = office
+            .attachment_read_for_delivery_with(
+                &tess,
+                &bob_dm_att_id,
+                &DeliveryScope::ActingForPerson(fx.person.clone()),
+                4,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            clamped,
+            DeliveryAttachmentPayload::Document { bytes: None, .. }
+        ));
+
+        // Chief of Staff acting for Owner MUST NOT cross into Bob<->Tess DM!
+        assert_eq!(
+            office
+                .attachment_read_for_delivery_with(
+                    &tess,
+                    &bob_dm_att_id,
+                    &DeliveryScope::ActingForPerson(fx.owner.clone()),
+                    u64::MAX,
+                    None
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound,
+            "owner must NEVER read another member's DM with Tess via caller ∩ tess"
+        );
+
+        // Chief of Staff in `tess:wake` (`DeliveryScope::None`) MUST refuse DM attachments!
+        assert_eq!(
+            office
+                .attachment_read_for_delivery_with(
+                    &tess,
+                    &bob_dm_att_id,
+                    &DeliveryScope::None,
+                    u64::MAX,
+                    None
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound,
+            "tess:wake must refuse DM attachments fail-closed"
+        );
+
+        // Chief of Staff in `tess:dm:<agent>` (`DirectSender`) can read agent's own DM, never Bob's.
+        assert_eq!(
+            office
+                .attachment_read_for_delivery_with(
+                    &tess,
+                    &bob_dm_att_id,
+                    &DeliveryScope::DirectSender(fx.agent.clone()),
+                    u64::MAX,
+                    None
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound,
+            "tess:dm:<agent> must refuse Bob<->Tess DM attachment"
+        );
+        let _ = office
+            .dm_open(
+                &fx.agent,
+                DmOpenParams {
+                    participants: vec![tess.clone()],
+                    name: None,
+                    conversation_id: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let ag_up = upload(office, &fx.agent, "bot.txt", "text/plain", b"from agent").unwrap();
+        let ag_msg = office
+            .chat_send(
+                &fx.agent,
+                ChatSendParams {
+                    id: next_uuid(),
+                    to: tess.clone(),
+                    kind: org_proto::msg::KIND_MSG.into(),
+                    priority: None,
+                    subject: None,
+                    body: "Agent report".into(),
+                    attachment_ids: vec![ag_up.upload_id],
+                    meta: Default::default(),
+                    reply_to: None,
+                    also_in_channel: false,
+                    reason: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let ag_dm_att_id = ag_msg.message.attachments[0].id.clone();
+        assert!(
+            office
+                .attachment_read_for_delivery_with(
+                    &tess,
+                    &ag_dm_att_id,
+                    &DeliveryScope::DirectSender(fx.agent.clone()),
+                    u64::MAX,
+                    None
+                )
+                .unwrap()
+                .is_ok(),
+            "tess:dm:<agent> may read attachment from <agent><->Tess DM"
+        );
+        // Agent ID passed in `ActingForPerson` must be refused (only active Person may delegate).
+        assert_eq!(
+            office
+                .attachment_read_for_delivery_with(
+                    &tess,
+                    &ag_dm_att_id,
+                    &DeliveryScope::ActingForPerson(fx.agent.clone()),
+                    u64::MAX,
+                    None
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound,
+            "ActingForPerson must require a Person, never an Agent"
+        );
+
+        // 3. Public channel attachment: allowed in `tess:wake` (`DeliveryScope::None`)!
+        let ch_up = upload(
+            office,
+            &fx.owner,
+            "announce.txt",
+            "text/plain",
+            b"channel announcement",
+        )
+        .unwrap();
+        let ch_msg = office
+            .chat_send(
+                &fx.owner,
+                ChatSendParams {
+                    id: next_uuid(),
+                    to: "#general".into(),
+                    kind: org_proto::msg::KIND_MSG.into(),
+                    priority: None,
+                    subject: None,
+                    body: "Public channel file".into(),
+                    attachment_ids: vec![ch_up.upload_id],
+                    meta: Default::default(),
+                    reply_to: None,
+                    also_in_channel: false,
+                    reason: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let ch_att_id = ch_msg.message.attachments[0].id.clone();
+        assert!(
+            office
+                .attachment_read_for_delivery_with(
+                    &tess,
+                    &ch_att_id,
+                    &DeliveryScope::None,
+                    u64::MAX,
+                    None
+                )
+                .unwrap()
+                .is_ok(),
+            "tess:wake may read public channel attachments"
+        );
+
+        // 4. Deactivated / offboarded caller (`MemberRemove`) is immediately refused!
+        let bob_rev = office
+            .load_employee(&fx.person)
+            .unwrap()
+            .expect("bob exists")
+            .meta
+            .revision;
+        office
+            .submit_org(
+                &fx.owner,
+                OrgCommand::MemberRemove(MemberRemoveParams {
+                    command_id: next_uuid(),
+                    member_id: fx.person.clone(),
+                    expected_version: bob_rev,
+                }),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            office
+                .attachment_read_for_delivery_with(
+                    &tess,
+                    &bob_dm_att_id,
+                    &DeliveryScope::ActingForPerson(fx.person.clone()),
+                    u64::MAX,
+                    None
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound,
+            "deactivated/offboarded caller must be refused immediately"
+        );
+
+        // 5. Offboarded/inactive agent in `tess:dm:<agent>` is also immediately refused!
+        let agent_rev = office
+            .load_employee(&fx.agent)
+            .unwrap()
+            .expect("agent exists")
+            .meta
+            .revision;
+        let offboard_req = org_proto::Request::new::<org_proto::hiring::AgentOffboard>(
+            99,
+            &org_proto::hiring::AgentOffboardParams {
+                command_id: next_uuid(),
+                member_id: fx.agent.clone(),
+                expected_version: agent_rev,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            office
+                .dispatch_hiring_rpc(Some(&fx.owner), &offboard_req)
+                .unwrap()
+                .outcome,
+            org_proto::Outcome::Result(_)
+        ));
+        assert_eq!(
+            office
+                .attachment_read_for_delivery_with(
+                    &tess,
+                    &ag_dm_att_id,
+                    &DeliveryScope::DirectSender(fx.agent.clone()),
+                    u64::MAX,
+                    None
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound,
+            "offboarded/inactive DirectSender must be refused immediately"
+        );
+    }
+}

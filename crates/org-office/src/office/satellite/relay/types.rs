@@ -15,6 +15,8 @@ pub struct RelayedAskAnswer {
     pub asker_id: String,
     pub question_summary: String,
     pub answer_summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<String>,
 }
 
 /// Structured withdrawal summary returned when an inbound relayed withdrawal closes a local ask

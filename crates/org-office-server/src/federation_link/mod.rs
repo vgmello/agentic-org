@@ -42,6 +42,7 @@ pub struct RelayedWake {
     pub sender_is_person: bool,
     pub conversation_id: Option<String>,
     pub summary: String,
+    pub attachment_ids: Vec<String>,
     pub ask_answer: Option<org_office::RelayedAskAnswer>,
     pub ask_withdrawal: Option<org_office::RelayedAskWithdrawal>,
 }

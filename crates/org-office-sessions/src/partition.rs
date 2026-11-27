@@ -70,6 +70,28 @@ impl PartitionKey {
     pub fn caller_id(&self) -> Option<&str> {
         self.0.strip_prefix(TESS_ASK_PREFIX)
     }
+
+    /// Alias for [`Self::caller_id`], naming the delegated human caller for `tess:ask:` turns.
+    pub fn acting_for_caller_id(&self) -> Option<&str> {
+        self.caller_id()
+    }
+
+    /// The non-person sender a `tess:dm:` partition belongs to.
+    pub fn dm_sender_id(&self) -> Option<&str> {
+        self.0.strip_prefix(TESS_DM_PREFIX)
+    }
+
+    /// Maps this Chief of Staff partition to the [`org_office::attachments::DeliveryScope`]
+    /// enforced on turn attachment resolution (`TASK-80.1`, `TASK-98.3`).
+    pub fn delivery_scope(&self) -> org_office::attachments::DeliveryScope {
+        if let Some(caller_id) = self.caller_id() {
+            org_office::attachments::DeliveryScope::ActingForPerson(caller_id.to_owned())
+        } else if let Some(sender_id) = self.dm_sender_id() {
+            org_office::attachments::DeliveryScope::DirectSender(sender_id.to_owned())
+        } else {
+            org_office::attachments::DeliveryScope::None
+        }
+    }
 }
 
 impl fmt::Display for PartitionKey {

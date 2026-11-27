@@ -397,6 +397,7 @@ fn task166_recycle_stale_warm_handle_fails_closed_and_updates_existing_active_tu
             started_identity: None,
             boot_identity: None,
             objective: "work".into(),
+            attachment_ids: Vec::new(),
             accepted_commands: Vec::new(),
             resume_attempts: 0,
             consecutive_stalls: 0,

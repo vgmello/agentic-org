@@ -1,15 +1,141 @@
 //! Turn dispatch: turn permits and lease heartbeats, queued turns, and mid-turn delivery.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use org_agent_runtime::Control;
+use org_agent_runtime::{Control, ControlError, ImageInputMode, MidTurnDelivery, Output};
+use org_office::attachments::DeliveryScope;
 use org_proto::sessions::SessionState;
 
-use crate::credentials::now_ms;
+use crate::credentials::{now_ms, rfc3339_now};
+use crate::turn_attachments::{
+    prepare_turn_attachments, purge_turn_dir, PrepareTurnAttachmentsRequest, PreparedTurnInput,
+    MAX_ATTACHMENTS_PER_TURN, MAX_DOC_STAGING_BYTES_PER_TURN,
+};
 
 use super::commands::{build_stale_failover_request, release_active_permit, take_pending_turns};
 use super::events::apply_outputs;
+use super::queue::{merge_queued_turns, QueuedTurn};
 use super::{persist_turn_update, MidTurnStageOutcome, PumpContext, PumpLoopState};
+
+fn delivery_scope(ctx: &PumpContext) -> DeliveryScope {
+    ctx.partition
+        .as_ref()
+        .map(|p| p.key().delivery_scope())
+        .unwrap_or(DeliveryScope::None)
+}
+
+fn stage_entropy_hex() -> String {
+    if let Ok(hex) = crate::credentials::random_hex(8) {
+        return hex;
+    }
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher as _, Hasher as _};
+    static FALLBACK_SEQ: AtomicU64 = AtomicU64::new(1);
+    let mut hasher = RandomState::new().build_hasher();
+    hasher.write_u64(FALLBACK_SEQ.fetch_add(1, Ordering::Relaxed));
+    hasher.write_u64(now_ms());
+    format!("{:016x}", hasher.finish())
+}
+
+fn next_stage_turn_id(run_id: &str, seq: u64, force_text_only: bool) -> String {
+    let rand = stage_entropy_hex();
+    let raw = if force_text_only {
+        format!("{run_id}-t{seq}-fb-{rand}")
+    } else {
+        format!("{run_id}-t{seq}-{rand}")
+    };
+    if raw.len() <= 128 {
+        raw
+    } else {
+        format!("t{seq}-{rand}")
+    }
+}
+
+fn next_mid_turn_stage_id(run_id: &str, delivery_id: &str) -> String {
+    let rand = stage_entropy_hex();
+    let raw = format!("{run_id}-{delivery_id}-{rand}");
+    if raw.len() <= 128 {
+        raw
+    } else {
+        format!("mt-{rand}")
+    }
+}
+
+fn send_turn_with_fallback(
+    ctx: &PumpContext,
+    session: &mut Box<dyn org_agent_runtime::Session>,
+    queued: &QueuedTurn,
+    next_seq: u64,
+) -> (Result<Vec<Output>, ControlError>, PreparedTurnInput, bool) {
+    let scope = delivery_scope(ctx);
+    let stage_turn_id = next_stage_turn_id(&ctx.run_id, next_seq, queued.force_text_only);
+    let mut prepared = prepare_turn_attachments(PrepareTurnAttachmentsRequest {
+        employee_id: &ctx.employee_id,
+        delivery_scope: &scope,
+        turn_id: &stage_turn_id,
+        base_text: queued.text.clone(),
+        attachment_ids: &queued.attachment_ids,
+        image_input_mode: ctx.runtime.capabilities().image_input,
+        allow_protocol_images: true,
+        model_supports_vision: ctx.model_supports_vision,
+        force_text_only: queued.force_text_only,
+        remaining_staging_budget: MAX_DOC_STAGING_BYTES_PER_TURN,
+        remaining_attachment_slots: MAX_ATTACHMENTS_PER_TURN,
+        attachments_root: &ctx.attachments_root,
+        resolver: ctx.attachment_resolver.as_ref(),
+    });
+    let mut retried_text_only = queued.force_text_only;
+    let first = session.control(
+        Control::Send {
+            text: std::mem::take(&mut prepared.text),
+            images: std::mem::take(&mut prepared.images),
+        },
+        Instant::now(),
+    );
+    match first {
+        Err(ControlError::Unsupported)
+            if prepared.had_protocol_images && !queued.force_text_only =>
+        {
+            if let Some(tid) = prepared.staged_turn_id.take() {
+                purge_turn_dir(&ctx.attachments_root, &tid);
+            }
+            let fb_id = next_stage_turn_id(&ctx.run_id, next_seq, true);
+            prepared = prepare_turn_attachments(PrepareTurnAttachmentsRequest {
+                employee_id: &ctx.employee_id,
+                delivery_scope: &scope,
+                turn_id: &fb_id,
+                base_text: queued.text.clone(),
+                attachment_ids: &queued.attachment_ids,
+                image_input_mode: ctx.runtime.capabilities().image_input,
+                allow_protocol_images: true,
+                model_supports_vision: ctx.model_supports_vision,
+                force_text_only: true,
+                remaining_staging_budget: MAX_DOC_STAGING_BYTES_PER_TURN,
+                remaining_attachment_slots: MAX_ATTACHMENTS_PER_TURN,
+                attachments_root: &ctx.attachments_root,
+                resolver: ctx.attachment_resolver.as_ref(),
+            });
+            retried_text_only = true;
+            let note = serde_json::json!({
+                "type": "image_fallback_retry",
+                "reason": "control_send_unsupported",
+                "attachment_count": queued.attachment_ids.len(),
+                "at": rfc3339_now(),
+            });
+            let _ = ctx.store.append_history(&ctx.employee_id, &note, &[]);
+            let retry = session.control(
+                Control::Send {
+                    text: std::mem::take(&mut prepared.text),
+                    images: std::mem::take(&mut prepared.images),
+                },
+                Instant::now(),
+            );
+            (retry, prepared, retried_text_only)
+        }
+        other => (other, prepared, retried_text_only),
+    }
+}
 
 pub(super) enum PermitCheck {
     Ready,
@@ -94,49 +220,83 @@ pub(super) fn dispatch_next_turn(
     match ensure_permit_for_turn(ctx, loop_state) {
         PermitCheck::Ready => {}
         PermitCheck::StaleWarm => {
-            let objective = take_pending_turns(ctx, loop_state).join("\n\n");
-            loop_state.failover_pending = Some(build_stale_failover_request(ctx, objective));
+            let (objective, attachment_ids) =
+                merge_queued_turns(take_pending_turns(ctx, loop_state));
+            loop_state.failover_pending =
+                Some(build_stale_failover_request(ctx, objective, attachment_ids));
             loop_state.stop_requested = true;
             return;
         }
         PermitCheck::Refused => return,
     }
-    let text = loop_state.pending_turns.remove(0);
+    let queued = loop_state.pending_turns.remove(0);
     loop_state.front_is_steer = false;
     ctx.state
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .dequeue_turns(1);
-    let objective_for_disk = text.clone();
-    loop_state.current_objective = text.clone();
+    let next_seq = loop_state.turns_dispatched.saturating_add(1);
+    let (send_res, mut prepared, retried_text_only) =
+        send_turn_with_fallback(ctx, session, &queued, next_seq);
+    let objective_for_disk = queued.text.clone();
+    let attachment_ids_for_disk = queued.attachment_ids.clone();
+    loop_state.current_objective = queued.text;
+    loop_state.current_attachment_ids = queued.attachment_ids;
+    loop_state.current_turn_staged_id = prepared.staged_turn_id.take();
+    loop_state.current_turn_had_protocol_images = prepared.had_protocol_images;
+    loop_state.current_turn_image_fallback_retried = retried_text_only;
+    loop_state.current_turn_remaining_staging_budget = prepared.remaining_staging_budget;
+    loop_state.current_turn_remaining_attachment_slots = prepared.remaining_attachment_slots;
     loop_state.turn_reply = None;
     loop_state.had_external_effect = false;
     loop_state.accepted_commands_baseline = ctx.bindings.accepted_commands(&ctx.employee_id).len();
     loop_state.rate_limited = false;
     loop_state.rate_limit_resets_at = None;
     loop_state.last_permit_renew = Instant::now();
-    if let Ok(outs) = session.control(Control::Send { text }, Instant::now()) {
-        loop_state.turn_active = true;
-        loop_state.turns_dispatched = loop_state.turns_dispatched.saturating_add(1);
-        loop_state.in_flight_delivery = None;
-        loop_state.mid_turn_total_this_turn = 0;
-        loop_state.mid_turn_agent_this_turn = 0;
-        loop_state.mid_turn_dirty = true;
-        loop_state.mid_turn_next_check = None;
-        persist_turn_update(ctx, |rec| {
-            rec.objective = objective_for_disk;
-            rec.active = true;
-        });
-        apply_outputs(outs, stdin, ctx, loop_state, session);
-    } else {
-        release_active_permit(ctx);
-        loop_state.permit_lease_deadline = None;
-        // The turn never started: the session marked busy when it was queued is idle again,
-        // unless another turn is queued behind it.
-        ctx.state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .settle_idle();
+    match send_res {
+        Ok(outs) => {
+            loop_state.turn_active = true;
+            loop_state.turns_dispatched = next_seq;
+            loop_state.in_flight_delivery = None;
+            loop_state.in_flight_delivery_staged_id = None;
+            loop_state.mid_turn_staged_ids.clear();
+            loop_state.mid_turn_total_this_turn = 0;
+            loop_state.mid_turn_agent_this_turn = 0;
+            loop_state.mid_turn_dirty = true;
+            loop_state.mid_turn_next_check = None;
+            persist_turn_update(ctx, |rec| {
+                rec.objective = objective_for_disk;
+                rec.attachment_ids = attachment_ids_for_disk;
+                rec.active = true;
+            });
+            apply_outputs(outs, stdin, ctx, loop_state, session);
+        }
+        Err(err) => {
+            if let Some(tid) = loop_state.current_turn_staged_id.take() {
+                purge_turn_dir(&ctx.attachments_root, &tid);
+            }
+            loop_state.current_turn_had_protocol_images = false;
+            loop_state.current_turn_image_fallback_retried = false;
+            loop_state.current_turn_remaining_staging_budget = MAX_DOC_STAGING_BYTES_PER_TURN;
+            loop_state.current_turn_remaining_attachment_slots = MAX_ATTACHMENTS_PER_TURN;
+            release_active_permit(ctx);
+            loop_state.permit_lease_deadline = None;
+            let err_msg = format!("turn dispatch failed: {err:?}");
+            {
+                // The turn never started: record the error clearly and settle back to idle
+                // unless another turn is queued behind it.
+                let mut st = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+                st.last_error = Some(err_msg);
+                st.settle_idle();
+            }
+            let note = serde_json::json!({
+                "type": "turn_dispatch_error",
+                "error": format!("{err:?}"),
+                "attachment_count": loop_state.current_attachment_ids.len(),
+                "at": rfc3339_now(),
+            });
+            let _ = ctx.store.append_history(&ctx.employee_id, &note, &[]);
+        }
     }
 }
 
@@ -189,20 +349,53 @@ pub(super) fn maybe_deliver_mid_turn(
             loop_state.mid_turn_next_check = Some(Instant::now() + dur);
         }
         MidTurnStageOutcome::Ready(batch) => {
+            let caps = ctx.runtime.capabilities();
+            let allow_protocol_images = caps.image_input == ImageInputMode::LocalPath
+                && caps.mid_turn_delivery == MidTurnDelivery::NativeSteer;
+            let scope = delivery_scope(ctx);
+            let stage_id = next_mid_turn_stage_id(&ctx.run_id, &batch.delivery_id);
+            let prepared = prepare_turn_attachments(PrepareTurnAttachmentsRequest {
+                employee_id: &ctx.employee_id,
+                delivery_scope: &scope,
+                turn_id: &stage_id,
+                base_text: batch.text.clone(),
+                attachment_ids: &batch.attachment_ids,
+                image_input_mode: caps.image_input,
+                allow_protocol_images,
+                model_supports_vision: ctx.model_supports_vision,
+                force_text_only: false,
+                remaining_staging_budget: loop_state.current_turn_remaining_staging_budget,
+                remaining_attachment_slots: loop_state.current_turn_remaining_attachment_slots,
+                attachments_root: &ctx.attachments_root,
+                resolver: ctx.attachment_resolver.as_ref(),
+            });
             let ctrl = Control::DeliverMidTurn {
                 delivery_id: batch.delivery_id.clone(),
-                text: batch.text.clone(),
+                text: prepared.text,
+                images: prepared.images,
             };
             match session.control(ctrl, Instant::now()) {
                 Ok(outs) => {
                     loop_state.in_flight_delivery = Some(batch);
+                    loop_state.in_flight_delivery_staged_id = prepared.staged_turn_id;
+                    loop_state.current_turn_remaining_staging_budget =
+                        prepared.remaining_staging_budget;
+                    loop_state.current_turn_remaining_attachment_slots =
+                        prepared.remaining_attachment_slots;
                     apply_outputs(outs, stdin, ctx, loop_state, session);
                 }
                 Err(org_agent_runtime::ControlError::NotReady) => {
+                    if let Some(tid) = prepared.staged_turn_id {
+                        purge_turn_dir(&ctx.attachments_root, &tid);
+                    }
                     loop_state.mid_turn_next_check =
                         Some(Instant::now() + MID_TURN_NOT_READY_RETRY);
                 }
-                Err(_) => {}
+                Err(_) => {
+                    if let Some(tid) = prepared.staged_turn_id {
+                        purge_turn_dir(&ctx.attachments_root, &tid);
+                    }
+                }
             }
         }
     }

@@ -38,6 +38,7 @@ pub mod stream_hub;
 pub mod subagents;
 pub mod subscription_usage;
 pub mod transcript;
+pub use org_turn_attachments as turn_attachments;
 pub mod wake;
 
 pub use binding::{
@@ -78,6 +79,11 @@ pub use subscription_usage::{
     HttpUsageResponse, ProviderSubscriptionUsageCollector, SubscriptionUsageCollectOutcome,
     SubscriptionUsageCollectRequest, SubscriptionUsageCollector, SubscriptionUsageTransport,
     SystemHttpsUsageTransport, UsageTransportError,
+};
+pub use turn_attachments::{
+    LocalOfficeAttachmentResolver, TurnAttachmentRef, TurnAttachmentResolver,
+    MAX_DOC_STAGING_BYTES_PER_TURN, MAX_IMAGE_DERIVATIVE_BYTES, MAX_INLINE_IMAGES_PER_TURN,
+    UNTRUSTED_ATTACHMENTS_CLOSE, UNTRUSTED_ATTACHMENTS_OPEN,
 };
 pub use wake::{
     compose_coalesced_wake_objective, compose_mid_turn_notice_batch, sanitize_untrusted_body,

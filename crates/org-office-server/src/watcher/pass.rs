@@ -332,6 +332,7 @@ pub(super) fn wake_confident_person_matches(
             conversation_id: Some(conversation_id.to_owned()),
             source_id: msg_id.clone(),
             summary: msg.body_markdown.clone(),
+            attachment_ids: msg.attachments.iter().map(|a| a.id.clone()).collect(),
             enqueued_at_ms: now,
         };
         if sessions.enqueue_wake(asker_id.as_str(), item) == WakeOutcome::Started {

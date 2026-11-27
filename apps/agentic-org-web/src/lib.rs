@@ -32,6 +32,7 @@ mod ingress;
 pub mod office;
 mod origin;
 pub mod path;
+pub mod ports;
 pub mod process;
 mod release;
 mod secret_json;
@@ -42,4 +43,7 @@ mod static_ui;
 pub mod tls;
 pub mod transport;
 
+pub use host::LocalUnixHostTransport;
+pub use office::LocalUnixOfficeTransport;
+pub use ports::{ControlPlaneTransport, EventBus, InMemoryEventBus, OfficeTransport};
 pub use static_ui::{Hsts, StaticUi};

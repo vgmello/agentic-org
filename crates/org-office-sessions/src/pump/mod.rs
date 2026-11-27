@@ -25,6 +25,7 @@ mod approval;
 mod commands;
 mod controls;
 mod events;
+mod queue;
 #[cfg(test)]
 mod tests;
 mod turn;
@@ -41,12 +42,13 @@ pub(crate) use controls::SteerRequest;
 use events::apply_outputs;
 #[cfg(test)]
 pub(crate) use events::classify_turn_failover_reason;
+pub(crate) use queue::QueuedTurn;
 use turn::{check_permit_heartbeat, dispatch_next_turn, maybe_deliver_mid_turn};
 
 const POST_EXIT_DRAIN_GRACE: Duration = Duration::from_millis(500);
 
 pub(crate) enum PumpCommand {
-    SendTurn(String),
+    SendTurn(QueuedTurn),
     /// A person's explicit interrupt of the running turn: the process lives on (`TASK-103`).
     InterruptTurn,
     /// A person's mid-turn steer (`TASK-103`), counted as a queued turn ([`queue_steer`]).
@@ -72,6 +74,7 @@ pub(crate) struct StagedMidTurnBatch {
     pub delivery_id: String,
     pub item_ids: Vec<String>,
     pub text: String,
+    pub attachment_ids: Vec<String>,
     pub has_agent_item: bool,
     pub agent_sender_convs: Vec<(String, String)>,
 }
@@ -113,6 +116,8 @@ pub(crate) struct FailoverRequest {
     pub failed_run_id: String,
     pub failed_connection_id: String,
     pub objective: String,
+    /// Lightweight bound attachment IDs preserved across heterogeneous runtime failover (`TASK-98.3`).
+    pub attachment_ids: Vec<String>,
     pub workspace: Option<String>,
     pub task_ref: Option<String>,
     pub tried_connections: Vec<String>,
@@ -251,12 +256,23 @@ impl SessionRuntimeState {
 /// turn is sent, so the pump can never refuse, finish or fail the turn before it is counted and
 /// leave the session wedged busy. A send to a dead pump undoes both. `Sender::send` on the
 /// pump's unbounded channel never blocks (rules §3.4). Returns whether the pump received it.
+#[cfg(test)]
 pub(crate) fn queue_turn(
     state: &Mutex<SessionRuntimeState>,
     tx: &Sender<PumpCommand>,
     text: String,
 ) -> bool {
-    queue_counted(state, tx, PumpCommand::SendTurn(text))
+    queue_turn_with_attachments(state, tx, QueuedTurn::text_only(text))
+}
+
+/// Queues a turn carrying lightweight `attachment_ids` on a live pump with [`queue_turn`]'s
+/// exact busy-state and `queued_turns` accounting (`TASK-98.3`).
+pub(crate) fn queue_turn_with_attachments(
+    state: &Mutex<SessionRuntimeState>,
+    tx: &Sender<PumpCommand>,
+    turn: QueuedTurn,
+) -> bool {
+    queue_counted(state, tx, PumpCommand::SendTurn(turn))
 }
 
 /// Queues a person's steer on a live pump with exactly [`queue_turn`]'s accounting: until the
@@ -319,6 +335,12 @@ pub(crate) struct PumpContext {
     pub partition: Option<crate::partition::PartitionHandle>,
     /// Where the run publishes its coarse live activity (`TASK-103`); `None` publishes nothing.
     pub stream: Option<crate::stream_hub::StreamPublisher>,
+    /// Stable `<runtime_dir>/attachments` root exposed read-only to the sandbox (`TASK-98.3`).
+    pub attachments_root: std::path::PathBuf,
+    /// Whether the admitted route's model accepts image/vision inputs (`TASK-98.3` AC #4).
+    pub model_supports_vision: bool,
+    /// Consumer-owned port resolving policy-authorized attachment payloads at turn preparation.
+    pub attachment_resolver: Arc<dyn crate::turn_attachments::TurnAttachmentResolver>,
 }
 
 impl PumpContext {
@@ -337,7 +359,7 @@ enum ReaderMsg {
 struct PumpLoopState {
     out_framer: LineFramer,
     err_framer: LineFramer,
-    pending_turns: Vec<String>,
+    pending_turns: Vec<QueuedTurn>,
     ready: bool,
     turn_active: bool,
     stop_requested: bool,
@@ -353,6 +375,12 @@ struct PumpLoopState {
     last_permit_renew: Instant,
     permit_lease_deadline: Option<Instant>,
     current_objective: String,
+    current_attachment_ids: Vec<String>,
+    current_turn_staged_id: Option<String>,
+    current_turn_had_protocol_images: bool,
+    current_turn_image_fallback_retried: bool,
+    current_turn_remaining_staging_budget: u64,
+    current_turn_remaining_attachment_slots: usize,
     turn_reply: Option<String>,
     turns_dispatched: u64,
     oauth_refresh_attempted: bool,
@@ -360,6 +388,8 @@ struct PumpLoopState {
     mid_turn_dirty: bool,
     mid_turn_next_check: Option<Instant>,
     in_flight_delivery: Option<StagedMidTurnBatch>,
+    in_flight_delivery_staged_id: Option<String>,
+    mid_turn_staged_ids: Vec<String>,
     mid_turn_total_this_turn: u32,
     mid_turn_agent_this_turn: u32,
     /// `pending_turns[0]` is a person's steer: a later steer folds into it (`TASK-103`).
@@ -395,6 +425,14 @@ impl PumpLoopState {
             last_permit_renew: Instant::now(),
             permit_lease_deadline: None,
             current_objective: String::new(),
+            current_attachment_ids: Vec::new(),
+            current_turn_staged_id: None,
+            current_turn_had_protocol_images: false,
+            current_turn_image_fallback_retried: false,
+            current_turn_remaining_staging_budget:
+                crate::turn_attachments::MAX_DOC_STAGING_BYTES_PER_TURN,
+            current_turn_remaining_attachment_slots:
+                crate::turn_attachments::MAX_ATTACHMENTS_PER_TURN,
             turn_reply: None,
             turns_dispatched: 0,
             oauth_refresh_attempted,
@@ -402,6 +440,8 @@ impl PumpLoopState {
             mid_turn_dirty: false,
             mid_turn_next_check: None,
             in_flight_delivery: None,
+            in_flight_delivery_staged_id: None,
+            mid_turn_staged_ids: Vec::new(),
             mid_turn_total_this_turn: 0,
             mid_turn_agent_this_turn: 0,
             front_is_steer: false,
@@ -419,11 +459,11 @@ impl PumpLoopState {
 
     /// Takes every turn waiting to run, steers first: each is one of
     /// [`SessionRuntimeState::queued_turns`], which the caller lowers by the count taken.
-    fn take_queued_turns(&mut self) -> Vec<String> {
-        let mut taken: Vec<String> = self
+    fn take_queued_turns(&mut self) -> Vec<QueuedTurn> {
+        let mut taken: Vec<QueuedTurn> = self
             .pending_steer
             .take()
-            .map(|s| s.turn)
+            .map(|s| QueuedTurn::text_only(s.turn))
             .into_iter()
             .collect();
         taken.append(&mut self.pending_turns);
@@ -437,12 +477,12 @@ impl PumpLoopState {
     fn queue_steer_turn(&mut self, state: &mut SessionRuntimeState, text: String) {
         match self.pending_turns.first_mut() {
             Some(front) if self.front_is_steer => {
-                front.push_str("\n\n");
-                front.push_str(&text);
+                front.text.push_str("\n\n");
+                front.text.push_str(&text);
                 state.dequeue_turns(1);
             }
             _ => {
-                self.pending_turns.insert(0, text);
+                self.pending_turns.insert(0, QueuedTurn::text_only(text));
                 self.front_is_steer = true;
             }
         }

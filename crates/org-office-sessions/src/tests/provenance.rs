@@ -231,6 +231,7 @@ fn a_queued_wake_badges_every_sender_as_a_direct_instruction_does() {
             conversation_id: Some("dm-1".into()),
             source_id: format!("msg-{n}"),
             summary: "Hello".into(),
+            attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
         };
         let _ = mgr.enqueue_wake(fx.target.id.as_str(), item);

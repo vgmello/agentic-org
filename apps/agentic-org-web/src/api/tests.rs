@@ -821,7 +821,9 @@ fn the_web_process_sends_only_browser_session_ops() {
     for (name, source) in [
         ("api.rs", include_str!("../api.rs")),
         ("host.rs", include_str!("../host.rs")),
+        ("ports.rs", include_str!("../ports.rs")),
         ("process.rs", include_str!("../process.rs")),
+        ("local_unix.rs", include_str!("../transport/local_unix.rs")),
     ] {
         for forbidden in [
             ["office", ".open_channel"].concat(),

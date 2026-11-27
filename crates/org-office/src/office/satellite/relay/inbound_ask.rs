@@ -73,7 +73,7 @@ pub(super) fn attach_relayed_ask_answer(
         answer_file,
     );
     let resume_info = emit_resume
-        .then(|| build_local_ask_answer_resume(rctx, &ask_msg, &card, &validated))
+        .then(|| build_local_ask_answer_resume(rctx, &ask_msg, &card, &validated, answer_file))
         .flatten();
     let closed_ask_id = emit_resume.then(|| ask_id.clone());
     if skip_write {
@@ -147,6 +147,7 @@ fn build_local_ask_answer_resume(
     ask_msg: &crate::messaging::records::MessageRecord,
     card: &crate::messaging::asks::AskCard,
     validated: &[org_proto::ask::QuestionAnswer],
+    answer_file: &crate::messaging::records::ParticipantAnswerFile,
 ) -> Option<RelayedAskAnswer> {
     let asker_id = ask_msg.sender_employee_id.as_ref()?;
     let owner_office = rctx
@@ -172,10 +173,16 @@ fn build_local_ask_answer_resume(
         .collect::<Vec<_>>()
         .join(" / ");
     let answer_summary = crate::messaging::asks::render_answer_summary(card, validated);
+    let attachment_ids = answer_file
+        .attachments
+        .iter()
+        .map(|a| a.id.clone())
+        .collect();
     Some(RelayedAskAnswer {
         ask_id: ask_msg.id.clone(),
         asker_id: asker_id.as_str().to_owned(),
         question_summary,
         answer_summary,
+        attachment_ids,
     })
 }

@@ -172,12 +172,12 @@ mod usage;
 #[cfg(feature = "testkit")]
 pub mod testkit;
 
-pub use caps::{Capabilities, MidTurnDelivery, VersionRange};
+pub use caps::{Capabilities, ImageInputMode, MidTurnDelivery, VersionRange};
 pub use event::{
     Activity, ApprovalId, ApprovalKind, ApprovalRequest, Escalation, ExitInfo, LimitKind,
     NoticeKind, SessionEvent, StartFailure, TurnOutcome,
 };
-pub use line::{encode_line, Frame, Line, LineFramer, MAX_LINE_BYTES};
+pub use line::{encode_line, Frame, Line, LineFramer, MAX_LINE_BYTES, MAX_OUTGOING_LINE_BYTES};
 pub use path::{PathPattern, RelPath, SpecPath, SpecPathError};
 pub use plan::{
     CleanupPath, FileLocation, LaunchPlan, PlannedDir, PlannedFile, ProbePlan, SignalTarget, Stdio,
@@ -192,7 +192,7 @@ pub use probe::{
     ProbeSession, ProbeStep, Unavailable,
 };
 pub use runtime::{AgentRuntime, PlanError};
-pub use session::{Control, ControlError, Decision, Output, Session};
+pub use session::{Control, ControlError, Decision, Output, Session, TurnImage, TurnImageSource};
 pub use spec::{
     AgentIdentity, LaunchContext, McpServer, PermissionMode, PermissionPolicy, Rule, RuleScope,
     SandboxSpec, SessionKind, SessionSpec, ToolCapability, CAPABILITY_PREFIX,

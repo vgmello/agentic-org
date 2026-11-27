@@ -180,7 +180,9 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
     let objective = mgr.prepend_watch_notices(employee.id.as_str(), req.objective.clone());
     let launch_res = mgr
         .plan_session_launch(&employee, &params, opts)
-        .and_then(|planned| mgr.issue_and_spawn_launch(objective, planned))
+        .and_then(|planned| {
+            mgr.issue_and_spawn_launch(objective, req.attachment_ids.clone(), planned)
+        })
         .and_then(|prepared| mgr.install_live_session(prepared, slot));
     if let Err(err) = launch_res {
         record_failover_exhausted(mgr, &req, &err);
@@ -367,6 +369,7 @@ pub(super) fn enqueue_recovery_wake(
         conversation_id: None,
         source_id: req.failed_connection_id.clone(),
         summary: req.objective.clone(),
+        attachment_ids: req.attachment_ids.clone(),
         enqueued_at_ms: ts,
     });
     if let Some(reason) = hold {

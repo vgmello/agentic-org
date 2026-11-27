@@ -495,7 +495,7 @@ fn build_settings_json(
         push_file_write_denies(&mut deny_rules, path.as_str(), true, is_linux_bwrap);
     }
     for dir in &spec.read_only_dirs {
-        push_file_write_denies(&mut deny_rules, dir.as_str(), false, is_linux_bwrap);
+        push_file_write_denies(&mut deny_rules, dir.as_str(), true, is_linux_bwrap);
     }
     // Protect vendor config dir from tool writes and its credential file from tool reads (S2).
     if let Some(cfg_dir) = &ctx.config_dir {

@@ -319,6 +319,7 @@ fn mid_turn_steer_transfers_ownership_without_aborting_and_in_band_cancel_keeps_
         .control(
             Control::Send {
                 text: "Run sleep 3".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -346,6 +347,7 @@ fn mid_turn_steer_transfers_ownership_without_aborting_and_in_band_cancel_keeps_
             Control::DeliverMidTurn {
                 delivery_id: "deliv-99".into(),
                 text: "Urgent steer CEDAR-99".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -373,7 +375,8 @@ fn mid_turn_steer_transfers_ownership_without_aborting_and_in_band_cancel_keeps_
     assert_eq!(
         session.control(
             Control::Send {
-                text: "nope".into()
+                text: "nope".into(),
+                images: Vec::new()
             },
             now
         ),
@@ -418,7 +421,13 @@ fn mid_turn_steer_transfers_ownership_without_aborting_and_in_band_cancel_keeps_
 
     // In-band Interrupt emits `session/cancel` and keeps warm session alive for next turn.
     let _ = session
-        .control(Control::Send { text: "t2".into() }, now)
+        .control(
+            Control::Send {
+                text: "t2".into(),
+                images: Vec::new(),
+            },
+            now,
+        )
         .unwrap();
     let cancel_out = session.control(Control::Interrupt, now).unwrap();
     let cancel_json: serde_json::Value = match &cancel_out[0] {
@@ -440,7 +449,13 @@ fn mid_turn_steer_transfers_ownership_without_aborting_and_in_band_cancel_keeps_
     )));
     // Warm session still accepts another turn!
     assert!(session
-        .control(Control::Send { text: "t3".into() }, now)
+        .control(
+            Control::Send {
+                text: "t3".into(),
+                images: Vec::new()
+            },
+            now
+        )
         .is_ok());
 }
 
@@ -515,7 +530,13 @@ fn approvals_classify_escalations_answer_allow_deny_and_handle_close_and_errors(
 
     // LimitKind::MaxTokens + AGY_ERROR stderr + Close emits session/close + CloseStdin.
     let _ = session
-        .control(Control::Send { text: "go".into() }, now)
+        .control(
+            Control::Send {
+                text: "go".into(),
+                images: Vec::new(),
+            },
+            now,
+        )
         .unwrap();
     let max_tok = session.on_line(
         br#"{"jsonrpc":"2.0","id":3,"result":{"stopReason":"max_tokens"}}"#,
@@ -556,13 +577,20 @@ fn approvals_classify_escalations_answer_allow_deny_and_handle_close_and_errors(
         let _ = s_err.on_line(line, now);
     }
     let _ = s_err
-        .control(Control::Send { text: "t1".into() }, now)
+        .control(
+            Control::Send {
+                text: "t1".into(),
+                images: Vec::new(),
+            },
+            now,
+        )
         .unwrap();
     let _ = s_err
         .control(
             Control::DeliverMidTurn {
                 delivery_id: "d-fail".into(),
                 text: "steer".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -591,13 +619,20 @@ fn approvals_classify_escalations_answer_allow_deny_and_handle_close_and_errors(
 
     // Crash during turn fails pending mid-turn delivery and emits Failed.
     let _ = s_err
-        .control(Control::Send { text: "t2".into() }, now)
+        .control(
+            Control::Send {
+                text: "t2".into(),
+                images: Vec::new(),
+            },
+            now,
+        )
         .unwrap();
     let _ = s_err
         .control(
             Control::DeliverMidTurn {
                 delivery_id: "d-crash".into(),
                 text: "steer".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -700,13 +735,20 @@ fn chained_mid_turn_steers_handle_intermediate_and_superseded_errors_cleanly() {
         let _ = s_a.on_line(line, now);
     }
     let _ = s_a
-        .control(Control::Send { text: "go".into() }, now)
+        .control(
+            Control::Send {
+                text: "go".into(),
+                images: Vec::new(),
+            },
+            now,
+        )
         .unwrap();
     let _ = s_a
         .control(
             Control::DeliverMidTurn {
                 delivery_id: "d1".into(),
                 text: "s1".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -716,6 +758,7 @@ fn chained_mid_turn_steers_handle_intermediate_and_superseded_errors_cleanly() {
             Control::DeliverMidTurn {
                 delivery_id: "d2".into(),
                 text: "s2".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -746,7 +789,8 @@ fn chained_mid_turn_steers_handle_intermediate_and_superseded_errors_cleanly() {
     assert_eq!(
         s_a.control(
             Control::Send {
-                text: "nope".into()
+                text: "nope".into(),
+                images: Vec::new()
             },
             now
         ),
@@ -775,13 +819,20 @@ fn chained_mid_turn_steers_handle_intermediate_and_superseded_errors_cleanly() {
         let _ = s_b.on_line(line, now);
     }
     let _ = s_b
-        .control(Control::Send { text: "go".into() }, now)
+        .control(
+            Control::Send {
+                text: "go".into(),
+                images: Vec::new(),
+            },
+            now,
+        )
         .unwrap();
     let _ = s_b
         .control(
             Control::DeliverMidTurn {
                 delivery_id: "d1".into(),
                 text: "s1".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -791,6 +842,7 @@ fn chained_mid_turn_steers_handle_intermediate_and_superseded_errors_cleanly() {
             Control::DeliverMidTurn {
                 delivery_id: "d2".into(),
                 text: "s2".into(),
+                images: Vec::new(),
             },
             now,
         )
@@ -849,7 +901,13 @@ fn usage_deduplicates_streamed_updates_and_falls_back_on_eof() {
 
     // During a turn: cumulative usage_update snapshots + authoritative result.usage must NOT double-count.
     let _ = session
-        .control(Control::Send { text: "t1".into() }, now)
+        .control(
+            Control::Send {
+                text: "t1".into(),
+                images: Vec::new(),
+            },
+            now,
+        )
         .unwrap();
     let _ = session.on_line(
         br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"usage_update","usage":{"inputTokens":50,"outputTokens":10}}}}"#,
@@ -870,7 +928,13 @@ fn usage_deduplicates_streamed_updates_and_falls_back_on_eof() {
 
     // Crash/EOF mid-turn without result.usage flushes the max streamed usage snapshot once.
     let _ = session
-        .control(Control::Send { text: "t2".into() }, now)
+        .control(
+            Control::Send {
+                text: "t2".into(),
+                images: Vec::new(),
+            },
+            now,
+        )
         .unwrap();
     let _ = session.on_line(
         br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"usage_update","usage":{"inputTokens":40,"outputTokens":8}}}}"#,
@@ -945,7 +1009,13 @@ fn modes_jsonrpc_nulls_auth_error_option_selection_and_idle_interrupt_hardening(
 
     // 3. `tool_call_update status=cancelled` withdraws pending approval; `Deny { stop_turn: true }` sends `session/cancel`.
     let _ = s_none
-        .control(Control::Send { text: "go".into() }, now)
+        .control(
+            Control::Send {
+                text: "go".into(),
+                images: Vec::new(),
+            },
+            now,
+        )
         .unwrap();
     let _ = s_none.on_line(
         br#"{"jsonrpc":"2.0","id":"c-1","method":"session/request_permission","params":{"toolCall":{"toolCallId":"tc-cancel","name":"run_command"}}}"#,
@@ -1232,7 +1302,15 @@ fn pass2_allow_always_fail_closed_opening_mode_update_and_null_fallbacks() {
         .iter()
         .any(|o| matches!(o, Output::Event(SessionEvent::Notice { .. }))));
 
-    let _ = s.control(Control::Send { text: "go".into() }, now).unwrap();
+    let _ = s
+        .control(
+            Control::Send {
+                text: "go".into(),
+                images: Vec::new(),
+            },
+            now,
+        )
+        .unwrap();
     let _ = s.on_line(
         br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"usage_update","usage":{"inputTokens":null,"input_tokens":55,"outputTokens":11}}}}"#,
         now,
@@ -1799,7 +1877,13 @@ fn opening_mode_edge_cases_banned_variants_and_terminal_mode_update_guard() {
         now,
     );
     assert_eq!(
-        s_wait.control(Control::Send { text: "hi".into() }, now),
+        s_wait.control(
+            Control::Send {
+                text: "hi".into(),
+                images: Vec::new()
+            },
+            now
+        ),
         Err(ControlError::NotReady)
     );
     let timed = s_wait.on_tick(now + Duration::from_secs(31));
@@ -1913,4 +1997,83 @@ fn opening_mode_edge_cases_banned_variants_and_terminal_mode_update_guard() {
             ..
         }) if m == "plan"
     )));
+}
+
+#[test]
+fn agy_is_staged_file_only_never_emits_image_blocks_and_passes_read_only_dirs() {
+    use org_agent_runtime::{ImageInputMode, TurnImage};
+
+    let runtime = AgyRuntime::new();
+    assert_eq!(
+        runtime.capabilities().image_input,
+        ImageInputMode::StagedFileOnly
+    );
+
+    let mut spec = sample_spec();
+    let att_dir = SpecPath::try_from("/office/agents/ada/runtime/attachments").unwrap();
+    spec.read_only_dirs.push(att_dir.clone());
+    let (plan, mut session) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    assert!(
+        plan.args
+            .windows(2)
+            .any(|w| w[0] == "--add-dir" && w[1] == att_dir.as_str()),
+        "Agy must pass read_only_dirs via --add-dir: {:?}",
+        plan.args
+    );
+
+    let now = Instant::now();
+    let _ = session.start(now);
+    let _ = session.on_line(
+        br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"version":"1.5.17"}}}"#,
+        now,
+    );
+    let _ = session.on_line(
+        br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sid-att","models":{"currentModelId":"gemini-4-neon-high"},"modes":{"currentModeId":"default"}}}"#,
+        now,
+    );
+
+    // Raw protocol images are refused cleanly so Agy never receives non-text blocks.
+    assert_eq!(
+        session.control(
+            Control::Send {
+                text: "see file".into(),
+                images: vec![TurnImage::local_path(
+                    "image/png",
+                    SpecPath::try_from("/office/agents/ada/runtime/attachments/t1/a1.png").unwrap(),
+                )],
+            },
+            now
+        ),
+        Err(ControlError::Unsupported)
+    );
+    // Text-only staged manifest succeeds with purely text prompt block.
+    let out = session
+        .control(
+            Control::Send {
+                text: "<<<UNTRUSTED_ATTACHMENTS>>>\nstaged_path=/office/agents/ada/runtime/attachments/t1/a1.png\n<<<END_UNTRUSTED_ATTACHMENTS>>>".into(),
+                images: Vec::new(),
+            },
+            now,
+        )
+        .expect("Agy accepts text-only staged manifest");
+    let Output::Write(line) = &out[0] else {
+        panic!("expected session/prompt write")
+    };
+    let req: serde_json::Value = serde_json::from_slice(line.as_bytes()).unwrap();
+    let prompt_blocks = req["params"]["prompt"].as_array().expect("prompt array");
+    assert_eq!(prompt_blocks.len(), 1);
+    assert_eq!(prompt_blocks[0]["type"], "text");
+
+    // Mid-turn also refuses non-text images cleanly.
+    assert_eq!(
+        session.control(
+            Control::DeliverMidTurn {
+                delivery_id: "mt-img".into(),
+                text: "mid".into(),
+                images: vec![TurnImage::inline_bytes("image/png", b"png")],
+            },
+            now
+        ),
+        Err(ControlError::Unsupported)
+    );
 }

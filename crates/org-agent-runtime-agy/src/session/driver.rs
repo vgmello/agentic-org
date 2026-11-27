@@ -176,10 +176,12 @@ impl Session for AgySession {
             return Err(ControlError::Closed);
         }
         match cmd {
-            Control::Send { text } => control_send(self, text),
-            Control::DeliverMidTurn { delivery_id, text } => {
-                control_deliver_mid_turn(self, delivery_id, text)
-            }
+            Control::Send { text, images } => control_send(self, text, images),
+            Control::DeliverMidTurn {
+                delivery_id,
+                text,
+                images,
+            } => control_deliver_mid_turn(self, delivery_id, text, images),
             Control::Interrupt => {
                 if is_opening(self.phase) {
                     return Err(ControlError::NotReady);
