@@ -6,6 +6,7 @@
 //! `runtime/<office-id>/protected/messaging.db` database (`messaging-schema.sql`), never into
 //! shared `office.db`.
 
+mod access;
 pub mod ask_card;
 pub mod asks;
 pub mod features;
@@ -17,3 +18,6 @@ pub mod records;
 pub mod runtime;
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;
+
+/// The conversations a member may read, by the one rule every read of messages applies.
+pub use access::readable_conversations;

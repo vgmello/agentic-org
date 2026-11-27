@@ -134,6 +134,18 @@ impl MemoryPrivateNotesStore {
         Self::default()
     }
 
+    /// Every active note of `org_id`, every author's: what the memory search index reads,
+    /// which applies `ADR-0031` itself before it scores anything.
+    pub fn active_notes(&self, org_id: &str) -> Result<Vec<PrivateNoteRecord>, OfficeError> {
+        Ok(self
+            .lock()?
+            .notes
+            .values()
+            .filter(|n| n.organization_id == org_id && n.deleted_at.is_none())
+            .cloned()
+            .collect())
+    }
+
     fn lock(&self) -> Result<MutexGuard<'_, State>, OfficeError> {
         self.state
             .lock()

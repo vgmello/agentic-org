@@ -567,3 +567,21 @@ fn a_draft_keeps_the_member_it_was_first_made_for() {
     assert!(w.gate.is_chief_of_staff(&w.tess));
     assert!(!w.gate.is_chief_of_staff(&w.bob));
 }
+
+#[test]
+fn search_query_is_never_admitted_for_chief_of_staff_even_for_the_owner() {
+    use super::{access, allowed, Access};
+    let w = world();
+    assert_eq!(access("search.query"), Access::Never);
+    for delegation in [
+        w.acting_for(&w.owner),
+        w.acting_for(&w.bob),
+        Delegation::default(),
+    ] {
+        assert!(
+            !allowed(access("search.query"), &delegation),
+            "search.query must be refused by gate() for {:?}",
+            delegation.caller_id
+        );
+    }
+}

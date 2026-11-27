@@ -1,5 +1,5 @@
-//! The companion stores an office opens beside its `org-store` journal: private notes,
-//! accounting, budgets, provider pools and replication.
+//! The companion stores an office opens beside its `org-store` journal: private notes (and
+//! their search index), accounting, budgets, provider pools and replication.
 
 use std::sync::Arc;
 
@@ -11,6 +11,7 @@ use super::DataRoots;
 
 pub(super) struct CompanionStores {
     pub private_notes: Arc<dyn crate::private_notes::PrivateNotesStore>,
+    pub private_search: Arc<dyn crate::search::ports::PrivateNotesSearch>,
     pub attachments: crate::attachments::AttachmentStores,
     pub accounting: Arc<dyn crate::accounting::AccountingStore>,
     pub budgets: Arc<dyn crate::budgets::BudgetStore>,
@@ -33,12 +34,17 @@ pub(super) fn open_companion_stores(
     spec: CompanionOpenSpec<'_>,
 ) -> Result<CompanionStores, OfficeError> {
     let is_hq = spec.info.role == crate::model::OfficeRole::Hq;
+    let private = crate::store::open::open_private_notes(
+        spec.engine,
+        &spec.roots.durable,
+        &spec.roots.runtime,
+        &spec.info.office_id,
+        &spec.info.org_id,
+        is_hq,
+    )?;
     Ok(CompanionStores {
-        private_notes: crate::store::open::open_private_notes(
-            spec.engine,
-            &spec.roots.durable,
-            is_hq,
-        )?,
+        private_notes: private.store,
+        private_search: private.search,
         attachments: crate::store::open::open_attachments(
             spec.engine,
             &spec.roots.durable,

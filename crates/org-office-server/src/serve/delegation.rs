@@ -10,7 +10,9 @@
 //!   external leases, answering approvals, changing her own execution or hiring power, reading
 //!   chats as the owner, her private task notes (one bucket every caller's turns would share),
 //!   the mailbox reads that consume or summarise every message at once (`msg.read`,
-//!   `msg.wait`, `msg.notify`, `chat.events_poll`), and long-polling an ask (`chat.wait_ask`).
+//!   `msg.wait`, `msg.notify`, `chat.events_poll`), long-polling an ask (`chat.wait_ask`), and
+//!   cross-entity search (`search.query`, which would otherwise span every DM she is in and her
+//!   private notes across callers).
 //!   Refused even when she acts for the owner.
 //! - **the caller is the owner**: organization-wide spend and budgets, structure changes,
 //!   starting, stopping and reading other sessions (hers included), and any method not named
@@ -113,6 +115,7 @@ const NEVER: &[&str] = &[
     "msg.wait",
     "office.remove",
     "office.restart",
+    "search.query",
 ];
 const NEVER_PREFIXES: &[&str] = &[
     "auth.",

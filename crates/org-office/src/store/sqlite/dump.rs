@@ -1,5 +1,7 @@
 //! A listing of every row of the projection, for the suites that compare one projection
-//! with another of this engine. Never part of a production build.
+//! with another of this engine. Never part of a production build. The adapter-private search
+//! index (its FTS5 virtual tables, their shadow tables and its rowid-keyed documents) is left
+//! out: it is derived from the rows listed here, and its own tests compare what it answers.
 
 use org_store::{testkit::Dump, Engine};
 use rusqlite::types::Value;
@@ -16,7 +18,10 @@ fn dump_connection(db: &rusqlite::Connection, prefix: &str, skip: &[&str], out: 
     let names = names.query_map([], |row| row.get::<_, String>(0));
     let names: Vec<String> = names.and_then(Iterator::collect).expect("table names");
     for table in names {
-        if skip.contains(&table.as_str()) {
+        let search_index = super::search::DUMP_SKIPPED_PREFIXES
+            .iter()
+            .any(|prefix| table.starts_with(prefix));
+        if skip.contains(&table.as_str()) || search_index {
             continue;
         }
         let ordered = LISTS.contains(&table.as_str());
