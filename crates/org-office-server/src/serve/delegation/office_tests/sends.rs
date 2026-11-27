@@ -200,6 +200,7 @@ fn ask_the_owner(w: &World, asker: &str, hold_ms: Option<u64>) -> (ChatAskResult
             &Arc::new(crate::watcher::ChannelWatcher::production(
                 Arc::clone(&w.office),
                 Some(Arc::clone(&w.sessions)),
+                w.sessions.runtimes().clone(),
             )),
             Arc::new(|| {}),
         )

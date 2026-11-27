@@ -9,13 +9,14 @@ publish.workspace = true
 base64.workspace = true
 libc.workspace = true
 org-agent-runtime = { path = "../org-agent-runtime" }
-org-command = { path = "../org-command" }
-org-command-catalogue = { path = "../org-command-catalogue" }
 org-office = { path = "../org-office" }
 org-pki = { path = "../org-pki" }
 org-platform = { path = "../org-platform" }
-org-process = { path = "../org-process" }
 org-proto = { path = "../org-proto" }
+org-redact = { path = "../org-redact" }
+org-session-instructions = { path = "../org-session-instructions" }
+org-session-presets = { path = "../org-session-presets" }
+org-subscription-usage = { path = "../org-subscription-usage" }
 org-supervise = { path = "../org-supervise" }
 org-turn-attachments = { path = "../org-turn-attachments" }
 ring = "=0.17.14"
@@ -33,7 +34,11 @@ org-agent-cli = { path = "../org-agent-cli" }
 org-agent-runtime-agy = { path = "../org-agent-runtime-agy" }
 org-agent-runtime-claude = { path = "../org-agent-runtime-claude" }
 org-agent-runtime-codex = { path = "../org-agent-runtime-codex" }
+org-command = { path = "../org-command" }
+org-command-catalogue = { path = "../org-command-catalogue" }
 org-office = { path = "../org-office", features = ["testkit"] }
+org-process = { path = "../org-process" }
+org-redact = { path = "../org-redact", features = ["testkit"] }
 tempfile.workspace = true
 
 [lints]

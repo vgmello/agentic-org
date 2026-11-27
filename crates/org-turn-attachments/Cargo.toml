@@ -8,11 +8,14 @@ publish.workspace = true
 [dependencies]
 base64.workspace = true
 org-agent-runtime = { path = "../org-agent-runtime" }
-org-office = { path = "../org-office" }
 org-platform = { path = "../org-platform" }
 org-proto = { path = "../org-proto" }
+org-redact = { path = "../org-redact" }
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

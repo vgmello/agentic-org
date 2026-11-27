@@ -1,7 +1,8 @@
 //! # org-office-sessions: production agent session runner, supervision, and CLI enrollment
 //!
 //! Composes `org-agent-runtime` and its adapters, `org-supervise`, `org-pki::wrap`,
-//! `org-platform::process`, `org-command-catalogue`, and `org-office` to implement:
+//! `org-platform::process`, `org-session-instructions`, `org-session-presets`,
+//! `org-subscription-usage`, `org-turn-attachments`, `org-redact`, and `org-office` to implement:
 //! - Headless supervised agent sessions in private `0700` agent homes (`TASK-42` / C3)
 //! - Permission presets, default-on sandbox, and escalation policy (`ADR-0032` §3 / `ENROLL-7`)
 //! - Standing agent instructions in static-to-volatile prefix order, the generated `agent-os`
@@ -23,22 +24,23 @@ mod employee_locks;
 mod external;
 mod external_sessions;
 mod host_auth;
-pub mod instructions;
+pub use org_session_instructions as instructions;
 mod lifecycle;
 pub mod manager;
 pub mod partition;
-pub mod preset;
+pub use org_session_presets as preset;
 mod provenance;
 mod pump;
 pub mod recovery;
-pub mod redact;
+pub use org_redact as redact;
 pub mod router;
 pub mod runtime_registry;
 pub mod stream_hub;
 pub mod subagents;
-pub mod subscription_usage;
+pub use org_subscription_usage as subscription_usage;
 pub mod transcript;
 pub use org_turn_attachments as turn_attachments;
+mod turn_attachments_adapter;
 pub mod wake;
 
 pub use binding::{
@@ -70,9 +72,7 @@ pub use recovery::{
     MAX_RESUME_ATTEMPTS,
 };
 pub use router::{HqPermitAcquireSpec, HqPermitCoordinator};
-pub use runtime_registry::{
-    install_default_runtimes, RuntimeFactory, RuntimeRegistry, RuntimeRegistryError,
-};
+pub use runtime_registry::{RuntimeRegistry, RuntimeRegistryError};
 pub use stream_hub::{
     SessionActivity, SessionStreamEvent, SessionStreamFrame, SessionStreamHub, SessionStreamKey,
     SessionStreamSubscription, StreamFilter, TurnEnd,
@@ -87,9 +87,14 @@ pub use subscription_usage::{
     SystemHttpsUsageTransport, UsageTransportError,
 };
 pub use turn_attachments::{
-    LocalOfficeAttachmentResolver, TurnAttachmentRef, TurnAttachmentResolver,
-    MAX_DOC_STAGING_BYTES_PER_TURN, MAX_IMAGE_DERIVATIVE_BYTES, MAX_INLINE_IMAGES_PER_TURN,
-    UNTRUSTED_ATTACHMENTS_CLOSE, UNTRUSTED_ATTACHMENTS_OPEN,
+    TurnAttachmentMeta, TurnAttachmentRef, TurnAttachmentResolveError, TurnAttachmentResolver,
+    TurnDeliveryAttachment, TurnDeliveryScope, TurnImageDerivative, MAX_DOC_STAGING_BYTES_PER_TURN,
+    MAX_IMAGE_DERIVATIVE_BYTES, MAX_INLINE_IMAGES_PER_TURN, UNTRUSTED_ATTACHMENTS_CLOSE,
+    UNTRUSTED_ATTACHMENTS_OPEN,
+};
+pub use turn_attachments_adapter::{
+    from_office_attachment_record, from_office_delivery_payload, from_office_delivery_scope,
+    map_office_delivery_result, to_office_delivery_scope, LocalOfficeAttachmentResolver,
 };
 pub use wake::{
     compose_coalesced_wake_objective, compose_mid_turn_notice_batch, sanitize_untrusted_body,

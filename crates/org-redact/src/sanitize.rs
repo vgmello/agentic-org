@@ -8,6 +8,11 @@
 /// Maximum UTF-8 byte budget for one sanitized header/provenance metadata token (`INSTR-5`).
 pub const MAX_META_FIELD_BYTES: usize = 96;
 
+/// Opening prefix of the untrusted-message fence (`INSTR-5`).
+pub const UNTRUSTED_MESSAGE_OPEN: &str = "<<<UNTRUSTED_MESSAGE";
+/// Closing delimiter of the untrusted-message fence (`INSTR-5`).
+pub const UNTRUSTED_MESSAGE_CLOSE: &str = "<<<END_UNTRUSTED_MESSAGE>>>";
+
 /// Neutralizes fence-breakout tokens and caps untrusted text to `max_bytes` UTF-8 bytes (`INSTR-5`).
 ///
 /// Invisible format characters and every control character but newline and tab (C0, `DEL`,

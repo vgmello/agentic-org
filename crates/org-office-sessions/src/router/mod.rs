@@ -65,6 +65,7 @@ pub fn endpoint_env_for_adapter(
 }
 
 pub fn endpoint_env_for(
+    runtimes: &RuntimeRegistry,
     driver: &str,
     endpoint_url: &str,
 ) -> Result<(&'static str, String), ApiError> {
@@ -74,7 +75,6 @@ pub fn endpoint_env_for(
             "invalid provider connection endpoint_url",
         ));
     }
-    let runtimes = RuntimeRegistry::production();
     let adapter = runtimes
         .resolve(driver)
         .map_err(|_| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;

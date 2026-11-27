@@ -114,11 +114,11 @@ impl ChannelWatcher {
         }
     }
 
-    pub fn production(office: Arc<Office>, sessions: Option<Arc<SessionManager>>) -> Self {
-        let runtimes = sessions
-            .as_ref()
-            .map(|s| s.runtimes().clone())
-            .unwrap_or_else(org_office_sessions::RuntimeRegistry::production);
+    pub fn production(
+        office: Arc<Office>,
+        sessions: Option<Arc<SessionManager>>,
+        runtimes: org_office_sessions::RuntimeRegistry,
+    ) -> Self {
         Self::new(
             office,
             sessions,

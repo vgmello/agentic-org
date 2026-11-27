@@ -936,13 +936,14 @@ class TestCargoDagAndLayer0(unittest.TestCase):
                 f"expected renamed workspace build-dep violation on org-store, got: {res.errors}",
             )
 
-    def test_layer0_includes_sync_proto_host_control_and_office_launch(self) -> None:
+    def test_layer0_includes_redact_sync_proto_host_control_and_office_launch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _create_workspace(
                 root,
                 [
                     "crates/org-proto",
+                    "crates/org-redact",
                     "crates/org-sync-proto",
                     "crates/org-host-control",
                     "crates/org-office-launch",
@@ -951,6 +952,11 @@ class TestCargoDagAndLayer0(unittest.TestCase):
                 {
                     "crates/org-proto": (
                         '[package]\nname = "org-proto"\nversion = "0.0.0"\n',
+                        {"src/lib.rs": ""},
+                    ),
+                    "crates/org-redact": (
+                        '[package]\nname = "org-redact"\nversion = "0.0.0"\n'
+                        '[dependencies]\norg-host = { path = "../org-host" }\n',
                         {"src/lib.rs": ""},
                     ),
                     "crates/org-sync-proto": (
@@ -977,7 +983,7 @@ class TestCargoDagAndLayer0(unittest.TestCase):
                 },
             )
             res = health.run_health_check(root)
-            for crate in ("org-sync-proto", "org-host-control", "org-office-launch"):
+            for crate in ("org-redact", "org-sync-proto", "org-host-control", "org-office-launch"):
                 self.assertTrue(
                     any("Layer-0" in e and f"`{crate}`" in e and "`org-host`" in e for e in res.errors),
                     f"expected Layer-0 violation for {crate}, got: {res.errors}",

@@ -2,12 +2,12 @@
 //! `INSTR-21`, `ADR-0025`, `ADR-0030`).
 //!
 //! Every body that someone else wrote, or a tool produced, sits in the same untrusted-data
-//! fence as an autonomous wake ([`crate::wake`]), sanitized by the same choke-point, with the
-//! office-verified sender beside it and the `agent-os` command to act on it.
+//! fence as an autonomous wake, sanitized by the same Layer-0 choke-point (`org-redact`), with
+//! the office-verified sender beside it and the `agent-os` command to act on it.
 
-use crate::wake::{
-    sanitize_untrusted_body, sanitize_untrusted_meta, MAX_META_FIELD_BYTES, UNTRUSTED_CLOSE,
-    UNTRUSTED_OPEN,
+use org_redact::sanitize::{
+    sanitize_untrusted_body, sanitize_untrusted_meta, MAX_META_FIELD_BYTES,
+    UNTRUSTED_MESSAGE_CLOSE, UNTRUSTED_MESSAGE_OPEN,
 };
 
 /// Most bytes of one fenced trigger body (64 KiB, far above any typed instruction); a longer
@@ -19,8 +19,8 @@ pub const MAX_TURN_BODY_BYTES: usize = 64 * 1024;
 pub struct TurnSender {
     pub name: String,
     pub handle: Option<String>,
-    /// The office-verified relation to the agent (`crate::provenance`): `owner`, `reports_to`,
-    /// `team_lead`, `person`, `peer`, or `unknown` for a sender the office cannot load.
+    /// The office-verified relation to the agent: `owner`, `reports_to`, `team_lead`, `person`,
+    /// `peer`, or `unknown` for a sender the office cannot load.
     pub relation: String,
 }
 
@@ -78,7 +78,9 @@ fn fence(kind: &str, from: Option<&str>, source_id: Option<&str>, body: &str) ->
         .map(|s| format!(" source_id=\"{s}\""))
         .unwrap_or_default();
     let body = sanitize_untrusted_body(body, MAX_TURN_BODY_BYTES);
-    format!("{UNTRUSTED_OPEN} kind=\"{kind}\"{from}{source}>>>\n{body}\n{UNTRUSTED_CLOSE}")
+    format!(
+        "{UNTRUSTED_MESSAGE_OPEN} kind=\"{kind}\"{from}{source}>>>\n{body}\n{UNTRUSTED_MESSAGE_CLOSE}"
+    )
 }
 
 /// Composes the input of one turn. Everything a person, a peer or a tool wrote is fenced as

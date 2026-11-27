@@ -5,8 +5,7 @@
 use std::collections::BTreeSet;
 
 use org_proto::org::OrgSnapshot;
-
-use crate::wake::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
+use org_redact::sanitize::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
 
 /// The most teams walked up from the home team (a guard against a malformed cycle).
 const MAX_TEAM_DEPTH: usize = 32;

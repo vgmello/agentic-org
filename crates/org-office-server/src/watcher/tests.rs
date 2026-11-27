@@ -1168,15 +1168,14 @@ fn make_real_session_manager(
     sock_dir: &tempfile::TempDir,
     recorded: &Arc<WatchRecordedTurns>,
 ) -> Arc<SessionManager> {
-    let mut reg = RuntimeRegistry::production();
+    let mut reg = RuntimeRegistry::empty();
     reg.register(
         Arc::new(WatchScriptedRuntime {
             recorded: Arc::clone(recorded),
         }),
         Some(script_path.to_path_buf()),
     );
-    let mut cfg = SessionManagerConfig::production(sock_dir.path().join("office.sock"));
-    cfg.runtimes = reg;
+    let cfg = SessionManagerConfig::with_runtimes(sock_dir.path().join("office.sock"), reg);
     Arc::new(SessionManager::new(Arc::clone(office), cfg))
 }
 

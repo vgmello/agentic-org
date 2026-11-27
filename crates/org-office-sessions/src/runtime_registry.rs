@@ -1,32 +1,17 @@
 //! Vendor-agnostic runtime adapter registry (`AGENTS.md` Rule 1, `TASK-42`, `TASK-83`,
-//! `TASK-216`).
+//! `TASK-216`, `TASK-255`).
 //!
-//! Concrete vendor adapters (`ClaudeRuntime`, `CodexRuntime`, `AgyRuntime`) are injected by the
-//! composition root (`apps/agentic-org-office`) via [`RuntimeRegistry::with_adapters`] or
-//! [`install_default_runtimes`]. Any unregistered or unknown runtime ID fails closed.
+//! Concrete vendor adapters (`ClaudeRuntime`, `CodexRuntime`, `AgyRuntime`) are explicitly
+//! injected by the composition root (`apps/agentic-org-office`) via
+//! [`RuntimeRegistry::with_adapters`]. Zero process-global state is held; any unregistered or
+//! unknown runtime ID fails closed.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use org_agent_runtime::AgentRuntime;
-
-/// Factory callback building the process's default [`RuntimeRegistry`], installed once by the
-/// composition root (`apps/agentic-org-office`).
-pub type RuntimeFactory = fn() -> RuntimeRegistry;
-
-static DEFAULT_RUNTIMES: OnceLock<RuntimeFactory> = OnceLock::new();
-
-#[cfg(not(test))]
-static EMPTY_REGISTRY_WARNED: std::sync::Once = std::sync::Once::new();
-
-/// Installs the process-wide default [`RuntimeRegistry`] factory. Called once at startup by
-/// `apps/agentic-org-office` before any [`RuntimeRegistry::production`] call. Subsequent calls
-/// are ignored and return `false`.
-pub fn install_default_runtimes(factory: RuntimeFactory) -> bool {
-    DEFAULT_RUNTIMES.set(factory).is_ok()
-}
 
 /// Errors resolving a runtime adapter or its executable path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,12 +50,6 @@ pub struct RuntimeRegistry {
     default_id: Option<String>,
 }
 
-impl Default for RuntimeRegistry {
-    fn default() -> Self {
-        Self::production()
-    }
-}
-
 impl RuntimeRegistry {
     /// Empty registry containing no runtime adapters; every lookup fails closed until adapters
     /// are registered with [`Self::register`].
@@ -93,32 +72,15 @@ impl RuntimeRegistry {
         reg
     }
 
-    /// Returns the production registry installed by the composition root via
-    /// [`install_default_runtimes`].
-    ///
-    /// If no factory was installed, fails closed with [`Self::empty`] (logging once to stderr)
-    /// so `org-office-sessions` never hardcodes vendor adapter crates in production.
+    /// Test-only helper returning a registry populated with all dev-dependency runtime adapters.
+    /// Production callers MUST inject adapters explicitly via [`Self::with_adapters`].
+    #[cfg(test)]
     pub fn production() -> Self {
-        if let Some(factory) = DEFAULT_RUNTIMES.get() {
-            return factory();
-        }
-        #[cfg(test)]
-        {
-            Self::with_adapters([
-                Arc::new(org_agent_runtime_claude::ClaudeRuntime::new()) as Arc<dyn AgentRuntime>,
-                Arc::new(org_agent_runtime_codex::CodexRuntime::new()) as Arc<dyn AgentRuntime>,
-                Arc::new(org_agent_runtime_agy::AgyRuntime::new()) as Arc<dyn AgentRuntime>,
-            ])
-        }
-        #[cfg(not(test))]
-        {
-            EMPTY_REGISTRY_WARNED.call_once(|| {
-                eprintln!(
-                    "org-office-sessions: no default runtimes installed via install_default_runtimes; returning empty fail-closed registry"
-                );
-            });
-            Self::empty()
-        }
+        Self::with_adapters([
+            Arc::new(org_agent_runtime_claude::ClaudeRuntime::new()) as Arc<dyn AgentRuntime>,
+            Arc::new(org_agent_runtime_codex::CodexRuntime::new()) as Arc<dyn AgentRuntime>,
+            Arc::new(org_agent_runtime_agy::AgyRuntime::new()) as Arc<dyn AgentRuntime>,
+        ])
     }
 
     /// Registers or replaces an adapter and optional explicit binary path.

@@ -1,6 +1,17 @@
-//! Single redaction choke-point for `org-office-sessions` (leaf module; zero internal deps).
+//! Single Layer-0 redaction and untrusted-data sanitization choke-point (`TASK-190`, `TASK-255`).
+//!
+//! Zero workspace crate dependencies: every crate that logs, persists, or fences external text
+//! shares this exact secret scrubber and untrusted-data sanitizer.
+
+#![forbid(unsafe_code)]
 
 use serde_json::Value;
+
+pub mod sanitize;
+#[cfg(any(test, feature = "testkit"))]
+pub mod testing;
+#[cfg(test)]
+mod tests;
 
 pub const REDACTED: &str = "[REDACTED]";
 const REDACTED_PRIVATE_KEY: &str = "[REDACTED PRIVATE KEY]";
@@ -710,8 +721,3 @@ fn unquoted_token_len(bytes: &[u8], stops: &[u8]) -> usize {
     }
     len
 }
-
-#[cfg(test)]
-pub(crate) mod testing;
-#[cfg(test)]
-mod tests;

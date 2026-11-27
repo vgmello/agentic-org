@@ -389,6 +389,99 @@ impl CredentialVault {
     }
 }
 
+fn map_usage_cred_err(err: EnrollmentVaultError) -> org_subscription_usage::UsageCredentialError {
+    use org_subscription_usage::UsageCredentialError as U;
+    match err {
+        EnrollmentVaultError::MissingSecretsKey => U::MissingSecretsKey,
+        EnrollmentVaultError::InvalidInput(m) => U::InvalidInput(m),
+        EnrollmentVaultError::NotAuthorized(m) => U::NotAuthorized(m),
+        EnrollmentVaultError::Conflict(m) => U::Conflict(m),
+        EnrollmentVaultError::NotFound(m) => U::NotFound(m),
+        EnrollmentVaultError::Expired(m) => U::Expired(m),
+        EnrollmentVaultError::Crypto(m) => U::Crypto(m),
+        EnrollmentVaultError::Io(m) => U::Io(m),
+    }
+}
+
+impl org_subscription_usage::UsageCredentialLookup for CredentialVault {
+    fn usage_status(
+        &self,
+        connection_id: &str,
+    ) -> Result<SubscriptionUsageCredentialView, org_subscription_usage::UsageCredentialError> {
+        CredentialVault::usage_status(self, connection_id).map_err(map_usage_cred_err)
+    }
+
+    fn enrolled_status(
+        &self,
+        connection_id: &str,
+    ) -> Result<ProviderCredentialView, org_subscription_usage::UsageCredentialError> {
+        CredentialVault::status(self, connection_id).map_err(map_usage_cred_err)
+    }
+
+    fn store_wrapped_usage(
+        &self,
+        connection_id: &str,
+        provider: &str,
+        bound_origin: &str,
+        secret: &[u8],
+        expires_at: Option<String>,
+        account_hint: Option<String>,
+    ) -> Result<SubscriptionUsageCredentialView, org_subscription_usage::UsageCredentialError> {
+        CredentialVault::store_wrapped_usage(
+            self,
+            connection_id,
+            provider,
+            bound_origin,
+            secret,
+            expires_at,
+            account_hint,
+        )
+        .map_err(map_usage_cred_err)
+    }
+
+    fn revoke_usage(
+        &self,
+        connection_id: &str,
+    ) -> Result<SubscriptionUsageCredentialView, org_subscription_usage::UsageCredentialError> {
+        CredentialVault::revoke_usage(self, connection_id).map_err(map_usage_cred_err)
+    }
+
+    fn load_unwrapped_usage(
+        &self,
+        connection_id: &str,
+        expected_origin: &str,
+    ) -> Result<
+        Option<org_subscription_usage::UnwrappedUsageCredential>,
+        org_subscription_usage::UsageCredentialError,
+    > {
+        CredentialVault::load_unwrapped_usage_with_meta(self, connection_id, expected_origin)
+            .map(|opt| {
+                opt.map(|c| org_subscription_usage::UnwrappedUsageCredential {
+                    secret: c.secret,
+                    expires_at: c.expires_at,
+                })
+            })
+            .map_err(map_usage_cred_err)
+    }
+
+    fn load_unwrapped_enrolled(
+        &self,
+        connection_id: &str,
+    ) -> Result<
+        Option<org_subscription_usage::UnwrappedUsageCredential>,
+        org_subscription_usage::UsageCredentialError,
+    > {
+        CredentialVault::load_unwrapped_with_meta(self, connection_id)
+            .map(|opt| {
+                opt.map(|c| org_subscription_usage::UnwrappedUsageCredential {
+                    secret: c.secret,
+                    expires_at: c.expires_at,
+                })
+            })
+            .map_err(map_usage_cred_err)
+    }
+}
+
 pub(super) fn remove_file_durably(path: &Path) -> Result<(), EnrollmentVaultError> {
     match fs::remove_file(path) {
         Ok(()) => {}

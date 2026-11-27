@@ -12,8 +12,8 @@ use org_proto::costs::{SubscriptionModelUsageView, SubscriptionUsageWindowView};
 use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 
-use crate::redact::redact_text;
-use crate::subscription_usage::SubscriptionUsageCollectOutcome;
+use crate::SubscriptionUsageCollectOutcome;
+use org_redact::redact_text;
 
 const MAX_RFC3339_EPOCH_SECS: u64 = 253_402_300_799; // 9999-12-31T23:59:59Z
 const FIVE_HOURS_SECS: u64 = 5 * 3_600;
@@ -571,8 +571,7 @@ fn epoch_secs_to_rfc3339(secs: u64) -> Option<String> {
     if secs > MAX_RFC3339_EPOCH_SECS {
         return None;
     }
-    let formatted = crate::credentials::format_rfc3339_ms(secs.saturating_mul(1_000));
-    org_proto::parse_rfc3339_ms(&formatted).map(|_| formatted)
+    org_proto::format_rfc3339_ms(secs.saturating_mul(1_000))
 }
 
 fn window_has_metrics(w: &SubscriptionUsageWindowView) -> bool {

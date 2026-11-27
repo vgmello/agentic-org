@@ -4,12 +4,12 @@
 
 /// One line of text per secret shape every call site must strip, plus the fragments that must
 /// never appear after redaction.
-pub(crate) struct SecretCorpus {
-    pub(crate) text: String,
-    pub(crate) fragments: Vec<String>,
+pub struct SecretCorpus {
+    pub text: String,
+    pub fragments: Vec<String>,
 }
 
-pub(crate) fn secret_corpus() -> SecretCorpus {
+pub fn secret_corpus() -> SecretCorpus {
     let pem_body = "MIIEvQIBADANcorpusPEMbody0042";
     let jwt_payload = "eyJzdWIiOiJjb3JwdXMifQcorpus";
     let pat_tail = "11CORPUSPAT0042_abcdefghijklmnop";
@@ -42,7 +42,7 @@ pub(crate) fn secret_corpus() -> SecretCorpus {
 }
 
 /// Panics when any corpus fragment survived in `haystack`.
-pub(crate) fn assert_no_corpus_secret(corpus: &SecretCorpus, haystack: &str, site: &str) {
+pub fn assert_no_corpus_secret(corpus: &SecretCorpus, haystack: &str, site: &str) {
     for fragment in &corpus.fragments {
         assert!(
             !haystack.contains(fragment.as_str()),

@@ -94,7 +94,7 @@ fn parse_version_output_extracts_first_token() {
 #[test]
 fn probe_runtime_version_aborts_immediately_when_stop_is_set() {
     let stop = AtomicBool::new(true);
-    let runtimes = RuntimeRegistry::production();
+    let runtimes = RuntimeRegistry::empty();
     assert!(probe_runtime_version(Some("/bin/sh"), "claude", &runtimes, &stop).is_none());
 
     let running = AtomicBool::new(false);
