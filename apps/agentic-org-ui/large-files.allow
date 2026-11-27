@@ -1,11 +1,6 @@
 # Legacy production UI files > 700 lines (TASK-225, CAP=700, TARGET=500).
 # Sorted by path. Entries may ONLY shrink or be deleted; never raise or add.
 src/lib/components/WorkReadingPanel.svelte 719
-src/lib/modules/activity/features/command-center/ActivityCommandCenter.svelte 2258
-src/lib/modules/activity/features/command-center/ActivityOpsRail.svelte 1146
-src/lib/modules/activity/features/command-center/ActivityStreamPanel.svelte 989
-src/lib/modules/activity/features/command-center/AssemblyLineMatrix.svelte 992
-src/lib/modules/activity/features/command-center/assembly-model.ts 1530
 src/lib/modules/agent-setup/http-api.ts 701
 src/lib/modules/chat/features/workspace/ChatWorkspace.svelte 1246
 src/lib/modules/costs/features/insights/OrganizationInsightsView.svelte 729

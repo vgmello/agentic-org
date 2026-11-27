@@ -90,7 +90,7 @@
 			const mod = await import('./CommandPaletteModal.svelte');
 			if (!destroyed) PaletteModal = mod.default;
 		} catch {
-			// User can retry via Cmd+K.
+			if (!destroyed && !PaletteModal) open = false;
 		} finally {
 			modalLoading = false;
 		}
