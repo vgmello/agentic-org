@@ -481,12 +481,7 @@ html[data-theme="report"] {
   color: var(--toolbar-seg-active-ink);
 }
 .work-layout-toggle .queue-tab[aria-pressed="true"]:hover { background: var(--toolbar-seg-active-bg); }
-/* Owner (owner-51): view controls sit at the right, under New task; tabs stay left.
-   No outline on the List/Board toggle (no border lines). */
-@media (min-width: 900px) {
-  #main .work-toolbar > .primary-tab-row + * { margin-inline-start: auto; }
-  #main .work-toolbar > .primary-tab-row + *::before { display: none; }
-}
+/* No outline on the List/Board toggle (no border lines). View controls stay left, right after the tabs (owner). */
 #main .work-layout-toggle { box-shadow: none; }
 #main .work-layout-toggle .queue-tab[aria-pressed="true"] { border-color: transparent; }
 
