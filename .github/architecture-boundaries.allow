@@ -68,4 +68,3 @@ crates/org-office-server/src/transfer/writer.rs 4
 [coupling.sandbox]
 
 [coupling.dead_code_trait]
-crates/org-host/src/hostdb.rs 1

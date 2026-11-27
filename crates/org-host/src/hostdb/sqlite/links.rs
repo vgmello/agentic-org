@@ -109,32 +109,6 @@ pub(super) fn redeem_in(
 }
 
 impl HostDb {
-    /// Non-consuming preview of a pending, unexpired link's subject.
-    pub(crate) fn peek_link_subject(
-        &self,
-        kind: LinkKind,
-        token: &crate::links::Token,
-        now_ms: i64,
-    ) -> Result<Result<String, Refused>, Error> {
-        let digest = LinkDigest::of(&self.instance_id, kind, token);
-        let db = self.connection.lock().map_err(poisoned)?;
-        let row: Option<(String, String, i64)> = db
-            .query_row(
-                "SELECT subject,state,expires_at_ms FROM one_time_links WHERE kind=?1 AND digest=?2",
-                (kind.as_str(), &digest.0[..]),
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()
-            .map_err(store)?;
-        let Some((subject, state, expires_at_ms)) = row else {
-            return Ok(Err(Refused::Unknown));
-        };
-        if let Err(refused) = redeem_rule(&state, expires_at_ms, now_ms) {
-            return Ok(Err(refused));
-        }
-        Ok(Ok(subject))
-    }
-
     /// Issues a link that replaces the pending one only while no administrator exists. The
     /// check and the write share one IMMEDIATE transaction, so an administrator registered
     /// concurrently either precedes the check (nothing issued) or follows the link.
@@ -236,6 +210,29 @@ impl OneTimeLinks for HostDb {
         Ok(row.map_or(Err(Refused::Unknown), |(state, expires_at_ms)| {
             redeem_rule(&state, expires_at_ms, now_ms)
         }))
+    }
+    fn peek_subject(
+        &self,
+        kind: LinkKind,
+        digest: LinkDigest,
+        now_ms: i64,
+    ) -> Result<Result<String, Refused>, Error> {
+        let db = self.connection.lock().map_err(poisoned)?;
+        let row: Option<(String, String, i64)> = db
+            .query_row(
+                "SELECT subject,state,expires_at_ms FROM one_time_links WHERE kind=?1 AND digest=?2",
+                (kind.as_str(), &digest.0[..]),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(store)?;
+        let Some((subject, state, expires_at_ms)) = row else {
+            return Ok(Err(Refused::Unknown));
+        };
+        if let Err(refused) = redeem_rule(&state, expires_at_ms, now_ms) {
+            return Ok(Err(refused));
+        }
+        Ok(Ok(subject))
     }
     fn pending_row(&self, kind: LinkKind, subject: &Subject) -> Result<Option<Pending>, Error> {
         let db = self.connection.lock().map_err(poisoned)?;

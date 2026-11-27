@@ -50,6 +50,24 @@ impl OneTimeLinks for MemoryLinks {
                 redeem_rule(r.state, r.pending.expires_at_ms, now_ms)
             }))
     }
+    fn peek_subject(
+        &self,
+        kind: LinkKind,
+        digest: LinkDigest,
+        now_ms: i64,
+    ) -> Result<Result<String, Refused>, Error> {
+        let rows = self
+            .rows
+            .lock()
+            .map_err(|_| Error::Store(StoreFault::Poisoned))?;
+        let Some(row) = rows.iter().find(|r| r.kind == kind && r.digest == digest) else {
+            return Ok(Err(Refused::Unknown));
+        };
+        if let Err(refused) = redeem_rule(row.state, row.pending.expires_at_ms, now_ms) {
+            return Ok(Err(refused));
+        }
+        Ok(Ok(row.subject.as_str().to_owned()))
+    }
     fn replace_pending(&self, link: NewLink<'_>) -> Result<(), Error> {
         let mut rows = self
             .rows

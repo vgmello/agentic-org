@@ -98,12 +98,13 @@ fn actual_registered_host_releases_recovery_custody_only_after_unlocked_presence
     let id = &mut next;
     let org = create_hq(&host, address);
     let recovery = host.service.recovery_for_test();
-    let (db, custody) = host
+    let auth = host
         .service
         .authentication
         .as_ref()
-        .expect("registered host authentication")
-        .provisioning_storage();
+        .expect("registered host authentication");
+    let (_, custody) = auth.provisioning_storage();
+    let db = auth.sqlite_for_test();
     let instance_id = host.instance.as_ref().unwrap().id().to_owned();
     let adapter = Arc::new(Scripted {
         db: Arc::clone(&db),

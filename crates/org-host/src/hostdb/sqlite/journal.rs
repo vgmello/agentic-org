@@ -1,8 +1,10 @@
 //! Registry-only journal transactions. Callers do all non-SQLite work between lookup/write.
 use super::clock::{advance_clock, now};
 use super::{Error, HostDb};
-pub(super) use crate::hostdb::journal::{id_time, DAY};
-pub(crate) use crate::hostdb::journal::{Attempt, Effect, Lookup, Stored, Verifier, Write};
+pub(super) use crate::hostdb::journal::{id_time, DAY, PRUNE_BATCH};
+pub(crate) use crate::hostdb::journal::{
+    Attempt, Effect, Lookup, PruneOutcome, Stored, Verifier, Write, MAX_PRUNE_BATCHES,
+};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 impl HostDb {
@@ -122,19 +124,6 @@ impl HostDb {
         })
     }
 }
-
-/// Summary of one startup [`HostDb::prune_expired`] pass.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PruneOutcome {
-    pub(crate) removed: u64,
-    pub(crate) more_remaining: bool,
-}
-
-/// The most expired rows one [`maintain`] removes, bounding every journaled write's work.
-const PRUNE_BATCH: u16 = 256;
-
-/// Hard upper bound on startup prune batches (1,024 × 256 = 262,144 rows per boot).
-pub(crate) const MAX_PRUNE_BATCHES: usize = 1024;
 
 /// The caller's account mutation and verifier invalidation share its IMMEDIATE transaction.
 #[cfg_attr(

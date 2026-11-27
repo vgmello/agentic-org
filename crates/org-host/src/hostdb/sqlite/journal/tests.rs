@@ -1349,3 +1349,36 @@ fn host_start_logs_warning_when_prune_reaches_batch_cap() {
         "expected startup prune batch-cap warning, got {lines:?}"
     );
 }
+
+impl HostDb {
+    /// Test fixture for `hostdb::contract_tests`: inserts one expired `reserved` row and one
+    /// expired `abandoned` row referenced by `org_create_staging`.
+    pub(crate) fn seed_expired_exempt_journal_rows(
+        &self,
+        reserved_id: &str,
+        staged_id: &str,
+        account: &str,
+        expires_at_ms: i64,
+    ) {
+        let refusal =
+            serde_json::to_string(&rejected(org_proto::ErrorCode::InvalidName).stored).unwrap();
+        let mut c = self.connection.lock().unwrap();
+        let tx = c.transaction().unwrap();
+        tx.execute(
+            "INSERT INTO op_journal VALUES (?1,'organization.create',?2,?3,'reserved',NULL,?4)",
+            (reserved_id, [7u8; 32], account, expires_at_ms),
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO op_journal VALUES (?1,'organization.create',?2,?3,'abandoned',?4,?5)",
+            (staged_id, [7u8; 32], account, refusal, expires_at_ms),
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO org_create_staging VALUES (?1,'name','org','office','member')",
+            [staged_id],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
+}

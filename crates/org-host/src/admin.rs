@@ -23,8 +23,8 @@ use org_proto::{ApiError, ErrorCode};
 
 use crate::app_auth::AppPolicy;
 use crate::control_listener::Connection;
-use crate::hostdb::HostDb;
-use crate::links::{Issued, LinkKind, OneTimeLinks, Subject};
+use crate::hostdb::HostStore;
+use crate::links::{Issued, LinkKind, Subject};
 use crate::peer::Received;
 
 /// The single subject every registration link is for: the instance's administrator. Setup's
@@ -64,7 +64,7 @@ impl Presence for NativePresence {
 }
 
 pub(crate) struct Admin {
-    db: Arc<HostDb>,
+    db: Arc<dyn HostStore>,
     setup_operation: String,
     origin: ListenOrigin,
     policy: AppPolicy,
@@ -126,7 +126,7 @@ fn wall() -> Result<i64, ApiError> {
 
 impl Admin {
     pub(crate) fn new(
-        db: Arc<HostDb>,
+        db: Arc<dyn HostStore>,
         setup_operation: &str,
         origin: ListenOrigin,
         policy: AppPolicy,
@@ -251,7 +251,7 @@ impl Admin {
                 "the setup operation does not match this instance",
             ));
         }
-        if self.db.administrator_exists().map_err(unavailable)? {
+        if self.db.has_administrator().map_err(unavailable)? {
             return Ok(AdminLinkResult::AdministratorPresent);
         }
         match self
@@ -286,7 +286,7 @@ impl Admin {
                 )
             })?;
         let _resetting = Resetting(&self.resetting);
-        let has_admin = self.db.administrator_exists().map_err(unavailable)?;
+        let has_admin = self.db.has_administrator().map_err(unavailable)?;
         let reason = if has_admin {
             ConfirmReason::ResetAdminPassword
         } else {

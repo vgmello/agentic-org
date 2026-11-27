@@ -24,7 +24,7 @@ use super::{Authentication, Service};
 use crate::control_listener::Connection;
 use crate::hostdb::{
     journal::{Attempt, Effect, Lookup, Stored, Write},
-    HostDb, HostStore,
+    HostStore,
 };
 
 const PENDING_JOIN_FILE: &str = "pending-join.v1.json";
@@ -54,7 +54,7 @@ struct PendingJoinRecord {
 /// - On any instance with accounts, requires an authenticated session belonging to an instance
 ///   administrator (`account.admin()`), refusing non-admin organization owners.
 fn authorize_join_actor(
-    db: &HostDb,
+    db: &dyn HostStore,
     authentication: &Authentication,
     request: &Request,
     connection: &Connection,
@@ -169,7 +169,7 @@ fn decode_empty_stored(stored: Stored) -> Result<HostOpResult<Empty>, ApiError> 
 }
 
 fn commit_join_result(
-    db: &HostDb,
+    db: &dyn HostStore,
     attempt: &Attempt<'_>,
     now: i64,
     result: &OfficeJoinResult,
@@ -177,12 +177,14 @@ fn commit_join_result(
     let val = serde_json::to_value(result)
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "cannot serialize join result"))?;
     let write = db
-        .write(attempt, now, |_| {
-            Ok(Effect {
+        .journal_commit(
+            attempt,
+            now,
+            Effect {
                 stored: Stored::Completed { result: val },
                 verifier: None,
-            })
-        })
+            },
+        )
         .map_err(journal_error)?;
     match write {
         Write::Committed(stored) | Write::Existing(Lookup::Replay(stored)) => {
@@ -259,7 +261,7 @@ pub(super) fn join_session_office(
 ) {
     let reply = (|| -> Result<HostOpResult<OfficeJoinResult>, ApiError> {
         let (db, _) = authentication.provisioning_storage();
-        let actor_id = authorize_join_actor(&db, authentication, request, connection)?;
+        let actor_id = authorize_join_actor(&*db, authentication, request, connection)?;
         let now = browser_now_ms()?;
         let p: OfficeJoinParams = request
             .params::<OfficeJoin>()
@@ -273,7 +275,7 @@ pub(super) fn join_session_office(
         let token = decode_invitation_syntax(p.invitation.expose())?;
         let attempt = Attempt::new(&p, &actor_id).map_err(journal_error)?;
         let _guard = crate::sync::lock(&service.office_restarting);
-        match db.lookup(&attempt, now).map_err(journal_error)? {
+        match db.journal_lookup(&attempt, now).map_err(journal_error)? {
             Lookup::Replay(stored) => {
                 let replayed = decode_join_stored(stored)?;
                 return try_resume_interrupted_join(
@@ -345,7 +347,7 @@ pub(super) fn join_session_office(
                 actor_account: actor_id.clone(),
                 pending_file,
             })?;
-        commit_join_result(&db, &attempt, now, &res)
+        commit_join_result(&*db, &attempt, now, &res)
     })();
     match reply {
         Ok(res) => connection.send_response(ok::<OfficeJoin>(request.id, &res)),
@@ -362,7 +364,7 @@ pub(super) fn remove_pending_session_office(
 ) {
     let reply = (|| -> Result<HostOpResult<Empty>, ApiError> {
         let (db, _) = authentication.provisioning_storage();
-        let actor_id = authorize_join_actor(&db, authentication, request, connection)?;
+        let actor_id = authorize_join_actor(&*db, authentication, request, connection)?;
         let now = browser_now_ms()?;
         let p: OfficeRemovePendingParams =
             request.params::<OfficeRemovePending>().map_err(|_| {
@@ -379,7 +381,7 @@ pub(super) fn remove_pending_session_office(
         }
         let attempt = Attempt::new(&p, &actor_id).map_err(journal_error)?;
         let _guard = crate::sync::lock(&service.office_restarting);
-        match db.lookup(&attempt, now).map_err(journal_error)? {
+        match db.journal_lookup(&attempt, now).map_err(journal_error)? {
             Lookup::Replay(stored) => return decode_empty_stored(stored),
             Lookup::NeedsVerification { .. } => {
                 return Err(ApiError::new(
@@ -417,14 +419,16 @@ pub(super) fn remove_pending_session_office(
             ));
         }
         let write = db
-            .write(&attempt, now, |_| {
-                Ok(Effect {
+            .journal_commit(
+                &attempt,
+                now,
+                Effect {
                     stored: Stored::Completed {
                         result: serde_json::json!({}),
                     },
                     verifier: None,
-                })
-            })
+                },
+            )
             .map_err(journal_error)?;
         let _ = fs::remove_file(&removing_file);
         let _ = fs::remove_dir(&dir);
@@ -454,7 +458,7 @@ pub(super) fn re_enroll_session_office(
 ) {
     let reply = (|| -> Result<HostOpResult<OfficeJoinResult>, ApiError> {
         let (db, _) = authentication.provisioning_storage();
-        let actor_id = authorize_join_actor(&db, authentication, request, connection)?;
+        let actor_id = authorize_join_actor(&*db, authentication, request, connection)?;
         let now = browser_now_ms()?;
         let p: OfficeReEnrollParams = request.params::<OfficeReEnroll>().map_err(|_| {
             ApiError::new(
@@ -483,7 +487,7 @@ pub(super) fn re_enroll_session_office(
         }
         let attempt = Attempt::new(&p, &actor_id).map_err(journal_error)?;
         let _guard = crate::sync::lock(&service.office_restarting);
-        match db.lookup(&attempt, now).map_err(journal_error)? {
+        match db.journal_lookup(&attempt, now).map_err(journal_error)? {
             Lookup::Replay(stored) => {
                 let replayed = decode_join_stored(stored)?;
                 return try_resume_interrupted_join(
@@ -556,7 +560,7 @@ pub(super) fn re_enroll_session_office(
                 actor_account: actor_id.clone(),
                 pending_file,
             })?;
-        commit_join_result(&db, &attempt, now, &res)
+        commit_join_result(&*db, &attempt, now, &res)
     })();
     match reply {
         Ok(res) => connection.send_response(ok::<OfficeReEnroll>(request.id, &res)),
