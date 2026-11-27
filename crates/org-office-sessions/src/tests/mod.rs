@@ -79,6 +79,7 @@ mod subagents_binding;
 mod subscription_usage;
 mod wake;
 mod warm;
+mod worktree_refresh;
 
 // ---------------------------------------------------------------------------
 // ENROLL-1..6: CLI enrollment, wrapped credential vault, redaction

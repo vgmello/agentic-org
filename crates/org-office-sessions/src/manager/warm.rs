@@ -87,7 +87,7 @@ enum FencedSend<'a> {
     /// The turn reached the pump and the start slot was released.
     Delivered,
     /// The pump is gone: its handle was removed and the slot stays reserved for a cold start.
-    PumpGone(Option<LiveSessionHandle>),
+    PumpGone(Option<Box<LiveSessionHandle>>),
     /// An explicit stop overtook the turn: nothing was sent and the slot is still held.
     Stopped(StartSlotGuard<'a>),
     /// `stop_all`/`shutdown` began: nothing was sent and the slot is still held, so the caller
@@ -189,7 +189,7 @@ pub(super) fn dispatch_warm_handle_turn(
         }),
         FencedSend::PumpGone(old) => {
             release_installed_permit(mgr, &turn.active_permit, installed_pid.as_deref());
-            Ok(cold(old))
+            Ok(cold(old.map(|h| *h)))
         }
         FencedSend::Stopped(slot_guard) => {
             release_installed_permit(mgr, &turn.active_permit, installed_pid.as_deref());
@@ -243,7 +243,7 @@ fn send_turn_fenced<'a>(
         drop(reg);
         return FencedSend::Delivered;
     }
-    let old = reg.live.remove(emp_id);
+    let old = reg.live.remove(emp_id).map(Box::new);
     slot_guard.keep_reserved();
     FencedSend::PumpGone(old)
 }

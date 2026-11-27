@@ -333,6 +333,13 @@ impl SessionManager {
         ensure_operator_home(employee, &home, &workspace_real, &self.config.runtimes)?;
         let workspace_spec = canonical_or_spec(&workspace_real)?;
 
+        // Auto-pre-prepare any repository-linked task worktrees BEFORE route admission (which
+        // hashes `worktree_sandbox_digest`) and BEFORE sandbox planning so Turn 1 always launches
+        // with exact least-privilege bare-cache grants (`TASK-135` AC #4).
+        if let Some(task_ref) = opts.task_ref {
+            self.preprepare_task_worktrees(&emp_id, &[task_ref]);
+        }
+
         let admitted = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
             office: &self.office,
             vault: self.enrollment.vault(),

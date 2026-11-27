@@ -67,14 +67,39 @@ impl GitService {
             base_branch: &base_branch,
             bare_path: &bare_path,
             remote: remote_res.as_ref(),
+            skip_fetch_if_active: false,
         };
-        let result = self
+        let mut outcome = self
             .locks
             .with_lock(&bare_path, || prepare_worktree_locked(self, &prep))
             .map_err(map_git_error)??;
 
         self.live.record_mailbox_change();
-        Ok(result)
+        self.notify_session_worktree_prepared(member, &mut outcome);
+        Ok(outcome.result)
+    }
+
+    fn notify_session_worktree_prepared(
+        &self,
+        member: &str,
+        outcome: &mut PreparedWorktreeOutcome,
+    ) {
+        let Some(sessions) = self.sessions() else {
+            return;
+        };
+        let wt = &outcome.result.worktree;
+        let notice = org_office_sessions::PreparedWorktreeNotice {
+            employee_id: &wt.employee_id,
+            triggered_by_self: member == wt.employee_id,
+            task_key: &wt.task_key,
+            repository_id: &wt.repository_id,
+            admin_dir_name: &outcome.admin_dir_name,
+            branch: &wt.branch,
+            worktree_path: &wt.worktree_path,
+        };
+        let refresh = sessions.on_worktree_prepared(&notice);
+        outcome.result.sandbox_refresh_required = refresh.sandbox_refresh_required;
+        outcome.result.sandbox_refresh_hint = refresh.sandbox_refresh_hint;
     }
 }
 
@@ -135,15 +160,24 @@ fn resolve_prepare_base_branch(
     }
 }
 
-struct PrepareLockedArgs<'a> {
-    runner: &'a GitRunner,
-    member: &'a str,
-    command_id: &'a str,
-    ctx: &'a org_office::TaskGitContext,
-    repo: &'a Repository,
-    base_branch: &'a str,
-    bare_path: &'a Path,
-    remote: Result<&'a RemoteSpec, &'a ApiError>,
+pub(super) struct PrepareLockedArgs<'a> {
+    pub(super) runner: &'a GitRunner,
+    pub(super) member: &'a str,
+    pub(super) command_id: &'a str,
+    pub(super) ctx: &'a org_office::TaskGitContext,
+    pub(super) repo: &'a Repository,
+    pub(super) base_branch: &'a str,
+    pub(super) bare_path: &'a Path,
+    pub(super) remote: Result<&'a RemoteSpec, &'a ApiError>,
+    /// When `true` (auto-pre-prepare), reuse an already-active worktree on disk immediately
+    /// without running a network `git fetch` first (`TASK-135` AC #4).
+    pub(super) skip_fetch_if_active: bool,
+}
+
+pub(super) struct PreparedWorktreeOutcome {
+    pub(super) result: WorktreePrepareResult,
+    pub(super) admin_dir_name: String,
+    pub(super) created_new: bool,
 }
 
 fn check_durable_link_matches_branch(
@@ -161,10 +195,10 @@ fn check_durable_link_matches_branch(
     Ok(())
 }
 
-fn prepare_worktree_locked(
+pub(super) fn prepare_worktree_locked(
     svc: &GitService,
     args: &PrepareLockedArgs<'_>,
-) -> Result<Result<WorktreePrepareResult, ApiError>, GitError> {
+) -> Result<Result<PreparedWorktreeOutcome, ApiError>, GitError> {
     let PrepareLockedArgs {
         runner,
         ctx,
@@ -172,6 +206,7 @@ fn prepare_worktree_locked(
         base_branch,
         bare_path,
         remote,
+        skip_fetch_if_active,
         ..
     } = *args;
     let durable_link = ctx
@@ -192,15 +227,26 @@ fn prepare_worktree_locked(
         Ok(allowed) => allowed,
         Err(err) => return Ok(Err(map_office_error(err))),
     };
-    if let Err(api_err) = ensure_bare_cache_ready(svc, runner, repo, bare_path, remote) {
-        return Ok(Err(api_err));
-    }
     let office_id = svc.office.info().office_id.clone();
     let ws_key = OfficeGitState::workspace_key(
         ctx.task.id.as_str(),
         repo.id.as_str(),
         ctx.workspace_owner_id.as_str(),
     );
+    if skip_fetch_if_active {
+        if let Ok(reused) = try_reuse_workspace(
+            &svc.state,
+            bare_path,
+            &ws_key,
+            repo.id.as_str(),
+            durable_link,
+        )? {
+            return Ok(reused);
+        }
+    }
+    if let Err(api_err) = ensure_bare_cache_ready(svc, runner, repo, bare_path, remote) {
+        return Ok(Err(api_err));
+    }
     let taken_branches = match try_reuse_workspace(
         &svc.state,
         bare_path,
@@ -263,12 +309,16 @@ fn prepare_worktree_locked(
     ) {
         return Ok(Err(err));
     }
-    Ok(Ok(build_prepare_result(
-        &ws_record,
-        bare_path,
-        &created.admin_dir_name,
-        &created.worktree_path,
-    )))
+    Ok(Ok(PreparedWorktreeOutcome {
+        result: build_prepare_result(
+            &ws_record,
+            bare_path,
+            &created.admin_dir_name,
+            &created.worktree_path,
+        ),
+        admin_dir_name: created.admin_dir_name,
+        created_new: true,
+    }))
 }
 
 fn record_branch_or_rollback(
@@ -302,7 +352,7 @@ fn try_reuse_workspace(
     ws_key: &str,
     repo_id: &str,
     durable_link: Option<&org_office::tasks::records::TaskRepositoryRecord>,
-) -> Result<Result<Result<WorktreePrepareResult, ApiError>, BTreeSet<String>>, GitError> {
+) -> Result<Result<Result<PreparedWorktreeOutcome, ApiError>, BTreeSet<String>>, GitError> {
     let state_guard = state.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(existing) = state_guard.workspaces.get(ws_key) {
         let existing_path = PathBuf::from(&existing.worktree_path);
@@ -316,12 +366,16 @@ fn try_reuse_workspace(
                 ));
             }
             sanitize_worktree_links(bare_path, &existing.admin_dir_name, &existing_path)?;
-            return Ok(Ok(Ok(build_prepare_result(
-                existing,
-                bare_path,
-                &existing.admin_dir_name,
-                &existing_path,
-            ))));
+            return Ok(Ok(Ok(PreparedWorktreeOutcome {
+                result: build_prepare_result(
+                    existing,
+                    bare_path,
+                    &existing.admin_dir_name,
+                    &existing_path,
+                ),
+                admin_dir_name: existing.admin_dir_name.clone(),
+                created_new: false,
+            })));
         }
     }
     let taken = state_guard
@@ -375,5 +429,7 @@ fn build_prepare_result(
             .into_iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect(),
+        sandbox_refresh_required: false,
+        sandbox_refresh_hint: None,
     }
 }

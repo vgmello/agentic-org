@@ -36,6 +36,11 @@ pub struct RuntimeHostProfile {
     /// Whether this runtime's sandbox requires explicit read-only directory mounts (e.g.
     /// `--add-dir`) for `agent-os`, the office socket folder, and host Rust toolchain caches.
     pub needs_explicit_sandbox_ro_dirs: bool,
+    /// Runtime-dir relative filename of a file-backed sandbox/permission settings artifact
+    /// planned by `plan_session` (e.g. `Some("claude-settings.json")`), so host-side live
+    /// worktree sandbox refreshes can rewrite it atomically without branching on runtime IDs
+    /// (`TASK-160`).
+    pub sandbox_settings_file: Option<&'static str>,
 }
 
 /// Workspace-relative operator execpolicy folder managed by a runtime adapter (`TASK-80.1`).
