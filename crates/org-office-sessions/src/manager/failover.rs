@@ -1,11 +1,12 @@
-//! Pool failover relaunch, host Claude subscription refresh, and recovery wakes.
+//! Pool failover relaunch, vault-native OAuth refresh, and recovery wakes.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
 
-use org_office::organization_family::records::{EmployeeKind, EmployeeStatus, PermissionPreset};
+use org_office::organization_family::records::{
+    EmployeeKind, EmployeeStatus, PermissionPreset, ProviderAuthMode,
+};
 use org_proto::sessions::{MemberSessionStartParams, SessionState};
-use org_proto::ApiError;
+use org_proto::{ApiError, ErrorCode};
 
 use crate::credentials::rfc3339_now;
 use crate::pump::FailoverRequest;
@@ -25,47 +26,33 @@ impl SessionManager {
     }
 }
 
-pub(crate) fn is_host_claude_subscription_refresh_eligible(
-    mgr: &SessionManager,
-    connection_id: &str,
-) -> Option<PathBuf> {
-    let conn = mgr.office.load_provider_connection(connection_id).ok()??;
-    if conn.auth_mode != org_office::organization_family::records::ProviderAuthMode::SubscriptionCli
-    {
-        return None;
-    }
-    let adapter = mgr.config.runtimes.resolve(&conn.runtime_driver).ok()?;
-    if !adapter.host_profile().uses_host_oauth_token_injection {
-        return None;
-    }
-    if mgr
-        .enrollment
-        .vault()
-        .load_unwrapped(conn.id.as_str())
-        .ok()
-        .flatten()
-        .is_some()
-    {
-        return None;
-    }
-    mgr.config
-        .runtimes
-        .resolve_binary(adapter.as_ref(), None)
-        .ok()
-}
-
-pub(super) fn try_refresh_host_claude_subscription(
+/// Attempts one bounded, single-flight vault-native OAuth refresh or operator-rotation re-read
+/// for a `subscription_cli` connection after a pre-side-effect `auth_expired` failure (`TASK-132`).
+pub(super) fn try_refresh_vault_oauth_connection(
     mgr: &SessionManager,
     req: &FailoverRequest,
 ) -> bool {
     if req.reason != "auth_expired" || req.oauth_refresh_attempted {
         return false;
     }
-    let Some(binary) = is_host_claude_subscription_refresh_eligible(mgr, &req.failed_connection_id)
+    let Ok(Some(conn)) = mgr
+        .office
+        .load_provider_connection(&req.failed_connection_id)
     else {
         return false;
     };
-    crate::host_auth::refresh_host_claude_oauth_reactive(&binary, req.oauth_token_fp.as_deref())
+    if conn.auth_mode != ProviderAuthMode::SubscriptionCli {
+        return false;
+    }
+    mgr.vault_oauth_refresh
+        .refresh_reactive(
+            mgr.enrollment.vault(),
+            conn.id.as_str(),
+            &conn.provider_type,
+            req.oauth_token_fp.as_deref(),
+            crate::credentials::now_ms(),
+        )
+        .is_ok()
 }
 
 pub(super) fn record_failover_connection_health(mgr: &SessionManager, req: &FailoverRequest) {
@@ -133,7 +120,7 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
         return;
     }
     let is_stale_recycle = req.reason == "warm_route_stale";
-    let refreshed_same_conn = !is_stale_recycle && try_refresh_host_claude_subscription(mgr, &req);
+    let refreshed_same_conn = !is_stale_recycle && try_refresh_vault_oauth_connection(mgr, &req);
     if !is_stale_recycle && !refreshed_same_conn {
         record_failover_connection_health(mgr, &req);
     }
@@ -185,8 +172,22 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
         })
         .and_then(|prepared| mgr.install_live_session(prepared, slot));
     if let Err(err) = launch_res {
-        record_failover_exhausted(mgr, &req, &err);
+        let final_err = normalize_failover_exhausted_error(&req, err);
+        record_failover_exhausted(mgr, &req, &final_err);
     }
+}
+
+fn normalize_failover_exhausted_error(req: &FailoverRequest, err: ApiError) -> ApiError {
+    if req.reason != "auth_expired" || err.message.starts_with("AUTH_EXPIRED:") {
+        return err;
+    }
+    ApiError::new(
+        ErrorCode::NotAuthorized,
+        format!(
+            "AUTH_EXPIRED: provider connection `{}` requires credential enrollment or token rotation in the office vault via `agentic-org` provider connection enrollment ({})",
+            req.failed_connection_id, err.message
+        ),
+    )
 }
 
 /// The route options of a failover relaunch: the failed run's task, epoch and partition (so the

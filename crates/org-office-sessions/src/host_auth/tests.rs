@@ -1,103 +1,149 @@
-//! Host auth unit tests: OAuth parsing and expiry, tmpdir placement, refresh rotation, and the
-//! launch-scoped Keychain cache.
+//! Vault-native OAuth credential unit tests (`TASK-132`): envelope parsing/validation,
+//! zeroization/redaction, tmpdir placement, host-auth refusal for OAuth-injected runtimes,
+//! and single-flight vault refresh + operator-rotation adoption.
 
 use std::ffi::OsString;
 use std::path::Path;
-use std::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier};
 
 use org_office::organization_family::records::ProviderAuthMode;
 use zeroize::Zeroizing;
 
-use super::keychain::KeychainTokenCache;
-use super::token::{parse_claude_oauth_token, ClaudeOAuthToken, MAX_HOST_CLAUDE_CRED_BYTES};
+use crate::credentials::CredentialVault;
+
 use super::{
-    allows_host_subscription_auth, host_config_dir_for, is_oauth_expiring, oauth_token_fingerprint,
-    pick_fresher_oauth_entry, read_claude_credentials_from_path, refresh_host_claude_oauth_with,
-    resolve_agent_tmpdir, MAX_SHORT_TMPDIR_BYTES, OAUTH_REFRESH_LEAD_MS,
+    allows_host_subscription_auth, collect_vault_redaction_secrets, host_config_dir_for,
+    is_oauth_expiring, oauth_token_fingerprint, parse_vault_oauth_credential, resolve_agent_tmpdir,
+    NoopVaultTokenRefresher, VaultAuthError, VaultOAuthCredential, VaultRefreshCoordinator,
+    VaultTokenRefresher, MAX_SHORT_TMPDIR_BYTES, MAX_VAULT_OAUTH_CRED_BYTES, OAUTH_REFRESH_LEAD_MS,
 };
 
-#[test]
-fn parses_claude_oauth_access_token_json() {
-    let valid =
-        br#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-example","expiresAt":1795620000000}}"#;
-    let parsed = parse_claude_oauth_token(valid).unwrap();
-    assert_eq!(parsed.access_token.as_str(), "sk-ant-oat01-example");
-    assert_eq!(parsed.expires_at_ms, Some(1_795_620_000_000));
-    assert!(is_oauth_expiring(
-        parsed.expires_at_ms,
-        1_795_620_000_000 - OAUTH_REFRESH_LEAD_MS
-    ));
-    assert!(!is_oauth_expiring(
-        parsed.expires_at_ms,
-        1_795_620_000_000 - OAUTH_REFRESH_LEAD_MS - 1
-    ));
-    assert!(!is_oauth_expiring(None, 1_795_620_000_000));
-    assert!(parse_claude_oauth_token(br#"{"claudeAiOauth":{"accessToken":"  "}}"#).is_none());
-    assert!(parse_claude_oauth_token(br#"not-json"#).is_none());
+type RefreshResponseFn =
+    Box<dyn Fn(usize, &str) -> Result<VaultOAuthCredential, String> + Send + Sync>;
+
+struct CountingRefresher {
+    calls: AtomicUsize,
+    barrier: Option<Arc<Barrier>>,
+    response: RefreshResponseFn,
+}
+
+impl VaultTokenRefresher for CountingRefresher {
+    fn refresh(
+        &self,
+        _connection_id: &str,
+        _provider: &str,
+        refresh_token: &str,
+    ) -> Result<VaultOAuthCredential, String> {
+        let n = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(ref b) = self.barrier {
+            b.wait();
+        }
+        (self.response)(n, refresh_token)
+    }
+}
+
+fn test_vault(dir: &Path) -> CredentialVault {
+    CredentialVault::new(dir.to_path_buf(), "org-1", "office-1", Some([0x42u8; 32]))
 }
 
 #[test]
-fn keychain_cache_serves_one_launch_once_and_keeps_nothing_after_it() {
-    use std::cell::Cell;
-    let cache = KeychainTokenCache::new();
-    let lookups = Cell::new(0u32);
-    let lookup = || {
-        lookups.set(lookups.get() + 1);
-        Some(ClaudeOAuthToken {
-            access_token: Zeroizing::new(format!("tok-{}", lookups.get())),
-            expires_at_ms: Some(1),
-        })
-    };
-    let ttl = Duration::from_secs(60);
-    // Outside a launch nothing is cached.
+fn parses_raw_and_structured_vault_oauth_credentials_and_rejects_malformed() {
+    // 1. Raw OAuth access token string (non-expiring / externally rotated).
+    let raw = parse_vault_oauth_credential(b"  sk-ant-oat01-raw-token  \n").unwrap();
+    assert_eq!(raw.access_token.as_str(), "sk-ant-oat01-raw-token");
+    assert!(raw.refresh_token.is_none());
+    assert_eq!(raw.expires_at_ms, None);
+    assert_eq!(raw.fingerprint().len(), 16);
     assert_eq!(
-        cache
-            .get_or_lookup(ttl, lookup)
-            .unwrap()
-            .access_token
-            .as_str(),
-        "tok-1"
+        raw.fingerprint(),
+        oauth_token_fingerprint("sk-ant-oat01-raw-token")
     );
+    assert!(!is_oauth_expiring(raw.expires_at_ms, 1_795_620_000_000));
+
+    // 2. Standard flat JSON envelope + canonical round-trip + redacting Debug.
+    let flat = br#"{"access_token":"sk-ant-oat01-flat","refresh_token":"rt-secret-1","expires_at_ms":1795620000000}"#;
+    let parsed = parse_vault_oauth_credential(flat).unwrap();
+    assert_eq!(parsed.access_token.as_str(), "sk-ant-oat01-flat");
     assert_eq!(
-        cache
-            .get_or_lookup(ttl, lookup)
-            .unwrap()
-            .access_token
-            .as_str(),
-        "tok-2"
+        parsed.refresh_token.as_deref().map(String::as_str),
+        Some("rt-secret-1")
     );
-    {
-        let _launch = cache.scope();
-        for _ in 0..4 {
-            let tok = cache.get_or_lookup(ttl, lookup).unwrap();
-            assert_eq!(tok.access_token.as_str(), "tok-3");
-        }
-        assert_eq!(lookups.get(), 3, "four reads in one launch run one lookup");
-        cache.invalidate();
-        let tok = cache.get_or_lookup(ttl, lookup).unwrap();
-        assert_eq!(
-            tok.access_token.as_str(),
-            "tok-4",
-            "a refresh probe forces a re-read"
-        );
-        let tok = cache.get_or_lookup(Duration::ZERO, lookup).unwrap();
-        assert_eq!(
-            tok.access_token.as_str(),
-            "tok-5",
-            "an expired answer is re-read"
-        );
-    }
+    assert_eq!(parsed.expires_at_ms, Some(1_795_620_000_000));
+    let dbg = format!("{parsed:?}");
     assert!(
-        cache.state.lock().unwrap().entry.is_none(),
-        "the token is dropped when the last launch ends"
+        !dbg.contains("sk-ant-oat01-flat"),
+        "Debug leaked access_token: {dbg}"
     );
-    {
-        let _launch = cache.scope();
-        assert!(cache.get_or_lookup(ttl, || None).is_none());
-        assert!(cache
-            .get_or_lookup(ttl, || panic!("cached negative answer must be reused"))
-            .is_none());
+    assert!(
+        !dbg.contains("rt-secret-1"),
+        "Debug leaked refresh_token: {dbg}"
+    );
+    assert!(dbg.contains(&parsed.fingerprint()));
+
+    let encoded = parsed.to_vault_json().unwrap();
+    let roundtrip = parse_vault_oauth_credential(&encoded).unwrap();
+    assert_eq!(roundtrip.access_token.as_str(), "sk-ant-oat01-flat");
+    assert_eq!(
+        roundtrip.refresh_token.as_deref().map(String::as_str),
+        Some("rt-secret-1")
+    );
+    assert_eq!(roundtrip.expires_at_ms, Some(1_795_620_000_000));
+
+    // 3. CamelCase aliases and `claudeAiOauth` wrapper for seamless vault enrollment.
+    let wrapped = br#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-wrap","refreshToken":"rt-wrap","expiresAt":1795620000000}}"#;
+    let parsed_wrap = parse_vault_oauth_credential(wrapped).unwrap();
+    assert_eq!(parsed_wrap.access_token.as_str(), "sk-ant-oat01-wrap");
+    assert_eq!(
+        parsed_wrap.refresh_token.as_deref().map(String::as_str),
+        Some("rt-wrap")
+    );
+    assert_eq!(parsed_wrap.expires_at_ms, Some(1_795_620_000_000));
+
+    // Expiry lead-time boundary.
+    assert!(is_oauth_expiring(
+        parsed_wrap.expires_at_ms,
+        1_795_620_000_000 - OAUTH_REFRESH_LEAD_MS
+    ));
+    assert!(!is_oauth_expiring(
+        parsed_wrap.expires_at_ms,
+        1_795_620_000_000 - OAUTH_REFRESH_LEAD_MS - 1
+    ));
+
+    // Redaction extracts both access_token and refresh_token from JSON envelopes.
+    let mut secrets = Vec::new();
+    collect_vault_redaction_secrets(flat, &mut secrets);
+    let secret_strs: Vec<&str> = secrets.iter().map(|s| s.as_str()).collect();
+    assert!(secret_strs.contains(&"sk-ant-oat01-flat"));
+    assert!(secret_strs.contains(&"rt-secret-1"));
+
+    // 4. Fail closed on empty, malformed JSON starting with `{`, bad types, control chars,
+    // invalid UTF-8, and oversized payloads — never leaking secret bytes in error text.
+    let bad_cases: &[&[u8]] = &[
+        b"",
+        b"   \t\n ",
+        b"{not-valid-json-secret-123",
+        br#"{"access_token":"   "}"#,
+        br#"{"claudeAiOauth":{"accessToken":""}}"#,
+        br#"{"access_token":12345}"#,
+        br#"{"access_token":"ok-tok","expires_at_ms":"not-a-number"}"#,
+        br#"{"claudeAiOauth":"not-an-object"}"#,
+        b"tok-with\nnewline",
+        b"tok-with\0nul",
+        &[0xff, 0xfe, 0xfd],
+    ];
+    for case in bad_cases {
+        let err = parse_vault_oauth_credential(case).expect_err("malformed input must fail");
+        assert!(matches!(err, VaultAuthError::MalformedCredential(_)));
+        let msg = err.actionable_message("claude-sub");
+        assert!(!msg.contains("not-valid-json-secret-123"));
+        assert!(!msg.contains("tok-with"));
     }
+    let oversized = vec![b'a'; MAX_VAULT_OAUTH_CRED_BYTES + 1];
+    assert!(matches!(
+        parse_vault_oauth_credential(&oversized),
+        Err(VaultAuthError::MalformedCredential(_))
+    ));
 }
 
 #[test]
@@ -111,221 +157,272 @@ fn resolve_agent_tmpdir_prefers_short_socket_parent_for_linux_sun_path() {
 }
 
 #[test]
-fn allows_host_subscription_auth_enforces_mode_and_empty_vault() {
-    assert!(allows_host_subscription_auth(&[], None));
+fn allows_host_subscription_auth_blocks_oauth_injected_runtimes_and_enforces_mode() {
+    use org_agent_runtime::AgentRuntime as _;
+
+    let claude = org_agent_runtime_claude::ClaudeRuntime::new();
+    let codex = org_agent_runtime_codex::CodexRuntime::new();
+    let agy = org_agent_runtime_agy::AgyRuntime::new();
+
+    // OAuth-injected runtimes (Claude) NEVER fall back to ambient host credentials.
+    assert!(claude.host_profile().uses_host_oauth_token_injection);
+    assert!(!allows_host_subscription_auth(
+        &[],
+        None,
+        claude.host_profile().uses_host_oauth_token_injection
+    ));
+    assert!(!allows_host_subscription_auth(
+        &[],
+        Some(ProviderAuthMode::SubscriptionCli),
+        claude.host_profile().uses_host_oauth_token_injection
+    ));
+    assert!(host_config_dir_for(claude.host_profile().host_config_subdir, true).is_none());
+
+    // Non-OAuth-injected runtimes (Codex/Agy) respect mode and empty-vault checks.
+    assert!(allows_host_subscription_auth(&[], None, false));
     assert!(allows_host_subscription_auth(
         &[],
-        Some(ProviderAuthMode::SubscriptionCli)
+        Some(ProviderAuthMode::SubscriptionCli),
+        false
     ));
     assert!(!allows_host_subscription_auth(
         &[],
-        Some(ProviderAuthMode::ApiKey)
+        Some(ProviderAuthMode::ApiKey),
+        false
     ));
     assert!(!allows_host_subscription_auth(
         &[],
-        Some(ProviderAuthMode::CloudIam)
+        Some(ProviderAuthMode::CloudIam),
+        false
     ));
     let non_empty = vec![(OsString::from("ANTHROPIC_API_KEY"), OsString::from("sk-1"))];
     assert!(!allows_host_subscription_auth(
         &non_empty,
-        Some(ProviderAuthMode::SubscriptionCli)
+        Some(ProviderAuthMode::SubscriptionCli),
+        false
     ));
-}
-
-#[test]
-fn host_config_dir_for_claude_is_always_none_and_cred_read_is_bounded() {
-    use org_agent_runtime::AgentRuntime as _;
-    let claude = org_agent_runtime_claude::ClaudeRuntime::new();
-    let codex = org_agent_runtime_codex::CodexRuntime::new();
-    let agy = org_agent_runtime_agy::AgyRuntime::new();
-    assert!(host_config_dir_for(claude.host_profile().host_config_subdir, true).is_none());
     assert!(host_config_dir_for(codex.host_profile().host_config_subdir, false).is_none());
     assert!(host_config_dir_for(agy.host_profile().host_config_subdir, false).is_none());
+}
 
+#[test]
+fn vault_refresh_coordinator_proactively_rotates_single_flight_and_persists_envelope() {
     let dir = tempfile::tempdir().unwrap();
-    let valid = dir.path().join("valid.json");
-    std::fs::write(
-        &valid,
-        r#"{"claudeAiOauth":{"accessToken":"sk-ant-bounded-tok"}}"#,
-    )
-    .unwrap();
+    let vault = test_vault(dir.path());
+    let now = 2_000_000_000_000u64;
+    let expiring = VaultOAuthCredential {
+        access_token: Zeroizing::new("sk-ant-oat01-expiring".into()),
+        refresh_token: Some(Zeroizing::new("rt-initial-1".into())),
+        expires_at_ms: Some(now + 60_000),
+    };
+    let encoded = expiring.to_vault_json().unwrap();
+    vault
+        .store_wrapped(
+            "conn-sf",
+            "anthropic",
+            &encoded,
+            None,
+            Some("team@example.com".into()),
+        )
+        .unwrap();
+
+    let new_exp = now + 3_600_000;
+    let refresher = Arc::new(CountingRefresher {
+        calls: AtomicUsize::new(0),
+        barrier: None,
+        response: Box::new(move |attempt, rt| {
+            assert_eq!(rt, "rt-initial-1");
+            // Small delay lets concurrent waiters queue on the per-connection lock.
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            Ok(VaultOAuthCredential {
+                access_token: Zeroizing::new(format!("sk-ant-oat01-fresh-{attempt}")),
+                // Omit refresh_token to verify coordinator preserves the existing one.
+                refresh_token: None,
+                expires_at_ms: Some(new_exp),
+            })
+        }),
+    });
+    let coord = Arc::new(VaultRefreshCoordinator::new(
+        Arc::clone(&refresher) as Arc<dyn VaultTokenRefresher>
+    ));
+
+    let start_gate = Arc::new(Barrier::new(3));
+    let mut handles = Vec::new();
+    for _ in 0..3 {
+        let c = Arc::clone(&coord);
+        let v = vault.clone();
+        let g = Arc::clone(&start_gate);
+        handles.push(std::thread::spawn(move || {
+            g.wait();
+            c.resolve_for_launch(&v, "conn-sf", "anthropic", now)
+                .unwrap()
+        }));
+    }
+    for h in handles {
+        let resolved = h.join().unwrap();
+        assert_eq!(resolved.access_token.as_str(), "sk-ant-oat01-fresh-1");
+        assert_eq!(resolved.expires_at_ms, Some(new_exp));
+        assert_eq!(
+            resolved.token_fp,
+            oauth_token_fingerprint("sk-ant-oat01-fresh-1")
+        );
+    }
     assert_eq!(
-        read_claude_credentials_from_path(&valid)
-            .as_ref()
-            .map(|e| e.access_token.as_str()),
-        Some("sk-ant-bounded-tok")
+        refresher.calls.load(Ordering::SeqCst),
+        1,
+        "concurrent expiring sessions must execute exactly one single-flight refresh"
     );
 
-    let oversized = dir.path().join("huge.json");
-    let pad = " ".repeat(MAX_HOST_CLAUDE_CRED_BYTES + 16);
-    std::fs::write(
-        &oversized,
-        format!(r#"{{"claudeAiOauth":{{"accessToken":"sk-too-big"}}}}{pad}"#),
-    )
-    .unwrap();
-    assert!(read_claude_credentials_from_path(&oversized).is_none());
-
-    let link = dir.path().join("link.json");
-    std::os::unix::fs::symlink(&valid, &link).unwrap();
-    assert!(read_claude_credentials_from_path(&link).is_none());
+    // Persisted vault envelope has the new token, preserved refresh_token, and preserved hint.
+    let meta = vault.load_unwrapped_with_meta("conn-sf").unwrap().unwrap();
+    assert_eq!(meta.account_hint.as_deref(), Some("team@example.com"));
+    assert!(meta.expires_at.is_some());
+    let stored = parse_vault_oauth_credential(&meta.secret).unwrap();
+    assert_eq!(stored.access_token.as_str(), "sk-ant-oat01-fresh-1");
+    assert_eq!(
+        stored.refresh_token.as_deref().map(String::as_str),
+        Some("rt-initial-1")
+    );
+    assert_eq!(stored.expires_at_ms, Some(new_exp));
 }
 
 #[test]
-fn pick_fresher_oauth_entry_prefers_newer_keychain_over_stale_file() {
-    let stale = ClaudeOAuthToken {
-        access_token: Zeroizing::new("stale-file-tok".into()),
-        expires_at_ms: Some(1_000),
-    };
-    let fresh = ClaudeOAuthToken {
-        access_token: Zeroizing::new("fresh-keychain-tok".into()),
-        expires_at_ms: Some(9_000_000),
-    };
-    let picked = pick_fresher_oauth_entry(Some(stale), Some(fresh)).unwrap();
-    assert_eq!(picked.access_token.as_str(), "fresh-keychain-tok");
-    assert_eq!(picked.expires_at_ms, Some(9_000_000));
-
-    let no_exp = ClaudeOAuthToken {
-        access_token: Zeroizing::new("no-exp".into()),
-        expires_at_ms: None,
-    };
-    let with_exp = ClaudeOAuthToken {
-        access_token: Zeroizing::new("with-exp".into()),
-        expires_at_ms: Some(5_000),
-    };
-    let picked2 = pick_fresher_oauth_entry(Some(no_exp), Some(with_exp)).unwrap();
-    assert_eq!(picked2.access_token.as_str(), "with-exp");
-}
-
-#[test]
-fn refresh_host_claude_oauth_scrubs_env_isolates_flags_and_verifies_rotation() {
-    use std::os::unix::fs::PermissionsExt as _;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-
+fn vault_refresh_coordinator_adopts_operator_rotation_and_fails_closed_on_errors() {
     let dir = tempfile::tempdir().unwrap();
-    let capture = dir.path().join("capture.txt");
-    let fake_claude = dir.path().join("fake-claude");
-    let script = format!(
-        "#!/bin/sh\nprintf 'ARGS=%s\\nPWD=%s\\nAPI=%s\\nOAUTH=%s\\nAUTOUPD=%s\\n' \"$*\" \"$(pwd)\" \"${{ANTHROPIC_API_KEY:-}}\" \"${{CLAUDE_CODE_OAUTH_TOKEN:-}}\" \"${{DISABLE_AUTOUPDATER:-}}\" > {}\nexit 0\n",
-        capture.display()
-    );
-    std::fs::write(&fake_claude, script).unwrap();
-    std::fs::set_permissions(&fake_claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let vault = test_vault(dir.path());
+    let now = 2_000_000_000_000u64;
+    let future_exp = now + 3_600_000;
 
-    // Case 1: script exits 0 but token does NOT rotate -> must return false.
-    let unrotated = refresh_host_claude_oauth_with(&fake_claude, false, None, || {
-        Some(ClaudeOAuthToken {
-            access_token: Zeroizing::new("still-expired".into()),
-            expires_at_ms: Some(1),
-        })
+    // 1. Missing credential -> MissingCredential (`vault_credential_missing`).
+    let noop = VaultRefreshCoordinator::noop();
+    let missing = noop
+        .resolve_for_launch(&vault, "conn-missing", "anthropic", now)
+        .err()
+        .expect("missing vault credential must fail closed");
+    assert_eq!(missing, VaultAuthError::MissingCredential);
+    assert_eq!(missing.issue_code(), "vault_credential_missing");
+
+    // 2. Operator already rotated vault T1 -> T2 before reactive 401 refresh:
+    //    coordinator adopts T2 immediately with ZERO refresher invocations.
+    let fp_t1 = oauth_token_fingerprint("sk-ant-oat01-old-t1");
+    let op_rotated = VaultOAuthCredential {
+        access_token: Zeroizing::new("sk-ant-oat01-operator-t2".into()),
+        refresh_token: Some(Zeroizing::new("rt-op-2".into())),
+        expires_at_ms: Some(future_exp),
+    };
+    vault
+        .store_wrapped(
+            "conn-op",
+            "anthropic",
+            &op_rotated.to_vault_json().unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+    let panic_refresher = Arc::new(CountingRefresher {
+        calls: AtomicUsize::new(0),
+        barrier: None,
+        response: Box::new(|_, _| panic!("must not call refresher when vault already rotated")),
     });
-    assert!(
-        !unrotated,
-        "refresh must return false when token stays expired and unchanged"
-    );
-    let log = std::fs::read_to_string(&capture).unwrap();
-    assert!(
-        log.contains("--setting-sources  --tools  --disable-slash-commands --strict-mcp-config --mcp-config "),
-        "refresh probe must pass isolation flags: {log}"
-    );
-    assert!(
-        log.contains("API=\n") && log.contains("OAUTH=\n") && log.contains("AUTOUPD=1\n"),
-        "refresh probe must scrub API/OAuth tokens and disable autoupdater: {log}"
-    );
-    assert!(
-        log.contains("org-oauth-refresh-"),
-        "refresh probe must run in isolated temp dir: {log}"
-    );
+    let op_coord =
+        VaultRefreshCoordinator::new(Arc::clone(&panic_refresher) as Arc<dyn VaultTokenRefresher>);
+    let adopted = op_coord
+        .refresh_reactive(&vault, "conn-op", "anthropic", Some(&fp_t1), now)
+        .unwrap();
+    assert_eq!(adopted.access_token.as_str(), "sk-ant-oat01-operator-t2");
+    assert_eq!(panic_refresher.calls.load(Ordering::SeqCst), 0);
 
-    // Case 2: second read returns rotated token -> must return true.
-    let called_once = Arc::new(AtomicBool::new(false));
-    let called_clone = Arc::clone(&called_once);
-    let rotated = refresh_host_claude_oauth_with(&fake_claude, false, None, move || {
-        if !called_clone.swap(true, Ordering::SeqCst) {
-            Some(ClaudeOAuthToken {
-                access_token: Zeroizing::new("old-tok".into()),
-                expires_at_ms: Some(1),
-            })
-        } else {
-            Some(ClaudeOAuthToken {
-                access_token: Zeroizing::new("new-rotated-tok".into()),
-                expires_at_ms: Some(crate::credentials::now_ms() + 3_600_000),
-            })
-        }
+    // 3. Expired token without refresh_token or with NoopVaultTokenRefresher fails closed.
+    let no_rt = VaultOAuthCredential {
+        access_token: Zeroizing::new("sk-ant-oat01-expired-nort".into()),
+        refresh_token: None,
+        expires_at_ms: Some(1),
+    };
+    vault
+        .store_wrapped(
+            "conn-nort",
+            "anthropic",
+            &no_rt.to_vault_json().unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+    let err_nort = noop
+        .resolve_for_launch(&vault, "conn-nort", "anthropic", now)
+        .err()
+        .expect("expired token without refresh_token must fail");
+    assert_eq!(err_nort.issue_code(), "vault_oauth_expired");
+
+    // 4. Refresher error containing secrets + multibyte UTF-8 is redacted & char-safe truncated.
+    let with_rt = VaultOAuthCredential {
+        access_token: Zeroizing::new("custom-secret-access-99".into()),
+        refresh_token: Some(Zeroizing::new("custom-secret-refresh-88".into())),
+        expires_at_ms: Some(1),
+    };
+    vault
+        .store_wrapped(
+            "conn-err",
+            "anthropic",
+            &with_rt.to_vault_json().unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+    let leaky = Arc::new(CountingRefresher {
+        calls: AtomicUsize::new(0),
+        barrier: None,
+        response: Box::new(|_, rt| {
+            Err(format!(
+                "upstream rejected custom-secret-access-99 and {rt} {}",
+                "é".repeat(150)
+            ))
+        }),
     });
+    let err_coord = VaultRefreshCoordinator::new(leaky);
+    let leaky_err = err_coord
+        .resolve_for_launch(&vault, "conn-err", "anthropic", now)
+        .err()
+        .expect("refresher failure must fail closed");
+    let msg = leaky_err.actionable_message("claude-err");
     assert!(
-        rotated,
-        "refresh must return true after verified token rotation"
+        !msg.contains("custom-secret-access-99"),
+        "leaked access: {msg}"
     );
-}
+    assert!(
+        !msg.contains("custom-secret-refresh-88"),
+        "leaked refresh: {msg}"
+    );
+    assert!(
+        msg.contains("[REDACTED]"),
+        "expected redaction marker: {msg}"
+    );
 
-#[test]
-fn refresh_host_claude_oauth_reactive_handles_peer_rotation_and_early_revocation() {
-    use std::os::unix::fs::PermissionsExt as _;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-
-    let dir = tempfile::tempdir().unwrap();
-    let capture = dir.path().join("capture.txt");
-    let fake_claude = dir.path().join("fake-claude");
-    std::fs::write(
-        &fake_claude,
-        format!("#!/bin/sh\necho ran > {}\nexit 0\n", capture.display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&fake_claude, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-    // Case 1: reactive 401 refresh when another session/host already rotated `T1 -> T2`
-    // MUST return true immediately WITHOUT spawning a probe or poisoning the shared pool.
-    let future_exp = crate::credentials::now_ms() + 3_600_000;
-    let fp_t1 = oauth_token_fingerprint("revoked-early");
-    let peer_rotated =
-        refresh_host_claude_oauth_with(&fake_claude, true, Some(&fp_t1), move || {
-            Some(ClaudeOAuthToken {
-                access_token: Zeroizing::new("already-rotated-by-peer".into()),
+    // 5. Reactive refresh returning the SAME rejected token (unrotated) is refused cleanly.
+    let same_fp = oauth_token_fingerprint("custom-secret-access-99");
+    let unrotated_refresher = Arc::new(CountingRefresher {
+        calls: AtomicUsize::new(0),
+        barrier: None,
+        response: Box::new(move |_, _| {
+            Ok(VaultOAuthCredential {
+                access_token: Zeroizing::new("custom-secret-access-99".into()),
+                refresh_token: None,
                 expires_at_ms: Some(future_exp),
             })
-        });
-    assert!(
-        peer_rotated,
-        "reactive refresh must succeed immediately when host token already rotated away from failed_token_fp"
-    );
-    assert!(
-        !capture.exists(),
-        "already-rotated reactive refresh must not spawn redundant probe"
-    );
+        }),
+    });
+    let unrot_coord = VaultRefreshCoordinator::new(unrotated_refresher);
+    let unrot_err = unrot_coord
+        .refresh_reactive(&vault, "conn-err", "anthropic", Some(&same_fp), now)
+        .err()
+        .expect("unrotated token in reactive refresh must be refused");
+    assert_eq!(unrot_err.issue_code(), "auth_expired");
+    // Vault must NOT have been overwritten by the rejected unrotated token.
+    let still_old =
+        parse_vault_oauth_credential(&vault.load_unwrapped("conn-err").unwrap().unwrap()).unwrap();
+    assert_eq!(still_old.expires_at_ms, Some(1));
 
-    // Case 2: reactive 401 refresh on early-revoked token whose local expiresAt is still
-    // in the future and still matches failed_token_fp MUST probe and require rotation.
-    let unchanged_reactive =
-        refresh_host_claude_oauth_with(&fake_claude, true, Some(&fp_t1), move || {
-            Some(ClaudeOAuthToken {
-                access_token: Zeroizing::new("revoked-early".into()),
-                expires_at_ms: Some(future_exp),
-            })
-        });
-    assert!(
-        !unchanged_reactive,
-        "reactive refresh must require token rotation when local token still matches failed_token_fp"
-    );
-    let reactive_flag = Arc::new(AtomicBool::new(false));
-    let reactive_clone = Arc::clone(&reactive_flag);
-    let rotated_reactive =
-        refresh_host_claude_oauth_with(&fake_claude, true, Some(&fp_t1), move || {
-            if !reactive_clone.swap(true, Ordering::SeqCst) {
-                Some(ClaudeOAuthToken {
-                    access_token: Zeroizing::new("revoked-early".into()),
-                    expires_at_ms: Some(future_exp),
-                })
-            } else {
-                Some(ClaudeOAuthToken {
-                    access_token: Zeroizing::new("fresh-rotated-early".into()),
-                    expires_at_ms: Some(future_exp + 1_000),
-                })
-            }
-        });
-    assert!(
-        rotated_reactive,
-        "reactive refresh must return true when early-revoked token rotates"
-    );
+    // Confirm NoopVaultTokenRefresher directly returns Err.
+    assert!(NoopVaultTokenRefresher
+        .refresh("conn-x", "anthropic", "rt")
+        .is_err());
 }

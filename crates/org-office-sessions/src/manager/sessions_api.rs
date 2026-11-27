@@ -327,7 +327,7 @@ impl SessionManager {
         .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "session transcript not found"))
     }
 
-    pub(super) fn active_redaction_secrets(
+    pub(crate) fn active_redaction_secrets(
         &self,
         employee_id: &str,
     ) -> Vec<zeroize::Zeroizing<String>> {
@@ -337,15 +337,7 @@ impl SessionManager {
             .into_iter()
             .map(zeroize::Zeroizing::new)
             .collect();
-        let Ok(exec_opt) = self.office.load_agent_execution(employee_id) else {
-            return secrets;
-        };
-        let Some(exec) = exec_opt else {
-            // Unconfigured agents fall back to Claude host subscription auth (`router.rs`),
-            // so redact host Claude OAuth if present.
-            if let Some(tok) = crate::host_auth::resolve_host_claude_oauth_token() {
-                secrets.push(tok);
-            }
+        let Ok(Some(exec)) = self.office.load_agent_execution(employee_id) else {
             return secrets;
         };
         let Ok(Some(prof)) = self
@@ -354,42 +346,16 @@ impl SessionManager {
         else {
             return secrets;
         };
-        let mut uses_claude_host_subscription = false;
         let conn_ids = prof
             .generated_for_connection_id
             .iter()
             .chain(prof.connection_ids.iter());
         for conn_id in conn_ids {
-            let mut has_vault_secret = false;
             if let Ok(Some(raw)) = self.enrollment.vault().load_unwrapped(conn_id.as_str()) {
-                if let Ok(text) = std::str::from_utf8(&raw) {
-                    has_vault_secret = true;
-                    secrets.push(zeroize::Zeroizing::new(text.to_owned()));
-                }
-            }
-            if !has_vault_secret && self.is_claude_subscription_connection(conn_id.as_str()) {
-                uses_claude_host_subscription = true;
-            }
-        }
-        if uses_claude_host_subscription {
-            if let Some(tok) = crate::host_auth::resolve_host_claude_oauth_token() {
-                secrets.push(tok);
+                crate::host_auth::collect_vault_redaction_secrets(&raw, &mut secrets);
             }
         }
         secrets
-    }
-
-    pub(super) fn is_claude_subscription_connection(&self, connection_id: &str) -> bool {
-        let Ok(Some(conn)) = self.office.load_provider_connection(connection_id) else {
-            return false;
-        };
-        conn.auth_mode
-            == org_office::organization_family::records::ProviderAuthMode::SubscriptionCli
-            && self
-                .config
-                .runtimes
-                .resolve(&conn.runtime_driver)
-                .is_ok_and(|adapter| adapter.host_profile().uses_host_oauth_token_injection)
     }
 
     pub(super) fn live_runtime_session_id(&self, employee_id: &str) -> Option<String> {

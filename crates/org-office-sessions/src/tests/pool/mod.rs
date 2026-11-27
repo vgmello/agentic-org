@@ -101,6 +101,10 @@ impl Session for PoolScriptedSession {
                     errors: vec!["rate_limited".into()],
                 }),
             ],
+            Some("auth_expired_fail") => vec![Output::Event(SessionEvent::TurnEnded {
+                outcome: TurnOutcome::SignedOut,
+                errors: vec!["401 auth_expired".into()],
+            })],
             Some("reply") => {
                 let text = v["text"].as_str().unwrap_or("").to_owned();
                 vec![
@@ -165,6 +169,13 @@ impl AgentRuntime for PoolScriptedRuntime {
 
     fn binary_name(&self) -> &'static str {
         "pool-scripted"
+    }
+
+    fn host_profile(&self) -> org_agent_runtime::RuntimeHostProfile {
+        org_agent_runtime::RuntimeHostProfile {
+            uses_host_oauth_token_injection: true,
+            ..org_agent_runtime::RuntimeHostProfile::default()
+        }
     }
 
     fn endpoint_env_var(&self) -> Option<&'static str> {
@@ -237,7 +248,10 @@ impl AgentRuntime for PoolScriptedRuntime {
             .into_iter()
             .map(|n| EnvName::try_from(n).unwrap())
             .collect(),
-            secret_env_names: vec![EnvName::try_from("ANTHROPIC_API_KEY").unwrap()],
+            secret_env_names: ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
+                .into_iter()
+                .map(|n| EnvName::try_from(n).unwrap())
+                .collect(),
             stop: StopPlan {
                 steps: vec![
                     StopStep::CloseStdin { grace_ms: 200 },
@@ -411,6 +425,88 @@ fn create_connection_and_bind(
         .unwrap()
         .unwrap();
     conn_id
+}
+
+fn create_subscription_connection_and_bind(
+    office: &Office,
+    owner: &str,
+    key: &str,
+    endpoint_url: Option<&str>,
+    max_concurrent: u64,
+    models: &[(&str, &str)],
+) -> String {
+    let conn_id = next_id();
+    let req = Request::new::<ProviderConnectionCreate>(
+        1,
+        &ProviderConnectionCreateParams {
+            command_id: next_id(),
+            connection_id: conn_id.clone(),
+            default_profile_id: next_id(),
+            key: key.into(),
+            name: key.into(),
+            provider_type: "anthropic".into(),
+            auth_mode: "subscription_cli".into(),
+            subscription_identity: Some(format!("{key}@example.com")),
+            runtime_driver: "claude".into(),
+            endpoint_url: endpoint_url.map(str::to_owned),
+            max_concurrent_turns: max_concurrent,
+        },
+    )
+    .unwrap();
+    let resp = office.dispatch_hiring_rpc(Some(owner), &req).unwrap();
+    assert!(
+        matches!(resp.outcome, org_proto::Outcome::Result(_)),
+        "create subscription connection failed: {resp:?}"
+    );
+    office
+        .provider_binding_set(
+            owner,
+            ProviderBindingSetParams {
+                operation_id: next_id(),
+                connection_id: conn_id.clone(),
+                expected_revision: None,
+                auth_context_ref: format!("vault://{key}"),
+                runtime_binary_path: None,
+                account_identity_ref: Some(format!("{key}@example.com")),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    refresh_subscription_connection_ready(office, owner, &conn_id, key, models);
+    conn_id
+}
+
+fn refresh_subscription_connection_ready(
+    office: &Office,
+    owner: &str,
+    conn_id: &str,
+    key: &str,
+    models: &[(&str, &str)],
+) {
+    office
+        .provider_connection_refresh(
+            owner,
+            ProviderConnectionRefreshParams {
+                connection_id: conn_id.to_owned(),
+                driver_version: Some("1.0.0".into()),
+                auth_signed_in: Some(true),
+                observed_subscription_identity: Some(format!("{key}@example.com")),
+                operator_attested_subscription: true,
+                models: models
+                    .iter()
+                    .map(|(m, dm)| DiscoveredModelInput {
+                        model_id: (*m).into(),
+                        driver_model_id: (*dm).into(),
+                        entitlement: DiscoveredModelEntitlement::Confirmed,
+                        capabilities_json: "{}".into(),
+                    })
+                    .collect(),
+                issue_code: None,
+                ttl_seconds: Some(300),
+            },
+        )
+        .unwrap()
+        .unwrap();
 }
 
 fn hire_agent(

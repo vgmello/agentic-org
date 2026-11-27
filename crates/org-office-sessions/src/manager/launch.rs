@@ -338,6 +338,7 @@ impl SessionManager {
             vault: self.enrollment.vault(),
             runtimes: &self.config.runtimes,
             hq_permits: self.config.hq_permits.as_deref(),
+            oauth_refresh: Some(&self.vault_oauth_refresh),
             employee_id: &emp_id,
             task_id: opts.task_ref,
             is_failover_switch: opts.is_failover_switch,
@@ -405,8 +406,11 @@ impl SessionManager {
         let run_id = format!("run-{}", next_entropy_hex(10)?);
         let session_id = next_uuid_v4()?;
         let mark_str = format!("m-{}", next_entropy_hex(12)?);
-        let allow_host_auth =
-            crate::host_auth::allows_host_subscription_auth(&admitted.auth_env, admitted.auth_mode);
+        let allow_host_auth = crate::host_auth::allows_host_subscription_auth(
+            &admitted.auth_env,
+            admitted.auth_mode,
+            host_profile.uses_host_oauth_token_injection,
+        );
         let hibernated_resume = self.resolve_hibernated_resume_id(
             &emp_id,
             admitted.adapter.id().as_str(),
@@ -428,14 +432,9 @@ impl SessionManager {
             .plan_session(&spec, &ctx)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "runtime rejected session spec"))?;
 
-        let (mut launch_env, oauth_expires_at_ms, oauth_token_fp) = assemble_launch_env(
-            admitted.auth_env,
-            admitted.endpoint_env,
-            host_profile.uses_host_oauth_token_injection,
-            allow_host_auth,
-            &ctx.runtime_path,
-            &plan,
-        );
+        let mut launch_env = assemble_launch_env(admitted.auth_env, admitted.endpoint_env);
+        let oauth_expires_at_ms = admitted.oauth_expires_at_ms;
+        let oauth_token_fp = admitted.oauth_token_fp;
         apply_build_concurrency_env(
             &mut plan,
             &mut launch_env,

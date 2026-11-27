@@ -70,10 +70,7 @@ mod warm;
 
 pub(crate) use environment::task_process_context;
 #[cfg(test)]
-pub(crate) use failover::{
-    failover_route_opts, is_host_claude_subscription_refresh_eligible, requeue_contended_failover,
-    run_failover_relaunch,
-};
+pub(crate) use failover::{failover_route_opts, requeue_contended_failover, run_failover_relaunch};
 pub use hibernation::{
     OfficeRssSnapshot, OsMemorySampler, ProcessMemorySampler, ResourceLimitsConfig, SessionRssEntry,
 };
@@ -455,6 +452,7 @@ pub struct SessionManager {
     /// Every run's post-redaction coarse live activity (`TASK-103`).
     pub(crate) stream_hub: crate::stream_hub::SessionStreamHub,
     enrollment: EnrollmentManager,
+    pub(crate) vault_oauth_refresh: crate::host_auth::VaultRefreshCoordinator,
     pub(crate) registry: Arc<Mutex<SessionRegistry>>,
     pub(crate) last_states: Arc<Mutex<HashMap<String, SessionView>>>,
     pub(crate) open_required_asks: Arc<Mutex<HashMap<String, Vec<SuspendedAskEntry>>>>,
@@ -517,6 +515,7 @@ impl SessionManager {
             external: crate::external::ExternalAuthState::default(),
             stream_hub: crate::stream_hub::SessionStreamHub::new(),
             enrollment,
+            vault_oauth_refresh: crate::host_auth::VaultRefreshCoordinator::noop(),
             registry: Arc::new(Mutex::new(SessionRegistry::default())),
             last_states: Arc::new(Mutex::new(HashMap::new())),
             open_required_asks: Arc::new(Mutex::new(HashMap::new())),

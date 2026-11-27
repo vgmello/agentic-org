@@ -137,14 +137,24 @@ impl Agent {
             self.office.durable_root().to_path_buf(),
             info.org_id.clone(),
             info.office_id.clone(),
-            None,
+            Some([0x22u8; 32]),
         );
+        vault
+            .store_wrapped(
+                &self.connection,
+                "anthropic",
+                b"sk-ant-oat01-effort-test-token",
+                None,
+                None,
+            )
+            .unwrap();
         let excluded = std::collections::HashSet::new();
         let admitted = select_and_admit_route(AdmitRouteRequest {
             office: &self.office,
             vault: &vault,
             runtimes: &registry,
             hq_permits: None,
+            oauth_refresh: None,
             employee_id: &self.agent,
             task_id: None,
             is_failover_switch: false,
