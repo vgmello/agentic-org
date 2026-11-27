@@ -52,17 +52,9 @@ pub fn execute_with_office(program: &str, args: &[String], office: &mut dyn Offi
         Some(rewritten) => Cow::Owned(rewritten),
         None => expanded,
     };
-    let table = registry::runtime_table();
     let mut sources = runtime::sources::StdSources;
     let mut keys = runtime::keys::UuidV7KeySource;
-    let output = org_command::run(
-        table,
-        program,
-        &effective_args,
-        &mut sources,
-        &mut keys,
-        office,
-    );
+    let output = registry::run_command(program, &effective_args, &mut sources, &mut keys, office);
     registry::augment_help(program, &effective_args, output)
 }
 

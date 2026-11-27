@@ -11,6 +11,8 @@ use org_proto::ErrorCode;
 use crate::runtime::domain::Domain;
 use crate::runtime::transport::{OfficeTransport, Refusal};
 
+pub(crate) use skill::{OFFLINE_SKILL_CAVEAT, OFFLINE_SKILL_MODE};
+
 /// The processes slice as the registry composes it.
 pub(crate) const DOMAIN: Domain = Domain {
     commands: org_command_catalogue::processes::ALL,

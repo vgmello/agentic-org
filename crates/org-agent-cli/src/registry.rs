@@ -5,7 +5,9 @@
 use std::borrow::Cow;
 use std::io::{BufRead, Write};
 
-use org_command::{Answer, Office, Output, Refusal, Request};
+use org_command::{
+    Answer, Command, Field, KeySource, Node, Office, Output, Refusal, Request, Sources, Status,
+};
 pub use org_command_catalogue::{catalogue_table, runtime_table, table};
 use org_proto::ErrorCode;
 use serde_json::Value;
@@ -73,6 +75,187 @@ pub(crate) fn augment_help(program: &str, args: &[String], output: Output) -> Ou
 /// Runs `agent-os login|whoami|logout|exec`; `None` for any other command line.
 pub(crate) fn run_lifecycle(args: &[String]) -> Option<(String, u8)> {
     auth::run_lifecycle(args, &LOGIN_HOOKS)
+}
+
+/// Runs one parsed command against `office` through `org_command::run`, wrapping successful
+/// `skill list --offline` responses with explicit partial-scope metadata
+/// (`mode: "offline_builtin_only"`, `org_skills_included: false`, `caveat`, `skills`).
+pub(crate) fn run_command(
+    program: &str,
+    effective_args: &[String],
+    sources: &mut dyn Sources,
+    keys: &mut dyn KeySource,
+    office: &mut dyn Office,
+) -> Output {
+    let table = runtime_table();
+    let mut observer = OfflineSkillListObserver {
+        inner: office,
+        captured: None,
+    };
+    let output = org_command::run(table, program, effective_args, sources, keys, &mut observer);
+    if output.exit_code == 0 {
+        if let Some(captured) = observer.captured {
+            let format = requested_format(captured.command, effective_args);
+            return format_offline_skill_list(&captured, format);
+        }
+    }
+    output
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OutputFormat {
+    Json,
+    Yaml,
+    Compact,
+}
+
+struct CapturedOfflineSkillList {
+    command: &'static Command,
+    answer: Answer,
+    fields: Option<Vec<String>>,
+}
+
+struct OfflineSkillListObserver<'a> {
+    inner: &'a mut dyn Office,
+    captured: Option<CapturedOfflineSkillList>,
+}
+
+impl Office for OfflineSkillListObserver<'_> {
+    fn call(&mut self, request: &Request) -> Result<Answer, Refusal> {
+        let is_offline_skill_list = request.command.resource == "skill"
+            && request.command.verb == "list"
+            && request.input.get("offline").and_then(Value::as_bool) == Some(true);
+        let answer = self.inner.call(request)?;
+        if is_offline_skill_list {
+            self.captured = Some(CapturedOfflineSkillList {
+                command: request.command,
+                answer: answer.clone(),
+                fields: request.fields.clone(),
+            });
+        }
+        Ok(answer)
+    }
+}
+
+fn requested_format(command: &Command, args: &[String]) -> OutputFormat {
+    let rest = args.get(2..).unwrap_or_default();
+    let mut at = 0;
+    while let Some(arg) = rest.get(at) {
+        at += 1;
+        let Some(body) = arg.strip_prefix("--") else {
+            continue;
+        };
+        let (name, inline) = match body.split_once('=') {
+            Some((name, value)) => (name, Some(value)),
+            None => (body, None),
+        };
+        let value = match (command.flag_takes_value(name), inline) {
+            (Some(true), Some(value)) => Some(value),
+            (Some(true), None) => {
+                let val = rest.get(at).map(String::as_str);
+                at += 1;
+                val
+            }
+            _ => None,
+        };
+        if name == "format" {
+            return match value {
+                Some("yaml") => OutputFormat::Yaml,
+                Some("compact") => OutputFormat::Compact,
+                _ => OutputFormat::Json,
+            };
+        }
+    }
+    OutputFormat::Json
+}
+
+fn build_skill_list_nodes(
+    schema_fields: &[Field],
+    raw_data: &Value,
+    projected: Option<&[String]>,
+) -> Vec<Node> {
+    let Some(items) = raw_data.as_array() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .map(|item| {
+            let Some(obj) = item.as_object() else {
+                return Node::from_value(item);
+            };
+            let entries: Vec<(String, Node)> = schema_fields
+                .iter()
+                .filter(|field| {
+                    projected.is_none_or(|wanted| wanted.iter().any(|w| w == field.name))
+                })
+                .filter_map(|field| {
+                    obj.get(field.name)
+                        .map(|val| (field.name.to_owned(), Node::from_value(val)))
+                })
+                .collect();
+            Node::Map(entries)
+        })
+        .collect()
+}
+
+fn format_offline_skill_list(captured: &CapturedOfflineSkillList, format: OutputFormat) -> Output {
+    let skills = build_skill_list_nodes(
+        captured.command.output,
+        &captured.answer.data,
+        captured.fields.as_deref(),
+    );
+    let empty_skills = skills.is_empty();
+    let data = Node::map([
+        ("mode", Node::text(processes::OFFLINE_SKILL_MODE)),
+        ("org_skills_included", Node::Bool(false)),
+        ("caveat", Node::text(processes::OFFLINE_SKILL_CAVEAT)),
+        ("skills", Node::List(skills)),
+    ]);
+    let mut meta_entries = vec![(
+        "status".to_owned(),
+        Node::text(captured.answer.status.as_str()),
+    )];
+    if let Some(cursor) = &captured.answer.next_cursor {
+        meta_entries.push(("next_cursor".to_owned(), Node::text(cursor)));
+    }
+    if let Some(total) = captured.answer.total {
+        meta_entries.push(("total".to_owned(), Node::Number(total.into())));
+    }
+    let meta = Node::Map(meta_entries);
+    let stdout = match format {
+        OutputFormat::Json => {
+            let envelope = Node::map([
+                ("ok", Node::Bool(true)),
+                ("data", data),
+                ("meta", meta),
+                ("error", Node::Null),
+            ]);
+            format!("{}\n", envelope.to_json())
+        }
+        OutputFormat::Yaml => {
+            let envelope = Node::map([
+                ("ok", Node::Bool(true)),
+                ("data", data),
+                ("meta", meta),
+                ("error", Node::Null),
+            ]);
+            envelope.to_yaml()
+        }
+        OutputFormat::Compact => {
+            let mut out = data.to_compact(&[]);
+            if captured.answer.status != Status::Completed
+                || captured.answer.next_cursor.is_some()
+                || (captured.answer.total.is_some() && empty_skills)
+            {
+                out.push_str(&format!("meta: {}\n", meta.to_json()));
+            }
+            out
+        }
+    };
+    Output {
+        stdout,
+        exit_code: 0,
+    }
 }
 
 /// Runs the `session attach` line loop over the live table.

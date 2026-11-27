@@ -800,3 +800,293 @@ fn session_inspect_grant_list_who_and_run_binding_refusals() {
 
     server.join().unwrap();
 }
+
+#[test]
+fn task_223_offline_builtin_skills_unbound_and_fail_closed_without_flag() {
+    // 1. Unbound `skill list --offline` succeeds without any office binding or socket.
+    let list = bin().args(["skill", "list", "--offline"]).output().unwrap();
+    assert_eq!(
+        list.status.code(),
+        Some(0),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&list.stdout),
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let env: Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["mode"], "offline_builtin_only");
+    assert_eq!(env["data"]["org_skills_included"], false);
+    assert!(env["data"]["caveat"]
+        .as_str()
+        .is_some_and(|c| !c.is_empty() && c.to_ascii_lowercase().contains("organization")));
+    assert_eq!(env["meta"]["total"], org_agent_cli::SKILL_INDEX.len());
+    let skills = env["data"]["skills"].as_array().unwrap();
+    assert_eq!(skills.len(), org_agent_cli::SKILL_INDEX.len().min(20));
+    assert_eq!(skills[0]["key"], "agent-os-basics");
+    assert_eq!(skills[0]["source"], "built_in");
+
+    // 2. Category filtering, pagination, and YAML format work offline.
+    let filtered = bin()
+        .args([
+            "skill",
+            "list",
+            "--offline",
+            "--category",
+            "product_guide",
+            "--limit",
+            "2",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(filtered.status.code(), Some(0));
+    let fenv: Value = serde_json::from_slice(&filtered.stdout).unwrap();
+    assert_eq!(fenv["data"]["mode"], "offline_builtin_only");
+    assert_eq!(fenv["data"]["org_skills_included"], false);
+    assert_eq!(fenv["data"]["skills"].as_array().unwrap().len(), 2);
+    assert_eq!(fenv["meta"]["next_cursor"], "2");
+    assert!(fenv["meta"]["total"].as_u64().unwrap() >= 2);
+
+    let yaml = bin()
+        .args([
+            "skill",
+            "list",
+            "--offline",
+            "--category",
+            "chief_of_staff",
+            "--format",
+            "yaml",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(yaml.status.code(), Some(0));
+    let yaml_text = String::from_utf8(yaml.stdout).unwrap();
+    assert!(
+        yaml_text.contains("mode: offline_builtin_only"),
+        "{yaml_text}"
+    );
+    assert!(
+        yaml_text.contains("org_skills_included: false"),
+        "{yaml_text}"
+    );
+    assert!(yaml_text.contains("key: tess-workflows"), "{yaml_text}");
+
+    let bad_cat = bin()
+        .args(["skill", "list", "--offline", "--category", "invalid-cat"])
+        .output()
+        .unwrap();
+    assert_eq!(bad_cat.status.code(), Some(2));
+    let benv: Value = serde_json::from_slice(&bad_cat.stdout).unwrap();
+    assert_eq!(benv["ok"], false);
+    assert_eq!(benv["error"]["code"], "invalid_request");
+
+    // 3. Unbound `skill read --offline --name <valid>` returns body + explicit partial-scope metadata.
+    let read = bin()
+        .args(["skill", "read", "--offline", "--name", "agent-os-basics"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        read.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&read.stdout)
+    );
+    let renv: Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(renv["ok"], true);
+    assert_eq!(renv["data"]["key"], "agent-os-basics");
+    assert_eq!(renv["data"]["source"], "built_in");
+    assert_eq!(renv["data"]["mode"], "offline_builtin_only");
+    assert_eq!(renv["data"]["org_skills_included"], false);
+    assert!(renv["data"]["caveat"]
+        .as_str()
+        .is_some_and(|c| !c.is_empty()));
+    assert!(renv["data"]["body_markdown"]
+        .as_str()
+        .is_some_and(|body| !body.trim().is_empty()));
+
+    // 4. Unknown skill name in offline mode returns clean NotFound with helpful hint.
+    let missing = bin()
+        .args(["skill", "read", "--offline", "--name", "does-not-exist"])
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(1));
+    let menv: Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert_eq!(menv["ok"], false);
+    assert_eq!(menv["error"]["code"], "not_found");
+    assert!(menv["error"]["hint"]
+        .as_str()
+        .unwrap()
+        .contains("skill list --offline"));
+
+    // 5. Unbound `skill list` and `skill read` without `--offline` fail closed with helpful hints.
+    for args in [
+        &["skill", "list"][..],
+        &["skill", "read", "--name", "agent-os-basics"],
+    ] {
+        let out = bin().args(args).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        let env: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(env["ok"], false);
+        assert_eq!(env["error"]["code"], "not_authorized");
+        let hint = env["error"]["hint"].as_str().unwrap();
+        assert!(
+            hint.contains("--offline") && hint.contains("agent-os login"),
+            "{args:?}: {hint}"
+        );
+    }
+}
+
+#[test]
+fn task_223_bound_online_skill_parity_and_explicit_offline_bypass_socket() {
+    use org_proto::processes::{
+        SkillCategoryWire, SkillList, SkillListResult, SkillRead, SkillReadResult, SkillSummaryWire,
+    };
+
+    let dir = tempfile::Builder::new()
+        .prefix("aos-skl")
+        .tempdir()
+        .unwrap();
+    let sock = dir.path().join("office.sock");
+    let listener = UnixListener::bind(&sock).unwrap();
+
+    // Server expects EXACTLY 2 connections: online `skill list` and online `skill read`.
+    // The subsequent bound `--offline` invocations must never touch this socket.
+    let server = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            while let Ok(Some(line)) = frame::read_line(&mut reader) {
+                let req: Request = serde_json::from_slice(&line).unwrap();
+                let resp = if req.is::<Hello>() {
+                    let hello: HelloResult = serde_json::from_value(serde_json::json!({
+                        "api_version": 2,
+                        "server_version": "test",
+                        "capabilities": []
+                    }))
+                    .unwrap();
+                    Response::ok::<Hello>(req.id, &hello).unwrap()
+                } else if req.is::<SkillList>() {
+                    Response::ok::<SkillList>(
+                        req.id,
+                        &SkillListResult {
+                            skills: vec![
+                                SkillSummaryWire {
+                                    key: "agent-os-basics".into(),
+                                    title: "Using agent-os".into(),
+                                    description: "Basics".into(),
+                                    source: "built_in".into(),
+                                    category: Some(SkillCategoryWire::Workflow),
+                                },
+                                SkillSummaryWire {
+                                    key: "org-deploy-runbook".into(),
+                                    title: "Org Deploy Runbook".into(),
+                                    description: "Live org-pushed deploy guide.".into(),
+                                    source: "organization".into(),
+                                    category: Some(SkillCategoryWire::Workflow),
+                                },
+                            ],
+                        },
+                    )
+                    .unwrap()
+                } else if req.is::<SkillRead>() {
+                    Response::ok::<SkillRead>(
+                        req.id,
+                        &SkillReadResult {
+                            key: "org-deploy-runbook".into(),
+                            title: "Org Deploy Runbook".into(),
+                            description: "Live org-pushed deploy guide.".into(),
+                            source: "organization".into(),
+                            category: Some(SkillCategoryWire::Workflow),
+                            body_markdown: "# Org Deploy\nRun smoke checks.".into(),
+                        },
+                    )
+                    .unwrap()
+                } else {
+                    panic!("unexpected method: {}", req.method);
+                };
+                frame::write_message(&mut stream, &resp).unwrap();
+            }
+        }
+    });
+
+    // 1. Online bound `skill list` returns the full live office set as an array unchanged.
+    let online_list = bin()
+        .args(["skill", "list"])
+        .env("AGENT_OS_SOCKET", &sock)
+        .env("AGENT_OS_SESSION_TOKEN", "session-token-fixture")
+        .output()
+        .unwrap();
+    assert_eq!(
+        online_list.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&online_list.stdout)
+    );
+    let env: Value = serde_json::from_slice(&online_list.stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    let items = env["data"].as_array().expect("online list stays an array");
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[1]["key"], "org-deploy-runbook");
+    assert_eq!(items[1]["source"], "organization");
+
+    // 2. Online bound `skill read` returns the live org skill without offline-only fields.
+    let online_read = bin()
+        .args(["skill", "read", "--name", "org-deploy-runbook"])
+        .env("AGENT_OS_SOCKET", &sock)
+        .env("AGENT_OS_SESSION_TOKEN", "session-token-fixture")
+        .output()
+        .unwrap();
+    assert_eq!(
+        online_read.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&online_read.stdout)
+    );
+    let env: Value = serde_json::from_slice(&online_read.stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["key"], "org-deploy-runbook");
+    assert_eq!(env["data"]["source"], "organization");
+    assert!(env["data"].get("mode").is_none());
+    assert!(env["data"].get("org_skills_included").is_none());
+    assert!(env["data"].get("caveat").is_none());
+
+    server.join().unwrap();
+    // Socket server is now closed; explicit `--offline` while bound must still succeed locally!
+    let bound_offline_list = bin()
+        .args(["skill", "list", "--offline"])
+        .env("AGENT_OS_SOCKET", &sock)
+        .env("AGENT_OS_SESSION_TOKEN", "session-token-fixture")
+        .output()
+        .unwrap();
+    assert_eq!(
+        bound_offline_list.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&bound_offline_list.stdout)
+    );
+    let env: Value = serde_json::from_slice(&bound_offline_list.stdout).unwrap();
+    assert_eq!(env["data"]["mode"], "offline_builtin_only");
+    assert_eq!(env["data"]["org_skills_included"], false);
+    assert!(env["data"]["caveat"]
+        .as_str()
+        .is_some_and(|c| !c.is_empty()));
+
+    let bound_offline_read = bin()
+        .args(["skill", "read", "--offline", "--name", "agent-os-basics"])
+        .env("AGENT_OS_SOCKET", &sock)
+        .env("AGENT_OS_SESSION_TOKEN", "session-token-fixture")
+        .output()
+        .unwrap();
+    assert_eq!(
+        bound_offline_read.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&bound_offline_read.stdout)
+    );
+    let env: Value = serde_json::from_slice(&bound_offline_read.stdout).unwrap();
+    assert_eq!(env["data"]["key"], "agent-os-basics");
+    assert_eq!(env["data"]["mode"], "offline_builtin_only");
+    assert_eq!(env["data"]["org_skills_included"], false);
+    assert!(env["data"]["caveat"]
+        .as_str()
+        .is_some_and(|c| !c.is_empty()));
+}

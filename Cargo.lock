@@ -1205,6 +1205,7 @@ dependencies = [
  "org-command-catalogue",
  "org-media",
  "org-platform",
+ "org-process",
  "org-proto",
  "ring",
  "serde",

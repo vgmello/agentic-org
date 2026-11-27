@@ -13,6 +13,7 @@ org-command = { path = "../org-command" }
 org-command-catalogue = { path = "../org-command-catalogue" }
 org-media = { path = "../org-media" }
 org-platform = { path = "../org-platform" }
+org-process = { path = "../org-process" }
 org-proto = { path = "../org-proto" }
 ring = "=0.17.14"
 serde.workspace = true
