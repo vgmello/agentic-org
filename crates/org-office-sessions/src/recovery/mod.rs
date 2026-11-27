@@ -201,46 +201,40 @@ impl SessionStore {
         Ok(self.sessions_root.join(employee_id))
     }
 
+    fn employee_file(&self, employee_id: &str, name: &str) -> io::Result<PathBuf> {
+        Ok(self.employee_dir(employee_id)?.join(name))
+    }
+
     pub fn pending_start_path(&self, employee_id: &str) -> io::Result<PathBuf> {
-        Ok(self
-            .employee_dir(employee_id)?
-            .join("pending-start.v1.json"))
+        self.employee_file(employee_id, "pending-start.v1.json")
     }
 
     pub fn active_turn_path(&self, employee_id: &str) -> io::Result<PathBuf> {
-        Ok(self.employee_dir(employee_id)?.join("active-turn.v1.json"))
+        self.employee_file(employee_id, "active-turn.v1.json")
     }
 
     pub fn history_path(&self, employee_id: &str) -> io::Result<PathBuf> {
-        Ok(self.employee_dir(employee_id)?.join("history.jsonl"))
+        self.employee_file(employee_id, "history.jsonl")
     }
 
     pub fn pending_wakes_path(&self, employee_id: &str) -> io::Result<PathBuf> {
-        Ok(self
-            .employee_dir(employee_id)?
-            .join("pending-wakes.v1.json"))
+        self.employee_file(employee_id, "pending-wakes.v1.json")
     }
 
     pub fn suspended_state_path(&self, employee_id: &str) -> io::Result<PathBuf> {
-        Ok(self
-            .employee_dir(employee_id)?
-            .join("suspended-asks.v1.json"))
+        self.employee_file(employee_id, "suspended-asks.v1.json")
     }
 
     pub fn wake_quota_path(&self, employee_id: &str) -> io::Result<PathBuf> {
-        Ok(self.employee_dir(employee_id)?.join("wake-quota.v1.json"))
+        self.employee_file(employee_id, "wake-quota.v1.json")
     }
 
     pub fn usage_capture_path(&self, employee_id: &str) -> io::Result<PathBuf> {
-        Ok(self
-            .employee_dir(employee_id)?
-            .join("usage-capture.v1.json"))
+        self.employee_file(employee_id, "usage-capture.v1.json")
     }
 
     pub fn rejected_usage_path(&self, employee_id: &str) -> io::Result<PathBuf> {
-        Ok(self
-            .employee_dir(employee_id)?
-            .join("rejected-usage.v1.json"))
+        self.employee_file(employee_id, "rejected-usage.v1.json")
     }
 }
 
@@ -370,32 +364,18 @@ fn ensure_owner_dirs(path: &Path) -> io::Result<()> {
 }
 
 fn write_atomic_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> io::Result<()> {
-    let bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
-    let mut suffix = [0u8; 8];
-    SystemRandom::new()
-        .fill(&mut suffix)
-        .map_err(|_| io::Error::other("system entropy unavailable"))?;
-    let hex: String = suffix.iter().map(|b| format!("{b:02x}")).collect();
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::other("path has no parent"))?;
-    let tmp = parent.join(format!(".session.{hex}.tmp"));
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(0o600)
-        .open(&tmp)?;
-    if let Err(err) = file.write_all(&bytes).and_then(|()| file.sync_all()) {
-        let _ = fs::remove_file(&tmp);
-        return Err(err);
-    }
-    drop(file);
-    fs::rename(&tmp, path).inspect_err(|_| {
-        let _ = fs::remove_file(&tmp);
-    })
+    write_atomic_json_inner(path, value, false)
 }
 
 fn write_atomic_json_durable<T: Serialize + ?Sized>(path: &Path, value: &T) -> io::Result<()> {
+    write_atomic_json_inner(path, value, true)
+}
+
+fn write_atomic_json_inner<T: Serialize + ?Sized>(
+    path: &Path,
+    value: &T,
+    durable: bool,
+) -> io::Result<()> {
     let bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
     let mut suffix = [0u8; 8];
     SystemRandom::new()
@@ -411,10 +391,14 @@ fn write_atomic_json_durable<T: Serialize + ?Sized>(path: &Path, value: &T) -> i
         .write(true)
         .mode(0o600)
         .open(&tmp)?;
-    if let Err(err) = file
-        .write_all(&bytes)
-        .and_then(|()| org_platform::fs::full_sync(&file))
-    {
+    let write_res = file.write_all(&bytes).and_then(|()| {
+        if durable {
+            org_platform::fs::full_sync(&file)
+        } else {
+            file.sync_all()
+        }
+    });
+    if let Err(err) = write_res {
         let _ = fs::remove_file(&tmp);
         return Err(err);
     }
@@ -422,7 +406,10 @@ fn write_atomic_json_durable<T: Serialize + ?Sized>(path: &Path, value: &T) -> i
     fs::rename(&tmp, path).inspect_err(|_| {
         let _ = fs::remove_file(&tmp);
     })?;
-    sync_dir(parent)
+    if durable {
+        sync_dir(parent)?;
+    }
+    Ok(())
 }
 
 fn read_optional_json<T: for<'de> Deserialize<'de>>(path: &Path) -> io::Result<Option<T>> {

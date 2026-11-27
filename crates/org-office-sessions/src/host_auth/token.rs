@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 /// Upper bound on a vault-stored OAuth credential payload before parsing.
@@ -99,6 +99,7 @@ pub(crate) enum VaultAuthError {
         detail: String,
     },
     VaultPersistFailed,
+    VaultUnavailable(&'static str),
 }
 
 impl VaultAuthError {
@@ -108,6 +109,7 @@ impl VaultAuthError {
             Self::MalformedCredential(_) => "vault_credential_malformed",
             Self::ReauthRequired { reason, .. } => reason,
             Self::VaultPersistFailed => "vault_oauth_persist_failed",
+            Self::VaultUnavailable(_) => "vault_unavailable",
         }
     }
 
@@ -125,6 +127,9 @@ impl VaultAuthError {
             ),
             Self::VaultPersistFailed => format!(
                 "provider connection `{connection_key}` refreshed OAuth credential could not be persisted to the office vault. {guide}"
+            ),
+            Self::VaultUnavailable(why) => format!(
+                "provider connection `{connection_key}` vault credential is temporarily unavailable ({why})."
             ),
         }
     }
@@ -177,82 +182,72 @@ pub(crate) fn collect_vault_redaction_secrets(raw: &[u8], out: &mut Vec<Zeroizin
     }
 }
 
+struct ZeroizingStr(Zeroizing<String>);
+
+impl<'de> Deserialize<'de> for ZeroizingStr {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|s| Self(Zeroizing::new(s)))
+    }
+}
+
+#[derive(Deserialize)]
+struct RawOAuthFields {
+    #[serde(default, alias = "accessToken")]
+    access_token: Option<ZeroizingStr>,
+    #[serde(default, alias = "refreshToken")]
+    refresh_token: Option<ZeroizingStr>,
+    #[serde(default, alias = "expiresAt")]
+    expires_at_ms: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct RawOAuthEnvelope {
+    #[serde(default, rename = "claudeAiOauth")]
+    claude_ai_oauth: Option<RawOAuthFields>,
+    #[serde(default, alias = "accessToken")]
+    access_token: Option<ZeroizingStr>,
+    #[serde(default, alias = "refreshToken")]
+    refresh_token: Option<ZeroizingStr>,
+    #[serde(default, alias = "expiresAt")]
+    expires_at_ms: Option<u64>,
+}
+
 fn parse_vault_oauth_json(trimmed: &str) -> Result<VaultOAuthCredential, VaultAuthError> {
-    let val: serde_json::Value = serde_json::from_str(trimmed)
+    let env: RawOAuthEnvelope = serde_json::from_str(trimmed)
         .map_err(|_| VaultAuthError::MalformedCredential("malformed JSON OAuth envelope"))?;
-    let root = val.as_object().ok_or(VaultAuthError::MalformedCredential(
-        "OAuth envelope must be a JSON object",
-    ))?;
-    let obj = match root.get("claudeAiOauth") {
-        Some(inner) => inner
-            .as_object()
+    let fields = env.claude_ai_oauth.unwrap_or(RawOAuthFields {
+        access_token: env.access_token,
+        refresh_token: env.refresh_token,
+        expires_at_ms: env.expires_at_ms,
+    });
+    let ZeroizingStr(access_token) =
+        fields
+            .access_token
             .ok_or(VaultAuthError::MalformedCredential(
-                "claudeAiOauth must be a JSON object",
-            ))?,
-        None => root,
-    };
-    let access = extract_optional_str(obj, "access_token", "accessToken")?.ok_or(
-        VaultAuthError::MalformedCredential("OAuth envelope is missing access_token"),
-    )?;
-    validate_secret_token(access)?;
-    let refresh_token = match extract_optional_str(obj, "refresh_token", "refreshToken")? {
-        Some(rt) => {
-            validate_secret_token(rt)?;
-            Some(Zeroizing::new(rt.to_owned()))
+                "OAuth envelope is missing access_token",
+            ))?;
+    validate_secret_token(access_token.as_str())?;
+    let refresh_token = match fields.refresh_token {
+        Some(ZeroizingStr(rt)) if !rt.is_empty() => {
+            validate_secret_token(rt.as_str())?;
+            Some(rt)
         }
-        None => None,
+        _ => None,
     };
-    let expires_at_ms = extract_optional_u64(obj, "expires_at_ms", "expiresAt")?;
     Ok(VaultOAuthCredential {
-        access_token: Zeroizing::new(access.to_owned()),
+        access_token,
         refresh_token,
-        expires_at_ms,
+        expires_at_ms: fields.expires_at_ms,
     })
 }
 
-fn extract_optional_str<'a>(
-    obj: &'a serde_json::Map<String, serde_json::Value>,
-    primary: &str,
-    alias: &str,
-) -> Result<Option<&'a str>, VaultAuthError> {
-    let Some(val) = obj.get(primary).or_else(|| obj.get(alias)) else {
-        return Ok(None);
-    };
-    if val.is_null() {
-        return Ok(None);
-    }
-    let s = val.as_str().ok_or(VaultAuthError::MalformedCredential(
-        "OAuth token field must be a string",
-    ))?;
-    let trimmed = s.trim();
-    Ok((!trimmed.is_empty()).then_some(trimmed))
-}
-
-fn extract_optional_u64(
-    obj: &serde_json::Map<String, serde_json::Value>,
-    primary: &str,
-    alias: &str,
-) -> Result<Option<u64>, VaultAuthError> {
-    let Some(val) = obj.get(primary).or_else(|| obj.get(alias)) else {
-        return Ok(None);
-    };
-    if val.is_null() {
-        return Ok(None);
-    }
-    val.as_u64()
-        .map(Some)
-        .ok_or(VaultAuthError::MalformedCredential(
-            "OAuth expires_at_ms must be an unsigned integer",
-        ))
-}
-
 fn validate_secret_token(token: &str) -> Result<(), VaultAuthError> {
-    if token.trim().is_empty() {
+    if token.is_empty() || token != token.trim() {
         return Err(VaultAuthError::MalformedCredential(
-            "OAuth token must not be empty",
+            "OAuth token must be non-empty and trimmed",
         ));
     }
-    if token.bytes().any(|b| b == 0 || b == b'\r' || b == b'\n') {
+    if token.bytes().any(|b| b.is_ascii_control()) {
         return Err(VaultAuthError::MalformedCredential(
             "OAuth token has disallowed control chars",
         ));

@@ -426,3 +426,237 @@ fn vault_refresh_coordinator_adopts_operator_rotation_and_fails_closed_on_errors
         .refresh("conn-x", "anthropic", "rt")
         .is_err());
 }
+
+#[test]
+fn metadata_expires_at_enforced_for_expired_future_and_unparseable() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = test_vault(dir.path());
+    let now = 2_000_000_000_000u64;
+    let noop = VaultRefreshCoordinator::noop();
+
+    // 1. Expired CredentialMetadata.expires_at on a raw token fails closed.
+    vault
+        .store_wrapped(
+            "conn-raw-exp",
+            "anthropic",
+            b"sk-ant-oat01-raw-exp",
+            Some("2020-01-01T00:00:00Z".into()),
+            None,
+        )
+        .unwrap();
+    let err = noop
+        .resolve_for_launch(&vault, "conn-raw-exp", "anthropic", now)
+        .err()
+        .expect("expired metadata expires_at must fail closed");
+    assert_eq!(err.issue_code(), "vault_oauth_expired");
+
+    // 2. Unparseable CredentialMetadata.expires_at fails closed as MalformedCredential.
+    vault
+        .store_wrapped(
+            "conn-bad-exp",
+            "anthropic",
+            b"sk-ant-oat01-raw-bad-exp",
+            Some("not-a-valid-rfc3339".into()),
+            None,
+        )
+        .unwrap();
+    let bad = noop
+        .resolve_for_launch(&vault, "conn-bad-exp", "anthropic", now)
+        .err()
+        .expect("unparseable metadata expires_at must fail closed");
+    assert!(matches!(bad, VaultAuthError::MalformedCredential(_)));
+
+    // 3. Future metadata expires_at populates resolved.expires_at_ms for warm recycle.
+    vault
+        .store_wrapped(
+            "conn-future-exp",
+            "anthropic",
+            b"sk-ant-oat01-raw-future",
+            Some("2099-01-01T00:00:00Z".into()),
+            None,
+        )
+        .unwrap();
+    let ok = noop
+        .resolve_for_launch(&vault, "conn-future-exp", "anthropic", now)
+        .unwrap();
+    assert_eq!(
+        ok.expires_at_ms,
+        org_proto::parse_rfc3339_ms("2099-01-01T00:00:00Z")
+    );
+
+    // 4. JSON envelope without expires_at_ms inherits expired metadata expires_at and refreshes.
+    let no_exp_json = br#"{"access_token":"sk-ant-oat01-old","refresh_token":"rt-meta-1"}"#;
+    vault
+        .store_wrapped(
+            "conn-json-meta-exp",
+            "anthropic",
+            no_exp_json,
+            Some("2020-01-01T00:00:00Z".into()),
+            None,
+        )
+        .unwrap();
+    let new_exp = now + 3_600_000;
+    let refresher = Arc::new(CountingRefresher {
+        calls: AtomicUsize::new(0),
+        barrier: None,
+        response: Box::new(move |_, rt| {
+            assert_eq!(rt, "rt-meta-1");
+            Ok(VaultOAuthCredential {
+                access_token: Zeroizing::new("sk-ant-oat01-rotated-meta".into()),
+                refresh_token: None,
+                expires_at_ms: Some(new_exp),
+            })
+        }),
+    });
+    let coord =
+        VaultRefreshCoordinator::new(Arc::clone(&refresher) as Arc<dyn VaultTokenRefresher>);
+    let rotated = coord
+        .resolve_for_launch(&vault, "conn-json-meta-exp", "anthropic", now)
+        .unwrap();
+    assert_eq!(rotated.access_token.as_str(), "sk-ant-oat01-rotated-meta");
+    assert_eq!(refresher.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn missing_secrets_key_returns_unavailable_while_corrupt_file_maps_to_vault_auth() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault_with_key = test_vault(dir.path());
+    vault_with_key
+        .store_wrapped("conn-key", "anthropic", b"sk-ant-oat01-valid", None, None)
+        .unwrap();
+
+    let vault_no_key = CredentialVault::new(dir.path().to_path_buf(), "org-1", "office-1", None);
+    let claude = org_agent_runtime_claude::ClaudeRuntime::new();
+    let noop = VaultRefreshCoordinator::noop();
+    let now = 2_000_000_000_000u64;
+
+    // MissingSecretsKey must return Fatal(Unavailable), NOT VaultAuth (which poisons AuthExpired).
+    let res = super::resolve_connection_vault_auth(
+        &vault_no_key,
+        &noop,
+        &claude,
+        "conn-key",
+        "anthropic",
+        ProviderAuthMode::SubscriptionCli,
+        now,
+    );
+    match res {
+        Err(super::ConnectionAuthError::Fatal(err)) => {
+            assert_eq!(err.code, org_proto::ErrorCode::Unavailable);
+        }
+        other => panic!(
+            "expected Fatal(Unavailable) on MissingSecretsKey, got {}",
+            other.is_ok()
+        ),
+    }
+
+    // Crypto/format corruption still maps to VaultAuth(MalformedCredential).
+    let path = vault_with_key.credential_path("conn-key").unwrap();
+    std::fs::write(&path, b"{corrupt-metadata").unwrap();
+    let corrupt = super::resolve_connection_vault_auth(
+        &vault_with_key,
+        &noop,
+        &claude,
+        "conn-key",
+        "anthropic",
+        ProviderAuthMode::SubscriptionCli,
+        now,
+    );
+    assert!(matches!(
+        corrupt,
+        Err(super::ConnectionAuthError::VaultAuth(
+            VaultAuthError::MalformedCredential(_)
+        ))
+    ));
+}
+
+#[test]
+fn refresher_rejects_untrimmed_and_control_char_tokens_without_overwriting_vault() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = test_vault(dir.path());
+    let now = 2_000_000_000_000u64;
+    let future_exp = now + 3_600_000;
+
+    // JSON parsing itself also rejects untrimmed or control-char token values.
+    for bad_json in [
+        br#"{"access_token":" sk-ant-padded "}"#.as_slice(),
+        br#"{"access_token":"sk-ant-bel\u0007"}"#.as_slice(),
+        br#"{"access_token":"sk-ant-ok","refresh_token":" rt-padded "}"#.as_slice(),
+        br#"{"access_token":"sk-ant-ok","refresh_token":"rt\u001besc"}"#.as_slice(),
+    ] {
+        assert!(matches!(
+            parse_vault_oauth_credential(bad_json),
+            Err(VaultAuthError::MalformedCredential(_))
+        ));
+    }
+
+    let initial = VaultOAuthCredential {
+        access_token: Zeroizing::new("sk-old-token".into()),
+        refresh_token: Some(Zeroizing::new("rt-valid-1".into())),
+        expires_at_ms: Some(1),
+    };
+    vault
+        .store_wrapped(
+            "conn-ctrl",
+            "anthropic",
+            &initial.to_vault_json().unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+
+    let bad_outputs: &[(&str, Option<&str>)] = &[
+        (" sk-old-token ", None),
+        ("sk-new-token\x07", None),
+        ("sk-new-token\t", None),
+        ("sk-new-token\x1b", None),
+        ("sk-new-clean", Some(" rt-padded ")),
+        ("sk-new-clean", Some("rt-bel\x07")),
+    ];
+    for &(bad_at, bad_rt) in bad_outputs {
+        let refresher = Arc::new(CountingRefresher {
+            calls: AtomicUsize::new(0),
+            barrier: None,
+            response: Box::new(move |_, _| {
+                Ok(VaultOAuthCredential {
+                    access_token: Zeroizing::new(bad_at.to_owned()),
+                    refresh_token: bad_rt.map(|s| Zeroizing::new(s.to_owned())),
+                    expires_at_ms: Some(future_exp),
+                })
+            }),
+        });
+        let coord = VaultRefreshCoordinator::new(refresher);
+        let err = coord
+            .resolve_for_launch(&vault, "conn-ctrl", "anthropic", now)
+            .err()
+            .expect("untrimmed or control-char refresher token must fail");
+        assert!(matches!(err, VaultAuthError::ReauthRequired { .. }));
+        let stored =
+            parse_vault_oauth_credential(&vault.load_unwrapped("conn-ctrl").unwrap().unwrap())
+                .unwrap();
+        assert_eq!(stored.access_token.as_str(), "sk-old-token");
+        assert_eq!(stored.expires_at_ms, Some(1));
+    }
+}
+
+#[test]
+fn refresh_lock_map_gc_enforces_max_entries_bound_and_keeps_active_locks() {
+    let coord = VaultRefreshCoordinator::noop();
+    let held = coord.connection_lock("conn-active");
+    for i in 0..(super::MAX_REFRESH_LOCK_ENTRIES + 64) {
+        let _ephemeral = coord.connection_lock(&format!("conn-gc-{i}"));
+    }
+    let map = coord.locks.lock().unwrap();
+    assert!(
+        map.len() <= super::MAX_REFRESH_LOCK_ENTRIES,
+        "lock map must stay bounded at <= {}, got {}",
+        super::MAX_REFRESH_LOCK_ENTRIES,
+        map.len()
+    );
+    assert!(
+        map.contains_key("conn-active"),
+        "in-flight referenced connection lock must be retained across GC"
+    );
+    drop(map);
+    drop(held);
+}

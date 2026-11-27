@@ -1,7 +1,4 @@
-//! Runtime temporary-directory placement and vault-native per-connection OAuth token lifecycle
-//! (`TASK-132`). Per-connection `subscription_cli` OAuth credentials live exclusively inside the
-//! office's wrapped [`CredentialVault`]; sessions never borrow ambient personal host CLI
-//! credential files or OS keychains and never spawn host-side turn probes to refresh tokens.
+//! Runtime `TMPDIR` placement and vault-native per-connection OAuth lifecycle (`TASK-132`).
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -16,7 +13,9 @@ use zeroize::Zeroizing;
 mod tests;
 mod token;
 
-use crate::credentials::{format_rfc3339_ms, CredentialVault, UnwrappedCredential};
+use crate::credentials::{
+    format_rfc3339_ms, CredentialVault, EnrollmentVaultError, UnwrappedCredential,
+};
 
 pub(crate) use token::{
     collect_vault_redaction_secrets, hex_short_sha256, is_oauth_expiring,
@@ -31,19 +30,15 @@ const MAX_SHORT_TMPDIR_BYTES: usize = 70;
 const MAX_REFRESH_DETAIL_BYTES: usize = 200;
 const MAX_REFRESH_LOCK_ENTRIES: usize = 256;
 
-/// The office runtime folder holding `host.sock`, launch rendezvous `r/`, and per-agent `t/`.
 pub(crate) fn office_runtime_dir(office_socket: &Path) -> Option<&Path> {
     org_proto::location::runtime_dir_of_office_socket(office_socket)
         .or_else(|| office_socket.parent())
 }
 
-/// Deterministic 8-hex per-agent slug used under `<runtime>/t/<slug>` ([`office_runtime_dir`]).
 pub(crate) fn agent_tmpdir_slug(office_id: &str, employee_id: &str) -> String {
     hex_short_sha256(format!("{office_id}:{employee_id}").as_bytes())[..8].to_owned()
 }
 
-/// Chooses an owner-only per-agent `TMPDIR` under `<runtime>/t/<8-hex>` when it stays within
-/// [`MAX_SHORT_TMPDIR_BYTES`] and shorter than `durable_fallback`.
 pub(crate) fn resolve_agent_tmpdir(
     office_socket: &Path,
     durable_fallback: &Path,
@@ -65,9 +60,6 @@ pub(crate) fn resolve_agent_tmpdir(
     }
 }
 
-/// Whether an admitted route may pass a runtime's declared host config directory (e.g. `.codex`,
-/// `.gemini`) when no vault credential is present. Runtimes requiring injected OAuth tokens
-/// (`uses_host_oauth_token_injection`) never fall back to ambient personal host credentials.
 pub(crate) fn allows_host_subscription_auth(
     auth_env: &[(OsString, OsString)],
     auth_mode: Option<ProviderAuthMode>,
@@ -78,7 +70,6 @@ pub(crate) fn allows_host_subscription_auth(
         && matches!(auth_mode, None | Some(ProviderAuthMode::SubscriptionCli))
 }
 
-/// Locates `$HOME/<subdir>` when host subscription config dir is allowed and declared (`None` for Claude).
 pub(crate) fn host_config_dir_for(
     host_config_subdir: Option<&str>,
     allowed: bool,
@@ -96,7 +87,6 @@ pub(crate) fn host_config_dir_for(
     SpecPath::try_from(resolved.display().to_string().as_str()).ok()
 }
 
-/// Resolved vault OAuth token and non-secret tracking metadata ready for launch injection.
 pub(crate) struct ResolvedVaultOAuth {
     pub access_token: Zeroizing<String>,
     pub expires_at_ms: Option<u64>,
@@ -114,7 +104,6 @@ impl ResolvedVaultOAuth {
     }
 }
 
-/// Consumer-owned non-turn OAuth refresh port (`TASK-132`).
 pub(crate) trait VaultTokenRefresher: Send + Sync {
     fn refresh(
         &self,
@@ -124,7 +113,6 @@ pub(crate) trait VaultTokenRefresher: Send + Sync {
     ) -> Result<VaultOAuthCredential, String>;
 }
 
-/// Fail-closed default [`VaultTokenRefresher`] when no provider refresh client is wired.
 #[derive(Debug, Default)]
 pub(crate) struct NoopVaultTokenRefresher;
 
@@ -139,7 +127,6 @@ impl VaultTokenRefresher for NoopVaultTokenRefresher {
     }
 }
 
-/// Single-flight per-connection vault OAuth resolver and refresher (`TASK-132`).
 pub(crate) struct VaultRefreshCoordinator {
     locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     refresher: Mutex<Arc<dyn VaultTokenRefresher>>,
@@ -332,7 +319,12 @@ pub(crate) fn resolve_connection_vault_auth(
             provider_type,
             now_ms,
         )
-        .map_err(ConnectionAuthError::VaultAuth);
+        .map_err(|err| match err {
+            VaultAuthError::VaultUnavailable(msg) => ConnectionAuthError::Fatal(
+                org_proto::ApiError::new(org_proto::ErrorCode::Unavailable, msg),
+            ),
+            other => ConnectionAuthError::VaultAuth(other),
+        });
     }
     let mut auth_env = Vec::new();
     if let Some(secret) = vault.load_unwrapped(connection_id).map_err(|_| {
@@ -398,18 +390,46 @@ fn resolve_subscription_cli_vault_auth(
     })
 }
 
+fn map_unwrap_error(err: EnrollmentVaultError) -> VaultAuthError {
+    match err {
+        EnrollmentVaultError::MissingSecretsKey => {
+            VaultAuthError::VaultUnavailable("office secrets key is unavailable")
+        }
+        EnrollmentVaultError::Io(_) => {
+            VaultAuthError::VaultUnavailable("provider credential could not be read")
+        }
+        EnrollmentVaultError::Crypto(_) | EnrollmentVaultError::InvalidInput(_) => {
+            VaultAuthError::MalformedCredential("provider credential could not be unwrapped")
+        }
+        _ => VaultAuthError::VaultUnavailable("provider credential vault is unavailable"),
+    }
+}
+
 fn load_vault_oauth_with_meta(
     vault: &CredentialVault,
     connection_id: &str,
 ) -> Result<(VaultOAuthCredential, UnwrappedCredential), VaultAuthError> {
     let unwrapped = vault
         .load_unwrapped_with_meta(connection_id)
-        .map_err(|_| {
-            VaultAuthError::MalformedCredential("provider credential could not be unwrapped")
-        })?
+        .map_err(map_unwrap_error)?
         .ok_or(VaultAuthError::MissingCredential)?;
-    let cred = parse_vault_oauth_credential(&unwrapped.secret)?;
+    let mut cred = parse_vault_oauth_credential(&unwrapped.secret)?;
+    if cred.expires_at_ms.is_none() {
+        if let Some(ref raw_exp) = unwrapped.expires_at {
+            let ms = org_proto::parse_rfc3339_ms(raw_exp).ok_or(
+                VaultAuthError::MalformedCredential("vault credential has invalid expires_at"),
+            )?;
+            cred.expires_at_ms = Some(ms);
+        }
+    }
     Ok((cred, unwrapped))
+}
+
+fn reauth_required(reason: &'static str, detail: &str) -> VaultAuthError {
+    VaultAuthError::ReauthRequired {
+        reason,
+        detail: detail.to_owned(),
+    }
 }
 
 fn validate_rotated_credential(
@@ -422,34 +442,43 @@ fn validate_rotated_credential(
 ) -> Result<(), VaultAuthError> {
     rotated
         .validate()
-        .map_err(|_| VaultAuthError::ReauthRequired {
-            reason,
-            detail: "OAuth refresh returned an invalid access token".to_owned(),
-        })?;
+        .map_err(|_| reauth_required(reason, "OAuth refresh returned an invalid access token"))?;
     if is_oauth_expiring(rotated.expires_at_ms, now_ms) {
-        return Err(VaultAuthError::ReauthRequired {
+        return Err(reauth_required(
             reason,
-            detail: "OAuth refresh returned an already-expiring token".to_owned(),
-        });
+            "OAuth refresh returned an already-expiring token",
+        ));
     }
-    let unchanged_from_failed = failed_token_fp.is_some_and(|fp| rotated.fingerprint() == fp);
-    let unchanged_from_current = rotated.access_token.as_str() == current.access_token.as_str();
-    if unchanged_from_failed
-        || (is_reactive && unchanged_from_current)
-        || (rotated.expires_at_ms.is_none() && unchanged_from_current)
-    {
-        return Err(VaultAuthError::ReauthRequired {
+    ensure_token_progressed(current, rotated, failed_token_fp, is_reactive, reason)
+}
+
+fn ensure_token_progressed(
+    current: &VaultOAuthCredential,
+    rotated: &VaultOAuthCredential,
+    failed_token_fp: Option<&str>,
+    is_reactive: bool,
+    reason: &'static str,
+) -> Result<(), VaultAuthError> {
+    if failed_token_fp.is_some_and(|fp| rotated.fingerprint() == fp) {
+        return Err(reauth_required(
             reason,
-            detail: "OAuth refresh did not rotate the access token".to_owned(),
-        });
+            "OAuth refresh did not rotate the access token",
+        ));
     }
-    if let (Some(old_exp), Some(new_exp)) = (current.expires_at_ms, rotated.expires_at_ms) {
-        if new_exp <= old_exp && unchanged_from_current {
-            return Err(VaultAuthError::ReauthRequired {
-                reason,
-                detail: "OAuth refresh did not extend token expiry".to_owned(),
-            });
-        }
+    if rotated.access_token.as_str() != current.access_token.as_str() {
+        return Ok(());
+    }
+    if is_reactive || rotated.expires_at_ms.is_none() {
+        return Err(reauth_required(
+            reason,
+            "OAuth refresh did not rotate the access token",
+        ));
+    }
+    if rotated.expires_at_ms <= current.expires_at_ms {
+        return Err(reauth_required(
+            reason,
+            "OAuth refresh did not extend token expiry",
+        ));
     }
     Ok(())
 }

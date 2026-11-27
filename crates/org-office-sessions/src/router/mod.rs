@@ -28,14 +28,10 @@ pub(crate) use warm_permit::{acquire_warm_permit_for_office, WarmPermitOutcome};
 #[cfg(test)]
 pub(crate) use warm_permit::{compute_route_digest_with_wt, compute_worktree_sandbox_digest};
 
-/// Fully admitted connection route ready to spawn a supervised agent session.
 pub(crate) struct AdmittedRoute {
     pub adapter: Arc<dyn AgentRuntime>,
     pub model_token: Option<Token>,
-    /// Whether the discovered model supports vision/image inputs (`TASK-98.3`).
     pub model_supports_vision: bool,
-    /// The agent's reasoning effort (`TASK-181`) as the session spec's token, in the office's
-    /// names; each runtime adapter maps it onto its own. `None` keeps the runtime's default.
     pub effort: Option<Token>,
     pub auth_mode: Option<ProviderAuthMode>,
     pub auth_env: Vec<(OsString, OsString)>,
@@ -49,7 +45,6 @@ pub(crate) struct AdmittedRoute {
     pub route_digest_suffix: String,
 }
 
-/// Maps a validated per-connection `endpoint_url` into `adapter`'s non-secret base-URL env var.
 pub fn endpoint_env_for_adapter(
     adapter: &dyn AgentRuntime,
     endpoint_url: &str,
@@ -69,7 +64,6 @@ pub fn endpoint_env_for_adapter(
     Ok((var, endpoint_url.to_owned()))
 }
 
-/// Maps a validated per-connection `endpoint_url` into the registered runtime's base-URL env var.
 pub fn endpoint_env_for(
     driver: &str,
     endpoint_url: &str,
@@ -87,7 +81,6 @@ pub fn endpoint_env_for(
     endpoint_env_for_adapter(adapter.as_ref(), endpoint_url)
 }
 
-/// Maps an adapter and auth mode to the runtime's allowlisted auth env variable name.
 pub fn auth_env_var_for_adapter(
     adapter: &dyn AgentRuntime,
     mode: ProviderAuthMode,
@@ -283,6 +276,20 @@ fn permit_authority_for(office: &Office, conn: &ProviderConnection) -> PermitAut
     }
 }
 
+struct CandidatePermitGuard<'a> {
+    office: &'a Office,
+    hq_permits: Option<&'a dyn HqPermitCoordinator>,
+    permit: Option<(String, u64)>,
+}
+
+impl Drop for CandidatePermitGuard<'_> {
+    fn drop(&mut self) {
+        if let Some((pid, _)) = self.permit.take() {
+            release_turn_permit_any(self.office, self.hq_permits, &pid);
+        }
+    }
+}
+
 fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOutcome, ApiError> {
     if ctx.excluded.contains(cid) {
         return Ok(CandidateSkip::plain(format!("{cid}:ALREADY_TRIED")));
@@ -315,17 +322,25 @@ fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOut
         Ok(p) => p,
         Err(skip) => return Ok(skip),
     };
+    let mut permit_guard = CandidatePermitGuard {
+        office: ctx.office,
+        hq_permits: ctx.hq_permits,
+        permit: Some(permit.clone()),
+    };
     match finalize_admitted_connection(
         ctx,
         &conn,
         binding_rev,
         &resolved_model,
         model_supports_vision,
-        permit.clone(),
+        permit,
     ) {
-        Ok(route) => Ok(CandidateOutcome::Admitted(route)),
+        Ok(route) => {
+            permit_guard.permit = None;
+            Ok(CandidateOutcome::Admitted(route))
+        }
         Err(crate::host_auth::ConnectionAuthError::VaultAuth(auth_err)) => {
-            release_turn_permit_any(ctx.office, ctx.hq_permits, &permit.0);
+            drop(permit_guard);
             let _ = ctx
                 .office
                 .mark_connection_auth_expired_internal(cid, auth_err.issue_code());
@@ -336,10 +351,7 @@ fn try_admit_candidate(ctx: &RouteWalkCtx<'_>, cid: &str) -> Result<CandidateOut
                 is_auth_expired: true,
             }))
         }
-        Err(crate::host_auth::ConnectionAuthError::Fatal(err)) => {
-            release_turn_permit_any(ctx.office, ctx.hq_permits, &permit.0);
-            Err(err)
-        }
+        Err(crate::host_auth::ConnectionAuthError::Fatal(err)) => Err(err),
     }
 }
 
@@ -544,19 +556,13 @@ fn exhausted_pool_error(
     first_auth_error: Option<String>,
     all_auth_expired: bool,
 ) -> ApiError {
-    if let Some(detail) = first_auth_error {
+    if !skips.is_empty() && all_auth_expired {
+        let detail = first_auth_error.unwrap_or_else(|| {
+            "all provider connections require vault credential enrollment or token rotation via `agentic-org` provider connection enrollment".to_owned()
+        });
         return ApiError::new(
             ErrorCode::NotAuthorized,
             format!("AUTH_EXPIRED: {detail} (pool: [{}])", skips.join(", ")),
-        );
-    }
-    if !skips.is_empty() && all_auth_expired {
-        return ApiError::new(
-            ErrorCode::NotAuthorized,
-            format!(
-                "AUTH_EXPIRED: all provider connections require vault credential enrollment or token rotation via `agentic-org` provider connection enrollment (pool: [{}])",
-                skips.join(", ")
-            ),
         );
     }
     let cd_note = earliest_cd
@@ -634,7 +640,7 @@ fn finalize_admitted_connection(
         conn.id.as_str(),
         &conn.provider_type,
         conn.auth_mode,
-        crate::credentials::now_ms(),
+        ctx.now_ms,
     )?;
     let mut endpoint_env = Vec::new();
     if let Some(ref url) = conn.endpoint_url {

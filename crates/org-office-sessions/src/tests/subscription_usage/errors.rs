@@ -516,3 +516,93 @@ fn transport_and_endpoint_failure_messages_are_redacted() {
     let message = invalid.snapshots[0].message.as_deref().unwrap_or_default();
     assert_no_corpus_secret(&corpus, message, "subscription_usage endpoint error");
 }
+
+#[test]
+fn enrolled_canonical_json_vault_envelope_extracts_access_token_only() {
+    let fx = SubUsageFixture::new();
+    let conn_id = fx.create_connection(
+        "claude-json-vault",
+        "anthropic",
+        ProviderAuthMode::SubscriptionCli,
+        Some("sub-json-vault"),
+        None,
+    );
+    let envelope = serde_json::json!({
+        "access_token": "sk-ant-oat01-json-access-token",
+        "refresh_token": "rt-secret-must-never-leak-to-usage",
+        "expires_at_ms": 4_070_908_800_000_u64,
+    })
+    .to_string();
+    enroll_claude_fallback(&fx, &conn_id, envelope.as_bytes());
+
+    fx.transport
+        .on_url("https://api.anthropic.com/api/oauth/usage", |_, headers| {
+            assert!(
+                headers.iter().any(|(k, v)| {
+                    k == "Authorization" && v == "Bearer sk-ant-oat01-json-access-token"
+                }),
+                "expected extracted access_token bearer header, got {headers:?}"
+            );
+            assert!(
+                !headers
+                    .iter()
+                    .any(|(_, v)| v.contains("rt-secret-must-never-leak-to-usage")),
+                "refresh_token must never be sent to subscription usage endpoint"
+            );
+            Ok(HttpUsageResponse {
+                status: 200,
+                body: br#"{"five_hour":{"utilization":25.0}}"#.to_vec(),
+            })
+        });
+    let res = fx
+        .mgr
+        .subscription_usage_collect(
+            &fx.owner,
+            CostSubscriptionUsageCollectParams {
+                connection_id: Some(conn_id.clone()),
+                time_zone: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(res.snapshots[0].status, SubscriptionUsageStatus::Ok);
+    assert_eq!(
+        res.snapshots[0].auth_source,
+        SubscriptionUsageAuthSource::EnrolledSubscriptionCredential
+    );
+    assert_eq!(
+        res.snapshots[0].models[0]
+            .short_term
+            .as_ref()
+            .and_then(|w| w.utilization_bps),
+        Some(2_500)
+    );
+
+    // Expired JSON envelope (expires_at_ms in past, metadata expires_at None) fails closed.
+    let expired_env = serde_json::json!({
+        "access_token": "sk-ant-oat01-expired-json",
+        "refresh_token": "rt-exp",
+        "expires_at_ms": 1_u64,
+    })
+    .to_string();
+    enroll_claude_fallback(&fx, &conn_id, expired_env.as_bytes());
+    let calls_before = fx.transport.call_count();
+    let expired = fx
+        .mgr
+        .subscription_usage_collect(
+            &fx.owner,
+            CostSubscriptionUsageCollectParams {
+                connection_id: Some(conn_id),
+                time_zone: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(fx.transport.call_count(), calls_before);
+    assert_eq!(
+        expired.snapshots[0].status,
+        SubscriptionUsageStatus::AuthRequired
+    );
+    assert_eq!(
+        expired.snapshots[0].issue_code.as_deref(),
+        Some("CREDENTIAL_EXPIRED")
+    );
+}

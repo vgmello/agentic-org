@@ -468,17 +468,36 @@ pub(super) fn load_active_credential(
         }
     }
     match vault.load_unwrapped_with_meta(connection_id) {
-        Ok(Some(cred)) => {
-            if is_expired(cred.expires_at.as_deref(), now_ms) {
-                return Err((
+        Ok(Some(mut cred)) => {
+            let expired_err = || {
+                (
                     SubscriptionUsageAuthSource::EnrolledSubscriptionCredential,
                     SubscriptionUsageCollectOutcome::AuthRequired {
                         issue_code: "CREDENTIAL_EXPIRED".into(),
                         message: "Enrolled subscription credential has expired; re-authenticate."
                             .into(),
                     },
-                ));
+                )
+            };
+            if is_expired(cred.expires_at.as_deref(), now_ms) {
+                return Err(expired_err());
             }
+            let Ok(oauth) = crate::host_auth::parse_vault_oauth_credential(&cred.secret) else {
+                return Err((
+                    SubscriptionUsageAuthSource::EnrolledSubscriptionCredential,
+                    SubscriptionUsageCollectOutcome::AuthRequired {
+                        issue_code: "INVALID_CREDENTIAL_FORMAT".into(),
+                        message: "Stored credential cannot be encoded as an HTTPS bearer token; re-authenticate.".into(),
+                    },
+                ));
+            };
+            if cred.expires_at.is_none() {
+                if oauth.expires_at_ms.is_some_and(|exp| now_ms >= exp) {
+                    return Err(expired_err());
+                }
+                cred.expires_at = oauth.expires_at_ms.map(format_rfc3339_ms);
+            }
+            cred.secret = zeroize::Zeroizing::new(oauth.access_token.as_bytes().to_vec());
             Ok((
                 SubscriptionUsageAuthSource::EnrolledSubscriptionCredential,
                 cred,
@@ -528,92 +547,59 @@ pub(super) fn outcome_to_stored_snapshot(
     outcome: SubscriptionUsageCollectOutcome,
 ) -> StoredSubscriptionUsageSnapshot {
     let info = ctx.office.info();
+    let mut snap = StoredSubscriptionUsageSnapshot {
+        organization_id: info.org_id.clone(),
+        office_id: info.office_id.clone(),
+        connection_id: connection_id.to_owned(),
+        attempt_seq,
+        status: SubscriptionUsageStatus::Unavailable,
+        auth_source,
+        collected_at: ctx.collected_at.to_owned(),
+        last_ok_collected_at: None,
+        fresh_until: None,
+        issue_code: None,
+        message: None,
+        models: Vec::new(),
+    };
     match outcome {
         SubscriptionUsageCollectOutcome::Collected { models, message } => {
-            let fresh_until = Some(format_rfc3339_ms(
+            snap.status = SubscriptionUsageStatus::Ok;
+            snap.last_ok_collected_at = Some(ctx.collected_at.to_owned());
+            snap.fresh_until = Some(format_rfc3339_ms(
                 ctx.now_ms.saturating_add(SUBSCRIPTION_USAGE_FRESHNESS_MS),
             ));
-            StoredSubscriptionUsageSnapshot {
-                organization_id: info.org_id.clone(),
-                office_id: info.office_id.clone(),
-                connection_id: connection_id.to_owned(),
-                attempt_seq,
-                status: SubscriptionUsageStatus::Ok,
-                auth_source,
-                collected_at: ctx.collected_at.to_owned(),
-                last_ok_collected_at: Some(ctx.collected_at.to_owned()),
-                fresh_until,
-                issue_code: None,
-                message,
-                models,
-            }
+            snap.message = message;
+            snap.models = models;
         }
         SubscriptionUsageCollectOutcome::AuthRequired {
             issue_code,
             message,
-        } => StoredSubscriptionUsageSnapshot {
-            organization_id: info.org_id.clone(),
-            office_id: info.office_id.clone(),
-            connection_id: connection_id.to_owned(),
-            attempt_seq,
-            status: SubscriptionUsageStatus::AuthRequired,
-            auth_source,
-            collected_at: ctx.collected_at.to_owned(),
-            last_ok_collected_at: None,
-            fresh_until: None,
-            issue_code: Some(issue_code),
-            message: Some(message),
-            models: Vec::new(),
-        },
+        } => {
+            snap.status = SubscriptionUsageStatus::AuthRequired;
+            snap.issue_code = Some(issue_code);
+            snap.message = Some(message);
+        }
         SubscriptionUsageCollectOutcome::Unavailable {
             issue_code,
             message,
-        } => StoredSubscriptionUsageSnapshot {
-            organization_id: info.org_id.clone(),
-            office_id: info.office_id.clone(),
-            connection_id: connection_id.to_owned(),
-            attempt_seq,
-            status: SubscriptionUsageStatus::Unavailable,
-            auth_source,
-            collected_at: ctx.collected_at.to_owned(),
-            last_ok_collected_at: None,
-            fresh_until: None,
-            issue_code: Some(issue_code),
-            message: Some(message),
-            models: Vec::new(),
-        },
+        } => {
+            snap.issue_code = Some(issue_code);
+            snap.message = Some(message);
+        }
         SubscriptionUsageCollectOutcome::Unsupported {
             issue_code,
             message,
-        } => StoredSubscriptionUsageSnapshot {
-            organization_id: info.org_id.clone(),
-            office_id: info.office_id.clone(),
-            connection_id: connection_id.to_owned(),
-            attempt_seq,
-            status: SubscriptionUsageStatus::Unsupported,
-            auth_source,
-            collected_at: ctx.collected_at.to_owned(),
-            last_ok_collected_at: None,
-            fresh_until: None,
-            issue_code: Some(issue_code),
-            message: Some(message),
-            models: Vec::new(),
-        },
-        SubscriptionUsageCollectOutcome::Deferred => StoredSubscriptionUsageSnapshot {
-            organization_id: info.org_id.clone(),
-            office_id: info.office_id.clone(),
-            connection_id: connection_id.to_owned(),
-            attempt_seq,
-            status: SubscriptionUsageStatus::Unavailable,
-            auth_source,
-            collected_at: ctx.collected_at.to_owned(),
-            last_ok_collected_at: None,
-            fresh_until: None,
-            issue_code: Some("COLLECTION_DEADLINE_EXCEEDED".into()),
-            message: Some("Usage collection deferred before completion.".into()),
-            models: Vec::new(),
-        },
+        } => {
+            snap.status = SubscriptionUsageStatus::Unsupported;
+            snap.issue_code = Some(issue_code);
+            snap.message = Some(message);
+        }
+        SubscriptionUsageCollectOutcome::Deferred => {
+            snap.issue_code = Some("COLLECTION_DEADLINE_EXCEEDED".into());
+            snap.message = Some("Usage collection deferred before completion.".into());
+        }
     }
+    snap
 }
 
 pub(super) fn require_owner(office: &Office, actor: &str) -> Result<(), ApiError> {

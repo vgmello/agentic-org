@@ -1013,3 +1013,282 @@ done
 
     mgr.stop_all("test-end");
 }
+
+#[test]
+fn task132_mixed_pool_exhaustion_preserves_pool_exhausted_and_earliest_cooldown() {
+    let script = "#!/bin/sh\necho '{\"kind\":\"ready\"}'\n";
+    let (_tmp, office, mgr, _recorded, owner) = setup_office_and_manager(script);
+    let conn_missing = create_subscription_connection_and_bind(
+        &office,
+        &owner,
+        "claude-mixed-missing",
+        None,
+        2,
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    let conn_cd = create_subscription_connection_and_bind(
+        &office,
+        &owner,
+        "claude-mixed-cd",
+        None,
+        2,
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(&conn_cd, "anthropic", b"sk-ant-oat01-cd-ok", None, None)
+        .unwrap();
+    office
+        .record_connection_cooldown_internal(&conn_cd, None, Some("2027-01-01T00:00:00Z"), None)
+        .unwrap();
+
+    let prof = next_id();
+    office
+        .model_profile_create(
+            &owner,
+            ModelProfileCreateParams {
+                command_id: next_id(),
+                profile_id: prof.clone(),
+                key: "pool-mixed-auth-cd".into(),
+                name: "Mixed Pool".into(),
+                description: "Missing vault + cooldown".into(),
+                connection_ids: vec![conn_missing.clone(), conn_cd],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let agent = hire_agent(&office, &owner, "mixed-ada", &prof, "claude-sonnet-4");
+
+    // Both Pass 1 (conn_missing fails vault lookup) and Pass 2 (conn_missing already AuthExpired)
+    // must classify as Conflict / POOL_EXHAUSTED and preserve earliest_cooldown=.
+    for cmd in ["run-mixed-pass1", "run-mixed-pass2"] {
+        let err = mgr
+            .start_session(
+                &owner,
+                &MemberSessionStartParams {
+                    command_id: cmd.into(),
+                    employee_id: agent.clone(),
+                    instruction: Some("Check mixed pool".into()),
+                    workspace: None,
+                },
+            )
+            .expect_err("mixed pool must refuse launch");
+        assert_eq!(err.code, org_proto::ErrorCode::Conflict, "{cmd}: {err:?}");
+        assert!(
+            err.message.contains("POOL_EXHAUSTED") && err.message.contains("earliest_cooldown="),
+            "{cmd}: expected POOL_EXHAUSTED with earliest_cooldown, got: {}",
+            err.message
+        );
+    }
+    let state_missing = office
+        .load_connection_state(&conn_missing)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        state_missing.status,
+        org_proto::providers::ConnectionReadinessStatus::AuthExpired
+    );
+    mgr.stop_all("test-end");
+}
+
+#[test]
+fn task132_single_slot_permit_never_leaks_on_auth_rejection_panic_or_keyless_vault() {
+    struct PanickingRefresher;
+    impl crate::host_auth::VaultTokenRefresher for PanickingRefresher {
+        fn refresh(
+            &self,
+            _connection_id: &str,
+            _provider: &str,
+            _refresh_token: &str,
+        ) -> Result<crate::host_auth::VaultOAuthCredential, String> {
+            panic!("simulated refresher panic");
+        }
+    }
+
+    let script = r#"#!/bin/sh
+echo '{"kind":"ready","endpoint":"single-slot"}'
+while IFS= read -r line; do
+  echo '{"kind":"reply","text":"single-slot-ok"}'
+done
+"#;
+    let (_tmp, office, mgr, _recorded, owner) = setup_office_and_manager(script);
+    let conn_id = create_subscription_connection_and_bind(
+        &office,
+        &owner,
+        "claude-solo-1",
+        None,
+        1, // max_concurrent_turns = 1
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    let prof = next_id();
+    office
+        .model_profile_create(
+            &owner,
+            ModelProfileCreateParams {
+                command_id: next_id(),
+                profile_id: prof.clone(),
+                key: "pool-solo-slot".into(),
+                name: "Single Slot Pool".into(),
+                description: "Zero permit leak guard".into(),
+                connection_ids: vec![conn_id.clone()],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let agent = hire_agent(&office, &owner, "solo-slot-ada", &prof, "claude-sonnet-4");
+    let active_permits = || {
+        office
+            .provider_quota_status(
+                &owner,
+                ProviderQuotaStatusParams {
+                    connection_id: Some(conn_id.clone()),
+                },
+            )
+            .unwrap()
+            .unwrap()
+            .active_permits
+            .len()
+    };
+
+    // 1. Missing vault rejection must release the sole turn permit.
+    assert!(mgr
+        .start_session(
+            &owner,
+            &MemberSessionStartParams {
+                command_id: "solo-missing".into(),
+                employee_id: agent.clone(),
+                instruction: Some("missing".into()),
+                workspace: None,
+            },
+        )
+        .is_err());
+    assert_eq!(active_permits(), 0);
+
+    // 2. Expired vault rejection must release the sole turn permit.
+    refresh_subscription_connection_ready(
+        &office,
+        &owner,
+        &conn_id,
+        "claude-solo-1",
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    let exp_json = serde_json::json!({
+        "access_token": "sk-ant-oat01-expired",
+        "refresh_token": "rt-solo",
+        "expires_at_ms": 1_u64,
+    })
+    .to_string();
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(&conn_id, "anthropic", exp_json.as_bytes(), None, None)
+        .unwrap();
+    assert!(mgr
+        .start_session(
+            &owner,
+            &MemberSessionStartParams {
+                command_id: "solo-expired".into(),
+                employee_id: agent.clone(),
+                instruction: Some("expired".into()),
+                workspace: None,
+            },
+        )
+        .is_err());
+    assert_eq!(active_permits(), 0);
+
+    // 3. Panic inside VaultTokenRefresher::refresh must unwind RAII guard and release permit.
+    refresh_subscription_connection_ready(
+        &office,
+        &owner,
+        &conn_id,
+        "claude-solo-1",
+        &[("claude-sonnet-4", "claude-sonnet-4")],
+    );
+    let panic_coord = crate::host_auth::VaultRefreshCoordinator::new(Arc::new(PanickingRefresher));
+    let excluded = std::collections::HashSet::new();
+    let runtimes = RuntimeRegistry::production();
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
+            office: &office,
+            vault: mgr.enrollment().vault(),
+            runtimes: &runtimes,
+            hq_permits: None,
+            oauth_refresh: Some(&panic_coord),
+            employee_id: &agent,
+            task_id: None,
+            is_failover_switch: false,
+            excluded_connections: &excluded,
+        });
+    }));
+    assert!(panicked.is_err(), "refresher panic should unwind");
+    assert_eq!(
+        active_permits(),
+        0,
+        "RAII guard must release candidate permit when refresher panics"
+    );
+
+    // 4. Keyless vault (MissingSecretsKey) returns Unavailable WITHOUT poisoning AuthExpired or leaking permit.
+    let info = office.info();
+    let keyless_vault = crate::credentials::CredentialVault::new(
+        office.durable_root().to_path_buf(),
+        info.org_id.clone(),
+        info.office_id.clone(),
+        None,
+    );
+    let unavail = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
+        office: &office,
+        vault: &keyless_vault,
+        runtimes: &runtimes,
+        hq_permits: None,
+        oauth_refresh: None,
+        employee_id: &agent,
+        task_id: None,
+        is_failover_switch: false,
+        excluded_connections: &excluded,
+    })
+    .err()
+    .expect("MissingSecretsKey must return Unavailable");
+    assert_eq!(unavail.code, org_proto::ErrorCode::Unavailable);
+    assert_eq!(
+        office
+            .load_connection_state(&conn_id)
+            .unwrap()
+            .unwrap()
+            .status,
+        org_proto::providers::ConnectionReadinessStatus::Ready,
+        "MissingSecretsKey must NOT poison connection readiness as AuthExpired"
+    );
+    assert_eq!(active_permits(), 0);
+
+    // 5. After enrolling a valid token, launching on max_concurrent_turns = 1 succeeds cleanly.
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(
+            &conn_id,
+            "anthropic",
+            b"sk-ant-oat01-solo-valid",
+            None,
+            None,
+        )
+        .unwrap();
+    mgr.start_session(
+        &owner,
+        &MemberSessionStartParams {
+            command_id: "solo-valid".into(),
+            employee_id: agent.clone(),
+            instruction: Some("run ok".into()),
+            workspace: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        wait_until(Duration::from_secs(5), || {
+            mgr.inspect_session(&owner, Some(&agent))
+                .ok()
+                .and_then(|r| r.session.last_reply)
+                .as_deref()
+                == Some("single-slot-ok")
+        }),
+        "valid launch must succeed after prior rejections without permit leaks"
+    );
+    mgr.stop_all("test-end");
+}
