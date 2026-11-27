@@ -160,9 +160,11 @@ impl BlobOutbox {
         Ok(found)
     }
 
-    /// Whether `id` still waits for HQ.
+    /// Whether `id` still waits for HQ: its entry opens as a file (never through a link).
     pub fn is_pending(&self, id: &Id) -> bool {
-        self.entry_path(id).is_file()
+        org_platform::fs::open_nofollow_ro(&self.entry_path(id))
+            .and_then(|file| file.metadata())
+            .is_ok_and(|meta| meta.is_file())
     }
 
     /// Drops `id`'s entry once HQ has acknowledged it (or its binding was refused here), and

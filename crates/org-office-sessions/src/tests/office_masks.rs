@@ -261,3 +261,72 @@ fn attachment_staging_of_this_office_and_of_every_sibling_office_is_masked() {
         sibling.join("attachment-staging").display()
     )));
 }
+
+#[test]
+fn the_blob_outbox_of_this_and_every_sibling_office_and_the_blob_cache_are_masked() {
+    use org_office::companion_paths::BLOB_OUTBOX_DIR_NAME;
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let mgr = manager(&office);
+    let me = first_employee(&office);
+    let durable = office.durable_root().canonicalize().unwrap();
+    let offices = durable.join("local/offices");
+    let office_id = office.info().office_id.clone();
+    let own = offices.join(&office_id).join(BLOB_OUTBOX_DIR_NAME);
+    assert!(
+        companion_store_paths(&office_id).iter().any(
+            |store| store.path.ends_with("/blob-outbox") && store.kind == CompanionKind::Folder
+        ),
+        "the blob outbox is a companion store"
+    );
+    // Another office's un-shipped files under the same durable root, with bytes in them.
+    let sibling = offices.join("0195a000-0000-7000-8000-0000000000ca");
+    std::fs::create_dir_all(sibling.join("blob-outbox/entries")).unwrap();
+    std::fs::write(
+        sibling.join("blob-outbox/entries/0195a000-0000-7000-8000-0000000000cb.yaml"),
+        b"someone else's file record",
+    )
+    .unwrap();
+    let empty_sibling = offices.join("0195a000-0000-7000-8000-0000000000cc");
+    std::fs::create_dir_all(&empty_sibling).unwrap();
+
+    let denied = denies(&mgr, &me);
+    for folder in [
+        own.clone(),
+        sibling.join(BLOB_OUTBOX_DIR_NAME),
+        empty_sibling.join(BLOB_OUTBOX_DIR_NAME),
+    ] {
+        let glob = format!("{}/**", folder.display());
+        assert!(denied.contains(&glob), "{glob} missing: {denied:?}");
+    }
+    assert!(!own.exists(), "denying never makes the folder");
+
+    crate::manager::ensure_bwrap_deny_dirs(&mgr, &me).unwrap();
+    assert!(
+        own.is_dir(),
+        "bwrap pre-creates the office's own blob outbox"
+    );
+    let mode = std::fs::metadata(&own).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+    // A sibling office's folder is masked, never made.
+    assert!(!empty_sibling.join(BLOB_OUTBOX_DIR_NAME).exists());
+    let denied = denies(&mgr, &me);
+    for folder in [own, sibling.join(BLOB_OUTBOX_DIR_NAME)] {
+        assert!(denied.contains(&format!("{}/**", folder.display())));
+    }
+
+    // The satellite's blob cache lives under the runtime's `protected/`, masked whole and
+    // made owner-only before launch.
+    let runtime = office.runtime_root().canonicalize().unwrap();
+    let protected = runtime.join(&office_id).join("protected");
+    let cache = runtime
+        .join(&office_id)
+        .join(org_office::attachments::cache::BLOB_CACHE_DIR);
+    assert!(cache.starts_with(&protected));
+    assert!(
+        denied.contains(&format!("{}/**", protected.display())),
+        "{denied:?}"
+    );
+    assert!(protected.is_dir());
+    let mode = std::fs::metadata(&protected).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+}

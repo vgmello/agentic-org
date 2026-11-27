@@ -70,7 +70,10 @@ pub struct OutboxShipment {
 pub struct ShippedAttachment {
     pub(crate) record: super::records::AttachmentRecord,
     pub(crate) media: super::media::MediaType,
-    /// Whether HQ's shared store already holds the bytes: then none are sent.
+    /// The satellite that announced it: its uploader is decided again for it on commit.
+    pub(crate) origin_office: String,
+    /// Whether the satellite may skip sending the bytes: only for a retry of a file HQ has
+    /// already bound and holds. A new attachment always sends them, so HQ checks every byte.
     pub present: bool,
 }
 

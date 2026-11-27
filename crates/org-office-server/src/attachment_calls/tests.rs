@@ -358,3 +358,50 @@ fn unbound_bad_and_foreign_requests_are_refused_by_the_dispatcher() {
         assert!(is_attachment_method(&request), "{method}");
     }
 }
+
+#[test]
+fn only_an_attach_that_bound_a_file_wakes_the_outbox_shipper() {
+    let office = Arc::new(Office::for_test(TestOffice {
+        engine: EngineChoice::Memory,
+    }));
+    let owner = office.owner_member_id().to_owned();
+    let upload_id = upload(&office, &owner, "wake.csv", b"a,b\n1,2\n").unwrap();
+    let attach_request = |upload_id: &str| {
+        Request::new::<AttachmentAttach>(
+            11,
+            &AttachmentAttachParams {
+                command_id: uuid(),
+                upload_id: Some(upload_id.into()),
+                source_attachment_id: None,
+                target_kind: AttachmentTargetKind::Organization,
+                target_id: None,
+                title: None,
+                description: None,
+                artifact_status: None,
+            },
+        )
+        .unwrap()
+    };
+    let bound = attach_request(&upload_id);
+    let response = dispatch_attachment_rpc(&office, Some(&owner), &bound).unwrap();
+    assert!(bound_a_file(&bound, &response), "{response:?}");
+    // A refused attach (that upload is bound and gone now) and any other call wake nothing.
+    let refused = attach_request(&upload_id);
+    let response = dispatch_attachment_rpc(&office, Some(&owner), &refused).unwrap();
+    assert!(matches!(response.outcome, Outcome::Error(_)));
+    assert!(!bound_a_file(&refused, &response));
+    let list = Request::new::<org_proto::attachments::AttachmentList>(
+        12,
+        &AttachmentListParams {
+            target_kind: Some(AttachmentTargetKind::Organization),
+            target_id: None,
+            scope: Some(AttachmentScope::Shared),
+            limit: None,
+            cursor: None,
+        },
+    )
+    .unwrap();
+    let response = dispatch_attachment_rpc(&office, Some(&owner), &list).unwrap();
+    assert!(matches!(response.outcome, Outcome::Result(_)));
+    assert!(!bound_a_file(&list, &response));
+}

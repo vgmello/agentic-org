@@ -294,13 +294,20 @@ impl Office {
             "artifact_status": params.artifact_status,
         }))
         .expect("a fingerprint encodes");
+        // A replay of a command already answered gets that answer and binds nothing again:
+        // no bytes are read or written and nothing enters the outbox. An upload a crash left
+        // staged after its binding committed goes now.
+        match self.attach_retry(&caller, &params, &target, &fingerprint)? {
+            Ok(Some(view)) => {
+                self.drop_bound_upload(&caller, params.upload_id.as_deref())?;
+                return Ok(Ok(AttachmentResult { attachment: view }));
+            }
+            Ok(None) => {}
+            Err(reused) => return Ok(Err(reused)),
+        }
         let source = match self.attach_source(&caller, &params)? {
             Ok(source) => source,
-            Err(refusal) => match self.attach_retry(&caller, &params, &target, &fingerprint)? {
-                Ok(Some(view)) => return Ok(Ok(AttachmentResult { attachment: view })),
-                Ok(None) => return Ok(Err(refusal)),
-                Err(reused) => return Ok(Err(reused)),
-            },
+            Err(refusal) => return Ok(Err(refusal)),
         };
         if let Err(refusal) =
             self.decide(|policy| policy.can_attach(&caller, &source.resource, &target.resource))?
@@ -308,6 +315,20 @@ impl Office {
             return Ok(Err(refusal));
         }
         self.bind(&caller, &params, target, source, &fingerprint)
+    }
+
+    /// Removes the caller's staged upload `upload_id`, which a replayed binding already bound.
+    fn drop_bound_upload(
+        &self,
+        caller: &PrincipalContext,
+        upload_id: Option<&str>,
+    ) -> Result<(), OfficeError> {
+        if let Some(upload_id) = upload_id {
+            if self.staged_for(caller, upload_id)?.is_ok() {
+                self.attachments.staging.remove(upload_id)?;
+            }
+        }
+        Ok(())
     }
 
     /// Where a new binding's bytes go on this office: HQ's shared or private store, or (on a
@@ -399,8 +420,9 @@ impl Office {
                 })
                 .map_err(storage)?
         };
-        // A refused binding was never made: nothing of it ships.
-        if outboxed && bound.is_err() {
+        // Only this call's own record ships: a refused binding was never made, and a replay
+        // (the same command answered concurrently) answered with its earlier record.
+        if outboxed && !matches!(&bound, Ok(view) if view.id == record_id.as_str()) {
             self.outbox().release(&record_id)?;
         }
         // A refused binding (a reused command, an archived project) leaves the upload staged.

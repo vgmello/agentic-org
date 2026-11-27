@@ -2,9 +2,11 @@
 //!
 //! - **Shipping.** A dedicated thread ([`spawn_satellite_blob_shipper`]) opens its own mTLS
 //!   session whenever the office's outbox holds files ready to go (and on every reconnect of
-//!   the persistent session), so a large upload never stalls messaging. For each file it sends
-//!   `BlobHasRequest`, streams `BlobChunk`s when HQ lacks the bytes, and drops the outbox entry
-//!   only on an accepted `BlobAck` for exactly that file.
+//!   the persistent session), so a large upload never stalls messaging. For each file it reads
+//!   and checks the bytes here first (a missing or damaged one is skipped, never holding up the
+//!   rest), sends `BlobHasRequest`, streams `BlobChunk`s unless HQ already bound the file, and
+//!   drops the outbox entry only on an accepted `BlobAck` for exactly that file. A shutdown
+//!   ends the pass within one socket read slice (250 ms), between files, chunks and replies.
 //! - **Pulling.** [`HqBlobRemote`] is the office's [`BlobRemote`]: one mTLS session per pull,
 //!   one `BlobFetchRequest` by `(org_id, attachment_id)`, the chunks reassembled and verified
 //!   against the record's SHA-256 before the office caches them.
@@ -68,16 +70,27 @@ fn request_id_of(frame: &SyncFrame) -> Option<&str> {
     }
 }
 
+fn stopped(stop: Option<&AtomicBool>) -> bool {
+    stop.is_some_and(|stop| stop.load(Ordering::Acquire))
+}
+
+const CANCELLED: &str = "blob shipping cancelled by shutdown";
+
 impl SatelliteSyncSession {
-    /// The next blob frame HQ sends for `request_id`, skipping anything else it pushes.
-    fn read_blob_reply(&mut self, request_id: &str) -> Result<SyncFrame, String> {
+    /// The next blob frame HQ sends for `request_id`, skipping anything else it pushes; a
+    /// shutdown (`stop`) ends the wait within one socket read slice.
+    pub(crate) fn read_blob_reply(
+        &mut self,
+        request_id: &str,
+        stop: Option<&AtomicBool>,
+    ) -> Result<SyncFrame, String> {
         let deadline = Instant::now() + BLOB_REPLY_DEADLINE;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 return Err("timed out waiting for HQ's blob reply".into());
             }
-            match self.read_correlated_frame(left, None)? {
+            match self.read_correlated_frame_cancellable(left, stop)? {
                 Some(frame) if request_id_of(&frame) == Some(request_id) => return Ok(frame),
                 Some(SyncFrame::Error { code, message }) => {
                     return Err(format!("HQ refused the session ({code}): {message}"));
@@ -88,16 +101,41 @@ impl SatelliteSyncSession {
         }
     }
 
-    /// Ships every outbox file ready to go, one after another. A file HQ refuses stays in
-    /// the outbox for a later pass; a broken session ends the pass with an error.
-    pub fn flush_blob_outbox(&mut self, cache_max_bytes: u64) -> Result<OutboxFlush, String> {
+    /// Ships every outbox file ready to go, one after another, until `stop`. A file HQ
+    /// refuses, or whose bytes here are missing or damaged, stays in the outbox for a later
+    /// pass (counted as refused) and never holds up the files after it; a broken session or a
+    /// shutdown ends the pass with an error.
+    pub fn flush_blob_outbox(
+        &mut self,
+        cache_max_bytes: u64,
+        stop: Option<&AtomicBool>,
+    ) -> Result<OutboxFlush, String> {
         let pending = self
             .office
             .attachment_outbox_pending()
             .map_err(|e| format!("reading the blob outbox: {e}"))?;
         let mut flush = OutboxFlush::default();
         for shipment in pending {
-            if self.ship_one(&shipment)? {
+            if stopped(stop) {
+                return Err(CANCELLED.into());
+            }
+            let bytes = match self.office.attachment_outbox_bytes(&shipment) {
+                Ok(Some(bytes)) => bytes,
+                Ok(None) => {
+                    eprintln!(
+                        "agentic-org-office: attachment {} waits in the blob outbox without its bytes; skipped",
+                        shipment.attachment_id
+                    );
+                    flush.refused += 1;
+                    continue;
+                }
+                Err(error) => {
+                    crate::failure::logged("attachment.ship", &error);
+                    flush.refused += 1;
+                    continue;
+                }
+            };
+            if self.ship_one(&shipment, &bytes, stop)? {
                 self.office
                     .attachment_outbox_acknowledged(&shipment, cache_max_bytes)
                     .map_err(|e| format!("releasing an acknowledged outbox file: {e}"))?;
@@ -109,8 +147,14 @@ impl SatelliteSyncSession {
         Ok(flush)
     }
 
-    /// Ships one file; `Ok(true)` only on HQ's accepted `BlobAck` naming exactly this file.
-    fn ship_one(&mut self, shipment: &OutboxShipment) -> Result<bool, String> {
+    /// Ships one file whose `bytes` were read and checked here; `Ok(true)` only on HQ's
+    /// accepted `BlobAck` naming exactly this file.
+    fn ship_one(
+        &mut self,
+        shipment: &OutboxShipment,
+        bytes: &[u8],
+        stop: Option<&AtomicBool>,
+    ) -> Result<bool, String> {
         let request_id = self.office.next_uuid_v7();
         self.write_frame(&SyncFrame::BlobHasRequest {
             request_id: request_id.clone(),
@@ -120,23 +164,19 @@ impl SatelliteSyncSession {
             byte_count: shipment.byte_count,
             record_b64: STANDARD.encode(&shipment.record_yaml),
         })?;
-        match self.read_blob_reply(&request_id)? {
+        match self.read_blob_reply(&request_id, stop)? {
             SyncFrame::BlobHasResponse { present: true, .. } => {}
             SyncFrame::BlobHasResponse { present: false, .. } => {
-                let Some(bytes) = self
-                    .office
-                    .attachment_outbox_bytes(shipment)
-                    .map_err(|e| format!("reading an outbox file: {e}"))?
-                else {
-                    return Err("an outbox file's bytes are missing".into());
-                };
-                for frame in blob_chunk_frames(&request_id, &shipment.content_sha256, &bytes) {
+                for frame in blob_chunk_frames(&request_id, &shipment.content_sha256, bytes) {
+                    if stopped(stop) {
+                        return Err(CANCELLED.into());
+                    }
                     self.write_frame(&frame)?;
                 }
             }
             reply => return Ok(is_accepted(&reply, shipment)),
         }
-        let reply = self.read_blob_reply(&request_id)?;
+        let reply = self.read_blob_reply(&request_id, stop)?;
         Ok(is_accepted(&reply, shipment))
     }
 
@@ -159,7 +199,7 @@ impl SatelliteSyncSession {
         .map_err(PullFailure::Unreachable)?;
         loop {
             match self
-                .read_blob_reply(&request_id)
+                .read_blob_reply(&request_id, None)
                 .map_err(PullFailure::Unreachable)?
             {
                 SyncFrame::BlobChunk {
@@ -238,7 +278,7 @@ pub fn ship_blob_outbox(
         return Ok(OutboxFlush::default());
     }
     let mut session = SatelliteSyncSession::connect_cancellable(Arc::clone(office), stop)?;
-    session.flush_blob_outbox(cache_max_bytes)
+    session.flush_blob_outbox(cache_max_bytes, stop)
 }
 
 /// Sleeps `wait`, ending early only on `stop`.

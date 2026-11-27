@@ -147,6 +147,10 @@ impl BlobAssembler {
         total_bytes: u64,
         data_b64: &str,
     ) -> Result<bool, BlobTransferError> {
+        // A finished transfer takes no more chunks: anything after the last byte is out of order.
+        if self.verified {
+            return Err(BlobTransferError::OutOfOrder);
+        }
         if content_sha256 != self.content_sha256 || total_bytes != self.total_bytes {
             return Err(BlobTransferError::Mismatch);
         }

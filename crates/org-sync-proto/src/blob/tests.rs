@@ -244,3 +244,28 @@ fn bytes_that_do_not_match_their_digest_are_never_handed_out() {
     assert!(!is_blob_digest("A".repeat(64).as_str()));
     assert!(!is_blob_digest("a".repeat(63).as_str()));
 }
+
+#[test]
+fn a_verified_transfer_takes_no_further_chunk() {
+    let bytes = pattern(10, 9);
+    let digest = blob_digest(&bytes);
+    let mut assembler = BlobAssembler::new(&digest, bytes.len() as u64, 100).unwrap();
+    assert_eq!(
+        assembler.push(&digest, 0, bytes.len() as u64, &STANDARD.encode(&bytes)),
+        Ok(true)
+    );
+    // A replayed last chunk, or any chunk after the end, is refused and changes nothing.
+    for offset in [0, bytes.len() as u64] {
+        assert_eq!(
+            assembler.push(
+                &digest,
+                offset,
+                bytes.len() as u64,
+                &STANDARD.encode(&bytes)
+            ),
+            Err(BlobTransferError::OutOfOrder)
+        );
+    }
+    assert_eq!(assembler.received(), bytes.len() as u64);
+    assert_eq!(assembler.into_verified_bytes(), Some(bytes));
+}

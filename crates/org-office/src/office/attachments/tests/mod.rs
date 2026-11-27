@@ -4,6 +4,7 @@
 mod acl;
 mod custody;
 mod flows;
+mod ingest;
 mod rebuild;
 mod update_meta;
 

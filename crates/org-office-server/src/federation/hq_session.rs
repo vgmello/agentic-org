@@ -308,7 +308,10 @@ fn hq_session_poll_wait(
 ) -> Duration {
     if buffered_flush_until.is_some() || office.has_pending_journal_pipeline() {
         Duration::from_millis(5)
-    } else if state.reader.has_partial_frame() || state.active_snapshot.is_some() {
+    } else if state.reader.has_partial_frame()
+        || state.active_snapshot.is_some()
+        || state.blob_upload.is_some()
+    {
         Duration::from_millis(250)
     } else {
         Duration::from_millis(500)
@@ -365,6 +368,7 @@ pub(super) fn handle_hq_satellite_session(
     let mut wake_triggered = false;
     while !stop.load(Ordering::Acquire) && !session_stop.load(Ordering::Acquire) {
         ActiveSnapshotTransfer::expire_if_idle(&mut state.active_snapshot);
+        HqBlobUpload::expire_if_idle(&mut state.blob_upload);
         let cur_gen = peer_reg.handle().wake_generation();
         if cur_gen != last_wake_gen {
             last_wake_gen = cur_gen;

@@ -208,11 +208,17 @@ fn apply_staged_deletions(
     let local_paths = office.list_local_state_paths().map_err(|e| {
         format!("failed listing local state paths for snapshot reconciliation: {e}")
     })?;
+    // A shared file still in this satellite's outbox is not at HQ yet: its record stays, or
+    // its bytes would wait in the outbox for a record that is gone (`TASK-98.6`).
+    let unshipped_files = office.pending_blob_outbox_state_paths().map_err(|e| {
+        format!("failed listing un-shipped attachment records for snapshot reconciliation: {e}")
+    })?;
     let mut deletes: Vec<String> = local_paths
         .into_iter()
         .filter(|existing| {
             !staged.incoming_paths.contains(existing)
                 && !pending_work_paths.contains(existing)
+                && !unshipped_files.contains(existing)
                 && !org_office::is_immutable_state_path(existing)
                 && !existing.starts_with("state/work/")
         })

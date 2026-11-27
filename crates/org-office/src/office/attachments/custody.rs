@@ -4,8 +4,12 @@
 //!   any byte arrives ([`Office::attachment_ingest_check`]), then keeps the verified bytes in
 //!   `<durable>/blobs/` and binds the record through its journal
 //!   ([`Office::attachment_ingest_commit`]), so it replicates to every office. Only a project or
-//!   organization file is accepted, from an uploader who may add to its target now, and an
-//!   agent's only from the office it is placed in.
+//!   organization file is accepted, from an uploader who may add to its target now (decided
+//!   when it is announced and again when it is bound), and an agent's only from the office it
+//!   is placed in. Every new file's bytes are sent and checked whole: its name fits its type,
+//!   an image is as an office keeps it (pixels alone), and the type, dimensions and page count
+//!   the record claims are the bytes' own. Only a retry of a file HQ already bound may skip
+//!   them, so a hash alone never binds anything (no possession proof, no existence oracle).
 //! - **Fetch.** A satellite asks for one shared file by `attachment_id`
 //!   ([`Office::attachment_peer_fetch`]): HQ looks in its shared projection and shared store
 //!   alone. The private space (`private/user-space.db`, `private/blobs/`) is never read for a
@@ -14,6 +18,7 @@
 use org_proto::attachments::AttachmentScope;
 use org_proto::{ApiError, ErrorCode};
 use org_store::{Id, Sha256};
+use org_sync_proto::BLOB_CHUNK_MAX_BYTES;
 
 use super::{invalid, not_found, target_ref, Answer, Office};
 use crate::attachments::blobs::ContentHash;
@@ -36,13 +41,44 @@ fn hq_custody_only() -> ApiError {
     )
 }
 
-/// Whether `existing` is the very file `shipped` names: same bytes, target and uploader.
+fn id_in_use() -> ApiError {
+    ApiError::new(ErrorCode::Conflict, "attachment id in use")
+}
+
+/// Whether `existing` is the very file `shipped` names: same bytes, type, target and uploader.
 fn same_file(existing: &AttachmentRecord, shipped: &AttachmentRecord) -> bool {
     existing.content_sha256 == shipped.content_sha256
         && existing.byte_count == shipped.byte_count
+        && existing.mime_type == shipped.mime_type
         && existing.target_kind == shipped.target_kind
         && existing.target_id == shipped.target_id
         && existing.uploaded_by_employee_id == shipped.uploaded_by_employee_id
+}
+
+/// Checks a shipped file's `bytes` whole before HQ keeps them for every office: they are the
+/// announced file, an image is as an office keeps it (no metadata, nothing after its end), and
+/// the type, dimensions and page count its record claims are what the bytes decode to.
+fn verify_shipped_bytes(shipped: &ShippedAttachment, bytes: &[u8]) -> Result<(), ApiError> {
+    let record = &shipped.record;
+    if bytes.len() as u64 != record.byte_count || ContentHash::of(bytes) != record.content_sha256 {
+        return Err(invalid("the bytes do not match the announced file"));
+    }
+    media::check_clean(shipped.media, bytes)?;
+    let kept = media::validate(shipped.media, bytes.to_vec())?;
+    if kept.media != shipped.media
+        || kept.width != record.width
+        || kept.height != record.height
+        || kept.page_count != record.page_count
+    {
+        return Err(invalid(
+            "the shipped record's type, dimensions or page count are not its bytes'",
+        ));
+    }
+    // A document is kept as it came; an image was checked clean above.
+    if !shipped.media.is_image() && kept.bytes != bytes {
+        return Err(invalid("the shipped document is not as an office keeps it"));
+    }
+    Ok(())
 }
 
 /// The command a shipped file is bound under at HQ: derived from its attachment ID (its
@@ -88,8 +124,31 @@ impl Office {
             .any(|m| m.id == agent_id && m.office_id.as_deref() == Some(office_id)))
     }
 
+    /// Whether `record`'s uploader may add it to its target now, shipped from `origin_office`:
+    /// an active member, an agent only from the office it is placed in, allowed by the policy.
+    fn ingest_allowed(&self, origin_office: &str, record: &AttachmentRecord) -> Answer<()> {
+        let uploader = record.uploaded_by_employee_id.to_string();
+        let caller = match self.attachment_caller(&uploader)? {
+            Ok(caller) => caller,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        if caller.kind == PrincipalKind::Agent && !self.agent_placed_at(&uploader, origin_office)? {
+            return Ok(Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "an agent's files ship only from the office it is placed in",
+            )));
+        }
+        let target = target_ref(
+            record.target_kind,
+            record.target_id.as_ref(),
+            &record.uploaded_by_employee_id,
+        );
+        self.decide(|policy| policy.can_write(&caller, &target))
+    }
+
     /// HQ: checks a shared file satellite `origin_office` announces from its outbox, before any
-    /// of its bytes arrive. `present` says HQ already holds the bytes (none are then sent).
+    /// of its bytes arrive. `present` is true only for a retry of a file HQ already bound and
+    /// holds; every new file must send its bytes.
     pub fn attachment_ingest_check(
         &self,
         origin_office: &str,
@@ -123,54 +182,40 @@ impl Office {
         let Some(media) = MediaType::from_mime(&record.mime_type) else {
             return Ok(Err(invalid("the shipped file has no accepted type")));
         };
-        if byte_count == 0 || byte_count > media.max_bytes() {
+        if let Err(refusal) = media::check_kept_filename(&record.filename, media) {
+            return Ok(Err(refusal));
+        }
+        if byte_count == 0 {
+            return Ok(Err(invalid("the shipped file is empty")));
+        }
+        if byte_count > media.max_bytes() {
             return Ok(Err(media::too_large(media)));
         }
-        let present = self.attachments.shared.size(&record.content_sha256)? == Some(byte_count);
+        let shipped = |present| ShippedAttachment {
+            record: record.clone(),
+            media,
+            origin_office: origin_office.to_owned(),
+            present,
+        };
         // A file HQ already bound (a retry after a lost ack) is answered as it is, whatever
         // has changed since: nothing new is granted.
         if let Some(existing) = self.shared_record(&record.id)? {
             if !same_file(&existing, &record) {
-                return Ok(Err(ApiError::new(
-                    ErrorCode::Conflict,
-                    "attachment id in use",
-                )));
+                return Ok(Err(id_in_use()));
             }
-            return Ok(Ok(ShippedAttachment {
-                record,
-                media,
-                present,
-            }));
+            let held = self.attachments.shared.size(&record.content_sha256)? == Some(byte_count);
+            return Ok(Ok(shipped(held)));
         }
-        let uploader = record.uploaded_by_employee_id.to_string();
-        let caller = match self.attachment_caller(&uploader)? {
-            Ok(caller) => caller,
-            Err(refusal) => return Ok(Err(refusal)),
-        };
-        if caller.kind == PrincipalKind::Agent && !self.agent_placed_at(&uploader, origin_office)? {
-            return Ok(Err(ApiError::new(
-                ErrorCode::NotAuthorized,
-                "an agent's files ship only from the office it is placed in",
-            )));
-        }
-        let target = target_ref(
-            record.target_kind,
-            record.target_id.as_ref(),
-            &record.uploaded_by_employee_id,
-        );
-        if let Err(refusal) = self.decide(|policy| policy.can_write(&caller, &target))? {
+        if let Err(refusal) = self.ingest_allowed(origin_office, &record)? {
             return Ok(Err(refusal));
         }
-        Ok(Ok(ShippedAttachment {
-            record,
-            media,
-            present,
-        }))
+        Ok(Ok(shipped(false)))
     }
 
-    /// HQ: keeps a checked file's verified `bytes` (when HQ did not hold them already) in
-    /// `<durable>/blobs/`, written once, and binds its record. `Ok(Ok(()))` means both are
-    /// durable: only then may the satellite drop its outbox entry.
+    /// HQ: keeps a checked file's verified `bytes` in `<durable>/blobs/`, written once (a
+    /// digest HQ already holds is kept once on disk), and binds its record. `None` is accepted
+    /// only for a file HQ already bound and holds. `Ok(Ok(()))` means both are durable: only
+    /// then may the satellite drop its outbox entry.
     pub fn attachment_ingest_commit(
         &self,
         shipped: &ShippedAttachment,
@@ -180,41 +225,36 @@ impl Office {
             return Ok(Err(hq_custody_only()));
         }
         let record = &shipped.record;
-        match bytes {
-            Some(bytes) => {
-                if bytes.len() as u64 != record.byte_count
-                    || ContentHash::of(&bytes) != record.content_sha256
-                {
-                    return Ok(Err(invalid("the bytes do not match the announced file")));
-                }
-                // The satellite checked the file when it was uploaded; HQ checks again that
-                // the bytes are what their type says before it keeps them for everyone.
-                let bytes = if shipped.media.is_image() {
-                    if let Err(refusal) = media::validate(shipped.media, bytes.clone()) {
-                        return Ok(Err(refusal));
-                    }
-                    bytes
-                } else {
-                    match media::validate(shipped.media, bytes) {
-                        Ok(kept) => kept.bytes,
-                        Err(refusal) => return Ok(Err(refusal)),
-                    }
-                };
-                if self.attachments.shared.put(&bytes)? != record.content_sha256 {
-                    return Err(OfficeError::Invalid(
-                        "a stored blob does not match its hash",
-                    ));
-                }
+        let bound = match self.shared_record(&record.id)? {
+            Some(existing) if !same_file(&existing, record) => return Ok(Err(id_in_use())),
+            existing => existing.is_some(),
+        };
+        let Some(bytes) = bytes else {
+            let held =
+                self.attachments.shared.size(&record.content_sha256)? == Some(record.byte_count);
+            return Ok(if bound && held {
+                Ok(())
+            } else {
+                Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "HQ binds a new file only from its bytes; send them",
+                ))
+            });
+        };
+        // Decided again now, not only when announced: the uploader may have been deactivated,
+        // an agent moved, or the target archived while the bytes were on their way.
+        if !bound {
+            if let Err(refusal) = self.ingest_allowed(&shipped.origin_office, record)? {
+                return Ok(Err(refusal));
             }
-            None => {
-                if self.attachments.shared.size(&record.content_sha256)? != Some(record.byte_count)
-                {
-                    return Ok(Err(ApiError::new(
-                        ErrorCode::Conflict,
-                        "HQ does not hold this file's bytes; send them",
-                    )));
-                }
-            }
+        }
+        if let Err(refusal) = verify_shipped_bytes(shipped, &bytes) {
+            return Ok(Err(refusal));
+        }
+        if self.attachments.shared.put(&bytes)? != record.content_sha256 {
+            return Err(OfficeError::Invalid(
+                "a stored blob does not match its hash",
+            ));
         }
         self.bind_shipped(record)
     }
@@ -224,7 +264,7 @@ impl Office {
             return Ok(if same_file(&existing, record) {
                 Ok(())
             } else {
-                Err(ApiError::new(ErrorCode::Conflict, "attachment id in use"))
+                Err(id_in_use())
             });
         }
         let fingerprint = records::encode(record);
@@ -282,16 +322,19 @@ impl Office {
         }))
     }
 
-    /// HQ: up to `max` bytes of a fetched file from `offset`, from the shared store only.
+    /// HQ: up to `max` bytes (never more than one chunk) of a fetched file from `offset`,
+    /// from the shared store only.
     pub fn attachment_peer_range(
         &self,
         blob: &PeerBlob,
         offset: u64,
         max: usize,
     ) -> Result<Option<Vec<u8>>, OfficeError> {
-        self.attachments
-            .shared
-            .read_range(&blob.content_sha256, offset, max)
+        self.attachments.shared.read_range(
+            &blob.content_sha256,
+            offset,
+            max.min(BLOB_CHUNK_MAX_BYTES),
+        )
     }
 }
 

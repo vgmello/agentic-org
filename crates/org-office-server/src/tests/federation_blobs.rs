@@ -34,15 +34,15 @@ use super::a2a_messaging::enroll_satellite;
 use crate::attachment_calls::dispatch_attachment_rpc;
 use crate::federation::{ship_blob_outbox, HqBlobRemote, HqFederationServer, SatelliteSyncSession};
 
-struct Net {
-    hq: Arc<Office>,
-    owner: String,
-    server: Option<HqFederationServer>,
-    sats: Vec<(tempfile::TempDir, Arc<Office>)>,
+pub(super) struct Net {
+    pub(super) hq: Arc<Office>,
+    pub(super) owner: String,
+    pub(super) server: Option<HqFederationServer>,
+    pub(super) sats: Vec<(tempfile::TempDir, Arc<Office>)>,
 }
 
 impl Net {
-    fn new(satellites: u8) -> Self {
+    pub(super) fn new(satellites: u8) -> Self {
         let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
             engine: EngineChoice::Sqlite,
         }));
@@ -66,11 +66,11 @@ impl Net {
         }
     }
 
-    fn sat(&self, n: usize) -> &Arc<Office> {
+    pub(super) fn sat(&self, n: usize) -> &Arc<Office> {
         &self.sats[n].1
     }
 
-    fn stop_hq(&mut self) {
+    pub(super) fn stop_hq(&mut self) {
         if let Some(server) = self.server.take() {
             server.stop();
         }
@@ -78,7 +78,7 @@ impl Net {
 }
 
 /// Uploads `bytes` in 512 KiB chunks, commits them and binds them organization-wide.
-fn publish(
+pub(super) fn publish(
     office: &Office,
     actor: &str,
     filename: &str,
@@ -142,7 +142,7 @@ fn publish(
 }
 
 /// Reads a whole file through the real `attachment.read_chunk` dispatch.
-fn read_rpc(office: &Arc<Office>, member: &str, id: &str) -> Result<Vec<u8>, ApiError> {
+pub(super) fn read_rpc(office: &Arc<Office>, member: &str, id: &str) -> Result<Vec<u8>, ApiError> {
     let mut out = Vec::new();
     loop {
         let request = Request::new::<AttachmentReadChunk>(
@@ -166,7 +166,11 @@ fn read_rpc(office: &Arc<Office>, member: &str, id: &str) -> Result<Vec<u8>, Api
     }
 }
 
-fn inspect(office: &Arc<Office>, member: &str, id: &str) -> Result<AttachmentView, ApiError> {
+pub(super) fn inspect(
+    office: &Arc<Office>,
+    member: &str,
+    id: &str,
+) -> Result<AttachmentView, ApiError> {
     let request = Request::new::<AttachmentInspect>(
         8,
         &AttachmentInspectParams {
@@ -187,13 +191,13 @@ fn inspect(office: &Arc<Office>, member: &str, id: &str) -> Result<AttachmentVie
     }
 }
 
-fn pull_org_events(sat: &Arc<Office>) {
+pub(super) fn pull_org_events(sat: &Arc<Office>) {
     let mut session = SatelliteSyncSession::connect(Arc::clone(sat)).unwrap();
     session.pull_org_events().unwrap();
 }
 
 /// HQ's own copy of a blob, straight from `<durable>/blobs/`.
-fn hq_blob_on_disk(hq: &Office, sha: &str) -> Vec<u8> {
+pub(super) fn hq_blob_on_disk(hq: &Office, sha: &str) -> Vec<u8> {
     let path = hq
         .durable_root()
         .join("blobs/sha256")
@@ -203,7 +207,7 @@ fn hq_blob_on_disk(hq: &Office, sha: &str) -> Vec<u8> {
     std::fs::read(path).unwrap()
 }
 
-fn files_under(dir: &std::path::Path) -> usize {
+pub(super) fn files_under(dir: &std::path::Path) -> usize {
     let Ok(listing) = std::fs::read_dir(dir) else {
         return 0;
     };
@@ -428,7 +432,11 @@ fn federation_reads_degrade_to_a_retryable_unavailable_when_hq_is_unreachable() 
 }
 
 /// Sends `frame` on a raw session and returns HQ's first reply naming `request_id`.
-fn exchange(session: &mut SatelliteSyncSession, frame: &SyncFrame, request_id: &str) -> SyncFrame {
+pub(super) fn exchange(
+    session: &mut SatelliteSyncSession,
+    frame: &SyncFrame,
+    request_id: &str,
+) -> SyncFrame {
     session.write_frame(frame).unwrap();
     loop {
         let reply = session

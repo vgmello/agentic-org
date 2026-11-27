@@ -4,11 +4,14 @@
 //! tells the office ([`Office::attachment_outbox_acknowledged`]), which keeps the bytes in its
 //! cache and drops the entry.
 
+use std::collections::BTreeSet;
+
 use org_store::Id;
 
 use super::Office;
 use crate::attachments::blobs::ContentHash;
 use crate::attachments::media::MediaType;
+use crate::attachments::records;
 use crate::attachments::remote::OutboxShipment;
 use crate::error::OfficeError;
 use crate::office::storage;
@@ -85,6 +88,22 @@ impl Office {
         }
         self.outbox().release(&id)?;
         Ok(())
+    }
+
+    /// The `state/` paths of every file still waiting in this satellite's outbox: records HQ
+    /// does not hold yet, which a snapshot from HQ must never delete here (their bytes would
+    /// be stranded in the outbox, never shipped).
+    pub fn pending_blob_outbox_state_paths(&self) -> Result<BTreeSet<String>, OfficeError> {
+        if !self.is_satellite() {
+            return Ok(BTreeSet::new());
+        }
+        Ok(self
+            .outbox()
+            .pending()?
+            .iter()
+            .filter_map(|entry| records::record_path(&entry.record))
+            .map(|path| path.as_str().to_owned())
+            .collect())
     }
 
     /// How many files wait in this satellite's outbox, shippable or not (diagnostics).

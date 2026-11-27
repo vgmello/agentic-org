@@ -10,19 +10,24 @@ use org_store::Id;
 
 use super::{attach_upload, next_uuid, read_all, upload, Fixture, ENGINES};
 use crate::attachments::blobs::ContentHash;
+use crate::attachments::media::{self, MediaType};
 use crate::attachments::records::{self, AttachmentRecord};
 use crate::attachments::testkit::sample_png;
 use crate::store::open::EngineChoice;
 
-const SATELLITE: &str = "0195a000-0000-7000-8000-00000000aaaa";
+pub(super) const SATELLITE: &str = "0195a000-0000-7000-8000-00000000aaaa";
 
-fn shipped(
+/// The record a satellite ships for `bytes`: named for its type, with the dimensions and page
+/// count the bytes decode to (none when they do not decode).
+pub(super) fn shipped(
     uploader: &str,
     kind: AttachmentTargetKind,
     target: Option<&str>,
     mime: &str,
     bytes: &[u8],
 ) -> AttachmentRecord {
+    let media = MediaType::from_mime(mime);
+    let kept = media.and_then(|media| media::validate(media, bytes.to_vec()).ok());
     AttachmentRecord {
         id: Id::parse(&next_uuid()).unwrap(),
         target_kind: kind,
@@ -30,20 +35,20 @@ fn shipped(
         content_sha256: ContentHash::of(bytes),
         mime_type: mime.into(),
         byte_count: bytes.len() as u64,
-        filename: "shipped.png".into(),
+        filename: format!("shipped.{}", media.map_or("bin", |m| m.extensions()[0])),
         title: "Shipped".into(),
         description: None,
         artifact_status: ArtifactStatus::default(),
-        width: None,
-        height: None,
-        page_count: None,
+        width: kept.as_ref().and_then(|k| k.width),
+        height: kept.as_ref().and_then(|k| k.height),
+        page_count: kept.as_ref().and_then(|k| k.page_count),
         uploaded_by_employee_id: Id::parse(uploader).unwrap(),
         created_at: "2026-11-26T10:00:00.000Z".into(),
         updated_at: "2026-11-26T10:00:00.000Z".into(),
     }
 }
 
-fn check(
+pub(super) fn check(
     fx: &Fixture,
     origin: &str,
     record: &AttachmentRecord,

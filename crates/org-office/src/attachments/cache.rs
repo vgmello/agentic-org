@@ -118,12 +118,27 @@ impl BlobCache {
         Ok(Some(out))
     }
 
-    /// The whole blob when it is at most `limit` bytes, recording the use.
+    /// The whole blob when it is at most `limit` bytes, recording the use. Read from the one
+    /// handle opened, bounded even if the file grew after it was opened.
     pub fn read_all(&self, hash: &ContentHash, limit: u64) -> Result<Option<Vec<u8>>, OfficeError> {
-        if self.open_used(hash)?.is_none() {
+        let Some((file, len)) = self.open_used(hash)? else {
             return Ok(None);
+        };
+        if len > limit {
+            return Err(OfficeError::Invalid(
+                "an attachment blob is over its size limit",
+            ));
         }
-        self.blobs.read_all(hash, limit)
+        let mut out = Vec::with_capacity(usize::try_from(len).unwrap_or(0));
+        file.take(limit.saturating_add(1))
+            .read_to_end(&mut out)
+            .map_err(OfficeError::storage)?;
+        if out.len() as u64 > limit {
+            return Err(OfficeError::Invalid(
+                "an attachment blob is over its size limit",
+            ));
+        }
+        Ok(Some(out))
     }
 
     /// Keeps `bytes` (whose digest must be `hash`) as just used, then evicts the least

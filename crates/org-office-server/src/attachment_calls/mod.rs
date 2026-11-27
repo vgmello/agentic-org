@@ -15,7 +15,7 @@ use org_proto::attachments::{
     AttachmentAttach, AttachmentInspect, AttachmentList, AttachmentReadChunk, AttachmentUpdateMeta,
     AttachmentUploadAbort, AttachmentUploadBegin, AttachmentUploadChunk, AttachmentUploadCommit,
 };
-use org_proto::{ApiError, Call, ErrorCode, Request, Response};
+use org_proto::{ApiError, Call, ErrorCode, Outcome, Request, Response};
 
 use crate::failure::logged;
 use crate::federation::{blob_cache_max_bytes, HqBlobRemote};
@@ -31,6 +31,12 @@ pub(crate) fn is_attachment_method(request: &Request) -> bool {
         || request.is::<AttachmentList>()
         || request.is::<AttachmentUpdateMeta>()
         || request.is::<AttachmentReadChunk>()
+}
+
+/// Whether `response` answers an `attachment.attach` that bound a file. A satellite's new
+/// shared file then waits in its outbox, so the caller wakes the shipper at once.
+pub(crate) fn bound_a_file(request: &Request, response: &Response) -> bool {
+    request.is::<AttachmentAttach>() && matches!(response.outcome, Outcome::Result(_))
 }
 
 /// Parses `request` as `C`, runs `handler`, and answers: the result, the caller's refusal, or
