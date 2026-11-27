@@ -83,11 +83,8 @@ impl HostDb {
         tx.commit()?;
         Ok(Write::Committed(stored))
     }
-    /// Startup calls this only after staged-create reconciliation/abandon has finished.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "startup does not prune verifiers yet")
-    )]
+    /// One [`maintain`] batch in its own IMMEDIATE transaction: at most [`PRUNE_BATCH`]
+    /// expired rows, each with its account-create verifier (`ON DELETE CASCADE`).
     pub(crate) fn prune(&self, wall_ms: i64) -> Result<usize, Error> {
         let mut db = self.connection.lock().map_err(|_| Error::Unsafe)?;
         let tx = immediate(&mut db)?;
@@ -95,7 +92,49 @@ impl HostDb {
         tx.commit()?;
         Ok(removed)
     }
+    /// Host startup: [`HostDb::prune`] until a batch comes back short or [`MAX_PRUNE_BATCHES`]
+    /// batches have run (262,144 rows per boot), so startup can never stall or infinite-loop
+    /// under a huge backlog or hostile trigger. The lock is released between batches. `reserved`
+    /// rows and rows `org_create_staging` still names stay for their reconciliation.
+    pub(crate) fn prune_expired(&self, wall_ms: i64) -> Result<PruneOutcome, Error> {
+        self.prune_expired_capped(wall_ms, MAX_PRUNE_BATCHES)
+    }
+
+    pub(crate) fn prune_expired_capped(
+        &self,
+        wall_ms: i64,
+        max_batches: usize,
+    ) -> Result<PruneOutcome, Error> {
+        let mut removed: u64 = 0;
+        for _ in 0..max_batches {
+            let batch = self.prune(wall_ms)?;
+            removed = removed.saturating_add(u64::try_from(batch).unwrap_or(u64::MAX));
+            if batch < usize::from(PRUNE_BATCH) {
+                return Ok(PruneOutcome {
+                    removed,
+                    more_remaining: false,
+                });
+            }
+        }
+        Ok(PruneOutcome {
+            removed,
+            more_remaining: true,
+        })
+    }
 }
+
+/// Summary of one startup [`HostDb::prune_expired`] pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PruneOutcome {
+    pub(crate) removed: u64,
+    pub(crate) more_remaining: bool,
+}
+
+/// The most expired rows one [`maintain`] removes, bounding every journaled write's work.
+const PRUNE_BATCH: u16 = 256;
+
+/// Hard upper bound on startup prune batches (1,024 × 256 = 262,144 rows per boot).
+pub(crate) const MAX_PRUNE_BATCHES: usize = 1024;
 
 /// The caller's account mutation and verifier invalidation share its IMMEDIATE transaction.
 #[cfg_attr(
@@ -122,8 +161,8 @@ pub(super) fn maintain(tx: &Transaction<'_>, now: i64) -> Result<usize, Error> {
          SELECT j.operation_id FROM op_journal j WHERE j.expires_at_ms<=?1
          AND j.state<>'reserved' AND NOT EXISTS
          (SELECT 1 FROM org_create_staging s WHERE s.operation_id=j.operation_id)
-         ORDER BY j.expires_at_ms,j.operation_id LIMIT 256)",
-        [now],
+         ORDER BY j.expires_at_ms,j.operation_id LIMIT ?2)",
+        (now, PRUNE_BATCH),
     )?)
 }
 /// The stored row of `op`, as `(state, result)`, once it is known to be `op`'s: unexpired, of
