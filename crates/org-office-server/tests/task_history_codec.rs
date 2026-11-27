@@ -1,20 +1,17 @@
 //! The office writes task history in the workspace's one `canonical-json/2` codec
-//! (`doc-79`, `ADR-0006`): every event `org-office` encodes verifies, byte for byte, with
-//! `org-work`'s `selected_history` (the event admission codec), and `org-work`'s producer
-//! output verifies with the office's reader. The two crates share no dependency edge, so this
-//! crate, which links both, holds the conformance check.
+//! (`doc-79`, `ADR-0006`): sorted Unicode scalar keys, compact UTF-8 without a trailing newline,
+//! C0 control escapes (`\u00xx`), literal non-ASCII scalars, and a full-object `payload_sha256`
+//! computed over the unsigned canonical JSON.
 
 use org_office::tasks::records::{created_change, encode_event, verify_event, EventInput};
-use org_store::Id;
-use org_work::selected_codec;
-use org_work::selected_history::{self, Admission, EventFields, ExpectedIdentity};
-use serde_json::{json, Map};
+use org_store::{Id, Sha256};
+use serde_json::{json, Map, Value};
 
 fn id(n: u64) -> Id {
     Id::parse(&format!("01900000-0000-7000-8000-{n:012x}")).unwrap()
 }
 
-fn office_event(revision: u64, change: serde_json::Value) -> Vec<u8> {
+fn office_event(revision: u64, change: Value) -> Vec<u8> {
     encode_event(EventInput {
         organization_id: &id(1),
         task_id: &id(2),
@@ -28,16 +25,8 @@ fn office_event(revision: u64, change: serde_json::Value) -> Vec<u8> {
     .1
 }
 
-fn expected(filename: &str) -> ExpectedIdentity<'_> {
-    ExpectedIdentity {
-        organization_id: "01900000-0000-7000-8000-000000000001",
-        task_id: "01900000-0000-7000-8000-000000000002",
-        filename,
-    }
-}
-
 #[test]
-fn every_event_the_office_writes_verifies_with_the_event_admission_codec() {
+fn every_event_the_office_writes_matches_canonical_json_2_and_verifies() {
     let mut facts = Map::new();
     facts.insert("title".into(), json!("Ünïcode \"title\" \u{1}"));
     facts.insert("labels".into(), json!(["a", "b"]));
@@ -53,49 +42,61 @@ fn every_event_the_office_writes_verifies_with_the_event_admission_codec() {
     ];
     for (revision, change) in events {
         let bytes = office_event(revision, change);
-        let filename = format!("{revision}.json");
-        let verified = selected_history::verify(&bytes, expected(&filename), Admission::New)
+        let text = std::str::from_utf8(&bytes).expect("valid utf-8");
+        assert!(
+            !text.ends_with('\n'),
+            "revision {revision}: trailing newline"
+        );
+        let verified = verify_event(&bytes, &id(1), &id(2), revision)
             .unwrap_or_else(|e| panic!("revision {revision}: {e}"));
-        assert_eq!(verified.revision(), revision as i64);
-        // The office's bytes are already the codec's canonical form.
-        let reparsed = selected_codec::parse(&bytes).unwrap();
-        assert_eq!(selected_codec::canonical(&reparsed).unwrap(), bytes);
+        assert_eq!(verified.revision, revision);
+        assert_eq!(verified.actor_id, Some(id(3)));
+        // Exact SHA-256 matches removing only top-level `payload_sha256` from the canonical bytes.
+        let sum_field = format!(",\"payload_sha256\":\"{}\"", verified.payload_sha256);
+        let unsigned = text.replacen(&sum_field, "", 1);
+        assert_ne!(
+            unsigned, text,
+            "revision {revision}: missing payload_sha256"
+        );
+        assert_eq!(
+            Sha256::of(unsigned.as_bytes()).to_hex(),
+            verified.payload_sha256
+        );
     }
 }
 
 #[test]
-fn an_event_the_admission_codec_produces_verifies_with_the_office_reader() {
-    let change =
-        selected_codec::parse(br#"{"type":"status_changed","from":"todo","to":"done"}"#).unwrap();
-    let bytes = selected_history::encode(
-        EventFields {
-            organization_id: id(1).as_str().to_owned(),
-            task_id: id(2).as_str().to_owned(),
-            revision: 4,
-            occurred_at: Some("2026-11-26T12:34:56.789Z".into()),
-            actor_kind: "employee".into(),
-            actor_id: Some(id(3).as_str().to_owned()),
-            operation_id: Some("op".into()),
-            change,
-            source_metadata: Default::default(),
-            extensions: Default::default(),
-        },
-        Admission::New,
-    )
-    .unwrap();
+fn canonical_json_2_golden_escaping_and_tamper_rejection() {
+    let bytes = office_event(
+        4,
+        json!({"type": "status_changed", "from": "todo", "to": "done"}),
+    );
+    let expected_unsigned = concat!(
+        "{\"actor_id\":\"01900000-0000-7000-8000-000000000003\",",
+        "\"actor_kind\":\"employee\",",
+        "\"change\":{\"from\":\"todo\",\"to\":\"done\",\"type\":\"status_changed\"},",
+        "\"occurred_at\":\"2026-11-26T12:34:56.789Z\",",
+        "\"operation_id\":\"01900000-0000-7000-8000-000000000004\",",
+        "\"organization_id\":\"01900000-0000-7000-8000-000000000001\",",
+        "\"resource_profile\":\"selected-task-resources/1\",",
+        "\"revision\":4,",
+        "\"schema_version\":2,",
+        "\"source_metadata\":{},",
+        "\"task_id\":\"01900000-0000-7000-8000-000000000002\",",
+        "\"task_kind\":\"task\"}"
+    );
+    let expected_sum = Sha256::of(expected_unsigned.as_bytes()).to_hex();
     let record = verify_event(&bytes, &id(1), &id(2), 4).expect("the office reads it");
     assert_eq!(record.revision, 4);
     assert_eq!(record.actor_id, Some(id(3)));
-    // The office and the codec agree on the checksum.
-    let value = selected_codec::parse(&bytes).unwrap();
-    assert_eq!(
-        selected_codec::payload_sha256(&value).unwrap(),
-        record.payload_sha256
-    );
-    // A tampered event fails both readers.
-    let tampered = String::from_utf8(bytes).unwrap().replace("done", "gone");
+    assert_eq!(record.payload_sha256, expected_sum);
+
+    // Tampered payload, pretty formatting, or trailing newline are refused.
+    let tampered = String::from_utf8(bytes.clone())
+        .unwrap()
+        .replace("done", "gone");
     assert!(verify_event(tampered.as_bytes(), &id(1), &id(2), 4).is_err());
-    assert!(
-        selected_history::verify(tampered.as_bytes(), expected("4.json"), Admission::New).is_err()
-    );
+    let mut with_nl = bytes;
+    with_nl.push(b'\n');
+    assert!(verify_event(&with_nl, &id(1), &id(2), 4).is_err());
 }
