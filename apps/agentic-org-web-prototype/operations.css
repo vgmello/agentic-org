@@ -3099,9 +3099,12 @@ html[data-assembly-dividers] .assembly-table tbody tr:not(.assembly-milestone) +
 .assembly-table small { display: block; color: var(--gray-400); font-size: var(--fs-xs); font-weight: 400; }
 /* Assembly rows read like the Work list (TASK-242): a feature is a task title (size, weight, colour) over a muted
    line, and a milestone is a group header ("To do 7"): semibold small text with its muted progress beside it. */
-.assembly-table tbody tr:not(.assembly-milestone) > th { color: var(--white); font-size: var(--fs-sm); font-weight: 500; line-height: 1.45; }
+.assembly-table tbody tr:not(.assembly-milestone) > th { color: var(--white); font-size: var(--fs-base); font-weight: 500; line-height: 1.45; }
 /* Column headers are quiet labels, not bold titles (owner): one size across the table, hierarchy from weight/colour */
-#main .assembly-table thead th { color: var(--gray-300); font-size: var(--fs-sm); font-weight: 500; line-height: 1.45; }
+#main .assembly-table thead th { color: var(--gray-300); font-size: var(--fs-base); font-weight: 500; line-height: 1.45; }
+/* Owner: the table's labels are at least 14px; the small muted lines (counts, "4 tasks") stay 12px */
+#main .assembly-table .assembly-milestone th { font-size: var(--fs-base); }
+#main .assembly-table .assembly-progress { font-size: var(--fs-xs); }
 #main .assembly-table thead th small { color: var(--gray-400); }
 .assembly-table tbody tr:not(.assembly-milestone) > th > small { margin-block-start: 2px; line-height: 1.5; }
 .assembly-table .assembly-milestone th {
