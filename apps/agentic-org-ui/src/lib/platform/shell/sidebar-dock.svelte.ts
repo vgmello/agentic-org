@@ -45,26 +45,31 @@ export class SidebarDockController {
 		);
 	}
 
-	onMenuOpenChange(open: boolean, container: HTMLElement | null): void {
-		clearTimeout(this.#focusTimer);
-		if (this.#focusRaf !== undefined) {
+	#cancelFocusRaf(): void {
+		if (this.#focusRaf !== undefined && typeof cancelAnimationFrame !== 'undefined') {
 			cancelAnimationFrame(this.#focusRaf);
 			this.#focusRaf = undefined;
 		}
+	}
+
+	#syncFocusContainment(container: HTMLElement | null): void {
+		if (this.#disposed || this.menuOpen) return;
+		const active = typeof document !== 'undefined' ? document.activeElement : null;
+		this.focused = Boolean(active instanceof Node && container?.contains(active));
+	}
+
+	onMenuOpenChange(open: boolean, container: HTMLElement | null): void {
+		clearTimeout(this.#focusTimer);
+		this.#cancelFocusRaf();
 		this.menuOpen = open;
 		if (!open && !this.#disposed) {
 			// Recompute focus containment after Bits UI focus restoration or outside click settles
 			// without cancelling any pending pointer-leave collapse timer.
-			const syncFocus = () => {
-				if (this.#disposed || this.menuOpen) return;
-				const active = typeof document !== 'undefined' ? document.activeElement : null;
-				this.focused = Boolean(active instanceof Node && container?.contains(active));
-			};
-			queueMicrotask(syncFocus);
+			queueMicrotask(() => this.#syncFocusContainment(container));
 			if (typeof requestAnimationFrame !== 'undefined') {
 				this.#focusRaf = requestAnimationFrame(() => {
 					this.#focusRaf = undefined;
-					syncFocus();
+					this.#syncFocusContainment(container);
 				});
 			}
 		}
@@ -82,12 +87,19 @@ export class SidebarDockController {
 		}, 240);
 	}
 
-	onFocusIn(event: FocusEvent): void {
+	onFocusIn(event: FocusEvent, container?: HTMLElement | null): void {
 		const target = event.target;
-		if (target instanceof HTMLElement && target.matches(':focus-visible')) {
-			clearTimeout(this.#focusTimer);
-			this.focused = true;
-		}
+		if (!(target instanceof HTMLElement) || !target.matches(':focus-visible')) return;
+		clearTimeout(this.#focusTimer);
+		this.focused = true;
+		if (!container || typeof requestAnimationFrame === 'undefined') return;
+		// If expanding from rail mode unmounts the focused rail-only trigger (no focusout fires),
+		// re-verify containment on the next animation frame so `focused` cannot leak true.
+		this.#cancelFocusRaf();
+		this.#focusRaf = requestAnimationFrame(() => {
+			this.#focusRaf = undefined;
+			this.#syncFocusContainment(container);
+		});
 	}
 
 	onFocusOut(event: FocusEvent, container: HTMLElement | null): void {
@@ -95,6 +107,7 @@ export class SidebarDockController {
 		const next = event.relatedTarget;
 		if (next instanceof Node && container?.contains(next)) return;
 		clearTimeout(this.#focusTimer);
+		this.#cancelFocusRaf();
 		this.#focusTimer = setTimeout(() => {
 			if (!this.#disposed && !this.menuOpen) this.focused = false;
 		}, 160);

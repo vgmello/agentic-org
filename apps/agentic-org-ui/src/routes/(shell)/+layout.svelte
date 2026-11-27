@@ -358,7 +358,7 @@
 			onMenuOpenChange={(open) => sidebarDock.onMenuOpenChange(open, desktopNavigation)}
 			onPointerEnter={() => sidebarDock.onPointerEnter()}
 			onPointerLeave={() => sidebarDock.onPointerLeave()}
-			onFocusIn={(event) => sidebarDock.onFocusIn(event)}
+			onFocusIn={(event) => sidebarDock.onFocusIn(event, desktopNavigation)}
 			onFocusOut={(event) => sidebarDock.onFocusOut(event, desktopNavigation)}
 			onNavigate={(event, href) => selectDesktopSection(event, href, goto)}
 		/>

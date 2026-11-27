@@ -90,7 +90,14 @@ for (const width of [959, 720]) {
 		await expect(aside).toHaveAttribute('data-collapsed', 'true');
 		await expect.poll(async () => Math.round((await aside.boundingBox())?.width ?? 0)).toBe(68);
 		await expect(activityLabel).toHaveClass(/sr-only/);
-		await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+		await page.evaluate(() => {
+			// Reset sequential focus navigation to the start of the document (HTML §6.6.3);
+			// plain blur() on body leaves Chromium's starting point on the last interacted node.
+			document.body.tabIndex = -1;
+			document.body.focus({ preventScroll: true });
+			document.body.blur();
+			document.body.removeAttribute('tabindex');
+		});
 		const tabKey = browserName === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab';
 		await page.keyboard.press(tabKey);
 		await expect(aside).not.toHaveAttribute('data-collapsed', 'true');

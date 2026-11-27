@@ -129,4 +129,54 @@ describe('SidebarDockController', () => {
 			vi.unstubAllGlobals();
 		}
 	});
+
+	it('clears focused on next frame when a rail-only focused target unmounts without focusout', () => {
+		class FakeNode {}
+		class FakeHTMLElement extends FakeNode {
+			matches(selector: string) {
+				return selector === ':focus-visible';
+			}
+		}
+
+		let rafCb: FrameRequestCallback | undefined;
+		const target = new FakeHTMLElement();
+		const outside = new FakeNode();
+		let active: FakeNode = target;
+		const container = {
+			contains: (node: FakeNode) => node === target
+		} as unknown as HTMLElement;
+
+		vi.stubGlobal('Node', FakeNode);
+		vi.stubGlobal('HTMLElement', FakeHTMLElement);
+		vi.stubGlobal('document', {
+			get activeElement() {
+				return active;
+			}
+		});
+		vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+			rafCb = cb;
+			return 1;
+		});
+		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+
+		try {
+			const dock = new SidebarDockController({
+				isSidebarKeyMode: () => false,
+				getNavCollapsed: () => true
+			});
+
+			dock.onFocusIn({ target } as unknown as FocusEvent, container);
+			expect(dock.focused).toBe(true);
+			expect(dock.collapsed).toBe(false);
+
+			// Simulate target unmounting (activeElement falls back outside container, no focusout).
+			active = outside;
+			rafCb?.(16);
+			expect(dock.focused).toBe(false);
+			expect(dock.collapsed).toBe(true);
+			dock.dispose();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
 });

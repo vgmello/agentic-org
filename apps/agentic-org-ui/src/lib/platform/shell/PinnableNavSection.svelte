@@ -7,7 +7,6 @@
 -->
 <script lang="ts" generics="TId extends string">
 	import { tick } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { Tooltip, mergeProps } from 'bits-ui';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -15,7 +14,7 @@
 	import Minus from '@lucide/svelte/icons/minus';
 	import Plus from '@lucide/svelte/icons/plus';
 	import { tooltipContentClass } from '$lib/components/classes';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+	import PinnableNavRailMoreMenu from './PinnableNavRailMoreMenu.svelte';
 	import type { PinnableNavItem, PinnableNavSectionConfig } from './sidebar-nav-items';
 	import { tooltipLinkProps } from './tooltip-link-props';
 
@@ -26,8 +25,7 @@
 		isItemActive,
 		onMoveItem,
 		onTogglePin,
-		onNavigate,
-		onMenuOpenChange
+		onNavigate
 	}: {
 		config: PinnableNavSectionConfig<TId>;
 		pinnedIds: readonly TId[];
@@ -36,7 +34,6 @@
 		onMoveItem: (id: TId, beforeId: TId | null, zone: 'pinned' | 'more') => void;
 		onTogglePin: (id: TId) => void;
 		onNavigate?: (event: MouseEvent, href: string) => void;
-		onMenuOpenChange?: (open: boolean) => void;
 	} = $props();
 
 	let draggingId = $state<TId | null>(null);
@@ -260,49 +257,12 @@
 		{/each}
 
 		{#if moreItems.length > 0 && collapsed}
-			<li class="flex justify-center">
-				<DropdownMenu.Root onOpenChange={(next) => onMenuOpenChange?.(next)}>
-					<Tooltip.Root>
-						<Tooltip.Trigger>
-							{#snippet child({ props: tipProps })}
-								<DropdownMenu.Trigger {...tipProps}>
-									{#snippet child({ props })}
-										<button
-											{...props}
-											type="button"
-											aria-label={config.moreListAriaLabel}
-											data-testid="{config.moreToggleTestId}-rail"
-											class={['exec-nav-item is-rail', anyMoreActive && 'is-active']}
-										>
-											<Ellipsis class="size-[18px] shrink-0" aria-hidden="true" />
-										</button>
-									{/snippet}
-								</DropdownMenu.Trigger>
-							{/snippet}
-						</Tooltip.Trigger>
-						<Tooltip.Portal>
-							<Tooltip.Content
-								role="tooltip"
-								side="right"
-								sideOffset={6}
-								class={tooltipContentClass}>{config.moreListAriaLabel}</Tooltip.Content
-							>
-						</Tooltip.Portal>
-					</Tooltip.Root>
-					<DropdownMenu.Content side="right" align="start" class="w-52 bg-surface ring-line">
-						{#each moreItems as item (item.id)}
-							{@const MoreIcon = item.Icon}
-							<DropdownMenu.Item
-								class="flex min-h-9 items-center gap-2 max-[639px]:min-h-11"
-								onSelect={() => void goto(resolve(item.href))}
-							>
-								<MoreIcon class="size-4 shrink-0 text-fg-muted" aria-hidden="true" />
-								<span>{item.label}</span>
-							</DropdownMenu.Item>
-						{/each}
-					</DropdownMenu.Content>
-				</DropdownMenu.Root>
-			</li>
+			<PinnableNavRailMoreMenu
+				items={moreItems}
+				ariaLabel={config.moreListAriaLabel}
+				testId="{config.moreToggleTestId}-rail"
+				active={anyMoreActive}
+			/>
 		{:else if moreItems.length > 0}
 			<li
 				class={['mt-0.5', moreDropActive && 'is-more-drop']}

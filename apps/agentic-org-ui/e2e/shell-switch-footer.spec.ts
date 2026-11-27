@@ -177,18 +177,48 @@ test(
 		const mainNav = page.getByRole('navigation', { name: 'Main', exact: true });
 		await expect(mainNav.locator('ul:not([data-sidebar-favs]) > li > a')).toHaveCount(9);
 		// Unpinned Organization items (Processes) stay reachable from the collapsed rail More menu.
-		await expect(page.getByTestId('organization-more-toggle-rail')).toBeVisible();
-		await shot(page, 'footer-rail');
-		// At 200% text (32px root), the 960px reflow rail keeps Processes reachable via its rail More menu.
-		await page.setViewportSize({ width: 960, height: 900 });
-		await page.addStyleTag({ content: 'html { font-size: 200% !important; }' });
 		const railMore = page.getByTestId('organization-more-toggle-rail');
 		await expect(railMore).toBeVisible();
-		await railMore.click();
+		await shot(page, 'footer-rail');
+		// Opening rail More in auto-hide rail mode stays open (does not expand/unmount) and hides its tooltip.
+		await railMore.dispatchEvent('click');
 		const processesItem = page.getByRole('menuitem', { name: 'Processes', exact: true });
+		await expect(processesItem).toBeVisible();
+		await expect(aside).toHaveAttribute('data-collapsed', 'true');
+		await expect(
+			page.getByRole('tooltip', { name: 'More organization pages', exact: true })
+		).toHaveCount(0);
+		await page.keyboard.press('Escape');
+		await expect(processesItem).toHaveCount(0);
+		await expect(aside).toHaveAttribute('data-collapsed', 'true');
+		// At 200% text (32px root), opening rail More and unzooming out of textReflowRail never sticks menuOpen.
+		await page.setViewportSize({ width: 960, height: 900 });
+		const zoomTag = await page.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+		await expect(railMore).toBeVisible();
+		await railMore.hover();
+		await railMore.click();
+		await expect(processesItem).toBeVisible();
+		await expect(
+			page.getByRole('tooltip', { name: 'More organization pages', exact: true })
+		).toHaveCount(0);
+		// Exit textReflowRail while the rail More dropdown is open; sidebar must still collapse cleanly after moving away.
+		await zoomTag.evaluate((el) => el.remove());
+		await page.mouse.move(940, 20);
+		await expect(aside).toHaveAttribute('data-collapsed', 'true');
+		await expect.poll(async () => Math.round((await aside.boundingBox())?.width ?? 0)).toBe(68);
+		// Re-enter 200%-text reflow rail, select Processes, and confirm destination heading receives focus.
+		await page.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+		await expect(railMore).toBeVisible();
+		await railMore.click();
 		await expect(processesItem).toBeVisible();
 		await processesItem.click();
 		await expect(page).toHaveURL(/\/settings\/processes$/);
+		await expect(
+			page
+				.getByRole('main')
+				.getByRole('heading', { level: 2, name: /^Processes/ })
+				.first()
+		).toBeFocused();
 	}
 );
 

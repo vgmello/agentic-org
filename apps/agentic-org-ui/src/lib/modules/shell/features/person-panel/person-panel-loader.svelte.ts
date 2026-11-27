@@ -1,3 +1,4 @@
+import { toAppError } from '$lib/proto';
 import type { PersonPanelDataSource, PersonPanelProfile, PersonPanelWorkItem } from './types';
 
 function isAbortError(error: unknown): boolean {
@@ -78,7 +79,7 @@ export class PersonPanelLoader {
 			this.profile = undefined;
 			this.openWork = [];
 			this.totalOpenWork = 0;
-			this.error = err instanceof Error && err.message ? err.message : 'Could not load profile.';
+			this.error = toAppError(err).message || 'Could not load profile.';
 		} finally {
 			if (!this.#disposed && seq === this.#seq) {
 				this.loading = false;

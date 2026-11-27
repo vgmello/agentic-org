@@ -75,11 +75,10 @@
 
 	let orgMenuOpen = $state(false);
 	let accountMenuOpen = $state(false);
-	let navMoreMenuOpen = $state(false);
 	const shortcutsEnabled = $derived(singleKeyShortcutsOn());
 
 	function notifyMenuOpen() {
-		onMenuOpenChange?.(orgMenuOpen || accountMenuOpen || navMoreMenuOpen);
+		onMenuOpenChange?.(orgMenuOpen || accountMenuOpen);
 	}
 
 	const pathname = $derived(page.url.pathname);
@@ -308,10 +307,6 @@
 				onMoveItem={(id, beforeId, zone) => uiPrefs.moveWorkspaceItem(id, beforeId, zone)}
 				onTogglePin={(id) => uiPrefs.toggleWorkspacePin(id)}
 				{onNavigate}
-				onMenuOpenChange={(next) => {
-					navMoreMenuOpen = next;
-					notifyMenuOpen();
-				}}
 			/>
 
 			{#if !collapsed}
@@ -335,10 +330,6 @@
 				onMoveItem={(id, beforeId, zone) => uiPrefs.moveOrgItem(id, beforeId, zone)}
 				onTogglePin={(id) => uiPrefs.toggleOrgPin(id)}
 				{onNavigate}
-				onMenuOpenChange={(next) => {
-					navMoreMenuOpen = next;
-					notifyMenuOpen();
-				}}
 			/>
 		</nav>
 

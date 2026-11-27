@@ -117,4 +117,53 @@ describe('PersonPanelLoader', () => {
 		expect(loader.disposed).toBe(true);
 		second.cancel();
 	});
+
+	it('cancel() aborts an in-flight retry request and drops late results while staying reusable', async () => {
+		let retrySignal: AbortSignal | undefined;
+		let resolveRetry: ((value: PersonPanelLoadedData) => void) | undefined;
+		let calls = 0;
+
+		const loadMember = vi.fn<PersonPanelDataSource['loadMember']>((_org, memberId, signal) => {
+			calls += 1;
+			if (calls === 1) {
+				return Promise.reject({ source: 'api', code: 'unavailable', message: 'Gateway down' });
+			}
+			if (calls === 2) {
+				retrySignal = signal;
+				return new Promise<PersonPanelLoadedData>((resolve) => {
+					resolveRetry = resolve;
+				});
+			}
+			return Promise.resolve({
+				profile: fakeProfile(memberId, 'Recovered'),
+				openWork: [],
+				totalOpenWork: 0
+			});
+		});
+
+		const loader = new PersonPanelLoader({ loadMember });
+		await loader.load('org-1', 'rowan').done;
+		expect(loader.error).toBe('Gateway down');
+
+		const retry = loader.load('org-1', 'rowan');
+		expect(loader.loading).toBe(true);
+		expect(retrySignal?.aborted).toBe(false);
+
+		loader.cancel();
+		expect(retrySignal?.aborted).toBe(true);
+		expect(loader.loading).toBe(false);
+
+		resolveRetry?.({
+			profile: fakeProfile('rowan', 'Late Response'),
+			openWork: [],
+			totalOpenWork: 0
+		});
+		await retry.done;
+		expect(loader.profile).toBeUndefined();
+
+		await loader.load('org-1', 'rowan').done;
+		expect(loader.profile?.name).toBe('Recovered');
+		expect(loader.error).toBeUndefined();
+		loader.dispose();
+	});
 });
