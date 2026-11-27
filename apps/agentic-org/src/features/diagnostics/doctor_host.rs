@@ -2,22 +2,28 @@
 //! `agentic-org doctor`.
 
 use std::fs;
-use std::io::Read;
+use std::io::{self, Read};
 use std::os::unix::fs::FileTypeExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use super::doctor::{CheckStatus, DoctorCheck};
+use serde::Deserialize;
+
+use super::doctor::DoctorCheck;
 use super::paths::{
     check_owner_and_mode, normalize_lstat_path, probe_lock_held, read_regular_bounded,
     InstancePaths, LockProbe,
 };
 
 const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
+const MAX_RELEASE_PIN_BYTES: u64 = 16 * 1024;
 
 pub(super) fn check_instance_layout(paths: &InstancePaths, checks: &mut Vec<DoctorCheck>) {
-    let has_root = fs::symlink_metadata(&paths.instance_root).is_ok_and(|m| m.is_dir());
-    let has_setup = fs::symlink_metadata(&paths.setup_record).is_ok_and(|m| m.is_file());
-    let has_office_home = fs::symlink_metadata(&paths.office_home).is_ok_and(|m| m.is_dir());
+    let has_root =
+        fs::symlink_metadata(normalize_lstat_path(&paths.instance_root)).is_ok_and(|m| m.is_dir());
+    let has_setup =
+        fs::symlink_metadata(normalize_lstat_path(&paths.setup_record)).is_ok_and(|m| m.is_file());
+    let has_office_home =
+        fs::symlink_metadata(normalize_lstat_path(&paths.office_home)).is_ok_and(|m| m.is_dir());
 
     if !has_root && !has_setup {
         checks.push(DoctorCheck::fail(
@@ -75,16 +81,8 @@ pub(super) fn check_permissions(paths: &InstancePaths, checks: &mut Vec<DoctorCh
         &paths.host_lock,
     ];
     let mut violations = Vec::new();
-    for dir in dir_targets {
-        if let Ok(Some(msg)) = check_owner_and_mode(dir, 0o700) {
-            violations.push(msg);
-        }
-    }
-    for file in file_targets {
-        if let Ok(Some(msg)) = check_owner_and_mode(file, 0o600) {
-            violations.push(msg);
-        }
-    }
+    collect_permission_issues(&dir_targets, 0o700, &mut violations);
+    collect_permission_issues(&file_targets, 0o600, &mut violations);
     if violations.is_empty() {
         checks.push(DoctorCheck::pass(
             "instance.permissions",
@@ -104,6 +102,17 @@ pub(super) fn check_permissions(paths: &InstancePaths, checks: &mut Vec<DoctorCh
             Some("Tighten permissions with `chmod 700` on instance directories and `chmod 600` on sensitive files.".to_owned()),
             Some(paths.instance_root.display().to_string()),
         ));
+    }
+}
+
+fn collect_permission_issues(targets: &[&PathBuf], expected_mode: u32, out: &mut Vec<String>) {
+    for path in targets {
+        match check_owner_and_mode(path, expected_mode) {
+            Ok(Some(msg)) => out.push(msg),
+            Ok(None) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => out.push(format!("cannot inspect `{}`: {e}", path.display())),
+        }
     }
 }
 
@@ -165,31 +174,33 @@ pub(super) fn check_registry_consistency(paths: &InstancePaths, checks: &mut Vec
     ));
 }
 
-fn validate_marker_content(paths: &InstancePaths) -> Option<DoctorCheck> {
+fn registry_fail(msg: impl Into<String>, fix: &str, path: &Path) -> DoctorCheck {
+    DoctorCheck::fail(
+        "instance.registry_consistency",
+        "registry",
+        msg,
+        Some(fix.to_owned()),
+        Some(path.display().to_string()),
+    )
+}
+
+pub(super) fn validate_marker_content(paths: &InstancePaths) -> Option<DoctorCheck> {
     let bytes = match read_regular_bounded(&paths.registry_created, 256) {
         Ok(b) => b,
         Err(e) => {
-            return Some(DoctorCheck::fail(
-                "instance.registry_consistency",
-                "registry",
+            return Some(registry_fail(
                 format!("cannot read host-registry.created safely: {e}"),
-                Some("Inspect or clear the marker with `agentic-org uninstall --yes`.".to_owned()),
-                Some(paths.registry_created.display().to_string()),
+                "Inspect or clear the marker with `agentic-org uninstall --yes`.",
+                &paths.registry_created,
             ));
         }
     };
-    let text = String::from_utf8_lossy(&bytes).trim().to_owned();
     if let Some(expected) = paths.instance_id.as_deref() {
-        if text != expected {
-            return Some(DoctorCheck::fail(
-                "instance.registry_consistency",
-                "registry",
+        if bytes.as_slice() != expected.as_bytes() {
+            return Some(registry_fail(
                 "host-registry.created names a different instance ID than instance metadata",
-                Some(
-                    "Run `agentic-org uninstall --yes` and re-initialize with `agentic-org setup`."
-                        .to_owned(),
-                ),
-                Some(paths.registry_created.display().to_string()),
+                "Run `agentic-org uninstall --yes` and re-initialize with `agentic-org setup`.",
+                &paths.registry_created,
             ));
         }
     }
@@ -200,37 +211,26 @@ fn validate_sqlite_header(db_path: &Path) -> Option<DoctorCheck> {
     let mut file = match org_platform::fs::open_nofollow_ro(&normalize_lstat_path(db_path)) {
         Ok(f) => f,
         Err(e) => {
-            return Some(DoctorCheck::fail(
-                "instance.registry_consistency",
-                "registry",
+            return Some(registry_fail(
                 format!("host-registry.db cannot be opened safely: {e}"),
-                Some(
-                    "Verify host-registry.db is a regular owner-only file, not a symlink."
-                        .to_owned(),
-                ),
-                Some(db_path.display().to_string()),
+                "Verify host-registry.db is a regular owner-only file, not a symlink.",
+                db_path,
             ));
         }
     };
     if !file.metadata().is_ok_and(|m| m.is_file()) {
-        return Some(DoctorCheck::fail(
-            "instance.registry_consistency",
-            "registry",
+        return Some(registry_fail(
             "host-registry.db is not a regular file",
-            Some(
-                "Restore a valid host-registry.db or run `agentic-org uninstall --yes`.".to_owned(),
-            ),
-            Some(db_path.display().to_string()),
+            "Restore a valid host-registry.db or run `agentic-org uninstall --yes`.",
+            db_path,
         ));
     }
     let mut hdr = [0u8; 16];
     if file.read_exact(&mut hdr).is_err() || &hdr != SQLITE_MAGIC {
-        return Some(DoctorCheck::fail(
-            "instance.registry_consistency",
-            "registry",
+        return Some(registry_fail(
             "host-registry.db header is corrupt or not a SQLite 3 database",
-            Some("Restore host-registry.db from backup or uninstall and re-run setup.".to_owned()),
-            Some(db_path.display().to_string()),
+            "Restore host-registry.db from backup or uninstall and re-run setup.",
+            db_path,
         ));
     }
     None
@@ -298,14 +298,55 @@ pub(super) fn check_sockets(paths: &InstancePaths, checks: &mut Vec<DoctorCheck>
 
 fn check_office_sockets(paths: &InstancePaths, checks: &mut Vec<DoctorCheck>) {
     let sockets_root = paths.run_dir.join("o");
-    let Ok(entries) = fs::read_dir(&sockets_root) else {
-        return;
+    let norm_root = normalize_lstat_path(&sockets_root);
+    match fs::symlink_metadata(&norm_root) {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => {
+            checks.push(DoctorCheck::fail(
+                "runtime.office_sockets",
+                "runtime",
+                "office sockets directory is not a real directory (symlinks are refused)",
+                Some(
+                    "Inspect and remove the invalid `o` entry under the runtime directory."
+                        .to_owned(),
+                ),
+                Some(sockets_root.display().to_string()),
+            ));
+            return;
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return,
+        Err(e) => {
+            checks.push(DoctorCheck::fail(
+                "runtime.office_sockets",
+                "runtime",
+                format!("cannot inspect office sockets directory: {e}"),
+                Some("Verify permissions on the runtime directory.".to_owned()),
+                Some(sockets_root.display().to_string()),
+            ));
+            return;
+        }
+    }
+    let entries = match fs::read_dir(&norm_root) {
+        Ok(entries) => entries,
+        Err(e) => {
+            checks.push(DoctorCheck::fail(
+                "runtime.office_sockets",
+                "runtime",
+                format!("cannot list office sockets directory: {e}"),
+                Some("Verify permissions on the runtime `o` directory.".to_owned()),
+                Some(sockets_root.display().to_string()),
+            ));
+            return;
+        }
     };
     let host_held = probe_lock_held(&paths.host_lock) == LockProbe::Held;
-    let mut stale = 0usize;
-    let mut active = 0usize;
+    let (mut stale, mut active) = (0usize, 0usize);
     for entry in entries.flatten() {
-        let sock = entry.path().join("s.sock");
+        let dir = normalize_lstat_path(&entry.path());
+        if !fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+            continue;
+        }
+        let sock = normalize_lstat_path(&dir.join("s.sock"));
         if fs::symlink_metadata(&sock).is_ok_and(|m| m.file_type().is_socket()) {
             if host_held {
                 active += 1;
@@ -335,56 +376,190 @@ fn check_office_sockets(paths: &InstancePaths, checks: &mut Vec<DoctorCheck>) {
     }
 }
 
+#[derive(Deserialize)]
+struct ReleaseCommitMini {
+    version: u32,
+    ordinal: u64,
+    pin: ReleasePinMini,
+}
+
+#[derive(Deserialize)]
+struct ReleasePinMini {
+    release_id: String,
+}
+
+fn release_fail(msg: impl Into<String>, fix: &str, path: &Path) -> DoctorCheck {
+    DoctorCheck::fail(
+        "release.status",
+        "release",
+        msg,
+        Some(fix.to_owned()),
+        Some(path.display().to_string()),
+    )
+}
+
 pub(super) fn check_release_pin(checks: &mut Vec<DoctorCheck>) {
     let Ok(store_dir) = org_host::default_release_store_dir() else {
         return;
     };
-    if !store_dir.exists() {
-        let status = if cfg!(debug_assertions) {
-            CheckStatus::Pass
-        } else {
-            CheckStatus::Warn
-        };
-        checks.push(DoctorCheck {
-            id: "release.status".to_owned(),
-            category: "release".to_owned(),
-            status,
-            message: "no pinned release bundle in release store".to_owned(),
-            remediation: (!cfg!(debug_assertions)).then(|| {
-                "Pin a signed release with `agentic-org release install <bundle>`.".to_owned()
-            }),
-            path: Some(store_dir.display().to_string()),
-        });
-        return;
+    check_release_pin_at(&store_dir, checks);
+}
+
+pub(super) fn check_release_pin_at(store_dir: &Path, checks: &mut Vec<DoctorCheck>) {
+    let norm_store = normalize_lstat_path(store_dir);
+    match fs::symlink_metadata(&norm_store) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            let path_s = Some(store_dir.display().to_string());
+            let check = if cfg!(debug_assertions) {
+                DoctorCheck::pass(
+                    "release.status",
+                    "release",
+                    "no pinned release bundle in release store",
+                    path_s,
+                )
+            } else {
+                DoctorCheck::warn(
+                    "release.status",
+                    "release",
+                    "no pinned release bundle in release store",
+                    Some(
+                        "Pin a signed release with `agentic-org release install <bundle>`."
+                            .to_owned(),
+                    ),
+                    path_s,
+                )
+            };
+            checks.push(check);
+            return;
+        }
+        Err(e) => {
+            checks.push(release_fail(
+                format!("cannot inspect release store: {e}"),
+                "Verify permissions on the release store directory.",
+                store_dir,
+            ));
+            return;
+        }
+        Ok(meta) if !meta.is_dir() => {
+            checks.push(release_fail(
+                "release store path is not a real directory (symlinks are refused)",
+                "Ensure the release store is an owner-only real directory.",
+                store_dir,
+            ));
+            return;
+        }
+        Ok(_) => {}
     }
-    let pin_path = store_dir.join("active.v1.json");
-    match read_regular_bounded(&pin_path, 64 * 1024)
-        .ok()
-        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-    {
-        Some(v) => {
-            let release_id = v
-                .get("release_id")
-                .and_then(|r| r.as_str())
-                .unwrap_or("unknown");
-            checks.push(DoctorCheck::pass(
+    let pins_dir = norm_store.join("pins");
+    let latest = match latest_release_pin_file(&pins_dir) {
+        Ok(Some(found)) => found,
+        Ok(None) => {
+            checks.push(DoctorCheck::warn(
                 "release.status",
                 "release",
-                format!("pinned release `{release_id}` present"),
-                Some(pin_path.display().to_string()),
+                "release store exists without an active release pin",
+                Some(
+                    "Install a signed release bundle with `agentic-org release install <bundle>`."
+                        .to_owned(),
+                ),
+                Some(store_dir.display().to_string()),
             ));
+            return;
         }
-        None => checks.push(DoctorCheck::warn(
-            "release.status",
-            "release",
-            "release store exists without an active release pin",
-            Some(
-                "Install a signed release bundle with `agentic-org release install <bundle>`."
+        Err(msg) => {
+            checks.push(release_fail(
+                msg,
+                "Inspect the release store pins directory for corruption or symlinks.",
+                &pins_dir,
+            ));
+            return;
+        }
+    };
+    checks.push(verify_release_pin_record(latest.0, &latest.1));
+}
+
+fn latest_release_pin_file(pins_dir: &Path) -> Result<Option<(u64, PathBuf)>, String> {
+    let norm_pins = normalize_lstat_path(pins_dir);
+    match fs::symlink_metadata(&norm_pins) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("cannot inspect release pins directory: {e}")),
+        Ok(meta) if !meta.is_dir() => {
+            return Err(
+                "release store `pins` entry is not a real directory (symlinks are refused)"
                     .to_owned(),
-            ),
-            Some(store_dir.display().to_string()),
-        )),
+            );
+        }
+        Ok(_) => {}
     }
+    let entries =
+        fs::read_dir(&norm_pins).map_err(|e| format!("cannot list release pins directory: {e}"))?;
+    let mut best: Option<(u64, PathBuf)> = None;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("reading release pins entry: {e}"))?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if name.starts_with(".pending-") {
+            continue;
+        }
+        let Some(ordinal) = parse_pin_ordinal(&name) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(cur, _)| ordinal > *cur) {
+            best = Some((ordinal, entry.path()));
+        }
+    }
+    Ok(best)
+}
+
+fn parse_pin_ordinal(name: &str) -> Option<u64> {
+    let stem = name.strip_suffix(".json")?;
+    if stem.is_empty() || stem.len() > 20 || !stem.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    stem.parse::<u64>().ok().filter(|&n| n > 0)
+}
+
+fn verify_release_pin_record(expected_ordinal: u64, pin_path: &Path) -> DoctorCheck {
+    const REINSTALL: &str =
+        "Re-install a signed release with `agentic-org release install <bundle>`.";
+    let bytes = match read_regular_bounded(pin_path, MAX_RELEASE_PIN_BYTES) {
+        Ok(b) => b,
+        Err(e) => {
+            return release_fail(
+                format!("cannot read release pin safely: {e}"),
+                "Verify the release pin file is a regular file (not a symlink).",
+                pin_path,
+            );
+        }
+    };
+    let commit: ReleaseCommitMini = match serde_json::from_slice(&bytes) {
+        Ok(c) => c,
+        Err(e) => {
+            return release_fail(
+                format!("release pin record is malformed: {e}"),
+                REINSTALL,
+                pin_path,
+            )
+        }
+    };
+    if commit.version != 1 || commit.ordinal != expected_ordinal || commit.pin.release_id.is_empty()
+    {
+        return release_fail(
+            "release pin record failed version/ordinal validation",
+            REINSTALL,
+            pin_path,
+        );
+    }
+    DoctorCheck::pass(
+        "release.status",
+        "release",
+        format!(
+            "pinned release `{}` present (ordinal {})",
+            commit.pin.release_id, commit.ordinal
+        ),
+        Some(pin_path.display().to_string()),
+    )
 }
 
 pub(super) fn check_credentials_dir(paths: &InstancePaths, checks: &mut Vec<DoctorCheck>) {

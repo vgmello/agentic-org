@@ -73,7 +73,7 @@ impl DoctorCheck {
             status: CheckStatus::Pass,
             message: redact_text(&message.into()).text,
             remediation: None,
-            path,
+            path: path.map(|p| redact_text(&p).text),
         }
     }
 
@@ -90,7 +90,7 @@ impl DoctorCheck {
             status: CheckStatus::Warn,
             message: redact_text(&message.into()).text,
             remediation: remediation.map(|r| redact_text(&r).text),
-            path,
+            path: path.map(|p| redact_text(&p).text),
         }
     }
 
@@ -107,7 +107,7 @@ impl DoctorCheck {
             status: CheckStatus::Fail,
             message: redact_text(&message.into()).text,
             remediation: remediation.map(|r| redact_text(&r).text),
-            path,
+            path: path.map(|p| redact_text(&p).text),
         }
     }
 }

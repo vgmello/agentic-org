@@ -12,9 +12,12 @@ mod org_integrity_checks;
 mod paths;
 mod redact;
 mod redact_fields;
+mod redact_pem;
 mod sqlite_read;
+mod sqlite_wal;
 mod support;
 mod uninstall;
+mod uninstall_guard;
 mod yaml_front;
 
 #[cfg(test)]

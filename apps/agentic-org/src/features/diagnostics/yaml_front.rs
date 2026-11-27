@@ -206,7 +206,7 @@ fn parse_value_after_key(
             parent_indent,
         )));
     }
-    parse_inline_value(line_num, val_part)
+    parse_inline_value(line_num, val_part, depth + 1)
 }
 
 fn parse_nested_block(
@@ -293,7 +293,7 @@ fn parse_seq_item(
         }
         return Ok(Value::Object(map));
     }
-    parse_inline_value(line_num, rest)
+    parse_inline_value(line_num, rest, depth + 1)
 }
 
 fn strip_seq_dash(content: &str) -> Option<&str> {
@@ -376,7 +376,12 @@ fn parse_key_scalar(line_num: usize, raw: &str) -> Result<String, String> {
     Ok(raw.to_owned())
 }
 
-fn parse_inline_value(line_num: usize, raw: &str) -> Result<Value, String> {
+fn parse_inline_value(line_num: usize, raw: &str, depth: usize) -> Result<Value, String> {
+    if depth > MAX_DEPTH {
+        return Err(format!(
+            "line {line_num}: YAML nesting exceeds maximum depth"
+        ));
+    }
     let raw = raw.trim();
     if raw.is_empty() {
         return Ok(Value::Null);
@@ -393,10 +398,10 @@ fn parse_inline_value(line_num: usize, raw: &str) -> Result<Value, String> {
         return parse_single_quoted(line_num, raw).map(Value::String);
     }
     if raw.starts_with('[') {
-        return parse_flow_sequence(line_num, raw);
+        return parse_flow_sequence(line_num, raw, depth);
     }
     if raw.starts_with('{') {
-        return parse_flow_mapping(line_num, raw);
+        return parse_flow_mapping(line_num, raw, depth);
     }
     Ok(parse_plain_scalar(raw))
 }
@@ -420,7 +425,7 @@ fn parse_single_quoted(line_num: usize, raw: &str) -> Result<String, String> {
     Ok(raw[1..raw.len() - 1].replace("''", "'"))
 }
 
-fn parse_flow_sequence(line_num: usize, raw: &str) -> Result<Value, String> {
+fn parse_flow_sequence(line_num: usize, raw: &str, depth: usize) -> Result<Value, String> {
     if !raw.ends_with(']') {
         return Err(format!("line {line_num}: unclosed YAML flow sequence `[`"));
     }
@@ -431,12 +436,12 @@ fn parse_flow_sequence(line_num: usize, raw: &str) -> Result<Value, String> {
     let parts = split_flow_items(line_num, inner)?;
     let mut items = Vec::with_capacity(parts.len());
     for part in parts {
-        items.push(parse_inline_value(line_num, part)?);
+        items.push(parse_inline_value(line_num, part, depth + 1)?);
     }
     Ok(Value::Array(items))
 }
 
-fn parse_flow_mapping(line_num: usize, raw: &str) -> Result<Value, String> {
+fn parse_flow_mapping(line_num: usize, raw: &str, depth: usize) -> Result<Value, String> {
     if !raw.ends_with('}') {
         return Err(format!("line {line_num}: unclosed YAML flow mapping `{{`"));
     }
@@ -447,10 +452,13 @@ fn parse_flow_mapping(line_num: usize, raw: &str) -> Result<Value, String> {
     let mut map = Map::new();
     for part in split_flow_items(line_num, inner)? {
         let (key, val) = split_key_value(line_num, part)?;
+        if key == "<<" {
+            return Err(format!("line {line_num}: YAML merge key `<<` is forbidden"));
+        }
         if map.contains_key(&key) {
             return Err(format!("line {line_num}: duplicate YAML key `{key}`"));
         }
-        map.insert(key, parse_inline_value(line_num, val)?);
+        map.insert(key, parse_inline_value(line_num, val, depth + 1)?);
     }
     Ok(Value::Object(map))
 }

@@ -20,6 +20,7 @@ struct DiagSandbox {
     root: PathBuf,
     base: PathBuf,
     keys: PathBuf,
+    svc: PathBuf,
 }
 
 impl DiagSandbox {
@@ -31,6 +32,7 @@ impl DiagSandbox {
         let root = dir.path().canonicalize().unwrap();
         let base = root.join("base");
         let keys = root.join("keys");
+        let svc = root.join("svc");
         for sub in ["home", "cache", "config", "work"] {
             fs::DirBuilder::new()
                 .mode(0o700)
@@ -39,11 +41,13 @@ impl DiagSandbox {
         }
         fs::DirBuilder::new().mode(0o700).create(&base).unwrap();
         fs::DirBuilder::new().mode(0o700).create(&keys).unwrap();
+        fs::DirBuilder::new().mode(0o700).create(&svc).unwrap();
         Self {
             _dir: dir,
             root,
             base,
             keys,
+            svc,
         }
     }
 
@@ -63,6 +67,7 @@ impl DiagSandbox {
             .env("HOME", self.root.join("home"))
             .env("ORG_DEV_ACCOUNT_BASE", &self.base)
             .env("ORG_OFFICE_DEV_KEY_DIR", &self.keys)
+            .env("ORG_DEV_SERVICE_DIR", &self.svc)
             .env("AGENTIC_ORG_CACHE_DIR", self.root.join("cache"))
             .env("AGENTIC_ORG_CONFIG_DIR", self.root.join("config"))
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
@@ -170,6 +175,10 @@ fn logs_redacts_secrets_respects_bounds_and_refuses_symlinks() {
     assert_eq!(quiet.status.code(), Some(0));
     assert!(quiet.stderr.is_empty());
     assert_eq!(text(&quiet.stdout).lines().count(), 2);
+
+    // P0 #3: Multibyte --office filter never panics (rejected cleanly with exit 2).
+    let mb = sb.run(&["logs", "--instance", "lab", "--office", "éaaaaaaaaaaa"]);
+    assert_eq!(mb.status.code(), Some(2), "{}", text(&mb.stderr));
 }
 
 #[test]
@@ -380,4 +389,122 @@ fn uninstall_requires_yes_refuses_active_lock_and_clears_registry_created_for_fr
     let rec_json: Value = serde_json::from_slice(&recover.stdout).unwrap();
     assert_eq!(rec_json["registry_created_cleared"], true, "{rec_json}");
     assert!(!fresh2.root.join("host-registry.created").exists());
+}
+
+#[test]
+fn uninstall_refuses_symlinks_traversal_busy_registry_lock_and_service_errors() {
+    // 1. Symlinked office-state -> victim dir: zero deletion outside OR inside instance.
+    let sb = DiagSandbox::new();
+    let acct = sb.setup_instance(Some("symoff"));
+    seed_administrator(&sb.base, Some("symoff"), &sb.keys).unwrap();
+    let victim = sb.root.join("victim-office-state");
+    write_file(&victim.join("host-registry.db"), "DO_NOT_DELETE");
+    write_file(&victim.join("logs/keep.log"), "KEEP_LOG");
+    fs::remove_dir_all(&acct.office_home).unwrap();
+    symlink(&victim, &acct.office_home).unwrap();
+    let res = sb.run(&["--json", "uninstall", "--instance", "symoff", "--yes"]);
+    assert_eq!(res.status.code(), Some(1), "{}", text(&res.stderr));
+    assert!(victim.join("host-registry.db").is_file());
+    assert!(victim.join("logs/keep.log").is_file());
+    assert!(acct.root.join("host-registry.created").is_file());
+
+    // 2. Symlinked setup_dir -> victim dir: zero deletion.
+    let sb2 = DiagSandbox::new();
+    let acct2 = sb2.setup_instance(Some("symsetup"));
+    seed_administrator(&sb2.base, Some("symsetup"), &sb2.keys).unwrap();
+    let victim_setup = sb2.root.join("victim-setup");
+    write_file(&victim_setup.join("setup.v1.json"), "KEEP_SETUP");
+    write_file(&victim_setup.join("setup.lock"), "KEEP_LOCK");
+    let setup_dir = sb2.base.join("setup/symsetup");
+    fs::remove_dir_all(&setup_dir).unwrap();
+    symlink(&victim_setup, &setup_dir).unwrap();
+    let res2 = sb2.run(&["--json", "uninstall", "--instance", "symsetup", "--yes"]);
+    assert_eq!(res2.status.code(), Some(1), "{}", text(&res2.stderr));
+    assert!(victim_setup.join("setup.v1.json").is_file());
+    assert!(victim_setup.join("setup.lock").is_file());
+    assert!(acct2.root.join("host-registry.created").is_file());
+
+    // 3. Symlinked `<user_temp>/ao` -> victim parent: zero deletion.
+    let sb3 = DiagSandbox::new();
+    let acct3 = sb3.setup_instance(Some("symao"));
+    seed_administrator(&sb3.base, Some("symao"), &sb3.keys).unwrap();
+    let handle = acct3.runtime.file_name().unwrap().to_owned();
+    let victim_ao = sb3.root.join("victim-ao");
+    write_file(&victim_ao.join(&handle).join("keep.txt"), "KEEP_AO");
+    let ao_dir = sb3.base.join("temp/ao");
+    fs::remove_dir_all(&ao_dir).unwrap();
+    symlink(&victim_ao, &ao_dir).unwrap();
+    let res3 = sb3.run(&["--json", "uninstall", "--instance", "symao", "--yes"]);
+    assert_eq!(res3.status.code(), Some(1), "{}", text(&res3.stderr));
+    assert!(victim_ao.join(&handle).join("keep.txt").is_file());
+    assert!(acct3.root.join("host-registry.created").is_file());
+
+    // 4. `..` traversal in instance.json (`temp_folder = <tmp>/ao/../../victim`): zero deletion.
+    let sb4 = DiagSandbox::new();
+    let acct4 = sb4.setup_instance(Some("trav"));
+    seed_administrator(&sb4.base, Some("trav"), &sb4.keys).unwrap();
+    let victim_trav = sb4.base.join("victim");
+    write_file(&victim_trav.join("keep.txt"), "KEEP_TRAV");
+    let cfg_path = acct4.root.join("instance.json");
+    let mut cfg: Value = serde_json::from_slice(&fs::read(&cfg_path).unwrap()).unwrap();
+    cfg["binding"]["temp_folder"] =
+        Value::String(sb4.base.join("temp/ao/../../victim").display().to_string());
+    fs::write(&cfg_path, serde_json::to_vec(&cfg).unwrap()).unwrap();
+    let res4 = sb4.run(&["--json", "uninstall", "--instance", "trav", "--yes"]);
+    assert!(
+        !res4.status.success(),
+        "traversal temp_folder must fail closed"
+    );
+    assert!(victim_trav.join("keep.txt").is_file());
+    assert!(acct4.root.join("host-registry.created").is_file());
+
+    // 5. Held `locator/registry.lock` fails closed BEFORE any instance/setup file is deleted.
+    let sb5 = DiagSandbox::new();
+    let acct5 = sb5.setup_instance(Some("reglock"));
+    seed_administrator(&sb5.base, Some("reglock"), &sb5.keys).unwrap();
+    let reg_lock_path = sb5.base.join("locator/registry.lock");
+    let reg_lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(&reg_lock_path)
+        .unwrap();
+    reg_lock.try_lock().unwrap();
+    let res5 = sb5.run(&["--json", "uninstall", "--instance", "reglock", "--yes"]);
+    assert_eq!(res5.status.code(), Some(1), "{}", text(&res5.stderr));
+    let env5: Value = serde_json::from_slice(&res5.stderr).unwrap();
+    assert_eq!(env5["error"]["code"], "uninstall::locator_busy");
+    assert!(acct5.root.join("host-registry.created").is_file());
+    assert!(acct5.office_home.join("host-registry.db").is_file());
+    assert!(sb5.base.join("setup/reglock/setup.v1.json").is_file());
+    reg_lock.unlock().unwrap();
+    drop(reg_lock);
+
+    // 6. Symlinked `locator/registry.lock` fails closed BEFORE deleting anything.
+    let lock_victim = sb5.root.join("lock-victim.txt");
+    fs::write(&lock_victim, "LOCK_VICTIM").unwrap();
+    fs::remove_file(&reg_lock_path).unwrap();
+    symlink(&lock_victim, &reg_lock_path).unwrap();
+    let res6 = sb5.run(&["--json", "uninstall", "--instance", "reglock", "--yes"]);
+    assert_eq!(res6.status.code(), Some(1), "{}", text(&res6.stderr));
+    let env6: Value = serde_json::from_slice(&res6.stderr).unwrap();
+    assert_eq!(env6["error"]["code"], "uninstall::unsafe_lock");
+    assert!(acct5.root.join("host-registry.created").is_file());
+    assert_eq!(fs::read_to_string(&lock_victim).unwrap(), "LOCK_VICTIM");
+
+    // 7. Failing service status (invalid service ID -> ServiceError::Invalid) fails closed with zero deletion.
+    let sb7 = DiagSandbox::new();
+    let acct7 = sb7.setup_instance(Some("svcerr"));
+    seed_administrator(&sb7.base, Some("svcerr"), &sb7.keys).unwrap();
+    let setup_rec = sb7.base.join("setup/svcerr/setup.v1.json");
+    let mut sdoc: Value = serde_json::from_slice(&fs::read(&setup_rec).unwrap()).unwrap();
+    sdoc["instance_id"] = Value::String("bad/service/id".to_owned());
+    fs::write(&setup_rec, serde_json::to_vec(&sdoc).unwrap()).unwrap();
+    let res7 = sb7.run(&["--json", "uninstall", "--instance", "svcerr", "--yes"]);
+    assert_eq!(res7.status.code(), Some(1), "{}", text(&res7.stderr));
+    let env7: Value = serde_json::from_slice(&res7.stderr).unwrap();
+    assert_eq!(env7["error"]["code"], "uninstall::service");
+    assert!(acct7.root.join("host-registry.created").is_file());
 }

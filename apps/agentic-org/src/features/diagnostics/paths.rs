@@ -19,6 +19,7 @@ const DEV_ACCOUNT_BASE: &str = "ORG_DEV_ACCOUNT_BASE";
 #[derive(Debug, Clone)]
 pub(crate) struct InstancePaths {
     pub(crate) name: String,
+    pub(crate) account_base: PathBuf,
     pub(crate) user_temp: Option<PathBuf>,
     pub(crate) setup_dir: PathBuf,
     pub(crate) setup_record: PathBuf,
@@ -88,6 +89,32 @@ pub(crate) fn validate_plain_path(path: &Path) -> Result<(), CliError> {
             "path `{}` must not contain `..` traversal components",
             path.display()
         )));
+    }
+    Ok(())
+}
+
+/// Validates a persisted or configured path: plain (no NUL/`..`), no `.` segments, and absolute.
+pub(crate) fn validate_loaded_abs_path(path: &Path, label: &str) -> Result<(), CliError> {
+    validate_plain_path(path)?;
+    if !path.is_absolute() {
+        return Err(CliError::failed(
+            "diagnostics::unsafe_path",
+            format!("{label} `{}` must be an absolute path", path.display()),
+        ));
+    }
+    let has_dot = path
+        .as_os_str()
+        .as_bytes()
+        .split(|&b| b == b'/')
+        .any(|seg| seg == b"." || seg == b"..");
+    if has_dot {
+        return Err(CliError::failed(
+            "diagnostics::unsafe_path",
+            format!(
+                "{label} `{}` must not contain `.` or `..` path components",
+                path.display()
+            ),
+        ));
     }
     Ok(())
 }
@@ -336,6 +363,10 @@ pub(crate) fn resolve_instance(instance_name: Option<&str>) -> Result<InstancePa
     let name = instance_name.unwrap_or("default").to_owned();
     validate_instance_name(&name)?;
     let (base, user_temp) = resolve_account_bases()?;
+    validate_loaded_abs_path(&base, "account base")?;
+    if let Some(ref temp) = user_temp {
+        validate_loaded_abs_path(temp, "user temp base")?;
+    }
     let setup_dir = base.join("setup").join(&name);
     let setup_record = setup_dir.join("setup.v1.json");
     let locator_dir = base.join("locator");
@@ -355,16 +386,32 @@ pub(crate) fn resolve_instance(instance_name: Option<&str>) -> Result<InstancePa
                 .map(|entry| entry.binding)
         });
 
+    if let Some(ref s) = setup {
+        validate_loaded_abs_path(&s.input.root, "setup instance root")?;
+        if let Some(ref creds) = s.credentials {
+            validate_loaded_abs_path(creds, "setup credentials directory")?;
+        }
+    }
+    if let Some(ref b) = locator_binding {
+        validate_loaded_abs_path(&b.root, "locator instance root")?;
+        validate_loaded_abs_path(&b.temp_folder, "locator temp folder")?;
+    }
+
     let instance_root = setup
         .as_ref()
         .map(|s| s.input.root.clone())
         .or_else(|| locator_binding.as_ref().map(|b| b.root.clone()))
         .unwrap_or_else(|| base.join("instances").join(&name));
+    validate_loaded_abs_path(&instance_root, "instance root")?;
     let instance_config = instance_root.join("instance.json");
     let config_binding = read_regular_bounded(&instance_config, MAX_CONTROL_BYTES)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<InstanceConfigMini>(&bytes).ok())
         .map(|cfg| cfg.binding);
+    if let Some(ref b) = config_binding {
+        validate_loaded_abs_path(&b.root, "instance config root")?;
+        validate_loaded_abs_path(&b.temp_folder, "instance config temp folder")?;
+    }
 
     let instance_id = setup
         .as_ref()
@@ -380,9 +427,11 @@ pub(crate) fn resolve_instance(instance_name: Option<&str>) -> Result<InstancePa
         .map(|b| b.temp_folder.clone())
         .or_else(|| locator_binding.as_ref().map(|b| b.temp_folder.clone()))
         .unwrap_or_else(|| office_home.join("run"));
+    validate_loaded_abs_path(&run_dir, "instance runtime directory")?;
 
     Ok(InstancePaths {
         name,
+        account_base: base,
         user_temp,
         setup_dir,
         setup_record,

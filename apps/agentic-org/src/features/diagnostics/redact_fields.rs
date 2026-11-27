@@ -24,6 +24,9 @@ const SENSITIVE_KEYS: &[&str] = &[
     "privatekey",
     "secret",
     "secretkey",
+    "secretaccesskey",
+    "awssecretaccesskey",
+    "accesskey",
     "secrethex",
     "secretb64",
     "secretbase64",
@@ -88,6 +91,8 @@ pub(super) fn is_sensitive_key(key: &str) -> bool {
     [
         "token",
         "secret",
+        "secretkey",
+        "accesskey",
         "apikey",
         "password",
         "passphrase",
@@ -174,7 +179,7 @@ fn header_value_end(bytes: &[u8], start: usize) -> usize {
         match bytes.get(at) {
             Some(b'\n' | b'\r') => return at,
             Some(b'n' | b'r') if run % 2 == 1 => return at - 1,
-            Some(b'"') if run.trailing_ones() > 0 || closes_json_string(bytes, at) => return i,
+            Some(b'"') if run % 2 == 1 || closes_json_string(bytes, at) => return i,
             _ => i = at + 1,
         }
     }
@@ -321,7 +326,7 @@ fn escaped_closing_quote(bytes: &[u8], from: usize) -> Option<usize> {
     let mut idx = from;
     while idx < bytes.len() {
         let run = bytes[idx..].iter().take_while(|&&b| b == b'\\').count();
-        match (bytes.get(idx + run), run.trailing_ones()) {
+        match (bytes.get(idx + run), run % 2) {
             (Some(b'"'), 1) => return Some(idx + run - 1),
             (Some(b'"'), 0) => return Some(idx + run),
             (Some(_), _) => idx += run + 1,

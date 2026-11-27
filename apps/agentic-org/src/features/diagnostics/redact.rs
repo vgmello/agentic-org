@@ -10,10 +10,13 @@ use super::redact_fields::{
     is_sensitive_key, redact_env_assignments, redact_header_values, redact_quoted_key_values,
     redact_recovery_codes, redact_unquoted_key_values,
 };
+use super::redact_pem::{
+    has_leading_orphan_pem_end, has_unclosed_pem_begin, redact_pem_blocks,
+    scrub_preceding_pem_body, strip_pem_end_line, REDACTED_PRIVATE_KEY,
+};
 
 /// Replacement for every redacted secret value.
 pub(crate) const REDACTED: &str = "[REDACTED]";
-const REDACTED_PRIVATE_KEY: &str = "[REDACTED PRIVATE KEY]";
 
 const SECRET_PREFIXES: &[(&str, usize)] = &[
     ("sk-ant-", 6),
@@ -101,25 +104,18 @@ pub(crate) fn redact_lines(lines: &[String]) -> (Vec<String>, usize) {
         if in_pem {
             total += 1;
             if let Some(after) = strip_pem_end_line(raw) {
-                in_pem = false;
+                in_pem = has_unclosed_pem_begin(after);
                 out.push(format_pem_end_tail(after, &mut total));
             } else {
                 out.push(REDACTED_PRIVATE_KEY.to_owned());
             }
             continue;
         }
+        if has_leading_orphan_pem_end(raw) {
+            scrub_preceding_pem_body(&mut out, &mut total);
+        }
         if has_unclosed_pem_begin(raw) {
             in_pem = true;
-            let red = redact_text(raw);
-            total += red.count;
-            out.push(red.text);
-            continue;
-        }
-        if let Some(after) = strip_pem_end_line(raw) {
-            scrub_preceding_pem_body(&mut out, &mut total);
-            total += 1;
-            out.push(format_pem_end_tail(after, &mut total));
-            continue;
         }
         let red = redact_text(raw);
         total += red.count;
@@ -176,80 +172,6 @@ fn redact_json_inner(value: &Value, total: &mut usize) -> Value {
         }
         other => other.clone(),
     }
-}
-
-const PEM_BEGIN: &str = "-----BEGIN ";
-const PEM_END: &str = "-----END ";
-const PEM_DASHES: &str = "-----";
-const PEM_MAX_LABEL: usize = 64;
-
-fn is_private_key_label(after_marker: &str) -> bool {
-    let label = match after_marker.find(PEM_DASHES) {
-        Some(end) if end <= PEM_MAX_LABEL => &after_marker[..end],
-        _ => &after_marker[..after_marker.floor_char_boundary(PEM_MAX_LABEL)],
-    };
-    label.to_ascii_uppercase().contains("PRIVATE KEY")
-}
-
-fn has_unclosed_pem_begin(line: &str) -> bool {
-    let Some(start) = line.rfind(PEM_BEGIN) else {
-        return false;
-    };
-    let after = &line[start + PEM_BEGIN.len()..];
-    is_private_key_label(after) && !after.contains(PEM_END)
-}
-
-fn strip_pem_end_line(line: &str) -> Option<&str> {
-    let start = line.find(PEM_END)?;
-    let after = &line[start + PEM_END.len()..];
-    if !is_private_key_label(after) {
-        return None;
-    }
-    let end_off = after.find(PEM_DASHES).map(|n| n + PEM_DASHES.len());
-    Some(end_off.map_or("", |off| &after[off..]))
-}
-
-fn scrub_preceding_pem_body(out: &mut [String], total: &mut usize) {
-    for line in out.iter_mut().rev() {
-        let trimmed = line.trim();
-        let looks_b64 = trimmed.len() >= 16
-            && trimmed
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='));
-        if !looks_b64 {
-            break;
-        }
-        *line = REDACTED_PRIVATE_KEY.to_owned();
-        *total += 1;
-    }
-}
-
-fn redact_pem_blocks(input: &str, total: &mut usize) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut rest = input;
-    while let Some(start) = rest.find(PEM_BEGIN) {
-        let after_begin = &rest[start + PEM_BEGIN.len()..];
-        if !is_private_key_label(after_begin) {
-            out.push_str(&rest[..start + PEM_BEGIN.len()]);
-            rest = after_begin;
-            continue;
-        }
-        out.push_str(&rest[..start]);
-        out.push_str(REDACTED_PRIVATE_KEY);
-        *total += 1;
-        rest = skip_past_pem_end(after_begin);
-    }
-    out.push_str(rest);
-    out
-}
-
-fn skip_past_pem_end(after_begin: &str) -> &str {
-    let Some(end_idx) = after_begin.find(PEM_END) else {
-        return "";
-    };
-    let tail = &after_begin[end_idx + PEM_END.len()..];
-    tail.find(PEM_DASHES)
-        .map_or("", |off| &tail[off + PEM_DASHES.len()..])
 }
 
 pub(super) fn is_token_byte(b: u8) -> bool {

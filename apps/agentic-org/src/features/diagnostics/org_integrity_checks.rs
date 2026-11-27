@@ -1,11 +1,50 @@
 //! Report builders for organization-state integrity checks (`org_integrity.rs`).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
-use super::doctor::{CheckStatus, DoctorCheck};
+use super::doctor::DoctorCheck;
 use super::org_integrity::{StateIndex, TargetKind};
 use super::sqlite_read::read_projected_tasks;
+
+pub(super) fn resolve_office_db(
+    org_dir: &Path,
+    state_root: &Path,
+    explicit: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(path) = explicit {
+        return Some(path.to_path_buf());
+    }
+    let mut candidates = vec![org_dir.join("office.db"), state_root.join("office.db")];
+    if let Some(p1) = state_root.parent() {
+        candidates.push(p1.join("office.db"));
+        candidates.push(p1.join("runtime").join("office.db"));
+        if let Some(p2) = p1.parent() {
+            candidates.push(p2.join("office.db"));
+            candidates.push(p2.join("runtime").join("office.db"));
+            collect_runtime_office_dbs(&p2.join("runtime"), &mut candidates);
+        }
+        collect_runtime_office_dbs(&p1.join("runtime"), &mut candidates);
+    }
+    collect_runtime_office_dbs(&org_dir.join("runtime"), &mut candidates);
+    candidates
+        .into_iter()
+        .find(|p| fs::symlink_metadata(p).is_ok_and(|m| m.is_file()))
+}
+
+fn collect_runtime_office_dbs(runtime_dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(runtime_dir) else {
+        return;
+    };
+    let mut dirs: Vec<PathBuf> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
+    dirs.sort();
+    for dir in dirs {
+        if fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+            out.push(dir.join("office.db"));
+        }
+    }
+}
 
 pub(super) fn build_syntax_check(index: &StateIndex, scope: &str, root: &Path) -> DoctorCheck {
     if index.syntax_errors.is_empty() {
@@ -146,22 +185,30 @@ pub(super) fn build_sqlite_parity_check(
     };
     let durable_keys: BTreeSet<String> = index.task_keys.keys().cloned().collect();
     let sqlite_keys: BTreeSet<String> = projected.iter().filter_map(|t| t.key.clone()).collect();
-    let missing_in_db: Vec<String> = durable_keys.difference(&sqlite_keys).cloned().collect();
-    let extra_in_db: Vec<String> = sqlite_keys.difference(&durable_keys).cloned().collect();
+    let missing_keys: Vec<String> = durable_keys.difference(&sqlite_keys).cloned().collect();
+    let extra_keys: Vec<String> = sqlite_keys.difference(&durable_keys).cloned().collect();
+
+    let durable_ids: BTreeSet<String> = index.task_ids.keys().cloned().collect();
+    let sqlite_ids: BTreeSet<String> = projected.iter().filter_map(|t| t.id.clone()).collect();
+    let missing_ids: Vec<String> = durable_ids.difference(&sqlite_ids).cloned().collect();
+    let extra_ids: Vec<String> = sqlite_ids.difference(&durable_ids).cloned().collect();
     let count_drift = projected.len() != index.task_count;
 
-    if !count_drift && missing_in_db.is_empty() && extra_in_db.is_empty() {
-        return DoctorCheck {
-            id: format!("{scope}.sqlite_parity"),
-            category: "org_integrity".to_owned(),
-            status: CheckStatus::Pass,
-            message: format!(
+    if !count_drift
+        && missing_keys.is_empty()
+        && extra_keys.is_empty()
+        && missing_ids.is_empty()
+        && extra_ids.is_empty()
+    {
+        return DoctorCheck::pass(
+            format!("{scope}.sqlite_parity"),
+            "org_integrity",
+            format!(
                 "SQLite projection matches durable state ({} task(s))",
                 index.task_count
             ),
-            remediation: None,
-            path: Some(db_path.display().to_string()),
-        };
+            Some(db_path.display().to_string()),
+        );
     }
     let mut details = Vec::new();
     if count_drift {
@@ -171,18 +218,10 @@ pub(super) fn build_sqlite_parity_check(
             projected.len()
         ));
     }
-    if !missing_in_db.is_empty() {
-        details.push(format!(
-            "missing in office.db: {}",
-            join_limited(&missing_in_db, 5)
-        ));
-    }
-    if !extra_in_db.is_empty() {
-        details.push(format!(
-            "extra in office.db: {}",
-            join_limited(&extra_in_db, 5)
-        ));
-    }
+    push_diff_detail(&mut details, "missing keys in office.db", &missing_keys);
+    push_diff_detail(&mut details, "extra keys in office.db", &extra_keys);
+    push_diff_detail(&mut details, "missing task IDs in office.db", &missing_ids);
+    push_diff_detail(&mut details, "extra task IDs in office.db", &extra_ids);
     DoctorCheck::fail(
         format!("{scope}.sqlite_parity"),
         "org_integrity",
@@ -193,6 +232,12 @@ pub(super) fn build_sqlite_parity_check(
         ),
         Some(db_path.display().to_string()),
     )
+}
+
+fn push_diff_detail(details: &mut Vec<String>, label: &str, items: &[String]) {
+    if !items.is_empty() {
+        details.push(format!("{label}: {}", join_limited(items, 5)));
+    }
 }
 
 fn join_limited(items: &[String], max: usize) -> String {

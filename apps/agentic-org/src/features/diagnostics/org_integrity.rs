@@ -13,15 +13,19 @@ use serde_json::{Map, Value};
 use super::doctor::DoctorCheck;
 use super::org_integrity_checks::{
     build_cross_link_check, build_display_key_check, build_sqlite_parity_check, build_syntax_check,
+    resolve_office_db,
 };
 use super::paths::{normalize_lstat_path, read_regular_bounded, validate_plain_path};
 use super::yaml_front::{parse_markdown_front_matter, parse_yaml_mapping};
 
-const MAX_SCAN_FILES: usize = 10_000;
+const MAX_SCAN_ENTRIES: usize = 10_000;
+const MAX_SCAN_DEPTH: usize = 32;
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Default)]
 pub(super) struct StateIndex {
+    pub(super) entries_scanned: usize,
+    pub(super) cap_hit: bool,
     pub(super) files_scanned: usize,
     pub(super) syntax_errors: Vec<String>,
     pub(super) task_keys: BTreeMap<String, Vec<String>>,
@@ -56,6 +60,16 @@ pub(super) enum TargetKind {
     AnyEntity,
 }
 
+fn syntax_fail(scope: &str, msg: impl Into<String>, fix: &str, path: &Path) -> Vec<DoctorCheck> {
+    vec![DoctorCheck::fail(
+        format!("{scope}.syntax"),
+        "org_integrity",
+        msg,
+        Some(fix.to_owned()),
+        Some(path.display().to_string()),
+    )]
+}
+
 /// Runs all four organization-state integrity checks against `org_dir`.
 pub(crate) fn check_org_state(
     org_dir: &Path,
@@ -63,38 +77,35 @@ pub(crate) fn check_org_state(
     scope_label: &str,
 ) -> Vec<DoctorCheck> {
     if let Err(err) = validate_plain_path(org_dir) {
-        return vec![DoctorCheck::fail(
-            format!("{scope_label}.syntax"),
-            "org_integrity",
+        return syntax_fail(
+            scope_label,
             err.to_string(),
-            Some("Pass a clean path without `..` or NUL bytes.".to_owned()),
-            Some(org_dir.display().to_string()),
-        )];
+            "Pass a clean path without `..` or NUL bytes.",
+            org_dir,
+        );
     }
     let state_root = resolve_state_root(org_dir);
     let norm_root = normalize_lstat_path(&state_root);
     match fs::symlink_metadata(&norm_root) {
         Ok(m) if m.is_dir() => {}
         Ok(_) => {
-            return vec![DoctorCheck::fail(
-                format!("{scope_label}.syntax"),
-                "org_integrity",
+            return syntax_fail(
+                scope_label,
                 format!(
                     "`{}` is not a real directory (symlinks are refused)",
                     norm_root.display()
                 ),
-                Some("Point --org-dir at a real durable/state directory.".to_owned()),
-                Some(norm_root.display().to_string()),
-            )];
+                "Point --org-dir at a real durable/state directory.",
+                &norm_root,
+            );
         }
         Err(e) => {
-            return vec![DoctorCheck::fail(
-                format!("{scope_label}.syntax"),
-                "org_integrity",
+            return syntax_fail(
+                scope_label,
                 format!("cannot inspect `{}`: {e}", norm_root.display()),
-                Some("Verify the organization state directory exists and is readable.".to_owned()),
-                Some(norm_root.display().to_string()),
-            )];
+                "Verify the organization state directory exists and is readable.",
+                &norm_root,
+            );
         }
     }
 
@@ -124,45 +135,25 @@ fn resolve_state_root(org_dir: &Path) -> PathBuf {
     org_dir.to_path_buf()
 }
 
-fn resolve_office_db(
-    org_dir: &Path,
-    state_root: &Path,
-    explicit: Option<&Path>,
-) -> Option<PathBuf> {
-    if let Some(path) = explicit {
-        return Some(path.to_path_buf());
-    }
-    let mut candidates = vec![org_dir.join("office.db"), state_root.join("office.db")];
-    if let Some(p1) = state_root.parent() {
-        candidates.push(p1.join("office.db"));
-        candidates.push(p1.join("runtime").join("office.db"));
-        if let Some(p2) = p1.parent() {
-            candidates.push(p2.join("office.db"));
-            candidates.push(p2.join("runtime").join("office.db"));
-            collect_runtime_office_dbs(&p2.join("runtime"), &mut candidates);
-        }
-        collect_runtime_office_dbs(&p1.join("runtime"), &mut candidates);
-    }
-    collect_runtime_office_dbs(&org_dir.join("runtime"), &mut candidates);
-    candidates
-        .into_iter()
-        .find(|p| fs::symlink_metadata(p).is_ok_and(|m| m.is_file()))
-}
-
-fn collect_runtime_office_dbs(runtime_dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(runtime_dir) else {
-        return;
-    };
-    let mut dirs: Vec<PathBuf> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
-    dirs.sort();
-    for dir in dirs {
-        if fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
-            out.push(dir.join("office.db"));
-        }
-    }
-}
-
 fn walk_state_tree(root: &Path, dir: &Path, index: &mut StateIndex) {
+    walk_state_tree_bounded(root, dir, 0, MAX_SCAN_DEPTH, MAX_SCAN_ENTRIES, index);
+}
+
+pub(super) fn walk_state_tree_bounded(
+    root: &Path,
+    dir: &Path,
+    depth: usize,
+    max_depth: usize,
+    max_entries: usize,
+    index: &mut StateIndex,
+) {
+    if depth > max_depth {
+        index.syntax_errors.push(format!(
+            "{}: directory nesting exceeds maximum depth of {max_depth}",
+            rel_str(root, dir)
+        ));
+        return;
+    }
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) => {
@@ -173,15 +164,28 @@ fn walk_state_tree(root: &Path, dir: &Path, index: &mut StateIndex) {
             return;
         }
     };
-    let mut paths: Vec<PathBuf> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
+    let mut paths = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(e) => paths.push(e.path()),
+            Err(e) => index.syntax_errors.push(format!(
+                "{}: directory entry read failed: {e}",
+                rel_str(root, dir)
+            )),
+        }
+    }
     paths.sort();
     for path in paths {
-        if index.files_scanned >= MAX_SCAN_FILES {
-            index.syntax_errors.push(format!(
-                "state tree exceeded scan cap of {MAX_SCAN_FILES} files"
-            ));
+        if index.entries_scanned >= max_entries {
+            if !index.cap_hit {
+                index.cap_hit = true;
+                index.syntax_errors.push(format!(
+                    "state tree exceeded scan cap of {max_entries} entries"
+                ));
+            }
             return;
         }
+        index.entries_scanned += 1;
         let rel = rel_str(root, &path);
         let meta = match fs::symlink_metadata(normalize_lstat_path(&path)) {
             Ok(m) => m,
@@ -197,7 +201,10 @@ fn walk_state_tree(root: &Path, dir: &Path, index: &mut StateIndex) {
             continue;
         }
         if meta.is_dir() {
-            walk_state_tree(root, &path, index);
+            walk_state_tree_bounded(root, &path, depth + 1, max_depth, max_entries, index);
+            if index.cap_hit {
+                return;
+            }
             continue;
         }
         if !meta.is_file() {
@@ -346,22 +353,22 @@ fn collect_task_links(fm: &Map<String, Value>, rel: &str, index: &mut StateIndex
     for dep in string_list_field(fm, "depends_on") {
         push_link(index, rel, "depends_on", TargetKind::Task, dep);
     }
-    if let Some(project_id) = str_field(fm, "project_id") {
+    if let Some(pid) = str_field(fm, "project_id") {
         push_link(
             index,
             rel,
             "project_id",
             TargetKind::Project,
-            project_id.to_owned(),
+            pid.to_owned(),
         );
     }
-    if let Some(feature_id) = str_field(fm, "feature_id") {
+    if let Some(fid) = str_field(fm, "feature_id") {
         push_link(
             index,
             rel,
             "feature_id",
             TargetKind::Feature,
-            feature_id.to_owned(),
+            fid.to_owned(),
         );
     }
     for rel_ref in string_list_field(fm, "relates_to") {
@@ -431,22 +438,22 @@ fn inspect_doc_or_decision_md(path: &Path, rel: &str, is_decision: bool, index: 
     for rel_ref in string_list_field(&fm, "relates_to") {
         push_link(index, rel, "relates_to", TargetKind::AnyEntity, rel_ref);
     }
-    if let Some(project_id) = str_field(&fm, "project_id") {
+    if let Some(pid) = str_field(&fm, "project_id") {
         push_link(
             index,
             rel,
             "project_id",
             TargetKind::Project,
-            project_id.to_owned(),
+            pid.to_owned(),
         );
     }
-    if let Some(feature_id) = str_field(&fm, "feature_id") {
+    if let Some(fid) = str_field(&fm, "feature_id") {
         push_link(
             index,
             rel,
             "feature_id",
             TargetKind::Feature,
-            feature_id.to_owned(),
+            fid.to_owned(),
         );
     }
 }
@@ -457,39 +464,26 @@ fn record_doc_identity(
     is_decision: bool,
     index: &mut StateIndex,
 ) {
+    let (known, ids, keys) = if is_decision {
+        (
+            &mut index.known_decisions,
+            &mut index.decision_ids,
+            &mut index.decision_keys,
+        )
+    } else {
+        (
+            &mut index.known_docs,
+            &mut index.doc_ids,
+            &mut index.doc_keys,
+        )
+    };
     if let Some(id) = str_field(fm, "id") {
-        if is_decision {
-            index.known_decisions.insert(id.to_owned());
-            index
-                .decision_ids
-                .entry(id.to_owned())
-                .or_default()
-                .push(rel.to_owned());
-        } else {
-            index.known_docs.insert(id.to_owned());
-            index
-                .doc_ids
-                .entry(id.to_owned())
-                .or_default()
-                .push(rel.to_owned());
-        }
+        known.insert(id.to_owned());
+        ids.entry(id.to_owned()).or_default().push(rel.to_owned());
     }
     if let Some(key) = str_field(fm, "key") {
-        if is_decision {
-            index.known_decisions.insert(key.to_owned());
-            index
-                .decision_keys
-                .entry(key.to_owned())
-                .or_default()
-                .push(rel.to_owned());
-        } else {
-            index.known_docs.insert(key.to_owned());
-            index
-                .doc_keys
-                .entry(key.to_owned())
-                .or_default()
-                .push(rel.to_owned());
-        }
+        known.insert(key.to_owned());
+        keys.entry(key.to_owned()).or_default().push(rel.to_owned());
     }
 }
 

@@ -10,13 +10,14 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use super::paths::normalize_lstat_path;
+use super::sqlite_wal::{load_wal_index, read_be_u16_at, read_be_u32_at};
 
 const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
-const WAL_MAGIC_LE: u32 = 0x377f_0682;
-const WAL_MAGIC_BE: u32 = 0x377f_0683;
 const MAX_PAGES_VISITED: usize = 16_384;
 const MAX_OVERFLOW_HOPS: usize = 256;
-const MAX_WAL_FRAMES: usize = 65_536;
+const MAX_ROWS_DECODED: usize = 100_000;
+const MAX_PAYLOAD_BYTES: usize = 1024 * 1024;
+const MAX_TOTAL_PAYLOAD_BYTES: usize = 32 * 1024 * 1024;
 
 /// One task row extracted read-only from `office.db`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,7 +42,7 @@ pub(crate) fn read_projected_tasks(db_path: &Path) -> Result<Vec<ProjectedTask>,
         }
     }
     let Some(root_page) = tasks_root else {
-        return Ok(Vec::new());
+        return Err("SQLite database is missing required `tasks` table".to_owned());
     };
     let cols = parse_task_columns(tasks_ddl.as_deref().unwrap_or(""));
     let rows = reader.read_table(root_page)?;
@@ -73,14 +74,15 @@ pub(crate) fn read_projected_tasks(db_path: &Path) -> Result<Vec<ProjectedTask>,
     Ok(tasks)
 }
 
-struct TaskCols {
-    id: Option<usize>,
-    key: Option<usize>,
-    office_code: Option<usize>,
-    number: Option<usize>,
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct TaskCols {
+    pub(super) id: Option<usize>,
+    pub(super) key: Option<usize>,
+    pub(super) office_code: Option<usize>,
+    pub(super) number: Option<usize>,
 }
 
-fn parse_task_columns(ddl: &str) -> TaskCols {
+pub(super) fn parse_task_columns(ddl: &str) -> TaskCols {
     let mut cols = TaskCols {
         id: None,
         key: None,
@@ -98,7 +100,7 @@ fn parse_task_columns(ddl: &str) -> TaskCols {
     }
     let mut physical_idx = 0usize;
     for raw_def in split_top_level_commas(&ddl[open + 1..close]) {
-        let def = raw_def.trim();
+        let def = strip_leading_sql_comments(raw_def).trim();
         if def.is_empty() || is_table_constraint(def) {
             continue;
         }
@@ -118,23 +120,48 @@ fn parse_task_columns(ddl: &str) -> TaskCols {
     cols
 }
 
-fn split_top_level_commas(input: &str) -> Vec<&str> {
+fn strip_leading_sql_comments(mut input: &str) -> &str {
+    loop {
+        let trimmed = input.trim_start();
+        if let Some(after) = trimmed.strip_prefix("--") {
+            match after.find('\n') {
+                Some(nl) => input = &after[nl + 1..],
+                None => return "",
+            }
+        } else {
+            return trimmed;
+        }
+    }
+}
+
+pub(super) fn split_top_level_commas(input: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = 0usize;
     let mut depth = 0i32;
     let mut in_single = false;
+    let mut in_double = false;
     let bytes = input.as_bytes();
-    for (i, &b) in bytes.iter().enumerate() {
-        match b {
-            b'\'' => in_single = !in_single,
-            b'(' if !in_single => depth += 1,
-            b')' if !in_single => depth = (depth - 1).max(0),
-            b',' if !in_single && depth == 0 => {
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if !in_single && !in_double && bytes[i] == b'-' && bytes.get(i + 1) == Some(&b'-') {
+            i += 2;
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        match bytes[i] {
+            b'\'' if !in_double => in_single = !in_single,
+            b'"' if !in_single => in_double = !in_double,
+            b'(' if !in_single && !in_double => depth += 1,
+            b')' if !in_single && !in_double => depth = (depth - 1).max(0),
+            b',' if !in_single && !in_double && depth == 0 => {
                 out.push(&input[start..i]);
                 start = i + 1;
             }
             _ => {}
         }
+        i += 1;
     }
     out.push(&input[start..]);
     out
@@ -168,8 +195,8 @@ fn extract_column_name(def: &str) -> &str {
     }
 }
 
-#[derive(Debug)]
-enum SqlVal {
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum SqlVal {
     Null,
     Int(i64),
     Text(String),
@@ -202,6 +229,10 @@ struct SqliteReader {
     wal_pages: BTreeMap<u32, u64>,
     page_size: usize,
     usable_size: usize,
+    total_payload_bytes: usize,
+    max_rows: usize,
+    max_payload_bytes: usize,
+    max_total_payload_bytes: usize,
 }
 
 impl SqliteReader {
@@ -223,7 +254,7 @@ impl SqliteReader {
         if &hdr[..16] != SQLITE_MAGIC {
             return Err("file is not a valid SQLite 3 database".to_owned());
         }
-        let raw_ps = u16::from_be_bytes([hdr[16], hdr[17]]);
+        let raw_ps = read_be_u16_at(&hdr, 16)?;
         let page_size = if raw_ps == 1 {
             65_536
         } else {
@@ -239,13 +270,17 @@ impl SqliteReader {
             .ok_or_else(|| "invalid SQLite usable page size".to_owned())?;
         let mut wal_path = path.as_os_str().to_os_string();
         wal_path.push("-wal");
-        let (wal, wal_pages) = load_wal_index(Path::new(&wal_path), page_size);
+        let (wal, wal_pages) = load_wal_index(Path::new(&wal_path), page_size)?;
         Ok(Self {
             db,
             wal,
             wal_pages,
             page_size,
             usable_size,
+            total_payload_bytes: 0,
+            max_rows: MAX_ROWS_DECODED,
+            max_payload_bytes: MAX_PAYLOAD_BYTES,
+            max_total_payload_bytes: MAX_TOTAL_PAYLOAD_BYTES,
         })
     }
 
@@ -260,7 +295,11 @@ impl SqliteReader {
                 .map_err(|e| format!("reading WAL page {page_no}: {e}"))?;
             return Ok(buf);
         }
-        let offset = u64::from(page_no - 1) * (self.page_size as u64);
+        let page_size_u64 =
+            u64::try_from(self.page_size).map_err(|_| "SQLite page size overflow".to_owned())?;
+        let offset = u64::from(page_no - 1)
+            .checked_mul(page_size_u64)
+            .ok_or_else(|| "SQLite page offset overflow".to_owned())?;
         self.db
             .seek(SeekFrom::Start(offset))
             .and_then(|_| self.db.read_exact(&mut buf))
@@ -281,8 +320,7 @@ impl SqliteReader {
             let page_type = *page
                 .get(hdr_off)
                 .ok_or_else(|| "truncated B-tree page".to_owned())?;
-            let cell_count =
-                usize::from(u16::from_be_bytes([page[hdr_off + 3], page[hdr_off + 4]]));
+            let cell_count = usize::from(read_be_u16_at(&page, hdr_off + 3)?);
             match page_type {
                 0x0d => self.read_leaf_cells(&page, hdr_off, cell_count, &mut rows)?,
                 0x05 => push_interior_children(&page, hdr_off, cell_count, &mut stack)?,
@@ -299,16 +337,60 @@ impl SqliteReader {
         cell_count: usize,
         rows: &mut Vec<Vec<SqlVal>>,
     ) -> Result<(), String> {
-        let ptr_base = hdr_off + 8;
+        let ptr_base = hdr_off
+            .checked_add(8)
+            .ok_or_else(|| "SQLite leaf header offset overflow".to_owned())?;
         for idx in 0..cell_count {
+            if rows.len() >= self.max_rows {
+                return Err(format!(
+                    "SQLite decoded row limit ({}) exceeded",
+                    self.max_rows
+                ));
+            }
             let off = read_cell_ptr(page, ptr_base, idx)?;
-            let (payload_len, n1) = read_varint(&page[off..])?;
-            let (_, n2) = read_varint(&page[off + n1..])?;
-            let payload_start = off + n1 + n2;
-            let payload = self.assemble_payload(page, payload_start, payload_len as usize)?;
+            let cell = page
+                .get(off..)
+                .ok_or_else(|| "SQLite leaf cell offset out of bounds".to_owned())?;
+            let (payload_len_u64, n1) = read_varint(cell)?;
+            let rowid_off = off
+                .checked_add(n1)
+                .ok_or_else(|| "SQLite leaf cell offset overflow".to_owned())?;
+            let after_len = page
+                .get(rowid_off..)
+                .ok_or_else(|| "SQLite leaf cell rowid out of bounds".to_owned())?;
+            let (_, n2) = read_varint(after_len)?;
+            let payload_start = rowid_off
+                .checked_add(n2)
+                .filter(|&s| s <= page.len())
+                .ok_or_else(|| "SQLite leaf cell payload offset out of bounds".to_owned())?;
+            let payload_len = self.reserve_payload_budget(payload_len_u64)?;
+            let payload = self.assemble_payload(page, payload_start, payload_len)?;
             rows.push(decode_record(&payload)?);
         }
         Ok(())
+    }
+
+    fn reserve_payload_budget(&mut self, payload_len_u64: u64) -> Result<usize, String> {
+        let payload_len = usize::try_from(payload_len_u64)
+            .map_err(|_| "SQLite cell payload length exceeds platform usize".to_owned())?;
+        if payload_len > self.max_payload_bytes {
+            return Err(format!(
+                "SQLite cell payload length {payload_len} exceeds per-row limit {}",
+                self.max_payload_bytes
+            ));
+        }
+        let next_total = self
+            .total_payload_bytes
+            .checked_add(payload_len)
+            .filter(|&n| n <= self.max_total_payload_bytes)
+            .ok_or_else(|| {
+                format!(
+                    "SQLite cumulative payload budget ({} bytes) exceeded",
+                    self.max_total_payload_bytes
+                )
+            })?;
+        self.total_payload_bytes = next_total;
+        Ok(payload_len)
     }
 
     fn assemble_payload(
@@ -319,25 +401,27 @@ impl SqliteReader {
     ) -> Result<Vec<u8>, String> {
         let max_local = self.usable_size - 35;
         if total_len <= max_local {
-            let end = start.checked_add(total_len).filter(|&e| e <= page.len());
-            return end
-                .map(|e| page[start..e].to_vec())
-                .ok_or_else(|| "SQLite cell payload out of bounds".to_owned());
+            let end = start
+                .checked_add(total_len)
+                .filter(|&e| e <= page.len())
+                .ok_or_else(|| "SQLite cell payload out of bounds".to_owned())?;
+            let slice = page
+                .get(start..end)
+                .ok_or_else(|| "SQLite cell payload out of bounds".to_owned())?;
+            return Ok(slice.to_vec());
         }
         let min_local = ((self.usable_size - 12) * 32 / 255) - 23;
         let k = min_local + ((total_len - min_local) % (self.usable_size - 4));
         let local = if k <= max_local { k } else { min_local };
-        let ovf_ptr_off = start + local;
-        if ovf_ptr_off + 4 > page.len() {
-            return Err("SQLite overflow pointer out of bounds".to_owned());
-        }
-        let mut out = Vec::with_capacity(total_len.min(1024 * 1024));
-        out.extend_from_slice(&page[start..ovf_ptr_off]);
-        let mut next = u32::from_be_bytes(
-            page[ovf_ptr_off..ovf_ptr_off + 4]
-                .try_into()
-                .expect("4 bytes"),
-        );
+        let ovf_ptr_off = start
+            .checked_add(local)
+            .ok_or_else(|| "SQLite overflow pointer offset overflow".to_owned())?;
+        let local_slice = page
+            .get(start..ovf_ptr_off)
+            .ok_or_else(|| "SQLite local payload out of bounds".to_owned())?;
+        let mut next = read_be_u32_at(page, ovf_ptr_off)?;
+        let mut out = Vec::with_capacity(total_len);
+        out.extend_from_slice(local_slice);
         let mut hops = 0usize;
         while out.len() < total_len && next != 0 {
             hops += 1;
@@ -345,9 +429,18 @@ impl SqliteReader {
                 return Err("SQLite overflow chain limit exceeded".to_owned());
             }
             let ovf = self.read_page(next)?;
-            next = u32::from_be_bytes(ovf[0..4].try_into().expect("4 bytes"));
+            next = read_be_u32_at(&ovf, 0)?;
             let take = (total_len - out.len()).min(self.usable_size - 4);
-            out.extend_from_slice(&ovf[4..4 + take]);
+            let chunk_end = 4usize
+                .checked_add(take)
+                .ok_or_else(|| "SQLite overflow chunk offset overflow".to_owned())?;
+            let chunk = ovf
+                .get(4..chunk_end)
+                .ok_or_else(|| "SQLite overflow page truncated".to_owned())?;
+            out.extend_from_slice(chunk);
+        }
+        if out.len() != total_len {
+            return Err("SQLite overflow payload truncated before expected length".to_owned());
         }
         Ok(out)
     }
@@ -359,131 +452,30 @@ fn push_interior_children(
     cell_count: usize,
     stack: &mut Vec<u32>,
 ) -> Result<(), String> {
-    let right_child = u32::from_be_bytes(
-        page[hdr_off + 8..hdr_off + 12]
-            .try_into()
-            .map_err(|_| "truncated interior page")?,
-    );
+    let right_off = hdr_off
+        .checked_add(8)
+        .ok_or_else(|| "SQLite interior header offset overflow".to_owned())?;
+    let right_child = read_be_u32_at(page, right_off)?;
     stack.push(right_child);
-    let ptr_base = hdr_off + 12;
+    let ptr_base = hdr_off
+        .checked_add(12)
+        .ok_or_else(|| "SQLite interior pointer base overflow".to_owned())?;
     for idx in (0..cell_count).rev() {
         let off = read_cell_ptr(page, ptr_base, idx)?;
-        let left = u32::from_be_bytes(
-            page.get(off..off + 4)
-                .ok_or_else(|| "interior cell out of bounds".to_owned())?
-                .try_into()
-                .expect("4 bytes"),
-        );
+        let left = read_be_u32_at(page, off)?;
         stack.push(left);
     }
     Ok(())
 }
 
 fn read_cell_ptr(page: &[u8], ptr_base: usize, idx: usize) -> Result<usize, String> {
-    let at = ptr_base + idx * 2;
-    let slice = page
-        .get(at..at + 2)
-        .ok_or_else(|| "cell pointer array out of bounds".to_owned())?;
-    Ok(usize::from(u16::from_be_bytes([slice[0], slice[1]])))
-}
-
-fn load_wal_index(
-    wal_path: &Path,
-    expected_page_size: usize,
-) -> (Option<File>, BTreeMap<u32, u64>) {
-    let Ok(mut wal) = org_platform::fs::open_nofollow_ro(&normalize_lstat_path(wal_path)) else {
-        return (None, BTreeMap::new());
-    };
-    let Ok(meta) = wal.metadata() else {
-        return (None, BTreeMap::new());
-    };
-    if !meta.is_file() || meta.len() < 32 {
-        return (None, BTreeMap::new());
-    }
-    let mut hdr = [0u8; 32];
-    if wal.read_exact(&mut hdr).is_err() {
-        return (None, BTreeMap::new());
-    }
-    let magic = u32::from_be_bytes(hdr[0..4].try_into().expect("4 bytes"));
-    let big_endian = match magic {
-        WAL_MAGIC_LE => false,
-        WAL_MAGIC_BE => true,
-        _ => return (None, BTreeMap::new()),
-    };
-    let wal_ps = u32::from_be_bytes(hdr[8..12].try_into().expect("4 bytes")) as usize;
-    if wal_ps != expected_page_size {
-        return (None, BTreeMap::new());
-    }
-    let (mut s0, mut s1) = wal_checksum(&hdr[..24], 0, 0, big_endian);
-    let hdr_c0 = u32::from_be_bytes(hdr[24..28].try_into().expect("4 bytes"));
-    let hdr_c1 = u32::from_be_bytes(hdr[28..32].try_into().expect("4 bytes"));
-    if (s0, s1) != (hdr_c0, hdr_c1) {
-        return (None, BTreeMap::new());
-    }
-    let salt = &hdr[16..24];
-    let committed = scan_wal_frames(&mut wal, wal_ps, salt, &mut s0, &mut s1, big_endian);
-    (Some(wal), committed)
-}
-
-fn scan_wal_frames(
-    wal: &mut File,
-    page_size: usize,
-    salt: &[u8],
-    s0: &mut u32,
-    s1: &mut u32,
-    big_endian: bool,
-) -> BTreeMap<u32, u64> {
-    let mut committed = BTreeMap::new();
-    let mut pending = Vec::new();
-    let mut frame_hdr = [0u8; 24];
-    let mut page_buf = vec![0u8; page_size];
-    let mut offset = 32u64;
-    for _ in 0..MAX_WAL_FRAMES {
-        if wal.read_exact(&mut frame_hdr).is_err() || wal.read_exact(&mut page_buf).is_err() {
-            break;
-        }
-        if &frame_hdr[8..16] != salt {
-            break;
-        }
-        let (n0, n1) = wal_checksum(&frame_hdr[..8], *s0, *s1, big_endian);
-        let (n0, n1) = wal_checksum(&page_buf, n0, n1, big_endian);
-        let exp0 = u32::from_be_bytes(frame_hdr[16..20].try_into().expect("4 bytes"));
-        let exp1 = u32::from_be_bytes(frame_hdr[20..24].try_into().expect("4 bytes"));
-        if (n0, n1) != (exp0, exp1) {
-            break;
-        }
-        *s0 = n0;
-        *s1 = n1;
-        let page_no = u32::from_be_bytes(frame_hdr[0..4].try_into().expect("4 bytes"));
-        let db_pages = u32::from_be_bytes(frame_hdr[4..8].try_into().expect("4 bytes"));
-        pending.push((page_no, offset + 24));
-        if db_pages > 0 {
-            for (p, off) in pending.drain(..) {
-                committed.insert(p, off);
-            }
-        }
-        offset += 24 + page_size as u64;
-    }
-    committed
-}
-
-fn wal_checksum(data: &[u8], mut s0: u32, mut s1: u32, big_endian: bool) -> (u32, u32) {
-    let (chunks, _) = data.as_chunks::<8>();
-    for &[a0, a1, a2, a3, b0, b1, b2, b3] in chunks {
-        let x0 = if big_endian {
-            u32::from_be_bytes([a0, a1, a2, a3])
-        } else {
-            u32::from_le_bytes([a0, a1, a2, a3])
-        };
-        let x1 = if big_endian {
-            u32::from_be_bytes([b0, b1, b2, b3])
-        } else {
-            u32::from_le_bytes([b0, b1, b2, b3])
-        };
-        s0 = s0.wrapping_add(x0).wrapping_add(s1);
-        s1 = s1.wrapping_add(x1).wrapping_add(s0);
-    }
-    (s0, s1)
+    let delta = idx
+        .checked_mul(2)
+        .ok_or_else(|| "SQLite cell pointer index overflow".to_owned())?;
+    let at = ptr_base
+        .checked_add(delta)
+        .ok_or_else(|| "SQLite cell pointer offset overflow".to_owned())?;
+    Ok(usize::from(read_be_u16_at(page, at)?))
 }
 
 fn read_varint(bytes: &[u8]) -> Result<(u64, usize), String> {
@@ -500,23 +492,33 @@ fn read_varint(bytes: &[u8]) -> Result<(u64, usize), String> {
     Err("truncated SQLite varint".to_owned())
 }
 
-fn decode_record(payload: &[u8]) -> Result<Vec<SqlVal>, String> {
+pub(super) fn decode_record(payload: &[u8]) -> Result<Vec<SqlVal>, String> {
     let (hdr_len, mut pos) = read_varint(payload)?;
     let hdr_end = usize::try_from(hdr_len)
         .ok()
-        .filter(|&e| e <= payload.len())
+        .filter(|&e| e >= pos && e <= payload.len())
         .ok_or_else(|| "SQLite record header out of bounds".to_owned())?;
     let mut serials = Vec::new();
     while pos < hdr_end {
-        let (st, n) = read_varint(&payload[pos..hdr_end])?;
+        let slice = payload
+            .get(pos..hdr_end)
+            .ok_or_else(|| "SQLite record header out of bounds".to_owned())?;
+        let (st, n) = read_varint(slice)?;
         serials.push(st);
-        pos += n;
+        pos = pos
+            .checked_add(n)
+            .ok_or_else(|| "SQLite record header offset overflow".to_owned())?;
     }
     let mut data_pos = hdr_end;
     let mut cols = Vec::with_capacity(serials.len());
     for st in serials {
-        let (val, used) = decode_column(st, &payload[data_pos..])?;
-        data_pos += used;
+        let rest = payload
+            .get(data_pos..)
+            .ok_or_else(|| "SQLite record column out of bounds".to_owned())?;
+        let (val, used) = decode_column(st, rest)?;
+        data_pos = data_pos
+            .checked_add(used)
+            .ok_or_else(|| "SQLite record data offset overflow".to_owned())?;
         cols.push(val);
     }
     Ok(cols)
@@ -525,12 +527,18 @@ fn decode_record(payload: &[u8]) -> Result<Vec<SqlVal>, String> {
 fn decode_column(serial: u64, rest: &[u8]) -> Result<(SqlVal, usize), String> {
     match serial {
         0 => Ok((SqlVal::Null, 0)),
-        1..=6 => decode_signed_int(serial as usize, rest),
-        7 => Ok((SqlVal::Other, 8.min(rest.len()))),
+        1..=6 => decode_signed_int(serial, rest),
+        7 => {
+            if rest.len() < 8 {
+                return Err("SQLite float column truncated".to_owned());
+            }
+            Ok((SqlVal::Other, 8))
+        }
         8 => Ok((SqlVal::Int(0), 0)),
         9 => Ok((SqlVal::Int(1), 0)),
         n if n >= 12 => {
-            let len = ((n - 12) / 2) as usize;
+            let len = usize::try_from((n - 12) / 2)
+                .map_err(|_| "SQLite column length exceeds platform usize".to_owned())?;
             let slice = rest
                 .get(..len)
                 .ok_or_else(|| "SQLite column payload truncated".to_owned())?;
@@ -545,7 +553,7 @@ fn decode_column(serial: u64, rest: &[u8]) -> Result<(SqlVal, usize), String> {
     }
 }
 
-fn decode_signed_int(serial: usize, rest: &[u8]) -> Result<(SqlVal, usize), String> {
+fn decode_signed_int(serial: u64, rest: &[u8]) -> Result<(SqlVal, usize), String> {
     let len = match serial {
         1 => 1,
         2 => 2,
@@ -553,12 +561,16 @@ fn decode_signed_int(serial: usize, rest: &[u8]) -> Result<(SqlVal, usize), Stri
         4 => 4,
         5 => 6,
         6 => 8,
-        _ => 0,
+        _ => return Err(format!("invalid SQLite integer serial type {serial}")),
     };
     let slice = rest
         .get(..len)
         .ok_or_else(|| "SQLite integer truncated".to_owned())?;
-    let mut v = if slice[0] & 0x80 != 0 { -1i64 } else { 0i64 };
+    let first = slice
+        .first()
+        .copied()
+        .ok_or_else(|| "SQLite integer truncated".to_owned())?;
+    let mut v = if first & 0x80 != 0 { -1i64 } else { 0i64 };
     for &b in slice {
         v = (v << 8) | i64::from(b);
     }

@@ -2,24 +2,29 @@
 //! host registry metadata, clearing `host-registry.created` so a subsequent fresh setup is never
 //! blocked by a stale marker (AC #1 / FC-022).
 //!
-//! Fails closed without explicit `--yes`, refuses while `host.lock`, any `office.lock`, the
-//! instance root lock, or the registered service is active, and never follows symlinks.
+//! Fails closed without explicit `--yes`, refuses while `registry.lock`, `host.lock`, any
+//! `office.lock`, the instance root lock, or the registered service is active or unsafe, and
+//! verifies strict canonical-anchor containment without following symlinks.
 
 use std::fs::{self, File};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use org_cli_shell::context::ExecutionContext;
 use org_cli_shell::error::ShellError;
 use org_cli_shell::output::Cell;
 use org_host::setup_flow::cli_context;
-use org_platform::service::ServiceStatus;
+use org_platform::service::{ServiceManager, ServiceStatus};
 use serde::Serialize;
 use serde_json::Value;
 
 use super::paths::{
     normalize_lstat_path, read_regular_bounded, resolve_instance, try_lock_dir_exclusive,
     try_lock_existing_exclusive, write_atomic_owner_only, InstancePaths, LockProbe,
+};
+use super::uninstall_guard::{
+    remove_dir_if_empty_within, remove_entry_within, remove_tree_within, verify_instance_temp_dir,
+    verify_parent_within_anchor, verify_uninstall_paths,
 };
 use super::UninstallArgs;
 use crate::error::CliError;
@@ -40,14 +45,25 @@ struct UninstallReport {
     preserved_paths: Vec<String>,
 }
 
-/// Held locks guaranteeing no host or office runs while uninstall removes state.
-struct UninstallLocks {
+/// Held locator lock acquired before destructive actions and kept until locator update finishes.
+struct LocatorLock(Option<File>);
+
+impl Drop for LocatorLock {
+    fn drop(&mut self) {
+        if let Some(f) = &self.0 {
+            let _ = f.unlock();
+        }
+    }
+}
+
+/// Held host, office, and instance-root locks guaranteeing nothing runs while uninstall deletes state.
+struct InstanceLocks {
     _host_lock: Option<File>,
     _office_locks: Vec<File>,
     _root_lock: Option<File>,
 }
 
-impl Drop for UninstallLocks {
+impl Drop for InstanceLocks {
     fn drop(&mut self) {
         for f in &self._office_locks {
             let _ = f.unlock();
@@ -78,23 +94,31 @@ pub(crate) fn run(args: UninstallArgs, ctx: &mut ExecutionContext) -> Result<(),
         .into());
     }
 
-    let locks = acquire_uninstall_locks(&paths)?;
+    // Pre-flight verify all anchors & intermediate directories before locking or unlinking.
+    verify_uninstall_paths(&paths)?;
+
+    // Acquire registry.lock BEFORE any destructive unlink and hold it until locator update completes.
+    let locator_lock = acquire_locator_lock(&paths)?;
+    let instance_locks = acquire_instance_locks(&paths)?;
     let unregistered_service = unregister_service_if_present(&paths)?;
     let mut removed = Vec::new();
     let mut preserved = Vec::new();
 
-    let registry_created_cleared = remove_entry_nofollow(&paths.registry_created, &mut removed)?;
-    remove_entry_nofollow(&paths.instance_config, &mut removed)?;
+    let registry_created_cleared =
+        remove_entry_within(&paths.instance_root, &paths.registry_created, &mut removed)?;
+    remove_entry_within(&paths.instance_root, &paths.instance_config, &mut removed)?;
     remove_host_registry_files(&paths, &mut removed)?;
     remove_runtime_and_logs(&paths, &mut removed)?;
 
-    // Release file/directory locks before removing host.lock and pruning empty directories.
-    drop(locks);
-    remove_entry_nofollow(&paths.host_lock, &mut removed)?;
+    // Release instance locks before removing host.lock and pruning empty instance directories,
+    // while keeping locator_lock held through setup cleanup and locator rewrite.
+    drop(instance_locks);
+    remove_entry_within(&paths.instance_root, &paths.host_lock, &mut removed)?;
     prune_instance_dirs(&paths, &mut removed, &mut preserved)?;
 
     remove_setup_files(&paths, &mut removed)?;
     let locator_entry_removed = remove_locator_entry(&paths)?;
+    drop(locator_lock);
     let context_cleared = clear_matching_context(&paths);
 
     let report = UninstallReport {
@@ -125,7 +149,28 @@ fn render_dry_run(paths: &InstancePaths, ctx: &mut ExecutionContext) -> Result<(
     Ok(ctx.render_dry_run(&summary, &plan)?)
 }
 
-fn acquire_uninstall_locks(paths: &InstancePaths) -> Result<UninstallLocks, CliError> {
+fn acquire_locator_lock(paths: &InstancePaths) -> Result<LocatorLock, CliError> {
+    match try_lock_existing_exclusive(&paths.locator_lock) {
+        Ok(lock) => Ok(LocatorLock(lock)),
+        Err(LockProbe::Held) => Err(CliError::failed(
+            "uninstall::locator_busy",
+            "instance locator is busy; retry once concurrent setup completes",
+        )),
+        Err(LockProbe::Unsafe(why)) => Err(CliError::failed(
+            "uninstall::unsafe_lock",
+            format!(
+                "cannot lock `{}` safely: {why}",
+                paths.locator_lock.display()
+            ),
+        )),
+        Err(_) => Err(CliError::failed(
+            "uninstall::unsafe_lock",
+            format!("cannot lock `{}` safely", paths.locator_lock.display()),
+        )),
+    }
+}
+
+fn acquire_instance_locks(paths: &InstancePaths) -> Result<InstanceLocks, CliError> {
     let host_lock = match try_lock_existing_exclusive(&paths.host_lock) {
         Ok(lock) => lock,
         Err(LockProbe::Held) => {
@@ -186,20 +231,68 @@ fn acquire_uninstall_locks(paths: &InstancePaths) -> Result<UninstallLocks, CliE
         }
     };
 
-    Ok(UninstallLocks {
+    Ok(InstanceLocks {
         _host_lock: host_lock,
         _office_locks: office_locks,
         _root_lock: root_lock,
     })
 }
 
-fn acquire_office_locks(offices_dir: &Path) -> Result<Vec<File>, CliError> {
-    let Ok(entries) = fs::read_dir(offices_dir) else {
-        return Ok(Vec::new());
-    };
+pub(super) fn acquire_office_locks(offices_dir: &Path) -> Result<Vec<File>, CliError> {
+    let norm = normalize_lstat_path(offices_dir);
+    match fs::symlink_metadata(&norm) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(CliError::failed(
+                "uninstall::unsafe_lock",
+                format!("inspecting offices directory `{}`: {e}", norm.display()),
+            ));
+        }
+        Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => {
+            return Err(CliError::failed(
+                "uninstall::unsafe_lock",
+                format!(
+                    "offices directory `{}` must be a real directory (symlinks are refused)",
+                    norm.display()
+                ),
+            ));
+        }
+        Ok(_) => {}
+    }
+    let entries = fs::read_dir(&norm).map_err(|e| {
+        CliError::failed(
+            "uninstall::unsafe_lock",
+            format!("listing offices directory `{}`: {e}", norm.display()),
+        )
+    })?;
     let mut locks = Vec::new();
-    for entry in entries.flatten() {
-        let lock_path = entry.path().join("office.lock");
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            CliError::failed(
+                "uninstall::unsafe_lock",
+                format!("reading entry in `{}`: {e}", norm.display()),
+            )
+        })?;
+        let office_path = normalize_lstat_path(&entry.path());
+        let meta = fs::symlink_metadata(&office_path).map_err(|e| {
+            CliError::failed(
+                "uninstall::unsafe_lock",
+                format!("inspecting office entry `{}`: {e}", office_path.display()),
+            )
+        })?;
+        if meta.file_type().is_symlink() {
+            return Err(CliError::failed(
+                "uninstall::unsafe_lock",
+                format!(
+                    "refusing symlinked office directory `{}`",
+                    office_path.display()
+                ),
+            ));
+        }
+        if !meta.is_dir() {
+            continue;
+        }
+        let lock_path = office_path.join("office.lock");
         match try_lock_existing_exclusive(&lock_path) {
             Ok(Some(f)) => locks.push(f),
             Ok(None) => {}
@@ -237,29 +330,41 @@ fn unregister_service_if_present(paths: &InstancePaths) -> Result<bool, CliError
     if paths.service_mode.as_deref() == Some("foreground") {
         return Ok(false);
     }
-    let Ok(manager) = crate::host::service_manager() else {
-        return Ok(false);
-    };
+    let manager = crate::host::service_manager().map_err(|e| {
+        CliError::failed(
+            "uninstall::service",
+            format!("accessing service manager for `{}`: {e}", paths.name),
+        )
+    })?;
+    unregister_service_with(&paths.name, instance_id, &*manager)
+}
+
+pub(super) fn unregister_service_with(
+    instance_name: &str,
+    instance_id: &str,
+    manager: &dyn ServiceManager,
+) -> Result<bool, CliError> {
     let service_id = instance_id.to_ascii_lowercase();
     match manager.status(&service_id) {
         Ok(ServiceStatus::Running { pid }) => Err(CliError::failed(
             "uninstall::service_running",
-            format!(
-                "registered service for `{}` is still running (pid {pid})",
-                paths.name
-            ),
+            format!("registered service for `{instance_name}` is still running (pid {pid})"),
         )
         .with_help(STOP_HELP)),
         Ok(ServiceStatus::Stopped | ServiceStatus::Unloaded) => {
             manager.unregister(&service_id).map_err(|e| {
                 CliError::failed(
                     "uninstall::service",
-                    format!("unregistering service for `{}`: {e}", paths.name),
+                    format!("unregistering service for `{instance_name}`: {e}"),
                 )
             })?;
             Ok(true)
         }
-        Ok(ServiceStatus::NotRegistered) | Err(_) => Ok(false),
+        Ok(ServiceStatus::NotRegistered) => Ok(false),
+        Err(e) => Err(CliError::failed(
+            "uninstall::service",
+            format!("checking service status for `{instance_name}`: {e}"),
+        )),
     }
 }
 
@@ -278,7 +383,7 @@ fn remove_host_registry_files(
         ".tmp-journal",
     ] {
         let name = format!("host-registry.db{suffix}");
-        remove_entry_nofollow(&paths.office_home.join(name), removed)?;
+        remove_entry_within(&paths.instance_root, &paths.office_home.join(name), removed)?;
     }
     Ok(())
 }
@@ -287,22 +392,24 @@ fn remove_runtime_and_logs(
     paths: &InstancePaths,
     removed: &mut Vec<String>,
 ) -> Result<(), CliError> {
-    remove_entry_nofollow(&paths.host_socket, removed)?;
-    remove_entry_nofollow(&paths.office_home.join("host.sock"), removed)?;
-    remove_tree_nofollow(&paths.office_home.join("run"), removed)?;
-    remove_tree_nofollow(&paths.logs_dir, removed)?;
-    if paths.run_dir != paths.office_home.join("run") && is_instance_temp_dir(paths) {
-        remove_tree_nofollow(&paths.run_dir, removed)?;
+    let fallback_run = paths.office_home.join("run");
+    if paths.run_dir == fallback_run {
+        remove_entry_within(&paths.instance_root, &paths.host_socket, removed)?;
+    } else if verify_instance_temp_dir(paths)? {
+        if let Some(ref user_temp) = paths.user_temp {
+            let ao_dir = user_temp.join("ao");
+            remove_entry_within(&ao_dir, &paths.host_socket, removed)?;
+            remove_tree_within(&ao_dir, &paths.run_dir, removed)?;
+        }
     }
+    remove_entry_within(
+        &paths.instance_root,
+        &paths.office_home.join("host.sock"),
+        removed,
+    )?;
+    remove_tree_within(&paths.instance_root, &fallback_run, removed)?;
+    remove_tree_within(&paths.instance_root, &paths.logs_dir, removed)?;
     Ok(())
-}
-
-fn is_instance_temp_dir(paths: &InstancePaths) -> bool {
-    let Some(user_temp) = &paths.user_temp else {
-        return false;
-    };
-    let ao_dir = user_temp.join("ao");
-    paths.run_dir.starts_with(&ao_dir) && paths.run_dir != ao_dir
 }
 
 fn prune_instance_dirs(
@@ -310,11 +417,15 @@ fn prune_instance_dirs(
     removed: &mut Vec<String>,
     preserved: &mut Vec<String>,
 ) -> Result<(), CliError> {
-    remove_dir_if_empty(&paths.offices_dir, removed);
-    remove_dir_if_empty(&paths.office_home, removed);
-    remove_dir_if_empty(&paths.instance_root.join("agents"), removed);
-    if !remove_dir_if_empty(&paths.instance_root, removed)
-        && fs::symlink_metadata(&paths.instance_root).is_ok()
+    remove_dir_if_empty_within(&paths.instance_root, &paths.offices_dir, removed)?;
+    remove_dir_if_empty_within(&paths.instance_root, &paths.office_home, removed)?;
+    remove_dir_if_empty_within(
+        &paths.instance_root,
+        &paths.instance_root.join("agents"),
+        removed,
+    )?;
+    if !remove_dir_if_empty_within(&paths.instance_root, &paths.instance_root, removed)?
+        && fs::symlink_metadata(normalize_lstat_path(&paths.instance_root)).is_ok()
     {
         preserved.push(paths.instance_root.display().to_string());
     }
@@ -322,26 +433,23 @@ fn prune_instance_dirs(
 }
 
 fn remove_setup_files(paths: &InstancePaths, removed: &mut Vec<String>) -> Result<(), CliError> {
-    remove_entry_nofollow(&paths.setup_record, removed)?;
-    remove_entry_nofollow(&paths.setup_dir.join("setup.lock"), removed)?;
-    remove_dir_if_empty(&paths.setup_dir, removed);
+    remove_entry_within(&paths.account_base, &paths.setup_record, removed)?;
+    remove_entry_within(
+        &paths.account_base,
+        &paths.setup_dir.join("setup.lock"),
+        removed,
+    )?;
+    remove_dir_if_empty_within(&paths.account_base, &paths.setup_dir, removed)?;
     Ok(())
 }
 
 fn remove_locator_entry(paths: &InstancePaths) -> Result<bool, CliError> {
-    if fs::symlink_metadata(&paths.locator_file).is_err() {
+    if !verify_parent_within_anchor(&paths.account_base, &paths.locator_file)? {
         return Ok(false);
     }
-    let _lock = match try_lock_existing_exclusive(&paths.locator_lock) {
-        Ok(lock) => lock,
-        Err(LockProbe::Held) => {
-            return Err(CliError::failed(
-                "uninstall::locator_busy",
-                "instance locator is busy; retry once concurrent setup completes",
-            ));
-        }
-        Err(_) => None,
-    };
+    if fs::symlink_metadata(normalize_lstat_path(&paths.locator_file)).is_err() {
+        return Ok(false);
+    }
     let bytes = read_regular_bounded(&paths.locator_file, MAX_LOCATOR_BYTES).map_err(|e| {
         CliError::failed(
             "uninstall::locator",
@@ -389,99 +497,6 @@ fn clear_matching_context(paths: &InstancePaths) -> bool {
         .is_some_and(|id| id == saved.instance_id);
     if name_matches || id_matches {
         cli_context::clear_at(&ctx_path).unwrap_or(false)
-    } else {
-        false
-    }
-}
-
-fn remove_entry_nofollow(path: &Path, removed: &mut Vec<String>) -> Result<bool, CliError> {
-    let norm = normalize_lstat_path(path);
-    match fs::symlink_metadata(&norm) {
-        Ok(meta) if meta.is_dir() => Ok(false),
-        Ok(_) => {
-            fs::remove_file(&norm).map_err(|e| {
-                CliError::failed(
-                    "uninstall::io",
-                    format!("removing `{}`: {e}", norm.display()),
-                )
-            })?;
-            removed.push(norm.display().to_string());
-            Ok(true)
-        }
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(CliError::failed(
-            "uninstall::io",
-            format!("inspecting `{}`: {e}", norm.display()),
-        )),
-    }
-}
-
-fn remove_tree_nofollow(path: &Path, removed: &mut Vec<String>) -> Result<(), CliError> {
-    let norm = normalize_lstat_path(path);
-    let meta = match fs::symlink_metadata(&norm) {
-        Ok(m) => m,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => {
-            return Err(CliError::failed(
-                "uninstall::io",
-                format!("inspecting `{}`: {e}", norm.display()),
-            ))
-        }
-    };
-    if meta.file_type().is_symlink() {
-        fs::remove_file(&norm).map_err(|e| {
-            CliError::failed(
-                "uninstall::io",
-                format!("removing symlink `{}`: {e}", norm.display()),
-            )
-        })?;
-        removed.push(norm.display().to_string());
-        return Ok(());
-    }
-    if meta.is_dir() {
-        let entries: Vec<PathBuf> = fs::read_dir(&norm)
-            .map_err(|e| {
-                CliError::failed(
-                    "uninstall::io",
-                    format!("listing `{}`: {e}", norm.display()),
-                )
-            })?
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .collect();
-        for child in entries {
-            remove_tree_nofollow(&child, removed)?;
-        }
-        fs::remove_dir(&norm).map_err(|e| {
-            CliError::failed(
-                "uninstall::io",
-                format!("removing `{}`: {e}", norm.display()),
-            )
-        })?;
-        removed.push(norm.display().to_string());
-    } else {
-        fs::remove_file(&norm).map_err(|e| {
-            CliError::failed(
-                "uninstall::io",
-                format!("removing `{}`: {e}", norm.display()),
-            )
-        })?;
-        removed.push(norm.display().to_string());
-    }
-    Ok(())
-}
-
-fn remove_dir_if_empty(path: &Path, removed: &mut Vec<String>) -> bool {
-    let norm = normalize_lstat_path(path);
-    let Ok(meta) = fs::symlink_metadata(&norm) else {
-        return false;
-    };
-    if !meta.is_dir() {
-        return false;
-    }
-    if fs::remove_dir(&norm).is_ok() {
-        removed.push(norm.display().to_string());
-        true
     } else {
         false
     }

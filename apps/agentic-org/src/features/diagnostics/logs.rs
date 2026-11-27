@@ -52,8 +52,13 @@ pub(crate) fn validate_lines(lines: usize) -> Result<(), CliError> {
     Ok(())
 }
 
-fn validate_office_filter(office: &str) -> Result<(), CliError> {
-    if office.is_empty() || office.contains(['/', '\\', '\0']) || office == "." || office == ".." {
+pub(super) fn validate_office_filter(office: &str) -> Result<(), CliError> {
+    if office.is_empty()
+        || !office.is_ascii()
+        || office.contains(['/', '\\', '\0'])
+        || office == "."
+        || office == ".."
+    {
         return Err(CliError::usage(format!(
             "invalid --office filter `{office}`"
         )));
@@ -182,7 +187,7 @@ fn is_log_filename(name: &str) -> bool {
     name.ends_with(".log") || name.ends_with(".log.1")
 }
 
-fn matches_office_filter(filename: &str, office_filter: Option<&str>) -> bool {
+pub(super) fn matches_office_filter(filename: &str, office_filter: Option<&str>) -> bool {
     let Some(filter) = office_filter else {
         return true;
     };
@@ -192,6 +197,9 @@ fn matches_office_filter(filename: &str, office_filter: Option<&str>) -> bool {
         .unwrap_or(filename);
     if stem == filter {
         return true;
+    }
+    if !filter.is_ascii() {
+        return false;
     }
     let handle = if filter.len() >= 12 {
         &filter[filter.len() - 12..]
