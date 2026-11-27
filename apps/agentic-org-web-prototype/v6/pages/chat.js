@@ -54,7 +54,9 @@ function mentionRef(match, name) {
   const key = Object.keys(M).find((k) => k === lower || M[k].name.split(" ")[0].toLowerCase() === lower);
   return key && !M[key].owner ? `<a class="alink chat-ref" href="#/members/${key}" data-person="${key}">@${esc(M[key].name)}</a>` : match;
 }
-const richText = (text) => esc(text).replace(/\bT-A\d+\b/g, workRef).replace(/@([A-Za-z]+)/g, mentionRef);
+/* `#channel` in a message links to that channel when it exists */
+const channelRef = (m, pre, name) => { const k = Object.keys(CH).find((x) => CH[x].kind === "channel" && CH[x].name === name); return k ? `${pre}<a class="alink chat-chan-ref" href="#/chat/${k}">#${name}</a>` : m; };
+const richText = (text) => esc(text).replace(/\bT-A\d+\b/g, workRef).replace(/@([A-Za-z]+)/g, mentionRef).replace(/(^|[\s(])#([a-z0-9][a-z0-9-]*)/g, channelRef);
 
 /* ---------------------------------------------------------------- one message */
 /* Hover tools on wide pointers; one touch-sized menu (with the message's time) on narrow or touch screens. */
