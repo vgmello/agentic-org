@@ -129,6 +129,7 @@ pub(super) fn build_initial_runtime_state(
         private_home: prepared.home.display().to_string(),
         permission_preset: prepared.preset_cfg.preset.as_str().to_owned(),
         sandbox_enabled: prepared.preset_cfg.sandbox.enabled,
+        allow_host_auth: prepared.allow_host_auth,
         spec_hash: prepared.spec_hash.clone(),
         watchdog: StallWatchdog::from_persisted(
             stall_timeout,

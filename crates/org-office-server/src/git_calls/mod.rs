@@ -12,11 +12,12 @@
 mod cache;
 mod credentials;
 mod fetch;
+mod preprepare;
 mod push;
 mod redaction;
 mod worktree;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use crate::live::LiveEvents;
 use org_git::{ls_remote_heads, GitRunner, RepoLocks};
@@ -57,6 +58,10 @@ pub(crate) struct GitService {
     state: Mutex<OfficeGitState>,
     runner: Mutex<Option<GitRunner>>,
     fetch_gate: FetchGate,
+    /// Weak session-manager handle for live mid-turn sandbox refresh notifications (`TASK-160`).
+    /// Weak breaks any reference cycle when `SessionManager` holds `Arc<GitService>` as its
+    /// [`org_office_sessions::TaskWorktreePreparer`].
+    sessions: Option<Weak<org_office_sessions::SessionManager>>,
 }
 
 impl GitService {
@@ -73,7 +78,20 @@ impl GitService {
             state: Mutex::new(loaded),
             runner: Mutex::new(None),
             fetch_gate: FetchGate::new(FETCH_COOLDOWN),
+            sessions: None,
         }
+    }
+
+    pub(crate) fn with_sessions(
+        mut self,
+        sessions: Weak<org_office_sessions::SessionManager>,
+    ) -> Self {
+        self.sessions = Some(sessions);
+        self
+    }
+
+    pub(super) fn sessions(&self) -> Option<Arc<org_office_sessions::SessionManager>> {
+        self.sessions.as_ref().and_then(Weak::upgrade)
     }
 
     pub(crate) fn dispatch(&self, member: Option<&str>, request: &Request) -> Option<Response> {
@@ -357,5 +375,7 @@ fn run_call<C: Call>(
 
 #[cfg(test)]
 mod fetch_tests;
+#[cfg(test)]
+mod preprepare_tests;
 #[cfg(test)]
 mod tests;

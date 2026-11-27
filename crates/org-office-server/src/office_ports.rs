@@ -411,18 +411,22 @@ pub(crate) fn build_office_ports(
     );
     let reads = build_read_ports(&office, &session_manager, &live);
     let attach_wake = Arc::clone(&sync_wake);
+    let git_svc = Arc::new(
+        git_calls::GitService::new(Arc::clone(&office), Arc::clone(&live))
+            .with_sessions(Arc::downgrade(&session_manager)),
+    );
+    session_manager.set_task_worktree_preparer(
+        Arc::clone(&git_svc) as Arc<dyn org_office_sessions::TaskWorktreePreparer>
+    );
     let task_svc = Arc::new(
         task_calls::TaskService::new(
             Arc::clone(&office),
             Arc::clone(&live),
             Some(Arc::clone(&session_manager)),
         )
+        .with_git_service(Arc::clone(&git_svc))
         .with_sync_wake(sync_wake),
     );
-    let git_svc = Arc::new(git_calls::GitService::new(
-        Arc::clone(&office),
-        Arc::clone(&live),
-    ));
     let delegation_gate = Arc::new(crate::chief_of_staff_port::ChiefOfStaffGate::new(
         Arc::clone(&office),
         Arc::clone(&session_manager),

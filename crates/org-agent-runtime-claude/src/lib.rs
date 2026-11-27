@@ -162,6 +162,7 @@ impl AgentRuntime for ClaudeRuntime {
             uses_host_oauth_token_injection: true,
             uses_mount_mask_sandbox: true,
             needs_explicit_sandbox_ro_dirs: false,
+            sandbox_settings_file: Some("claude-settings.json"),
         }
     }
 

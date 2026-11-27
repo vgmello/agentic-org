@@ -79,6 +79,7 @@ mod subagents_binding;
 mod subscription_usage;
 mod wake;
 mod warm;
+mod worktree_refresh;
 
 // ---------------------------------------------------------------------------
 // ENROLL-1..6: CLI enrollment, wrapped credential vault, redaction
@@ -690,6 +691,7 @@ fn spawn_stub_bwrap_handle(
         private_home: "/tmp/home-a".into(),
         permission_preset: "autonomous_sandboxed".into(),
         sandbox_enabled: true,
+        allow_host_auth: false,
         spec_hash: "h".into(),
         watchdog: crate::recovery::StallWatchdog::new(Duration::from_secs(60), Instant::now()),
         recovery_required: false,
