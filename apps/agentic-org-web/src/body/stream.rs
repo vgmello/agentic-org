@@ -7,6 +7,8 @@
 //! `Content-Length`; one absolute deadline covers the whole transfer and is never
 //! restarted by chunk progress. No failure keeps codec error text or payload bytes.
 
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use http_body_util::BodyExt;
@@ -28,9 +30,48 @@ pub enum StreamError {
     Malformed,
 }
 
+impl StreamError {
+    /// The code [`FeedFailure`] keeps; `0` is no failure.
+    fn code(self) -> u8 {
+        match self {
+            Self::TimedOut => 1,
+            Self::LengthMismatch => 2,
+            Self::Malformed => 3,
+        }
+    }
+
+    fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::TimedOut),
+            2 => Some(Self::LengthMismatch),
+            3 => Some(Self::Malformed),
+            _ => None,
+        }
+    }
+}
+
+/// How the feeder failed, shared with the receiver. The error the feeder also tries to
+/// queue is lost when the one-slot channel is full, so the receiver checks this before it
+/// hands out a chunk or reports the end: a failed body never reads as a complete one.
+#[derive(Clone, Default)]
+struct FeedFailure(Arc<AtomicU8>);
+
+impl FeedFailure {
+    /// Recorded before the feeder drops its sender, so a receiver that sees the channel
+    /// close also sees the failure.
+    fn record(&self, error: StreamError) {
+        self.0.store(error.code(), Ordering::Release);
+    }
+
+    fn get(&self) -> Option<StreamError> {
+        StreamError::from_code(self.0.load(Ordering::Acquire))
+    }
+}
+
 /// The receiving half: chunks in order, then `None` once exactly the declared bytes arrived.
 pub struct StreamedBody {
     chunks: mpsc::Receiver<Result<Bytes, StreamError>>,
+    failure: FeedFailure,
     declared: u64,
     received: u64,
     deadline: Instant,
@@ -40,6 +81,7 @@ pub struct StreamedBody {
 /// The sending half, driven by the service alongside the call that consumes the chunks.
 pub struct BodyFeeder {
     chunks: mpsc::Sender<Result<Bytes, StreamError>>,
+    failure: FeedFailure,
     declared: u64,
     chunk_bytes: usize,
     deadline: Instant,
@@ -49,9 +91,11 @@ pub struct BodyFeeder {
 /// must arrive before `deadline`.
 pub fn channel(declared: u64, chunk_bytes: usize, deadline: Instant) -> (StreamedBody, BodyFeeder) {
     let (sender, receiver) = mpsc::channel(1);
+    let failure = FeedFailure::default();
     (
         StreamedBody {
             chunks: receiver,
+            failure: failure.clone(),
             declared,
             received: 0,
             deadline,
@@ -59,6 +103,7 @@ pub fn channel(declared: u64, chunk_bytes: usize, deadline: Instant) -> (Streame
         },
         BodyFeeder {
             chunks: sender,
+            failure,
             declared,
             chunk_bytes: chunk_bytes.max(1),
             deadline,
@@ -78,7 +123,8 @@ impl StreamedBody {
     }
 
     /// The next chunk; `None` only after every declared byte arrived. A feeder that stops
-    /// early (dropped, or out of time with a full channel) is an error here, never an end.
+    /// early (dropped, failed, or out of time with a full channel) is an error here, never
+    /// an end, even when the chunks it queued before failing add up to the declared length.
     pub async fn next_chunk(&mut self) -> Option<Result<Bytes, StreamError>> {
         if self.ended {
             return None;
@@ -88,19 +134,25 @@ impl StreamedBody {
             .unwrap_or(Some(Err(StreamError::TimedOut)));
         let next = match next {
             Some(Ok(chunk)) => match self.received.checked_add(chunk.len() as u64) {
-                Some(total) if total <= self.declared => {
-                    self.received = total;
-                    return Some(Ok(chunk));
-                }
+                Some(total) if total <= self.declared => match self.failure.get() {
+                    Some(error) => Err(error),
+                    None => {
+                        self.received = total;
+                        return Some(Ok(chunk));
+                    }
+                },
                 _ => Err(StreamError::LengthMismatch),
             },
             Some(Err(error)) => Err(error),
-            None if self.received == self.declared => {
-                self.ended = true;
-                return None;
-            }
-            None if Instant::now() >= self.deadline => Err(StreamError::TimedOut),
-            None => Err(StreamError::Malformed),
+            None => match self.failure.get() {
+                Some(error) => Err(error),
+                None if self.received == self.declared => {
+                    self.ended = true;
+                    return None;
+                }
+                None if Instant::now() >= self.deadline => Err(StreamError::TimedOut),
+                None => Err(StreamError::Malformed),
+            },
         };
         self.ended = true;
         Some(next)
@@ -119,8 +171,9 @@ impl BodyFeeder {
             .await
             .unwrap_or(Err(Stop::Failed(StreamError::TimedOut)));
         if let Err(Stop::Failed(error)) = outcome {
-            // Never wait past the deadline to report: a full channel or a receiver that
-            // stopped listening sees the early end in `next_chunk` instead.
+            // Recorded first, so the failure survives a full channel; never wait past the
+            // deadline to queue it as well.
+            self.failure.record(error);
             let _ = self.chunks.try_send(Err(error));
         }
     }
@@ -144,7 +197,9 @@ impl BodyFeeder {
                 .ok_or(Stop::Failed(StreamError::LengthMismatch))?;
             while !data.is_empty() {
                 if pending.capacity() == 0 {
-                    pending.reserve_exact(self.chunk_bytes);
+                    // A small upload never reserves a whole chunk.
+                    let declared = usize::try_from(self.declared).unwrap_or(usize::MAX);
+                    pending.reserve_exact(self.chunk_bytes.min(declared));
                 }
                 let take = (self.chunk_bytes - pending.len()).min(data.len());
                 pending.extend_from_slice(&data.split_to(take));

@@ -157,3 +157,30 @@ fn the_feeder_stops_once_the_consumer_stops_listening() {
         feeder.pump(frames(&[b"0123456789ab"])).await;
     });
 }
+
+/// `TASK-98.5`: a feeder that fails after filling the one slot cannot queue its error, and
+/// the chunk it queued already adds up to the declared length. The receiver still reports
+/// the failure, never a clean end of a body that broke its declared length or framing.
+#[test]
+fn a_failure_behind_an_undrained_full_slot_is_reported_never_a_clean_end() {
+    run(async {
+        let deadline = Instant::now() + STREAMED_BODY_TIMEOUT;
+        // One more byte than declared, after a first frame of exactly the declared length.
+        let (mut body, feeder) = channel(4, 4, deadline);
+        feeder.pump(frames(&[b"abcd", b"e"])).await;
+        assert_eq!(
+            body.next_chunk().await,
+            Some(Err(StreamError::LengthMismatch))
+        );
+        assert_eq!(body.next_chunk().await, None);
+        // The connection fails after the declared bytes arrived.
+        let (mut body, feeder) = channel(4, 4, deadline);
+        let source = Frames(VecDeque::from([
+            Ok(Frame::data(Bytes::from_static(b"abcd"))),
+            Err(io::Error::other("reset")),
+        ]));
+        feeder.pump(source).await;
+        assert_eq!(body.next_chunk().await, Some(Err(StreamError::Malformed)));
+        assert_eq!(body.next_chunk().await, None);
+    });
+}

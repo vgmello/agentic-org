@@ -14,6 +14,7 @@ use hyper::StatusCode;
 use org_proto::web::{Milliseconds, ReadResponse, WebError, WebErrorCode};
 use org_proto::{Call, ErrorCode};
 use serde_json::Value;
+use tokio::time::Instant;
 
 use super::super::hq_context::{resolve_hq_office, revalidate_and_resolve_hq};
 use super::super::{failure, unavailable, CallerAuth, SessionApi};
@@ -25,7 +26,7 @@ use crate::service::ApiReply;
 pub(super) const OFFICE_CALL: Duration = Duration::from_secs(5);
 
 /// One typed `attachment.*` call to the caller's organization office. `retry` allows one
-/// retry after a transport failure (reads only); `deadline` bounds the office's answer.
+/// retry after a transport failure (reads only); `deadline` bounds the whole call.
 pub(super) trait AttachmentOffice: Send + Sync + 'static {
     fn call<C>(
         &self,
@@ -82,6 +83,9 @@ fn hq_failure(error: Failure) -> ApiReply {
 }
 
 impl AttachmentOffice for HqOffice {
+    /// The whole call (channel setup, grant, round trip and the one retry after a stale
+    /// grant) runs within `deadline`: past it the call is a transport failure, whichever
+    /// step it was in.
     async fn call<C>(
         &self,
         params: C::Params,
@@ -93,11 +97,32 @@ impl AttachmentOffice for HqOffice {
         C::Params: Send + Sync,
         C::Result: Send,
     {
+        let until = Instant::now() + deadline;
+        tokio::time::timeout_at(until, self.call_until::<C>(params, retry, until))
+            .await
+            .unwrap_or(Err(OfficeFailure::Transport))
+    }
+}
+
+impl HqOffice {
+    /// [`AttachmentOffice::call`]; each office round trip gets only what is left of `until`.
+    async fn call_until<C>(
+        &self,
+        params: C::Params,
+        retry: bool,
+        until: Instant,
+    ) -> Result<C::Result, OfficeFailure>
+    where
+        C: Call,
+        C::Params: Send + Sync,
+        C::Result: Send,
+    {
+        let left = || until.saturating_duration_since(Instant::now());
         let auth = self.api.auth(&self.caller);
         let reply = self
             .api
             .offices
-            .call_typed_with_timeout::<C>(&auth, &self.office(), &params, retry, deadline)
+            .call_typed_with_timeout::<C>(&auth, &self.office(), &params, retry, left())
             .await;
         // A grant minted for a session that changed since: revalidate once and ask again
         // (a refusal is never applied, so the retry is safe for every call).
@@ -113,7 +138,7 @@ impl AttachmentOffice for HqOffice {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = office.clone();
         self.api
             .offices
-            .call_typed_with_timeout::<C>(&auth, &office, &params, retry, deadline)
+            .call_typed_with_timeout::<C>(&auth, &office, &params, retry, left())
             .await
     }
 }

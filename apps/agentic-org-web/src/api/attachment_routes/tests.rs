@@ -2,6 +2,8 @@
 //! many calls), and what the browser gets back. Routing, sessions and the ingress rules are
 //! covered through the full gateway in `api/tests/attachments.rs`.
 
+mod hq_office;
+
 use super::download::{download, DownloadRequest};
 use super::files::{self, MimeCategory};
 use super::media;
@@ -119,7 +121,7 @@ impl Body for Frames {
 fn staging_office(
     committed: Value,
     refuse: Option<(&'static str, ErrorCode)>,
-) -> (FakeOffice, Arc<Mutex<Vec<u8>>>) {
+) -> (Arc<FakeOffice>, Arc<Mutex<Vec<u8>>>) {
     let staged = Arc::new(Mutex::new(Vec::new()));
     let bytes = Arc::clone(&staged);
     let declared: Mutex<Value> = Mutex::new(Value::Null);
@@ -172,12 +174,12 @@ fn staging_office(
             other => panic!("unexpected {other}"),
         }
     });
-    (office, staged)
+    (Arc::new(office), staged)
 }
 
 /// Runs one upload of `bytes` (sent in `frame`-sized frames) declaring `declared` bytes.
 fn run_upload(
-    office: &FakeOffice,
+    office: &Arc<FakeOffice>,
     mime: &'static str,
     name: &str,
     bytes: &[u8],
@@ -197,7 +199,7 @@ fn run_upload(
             filename: name.to_owned(),
             mime,
         };
-        let reply = upload(office, file, body).await;
+        let reply = upload(Arc::clone(office), file, body).await;
         pump.await.unwrap();
         reply
     })
@@ -320,6 +322,43 @@ fn a_body_shorter_than_its_declared_length_is_400_and_aborted_never_committed() 
     assert_eq!(reply.status(), StatusCode::BAD_REQUEST);
     assert_eq!(office.count("attachment.upload_commit"), 0);
     assert_eq!(office.methods().last().unwrap(), "attachment.upload_abort");
+}
+
+/// `TASK-98.5`: hyper drops the request future when the client disconnects or an outer
+/// deadline cancels it. A begun upload is then still aborted, so its staged bytes never hold
+/// the caller's staging quota until they expire.
+#[test]
+fn an_upload_dropped_mid_transfer_still_aborts_the_staged_upload() {
+    let (office, _) = staging_office(json!({}), None);
+    runtime().block_on(async {
+        let deadline = tokio::time::Instant::now() + STREAMED_BODY_TIMEOUT;
+        // A body that never sends a byte: the upload waits for its first chunk.
+        let (body, feeder) = body_stream::channel(10, CHUNK, deadline);
+        let file = UploadFile {
+            filename: "a.pdf".to_owned(),
+            mime: "application/pdf",
+        };
+        let mut request = Box::pin(upload(Arc::clone(&office), file, body));
+        let waited = tokio::time::timeout(Duration::from_millis(20), &mut request).await;
+        assert!(waited.is_err(), "the upload waits for its body");
+        assert_eq!(office.methods(), ["attachment.upload_begin"]);
+        drop(request);
+        for _ in 0..10 {
+            if office.count("attachment.upload_abort") > 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        drop(feeder);
+    });
+    assert_eq!(
+        office.methods(),
+        ["attachment.upload_begin", "attachment.upload_abort"]
+    );
+    assert_eq!(
+        office.params("attachment.upload_abort")[0],
+        json!({"upload_id": UPLOAD_ID})
+    );
 }
 
 /// An office holding one file: `inspect` answers its view, `read_chunk` serves its bytes.
@@ -708,6 +747,14 @@ fn a_file_commit_binds_one_source_to_a_standalone_target_and_answers_201() {
         json!({"command_id": COMMAND, "upload_id": UPLOAD_ID, "target_kind": "organization",
                "extra": 1}),
         json!({"command_id": "not-a-uuid", "upload_id": UPLOAD_ID, "target_kind": "organization"}),
+        // Every id the office would look up is a canonical UUIDv7 before any IPC.
+        json!({"command_id": COMMAND, "upload_id": "../u", "target_kind": "organization"}),
+        json!({"command_id": COMMAND, "upload_id": UPLOAD_ID.to_uppercase(),
+               "target_kind": "organization"}),
+        json!({"command_id": COMMAND, "source_attachment_id": "0193a5c0-0000-4000-8000-0000000000bb",
+               "target_kind": "organization"}),
+        json!({"command_id": COMMAND, "upload_id": UPLOAD_ID, "target_kind": "project",
+               "target_id": "project-1"}),
     ] {
         let refused = files::commit_params(bad.to_string().as_bytes())
             .err()
@@ -804,6 +851,11 @@ fn only_allowlisted_upload_types_pass_with_their_caps() {
         vec![("content-type", "application/pdf; charset=utf-8")],
         vec![("content-type", "image/png; name=x")],
         vec![("content-type", "text/plain; charset=latin1")],
+        // One `charset` parameter, its value bare or in exactly one pair of quotes.
+        vec![("content-type", "text/plain; charset=utf-8; charset=utf-8")],
+        vec![("content-type", "text/plain; charset=\"\"utf-8\"\"")],
+        vec![("content-type", "text/plain; charset=\"utf-8")],
+        vec![("content-type", "text/plain;")],
         vec![("content-type", "image/png"), ("content-type", "image/png")],
         vec![],
     ] {
@@ -837,6 +889,12 @@ fn the_filename_header_is_one_percent_encoded_plain_name() {
         "%2",
         "%20a.md",
         long.as_str(),
+        // Bidirectional overrides and isolates (U+202A..U+202E, U+2066..U+2069) could show a
+        // name other than the stored one: `invoice<RLO>fdp.exe` reads as `invoiceexe.pdf`.
+        "invoice%E2%80%AEfdp.exe",
+        "a%E2%80%AA.md",
+        "a%E2%81%A6.md",
+        "a%E2%81%A9.md",
     ] {
         assert_eq!(
             name(bad).err().unwrap().status(),

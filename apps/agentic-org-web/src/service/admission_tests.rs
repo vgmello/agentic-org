@@ -241,7 +241,7 @@ fn origin_gate_covers_every_api_namespace_and_method_but_no_static_namespace() {
                             (StatusCode::NOT_FOUND, "not_found")
                         };
                         if options {
-                            assert_eq!(response.headers()["allow"], "GET, HEAD, POST");
+                            assert_eq!(response.headers()["allow"], "GET, HEAD, POST, PATCH");
                         }
                         assert!(!response
                             .headers()

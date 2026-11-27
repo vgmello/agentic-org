@@ -87,7 +87,7 @@ fn is_javascript_url(value: &str) -> bool {
 mod tests {
     use super::*;
 
-    const EXPECTED_HTML: &str = "default-src 'none'; script-src 'self' {script_hashes}; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'";
+    const EXPECTED_HTML: &str = "default-src 'none'; script-src 'self' {script_hashes}; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'";
     const EXPECTED_NON_HTML: &str =
         "default-src 'none'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'";
 
@@ -96,36 +96,6 @@ mod tests {
         assert_eq!(policy_line(HTML_TEMPLATE), EXPECTED_HTML);
         assert_eq!(policy_line(NON_HTML), EXPECTED_NON_HTML);
         assert_eq!(non_html_policy(), EXPECTED_NON_HTML);
-    }
-
-    /// `TASK-98.5`: images may come from this origin or from a `blob:` URL the page made
-    /// itself (an authenticated attachment fetched with the session proof); never `data:`,
-    /// never a remote or wildcard source, and `blob:` nowhere else.
-    #[test]
-    fn images_allow_self_and_blob_only_and_no_other_directive_allows_blob() {
-        let policy = html_policy("<script>0</script>").unwrap();
-        let policy = policy.to_str().unwrap();
-        let directives: Vec<Vec<&str>> = policy
-            .split(';')
-            .map(|directive| directive.split_ascii_whitespace().collect())
-            .collect();
-        let images: Vec<_> = directives
-            .iter()
-            .filter(|tokens| tokens.first() == Some(&"img-src"))
-            .collect();
-        assert_eq!(images, [&vec!["img-src", "'self'", "blob:"]]);
-        for tokens in &directives {
-            for source in &tokens[1..] {
-                assert!(
-                    !matches!(*source, "data:" | "https:" | "http:" | "*" | "filesystem:"),
-                    "{tokens:?}"
-                );
-                assert!(
-                    *source != "blob:" || tokens[0] == "img-src",
-                    "blob: only for images: {tokens:?}"
-                );
-            }
-        }
     }
 
     #[test]

@@ -165,6 +165,15 @@ pub(super) fn commit_params(
     if !standalone || body.upload_id.is_some() == body.source_attachment_id.is_some() {
         return Err(invalid());
     }
+    // Every id the office would look up is a canonical UUIDv7 before any IPC.
+    let ids = [&body.upload_id, &body.source_attachment_id, &body.target_id];
+    if ids
+        .into_iter()
+        .flatten()
+        .any(|id| !org_proto::is_uuid_v7(id))
+    {
+        return Err(invalid());
+    }
     Ok((
         id,
         AttachmentAttachParams {

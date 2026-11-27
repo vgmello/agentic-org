@@ -209,16 +209,16 @@ pub(super) async fn execute(api: Arc<SessionApi>, call: AttachmentCall) -> WebRe
         | AttachmentCall::FileUpdate(caller, org, _) => (*caller, org.clone()),
     };
     let office = match HqOffice::resolve(api, caller, org).await {
-        Ok(office) => office,
+        Ok(office) => Arc::new(office),
         Err(reply) => return WebReply::Json(reply),
     };
     WebReply::Json(match call {
-        AttachmentCall::Upload(_, _, file, body) => upload::upload(&office, file, body).await,
+        AttachmentCall::Upload(_, _, file, body) => upload::upload(office, file, body).await,
         AttachmentCall::Download(_, _, request) => {
-            return download::download(Arc::new(office), request).await;
+            return download::download(office, request).await;
         }
-        AttachmentCall::FileList(_, _, query) => files::list(&office, query).await,
-        AttachmentCall::FileCommit(_, _, params) => files::commit(&office, params).await,
-        AttachmentCall::FileUpdate(_, _, params) => files::update(&office, params).await,
+        AttachmentCall::FileList(_, _, query) => files::list(&*office, query).await,
+        AttachmentCall::FileCommit(_, _, params) => files::commit(&*office, params).await,
+        AttachmentCall::FileUpdate(_, _, params) => files::update(&*office, params).await,
     })
 }

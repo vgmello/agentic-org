@@ -1,9 +1,10 @@
 //! `POST /api/v1/organizations/{org}/attachments`: one streamed upload into the caller's
 //! staging area. The declared file is begun, each body chunk is forwarded as soon as it
 //! arrives (at most 512 KiB per `attachment.upload_chunk`), and the complete upload is
-//! committed (validated and sanitized by the office). Any failure after the begin aborts
-//! the staged upload, so nothing half-sent stays behind.
+//! committed (validated and sanitized by the office). Any failure after the begin, and a
+//! request dropped mid-transfer, aborts the staged upload, so nothing half-sent stays behind.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::prelude::*;
@@ -59,7 +60,7 @@ impl From<StagedUploadView> for UploadedFile {
 
 /// Streams `body` into a new staged upload and commits it.
 pub(super) async fn upload<O: AttachmentOffice>(
-    office: &O,
+    office: Arc<O>,
     file: UploadFile,
     mut body: StreamedBody,
 ) -> ApiReply {
@@ -81,14 +82,13 @@ pub(super) async fn upload<O: AttachmentOffice>(
         Err(error) => return office_reply(error),
     };
     let upload_id = begun.upload.upload_id;
+    let mut staged = UploadGuard::new(Arc::clone(&office), upload_id.clone());
     let piece = begun.chunk_size_bytes.clamp(1, ATTACHMENT_CHUNK_MAX_BYTES) as usize;
-    if let Err(reply) = send_chunks(office, &upload_id, piece, &mut body).await {
-        abort(office, upload_id).await;
+    if let Err(reply) = send_chunks(&*office, &upload_id, piece, &mut body).await {
+        staged.abort().await;
         return reply;
     }
-    let commit = AttachmentUploadRef {
-        upload_id: upload_id.clone(),
-    };
+    let commit = AttachmentUploadRef { upload_id };
     let committed = match budget(&body) {
         Ok(deadline) => office
             .call::<AttachmentUploadCommit>(commit, false, deadline)
@@ -97,14 +97,62 @@ pub(super) async fn upload<O: AttachmentOffice>(
         Err(reply) => Err(reply),
     };
     match committed {
-        Ok(committed) => ApiReply::json(
-            StatusCode::CREATED,
-            serde_json::to_value(ReadResponse::Result(UploadedFile::from(committed.upload)))
-                .expect("upload result serializes"),
-        ),
+        Ok(committed) => {
+            staged.disarm();
+            ApiReply::json(
+                StatusCode::CREATED,
+                serde_json::to_value(ReadResponse::Result(UploadedFile::from(committed.upload)))
+                    .expect("upload result serializes"),
+            )
+        }
         Err(reply) => {
-            abort(office, upload_id).await;
+            staged.abort().await;
             reply
+        }
+    }
+}
+
+/// A begun upload that is not committed yet. However the request ends without its commit
+/// it is aborted, so a staged file never outlives its request and keeps the caller's
+/// staging quota: awaited on a failure the route answers, and spawned (best effort) when
+/// the request future itself is dropped, because the client went away or an outer deadline
+/// cancelled it.
+struct UploadGuard<O: AttachmentOffice> {
+    office: Arc<O>,
+    upload_id: Option<String>,
+}
+
+impl<O: AttachmentOffice> UploadGuard<O> {
+    fn new(office: Arc<O>, upload_id: String) -> Self {
+        Self {
+            office,
+            upload_id: Some(upload_id),
+        }
+    }
+
+    /// The upload was committed: nothing is left to remove.
+    fn disarm(&mut self) {
+        self.upload_id = None;
+    }
+
+    /// Aborts now. A drop while this waits still aborts from `Drop` (twice is harmless).
+    async fn abort(&mut self) {
+        if let Some(upload_id) = self.upload_id.clone() {
+            abort(&*self.office, upload_id).await;
+            self.disarm();
+        }
+    }
+}
+
+impl<O: AttachmentOffice> Drop for UploadGuard<O> {
+    fn drop(&mut self) {
+        let Some(upload_id) = self.upload_id.take() else {
+            return;
+        };
+        // No runtime (shutting down): the office expires the staged upload itself.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let office = Arc::clone(&self.office);
+            runtime.spawn(async move { abort(&*office, upload_id).await });
         }
     }
 }

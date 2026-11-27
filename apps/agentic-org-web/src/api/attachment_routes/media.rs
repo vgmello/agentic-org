@@ -63,7 +63,7 @@ fn invalid(message: &'static str) -> ApiReply {
 }
 
 /// The upload's type from its one `Content-Type`: an allowlisted image or document, with
-/// only `charset=utf-8` on a text type. Anything else is `415`.
+/// at most one `charset=utf-8` parameter on a text type. Anything else is `415`.
 pub(crate) fn upload_media(headers: &HeaderMap) -> Result<UploadMedia, ApiReply> {
     let mut values = headers.get_all(CONTENT_TYPE).iter();
     let (Some(value), None) = (values.next(), values.next()) else {
@@ -82,19 +82,30 @@ pub(crate) fn upload_media(headers: &HeaderMap) -> Result<UploadMedia, ApiReply>
     } else {
         return Err(unsupported());
     };
-    for parameter in parts {
-        let (name, value) = parameter.split_once('=').ok_or_else(unsupported)?;
-        let utf8 = name.trim().eq_ignore_ascii_case("charset")
-            && value.trim().trim_matches('"').eq_ignore_ascii_case("utf-8");
-        if !(text && utf8) {
-            return Err(unsupported());
+    match (parts.next(), parts.next()) {
+        (None, _) => Ok(UploadMedia { mime, max_bytes }),
+        (Some(parameter), None) if text && utf8_charset(parameter) => {
+            Ok(UploadMedia { mime, max_bytes })
         }
+        _ => Err(unsupported()),
     }
-    Ok(UploadMedia { mime, max_bytes })
+}
+
+/// `charset=utf-8`, its value bare or in exactly one pair of quotes.
+fn utf8_charset(parameter: &str) -> bool {
+    parameter.split_once('=').is_some_and(|(name, value)| {
+        let value = value.trim();
+        let value = value
+            .strip_prefix('"')
+            .and_then(|quoted| quoted.strip_suffix('"'))
+            .unwrap_or(value);
+        name.trim().eq_ignore_ascii_case("charset") && value.eq_ignore_ascii_case("utf-8")
+    })
 }
 
 /// The file name from its one percent-encoded header: 1 to 255 bytes of UTF-8, one plain
-/// name (no folder, no leading dot, no control character).
+/// name (no folder, no leading dot, no control or bidirectional override character, which
+/// could show a name other than the stored one).
 pub(crate) fn upload_filename(headers: &HeaderMap) -> Result<String, ApiReply> {
     const RULE: &str = "X-Attachment-Filename must be one percent-encoded file name.";
     let mut values = headers.get_all(FILENAME_HEADER).iter();
@@ -107,9 +118,10 @@ pub(crate) fn upload_filename(headers: &HeaderMap) -> Result<String, ApiReply> {
         || name.len() > ATTACHMENT_FILENAME_MAX_BYTES
         || name.trim() != name
         || name.starts_with('.')
-        || name
-            .chars()
-            .any(|c| c.is_control() || matches!(c, '/' | '\\'))
+        || name.chars().any(|c| {
+            c.is_control()
+                || matches!(c, '/' | '\\' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+        })
     {
         return Err(invalid(RULE));
     }
