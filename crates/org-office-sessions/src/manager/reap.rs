@@ -120,45 +120,85 @@ pub(crate) fn reap_live_handle(
     })
 }
 
+fn take_recyclable_idle_handle(
+    mgr: &SessionManager,
+    employee_id: &str,
+    expected_run_id: &str,
+    reason: &str,
+    reserve_bg_spawn: bool,
+) -> Option<LiveSessionHandle> {
+    let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+    if reg.draining || reg.shutting_down || reg.starting.contains(employee_id) {
+        return None;
+    }
+    let still_recyclable = reg.live.get(employee_id).is_some_and(|handle| {
+        let permit_free = handle
+            .active_permit
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_none();
+        let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+        st.run_id.as_deref() == Some(expected_run_id)
+            && st.state == SessionState::Idle
+            && !st.recovery_required
+            && permit_free
+    });
+    if !still_recyclable {
+        return None;
+    }
+    let handle = reg.live.remove(employee_id)?;
+    reg.starting.insert(employee_id.to_owned());
+    if reserve_bg_spawn {
+        reg.bg_workers.retain(|h| !h.is_finished());
+        reg.bg_spawning += 1;
+    }
+    let _ = handle.tx.send(PumpCommand::Stop {
+        reason: reason.to_owned(),
+    });
+    Some(handle)
+}
+
+/// Synchronously removes and reaps an idle, permit-free, matching-`run_id` warm handle under
+/// `StartSlotGuard` so `reg.starting` is clear before returning (used during auto-pre-prepare
+/// right before the assignee's synchronous launch so `enforce_sibling_isolation` never races).
+pub(crate) fn recycle_stale_warm_handle_sync(
+    mgr: &SessionManager,
+    employee_id: &str,
+    expected_run_id: &str,
+    reason: &str,
+) -> bool {
+    let Some(old) = take_recyclable_idle_handle(mgr, employee_id, expected_run_id, reason, false)
+    else {
+        return false;
+    };
+    let _start_guard = StartSlotGuard::new(&mgr.registry, employee_id.to_owned());
+    reap_live_handle(
+        mgr,
+        employee_id,
+        old,
+        None,
+        ReapMode::FailClosedRestore {
+            conflict_message: format!(
+                "could not verify teardown of recycled warm session `{employee_id}`; resolve recovery first"
+            ),
+        },
+    )
+    .is_ok()
+}
+
 /// Removes an idle, permit-free, matching-`run_id` warm handle from `mgr.registry`, stops its
-/// pump, reaps it fail-closed on a tracked background worker, and triggers `process_due_wakes_for`
-/// once teardown is verified (`TASK-166`, `TASK-160`).
+/// pump, reaps it fail-closed on a tracked background worker, and retries due wakes once
+/// teardown is verified (`TASK-166`, `TASK-160`).
 pub(crate) fn recycle_stale_warm_handle_in(
     mgr: &Arc<SessionManager>,
     employee_id: &str,
     expected_run_id: &str,
     reason: &str,
 ) -> bool {
-    let removed = {
-        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
-        if reg.draining || reg.shutting_down || reg.starting.contains(employee_id) {
-            return false;
-        }
-        let still_recyclable = reg.live.get(employee_id).is_some_and(|handle| {
-            let permit_free = handle
-                .active_permit
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .is_none();
-            let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-            st.run_id.as_deref() == Some(expected_run_id)
-                && st.state == SessionState::Idle
-                && !st.recovery_required
-                && permit_free
-        });
-        if !still_recyclable {
-            return false;
-        }
-        let Some(handle) = reg.live.remove(employee_id) else {
-            return false;
-        };
-        reg.starting.insert(employee_id.to_owned());
-        reg.bg_workers.retain(|h| !h.is_finished());
-        reg.bg_spawning += 1;
-        let _ = handle.tx.send(PumpCommand::Stop {
-            reason: reason.to_owned(),
-        });
-        handle
+    let Some(removed) =
+        take_recyclable_idle_handle(mgr, employee_id, expected_run_id, reason, true)
+    else {
+        return false;
     };
     let emp = employee_id.to_owned();
     let slot = Arc::new(Mutex::new(Some(removed)));
@@ -182,8 +222,8 @@ pub(crate) fn recycle_stale_warm_handle_in(
                 .is_ok();
             }
         }
-        if reaped_cleanly {
-            let _ = m.process_due_wakes_for(&emp);
+        if reaped_cleanly && !super::is_admissions_closed(&m) {
+            m.process_due_wakes();
         }
     });
     if !spawned {

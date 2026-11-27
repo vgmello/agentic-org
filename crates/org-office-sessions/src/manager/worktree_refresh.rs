@@ -161,7 +161,7 @@ impl SessionManager {
         &self,
         notice: &PreparedWorktreeNotice<'_>,
     ) -> WorktreeSandboxRefreshOutcome {
-        self.recycle_stale_idle_siblings(notice.employee_id);
+        self.recycle_stale_idle_siblings(notice.employee_id, !notice.recycle_idle_target);
         self.refresh_stale_busy_siblings(notice.employee_id);
         let Some(snap) = self.snapshot_live_for_refresh(notice.employee_id) else {
             return WorktreeSandboxRefreshOutcome::default();
@@ -190,9 +190,10 @@ impl SessionManager {
     fn refresh_stale_busy_siblings(&self, exclude_employee_id: &str) {
         let busy_siblings = self.collect_busy_sibling_snapshots(exclude_employee_id);
         for (emp_id, snap) in busy_siblings {
-            if self
-                .sandbox_runner
-                .is_plan_stale(&self.office, &emp_id, &snap.sandbox_plan)
+            if !snap.sandbox_enabled
+                || self
+                    .sandbox_runner
+                    .is_plan_stale(&self.office, &emp_id, &snap.sandbox_plan)
             {
                 let _ = self.refresh_live_grants_and_settings(&emp_id, &snap);
             }
@@ -224,19 +225,29 @@ impl SessionManager {
             .collect()
     }
 
-    fn recycle_stale_idle_siblings(&self, exclude_employee_id: &str) {
-        let Some(mgr) = self.weak_self().and_then(|w| w.upgrade()) else {
-            return;
-        };
+    fn recycle_stale_idle_siblings(&self, exclude_employee_id: &str, synchronous: bool) {
         let candidates = self.collect_idle_recycle_candidates(exclude_employee_id);
+        let mgr = (!synchronous)
+            .then(|| self.weak_self().and_then(|w| w.upgrade()))
+            .flatten();
         for candidate in candidates {
-            if self.sandbox_runner.is_plan_stale(
+            if !self.sandbox_runner.is_plan_stale(
                 &self.office,
                 &candidate.employee_id,
                 &candidate.sandbox_plan,
             ) {
+                continue;
+            }
+            if synchronous {
+                let _ = super::reap::recycle_stale_warm_handle_sync(
+                    self,
+                    &candidate.employee_id,
+                    &candidate.run_id,
+                    "sandbox_topology_changed",
+                );
+            } else if let Some(ref mgr) = mgr {
                 let _ = super::reap::recycle_stale_warm_handle_in(
-                    &mgr,
+                    mgr,
                     &candidate.employee_id,
                     &candidate.run_id,
                     "sandbox_topology_changed",
@@ -343,10 +354,16 @@ impl SessionManager {
         };
         let attachments_root = crate::turn_attachments::attachments_root(&runtime_dir);
         Self::append_attachments_write_denies(&mut preset_cfg, &attachments_root);
-        let live_state_refreshed = update_live_runtime_policy(snap, &preset_cfg, &tmpdir);
+        let live_state_refreshed =
+            self.update_live_runtime_policy(employee_id, snap, &preset_cfg, &tmpdir);
+        if !live_state_refreshed {
+            return (false, false);
+        }
         let settings_file_refreshed = match (adapter.as_deref(), fresh_plan.as_ref()) {
-            (Some(rt), Some(plan)) => {
-                self.rewrite_runtime_sandbox_settings(&SettingsRewriteInput {
+            (Some(rt), Some(plan)) => self.rewrite_runtime_sandbox_settings(
+                employee_id,
+                snap,
+                &SettingsRewriteInput {
                     adapter: rt,
                     employee: &employee,
                     home: &home,
@@ -359,11 +376,57 @@ impl SessionManager {
                     allow_host_auth: snap.allow_host_auth,
                     preset_cfg: &preset_cfg,
                     fresh_plan: plan,
-                })
-            }
+                },
+            ),
             _ => false,
         };
         (live_state_refreshed, settings_file_refreshed)
+    }
+
+    fn is_live_snapshot_current(&self, employee_id: &str, snap: &LiveRefreshSnapshot) -> bool {
+        let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(handle) = reg.live.get(employee_id) else {
+            return false;
+        };
+        if !Arc::ptr_eq(&handle.state, &snap.state) {
+            return false;
+        }
+        let guard = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+        guard.run_id.as_deref() == Some(snap.run_id.as_str())
+            && !guard.recovery_required
+            && !is_terminal_session_state(guard.state)
+    }
+
+    fn update_live_runtime_policy(
+        &self,
+        employee_id: &str,
+        snap: &LiveRefreshSnapshot,
+        preset_cfg: &PresetConfig,
+        tmpdir: &Path,
+    ) -> bool {
+        let new_roots = effective_approval_writable_roots_from(
+            preset_cfg.preset,
+            &preset_cfg.sandbox.writable_roots,
+            tmpdir,
+        );
+        let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(handle) = reg.live.get(employee_id) else {
+            return false;
+        };
+        if !Arc::ptr_eq(&handle.state, &snap.state) {
+            return false;
+        }
+        let mut guard = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+        if guard.run_id.as_deref() != Some(snap.run_id.as_str())
+            || guard.recovery_required
+            || is_terminal_session_state(guard.state)
+        {
+            return false;
+        }
+        guard.policy.deny = preset_cfg.policy.deny.clone();
+        guard.policy.version = guard.policy.version.saturating_add(1);
+        guard.writable_roots = new_roots;
+        true
     }
 
     fn resolve_live_adapter(&self, runtime_id: Option<&str>) -> Option<Arc<dyn AgentRuntime>> {
@@ -388,7 +451,12 @@ impl SessionManager {
             .ok()
     }
 
-    fn rewrite_runtime_sandbox_settings(&self, input: &SettingsRewriteInput<'_>) -> bool {
+    fn rewrite_runtime_sandbox_settings(
+        &self,
+        employee_id: &str,
+        snap: &LiveRefreshSnapshot,
+        input: &SettingsRewriteInput<'_>,
+    ) -> bool {
         let host_profile = input.adapter.host_profile();
         let Some(settings_file) = host_profile.sandbox_settings_file else {
             return false;
@@ -437,6 +505,9 @@ impl SessionManager {
         }) else {
             return false;
         };
+        if !self.is_live_snapshot_current(employee_id, snap) {
+            return false;
+        }
         org_supervise::runtime::write_runtime_planned_file(
             Path::new(ctx.runtime_dir.as_str()),
             Path::new(settings_file),
@@ -530,24 +601,4 @@ fn is_terminal_session_state(state: SessionState) -> bool {
             | SessionState::StallLocked
             | SessionState::RecoveryRequired
     )
-}
-
-fn update_live_runtime_policy(
-    snap: &LiveRefreshSnapshot,
-    preset_cfg: &PresetConfig,
-    tmpdir: &Path,
-) -> bool {
-    let new_roots = effective_approval_writable_roots_from(
-        preset_cfg.preset,
-        &preset_cfg.sandbox.writable_roots,
-        tmpdir,
-    );
-    let mut guard = snap.state.lock().unwrap_or_else(|p| p.into_inner());
-    if guard.run_id.as_deref() != Some(snap.run_id.as_str()) {
-        return false;
-    }
-    guard.policy.deny = preset_cfg.policy.deny.clone();
-    guard.policy.version = guard.policy.version.saturating_add(1);
-    guard.writable_roots = new_roots;
-    true
 }

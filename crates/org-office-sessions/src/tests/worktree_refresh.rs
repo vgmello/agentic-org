@@ -1225,10 +1225,12 @@ fn task160_sandbox_refresh_wake_respects_task_budget_hold_pause_offboard_and_shu
         crate::WakeOutcome::Ignored
     );
 
-    // 4. Manager shutdown refuses/ignores SandboxRefresh.
-    mgr.stop_all("shutdown");
+    // 4. Manager shutdown refuses/ignores SandboxRefresh on a distinct ACTIVE agent.
+    let (active_emp, _) =
+        hire_sandboxed_claude_agent(&office, &owner_id, &root_team_id, "self-wake-shutdown");
+    mgr.shutdown("shutdown");
     assert_eq!(
-        mgr.enqueue_wake(&emp_id, make_refresh_wake("shutdown")),
+        mgr.enqueue_wake(&active_emp, make_refresh_wake("shutdown")),
         crate::WakeOutcome::Ignored
     );
 }

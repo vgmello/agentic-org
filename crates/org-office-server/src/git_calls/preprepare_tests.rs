@@ -435,6 +435,7 @@ struct TestHarness {
     self_agent: String,
     self_conn: String,
     peer_agent: String,
+    peer_conn: String,
     sessions: Arc<SessionManager>,
     git: Arc<GitService>,
     tasks: TaskService,
@@ -482,7 +483,7 @@ fn build_harness(fake_claude: Option<PathBuf>, wire_sessions_on_tasks: bool) -> 
         .unwrap();
 
     let (self_agent, self_conn) = hire_sandboxed_agent(&office, &owner, &team_id, "self-eng", 100);
-    let (peer_agent, _) = hire_sandboxed_agent(&office, &owner, &team_id, "peer-eng", 200);
+    let (peer_agent, peer_conn) = hire_sandboxed_agent(&office, &owner, &team_id, "peer-eng", 200);
 
     let sock_tmp = tempfile::tempdir().unwrap();
     let mut registry = RuntimeRegistry::empty();
@@ -549,6 +550,7 @@ fn build_harness(fake_claude: Option<PathBuf>, wire_sessions_on_tasks: bool) -> 
         self_agent,
         self_conn,
         peer_agent,
+        peer_conn,
         sessions,
         git,
         tasks,
@@ -1132,12 +1134,8 @@ fn task160_mid_turn_worktree_prepare_rpc_signals_refresh_and_preserves_isolation
     let _ = h.sessions.stop_session(&h.self_agent, "done");
 }
 
-#[test]
-fn task160_idle_warm_handle_auto_preprepare_does_not_race_async_recycle() {
-    let _ = org_platform::process::harden_self();
-    let cli_tmp = tempfile::tempdir().unwrap();
-    let count_file = cli_tmp.path().join("invocations");
-    let fake_cli = cli_tmp.path().join("stub-warm");
+fn write_counting_warm_stub_cli(dir: &Path, count_file: &Path) -> PathBuf {
+    let fake_cli = dir.join("stub-warm");
     let script = format!(
         r#"#!/bin/sh
 n=0
@@ -1153,44 +1151,90 @@ done
     );
     std::fs::write(&fake_cli, script).unwrap();
     std::fs::set_permissions(&fake_cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+    fake_cli
+}
 
-    let h = build_harness(Some(fake_cli), true);
-    let peer_admin = setup_midturn_peer_and_untargeted_repo(&h);
-
-    // 1. Start `self_agent` with 0 active worktrees and wait until the warm handle settles Idle.
-    h.sessions
-        .start_session(
-            &h.owner,
-            &MemberSessionStartParams {
-                command_id: test_uuid(710),
-                employee_id: h.self_agent.clone(),
-                instruction: Some("Warm up with 0 worktrees".into()),
-                workspace: None,
-            },
-        )
-        .expect("warm Turn 1");
+fn wait_for_session_state(
+    sessions: &SessionManager,
+    owner: &str,
+    emp_id: &str,
+    want: org_proto::sessions::SessionState,
+) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        if h.sessions
-            .inspect_session(&h.owner, Some(&h.self_agent))
+        if sessions
+            .inspect_session(owner, Some(emp_id))
             .ok()
-            .is_some_and(|r| r.session.state == org_proto::sessions::SessionState::Idle)
+            .is_some_and(|r| r.session.state == want)
         {
-            break;
+            return;
         }
         std::thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(
-        h.sessions
-            .inspect_session(&h.owner, Some(&h.self_agent))
+        sessions
+            .inspect_session(owner, Some(emp_id))
             .unwrap()
             .session
             .state,
-        org_proto::sessions::SessionState::Idle
+        want
     );
+}
 
-    // 2. Assign a repository-linked task while `self_agent` is idle -> auto-pre-prepare must NOT
-    //    spawn a racing async recycle; synchronous cold-start must launch Turn 2 with new grants!
+fn warm_up_peer_and_self_idle(h: &TestHarness) {
+    let peer_enroll = h
+        .sessions
+        .enrollment()
+        .start(&h.owner, &h.peer_conn, "claude")
+        .unwrap();
+    h.sessions
+        .enrollment()
+        .submit_code(
+            &h.owner,
+            &h.peer_conn,
+            &peer_enroll.login_id,
+            "sk-ant-peer-960",
+        )
+        .unwrap();
+    for (cmd_seq, emp_id, msg) in [
+        (709, &h.peer_agent, "Warm peer with r1 worktree"),
+        (710, &h.self_agent, "Warm self with 0 worktrees"),
+    ] {
+        h.sessions
+            .start_session(
+                &h.owner,
+                &MemberSessionStartParams {
+                    command_id: test_uuid(cmd_seq),
+                    employee_id: emp_id.clone(),
+                    instruction: Some(msg.into()),
+                    workspace: None,
+                },
+            )
+            .expect("warm Turn 1");
+        wait_for_session_state(
+            &h.sessions,
+            &h.owner,
+            emp_id,
+            org_proto::sessions::SessionState::Idle,
+        );
+    }
+}
+
+#[test]
+fn task160_idle_warm_handle_auto_preprepare_does_not_race_async_recycle() {
+    let _ = org_platform::process::harden_self();
+    let cli_tmp = tempfile::tempdir().unwrap();
+    let count_file = cli_tmp.path().join("invocations");
+    let fake_cli = write_counting_warm_stub_cli(cli_tmp.path(), &count_file);
+
+    let h = build_harness(Some(fake_cli), true);
+    let peer_admin = setup_midturn_peer_and_untargeted_repo(&h);
+    warm_up_peer_and_self_idle(&h);
+
+    // Assign a repository-linked task while BOTH `peer_agent` (holding an `r1` worktree) and
+    // `self_agent` have idle warm handles -> auto-pre-prepare must reap `peer_agent` synchronously
+    // (clearing `reg.starting` before `enforce_sibling_isolation`) and let `self_agent` recycle
+    // and launch Turn 2 with ZERO `AdmissionRefused` holds!
     let t_new = test_uuid(720);
     let create_req = Request::new::<TasksCreate>(
         1,
@@ -1207,18 +1251,18 @@ done
     let resp = h.tasks.dispatch(Some(&h.owner), &create_req).unwrap();
     assert!(matches!(resp.outcome, Outcome::Result(_)), "{resp:?}");
 
-    let deadline2 = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline2 {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
         let count = std::fs::read_to_string(&count_file)
             .ok()
             .and_then(|s| s.trim().parse::<u32>().ok())
             .unwrap_or(0);
-        let idle = h
+        let self_idle = h
             .sessions
             .inspect_session(&h.owner, Some(&h.self_agent))
             .ok()
             .is_some_and(|r| r.session.state == org_proto::sessions::SessionState::Idle);
-        if count >= 2 && idle {
+        if count >= 3 && self_idle {
             break;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -1229,8 +1273,17 @@ done
         .parse()
         .unwrap();
     assert_eq!(
-        count, 2,
-        "stale idle warm handle must be synchronously recycled once without racing AdmissionRefused"
+        count, 3,
+        "peer warm (1) + self warm (2) + self recycled Turn 2 (3) must run with zero AdmissionRefused race"
+    );
+    assert_eq!(
+        h.sessions
+            .inspect_session(&h.owner, Some(&h.peer_agent))
+            .unwrap()
+            .session
+            .state,
+        org_proto::sessions::SessionState::Stopped,
+        "stale idle sibling peer_agent must be reaped synchronously before self_agent launches"
     );
     let pending = h
         .sessions
