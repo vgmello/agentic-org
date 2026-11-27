@@ -82,6 +82,49 @@ impl TaskStatus {
             _ => None,
         }
     }
+
+    /// Whether the task's lifecycle has ended: `done` or `cancelled` (`TASK-105`).
+    pub fn is_closed(self) -> bool {
+        matches!(self, Self::Done | Self::Cancelled)
+    }
+}
+
+/// Which half of the task lifecycle `tasks.list` answers (`TASK-105`): `open` is `todo`,
+/// `in_progress` and `blocked`; `closed` is `done` and `cancelled`; `all` is every status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatusScope {
+    Open,
+    Closed,
+    All,
+}
+
+impl TaskStatusScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Closed => "closed",
+            Self::All => "all",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "open" => Some(Self::Open),
+            "closed" => Some(Self::Closed),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    /// Whether a task in `status` is in this scope.
+    pub fn admits(self, status: TaskStatus) -> bool {
+        match self {
+            Self::Open => !status.is_closed(),
+            Self::Closed => status.is_closed(),
+            Self::All => true,
+        }
+    }
 }
 
 /// Task priority (`doc-77`: `urgent | high | normal | low`).
@@ -164,3 +207,6 @@ pub enum TaskSortMode {
     /// Most recently updated first.
     UpdatedDesc,
 }
+
+#[cfg(test)]
+mod tests;

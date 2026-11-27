@@ -100,6 +100,8 @@ fn list_params(request: &Request, offset: usize) -> Result<TasksListParams, Refu
         unassigned,
         modified_file: opt_str(i, "modified_file"),
         offset: (offset > 0).then_some(offset as u64),
+        status_scope: None,
+        done_since: None,
     })
 }
 
