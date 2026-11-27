@@ -340,6 +340,9 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org repo revoke-credential --repo <id-or-key> [--office <office_id>] [--json]`
   Delete an office's stored per-repository HTTPS token from its credential vault.
   **Use when:** rotating or revoking a scoped repository HTTPS token on an office.
+- `agentic-org repo github configure|status|revoke|bind|unbind [--office <office_id>] [--json]`
+  Configure an office's wrapped GitHub App RSA private key and webhook HMAC-SHA256 secret (read from `--private-key-file`/`--private-key-stdin` and `--webhook-secret-file`/`--webhook-secret-prompt`, never CLI flags), inspect non-secret status, bind or unbind registered repositories to GitHub `owner/repo` slugs, or revoke App credentials.
+  **Use when:** enabling GitHub App PR, review comment, and CI check-run analysis on an HQ office without personal PATs.
 - `agentic-org worktree list|prepare`
   List or prepare isolated task Git worktrees over an approved office channel.
   **Use when:** preparing a clean per-task Git worktree before editing code or inspecting active worktrees.

@@ -13,8 +13,8 @@ use std::time::Duration;
 use argon2::password_hash::{PasswordHash, PasswordVerifier};
 use org_host_control::browser::{
     BrowserAccount, BrowserAuthEnableParams, BrowserOpenChannelParams, BrowserOrigin,
-    BrowserSession, BrowserSessionGrantParams, Digest32, LinkRegisterParams, SessionSignInParams,
-    SessionValidateParams,
+    BrowserSession, BrowserSessionGrantParams, BrowserWebhookGrantParams, Digest32,
+    LinkRegisterParams, SessionSignInParams, SessionValidateParams,
 };
 use org_host_control::listen::ListenMode;
 use org_host_control::ops::LinkedOrg;
@@ -98,6 +98,13 @@ fn validate_registration_inputs(
     let origin = origin(&params.origin)?;
     Ok((username, origin))
 }
+
+/// Opened Web channel descriptor returned to the service layer for transfer delivery.
+pub(crate) type OpenedWebChannel = (
+    String,
+    std::os::unix::net::UnixStream,
+    crate::supervisor::channels::ChannelSlot,
+);
 
 impl Authentication {
     pub(super) fn permit(&self) -> Result<HashPermit<'_>, ApiError> {
@@ -421,14 +428,7 @@ impl Authentication {
         organization: &str,
         now_ms: i64,
         ended: &mut Vec<Ended>,
-    ) -> Result<
-        (
-            String,
-            std::os::unix::net::UnixStream,
-            crate::supervisor::channels::ChannelSlot,
-        ),
-        ApiError,
-    > {
+    ) -> Result<OpenedWebChannel, ApiError> {
         let account = self.browser_auth_account(connection, &params.auth, now_ms, ended)?;
         if !account
             .links()
@@ -534,6 +534,82 @@ impl Authentication {
                 channel_id: &params.channel_id,
                 session_id: &session.session_id,
                 ttl,
+            },
+        )
+    }
+
+    /// `browser.webhook_open_channel`: opens a Web channel to an organization's HQ office for
+    /// forwarding HMAC-signed external webhooks from the admitted web process.
+    pub(crate) fn open_webhook_channel(
+        &self,
+        connection: &Connection,
+        endpoint: Arc<crate::supervisor::channels::Endpoint>,
+        organization: &str,
+    ) -> Result<OpenedWebChannel, ApiError> {
+        let (id, socket, slot) = endpoint
+            .open(org_office_launch::ChannelKind::Web)
+            .map_err(|_| unavailable())?;
+        let alive = connection.liveness();
+        if alive
+            .upgrade()
+            .is_none_or(|closed| closed.load(Ordering::SeqCst))
+            || !slot.is_live()
+        {
+            return Err(unavailable());
+        }
+        let mut channels = self.web_channels.lock().map_err(|_| unavailable())?;
+        channels.retain(|_, channel| channel.live());
+        if channels.len() >= 64 {
+            return Err(unavailable());
+        }
+        channels.insert(
+            id.clone(),
+            WebChannel {
+                endpoint: Arc::downgrade(&endpoint),
+                organization: organization.into(),
+                connection: alive,
+                _slot: slot.clone(),
+            },
+        );
+        Ok((id, socket, slot))
+    }
+
+    /// `browser.webhook_grant`: mints a short-lived (60s) webhook-only grant whose principal
+    /// (`__github_webhook__`) is admitted by the office strictly for `github.webhook.ingest`.
+    pub(crate) fn grant_webhook(
+        &self,
+        connection: &Connection,
+        params: &BrowserWebhookGrantParams,
+    ) -> Result<org_host_control::ops::SessionGrantResult, ApiError> {
+        const WEBHOOK_SESSION_ID: &str = "01000000000000000000000001";
+        if !connection.channel_received(&params.channel_id) {
+            return Err(denied());
+        }
+        let endpoint = {
+            let channels = self.web_channels.lock().map_err(|_| unavailable())?;
+            let bound = channels.get(&params.channel_id).ok_or_else(denied)?;
+            if !bound.connection.ptr_eq(&connection.liveness())
+                || !bound._slot.is_live()
+                || bound.organization != params.org_id
+            {
+                return Err(denied());
+            }
+            let endpoint = bound.endpoint.upgrade().ok_or_else(unavailable)?;
+            if endpoint.office != params.office_id || !endpoint.is_live() {
+                return Err(denied());
+            }
+            endpoint
+        };
+        sign_grant(
+            &endpoint,
+            GrantInput {
+                account: "github-webhook",
+                member: org_proto::github::WEBHOOK_PRINCIPAL_MEMBER,
+                org_id: &params.org_id,
+                office_id: &params.office_id,
+                channel_id: &params.channel_id,
+                session_id: WEBHOOK_SESSION_ID,
+                ttl: Duration::from_secs(60),
             },
         )
     }

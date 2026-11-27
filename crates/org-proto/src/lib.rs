@@ -98,6 +98,7 @@ pub mod external_auth;
 pub mod federation;
 pub mod frame;
 pub mod git;
+pub mod github;
 pub mod hiring;
 pub mod inbox;
 pub mod location;

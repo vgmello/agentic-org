@@ -394,3 +394,59 @@ fn attachment_methods_are_person_scoped_never_owner_only() {
     }
     assert!(!is_member_scoped_method("attachment.future"));
 }
+
+#[test]
+fn github_app_and_repo_methods_require_owner_and_webhook_principal_is_strictly_scoped() {
+    for method in [
+        "github.app.configure",
+        "github.app.status",
+        "github.app.revoke",
+        "github.repo.bind",
+        "github.repo.unbind",
+    ] {
+        let mut req = request(claims());
+        req.method = method.into();
+        assert_eq!(
+            authorize(
+                &req,
+                "channel",
+                &office(),
+                &PersonOnly(Some("alice".into()))
+            ),
+            Err(ErrorCode::NotAuthorized),
+            "non-owner must be refused for {method}"
+        );
+        assert_eq!(
+            authorize(&req, "channel", &office(), &Probe::default()),
+            Ok("owner".into()),
+            "owner must be allowed for {method}"
+        );
+    }
+
+    // Webhook principal is admitted EXCLUSIVELY for `github.webhook.ingest`.
+    let mut wh_claims = claims();
+    wh_claims.member = org_proto::github::WEBHOOK_PRINCIPAL_MEMBER.into();
+    let mut ingest_req = request(wh_claims.clone());
+    ingest_req.method = "github.webhook.ingest".into();
+    assert_eq!(
+        authorize(&ingest_req, "channel", &office(), &PersonOnly(None)),
+        Ok(org_proto::github::WEBHOOK_PRINCIPAL_MEMBER.into())
+    );
+
+    for forbidden in [
+        "org.snapshot",
+        "github.app.status",
+        "github.app.configure",
+        "github.repo.bind",
+        "github.pr.list",
+        "github.pr.inspect",
+    ] {
+        let mut bad_req = request(wh_claims.clone());
+        bad_req.method = forbidden.into();
+        assert_eq!(
+            authorize(&bad_req, "channel", &office(), &PersonOnly(None)),
+            Err(ErrorCode::NotAuthorized),
+            "webhook principal must NEVER authorize {forbidden}"
+        );
+    }
+}

@@ -490,3 +490,59 @@ fn auth_scheme_stops_at_json_escapes_without_leaking_next_line_or_breaking_json(
         serde_json::from_str::<serde_json::Value>(&redacted).expect(&redacted);
     }
 }
+
+#[test]
+fn task272_github_app_pems_installation_tokens_and_webhook_secrets_are_redacted() {
+    let pkcs8 = format!(
+        "-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----",
+        "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwTESTSECRET"
+    );
+    let ghs = format!("ghs_{}", "InstallToken0123456789ABCDEF");
+    let ghp = format!("ghp_{}", "PersonalToken0123456789ABCDEF");
+    let pat = github_pat();
+    let whsec = format!("whsec_{}", "WebhookSecret0123456789ABCDEF");
+    let sig_hex = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
+    let raw = format!(
+        "café {ghs} 日本語 {ghp} {pat} {whsec}\n\
+         X-Hub-Signature-256: sha256={sig_hex}\n\
+         x-hub-signature: sha1=deadbeef0123456789abcdef\n\
+         {{\"private_key_pem\":\"PEM_VALUE_001\",\"webhook_secret\":\"HOOK_VAL_002\",\"ok\":true}}\n\
+         {pkcs8}\n"
+    );
+    let scrubbed = redact_text(&raw, &[]);
+    assert_clean(
+        &scrubbed,
+        &[
+            &ghs,
+            "InstallToken0123456789ABCDEF",
+            &ghp,
+            "PersonalToken0123456789ABCDEF",
+            &pat,
+            &whsec,
+            "WebhookSecret0123456789ABCDEF",
+            sig_hex,
+            "deadbeef0123456789abcdef",
+            "PEM_VALUE_001",
+            "HOOK_VAL_002",
+            "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwTESTSECRET",
+        ],
+    );
+    assert!(scrubbed.contains("café [REDACTED] 日本語 [REDACTED]"));
+    assert!(scrubbed.contains("[REDACTED PRIVATE KEY]"));
+    assert!(is_sensitive_key("private_key_pem"));
+    assert!(is_sensitive_key("githubPrivateKeyPem"));
+    assert!(is_sensitive_key("webhook_secret"));
+
+    let obj = json!({
+        "private_key_pem": pkcs8,
+        "webhook_secret": "raw_hook_secret_value",
+        "title": format!("Fix auth leak {ghs} café")
+    });
+    let scrubbed_json = redact_json(&obj, &[]);
+    assert_eq!(scrubbed_json["private_key_pem"], json!(REDACTED));
+    assert_eq!(scrubbed_json["webhook_secret"], json!(REDACTED));
+    assert_eq!(
+        scrubbed_json["title"],
+        json!("Fix auth leak [REDACTED] café")
+    );
+}

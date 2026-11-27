@@ -240,3 +240,100 @@ fn task_135_git_credentials_use_distinct_key_class_and_strict_repo_scope_binding
         Err(WrapError::Invalid)
     );
 }
+
+#[test]
+fn task272_github_app_key_class_and_aad_binding_are_isolated() {
+    let git_key = derive_wrapping_key(&KEY, KeyClass::GitCredential).unwrap();
+    let provider_key = derive_wrapping_key(&KEY, KeyClass::ProviderCredential).unwrap();
+    let office_key = derive_wrapping_key(&KEY, KeyClass::OfficePrivateKey).unwrap();
+    let github_key = derive_wrapping_key(&KEY, KeyClass::GitHubApp).unwrap();
+    assert_ne!(*github_key, *git_key);
+    assert_ne!(*github_key, *provider_key);
+    assert_ne!(*github_key, *office_key);
+
+    let binding = GitHubAppCredentialBinding {
+        organization_id: ORG,
+        office_id: OFFICE,
+        app_id: 424_242,
+        purpose: "private-key",
+    };
+    let secret = b"synthetic-github-app-key-material";
+    let wrapped = wrap_github_app_credential(&github_key, &binding, secret).unwrap();
+    assert!(!wrapped.windows(secret.len()).any(|w| w == secret));
+    assert_eq!(
+        *unwrap_github_app_credential(&github_key, &binding, &wrapped).unwrap(),
+        secret
+    );
+
+    // Wrong key class, wrong org, wrong office, wrong app_id, or swapped purpose fail closed.
+    assert_eq!(
+        unwrap_github_app_credential(&git_key, &binding, &wrapped),
+        Err(WrapError::Rejected)
+    );
+    assert_eq!(
+        unwrap_github_app_credential(
+            &github_key,
+            &GitHubAppCredentialBinding {
+                organization_id: "01J0000000000000000000ORG2",
+                ..binding
+            },
+            &wrapped
+        ),
+        Err(WrapError::Rejected)
+    );
+    assert_eq!(
+        unwrap_github_app_credential(
+            &github_key,
+            &GitHubAppCredentialBinding {
+                office_id: "01J000000000000000000OFFC2",
+                ..binding
+            },
+            &wrapped
+        ),
+        Err(WrapError::Rejected)
+    );
+    assert_eq!(
+        unwrap_github_app_credential(
+            &github_key,
+            &GitHubAppCredentialBinding {
+                app_id: 424_243,
+                ..binding
+            },
+            &wrapped
+        ),
+        Err(WrapError::Rejected)
+    );
+    assert_eq!(
+        unwrap_github_app_credential(
+            &github_key,
+            &GitHubAppCredentialBinding {
+                purpose: "webhook-secret",
+                ..binding
+            },
+            &wrapped
+        ),
+        Err(WrapError::Rejected)
+    );
+    assert_eq!(
+        wrap_github_app_credential(
+            &github_key,
+            &GitHubAppCredentialBinding {
+                app_id: 0,
+                ..binding
+            },
+            secret
+        ),
+        Err(WrapError::Invalid)
+    );
+    assert_eq!(
+        wrap_github_app_credential(
+            &github_key,
+            &GitHubAppCredentialBinding {
+                purpose: "",
+                ..binding
+            },
+            secret
+        ),
+        Err(WrapError::Invalid)
+    );
+}

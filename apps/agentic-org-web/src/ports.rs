@@ -273,9 +273,31 @@ pub trait OfficeTransport: Send + Sync {
         method: &'a str,
         params: Value,
     ) -> BoxFuture<'a, Result<Option<Value>, OfficeFailure>>;
+
+    /// Dispatches one signed external webhook RPC (`method`, `params`) directly to an
+    /// organization's HQ office using the host's webhook-scoped grant (no browser session cookie).
+    fn call_webhook_raw<'a>(
+        &'a self,
+        _org_id: &'a str,
+        _method: &'static str,
+        _params: Value,
+    ) -> BoxFuture<'a, Result<Value, OfficeFailure>> {
+        Box::pin(async { Err(OfficeFailure::Transport) })
+    }
 }
 
 impl dyn OfficeTransport + '_ {
+    /// Sends one typed webhook RPC directly to `org_id`'s HQ office.
+    pub async fn call_webhook_typed<C: Call>(
+        &self,
+        org_id: &str,
+        params: &C::Params,
+    ) -> Result<C::Result, OfficeFailure> {
+        let params = serde_json::to_value(params)
+            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
+        let value = self.call_webhook_raw(org_id, C::METHOD, params).await?;
+        serde_json::from_value(value).map_err(|_| OfficeFailure::Transport)
+    }
     /// Sends one typed `org-proto` RPC with the default office deadline.
     pub async fn call_typed<C: Call>(
         &self,

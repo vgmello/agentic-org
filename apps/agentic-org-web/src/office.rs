@@ -17,7 +17,10 @@ use std::{
 };
 
 use org_host_control::{
-    browser::{BrowserSessionGrant, BrowserSessionGrantParams},
+    browser::{
+        BrowserSessionGrant, BrowserSessionGrantParams, BrowserWebhookGrant,
+        BrowserWebhookGrantParams,
+    },
     organization::BrowserAuth,
 };
 use org_proto::{Outcome, Principal, Request, Response};
@@ -313,6 +316,49 @@ impl OfficeBridge {
             Err(error) => Err(OfficeFailure::BeforeDispatch(error)),
         }
     }
+    async fn call_webhook_inner(
+        &self,
+        org_id: &str,
+        method: &'static str,
+        params: Value,
+    ) -> Result<Value, OfficeFailure> {
+        let (office_id, channel_id, stream) = self
+            .host
+            .open_webhook_channel_async(org_id.to_owned())
+            .await
+            .map_err(OfficeFailure::BeforeDispatch)?;
+        let isolated = Arc::new(Mutex::new(BTreeMap::new()));
+        let channel = MultiplexedChannel::from_local_unix(
+            office_id.clone(),
+            channel_id.clone(),
+            stream,
+            isolated,
+            Arc::clone(&self.events),
+        )
+        .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
+        if negotiate(&channel).await.is_err() {
+            return Err(OfficeFailure::BeforeDispatch(Failure::Unavailable));
+        }
+        let granted = self
+            .host
+            .request_async::<BrowserWebhookGrant>(&BrowserWebhookGrantParams {
+                org_id: org_id.to_owned(),
+                office_id: office_id.clone(),
+                channel_id: channel_id.clone(),
+            })
+            .await
+            .map_err(OfficeFailure::BeforeDispatch)?;
+        let principal = Principal {
+            grant: granted.grant,
+        };
+        let rpc_id = self.next_rpc_id();
+        let request = build_request(rpc_id, method, params, &principal)?;
+        let raw = channel
+            .roundtrip_raw(&request, rpc_id)
+            .await
+            .map_err(|_| OfficeFailure::Transport)?;
+        decode_response(raw)
+    }
 }
 
 impl OfficeTransport for OfficeBridge {
@@ -335,6 +381,15 @@ impl OfficeTransport for OfficeBridge {
         params: Value,
     ) -> BoxFuture<'a, Result<Option<Value>, OfficeFailure>> {
         Box::pin(self.dispatch_mutation_inner(auth, office_id, method, params))
+    }
+
+    fn call_webhook_raw<'a>(
+        &'a self,
+        org_id: &'a str,
+        method: &'static str,
+        params: Value,
+    ) -> BoxFuture<'a, Result<Value, OfficeFailure>> {
+        Box::pin(self.call_webhook_inner(org_id, method, params))
     }
 }
 

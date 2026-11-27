@@ -73,6 +73,7 @@ pub(crate) struct LiveEvents {
     presence: Mutex<Presence>,
     wake: Box<dyn Fn() + Send + Sync>,
     mailbox_changes: AtomicU64,
+    org_changes: AtomicU64,
     owner_member_id: Option<String>,
 }
 
@@ -102,12 +103,25 @@ impl LiveEvents {
             }),
             wake,
             mailbox_changes: AtomicU64::new(0),
+            org_changes: AtomicU64::new(0),
             owner_member_id,
         }
     }
 
     pub(crate) fn mailbox_head(&self) -> u64 {
         self.mailbox_changes.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn org_change_head(&self) -> u64 {
+        self.org_changes.load(Ordering::Acquire)
+    }
+
+    /// Marks a committed organization/integration context change (such as ingested GitHub PR/CI
+    /// status) and wakes live SSE subscribers.
+    pub(crate) fn record_org_changed(&self) {
+        self.org_changes.fetch_add(1, Ordering::Release);
+        self.record_inbox_changed();
     }
 
     /// Marks one committed change to an Inbox source (owner mailbox, pending tool approval,

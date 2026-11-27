@@ -33,6 +33,7 @@ const SECRET_PREFIXES: &[(&str, usize)] = &[
     ("ghs_", 8),
     ("ghu_", 8),
     ("ghr_", 8),
+    ("whsec_", 8),
     ("glpat-", 8),
     ("xoxb-", 8),
     ("xoxp-", 8),
@@ -104,6 +105,8 @@ const SENSITIVE_HEADERS_NORMALIZED: &[&str] = &[
     "xamzsecuritytoken",
     "xvaulttoken",
     "xaccesstoken",
+    "xhubsignature",
+    "xhubsignature256",
 ];
 
 /// Redacts every secret shape this crate knows from `input` (see the module docs).
@@ -157,6 +160,9 @@ pub fn redact_json(value: &Value, active_secrets: &[&str]) -> Value {
 pub fn is_sensitive_key(key: &str) -> bool {
     let norm = normalize_key(key);
     if SENSITIVE_KEYS_NORMALIZED.contains(&norm.as_str()) {
+        return true;
+    }
+    if norm.contains("privatekey") {
         return true;
     }
     [

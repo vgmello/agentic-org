@@ -210,8 +210,8 @@ pub(crate) enum TopCommand {
     /// Use when: reviewing or changing who belongs to the organization.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Member(PassArgs),
-    /// Manage repositories, scoped vault credentials, fetch origin branches and push task branches (repo register|list|attach|status|fetch|push|set-credential|credential-status|revoke-credential)
-    /// Use when: registering/attaching Git repos, storing per-repo office vault HTTPS tokens, checking office cache status, fetching newly pushed origin branches, or pushing branches.
+    /// Manage repositories, scoped vault credentials, GitHub App bindings, fetch origin branches and push task branches (repo register|list|attach|status|fetch|push|set-credential|credential-status|revoke-credential|github)
+    /// Use when: registering/attaching Git repos, storing per-repo office vault HTTPS tokens or wrapped GitHub App credentials, checking office cache status, fetching newly pushed origin branches, or pushing branches.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Repo(PassArgs),
     /// List or prepare isolated task worktrees (worktree list|prepare)

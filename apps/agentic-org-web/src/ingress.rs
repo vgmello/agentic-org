@@ -56,7 +56,10 @@ impl RequestAdmission {
                 return Err(ApiRefusal::CrossSite);
             }
         }
-        if !self.accepts_api_origin(request) {
+        let signed_webhook = is_github_webhook(request, path)
+            && request.headers.get(ORIGIN).is_none()
+            && has_signed_webhook_headers(request);
+        if !signed_webhook && !self.accepts_api_origin(request) {
             return Err(ApiRefusal::Origin);
         }
         let json_body = match request.method {
@@ -99,6 +102,32 @@ pub(crate) enum ApiRefusal {
 fn is_attachment_upload(path: &RequestPath) -> bool {
     matches!(path.segments(), [api, v1, orgs, _, attachments]
         if api == "api" && v1 == "v1" && orgs == "organizations" && attachments == "attachments")
+}
+
+/// Exactly `POST /api/v1/organizations/{org}/integrations/github/webhook`: HMAC-SHA256 signed
+/// webhook ingress delivered server-to-server by GitHub (no browser cookie or `Origin` header).
+fn is_github_webhook(request: &Parts, path: &RequestPath) -> bool {
+    request.method == Method::POST
+        && matches!(
+            path.segments(),
+            [api, v1, orgs, org, integrations, github, webhook]
+                if api == "api"
+                    && v1 == "v1"
+                    && orgs == "organizations"
+                    && !org.is_empty()
+                    && integrations == "integrations"
+                    && github == "github"
+                    && webhook == "webhook"
+        )
+}
+
+fn has_signed_webhook_headers(request: &Parts) -> bool {
+    ["x-hub-signature-256", "x-github-event", "x-github-delivery"]
+        .into_iter()
+        .all(|name| {
+            let mut vals = request.headers.get_all(name).iter();
+            vals.next().is_some_and(|v| !v.is_empty()) && vals.next().is_none()
+        })
 }
 
 /// One `Content-Type` of exactly `application/json`, optionally with
@@ -444,5 +473,45 @@ mod tests {
             check(Method::PATCH, upload, &[o, ("content-type", "image/png")]),
             Err(ApiRefusal::MediaType)
         );
+    }
+
+    #[test]
+    fn github_webhook_allows_missing_origin_only_with_signed_headers_and_json() {
+        let origin = "http://127.0.0.1:8080";
+        let admission = RequestAdmission::new(ListenOrigin::parse(origin).unwrap());
+        let check = |method: Method, target: &str, headers: &[(&str, &str)]| {
+            let request = api_at(method, target, headers);
+            let path = RequestPath::parse(request.uri.path()).unwrap();
+            admission.check_api(&request, &path)
+        };
+        let hook = "/api/v1/organizations/org-1/integrations/github/webhook";
+        let signed = [
+            ("content-type", "application/json"),
+            ("x-hub-signature-256", "sha256=deadbeef"),
+            ("x-github-event", "pull_request"),
+            ("x-github-delivery", "11111111-2222-4333-8444-555555555555"),
+        ];
+        assert_eq!(check(Method::POST, hook, &signed), Ok(()));
+        // Missing signature header without Origin is refused.
+        assert_eq!(
+            check(Method::POST, hook, &[("content-type", "application/json")]),
+            Err(ApiRefusal::Origin)
+        );
+        // Wrong Origin or cross-site Sec-Fetch-Site is STILL refused even with signature headers.
+        let mut bad_origin = signed.to_vec();
+        bad_origin.push(("origin", "https://evil.test"));
+        assert_eq!(
+            check(Method::POST, hook, &bad_origin),
+            Err(ApiRefusal::Origin)
+        );
+        let mut cross_site = signed.to_vec();
+        cross_site.push(("sec-fetch-site", "cross-site"));
+        assert_eq!(
+            check(Method::POST, hook, &cross_site),
+            Err(ApiRefusal::CrossSite)
+        );
+        // Non-webhook endpoints still require Origin even if GitHub headers are attached.
+        let cfg = "/api/v1/organizations/org-1/integrations/github/configure";
+        assert_eq!(check(Method::POST, cfg, &signed), Err(ApiRefusal::Origin));
     }
 }
