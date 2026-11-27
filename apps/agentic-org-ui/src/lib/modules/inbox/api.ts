@@ -6,7 +6,7 @@ import type { InboxItem, InboxRequest } from './types';
 /** The owner's unified Inbox (our-org-in-the-app §6.1): one item per source, cleared when its source resolves. */
 export interface InboxApi {
 	/** Every item, open and handled, in no particular order. */
-	list(organizationId: string): Promise<InboxItem[]>;
+	list(organizationId: string, signal?: AbortSignal): Promise<InboxItem[]>;
 	/**
 	 * Does what the owner asked, through the item's source. Resolves with the item as it now is (handled).
 	 * Rejects with the source's own reason when it refuses; the item then stays open.
@@ -69,8 +69,8 @@ const gatewayInboxApi = createHttpInboxApi({
  * Under `bun run dev:mock`, `e2e/fakes/modules/inbox.ts` stands in for this file.
  */
 export const inboxApi: InboxApi = Object.freeze<InboxApi>({
-	list: (organizationId) =>
-		signedInSession() ? gatewayInboxApi.list(organizationId) : unavailableCall(),
+	list: (organizationId, signal) =>
+		signedInSession() ? gatewayInboxApi.list(organizationId, signal) : unavailableCall(),
 	act: (organizationId, itemId, request) =>
 		signedInSession() ? gatewayInboxApi.act(organizationId, itemId, request) : unavailableCall(),
 	defer: (organizationId, itemId, untilIso, note) =>

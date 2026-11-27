@@ -58,10 +58,7 @@
 		tessPanel.setOrganization(organizationId);
 	});
 	onDestroy(() => tessPanel.dispose());
-	const stopCommentCleanup = appSession.onSessionEnded(() => {
-		clearInboxDeviceComments();
-		uiPrefs.clearFavorites();
-	});
+	const stopCommentCleanup = appSession.onSessionEnded(() => clearInboxDeviceComments());
 	onDestroy(() => stopCommentCleanup());
 	provideNotifications();
 	let shortcutsOpen = $state(false);
@@ -240,9 +237,9 @@
 	const shellData = provideShellData({
 		getOrganizationId: () => organizationId,
 		getBaseOffices: () => data.connection.organization.offices,
-		loadOffices: (id, baseOffices) =>
+		loadOffices: (id, baseOffices, signal) =>
 			officesApi
-				.overview(id)
+				.overview(id, signal)
 				.then((overview) => layerOffices(baseOffices, overview))
 				.catch(() => baseOffices)
 	});

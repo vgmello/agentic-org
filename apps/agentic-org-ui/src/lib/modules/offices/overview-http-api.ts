@@ -79,14 +79,15 @@ export function createHttpOfficesOverviewApi({
 	http
 }: {
 	http: Pick<GatewayHttpTransport, 'read'>;
-}): { overview(organizationId: string): Promise<OfficesOverview> } {
+}): { overview(organizationId: string, signal?: AbortSignal): Promise<OfficesOverview> } {
 	return Object.freeze({
-		async overview(organizationId: string): Promise<OfficesOverview> {
+		async overview(organizationId: string, signal?: AbortSignal): Promise<OfficesOverview> {
 			const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/offices`;
 			let reply: GatewayReply;
 			try {
-				reply = await http.read(path);
-			} catch {
+				reply = await (signal ? http.read(path, signal) : http.read(path));
+			} catch (err) {
+				if (signal?.aborted) throw err;
 				throw {
 					source: 'api',
 					code: 'unavailable',

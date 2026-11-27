@@ -1,11 +1,5 @@
 import type { AppError } from '$lib/proto';
-import {
-	gatewayStatusCode,
-	readGatewayAppError,
-	unwrapGatewayResult,
-	type GatewayHttpTransport,
-	type GatewayReply
-} from '$lib/platform/http/gateway-errors';
+import type { GatewayHttpTransport } from '$lib/platform/http/gateway-errors';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgApi } from '$lib/modules/organization/api';
 import { isOpen, normalizeRef } from './present';
@@ -25,13 +19,13 @@ import {
 	buildClosePayload,
 	buildCreateBody,
 	defaultUuidV7,
-	inferTaskField,
 	isWireProject,
 	isWireTaskView,
 	normalizeUuidV7,
 	type PendingIds
 } from './http-api-payloads';
 import { createWorkItemNotesHandlers } from './http-api-notes';
+import { createWorkItemTransport } from './http-api-transport';
 import type { WorkItemsApi } from './api';
 import type {
 	AssignmentChange,
@@ -79,66 +73,46 @@ export function createHttpWorkItemsApi({
 		return `/api/v1/organizations/${encodeURIComponent(orgId)}`;
 	}
 
-	async function readJson(path: string, fallbackMessage: string): Promise<Record<string, unknown>> {
-		let reply: GatewayReply;
-		try {
-			reply = await http.read(path);
-		} catch {
-			throw { source: 'api', code: 'unavailable', message: fallbackMessage } satisfies AppError;
-		}
-		return unwrapGatewayResult(reply, fallbackMessage);
-	}
+	const { readJson, postJson } = createWorkItemTransport(http);
 
-	async function postJson(
-		path: string,
-		body: Record<string, unknown>,
-		fallbackMessage: string
-	): Promise<Record<string, unknown>> {
-		let reply: GatewayReply;
-		try {
-			reply = await http.submit(path, body);
-		} catch {
-			throw { source: 'api', code: 'unavailable', message: fallbackMessage } satisfies AppError;
-		}
-		if (reply.status !== 200) {
-			const err = readGatewayAppError(reply.body, gatewayStatusCode(reply.status), fallbackMessage);
-			const field = inferTaskField(err);
-			throw field ? { ...err, field } : err;
-		}
-		return unwrapGatewayResult(reply, fallbackMessage);
-	}
-
-	async function readProjects(organizationId: string): Promise<WireProject[]> {
+	async function readProjects(
+		organizationId: string,
+		signal?: AbortSignal
+	): Promise<WireProject[]> {
 		try {
 			const res = await readJson(
 				`${orgBase(organizationId)}/projects?include_archived=true`,
-				'Projects could not be loaded.'
+				'Projects could not be loaded.',
+				signal
 			);
 			return Array.isArray(res.projects) ? res.projects.filter(isWireProject) : [];
-		} catch {
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			return [];
 		}
 	}
 
-	async function loadLookup(organizationId: string): Promise<{
-		lookup: OrgLookup;
-		projects: WireProject[];
-	}> {
+	async function loadLookup(
+		organizationId: string,
+		signal?: AbortSignal
+	): Promise<{ lookup: OrgLookup; projects: WireProject[] }> {
 		const [view, projects] = await Promise.all([
-			orgApi.view(organizationId),
-			readProjects(organizationId)
+			orgApi.view(organizationId, signal),
+			readProjects(organizationId, signal)
 		]);
 		return { lookup: buildOrgLookup(view.snapshot, projects), projects };
 	}
 
 	async function readTasks(
 		organizationId: string,
-		params?: URLSearchParams
+		params?: URLSearchParams,
+		signal?: AbortSignal
 	): Promise<WireTaskView[]> {
 		const qs = params?.toString();
 		const res = await readJson(
 			`${orgBase(organizationId)}/tasks${qs ? `?${qs}` : ''}`,
-			'Work items could not be loaded.'
+			'Work items could not be loaded.',
+			signal
 		);
 		if (!Array.isArray(res.tasks)) {
 			throw {
@@ -176,12 +150,16 @@ export function createHttpWorkItemsApi({
 	});
 
 	return Object.freeze<WorkItemsApi>({
-		async queue(organizationId: string, scope: WorkScope): Promise<WorkQueue> {
+		async queue(
+			organizationId: string,
+			scope: WorkScope,
+			signal?: AbortSignal
+		): Promise<WorkQueue> {
 			const params = new URLSearchParams();
 			if (scope.kind === 'project') params.set('project_id', scope.projectId);
 			const [tasks, { lookup }] = await Promise.all([
-				readTasks(organizationId, params),
-				loadLookup(organizationId)
+				readTasks(organizationId, params, signal),
+				loadLookup(organizationId, signal)
 			]);
 			return {
 				rows: tasks.map((t) => mapTaskRow(t, lookup)),

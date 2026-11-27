@@ -5,7 +5,7 @@ import type { AddProgress, Issued, OfficesOverview } from './types';
 
 /** The office flows beyond the connected office: add, approve, remove, rename, place and the outboxes. */
 export interface OfficesApi {
-	overview(organizationId: string): Promise<OfficesOverview>;
+	overview(organizationId: string, signal?: AbortSignal): Promise<OfficesOverview>;
 
 	/** Approves a join with the check code typed at HQ. Rejects `code_mismatch` (with `triesLeft`) or `join_cancelled`. */
 	approveJoin(organizationId: string, requestId: string, code: string): Promise<void>;
@@ -44,8 +44,10 @@ const gatewayOfficesOverviewApi = createHttpOfficesOverviewApi({
 // closed when signed out. Remaining office management mutations stay unavailable until their web
 // routes are wired. Under `bun run dev:mock`, e2e/fakes/modules/offices.ts stands in.
 export const officesApi: OfficesApi = {
-	overview: (organizationId) =>
-		signedInSession() ? gatewayOfficesOverviewApi.overview(organizationId) : unavailableCall(),
+	overview: (organizationId, signal) =>
+		signedInSession()
+			? gatewayOfficesOverviewApi.overview(organizationId, signal)
+			: unavailableCall(),
 	approveJoin: unavailableCall,
 	declineJoin: unavailableCall,
 	invite: unavailableCall,

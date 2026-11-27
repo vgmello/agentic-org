@@ -41,8 +41,9 @@ export async function safeRead(
 ): Promise<Rec> {
 	let reply: GatewayReply;
 	try {
-		reply = await http.read(path, signal);
-	} catch {
+		reply = await (signal ? http.read(path, signal) : http.read(path));
+	} catch (err) {
+		if (signal?.aborted) throw err;
 		throw { source: 'api', code: 'unavailable', message: fallbackMessage } satisfies ChatRefusal;
 	}
 	return unwrapChatReply(reply, fallbackMessage);
@@ -57,8 +58,9 @@ export async function safeSubmit(
 ): Promise<Rec> {
 	let reply: GatewayReply;
 	try {
-		reply = await http.submit(path, body, signal);
-	} catch {
+		reply = await (signal ? http.submit(path, body, signal) : http.submit(path, body));
+	} catch (err) {
+		if (signal?.aborted) throw err;
 		throw { source: 'api', code: 'unavailable', message: fallbackMessage } satisfies ChatRefusal;
 	}
 	return unwrapChatReply(reply, fallbackMessage);

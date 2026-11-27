@@ -335,7 +335,7 @@
 	:global(html[data-ui-theme^='report']) .profile-toolbar {
 		border-block-end: 1.5px solid var(--report-masthead-rule);
 	}
-	:global(.profile-owner-pill) {
+	.profile-header :global(.profile-owner-pill) {
 		background: var(--tone-accent-bg);
 		color: var(--tone-accent-ink);
 		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);

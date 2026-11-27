@@ -135,4 +135,33 @@ describe('captureOverlayOpener & returnFocus (WebKit pointer-open support)', () 
 
 		expect(captureOverlayOpener(null)).toBe(trigger);
 	});
+
+	it('preserves trigger opener after > 1500ms menu dwell and skips focused menuitem', () => {
+		vi.useFakeTimers();
+		try {
+			const trigger = new FakeElement('button');
+			const menu = new FakeElement('div', { role: 'menu' });
+			const menuItem = new FakeElement('button', { role: 'menuitem' });
+			menu.append(menuItem);
+
+			captureOverlayOpener(null);
+			const dispatch = (
+				globalThis.document as unknown as { dispatch: (t: string, el: FakeElement) => void }
+			).dispatch;
+			dispatch('pointerdown', trigger);
+			vi.advanceTimersByTime(2500);
+			// Clicking inside the menu after > 1500ms refreshes the trigger's timestamp and skips the focused menuitem.
+			(globalThis.document as unknown as { activeElement: unknown }).activeElement = menuItem;
+			dispatch('pointerdown', menuItem);
+
+			expect(captureOverlayOpener(null)).toBe(trigger);
+
+			// Stale pointer outside a menu (> 1500ms) or disabled trigger returns null.
+			vi.advanceTimersByTime(2500);
+			(globalThis.document as unknown as { activeElement: unknown }).activeElement = body;
+			expect(captureOverlayOpener(null)).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });

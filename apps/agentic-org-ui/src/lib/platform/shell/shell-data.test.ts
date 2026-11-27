@@ -79,4 +79,57 @@ describe('ShellData inboxLoadedOrganizationId', () => {
 		shell.dispose();
 		expect(shell.inboxLoadedOrganizationId).toBeUndefined();
 	});
+
+	it('forwards AbortSignal to all 4 shell loaders and aborts superseded or cancelled loads', async () => {
+		const orgSignals: (AbortSignal | undefined)[] = [];
+		const workSignals: (AbortSignal | undefined)[] = [];
+		const inboxSignals: (AbortSignal | undefined)[] = [];
+		const officeSignals: (AbortSignal | undefined)[] = [];
+
+		orgView.mockImplementation((_id: string, signal?: AbortSignal) => {
+			orgSignals.push(signal);
+			return Promise.resolve({ snapshot: { members: [], teams: [], projects: [] } });
+		});
+		workSnapshot.mockImplementation(
+			(_id: string, _p?: string, _c?: string, signal?: AbortSignal) => {
+				workSignals.push(signal);
+				return Promise.resolve({ items: [] });
+			}
+		);
+		inboxList.mockImplementation((_id: string, signal?: AbortSignal) => {
+			inboxSignals.push(signal);
+			return Promise.resolve([]);
+		});
+
+		const shell = new ShellData({
+			getOrganizationId: () => 'org-1',
+			getBaseOffices: () => baseOffices,
+			loadOffices: async (_id, offices, signal) => {
+				officeSignals.push(signal);
+				return offices;
+			}
+		});
+
+		const first = shell.load('org-1', true);
+		await Promise.resolve();
+		expect(orgSignals[0]?.aborted).toBe(false);
+		expect(workSignals[0]?.aborted).toBe(false);
+		expect(inboxSignals[0]?.aborted).toBe(false);
+		expect(officeSignals[0]?.aborted).toBe(false);
+
+		const second = shell.load('org-1', false);
+		await Promise.resolve();
+		expect(orgSignals[0]?.aborted).toBe(true);
+		expect(workSignals[0]?.aborted).toBe(true);
+		expect(inboxSignals[0]?.aborted).toBe(true);
+		expect(officeSignals[0]?.aborted).toBe(true);
+		expect(orgSignals[1]?.aborted).toBe(false);
+
+		await Promise.all([first.promise, second.promise]);
+
+		const third = shell.load('org-1', false);
+		third.cancel();
+		expect(orgSignals[2]?.aborted).toBe(true);
+		await third.promise;
+	});
 });

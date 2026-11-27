@@ -18,7 +18,11 @@ export { loadShellWorkItems, useShellData, type ShellRefreshResult };
 export interface ShellDataOptions {
 	getOrganizationId: () => string;
 	getBaseOffices: () => OfficeInfo[];
-	loadOffices: (organizationId: string, baseOffices: OfficeInfo[]) => Promise<OfficeInfo[]>;
+	loadOffices: (
+		organizationId: string,
+		baseOffices: OfficeInfo[],
+		signal?: AbortSignal
+	) => Promise<OfficeInfo[]>;
 }
 
 export class ShellData implements ShellDataContext {
@@ -119,10 +123,10 @@ export class ShellData implements ShellDataContext {
 		if (reset) this.#resetFields();
 		const baseOffices = untrack(() => this.#options.getBaseOffices());
 		const promise: Promise<ShellRefreshResult> = Promise.allSettled([
-			orgApi.view(id),
-			loadShellWorkItems(id),
-			inboxApi.list(id),
-			this.#options.loadOffices(id, baseOffices)
+			orgApi.view(id, controller.signal),
+			loadShellWorkItems(id, controller.signal),
+			inboxApi.list(id, controller.signal),
+			this.#options.loadOffices(id, baseOffices, controller.signal)
 		]).then(async ([orgRes, workRes, inboxRes, officesRes]): Promise<ShellRefreshResult> => {
 			if (this.#activeAbort === controller) this.#activeAbort = undefined;
 			if (this.#leaving || cancelled) return { inboxUpdated: false, workUpdated: false };

@@ -2,6 +2,7 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
+	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { areaCapability } from '$lib/platform/workspace/capabilities';
 	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 	import Unavailable from '$lib/platform/shell/Unavailable.svelte';
@@ -12,6 +13,7 @@
 	onMount(() => {
 		uiPrefs.hydrate();
 		document.documentElement.dataset.hydrated = 'true';
+		return appSession.onSessionEnded(() => uiPrefs.clearFavorites());
 	});
 </script>
 

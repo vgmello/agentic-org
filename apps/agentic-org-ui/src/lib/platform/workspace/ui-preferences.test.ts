@@ -279,4 +279,35 @@ describe('ui preferences and 7-theme selection', () => {
 		});
 		expect(stored.workspaceNav).toEqual(['chat', 'insights']);
 	});
+
+	it('clears org-scoped favoriteProjects from memory and localStorage via clearFavorites()', () => {
+		const removed: string[] = [];
+		const map = new Map<string, string>();
+		const prevWindow = globalThis.window;
+		Object.defineProperty(globalThis, 'window', {
+			configurable: true,
+			value: {
+				localStorage: {
+					getItem: (k: string) => map.get(k) ?? null,
+					setItem: (k: string, v: string) => void map.set(k, v),
+					removeItem: (k: string) => {
+						removed.push(k);
+						map.delete(k);
+					}
+				}
+			}
+		});
+		try {
+			uiPrefs.toggleFavorite('proj-1');
+			expect(uiPrefs.favoriteProjects).toContain('proj-1');
+			expect(map.get(STORAGE_KEYS.favorites)).toContain('proj-1');
+
+			uiPrefs.clearFavorites();
+			expect(uiPrefs.favoriteProjects).toEqual([]);
+			expect(removed).toContain(STORAGE_KEYS.favorites);
+			expect(map.has(STORAGE_KEYS.favorites)).toBe(false);
+		} finally {
+			Object.defineProperty(globalThis, 'window', { configurable: true, value: prevWindow });
+		}
+	});
 });

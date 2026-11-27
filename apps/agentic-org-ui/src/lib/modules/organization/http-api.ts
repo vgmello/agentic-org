@@ -241,13 +241,13 @@ export function createHttpOrgApi({
 	newId?: () => string;
 }): OrgApi {
 	return Object.freeze({
-		async view(organizationId: string) {
+		async view(organizationId: string, signal?: AbortSignal) {
 			let reply: Reply;
 			try {
-				reply = await http.read(
-					`/api/v1/organizations/${encodeURIComponent(organizationId)}/snapshot`
-				);
-			} catch {
+				const path = `/api/v1/organizations/${encodeURIComponent(organizationId)}/snapshot`;
+				reply = await (signal ? http.read(path, signal) : http.read(path));
+			} catch (err) {
+				if (signal?.aborted) throw err;
 				throw {
 					source: 'api',
 					code: 'unavailable',

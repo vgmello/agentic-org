@@ -49,10 +49,14 @@ export function createHttpChatApi({ http, subscribe, viewerId }: HttpChatApiOpti
 			const base = `/api/v1/organizations/${encodeURIComponent(organizationId)}/chat`;
 			const [convRes, chanRes] = await Promise.all([
 				safeRead(http, `${base}/conversations`, 'Conversations could not be loaded.', signal),
-				safeRead(http, `${base}/channels`, 'Channels could not be loaded.', signal).catch(() => ({
-					channels: []
-				}))
+				safeRead(http, `${base}/channels`, 'Channels could not be loaded.', signal).catch((err) => {
+					if (signal?.aborted) throw err;
+					return { channels: [] };
+				})
 			]);
+			if (signal?.aborted) {
+				throw signal.reason ?? new DOMException('Aborted', 'AbortError');
+			}
 			const { conversations, joinedIds, readAt, lastReadByConv, pinnedIds } = mergeConversations(
 				convRes,
 				chanRes

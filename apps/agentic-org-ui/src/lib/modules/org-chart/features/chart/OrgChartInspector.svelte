@@ -140,7 +140,7 @@
 			>
 				Change manager…
 			</button>
-			{#if canMove && selectedData.employee.homeTeam && !isBuiltInHandle(selectedData.employee.kind, selectedData.employee.handle, selectedData.employee.builtinKey)}
+			{#if canMove && selectedData.employee.homeTeam && !isBuiltInHandle(selectedData.employee.kind, selectedData.employee.handle, undefined, selectedData.employee.builtinKey)}
 				<button
 					type="button"
 					onclick={() => onAction('move', selectedData.employee!)}

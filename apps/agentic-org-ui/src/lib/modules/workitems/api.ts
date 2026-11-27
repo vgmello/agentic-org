@@ -39,7 +39,7 @@ import type {
  */
 export interface WorkItemsApi {
 	/** The task projection for a scope: board, list and Needs me read the same rows. */
-	queue(organizationId: string, scope: WorkScope): Promise<WorkQueue>;
+	queue(organizationId: string, scope: WorkScope, signal?: AbortSignal): Promise<WorkQueue>;
 	/** Looks a task up by its reference (`T-A42`); one task or `not_found`. */
 	task(organizationId: string, ref: string): Promise<TaskDetail>;
 	/** Teams, employees and projects a capture or assignment may name. */

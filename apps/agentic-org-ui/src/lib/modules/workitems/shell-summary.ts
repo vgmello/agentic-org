@@ -55,14 +55,18 @@ function rowToSummary(row: TaskRow): WorkItemSummary {
 	};
 }
 
-export async function loadShellWorkItems(organizationId: string): Promise<WorkItemSummary[]> {
+export async function loadShellWorkItems(
+	organizationId: string,
+	signal?: AbortSignal
+): Promise<WorkItemSummary[]> {
 	if (areaCapability('/work').available) {
 		try {
-			const queue = await workItemsApi.queue(organizationId, { kind: 'organization' });
+			const queue = await workItemsApi.queue(organizationId, { kind: 'organization' }, signal);
 			return queue.rows.map(rowToSummary);
-		} catch {
+		} catch (err) {
+			if (signal?.aborted) throw err;
 			// Fall back to legacy workApi when workItemsApi is unavailable.
 		}
 	}
-	return (await workApi.snapshot(organizationId)).items;
+	return (await workApi.snapshot(organizationId, undefined, undefined, signal)).items;
 }

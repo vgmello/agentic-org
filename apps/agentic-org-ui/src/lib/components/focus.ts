@@ -86,8 +86,12 @@ function onDocumentPointerDown(event: Event): void {
 	const raw = event.target;
 	const target = raw instanceof Element ? raw : null;
 	if (!target) return;
-	// Do not overwrite the trigger button when clicking inside a dropdown/listbox menu item that will unmount.
-	if (target.closest('[role="menu"], [role="listbox"]')) return;
+	// Do not overwrite the trigger button when clicking inside a dropdown/listbox menu item that will unmount;
+	// refresh the trigger timestamp so reading a menu for > 1.5 s still returns focus to its trigger on WebKit.
+	if (target.closest('[role="menu"], [role="listbox"]')) {
+		if (usable(lastPointerEl)) lastPointerAt = Date.now();
+		return;
+	}
 	const interactive = target.closest<HTMLElement>(INTERACTIVE_OPENER);
 	if (interactive) {
 		lastPointerEl = interactive;
@@ -115,6 +119,8 @@ function isActiveOpener(el: Element | null, within?: Element | null): el is HTML
 		el instanceof HTMLElement &&
 		el !== document.body &&
 		el !== document.documentElement &&
+		usable(el) &&
+		!el.closest('[role="menu"], [role="listbox"]') &&
 		!within?.contains(el)
 	);
 }

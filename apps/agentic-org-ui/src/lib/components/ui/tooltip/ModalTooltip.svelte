@@ -69,12 +69,14 @@
 	function trackTooltip(node: HTMLElement) {
 		node.addEventListener('pointerenter', scheduleOpen);
 		node.addEventListener('pointerleave', close);
+		node.addEventListener('pointerdown', close);
 		node.addEventListener('focusin', onFocusIn);
 		node.addEventListener('focusout', close);
 		return () => {
 			clearTimer();
 			node.removeEventListener('pointerenter', scheduleOpen);
 			node.removeEventListener('pointerleave', close);
+			node.removeEventListener('pointerdown', close);
 			node.removeEventListener('focusin', onFocusIn);
 			node.removeEventListener('focusout', close);
 		};
