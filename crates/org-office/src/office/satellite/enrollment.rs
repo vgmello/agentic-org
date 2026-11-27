@@ -104,6 +104,28 @@ impl Office {
             .map_err(OfficeError::storage)
     }
 
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn provision_satellite_with(
+        folder: PathBuf,
+        spec: SatelliteProvisionSpec,
+        key: Key,
+        roots: DataRoots,
+        custody: Custody,
+        options: Options,
+        publish_office_file: bool,
+    ) -> Result<Office, OfficeError> {
+        provision_satellite_impl(
+            folder,
+            spec,
+            key,
+            roots,
+            custody,
+            options,
+            publish_office_file,
+        )
+    }
+
+    #[cfg(not(any(test, feature = "testkit")))]
     pub(crate) fn provision_satellite_with(
         folder: PathBuf,
         spec: SatelliteProvisionSpec,
@@ -259,6 +281,7 @@ fn provision_satellite_impl(
     let store = open_store(&cfg).map_err(storage)?;
     let companions = open_companion_stores(crate::office::CompanionOpenSpec {
         engine: options.engine,
+        backend: options.backend.as_ref(),
         roots: &roots,
         info: &info,
         identity: &custody.identity,

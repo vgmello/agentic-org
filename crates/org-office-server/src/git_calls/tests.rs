@@ -51,6 +51,7 @@ fn seed_bare_origin(dir: &Path) -> PathBuf {
 
 #[test]
 fn real_office_register_attach_prepare_commit_and_push_end_to_end() {
+    org_office_sqlite::install();
     let office = Arc::new(Office::for_test(TestOffice {
         engine: EngineChoice::Sqlite,
     }));

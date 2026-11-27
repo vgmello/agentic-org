@@ -378,7 +378,7 @@ fn assemble_create_change(
 }
 
 /// The ID of the `index`-th item of a task's definition of done copied at create.
-pub(crate) fn dod_step_id(task: &Id, index: usize) -> Id {
+pub fn dod_step_id(task: &Id, index: usize) -> Id {
     let index = (index as u64).to_be_bytes();
     derived_id(&[
         b"task-checklist-step-v1:",

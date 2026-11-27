@@ -45,9 +45,9 @@ The workspace intentionally runs **two distinct CLI contracts**:
 
 - Prefer **`application -> domain module -> feature/use case`** for business workflows.
 - **Journaled `org-office` domain families** follow one uniform VSA shape:
-  `<family>/{mod.rs, records.rs, ports.rs, projector.rs, features/<op>.rs, testkit.rs}` + SQLite adapter in `crates/org-office/src/store/sqlite/<family>.rs`.
+  `<family>/{mod.rs, records.rs, ports.rs, projector.rs, features/<op>.rs, testkit.rs}` + SQLite adapter in `crates/org-office-sqlite/src/<family>.rs`.
   - Never import another domain's `features::*` across domain boundaries (share narrow public capabilities or small domain-neutral helpers instead).
-  - Never put `rusqlite` or raw SQL outside `crates/org-office/src/store/sqlite/` or `crates/org-host-sqlite/src/` (`engine_boundary.rs`).
+  - Never put `rusqlite` or raw SQL outside `crates/org-office-sqlite/src/` or `crates/org-host-sqlite/src/` (`engine_boundary.rs`).
 - **Keep leaf contracts and hexagonal adapters native (do NOT force into `features/`):**
   - Wire/protocol contracts (`org-proto`, `org-sync-proto`, `org-host-control`, `org-office-launch`) stay flat domain-schema leaves (`I ≈ 0.00`).
   - OS & vendor runtime adapters (`org-platform`, `org-platform-host`, `org-agent-runtime`, `org-agent-runtime-{claude,codex,agy}`, `org-socket`, `org-client`, `org-git`) stay capability-per-module hexagonal adapters.

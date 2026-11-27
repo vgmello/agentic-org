@@ -45,6 +45,7 @@ pub(super) struct Net {
 
 impl Net {
     pub(super) fn new(satellites: u8) -> Self {
+        org_office_sqlite::install();
         let hq = Arc::new(Office::for_test_with_real_ca(TestOffice {
             engine: EngineChoice::Sqlite,
         }));

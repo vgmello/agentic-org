@@ -16,6 +16,7 @@ path = "tests/launch.rs"
 
 [dependencies]
 org-office-server = { path = "../../crates/org-office-server" }
+org-office-sqlite = { path = "../../crates/org-office-sqlite" }
 # Composition root wiring: concrete vendor runtime adapters are injected here so
 # `org-office-sessions` never links vendor adapter crates.
 org-agent-runtime = { path = "../../crates/org-agent-runtime" }

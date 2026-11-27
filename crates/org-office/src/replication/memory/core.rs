@@ -18,7 +18,7 @@ use crate::error::OfficeError;
 use crate::replication::{initial_checkpoint, StoredRelayItem, SyncStatusSnapshot};
 
 #[derive(Clone, Debug)]
-pub(crate) struct ReplicationCoreData {
+pub struct ReplicationCoreData {
     pub checkpoint: OrgCheckpoint,
     pub initial_snapshot_required: bool,
     pub events: BTreeMap<(u64, u64), OrgEvent>,

@@ -60,6 +60,7 @@ impl LiveOfficeFixture {
     fn start() -> Self {
         let dir = tempfile::Builder::new().prefix("b6").tempdir().unwrap();
         let socket = dir.path().join("office.sock");
+        org_office_sqlite::install();
         let office = Arc::new(Office::for_test(TestOffice {
             engine: org_office::EngineChoice::Sqlite,
         }));

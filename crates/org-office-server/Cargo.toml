@@ -20,6 +20,7 @@ zeroize = "=1.9.1"
 org-socket = { path = "../org-socket" }
 org-proto = { path = "../org-proto" }
 org-office = { path = "../org-office" }
+org-office-sqlite = { path = "../org-office-sqlite" }
 org-doc-render = { path = "../org-doc-render" }
 org-git = { path = "../org-git" }
 org-copilot = { path = "../org-copilot" }
@@ -46,6 +47,7 @@ org-agent-cli = { path = "../org-agent-cli" }
 org-agent-runtime = { path = "../org-agent-runtime" }
 org-sync = { path = "../org-sync" }
 org-office = { path = "../org-office", features = ["testkit"] }
+org-office-sqlite = { path = "../org-office-sqlite", features = ["testkit"] }
 org-mailbox = { path = "../org-mailbox", features = ["testkit"] }
 org-client = { path = "../org-client", features = ["testkit"] }
 tempfile.workspace = true

@@ -61,6 +61,7 @@ impl World {
     }
 
     pub(crate) fn open(&self, key: Option<Key>) -> Result<Office, OfficeError> {
+        org_office_sqlite::install();
         let (custody, roots) = self.writer.admitted();
         Office::open(&self.folder, key, INSTANCE, roots, custody)
     }

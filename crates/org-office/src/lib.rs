@@ -10,10 +10,7 @@
 //! a folder. The organization family (`organization_family`) holds the organization's
 //! rules; `rules` reads the native protocol's organization commands.
 
-// No unsafe code but one call: the SQLite engine's deferred-reference counter, which rusqlite
-// does not wrap (`store/sqlite/references.rs`, the one exception `tests/rust_hygiene.rs` of
-// `org-platform` allows). Every other crate but the platform's forbids unsafe code.
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 pub mod accounting;
 /// Attachments: blobs, media validation, staging, the shared family and the private space.
@@ -43,15 +40,16 @@ pub mod import {
 /// operations, its records and codec, its two ports and its projector. With the `testkit`
 /// feature: its memory port and `organization_conformance_tests!`.
 pub mod organization_family {
+    pub use crate::organization::chief_of_staff::{chief_of_staff_id, CHIEF_OF_STAFF_CHARTER};
     pub use crate::organization::features::{
         self, add_person, archive_team, create_organization, create_team, deactivate_person,
         move_person, move_team, update_person, update_team, AddPerson, ArchiveTeam, Changed,
         CreateOrganization, CreateTeam, Creator, DeactivatePerson, Edit, Feature, MovePerson,
         MoveTeam, Op, OrgRejection, OrganizationCreated, RejectCode, TeamCreated, UpdatePerson,
-        UpdateTeam, NOT_AUTHORIZED,
+        UpdateTeam, HIRE_DENIED, NOT_AUTHORIZED,
     };
     pub use crate::organization::ports::{
-        OrganizationEngine, OrganizationRead, OrganizationWrite, RecordRef, MAX_TEAM_DEPTH,
+        self, OrganizationEngine, OrganizationRead, OrganizationWrite, RecordRef, MAX_TEAM_DEPTH,
     };
     pub use crate::organization::projector::OrganizationFiles;
     pub use crate::organization::records;
@@ -71,7 +69,8 @@ mod office_file;
 /// clean-stop marker under `durable/local/offices/<office-id>/`. With the `testkit`
 /// feature: a CA fixture.
 pub mod office_local;
-mod private_fs;
+/// Owner-only filesystem and durability helpers shared with external storage adapters.
+pub mod private_fs;
 pub mod private_notes;
 pub mod processes;
 /// The project documentation tree family (`TASK-55`): documents, media and the office-maintained
@@ -86,6 +85,16 @@ pub mod rules;
 /// Unified cross-entity search (`TASK-91`): its consumer-owned ports, documents and ranking.
 pub mod search;
 mod store;
+/// Consumer-owned storage backend and erased engine seams implemented by external engine crates
+/// such as `org-office-sqlite` (`TASK-255`).
+pub use store::backend::{
+    install_sqlite_backend, installed_sqlite_backend, OfficeStorageBackend, PrivateNotesOpened,
+};
+pub use store::erased::{
+    BoxedSnapshot, BoxedTx, DynOfficeEngine, OfficeEngineAdapter, OfficeRead, OfficeWrite,
+};
+/// Companion-store durable folder layout shared by every engine (`TASK-172`).
+pub use store::layout as storage_layout;
 mod structure;
 pub mod tasks;
 pub use store::open::messaging_ops::{
@@ -97,11 +106,22 @@ pub use store::open::Testing;
 /// Opening an office's store on the engine its configuration names, and the operations
 /// run on it whichever engine that is.
 pub use store::open::{
-    open_store, AddPersonOp, ArchiveTeamOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp,
-    DirectoryGeneration, DirectorySnapshot, EngineChoice, ImportOrganizationOp, MovePersonOp,
-    MoveTeamOp, OfficeEngine, OfficeStanding, OfficeStore, ReadOp, Standing, StoreConfig, StoreOp,
-    StructureOp, TaskGitContext, UpdatePersonOp, UpdateTeamOp,
+    open_store, open_store_with_adapter, AddPersonOp, ArchiveTeamOp, CreateOrganizationOp,
+    CreateTeamOp, DeactivatePersonOp, DirectoryGeneration, DirectorySnapshot, EngineChoice,
+    ImportOrganizationOp, MovePersonOp, MoveTeamOp, OfficeEngine, OfficeStanding, OfficeStore,
+    ReadOp, Standing, StoreConfig, StoreOp, StructureOp, TaskGitContext, UpdatePersonOp,
+    UpdateTeamOp, PROJECTION_FILE,
 };
+/// Testkit re-exports of internal store operations and office test harnesses for cross-crate
+/// engine conformance suites (`org-office-sqlite`).
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit_support {
+    pub use crate::office::satellite_testkit;
+    pub use crate::office::testkit as office_harness;
+    pub use crate::office::Options;
+    pub use crate::store::open as store_open;
+    pub use crate::tasks::ops as task_domain_ops;
+}
 mod time;
 pub use time::format_rfc3339_ms;
 pub use time::parse_rfc3339_ms;

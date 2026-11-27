@@ -1,9 +1,9 @@
 //! Validation of imported organization `state/` files against the shared-state production
-//! projectors on a disposable private SQLite projection (`TASK-39` / R1, `TASK-97`).
+//! projectors on a disposable private projection (`TASK-39` / R1, `TASK-97`).
 
 use org_store::{Id, Projector, StoreError};
 
-use super::super::sqlite::SqliteEngine;
+use super::super::{backend::resolve_sqlite_backend, erased::DynOfficeEngine};
 use super::OfficeEngine;
 use crate::{
     attachments::projector::AttachmentFiles, organization::projector::OrganizationFiles,
@@ -99,7 +99,7 @@ fn apply_imported_to_engine<E: OfficeEngine>(
 }
 
 /// Validates a complete map of imported `state/` files against all shared-state production
-/// projectors (`OrganizationFiles`, `ProjectFiles`, `TaskFiles`, `ProcessFiles`) and SQLite
+/// projectors (`OrganizationFiles`, `ProjectFiles`, `TaskFiles`, `ProcessFiles`) and engine
 /// constraints using a disposable private projection database (`TASK-39` / R1, `TASK-97`).
 /// Any invalid or unrecognized file fails closed with its exact path and reason.
 pub(crate) fn validate_imported_files(
@@ -115,10 +115,12 @@ pub(crate) fn validate_imported_files(
     use crate::projects::ports::ProjectsRead;
     use org_store::Engine;
 
+    let backend = resolve_sqlite_backend(None).map_err(|e| ImportError::Storage(e.to_string()))?;
     let dir = PrivateTempDir::create("org-validate")?;
-    let engine = SqliteEngine::open(&dir.path().join("validate.db"))
-        .map_err(|e| ImportError::Storage(e.to_string()))?
-        .for_organization(organization_id);
+    let adapter = backend
+        .open_validation_engine(&dir.path().join("validate.db"), organization_id)
+        .map_err(|e| ImportError::Storage(e.to_string()))?;
+    let engine = DynOfficeEngine::new(adapter);
     apply_imported_to_engine(&engine, organization_id, files)?;
 
     let snap = engine

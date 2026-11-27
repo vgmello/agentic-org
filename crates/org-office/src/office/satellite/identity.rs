@@ -183,7 +183,7 @@ fn load_replicated_hq_owner(
     Ok(Some(parsed))
 }
 
-pub(crate) fn read_replicated_hq_owner(
+pub fn read_replicated_hq_owner(
     durable_root: &Path,
     office_id: &str,
     org_id: &str,
@@ -210,7 +210,7 @@ pub(crate) fn check_replicated_hq_owner(
     load_replicated_hq_owner(durable_root, office_id, org_id).map(|_| ())
 }
 
-pub(crate) fn write_replicated_hq_owner(
+pub fn write_replicated_hq_owner(
     durable_root: &Path,
     office_id: &str,
     org_id: &str,
@@ -230,10 +230,7 @@ pub(crate) fn write_replicated_hq_owner(
         .map_err(OfficeError::storage)
 }
 
-pub(crate) fn remove_replicated_hq_owner(
-    durable_root: &Path,
-    office_id: &str,
-) -> Result<(), OfficeError> {
+pub fn remove_replicated_hq_owner(durable_root: &Path, office_id: &str) -> Result<(), OfficeError> {
     let dir = replicated_hq_owner_dir(durable_root, office_id);
     let path = dir.join(REPLICATED_HQ_OWNER_FILE);
     match fs::remove_file(&path) {

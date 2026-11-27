@@ -49,7 +49,7 @@ fn task_json(id: &str, code: &str, number: u64, team_id: &str, actor: &str) -> V
 #[test]
 fn satellite_work_outbox_filter_accepts_only_valid_local_work_entries() {
     let office = Office::for_test(TestOffice {
-        engine: EngineChoice::Sqlite,
+        engine: EngineChoice::Memory,
     });
     let owner = office.owner_member_id().to_owned();
     let team_id = office.org_snapshot().unwrap().teams[0].id.clone();
