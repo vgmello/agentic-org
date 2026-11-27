@@ -665,6 +665,7 @@ fn task140_host_channel_blocking_events_poll_avoids_hol_blocking_and_enforces_re
                     messages_received: Vec::new(),
                     message_states: Vec::new(),
                     presence_changes: Vec::new(),
+                    activity_changes: Vec::new(),
                     inbox_changes: Vec::new(),
                 },
             )
@@ -806,6 +807,7 @@ fn task140_host_channel_held_events_poll_refuses_offboarded_person() {
                     messages_received: Vec::new(),
                     message_states: Vec::new(),
                     presence_changes: Vec::new(),
+                    activity_changes: Vec::new(),
                     inbox_changes: Vec::new(),
                 },
             )

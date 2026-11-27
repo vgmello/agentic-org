@@ -2318,3 +2318,98 @@ fn role_inspect_route_requires_canonical_uuidv7_before_reaching_office() {
     assert_eq!(valid.status, StatusCode::SERVICE_UNAVAILABLE);
     assert!(calls.methods().contains(&"organization.list".to_owned()));
 }
+
+/// `POST /api/v1/organizations/{org}/agents/{id}/{interrupt,steer}` (`TASK-103`): the
+/// cookie+proof pair first, then Origin/`Sec-Fetch-Site`, the agent id and the body, all before
+/// the office is asked; a valid control goes on to the organization's HQ office.
+#[test]
+fn turn_control_routes_check_the_pair_origin_id_and_body_before_reaching_the_office() {
+    const AGENT: &str = "0193a5c0-0000-7000-8000-000000000050";
+    let (gateway, calls) = gateway(organization_script(|method, _| {
+        (method == "organization.list").then(|| {
+            vec![json!({"result": {"organizations": [host_organization()], "creating": []}})]
+        })
+    }));
+    let interrupt = format!("/api/v1/organizations/{ORG}/agents/{AGENT}/interrupt");
+    let steer = format!("/api/v1/organizations/{ORG}/agents/{AGENT}/steer");
+    let interrupt_body = json!({"command_id": OPERATION}).to_string();
+    let steer_body = json!({"command_id": OPERATION, "text": "Use staging"}).to_string();
+
+    // Without the pair: 401 and no host call.
+    let before = calls.methods();
+    for (path, body) in [(&interrupt, &interrupt_body), (&steer, &steer_body)] {
+        let reply = send(&gateway, Method::POST, path, body, None, &[]);
+        assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{path}");
+    }
+    assert_eq!(calls.methods(), before);
+
+    let pair = sign_in(&gateway).pair();
+    let before = calls.methods();
+    // A cross-site or cross-origin browser request is refused before routing.
+    for extra in [
+        ("sec-fetch-site", "cross-site"),
+        ("origin", "http://evil.example"),
+    ] {
+        for (path, body) in [(&interrupt, &interrupt_body), (&steer, &steer_body)] {
+            let reply = send(&gateway, Method::POST, path, body, Some(&pair), &[extra]);
+            assert_eq!(reply.status, StatusCode::FORBIDDEN, "{path} {extra:?}");
+        }
+    }
+    // A bad agent id, a wrong method, or a bad body is 400 before HQ is resolved.
+    let oversized = "x".repeat(org_proto::sessions::MAX_STEER_TEXT_BYTES + 1);
+    for (method, path, body) in [
+        (
+            Method::POST,
+            format!("/api/v1/organizations/{ORG}/agents/not..an-id/interrupt"),
+            interrupt_body.clone(),
+        ),
+        (Method::GET, interrupt.clone(), String::new()),
+        (Method::GET, steer.clone(), String::new()),
+        (Method::POST, interrupt.clone(), "{}".into()),
+        (
+            Method::POST,
+            interrupt.clone(),
+            json!({"command_id": OPERATION, "reason": "x"}).to_string(),
+        ),
+        (
+            Method::POST,
+            interrupt.clone(),
+            json!({"command_id": "not-an-operation"}).to_string(),
+        ),
+        (
+            Method::POST,
+            steer.clone(),
+            json!({"command_id": OPERATION}).to_string(),
+        ),
+        (
+            Method::POST,
+            steer.clone(),
+            json!({"command_id": OPERATION, "text": "  \n "}).to_string(),
+        ),
+        (
+            Method::POST,
+            steer.clone(),
+            json!({"command_id": OPERATION, "text": oversized}).to_string(),
+        ),
+        (
+            Method::POST,
+            steer.clone(),
+            json!({"command_id": OPERATION, "text": "t", "employee_id": AGENT}).to_string(),
+        ),
+    ] {
+        let reply = send(&gateway, method.clone(), &path, &body, Some(&pair), &[]);
+        assert_eq!(
+            reply.status,
+            StatusCode::BAD_REQUEST,
+            "{method} {path} {body}"
+        );
+    }
+    assert_eq!(calls.methods(), before, "nothing reached the host");
+
+    // A valid control resolves the organization's HQ office (503: no office socket here).
+    for (path, body) in [(&interrupt, &interrupt_body), (&steer, &steer_body)] {
+        let reply = send(&gateway, Method::POST, path, body, Some(&pair), &[]);
+        assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+    }
+    assert!(calls.methods().contains(&"organization.list".to_owned()));
+}

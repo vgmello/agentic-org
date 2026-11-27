@@ -65,7 +65,7 @@ pub(super) fn ensure_permit_for_turn(
         Err(reason) => {
             // Every queued turn is refused with this one; a turn queued since stays (and keeps
             // the session busy) for the next dispatch.
-            let refused = std::mem::take(&mut loop_state.pending_turns);
+            let refused = loop_state.take_queued_turns();
             let mut st = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
             st.last_error = Some(reason);
             st.dequeue_turns(refused.len());
@@ -99,6 +99,7 @@ pub(super) fn dispatch_next_turn(
         PermitCheck::Refused => return,
     }
     let text = loop_state.pending_turns.remove(0);
+    loop_state.front_is_steer = false;
     ctx.state
         .lock()
         .unwrap_or_else(|p| p.into_inner())

@@ -55,6 +55,7 @@ fn test_pump_ctx(
         pending_wake_count: 0,
         pending_wake_reason: None,
         queued_turns: 0,
+        activity: Default::default(),
     }));
     PumpContext {
         employee_id: "emp-1".into(),
@@ -92,6 +93,7 @@ fn test_pump_ctx(
         },
         stop_epoch: 0,
         partition: None,
+        stream: None,
     }
 }
 
@@ -483,4 +485,117 @@ fn a_refused_permit_forgets_every_queued_turn_and_settles_idle() {
     ));
     let st = ctx.state.lock().unwrap();
     assert_eq!((st.state, st.queued_turns), (SessionState::Running, 1));
+}
+
+fn tool_started(name: &str) -> org_agent_runtime::SessionEvent {
+    org_agent_runtime::SessionEvent::ToolStarted {
+        tool_use_id: "tu".into(),
+        name: name.into(),
+        capability: None,
+        input: serde_json::json!({ "command": "echo TOPSECRET" }),
+    }
+}
+
+/// Coarse activity (`TASK-103`): one change per phase, a tool's name only, and a person's
+/// interrupt sticks until the turn ends.
+#[test]
+fn activity_follows_redacted_events_coarsely_and_interrupting_sticks_until_the_turn_ends() {
+    use org_agent_runtime::{SessionEvent, TurnOutcome};
+    use org_proto::sessions::ActivityPhase;
+
+    use super::activity::next_activity;
+    use crate::stream_hub::SessionActivity;
+
+    let idle = SessionActivity {
+        supports_steer: true,
+        ..SessionActivity::default()
+    };
+    let started = SessionEvent::TurnStarted {
+        turn_id: None,
+        solicited: true,
+    };
+    let thinking = next_activity(&idle, &started, "t0").unwrap();
+    assert_eq!(thinking.phase, Some(ActivityPhase::Thinking));
+    assert!(thinking.supports_steer);
+    assert_eq!(
+        next_activity(&thinking, &SessionEvent::Thinking, "t1"),
+        None
+    );
+    let tool = next_activity(&thinking, &tool_started("Bash\n\u{1b}x"), "t2").unwrap();
+    assert_eq!(tool.phase, Some(ActivityPhase::RunningTool));
+    assert_eq!(tool.active_tool_name.as_deref(), Some("Bash x"));
+    assert_eq!(tool.active_tool_started_at.as_deref(), Some("t2"));
+    assert!(!format!("{tool:?}").contains("TOPSECRET"));
+    let finished = SessionEvent::ToolFinished {
+        tool_use_id: "tu".into(),
+        is_error: false,
+    };
+    let back = next_activity(&tool, &finished, "t3").unwrap();
+    assert_eq!(back, thinking);
+    assert_eq!(next_activity(&back, &finished, "t3"), None);
+    let delta = SessionEvent::TextDelta { text: "a".into() };
+    let responding = next_activity(&back, &delta, "t4").unwrap();
+    assert_eq!(responding.phase, Some(ActivityPhase::Responding));
+    assert_eq!(next_activity(&responding, &delta, "t5"), None, "coalesced");
+
+    let interrupting = tool.in_phase(ActivityPhase::Interrupting);
+    for event in [
+        &delta,
+        &SessionEvent::Thinking,
+        &tool_started("Read"),
+        &finished,
+    ] {
+        assert_eq!(next_activity(&interrupting, event, "t6"), None);
+    }
+    let ended = SessionEvent::TurnEnded {
+        outcome: TurnOutcome::Interrupted,
+        errors: Vec::new(),
+    };
+    assert_eq!(
+        next_activity(&interrupting, &ended, "t7"),
+        Some(idle.clone())
+    );
+    assert_eq!(next_activity(&idle, &ended, "t8"), None);
+}
+
+/// Steers run ahead of queued turns, fold into a steer already waiting, and are counted as
+/// exactly one queued turn each until they run (`TASK-103`).
+#[test]
+fn steers_queue_at_the_front_fold_together_and_keep_the_queued_count_exact() {
+    use super::controls::{queue_steer_turn, requeue_steer};
+
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_pump_ctx(dir.path(), None, None);
+    let mut loop_state = PumpLoopState::new(false);
+    let mut st = ctx.state.lock().unwrap();
+    st.state = SessionState::Idle;
+    // Two ordinary turns and two steers queued, each counted once by its sender.
+    st.queued_turns = 4;
+    loop_state.pending_turns = vec!["ordinary-1".into(), "ordinary-2".into()];
+    queue_steer_turn(&mut st, &mut loop_state, "steer-a".into());
+    queue_steer_turn(&mut st, &mut loop_state, "steer-b".into());
+    assert_eq!(
+        loop_state.pending_turns,
+        ["steer-a\n\nsteer-b", "ordinary-1", "ordinary-2"]
+    );
+    assert_eq!(st.queued_turns, 3, "the folded steer runs as one turn");
+
+    // A steer the runtime never confirmed is counted again and keeps the session busy.
+    requeue_steer(&mut st, &mut loop_state, "steer-c".into());
+    assert_eq!(st.queued_turns, 3);
+    assert_eq!(st.state, SessionState::Running);
+    assert_eq!(loop_state.pending_turns[0], "steer-a\n\nsteer-b\n\nsteer-c");
+    drop(st);
+
+    let taken = loop_state.take_queued_turns();
+    assert_eq!(taken.len(), 3);
+    assert!(!loop_state.front_is_steer);
+    // After the queue is taken, a new steer starts a fresh front slot.
+    let mut st = ctx.state.lock().unwrap();
+    // One ordinary turn and one steer, each counted once.
+    st.queued_turns = 2;
+    loop_state.pending_turns.push("ordinary-3".into());
+    queue_steer_turn(&mut st, &mut loop_state, "steer-d".into());
+    assert_eq!(loop_state.pending_turns, ["steer-d", "ordinary-3"]);
+    assert_eq!(st.queued_turns, 2);
 }

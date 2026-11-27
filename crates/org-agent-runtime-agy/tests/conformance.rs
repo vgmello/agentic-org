@@ -126,6 +126,8 @@ fn passes_org_agent_runtime_testkit_conformance_and_plan_checks() {
     assert_eq!(caps.mid_turn_delivery, MidTurnDelivery::NativeSteer);
     assert!(caps.supports_mid_turn_delivery());
     assert!(caps.interrupt_in_band);
+    // A person's steer goes in natively as an ACP `session/prompt` (`TASK-103`).
+    assert_eq!(caps.steer_route(), Ok(()));
     assert!(caps.approval_bridge);
     assert_eq!(caps.cost, CostBasis::None);
     assert_eq!(caps.tested_versions.min, "1.5.16");

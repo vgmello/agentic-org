@@ -11,7 +11,9 @@ use crate::credentials::rfc3339_now;
 use crate::redact::redact_text;
 use crate::subagents::BackgroundKind;
 
+use super::activity::track_activity;
 use super::approval::handle_approval_request;
+use super::controls::requeue_steer;
 use super::{
     persist_turn_update, FailoverRequest, PumpContext, PumpLoopState, SessionRuntimeState,
 };
@@ -77,6 +79,8 @@ pub(super) fn apply_outputs(
                     _ => None,
                 };
                 redact_event_into_history(ctx, &mut event, &refs);
+                // Coarse live activity comes from the redacted event only (`TASK-103`).
+                track_activity(ctx, &event, loop_state.interrupt_sent);
                 let ctrl = if let Some(raw_req) = unredacted_approval {
                     let mut state = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
                     state.watchdog.record_activity(Instant::now());
@@ -155,6 +159,11 @@ pub(super) fn handle_event(
                 if let Some(cb) = hook {
                     cb(&emp_id, &batch);
                 }
+            } else {
+                // A person's steer the runtime took into the turn (`TASK-103`).
+                loop_state
+                    .in_flight_steers
+                    .retain(|(id, _)| id != delivery_id);
             }
         }
         SessionEvent::MidTurnDeliveryFailed { delivery_id, .. } => {
@@ -165,6 +174,15 @@ pub(super) fn handle_event(
                 .is_some_and(|b| b.delivery_id == *delivery_id)
             {
                 loop_state.in_flight_delivery = None;
+            }
+            // A refused steer runs as the next turn instead (`TASK-103`).
+            if let Some(at) = loop_state
+                .in_flight_steers
+                .iter()
+                .position(|(id, _)| id == delivery_id)
+            {
+                let (_, text) = loop_state.in_flight_steers.remove(at);
+                requeue_steer(&mut state, loop_state, text);
             }
         }
         SessionEvent::AssistantText { text, .. } => {
@@ -271,16 +289,32 @@ pub(super) fn handle_turn_ended(
     outcome: &org_agent_runtime::TurnOutcome,
     errors: &[String],
 ) {
+    // A turn a person interrupted (`TASK-103`) ends as they asked: its errors are expected, it
+    // never fails over to another connection (or blocks on recovery), and an approval it was
+    // waiting on is moot. The warm process lives on for the next turn.
+    let interrupted = std::mem::take(&mut loop_state.interrupt_sent);
+    loop_state.interrupt_wanted = false;
     loop_state.turn_active = false;
     loop_state.turn_just_ended = true;
     loop_state.in_flight_delivery = None;
     loop_state.mid_turn_dirty = false;
     loop_state.mid_turn_next_check = None;
     state.watchdog.record_turn_completed(Instant::now());
-    if !errors.is_empty() {
+    if !errors.is_empty() && !interrupted {
         state.last_error = Some(errors.join("; "));
     }
-    let failover_blocked_recovery = evaluate_turn_failover(state, loop_state, ctx, outcome, errors);
+    // Steers the turn never confirmed run next, ahead of the queue (at least once).
+    for (_, text) in std::mem::take(&mut loop_state.in_flight_steers) {
+        requeue_steer(state, loop_state, text);
+    }
+    let failover_blocked_recovery =
+        !interrupted && evaluate_turn_failover(state, loop_state, ctx, outcome, errors);
+    if interrupted {
+        state.pending_approvals.clear();
+        if state.state == SessionState::WaitingApproval {
+            state.state = SessionState::Running;
+        }
+    }
     // A turn queued behind this one keeps the session busy until it is dispatched.
     state.settle_idle();
     persist_turn_update(ctx, |rec| {
@@ -367,8 +401,8 @@ pub(super) fn evaluate_turn_failover(
         tried.push(conn_id.clone());
     }
     let mut objective = loop_state.current_objective.clone();
-    if !loop_state.pending_turns.is_empty() {
-        let queued = std::mem::take(&mut loop_state.pending_turns);
+    if loop_state.has_queued_turns() {
+        let queued = loop_state.take_queued_turns();
         state.dequeue_turns(queued.len());
         let queued = queued.join("\n\n");
         if objective.is_empty() {

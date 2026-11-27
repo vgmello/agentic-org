@@ -1536,3 +1536,27 @@ fn root_is_never_the_workspace_or_a_writable_root() {
         Err(PlanError::InvalidSpec(_))
     ));
 }
+
+#[test]
+fn steer_route_follows_mid_turn_delivery_and_in_band_interrupt() {
+    use org_agent_runtime::{ControlError, MidTurnDelivery};
+    let mut caps = EchoRuntime.capabilities();
+    // No mid-turn delivery but an in-band interrupt: interrupt, then send (`TASK-103`).
+    assert_eq!(caps.steer_route(), Err(ControlError::NeedsInterrupt));
+    assert!(!caps.supports_native_steer());
+    caps.mid_turn_delivery = MidTurnDelivery::StepHook;
+    assert_eq!(caps.steer_route(), Err(ControlError::NeedsInterrupt));
+    caps.mid_turn_delivery = MidTurnDelivery::NativeSteer;
+    assert_eq!(caps.steer_route(), Ok(()));
+    assert!(caps.supports_native_steer());
+    // Native steering never needs the interrupt.
+    caps.interrupt_in_band = false;
+    assert_eq!(caps.steer_route(), Ok(()));
+    // Neither: the steer can only queue behind the turn.
+    caps.mid_turn_delivery = MidTurnDelivery::None;
+    assert_eq!(caps.steer_route(), Err(ControlError::Unsupported));
+    assert_eq!(
+        ControlError::NeedsInterrupt.to_string(),
+        "the running turn must be interrupted first"
+    );
+}

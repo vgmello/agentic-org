@@ -222,6 +222,7 @@ fn stub_handle(
         pending_wake_count: 0,
         pending_wake_reason: None,
         queued_turns: 0,
+        activity: Default::default(),
     }));
     let handle = LiveSessionHandle {
         state: runtime_state,
