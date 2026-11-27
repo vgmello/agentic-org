@@ -5,7 +5,7 @@ use org_cli_shell::context::ExecutionContext;
 use org_cli_shell::error::ShellError;
 use org_cli_shell::prompt::confirm;
 use org_cli_shell::terminal::sanitize;
-use org_host::setup_flow::{AdminLink, AdminResetLink};
+use org_host_setup::{AdminLink, AdminResetLink};
 use serde_json::json;
 
 use crate::args::{InstanceArgs, YesArgs};
@@ -40,14 +40,13 @@ pub(super) fn run(args: ResetArgs, ctx: &mut ExecutionContext) -> Result<(), Cli
     let target = selection::select(args.instance.name.as_deref(), None)?;
     // The host's own refusals (SSH on a Mac, not a terminal, not root on Linux) come first:
     // a person is never asked and then refused.
-    org_host::setup_flow::admin_reset_precheck(target.instance(), args.user.as_deref(), terminal)?;
+    org_host_setup::admin_reset_precheck(target.instance(), args.user.as_deref(), terminal)?;
     if ctx.modes().dry_run {
         let plan = json!({"action": "admin_reset", "user": args.user});
         return Ok(ctx.render_dry_run("would issue a new one-time administrator link", &plan)?);
     }
     confirm_reset(ctx)?;
-    let link =
-        org_host::setup_flow::admin_reset(target.instance(), args.user.as_deref(), terminal)?;
+    let link = org_host_setup::admin_reset(target.instance(), args.user.as_deref(), terminal)?;
     if ctx.modes().json {
         return Ok(ctx.write_json(&link)?);
     }
@@ -134,7 +133,7 @@ fn show(ctx: &mut ExecutionContext, link: &AdminResetLink) -> Result<(), CliErro
 mod tests {
     use org_cli_shell::context::testing::{captured, tty};
     use org_cli_shell::context::Modes;
-    use org_host::setup_flow::{AdminLink, AdminResetLink, OneTimeLinkUrl};
+    use org_host_setup::{AdminLink, AdminResetLink, OneTimeLinkUrl};
 
     use super::show;
 

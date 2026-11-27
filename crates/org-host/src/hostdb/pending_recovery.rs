@@ -22,7 +22,7 @@ pub(crate) struct Pending {
 
 /// Reads the pending recovery code for `r` from custody. Refuses a record not bound to exactly
 /// this unlinked reservation, and a code not in its grouped hexadecimal form.
-pub(crate) fn pending_recovery(
+pub fn pending_recovery(
     custody: &dyn HostSecrets,
     r: &Reservation,
 ) -> Result<RecoveryCode, ApiError> {

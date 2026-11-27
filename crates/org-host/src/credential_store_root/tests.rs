@@ -24,7 +24,6 @@ use org_proto::OfficeSecretsKey;
 
 use super::*;
 use crate::host_secrets::{HostSecrets, Name, SelectionError, Value};
-use crate::hostdb::{HostDb, HostDbInit};
 use crate::instance::registry::{Instance, Registry};
 use crate::keys::{OfficeSecretsKeys, StoreError};
 
@@ -341,24 +340,15 @@ fn host_secrets_are_owner_only_and_none_is_in_the_data_root() {
             b"TLS-PRIVATE-KEY-SECRET-3c5d".to_vec(),
         ),
         (
-            "recovery.01BBBBBBBBBBBBBBBBBBBBBBBB",
+            "recovery.0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b0",
             b"RECOVERY-CODE-SECRET-e2e2".to_vec(),
         ),
     ];
     {
         let root = world.open_as_the_host_decides().unwrap();
         let custody = world.secrets(&root);
-        // The host creates its registry in the data root at its first start.
-        let now = 1_800_000_000_000;
-        HostDb::create(
-            &world.office_home,
-            &*custody,
-            &HostDbInit {
-                instance_id: world.instance.id().to_owned(),
-                clock_high_ms: now,
-            },
-        )
-        .unwrap_or_else(|e| panic!("{e:?}"));
+        // A regular non-secret file in the data root stands in for the registry data file.
+        fs::write(world.office_home.join("host-registry.data"), b"registry").unwrap();
         world
             .keys(&root)
             .create(OFFICE, &OfficeSecretsKey::from_bytes(key))
@@ -426,8 +416,8 @@ fn host_secrets_are_owner_only_and_none_is_in_the_data_root() {
     assert!(
         in_data_root
             .iter()
-            .any(|(path, _)| path.ends_with("office-state/host-registry.db")),
-        "the host registry was not created in the data root"
+            .any(|(path, _)| path.ends_with("office-state/host-registry.data")),
+        "the data root fixture file was not read"
     );
     let needles: Vec<Vec<u8>> = [
         key.to_vec(),

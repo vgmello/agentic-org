@@ -1,7 +1,5 @@
 //! Protected selected HQ orchestration. The office owns canonical data; this
 //! adapter owns reservations/custody and uses the existing admitted supervisor.
-#[cfg(test)]
-use crate::hostdb::accounts::Account;
 use crate::hostdb::pending_recovery::{unavailable, Pending};
 use crate::{
     broadcast::Broadcast,
@@ -70,7 +68,7 @@ pub(crate) struct Provisioning {
     drives_started: std::sync::atomic::AtomicUsize,
     /// While set, a creation thread holds its claim and creates nothing until the host
     /// stops.
-    #[cfg(test)]
+    #[cfg(all(feature = "test-support", debug_assertions))]
     hold_drives: std::sync::atomic::AtomicBool,
     /// 1: the next reservation commit fails; 2: the host is lost between staging the code
     /// and the commit, so the staged entry stays.
@@ -170,7 +168,7 @@ impl Provisioning {
             stopping: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             drives_started: std::sync::atomic::AtomicUsize::new(0),
-            #[cfg(test)]
+            #[cfg(all(feature = "test-support", debug_assertions))]
             hold_drives: std::sync::atomic::AtomicBool::new(false),
             web: Broadcast::default(),
             #[cfg(test)]
@@ -265,15 +263,15 @@ impl Provisioning {
             .load(std::sync::atomic::Ordering::Acquire)
     }
     /// Creation threads started from now on wait, holding their claim, until the host stops.
-    #[cfg(test)]
+    #[cfg(all(feature = "test-support", debug_assertions))]
     pub(crate) fn hold_drives(&self) {
         self.hold_drives
             .store(true, std::sync::atomic::Ordering::Release);
     }
     /// The account a browser signed in as `login` acts as, for a test that creates an
     /// organization in the host's process where no web process serves.
-    #[cfg(test)]
-    pub(crate) fn account_for_test(&self, login: &str) -> Account {
+    #[cfg(all(feature = "test-support", debug_assertions))]
+    pub(crate) fn account_for_test(&self, login: &str) -> crate::hostdb::accounts::Account {
         let credentials = self
             .accounts
             .account_credentials(&crate::accounts::identity::LoginKey::new(login).unwrap())

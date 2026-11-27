@@ -27,7 +27,7 @@ const LIMIT: usize = 64 * 1024;
 /// configuration: nothing detects a container.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Service {
+pub enum Service {
     /// The account's service manager (launchd, a systemd user unit).
     Registered,
     /// Nothing is registered: whoever runs `agentic-org serve` is the supervisor (a
@@ -104,7 +104,7 @@ impl FederationConfig {
         Ok(config)
     }
 
-    pub(crate) fn validate(&self) -> Result<(), Error> {
+    pub fn validate(&self) -> Result<(), Error> {
         if self.bind.trim() != self.bind {
             return Err(Error::Invalid(
                 "federation \"bind\" must be a socket address (IP:port) without surrounding \
@@ -154,7 +154,7 @@ impl FederationConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Input {
+pub struct Input {
     pub version: u32,
     pub service: Service,
     pub root: PathBuf,
@@ -179,7 +179,7 @@ pub(crate) struct Input {
 /// paths are recorded. Without one, an `https` instance makes its own certificate.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SuppliedTls {
+pub struct SuppliedTls {
     pub cert: PathBuf,
     pub key: PathBuf,
 }
@@ -211,7 +211,7 @@ fn spelled(path: &Path) -> bool {
 /// The configuration of non-interactive setup, as read: the input and, for `https`, a
 /// supplied pair.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Configured {
+pub struct Configured {
     pub input: Input,
     pub tls: Option<SuppliedTls>,
 }
@@ -354,17 +354,17 @@ impl Input {
 /// published port and its service mode is not `foreground` (`ListenMode::fits_service`).
 /// Refused when the input is read, before anything is made, and again whenever the record
 /// is read, so a record edited by hand does not start a host.
-pub(crate) const PUBLISHED_NEEDS_FOREGROUND: &str = "\"scheme\": \"http_published\" (plain HTTP \
+pub const PUBLISHED_NEEDS_FOREGROUND: &str = "\"scheme\": \"http_published\" (plain HTTP \
      on a published port) is only for \"service\": \"foreground\", the main process of a \
      container; a registered service listens with http_loopback";
 
 /// What a configuration that names a TLS pair for a plain HTTP listener is told.
-pub(crate) const TLS_NEEDS_HTTPS: &str = "\"tls\" names a certificate pair, which only \
+pub const TLS_NEEDS_HTTPS: &str = "\"tls\" names a certificate pair, which only \
      \"scheme\": \"https\" serves; remove it, or listen with https";
 
 /// What a configuration that does not parse is told: the whole shape, since a strict
 /// reader cannot say which property a person meant.
-pub(crate) const CONFIGURATION_SHAPE: &str = "the setup configuration is not valid: it is one \
+pub const CONFIGURATION_SHAPE: &str = "the setup configuration is not valid: it is one \
      JSON object with \"version\": 1, \"service\": \"registered\" or \"foreground\", \"root\": an \
      absolute path, \"listen\": {\"address\", \"port\", \"scheme\": \"https\", \"http_loopback\" or \
      \"http_published\", \"origin\", \"hsts\": \"off\", \"on\" or \"clear\"}, and optionally \
@@ -393,7 +393,7 @@ fn registered_service() -> Service {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Record {
+pub struct Record {
     pub version: u32,
     #[serde(deserialize_with = "RecordedInput::deserialize")]
     pub input: Input,
@@ -498,7 +498,7 @@ impl Record {
 /// - A release directory: a release build's record names it from the moment the instance
 ///   is reserved (both are written together), so a host never starts without knowing where
 ///   its secrets are. A development build keeps its development stores and may record none.
-pub(crate) fn credentials_rule(
+pub fn credentials_rule(
     store: Option<ProtectedStore>,
     release_build: bool,
     reserved: bool,
@@ -523,15 +523,15 @@ pub(crate) fn credentials_rule(
 /// `path` in the one spelling a record accepts: absolute, UTF-8, without `.`, `..`, a
 /// repeated or a trailing separator. `.` and repeated separators are dropped; `..` is
 /// refused, never resolved.
-pub(crate) fn normalized(path: &Path) -> Result<PathBuf, Error> {
+pub fn normalized(path: &Path) -> Result<PathBuf, Error> {
     super::directory::absolute(path)
 }
 
-pub(crate) struct Journal {
+pub struct Journal {
     directory: Directory,
     lock: FileLock,
 }
-pub(crate) struct Paths {
+pub struct Paths {
     pub base: PathBuf,
     pub locator: PathBuf,
     pub user_temp: PathBuf,

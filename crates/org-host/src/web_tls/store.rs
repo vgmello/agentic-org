@@ -439,7 +439,7 @@ impl WebTls {
     }
 
     /// The pair, for the instance's own origin (tests).
-    #[cfg(test)]
+    #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
     pub(crate) fn fetch(&self) -> Result<(String, TlsPrivateKey), Unservable> {
         self.fetch_for(&self.origin.clone())
     }
@@ -641,7 +641,7 @@ fn journal(error: crate::hostdb::Error) -> ApiError {
 }
 
 /// The supplied pair at `cert` and `key`, read and checked for `origin` at `now`.
-pub(crate) fn read_supplied(
+pub fn read_supplied(
     cert: &Path,
     key: &Path,
     origin: &ListenOrigin,
@@ -660,7 +660,7 @@ pub(crate) fn read_supplied(
 }
 
 /// A refusal in words: its code and what it means.
-pub(crate) fn refusal_text(refusal: &TlsRefusal) -> String {
+pub fn refusal_text(refusal: &TlsRefusal) -> String {
     match refusal {
         TlsRefusal::TlsInvalid => "tls_invalid: the certificate chain or the key does not parse \
              (PEM CERTIFICATE blocks, leaf first, and an unencrypted PRIVATE KEY, RSA PRIVATE KEY \

@@ -35,7 +35,7 @@ pub(super) fn run(args: UseArgs, ctx: &mut ExecutionContext) -> Result<(), CliEr
         let plan = json!({"action": "context_use", "office_id": args.office, "instance_name": args.instance.name});
         return Ok(ctx.render_dry_run("would save the default instance and office", &plan)?);
     }
-    let saved = org_host::setup_flow::context_use(args.instance.name.as_deref(), &args.office)?;
+    let saved = org_host_setup::context_use(args.instance.name.as_deref(), &args.office)?;
     let mut json = view::json(&saved)?;
     if json["instance_name"].is_null() {
         json["instance_name"] = "default".into();

@@ -23,7 +23,7 @@ pub const OUTPUT_CLOSED: &str = "standard output closed";
 
 /// What the terminal's password entry answers when the person cancelled it (Ctrl+C, or
 /// end of input at the prompt); [`HostCliError::password`] makes it a cancellation.
-pub(crate) const PASSWORD_CANCELLED: &str = "password entry cancelled";
+pub const PASSWORD_CANCELLED: &str = "password entry cancelled";
 
 /// The class of a [`HostCliError`]; the command line maps each to its exit code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,7 +119,7 @@ impl HostCliError {
 
     /// A failed password entry: [`PASSWORD_CANCELLED`] is a cancellation, anything else
     /// (no terminal, a read error) is `Runtime`.
-    pub(crate) fn password(why: String) -> Self {
+    pub fn password(why: String) -> Self {
         if why == PASSWORD_CANCELLED {
             Self::new(HostCliErrorKind::Cancelled, None, why)
         } else {
@@ -129,7 +129,7 @@ impl HostCliError {
 
     /// A failed write of the command's own output: a closed reader is
     /// [`HostCliError::output_closed`], any other failure `Runtime`.
-    pub(crate) fn output(error: io::Error) -> Self {
+    pub fn output(error: io::Error) -> Self {
         if error.kind() == io::ErrorKind::BrokenPipe {
             Self::output_closed()
         } else {
@@ -207,7 +207,7 @@ pub fn office_refused(action: &str, error: &ApiError) -> HostCliError {
 
 /// What a refused `account.verify` says: a throttle or an unavailable service is the
 /// service's refusal; any other answer is `wrong`, a sign-in the person cannot make.
-pub(crate) fn sign_in_refused(code: ErrorCode, wrong: &str) -> HostCliError {
+pub fn sign_in_refused(code: ErrorCode, wrong: &str) -> HostCliError {
     match code {
         ErrorCode::RateLimited => {
             HostCliError::refused(code, "too many failed sign-ins; try again later")

@@ -1,25 +1,23 @@
 //! Engine-neutral host-registry persistence contract (ADR-0018).
 //!
 //! [`HostStore`] is the host's storage port; [`Error`] and [`StoreFault`] carry no driver
-//! types. The SQLite adapter lives under [`sqlite`] (the only module in `org-host` that
-//! imports `rusqlite` or holds SQL), [`memory`] provides a second in-memory adapter in
-//! tests, and `contract_tests` runs one conformance suite against both.
+//! types. The SQLite adapter lives in the separate `org-host-sqlite` crate, [`memory`]
+//! provides an in-memory adapter in tests, and `contract_tests` runs the conformance suite
+//! against it (with `org-host-sqlite` running the same conformance contract against SQLite).
 
 pub mod multi_person;
 pub(crate) mod pending_recovery;
-pub(crate) mod sqlite;
 mod traits;
 
 #[cfg(test)]
 mod contract_tests;
 #[cfg(test)]
-mod testing;
+pub(crate) mod testing;
 #[cfg(test)]
 pub(crate) use testing::memory;
 
 use std::io;
 
-pub(crate) use sqlite::HostDb;
 pub use traits::{
     HostAccountsStore, HostStore, LoginLockoutStore, OperationJournalStore, ProvisioningStore,
     RecoveryStore, WebTlsStore,
@@ -27,7 +25,7 @@ pub use traits::{
 
 /// Sentinel password PHC stored for the implicit local-authless placeholder account (ADR-0034).
 /// It is deliberately not a valid Argon2id PHC and can never satisfy password verification.
-pub(crate) const LOCAL_AUTHLESS_VERIFIER: &str = "!local-authless";
+pub const LOCAL_AUTHLESS_VERIFIER: &str = "!local-authless";
 
 /// Engine-neutral class of storage failure (ADR-0018).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,9 +91,10 @@ impl From<crate::host_secrets::Error> for Error {
 }
 
 /// What a new registry records. Accounts arrive later, through a one-time link.
-pub(crate) struct HostDbInit {
-    pub(crate) instance_id: String,
-    pub(crate) clock_high_ms: i64,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostDbInit {
+    pub instance_id: String,
+    pub clock_high_ms: i64,
 }
 
 /// Engine-neutral account snapshot types.
@@ -169,6 +168,9 @@ pub mod accounts {
             self.last_org_id = last_org_id;
             self
         }
+        pub fn id(&self) -> &AccountId {
+            &self.account_id
+        }
         pub fn account_id(&self) -> &str {
             self.account_id.as_str()
         }
@@ -205,6 +207,9 @@ pub mod accounts {
         /// Borrow the checked verifier; password hashing belongs outside the registry lock.
         pub fn verifier(&self) -> &Verifier {
             &self.verifier
+        }
+        pub fn into_parts(self) -> (Account, Verifier) {
+            (self.account, self.verifier)
         }
     }
 }
@@ -398,7 +403,7 @@ pub mod recovery {
 /// Engine-neutral browser-session schema refusal text.
 pub(crate) mod sessions {
     /// What the operator is told when `ensure_schema` refuses.
-    pub(crate) const OUTDATED: &str =
+    pub const OUTDATED: &str =
         "host database from an earlier development build; run `agentic-org setup` on a new instance";
 }
 

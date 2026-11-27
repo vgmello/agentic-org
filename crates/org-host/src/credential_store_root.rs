@@ -29,7 +29,7 @@ use org_platform_host::credentials::{
 /// the office secrets keys and the host's own secrets. The platform judges these two
 /// directories when it opens the credential directory, counts only what the two views would
 /// list when the records say keys exist, and opens no other.
-pub(crate) const ITEM_STORES: [ItemStore<'static>; 2] = [
+pub const ITEM_STORES: [ItemStore<'static>; 2] = [
     crate::keys::RELEASE_ITEM_STORE,
     crate::host_secrets::RELEASE_ITEM_STORE,
 ];

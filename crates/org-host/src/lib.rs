@@ -46,24 +46,24 @@ mod admin;
 mod app_auth;
 mod authentication;
 mod broadcast;
-mod browser_listener;
+pub mod browser_listener;
 mod catalog;
-mod cli_error;
+pub mod cli_error;
 mod clock;
 mod cloexec;
 mod code_signing;
 mod config;
 mod control_listener;
-mod credential_store_root;
+pub mod credential_store_root;
 mod error;
-mod home;
+pub mod home;
 mod host;
-mod host_log;
+pub mod host_log;
 mod host_secrets;
 mod hostdb;
 pub mod human;
-mod ids;
-mod instance;
+pub mod ids;
+pub mod instance;
 mod keys;
 mod links;
 mod logs;
@@ -80,7 +80,6 @@ mod secrets;
 mod server_check;
 mod service;
 mod sessions;
-pub mod setup_flow;
 pub mod signals;
 mod startup;
 pub mod stop;
@@ -88,26 +87,19 @@ mod supervisor;
 mod sync;
 mod timings;
 mod web;
-mod web_tls;
+pub mod web_tls;
 mod writer;
 
 #[cfg(test)]
 mod test_programs;
-// Real-process tests (debug builds only).
-#[cfg(all(test, debug_assertions))]
-mod enc1_process_tests;
-#[cfg(all(test, debug_assertions))]
-mod https_process_tests;
-#[cfg(all(test, debug_assertions))]
-mod web_process_tests;
 
 pub use config::{
     default_office_home, default_release_store_dir, default_server_program, harden_process, Config,
 };
 #[cfg(all(feature = "test-support", debug_assertions))]
-pub use host::start_instance_for_test;
+pub use host::start_instance_for_test_with_ports;
 pub use host::Host;
-pub use ports::HostPorts;
+pub use ports::{HostPorts, HostStoreOpener};
 
 #[cfg(all(feature = "test-support", debug_assertions))]
 pub mod test_support;

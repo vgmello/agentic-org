@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::{broadcast::Subscriber, sync::lock, Host};
 
-pub mod custody;
+pub mod process;
 
 /// Native lifecycle operations and observation for this crate's integration tests only.
 /// No listener or socket exposes these operations.

@@ -1,10 +1,10 @@
 //! The engine boundary (ADR-0018 ENG-1) for the host:
 //!
-//! - inside `crates/org-host`, only `src/hostdb/sqlite/` names the engine's crate
-//!   (`rusqlite`) or holds SQL. Every other Rust file of the crate (library, tests,
-//!   benches, examples, build script) is parsed with `syn`, and a path through `rusqlite`,
-//!   a string literal that reads as an SQL statement, or a `.sql` file is a violation.
-//!   The allowlist is empty: there is nothing outside the adapter to excuse.
+//! - inside `crates/org-host`, ZERO files may name the engine's crate (`rusqlite`) or hold SQL.
+//!   The SQLite adapter lives in the separate `crates/org-host-sqlite` crate. Every Rust file
+//!   of `crates/org-host` (library, tests, benches, examples, build script) is parsed with `syn`,
+//!   and a path through `rusqlite`, a string literal that reads as an SQL statement, or a `.sql`
+//!   file is a violation. The allowlist is empty: there is nothing in `org-host` to excuse.
 //!
 //! The detector's own cases are in `tests/engine_boundary/*.rs.txt`, which this scan
 //! does not read (they are not `.rs` files), so the guard never has to excuse itself.
@@ -22,10 +22,10 @@ const ENGINE_CRATE: &str = "rusqlite";
 /// Folders that hold no source of this workspace.
 const SKIPPED: [&str; 4] = ["target", "node_modules", ".git", ".agents"];
 
-/// The only folder of `crates/org-host` that may name the engine or hold SQL.
-const ENGINE_ADAPTER: &str = "src/hostdb/sqlite";
+/// The separate SQLite adapter crate used to verify the detector is non-vacuous.
+const EXTERNAL_ENGINE_ADAPTER: &str = "../org-host-sqlite/src";
 
-/// Files outside the adapter excused from the scan. It stays empty (ENG-1).
+/// Files in `crates/org-host` excused from the scan. It stays empty (ENG-1).
 const ALLOWED: [&str; 0] = [];
 
 /// Every file under `root` whose name satisfies `wanted`, sorted.
@@ -295,13 +295,9 @@ fn violations(source: &str, name: &str) -> Vec<String> {
 
 fn crate_violations() -> (Vec<String>, usize) {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let adapter = manifest.join(ENGINE_ADAPTER);
     let mut found = Vec::new();
     let mut scanned = 0;
     for file in files(manifest, |_| true) {
-        if file.starts_with(&adapter) {
-            continue;
-        }
         let relative = file.strip_prefix(manifest).expect("under the crate");
         let relative = relative.to_str().expect("a UTF-8 path").replace('\\', "/");
         if ALLOWED.contains(&relative.as_str()) {
@@ -312,7 +308,7 @@ fn crate_violations() -> (Vec<String>, usize) {
             .and_then(|name| name.to_str())
             .unwrap_or("");
         if name.to_ascii_lowercase().ends_with(".sql") {
-            found.push(format!("{relative}: an SQL file outside the adapter"));
+            found.push(format!("{relative}: an SQL file inside org-host"));
             continue;
         }
         if !name.ends_with(".rs") {
@@ -338,20 +334,20 @@ fn fixture(name: &str) -> String {
 fn only_the_sqlite_adapter_names_the_engine_or_holds_sql() {
     assert!(
         ALLOWED.is_empty(),
-        "ENG-1 allows no file outside the adapter"
+        "ENG-1 allows no file in org-host to reference the engine"
     );
     let (found, scanned) = crate_violations();
-    // The crate has over a hundred Rust files outside the adapter.
+    // `crates/org-host` has well over a hundred Rust files.
     assert!(scanned > 80, "only {scanned} files were scanned");
     assert!(
         found.is_empty(),
-        "outside {ENGINE_ADAPTER}, the engine is named or SQL is written: {found:#?}"
+        "inside crates/org-host, the engine is named or SQL is written: {found:#?}"
     );
 }
 
 #[test]
 fn the_scan_finds_the_engine_and_its_sql_in_the_adapter() {
-    let adapter = Path::new(env!("CARGO_MANIFEST_DIR")).join(ENGINE_ADAPTER);
+    let adapter = Path::new(env!("CARGO_MANIFEST_DIR")).join(EXTERNAL_ENGINE_ADAPTER);
     let mut named = 0;
     let mut statements = 0;
     for file in files(&adapter, |name| name.ends_with(".rs")) {

@@ -9,7 +9,7 @@ use std::borrow::Cow;
 use org_cli_shell::error::{
     CliDiagnostic, ShellError, EXIT_AUTH, EXIT_CANCELLED, EXIT_FAILURE, EXIT_USAGE,
 };
-use org_host::setup_flow::{HostCliError, HostCliErrorKind};
+use org_host_setup::{HostCliError, HostCliErrorKind};
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum CliError {

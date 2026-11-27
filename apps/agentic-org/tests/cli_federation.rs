@@ -17,10 +17,10 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use org_host::setup_flow::fixture::{
+use org_host_setup::fixture::{
     registered_account, registered_account_with_federation, RegisteredAccount,
 };
-use org_host::setup_flow::FederationConfig;
+use org_host_setup::FederationConfig;
 use serde_json::Value;
 use support::{may_run_the_service, sibling_program};
 
@@ -475,6 +475,16 @@ fn setup_cli_persists_and_freezes_federation_config() {
         }
     });
     fs::write(&cfg_path, serde_json::to_vec_pretty(&cfg).unwrap()).unwrap();
+    if let Err(refused) = org_host_setup::configuration(&cfg_path) {
+        if refused.contains("needs \"credentials\"") {
+            println!(
+                "setup_cli_persists_and_freezes_federation_config: SKIPPED: this system keeps a \
+                 foreground host's secrets in a mounted volume, which a test cannot mount"
+            );
+            return;
+        }
+        panic!("{refused}");
+    }
 
     let out = Command::new(env!("CARGO_BIN_EXE_agentic-org"))
         .args(["setup", "--non-interactive", "--config"])

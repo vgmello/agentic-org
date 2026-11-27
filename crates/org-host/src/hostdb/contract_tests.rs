@@ -1,7 +1,7 @@
 //! Engine-independent `HostStore` conformance suite (ADR-0018 ENG-2 / ENG-3).
 //!
-//! Every case runs against both the SQLite adapter (`HostDb`) and the in-memory adapter
-//! (`MemoryHostStore`), proving that all host-registry semantics stay engine-neutral.
+//! Runs against `MemoryHostStore` inside `org-host` (keeping `org-host` 100% `rusqlite`-free);
+//! `org-host-sqlite` runs its own SQLite conformance suite against `HostDb`.
 
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
@@ -18,13 +18,10 @@ use super::memory::MemoryHostStore;
 use super::provisioning::{Reservation, Taken};
 use super::recovery::State as RecoveryState;
 use super::web_tls::{Source, StoredPair, TlsLookup, TlsStored};
-use super::{
-    Error, HostAccountsStore, HostDb, HostDbInit, HostStore, OperationJournalStore, WebTlsStore,
-};
+use super::{Error, HostAccountsStore, HostStore, OperationJournalStore, WebTlsStore};
 use crate::accounts::identity::{AccountId, LoginKey};
 use crate::host_secrets::{HostSecrets, Name, Value};
 use crate::links::{LinkKind, Refused, Subject};
-use crate::sessions::contract_tests::NoSecrets;
 
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b0";
 const OTHER_INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b1";
@@ -64,26 +61,6 @@ fn uuid_v7_at(at: i64, sequence: u64) -> String {
 fn each(case: impl Fn(Harness<'_>)) {
     let verifier = Verifier::new(PHC.into()).unwrap();
     let now = org_proto::uuid_v7_time_ms(OP_ID).unwrap() as i64;
-
-    let home = tempfile::tempdir().unwrap();
-    std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-    let init = HostDbInit {
-        instance_id: INSTANCE.into(),
-        clock_high_ms: now,
-    };
-    let sqlite = HostDb::create(home.path(), &NoSecrets, &init).unwrap();
-    case(Harness {
-        store: &sqlite,
-        seed: &|id, login, admin| {
-            sqlite
-                .seed_account(id, login, &verifier, admin, now)
-                .unwrap();
-        },
-        revoke: &|id| sqlite.change_authority_fixture(id, true).unwrap(),
-        seed_exempt_journal: &|reserved_id, staged_id, account, expires_at_ms| {
-            sqlite.seed_expired_exempt_journal_rows(reserved_id, staged_id, account, expires_at_ms);
-        },
-    });
 
     let memory = MemoryHostStore::new(INSTANCE, now);
     case(Harness {

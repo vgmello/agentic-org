@@ -39,7 +39,7 @@ const COLUMNS: [Column; 6] = [
 
 pub(super) fn run(args: BindingsArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let target = selection::select(args.instance.name.as_deref(), args.office.as_deref())?;
-    let listed = org_host::setup_flow::provider_bindings(
+    let listed = org_host_setup::provider_bindings(
         target.instance(),
         args.login.login.as_deref(),
         args.org.org.as_deref(),

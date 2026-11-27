@@ -317,7 +317,7 @@ impl OfficeRunner {
                     child.stop(Instant::now() + self.timings.shutdown_grace);
                     return Ending::Reload;
                 }
-                #[cfg(test)]
+                #[cfg(all(feature = "test-support", debug_assertions))]
                 Signal::KillForTest => {
                     child.kill();
                     return after_exit(failure, ready_at);

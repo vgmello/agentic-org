@@ -28,7 +28,7 @@ pub(crate) struct InspectArgs {
 
 pub(super) fn run(args: InspectArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let project = org_host::setup_flow::project_inspect(
+    let project = org_host_setup::project_inspect(
         target.instance(),
         args.login.login.as_deref(),
         args.org.org.as_deref(),

@@ -1,13 +1,12 @@
 //! Engine-independent `AccountStore` suite (ADR-0018 ENG-3 for host storage).
-//! Every case runs against the SQLite registry and the in-memory adapter.
+//! Runs against `MemoryAccounts` and `MemoryHostStore` in `org-host`; `org-host-sqlite` runs
+//! the SQLite conformance checks against `HostDb`.
 use std::net::IpAddr;
-use std::os::unix::fs::PermissionsExt;
 
 use super::memory::MemoryAccounts;
 use super::*;
-use crate::hostdb::{HostDb, HostDbInit};
+use crate::hostdb::memory::MemoryHostStore;
 use crate::links::{Issued, LinkKind, OneTimeLinks, Subject, REGISTRATION_TTL_MS};
-use crate::sessions::contract_tests::NoSecrets;
 
 /// A valid registry instance ID (the format the links suite uses).
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b0";
@@ -21,19 +20,13 @@ struct Case<'a> {
     revoke: &'a dyn Fn(&AccountId),
 }
 
-/// Runs `case` against an empty registry and an empty memory store.
+/// Runs `case` against both in-memory adapters.
 fn each(case: impl Fn(Case<'_>)) {
-    let home = tempfile::tempdir().unwrap();
-    std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-    let init = HostDbInit {
-        instance_id: INSTANCE.into(),
-        clock_high_ms: NOW,
-    };
-    let db = HostDb::create(home.path(), &NoSecrets, &init).unwrap();
+    let host_mem = MemoryHostStore::new(INSTANCE, NOW);
     case(Case {
-        store: &db,
-        links: &db,
-        revoke: &|id| db.change_authority_fixture(id, true).unwrap(),
+        store: &host_mem,
+        links: &host_mem,
+        revoke: &|id| host_mem.revoke_account(id),
     });
     let memory = MemoryAccounts::new(INSTANCE, NOW);
     case(Case {

@@ -104,7 +104,7 @@ pub(super) fn run_as(
         |held| {
             config.browser_listener = held;
             if registered {
-                Host::start_registered(config, name.as_deref())
+                org_host_sqlite::start_registered(config, name.as_deref())
             } else {
                 Host::start(config)
             }

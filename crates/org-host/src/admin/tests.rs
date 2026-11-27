@@ -4,34 +4,11 @@
 use std::os::unix::fs::PermissionsExt;
 
 use super::*;
-use crate::hostdb::{HostDb, HostDbInit};
+use crate::hostdb::memory::MemoryHostStore;
 
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b0";
 pub(crate) const OPERATION: &str = "01890a5d-ac96-774b-bcce-b302099a8057";
 const PHC: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-
-struct NoSecrets;
-impl crate::host_secrets::HostSecrets for NoSecrets {
-    fn put(
-        &self,
-        _: &crate::host_secrets::Name,
-        _: &crate::host_secrets::Value,
-    ) -> Result<(), crate::host_secrets::Error> {
-        Ok(())
-    }
-    fn load(
-        &self,
-        _: &crate::host_secrets::Name,
-    ) -> Result<Option<crate::host_secrets::Value>, crate::host_secrets::Error> {
-        Ok(None)
-    }
-    fn delete(&self, _: &crate::host_secrets::Name) -> Result<(), crate::host_secrets::Error> {
-        Ok(())
-    }
-    fn list(&self) -> Result<Vec<crate::host_secrets::Name>, crate::host_secrets::Error> {
-        Ok(Vec::new())
-    }
-}
 
 struct Refusing;
 impl Presence for Refusing {
@@ -43,21 +20,17 @@ impl Presence for Refusing {
     }
 }
 
-/// An administrator service over a fresh temp registry, bound to [`OPERATION`]; its presence
+/// An administrator service over an in-memory registry, bound to [`OPERATION`]; its presence
 /// check refuses.
 pub(crate) fn admin() -> (tempfile::TempDir, Admin) {
     let (home, _db, admin) = admin_with_db();
     (home, admin)
 }
 
-fn admin_with_db() -> (tempfile::TempDir, Arc<HostDb>, Admin) {
+fn admin_with_db() -> (tempfile::TempDir, Arc<MemoryHostStore>, Admin) {
     let home = tempfile::tempdir().unwrap();
     std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-    let init = HostDbInit {
-        instance_id: INSTANCE.into(),
-        clock_high_ms: 1,
-    };
-    let db = Arc::new(HostDb::create(home.path(), &NoSecrets, &init).unwrap());
+    let db = Arc::new(MemoryHostStore::new(INSTANCE, 1));
     let policy = AppPolicy::new(crate::HOST_SIGNING_ID, None).unwrap();
     let origin = ListenOrigin::parse("http://127.0.0.1:7420").unwrap();
     let admin = Admin::new(
@@ -76,7 +49,7 @@ pub(crate) fn registry(admin: &Admin) -> &Arc<dyn OneTimeLinks + Send + Sync> {
     &admin.links
 }
 
-fn seed_administrator(db: &HostDb) {
+fn seed_administrator(db: &MemoryHostStore) {
     db.seed_account(
         "01J00000000000000000000003",
         "Sage",

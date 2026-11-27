@@ -47,7 +47,7 @@ impl Provisioning {
             .name("organization-create".into())
             .spawn(move || {
                 let _claim = claim;
-                #[cfg(test)]
+                #[cfg(all(feature = "test-support", debug_assertions))]
                 while this.hold_drives.load(std::sync::atomic::Ordering::Acquire)
                     && !this.stopping()
                 {

@@ -1,8 +1,8 @@
 //! `agentic-org setup [--name <instance>] [--port <port>]`: composes the platform adapters and
-//! runs [`org_host::setup_flow`]. Satellite flags are refused before anything else.
+//! runs [`org_host_setup`]. Satellite flags are refused before anything else.
 //!
 //! `agentic-org setup --non-interactive --config <file> [--name <instance>]` takes the whole
-//! setup input from a strict JSON file ([`setup_flow::configuration`] documents it), asks
+//! setup input from a strict JSON file ([`org_host_setup::configuration`] documents it), asks
 //! nothing, fetches nothing and prints no link. With `"service": "foreground"` in the file
 //! nothing is registered or started: `agentic-org serve --setup <file>` runs that setup
 //! when the instance is not set up yet and then serves it (`crate::host::configured`).
@@ -12,7 +12,7 @@
 
 use std::io::{BufRead, IsTerminal, Write};
 
-use org_host::setup_flow::{self, Request};
+use org_host_setup::Request;
 
 use crate::host;
 
@@ -190,7 +190,7 @@ pub(super) fn run_as(
         configuration: None,
         federation,
     };
-    setup_flow::run(&platform, request, out)
+    org_host_setup::run(&platform, request, out)
         .map(|_| SetUp::Done)
         .map_err(SetupError::Failed)
 }
@@ -198,7 +198,7 @@ pub(super) fn run_as(
 fn parse_federation_flags(
     bind: Option<&str>,
     advertise: Option<&str>,
-) -> Result<Option<setup_flow::FederationConfig>, String> {
+) -> Result<Option<org_host_setup::FederationConfig>, String> {
     match (bind, advertise) {
         (None, None) => Ok(None),
         (None, Some(_)) => {
@@ -217,7 +217,7 @@ fn parse_federation_flags(
                     raw.split(',').map(str::to_owned).collect()
                 }
             };
-            setup_flow::FederationConfig::parse(bind, entries).map(Some)
+            org_host_setup::FederationConfig::parse(bind, entries).map(Some)
         }
     }
 }

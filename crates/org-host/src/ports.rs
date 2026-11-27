@@ -18,6 +18,8 @@
 //! required to implement and drive the corresponding trait from an external crate.
 
 use std::fmt;
+use std::io;
+use std::path::Path;
 use std::sync::Arc;
 
 pub use crate::accounts::store::AccountStore;
@@ -30,13 +32,43 @@ pub use crate::keys::OfficeSecretsKeys;
 pub use crate::links::OneTimeLinks;
 pub use crate::sessions::BrowserSessions;
 
-/// Optional caller-injected persistence and custody ports for [`crate::Host::start_with_ports`].
+/// Consumer-owned factory port for checking, creating, and opening a local host-registry
+/// store under `host.lock` and the instance root lock (ADR-0018).
 ///
-/// Any field left `None` falls back to the default local adapter (`HostDb`, local host secrets
-/// custody, or local per-office secrets key store).
+/// Storage backend crates (such as `org-host-sqlite`) implement this trait so `org-host`
+/// verifies registry existence, creates a first-start registry, and opens an existing
+/// registry without depending on any concrete database engine.
+pub trait HostStoreOpener: Send + Sync {
+    /// Whether a persisted registry already exists in `office_home`.
+    fn exists(&self, office_home: &Path) -> Result<bool, io::Error>;
+
+    /// Creates a brand-new host registry at `office_home` for `init.instance_id` and returns
+    /// the opened [`HostStore`].
+    fn create(
+        &self,
+        office_home: &Path,
+        custody: &dyn HostSecrets,
+        init: &host_store::HostDbInit,
+    ) -> Result<Arc<dyn HostStore>, host_store::Error>;
+
+    /// Opens an existing host registry at `office_home`.
+    fn open(
+        &self,
+        office_home: &Path,
+        custody: &dyn HostSecrets,
+    ) -> Result<Arc<dyn HostStore>, host_store::Error>;
+}
+
+/// Optional caller-injected persistence and custody ports for [`crate::Host::start_with_ports`]
+/// and [`crate::Host::start_registered_with_ports`].
+///
+/// Registered starts must supply either a pre-opened `store` or a `store_opener` (for example
+/// `org-host-sqlite`'s SQLite opener). Any custody field left `None` falls back to the local
+/// host secrets or per-office secrets key store.
 #[derive(Default)]
 pub struct HostPorts {
     pub store: Option<Arc<dyn HostStore>>,
+    pub store_opener: Option<Arc<dyn HostStoreOpener>>,
     pub secrets: Option<Arc<dyn HostSecrets>>,
     pub keys: Option<Arc<dyn OfficeSecretsKeys>>,
 }
@@ -45,6 +77,7 @@ impl fmt::Debug for HostPorts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HostPorts")
             .field("store", &self.store.is_some())
+            .field("store_opener", &self.store_opener.is_some())
             .field("secrets", &self.secrets.is_some())
             .field("keys", &self.keys.is_some())
             .finish()
@@ -53,10 +86,12 @@ impl fmt::Debug for HostPorts {
 
 /// Public types and shared rules for [`HostStore`] and its focused domain sub-traits.
 pub mod host_store {
+    pub use crate::hostdb::pending_recovery::pending_recovery;
+    pub use crate::hostdb::sessions::OUTDATED as SESSIONS_OUTDATED;
     pub use crate::hostdb::{
         accounts, journal, lockout, multi_person, provisioning, recovery, web_tls, Error,
-        HostAccountsStore, HostStore, LoginLockoutStore, OperationJournalStore, ProvisioningStore,
-        RecoveryStore, StoreFault, WebTlsStore,
+        HostAccountsStore, HostDbInit, HostStore, LoginLockoutStore, OperationJournalStore,
+        ProvisioningStore, RecoveryStore, StoreFault, WebTlsStore, LOCAL_AUTHLESS_VERIFIER,
     };
     pub use org_host_control::browser_accounts::OrgAccessEntry;
     pub use org_host_control::journal::Journaled;

@@ -23,7 +23,7 @@ pub(crate) use image::{admission, Configuration, Image};
 use image::{gated, https_gate, unconfinable};
 pub use listener::BrowserListener;
 use running::{Running, WAIT};
-#[cfg(test)]
+#[cfg(all(feature = "test-support", debug_assertions))]
 pub(crate) use stderr::captured_stderr;
 use supervise::{supervise, Timing};
 
@@ -104,7 +104,7 @@ impl Supervisor {
 
     /// Whether the supervision has ended: it was stopped, or it gave up after its limit of
     /// failed starts.
-    #[cfg(test)]
+    #[cfg(all(feature = "test-support", debug_assertions))]
     pub(crate) fn ended(&self) -> bool {
         self.thread.as_ref().is_none_or(JoinHandle::is_finished)
     }

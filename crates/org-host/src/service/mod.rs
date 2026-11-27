@@ -64,11 +64,11 @@ pub(crate) struct Service {
     cli_approvals: cli_approvals::CliApprovals,
     /// Browser ops this service accepted on a web connection; real-process tests prove
     /// that an ingress refusal reaches no host op.
-    #[cfg(test)]
+    #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
     browser_ops: std::sync::atomic::AtomicUsize,
     /// Organization calls answered on the admitted web connection; real-process tests
     /// prove that a refused request reaches none.
-    #[cfg(test)]
+    #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
     organization_ops: std::sync::atomic::AtomicUsize,
 }
 
@@ -94,9 +94,9 @@ impl Service {
             office_restarting: std::sync::Mutex::new(()),
             tls_upgrading: std::sync::Mutex::new(()),
             cli_approvals: cli_approvals::CliApprovals::new(),
-            #[cfg(test)]
+            #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
             browser_ops: std::sync::atomic::AtomicUsize::new(0),
-            #[cfg(test)]
+            #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
             organization_ops: std::sync::atomic::AtomicUsize::new(0),
             gateway: Arc::new(std::sync::Mutex::new(WebState::NotConfigured)),
         }
@@ -137,24 +137,24 @@ impl Service {
         self.browser_origin = origin;
         self
     }
-    #[cfg(test)]
+    #[cfg(all(feature = "test-support", debug_assertions))]
     pub(crate) fn instance_id_for_test(&self) -> Option<&str> {
         self.instance_id.as_deref()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
     pub(crate) fn web_tls_for_test(&self) -> Option<&Arc<crate::web_tls::WebTls>> {
         self.web_tls.as_ref()
     }
     /// The registered host's administrator link calls. Installed at most once.
-    #[cfg(test)]
+    #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
     pub(crate) fn admin(&self) -> Option<&Arc<crate::admin::Admin>> {
         self.admin.get()
     }
     pub(crate) fn install_admin(&self, admin: Arc<crate::admin::Admin>) -> bool {
         self.admin.set(admin).is_ok()
     }
-    #[cfg(test)]
+    #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
     pub(crate) fn browser_ops(&self) -> usize {
         self.browser_ops.load(std::sync::atomic::Ordering::Acquire)
     }
@@ -163,7 +163,7 @@ impl Service {
     pub(crate) fn provisioning_for_test(&self) -> Option<&Arc<crate::provisioning::Provisioning>> {
         self.provisioning.as_ref()
     }
-    #[cfg(test)]
+    #[cfg(all(feature = "test-support", debug_assertions))]
     pub(crate) fn organization_ops(&self) -> usize {
         self.organization_ops
             .load(std::sync::atomic::Ordering::Acquire)
@@ -202,7 +202,7 @@ impl Service {
     fn registered(&self) -> bool {
         self.instance_id.is_some()
     }
-    #[cfg(test)]
+    #[cfg(all(feature = "test-support", debug_assertions))]
     pub(crate) fn recovery_for_test(&self) -> Arc<crate::recovery::Recovery> {
         Arc::clone(self.recovery.as_ref().expect("selected test host"))
     }

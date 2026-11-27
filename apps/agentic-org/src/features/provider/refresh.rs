@@ -7,7 +7,7 @@ use org_cli_shell::context::ExecutionContext;
 use crate::args::{InstanceArgs, LoginArgs, OrgArg};
 use crate::completers;
 use crate::error::CliError;
-use org_host::setup_flow::ProviderRefreshInput;
+use org_host_setup::ProviderRefreshInput;
 use serde_json::json;
 
 use crate::selection;
@@ -99,11 +99,8 @@ pub(super) fn run(args: RefreshArgs, ctx: &mut ExecutionContext) -> Result<(), C
         );
         return Ok(ctx.render_dry_run(&summary, &plan)?);
     }
-    let refreshed = org_host::setup_flow::provider_refresh(
-        target.instance(),
-        args.login.login.as_deref(),
-        &input,
-    )?;
+    let refreshed =
+        org_host_setup::provider_refresh(target.instance(), args.login.login.as_deref(), &input)?;
     let json = view::json(&refreshed)?;
     let rows = view::items(&json, "models");
     view::list(

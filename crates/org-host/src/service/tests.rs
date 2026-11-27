@@ -768,7 +768,7 @@ fn tls_set_needs_the_administrators_session_on_host_sock() {
     )
     .unwrap();
     authentication
-        .sqlite_for_test()
+        .memory_for_test()
         .seed_account(
             &crate::ids::generate().unwrap(),
             "Member",

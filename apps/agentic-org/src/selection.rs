@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use org_cli_shell::config::{resolve_selection, Selection, SelectionInput, Tier};
 use org_cli_shell::error::ShellError;
-use org_host::setup_flow::cli_context::{self, CliContext};
+use org_host_setup::cli_context::{self, CliContext};
 
 use crate::error::CliError;
 

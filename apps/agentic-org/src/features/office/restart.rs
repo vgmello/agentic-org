@@ -34,7 +34,7 @@ pub(super) fn run(args: RestartArgs, ctx: &mut ExecutionContext) -> Result<(), C
         return Ok(());
     }
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let done = org_host::setup_flow::office_restart(
+    let done = org_host_setup::office_restart(
         target.instance(),
         args.login.login.as_deref(),
         &args.office_id,

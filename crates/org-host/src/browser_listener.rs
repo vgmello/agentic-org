@@ -5,7 +5,7 @@
 use org_host_control::listen::{ListenConfig, ListenMode};
 
 /// What setup and the host say about the exposure of an explicit plain-HTTP listener.
-pub(crate) fn published_http_notice(listen: &ListenConfig) -> String {
+pub fn published_http_notice(listen: &ListenConfig) -> String {
     format!(
         "serving plain HTTP on a published port ({}). Every machine that can reach the \
          listen address can reach sign-in and sessions in plain text. In Docker, publish \
@@ -21,7 +21,7 @@ pub(crate) fn published_http_notice(listen: &ListenConfig) -> String {
 /// identical, or an opt-in HTTPS upgrade / HSTS update (`ADR-0033`) preserving the exact
 /// reserved listen address, port, origin host, and origin port. Downgrades from `https`
 /// to plain HTTP and any address/port/host changes are refused.
-pub(crate) fn browser_matches_setup(active: &ListenConfig, setup: &ListenConfig) -> bool {
+pub fn browser_matches_setup(active: &ListenConfig, setup: &ListenConfig) -> bool {
     if active == setup {
         return true;
     }

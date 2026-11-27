@@ -1,12 +1,12 @@
 //! `release install`: verify a signed bundle and pin it atomically into the release store,
-//! then move the instances' registered services to it (`org_host::setup_flow::ServiceRefresh`).
+//! then move the instances' registered services to it (`org_host_setup::ServiceRefresh`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use org_cli_shell::context::ExecutionContext;
 use org_host::release::{ArchiveBundle, DirectoryBundle, ReleasePin, ReleaseStore};
-use org_host::setup_flow::{InstallAttempt, RefreshOutcome, ServiceRefresh, ServiceRefreshReport};
+use org_host_setup::{InstallAttempt, RefreshOutcome, ServiceRefresh, ServiceRefreshReport};
 use org_platform::service::{ServiceManager, ServiceMode};
 use serde::Serialize;
 

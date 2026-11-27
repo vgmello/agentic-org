@@ -15,7 +15,7 @@ use crate::sync::lock;
 use super::control::{exited, failed, ControlEof};
 
 /// What one instance's web processes wrote to stderr, for a test.
-#[cfg(test)]
+#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 #[derive(Clone, Default)]
 pub(super) struct Captured {
     pub(super) bytes: Vec<u8>,
@@ -27,14 +27,14 @@ pub(super) struct Captured {
 
 /// What each instance's web processes wrote to stderr. The host keeps none of it; a
 /// real-process test reads it to prove what the web process never prints.
-#[cfg(test)]
+#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 pub(super) static CAPTURED_STDERR: Mutex<std::collections::BTreeMap<String, Captured>> =
     Mutex::new(std::collections::BTreeMap::new());
 
 /// Everything `instance`'s web processes wrote to stderr, once every reader has read its
 /// pipe to the end. A reader that failed, or one still reading after ten seconds, fails
 /// the test: a partial capture would prove nothing about what was never printed.
-#[cfg(test)]
+#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 pub(crate) fn captured_stderr(instance: &str) -> Option<Vec<u8>> {
     let until = std::time::Instant::now() + Duration::from_secs(10);
     loop {
@@ -216,9 +216,9 @@ impl Stderr {
         instance: &str,
         on_renewal_kept: Option<Arc<dyn Fn(&'static str) + Send + Sync>>,
     ) -> io::Result<Arc<Self>> {
-        #[cfg(test)]
+        #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
         let instance = instance.to_owned();
-        #[cfg(not(test))]
+        #[cfg(not(any(test, all(feature = "test-support", debug_assertions))))]
         let _ = instance;
         let captured = Arc::new(Self {
             kept: Mutex::new((Vec::new(), false)),
@@ -227,14 +227,14 @@ impl Stderr {
         let filling = Arc::clone(&captured);
         // Counted before the reader starts, so a test that reads the capture after the
         // process ended waits for this reader too.
-        #[cfg(test)]
+        #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
         {
             lock(&CAPTURED_STDERR)
                 .entry(instance.clone())
                 .or_default()
                 .reading += 1;
         }
-        #[cfg(test)]
+        #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
         let ended = {
             let instance = instance.clone();
             move |failed: Option<String>| {
@@ -244,7 +244,7 @@ impl Stderr {
                 }
             }
         };
-        #[cfg(test)]
+        #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
         let on_spawn_failure = ended.clone();
         let spawned = thread::Builder::new()
             .name("web-stderr".into())
@@ -266,7 +266,7 @@ impl Stderr {
                             }
                         }
                     }
-                    #[cfg(test)]
+                    #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
                     lock(&CAPTURED_STDERR)
                         .entry(instance.clone())
                         .or_default()
@@ -280,12 +280,12 @@ impl Stderr {
                 };
                 lock(&filling.kept).1 = true;
                 filling.changed.notify_all();
-                #[cfg(test)]
+                #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
                 ended(stopped.map(|error| error.to_string()));
-                #[cfg(not(test))]
+                #[cfg(not(any(test, all(feature = "test-support", debug_assertions))))]
                 let _ = stopped;
             });
-        #[cfg(test)]
+        #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
         if let Err(error) = &spawned {
             on_spawn_failure(Some(format!("the reader did not start: {error}")));
         }

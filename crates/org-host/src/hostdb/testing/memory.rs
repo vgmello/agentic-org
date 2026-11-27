@@ -119,6 +119,7 @@ struct Inner {
     journal: BTreeMap<String, JournalRow>,
     op_verifiers: BTreeMap<String, (String, Verifier)>,
     staged_creates: BTreeSet<String>,
+    fail_provisioning_reads: bool,
 }
 
 impl Inner {
@@ -416,8 +417,65 @@ impl MemoryHostStore {
                 journal: BTreeMap::new(),
                 op_verifiers: BTreeMap::new(),
                 staged_creates: BTreeSet::new(),
+                fail_provisioning_reads: false,
             }),
         }
+    }
+
+    pub(crate) fn fail_provisioning_reads(&self) {
+        if let Ok(mut s) = self.inner.lock() {
+            s.fail_provisioning_reads = true;
+        }
+    }
+
+    pub(crate) fn change_authority_fixture(
+        &self,
+        account_id: &AccountId,
+        revoke: bool,
+    ) -> Result<(), Error> {
+        let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        let row = s
+            .accounts
+            .get_mut(account_id.as_str())
+            .ok_or(Error::Unsafe)?;
+        if revoke {
+            row.revoked_at_ms = Some(1);
+        } else {
+            row.password_changed_at_ms = row.password_changed_at_ms.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn seed_link_for_test(
+        &self,
+        account_id: &str,
+        org_id: &str,
+        member_id: &str,
+    ) -> Result<(), Error> {
+        let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        s.account_links.insert(
+            (account_id.to_owned(), org_id.to_owned()),
+            member_id.to_owned(),
+        );
+        Ok(())
+    }
+
+    pub(crate) fn seed_owner_for_test(
+        &self,
+        account_id: &str,
+        org_id: &str,
+        member_id: &str,
+    ) -> Result<(), Error> {
+        let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        s.org_owners.insert(
+            org_id.to_owned(),
+            (account_id.to_owned(), member_id.to_owned()),
+        );
+        s.account_links.insert(
+            (account_id.to_owned(), org_id.to_owned()),
+            member_id.to_owned(),
+        );
+        Ok(())
     }
 
     pub(crate) fn seed_account(
@@ -1898,6 +1956,9 @@ impl ProvisioningStore for MemoryHostStore {
 
     fn provisioning_linked_to(&self, org: &str) -> Result<Option<Reservation>, Error> {
         let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        if s.fail_provisioning_reads {
+            return Err(Error::Unsafe);
+        }
         Ok(s.provisioning
             .values()
             .find(|r| r.linked && r.prepared.organization_id == org)
@@ -1906,6 +1967,9 @@ impl ProvisioningStore for MemoryHostStore {
 
     fn provisioning_for_org(&self, org: &str) -> Result<Option<Reservation>, Error> {
         let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        if s.fail_provisioning_reads {
+            return Err(Error::Unsafe);
+        }
         Ok(s.provisioning
             .values()
             .find(|r| r.prepared.organization_id == org)
@@ -1914,6 +1978,9 @@ impl ProvisioningStore for MemoryHostStore {
 
     fn provisioning_reserved(&self) -> Result<Vec<Reservation>, Error> {
         let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        if s.fail_provisioning_reads {
+            return Err(Error::Unsafe);
+        }
         Ok(s.provisioning
             .values()
             .filter(|r| !r.linked)
@@ -1923,6 +1990,9 @@ impl ProvisioningStore for MemoryHostStore {
 
     fn provisioning_of(&self, account: &str) -> Result<Vec<Reservation>, Error> {
         let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        if s.fail_provisioning_reads {
+            return Err(Error::Unsafe);
+        }
         Ok(s.provisioning
             .values()
             .filter(|r| r.account == account)
@@ -1936,6 +2006,9 @@ impl ProvisioningStore for MemoryHostStore {
         operation: &str,
     ) -> Result<Option<Reservation>, Error> {
         let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        if s.fail_provisioning_reads {
+            return Err(Error::Unsafe);
+        }
         Ok(s.provisioning
             .get(operation)
             .filter(|r| r.account == account)

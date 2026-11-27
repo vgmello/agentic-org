@@ -18,7 +18,7 @@ pub(crate) fn handle_of(office_id: &str) -> &str {
 }
 
 /// A fresh ULID: 48 bits of Unix milliseconds followed by 80 bits from `/dev/urandom`.
-pub(crate) fn generate() -> io::Result<String> {
+pub fn generate() -> io::Result<String> {
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -30,7 +30,7 @@ pub(crate) fn generate() -> io::Result<String> {
 
 /// Canonical lowercase UUIDv7 text: selected entity, setup operation, link and instance IDs.
 /// [`generate`] still mints ULIDs for the IDs not yet moved to UUIDv7.
-pub(crate) fn uuid_v7() -> io::Result<String> {
+pub fn uuid_v7() -> io::Result<String> {
     let ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| io::Error::other("clock unavailable"))?

@@ -1,11 +1,10 @@
 //! Engine-independent `BrowserSessions` suite (ADR-0018 ENG-3 for host storage).
-//! Every case runs against the SQLite registry and the in-memory adapter.
-
-use std::os::unix::fs::PermissionsExt;
+//! Runs against `MemoryHostStore` and `MemorySessions` in `org-host`; `org-host-sqlite` runs
+//! the SQLite conformance suite against `HostDb`.
 
 use super::memory::MemorySessions;
 use super::*;
-use crate::hostdb::{HostDb, HostDbInit};
+use crate::hostdb::memory::MemoryHostStore;
 
 /// A valid registry instance ID (the format the links suite uses).
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b0";
@@ -15,51 +14,19 @@ const BOB: &str = "01J0000000000000000000000B";
 const UNKNOWN: &str = "01J0000000000000000000000Z";
 const PHC: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
-pub(crate) struct NoSecrets;
-impl crate::host_secrets::HostSecrets for NoSecrets {
-    fn put(
-        &self,
-        _: &crate::host_secrets::Name,
-        _: &crate::host_secrets::Value,
-    ) -> Result<(), crate::host_secrets::Error> {
-        Ok(())
-    }
-    fn load(
-        &self,
-        _: &crate::host_secrets::Name,
-    ) -> Result<Option<crate::host_secrets::Value>, crate::host_secrets::Error> {
-        Ok(None)
-    }
-    fn delete(&self, _: &crate::host_secrets::Name) -> Result<(), crate::host_secrets::Error> {
-        Ok(())
-    }
-    fn list(&self) -> Result<Vec<crate::host_secrets::Name>, crate::host_secrets::Error> {
-        Ok(Vec::new())
-    }
-}
-
-/// A registry with the accounts ALICE and BOB, created at `NOW`.
-pub(crate) fn sqlite() -> (tempfile::TempDir, HostDb) {
-    let home = tempfile::tempdir().unwrap();
-    std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-    let init = HostDbInit {
-        instance_id: INSTANCE.into(),
-        clock_high_ms: NOW,
-    };
-    let db = HostDb::create(home.path(), &NoSecrets, &init).unwrap();
+fn memory_host_store() -> MemoryHostStore {
+    let db = MemoryHostStore::new(INSTANCE, NOW);
     for (id, login) in [(ALICE, "alice"), (BOB, "bob")] {
         let verifier = crate::accounts::verifier::Verifier::new(PHC.into()).unwrap();
         db.seed_account(id, login, &verifier, id == ALICE, NOW)
             .unwrap();
     }
-    db.relax_durability_for_tests();
-    (home, db)
+    db
 }
 
-/// Runs `case` against both adapters.
+/// Runs `case` against both in-memory adapters.
 fn each(case: impl Fn(&dyn BrowserSessions)) {
-    let (_home, db) = sqlite();
-    case(&db);
+    case(&memory_host_store());
     case(&MemorySessions::new(&[ALICE, BOB], NOW));
 }
 

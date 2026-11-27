@@ -356,7 +356,7 @@ fn classify_join_signal(
             Some(JoinStep::Crashed)
         }
         Signal::Restart | Signal::Reload | Signal::Event { .. } => None,
-        #[cfg(test)]
+        #[cfg(all(feature = "test-support", debug_assertions))]
         Signal::KillForTest => None,
     }
 }

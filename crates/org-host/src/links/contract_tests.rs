@@ -1,54 +1,18 @@
 //! Engine-independent `OneTimeLinks` suite (ADR-0018 ENG-3 for host storage).
-//! Every case runs against the SQLite registry and the in-memory adapter.
-
-use std::os::unix::fs::PermissionsExt;
+//! Runs against `MemoryHostStore` and `MemoryLinks` in `org-host`; `org-host-sqlite` runs
+//! the SQLite conformance suite against `HostDb`.
 
 use super::memory::MemoryLinks;
 use super::*;
-use crate::hostdb::{HostDb, HostDbInit};
+use crate::hostdb::memory::MemoryHostStore;
 
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b0";
 const OTHER_INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b1";
 const NOW: i64 = 1_800_000_000_000;
 
-struct NoSecrets;
-impl crate::host_secrets::HostSecrets for NoSecrets {
-    fn put(
-        &self,
-        _: &crate::host_secrets::Name,
-        _: &crate::host_secrets::Value,
-    ) -> Result<(), crate::host_secrets::Error> {
-        Ok(())
-    }
-    fn load(
-        &self,
-        _: &crate::host_secrets::Name,
-    ) -> Result<Option<crate::host_secrets::Value>, crate::host_secrets::Error> {
-        Ok(None)
-    }
-    fn delete(&self, _: &crate::host_secrets::Name) -> Result<(), crate::host_secrets::Error> {
-        Ok(())
-    }
-    fn list(&self) -> Result<Vec<crate::host_secrets::Name>, crate::host_secrets::Error> {
-        Ok(Vec::new())
-    }
-}
-
-fn sqlite(instance: &str) -> (tempfile::TempDir, HostDb) {
-    let home = tempfile::tempdir().unwrap();
-    std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-    let init = HostDbInit {
-        instance_id: instance.into(),
-        clock_high_ms: NOW,
-    };
-    let db = HostDb::create(home.path(), &NoSecrets, &init).unwrap();
-    (home, db)
-}
-
-/// Runs `case` against both adapters for `instance`.
+/// Runs `case` against both in-memory adapters for `instance`.
 fn each(case: impl Fn(&dyn OneTimeLinks)) {
-    let (_home, db) = sqlite(INSTANCE);
-    case(&db);
+    case(&MemoryHostStore::new(INSTANCE, NOW));
     case(&MemoryLinks::new(INSTANCE));
 }
 
@@ -276,8 +240,8 @@ fn the_digest_is_bound_to_the_instance_and_kind() {
 
     // A token issued by one instance never redeems at another, even when the
     // other instance holds a copy of the stored row.
-    let (_a, issuer) = sqlite(INSTANCE);
-    let (_b, redeemer) = sqlite(OTHER_INSTANCE);
+    let issuer = crate::hostdb::memory::MemoryHostStore::new(INSTANCE, NOW);
+    let redeemer = crate::hostdb::memory::MemoryHostStore::new(OTHER_INSTANCE, NOW);
     let s = subject("initial-administrator");
     let issued = issuer.issue(REG, &s, NOW).unwrap();
     redeemer
@@ -387,38 +351,6 @@ fn token_text_round_trips_and_debug_hides_it() {
         assert!(text.bytes().all(|b| ALPHABET.contains(&b)));
         assert_eq!(Token::parse(&text).unwrap().0, token.0);
         assert_eq!(format!("{token:?}"), "Token(..)");
-    }
-}
-
-#[test]
-fn the_registry_file_holds_no_token_bytes() {
-    let (home, db) = sqlite(INSTANCE);
-    let s = subject("initial-administrator");
-    let issued: Vec<_> = (0..4)
-        .map(|i| db.issue(REG, &s, NOW + i).unwrap())
-        .collect();
-    let used = &issued[3];
-    db.consume(REG, &used.token.encode(), NOW + 10)
-        .unwrap()
-        .unwrap();
-    drop(db);
-    let mut bytes = Vec::new();
-    for entry in std::fs::read_dir(home.path()).unwrap() {
-        bytes.extend(std::fs::read(entry.unwrap().path()).unwrap());
-    }
-    assert!(!bytes.is_empty());
-    for link in &issued {
-        let text = link.token.encode();
-        assert!(
-            !bytes.windows(32).any(|w| w == link.token.0),
-            "raw token stored"
-        );
-        assert!(
-            !bytes.windows(text.len()).any(|w| w == text.as_bytes()),
-            "encoded token stored"
-        );
-        let digest = LinkDigest::of(INSTANCE, REG, &link.token).0;
-        assert!(bytes.windows(32).any(|w| w == digest), "digest is stored");
     }
 }
 

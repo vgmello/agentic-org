@@ -290,21 +290,14 @@ mod tests {
             None,
         )
         .unwrap();
-        let db = Arc::new(
-            crate::hostdb::HostDb::create(
-                &office_home,
-                &*custody,
-                &crate::hostdb::HostDbInit {
-                    instance_id: instance.clone(),
-                    clock_high_ms: 10_000,
-                },
-            )
-            .unwrap(),
-        );
+        let db = Arc::new(crate::hostdb::memory::MemoryHostStore::new(
+            &instance, 10_000,
+        ));
+        use crate::hostdb::HostAccountsStore;
         db.init_local_authless_if_empty(10_500).unwrap().unwrap();
         let auth = Arc::new(
-            crate::authentication::Authentication::open(
-                &office_home,
+            crate::authentication::Authentication::with_memory_for_test(
+                db,
                 Arc::clone(&custody),
                 &instance,
             )

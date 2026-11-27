@@ -4,7 +4,7 @@ use crate::control_listener::Connection;
 use crate::host_secrets::HostSecrets;
 use crate::host_secrets::{Name, Value};
 use crate::hostdb::lockout::{Outcome, Socket};
-use crate::hostdb::{HostDb, HostDbInit};
+use crate::hostdb::memory::MemoryHostStore;
 use org_host_control::ops::AccountVerifyResult;
 use org_host_control::{Password, SessionHandle};
 use org_proto::ErrorCode;
@@ -65,19 +65,15 @@ fn fixture_seeded(
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let custody: Arc<dyn HostSecrets> = Arc::new(TestCustody::default());
     let account = crate::ids::generate().unwrap();
-    let init = HostDbInit {
-        instance_id: instance.into(),
-        clock_high_ms: wall_ms().unwrap() as i64,
-    };
-    let db = HostDb::create(root.path(), &*custody, &init).unwrap();
+    let clock_high_ms = wall_ms().unwrap() as i64;
+    let db = Arc::new(MemoryHostStore::new(instance, clock_high_ms));
     let verifier =
         hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap();
     if seed {
-        db.seed_account(&account, "Owner", &verifier, true, init.clock_high_ms)
+        db.seed_account(&account, "Owner", &verifier, true, clock_high_ms)
             .unwrap();
     }
-    drop(db);
-    let auth = Authentication::open(root.path(), custody, instance).unwrap();
+    let auth = Authentication::with_memory_for_test(db, custody, instance).unwrap();
     (root, auth, Connection::for_test())
 }
 fn login(auth: &Authentication, connection: &Connection) -> AccountVerifyResult {
@@ -264,7 +260,7 @@ fn protected_account_changes_revoke_both_independently_issued_session_grants() {
         assert_eq!(auth.sessions.lock().unwrap().len(), 2);
         // Change the actual protected registry fact after both grants exist.
         // No further sign-in/renewal/authorization request triggers the reaper.
-        auth.sqlite_for_test()
+        auth.memory_for_test()
             .change_authority_fixture(&AccountId::parse(&first.account).unwrap(), revoke)
             .unwrap();
         let auth = Arc::new(auth);
@@ -337,7 +333,7 @@ fn wrong_unknown_revoked_and_changed_passwords_are_uniform_and_pool_is_bounded()
     assert_eq!(a.message, b.message);
     let result = login(&auth, &connection);
     let id = AccountId::parse(&result.account).unwrap();
-    auth.sqlite_for_test()
+    auth.memory_for_test()
         .change_authority_fixture(&id, false)
         .unwrap();
     assert_eq!(
@@ -347,7 +343,7 @@ fn wrong_unknown_revoked_and_changed_passwords_are_uniform_and_pool_is_bounded()
         ErrorCode::NotAuthorized
     );
     let result = login(&auth, &connection);
-    auth.sqlite_for_test()
+    auth.memory_for_test()
         .change_authority_fixture(&id, true)
         .unwrap();
     assert_eq!(
@@ -597,7 +593,7 @@ fn recovery_private_permission_stamp_dies_on_logout_expiry_and_registry_revocati
                 auth.reap();
             }
             _ => {
-                auth.sqlite_for_test()
+                auth.memory_for_test()
                     .change_authority_fixture(&AccountId::parse(&result.account).unwrap(), true)
                     .unwrap();
                 auth.reap();
@@ -748,7 +744,7 @@ fn satellite_operator_channel_survives_reap_while_admin_and_revokes_on_demotion(
         hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap();
     let second_acct = crate::ids::generate().unwrap();
     let second_id = AccountId::parse(&second_acct).unwrap();
-    let sqlite = auth.sqlite_for_test();
+    let sqlite = auth.memory_for_test();
     sqlite
         .seed_account(&second_acct, "Successor", &verifier, false, 10_000)
         .unwrap();
@@ -805,7 +801,7 @@ fn satellite_operator_channel_survives_reap_while_admin_and_revokes_on_demotion(
         .unwrap();
     assert!(matches!(
         handover,
-        crate::hostdb::sqlite::accounts::multi_person::AdminHandoverOutcome::Transferred
+        crate::hostdb::multi_person::AdminHandoverOutcome::Transferred
     ));
     auth.reap();
     assert!(auth

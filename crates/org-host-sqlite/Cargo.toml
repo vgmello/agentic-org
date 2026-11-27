@@ -1,0 +1,32 @@
+[package]
+name = "org-host-sqlite"
+description = "Local SQLite host-registry adapter implementing org-host persistence ports."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Exposes SQLite test fixtures to agentic-org and org-host-setup integration tests.
+test-support = ["org-host/test-support"]
+
+[dependencies]
+libc.workspace = true
+org-host = { path = "../org-host" }
+org-host-control = { path = "../org-host-control" }
+org-office-launch = { path = "../org-office-launch" }
+org-platform = { path = "../org-platform" }
+org-proto = { path = "../org-proto" }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+org-host = { path = "../org-host", features = ["test-support"] }
+org-host-sqlite = { path = ".", features = ["test-support"] }
+org-platform = { path = "../org-platform", features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

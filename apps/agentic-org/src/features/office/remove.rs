@@ -46,7 +46,7 @@ pub(super) fn run(args: RemoveArgs, ctx: &mut ExecutionContext) -> Result<(), Cl
         return Ok(());
     }
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let removed = org_host::setup_flow::office_remove(
+    let removed = org_host_setup::office_remove(
         target.instance(),
         args.login.login.as_deref(),
         args.org.org.as_deref(),

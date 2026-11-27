@@ -49,7 +49,7 @@ pub(super) fn run(args: ApproveArgs, ctx: &mut ExecutionContext) -> Result<(), C
         return Ok(ctx.render_dry_run(&summary, &plan)?);
     }
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let approved = org_host::setup_flow::office_approve(
+    let approved = org_host_setup::office_approve(
         target.instance(),
         args.login.login.as_deref(),
         args.org.org.as_deref(),

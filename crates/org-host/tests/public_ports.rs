@@ -2352,6 +2352,7 @@ fn external_host_store_local_authless_lifecycle() {
         store: Some(store),
         secrets: Some(Arc::new(ExternalHostSecrets::default())),
         keys: Some(Arc::new(ExternalOfficeKeys::default())),
+        ..HostPorts::default()
     };
     assert!(ports.store.is_some() && ports.secrets.is_some() && ports.keys.is_some());
 }

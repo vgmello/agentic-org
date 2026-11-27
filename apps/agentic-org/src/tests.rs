@@ -241,7 +241,7 @@ fn cli_reference_documents_every_top_level_and_office_command() {
 #[test]
 fn the_host_and_the_shell_name_the_same_config_variable() {
     assert_eq!(
-        org_host::setup_flow::cli_context::CONFIG_DIR_ENV,
+        org_host_setup::cli_context::CONFIG_DIR_ENV,
         org_cli_shell::paths::CONFIG_DIR_ENV
     );
 }

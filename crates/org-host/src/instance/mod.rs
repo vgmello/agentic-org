@@ -13,9 +13,9 @@
 //! narrows the replacement window; it is not an atomic inode compare-and-swap.
 
 mod directory;
-pub(crate) use directory::RootProbe;
-pub(crate) mod registry;
-pub(crate) mod setup;
+pub use directory::RootProbe;
+pub mod registry;
+pub mod setup;
 mod temp;
 
 use std::fmt;
@@ -23,18 +23,15 @@ use std::io;
 use std::path::PathBuf;
 
 #[derive(Debug)]
-pub(crate) enum Error {
+pub enum Error {
     Invalid(&'static str),
     Unsafe(&'static str),
     Conflict(&'static str),
-    #[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
     RebindUnconfirmed,
-    #[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
     RebindRecoveryRequired {
         name: String,
         path: PathBuf,
     },
-    #[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
     RebindChanged {
         name: String,
         path: PathBuf,
@@ -143,10 +140,10 @@ impl From<org_platform::fs::FilesystemRefusal> for Error {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub(crate) struct Name(String);
+pub struct Name(String);
 
 impl Name {
-    pub(crate) fn parse(name: Option<&str>) -> Result<Self, Error> {
+    pub fn parse(name: Option<&str>) -> Result<Self, Error> {
         let name = name.unwrap_or("default");
         if !(1..=32).contains(&name.len())
             || !name
@@ -161,7 +158,7 @@ impl Name {
         Ok(Self(name.to_owned()))
     }
 
-    pub(crate) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }

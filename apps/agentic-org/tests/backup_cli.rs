@@ -11,7 +11,7 @@ use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-use org_host::setup_flow::fixture::registered_account;
+use org_host_setup::fixture::registered_account;
 use org_office::{EngineChoice, Office, TestOffice};
 use serde_json::Value;
 

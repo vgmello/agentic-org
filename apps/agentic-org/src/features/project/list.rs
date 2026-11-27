@@ -34,7 +34,7 @@ const COLUMNS: [Column; 6] = [
 
 pub(super) fn run(args: ListArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let listed = org_host::setup_flow::project_list(
+    let listed = org_host_setup::project_list(
         target.instance(),
         args.login.login.as_deref(),
         args.org.org.as_deref(),

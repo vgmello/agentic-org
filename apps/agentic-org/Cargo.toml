@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-test-support = ["org-host/test-support", "org-platform/test-support", "dep:org-office-launch", "dep:org-socket", "dep:libc"]
+test-support = ["org-host/test-support", "org-host-sqlite/test-support", "org-host-setup/test-support", "org-platform/test-support", "dep:org-office-launch", "dep:org-socket", "dep:libc"]
 
 [[bin]]
 name = "agentic-org"
@@ -43,6 +43,8 @@ org-agent-cli = { path = "../../crates/org-agent-cli" }
 org-backup = { path = "../../crates/org-backup" }
 org-command = { path = "../../crates/org-command" }
 org-host = { path = "../../crates/org-host" }
+org-host-sqlite = { path = "../../crates/org-host-sqlite" }
+org-host-setup = { path = "../../crates/org-host-setup" }
 org-platform = { path = "../../crates/org-platform" }
 org-proto = { path = "../../crates/org-proto" }
 # The test-support `fake-office-server` binary's descriptor plumbing only.

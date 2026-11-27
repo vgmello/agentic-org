@@ -7,7 +7,7 @@ use org_cli_shell::context::ExecutionContext;
 use crate::args::{InstanceArgs, LoginArgs, OrgArg};
 use crate::completers;
 use crate::error::CliError;
-use org_host::setup_flow::ProviderBindInput;
+use org_host_setup::ProviderBindInput;
 use serde_json::json;
 
 use crate::selection;
@@ -77,11 +77,8 @@ pub(super) fn run(args: BindArgs, ctx: &mut ExecutionContext) -> Result<(), CliE
         );
         return Ok(ctx.render_dry_run(&summary, &plan)?);
     }
-    let bound = org_host::setup_flow::provider_bind(
-        target.instance(),
-        args.login.login.as_deref(),
-        &input,
-    )?;
+    let bound =
+        org_host_setup::provider_bind(target.instance(), args.login.login.as_deref(), &input)?;
     let json = view::json(&bound)?;
     view::detail(ctx, &json, &json, "binding.connection_id", &FIELDS)?;
     ctx.success(&format!(

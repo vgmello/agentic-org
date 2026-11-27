@@ -47,7 +47,7 @@ pub(super) fn run(args: SetArgs, ctx: &mut ExecutionContext) -> Result<(), CliEr
     }
     require_confirmation(ctx, "Replace this instance's HTTPS certificate and key")?;
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let replaced = org_host::setup_flow::admin_tls_set(
+    let replaced = org_host_setup::admin_tls_set(
         target.instance(),
         std::path::Path::new(&args.cert),
         std::path::Path::new(&args.key),

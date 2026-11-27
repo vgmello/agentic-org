@@ -166,9 +166,44 @@ fn host_start_with_ports_uses_injected_keys_without_dev_key_dir() {
         keys: Some(Arc::new(crate::keys::memory::MemoryKeys::default())),
         ..HostPorts::default()
     };
-    let err = Host::start_with_ports(base_config, with_secrets)
+    let err = Host::start_with_ports(base_config.clone(), with_secrets)
         .err()
         .expect("unregistered start_with_ports must refuse secrets");
+    assert!(
+        err.to_string().contains("start_registered_with_ports"),
+        "unexpected error: {err}"
+    );
+
+    struct DummyOpener;
+    impl crate::ports::HostStoreOpener for DummyOpener {
+        fn exists(&self, _office_home: &std::path::Path) -> Result<bool, std::io::Error> {
+            Ok(false)
+        }
+        fn create(
+            &self,
+            _office_home: &std::path::Path,
+            _custody: &dyn crate::ports::HostSecrets,
+            _init: &crate::ports::host_store::HostDbInit,
+        ) -> Result<Arc<dyn crate::ports::HostStore>, crate::ports::host_store::Error> {
+            Err(crate::ports::host_store::Error::Unsafe)
+        }
+        fn open(
+            &self,
+            _office_home: &std::path::Path,
+            _custody: &dyn crate::ports::HostSecrets,
+        ) -> Result<Arc<dyn crate::ports::HostStore>, crate::ports::host_store::Error> {
+            Err(crate::ports::host_store::Error::Unsafe)
+        }
+    }
+
+    let with_opener = HostPorts {
+        store_opener: Some(Arc::new(DummyOpener)),
+        keys: Some(Arc::new(crate::keys::memory::MemoryKeys::default())),
+        ..HostPorts::default()
+    };
+    let err = Host::start_with_ports(base_config, with_opener)
+        .err()
+        .expect("unregistered start_with_ports must refuse store_opener");
     assert!(
         err.to_string().contains("start_registered_with_ports"),
         "unexpected error: {err}"
@@ -209,6 +244,7 @@ fn host_start_with_injected_ports_wires_memory_store_without_sqlite() {
         store: Some(Arc::clone(&store)),
         secrets: Some(Arc::clone(&secrets)),
         keys: Some(Arc::clone(&keys)),
+        ..HostPorts::default()
     };
     let host = Host::start_with(config, Some(instance), None, None, ports)
         .expect("Host::start_with wires injected ports");
@@ -237,6 +273,7 @@ fn host_start_with_injected_ports_wires_memory_store_without_sqlite() {
         store: Some(wrong_store),
         secrets: Some(secrets),
         keys: Some(keys),
+        ..HostPorts::default()
     };
     let bad_config = Config::new(root.join("unused"), "/nonexistent/worker");
     assert!(

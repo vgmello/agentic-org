@@ -18,7 +18,7 @@
 #   python3 .github/scripts/check_architecture_health.py --print-baseline
 
 [crate_loc]
-org-host 43500
+org-host 32500
 org-office 91500
 org-office-server 29000
 org-office-sessions 30000
@@ -26,6 +26,10 @@ org-office-sessions 30000
 [coupling.rusqlite]
 
 [coupling.unix_socket]
+crates/org-host-setup/src/cli_session.rs 3
+crates/org-host-setup/src/project_command.rs 3
+crates/org-host-setup/src/sign_in_command.rs 2
+crates/org-host-setup/src/wire.rs 3
 crates/org-host/examples/fake_web.rs 4
 crates/org-host/src/app_auth.rs 2
 crates/org-host/src/authentication/browser.rs 1
@@ -41,10 +45,6 @@ crates/org-host/src/human/recovery.rs 2
 crates/org-host/src/peer.rs 5
 crates/org-host/src/presence.rs 2
 crates/org-host/src/service/browser.rs 1
-crates/org-host/src/setup_flow/cli_session.rs 3
-crates/org-host/src/setup_flow/project_command.rs 3
-crates/org-host/src/setup_flow/sign_in_command.rs 2
-crates/org-host/src/setup_flow/wire.rs 3
 crates/org-host/src/startup.rs 1
 crates/org-host/src/supervisor/channels.rs 19
 crates/org-host/src/supervisor/channels/endpoint.rs 6

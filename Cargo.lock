@@ -36,6 +36,8 @@ dependencies = [
  "org-command",
  "org-host",
  "org-host-control",
+ "org-host-setup",
+ "org-host-sqlite",
  "org-office",
  "org-office-launch",
  "org-platform",
@@ -1381,7 +1383,6 @@ dependencies = [
  "proc-macro2",
  "rcgen",
  "ring",
- "rusqlite",
  "rustls",
  "serde",
  "serde_json",
@@ -1403,6 +1404,50 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "org-host-setup"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "org-agent-cli",
+ "org-command",
+ "org-host",
+ "org-host-control",
+ "org-host-setup",
+ "org-host-sqlite",
+ "org-office-launch",
+ "org-platform",
+ "org-platform-host",
+ "org-proto",
+ "org-release",
+ "org-socket",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "time",
+]
+
+[[package]]
+name = "org-host-sqlite"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "org-host",
+ "org-host-control",
+ "org-host-sqlite",
+ "org-office-launch",
+ "org-platform",
+ "org-proto",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]

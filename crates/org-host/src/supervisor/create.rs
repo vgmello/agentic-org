@@ -199,7 +199,7 @@ impl Supervisor {
                     child.kill();
                     return DiscardOutcome::TimedOut;
                 }
-                #[cfg(test)]
+                #[cfg(all(feature = "test-support", debug_assertions))]
                 Ok(Signal::KillForTest) => continue,
             };
             // It exits right after reporting.
@@ -324,7 +324,7 @@ impl<'a> PendingCreate<'a> {
                     self.child.stop(Instant::now() + grace);
                     return CreateOutcome::Crashed;
                 }
-                #[cfg(test)]
+                #[cfg(all(feature = "test-support", debug_assertions))]
                 Signal::KillForTest => {}
             }
         }

@@ -31,7 +31,7 @@ const COLUMNS: [Column; 6] = [
 
 pub(super) fn run(args: InvitationsArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let listed = org_host::setup_flow::office_invitations(
+    let listed = org_host_setup::office_invitations(
         target.instance(),
         args.login.login.as_deref(),
         args.org.org.as_deref(),

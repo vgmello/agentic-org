@@ -3,7 +3,7 @@
 
 use clap::Args;
 use org_cli_shell::context::ExecutionContext;
-use org_host::setup_flow::{OrgCreateInput, OrgCreateOutcome};
+use org_host_setup::{OrgCreateInput, OrgCreateOutcome};
 use serde::Serialize;
 
 use super::shown_org;
@@ -66,7 +66,7 @@ pub(super) fn run(args: CreateArgs, ctx: &mut ExecutionContext) -> Result<(), Cl
         state_branch: &args.branch,
         no_wait: args.no_wait,
     };
-    org_host::setup_flow::validate_create_plan(&input)?;
+    org_host_setup::validate_create_plan(&input)?;
     if ctx.modes().dry_run {
         let plan = Plan {
             action: "org_create",
@@ -83,7 +83,7 @@ pub(super) fn run(args: CreateArgs, ctx: &mut ExecutionContext) -> Result<(), Cl
     }
     let target = selection::select(args.instance.name.as_deref(), None)?;
     let outcome =
-        org_host::setup_flow::org_create(target.instance(), args.login.login.as_deref(), &input)?;
+        org_host_setup::org_create(target.instance(), args.login.login.as_deref(), &input)?;
     let json = view::json(&outcome)?;
     match &outcome {
         OrgCreateOutcome::Created(_) => {

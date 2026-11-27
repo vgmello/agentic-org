@@ -207,9 +207,8 @@ fn org_owner_handover_rollback_restores_db_before_reverting_earlier_offices() {
     use crate::accounts::rules::Username;
     use crate::accounts::store::NewAccount;
     use crate::hostdb::journal::Verifier;
-    use crate::hostdb::sqlite::accounts::multi_person::{
-        InviteRegistration, OrgOwnerHandoverOutcome,
-    };
+    use crate::hostdb::multi_person::{InviteRegistration, OrgOwnerHandoverOutcome};
+    use crate::hostdb::HostAccountsStore;
 
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path();

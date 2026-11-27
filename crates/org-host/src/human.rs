@@ -15,13 +15,13 @@ fn unavailable() -> String {
 }
 /// Exclusive byte/descriptor reader. No buffered ordinary reader can consume
 /// SCM_RIGHTS. Fatal ancillary truncation requires process termination.
-pub(crate) struct Wire {
+pub struct Wire {
     write: UnixStream,
     read: StreamReceiver,
     id: u64,
 }
 impl Wire {
-    pub(crate) fn new(stream: UnixStream) -> Result<Self, String> {
+    pub fn new(stream: UnixStream) -> Result<Self, String> {
         stream.set_nonblocking(false).map_err(|_| unavailable())?;
         stream
             .set_write_timeout(Some(Duration::from_secs(30)))
@@ -51,7 +51,7 @@ impl Wire {
             }
         }
     }
-    pub(crate) fn receive_office_channel(&mut self) -> Result<UnixStream, String> {
+    pub fn receive_office_channel(&mut self) -> Result<UnixStream, String> {
         let deadline = Instant::now() + Duration::from_secs(30);
         let (marker, mut fds) = self.byte_until(1, deadline)?;
         if marker != ops::HOST_SOCK_MARKER || fds.len() != 1 {
@@ -69,7 +69,7 @@ impl Wire {
         Ok(stream)
     }
 
-    pub(crate) fn call<C: Call>(
+    pub fn call<C: Call>(
         &mut self,
         params: &C::Params,
         principal: Option<&Principal>,
@@ -80,7 +80,7 @@ impl Wire {
 
     /// [`Wire::call`], with the code of a refusal the host answered kept: `Ok(Err(code))`.
     /// Only its code: an error's message is the host's and is not shown.
-    pub(crate) fn call_answer<C: Call>(
+    pub fn call_answer<C: Call>(
         &mut self,
         params: &C::Params,
         principal: Option<&Principal>,
@@ -172,7 +172,7 @@ fn session(handle: &SessionHandle) -> SessionHandle {
     SessionHandle::new(handle.expose().into()).expect("live nonempty handle")
 }
 
-pub(crate) fn password() -> Result<Password, String> {
+pub fn password() -> Result<Password, String> {
     terminal::password()
 }
 
@@ -216,7 +216,7 @@ pub fn terminal_secret(label: &str) -> Result<zeroize::Zeroizing<String>, Secret
 pub const DEV_ACCOUNT_BASE: &str = "ORG_DEV_ACCOUNT_BASE";
 
 /// The instance paths of this account, for setup, `serve --name`, `admin` and `recovery`.
-pub(crate) fn paths(name: Option<&str>) -> Result<Paths, String> {
+pub fn paths(name: Option<&str>) -> Result<Paths, String> {
     if let Some(base) = std::env::var_os(DEV_ACCOUNT_BASE).filter(|b| !b.is_empty()) {
         if !cfg!(debug_assertions) {
             return Err(format!(
@@ -264,7 +264,7 @@ fn user_temp(account: &std::path::Path) -> Result<PathBuf, String> {
     })
 }
 mod host;
-pub(crate) use host::{host_is_named_by_user_alone, verify_host, verify_service_host};
+pub use host::{host_is_named_by_user_alone, verify_host, verify_service_host, VerifiedHost};
 mod recovery;
 pub use recovery::recovery;
 mod terminal;

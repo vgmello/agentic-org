@@ -113,46 +113,12 @@ fn flush_to_store(sessions: &dyn BrowserSessions, batch: BTreeMap<String, i64>, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hostdb::{HostDb, HostDbInit};
+    use crate::hostdb::memory::MemoryHostStore;
     use crate::sessions::{NewSession, Origin, Scheme, SessionDigest};
-
-    struct NoSecrets;
-    impl crate::host_secrets::HostSecrets for NoSecrets {
-        fn put(
-            &self,
-            _: &crate::host_secrets::Name,
-            _: &crate::host_secrets::Value,
-        ) -> Result<(), crate::host_secrets::Error> {
-            Ok(())
-        }
-        fn load(
-            &self,
-            _: &crate::host_secrets::Name,
-        ) -> Result<Option<crate::host_secrets::Value>, crate::host_secrets::Error> {
-            Ok(None)
-        }
-        fn delete(&self, _: &crate::host_secrets::Name) -> Result<(), crate::host_secrets::Error> {
-            Ok(())
-        }
-        fn list(&self) -> Result<Vec<crate::host_secrets::Name>, crate::host_secrets::Error> {
-            Ok(Vec::new())
-        }
-    }
 
     #[test]
     fn coalesces_multiple_touches_into_one_batched_flush() {
-        use std::os::unix::fs::PermissionsExt;
-        let home = tempfile::tempdir().unwrap();
-        std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-        let db = HostDb::create(
-            home.path(),
-            &NoSecrets,
-            &HostDbInit {
-                instance_id: crate::ids::uuid_v7().unwrap(),
-                clock_high_ms: 1_000,
-            },
-        )
-        .unwrap();
+        let db = MemoryHostStore::new(&crate::ids::uuid_v7().unwrap(), 1_000);
         let account = crate::ids::uuid_v7().unwrap();
         let phc = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
         db.seed_account(
