@@ -158,6 +158,7 @@ pub(super) async fn emit_poll_inbox_and_presence(
     presence_head_seq: u64,
     inbox_changes: Vec<org_proto::inbox::InboxChangedData>,
     presence_changes: Vec<org_proto::directory::MemberPresenceChangedData>,
+    activity_changes: Vec<org_proto::sessions::MemberActivityChangedData>,
     tx: &mpsc::Sender<StreamInput>,
 ) -> bool {
     for inbox in inbox_changes {
@@ -185,6 +186,18 @@ pub(super) async fn emit_poll_inbox_and_presence(
     for presence in presence_changes {
         let data = serde_json::to_value(&presence).unwrap_or(Value::Null);
         let ev = HubEvent::PresenceChanged {
+            org_id: org_id.to_owned(),
+            cursor: format!("presence:{org_id}:{presence_head_seq}"),
+            data,
+        };
+        if tx.send(StreamInput::Event(ev)).await.is_err() {
+            return false;
+        }
+    }
+    // Agents' coalesced coarse activity, as the office scoped it to this caller (`TASK-103`).
+    for activity in activity_changes {
+        let data = serde_json::to_value(&activity).unwrap_or(Value::Null);
+        let ev = HubEvent::ActivityChanged {
             org_id: org_id.to_owned(),
             cursor: format!("presence:{org_id}:{presence_head_seq}"),
             data,
@@ -236,6 +249,7 @@ pub(super) async fn emit_poll_result(
         res.presence_head_seq,
         res.inbox_changes,
         res.presence_changes,
+        res.activity_changes,
         tx,
     )
     .await

@@ -1,12 +1,13 @@
 //! Browser HTTP routes for C3 agent sessions, grants, approval decisions, stall recovery,
-//! and browser-driven provider CLI enrollment (`TASK-42` / C3, `ADR-0030`, `ADR-0032`).
+//! live turn controls (interrupt and steer, `TASK-103`), and browser-driven provider CLI
+//! enrollment (`TASK-42` / C3, `ADR-0030`, `ADR-0032`).
 
 use hyper::{http::request::Parts, Method};
 use org_proto::sessions::{
-    MemberSessionApprovalDecideParams, MemberSessionClearStallParams, MemberSessionListParams,
-    MemberSessionStartParams, MemberSessionStopParams, MemberSessionTranscriptParams,
-    ProviderCredentialRevokeParams, ProviderEnrollmentCancelParams, ProviderEnrollmentStartParams,
-    ProviderEnrollmentSubmitParams,
+    MemberSessionApprovalDecideParams, MemberSessionClearStallParams, MemberSessionInterruptParams,
+    MemberSessionListParams, MemberSessionStartParams, MemberSessionSteerParams,
+    MemberSessionStopParams, MemberSessionTranscriptParams, ProviderCredentialRevokeParams,
+    ProviderEnrollmentCancelParams, ProviderEnrollmentStartParams, ProviderEnrollmentSubmitParams,
 };
 use org_proto::web::organizations;
 use serde::Deserialize;
@@ -21,6 +22,8 @@ pub(super) use calls::{execute, prepare};
 pub enum SessionRoute {
     Start(CallerAuth, String, String),
     Stop(CallerAuth, String, String),
+    Interrupt(CallerAuth, String, String),
+    Steer(CallerAuth, String, String),
     Inspect(CallerAuth, String, String),
     ListSessions(CallerAuth, String, MemberSessionListParams),
     Transcript(CallerAuth, String, MemberSessionTranscriptParams),
@@ -38,6 +41,8 @@ pub enum SessionRoute {
 pub enum SessionCall {
     Start(CallerAuth, String, MemberSessionStartParams),
     Stop(CallerAuth, String, MemberSessionStopParams),
+    Interrupt(CallerAuth, String, MemberSessionInterruptParams),
+    Steer(CallerAuth, String, MemberSessionSteerParams),
     Inspect(CallerAuth, String, String),
     ListSessions(CallerAuth, String, MemberSessionListParams),
     Transcript(CallerAuth, String, MemberSessionTranscriptParams),
@@ -68,6 +73,13 @@ struct StopBody {
     command_id: String,
     #[serde(default)]
     reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SteerBody {
+    command_id: String,
+    text: String,
 }
 
 #[derive(Deserialize)]
@@ -336,6 +348,8 @@ fn route_agent_post(
     match action {
         "start" => Some(auth_uuid(api, request, org, id, SessionRoute::Start)),
         "stop" => Some(auth_uuid(api, request, org, id, SessionRoute::Stop)),
+        "interrupt" => Some(auth_uuid(api, request, org, id, SessionRoute::Interrupt)),
+        "steer" => Some(auth_uuid(api, request, org, id, SessionRoute::Steer)),
         "approvals" => Some(auth_uuid(api, request, org, id, SessionRoute::Approval)),
         "clear-stall" => Some(auth_uuid(api, request, org, id, SessionRoute::ClearStall)),
         a if is_known_agent_action(a) => Some(Err(invalid())),
@@ -346,7 +360,14 @@ fn route_agent_post(
 fn is_known_agent_action(action: &str) -> bool {
     matches!(
         action,
-        "start" | "stop" | "session" | "grants" | "approvals" | "clear-stall"
+        "start"
+            | "stop"
+            | "interrupt"
+            | "steer"
+            | "session"
+            | "grants"
+            | "approvals"
+            | "clear-stall"
     )
 }
 
@@ -491,12 +512,18 @@ fn decode_mut<B: serde::de::DeserializeOwned>(
     wrap: impl FnOnce(B) -> SessionCall,
 ) -> Result<PreparedCall<Call>, ApiReply> {
     let body: B = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    prepare_mut(body, bytes.len(), command_id, wrap)
+}
+
+/// [`decode_mut`] for a body its route already decoded (and checked), `len` bytes long.
+fn prepare_mut<B>(
+    body: B,
+    len: usize,
+    command_id: impl FnOnce(&B) -> &str,
+    wrap: impl FnOnce(B) -> SessionCall,
+) -> Result<PreparedCall<Call>, ApiReply> {
     let id = organizations::host_operation_id(command_id(&body)).map_err(bad_input)?;
-    Ok(PreparedCall::mutation(
-        Call::Sessions(wrap(body)),
-        id,
-        bytes.len(),
-    ))
+    Ok(PreparedCall::mutation(Call::Sessions(wrap(body)), id, len))
 }
 
 fn read_call(call: SessionCall, bytes: &[u8]) -> Result<PreparedCall<Call>, ApiReply> {

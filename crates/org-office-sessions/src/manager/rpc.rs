@@ -2,10 +2,10 @@
 
 use org_proto::sessions::{
     MemberSessionApprovalDecide, MemberSessionClearStall, MemberSessionGrants,
-    MemberSessionInspect, MemberSessionList, MemberSessionStart, MemberSessionStop,
-    MemberSessionTranscript, ProviderCredentialRevoke, ProviderCredentialStatus,
-    ProviderEnrollmentCancel, ProviderEnrollmentStart, ProviderEnrollmentStatus,
-    ProviderEnrollmentSubmit,
+    MemberSessionInspect, MemberSessionInterrupt, MemberSessionList, MemberSessionStart,
+    MemberSessionSteer, MemberSessionStop, MemberSessionTranscript, ProviderCredentialRevoke,
+    ProviderCredentialStatus, ProviderEnrollmentCancel, ProviderEnrollmentStart,
+    ProviderEnrollmentStatus, ProviderEnrollmentSubmit,
 };
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
@@ -137,7 +137,10 @@ impl SessionManager {
             | "member.session_clear_stall" => {
                 self.authorize_owner_only_inner(caller_id, hq_attested_owner)
             }
-            "member.session_start" | "member.session_stop" => {
+            "member.session_start"
+            | "member.session_stop"
+            | "member.session_interrupt"
+            | "member.session_steer" => {
                 self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)
             }
             _ => Ok(()),
@@ -163,6 +166,10 @@ impl SessionManager {
                 self.authorize_chief_of_staff_target_inner(m, hq_attested_owner, &p.employee_id)?;
                 self.stop_session(&p.employee_id, p.reason.as_deref().unwrap_or("stopped"))
             }));
+        }
+        if let Some(response) = self.dispatch_turn_control_rpcs(member, hq_attested_owner, request)
+        {
+            return Some(response);
         }
         if request.is::<MemberSessionInspect>() {
             return Some(handle_call::<MemberSessionInspect>(
@@ -211,6 +218,40 @@ impl SessionManager {
                 request,
                 member,
                 |m, p| self.read_session_transcript_inner(m, hq_attested_owner, &p),
+            ));
+        }
+        None
+    }
+
+    /// A person's live turn controls (`TASK-103`), under `member.session_stop`'s policy: the
+    /// owner or an active person, and only the owner on the Chief of Staff's sessions.
+    fn dispatch_turn_control_rpcs(
+        &self,
+        member: Option<&str>,
+        hq_attested_owner: bool,
+        request: &Request,
+    ) -> Option<Response> {
+        if request.is::<MemberSessionInterrupt>() {
+            return Some(handle_call::<MemberSessionInterrupt>(
+                request,
+                member,
+                |m, p| {
+                    self.authorize_owner_or_person_inner(m, hq_attested_owner)?;
+                    self.authorize_chief_of_staff_target_inner(
+                        m,
+                        hq_attested_owner,
+                        &p.employee_id,
+                    )?;
+                    self.interrupt_session(&p.employee_id)
+                },
+            ));
+        }
+        if request.is::<MemberSessionSteer>() {
+            return Some(handle_call::<MemberSessionSteer>(
+                request,
+                member,
+                // The steer checks its caller itself (and, on the Chief of Staff, the partition).
+                |m, p| self.steer_session_inner(m, hq_attested_owner, &p.employee_id, &p.text),
             ));
         }
         None
@@ -321,6 +362,8 @@ pub(super) fn is_c3_rpc_method(method: &str) -> bool {
         method,
         "member.session_start"
             | "member.session_stop"
+            | "member.session_interrupt"
+            | "member.session_steer"
             | "member.session_inspect"
             | "member.session_list"
             | "member.session_transcript"

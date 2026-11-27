@@ -60,14 +60,18 @@ fn is_hiring_method(request: &Request) -> bool {
         || is_hiring_policy_method(request)
 }
 
+/// A person's live turn controls (`TASK-103`) are session controls too; unlike a stop, they
+/// keep the warm process, so they never revoke the agent's binding.
 fn is_session_control_method(request: &Request) -> bool {
     use org_proto::sessions::{
         MemberSessionApprovalDecide, MemberSessionClearStall, MemberSessionGrants,
-        MemberSessionInspect, MemberSessionList, MemberSessionStart, MemberSessionStop,
-        MemberSessionTranscript,
+        MemberSessionInspect, MemberSessionInterrupt, MemberSessionList, MemberSessionStart,
+        MemberSessionSteer, MemberSessionStop, MemberSessionTranscript,
     };
     request.is::<MemberSessionStart>()
         || request.is::<MemberSessionStop>()
+        || request.is::<MemberSessionInterrupt>()
+        || request.is::<MemberSessionSteer>()
         || request.is::<MemberSessionInspect>()
         || request.is::<MemberSessionList>()
         || request.is::<MemberSessionTranscript>()

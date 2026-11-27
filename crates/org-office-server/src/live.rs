@@ -6,14 +6,23 @@
 //! is told by [`Batch::lost`]: the pusher ends its subscription (closes the connection) and the
 //! client re-lists and subscribes again. They carry headers and cards, never bodies. A publish
 //! wakes the followers, which are asleep on the organization's change signal.
+//!
+//! Agents' coarse live turn activity (`member.activity_changed`, `TASK-103`) is kept like
+//! presence, the latest per member and numbered on the presence cursor, so a busy agent's phase
+//! changes never push message events out of the ring either. It comes from the session
+//! manager's post-redaction stream ([`follow_session_activity`]) and carries a phase and a
+//! tool's name only. The Chief of Staff's turns serve one caller's private partition: only the
+//! owner gets her tool detail ([`LiveEvents::activity_since`]).
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use org_mailbox::{MessageEvent, MessageEvents};
+use org_office_sessions::{SessionStreamEvent, SessionStreamHub, StreamFilter};
 use org_proto::directory::MemberPresenceChangedData;
 use org_proto::msg::{MessageReceivedData, MessageStateChangedData};
+use org_proto::sessions::MemberActivityChangedData;
 
 /// How many message events the ring keeps.
 pub(crate) const CAPACITY: usize = 1024;
@@ -44,11 +53,19 @@ struct Ring {
 }
 
 /// The latest presence of each member, and when it was set. A status flood takes one slot per
-/// member and cannot push message events out of the ring.
+/// member and cannot push message events out of the ring. Agents' live activity shares the
+/// numbering, one slot per member too.
 #[derive(Default)]
 struct Presence {
     next: u64,
     latest: HashMap<String, (u64, MemberPresenceChangedData)>,
+    activity: HashMap<String, (u64, LatestActivity)>,
+}
+
+/// An agent's latest coarse activity; `private` when only the owner may see its tool detail.
+struct LatestActivity {
+    data: MemberActivityChangedData,
+    private: bool,
 }
 
 pub(crate) struct LiveEvents {
@@ -81,6 +98,7 @@ impl LiveEvents {
             presence: Mutex::new(Presence {
                 next: 1,
                 latest: HashMap::new(),
+                activity: HashMap::new(),
             }),
             wake,
             mailbox_changes: AtomicU64::new(0),
@@ -120,6 +138,34 @@ impl LiveEvents {
             presence
                 .latest
                 .insert(data.member_id.clone(), (number, data));
+        }
+        (self.wake)();
+    }
+
+    /// An agent's coarse live activity changed (`TASK-103`). Only the latest per member is kept,
+    /// and a repeat of it publishes nothing.
+    pub(crate) fn publish_activity(&self, data: MemberActivityChangedData, private: bool) {
+        {
+            let mut presence = self.presence.lock().unwrap_or_else(|p| p.into_inner());
+            let unchanged = presence
+                .activity
+                .get(&data.member_id)
+                .is_some_and(|(_, l)| {
+                    l.private == private
+                        && l.data.phase == data.phase
+                        && l.data.active_tool_name == data.active_tool_name
+                        && l.data.active_tool_started_at == data.active_tool_started_at
+                        && l.data.supports_steer == data.supports_steer
+                });
+            if unchanged {
+                return;
+            }
+            let number = presence.next;
+            presence.next += 1;
+            presence.activity.insert(
+                data.member_id.clone(),
+                (number, LatestActivity { data, private }),
+            );
         }
         (self.wake)();
     }
@@ -173,6 +219,61 @@ impl LiveEvents {
             upto.max(after),
         )
     }
+}
+
+impl LiveEvents {
+    /// The latest activity of agents changed after `after` and up to `upto` (presence numbers),
+    /// oldest first. Without `owner`, a private (Chief of Staff) activity comes without its tool
+    /// detail.
+    pub(crate) fn activity_since(
+        &self,
+        after: u64,
+        upto: u64,
+        owner: bool,
+    ) -> Vec<MemberActivityChangedData> {
+        let presence = self.presence.lock().unwrap_or_else(|p| p.into_inner());
+        let mut changed: Vec<&(u64, LatestActivity)> = presence
+            .activity
+            .values()
+            .filter(|(number, _)| *number > after && *number <= upto)
+            .collect();
+        changed.sort_by_key(|(number, _)| *number);
+        changed
+            .into_iter()
+            .map(|(_, latest)| {
+                if latest.private && !owner {
+                    latest.data.clone().without_tool_detail()
+                } else {
+                    latest.data.clone()
+                }
+            })
+            .collect()
+    }
+}
+
+/// Feeds every agent's coalesced coarse activity from the session manager's post-redaction
+/// stream into `live`'s presence feed (`TASK-103`), until `live` is gone. Holds `live` weakly.
+pub(crate) fn follow_session_activity(live: &Arc<LiveEvents>, hub: &SessionStreamHub) -> bool {
+    let live = Arc::downgrade(live);
+    hub.add_sink(StreamFilter::All, move |frame| {
+        let Some(live) = live.upgrade() else {
+            return false;
+        };
+        if let SessionStreamEvent::Activity(activity) = &frame.event {
+            live.publish_activity(
+                MemberActivityChangedData {
+                    member_id: frame.key.employee_id.clone(),
+                    phase: activity.phase,
+                    active_tool_name: activity.active_tool_name.clone(),
+                    active_tool_started_at: activity.active_tool_started_at.clone(),
+                    supports_steer: activity.supports_steer,
+                    changed_at: frame.at.clone(),
+                },
+                frame.key.is_private(),
+            );
+        }
+        true
+    })
 }
 
 /// Where a subscriber starts reading the live events.

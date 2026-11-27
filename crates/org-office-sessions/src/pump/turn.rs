@@ -65,7 +65,7 @@ pub(super) fn ensure_permit_for_turn(
         Err(reason) => {
             // Every queued turn is refused with this one; a turn queued since stays (and keeps
             // the session busy) for the next dispatch.
-            let refused = std::mem::take(&mut loop_state.pending_turns);
+            let refused = loop_state.take_queued_turns();
             let mut st = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
             st.last_error = Some(reason);
             st.dequeue_turns(refused.len());
@@ -81,8 +81,11 @@ pub(super) fn dispatch_next_turn(
     loop_state: &mut PumpLoopState,
     session: &mut Box<dyn org_agent_runtime::Session>,
 ) {
+    // `turn_just_ended`: the last turn's end (and its permit's release) is settled first, even
+    // when a runtime ended it synchronously in this pass.
     if !loop_state.ready
         || loop_state.turn_active
+        || loop_state.turn_just_ended
         || loop_state.stop_requested
         || loop_state.pending_turns.is_empty()
     {
@@ -99,6 +102,7 @@ pub(super) fn dispatch_next_turn(
         PermitCheck::Refused => return,
     }
     let text = loop_state.pending_turns.remove(0);
+    loop_state.front_is_steer = false;
     ctx.state
         .lock()
         .unwrap_or_else(|p| p.into_inner())
@@ -144,9 +148,13 @@ pub(super) fn maybe_deliver_mid_turn(
     loop_state: &mut PumpLoopState,
     session: &mut Box<dyn org_agent_runtime::Session>,
 ) {
+    // A turn being interrupted (`TASK-103`) takes no wake: delivered now it could restart the
+    // turn (Agy) or be lost with it (Codex, Claude); the wakes stay staged for the next turn.
     if !loop_state.turn_active
         || loop_state.stop_requested
         || loop_state.suspend_now
+        || loop_state.interrupt_wanted
+        || loop_state.interrupt_sent
         || loop_state.in_flight_delivery.is_some()
         || !ctx.supports_mid_turn
     {

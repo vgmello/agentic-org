@@ -1914,4 +1914,136 @@ fn task140_chat_events_poll_wakes_immediately_on_commit_and_respects_timeout() {
     );
 }
 
+fn events_poll_as(
+    fx: &LiveOfficeFixture,
+    member: &str,
+    params: &ChatEventsPollParams,
+) -> org_proto::chat::ChatEventsPollResult {
+    let req = Request::new::<ChatEventsPoll>(930, params).unwrap();
+    let Outcome::Result(val) = fx.shared.answer_for_test(&req, member, true).outcome else {
+        panic!("chat.events_poll failed for {member}");
+    };
+    serde_json::from_value(val).unwrap()
+}
+
+/// Agents' coarse live activity streams over `chat.events_poll` (the web's `presence` feed):
+/// coalesced to the latest per agent, carrying a phase and a tool's name only, and the Chief
+/// of Staff's tool detail only for the owner (`TASK-103`).
+#[test]
+fn task103_events_poll_streams_coalesced_agent_activity_and_keeps_tess_detail_for_the_owner() {
+    use org_office_sessions::{
+        SessionActivity, SessionStreamEvent, SessionStreamFrame, SessionStreamKey,
+    };
+    use org_proto::sessions::ActivityPhase;
+
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let fx = LiveOfficeFixture::start();
+    let tess = fx
+        .office
+        .chief_of_staff()
+        .unwrap()
+        .expect("Tess")
+        .id
+        .to_string();
+    let top_team = fx.office.org_snapshot().unwrap().teams[0].id.clone();
+    let bob = uuidv7(93);
+    let add_bob = Request::new::<org_proto::org::MemberAddPerson>(
+        93,
+        &org_proto::org::MemberAddPersonParams {
+            command_id: uuidv7(94),
+            member_id: bob.clone(),
+            name: "Bob".into(),
+            contact: None,
+            handle: Some("bob".into()),
+            home_team_id: Some(top_team),
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        fx.shared
+            .answer_for_test(&add_bob, &fx.owner_id, true)
+            .outcome,
+        Outcome::Result(_)
+    ));
+    let boot = events_poll_as(&fx, &fx.owner_id, &ChatEventsPollParams::default());
+    let cursors = ChatEventsPollParams {
+        after_org_seq: Some(boot.org_head_seq),
+        after_live_seq: Some(boot.live_head_seq),
+        after_presence_seq: Some(boot.presence_head_seq),
+        wait_ms: None,
+    };
+
+    let publish = |employee_id: &str, partition: Option<&str>, activity: SessionActivity| {
+        fx.sessions.stream_hub().publish(&SessionStreamFrame {
+            key: SessionStreamKey {
+                org_id: fx.office.info().org_id.clone(),
+                employee_id: employee_id.to_owned(),
+                partition: partition.map(str::to_owned),
+            },
+            at: "2026-11-27T10:00:00Z".into(),
+            event: SessionStreamEvent::Activity(activity),
+        });
+    };
+    let running = |tool: &str| SessionActivity {
+        phase: Some(ActivityPhase::RunningTool),
+        active_tool_name: Some(tool.into()),
+        active_tool_started_at: Some("2026-11-27T10:00:00Z".into()),
+        supports_steer: false,
+    };
+    for n in 0..2_000 {
+        let tool = if n % 2 == 0 { "Bash" } else { "Read" };
+        publish(&fx.hr_id, None, running(tool));
+    }
+    publish(
+        &tess,
+        Some(&format!("tess:ask:{}", fx.owner_id)),
+        running("Bash"),
+    );
+
+    let owner = events_poll_as(&fx, &fx.owner_id, &cursors);
+    assert!(!owner.live_lost, "activity never evicts message events");
+    assert_eq!(
+        owner.activity_changes.len(),
+        2,
+        "{:?}",
+        owner.activity_changes
+    );
+    let hr = &owner.activity_changes[0];
+    assert_eq!(hr.member_id, fx.hr_id);
+    assert_eq!(hr.active_tool_name.as_deref(), Some("Read"), "the latest");
+    let tess_for_owner = &owner.activity_changes[1];
+    assert_eq!(tess_for_owner.member_id, tess);
+    assert_eq!(tess_for_owner.active_tool_name.as_deref(), Some("Bash"));
+
+    let other = events_poll_as(&fx, &bob, &cursors);
+    assert_eq!(other.activity_changes.len(), 2);
+    assert_eq!(
+        other.activity_changes[0].active_tool_name.as_deref(),
+        Some("Read")
+    );
+    assert_eq!(other.activity_changes[1].member_id, tess);
+    assert_eq!(
+        other.activity_changes[1].phase,
+        Some(ActivityPhase::RunningTool)
+    );
+    assert_eq!(other.activity_changes[1].active_tool_name, None);
+    assert_eq!(other.activity_changes[1].active_tool_started_at, None);
+    let wire = serde_json::to_value(&other).unwrap();
+    assert!(wire["activity_changes"][1]
+        .get("active_tool_name")
+        .is_none());
+
+    // A poll after the latest change sees nothing new.
+    let again = events_poll_as(
+        &fx,
+        &fx.owner_id,
+        &ChatEventsPollParams {
+            after_presence_seq: Some(owner.presence_head_seq),
+            ..cursors
+        },
+    );
+    assert!(again.activity_changes.is_empty());
+}
+
 mod files;
+mod session_controls;

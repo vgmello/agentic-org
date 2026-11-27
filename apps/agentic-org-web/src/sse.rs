@@ -23,7 +23,7 @@ use org_proto::web::{
 };
 use tokio::sync::{broadcast, mpsc};
 
-pub use crate::event_hub::{EventHub, HubEvent};
+pub use crate::event_hub::{EventBus, EventHub, HubEvent, InMemoryEventBus};
 use crate::office::OfficeBridge;
 
 mod deliver;
@@ -160,8 +160,22 @@ pub fn open_stream_with_offices(
     offices: Option<OfficeBridge>,
     targets: Vec<OfficePollTarget>,
 ) -> Response<WebBody> {
+    let bus = InMemoryEventBus::new(hub.clone());
+    open_stream_on_bus(&bus, instance_id, session_id, request, offices, targets)
+}
+
+/// Spawns an SSE stream task subscribed to `bus`, with optional live office polling: the
+/// stream depends on the [`EventBus`] seam only, never on how events travel.
+pub fn open_stream_on_bus(
+    bus: &dyn EventBus,
+    instance_id: String,
+    session_id: String,
+    request: StreamRequest,
+    offices: Option<OfficeBridge>,
+    targets: Vec<OfficePollTarget>,
+) -> Response<WebBody> {
     let (tx, rx) = mpsc::channel::<Bytes>(STREAM_QUEUE);
-    let mut events = hub.subscribe();
+    let mut events = bus.subscribe();
     let subs = request.subscriptions;
     let (merged_tx, merged_rx) = mpsc::channel::<StreamInput>(STREAM_QUEUE);
     let btx = merged_tx.clone();

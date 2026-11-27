@@ -291,6 +291,10 @@ pub(super) fn build_initial_runtime_state(
         pending_wake_count: 0,
         pending_wake_reason: None,
         queued_turns: 0,
+        activity: crate::stream_hub::SessionActivity {
+            supports_steer: prepared.runtime.capabilities().supports_native_steer(),
+            ..Default::default()
+        },
     }
 }
 

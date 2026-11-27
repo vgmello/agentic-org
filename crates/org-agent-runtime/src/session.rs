@@ -192,6 +192,11 @@ pub enum ControlError {
     Closed,
     /// This runtime can't do it (or doesn't know the command).
     Unsupported,
+    /// The input can reach the running turn only by interrupting it: send
+    /// [`Control::Interrupt`], then send the input as the next turn once the interrupted turn
+    /// ends (a person's explicit steer on a runtime without native steering, see
+    /// [`crate::Capabilities::steer_route`]).
+    NeedsInterrupt,
 }
 
 impl fmt::Display for ControlError {
@@ -203,6 +208,7 @@ impl fmt::Display for ControlError {
             ControlError::UnknownApproval => "no pending approval has this id",
             ControlError::Closed => "the session is closed",
             ControlError::Unsupported => "not supported by this runtime",
+            ControlError::NeedsInterrupt => "the running turn must be interrupted first",
         })
     }
 }

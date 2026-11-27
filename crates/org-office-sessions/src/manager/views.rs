@@ -120,6 +120,10 @@ pub(super) fn build_idle_session_view(
         suspended_since,
         pending_wake_count,
         pending_wake_reason,
+        activity_phase: None,
+        active_tool_name: None,
+        active_tool_started_at: None,
+        supports_steer: false,
     }
 }
 
