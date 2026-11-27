@@ -59,6 +59,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"done"}'
                 employee_id: emp_id.clone(),
                 instruction: Some("Check inbox".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .expect("session started");
@@ -153,6 +155,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"done"}'
                 employee_id: emp_id.clone(),
                 instruction: Some("Check escalations".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .expect("session started");

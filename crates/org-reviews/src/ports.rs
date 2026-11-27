@@ -112,6 +112,7 @@ pub trait ReviewContextRead {
     fn employee_info(&self, id: &Id) -> Result<Option<ReviewActorInfo>, EngineError>;
     fn all_employees(&self) -> Result<Vec<ReviewActorInfo>, EngineError>;
     fn team_exists_active(&self, team_id: &Id) -> Result<bool, EngineError>;
+    fn team_lead(&self, team_id: &Id) -> Result<Option<Id>, EngineError>;
     fn team_chain(&self, team_id: &Id) -> Result<Option<Vec<Id>>, EngineError>;
     fn resolve_project_info(
         &self,

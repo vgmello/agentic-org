@@ -304,6 +304,7 @@ fn insert_stub_handle(mgr: &SessionManager, spec: StubSessionSpec<'_>) -> StubSe
         runtime_id: Some("claude".into()),
         runtime_session_id: rsid.map(str::to_owned),
         private_home: "/tmp/home".into(),
+        workspace_spec: "/tmp".into(),
         permission_preset: "autonomous_sandboxed".into(),
         sandbox_enabled: true,
         spec_hash: "h".into(),
@@ -417,6 +418,8 @@ fn task133_ac1_idle_warm_session_hibernates_after_ttl_and_resumes_transparently(
             employee_id: hr_id.clone(),
             instruction: Some("first turn".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();
@@ -448,6 +451,8 @@ fn task133_ac1_idle_warm_session_hibernates_after_ttl_and_resumes_transparently(
             employee_id: hr_id.clone(),
             instruction: Some("second turn after hibernation".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();
@@ -468,6 +473,8 @@ fn task133_ac1_idle_warm_session_hibernates_after_ttl_and_resumes_transparently(
             employee_id: hr_id.clone(),
             instruction: Some("fresh turn after explicit stop".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();
@@ -778,6 +785,8 @@ fn task133_ac3_child_build_concurrency_enforcement_and_clamping() {
                 employee_id: hr_id.clone(),
                 instruction: Some("print build env".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .unwrap();
@@ -851,6 +860,8 @@ fn task133_pre_launch_sweep_evicts_over_budget_idle_session() {
             employee_id: hr_id.clone(),
             instruction: Some("launch triggers pre-launch RSS sweep".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();
@@ -923,6 +934,7 @@ fn task133_hibernation_fails_closed_when_teardown_panics() {
         runtime_id: Some("claude".into()),
         runtime_session_id: Some("rs-panic".into()),
         private_home: "/tmp/home".into(),
+        workspace_spec: "/tmp".into(),
         permission_preset: "autonomous_sandboxed".into(),
         sandbox_enabled: true,
         spec_hash: "h".into(),

@@ -602,6 +602,7 @@ fn assert_rebuild_parity(fx: Fx, review_id: &str, engine: EngineChoice) {
             &fx.owning_agent,
             ReviewInspectParams {
                 review: review_id.to_owned(),
+                fields: None,
             },
             ReviewInspectSections {
                 rounds: true,
@@ -621,6 +622,7 @@ fn assert_rebuild_parity(fx: Fx, review_id: &str, engine: EngineChoice) {
             &fx.owner,
             ReviewInspectParams {
                 review: "RV-A1".into(),
+                fields: None,
             },
         )
         .unwrap()
@@ -647,6 +649,7 @@ fn assert_rebuild_parity(fx: Fx, review_id: &str, engine: EngineChoice) {
             &fx.owner,
             ReviewInspectParams {
                 review: "RV-A1".into(),
+                fields: None,
             },
         )
         .unwrap()
@@ -1144,6 +1147,7 @@ fn concurrency_atomicity_and_idempotency() {
                 &fx.owner,
                 ReviewInspectParams {
                     review: "RV-A1".into(),
+                    fields: None,
                 },
             )
             .unwrap()
@@ -1289,7 +1293,8 @@ fn security_project_scoping_and_unrouted_verdict() {
                 .review_inspect(
                     &fx.outsider_agent,
                     ReviewInspectParams {
-                        review: key.clone()
+                        review: key.clone(),
+                        fields: None,
                     }
                 )
                 .unwrap()
@@ -1402,7 +1407,8 @@ fn security_inactive_and_unknown_callers() {
                     .review_inspect(
                         bad_caller,
                         ReviewInspectParams {
-                            review: key.clone()
+                            review: key.clone(),
+                            fields: None,
                         }
                     )
                     .unwrap()
@@ -1526,11 +1532,31 @@ fn route_cannot_bypass_open_blocker_and_resets_readded_verdict() {
             .unwrap()
             .unwrap();
         assert_eq!(v_blk.review.status, ReviewStatus::ChangesRequested);
-        // Removing contributing_agent leaves only owner (Approve), yet open Blocker prevents Approved (P0-2).
-        let routed = fx
+        // Independent guard: author cannot remove dissenting ChangesRequested reviewer.
+        let blocked_route = fx
             .office
             .review_route(
                 &fx.owning_agent,
+                ReviewRouteParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    expected_revision: v_blk.review.revision,
+                    routing: ReviewRoutingSpec {
+                        mode: RoutingMode::Explicit,
+                        reviewer_ids: vec![fx.owner.clone()],
+                        team_id: None,
+                    },
+                    session_mode: Some(ReviewSessionMode::Fresh),
+                },
+            )
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(blocked_route.code, ErrorCode::NotAuthorized);
+        // Non-author (owner) removing contributing_agent leaves only owner (Approve), yet open Blocker prevents Approved (P0-2).
+        let routed = fx
+            .office
+            .review_route(
+                &fx.owner,
                 ReviewRouteParams {
                     command_id: next_uuid(),
                     review: key.clone(),
@@ -1550,7 +1576,7 @@ fn route_cannot_bypass_open_blocker_and_resets_readded_verdict() {
         let readded = fx
             .office
             .review_route(
-                &fx.owning_agent,
+                &fx.owner,
                 ReviewRouteParams {
                     command_id: next_uuid(),
                     review: key,
@@ -1678,5 +1704,496 @@ fn pass2_security_and_resubmit_invariants() {
             round3.round.base_oid.as_deref(),
             Some(rebased_base.as_str())
         );
+    }
+}
+
+#[test]
+fn standing_audit_independent_guards_blocker_downgrade_and_session_reset() {
+    org_office_sqlite::install();
+    for engine in ENGINES {
+        let fx = fixture(engine);
+        let peer_agent = hire_agent(&fx.office, &fx.owner, &fx.owning_team, "Peer", "peer");
+        let bystander = hire_agent(
+            &fx.office,
+            &fx.owner,
+            &fx.owning_team,
+            "Bystander",
+            "bystander",
+        );
+
+        // --- Finding #1 & #2: Independent review guards + round.submitted_by parity ---
+        let created = fx
+            .office
+            .review_request(
+                &fx.owning_agent,
+                code_request_params(&fx, next_uuid(), &fx.contributing_agent, true),
+            )
+            .unwrap()
+            .unwrap();
+        let key = created.review.key.clone();
+
+        // Bystander cannot close (NotAuthorized).
+        assert_eq!(
+            fx.office
+                .review_close(
+                    &bystander,
+                    ReviewCloseParams {
+                        command_id: next_uuid(),
+                        review: key.clone(),
+                        expected_revision: created.review.revision,
+                        reason: Some("unauthorized close".into()),
+                    }
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotAuthorized
+        );
+        // Author agent cannot self-close an unapproved independent review.
+        assert_eq!(
+            fx.office
+                .review_close(
+                    &fx.owning_agent,
+                    ReviewCloseParams {
+                        command_id: next_uuid(),
+                        review: key.clone(),
+                        expected_revision: created.review.revision,
+                        reason: Some("self-close bypass".into()),
+                    }
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotAuthorized
+        );
+
+        // Reviewer requests changes with a Blocker finding.
+        let blocker_id = next_uuid();
+        let _v_blk = fx
+            .office
+            .review_verdict(
+                &fx.contributing_agent,
+                ReviewVerdictParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    round_number: 1,
+                    head_oid: Some(OID_HEAD1.into()),
+                    verdict: ReviewVerdict::ChangesRequested,
+                    summary_markdown: "Needs fix".into(),
+                    findings: vec![ReviewFindingDraft {
+                        finding_id: blocker_id.clone(),
+                        severity: FindingSeverity::Blocker,
+                        anchor: FindingAnchor::general(),
+                        body_markdown: "Must fix race".into(),
+                        attachment_ids: vec![],
+                    }],
+                    attachment_ids: vec![],
+                },
+            )
+            .unwrap()
+            .unwrap();
+
+        // Author cannot resolve or wont_fix a Blocker finding on an independent review.
+        for status in [FindingStatus::Resolved, FindingStatus::WontFix] {
+            let err = fx
+                .office
+                .review_finding(
+                    &fx.owning_agent,
+                    ReviewFindingParams {
+                        command_id: next_uuid(),
+                        review: key.clone(),
+                        op: ReviewFindingOp::Reply {
+                            finding_id: blocker_id.clone(),
+                            reply_id: next_uuid(),
+                            body_markdown: "Author trying to dismiss blocker".into(),
+                            set_status: Some(status),
+                            attachment_ids: vec![],
+                        },
+                    },
+                )
+                .unwrap()
+                .unwrap_err();
+            assert_eq!(err.code, ErrorCode::NotAuthorized);
+        }
+        // Comment-only reply by author on Blocker IS allowed.
+        let comment_reply = fx
+            .office
+            .review_finding(
+                &fx.owning_agent,
+                ReviewFindingParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    op: ReviewFindingOp::Reply {
+                        finding_id: blocker_id.clone(),
+                        reply_id: next_uuid(),
+                        body_markdown: "Fixed in next round".into(),
+                        set_status: None,
+                        attachment_ids: vec![],
+                    },
+                },
+            )
+            .unwrap()
+            .unwrap();
+
+        // peer_agent submits round 2 (round.submitted_by != created_by).
+        let r2 = fx
+            .office
+            .review_resubmit(
+                &peer_agent,
+                ReviewResubmitParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    expected_revision: comment_reply.review.revision,
+                    expected_head_oid: Some(OID_HEAD2.into()),
+                    note_markdown: "Peer resubmitted fix".into(),
+                    session_mode: None,
+                    fresh: true,
+                },
+            )
+            .unwrap()
+            .unwrap();
+
+        // Round 2 submitter (peer_agent) cannot resolve Blocker either!
+        assert_eq!(
+            fx.office
+                .review_finding(
+                    &peer_agent,
+                    ReviewFindingParams {
+                        command_id: next_uuid(),
+                        review: key.clone(),
+                        op: ReviewFindingOp::Reply {
+                            finding_id: blocker_id.clone(),
+                            reply_id: next_uuid(),
+                            body_markdown: "Submitter trying to resolve blocker".into(),
+                            set_status: Some(FindingStatus::Resolved),
+                            attachment_ids: vec![],
+                        },
+                    },
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotAuthorized
+        );
+        // Round 2 submitter (peer_agent) cannot be routed as reviewer on independent review (Finding #2).
+        assert_eq!(
+            fx.office
+                .review_route(
+                    &fx.owner,
+                    ReviewRouteParams {
+                        command_id: next_uuid(),
+                        review: key.clone(),
+                        expected_revision: r2.review.revision,
+                        routing: ReviewRoutingSpec {
+                            mode: RoutingMode::Explicit,
+                            reviewer_ids: vec![peer_agent.clone()],
+                            team_id: None,
+                        },
+                        session_mode: Some(ReviewSessionMode::Fresh),
+                    },
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidRequest
+        );
+        // Round 2 submitter cannot self-close unapproved independent review.
+        assert_eq!(
+            fx.office
+                .review_close(
+                    &peer_agent,
+                    ReviewCloseParams {
+                        command_id: next_uuid(),
+                        review: key.clone(),
+                        expected_revision: r2.review.revision,
+                        reason: Some("peer self-close".into()),
+                    }
+                )
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotAuthorized
+        );
+
+        // Reviewer resolves the Blocker and approves -> status Approved.
+        let _ = fx
+            .office
+            .review_finding(
+                &fx.contributing_agent,
+                ReviewFindingParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    op: ReviewFindingOp::Reply {
+                        finding_id: blocker_id.clone(),
+                        reply_id: next_uuid(),
+                        body_markdown: "Verified fix".into(),
+                        set_status: Some(FindingStatus::Resolved),
+                        attachment_ids: vec![],
+                    },
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let approved = fx
+            .office
+            .review_verdict(
+                &fx.contributing_agent,
+                ReviewVerdictParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    round_number: 2,
+                    head_oid: Some(OID_HEAD2.into()),
+                    verdict: ReviewVerdict::Approve,
+                    summary_markdown: "LGTM".into(),
+                    findings: vec![],
+                    attachment_ids: vec![],
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(approved.review.status, ReviewStatus::Approved);
+
+        // --- Finding #3a: Reopening a Blocker on Approved downgrades Approved -> Open ---
+        let reopened = fx
+            .office
+            .review_finding(
+                &fx.contributing_agent,
+                ReviewFindingParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    op: ReviewFindingOp::Reply {
+                        finding_id: blocker_id.clone(),
+                        reply_id: next_uuid(),
+                        body_markdown: "Regression spotted, reopening".into(),
+                        set_status: Some(FindingStatus::Open),
+                        attachment_ids: vec![],
+                    },
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(reopened.review.status, ReviewStatus::Open);
+
+        // Resolve again & re-approve, then test Finding #3b: adding a NEW Blocker downgrades Approved -> Open.
+        let _ = fx
+            .office
+            .review_finding(
+                &fx.contributing_agent,
+                ReviewFindingParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    op: ReviewFindingOp::Reply {
+                        finding_id: blocker_id,
+                        reply_id: next_uuid(),
+                        body_markdown: "Actually fine".into(),
+                        set_status: Some(FindingStatus::Resolved),
+                        attachment_ids: vec![],
+                    },
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let reapproved = fx
+            .office
+            .review_verdict(
+                &fx.contributing_agent,
+                ReviewVerdictParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    round_number: 2,
+                    head_oid: Some(OID_HEAD2.into()),
+                    verdict: ReviewVerdict::Approve,
+                    summary_markdown: "Re-approved".into(),
+                    findings: vec![],
+                    attachment_ids: vec![],
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(reapproved.review.status, ReviewStatus::Approved);
+        let new_blk = fx
+            .office
+            .review_finding(
+                &fx.contributing_agent,
+                ReviewFindingParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    op: ReviewFindingOp::Add(ReviewFindingDraft {
+                        finding_id: next_uuid(),
+                        severity: FindingSeverity::Blocker,
+                        anchor: FindingAnchor::general(),
+                        body_markdown: "Late blocker".into(),
+                        attachment_ids: vec![],
+                    }),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(new_blk.review.status, ReviewStatus::Open);
+
+        // Person (owner) can still close an open independent review.
+        let closed_by_owner = fx
+            .office
+            .review_close(
+                &fx.owner,
+                ReviewCloseParams {
+                    command_id: next_uuid(),
+                    review: key,
+                    expected_revision: new_blk.review.revision,
+                    reason: Some("Owner superseded".into()),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(closed_by_owner.review.status, ReviewStatus::Closed);
+
+        // --- Finding #5: Session reset on re-route (was_removed || session_mode == Fresh) ---
+        let warm_req = fx
+            .office
+            .review_request(
+                &fx.owning_agent,
+                code_request_params(&fx, next_uuid(), &fx.contributing_agent, false),
+            )
+            .unwrap()
+            .unwrap();
+        let wkey = warm_req.review.key;
+        let wid = warm_req.review.id;
+        let reviewer_sid = |office: &Office, review_id: &str, reviewer: &str| -> Option<String> {
+            office
+                .review_reviewer_records(review_id)
+                .unwrap()
+                .unwrap()
+                .into_iter()
+                .find(|r| r.round_number == 1 && r.reviewer_id.as_str() == reviewer)
+                .and_then(|r| r.runtime_session_id)
+        };
+        let v_sid = fx
+            .office
+            .review_verdict_with_session(
+                &fx.contributing_agent,
+                ReviewVerdictParams {
+                    command_id: next_uuid(),
+                    review: wkey.clone(),
+                    round_number: 1,
+                    head_oid: Some(OID_HEAD1.into()),
+                    verdict: ReviewVerdict::ChangesRequested,
+                    summary_markdown: "Check X".into(),
+                    findings: vec![],
+                    attachment_ids: vec![],
+                },
+                None,
+                Some("runtime-sess-123".into()),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reviewer_sid(&fx.office, &wid, &fx.contributing_agent).as_deref(),
+            Some("runtime-sess-123")
+        );
+        // Keeping reviewer active in Warm mode preserves runtime_session_id.
+        let kept_warm = fx
+            .office
+            .review_route(
+                &fx.owning_agent,
+                ReviewRouteParams {
+                    command_id: next_uuid(),
+                    review: wkey.clone(),
+                    expected_revision: v_sid.review.revision,
+                    routing: ReviewRoutingSpec {
+                        mode: RoutingMode::Explicit,
+                        reviewer_ids: vec![fx.contributing_agent.clone(), peer_agent.clone()],
+                        team_id: None,
+                    },
+                    session_mode: Some(ReviewSessionMode::Warm),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reviewer_sid(&fx.office, &wid, &fx.contributing_agent).as_deref(),
+            Some("runtime-sess-123")
+        );
+        // Switching to Fresh mode clears runtime_session_id even if not removed.
+        let _switched_fresh = fx
+            .office
+            .review_route(
+                &fx.owning_agent,
+                ReviewRouteParams {
+                    command_id: next_uuid(),
+                    review: wkey.clone(),
+                    expected_revision: kept_warm.review.revision,
+                    routing: ReviewRoutingSpec {
+                        mode: RoutingMode::Explicit,
+                        reviewer_ids: vec![fx.contributing_agent.clone()],
+                        team_id: None,
+                    },
+                    session_mode: Some(ReviewSessionMode::Fresh),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(reviewer_sid(&fx.office, &wid, &fx.contributing_agent), None);
+        // Re-stamp session ID, remove reviewer, re-add in Warm mode -> was_removed clears runtime_session_id.
+        let v_sid2 = fx
+            .office
+            .review_verdict_with_session(
+                &fx.contributing_agent,
+                ReviewVerdictParams {
+                    command_id: next_uuid(),
+                    review: wkey.clone(),
+                    round_number: 1,
+                    head_oid: Some(OID_HEAD1.into()),
+                    verdict: ReviewVerdict::Comment,
+                    summary_markdown: "Note".into(),
+                    findings: vec![],
+                    attachment_ids: vec![],
+                },
+                None,
+                Some("runtime-sess-456".into()),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reviewer_sid(&fx.office, &wid, &fx.contributing_agent).as_deref(),
+            Some("runtime-sess-456")
+        );
+        let removed = fx
+            .office
+            .review_route(
+                &fx.owning_agent,
+                ReviewRouteParams {
+                    command_id: next_uuid(),
+                    review: wkey.clone(),
+                    expected_revision: v_sid2.review.revision,
+                    routing: ReviewRoutingSpec {
+                        mode: RoutingMode::Explicit,
+                        reviewer_ids: vec![peer_agent.clone()],
+                        team_id: None,
+                    },
+                    session_mode: Some(ReviewSessionMode::Warm),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let readded = fx
+            .office
+            .review_route(
+                &fx.owning_agent,
+                ReviewRouteParams {
+                    command_id: next_uuid(),
+                    review: wkey,
+                    expected_revision: removed.review.revision,
+                    routing: ReviewRoutingSpec {
+                        mode: RoutingMode::Explicit,
+                        reviewer_ids: vec![fx.contributing_agent.clone()],
+                        team_id: None,
+                    },
+                    session_mode: Some(ReviewSessionMode::Warm),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(readded.reviewers.iter().filter(|r| !r.removed).count(), 1);
+        assert_eq!(reviewer_sid(&fx.office, &wid, &fx.contributing_agent), None);
     }
 }

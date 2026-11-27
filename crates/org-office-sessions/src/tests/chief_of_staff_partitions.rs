@@ -169,6 +169,7 @@ impl Fixture {
             summary: "Bea: what is the owner planning?".into(),
             attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
+            session_affinity: None,
         }
     }
 
@@ -199,6 +200,7 @@ fn stub_handle(
         runtime_id: Some("claude".into()),
         runtime_session_id: conversation.map(str::to_owned),
         private_home: "/tmp/tess-home".into(),
+        workspace_spec: "/tmp".into(),
         permission_preset: "operator_sandboxed".into(),
         sandbox_enabled: true,
         spec_hash: "h".into(),
@@ -721,6 +723,7 @@ fn wake_item(
         summary: summary.into(),
         attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
+        session_affinity: None,
     }
 }
 

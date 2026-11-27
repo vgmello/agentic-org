@@ -243,6 +243,8 @@ echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"t1","st
                     employee_id: agent_id.clone(),
                     instruction: Some("Say hello".into()),
                     workspace: None,
+                    resume_runtime_session_id: None,
+                    fresh: false,
                 },
             )
             .expect("session started");
@@ -440,6 +442,8 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
                 employee_id: agent_id.clone(),
                 instruction: Some("Hello".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .expect("session starts with effective processes");
@@ -485,6 +489,8 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
                 employee_id: agent_id,
                 instruction: Some("Start".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .expect_err("launch must refuse when mandatory standards overflow budget");
@@ -583,6 +589,8 @@ echo '{{"jsonrpc":"2.0","id":3,"result":{{"stopReason":"end_turn","usage":{{"inp
                 employee_id: contrib_agent_id.clone(),
                 instruction: Some("Say hello.".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .expect("plain start");

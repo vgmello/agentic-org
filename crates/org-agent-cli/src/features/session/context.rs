@@ -78,7 +78,7 @@ pub(super) fn read_session_context<T: OfficeTransport + ?Sized>(
     let next_action = if bound {
         "Run `agent-os context` without --offline for who you are and your organization's must-follow processes."
     } else {
-        "This shell has no office binding: these are the built-in rules only. Sign in with `agent-os login --as @<handle>` (which returns your context automatically), or work inside an office-started session."
+        "Unbound shell (built-in rules only). Run `agent-os login --as @<handle>` (returns your context automatically) or use an office-started session."
     };
     let rules = rules_for_mode(transport.session_mode());
     let mut data = common("offline", rules, catalogue);

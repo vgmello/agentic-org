@@ -288,6 +288,23 @@ fn request_list_and_inspect_round_trip() {
     assert_eq!(inspect.findings[0].anchor.last_line(), Some(44));
     assert_eq!(inspect.findings[0].anchor.check(), Ok(()));
     round_trip::<ReviewInspectParams>(&json!({"review": "RV-A12"}));
+    round_trip::<ReviewInspectParams>(
+        &json!({"review": "RV-A12", "fields": ["review", "findings"]}),
+    );
+    let sel =
+        ReviewInspectSelection::try_from_fields(Some(&["review.status".into(), "findings".into()]))
+            .unwrap();
+    assert_eq!(
+        sel,
+        ReviewInspectSelection {
+            body: false,
+            rounds: false,
+            reviewers: false,
+            findings: true,
+        }
+    );
+    assert!(ReviewInspectSelection::try_from_fields(Some(&[])).is_err());
+    assert!(ReviewInspectSelection::try_from_fields(Some(&["unknown_section".into()])).is_err());
 }
 
 #[test]

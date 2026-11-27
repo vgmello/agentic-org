@@ -4,7 +4,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 use org_office::organization_family::records::{Employee, PermissionPreset};
-use org_proto::sessions::{MemberSessionStartParams, SessionState, SessionView};
+use org_proto::sessions::{MemberSessionStartParams, SessionView};
 use org_proto::{ApiError, ErrorCode};
 use org_supervise::SessionMark;
 
@@ -14,6 +14,11 @@ use crate::pump::{PumpCommand, SessionRuntimeState};
 use crate::recovery::{ActiveTurnRecord, PendingStartRecord};
 use crate::subagents::{build_general_subagent_definition, write_subagent_definition};
 
+use super::affinity::{
+    affinity_entry, control_stop_reason, ensure_warm_sandbox_not_stale, is_warm_state_reusable,
+    next_uuid_v4, prepend_fallback_notice, resolve_and_audit_resume, ResumeAffinityCheck,
+    WarmReuseControl,
+};
 use super::chief_of_staff::partition_switch_reason;
 use super::environment::{
     apply_build_concurrency_env, assemble_launch_env, resolve_workspace,
@@ -76,6 +81,7 @@ impl SessionManager {
     /// A Chief of Staff turn names its `partition` (`TASK-80.1`): whether the live process
     /// serves it is decided in that same critical section, and the turn is counted in the
     /// partition only once the slot (or the warm send) is this start's.
+    #[cfg(test)]
     pub(crate) fn reserve_start_or_send(
         &self,
         employee: &Employee,
@@ -84,17 +90,22 @@ impl SessionManager {
         requested_workspace: Option<&str>,
         partition: Option<&PartitionKey>,
     ) -> Result<StartReservation, ApiError> {
-        self.reserve_start_or_send_with_attachments(
+        self.reserve_start_or_send_with_control(
             employee,
             objective,
             Vec::new(),
             task_ref,
             requested_workspace,
             partition,
+            WarmReuseControl::Default,
         )
     }
 
-    pub(crate) fn reserve_start_or_send_with_attachments(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "start reservation takes employee, turn payload, workspace, partition, and warm-reuse control"
+    )]
+    pub(super) fn reserve_start_or_send_with_control(
         &self,
         employee: &Employee,
         objective: Option<String>,
@@ -102,6 +113,7 @@ impl SessionManager {
         task_ref: Option<&str>,
         requested_workspace: Option<&str>,
         partition: Option<&PartitionKey>,
+        control: WarmReuseControl<'_>,
     ) -> Result<StartReservation, ApiError> {
         let emp_id = employee.id.as_str();
         // Load the lease cache now, so the check under the registry lock below never misses it.
@@ -118,6 +130,7 @@ impl SessionManager {
                 objective.is_some() || !attachment_ids.is_empty(),
                 requested_workspace,
                 partition,
+                control,
             )?;
             match decision {
                 None => continue,
@@ -215,6 +228,10 @@ impl SessionManager {
 
     /// Re-validates the snapshotted handle by identity under the lock and decides. `None` means
     /// the handle was replaced or removed while unlocked, so the caller plans again.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "re-validates snapshotted warm handle under lock with freshness, workspace, partition, and affinity control"
+    )]
     fn decide_start_or_send(
         &self,
         emp_id: &str,
@@ -223,6 +240,7 @@ impl SessionManager {
         wants_turn: bool,
         requested_workspace: Option<&str>,
         partition: Option<&PartitionKey>,
+        control: WarmReuseControl<'_>,
     ) -> Result<Option<StartDecision>, ApiError> {
         let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
         check_registry_startable(&reg, emp_id)?;
@@ -259,7 +277,8 @@ impl SessionManager {
             Some(key) => partition_switch_reason(&self.partitions, emp_id, handle, &state, key)?,
             None => None,
         };
-        let stop_reason = switch.or_else(|| {
+        let control_stop = control_stop_reason(control, state.state)?;
+        let stop_reason = switch.or(control_stop).or_else(|| {
             warm_handle_stop_reason(handle, requested_workspace, state.state, freshness)
         });
         if stop_reason.is_none() && is_warm_state_reusable(state.state) {
@@ -305,6 +324,7 @@ impl SessionManager {
     ) -> Result<PreparedSessionLaunch, ApiError> {
         let objective = self.prepend_watch_notices(employee.id.as_str(), objective);
         let planned = self.plan_session_launch(employee, params, opts)?;
+        let objective = prepend_fallback_notice(planned.fallback_notice.as_deref(), objective);
         self.issue_and_spawn_launch(objective, attachment_ids, planned)
     }
 
@@ -332,6 +352,7 @@ impl SessionManager {
         let workspace_real = resolve_workspace(&home, params.workspace.as_deref())?;
         ensure_operator_home(employee, &home, &workspace_real, &self.config.runtimes)?;
         let workspace_spec = canonical_or_spec(&workspace_real)?;
+        let workspace_spec_str = workspace_spec.as_str().to_owned();
 
         let admitted = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
             office: &self.office,
@@ -379,30 +400,21 @@ impl SessionManager {
             build_general_subagent_definition(preset_cfg.allowed_tools.as_deref(), None);
         let _ = write_subagent_definition(&runtime_dir, &subagent_def);
 
-        let instructions =
-            self.build_instructions(employee, &home, &workspace_real, &preset_cfg)?;
-        let mut read_only_dirs = self.collect_session_read_only_dirs(
-            admitted.adapter.as_ref(),
-            &home,
-            &workspace_real,
-            preset_cfg.sandbox.enabled,
-        );
-        Self::append_attachments_read_only_dir(&mut read_only_dirs, &attachments_root);
-        let mut spec = build_session_spec(
-            admitted.adapter.id(),
+        let (spec, spec_hash) = self.assemble_launch_spec(
             employee,
+            admitted.adapter.as_ref(),
             ModelChoice {
                 model: admitted.model_token,
                 effort: admitted.effort,
             },
+            &admitted.route_digest_suffix,
+            &home,
+            &workspace_real,
             workspace_spec,
-            read_only_dirs,
-            instructions,
+            &attachments_root,
             &preset_cfg,
+            &sandbox_plan,
         )?;
-        self.sandbox_runner
-            .adapt_session_spec(&sandbox_plan, &mut spec);
-        let spec_hash = compute_launch_spec_hash(&spec, &admitted.route_digest_suffix);
         let run_id = format!("run-{}", next_entropy_hex(10)?);
         let session_id = next_uuid_v4()?;
         let mark_str = format!("m-{}", next_entropy_hex(12)?);
@@ -411,9 +423,10 @@ impl SessionManager {
             admitted.auth_mode,
             host_profile.uses_host_oauth_token_injection,
         );
-        let hibernated_resume = self.resolve_hibernated_resume_id(
+        let (effective_resume, fallback_notice) = self.resolve_effective_resume_for_launch(
             &emp_id,
-            admitted.adapter.id().as_str(),
+            admitted.adapter.as_ref(),
+            &workspace_spec_str,
             &spec_hash,
             &opts,
         );
@@ -422,8 +435,7 @@ impl SessionManager {
             &runtime_dir,
             &tmpdir,
             &session_id,
-            opts.resume_runtime_session_id
-                .or(hibernated_resume.as_deref()),
+            effective_resume.as_deref(),
             host_profile.host_config_subdir,
             allow_host_auth,
         )?;
@@ -466,16 +478,91 @@ impl SessionManager {
             partition: opts.partition,
             home,
             workspace_real,
+            workspace_spec: workspace_spec_str,
             runtime_dir,
             attachments_root,
             tmpdir,
             preset_cfg,
             spec_hash,
+            fallback_notice,
             auth_env: launch_env,
             ctx,
             plan,
             session,
         })
+    }
+
+    fn resolve_effective_resume_for_launch(
+        &self,
+        emp_id: &str,
+        adapter: &dyn org_agent_runtime::AgentRuntime,
+        workspace_spec_str: &str,
+        spec_hash: &str,
+        opts: &LaunchRouteOpts<'_>,
+    ) -> (Option<String>, Option<String>) {
+        let runtime_id = adapter.id().as_str().to_owned();
+        let resume_res = resolve_and_audit_resume(
+            &self.store,
+            &self.bindings,
+            &ResumeAffinityCheck {
+                employee_id: emp_id,
+                requested_resume: opts.resume_runtime_session_id,
+                force_fresh: opts.force_fresh,
+                enforce_affinity_guard: opts.enforce_affinity_guard,
+                runtime_id: &runtime_id,
+                workspace: workspace_spec_str,
+                spec_hash,
+                capabilities: adapter.capabilities(),
+            },
+        );
+        let effective = if let Some(explicit) = resume_res.effective_resume {
+            Some(explicit)
+        } else if opts.force_fresh || resume_res.fallback_notice.is_some() {
+            None
+        } else {
+            self.resolve_hibernated_resume_id(emp_id, &runtime_id, spec_hash, opts)
+        };
+        (effective, resume_res.fallback_notice)
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "session spec assembly combines employee, runtime adapter, model choice, paths, preset, and sandbox plan"
+    )]
+    fn assemble_launch_spec(
+        &self,
+        employee: &Employee,
+        adapter: &dyn org_agent_runtime::AgentRuntime,
+        choice: ModelChoice,
+        route_digest_suffix: &str,
+        home: &std::path::Path,
+        workspace_real: &std::path::Path,
+        workspace_spec: org_agent_runtime::SpecPath,
+        attachments_root: &std::path::Path,
+        preset_cfg: &crate::preset::PresetConfig,
+        sandbox_plan: &SandboxPlan,
+    ) -> Result<(org_agent_runtime::SessionSpec, String), ApiError> {
+        let instructions = self.build_instructions(employee, home, workspace_real, preset_cfg)?;
+        let mut read_only_dirs = self.collect_session_read_only_dirs(
+            adapter,
+            home,
+            workspace_real,
+            preset_cfg.sandbox.enabled,
+        );
+        Self::append_attachments_read_only_dir(&mut read_only_dirs, attachments_root);
+        let mut spec = build_session_spec(
+            adapter.id(),
+            employee,
+            choice,
+            workspace_spec,
+            read_only_dirs,
+            instructions,
+            preset_cfg,
+        )?;
+        self.sandbox_runner
+            .adapt_session_spec(sandbox_plan, &mut spec);
+        let spec_hash = compute_launch_spec_hash(&spec, route_digest_suffix);
+        Ok((spec, spec_hash))
     }
 
     pub(super) fn issue_and_spawn_launch(
@@ -509,11 +596,13 @@ impl SessionManager {
             partition,
             home,
             workspace_real,
+            workspace_spec,
             runtime_dir,
             attachments_root,
             tmpdir,
             preset_cfg,
             spec_hash,
+            fallback_notice: _,
             auth_env,
             ctx,
             plan,
@@ -570,6 +659,11 @@ impl SessionManager {
             &sandbox_plan,
         )?;
         ensure_not_stopped_since(&self.registry, &emp_id, start_stop_epoch)?;
+        let initial_rsid = launch
+            .lifecycle
+            .runtime_session_id
+            .as_ref()
+            .map(|s| s.as_str());
         let spawned = self.spawn_and_persist(
             launch.prepared,
             &emp_id,
@@ -579,12 +673,14 @@ impl SessionManager {
             &objective,
             &attachment_ids,
             persisted_stalls,
-            launch
-                .lifecycle
-                .runtime_session_id
-                .as_ref()
-                .map(|s| s.as_str()),
+            initial_rsid,
         )?;
+        if let Some(rsid) = initial_rsid {
+            let _ = self.store.record_session_affinity(
+                &emp_id,
+                affinity_entry(rsid, &runtime_id, &workspace_spec, &spec_hash),
+            );
+        }
         binding_guard.disarm();
         drop(binding_guard);
 
@@ -609,6 +705,7 @@ impl SessionManager {
             start_stop_epoch,
             partition,
             home,
+            workspace_spec,
             attachments_root,
             tmpdir,
             binding_file,
@@ -724,39 +821,4 @@ impl SessionManager {
         self.hibernation
             .matching_resume_id(emp_id, runtime_id, spec_hash, opts.start_stop_epoch)
     }
-}
-
-fn next_uuid_v4() -> Result<String, ApiError> {
-    use ring::rand::{SecureRandom, SystemRandom};
-    let mut b = [0_u8; 16];
-    SystemRandom::new()
-        .fill(&mut b)
-        .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))?;
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    Ok(format!(
-        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
-    ))
-}
-
-pub(super) fn ensure_warm_sandbox_not_stale(sandbox_topology_stale: bool) -> Result<(), ApiError> {
-    if sandbox_topology_stale {
-        return Err(ApiError::new(
-            ErrorCode::Conflict,
-            "sandboxed session topology is stale while busy; wait for current turn to finish or stop session first",
-        ));
-    }
-    Ok(())
-}
-
-pub(super) fn is_warm_state_reusable(state: SessionState) -> bool {
-    !matches!(
-        state,
-        SessionState::Stopped
-            | SessionState::Stopping
-            | SessionState::Suspended
-            | SessionState::StallLocked
-            | SessionState::RecoveryRequired
-    )
 }

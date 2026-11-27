@@ -200,6 +200,7 @@ impl SessionManager {
             source_id: task_id.to_owned(),
             summary: format!("Task `{task_id}` assigned to you: {task_title}"),
             attachment_ids,
+            session_affinity: None,
             enqueued_at_ms: now_ms(),
         };
         self.enqueue_wake(assignee_id, item)
@@ -248,6 +249,7 @@ impl SessionManager {
             .remove(employee_id);
         let _ = self.store.clear_pending_wakes(employee_id);
         let _ = self.store.clear_suspended_state(employee_id);
+        let _ = self.store.clear_session_affinity(employee_id);
         set_waiting_messages_count(&self.waiting_messages, employee_id, 0);
     }
 

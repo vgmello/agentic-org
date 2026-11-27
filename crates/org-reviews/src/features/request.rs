@@ -280,7 +280,7 @@ pub fn decide_request<V: ReviewsRead + ReviewContextRead>(
         view,
         p.routing.as_ref(),
         target.project.as_ref(),
-        &caller.id,
+        &[&caller.id],
         p.independent,
         number,
     )?;

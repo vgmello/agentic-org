@@ -73,6 +73,7 @@ mod real_process;
 mod recovery;
 mod recovery_clear;
 mod redaction;
+mod review_affinity;
 mod sandbox;
 mod sandbox_runner;
 mod subagents_binding;
@@ -688,6 +689,7 @@ fn spawn_stub_bwrap_handle(
         runtime_id: Some("claude".into()),
         runtime_session_id: None,
         private_home: "/tmp/home-a".into(),
+        workspace_spec: "/tmp".into(),
         permission_preset: "autonomous_sandboxed".into(),
         sandbox_enabled: true,
         spec_hash: "h".into(),

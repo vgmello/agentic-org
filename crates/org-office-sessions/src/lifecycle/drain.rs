@@ -333,6 +333,22 @@ pub(super) fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEn
     let Some(claim) = claim_live_drain_batch(employee_id, ctx) else {
         return;
     };
+    if claim.requires_session_recycle {
+        let run_id = {
+            let reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
+            reg.live.get(employee_id).and_then(|h| {
+                h.state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .run_id
+                    .clone()
+            })
+        };
+        if let Some(run_id) = run_id {
+            recycle_stale_warm_handle(employee_id, &run_id, "session_affinity_requested", ctx);
+        }
+        return;
+    }
     let sent = try_send_wake_on_live_handle(
         employee_id,
         claim.task_id.as_deref(),
@@ -363,6 +379,7 @@ pub(super) struct LiveDrainClaim {
     pub(super) attachment_ids: Vec<String>,
     pub(super) task_id: Option<String>,
     pub(super) person_triggered: bool,
+    pub(super) requires_session_recycle: bool,
     pub(super) trigger: serde_json::Value,
     pub(super) ts: u64,
 }
@@ -449,12 +466,14 @@ pub(super) fn claim_live_drain_batch(
         "at": rfc3339_now(),
     });
     let attachment_ids = crate::wake::collect_wake_attachment_ids(&queue.items);
+    let requires_session_recycle = queue.items.iter().any(|i| i.session_affinity.is_some());
     Some(LiveDrainClaim {
         item_ids: queue.items.iter().map(|i| i.item_id.clone()).collect(),
         objective,
         attachment_ids,
         task_id,
         person_triggered,
+        requires_session_recycle,
         trigger,
         ts,
     })

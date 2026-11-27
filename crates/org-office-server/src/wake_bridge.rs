@@ -108,6 +108,7 @@ pub(crate) fn on_chat_send_committed(
             source_id: committed.message.id.clone(),
             summary: committed.message.body_markdown.clone(),
             attachment_ids: attachment_ids.clone(),
+            session_affinity: None,
             enqueued_at_ms: ts,
         };
         if sessions.enqueue_wake(target_id, item) == WakeOutcome::Started {
@@ -235,6 +236,7 @@ pub(crate) fn on_chat_ask_committed(
             source_id: committed.result.ask_id.clone(),
             summary: question_summary.clone(),
             attachment_ids: attachment_ids.clone(),
+            session_affinity: None,
             enqueued_at_ms: ts,
         };
         if sessions.enqueue_wake(target_id, item) == WakeOutcome::Started {
@@ -355,6 +357,7 @@ pub(crate) fn on_task_comment_committed(
             source_id: result.task.key.clone(),
             summary: summary.clone(),
             attachment_ids: attachment_ids.clone(),
+            session_affinity: None,
             enqueued_at_ms: ts,
         };
         let _ = sessions.enqueue_wake(&target_id, item);

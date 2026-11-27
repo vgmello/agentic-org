@@ -27,6 +27,8 @@ fn c6_required_ask_suspends_on_turn_end_survives_restart_and_resumes_same_sessio
             employee_id: fx.agent_a.clone(),
             instruction: Some("Deploy service".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();
@@ -112,6 +114,8 @@ fn c6_grace_period_suspends_and_names_reaped_background_work_on_resume() {
             employee_id: fx.agent_a.clone(),
             instruction: Some("Start long background task".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();
@@ -191,6 +195,8 @@ fn pass2_grace_period_disarm_prevents_stale_deadline_on_subsequent_ask() {
             employee_id: fx.agent_a.clone(),
             instruction: Some("Long running turn".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();

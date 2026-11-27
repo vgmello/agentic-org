@@ -127,6 +127,7 @@ pub(super) fn build_initial_runtime_state(
             .as_ref()
             .map(|s| s.as_str().to_owned()),
         private_home: prepared.home.display().to_string(),
+        workspace_spec: prepared.workspace_spec.clone(),
         permission_preset: prepared.preset_cfg.preset.as_str().to_owned(),
         sandbox_enabled: prepared.preset_cfg.sandbox.enabled,
         spec_hash: prepared.spec_hash.clone(),

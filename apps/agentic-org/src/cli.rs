@@ -230,6 +230,10 @@ pub(crate) enum TopCommand {
     /// Use when: recording private task notes or publishing a copy as a public task comment.
     #[command(verbatim_doc_comment, disable_help_flag = true, name = "task-note")]
     TaskNote(PassArgs),
+    /// Universal reviews (review request|list|inspect|diff|route|finding|verdict|resubmit|close)
+    /// Use when: requesting, inspecting, diffing, routing, judging, resubmitting, or closing code, doc, task, or artifact reviews.
+    #[command(verbatim_doc_comment, disable_help_flag = true)]
+    Review(PassArgs),
     /// Agent and person sessions (session ...)
     /// Use when: inspecting or ending sessions on an office.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
@@ -272,6 +276,7 @@ impl TopCommand {
             Self::Task(p) => ("task", p),
             Self::Checklist(p) => ("checklist", p),
             Self::TaskNote(p) => ("task-note", p),
+            Self::Review(p) => ("review", p),
             Self::Session(p) => ("session", p),
             Self::Grant(p) => ("grant", p),
             Self::Process(p) => ("process", p),
@@ -301,6 +306,7 @@ impl TopCommand {
             Self::Task(p) => ("task", p),
             Self::Checklist(p) => ("checklist", p),
             Self::TaskNote(p) => ("task-note", p),
+            Self::Review(p) => ("review", p),
             Self::Session(p) => ("session", p),
             Self::Grant(p) => ("grant", p),
             Self::Process(p) => ("process", p),

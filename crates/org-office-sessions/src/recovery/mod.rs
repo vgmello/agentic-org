@@ -13,11 +13,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::credentials::{is_safe_id, rfc3339_now};
 
+mod affinity_store;
 mod external_store;
 mod startup;
 mod usage_store;
 mod wake_store;
 
+pub use affinity_store::{SessionAffinityEntry, SessionAffinityRecord};
 pub use usage_store::{
     DeferredUsageEntry, RejectedUsageEntry, UsageCaptureState, UsageWatermarkRecord,
 };
@@ -235,6 +237,10 @@ impl SessionStore {
 
     pub fn rejected_usage_path(&self, employee_id: &str) -> io::Result<PathBuf> {
         self.employee_file(employee_id, "rejected-usage.v1.json")
+    }
+
+    pub fn session_affinity_path(&self, employee_id: &str) -> io::Result<PathBuf> {
+        self.employee_file(employee_id, "session-affinity.v1.json")
     }
 }
 

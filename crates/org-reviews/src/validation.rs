@@ -311,10 +311,14 @@ fn pick_seed<T>(mut items: Vec<T>, seed: u64) -> Option<T> {
     (!items.is_empty()).then(|| items.swap_remove((seed.saturating_sub(1) as usize) % items.len()))
 }
 
+fn is_excluded_independent(id: &Id, excluded: &[&Id], ind: bool) -> bool {
+    ind && excluded.iter().any(|ex| **ex == *id)
+}
+
 fn load_reviewer<C: ReviewContextRead>(
     ctx: &C,
     raw: &str,
-    author: &Id,
+    excluded: &[&Id],
     ind: bool,
     agent: bool,
 ) -> Result<Id, Refusal> {
@@ -326,8 +330,10 @@ fn load_reviewer<C: ReviewContextRead>(
     if !emp.active || (agent && emp.is_person) {
         return Err(bad_req("reviewer is not an eligible active employee"));
     }
-    if ind && emp.id == *author {
-        return Err(bad_req("independent review forbids author as reviewer"));
+    if is_excluded_independent(&emp.id, excluded, ind) {
+        return Err(bad_req(
+            "independent review forbids author or round submitter as reviewer",
+        ));
     }
     Ok(emp.id)
 }
@@ -335,7 +341,7 @@ fn load_reviewer<C: ReviewContextRead>(
 fn pick_default_agent<C: ReviewContextRead>(
     ctx: &C,
     proj: Option<&ReviewProjectInfo>,
-    author: &Id,
+    excluded: &[&Id],
     ind: bool,
     seed: u64,
 ) -> Result<Option<Id>, Refusal> {
@@ -343,7 +349,12 @@ fn pick_default_agent<C: ReviewContextRead>(
         .all_employees()
         .map_err(storage_refusal)?
         .into_iter()
-        .filter(|e| e.active && !e.is_person && !e.is_builtin && (!ind || e.id != *author))
+        .filter(|e| {
+            e.active
+                && !e.is_person
+                && !e.is_builtin
+                && !is_excluded_independent(&e.id, excluded, ind)
+        })
         .collect();
     eligible.sort_by(|a, b| a.id.cmp(&b.id));
     if let Some(p) = proj {
@@ -365,12 +376,12 @@ pub fn resolve_routing<C: ReviewContextRead>(
     ctx: &C,
     spec: Option<&ReviewRoutingSpec>,
     proj: Option<&ReviewProjectInfo>,
-    author: &Id,
+    excluded: &[&Id],
     ind: bool,
     seed: u64,
 ) -> Result<ResolvedRouting, Refusal> {
     let Some(spec) = spec else {
-        let ids = pick_default_agent(ctx, proj, author, ind, seed)?
+        let ids = pick_default_agent(ctx, proj, excluded, ind, seed)?
             .into_iter()
             .collect();
         return Ok(ResolvedRouting {
@@ -385,7 +396,7 @@ pub fn resolve_routing<C: ReviewContextRead>(
         RoutingMode::Explicit => spec
             .reviewer_ids
             .iter()
-            .map(|r| load_reviewer(ctx, r, author, ind, false))
+            .map(|r| load_reviewer(ctx, r, excluded, ind, false))
             .collect::<Result<Vec<_>, _>>()?,
         RoutingMode::Pool => {
             let tid = validate_uuid(
@@ -402,7 +413,10 @@ pub fn resolve_routing<C: ReviewContextRead>(
                 .map_err(storage_refusal)?
                 .into_iter()
                 .filter(|e| {
-                    e.active && !e.is_builtin && e.home_team_id == tid && (!ind || e.id != *author)
+                    e.active
+                        && !e.is_builtin
+                        && e.home_team_id == tid
+                        && !is_excluded_independent(&e.id, excluded, ind)
                 })
                 .map(|e| e.id)
                 .collect();
@@ -411,8 +425,8 @@ pub fn resolve_routing<C: ReviewContextRead>(
             vec![pick_seed(cands, seed).ok_or_else(|| bad_req("no eligible reviewer in pool"))?]
         }
         RoutingMode::SingleAgent => vec![match spec.reviewer_ids.first() {
-            Some(raw) => load_reviewer(ctx, raw, author, ind, true)?,
-            None => pick_default_agent(ctx, proj, author, ind, seed)?
+            Some(raw) => load_reviewer(ctx, raw, excluded, ind, true)?,
+            None => pick_default_agent(ctx, proj, excluded, ind, seed)?
                 .ok_or_else(|| bad_req("no eligible reviewer agent"))?,
         }],
     };

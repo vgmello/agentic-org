@@ -119,6 +119,7 @@ fn wake_item(sender: &str, id: &str) -> PendingWakeItem {
         summary: "please look".into(),
         attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
+        session_affinity: None,
     }
 }
 
@@ -323,6 +324,8 @@ fn an_active_lease_holds_wakes_and_refuses_managed_starts_until_revoked() {
                 employee_id: fx.agent_a.clone(),
                 instruction: Some("run".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .unwrap_err();
@@ -362,6 +365,8 @@ fn a_live_managed_turn_refuses_approval_without_takeover_and_is_parked_with_it()
             employee_id: fx.agent_a.clone(),
             instruction: Some("long task".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();

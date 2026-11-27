@@ -242,6 +242,8 @@ fn task166_panicking_bwrap_reap_persists_without_existing_file_and_blocks_stop_a
                 employee_id: hr_agent_id.clone(),
                 instruction: Some("bypass?".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .unwrap_err();
@@ -305,6 +307,8 @@ fn task166_start_and_recycle_fail_closed_on_panicking_stale_bwrap_and_stop_all_d
                 employee_id: hr_agent_id.clone(),
                 instruction: Some("trigger stale recycle".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .unwrap_err();

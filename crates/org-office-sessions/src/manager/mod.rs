@@ -39,6 +39,7 @@ use crate::wake::{
     DEFAULT_SUSPEND_GRACE, DEFAULT_WAKE_WINDOW,
 };
 
+mod affinity;
 #[cfg(test)]
 mod agent_os_sandbox_tests;
 #[cfg(test)]
@@ -345,11 +346,13 @@ struct PlannedSessionLaunch {
     partition: Option<crate::partition::PartitionKey>,
     home: PathBuf,
     workspace_real: PathBuf,
+    workspace_spec: String,
     runtime_dir: PathBuf,
     attachments_root: PathBuf,
     tmpdir: PathBuf,
     preset_cfg: PresetConfig,
     spec_hash: String,
+    fallback_notice: Option<String>,
     auth_env: Vec<(OsString, OsString)>,
     ctx: LaunchContext,
     plan: org_agent_runtime::LaunchPlan,
@@ -380,6 +383,7 @@ struct PreparedSessionLaunch {
     /// The Chief of Staff partition the run serves (`TASK-80.1`).
     partition: Option<crate::partition::PartitionKey>,
     home: PathBuf,
+    workspace_spec: String,
     attachments_root: PathBuf,
     tmpdir: PathBuf,
     binding_file: PathBuf,

@@ -216,6 +216,8 @@ fn she_works_only_from_her_private_home() {
                 employee_id: f.tess.clone(),
                 instruction: Some("Summarise the week.".into()),
                 workspace: Some(elsewhere.path().display().to_string()),
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .unwrap_err();

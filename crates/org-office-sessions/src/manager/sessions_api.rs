@@ -14,6 +14,7 @@ use crate::partition::PartitionKey;
 use crate::preset::build_grants_summary;
 use crate::pump::PumpCommand;
 
+use super::affinity::{validate_start_affinity_params, WarmReuseControl};
 use super::lifecycle_ops::reap_replaced_handle;
 use super::spec::canonical_or_spec;
 use super::views::overlay_durable_wake_state;
@@ -39,6 +40,7 @@ impl SessionManager {
         params: &MemberSessionStartParams,
     ) -> Result<SessionView, ApiError> {
         self.authorize_owner_or_person_inner(actor_member_id, hq_attested_owner)?;
+        let control = validate_start_affinity_params(params)?;
         let employee = self.require_active_agent(&params.employee_id)?;
         let emp_id = employee.id.as_str();
         self.check_not_recovery_required(emp_id)?;
@@ -51,12 +53,14 @@ impl SessionManager {
         let objective = params.instruction.as_deref().map(|text| {
             self.objective_text_attested(&employee, actor_member_id, hq_attested_owner, text)
         });
-        let reservation = self.reserve_start_or_send(
+        let reservation = self.reserve_start_or_send_with_control(
             &employee,
             objective.clone(),
+            Vec::new(),
             None,
             params.workspace.as_deref(),
             partition.as_ref(),
+            control,
         )?;
         if let Some(view) = reservation.live_view {
             return Ok(view);
@@ -73,8 +77,16 @@ impl SessionManager {
             &turn_trigger_entry(actor_member_id, &params.command_id, turn),
             &refs,
         );
-        let resume = turn.and_then(|turn| turn.resume_runtime_session_id.as_deref());
-        let opts = LaunchRouteOpts::fresh(resume, None, reservation.start_stop_epoch, partition);
+        let explicit_resume = params.resume_runtime_session_id.as_deref();
+        let resume = if params.fresh {
+            None
+        } else if partition.is_some() {
+            turn.and_then(|turn| turn.resume_runtime_session_id.as_deref())
+        } else {
+            explicit_resume.or_else(|| turn.and_then(|t| t.resume_runtime_session_id.as_deref()))
+        };
+        let opts = LaunchRouteOpts::fresh(resume, None, reservation.start_stop_epoch, partition)
+            .with_affinity(params.fresh, explicit_resume.is_some());
         let prepared = self.prepare_and_spawn_raw(
             &employee,
             params,
@@ -132,6 +144,35 @@ impl SessionManager {
         trigger_entry: serde_json::Value,
         wake_partition: Option<PartitionKey>,
     ) -> Result<SessionView, ApiError> {
+        self.spawn_or_send_autonomous_with_affinity(
+            employee,
+            objective,
+            attachment_ids,
+            resume_runtime_session_id,
+            false,
+            false,
+            task_ref,
+            trigger_entry,
+            wake_partition,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "autonomous session launch with review affinity threads employee, turn payload, resume/fresh controls, task ref, trigger, and partition"
+    )]
+    pub(crate) fn spawn_or_send_autonomous_with_affinity(
+        &self,
+        employee: &Employee,
+        objective: String,
+        attachment_ids: Vec<String>,
+        resume_runtime_session_id: Option<&str>,
+        force_fresh: bool,
+        enforce_affinity_guard: bool,
+        task_ref: Option<&str>,
+        trigger_entry: serde_json::Value,
+        wake_partition: Option<PartitionKey>,
+    ) -> Result<SessionView, ApiError> {
         let emp_id = employee.id.as_str();
         self.check_not_blocked(emp_id)?;
         let partition =
@@ -141,14 +182,28 @@ impl SessionManager {
             employee_id: emp_id.to_owned(),
             instruction: Some(objective.clone()),
             workspace: None,
+            resume_runtime_session_id: (!force_fresh)
+                .then(|| resume_runtime_session_id.map(str::to_owned))
+                .flatten(),
+            fresh: force_fresh,
         };
-        let reservation = self.reserve_start_or_send_with_attachments(
+        let control = if force_fresh {
+            WarmReuseControl::ForceFresh
+        } else if enforce_affinity_guard {
+            resume_runtime_session_id
+                .map(WarmReuseControl::RequireSession)
+                .unwrap_or(WarmReuseControl::Default)
+        } else {
+            WarmReuseControl::Default
+        };
+        let reservation = self.reserve_start_or_send_with_control(
             employee,
             Some(objective.clone()),
             attachment_ids.clone(),
             task_ref,
             None,
             partition.as_ref(),
+            control,
         )?;
         if let Some(view) = reservation.live_view {
             let tokens = self.bindings.active_tokens();
@@ -162,16 +217,40 @@ impl SessionManager {
         let tokens = self.bindings.active_tokens();
         let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
         let _ = self.store.append_history(emp_id, &trigger_entry, &refs);
-        let resume = autonomous_resume(
-            reservation.partition_turn.as_ref(),
-            partition.is_some(),
-            resume_runtime_session_id,
-        );
+        let resume = if force_fresh {
+            None
+        } else {
+            autonomous_resume(
+                reservation.partition_turn.as_ref(),
+                partition.is_some(),
+                resume_runtime_session_id,
+            )
+        };
         let opts =
-            LaunchRouteOpts::fresh(resume, task_ref, reservation.start_stop_epoch, partition);
+            LaunchRouteOpts::fresh(resume, task_ref, reservation.start_stop_epoch, partition)
+                .with_affinity(force_fresh, enforce_affinity_guard);
         let prepared =
             self.prepare_and_spawn_raw(employee, &params, objective, attachment_ids, opts)?;
         self.install_live_session(prepared, slot)
+    }
+
+    /// Returns an agent's current live or last recorded `runtime_session_id`, used by
+    /// `ReviewService` to stamp session affinity when a reviewer commits a verdict (`TASK-92.1`).
+    pub fn current_runtime_session_id(&self, employee_id: &str) -> Option<String> {
+        {
+            let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(handle) = reg.live.get(employee_id) {
+                let guard = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(rsid) = guard.runtime_session_id.clone() {
+                    return Some(rsid);
+                }
+            }
+        }
+        self.store
+            .read_active_turn(employee_id)
+            .ok()
+            .flatten()
+            .and_then(|r| r.runtime_session_id)
     }
 
     /// Inspects an agent's live or last session (`CLI-9`). Agents may only inspect themselves.
