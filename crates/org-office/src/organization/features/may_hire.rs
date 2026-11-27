@@ -2,13 +2,14 @@
 //!
 //! Only the owner or an active **person** above the employee in the hierarchy may turn `may_hire`
 //! on or off. Nobody sets their own, an agent never sets anyone's, and the built-in HR lead
-//! never has `may_hire`.
+//! never has `may_hire`. The built-in Chief of Staff starts with it; the owner may revoke and
+//! restore it, and she can never set it herself.
 
 use org_store::{Actor, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 use serde::Serialize;
 
 use super::{
-    authority::{admit_active_employee, is_person_above_employee},
+    authority::{admit_active_employee, may_manage_employee},
     changed, invalid,
     shared::{check_revision, profile_file, reject, touched},
     stable, Feature, Op, RejectCode, NOT_AUTHORIZED,
@@ -62,17 +63,19 @@ where
     let Some(target) = view.employee(&command.id)? else {
         return reject(RejectCode::NotFound, "no such employee");
     };
-    if !is_person_above_employee(view, owner, &admitted.actor, &target)? {
+    // A built-in member's hiring power (the Chief of Staff's reaches every team) is the
+    // owner's alone to change (`TASK-80.1`).
+    if !may_manage_employee(view, owner, &admitted.actor, &target)? {
         return invalid(NOT_AUTHORIZED);
     }
     if target.status == EmployeeStatus::Inactive {
         return reject(RejectCode::InvalidRequest, "the employee is inactive");
     }
-    if target.builtin_key.is_some() {
-        return reject(
-            RejectCode::InvalidRequest,
-            "the built-in HR lead's hiring permission cannot be changed",
-        );
+    // The owner turns the Chief of Staff's hiring power off and on like anyone's; the HR
+    // lead never has it (`TASK-80.1`).
+    if let Some(key) = target.builtin_key.filter(|key| !key.may_hold_hiring()) {
+        let reason = format!("{}'s hiring permission cannot be changed", key.described());
+        return reject(RejectCode::InvalidRequest, reason);
     }
     check_revision(target.meta.revision, command.expected_revision)?;
     let Some(chain) = view.team_chain(&target.home_team_id)? else {

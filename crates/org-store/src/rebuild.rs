@@ -3,12 +3,13 @@
 use std::sync::Arc;
 
 use crate::{
-    change::{DurablePath, Id, Sha256, Tree},
+    change::{Id, Sha256},
     engine::{CorePort, Cursor, Engine, Projector},
     error::{ProjectionError, StoreError},
     files::{FileVersion, Files},
     hooks::{Hooks, NoHooks, Site},
     journal::{Entry, Journal},
+    path::{DurablePath, Tree},
     receipts::{ReceiptProjector, RECEIPTS},
 };
 

@@ -109,11 +109,36 @@ function clearSliver(s) {
   markStuckDays(s);
   markCut(s);
 }
+/* An open ask is never the first view's top edge with its buttons showing and its title cut off. When opening at the
+   end (or a boundary) cuts one, the stream opens just past that message when it is not the newest open ask and the
+   blank space after the newest message stays under 40% of the view; otherwise it opens at that message's start, so
+   the ask's title, its context and its responses show together. */
+const openAskCard = (m) => m.querySelector(".chat-needs:not(.is-done)");
+function cutAskMessage(s) {
+  const top = viewTop(s);
+  return [...s.querySelectorAll(":scope > .msg")].find((m) => {
+    const card = openAskCard(m), title = card?.querySelector(".chat-needs-q");
+    return title && title.getBoundingClientRect().top < top + (m.querySelector(".hd")?.offsetHeight || 0) && card.getBoundingClientRect().bottom > top;
+  });
+}
+function snapToAsk(s) {
+  const msg = cutAskMessage(s);
+  if (!msg) return;
+  const newest = [...s.querySelectorAll(":scope > .msg")].filter(openAskCard).pop();
+  const past = msg.getBoundingClientRect().bottom - viewTop(s) + BOUNDARY_GAP;
+  const blank = past - (s.scrollHeight - spacerOf(s) - s.clientHeight - s.scrollTop);
+  if (msg !== newest && blank <= s.clientHeight * 0.4) scrollToY(s, s.scrollTop + past);
+  else scrollToY(s, Math.max(0, yOf(s, msg) - BOUNDARY_GAP - bandOf(s)));
+  markStuckDays(s);
+  markCut(s);
+}
 function applyPos(s, pos) {
   placeAt(s, pos);
   markStuckDays(s);
   markCut(s);
-  if (pos.end || pos.boundary) clearSliver(s);
+  if (!pos.end && !pos.boundary) return;
+  clearSliver(s);
+  snapToAsk(s);
 }
 const savedPos = (id) => positions.get(id);
 const savePos = (id, pos) => positions.set(id, pos);
@@ -226,8 +251,9 @@ function jumpToLatest() {
   last.focus({ preventScroll: true });
   syncLatestJump(s);
 }
-/* Phones: each jump is as wide as its label. Both share the row while they fit side by side; otherwise Jump to latest
-   wraps to its own row under Earlier requests, so neither label is ever clipped (320 px with "1 earlier request"). */
+/* Phones: each jump is as wide as its label. Both share the row while they fit side by side (at 320 px Jump to latest
+   reads "Latest", so "1 earlier request" fits beside it); otherwise Jump to latest wraps to its own row under Earlier
+   requests, so neither label is ever clipped. */
 /* A button's width with its whole label, even while the row has squeezed it. */
 const labelWidth = (btn) => { const t = btn.querySelector("span"); return btn.offsetWidth + t.scrollWidth - t.clientWidth; };
 function wrapJumps(s) {
@@ -235,8 +261,8 @@ function wrapJumps(s) {
   if (!ask || !latest) return;
   main.classList.remove("jumps-wrap");
   if (ask.hidden || latest.hidden || getComputedStyle(ask).position !== "static") return;
-  const gutter = parseFloat(getComputedStyle(ask.parentElement).paddingLeft) || 16, half = (main.clientWidth - 2 * gutter - 8) / 2;
-  if (Math.max(labelWidth(ask), labelWidth(latest)) > half) main.classList.add("jumps-wrap");
+  const gutter = parseFloat(getComputedStyle(ask.parentElement).paddingLeft) || 16;
+  if (labelWidth(ask) + labelWidth(latest) + 8 > main.clientWidth - 2 * gutter) main.classList.add("jumps-wrap");
 }
 function syncJumps(s) {
   syncAskJump(s);

@@ -58,7 +58,7 @@ pub(super) fn open_as_the_host_will(
     move |location| {
         org_platform_host::credentials::release_directory_apart_from(
             location,
-            &crate::release_store::ITEM_STORES,
+            &crate::credential_store_root::ITEM_STORES,
             &[records],
         )
     }
@@ -80,7 +80,7 @@ pub(super) fn unused_as_the_host_will(
     move |location| {
         org_platform_host::credentials::check_unused_release_directory(
             location,
-            &crate::release_store::ITEM_STORES,
+            &crate::credential_store_root::ITEM_STORES,
             &[records],
         )?;
         open_as_the_host_will(records)(location)
@@ -97,7 +97,7 @@ pub(super) fn unused_mounted_store(
     check_mounted_store(path, data_root, |location| {
         org_platform_host::credentials::check_unused_release_directory(
             location,
-            &crate::release_store::ITEM_STORES,
+            &crate::credential_store_root::ITEM_STORES,
             &[records],
         )
     })

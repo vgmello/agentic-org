@@ -1,4 +1,5 @@
 import type { AppError, Member, OrgSnapshot } from '$lib/proto';
+import { asRec, asStr } from '$lib/platform/http/decode';
 import {
 	unwrapGatewayResult,
 	type GatewayHttpTransport,
@@ -39,16 +40,6 @@ const RUNTIME_CATALOG: readonly { id: RuntimeId; label: string; providers: reado
 	{ id: 'codex', label: 'Codex', providers: ['openai', 'codex'] },
 	{ id: 'antigravity', label: 'Antigravity', providers: ['google', 'gemini', 'antigravity', 'agy'] }
 ];
-
-function asRec(value: unknown): Record<string, unknown> | undefined {
-	return value && typeof value === 'object' && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: undefined;
-}
-
-function asStr(value: unknown): string | undefined {
-	return typeof value === 'string' ? value : undefined;
-}
 
 function normalizeRuntimeId(raw: unknown): RuntimeId | undefined {
 	if (raw === 'claude_code' || raw === 'codex' || raw === 'antigravity') return raw;

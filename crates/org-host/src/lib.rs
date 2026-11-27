@@ -44,6 +44,7 @@ compile_error!(
 mod accounts;
 mod admin;
 mod app_auth;
+mod authentication;
 mod broadcast;
 mod browser_listener;
 mod catalog;
@@ -51,59 +52,32 @@ mod cli_error;
 mod clock;
 mod cloexec;
 mod code_signing;
+mod config;
+mod control_listener;
+mod credential_store_root;
 mod error;
 mod home;
+mod host;
 mod host_log;
 mod host_secrets;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "A2 B3 composes the registry into service start and setup"
-    )
-)]
 mod hostdb;
 pub mod human;
 mod ids;
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "composed into admin.link.initial and admin.reset in A2 B3"
-    )
-)]
-mod links;
-pub mod release;
-mod web;
-mod web_tls;
-
-// Real-process tests (debug builds only).
-#[cfg(all(test, debug_assertions))]
-mod enc1_process_tests;
-#[cfg(all(test, debug_assertions))]
-mod https_process_tests;
-#[cfg(all(test, debug_assertions))]
-mod web_process_tests;
-// B2-01 foundation: compiled now; host wiring follows in the next reviewed slice.
-mod config;
-mod host;
-#[cfg_attr(not(test), expect(dead_code, reason = "B2-01.2 wires the host"))]
 mod instance;
 mod keys;
+mod links;
 mod logs;
 mod offices;
 mod peer;
+mod presence;
 mod provisioning;
 mod recovery;
+mod recovery_permission;
 mod registered;
-mod release_store;
+pub mod release;
 mod secrets;
 mod server_check;
 mod service;
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "A3 B4 wires browser sessions into the host ops")
-)]
 mod sessions;
 pub mod setup_flow;
 pub mod signals;
@@ -111,10 +85,21 @@ mod startup;
 pub mod stop;
 mod supervisor;
 mod sync;
+mod timings;
+mod web;
+mod web_tls;
+mod writer;
+
 #[cfg(test)]
 mod test_programs;
-mod timings;
-mod writer;
+// Real-process tests (debug builds only).
+#[cfg(all(test, debug_assertions))]
+mod enc1_process_tests;
+#[cfg(all(test, debug_assertions))]
+mod https_process_tests;
+#[cfg(all(test, debug_assertions))]
+mod web_process_tests;
+
 pub use config::{
     default_office_home, default_release_store_dir, default_server_program, harden_process, Config,
 };

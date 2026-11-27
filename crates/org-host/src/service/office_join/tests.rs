@@ -19,7 +19,7 @@ use org_pki::{
 };
 use org_proto::{CallError, ErrorCode, Hello, OfficeRole};
 
-use crate::service::{authentication::hash_password, listener, tests as service_tests};
+use crate::{authentication::hash_password, control_listener, service::tests as service_tests};
 
 fn make_invitation(org_id: &str, office_id: &str, hq_id: &str, expires_at_ms: u64) -> String {
     let ca_key = SigningKey::generate().unwrap();
@@ -180,7 +180,7 @@ fn satellite_join_server() {
 struct JoinTestHarness {
     _home: tempfile::TempDir,
     _root: tempfile::TempDir,
-    _local: listener::LocalConnection,
+    _local: control_listener::LocalConnection,
     service: Arc<Service>,
     peer: std::io::BufReader<std::os::unix::net::UnixStream>,
     session_token: Option<String>,
@@ -208,10 +208,10 @@ impl JoinTestHarness {
         fs::create_dir_all(&runtime_dir).unwrap();
         let instance_id = crate::ids::uuid_v7().unwrap();
         let (root, authentication) = if with_admin {
-            let (r, auth, _) = crate::service::authentication::tests::fixture();
+            let (r, auth, _) = crate::authentication::tests::fixture();
             (r, auth)
         } else {
-            crate::service::authentication::tests::fixture_without_accounts()
+            crate::authentication::tests::fixture_without_accounts()
         };
         let (db, _) = authentication.provisioning_storage();
         let now = super::browser_now_ms().unwrap();
@@ -277,8 +277,8 @@ impl JoinTestHarness {
         ));
         let service = Arc::new(service);
         let (host_stream, peer_stream) = std::os::unix::net::UnixStream::pair().unwrap();
-        let handler: Arc<dyn listener::Handler> = service.clone();
-        let local = listener::LocalConnection::start(host_stream, handler).unwrap();
+        let handler: Arc<dyn control_listener::Handler> = service.clone();
+        let local = control_listener::LocalConnection::start(host_stream, handler).unwrap();
         peer_stream
             .set_read_timeout(Some(std::time::Duration::from_secs(10)))
             .unwrap();

@@ -126,14 +126,16 @@ fn wake_kind_for_send(
     if committed.open_question_asker_id.as_deref() == Some(target_id) {
         return Some(WakeKind::AskAnswer);
     }
-    if delivered_because == DeliveredBecause::Mention || is_mentioned {
-        return Some(WakeKind::Mention);
-    }
+    // A DM is a direct message even when it `@mentions` her: a mention is a channel's wake,
+    // and the Chief of Staff runs one in her shared wake partition (`TASK-80.1`).
     if matches!(
         committed.conversation_kind,
         ConversationKind::Dm | ConversationKind::GroupDm
     ) {
         return Some(WakeKind::DirectMessage);
+    }
+    if delivered_because == DeliveredBecause::Mention || is_mentioned {
+        return Some(WakeKind::Mention);
     }
     None
 }
@@ -260,3 +262,7 @@ pub(crate) fn on_msg_withdraw_committed(
     let asker = committed.asker_id.as_deref().unwrap_or(caller_id);
     sessions.on_ask_withdrawn(asker, &committed.result.ask_id);
 }
+
+#[cfg(test)]
+#[path = "wake_bridge_tests.rs"]
+mod tests;

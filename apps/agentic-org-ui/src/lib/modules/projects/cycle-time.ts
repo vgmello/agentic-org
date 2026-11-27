@@ -1,4 +1,4 @@
-import { isItemDone } from '$lib/home/model';
+import { isItemDone } from '$lib/format';
 import type { WorkItemSummary } from '$lib/proto';
 
 export interface ProjectCycleTimeSummary {

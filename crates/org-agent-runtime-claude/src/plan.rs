@@ -5,10 +5,10 @@ mod sandbox;
 use serde_json::{Map, Value};
 
 use org_agent_runtime::{
-    expand_capability_allowlist, runtime_env_add, static_env_names, validate_plan_paths,
-    Capabilities, EnvName, FileLocation, LaunchContext, LaunchPlan, PermissionMode, PlanError,
-    PlannedFile, RelPath, Rule, RuleScope, SessionId, SessionKind, SessionSpec, SignalTarget,
-    Stdio, StopPlan, StopSignal, StopStep, ToolCapability, ToolName,
+    expand_capability_allowlist, runtime_env_add, static_env_names, validate_operator_shell,
+    validate_plan_paths, Capabilities, EnvName, FileLocation, LaunchContext, LaunchPlan,
+    PermissionMode, PlanError, PlannedFile, RelPath, Rule, RuleScope, SessionId, SessionKind,
+    SessionSpec, SignalTarget, Stdio, StopPlan, StopSignal, StopStep, ToolCapability, ToolName,
 };
 
 use self::definitions::{build_agents_json, build_mcp_json};
@@ -103,6 +103,9 @@ pub(crate) fn build_headless_plan(
     caps: &Capabilities,
 ) -> Result<(LaunchPlan, ExpectedMode, Option<Vec<String>>), PlanError> {
     validate_plan_paths(spec, ctx)?;
+    // An operator session (`TASK-80.1`) is the read-only preset with its shell confined to
+    // its prefixes, which this runtime's own rules and the office's approval bridge enforce.
+    validate_operator_shell(spec)?;
     let (session_id, is_resume) = resolve_session_id(ctx)?;
     let effort = claude_effort(spec)?;
     let effective_mode = spec.effective_permission_mode(caps);
@@ -235,6 +238,9 @@ pub(crate) fn build_take_over_plan(
         ));
     }
     validate_plan_paths(spec, ctx)?;
+    // An operator session (`TASK-80.1`) is the read-only preset with its shell confined to
+    // its prefixes, which this runtime's own rules and the office's approval bridge enforce.
+    validate_operator_shell(spec)?;
     let Some(resume_id) = ctx.resume.clone() else {
         return Err(PlanError::InvalidSpec(
             "take-over requires LaunchContext::resume to be set".to_owned(),

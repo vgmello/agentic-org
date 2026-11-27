@@ -12,13 +12,10 @@ const IMPORT_RE =
 	/\b(?:import|export)\s+(?:type\s+)?(?:[^;'"]*?\s+from\s+)?['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 /**
- * Legacy source dependency cycles recorded as shrinking debt in Wave 0 (TASK-225).
- * Wave 2 (TASK-227) removes both entries until KNOWN_CYCLES is empty (`[]`).
- * No new cycle or expanded cycle membership is ever allowed.
+ * Source dependency cycles between domain modules.
+ * Cleared to empty in Wave 2 (TASK-227); zero cycles are permitted.
  */
-const KNOWN_CYCLES: readonly string[] = [
-	'activity,costs,employees,home,inbox,members,offices,projects,releases'
-];
+const KNOWN_CYCLES: readonly string[] = [];
 
 function domainOf(relFromSrc: string): string | undefined {
 	const mod = /^src\/lib\/modules\/([^/]+)\//.exec(relFromSrc);

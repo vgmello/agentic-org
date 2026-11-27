@@ -97,7 +97,7 @@ pub(super) fn record_failover_connection_health(mgr: &SessionManager, req: &Fail
 /// Outcome of claiming a failed run's start slot for a pool failover relaunch.
 pub(super) enum FailoverSlot {
     /// The failed run's handle (when still registered) was removed and the start slot reserved.
-    Reserved(Option<LiveSessionHandle>),
+    Reserved(Option<Box<LiveSessionHandle>>),
     /// Admissions are closed or the run was explicitly stopped: the turn is intentionally dropped.
     Abandoned,
     /// A concurrent lifecycle operation holds the start slot (a recovery clear, stop, start, or
@@ -125,7 +125,7 @@ pub(super) fn take_failed_live_handle(mgr: &SessionManager, req: &FailoverReques
     }
     let old = reg.live.remove(&req.employee_id);
     reg.starting.insert(req.employee_id.clone());
-    FailoverSlot::Reserved(old)
+    FailoverSlot::Reserved(old.map(Box::new))
 }
 
 pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) {
@@ -138,7 +138,7 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
         record_failover_connection_health(mgr, &req);
     }
     let dead_handle = match take_failed_live_handle(mgr, &req) {
-        FailoverSlot::Reserved(dead_handle) => dead_handle,
+        FailoverSlot::Reserved(dead_handle) => dead_handle.map(|handle| *handle),
         FailoverSlot::Abandoned => return,
         FailoverSlot::Contended => {
             requeue_contended_failover(mgr, &req);
@@ -176,6 +176,25 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
         instruction: Some(req.objective.clone()),
         workspace: req.workspace.clone(),
     };
+    let opts = failover_route_opts(&req, refreshed_same_conn);
+    let objective = mgr.prepend_watch_notices(employee.id.as_str(), req.objective.clone());
+    let launch_res = mgr
+        .plan_session_launch(&employee, &params, opts)
+        .and_then(|planned| mgr.issue_and_spawn_launch(objective, planned))
+        .and_then(|prepared| mgr.install_live_session(prepared, slot));
+    if let Err(err) = launch_res {
+        record_failover_exhausted(mgr, &req, &err);
+    }
+}
+
+/// The route options of a failover relaunch: the failed run's task, epoch and partition (so the
+/// relaunch acts for exactly the caller the failed run acted for, `TASK-80.1`), with the tried
+/// connections excluded unless the run is only being recycled.
+pub(crate) fn failover_route_opts(
+    req: &FailoverRequest,
+    refreshed_same_conn: bool,
+) -> LaunchRouteOpts<'_> {
+    let is_stale_recycle = req.reason == "warm_route_stale";
     let mut excluded: HashSet<String> = if is_stale_recycle {
         HashSet::new()
     } else {
@@ -184,7 +203,7 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
     if refreshed_same_conn {
         excluded.remove(&req.failed_connection_id);
     }
-    let opts = LaunchRouteOpts {
+    LaunchRouteOpts {
         resume_runtime_session_id: None,
         task_ref: req.task_ref.as_deref(),
         is_failover_switch: !is_stale_recycle,
@@ -198,14 +217,7 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
         // `take_failed_live_handle` reserved the slot only while the epoch still matched, so a
         // stop from here on makes the relaunch abort at registration (`TASK-190`).
         start_stop_epoch: req.stop_epoch,
-    };
-    let objective = mgr.prepend_watch_notices(employee.id.as_str(), req.objective.clone());
-    let launch_res = mgr
-        .plan_session_launch(&employee, &params, opts)
-        .and_then(|planned| mgr.issue_and_spawn_launch(objective, planned))
-        .and_then(|prepared| mgr.install_live_session(prepared, slot));
-    if let Err(err) = launch_res {
-        record_failover_exhausted(mgr, &req, &err);
+        partition: req.partition.clone(),
     }
 }
 
@@ -221,6 +233,10 @@ pub(crate) fn requeue_contended_failover(mgr: &SessionManager, req: &FailoverReq
     if is_failover_abandoned(mgr, req) || is_retired_agent(mgr, &req.employee_id) {
         return;
     }
+    if !is_requeueable(req) {
+        record_not_requeued(mgr, req);
+        return;
+    }
     let note = serde_json::json!({
         "type": "pool_failover_requeued",
         "failed_connection_id": req.failed_connection_id,
@@ -229,6 +245,33 @@ pub(crate) fn requeue_contended_failover(mgr: &SessionManager, req: &FailoverReq
     });
     let _ = mgr.store.append_history(&req.employee_id, &note, &[]);
     enqueue_recovery_wake(mgr, req, None);
+}
+
+/// Whether the shared wake queue may take a failed turn. A Chief of Staff turn of any partition
+/// but `tess:wake` carries one sender's request or private message (a member's, acting for
+/// them, or what an agent addressed to her): the queue would run it as a recovery wake in
+/// `tess:wake`, so it never takes the turn, and the sender sees the failure and asks again
+/// (`TASK-80.1`).
+fn is_requeueable(req: &FailoverRequest) -> bool {
+    req.partition
+        .as_ref()
+        .is_none_or(|key| *key == crate::partition::PartitionKey::tess_wake())
+}
+
+/// Records that a failed Chief of Staff turn was deliberately not requeued ([`is_requeueable`]).
+fn record_not_requeued(mgr: &SessionManager, req: &FailoverRequest) {
+    let reason = if req.acting_for_caller_id().is_some() {
+        "delegated_chief_of_staff_turn"
+    } else {
+        "chief_of_staff_sender_partition_turn"
+    };
+    let note = serde_json::json!({
+        "type": "pool_failover_not_requeued",
+        "reason": reason,
+        "failed_connection_id": req.failed_connection_id,
+        "at": rfc3339_now(),
+    });
+    let _ = mgr.store.append_history(&req.employee_id, &note, &[]);
 }
 
 /// `true` once admissions closed or an explicit stop moved the employee's stop epoch past the
@@ -292,6 +335,10 @@ pub(super) fn enqueue_recovery_wake(
     req: &FailoverRequest,
     hold: Option<crate::wake::WakeHoldReason>,
 ) {
+    if !is_requeueable(req) {
+        record_not_requeued(mgr, req);
+        return;
+    }
     let ts = crate::credentials::now_ms();
     let _lock = mgr.employee_locks.lock(&req.employee_id);
     {

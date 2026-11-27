@@ -1,27 +1,26 @@
 /* "Between agents" in the conversation list, built for many agents (10+ agents is up to ~45 pairs):
-   the last day's conversations newest first, "Show all N" for the rest, and a filter by agent
-   (one agent: every conversation it is in; two: that pair). */
+   newest first, a date scope ("Last 24 hours" | "All dates") beside a filter by agent (one agent: every conversation
+   it is in; two: that pair), and a heading that names the picked agents and counts the rows. */
 import { CH, M } from "../data.js";
 import { esc, ic, plural } from "../ui.js";
-import { activeToday, newestFirst } from "./chat-model.js";
+import { activeToday, lastActiveLabel, newestFirst } from "./chat-model.js";
 
-const a2a = { all: false, filter: false, agents: [], q: "", open: false, active: 0 };
+/* `all`: the All dates scope; `allBefore`: the scope to restore when the agent filter is cleared. */
+const a2a = { all: false, allBefore: null, filter: false, agents: [], q: "", open: false, active: 0 };
 const MAX_PICKS = 2;
 
 /* Every agent that has a conversation with another agent, by name. */
 const pairAgents = () => [...new Set(Object.values(CH).filter((ch) => ch.kind === "a2a").flatMap((ch) => ch.pair))]
   .filter((k) => M[k]).sort((a, b) => M[a].name.localeCompare(M[b].name));
 
-/* Rows shown, and how many older ones wait behind Show all. A filter shows every match, whatever its age.
-   The open conversation always shows: when it is older than the window it is listed on its own, labelled
-   "Current conversation · outside 24 hours", never under "Last 24 hours". */
+/* Rows shown: the picked agents' conversations, within the date scope. The open conversation always shows: when it
+   is older than the last day it is listed on its own, labelled "Older than 24h", never among the last day's. */
 function visibleRows(keys, activeId) {
-  const sorted = [...keys].sort(newestFirst);
-  if (a2a.agents.length) return { rows: sorted.filter((k) => a2a.agents.every((a) => CH[k].pair.includes(a))), hidden: 0, current: "" };
-  if (a2a.all) return { rows: sorted, hidden: 0, current: "" };
+  const sorted = [...keys].sort(newestFirst).filter((k) => a2a.agents.every((a) => CH[k].pair.includes(a)));
+  if (a2a.all) return { rows: sorted, current: "" };
   const rows = sorted.filter((k) => activeToday(CH[k]));
   const current = sorted.includes(activeId) && !rows.includes(activeId) ? activeId : "";
-  return { rows, hidden: sorted.length - rows.length - (current ? 1 : 0), current };
+  return { rows, current };
 }
 /* ---------------------------------------------------------------- the agent picker (a combobox)
    A searchable field for one or two agents: picked agents show as removable names above it, matching agents list
@@ -63,52 +62,58 @@ function filterPanel() {
     </div>`;
 }
 function filterButton() {
-  const n = a2a.agents.length, label = n ? `Filter by agent, ${a2a.agents.map((k) => M[k].name).join(" and ")}` : "Filter by agent";
-  return `<button class="btn ghost sm chat-a2a-filter-btn" id="chat-a2a-filter-btn" type="button" data-act="chat-a2a-filter" aria-expanded="${a2a.filter}" aria-controls="chat-a2a-filter" aria-label="${esc(label)}" title="Filter by agent">${ic("filter", "ic16")}<span>Filter</span>${n ? `<span class="chat-a2a-count" aria-hidden="true">${n}</span>` : ""}</button>`;
+  const n = a2a.agents.length, label = n ? `Filter by agent, ${pickedNames()}` : "Filter by agent";
+  return `<button class="btn ghost sm chat-a2a-filter-btn${n ? " is-on" : ""}" id="chat-a2a-filter-btn" type="button" data-act="chat-a2a-filter" aria-expanded="${a2a.filter}" aria-controls="chat-a2a-filter" aria-label="${esc(label)}" title="Filter by agent">${ic("filter", "ic16")}<span class="chat-a2a-filter-word">Agents</span></button>`;
 }
-/* Which conversations the rows are: the default window is named, so "Show all" reads as widening it. */
-function windowLabel() {
-  if (a2a.agents.length) return "";
-  return `<p class="chat-a2a-window">${a2a.all ? "All conversations" : "Last 24 hours"}</p>`;
+/* The date scope, a small segmented control beside the agent filter. */
+function scopeControl() {
+  const seg = (all, label) => `<button type="button" class="chat-seg-btn" id="chat-a2a-${all ? "all" : "day"}" data-act="chat-a2a-scope" data-id="${all ? "all" : "day"}" aria-pressed="${a2a.all === all}">${label}</button>`;
+  return `<div class="chat-a2a-bar"><span class="chat-seg" role="group" aria-label="Dates">${seg(false, "Last 24 hours")}${seg(true, "All dates")}</span>${filterButton()}</div>`;
 }
-function showAllButton(total, hidden) {
-  if (a2a.agents.length || (!hidden && !a2a.all) || total < 2) return "";
-  const label = a2a.all ? "Show recent only" : `Show all ${total}`;
-  const more = a2a.all ? "" : `<span class="sr-only">, ${plural(hidden, "conversation", "conversations")} older than a day</span>`;
-  return `<button class="btn ghost sm chat-a2a-all" id="chat-a2a-all" type="button" data-act="chat-a2a-all" aria-expanded="${a2a.all}">${ic(a2a.all ? "chev-right" : "chev-down", "ic16")}<span>${label}</span>${more}</button>`;
-}
+const scopeWords = () => (a2a.all ? "" : " in the last 24 hours");
 function emptyLine() {
-  if (a2a.agents.length) return `<p class="chat-find-empty">No conversations between ${esc(a2a.agents.map((k) => M[k].name).join(" and "))}.</p>`;
+  if (a2a.agents.length) return `<p class="chat-find-empty">No conversations between ${esc(pickedNames())}${scopeWords()}.</p>`;
   return `<p class="chat-find-empty">None in the last 24 hours.</p>`;
 }
 const pickedNames = () => a2a.agents.map((k) => M[k].name).join(" and ");
-/* With the picker closed the filter stays readable: the picked names and a Clear, under the heading. */
-function pickedSummary() {
-  if (a2a.filter || !a2a.agents.length) return "";
-  return `<p class="chat-a2a-active"><span>${ic("filter", "ic14")}<span><span class="sr-only">Filtered to </span>${esc(pickedNames())}</span></span>
-    <button class="btn ghost sm chat-a2a-clear" id="chat-a2a-clear" type="button" data-act="chat-a2a-clear" aria-label="Clear the agent filter">Clear</button></p>`;
+/* The heading names the picked agents (with a one-step Clear) and counts the rows shown (announced by the section's
+   status line). */
+function headSummary(n) {
+  const picked = a2a.agents.length && !a2a.filter ? `<span class="chat-a2a-whorow"><span class="chat-a2a-who"><span class="sr-only">Filtered to </span>${esc(pickedNames())}<button class="chat-a2a-rm" id="chat-a2a-clear-head" type="button" data-act="chat-a2a-clear" aria-label="Clear the agent filter" title="Clear">${ic("x", "ic14")}</button></span></span>` : "";
+  return `<span class="chat-a2a-n" title="${esc(plural(n, "conversation", "conversations"))} shown" aria-hidden="true">${n}</span>${picked}`;
 }
+/* The open pair, when older than the window, leads the section under its own label, so it stays in view. */
 function currentOutside(current, rowHtml) {
   if (!current) return "";
-  return `<p class="chat-a2a-window">Current conversation · outside 24 hours</p><ul>${rowHtml(current)}</ul>`;
+  return `<p class="chat-a2a-window chat-a2a-older">Older than 24h</p><ul>${rowHtml(current, lastActiveLabel(CH[current]))}</ul>`;
 }
+/* All dates rows say when each pair last spoke; the last day's rows need no date. */
+const rowWhen = (k) => (a2a.all ? lastActiveLabel(CH[k]) : "");
 function statusText(n) {
-  if (!a2a.agents.length) return "";
-  return `${plural(n, "conversation", "conversations")} with ${a2a.agents.map((k) => M[k].name).join(" and ")}`;
+  const who = a2a.agents.length ? ` with ${pickedNames()}` : "";
+  return `${plural(n, "conversation", "conversations")}${who}${a2a.all ? ", all dates" : scopeWords()}`;
 }
-/* The section: heading with its filter, the rows, then Show all. `rowHtml(key)` renders one list row. */
+/* The section: heading with the picked agents and the count, the date scope and the agent filter, then the rows.
+   `rowHtml(key)` renders one list row. */
 function a2aSectionHtml(keys, activeId, rowHtml) {
-  const { rows, hidden, current } = visibleRows(keys, activeId);
-  const list = rows.length ? `<ul>${rows.map(rowHtml).join("")}</ul>` : emptyLine();
-  return `<div class="chat-sec-head" id="chat-a2a-head"><h2>Between agents</h2>${filterButton()}</div>${pickedSummary()}${windowLabel()}${filterPanel()}
+  const { rows, current } = visibleRows(keys, activeId);
+  const list = rows.length ? `<ul>${rows.map((k) => rowHtml(k, rowWhen(k))).join("")}</ul>` : emptyLine();
+  return `<div class="chat-sec-head" id="chat-a2a-head"><h2>Between agents</h2>${headSummary(rows.length + (current ? 1 : 0))}</div>${scopeControl()}${filterPanel()}${currentOutside(current, rowHtml)}
     <p class="sr-only" role="status">${statusText(rows.length)}</p>
-    ${list}${currentOutside(current, rowHtml)}${showAllButton(keys.length, hidden)}`;
+    ${list}`;
 }
 
 /* Clicks: each returns the id of the control that keeps focus after the list re-renders. Picking or removing an
    agent keeps focus in the picker (on the last name's Remove once two are picked). */
+/* Picking the first agent widens the scope to All dates (shown in the control), so "every conversation it is in"
+   holds; clearing the last agent restores the scope it had. */
+function setAgents(next) {
+  if (!a2a.agents.length && next.length) Object.assign(a2a, { allBefore: a2a.all, all: true });
+  if (a2a.agents.length && !next.length && a2a.allBefore !== null) Object.assign(a2a, { all: a2a.allBefore, allBefore: null });
+  a2a.agents = next;
+}
 function toggleAgent(k) {
-  a2a.agents = a2a.agents.includes(k) ? a2a.agents.filter((x) => x !== k) : [...a2a.agents, k].slice(-MAX_PICKS);
+  setAgents(a2a.agents.includes(k) ? a2a.agents.filter((x) => x !== k) : [...a2a.agents, k].slice(-MAX_PICKS));
   Object.assign(a2a, { q: "", open: false, active: 0 });
   return a2a.agents.length >= MAX_PICKS ? `chat-a2a-rm-${a2a.agents.at(-1)}` : "chat-a2a-q";
 }
@@ -118,10 +123,10 @@ function toggleFilter() {
   return a2a.filter && a2a.agents.length < MAX_PICKS ? "chat-a2a-q" : "chat-a2a-filter-btn";
 }
 const A2A_CLICKS = {
-  "chat-a2a-all": () => { a2a.all = !a2a.all; return "chat-a2a-all"; },
+  "chat-a2a-scope": (id) => { Object.assign(a2a, { all: id === "all", allBefore: null }); return `chat-a2a-${id}`; },
   "chat-a2a-filter": () => toggleFilter(),
   "chat-a2a-agent": (id) => toggleAgent(id),
-  "chat-a2a-clear": () => { Object.assign(a2a, { agents: [], q: "", open: false }); return a2a.filter ? "chat-a2a-q" : "chat-a2a-filter-btn"; },
+  "chat-a2a-clear": () => { setAgents([]); Object.assign(a2a, { q: "", open: false }); return a2a.filter ? "chat-a2a-q" : "chat-a2a-filter-btn"; },
 };
 
 /* ---------------------------------------------------------------- picker typing and keys (the field keeps focus) */

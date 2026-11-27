@@ -26,6 +26,9 @@ pub struct PresetConfig {
     pub policy: PermissionPolicy,
     pub sandbox: SandboxSpec,
     pub allowed_tools: Option<Vec<ToolName>>,
+    /// The prefixes an operator session's shell is confined to
+    /// ([`PermissionPreset::OperatorSandboxed`]): `agent-os`. Empty for every other preset.
+    pub operator_shell_prefixes: Vec<CommandPrefix>,
 }
 
 /// Errors building a permission/sandbox configuration.
@@ -82,14 +85,16 @@ pub fn build_session_policy(
         CommandPrefix::try_from("agent-os").expect("static agent-os command prefix is valid");
     let (permission_mode, allow_rules, allowed_tools) = match preset {
         PermissionPreset::SafeAsk => (PermissionMode::Ask, Vec::new(), None),
-        PermissionPreset::ReadOnly => (
+        // The Chief of Staff's preset is the read-only one, its shell confined to `agent-os`
+        // natively on every runtime (`operator_shell_prefixes`, `TASK-80.1`).
+        PermissionPreset::ReadOnly | PermissionPreset::OperatorSandboxed => (
             PermissionMode::Plan,
             vec![
                 cap_rule(ToolCapability::Read, RuleScope::Any),
                 cap_rule(ToolCapability::Search, RuleScope::Any),
                 cap_rule(
                     ToolCapability::Shell,
-                    RuleScope::CommandPrefix(agent_os_prefix),
+                    RuleScope::CommandPrefix(agent_os_prefix.clone()),
                 ),
             ],
             Some(vec![
@@ -106,7 +111,7 @@ pub fn build_session_policy(
                 cap_rule(ToolCapability::Edit, RuleScope::Any),
                 cap_rule(
                     ToolCapability::Shell,
-                    RuleScope::CommandPrefix(agent_os_prefix),
+                    RuleScope::CommandPrefix(agent_os_prefix.clone()),
                 ),
             ],
             None,
@@ -143,9 +148,14 @@ pub fn build_session_policy(
         deny_write.push(git_hooks);
     }
 
-    let writable_roots = match preset {
-        PermissionPreset::ReadOnly => Vec::new(),
-        _ => vec![workspace.clone()],
+    let writable_roots = if preset.is_read_only_fs() {
+        Vec::new()
+    } else {
+        vec![workspace.clone()]
+    };
+    let operator_shell_prefixes = match preset {
+        PermissionPreset::OperatorSandboxed => vec![agent_os_prefix.clone()],
+        _ => Vec::new(),
     };
     let allowed_unix_sockets = office_socket.into_iter().cloned().collect();
 
@@ -165,6 +175,7 @@ pub fn build_session_policy(
             allowed_unix_sockets,
         },
         allowed_tools,
+        operator_shell_prefixes,
     })
 }
 
@@ -176,7 +187,7 @@ pub fn apply_worktree_sandbox_rules(
     extra_writable_roots: &[SpecPath],
     extra_write_denies: &[PathPattern],
 ) {
-    if cfg.preset != PermissionPreset::ReadOnly {
+    if !cfg.preset.is_read_only_fs() {
         for root in extra_writable_roots {
             if !cfg.sandbox.writable_roots.contains(root) {
                 cfg.sandbox.writable_roots.push(root.clone());

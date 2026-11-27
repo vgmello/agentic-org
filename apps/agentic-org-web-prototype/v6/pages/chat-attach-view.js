@@ -14,7 +14,8 @@ function imageTile(m, img, i, all) {
   const pos = all.length > 1 ? `, ${i + 1} of ${all.length}` : "";
   const label = `Open image ${altOf(img)}${pos}${extra ? `, and ${extra} more` : ""}`;
   return `<button class="chat-att-img" type="button" data-act="chat-att-view" data-id="${esc(m.id)}" data-i="${i}" aria-label="${esc(label)}">
-    <img src="${esc(img.url)}" alt="${esc(altOf(img))}" loading="lazy" decoding="async">${extra ? `<span class="chat-att-more" aria-hidden="true">+${extra}</span>` : ""}</button>`;
+    <span class="chat-att-frame"><img src="${esc(img.url)}" alt="${esc(altOf(img))}" loading="lazy" decoding="async"><span class="chat-att-zoom" aria-hidden="true">${ic("maximize", "ic14")}</span>${extra ? `<span class="chat-att-more" aria-hidden="true">+${extra}</span>` : ""}</span>
+    <span class="chat-att-cap" aria-hidden="true">${ic("image", "ic14")}<span class="chat-att-cap-name">${esc(img.name)}</span></span></button>`;
 }
 function imageGrid(m, images) {
   if (!images.length) return "";
@@ -133,13 +134,22 @@ function conversationFiles(ch) {
   }
   return out.reverse();
 }
+/* Preview opens an image in the viewer (or another file in a new tab); Download saves it; Open source message goes to
+   the message (or exact reply) that carries it. */
+function previewAction(f, m, link) {
+  const label = `aria-label="Preview ${esc(f.name)}"`;
+  if (!isImage(f)) return `<a class="alink" href="${esc(f.url)}" target="_blank" rel="noopener" ${label}>Preview</a>`;
+  const i = (m.files || []).filter(isImage).indexOf(f);
+  return `<button class="alink" type="button" data-act="chat-att-view" data-id="${esc(link)}" data-i="${i}" ${label}>Preview</button>`;
+}
 function fileRow({ f, m, link, inThread }, chId) {
   const thumb = isImage(f) ? `<span class="chat-att-thumb"><img src="${esc(f.url)}" alt="" loading="lazy"></span>` : `<span class="chat-att-thumb">${fileIcon(f)}</span>`;
   const where = inThread ? " · in a thread" : "";
   return `<li class="chat-file-row">${thumb}
-    <span class="chat-att-meta"><a class="chat-att-name alink" href="#/chat/${esc(chId)}/${esc(link)}" data-act="chat-file-open" title="Go to the message">${esc(f.name)}</a>
-      <span class="chat-att-sub">${esc(M[m.who].name)} · ${esc(sentAt(m))}${where} · ${esc(fileFacts(f))}</span></span>
-    <a class="btn ghost icon" href="${esc(f.url)}" download="${esc(f.name)}" aria-label="Download ${esc(f.name)}" title="Download">${ic("download", "ic16")}</a></li>`;
+    <span class="chat-att-meta"><span class="chat-att-name">${esc(f.name)}</span>
+      <span class="chat-att-sub">${esc(M[m.who].name)} · ${esc(sentAt(m))}${where} · ${esc(fileFacts(f))}</span>
+      <span class="chat-file-acts"><a class="alink" href="#/chat/${esc(chId)}/${esc(link)}" data-act="chat-file-open" aria-label="Open source message for ${esc(f.name)}">Open source message</a>
+        ${previewAction(f, m, link)}<a class="alink" href="${esc(f.url)}" download="${esc(f.name)}" aria-label="Download ${esc(f.name)}">Download</a></span></span></li>`;
 }
 function filesPanelHtml(ch, chId, title, o) {
   if (!o.open) return "";

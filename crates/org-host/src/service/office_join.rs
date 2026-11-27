@@ -18,10 +18,10 @@ use org_proto::{ApiError, Empty, ErrorCode, OfficeRole, Request, Response};
 use serde::{Deserialize, Serialize};
 
 use super::browser_sessions::browser_now_ms;
-use super::listener::Connection;
 use super::reply::ok;
 use super::session_office::{authorize_session_first, journal_error};
 use super::{Authentication, Service};
+use crate::control_listener::Connection;
 use crate::hostdb::{
     journal::{Attempt, Effect, Lookup, Stored, Write},
     HostDb, HostStore,

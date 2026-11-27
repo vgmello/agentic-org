@@ -6,7 +6,6 @@ use serde_json::{json, Value};
 use crate::directory::DirectoryCard;
 use crate::org::{MemberAddAgentParams, OrgChange};
 use crate::retired::{self, APP_TOKEN_RETIRED, HOME_RETIRED};
-use crate::work::{TaskCreateParams, WorkChangedData};
 use crate::*;
 
 fn vectors(text: &str) -> Value {
@@ -497,12 +496,6 @@ fn agent_profile_input_serializes_byte_identically_to_the_v1_profile() {
         error.contains(stored["v2_refusal"].as_str().unwrap()),
         "{error}"
     );
-
-    // The work vector's params are real `task.create` params, re-encoded unchanged.
-    for case in doc["work"].as_array().unwrap() {
-        let typed: TaskCreateParams = serde_json::from_value(case["params"].clone()).unwrap();
-        assert_eq!(serde_json::to_value(&typed).unwrap(), case["params"]);
-    }
 }
 
 // ---- §4.3 retired fields -------------------------------------------------------------------
@@ -647,15 +640,6 @@ fn changes_name_their_actor_when_known() {
     assert_eq!(decoded.actor.as_ref(), Some(&actor));
     assert!(matches!(decoded.changes[0], OrgChange::TeamDeleted { .. }));
     assert_eq!(serde_json::to_value(&decoded).unwrap(), new);
-
-    let work =
-        json!({"position": {"incarnation": 1, "seq": 2}, "part": 1, "parts": 1, "changes": []});
-    let old: WorkChangedData = serde_json::from_value(work.clone()).unwrap();
-    assert!(old.actor.is_none());
-    let mut new = work;
-    new["actor"] = json!({"member": "01M72N8MG00000000000000M02", "kind": "agent"});
-    let decoded: WorkChangedData = serde_json::from_value(new.clone()).unwrap();
-    assert_eq!(decoded.actor.unwrap().kind, ActorKind::Agent);
 
     let unknown: Actor = serde_json::from_value(json!({"member": "m", "kind": "system"})).unwrap();
     assert_eq!(unknown.kind, ActorKind::Unknown);

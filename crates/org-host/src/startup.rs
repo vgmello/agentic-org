@@ -10,14 +10,14 @@ use org_platform_host::credentials::ReleaseRoot;
 use crate::app_auth::{AppPolicy, APP_BUNDLE_ID};
 use crate::catalog::Catalog;
 use crate::config::Config;
+use crate::control_listener::{Listener, ListenerConfig};
 use crate::error::HostError;
 use crate::home::Layout;
 use crate::offices::Offices;
 use crate::server_check::ServerCheck;
-use crate::service::listener::{Listener, ListenerConfig};
 use crate::service::Service;
 use crate::supervisor::Supervisor;
-use crate::{catalog, code_signing, host_log, host_secrets, instance, keys, provisioning, service};
+use crate::{catalog, code_signing, host_log, host_secrets, instance, keys, provisioning};
 use crate::{web, web_tls, writer};
 use crate::{HOST_SIGNING_ID, MAX_IN_FLIGHT_PER_CONNECTION, SERVER_PROGRAM_NAME};
 
@@ -144,7 +144,7 @@ pub(super) fn startup_authentication(
     custody: &mut Option<Arc<dyn host_secrets::HostSecrets>>,
     dev_key_dir: Option<&Path>,
     release_directory: Option<&ReleaseRoot>,
-) -> Result<Option<Arc<service::authentication::Authentication>>, HostError> {
+) -> Result<Option<Arc<crate::authentication::Authentication>>, HostError> {
     let authentication = if let Some(instance) = instance {
         match fs::symlink_metadata(layout.home.join("host-registry.db")) {
             Ok(_) => {
@@ -163,7 +163,7 @@ pub(super) fn startup_authentication(
                     })?,
                 };
                 Some(Arc::new(
-                    service::authentication::Authentication::open(
+                    crate::authentication::Authentication::open(
                         &layout.home,
                         custody,
                         instance.id(),
@@ -190,7 +190,7 @@ pub(super) fn startup_authentication(
 
 pub(super) fn startup_catalog(
     layout: &Layout,
-    authentication: &Option<Arc<service::authentication::Authentication>>,
+    authentication: &Option<Arc<crate::authentication::Authentication>>,
 ) -> Result<(Catalog, std::collections::BTreeSet<String>, Vec<String>), HostError> {
     let catalog = Catalog::scan(&layout.home).map_err(|source| HostError::Io {
         context: "reading the office folders",
@@ -222,7 +222,7 @@ pub(super) fn startup_catalog(
 /// refuses the start, before anything is served.
 pub(super) fn startup_web_tls(
     instance: &Option<instance::registry::Instance>,
-    authentication: &Option<Arc<service::authentication::Authentication>>,
+    authentication: &Option<Arc<crate::authentication::Authentication>>,
     supplied: Option<instance::setup::SuppliedTls>,
 ) -> Result<Option<Arc<web_tls::WebTls>>, HostError> {
     let (Some(instance), Some(authentication)) = (instance, authentication) else {
@@ -302,7 +302,7 @@ pub(super) struct ProtectedServices {
 
 pub(super) fn startup_protected_services(
     instance: &Option<instance::registry::Instance>,
-    authentication: &Option<Arc<service::authentication::Authentication>>,
+    authentication: &Option<Arc<crate::authentication::Authentication>>,
     supervisor: Supervisor,
     keys: &Arc<dyn keys::OfficeSecretsKeys>,
     layout: &Layout,
@@ -345,7 +345,7 @@ pub(super) fn startup_protected_services(
 /// that has zero accounts and zero issued registration links.
 pub(super) fn maybe_init_local_authless(
     instance: Option<&instance::registry::Instance>,
-    authentication: Option<&Arc<service::authentication::Authentication>>,
+    authentication: Option<&Arc<crate::authentication::Authentication>>,
 ) {
     let is_local_http = instance
         .and_then(|i| i.browser().ok().flatten())

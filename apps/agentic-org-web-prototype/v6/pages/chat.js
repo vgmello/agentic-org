@@ -8,7 +8,7 @@ import { ASK_CLICKS, answerableHere, messageNeeds, onAskKeydown, resetAsks, save
 import { CHAT_VIEWS, chatViewHtml, isChatView } from "./chat-views.js";
 import { bindOverlays, syncOverlayHistory } from "./chat-overlays.js";
 import {
-  PRESENCE_WORD, chatListHtml, needsCount, onListClick, onListInput, onListKeydown, prepareList, takeListFocus, unreadDot,
+  PRESENCE_WORD, chatListHtml, needsCount, onListClick, onListInput, onListKeydown, prepareList, syncPicking, takeListFocus, unreadDot,
 } from "./chat-list.js";
 import { endVisit, markAllRead, newFromId, startVisit, watchUnread } from "./chat-read.js";
 import { listIsOverlay, watchListMode } from "./chat-layout.js";
@@ -18,6 +18,7 @@ import {
   DEFAULT_CHAT, chatTitle, dmSources, inboxItem, openAsks, openDirectMessage, resolveChatId, sentAt, sourceHref, sourceLabel, splitTime,
 } from "./chat-model.js";
 import "./chat-attach-seed.js";
+import { THREAD_SUM_CLICKS, markRoot, rootOpen, setRootOpen, threadSummaryHtml } from "./chat-thread-sum.js";
 import { ATTACH_CLICKS, attachButton, attachmentsForSend, bindAttachments, clearAttachments, trayHtml } from "./chat-attachments.js";
 import { VIEW_CLICKS, attachmentNameHit, closeViewer, filesButton, filesPanelHtml, messageAttachmentsHtml, viewerOpen } from "./chat-attach-view.js";
 import { render, route } from "../shell/router.js";
@@ -174,6 +175,26 @@ function shortcutHint() {
   const keys = { either: "Ctrl/⌘", control: "Ctrl", command: "⌘" }[S.chatSend] || "Ctrl/⌘";
   return `<span class="sr-only">Enter adds a new line. ${CHAT_SEND_SHORTCUTS[S.chatSend].label} sends.</span><span aria-hidden="true"><kbd>${keys}</kbd> <kbd>Enter</kbd> to send · <kbd>Enter</kbd> new line</span>`;
 }
+/* While the main composer holds a / command, its submit button names what the command does next. */
+/* Phones keep the verb ("Review"); the button's name is always the whole label. */
+const COMMAND_SUBMIT = { assign: ["Review", " assignment"], task: ["Create", " task"], ask: ["Send", " question"], files: ["Show", " files"] };
+function submitLabel(text, base) {
+  const cmd = base === "Send" && parseCommand(text || "");
+  return (cmd && !cmd.unknown && COMMAND_SUBMIT[cmd.name]) || [base, ""];
+}
+const submitInner = ([verb, rest]) => (rest ? `${verb}<span class="chat-long">${rest}</span>` : verb);
+function syncSubmitLabel(field) {
+  const label = field.form?.querySelector(".chat-submit-label");
+  if (!label) return;
+  const parts = submitLabel(field.value, "Send");
+  label.innerHTML = submitInner(parts);
+  if (parts[1]) label.parentElement.setAttribute("aria-label", parts.join(""));
+  else label.parentElement.removeAttribute("aria-label");
+}
+function submitButton(o, shortcut) {
+  const parts = submitLabel(o.draft, o.submit), name = parts[1] ? ` aria-label="${esc(parts.join(""))}"` : "";
+  return `<button class="btn ${o.button}" type="submit" title="${o.submit} (${shortcut.label})" aria-keyshortcuts="${shortcut.keys}"${name}>${ic("send", "ic20")}<span class="chat-submit-label">${submitInner(parts)}</span></button>`;
+}
 /* Main and thread composers share markup, the send hint and empty-send validation. */
 function composerHtml(o) {
   const shortcut = CHAT_SEND_SHORTCUTS[S.chatSend];
@@ -185,7 +206,7 @@ function composerHtml(o) {
       <label class="sr-only" for="${o.field}">${esc(o.label)}</label>
       <textarea class="field" id="${o.field}" name="message" rows="1" placeholder="${esc(o.label)}" data-placeholder="${esc(o.label)}" aria-describedby="${o.note ? o.field + "-note " : ""}${o.field}-help" autocomplete="off" enterkeyhint="enter" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false">
 ${esc(o.draft || "")}</textarea>
-      <button class="btn ${o.button}" type="submit" title="${o.submit} (${shortcut.label})" aria-keyshortcuts="${shortcut.keys}">${ic("send", "ic20")}${o.submit}</button>
+      ${submitButton(o, shortcut)}
     </div>
     <p class="chat-compose-hint" id="${o.field}-help" aria-live="polite">${shortcutHint()}</p>
     ${o.after || ""}
@@ -230,6 +251,7 @@ const threadComposer = (id, root) => composerHtml({
   draft: threadDraft(root.id).text, button: "outline", submit: "Reply", attach: `t:${id}:${root.id}`, after: alsoSendBox(id, root.id),
 });
 function resetHint(form) {
+  form.classList.remove("is-confirming");
   const hint = form.querySelector(".chat-compose-hint");
   hint.classList.remove("is-error", "is-confirm");
   hint.innerHTML = shortcutHint();
@@ -261,6 +283,7 @@ function clearComposer(id, field) {
   chatDrafts.delete(id);
   field.value = "";
   fitTextarea(field);
+  syncSubmitLabel(field);
 }
 /* /task what to do: a task whose prompt is those words, with this conversation's latest messages as context (the
    task-context excerpt). The composer keeps "/task …" until the task is created, so cancelling loses nothing. */
@@ -272,7 +295,7 @@ function taskFromConversation(id, field, text = "") {
 }
 /* /files opens the Files panel; any words after it stay in the composer. */
 function filesCommand(id, field, text = "") {
-  if (text) { field.value = text; chatDrafts.set(id, text); fitTextarea(field); } else clearComposer(id, field);
+  if (text) { field.value = text; chatDrafts.set(id, text); fitTextarea(field); syncSubmitLabel(field); } else clearComposer(id, field);
   toggleFiles();
 }
 function runCommand(name, id, field, text = "") {
@@ -305,6 +328,8 @@ function assignItem(form, field, cmd) {
   const hint = form.querySelector(".chat-compose-hint");
   hint.classList.remove("is-error");
   hint.classList.add("is-confirm");
+  /* Assign is the one primary action while the confirmation shows; the submit button steps back. */
+  form.classList.add("is-confirming");
   hint.innerHTML = `<span class="chat-assign-ask" role="group" aria-label="Confirm assignment">${ic("user-plus", "ic14")}<span>Assign <b>${esc(w.id)}</b> ${esc(w.title)}${from} to <b>${esc(M[cmd.who].name)}</b>?</span>
     <button class="btn primary sm" type="button" data-act="chat-assign-confirm">Assign</button><button class="btn ghost sm" type="button" data-act="chat-assign-cancel">Cancel</button></span>`;
   hint.querySelector('[data-act="chat-assign-confirm"]').focus();
@@ -411,13 +436,18 @@ function dmRequests(who, chId) {
   const here = openAsks(CH[chId]);
   return { here, elsewhere: IN.filter((i) => !i.handled && i.from === who && !here.includes(i.id)) };
 }
-/* A DM whose agent waits on you leads with what can be answered here, linked to its card, then "N in Inbox" opening
-   the list of the agent's other requests. The header summary and Details say exactly the same, in the same order. */
-function dmWaiting(who, chId, slot) {
+/* "1 in this DM · 2 more requests ▾": what can be answered here, linked to its card, then the agent's other requests
+   (all of which are also in Inbox) as a menu. Without a card here, the menu says "2 requests in Inbox". The header
+   summary and Details use the same words, in the same order. */
+function elsewhereWord(here, elsewhere, short) {
+  if (!here.length) return `${plural(elsewhere.length, "request", "requests")} in Inbox`;
+  return short ? `${elsewhere.length} more` : `${elsewhere.length} more ${elsewhere.length === 1 ? "request" : "requests"}`;
+}
+function dmWaiting(who, chId, slot, short = false) {
   const { here, elsewhere } = dmRequests(who, chId), parts = [];
   const card = here.length && CH[chId].msgs.find((x) => x.needs === here[0]);
-  if (card) parts.push(`<a class="alink chat-here-link" href="#/chat/${esc(chId)}/${esc(card.id)}">${plural(here.length, "request", "requests")} here</a>`);
-  if (elsewhere.length) parts.push(requestsMenu(elsewhere, who, slot, `${elsewhere.length} in Inbox`));
+  if (card) parts.push(`<a class="alink chat-here-link" href="#/chat/${esc(chId)}/${esc(card.id)}" aria-label="${esc(plural(here.length, "request", "requests"))} in this DM">${here.length} in this DM</a>`);
+  if (elsewhere.length) parts.push(requestsMenu(elsewhere, who, slot, `${elsewhereWord(here, elsewhere, short)}${ic("chev-down", "ic14 chat-more-chev")}`));
   return parts.join(" · ");
 }
 function dmStatus(who, chId, slot) {
@@ -451,7 +481,7 @@ function dmSummary(who) {
   if (presence(who) !== "needs") return [word, m.role];
   const { here, elsewhere } = dmRequests(who, `dm-${who}`);
   if (!here.length && !elsewhere.length) return [word, m.role];
-  return [here.length ? plural(here.length, "request", "requests") + " here" : "", elsewhere.length ? `${elsewhere.length} in Inbox` : ""];
+  return [here.length ? `${here.length} in this DM` : "", elsewhere.length ? elsewhereWord(here, elsewhere, false) : ""];
 }
 function summaryParts(ch) {
   if (ch.kind === "dm") return dmSummary(ch.with);
@@ -489,6 +519,13 @@ function listButton(id) {
 }
 /* Below 640 px the context line moves into Details; an agents' conversation keeps its access label by the title. */
 const readAsTag = (ch) => (ch.kind === "a2a" ? `<span class="chat-readas chat-readas-tag">${ic("eye", "ic14")}Reading as the owner</span>` : "");
+/* Below 640 px a DM whose agent waits on you keeps a compact request summary by the title ("1 here · 2 in Inbox"),
+   with the same links as the context line; role and project stay in Details. */
+function requestsTag(ch, chId) {
+  if (ch.kind !== "dm" || M[ch.with].kind !== "agent" || presence(ch.with) !== "needs") return "";
+  const parts = dmWaiting(ch.with, chId, "tag", true);
+  return parts ? `<span class="chat-req-tag">${ic("bell", "ic14")}<span>${parts}</span></span>` : "";
+}
 function chatHeaderHtml(id, ch, title) {
   return `<header class="ph chhead">
     ${listButton(id)}
@@ -497,7 +534,7 @@ function chatHeaderHtml(id, ch, title) {
       <div class="chat-heading"><h1 id="ch-title" tabindex="-1">${esc(title)}</h1>
         <p class="chat-context"><span class="chat-ctx-full">${headerContext(ch, id)}</span><span class="chat-ctx-summary">${headerSummary(ch)}</span></p>
       </div>
-      ${readAsTag(ch)}
+      ${readAsTag(ch)}${requestsTag(ch, id)}
     </div>
     ${headerActions(id, title)}
     ${detailsPanel(ch, id)}
@@ -528,10 +565,10 @@ function chatThreadHtml(id, root, title) {
   const count = replies.length ? plural(replies.length, "reply", "replies") : "No replies yet";
   const list = replies.map((_r, i) => threadReplyHtml(id, root, i)).join("");
   /* A writable thread carries the ask's own card, answerable here; the stream points to it while the thread is open. */
-  const head = messageHtml(Object.assign({}, root, { thread: null }), null, { cards: readOnly ? "chip" : "thread-card", ch: id });
+  const head = markRoot(messageHtml(Object.assign({}, root, { thread: null }), null, { cards: readOnly ? "chip" : "thread-card", ch: id }));
   return `<div class="thread-scrim" data-act="thread-close" data-scrim aria-hidden="true"></div>
-    <aside class="thread"${panelModal()} aria-labelledby="chat-thread-title"><header class="side-panel-header"><div class="thread-title"><h2 id="chat-thread-title" tabindex="-1">Thread</h2><span class="muted">${esc(title)}</span></div><button class="btn ghost icon" type="button" data-act="thread-close" aria-label="Close thread">${ic("x", "ic20")}</button></header>
-      <div class="msgs">${head}<p class="chat-thread-count">${count}</p>${list}</div>
+    <aside class="thread${rootOpen(root.id) ? " root-open" : ""}"${panelModal()} aria-labelledby="chat-thread-title"><header class="side-panel-header"><div class="thread-title"><h2 id="chat-thread-title" tabindex="-1">Thread</h2><span class="muted">${esc(title)}</span></div><button class="btn ghost icon" type="button" data-act="thread-close" aria-label="Close thread">${ic("x", "ic20")}</button></header>
+      <div class="msgs">${threadSummaryHtml(root)}${head}<p class="chat-thread-count">${count}</p>${list}</div>
       ${readOnly ? "" : threadComposer(id, root)}</aside>`;
 }
 function memberRow(k) {
@@ -551,7 +588,7 @@ function readOnlyFoot(id, ch) {
   return `<div class="readfoot"><p>${ic("eye", "ic16")}You can't reply here. To weigh in, message ${ch.pair.map((k) => esc(M[k].name)).join(" or ")}.</p><div class="actions">${buttons}</div></div>`;
 }
 const askJump = () => `<div class="chat-asks-jump"><button class="btn sm" type="button" data-act="chat-asks-jump" hidden>${ic("bell", "ic16")}<span></span>${ic("chev-down", "ic16 chat-up")}</button></div>`;
-const latestJump = () => `<div class="chat-latest-jump"><button class="btn sm" type="button" data-act="chat-latest-jump" hidden>${ic("chev-down", "ic16")}<span>Jump to latest</span></button></div>`;
+const latestJump = () => `<div class="chat-latest-jump"><button class="btn sm" type="button" data-act="chat-latest-jump" aria-label="Jump to latest" hidden>${ic("chev-down", "ic16")}<span><span class="chat-jump-long">Jump to latest</span><span class="chat-jump-short">Latest</span></span></button></div>`;
 
 /* ---------------------------------------------------------------- page */
 /* A source link (#/chat/<ch>/<msg>) opens the unfiltered stream on that exact message, once per navigation: every
@@ -800,6 +837,8 @@ function closeTopOverlay() {
 bindOverlays(anyOverlay, closeTopOverlay);
 /* The stream's "answer in the thread" chip moves focus to the card in the open thread. */
 function focusThreadCard() {
+  const aside = document.querySelector("aside.thread .chat-thread-root")?.closest("aside");
+  if (aside && !aside.classList.contains("root-open")) setRootOpen(S.thread, true);
   document.querySelector(".thread .chat-needs-q, .thread .chat-needs-done")?.focus();
 }
 function openViewThread(t) {
@@ -811,6 +850,7 @@ const CLICKS = {
   ...ASK_CLICKS,
   ...ATTACH_CLICKS,
   ...VIEW_CLICKS,
+  ...THREAD_SUM_CLICKS,
   "chat-files": () => toggleFiles(),
   "chat-file-open": () => { local.files = false; },
   thread: (id, t) => toggleThread(id, t),
@@ -860,6 +900,7 @@ function onChatClick(e) {
 function onChatInput(e) {
   const t = e.target;
   if (t.id === "compose" || t.id === "thread-compose") updateAssist(t, t.form.dataset.ch || t.form.dataset.id, t.id === "compose");
+  if (t.id === "compose") syncSubmitLabel(t);
   if (t.id === "thread-compose") { saveThreadDraft(t.form.dataset.id, { text: t.value }); fitTextarea(t); }
   else if (t.name === "also" && t.form?.dataset.form === "thread-send") saveThreadDraft(t.form.dataset.id, { also: t.checked });
   else if (t.id.startsWith("ar-")) saveAskDraft(t);
@@ -882,15 +923,20 @@ function mountOverlays(root) {
   if (panel) inertOutside(panel);
 }
 /* When the full context line under the title would be cut off, the header shows a plain summary instead and offers
-   Details with the full line (always below 640 px, by CSS). The full line stays laid out, hidden, for measuring. */
+   Details with the full line (always below 640 px, by CSS). The full line stays laid out, hidden, for measuring.
+   Swapping the lines resizes the observed element, so the swap waits for the next frame: changing it inside the
+   observer callback raised "ResizeObserver loop completed with undelivered notifications" while the app nav
+   animated (the Bun dev overlay showed it at 1024 px). */
 function watchContext(root) {
   const ctx = root.querySelector(".chhead .chat-context"), full = ctx?.querySelector(".chat-ctx-full");
   if (!full || !root.querySelector(".chat-details-btn")) return;
-  const measure = () => {
+  const measure = () => root.classList.toggle("ctx-overflow", full.scrollWidth > full.clientWidth + 1);
+  let frame = 0;
+  const ro = new ResizeObserver(() => {
     if (!ctx.isConnected) { ro.disconnect(); return; }
-    root.classList.toggle("ctx-overflow", full.scrollWidth > full.clientWidth + 1);
-  };
-  const ro = new ResizeObserver(measure);
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(measure);
+  });
   ro.observe(ctx);
   measure();
 }
@@ -953,6 +999,7 @@ function mountChat() {
   mountThread(root);
   fitTextarea(document.getElementById("thread-compose"));
   mountOverlays(root);
+  syncPicking(root);
   bindPanelResize(root);
   watchContext(root);
   watchListMode(root, onListModeCross);

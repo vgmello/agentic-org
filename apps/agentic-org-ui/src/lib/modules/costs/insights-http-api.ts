@@ -20,7 +20,7 @@ import type {
 	UsageTotals
 } from './types';
 
-type Rec = Record<string, unknown>;
+import { asNum, asRec, asStr } from '$lib/platform/http/decode';
 
 interface GatewayProjectRecord {
 	id: string;
@@ -30,12 +30,6 @@ interface GatewayProjectRecord {
 	owner_team_id?: string;
 	archived?: boolean;
 }
-
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
-const asNum = (v: unknown): number | undefined =>
-	typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 
 export function emptyUsageTotals(): UsageTotals {
 	return {

@@ -2,8 +2,8 @@
 //! unknown.
 //!
 //! The operation id is the write's existing field: `command_id` for organization commands
-//! ([`crate::org`]), `change_id` for work writes ([`crate::work`]) and `msg.send`'s `id` for
-//! messages ([`crate::msg`]). The lookup names the kind so a client can retrieve an outcome
+//! ([`crate::org`]), `change_id` for work writes ([`OperationKind::Work`]) and `msg.send`'s `id`
+//! for messages ([`crate::msg`]). The lookup names the kind so a client can retrieve an outcome
 //! without keeping the request body when that lookup is served. See [`OperationGet`] for
 //! current availability.
 

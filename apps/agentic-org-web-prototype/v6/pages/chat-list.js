@@ -19,24 +19,24 @@ function rowLead(ch) {
   if (ch.kind === "channel") return ic("hash", "ic16");
   return ch.kind === "dm" ? av(ch.with, 24) : ic("eye", "ic16");
 }
-function rowTrail(ch, unread) {
+function rowTrail(ch, unread, when = "") {
   const needs = openAsks(ch).length;
-  const dot = unread ? unreadDot : "";
+  const dot = (when ? `<time class="chat-row-when">${esc(when)}</time>` : "") + (unread ? unreadDot : "");
   if (needs) return dot + needsCount(needs);
   if (ch.kind !== "dm") return dot;
   const word = M[ch.with].kind === "person" ? "Person" : PRESENCE_WORD[presence(ch.with)];
   return (word ? `<span class="chat-row-word">${word}</span>` : "") + dot;
 }
 /* `why`: while finding, what matched when the name doesn't show it (a project, a task id, a message's words). */
-function chatLinkHtml(k, activeId, why = "") {
+function chatLinkHtml(k, activeId, why = "", when = "") {
   const ch = CH[k], unread = ch.unread && k !== activeId;
   const attrs = (k === activeId ? ' aria-current="page"' : "") + (unread ? ' class="is-unread"' : "");
   const unreadText = unread ? `<span class="sr-only">, ${plural(ch.unread, "unread message", "unread messages")}</span>` : "";
   const reason = why ? `<span class="chat-row-why"><span class="sr-only">, </span>${esc(why)}</span>` : "";
-  return `<li><a href="#/chat/${k}"${attrs}>${rowLead(ch)}<span class="chat-row-name">${esc(ch.kind === "channel" ? ch.name : chatTitle(ch))}${reason}</span>${unreadText}${rowTrail(ch, unread)}</a></li>`;
+  return `<li><a href="#/chat/${k}"${attrs}>${rowLead(ch)}<span class="chat-row-name">${esc(ch.kind === "channel" ? ch.name : chatTitle(ch))}${reason}</span>${unreadText}${rowTrail(ch, unread, when)}</a></li>`;
 }
 function groupHtml(kind, label, rows, activeId, q) {
-  if (kind === "a2a" && !q) return rows.length ? a2aSectionHtml(rows, activeId, (k) => chatLinkHtml(k, activeId)) : "";
+  if (kind === "a2a" && !q) return rows.length ? a2aSectionHtml(rows, activeId, (k, when) => chatLinkHtml(k, activeId, "", when)) : "";
   return rows.length ? `<h2>${label}</h2><ul>${rows.map((k) => chatLinkHtml(k, activeId, q ? matchReason(CH[k], q) : "")).join("")}</ul>` : "";
 }
 function recipientButton(k, act = "chat-to") {
@@ -94,9 +94,28 @@ function rerenderList(root, focusId) {
   el.outerHTML = chatListHtml(root.dataset.ch, open);
   document.getElementById(focusId)?.focus();
 }
+/* While the recipient picker is open, the message has no destination yet: the conversation behind it steps back
+   (inert, its composer suspended) and the main pane says "Choose a recipient" until a choice or Cancel. */
+function syncPicking(root) {
+  const main = root.querySelector(".chmain");
+  if (!main) return;
+  const on = list.picker && Boolean(CH[root.dataset.ch]);
+  root.classList.toggle("is-picking", on);
+  main.querySelector(":scope > .chat-picking")?.remove();
+  for (const el of main.children) el.inert = on;
+  if (!on) return;
+  const from = chatTitle(CH[root.dataset.ch]);
+  main.insertAdjacentHTML("afterbegin", `<div class="chat-picking" role="status">
+      <span class="chat-picking-ic">${ic("pencil", "ic20")}</span>
+      <h2 class="chat-picking-t">Choose a recipient</h2>
+      <p class="chat-picking-p">Pick a person or agent under <b>To</b> to start a direct message. Messages to ${esc(from)} are paused until you choose or cancel.</p>
+      <button class="btn ghost sm" type="button" data-act="chat-new-cancel">Cancel new message</button>
+    </div>`);
+}
 function setPicker(root, on) {
   Object.assign(list, { picker: on, to: "" });
   rerenderList(root, on ? "chat-to" : "chat-new");
+  syncPicking(root);
 }
 /* Opens the DM with the composer focused. When that DM is already open the hash would not change, so the
    caller closes the picker and drawer in place ("same-conversation"). */
@@ -200,6 +219,7 @@ export {
   onListInput,
   onListKeydown,
   prepareList,
+  syncPicking,
   takeListFocus,
   unreadDot,
 };

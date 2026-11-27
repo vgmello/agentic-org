@@ -16,7 +16,7 @@ import {
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { WorkApi } from './api';
 
-type Rec = Record<string, unknown>;
+import { asNum, asRec, asStr, type Rec } from '$lib/platform/http/decode';
 
 const VALID_PRIORITIES = new Set<Priority>(['urgent', 'high', 'normal', 'low']);
 const VALID_SEVERITIES = new Set<Severity>(['critical', 'major', 'minor', 'trivial']);
@@ -36,12 +36,6 @@ const VALID_STATUSES = new Set<ItemStatus>([
 	'declined',
 	'merged'
 ]);
-
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
-const asNum = (v: unknown): number | undefined =>
-	typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 
 function mapItemKind(raw: unknown): ItemKind {
 	if (raw === 'task' || raw === 'bug' || raw === 'request') return raw;
