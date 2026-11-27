@@ -2416,3 +2416,81 @@ fn turn_control_routes_check_the_pair_origin_id_and_body_before_reaching_the_off
 
 #[path = "tests/attachments.rs"]
 mod attachments;
+
+#[test]
+fn member_decisions_route_checks_session_member_and_query_before_reaching_hq() {
+    let (gateway, calls) = gateway(organization_script(|method, _| {
+        (method == "organization.list").then(|| {
+            vec![json!({"result": {"organizations": [host_organization()], "creating": []}})]
+        })
+    }));
+    let member = "0193a5c0-0000-7000-8000-000000000040";
+    let decisions = format!("/api/v1/organizations/{ORG}/members/{member}/decisions");
+
+    // No session: 401, whatever the member or query.
+    let unauth = send(&gateway, Method::GET, &decisions, "", None, &[]);
+    assert_eq!(unauth.status, StatusCode::UNAUTHORIZED);
+
+    let pair = sign_in(&gateway).pair();
+    // A malformed member, another author or kind, or an unknown filter never reaches HQ.
+    for target in [
+        format!("/api/v1/organizations/{ORG}/members/not-a-uuid/decisions"),
+        format!(
+            "/api/v1/organizations/{ORG}/members/0193A5C0-0000-7000-8000-000000000040/decisions"
+        ),
+        format!("{decisions}?kind=note"),
+        format!("{decisions}?author_id=0193a5c0-0000-7000-8000-000000000041"),
+        format!("{decisions}?bogus=1"),
+        format!("{decisions}?fields=secret"),
+        format!("{decisions}?limit=ten"),
+        // IDs are canonical UUIDv7s, the page size 1 to 500, text filters 1 to 128 bytes, and
+        // no key repeats.
+        format!("{decisions}?project_id=not-a-uuid"),
+        format!("{decisions}?project_id=0193A5C0-0000-7000-8000-000000000050"),
+        format!("{decisions}?limit=0"),
+        format!("{decisions}?limit=501"),
+        format!("{decisions}?tag="),
+        format!("{decisions}?since="),
+        format!("{decisions}?cursor="),
+        format!("{decisions}?tag={}", "a".repeat(129)),
+        format!("{decisions}?since={}", "1".repeat(129)),
+        format!("{decisions}?cursor={}", "c".repeat(129)),
+        format!("{decisions}?tag=a&tag=b"),
+        format!("{decisions}?limit=5&limit=6"),
+        format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?author_id=not-a-uuid"),
+        format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?kind=plan&kind=note"),
+        format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?limit=501"),
+        format!("/api/v1/organizations/{ORG}/tasks/notes/not-a-uuid"),
+        format!("/api/v1/organizations/{ORG}/tasks/notes/0193A5C0-0000-7000-8000-000000000060"),
+        format!("/api/v1/organizations/{ORG}/tasks/notes/550e8400-e29b-41d4-a716-446655440000"),
+    ] {
+        let reply = send(&gateway, Method::GET, &target, "", Some(&pair), &[]);
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{target}");
+    }
+    let posted = send(&gateway, Method::POST, &decisions, "{}", Some(&pair), &[]);
+    assert_eq!(posted.status, StatusCode::BAD_REQUEST);
+    let task_notes_with_task_id = send(
+        &gateway,
+        Method::GET,
+        &format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?task_id=T-A2"),
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(task_notes_with_task_id.status, StatusCode::BAD_REQUEST);
+    assert!(
+        !calls.methods().contains(&"organization.list".to_owned()),
+        "refused requests must fail before resolving HQ"
+    );
+
+    // Valid requests go to the organization's HQ office (503 here: the fixture has no office).
+    for target in [
+        format!("{decisions}?tag=arch&project_id=0193a5c0-0000-7000-8000-000000000050&task_id=T-A1&limit=20&fields=title,tags"),
+        format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?kind=decision&tag=arch&fields=title"),
+        format!("/api/v1/organizations/{ORG}/tasks/notes/0193a5c0-0000-7000-8000-000000000060"),
+    ] {
+        let reply = send(&gateway, Method::GET, &target, "", Some(&pair), &[]);
+        assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE, "{target}");
+    }
+    assert!(calls.methods().contains(&"organization.list".to_owned()));
+}

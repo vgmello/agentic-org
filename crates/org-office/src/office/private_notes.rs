@@ -1,21 +1,23 @@
-//! Office facade methods for isolated per-author private task notes
-//! (`TASK-50`, `L8`, `ADR-0031` TASKAUTH-4..7, `doc-79` PN-01..06).
+//! Office facade methods for isolated per-author private notes, plans and decisions
+//! (`TASK-50`, `TASK-111` ADEC-1/2, `L8`, `ADR-0031` TASKAUTH-4..7, `doc-79` PN-01..06).
 
 use std::sync::atomic::Ordering;
 
 use org_proto::private_notes::{
-    TaskNotePublishResult, TaskNoteRemovedResult, TaskNoteResult, TasksNotesAddParams,
-    TasksNotesGetParams, TasksNotesListParams, TasksNotesListResult, TasksNotesPublishParams,
-    TasksNotesRemoveParams, TasksNotesUpdateParams,
+    PrivateNoteAddParams, PrivateNoteListParams, PrivateNoteUpdateParams, TaskNotePublishResult,
+    TaskNoteRemovedResult, TaskNoteResult, TasksNotesGetParams, TasksNotesListResult,
+    TasksNotesPublishParams, TasksNotesRemoveParams,
 };
 use org_proto::tasks::TasksCommentParams;
 use org_proto::{ApiError, ErrorCode};
 
 use crate::error::OfficeError;
 use crate::organization::records::{Employee, EmployeeKind, EmployeeStatus};
+use crate::private_notes::query::{normalize_since, page_limit};
 use crate::private_notes::{
-    format_receipt_error_code, request_digest, validate_note_body, BeginPublishCmd, CreateNoteCmd,
-    DeleteNoteCmd, EditNoteCmd, PublishAttempt,
+    delete_digest, format_receipt_error_code, normalize_tag, publish_digest, BeginPublishCmd,
+    CreateNoteCmd, DeleteNoteCmd, DigestInput, EditNoteCmd, FieldSet, NoteContent, NoteCursor,
+    NotePatch, NoteQuery, PrivateNoteRecord, PublishAttempt, SatelliteRefusedPrivateNotesStore,
 };
 use crate::time::format_rfc3339_ms;
 
@@ -31,6 +33,10 @@ fn require_uuid(raw: &str, field: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+fn require_optional_uuid(raw: Option<&str>, field: &str) -> Result<(), ApiError> {
+    raw.map_or(Ok(()), |id| require_uuid(id, field))
+}
+
 fn require_revision(rev: u64) -> Result<u64, ApiError> {
     if rev == 0 || rev > i64::MAX as u64 {
         return Err(ApiError::new(
@@ -41,6 +47,51 @@ fn require_revision(rev: u64) -> Result<u64, ApiError> {
     Ok(rev)
 }
 
+/// Unwraps an inner refusal: `Ok(Err(refusal))` returns it from the enclosing facade method.
+macro_rules! refused {
+    ($outcome:expr) => {
+        match $outcome {
+            Ok(value) => value,
+            Err(refusal) => return Ok(Err(refusal)),
+        }
+    };
+}
+
+/// The task and project a note belongs to.
+struct NoteScope {
+    task_id: Option<String>,
+    project_id: Option<String>,
+}
+
+/// A validated `tasks.notes.list` request: the filters a [`NoteQuery`] borrows.
+struct ListFilters {
+    task_id: Option<String>,
+    tag: Option<String>,
+    since: Option<String>,
+    after: Option<NoteCursor>,
+    limit: usize,
+    fields: FieldSet,
+}
+
+impl ListFilters {
+    fn validate(params: &PrivateNoteListParams) -> Result<Self, ApiError> {
+        require_optional_uuid(params.project_id.as_deref(), "project_id")?;
+        require_optional_uuid(params.author_id.as_deref(), "author_id")?;
+        Ok(Self {
+            task_id: None,
+            tag: params.tag.as_deref().map(normalize_tag).transpose()?,
+            since: params.since.as_deref().map(normalize_since).transpose()?,
+            after: params
+                .cursor
+                .as_deref()
+                .map(NoteCursor::parse)
+                .transpose()?,
+            limit: page_limit(params.limit)?,
+            fields: FieldSet::requested(&params.fields),
+        })
+    }
+}
+
 impl Office {
     fn monotonic_private_now(&self) -> String {
         let raw = self.clock.now().0;
@@ -48,10 +99,16 @@ impl Office {
         format_rfc3339_ms(raw.max(prev))
     }
 
+    /// `ADR-0031`: only active members read or write private notes; returns the caller and
+    /// whether it is a person. Every `tasks.notes.*` call starts here, so a satellite, which
+    /// holds no private notes, refuses them all with `Unavailable` before anything else.
     fn require_active_private_caller(
         &self,
         actor: &str,
-    ) -> Result<Result<Employee, ApiError>, OfficeError> {
+    ) -> Result<Result<(Employee, bool), ApiError>, OfficeError> {
+        if !self.private_notes.available() {
+            return Ok(Err(SatelliteRefusedPrivateNotesStore::refused()));
+        }
         let Some(emp) = self.load_employee(actor)? else {
             return Ok(Err(ApiError::new(
                 ErrorCode::NotAuthorized,
@@ -61,100 +118,117 @@ impl Office {
         if emp.status != EmployeeStatus::Active {
             return Ok(Err(ApiError::new(
                 ErrorCode::NotAuthorized,
-                "inactive or paused employees cannot access private task notes",
+                "inactive or paused employees cannot access private notes",
             )));
         }
-        Ok(Ok(emp))
+        let is_person = emp.kind == EmployeeKind::Person;
+        Ok(Ok((emp, is_person)))
     }
 
-    fn resolve_task_id(&self, task_ref: &str) -> Result<Result<String, ApiError>, OfficeError> {
-        match self.task_inspect(task_ref)? {
-            Ok(inspected) => Ok(Ok(inspected.task.id)),
-            Err(api_err) => Ok(Err(api_err)),
+    /// The task a reference names, with its project.
+    fn resolve_task(&self, task_ref: &str) -> Result<Result<NoteScope, ApiError>, OfficeError> {
+        let inspected = refused!(self.task_inspect(task_ref)?);
+        Ok(Ok(NoteScope {
+            task_id: Some(inspected.task.id),
+            project_id: inspected.task.project_id,
+        }))
+    }
+
+    /// A new note's task and project: a task note belongs to its task's project.
+    fn note_scope(
+        &self,
+        task: Option<&str>,
+        project_id: Option<&str>,
+    ) -> Result<Result<NoteScope, ApiError>, OfficeError> {
+        refused!(require_optional_uuid(project_id, "project_id"));
+        let Some(task) = task else {
+            return Ok(Ok(NoteScope {
+                task_id: None,
+                project_id: project_id.map(str::to_owned),
+            }));
+        };
+        let scope = refused!(self.resolve_task(task)?);
+        if project_id.is_some() && project_id != scope.project_id.as_deref() {
+            return Ok(Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "`project_id` must be the task's project",
+            )));
         }
+        Ok(Ok(scope))
     }
 
-    /// `tasks.notes.add` (`PN-01`): creates a private note authored by the authenticated caller.
+    /// `tasks.notes.add` (`PN-01`, ADEC-1): creates a private note, plan or decision authored
+    /// by the authenticated caller, on a task, a project, or neither.
     pub fn task_note_add(
         &self,
         actor: &str,
-        params: TasksNotesAddParams,
+        params: PrivateNoteAddParams,
     ) -> Result<Result<TaskNoteResult, ApiError>, OfficeError> {
-        let caller = match self.require_active_private_caller(actor)? {
-            Ok(emp) => emp,
-            Err(e) => return Ok(Err(e)),
-        };
-        if let Err(e) = require_uuid(&params.command_id, "command_id")
-            .and_then(|()| require_uuid(&params.note_id, "note_id"))
-        {
-            return Ok(Err(e));
-        }
-        let body = match validate_note_body(&params.body_markdown) {
-            Ok(b) => b,
-            Err(e) => return Ok(Err(e)),
-        };
-        let task_id = match self.resolve_task_id(&params.task)? {
-            Ok(id) => id,
-            Err(e) => return Ok(Err(e)),
-        };
+        let (caller, _) = refused!(self.require_active_private_caller(actor)?);
+        refused!(require_uuid(&params.command_id, "command_id")
+            .and_then(|()| require_uuid(&params.note_id, "note_id")));
+        let content = refused!(NoteContent::from_add(&params));
+        let scope =
+            refused!(self.note_scope(params.task.as_deref(), params.project_id.as_deref())?);
+        let mut digest = DigestInput::new("create");
+        digest
+            .text(scope.task_id.as_deref())
+            .text(scope.project_id.as_deref())
+            .text(Some(&params.note_id));
+        content.digest_into(&mut digest);
         let now = self.monotonic_private_now();
-        let digest = request_digest(&[
-            b"create\0",
-            task_id.as_bytes(),
-            b"\0",
-            params.note_id.as_bytes(),
-            b"\0",
-            body.as_bytes(),
-        ]);
-        match self.private_notes.create_note(CreateNoteCmd {
+        let record = refused!(self.private_notes.create_note(CreateNoteCmd {
             org_id: &self.info.org_id,
             author_id: caller.id.as_str(),
-            task_id: &task_id,
+            task_id: scope.task_id.as_deref(),
+            project_id: scope.project_id.as_deref(),
             note_id: &params.note_id,
-            body_markdown: &body,
+            content: &content,
             operation_id: &params.command_id,
-            request_sha256: &digest,
+            request_sha256: &digest.finish(),
             now: &now,
-        })? {
-            Ok(record) => Ok(Ok(TaskNoteResult {
-                note: record.to_wire(caller.id.as_str()),
-            })),
-            Err(e) => Ok(Err(e)),
-        }
+        })?);
+        Ok(Ok(TaskNoteResult {
+            note: record.to_wire(caller.id.as_str()),
+        }))
     }
 
-    /// `tasks.notes.list` (`PN-02`, `TASKAUTH-4/5`): lists visible active notes on a task.
+    /// `tasks.notes.list` (`PN-02`, `TASKAUTH-4/5`, ADEC-2): one newest-first page of the
+    /// caller's visible active notes, across tasks unless `task` narrows it. An agent sees only
+    /// its own notes, whatever team it leads or task it holds.
     pub fn task_note_list(
         &self,
         actor: &str,
-        params: TasksNotesListParams,
+        params: PrivateNoteListParams,
     ) -> Result<Result<TasksNotesListResult, ApiError>, OfficeError> {
-        let caller = match self.require_active_private_caller(actor)? {
-            Ok(emp) => emp,
-            Err(e) => return Ok(Err(e)),
-        };
-        if let Some(ref aid) = params.author_id {
-            if let Err(e) = require_uuid(aid, "author_id") {
-                return Ok(Err(e));
-            }
+        let (caller, is_person) = refused!(self.require_active_private_caller(actor)?);
+        let mut filters = refused!(ListFilters::validate(&params));
+        if let Some(task) = params.task.as_deref() {
+            filters.task_id = refused!(self.resolve_task(task)?).task_id;
         }
-        let task_id = match self.resolve_task_id(&params.task)? {
-            Ok(id) => id,
-            Err(e) => return Ok(Err(e)),
-        };
-        let is_person = caller.kind == EmployeeKind::Person;
-        let records = self.private_notes.list_notes(
-            &self.info.org_id,
-            caller.id.as_str(),
-            is_person,
-            &task_id,
-            params.author_id.as_deref(),
-        )?;
-        let notes = records
-            .into_iter()
-            .map(|r| r.to_wire(caller.id.as_str()))
-            .collect();
-        Ok(Ok(TasksNotesListResult { task_id, notes }))
+        let page = self.private_notes.list_notes(&NoteQuery {
+            org_id: &self.info.org_id,
+            caller_id: caller.id.as_str(),
+            caller_is_person: is_person,
+            task_id: filters.task_id.as_deref(),
+            project_id: params.project_id.as_deref(),
+            kind: params.kind,
+            tag: filters.tag.as_deref(),
+            since: filters.since.as_deref(),
+            author_id: params.author_id.as_deref(),
+            after: filters.after.as_ref(),
+            limit: filters.limit,
+        })?;
+        Ok(Ok(TasksNotesListResult {
+            task_id: filters.task_id,
+            notes: page
+                .notes
+                .iter()
+                .map(|r| r.to_wire_with(caller.id.as_str(), filters.fields))
+                .collect(),
+            total: page.total,
+            next_cursor: page.next_cursor.as_ref().map(NoteCursor::encode),
+        }))
     }
 
     /// `tasks.notes.get` (`PN-02`, `TASKAUTH-4/5`): fetches one visible active note by ID.
@@ -164,14 +238,8 @@ impl Office {
         actor: &str,
         params: TasksNotesGetParams,
     ) -> Result<Result<TaskNoteResult, ApiError>, OfficeError> {
-        let caller = match self.require_active_private_caller(actor)? {
-            Ok(emp) => emp,
-            Err(e) => return Ok(Err(e)),
-        };
-        if let Err(e) = require_uuid(&params.note_id, "note_id") {
-            return Ok(Err(e));
-        }
-        let is_person = caller.kind == EmployeeKind::Person;
+        let (caller, is_person) = refused!(self.require_active_private_caller(actor)?);
+        refused!(require_uuid(&params.note_id, "note_id"));
         match self.private_notes.get_note(
             &self.info.org_id,
             caller.id.as_str(),
@@ -188,136 +256,102 @@ impl Office {
         }
     }
 
-    /// `tasks.notes.update` (`PN-01`, `TASKAUTH-6`): author-only revision-checked edit.
+    /// `tasks.notes.update` (`PN-01`, `TASKAUTH-6`, ADEC-1): author-only revision-checked
+    /// patch of the kind, title, why, alternatives, tags or body.
     pub fn task_note_update(
         &self,
         actor: &str,
-        params: TasksNotesUpdateParams,
+        params: PrivateNoteUpdateParams,
     ) -> Result<Result<TaskNoteResult, ApiError>, OfficeError> {
-        let caller = match self.require_active_private_caller(actor)? {
-            Ok(emp) => emp,
-            Err(e) => return Ok(Err(e)),
-        };
-        if let Err(e) = require_uuid(&params.command_id, "command_id")
+        let (caller, is_person) = refused!(self.require_active_private_caller(actor)?);
+        refused!(require_uuid(&params.command_id, "command_id")
             .and_then(|()| require_uuid(&params.note_id, "note_id"))
-            .and_then(|()| require_revision(params.expected_revision).map(|_| ()))
-        {
-            return Ok(Err(e));
-        }
-        let body = match validate_note_body(&params.body_markdown) {
-            Ok(b) => b,
-            Err(e) => return Ok(Err(e)),
-        };
+            .and_then(|()| require_revision(params.expected_revision).map(|_| ())));
+        let patch = refused!(NotePatch::from_update(&params));
+        let mut digest = DigestInput::new("edit");
+        digest
+            .text(Some(&params.note_id))
+            .number(params.expected_revision);
+        patch.digest_into(&mut digest);
         let now = self.monotonic_private_now();
-        let rev_bytes = params.expected_revision.to_be_bytes();
-        let digest = request_digest(&[
-            b"edit\0",
-            params.note_id.as_bytes(),
-            b"\0",
-            &rev_bytes,
-            b"\0",
-            body.as_bytes(),
-        ]);
-        match self.private_notes.edit_note(EditNoteCmd {
+        let record = refused!(self.private_notes.edit_note(EditNoteCmd {
             org_id: &self.info.org_id,
             caller_id: caller.id.as_str(),
-            caller_is_person: caller.kind == EmployeeKind::Person,
+            caller_is_person: is_person,
             note_id: &params.note_id,
             expected_revision: params.expected_revision,
-            body_markdown: &body,
+            patch: &patch,
             operation_id: &params.command_id,
-            request_sha256: &digest,
+            request_sha256: &digest.finish(),
             now: &now,
-        })? {
-            Ok(record) => Ok(Ok(TaskNoteResult {
-                note: record.to_wire(caller.id.as_str()),
-            })),
-            Err(e) => Ok(Err(e)),
-        }
+        })?);
+        Ok(Ok(TaskNoteResult {
+            note: record.to_wire(caller.id.as_str()),
+        }))
     }
 
-    /// `tasks.notes.remove` (`PN-01`, `PN-06`, `TASKAUTH-6`): author-only revisioned tombstone.
+    /// `tasks.notes.remove` (`PN-01`, `PN-06`, `TASKAUTH-6`): author-only revisioned tombstone
+    /// clearing every private text field and tag.
     pub fn task_note_remove(
         &self,
         actor: &str,
         params: TasksNotesRemoveParams,
     ) -> Result<Result<TaskNoteRemovedResult, ApiError>, OfficeError> {
-        let caller = match self.require_active_private_caller(actor)? {
-            Ok(emp) => emp,
-            Err(e) => return Ok(Err(e)),
-        };
-        if let Err(e) = require_uuid(&params.command_id, "command_id")
+        let (caller, is_person) = refused!(self.require_active_private_caller(actor)?);
+        refused!(require_uuid(&params.command_id, "command_id")
             .and_then(|()| require_uuid(&params.note_id, "note_id"))
-            .and_then(|()| require_revision(params.expected_revision).map(|_| ()))
-        {
-            return Ok(Err(e));
-        }
+            .and_then(|()| require_revision(params.expected_revision).map(|_| ())));
+        let digest = delete_digest(&params.note_id, params.expected_revision);
         let now = self.monotonic_private_now();
-        let rev_bytes = params.expected_revision.to_be_bytes();
-        let digest = request_digest(&[b"delete\0", params.note_id.as_bytes(), b"\0", &rev_bytes]);
-        match self.private_notes.delete_note(DeleteNoteCmd {
+        let record = refused!(self.private_notes.delete_note(DeleteNoteCmd {
             org_id: &self.info.org_id,
             caller_id: caller.id.as_str(),
-            caller_is_person: caller.kind == EmployeeKind::Person,
+            caller_is_person: is_person,
             note_id: &params.note_id,
             expected_revision: params.expected_revision,
             operation_id: &params.command_id,
             request_sha256: &digest,
             now: &now,
-        })? {
-            Ok(record) => Ok(Ok(TaskNoteRemovedResult {
-                note_id: record.id,
-                task_id: record.task_id,
-                revision: record.revision,
-                deleted_at: record.deleted_at.unwrap_or(record.updated_at),
-            })),
-            Err(e) => Ok(Err(e)),
-        }
+        })?);
+        Ok(Ok(TaskNoteRemovedResult {
+            note_id: record.id,
+            task_id: record.task_id,
+            revision: record.revision,
+            deleted_at: record.deleted_at.unwrap_or(record.updated_at),
+        }))
     }
 
-    /// `tasks.notes.publish` (`PN-05`): explicit author-only 2-phase publish-copy to a shared
-    /// task comment while preserving the private original unchanged.
+    /// `tasks.notes.publish` (`PN-05`): explicit author-only 2-phase publish-copy of a task
+    /// note to a shared task comment while preserving the private original unchanged. A note
+    /// outside any task is refused (`InvalidRequest`).
     /// Returns `(result, replayed)` so callers suppress live event notifications on replay.
     pub fn task_note_publish(
         &self,
         actor: &str,
         params: TasksNotesPublishParams,
     ) -> Result<Result<(TaskNotePublishResult, bool), ApiError>, OfficeError> {
-        let caller = match self.require_active_private_caller(actor)? {
-            Ok(emp) => emp,
-            Err(e) => return Ok(Err(e)),
-        };
-        if let Err(e) = require_uuid(&params.command_id, "command_id")
+        let (caller, is_person) = refused!(self.require_active_private_caller(actor)?);
+        refused!(require_uuid(&params.command_id, "command_id")
             .and_then(|()| require_uuid(&params.note_id, "note_id"))
             .and_then(|()| require_uuid(&params.comment_id, "comment_id"))
-            .and_then(|()| require_revision(params.expected_revision).map(|_| ()))
-        {
-            return Ok(Err(e));
-        }
+            .and_then(|()| require_revision(params.expected_revision).map(|_| ())));
+        let digest = publish_digest(
+            &params.note_id,
+            params.expected_revision,
+            &params.comment_id,
+        );
         let now = self.monotonic_private_now();
-        let rev_bytes = params.expected_revision.to_be_bytes();
-        let digest = request_digest(&[
-            b"publish\0",
-            params.note_id.as_bytes(),
-            b"\0",
-            &rev_bytes,
-            b"\0",
-            params.comment_id.as_bytes(),
-        ]);
-        let attempt = match self.private_notes.begin_publish(BeginPublishCmd {
+        let attempt = refused!(self.private_notes.begin_publish(BeginPublishCmd {
             org_id: &self.info.org_id,
             caller_id: caller.id.as_str(),
-            caller_is_person: caller.kind == EmployeeKind::Person,
+            caller_is_person: is_person,
             note_id: &params.note_id,
             expected_revision: params.expected_revision,
             comment_id: &params.comment_id,
             operation_id: &params.command_id,
             request_sha256: &digest,
             now: &now,
-        })? {
-            Ok(a) => a,
-            Err(e) => return Ok(Err(e)),
-        };
+        })?);
 
         match attempt {
             PublishAttempt::AlreadyCompleted {
@@ -346,14 +380,17 @@ impl Office {
     fn replay_completed_publish(
         &self,
         caller_id: &str,
-        mut note: crate::private_notes::PrivateNoteRecord,
+        mut note: PrivateNoteRecord,
         result_revision: u64,
         shared_comment_id: &str,
     ) -> Result<Result<(TaskNotePublishResult, bool), ApiError>, OfficeError> {
-        let inspected = match self.task_inspect(&note.task_id)? {
-            Ok(v) => v,
-            Err(e) => return Ok(Err(e)),
+        let Some(task_id) = note.task_id.clone() else {
+            return Ok(Err(ApiError::new(
+                ErrorCode::StorageError,
+                "published private note lost its task",
+            )));
         };
+        let inspected = refused!(self.task_inspect(&task_id)?);
         let Some(comment) = inspected
             .comments
             .into_iter()
@@ -383,9 +420,15 @@ impl Office {
         actor: &str,
         caller_id: &str,
         command_id: &str,
-        note: crate::private_notes::PrivateNoteRecord,
+        note: PrivateNoteRecord,
         shared_comment_id: String,
     ) -> Result<Result<(TaskNotePublishResult, bool), ApiError>, OfficeError> {
+        let Some(task_id) = note.task_id.clone() else {
+            return Ok(Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "only a private note on a task can be published to its comments",
+            )));
+        };
         let body = note.body_markdown.clone().unwrap_or_default();
         // `doc-79`: use the shared comment ID as the shared idempotency key, independent of
         // the private operation ID.
@@ -393,7 +436,7 @@ impl Office {
             actor,
             TasksCommentParams {
                 command_id: shared_comment_id.clone(),
-                task: note.task_id.clone(),
+                task: task_id,
                 comment_id: shared_comment_id,
                 body_markdown: body,
             },
@@ -445,3 +488,7 @@ impl Office {
             .mark_task_deleted(&self.info.org_id, task_id)
     }
 }
+
+#[cfg(test)]
+#[path = "private_notes_adec_tests.rs"]
+mod adec_tests;

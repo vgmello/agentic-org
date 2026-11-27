@@ -1,29 +1,36 @@
-//! Isolated SQLite adapter for per-author private task notes (`TASK-50`, `L8`, `ADR-0016`,
-//! `ADR-0031`, `doc-79` PN-01..06, `TASK-97` ARCH-01).
+//! Isolated SQLite adapter for per-author private notes, plans and decisions (`TASK-50`,
+//! `TASK-111` ADEC-1/2, `L8`, `ADR-0016`, `ADR-0031`, `doc-79` PN-01..06, `TASK-97` ARCH-01).
 //!
 //! Opens HQ-authoritative `<durable-root>/private/task-notes.db` using `private-notes-schema.sql`
 //! verbatim, completely outside `durable/state/`, `durable/journal/`, `office.db`, and Git.
 //! It is NOT a disposable runtime cache (`doc-79` §Private Task Notes).
 
+mod list;
+mod rows;
+pub(crate) mod schema;
+
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use org_proto::{ApiError, ErrorCode};
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::error::OfficeError;
 use crate::private_fs::{
     absolute, full_sync, private_dir_synced, private_file, sync_dir, tighten_sqlite_sidecars,
 };
 use crate::private_notes::{
-    non_author_mutation_error, parse_receipt_error_code, BeginPublishCmd, CreateNoteCmd,
-    DeleteNoteCmd, EditNoteCmd, PrivateNoteRecord, PrivateNotesStore, PublishAttempt,
+    check_author_mutation, check_receipt_reuse, monotonic_ts, next_revision,
+    parse_receipt_error_code, replayed_note, require_publishable, Accepted, BeginPublishCmd,
+    CreateNoteCmd, DeleteNoteCmd, EditNoteCmd, NotePage, NoteQuery, PrivateNoteRecord,
+    PrivateNotesStore, PublishAttempt,
 };
 use crate::store::layout;
 
-/// Verbatim DDL for the isolated private task notes database (`doc-79`, `doc-93`).
-const PRIVATE_NOTES_DDL: &str =
-    include_str!("../../../../../docs/design/organization-data/private-notes-schema.sql");
+use rows::{
+    has_pending_publish, insert_completed_receipt, insert_note, load_note, load_receipt, note_row,
+    tombstone, update_content, with_tags, Expected, ReceiptRow, NOTE_COLUMNS,
+};
 
 /// SQLite-backed isolated private notes database behind a single serialized writer lock (`ADR-0002`).
 pub struct SqlitePrivateNotesStore {
@@ -32,8 +39,9 @@ pub struct SqlitePrivateNotesStore {
 }
 
 impl SqlitePrivateNotesStore {
-    /// Opens (or initializes) HQ-authoritative `<durable-root>/private/task-notes.db` with
-    /// owner-only directory and file permissions (`doc-79`, `ADR-0016`, `PN-04`).
+    /// Opens (or initializes, or upgrades from the `TASK-50` layout) HQ-authoritative
+    /// `<durable-root>/private/task-notes.db` with owner-only directory and file permissions
+    /// (`doc-79`, `ADR-0016`, `PN-04`).
     pub fn open(durable_root: &Path) -> Result<Self, OfficeError> {
         let private_folder = layout::private_notes(durable_root);
         private_dir_synced(durable_root, &private_folder).map_err(OfficeError::storage)?;
@@ -42,13 +50,17 @@ impl SqlitePrivateNotesStore {
             absolute(private_folder.join("task-notes.db")).map_err(OfficeError::storage)?;
         // Pre-create with 0o600 before SQLite opens it (no 0o644 creation window).
         drop(private_file(&db_path).map_err(OfficeError::storage)?);
-        let conn = Connection::open(&db_path).map_err(OfficeError::storage)?;
+        let mut conn = Connection::open(&db_path).map_err(OfficeError::storage)?;
         // `fullfsync` + `checkpoint_fullfsync` request `F_FULLFSYNC` inside SQLite, and
         // `flush_authoritative_db` additionally invokes `org_platform::fs::full_sync` directly
         // on the WAL/DB file after every commit so macOS VFS fallback can never silently
         // acknowledge a commit without a verified device flush (`TASK-97` / Pass 2 Finding #6).
+        // `temp_store = MEMORY` comes before the schema step: the upgrade's temporary copies
+        // and every sort or temporary B-tree of note text stay in memory, never in a temporary
+        // file outside the owner-only `durable/private/` folder.
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
+            "PRAGMA temp_store = MEMORY;
+             PRAGMA journal_mode = WAL;
              PRAGMA synchronous = FULL;
              PRAGMA fullfsync = ON;
              PRAGMA checkpoint_fullfsync = ON;
@@ -58,7 +70,7 @@ impl SqlitePrivateNotesStore {
         )
         .map_err(OfficeError::storage)?;
 
-        ensure_schema_initialized(&conn)?;
+        schema::ensure_schema(&mut conn)?;
         sync_dir(&private_folder).map_err(OfficeError::storage)?;
         tighten_sqlite_sidecars(&db_path).map_err(OfficeError::storage)?;
         flush_authoritative_db(&db_path)?;
@@ -69,46 +81,55 @@ impl SqlitePrivateNotesStore {
         })
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, OfficeError> {
+    fn lock(&self) -> Result<MutexGuard<'_, Connection>, OfficeError> {
         self.conn
             .lock()
             .map_err(|_| OfficeError::Invalid("private notes sqlite connection poisoned"))
     }
+
+    /// Answers an exact replay of `receipt` after flushing, or refuses a reused command.
+    fn replay(
+        &self,
+        tx: Transaction<'_>,
+        org_id: &str,
+        receipt: &ReceiptRow,
+        request: (&str, &str),
+        accepted: Accepted<'_>,
+    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
+        if let Err(e) = check_receipt_reuse(
+            &receipt.command,
+            &receipt.request_sha256,
+            request.0,
+            request.1,
+        ) {
+            return Ok(Err(e));
+        }
+        let current = load_note(&tx, org_id, &receipt.note_id)?
+            .ok_or(OfficeError::Invalid("replayed private note missing"))?;
+        let replayed = replayed_note(&current, receipt.result_revision, receipt.time(), accepted);
+        drop(tx);
+        flush_authoritative_db(&self.db_path)?;
+        Ok(Ok(replayed))
+    }
+
+    /// Commits `tx`, flushes, and answers the stored note.
+    fn commit_note(
+        &self,
+        tx: Transaction<'_>,
+        org_id: &str,
+        note_id: &str,
+    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
+        let record = load_note(&tx, org_id, note_id)?
+            .ok_or(OfficeError::Invalid("written private note missing"))?;
+        tx.commit().map_err(OfficeError::storage)?;
+        flush_authoritative_db(&self.db_path)?;
+        Ok(Ok(record))
+    }
 }
 
-fn ensure_schema_initialized(conn: &Connection) -> Result<(), OfficeError> {
-    let table_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN \
-             ('private_note_authors', 'private_note_tasks', 'private_task_notes', 'private_note_command_receipts')",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(OfficeError::storage)?;
-    let trigger_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(OfficeError::storage)?;
-    if table_count == 4 && trigger_count >= 10 {
-        return Ok(());
-    }
-    if table_count != 0 || trigger_count != 0 {
-        return Err(OfficeError::Invalid(
-            "corrupt or partially initialized private task notes database",
-        ));
-    }
-    conn.execute_batch("BEGIN IMMEDIATE;")
-        .map_err(OfficeError::storage)?;
-    if let Err(err) = conn.execute_batch(PRIVATE_NOTES_DDL) {
-        let _ = conn.execute_batch("ROLLBACK;");
-        return Err(OfficeError::storage(err));
-    }
-    conn.execute_batch("COMMIT;")
-        .map_err(OfficeError::storage)?;
-    Ok(())
+fn begin(conn: &mut Connection) -> Result<Transaction<'_>, OfficeError> {
+    conn.transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(OfficeError::storage)
 }
 
 /// Explicitly runs `org_platform::fs::full_sync` (`F_FULLFSYNC` on macOS, never downgraded)
@@ -127,181 +148,23 @@ fn flush_authoritative_db(db_path: &Path) -> Result<(), OfficeError> {
     full_sync(&db_file).map_err(OfficeError::storage)
 }
 
-fn note_row(row: &Row<'_>) -> rusqlite::Result<PrivateNoteRecord> {
-    let schema_version: i64 = row.get(2)?;
-    let revision: i64 = row.get(3)?;
-    Ok(PrivateNoteRecord {
-        organization_id: row.get(0)?,
-        id: row.get(1)?,
-        schema_version: schema_version as u64,
-        revision: revision as u64,
-        task_id: row.get(4)?,
-        author_id: row.get(5)?,
-        body_markdown: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
-        deleted_at: row.get(9)?,
-    })
-}
-
-struct ReceiptRow {
-    request_sha256: String,
-    command: String,
-    note_id: String,
-    result_revision: u64,
-    state: String,
-    shared_comment_id: Option<String>,
-    error_code: Option<String>,
-    created_at: String,
-    finished_at: Option<String>,
-}
-
-fn load_receipt(
-    tx: &rusqlite::Transaction<'_>,
-    org_id: &str,
-    author_id: &str,
-    operation_id: &str,
-) -> Result<Option<ReceiptRow>, OfficeError> {
-    tx.query_row(
-        "SELECT request_sha256, command, note_id, result_revision, state,
-                shared_comment_id, error_code, created_at, finished_at
-         FROM private_note_command_receipts
-         WHERE organization_id = ?1 AND author_id = ?2 AND operation_id = ?3",
-        params![org_id, author_id, operation_id],
-        |row| {
-            let result_revision: i64 = row.get(3)?;
-            Ok(ReceiptRow {
-                request_sha256: row.get(0)?,
-                command: row.get(1)?,
-                note_id: row.get(2)?,
-                result_revision: result_revision as u64,
-                state: row.get(4)?,
-                shared_comment_id: row.get(5)?,
-                error_code: row.get(6)?,
-                created_at: row.get(7)?,
-                finished_at: row.get(8)?,
-            })
-        },
-    )
-    .optional()
-    .map_err(OfficeError::storage)
-}
-
-fn reconstruct_accepted_note(
-    current: &PrivateNoteRecord,
-    receipt: &ReceiptRow,
-    accepted_body: Option<&str>,
-) -> PrivateNoteRecord {
-    let ts = receipt
-        .finished_at
-        .clone()
-        .unwrap_or_else(|| receipt.created_at.clone());
-    PrivateNoteRecord {
-        organization_id: current.organization_id.clone(),
-        id: current.id.clone(),
-        schema_version: current.schema_version,
-        revision: receipt.result_revision,
-        task_id: current.task_id.clone(),
-        author_id: current.author_id.clone(),
-        body_markdown: accepted_body.map(str::to_owned),
-        created_at: current.created_at.clone(),
-        updated_at: ts.clone(),
-        deleted_at: accepted_body.is_none().then_some(ts),
-    }
-}
-
-fn load_note(
-    tx: &rusqlite::Transaction<'_>,
+/// Validates an author mutation of the stored note inside `tx`.
+fn author_mutation(
+    tx: &Transaction<'_>,
     org_id: &str,
     note_id: &str,
-) -> Result<Option<PrivateNoteRecord>, OfficeError> {
-    tx.query_row(
-        "SELECT organization_id, id, schema_version, revision, task_id, author_id,
-                body_markdown, created_at, updated_at, deleted_at
-         FROM private_task_notes
-         WHERE organization_id = ?1 AND id = ?2",
-        params![org_id, note_id],
-        note_row,
-    )
-    .optional()
-    .map_err(OfficeError::storage)
-}
-
-fn has_pending_publish(
-    tx: &rusqlite::Transaction<'_>,
-    org_id: &str,
-    note_id: &str,
-) -> Result<bool, OfficeError> {
-    tx.query_row(
-        "SELECT EXISTS(
-            SELECT 1 FROM private_note_command_receipts
-            WHERE organization_id = ?1 AND note_id = ?2 AND state = 'pending'
-         )",
-        params![org_id, note_id],
-        |row| row.get(0),
-    )
-    .map_err(OfficeError::storage)
-}
-
-fn check_receipt_reuse(
-    existing: &ReceiptRow,
-    expected_cmd: &str,
-    request_sha256: &str,
-) -> Result<(), ApiError> {
-    if existing.command != expected_cmd || existing.request_sha256 != request_sha256 {
-        return Err(ApiError::new(
-            ErrorCode::OperationReused,
-            "command_id reused with different private note request",
-        ));
-    }
-    Ok(())
-}
-
-fn monotonic_ts(now: &str, prev: &str) -> String {
-    if now >= prev {
-        now.to_owned()
-    } else {
-        prev.to_owned()
-    }
-}
-
-fn validate_author_mutation(
-    tx: &rusqlite::Transaction<'_>,
-    org_id: &str,
-    note_id: &str,
-    caller_id: &str,
-    caller_is_person: bool,
+    caller: (&str, bool),
     expected_revision: u64,
     pending_msg: &str,
 ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
-    let Some(existing) = load_note(tx, org_id, note_id)? else {
-        return Ok(Err(ApiError::new(
-            ErrorCode::NotFound,
-            "private note not found",
-        )));
-    };
-    if existing.deleted_at.is_some() {
-        return Ok(Err(ApiError::new(
-            ErrorCode::NotFound,
-            "private note not found",
-        )));
-    }
-    if existing.author_id != caller_id {
-        return Ok(Err(non_author_mutation_error(caller_is_person)));
-    }
-    if has_pending_publish(tx, org_id, note_id)? {
-        return Ok(Err(ApiError::new(ErrorCode::Conflict, pending_msg)));
-    }
-    if existing.revision != expected_revision {
-        return Ok(Err(ApiError::new(
-            ErrorCode::Conflict,
-            format!(
-                "stale expected_revision {expected_revision}: note is at revision {}",
-                existing.revision
-            ),
-        )));
-    }
-    Ok(Ok(existing))
+    check_author_mutation(
+        load_note(tx, org_id, note_id)?,
+        caller.0,
+        caller.1,
+        expected_revision,
+        || has_pending_publish(tx, org_id, note_id),
+        pending_msg,
+    )
 }
 
 impl PrivateNotesStore for SqlitePrivateNotesStore {
@@ -310,20 +173,16 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
         cmd: CreateNoteCmd<'_>,
     ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
         let mut conn = self.lock()?;
-        let tx = conn
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(OfficeError::storage)?;
-
-        if let Some(existing) = load_receipt(&tx, cmd.org_id, cmd.author_id, cmd.operation_id)? {
-            if let Err(e) = check_receipt_reuse(&existing, "create", cmd.request_sha256) {
-                return Ok(Err(e));
-            }
-            let current = load_note(&tx, cmd.org_id, &existing.note_id)?
-                .ok_or_else(|| OfficeError::Invalid("replayed private note missing"))?;
-            let replayed = reconstruct_accepted_note(&current, &existing, Some(cmd.body_markdown));
-            drop(tx);
-            flush_authoritative_db(&self.db_path)?;
-            return Ok(Ok(replayed));
+        let tx = begin(&mut conn)?;
+        if let Some(receipt) = load_receipt(&tx, cmd.org_id, cmd.author_id, cmd.operation_id)? {
+            let request = ("create", cmd.request_sha256);
+            return self.replay(
+                tx,
+                cmd.org_id,
+                &receipt,
+                request,
+                Accepted::Created(cmd.content),
+            );
         }
         if load_note(&tx, cmd.org_id, cmd.note_id)?.is_some() {
             return Ok(Err(ApiError::new(
@@ -331,53 +190,27 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
                 format!("private note `{}` already exists", cmd.note_id),
             )));
         }
-
         tx.execute(
             "INSERT OR IGNORE INTO private_note_authors (organization_id, author_id) VALUES (?1, ?2)",
             params![cmd.org_id, cmd.author_id],
         )
         .map_err(OfficeError::storage)?;
-        tx.execute(
-            "INSERT OR IGNORE INTO private_note_tasks (organization_id, task_id, is_deleted) VALUES (?1, ?2, 0)",
-            params![cmd.org_id, cmd.task_id],
-        )
-        .map_err(OfficeError::storage)?;
-        tx.execute(
-            "INSERT INTO private_task_notes
-             (organization_id, id, schema_version, revision, task_id, author_id,
-              body_markdown, created_at, updated_at, deleted_at)
-             VALUES (?1, ?2, 1, 1, ?3, ?4, ?5, ?6, ?6, NULL)",
-            params![
-                cmd.org_id,
-                cmd.note_id,
-                cmd.task_id,
-                cmd.author_id,
-                cmd.body_markdown,
-                cmd.now,
-            ],
-        )
-        .map_err(OfficeError::storage)?;
-        tx.execute(
-            "INSERT INTO private_note_command_receipts
-             (organization_id, author_id, operation_id, request_sha256, command, note_id,
-              result_revision, state, shared_comment_id, error_code, created_at, finished_at)
-             VALUES (?1, ?2, ?3, ?4, 'create', ?5, 1, 'completed', NULL, NULL, ?6, ?6)",
-            params![
-                cmd.org_id,
-                cmd.author_id,
-                cmd.operation_id,
-                cmd.request_sha256,
-                cmd.note_id,
-                cmd.now,
-            ],
-        )
-        .map_err(OfficeError::storage)?;
-
-        let record = load_note(&tx, cmd.org_id, cmd.note_id)?
-            .ok_or_else(|| OfficeError::Invalid("inserted private note missing"))?;
-        tx.commit().map_err(OfficeError::storage)?;
-        flush_authoritative_db(&self.db_path)?;
-        Ok(Ok(record))
+        if let Some(task_id) = cmd.task_id {
+            tx.execute(
+                "INSERT OR IGNORE INTO private_note_tasks (organization_id, task_id, is_deleted) VALUES (?1, ?2, 0)",
+                params![cmd.org_id, task_id],
+            )
+            .map_err(OfficeError::storage)?;
+        }
+        insert_note(&tx, &PrivateNoteRecord::new_active(&cmd))?;
+        let key = (
+            cmd.org_id,
+            cmd.author_id,
+            cmd.operation_id,
+            cmd.request_sha256,
+        );
+        insert_completed_receipt(&tx, key, "create", cmd.note_id, 1, cmd.now)?;
+        self.commit_note(tx, cmd.org_id, cmd.note_id)
     }
 
     fn edit_note(
@@ -385,78 +218,51 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
         cmd: EditNoteCmd<'_>,
     ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
         let mut conn = self.lock()?;
-        let tx = conn
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(OfficeError::storage)?;
-
-        if let Some(existing) = load_receipt(&tx, cmd.org_id, cmd.caller_id, cmd.operation_id)? {
-            if let Err(e) = check_receipt_reuse(&existing, "edit", cmd.request_sha256) {
-                return Ok(Err(e));
-            }
-            let current = load_note(&tx, cmd.org_id, &existing.note_id)?
-                .ok_or_else(|| OfficeError::Invalid("replayed private note missing"))?;
-            let replayed = reconstruct_accepted_note(&current, &existing, Some(cmd.body_markdown));
-            drop(tx);
-            flush_authoritative_db(&self.db_path)?;
-            return Ok(Ok(replayed));
+        let tx = begin(&mut conn)?;
+        if let Some(receipt) = load_receipt(&tx, cmd.org_id, cmd.caller_id, cmd.operation_id)? {
+            let request = ("edit", cmd.request_sha256);
+            return self.replay(
+                tx,
+                cmd.org_id,
+                &receipt,
+                request,
+                Accepted::Edited(cmd.patch),
+            );
         }
-
-        let existing = match validate_author_mutation(
+        let existing = match author_mutation(
             &tx,
             cmd.org_id,
             cmd.note_id,
-            cmd.caller_id,
-            cmd.caller_is_person,
+            (cmd.caller_id, cmd.caller_is_person),
             cmd.expected_revision,
             "resolve pending publication before editing private note",
         )? {
-            Ok(n) => n,
+            Ok(note) => note,
             Err(e) => return Ok(Err(e)),
         };
-        if existing.revision >= i64::MAX as u64 {
-            return Ok(Err(ApiError::new(
-                ErrorCode::Conflict,
-                "private note revision limit reached",
-            )));
-        }
-
+        let next_rev = match next_revision(existing.revision) {
+            Ok(rev) => rev,
+            Err(e) => return Ok(Err(e)),
+        };
+        let content = cmd
+            .patch
+            .apply(&existing)
+            .ok_or(OfficeError::Invalid("active private note without a body"))?;
         let updated_at = monotonic_ts(cmd.now, &existing.updated_at);
-        let next_rev = existing.revision + 1;
-        tx.execute(
-            "UPDATE private_task_notes
-             SET revision = ?3, body_markdown = ?4, updated_at = ?5
-             WHERE organization_id = ?1 AND id = ?2",
-            params![
-                cmd.org_id,
-                cmd.note_id,
-                next_rev as i64,
-                cmd.body_markdown,
-                updated_at,
-            ],
-        )
-        .map_err(OfficeError::storage)?;
-        tx.execute(
-            "INSERT INTO private_note_command_receipts
-             (organization_id, author_id, operation_id, request_sha256, command, note_id,
-              result_revision, state, shared_comment_id, error_code, created_at, finished_at)
-             VALUES (?1, ?2, ?3, ?4, 'edit', ?5, ?6, 'completed', NULL, NULL, ?7, ?7)",
-            params![
-                cmd.org_id,
-                cmd.caller_id,
-                cmd.operation_id,
-                cmd.request_sha256,
-                cmd.note_id,
-                next_rev as i64,
-                updated_at,
-            ],
-        )
-        .map_err(OfficeError::storage)?;
-
-        let record = load_note(&tx, cmd.org_id, cmd.note_id)?
-            .ok_or_else(|| OfficeError::Invalid("updated private note missing"))?;
-        tx.commit().map_err(OfficeError::storage)?;
-        flush_authoritative_db(&self.db_path)?;
-        Ok(Ok(record))
+        let expected = Expected {
+            author_id: cmd.caller_id,
+            revision: cmd.expected_revision,
+        };
+        let edited = existing.with_content(&content, next_rev, &updated_at);
+        update_content(&tx, expected, &edited)?;
+        let key = (
+            cmd.org_id,
+            cmd.caller_id,
+            cmd.operation_id,
+            cmd.request_sha256,
+        );
+        insert_completed_receipt(&tx, key, "edit", cmd.note_id, next_rev, &updated_at)?;
+        self.commit_note(tx, cmd.org_id, cmd.note_id)
     }
 
     fn delete_note(
@@ -464,72 +270,46 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
         cmd: DeleteNoteCmd<'_>,
     ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
         let mut conn = self.lock()?;
-        let tx = conn
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(OfficeError::storage)?;
-
-        if let Some(existing) = load_receipt(&tx, cmd.org_id, cmd.caller_id, cmd.operation_id)? {
-            if let Err(e) = check_receipt_reuse(&existing, "delete", cmd.request_sha256) {
-                return Ok(Err(e));
-            }
-            let current = load_note(&tx, cmd.org_id, &existing.note_id)?
-                .ok_or_else(|| OfficeError::Invalid("replayed private note missing"))?;
-            let replayed = reconstruct_accepted_note(&current, &existing, None);
-            drop(tx);
-            flush_authoritative_db(&self.db_path)?;
-            return Ok(Ok(replayed));
+        let tx = begin(&mut conn)?;
+        if let Some(receipt) = load_receipt(&tx, cmd.org_id, cmd.caller_id, cmd.operation_id)? {
+            let request = ("delete", cmd.request_sha256);
+            return self.replay(tx, cmd.org_id, &receipt, request, Accepted::Deleted);
         }
-
-        let existing = match validate_author_mutation(
+        let existing = match author_mutation(
             &tx,
             cmd.org_id,
             cmd.note_id,
-            cmd.caller_id,
-            cmd.caller_is_person,
+            (cmd.caller_id, cmd.caller_is_person),
             cmd.expected_revision,
             "resolve pending publication before deleting private note",
         )? {
-            Ok(n) => n,
+            Ok(note) => note,
             Err(e) => return Ok(Err(e)),
         };
-        if existing.revision >= i64::MAX as u64 {
-            return Ok(Err(ApiError::new(
-                ErrorCode::Conflict,
-                "private note revision limit reached",
-            )));
-        }
-
+        let next_rev = match next_revision(existing.revision) {
+            Ok(rev) => rev,
+            Err(e) => return Ok(Err(e)),
+        };
         let deleted_at = monotonic_ts(cmd.now, &existing.updated_at);
-        let next_rev = existing.revision + 1;
-        tx.execute(
-            "UPDATE private_task_notes
-             SET revision = ?3, body_markdown = NULL, updated_at = ?4, deleted_at = ?4
-             WHERE organization_id = ?1 AND id = ?2",
-            params![cmd.org_id, cmd.note_id, next_rev as i64, deleted_at],
-        )
-        .map_err(OfficeError::storage)?;
-        tx.execute(
-            "INSERT INTO private_note_command_receipts
-             (organization_id, author_id, operation_id, request_sha256, command, note_id,
-              result_revision, state, shared_comment_id, error_code, created_at, finished_at)
-             VALUES (?1, ?2, ?3, ?4, 'delete', ?5, ?6, 'completed', NULL, NULL, ?7, ?7)",
-            params![
-                cmd.org_id,
-                cmd.caller_id,
-                cmd.operation_id,
-                cmd.request_sha256,
-                cmd.note_id,
-                next_rev as i64,
-                deleted_at,
-            ],
-        )
-        .map_err(OfficeError::storage)?;
-
-        let record = load_note(&tx, cmd.org_id, cmd.note_id)?
-            .ok_or_else(|| OfficeError::Invalid("deleted private note tombstone missing"))?;
-        tx.commit().map_err(OfficeError::storage)?;
-        flush_authoritative_db(&self.db_path)?;
-        Ok(Ok(record))
+        let expected = Expected {
+            author_id: cmd.caller_id,
+            revision: cmd.expected_revision,
+        };
+        tombstone(
+            &tx,
+            (cmd.org_id, cmd.note_id),
+            expected,
+            next_rev,
+            &deleted_at,
+        )?;
+        let key = (
+            cmd.org_id,
+            cmd.caller_id,
+            cmd.operation_id,
+            cmd.request_sha256,
+        );
+        insert_completed_receipt(&tx, key, "delete", cmd.note_id, next_rev, &deleted_at)?;
+        self.commit_note(tx, cmd.org_id, cmd.note_id)
     }
 
     fn get_note(
@@ -540,88 +320,25 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
         note_id: &str,
     ) -> Result<Option<PrivateNoteRecord>, OfficeError> {
         let conn = self.lock()?;
-        let row = if caller_is_person {
-            conn.query_row(
-                "SELECT organization_id, id, schema_version, revision, task_id, author_id,
-                        body_markdown, created_at, updated_at, deleted_at
-                 FROM private_task_notes
-                 WHERE organization_id = ?1 AND id = ?2 AND deleted_at IS NULL",
-                params![org_id, note_id],
+        // `ADR-0031`: an agent reads only its own notes; a person reads every author's.
+        let row = conn
+            .query_row(
+                &format!(
+                    "SELECT {NOTE_COLUMNS} FROM private_notes
+                     WHERE organization_id = ?1 AND id = ?2 AND deleted_at IS NULL
+                       AND (?3 OR author_id = ?4)"
+                ),
+                params![org_id, note_id, caller_is_person, caller_id],
                 note_row,
             )
             .optional()
-            .map_err(OfficeError::storage)?
-        } else {
-            conn.query_row(
-                "SELECT organization_id, id, schema_version, revision, task_id, author_id,
-                        body_markdown, created_at, updated_at, deleted_at
-                 FROM private_task_notes
-                 WHERE organization_id = ?1 AND id = ?2 AND author_id = ?3 AND deleted_at IS NULL",
-                params![org_id, note_id, caller_id],
-                note_row,
-            )
-            .optional()
-            .map_err(OfficeError::storage)?
-        };
-        Ok(row)
+            .map_err(OfficeError::storage)?;
+        row.map(|record| with_tags(&conn, record)).transpose()
     }
 
-    fn list_notes(
-        &self,
-        org_id: &str,
-        caller_id: &str,
-        caller_is_person: bool,
-        task_id: &str,
-        author_filter: Option<&str>,
-    ) -> Result<Vec<PrivateNoteRecord>, OfficeError> {
-        if !caller_is_person {
-            if let Some(filter) = author_filter {
-                if filter != caller_id {
-                    return Ok(Vec::new());
-                }
-            }
-        }
+    fn list_notes(&self, query: &NoteQuery<'_>) -> Result<NotePage, OfficeError> {
         let conn = self.lock()?;
-        let effective_author = if caller_is_person {
-            author_filter
-        } else {
-            Some(caller_id)
-        };
-        let mut out = Vec::new();
-        if let Some(author) = effective_author {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT organization_id, id, schema_version, revision, task_id, author_id,
-                            body_markdown, created_at, updated_at, deleted_at
-                     FROM private_task_notes
-                     WHERE organization_id = ?1 AND task_id = ?2 AND author_id = ?3 AND deleted_at IS NULL
-                     ORDER BY updated_at ASC, id ASC",
-                )
-                .map_err(OfficeError::storage)?;
-            let rows = stmt
-                .query_map(params![org_id, task_id, author], note_row)
-                .map_err(OfficeError::storage)?;
-            for item in rows {
-                out.push(item.map_err(OfficeError::storage)?);
-            }
-        } else {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT organization_id, id, schema_version, revision, task_id, author_id,
-                            body_markdown, created_at, updated_at, deleted_at
-                     FROM private_task_notes
-                     WHERE organization_id = ?1 AND task_id = ?2 AND deleted_at IS NULL
-                     ORDER BY updated_at ASC, id ASC",
-                )
-                .map_err(OfficeError::storage)?;
-            let rows = stmt
-                .query_map(params![org_id, task_id], note_row)
-                .map_err(OfficeError::storage)?;
-            for item in rows {
-                out.push(item.map_err(OfficeError::storage)?);
-            }
-        }
-        Ok(out)
+        list::list(&conn, query)
     }
 
     fn begin_publish(
@@ -629,17 +346,20 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
         cmd: BeginPublishCmd<'_>,
     ) -> Result<Result<PublishAttempt, ApiError>, OfficeError> {
         let mut conn = self.lock()?;
-        let tx = conn
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(OfficeError::storage)?;
+        let tx = begin(&mut conn)?;
 
         if let Some(existing) = load_receipt(&tx, cmd.org_id, cmd.caller_id, cmd.operation_id)? {
-            if let Err(e) = check_receipt_reuse(&existing, "publish", cmd.request_sha256) {
+            if let Err(e) = check_receipt_reuse(
+                &existing.command,
+                &existing.request_sha256,
+                "publish",
+                cmd.request_sha256,
+            ) {
                 return Ok(Err(e));
             }
             let shared_comment_id = existing.shared_comment_id.unwrap_or_default();
             let note = load_note(&tx, cmd.org_id, &existing.note_id)?
-                .ok_or_else(|| OfficeError::Invalid("replayed publish note missing"))?;
+                .ok_or(OfficeError::Invalid("replayed publish note missing"))?;
             drop(tx);
             flush_authoritative_db(&self.db_path)?;
             return match existing.state.as_str() {
@@ -659,18 +379,20 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
             };
         }
 
-        let note = match validate_author_mutation(
+        let note = match author_mutation(
             &tx,
             cmd.org_id,
             cmd.note_id,
-            cmd.caller_id,
-            cmd.caller_is_person,
+            (cmd.caller_id, cmd.caller_is_person),
             cmd.expected_revision,
             "another publication of this private note is already pending",
         )? {
             Ok(n) => n,
             Err(e) => return Ok(Err(e)),
         };
+        if let Err(e) = require_publishable(&note) {
+            return Ok(Err(e));
+        }
 
         let comment_used: bool = tx
             .query_row(
@@ -724,9 +446,7 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
         now: &str,
     ) -> Result<(), OfficeError> {
         let mut conn = self.lock()?;
-        let tx = conn
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(OfficeError::storage)?;
+        let tx = begin(&mut conn)?;
         let Some(existing) = load_receipt(&tx, org_id, author_id, operation_id)? else {
             return Ok(());
         };
@@ -773,3 +493,6 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

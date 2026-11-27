@@ -291,4 +291,8 @@ html[data-theme="graphite-light"] .board { --bd-canvas: #fafafa; --bd-ring: #3f3
   .board .bcol[data-collapsed] { align-self: start; padding-bottom: 0; }
   .board .bcol[data-collapsed] > .bcol-empty { display: none; }
   .board .bcol[data-collapsed] .bcol-name { overflow: visible; }
+  /* A lane is an inline-size container; contained, its max-content width ignores the heading and the lane shrank to
+     its icon (16px) with the name squeezed out. Collapsed lanes size to their heading instead. */
+  .board .bcol[data-collapsed] { container-type: normal; min-width: max-content; }
+  .board .bcol[data-collapsed] :is(.bcol-title, .bcol-name) { min-width: max-content; }
 }
