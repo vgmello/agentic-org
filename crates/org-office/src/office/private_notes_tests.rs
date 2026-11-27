@@ -1012,7 +1012,8 @@ fn the_chief_of_staff_never_reads_another_agents_private_notes() {
                     task: f.task_key.clone(),
                     note_id: note_id.clone(),
                     body_markdown: "Alpha's private reasoning".into(),
-                },
+                }
+                .into(),
             )
             .unwrap()
             .unwrap();
@@ -1023,7 +1024,8 @@ fn the_chief_of_staff_never_reads_another_agents_private_notes() {
                 TasksNotesListParams {
                     task: f.task_key.clone(),
                     author_id: Some(f.agent_a.clone()),
-                },
+                }
+                .into(),
             )
             .unwrap()
             .unwrap();

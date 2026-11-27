@@ -29,7 +29,7 @@ use crate::store::layout;
 
 use rows::{
     has_pending_publish, insert_completed_receipt, insert_note, load_note, load_receipt, note_row,
-    tombstone, update_content, with_tags, ReceiptRow, NOTE_COLUMNS,
+    tombstone, update_content, with_tags, Expected, ReceiptRow, NOTE_COLUMNS,
 };
 
 /// SQLite-backed isolated private notes database behind a single serialized writer lock (`ADR-0002`).
@@ -55,8 +55,12 @@ impl SqlitePrivateNotesStore {
         // `flush_authoritative_db` additionally invokes `org_platform::fs::full_sync` directly
         // on the WAL/DB file after every commit so macOS VFS fallback can never silently
         // acknowledge a commit without a verified device flush (`TASK-97` / Pass 2 Finding #6).
+        // `temp_store = MEMORY` comes before the schema step: the upgrade's temporary copies
+        // and every sort or temporary B-tree of note text stay in memory, never in a temporary
+        // file outside the owner-only `durable/private/` folder.
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
+            "PRAGMA temp_store = MEMORY;
+             PRAGMA journal_mode = WAL;
              PRAGMA synchronous = FULL;
              PRAGMA fullfsync = ON;
              PRAGMA checkpoint_fullfsync = ON;
@@ -245,7 +249,12 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
             .apply(&existing)
             .ok_or(OfficeError::Invalid("active private note without a body"))?;
         let updated_at = monotonic_ts(cmd.now, &existing.updated_at);
-        update_content(&tx, &existing.with_content(&content, next_rev, &updated_at))?;
+        let expected = Expected {
+            author_id: cmd.caller_id,
+            revision: cmd.expected_revision,
+        };
+        let edited = existing.with_content(&content, next_rev, &updated_at);
+        update_content(&tx, expected, &edited)?;
         let key = (
             cmd.org_id,
             cmd.caller_id,
@@ -282,7 +291,17 @@ impl PrivateNotesStore for SqlitePrivateNotesStore {
             Err(e) => return Ok(Err(e)),
         };
         let deleted_at = monotonic_ts(cmd.now, &existing.updated_at);
-        tombstone(&tx, cmd.org_id, cmd.note_id, next_rev, &deleted_at)?;
+        let expected = Expected {
+            author_id: cmd.caller_id,
+            revision: cmd.expected_revision,
+        };
+        tombstone(
+            &tx,
+            (cmd.org_id, cmd.note_id),
+            expected,
+            next_rev,
+            &deleted_at,
+        )?;
         let key = (
             cmd.org_id,
             cmd.caller_id,

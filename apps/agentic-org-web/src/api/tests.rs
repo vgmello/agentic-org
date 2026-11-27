@@ -2345,6 +2345,26 @@ fn member_decisions_route_checks_session_member_and_query_before_reaching_hq() {
         format!("{decisions}?bogus=1"),
         format!("{decisions}?fields=secret"),
         format!("{decisions}?limit=ten"),
+        // IDs are canonical UUIDv7s, the page size 1 to 500, text filters 1 to 128 bytes, and
+        // no key repeats.
+        format!("{decisions}?project_id=not-a-uuid"),
+        format!("{decisions}?project_id=0193A5C0-0000-7000-8000-000000000050"),
+        format!("{decisions}?limit=0"),
+        format!("{decisions}?limit=501"),
+        format!("{decisions}?tag="),
+        format!("{decisions}?since="),
+        format!("{decisions}?cursor="),
+        format!("{decisions}?tag={}", "a".repeat(129)),
+        format!("{decisions}?since={}", "1".repeat(129)),
+        format!("{decisions}?cursor={}", "c".repeat(129)),
+        format!("{decisions}?tag=a&tag=b"),
+        format!("{decisions}?limit=5&limit=6"),
+        format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?author_id=not-a-uuid"),
+        format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?kind=plan&kind=note"),
+        format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?limit=501"),
+        format!("/api/v1/organizations/{ORG}/tasks/notes/not-a-uuid"),
+        format!("/api/v1/organizations/{ORG}/tasks/notes/0193A5C0-0000-7000-8000-000000000060"),
+        format!("/api/v1/organizations/{ORG}/tasks/notes/550e8400-e29b-41d4-a716-446655440000"),
     ] {
         let reply = send(&gateway, Method::GET, &target, "", Some(&pair), &[]);
         assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{target}");
@@ -2369,6 +2389,7 @@ fn member_decisions_route_checks_session_member_and_query_before_reaching_hq() {
     for target in [
         format!("{decisions}?tag=arch&project_id=0193a5c0-0000-7000-8000-000000000050&task_id=T-A1&limit=20&fields=title,tags"),
         format!("/api/v1/organizations/{ORG}/tasks/T-A1/notes?kind=decision&tag=arch&fields=title"),
+        format!("/api/v1/organizations/{ORG}/tasks/notes/0193a5c0-0000-7000-8000-000000000060"),
     ] {
         let reply = send(&gateway, Method::GET, &target, "", Some(&pair), &[]);
         assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE, "{target}");

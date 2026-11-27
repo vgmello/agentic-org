@@ -17,7 +17,7 @@ use crate::private_notes::query::{normalize_since, page_limit};
 use crate::private_notes::{
     delete_digest, format_receipt_error_code, normalize_tag, publish_digest, BeginPublishCmd,
     CreateNoteCmd, DeleteNoteCmd, DigestInput, EditNoteCmd, FieldSet, NoteContent, NoteCursor,
-    NotePatch, NoteQuery, PrivateNoteRecord, PublishAttempt,
+    NotePatch, NoteQuery, PrivateNoteRecord, PublishAttempt, SatelliteRefusedPrivateNotesStore,
 };
 use crate::time::format_rfc3339_ms;
 
@@ -100,11 +100,15 @@ impl Office {
     }
 
     /// `ADR-0031`: only active members read or write private notes; returns the caller and
-    /// whether it is a person.
+    /// whether it is a person. Every `tasks.notes.*` call starts here, so a satellite, which
+    /// holds no private notes, refuses them all with `Unavailable` before anything else.
     fn require_active_private_caller(
         &self,
         actor: &str,
     ) -> Result<Result<(Employee, bool), ApiError>, OfficeError> {
+        if !self.private_notes.available() {
+            return Ok(Err(SatelliteRefusedPrivateNotesStore::refused()));
+        }
         let Some(emp) = self.load_employee(actor)? else {
             return Ok(Err(ApiError::new(
                 ErrorCode::NotAuthorized,

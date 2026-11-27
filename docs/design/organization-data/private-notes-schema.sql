@@ -52,7 +52,7 @@ CREATE INDEX private_notes_by_author_task
 
 CREATE INDEX private_notes_by_task
   ON private_notes(organization_id, task_id, updated_at)
-  WHERE deleted_at IS NULL;
+  WHERE deleted_at IS NULL AND task_id IS NOT NULL;
 
 CREATE INDEX private_notes_by_author_kind
   ON private_notes(organization_id, author_id, kind, updated_at)
@@ -143,6 +143,9 @@ CREATE TRIGGER private_note_tags_limit BEFORE INSERT ON private_note_tags
 WHEN (SELECT COUNT(*) FROM private_note_tags t WHERE t.organization_id=NEW.organization_id
   AND t.note_id=NEW.note_id) >= 8
 BEGIN SELECT RAISE(ABORT, 'a private note carries at most 8 tags'); END;
+
+CREATE TRIGGER private_note_tags_no_update BEFORE UPDATE ON private_note_tags
+BEGIN SELECT RAISE(ABORT, 'private note tags are replaced, never updated'); END;
 
 CREATE TRIGGER private_receipts_no_replace BEFORE INSERT ON private_note_command_receipts
 WHEN EXISTS (SELECT 1 FROM private_note_command_receipts r WHERE r.organization_id=NEW.organization_id

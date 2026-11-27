@@ -16,7 +16,7 @@ use org_proto::private_notes::{
     PrivateNoteAddParams, PrivateNoteField, PrivateNoteKind, PrivateNoteListParams,
     PrivateNoteUpdateParams, TasksNotesAdd, TasksNotesGet, TasksNotesGetParams, TasksNotesList,
     TasksNotesPublish, TasksNotesPublishParams, TasksNotesRemove, TasksNotesRemoveParams,
-    TasksNotesUpdate,
+    TasksNotesUpdate, PRIVATE_NOTE_LIST_MAX_LIMIT,
 };
 use org_proto::web::{ReadResponse, WebError, WebErrorCode};
 use serde_json::Value;
@@ -53,11 +53,34 @@ fn valid_org_id(id: &str) -> Result<(), ApiReply> {
         .ok_or_else(invalid)
 }
 
+/// A task reference or text filter: present, and at most 128 bytes.
 fn valid_ref(value: &str) -> Result<(), ApiReply> {
     if value.is_empty() || value.len() > 128 {
         return Err(invalid());
     }
     Ok(())
+}
+
+/// A member, project or note ID: a canonical lowercase UUIDv7.
+fn valid_uuid(value: &str) -> Result<(), ApiReply> {
+    org_proto::is_uuid_v7(value)
+        .then_some(())
+        .ok_or_else(invalid)
+}
+
+/// A page size within the office's 1 to 500.
+fn valid_limit(value: &str) -> Result<u32, ApiReply> {
+    value
+        .parse()
+        .ok()
+        .filter(|limit| (1..=PRIVATE_NOTE_LIST_MAX_LIMIT).contains(limit))
+        .ok_or_else(invalid)
+}
+
+/// `value` after checking it with `check`.
+fn checked(value: String, check: fn(&str) -> Result<(), ApiReply>) -> Result<String, ApiReply> {
+    check(&value)?;
+    Ok(value)
 }
 
 fn decode_query_value(raw: &str) -> Result<String, ApiReply> {
@@ -93,7 +116,9 @@ enum ListScope {
 }
 
 /// Parses a notes list query. A task list takes `author_id` and `kind`; the decisions list
-/// takes `task_id` instead (its author and kind are the path's). Anything else is refused.
+/// takes `task_id` instead (its author and kind are the path's). IDs are canonical UUIDv7s,
+/// `limit` is 1 to 500, text filters are 1 to 128 bytes, and each key comes at most once.
+/// Anything else is refused before the request leaves this process.
 fn parse_list_query(
     scope: ListScope,
     query: Option<&str>,
@@ -102,23 +127,25 @@ fn parse_list_query(
     let Some(q) = query.filter(|s| !s.is_empty()) else {
         return Ok(params);
     };
+    let mut seen: Vec<&str> = Vec::new();
     for pair in q.split('&') {
         let (key, raw) = pair.split_once('=').ok_or_else(invalid)?;
+        if seen.contains(&key) {
+            return Err(invalid());
+        }
+        seen.push(key);
         let value = decode_query_value(raw)?;
         match (scope, key) {
-            (ListScope::Task, "author_id") => params.author_id = Some(value),
+            (ListScope::Task, "author_id") => params.author_id = Some(checked(value, valid_uuid)?),
             (ListScope::Task, "kind") => {
                 params.kind = Some(PrivateNoteKind::parse(&value).ok_or_else(invalid)?);
             }
-            (ListScope::Decisions, "task_id") => {
-                valid_ref(&value)?;
-                params.task = Some(value);
-            }
-            (_, "project_id") => params.project_id = Some(value),
-            (_, "tag") => params.tag = Some(value),
-            (_, "since") => params.since = Some(value),
-            (_, "cursor") => params.cursor = Some(value),
-            (_, "limit") => params.limit = Some(value.parse().map_err(|_| invalid())?),
+            (ListScope::Decisions, "task_id") => params.task = Some(checked(value, valid_ref)?),
+            (_, "project_id") => params.project_id = Some(checked(value, valid_uuid)?),
+            (_, "tag") => params.tag = Some(checked(value, valid_ref)?),
+            (_, "since") => params.since = Some(checked(value, valid_ref)?),
+            (_, "cursor") => params.cursor = Some(checked(value, valid_ref)?),
+            (_, "limit") => params.limit = Some(valid_limit(&value)?),
             (_, "fields") => {
                 params.fields = value
                     .split(',')
@@ -137,9 +164,7 @@ fn decisions_params(
     member_id: &str,
     query: Option<&str>,
 ) -> Result<PrivateNoteListParams, ApiReply> {
-    if !org_proto::is_uuid_v7(member_id) {
-        return Err(invalid());
-    }
+    valid_uuid(member_id)?;
     let base = PrivateNoteListParams {
         author_id: Some(member_id.to_owned()),
         kind: Some(PrivateNoteKind::Decision),
@@ -190,7 +215,7 @@ pub(super) fn try_route(
         }
         ["tasks", "notes", note_id] if is_get && !query => {
             routed(api, request, org, |pair, org| {
-                valid_ref(note_id)?;
+                valid_uuid(note_id)?;
                 Ok(NoteRoute::Get(pair, org, (*note_id).to_owned()))
             })
         }

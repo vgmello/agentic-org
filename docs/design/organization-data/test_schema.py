@@ -1149,6 +1149,8 @@ class PrivateNoteSchemaTests(unittest.TestCase):
         self.db.commit()
         assert_refused(self, self.db, "a private note carries at most 8 tags", lambda: insert(
             self.db, "private_note_tags", organization_id="org", note_id="note", tag="ninth"))
+        assert_refused(self, self.db, "private note tags are replaced, never updated", lambda: self.db.execute(
+            "UPDATE private_note_tags SET tag='renamed' WHERE note_id='note' AND tag='t0.a:b/c_d'"))
 
     def test_a_tombstone_clears_every_private_field_and_tag(self):
         self.note("decided", why="Private why", alternatives="Private options")

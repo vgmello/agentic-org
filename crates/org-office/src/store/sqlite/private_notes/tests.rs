@@ -531,6 +531,10 @@ fn the_schema_guards_tags_titles_and_tombstones() {
         refused("INSERT INTO private_note_tags VALUES ('org', 'n', 'ninth')")
             .contains("at most 8 tags")
     );
+    assert!(refused(
+        "UPDATE private_note_tags SET tag = 'renamed' WHERE note_id = 'n' AND tag = 't0'"
+    )
+    .contains("replaced, never updated"));
     raw.execute_batch(
         "UPDATE private_notes SET revision = 2, title = NULL, why = NULL, alternatives = NULL,
            body_markdown = NULL, updated_at = 'u', deleted_at = 'u' WHERE id = 'n'",
@@ -647,11 +651,177 @@ fn a_task50_database_is_upgraded_in_place_keeping_every_row() {
 
 #[test]
 fn a_foreign_or_partial_database_is_refused() {
+    for foreign in [
+        "CREATE TABLE private_note_authors (organization_id TEXT, author_id TEXT);",
+        "CREATE VIEW foreign_view AS SELECT 1 AS x;",
+    ] {
+        let (_dir, durable) = durable();
+        std::fs::create_dir(durable.join("private")).unwrap();
+        let raw = Connection::open(db_path(&durable)).unwrap();
+        raw.execute_batch(foreign).unwrap();
+        drop(raw);
+        assert!(
+            SqlitePrivateNotesStore::open(&durable).is_err(),
+            "{foreign}"
+        );
+    }
+}
+
+/// A current database, as the store creates it.
+fn seed_current(path: &std::path::Path) {
+    let durable = path.parent().and_then(std::path::Path::parent).unwrap();
+    drop(SqlitePrivateNotesStore::open(durable).unwrap());
+}
+
+/// A notes file made by `seed` and then changed by `tamper` is neither opened by the store nor
+/// accepted by a backup check, and the refusal leaves the file as it was.
+fn assert_tampered_layout_refused(seed: fn(&std::path::Path), tamper: &str) {
     let (_dir, durable) = durable();
-    std::fs::create_dir(durable.join("private")).unwrap();
-    let raw = Connection::open(db_path(&durable)).unwrap();
-    raw.execute_batch("CREATE TABLE private_note_authors (organization_id TEXT, author_id TEXT);")
-        .unwrap();
+    std::fs::create_dir_all(durable.join("private")).unwrap();
+    let path = db_path(&durable);
+    seed(&path);
+    let raw = Connection::open(&path).unwrap();
+    raw.execute_batch(tamper).unwrap();
+    assert_eq!(layout(&raw).unwrap(), None, "{tamper}");
     drop(raw);
-    assert!(SqlitePrivateNotesStore::open(&durable).is_err());
+    assert!(check_task_notes(&path).is_err(), "backup check: {tamper}");
+    assert!(
+        SqlitePrivateNotesStore::open(&durable).is_err(),
+        "store: {tamper}"
+    );
+    let raw = Connection::open(&path).unwrap();
+    assert_eq!(layout(&raw).unwrap(), None, "left unchanged: {tamper}");
+}
+
+#[test]
+fn a_mixed_layout_or_foreign_object_is_refused_by_the_store_and_the_backup_check() {
+    for tamper in [
+        "CREATE TABLE private_note_tags (organization_id TEXT, note_id TEXT, tag TEXT);",
+        "CREATE TABLE foreign_table (x TEXT);",
+        "DROP TRIGGER private_notes_keep_tombstone;",
+        "CREATE TRIGGER foreign_trigger BEFORE DELETE ON private_note_tasks
+         BEGIN SELECT 1; END;",
+    ] {
+        assert_tampered_layout_refused(seed_task50, tamper);
+    }
+    for tamper in [
+        "CREATE TABLE foreign_table (x TEXT);",
+        "CREATE TABLE private_task_notes (id TEXT);",
+        "DROP TRIGGER private_note_tags_no_update;",
+        "CREATE VIEW foreign_view AS SELECT id FROM private_notes;",
+        "CREATE TRIGGER foreign_trigger BEFORE DELETE ON private_note_tags
+         BEGIN SELECT 1; END;",
+    ] {
+        assert_tampered_layout_refused(seed_current, tamper);
+    }
+}
+
+#[test]
+fn both_engines_derive_the_same_title_around_control_characters() {
+    let (_dir, durable) = durable();
+    let sqlite = SqlitePrivateNotesStore::open(&durable).unwrap();
+    let memory = MemoryPrivateNotesStore::new();
+    for store in [&memory as &dyn PrivateNotesStore, &sqlite] {
+        for (n, body, title) in [
+            (1, "\u{0007}", "Untitled"),
+            (2, "# \x01\nReal heading", "Real heading"),
+        ] {
+            let decision = content(PrivateNoteKind::Decision, body, &[]);
+            assert_eq!(decision.title.as_deref(), Some(title), "{body:?}");
+            let note = create(
+                store,
+                n,
+                AGENT,
+                (None, None),
+                &decision,
+                "2026-11-26T10:00:00.000Z",
+            );
+            let stored = store.get_note(ORG, AGENT, false, &note.id).unwrap();
+            assert_eq!(stored.unwrap().title.as_deref(), Some(title), "{body:?}");
+        }
+        // A cleared title is derived again from the edited body the same way.
+        let patch = NotePatch {
+            title: Some(None),
+            body_markdown: Some("\x02\n## \x03 Heading \x04".into()),
+            ..NotePatch::default()
+        };
+        let edited = store
+            .edit_note(EditNoteCmd {
+                org_id: ORG,
+                caller_id: AGENT,
+                caller_is_person: false,
+                note_id: &uuid(2),
+                expected_revision: 1,
+                patch: &patch,
+                operation_id: &uuid(3000),
+                request_sha256: &"b".repeat(64),
+                now: "2026-11-26T11:00:00.000Z",
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(edited.title.as_deref(), Some("Heading"));
+    }
+}
+
+#[test]
+fn the_store_keeps_temporary_data_in_memory() {
+    let (_dir, durable) = durable();
+    let store = SqlitePrivateNotesStore::open(&durable).unwrap();
+    let conn = store.lock().unwrap();
+    let temp_store: i64 = conn
+        .query_row("PRAGMA temp_store", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(temp_store, 2, "MEMORY");
+}
+
+#[test]
+fn a_write_changes_only_the_authors_active_note_at_the_revision_read() {
+    use super::rows::{tombstone, update_content, Expected};
+    use crate::error::OfficeError;
+
+    let (_dir, durable) = durable();
+    let store = SqlitePrivateNotesStore::open(&durable).unwrap();
+    let body = content(PrivateNoteKind::Note, "Body", &[]);
+    let note = create(
+        &store,
+        1,
+        AGENT,
+        (None, None),
+        &body,
+        "2026-11-26T10:00:00.000Z",
+    );
+    let current = store.get_note(ORG, AGENT, false, &note.id).unwrap();
+    let later = "2026-11-26T11:00:00.000Z";
+    let edited =
+        current
+            .unwrap()
+            .with_content(&content(PrivateNoteKind::Plan, "Edited", &[]), 2, later);
+    let conn = store.lock().unwrap();
+    let key = (ORG, note.id.as_str());
+    let guarded = |result: Result<(), OfficeError>| matches!(result, Err(OfficeError::Invalid(msg)) if msg.contains("underneath its writer"));
+    for expected in [
+        Expected {
+            author_id: LEAD,
+            revision: 1,
+        },
+        Expected {
+            author_id: AGENT,
+            revision: 2,
+        },
+    ] {
+        assert!(guarded(update_content(&conn, expected, &edited)));
+        assert!(guarded(tombstone(&conn, key, expected, 2, later)));
+    }
+    let read = Expected {
+        author_id: AGENT,
+        revision: 1,
+    };
+    tombstone(&conn, key, read, 2, later).unwrap();
+    // A tombstone takes no further write, even at its own revision.
+    let at_tombstone = Expected {
+        author_id: AGENT,
+        revision: 2,
+    };
+    assert!(guarded(update_content(&conn, at_tombstone, &edited)));
+    assert!(guarded(tombstone(&conn, key, at_tombstone, 3, later)));
 }

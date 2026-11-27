@@ -231,6 +231,12 @@ pub enum PublishAttempt {
 /// Consumer-owned adapter boundary for the isolated private notes database (`doc-8`, `ENG-1`).
 /// Every engine enforces `ADR-0031` itself: an agent reads only its own notes.
 pub trait PrivateNotesStore: Send + Sync {
+    /// Whether this office holds private notes at all. `false` only on a satellite, where every
+    /// `tasks.notes.*` call fails closed with `Unavailable` before reaching the store.
+    fn available(&self) -> bool {
+        true
+    }
+
     fn create_note(
         &self,
         cmd: CreateNoteCmd<'_>,
@@ -282,15 +288,21 @@ pub trait PrivateNotesStore: Send + Sync {
 pub struct SatelliteRefusedPrivateNotesStore;
 
 impl SatelliteRefusedPrivateNotesStore {
-    fn refused() -> ApiError {
+    /// The refusal every `tasks.notes.*` call receives on a satellite: the notes exist only at
+    /// HQ, so the request must go there (`Unavailable`, never an authorization answer).
+    pub fn refused() -> ApiError {
         ApiError::new(
-            ErrorCode::NotAuthorized,
+            ErrorCode::Unavailable,
             "private notes are stored only at HQ and are unavailable on a satellite office",
         )
     }
 }
 
 impl PrivateNotesStore for SatelliteRefusedPrivateNotesStore {
+    fn available(&self) -> bool {
+        false
+    }
+
     fn create_note(
         &self,
         _cmd: CreateNoteCmd<'_>,

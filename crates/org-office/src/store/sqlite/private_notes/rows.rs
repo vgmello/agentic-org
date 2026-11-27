@@ -118,29 +118,54 @@ fn insert_tags(conn: &Connection, note: &PrivateNoteRecord) -> Result<(), Office
     Ok(())
 }
 
-/// Stores an author edit: the next revision's content, replacing every tag.
+/// What an author's write requires of the stored note besides being active: the caller is its
+/// author and read it at `revision` (`doc-79`, checked again by the `UPDATE` itself).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Expected<'a> {
+    pub author_id: &'a str,
+    pub revision: u64,
+}
+
+/// Exactly one active row must change: the author's note at the revision the writer read.
+fn changed_one(changed: usize) -> Result<(), OfficeError> {
+    if changed != 1 {
+        return Err(OfficeError::Invalid(
+            "private note changed underneath its writer",
+        ));
+    }
+    Ok(())
+}
+
+/// Stores an author edit: the next revision's content `note`, replacing every tag. Only the
+/// `expected` author's active note still at the expected revision is changed.
 pub(super) fn update_content(
     conn: &Connection,
+    expected: Expected<'_>,
     note: &PrivateNoteRecord,
 ) -> Result<(), OfficeError> {
-    conn.execute(
-        "UPDATE private_notes
-         SET revision = ?3, kind = ?4, title = ?5, why = ?6, alternatives = ?7,
-             body_markdown = ?8, updated_at = ?9
-         WHERE organization_id = ?1 AND id = ?2",
-        params![
-            note.organization_id,
-            note.id,
-            note.revision as i64,
-            note.kind.as_str(),
-            note.title,
-            note.why,
-            note.alternatives,
-            note.body_markdown,
-            note.updated_at,
-        ],
-    )
-    .map_err(OfficeError::storage)?;
+    let changed = conn
+        .execute(
+            "UPDATE private_notes
+             SET revision = ?3, kind = ?4, title = ?5, why = ?6, alternatives = ?7,
+                 body_markdown = ?8, updated_at = ?9
+             WHERE organization_id = ?1 AND id = ?2
+               AND author_id = ?10 AND revision = ?11 AND deleted_at IS NULL",
+            params![
+                note.organization_id,
+                note.id,
+                note.revision as i64,
+                note.kind.as_str(),
+                note.title,
+                note.why,
+                note.alternatives,
+                note.body_markdown,
+                note.updated_at,
+                expected.author_id,
+                expected.revision as i64,
+            ],
+        )
+        .map_err(OfficeError::storage)?;
+    changed_one(changed)?;
     conn.execute(
         "DELETE FROM private_note_tags WHERE organization_id = ?1 AND note_id = ?2",
         params![note.organization_id, note.id],
@@ -151,22 +176,32 @@ pub(super) fn update_content(
 
 /// Stores a revisioned tombstone (`PN-06`): every private text field is cleared, and the
 /// schema's `private_note_tombstone_clears_tags` trigger deletes the tags in the same statement.
+/// Only the `expected` author's active note still at the expected revision is changed.
 pub(super) fn tombstone(
     conn: &Connection,
-    org_id: &str,
-    note_id: &str,
+    (org_id, note_id): (&str, &str),
+    expected: Expected<'_>,
     revision: u64,
     deleted_at: &str,
 ) -> Result<(), OfficeError> {
-    conn.execute(
-        "UPDATE private_notes
-         SET revision = ?3, title = NULL, why = NULL, alternatives = NULL,
-             body_markdown = NULL, updated_at = ?4, deleted_at = ?4
-         WHERE organization_id = ?1 AND id = ?2",
-        params![org_id, note_id, revision as i64, deleted_at],
-    )
-    .map_err(OfficeError::storage)?;
-    Ok(())
+    let changed = conn
+        .execute(
+            "UPDATE private_notes
+             SET revision = ?3, title = NULL, why = NULL, alternatives = NULL,
+                 body_markdown = NULL, updated_at = ?4, deleted_at = ?4
+             WHERE organization_id = ?1 AND id = ?2
+               AND author_id = ?5 AND revision = ?6 AND deleted_at IS NULL",
+            params![
+                org_id,
+                note_id,
+                revision as i64,
+                deleted_at,
+                expected.author_id,
+                expected.revision as i64,
+            ],
+        )
+        .map_err(OfficeError::storage)?;
+    changed_one(changed)
 }
 
 pub(super) struct ReceiptRow {

@@ -62,6 +62,18 @@ fn a_title_is_derived_from_the_first_line_with_text() {
     assert_eq!(derive_title("###\nreal line"), "real line");
     assert_eq!(derive_title("###"), "###");
     assert_eq!(derive_title("tab\tinside"), "tab inside");
+    // Control characters read as spaces before a line is trimmed and chosen.
+    assert_eq!(derive_title("\u{0007}"), "Untitled");
+    assert_eq!(derive_title("\u{0001}\u{0007} \u{007f}"), "Untitled");
+    assert_eq!(derive_title("# \x01\nReal heading"), "Real heading");
+    assert_eq!(
+        derive_title("\x01 # \x02\n\x03Next\x04line\x05"),
+        "Next line"
+    );
+    assert_eq!(derive_title("\u{0085}Lead\u{009f}"), "Lead");
+    let bell = NoteContent::from_add(&add("\u{0007}")).unwrap();
+    assert_eq!(bell.title.as_deref(), Some("Untitled"));
+    assert_eq!(bell.body_markdown, "\u{0007}");
     let long = "é".repeat(300);
     let derived = derive_title(&long);
     assert_eq!(derived.chars().count(), 120);
@@ -420,9 +432,15 @@ fn a_task_less_note_is_not_publishable_and_a_satellite_refuses_everything() {
         request_sha256: "sha",
         now: "t",
     };
+    assert!(!satellite.available());
+    assert!(memory::MemoryPrivateNotesStore::new().available());
     assert_eq!(
         satellite.create_note(cmd).unwrap().unwrap_err().code,
-        ErrorCode::NotAuthorized
+        ErrorCode::Unavailable
+    );
+    assert_eq!(
+        SatelliteRefusedPrivateNotesStore::refused().code,
+        ErrorCode::Unavailable
     );
     let page = satellite.list_notes(&query("person", true, None)).unwrap();
     assert!(page.notes.is_empty() && page.total == 0 && page.next_cursor.is_none());

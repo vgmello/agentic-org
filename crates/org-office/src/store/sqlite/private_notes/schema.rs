@@ -2,6 +2,8 @@
 //! recognizing it, and the one-time upgrade of a `TASK-50` task-only notes database
 //! (`private_task_notes`) to the `TASK-111` layout (`private_notes` + `private_note_tags`).
 
+use std::collections::BTreeSet;
+
 use rusqlite::{Connection, TransactionBehavior};
 
 use crate::error::OfficeError;
@@ -21,14 +23,25 @@ const CURRENT_TABLES: [&str; 5] = [
     "private_notes",
 ];
 
-const CURRENT_NOTES: &str = "private_notes";
-const TASK50_NOTES: &str = "private_task_notes";
-
 const TASK50_TABLES: [&str; 4] = [
     "private_note_authors",
     "private_note_command_receipts",
     "private_note_tasks",
     "private_task_notes",
+];
+
+/// The triggers the `TASK-50` schema created, all of which a `TASK-50` database holds.
+const TASK50_TRIGGERS: [&str; 10] = [
+    "private_note_pending_publication",
+    "private_note_tasks_no_undelete",
+    "private_notes_initial_state",
+    "private_notes_keep_tombstone",
+    "private_notes_no_replace",
+    "private_notes_update_contract",
+    "private_receipt_matches_author",
+    "private_receipts_finish_once",
+    "private_receipts_no_delete",
+    "private_receipts_no_replace",
 ];
 
 /// Copies a `TASK-50` database's rows aside and drops its tables (children first, so the
@@ -95,36 +108,46 @@ fn ddl_parts() -> Result<(&'static str, &'static str), OfficeError> {
     Ok((tables, triggers))
 }
 
-fn expected_triggers() -> usize {
-    DDL.matches("CREATE TRIGGER").count()
+/// The name of every trigger [`DDL`] creates.
+fn current_triggers() -> Vec<&'static str> {
+    DDL.split("CREATE TRIGGER ")
+        .skip(1)
+        .filter_map(|rest| rest.split_whitespace().next())
+        .collect()
 }
 
-/// Recognizes the database's layout by the tables each schema creates (other tables do not
-/// matter); `None` for anything else, such as a foreign or partially created schema.
-pub(crate) fn layout(conn: &Connection) -> Result<Option<Layout>, OfficeError> {
+/// The names of the database's own objects of `kind` (`table`, `trigger` or `view`).
+fn object_names(conn: &Connection, kind: &str) -> Result<BTreeSet<String>, OfficeError> {
     let mut statement = conn
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+        .prepare("SELECT name FROM main.sqlite_master WHERE type = ?1 AND name NOT GLOB 'sqlite_*'")
         .map_err(OfficeError::storage)?;
-    let tables: Vec<String> = statement
-        .query_map([], |row| row.get(0))
+    let names = statement
+        .query_map([kind], |row| row.get(0))
         .map_err(OfficeError::storage)?
         .collect::<Result<_, _>>()
         .map_err(OfficeError::storage)?;
-    let triggers: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(OfficeError::storage)?;
-    let triggers = usize::try_from(triggers).unwrap_or(0);
-    let has = |name: &str| tables.iter().any(|table| table == name);
-    let has_all = |names: &[&str]| names.iter().all(|name| has(name));
-    Ok(if tables.is_empty() && triggers == 0 {
+    Ok(names)
+}
+
+/// Whether `found` holds exactly the `expected` names, no more and no fewer.
+fn exactly(found: &BTreeSet<String>, expected: &[&str]) -> bool {
+    found.len() == expected.len() && expected.iter().all(|name| found.contains(*name))
+}
+
+/// Recognizes the database's layout by exactly the tables and triggers each schema creates
+/// (neither creates a view); `None` for anything else, such as a foreign, mixed or partially
+/// created schema.
+pub(crate) fn layout(conn: &Connection) -> Result<Option<Layout>, OfficeError> {
+    if !object_names(conn, "view")?.is_empty() {
+        return Ok(None);
+    }
+    let tables = object_names(conn, "table")?;
+    let triggers = object_names(conn, "trigger")?;
+    Ok(if tables.is_empty() && triggers.is_empty() {
         Some(Layout::Empty)
-    } else if has_all(&CURRENT_TABLES) && !has(TASK50_NOTES) && triggers >= expected_triggers() {
+    } else if exactly(&tables, &CURRENT_TABLES) && exactly(&triggers, &current_triggers()) {
         Some(Layout::Current)
-    } else if has_all(&TASK50_TABLES) && !has(CURRENT_NOTES) {
+    } else if exactly(&tables, &TASK50_TABLES) && exactly(&triggers, &TASK50_TRIGGERS) {
         Some(Layout::Task50)
     } else {
         None

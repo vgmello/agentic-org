@@ -198,19 +198,31 @@ fn rationale(raw: Option<&str>, field: &str) -> Result<Option<String>, ApiError>
     Ok(Some(text.to_owned()))
 }
 
+/// The body's lines with every control character turned into a space, trimmed, blank ones
+/// dropped: what a derived title is chosen from.
+fn text_lines(body: &str) -> impl Iterator<Item = String> + '_ {
+    body.lines().filter_map(|line| {
+        let flat: String = line
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect();
+        let text = flat.trim();
+        (!text.is_empty()).then(|| text.to_owned())
+    })
+}
+
 /// The title of an untitled note: its first line with text (Markdown heading marks dropped),
-/// cut to 120 characters. A non-empty body always yields a non-empty title.
+/// control characters read as spaces, cut to 120 characters. A body with no text at all is
+/// `Untitled`, so a derived title is never blank on any engine.
 pub fn derive_title(body: &str) -> String {
-    let lines = || body.lines().map(str::trim).filter(|line| !line.is_empty());
-    let line = lines()
-        .map(|line| line.trim_start_matches('#').trim())
-        .find(|line| !line.is_empty())
-        .or_else(|| lines().next())
-        .unwrap_or("Untitled");
-    let flat: String = line
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
+    let heading = |line: String| {
+        let text = line.trim_start_matches('#').trim();
+        (!text.is_empty()).then(|| text.to_owned())
+    };
+    let flat = text_lines(body)
+        .find_map(heading)
+        .or_else(|| text_lines(body).next())
+        .unwrap_or_else(|| "Untitled".to_owned());
     if flat.chars().count() <= PRIVATE_NOTE_DERIVED_TITLE_MAX_CHARS {
         return flat;
     }

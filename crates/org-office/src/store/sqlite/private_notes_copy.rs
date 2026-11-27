@@ -70,6 +70,10 @@ fn open_read_only(path: &Path) -> Result<Connection, OfficeError> {
     let conn = Connection::open_with_flags(path, flags).map_err(OfficeError::storage)?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(OfficeError::storage)?;
+    // Private text never spills to a temporary file outside `durable/private/` while a copy
+    // is written or checked.
+    conn.execute_batch("PRAGMA temp_store = MEMORY;")
+        .map_err(OfficeError::storage)?;
     Ok(conn)
 }
 
