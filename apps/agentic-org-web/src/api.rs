@@ -15,6 +15,7 @@ mod git_routes;
 mod hiring_routes;
 mod hq_context;
 mod instance_routes;
+mod note_routes;
 mod office_routes;
 mod open_routes;
 mod org_routes;
@@ -162,6 +163,7 @@ pub enum Route {
     Sessions(session_routes::SessionRoute),
     Chat(chat_routes::ChatRoute),
     Tasks(task_routes::TaskRoute),
+    Notes(note_routes::NoteRoute),
     Git(git_routes::GitRoute),
     Process(process_routes::ProcessRoute),
     Cost(cost_routes::CostRoute),
@@ -203,6 +205,7 @@ pub enum Call {
     Sessions(session_routes::SessionCall),
     Chat(chat_routes::ChatCall),
     Tasks(task_routes::TaskCall),
+    Notes(note_routes::NoteCall),
     Git(git_routes::GitCall),
     Process(process_routes::ProcessCall),
     Cost(cost_routes::CostCall),

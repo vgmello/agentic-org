@@ -1,16 +1,20 @@
 //! In-memory [`PrivateNotesStore`] adapter enforcing the exact `private-notes-schema.sql`
-//! state machine, receipt idempotency, tombstones, and `ADR-0031` boundaries for tests (`ENG-2`).
+//! state machine, tags, receipt idempotency, tombstones, and `ADR-0031` boundaries for tests
+//! (`ENG-2`).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use org_proto::{ApiError, ErrorCode};
 
 use crate::error::OfficeError;
 
+use super::query::newest_first;
 use super::{
-    non_author_mutation_error, parse_receipt_error_code, BeginPublishCmd, CreateNoteCmd,
-    DeleteNoteCmd, EditNoteCmd, PrivateNoteRecord, PrivateNotesStore, PublishAttempt,
+    check_author_mutation, check_receipt_reuse, monotonic_ts, next_revision,
+    parse_receipt_error_code, replayed_note, require_publishable, Accepted, BeginPublishCmd,
+    CreateNoteCmd, DeleteNoteCmd, EditNoteCmd, NotePage, NoteQuery, PrivateNoteRecord,
+    PrivateNotesStore, PublishAttempt,
 };
 
 #[derive(Debug, Clone)]
@@ -26,6 +30,26 @@ struct ReceiptRow {
     finished_at: Option<String>,
 }
 
+impl ReceiptRow {
+    fn completed(cmd: (&'static str, &str), note_id: &str, result_revision: u64, at: &str) -> Self {
+        Self {
+            request_sha256: cmd.1.to_owned(),
+            command: cmd.0,
+            note_id: note_id.to_owned(),
+            result_revision,
+            state: ReceiptState::Completed,
+            shared_comment_id: None,
+            error_code: None,
+            created_at: at.to_owned(),
+            finished_at: Some(at.to_owned()),
+        }
+    }
+
+    fn time(&self) -> &str {
+        self.finished_at.as_deref().unwrap_or(&self.created_at)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReceiptState {
     Pending,
@@ -33,12 +57,70 @@ enum ReceiptState {
     Rejected,
 }
 
+type ReceiptKey = (String, String, String);
+
 #[derive(Default)]
 struct State {
     authors: BTreeSet<(String, String)>,
     tasks: BTreeMap<(String, String), bool>,
     notes: BTreeMap<(String, String), PrivateNoteRecord>,
-    receipts: BTreeMap<(String, String, String), ReceiptRow>,
+    receipts: BTreeMap<ReceiptKey, ReceiptRow>,
+}
+
+impl State {
+    fn note(&self, org_id: &str, note_id: &str) -> Option<&PrivateNoteRecord> {
+        self.notes.get(&(org_id.to_owned(), note_id.to_owned()))
+    }
+
+    fn put(&mut self, note: PrivateNoteRecord) {
+        self.notes
+            .insert((note.organization_id.clone(), note.id.clone()), note);
+    }
+
+    fn has_pending_publish(&self, org_id: &str, note_id: &str) -> bool {
+        self.receipts.iter().any(|((o, _, _), r)| {
+            o == org_id && r.note_id == note_id && r.state == ReceiptState::Pending
+        })
+    }
+
+    /// The note an exact replay of `existing` answers, or the refusal of a reused command.
+    fn replay(
+        &self,
+        org_id: &str,
+        existing: &ReceiptRow,
+        cmd: (&str, &str),
+        accepted: Accepted<'_>,
+    ) -> Result<PrivateNoteRecord, ApiError> {
+        check_receipt_reuse(existing.command, &existing.request_sha256, cmd.0, cmd.1)?;
+        let current = self
+            .note(org_id, &existing.note_id)
+            .ok_or_else(|| ApiError::new(ErrorCode::StorageError, "replayed note missing"))?;
+        Ok(replayed_note(
+            current,
+            existing.result_revision,
+            existing.time(),
+            accepted,
+        ))
+    }
+
+    /// Validates an author mutation against the stored note.
+    fn author_mutation(
+        &self,
+        org_id: &str,
+        note_id: &str,
+        caller: (&str, bool),
+        expected_revision: u64,
+        pending_msg: &str,
+    ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
+        check_author_mutation(
+            self.note(org_id, note_id).cloned(),
+            caller.0,
+            caller.1,
+            expected_revision,
+            || Ok(self.has_pending_publish(org_id, note_id)),
+            pending_msg,
+        )
+    }
 }
 
 /// Engine-independent in-memory private notes store for `EngineChoice::Memory` tests.
@@ -52,96 +134,19 @@ impl MemoryPrivateNotesStore {
         Self::default()
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, State>, OfficeError> {
+    fn lock(&self) -> Result<MutexGuard<'_, State>, OfficeError> {
         self.state
             .lock()
             .map_err(|_| OfficeError::Invalid("private notes store lock poisoned"))
     }
 }
 
-fn check_receipt_reuse(
-    existing: &ReceiptRow,
-    expected_cmd: &str,
-    request_sha256: &str,
-) -> Result<(), ApiError> {
-    if existing.command != expected_cmd || existing.request_sha256 != request_sha256 {
-        return Err(ApiError::new(
-            ErrorCode::OperationReused,
-            "command_id reused with different private note request",
-        ));
-    }
-    Ok(())
-}
-
-fn has_pending_publish(state: &State, org_id: &str, note_id: &str) -> bool {
-    state.receipts.iter().any(|((o, _, _), r)| {
-        o == org_id && r.note_id == note_id && r.state == ReceiptState::Pending
-    })
-}
-
-fn monotonic_ts(now: &str, prev: &str) -> String {
-    if now >= prev {
-        now.to_owned()
-    } else {
-        prev.to_owned()
-    }
-}
-
-fn reconstruct_accepted_note(
-    current: &PrivateNoteRecord,
-    receipt: &ReceiptRow,
-    accepted_body: Option<&str>,
-) -> PrivateNoteRecord {
-    let ts = receipt
-        .finished_at
-        .clone()
-        .unwrap_or_else(|| receipt.created_at.clone());
-    PrivateNoteRecord {
-        organization_id: current.organization_id.clone(),
-        id: current.id.clone(),
-        schema_version: current.schema_version,
-        revision: receipt.result_revision,
-        task_id: current.task_id.clone(),
-        author_id: current.author_id.clone(),
-        body_markdown: accepted_body.map(str::to_owned),
-        created_at: current.created_at.clone(),
-        updated_at: ts.clone(),
-        deleted_at: accepted_body.is_none().then_some(ts),
-    }
-}
-
-fn validate_author_mutation<'a>(
-    st: &'a State,
-    org_id: &str,
-    note_id: &str,
-    caller_id: &str,
-    caller_is_person: bool,
-    expected_revision: u64,
-    pending_msg: &str,
-) -> Result<&'a PrivateNoteRecord, ApiError> {
-    let nkey = (org_id.to_owned(), note_id.to_owned());
-    let Some(existing) = st.notes.get(&nkey) else {
-        return Err(ApiError::new(ErrorCode::NotFound, "private note not found"));
-    };
-    if existing.deleted_at.is_some() {
-        return Err(ApiError::new(ErrorCode::NotFound, "private note not found"));
-    }
-    if existing.author_id != caller_id {
-        return Err(non_author_mutation_error(caller_is_person));
-    }
-    if has_pending_publish(st, org_id, note_id) {
-        return Err(ApiError::new(ErrorCode::Conflict, pending_msg));
-    }
-    if existing.revision != expected_revision {
-        return Err(ApiError::new(
-            ErrorCode::Conflict,
-            format!(
-                "stale expected_revision {expected_revision}: note is at revision {}",
-                existing.revision
-            ),
-        ));
-    }
-    Ok(existing)
+fn receipt_key(org_id: &str, author_id: &str, operation_id: &str) -> ReceiptKey {
+    (
+        org_id.to_owned(),
+        author_id.to_owned(),
+        operation_id.to_owned(),
+    )
 }
 
 impl PrivateNotesStore for MemoryPrivateNotesStore {
@@ -150,70 +155,34 @@ impl PrivateNotesStore for MemoryPrivateNotesStore {
         cmd: CreateNoteCmd<'_>,
     ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
         let mut st = self.lock()?;
-        let rkey = (
-            cmd.org_id.to_owned(),
-            cmd.author_id.to_owned(),
-            cmd.operation_id.to_owned(),
-        );
+        let rkey = receipt_key(cmd.org_id, cmd.author_id, cmd.operation_id);
         if let Some(existing) = st.receipts.get(&rkey) {
-            if let Err(e) = check_receipt_reuse(existing, "create", cmd.request_sha256) {
-                return Ok(Err(e));
-            }
-            let nkey = (cmd.org_id.to_owned(), existing.note_id.clone());
-            let Some(current) = st.notes.get(&nkey) else {
-                return Ok(Err(ApiError::new(
-                    ErrorCode::StorageError,
-                    "replayed note missing",
-                )));
-            };
-            return Ok(Ok(reconstruct_accepted_note(
-                current,
+            let request = ("create", cmd.request_sha256);
+            return Ok(st.replay(
+                cmd.org_id,
                 existing,
-                Some(cmd.body_markdown),
-            )));
+                request,
+                Accepted::Created(cmd.content),
+            ));
         }
-
-        let nkey = (cmd.org_id.to_owned(), cmd.note_id.to_owned());
-        if st.notes.contains_key(&nkey) {
+        if st.note(cmd.org_id, cmd.note_id).is_some() {
             return Ok(Err(ApiError::new(
                 ErrorCode::AlreadyExists,
                 format!("private note `{}` already exists", cmd.note_id),
             )));
         }
-
         st.authors
             .insert((cmd.org_id.to_owned(), cmd.author_id.to_owned()));
-        st.tasks
-            .entry((cmd.org_id.to_owned(), cmd.task_id.to_owned()))
-            .or_insert(false);
-
-        let record = PrivateNoteRecord {
-            organization_id: cmd.org_id.to_owned(),
-            id: cmd.note_id.to_owned(),
-            schema_version: 1,
-            revision: 1,
-            task_id: cmd.task_id.to_owned(),
-            author_id: cmd.author_id.to_owned(),
-            body_markdown: Some(cmd.body_markdown.to_owned()),
-            created_at: cmd.now.to_owned(),
-            updated_at: cmd.now.to_owned(),
-            deleted_at: None,
-        };
-        st.notes.insert(nkey, record.clone());
-        st.receipts.insert(
-            rkey,
-            ReceiptRow {
-                request_sha256: cmd.request_sha256.to_owned(),
-                command: "create",
-                note_id: cmd.note_id.to_owned(),
-                result_revision: 1,
-                state: ReceiptState::Completed,
-                shared_comment_id: None,
-                error_code: None,
-                created_at: cmd.now.to_owned(),
-                finished_at: Some(cmd.now.to_owned()),
-            },
-        );
+        if let Some(task_id) = cmd.task_id {
+            st.tasks
+                .entry((cmd.org_id.to_owned(), task_id.to_owned()))
+                .or_insert(false);
+        }
+        let record = PrivateNoteRecord::new_active(&cmd);
+        st.put(record.clone());
+        let receipt =
+            ReceiptRow::completed(("create", cmd.request_sha256), cmd.note_id, 1, cmd.now);
+        st.receipts.insert(rkey, receipt);
         Ok(Ok(record))
     }
 
@@ -222,74 +191,38 @@ impl PrivateNotesStore for MemoryPrivateNotesStore {
         cmd: EditNoteCmd<'_>,
     ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
         let mut st = self.lock()?;
-        let rkey = (
-            cmd.org_id.to_owned(),
-            cmd.caller_id.to_owned(),
-            cmd.operation_id.to_owned(),
-        );
+        let rkey = receipt_key(cmd.org_id, cmd.caller_id, cmd.operation_id);
         if let Some(existing) = st.receipts.get(&rkey) {
-            if let Err(e) = check_receipt_reuse(existing, "edit", cmd.request_sha256) {
-                return Ok(Err(e));
-            }
-            let nkey = (cmd.org_id.to_owned(), existing.note_id.clone());
-            let Some(current) = st.notes.get(&nkey) else {
-                return Ok(Err(ApiError::new(
-                    ErrorCode::StorageError,
-                    "replayed note missing",
-                )));
-            };
-            return Ok(Ok(reconstruct_accepted_note(
-                current,
-                existing,
-                Some(cmd.body_markdown),
-            )));
+            let request = ("edit", cmd.request_sha256);
+            return Ok(st.replay(cmd.org_id, existing, request, Accepted::Edited(cmd.patch)));
         }
-
-        let existing_note = match validate_author_mutation(
-            &st,
+        let existing = match st.author_mutation(
             cmd.org_id,
             cmd.note_id,
-            cmd.caller_id,
-            cmd.caller_is_person,
+            (cmd.caller_id, cmd.caller_is_person),
             cmd.expected_revision,
             "resolve pending publication before editing private note",
-        ) {
-            Ok(n) => n.clone(),
+        )? {
+            Ok(note) => note,
             Err(e) => return Ok(Err(e)),
         };
-        if existing_note.revision >= i64::MAX as u64 {
-            return Ok(Err(ApiError::new(
-                ErrorCode::Conflict,
-                "private note revision limit reached",
-            )));
-        }
-
-        let updated_at = monotonic_ts(cmd.now, &existing_note.updated_at);
-        let next_rev = existing_note.revision + 1;
-        let updated = PrivateNoteRecord {
-            revision: next_rev,
-            body_markdown: Some(cmd.body_markdown.to_owned()),
-            updated_at: updated_at.clone(),
-            ..existing_note
+        let next_rev = match next_revision(existing.revision) {
+            Ok(rev) => rev,
+            Err(e) => return Ok(Err(e)),
         };
-        st.notes.insert(
-            (cmd.org_id.to_owned(), cmd.note_id.to_owned()),
-            updated.clone(),
+        let Some(content) = cmd.patch.apply(&existing) else {
+            return Err(OfficeError::Invalid("active private note without a body"));
+        };
+        let updated_at = monotonic_ts(cmd.now, &existing.updated_at);
+        let updated = existing.with_content(&content, next_rev, &updated_at);
+        st.put(updated.clone());
+        let receipt = ReceiptRow::completed(
+            ("edit", cmd.request_sha256),
+            cmd.note_id,
+            next_rev,
+            &updated_at,
         );
-        st.receipts.insert(
-            rkey,
-            ReceiptRow {
-                request_sha256: cmd.request_sha256.to_owned(),
-                command: "edit",
-                note_id: cmd.note_id.to_owned(),
-                result_revision: next_rev,
-                state: ReceiptState::Completed,
-                shared_comment_id: None,
-                error_code: None,
-                created_at: updated_at.clone(),
-                finished_at: Some(updated_at),
-            },
-        );
+        st.receipts.insert(rkey, receipt);
         Ok(Ok(updated))
     }
 
@@ -298,71 +231,35 @@ impl PrivateNotesStore for MemoryPrivateNotesStore {
         cmd: DeleteNoteCmd<'_>,
     ) -> Result<Result<PrivateNoteRecord, ApiError>, OfficeError> {
         let mut st = self.lock()?;
-        let rkey = (
-            cmd.org_id.to_owned(),
-            cmd.caller_id.to_owned(),
-            cmd.operation_id.to_owned(),
-        );
+        let rkey = receipt_key(cmd.org_id, cmd.caller_id, cmd.operation_id);
         if let Some(existing) = st.receipts.get(&rkey) {
-            if let Err(e) = check_receipt_reuse(existing, "delete", cmd.request_sha256) {
-                return Ok(Err(e));
-            }
-            let nkey = (cmd.org_id.to_owned(), existing.note_id.clone());
-            let Some(current) = st.notes.get(&nkey) else {
-                return Ok(Err(ApiError::new(
-                    ErrorCode::StorageError,
-                    "replayed note missing",
-                )));
-            };
-            return Ok(Ok(reconstruct_accepted_note(current, existing, None)));
+            let request = ("delete", cmd.request_sha256);
+            return Ok(st.replay(cmd.org_id, existing, request, Accepted::Deleted));
         }
-
-        let existing_note = match validate_author_mutation(
-            &st,
+        let existing = match st.author_mutation(
             cmd.org_id,
             cmd.note_id,
-            cmd.caller_id,
-            cmd.caller_is_person,
+            (cmd.caller_id, cmd.caller_is_person),
             cmd.expected_revision,
             "resolve pending publication before deleting private note",
-        ) {
-            Ok(n) => n.clone(),
+        )? {
+            Ok(note) => note,
             Err(e) => return Ok(Err(e)),
         };
-        if existing_note.revision >= i64::MAX as u64 {
-            return Ok(Err(ApiError::new(
-                ErrorCode::Conflict,
-                "private note revision limit reached",
-            )));
-        }
-
-        let deleted_at = monotonic_ts(cmd.now, &existing_note.updated_at);
-        let next_rev = existing_note.revision + 1;
-        let tombstone = PrivateNoteRecord {
-            revision: next_rev,
-            body_markdown: None,
-            updated_at: deleted_at.clone(),
-            deleted_at: Some(deleted_at.clone()),
-            ..existing_note
+        let next_rev = match next_revision(existing.revision) {
+            Ok(rev) => rev,
+            Err(e) => return Ok(Err(e)),
         };
-        st.notes.insert(
-            (cmd.org_id.to_owned(), cmd.note_id.to_owned()),
-            tombstone.clone(),
+        let deleted_at = monotonic_ts(cmd.now, &existing.updated_at);
+        let tombstone = existing.tombstone(next_rev, &deleted_at);
+        st.put(tombstone.clone());
+        let receipt = ReceiptRow::completed(
+            ("delete", cmd.request_sha256),
+            cmd.note_id,
+            next_rev,
+            &deleted_at,
         );
-        st.receipts.insert(
-            rkey,
-            ReceiptRow {
-                request_sha256: cmd.request_sha256.to_owned(),
-                command: "delete",
-                note_id: cmd.note_id.to_owned(),
-                result_revision: next_rev,
-                state: ReceiptState::Completed,
-                shared_comment_id: None,
-                error_code: None,
-                created_at: deleted_at.clone(),
-                finished_at: Some(deleted_at),
-            },
-        );
+        st.receipts.insert(rkey, receipt);
         Ok(Ok(tombstone))
     }
 
@@ -374,52 +271,26 @@ impl PrivateNotesStore for MemoryPrivateNotesStore {
         note_id: &str,
     ) -> Result<Option<PrivateNoteRecord>, OfficeError> {
         let st = self.lock()?;
-        let Some(note) = st.notes.get(&(org_id.to_owned(), note_id.to_owned())) else {
-            return Ok(None);
-        };
-        if note.deleted_at.is_some() {
-            return Ok(None);
-        }
-        if !caller_is_person && note.author_id != caller_id {
-            return Ok(None);
-        }
-        Ok(Some(note.clone()))
+        Ok(st
+            .note(org_id, note_id)
+            .filter(|n| n.deleted_at.is_none())
+            .filter(|n| caller_is_person || n.author_id == caller_id)
+            .cloned())
     }
 
-    fn list_notes(
-        &self,
-        org_id: &str,
-        caller_id: &str,
-        caller_is_person: bool,
-        task_id: &str,
-        author_filter: Option<&str>,
-    ) -> Result<Vec<PrivateNoteRecord>, OfficeError> {
+    fn list_notes(&self, query: &NoteQuery<'_>) -> Result<NotePage, OfficeError> {
         let st = self.lock()?;
-        if !caller_is_person {
-            if let Some(filter) = author_filter {
-                if filter != caller_id {
-                    return Ok(Vec::new());
-                }
-            }
-        }
-        let mut out: Vec<PrivateNoteRecord> = st
-            .notes
-            .values()
-            .filter(|n| {
-                n.organization_id == org_id
-                    && n.task_id == task_id
-                    && n.deleted_at.is_none()
-                    && (caller_is_person || n.author_id == caller_id)
-                    && author_filter.is_none_or(|a| n.author_id == a)
-            })
+        let mut matched: Vec<&PrivateNoteRecord> =
+            st.notes.values().filter(|n| query.matches(n)).collect();
+        matched.sort_by(|a, b| newest_first(a, b));
+        let total = matched.len() as u64;
+        let candidates = matched
+            .into_iter()
+            .filter(|n| query.is_after_cursor(n))
+            .take(query.limit.saturating_add(1))
             .cloned()
             .collect();
-        out.sort_by(|a, b| {
-            a.updated_at
-                .cmp(&b.updated_at)
-                .then_with(|| a.id.cmp(&b.id))
-        });
-        Ok(out)
+        Ok(NotePage::from_candidates(candidates, total, query.limit))
     }
 
     fn begin_publish(
@@ -427,21 +298,21 @@ impl PrivateNotesStore for MemoryPrivateNotesStore {
         cmd: BeginPublishCmd<'_>,
     ) -> Result<Result<PublishAttempt, ApiError>, OfficeError> {
         let mut st = self.lock()?;
-        let rkey = (
-            cmd.org_id.to_owned(),
-            cmd.caller_id.to_owned(),
-            cmd.operation_id.to_owned(),
-        );
+        let rkey = receipt_key(cmd.org_id, cmd.caller_id, cmd.operation_id);
         if let Some(existing) = st.receipts.get(&rkey).cloned() {
-            if let Err(e) = check_receipt_reuse(&existing, "publish", cmd.request_sha256) {
+            if let Err(e) = check_receipt_reuse(
+                existing.command,
+                &existing.request_sha256,
+                "publish",
+                cmd.request_sha256,
+            ) {
                 return Ok(Err(e));
             }
             let shared_comment_id = existing.shared_comment_id.unwrap_or_default();
             let note = st
-                .notes
-                .get(&(cmd.org_id.to_owned(), existing.note_id))
+                .note(cmd.org_id, &existing.note_id)
                 .cloned()
-                .ok_or_else(|| OfficeError::Invalid("replayed publish note missing"))?;
+                .ok_or(OfficeError::Invalid("replayed publish note missing"))?;
             return match existing.state {
                 ReceiptState::Completed => Ok(Ok(PublishAttempt::AlreadyCompleted {
                     note,
@@ -459,18 +330,19 @@ impl PrivateNotesStore for MemoryPrivateNotesStore {
             };
         }
 
-        let note = match validate_author_mutation(
-            &st,
+        let note = match st.author_mutation(
             cmd.org_id,
             cmd.note_id,
-            cmd.caller_id,
-            cmd.caller_is_person,
+            (cmd.caller_id, cmd.caller_is_person),
             cmd.expected_revision,
             "another publication of this private note is already pending",
-        ) {
-            Ok(n) => n.clone(),
+        )? {
+            Ok(note) => note,
             Err(e) => return Ok(Err(e)),
         };
+        if let Err(e) = require_publishable(&note) {
+            return Ok(Err(e));
+        }
         let comment_used = st.receipts.iter().any(|((o, _, _), r)| {
             o == cmd.org_id && r.shared_comment_id.as_deref() == Some(cmd.comment_id)
         });
@@ -510,11 +382,7 @@ impl PrivateNotesStore for MemoryPrivateNotesStore {
         now: &str,
     ) -> Result<(), OfficeError> {
         let mut st = self.lock()?;
-        let rkey = (
-            org_id.to_owned(),
-            author_id.to_owned(),
-            operation_id.to_owned(),
-        );
+        let rkey = receipt_key(org_id, author_id, operation_id);
         if let Some(row) = st.receipts.get_mut(&rkey) {
             if row.state == ReceiptState::Pending {
                 row.state = if error_code.is_some() {

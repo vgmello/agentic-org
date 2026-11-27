@@ -26,7 +26,7 @@ use crate::store::open::EngineChoice;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(50_000);
 
-fn next_uuid() -> String {
+pub(super) fn next_uuid() -> String {
     let n = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let ms = CREATION_AT.0 + n;
     let mut b = [0u8; 16];
@@ -41,19 +41,19 @@ fn next_uuid() -> String {
     )
 }
 
-struct PrivateNoteFixture {
+pub(super) struct PrivateNoteFixture {
     _tmp: tempfile::TempDir,
     folder: std::path::PathBuf,
-    roots: DataRoots,
+    pub(super) roots: DataRoots,
     custody: Custody,
-    office: Office,
-    owner: String,
-    agent_a: String,
-    agent_b: String,
-    task_key: String,
+    pub(super) office: Office,
+    pub(super) owner: String,
+    pub(super) agent_a: String,
+    pub(super) agent_b: String,
+    pub(super) task_key: String,
 }
 
-fn seed_fixture(engine: EngineChoice) -> PrivateNoteFixture {
+pub(super) fn seed_fixture(engine: EngineChoice) -> PrivateNoteFixture {
     let tmp = tempfile::tempdir().expect("tempdir");
     let (folder, roots) = places(tmp.path());
     std::fs::create_dir_all(&roots.durable).unwrap();
@@ -174,7 +174,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
                 task: f.task_key.clone(),
                 note_id: note_id.clone(),
                 body_markdown: format!("Agent A plan: {secret}"),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap()
@@ -192,7 +193,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
                 task: f.task_key.clone(),
                 note_id: note_id.clone(),
                 body_markdown: format!("Agent A plan: {secret}"),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap()
@@ -207,7 +209,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
                 task: f.task_key.clone(),
                 note_id: note_id.clone(),
                 body_markdown: "Different body".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap_err();
@@ -221,7 +224,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
             TasksNotesListParams {
                 task: f.task_key.clone(),
                 author_id: None,
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap();
@@ -235,7 +239,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
             TasksNotesListParams {
                 task: f.task_key.clone(),
                 author_id: Some(f.agent_a.clone()),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap();
@@ -277,7 +282,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
                 note_id: note_id.clone(),
                 expected_revision: 1,
                 body_markdown: "Human overwrite".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap_err();
@@ -291,7 +297,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
                 note_id: note_id.clone(),
                 expected_revision: 1,
                 body_markdown: "Peer agent overwrite".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap_err();
@@ -307,7 +314,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
                 note_id: note_id.clone(),
                 expected_revision: 99,
                 body_markdown: "Stale".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap_err();
@@ -321,7 +329,8 @@ fn assert_pn01_pn02_taskauth4_and_6(f: &PrivateNoteFixture, secret: &str) -> Str
                 note_id: note_id.clone(),
                 expected_revision: 1,
                 body_markdown: format!("Refined plan: {secret}"),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap()
@@ -356,7 +365,8 @@ fn assert_pn03_pn05_pn06_and_taskauth5_7(f: &PrivateNoteFixture, note_id: &str, 
             TasksNotesListParams {
                 task: f.task_key.clone(),
                 author_id: None,
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap()
@@ -433,7 +443,8 @@ fn assert_pn03_pn05_pn06_and_taskauth5_7(f: &PrivateNoteFixture, note_id: &str, 
                 task: f.task_key.clone(),
                 note_id: temp_id.clone(),
                 body_markdown: "Scratchpad to delete".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap();
@@ -460,7 +471,7 @@ fn assert_pn03_pn05_pn06_and_taskauth5_7(f: &PrivateNoteFixture, note_id: &str, 
     );
 }
 
-fn dir_contains_bytes_excluding(root: &Path, skip_dir: &Path, needle: &[u8]) -> bool {
+pub(super) fn dir_contains_bytes_excluding(root: &Path, skip_dir: &Path, needle: &[u8]) -> bool {
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         if dir == skip_dir {
@@ -503,7 +514,8 @@ fn pn_01_through_06_and_taskauth_4_through_7_on_memory_and_sqlite() {
                     task: f.task_key.clone(),
                     note_id: unpub_id.clone(),
                     body_markdown: format!("Never published: {unpublished_secret}"),
-                },
+                }
+                .into(),
             )
             .unwrap()
             .unwrap();
@@ -606,7 +618,7 @@ fn pn_01_through_06_and_taskauth_4_through_7_on_memory_and_sqlite() {
                     .unwrap()
                     .note
                     .body_markdown,
-                format!("Never published: {unpublished_secret}")
+                Some(format!("Never published: {unpublished_secret}"))
             );
             assert_eq!(
                 reopened
@@ -623,7 +635,8 @@ fn pn_01_through_06_and_taskauth_4_through_7_on_memory_and_sqlite() {
                         TasksNotesListParams {
                             task: f.task_key.clone(),
                             author_id: None,
-                        },
+                        }
+                        .into(),
                     )
                     .unwrap()
                     .unwrap()
@@ -648,7 +661,8 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
                 task: f.task_key.clone(),
                 note_id: person_note_id.clone(),
                 body_markdown: "Human-only supervisory note v1".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap();
@@ -675,7 +689,8 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
                 TasksNotesListParams {
                     task: f.task_key.clone(),
                     author_id: None,
-                },
+                }
+                .into(),
             )
             .unwrap()
             .unwrap_err()
@@ -693,7 +708,8 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
                 task: f.task_key.clone(),
                 note_id: agent_note_id.clone(),
                 body_markdown: "Agent A exclusive note".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap();
@@ -754,7 +770,8 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
                 note_id: person_note_id.clone(),
                 expected_revision: 1,
                 body_markdown: "Human-only supervisory note v2".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap();
@@ -778,15 +795,16 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
                 task: f.task_key.clone(),
                 note_id: person_note_id.clone(),
                 body_markdown: "Human-only supervisory note v1".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap()
         .note;
     assert_eq!(replay_create.revision, 1);
     assert_eq!(
-        replay_create.body_markdown,
-        "Human-only supervisory note v1"
+        replay_create.body_markdown.as_deref(),
+        Some("Human-only supervisory note v1")
     );
     let replay_edit = f
         .office
@@ -797,13 +815,17 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
                 note_id: person_note_id,
                 expected_revision: 1,
                 body_markdown: "Human-only supervisory note v2".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap()
         .note;
     assert_eq!(replay_edit.revision, 2);
-    assert_eq!(replay_edit.body_markdown, "Human-only supervisory note v2");
+    assert_eq!(
+        replay_edit.body_markdown.as_deref(),
+        Some("Human-only supervisory note v2")
+    );
 
     // (f) On SQLite Unix, durable/private directory is 0o700 and task-notes.db is 0o600.
     if engine == EngineChoice::Sqlite {
@@ -826,7 +848,7 @@ fn assert_extended_security_and_replay_boundaries(f: &PrivateNoteFixture, engine
 }
 
 fn assert_pending_publish_lock_and_paused_agent_refusal(f: &PrivateNoteFixture) {
-    use crate::private_notes::{request_digest, BeginPublishCmd, PublishAttempt};
+    use crate::private_notes::{publish_digest, BeginPublishCmd, PublishAttempt};
     use org_proto::hiring::{AgentSetStatus, AgentSetStatusParams};
     use org_proto::{Outcome, Request};
 
@@ -841,21 +863,14 @@ fn assert_pending_publish_lock_and_paused_agent_refusal(f: &PrivateNoteFixture) 
                 task: f.task_key.clone(),
                 note_id: locked_note_id.clone(),
                 body_markdown: "Pending publish body".into(),
-            },
+            }
+            .into(),
         )
         .unwrap()
         .unwrap();
     let pub_cmd = next_uuid();
     let comment_id = next_uuid();
-    let rev_bytes = 1u64.to_be_bytes();
-    let digest = request_digest(&[
-        b"publish\0",
-        locked_note_id.as_bytes(),
-        b"\0",
-        &rev_bytes,
-        b"\0",
-        comment_id.as_bytes(),
-    ]);
+    let digest = publish_digest(&locked_note_id, 1, &comment_id);
     let pending = f
         .office
         .private_notes
@@ -883,7 +898,8 @@ fn assert_pending_publish_lock_and_paused_agent_refusal(f: &PrivateNoteFixture) 
                     note_id: locked_note_id.clone(),
                     expected_revision: 1,
                     body_markdown: "Blocked while pending".into(),
-                },
+                }
+                .into(),
             )
             .unwrap()
             .unwrap_err()
@@ -945,7 +961,8 @@ fn assert_pending_publish_lock_and_paused_agent_refusal(f: &PrivateNoteFixture) 
                 TasksNotesListParams {
                     task: f.task_key.clone(),
                     author_id: None,
-                },
+                }
+                .into(),
             )
             .unwrap()
             .unwrap_err()
