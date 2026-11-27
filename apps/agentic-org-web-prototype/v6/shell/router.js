@@ -110,7 +110,7 @@ const ROUTE_RENDERERS = {
   activity: () => pageActivity(),
   insights: () => pageInsights(),
   calendar: () => pageCalendar(),
-  teams: (r1, r2) => (MEMBER_ALIASES.includes(r1) ? pageMembersDir() : r1 === "org-chart" ? pageOrgChart() : !r1 ? pageTeams() : own(TEAMS, r1) ? pageTeam(r1, r2) : notFound()),
+  teams: (r1, r2) => (MEMBER_ALIASES.includes(r1) ? pageMembersDir() : r1 === "org-chart" || !r1 ? pageOrgChart() : r1 === "all" ? pageTeams() : own(TEAMS, r1) ? pageTeam(r1, r2) : notFound()),
   members: (r1, r2, r3) => (own(M, r1) ? pageMember(r1, r2, r3) : notFound()),
   settings: (r1, r2) => (!r1 || SET.some(([k]) => k === r1) ? pageSettings(r1, own(M, r2) ? r2 : null) : notFound()),
   preferences: () => pagePreferences(),

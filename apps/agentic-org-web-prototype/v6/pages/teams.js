@@ -14,7 +14,8 @@ import { SEP, acts, av, avStack, crumbs, esc, feed, hireMenu, ic, isPerson, join
 
 /* ---------------------------------------------------------------- teams */
 function teamsHeader(title, count, current, controls = "", actions = "") {
-  const tabs = linkTabs("#/teams", [["", "Teams", Object.keys(TEAMS).length], ["members", "Members", memberIds().length], ["org-chart", "Org chart"]], current, "Teams views");
+  /* Org chart first and the default view (owner), then Teams, then Members */
+  const tabs = linkTabs("#/teams", [["", "Org chart"], ["all", "Teams", Object.keys(TEAMS).length], ["members", "Members", memberIds().length]], current, "Teams views");
   return `<div class="section-header org-directory-header">${queueHeadline(title, count)}${sectionTabs(tabs, controls, actions)}</div>`;
 }
 function ownerCard() {
@@ -27,7 +28,7 @@ const teamActivity = (id) => acts().filter(({ who }) => TEAMS[id].members.includ
 function pageTeams() {
   const all = memberIds(), ppl = all.filter(isPerson).length;
   const create = `<button class="btn primary" type="button" data-act="proto" data-v="New team">${ic("plus", "ic16")}New team</button>`;
-  return teamsHeader("Teams", `${plural(Object.keys(TEAMS).length, "team", "teams")} · ${plural(ppl, "person", "people")} · ${plural(all.length - ppl, "agent", "agents")}`, "", "", create) +
+  return teamsHeader("Teams", `${plural(Object.keys(TEAMS).length, "team", "teams")} · ${plural(ppl, "person", "people")} · ${plural(all.length - ppl, "agent", "agents")}`, "all", "", create) +
   `<div class="owner-wrap">${ownerCard()}</div>
   <ul class="rows" role="list" aria-label="Teams">${Object.entries(TEAMS).map(([k, t]) => {
     const people = t.members.filter(isPerson).length, agents = t.members.length - people;
@@ -120,7 +121,7 @@ function pageTeam(id, tab = "overview") {
     ["", "Overview"], ["members", "Members", t.members.length], ["work", "Work", `${ws.filter(OPEN).length} open`], ["calendar", "Calendar"],
     ["projects", "Projects"], ["activity", "Activity"], ["conversations", "Conversations"],
   ], tab === "overview" ? "" : tab, "Team sections");
-  const header = crumbs([["#/teams", "Teams"], [null, t.name]]) + `<div class="section-header">${queueHeadline(t.name, count)}${sectionTabs(tabs, "", actions)}</div>`;
+  const header = crumbs([["#/teams", "Teams"], ["#/teams/all", "All teams"], [null, t.name]]) + `<div class="section-header">${queueHeadline(t.name, count)}${sectionTabs(tabs, "", actions)}</div>`;
   if (tab === "overview") return header + teamOverview(id, ws);
   if (tab === "members") return header + `<section aria-labelledby="h-mem"><h2 class="team-roster-title" id="h-mem">All members</h2>${memberRows(t.members, { noTeam: true })}</section>`;
   if (tab === "work") return header + scopedWorkToolbar("team", id, ws) + scopedWorkWorkspace();
@@ -142,7 +143,7 @@ function pageMembersDir() {
     memberRows(ids, { emptyText: "No members match this filter." });
 }
 function pageOrgChart() {
-  return teamsHeader("Org chart", orgSummary(), "org-chart", "", hireMenu()) + orgChartBody();
+  return teamsHeader("Org chart", orgSummary(), "", "", hireMenu()) + orgChartBody();
 }
 
 function agentSetupFields(id, inProfile = false) {

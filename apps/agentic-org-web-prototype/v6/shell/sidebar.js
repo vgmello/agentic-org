@@ -53,19 +53,13 @@ function navFavoritesHtml(favs, r0, r1, homeError, favsOpen) {
     </li>`;
 }
 
-function navTeamsGroupHtml(r0, r1, teamsOpen) {
-  const teams = Object.keys(TEAMS);
-  const inTeamChild = r0 === "teams" && own(TEAMS, r1);
+/* Teams is a plain entry (owner): no fold arrow or team sub-list; it opens on the Org chart */
+function navTeamsGroupHtml(r0) {
   const inTeams = r0 === "teams" || r0 === "members";
-  const subIcon = (href, label, icon, cur) => `<li><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon, "")}<span class="t">${esc(label)}</span></a></li>`;
-  const more = teams.length > NAV_CAP ? `<li><a class="nav-item more" href="#/teams"><span class="t">View all teams</span></a></li>` : "";
-  const list = teamsOpen ? `<div class="subwrap" id="nav-sub-teams" data-fold="teams"><ul class="nav-sub" role="list" aria-label="Teams">${teams.slice(0, NAV_CAP).map((t) => subIcon("#/teams/" + t, TEAMS[t].name, TEAM_ICON[t] || "user-group", r0 === "teams" && r1 === t)).join("")}${more}</ul></div>` : "";
   return `<li>
           <div class="nav-row">
-            <a class="nav-item${!teamsOpen && inTeamChild ? " cur" : ""}" href="#/teams" title="Teams" ${inTeams && !inTeamChild ? 'aria-current="page"' : ""}>${ic("user-group")}<span class="lbl">Teams</span></a>
-            <button class="nav-fold-btn" type="button" data-act="v4-acc" data-id="nav-teams" aria-expanded="${!!teamsOpen}" aria-controls="nav-sub-teams" aria-label="${teamsOpen ? "Collapse" : "Expand"} teams">${ic("chev-right")}</button>
+            <a class="nav-item" href="#/teams" title="Teams" ${inTeams ? 'aria-current="page"' : ""}>${ic("user-group")}<span class="lbl">Teams</span></a>
           </div>
-          ${list}
         </li>`;
 }
 
@@ -170,9 +164,7 @@ function renderNav(route) {
   syncOfficeNavStatus(homeError);
   const item = (href, label, icon, cur, extra = "") => `<li><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon)}<span class="lbl">${esc(label)}</span>${extra}</a></li>`;
   const favs = homeEmpty ? [] : S.favProjs.filter((p) => P[p] && !P[p].archived);
-  const inTeamChild = r0 === "teams" && own(TEAMS, r1);
   const favsOpen = S.v4Open["nav-favs"] !== false;
-  const teamsOpen = S.v4Open["nav-teams"] ?? inTeamChild;
   const nav = document.getElementById("nav"); if (!nav) return;
   bindWorkspaceDrag(nav);
   nav.innerHTML = `<ul class="nav-scroll" role="list">
@@ -193,7 +185,7 @@ function renderNav(route) {
     <li>
       <div class="nav-label">Organization</div>
       <ul class="nav-list" role="list">
-        ${navTeamsGroupHtml(r0, r1, teamsOpen)}
+        ${navTeamsGroupHtml(r0)}
         ${item("#/settings", "Settings", "cog", r0 === "settings" || r0 === "preferences")}
       </ul>
     </li>
