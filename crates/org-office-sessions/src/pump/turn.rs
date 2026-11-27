@@ -81,8 +81,11 @@ pub(super) fn dispatch_next_turn(
     loop_state: &mut PumpLoopState,
     session: &mut Box<dyn org_agent_runtime::Session>,
 ) {
+    // `turn_just_ended`: the last turn's end (and its permit's release) is settled first, even
+    // when a runtime ended it synchronously in this pass.
     if !loop_state.ready
         || loop_state.turn_active
+        || loop_state.turn_just_ended
         || loop_state.stop_requested
         || loop_state.pending_turns.is_empty()
     {
@@ -145,9 +148,13 @@ pub(super) fn maybe_deliver_mid_turn(
     loop_state: &mut PumpLoopState,
     session: &mut Box<dyn org_agent_runtime::Session>,
 ) {
+    // A turn being interrupted (`TASK-103`) takes no wake: delivered now it could restart the
+    // turn (Agy) or be lost with it (Codex, Claude); the wakes stay staged for the next turn.
     if !loop_state.turn_active
         || loop_state.stop_requested
         || loop_state.suspend_now
+        || loop_state.interrupt_wanted
+        || loop_state.interrupt_sent
         || loop_state.in_flight_delivery.is_some()
         || !ctx.supports_mid_turn
     {

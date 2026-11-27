@@ -11,8 +11,9 @@
 //! Subscribers choose what they see with a [`StreamFilter`]:
 //! - [`SessionStreamHub::subscribe`] gives a bounded queue ([`SUBSCRIBER_QUEUE`] frames); a
 //!   subscriber that falls behind loses frames and is told by
-//!   [`SessionStreamSubscription::take_lagged`], and a dropped subscription is forgotten on the
-//!   next publish. The pump never blocks on a subscriber.
+//!   [`SessionStreamSubscription::take_lagged`], and dropping the subscription removes it from
+//!   the hub at once (an idle or never-matching filter never holds a place). The pump never
+//!   blocks on a subscriber.
 //! - [`SessionStreamHub::add_sink`] calls a function for every matching frame, on the
 //!   publishing thread, outside the hub's lock: it must be quick and never block (the office
 //!   bridges coalesced activity into its live presence feed this way). It returns `false` to
@@ -25,7 +26,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
 use org_proto::sessions::ActivityPhase;
@@ -148,6 +149,8 @@ type Sink = Arc<dyn Fn(&SessionStreamFrame) -> bool + Send + Sync>;
 
 enum Subscriber {
     Queue {
+        /// Names the queue for its [`SessionStreamSubscription`]'s drop.
+        id: u64,
         filter: StreamFilter,
         tx: SyncSender<SessionStreamFrame>,
         lagged: Arc<AtomicBool>,
@@ -158,10 +161,23 @@ enum Subscriber {
     },
 }
 
+#[derive(Default)]
+struct Subscribers {
+    next_queue_id: u64,
+    list: Vec<Subscriber>,
+}
+
+impl Subscribers {
+    fn remove_queue(&mut self, queue_id: u64) {
+        self.list
+            .retain(|s| !matches!(s, Subscriber::Queue { id, .. } if *id == queue_id));
+    }
+}
+
 /// The office's live session stream (cheap to clone: clones share the subscribers).
 #[derive(Clone, Default)]
 pub struct SessionStreamHub {
-    subscribers: Arc<Mutex<Vec<Subscriber>>>,
+    subscribers: Arc<Mutex<Subscribers>>,
 }
 
 impl SessionStreamHub {
@@ -173,17 +189,25 @@ impl SessionStreamHub {
     /// holds [`MAX_SUBSCRIBERS`].
     pub fn subscribe(&self, filter: StreamFilter) -> Option<SessionStreamSubscription> {
         let mut subscribers = self.lock();
-        if subscribers.len() >= MAX_SUBSCRIBERS {
+        if subscribers.list.len() >= MAX_SUBSCRIBERS {
             return None;
         }
+        let id = subscribers.next_queue_id;
+        subscribers.next_queue_id = id.wrapping_add(1);
         let (tx, rx) = mpsc::sync_channel(SUBSCRIBER_QUEUE);
         let lagged = Arc::new(AtomicBool::new(false));
-        subscribers.push(Subscriber::Queue {
+        subscribers.list.push(Subscriber::Queue {
+            id,
             filter,
             tx,
             lagged: Arc::clone(&lagged),
         });
-        Some(SessionStreamSubscription { rx, lagged })
+        Some(SessionStreamSubscription {
+            rx,
+            lagged,
+            hub: Arc::downgrade(&self.subscribers),
+            id,
+        })
     }
 
     /// Calls `sink` for every frame `filter` matches, from now on, until it returns `false`.
@@ -196,19 +220,19 @@ impl SessionStreamHub {
         sink: impl Fn(&SessionStreamFrame) -> bool + Send + Sync + 'static,
     ) -> bool {
         let mut subscribers = self.lock();
-        if subscribers.len() >= MAX_SUBSCRIBERS {
+        if subscribers.list.len() >= MAX_SUBSCRIBERS {
             return false;
         }
-        subscribers.push(Subscriber::Sink {
+        subscribers.list.push(Subscriber::Sink {
             filter,
             sink: Arc::new(sink),
         });
         true
     }
 
-    /// How many subscribers the hub holds (a dropped queue counts until the next publish).
+    /// How many subscribers the hub holds (a dropped subscription no longer counts).
     pub fn subscriber_count(&self) -> usize {
-        self.lock().len()
+        self.lock().list.len()
     }
 
     /// Hands `frame` to every matching subscriber without ever blocking: a full queue loses the
@@ -216,8 +240,10 @@ impl SessionStreamHub {
     /// released; a sink that returns `false` is forgotten.
     pub fn publish(&self, frame: &SessionStreamFrame) {
         let mut sinks: Vec<Sink> = Vec::new();
-        self.lock().retain(|subscriber| match subscriber {
-            Subscriber::Queue { filter, tx, lagged } => {
+        self.lock().list.retain(|subscriber| match subscriber {
+            Subscriber::Queue {
+                filter, tx, lagged, ..
+            } => {
                 if !filter.matches(&frame.key) {
                     return true;
                 }
@@ -241,22 +267,37 @@ impl SessionStreamHub {
         if finished.is_empty() {
             return;
         }
-        self.lock().retain(|subscriber| match subscriber {
+        self.lock().list.retain(|subscriber| match subscriber {
             Subscriber::Sink { sink, .. } => !finished.iter().any(|f| Arc::ptr_eq(f, sink)),
             Subscriber::Queue { .. } => true,
         });
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Subscriber>> {
-        self.subscribers.lock().unwrap_or_else(|p| p.into_inner())
+    fn lock(&self) -> MutexGuard<'_, Subscribers> {
+        lock_subscribers(&self.subscribers)
     }
 }
 
+fn lock_subscribers(subscribers: &Mutex<Subscribers>) -> MutexGuard<'_, Subscribers> {
+    subscribers.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// One subscriber's bounded queue (see [`SessionStreamHub::subscribe`]). Dropping it
-/// unsubscribes.
+/// unsubscribes at once.
 pub struct SessionStreamSubscription {
     rx: Receiver<SessionStreamFrame>,
     lagged: Arc<AtomicBool>,
+    /// The hub's subscribers, without keeping the hub alive.
+    hub: Weak<Mutex<Subscribers>>,
+    id: u64,
+}
+
+impl Drop for SessionStreamSubscription {
+    fn drop(&mut self) {
+        if let Some(subscribers) = self.hub.upgrade() {
+            lock_subscribers(&subscribers).remove_queue(self.id);
+        }
+    }
 }
 
 impl SessionStreamSubscription {

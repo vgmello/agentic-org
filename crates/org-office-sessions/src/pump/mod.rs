@@ -430,6 +430,33 @@ impl PumpLoopState {
         self.front_is_steer = false;
         taken
     }
+
+    /// Puts a person's steer at the front of the queue, ahead of queued turns, folding it into
+    /// a steer already waiting there (`TASK-103`). The steer is counted once in
+    /// `queued_turns` by its caller; a fold lowers the count by the one it absorbed.
+    fn queue_steer_turn(&mut self, state: &mut SessionRuntimeState, text: String) {
+        match self.pending_turns.first_mut() {
+            Some(front) if self.front_is_steer => {
+                front.push_str("\n\n");
+                front.push_str(&text);
+                state.dequeue_turns(1);
+            }
+            _ => {
+                self.pending_turns.insert(0, text);
+                self.front_is_steer = true;
+            }
+        }
+    }
+
+    /// A steer delivered into the turn but not taken (refused, or unconfirmed when the turn
+    /// ended) runs as the next turn instead: counted again, and the session busy until it runs.
+    fn requeue_steer(&mut self, state: &mut SessionRuntimeState, text: String) {
+        state.queued_turns = state.queued_turns.saturating_add(1);
+        if state.state == SessionState::Idle {
+            state.state = SessionState::Running;
+        }
+        self.queue_steer_turn(state, text);
+    }
 }
 
 pub(crate) fn run_pump(

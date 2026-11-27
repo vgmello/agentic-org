@@ -2041,3 +2041,4 @@ fn task103_events_poll_streams_coalesced_agent_activity_and_keeps_tess_detail_fo
 }
 
 mod files;
+mod session_controls;

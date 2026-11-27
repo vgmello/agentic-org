@@ -21,8 +21,8 @@ use super::super::{
     failure, invalid, not_found, result, unavailable, Call, CallerAuth, SessionApi,
 };
 use super::{
-    decode_mut, read_call, ApprovalBody, CommandOnlyBody, EnrollStartBody, EnrollSubmitBody,
-    SessionCall, SessionRoute, StartBody, SteerBody, StopBody,
+    decode_mut, prepare_mut, read_call, ApprovalBody, CommandOnlyBody, EnrollStartBody,
+    EnrollSubmitBody, SessionCall, SessionRoute, StartBody, SteerBody, StopBody,
 };
 use crate::host::Failure;
 use crate::office::OfficeFailure;
@@ -150,8 +150,9 @@ pub(super) fn prepare_turn_control(
             if body.text.trim().is_empty() || body.text.len() > MAX_STEER_TEXT_BYTES {
                 return Err(invalid());
             }
-            decode_mut(
-                bytes,
+            prepare_mut(
+                body,
+                bytes.len(),
                 |b: &SteerBody| &b.command_id,
                 |b| {
                     SessionCall::Steer(

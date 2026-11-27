@@ -45,6 +45,12 @@ pub enum HubEvent {
     },
     /// An agent's coalesced coarse live activity (`member.activity_changed` on the
     /// `presence` feed, `TASK-103`): a phase and a tool's name only.
+    ///
+    /// **Invariant:** the [`EventBus`] is shared by every subscriber of the organization, so
+    /// only what every member may see is published here. A caller-scoped or owner-private
+    /// frame (such as the Chief of Staff's `active_tool_name`, which only the owner sees) must
+    /// never be published on the bus; it reaches its caller only through that caller's own
+    /// poll, filtered by the office.
     ActivityChanged {
         org_id: String,
         cursor: String,

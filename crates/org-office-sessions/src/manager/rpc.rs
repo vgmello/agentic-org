@@ -250,15 +250,8 @@ impl SessionManager {
             return Some(handle_call::<MemberSessionSteer>(
                 request,
                 member,
-                |m, p| {
-                    self.authorize_owner_or_person_inner(m, hq_attested_owner)?;
-                    self.authorize_chief_of_staff_target_inner(
-                        m,
-                        hq_attested_owner,
-                        &p.employee_id,
-                    )?;
-                    self.steer_session_inner(m, hq_attested_owner, &p.employee_id, &p.text)
-                },
+                // The steer checks its caller itself (and, on the Chief of Staff, the partition).
+                |m, p| self.steer_session_inner(m, hq_attested_owner, &p.employee_id, &p.text),
             ));
         }
         None

@@ -12,12 +12,12 @@
 //! never lost. Ordinary `chat.send` / `msg.send` turns are never affected: they queue as before.
 //!
 //! A steer is counted in [`super::SessionRuntimeState::queued_turns`] from the moment it is
-//! queued ([`super::queue_steer`]) until it is delivered into the turn or dispatched as one.
+//! queued ([`super::queue_steer`]) until it is delivered into the turn or dispatched as one; the pump
+//! queues and folds it with [`PumpLoopState`]'s steer queue.
 
 use std::time::Instant;
 
 use org_agent_runtime::{Control, ControlError};
-use org_proto::sessions::SessionState;
 
 use super::activity::mark_interrupting;
 use super::events::apply_outputs;
@@ -109,7 +109,7 @@ pub(super) fn steer(
 ) {
     if !loop_state.ready || !loop_state.turn_active || loop_state.interrupt_wanted {
         // No turn to steer, or it is already being interrupted: the steer runs next.
-        queue_steer_turn(&mut lock_state(ctx), loop_state, request.turn);
+        loop_state.queue_steer_turn(&mut lock_state(ctx), request.turn);
         return;
     }
     let caps = ctx.runtime.capabilities();
@@ -139,45 +139,11 @@ pub(super) fn steer(
             None => loop_state.pending_steer = Some(request),
         },
         Err(ControlError::NeedsInterrupt | ControlError::Unsupported) if caps.interrupt_in_band => {
-            queue_steer_turn(&mut lock_state(ctx), loop_state, request.turn);
+            loop_state.queue_steer_turn(&mut lock_state(ctx), request.turn);
             request_interrupt(stdin, ctx, loop_state, session);
         }
-        Err(_) => queue_steer_turn(&mut lock_state(ctx), loop_state, request.turn),
+        Err(_) => loop_state.queue_steer_turn(&mut lock_state(ctx), request.turn),
     }
-}
-
-/// Puts a steer at the front of the queue, ahead of queued turns, folding it into a steer
-/// already waiting there. The steer is counted once in `queued_turns` by its caller.
-pub(super) fn queue_steer_turn(
-    state: &mut SessionRuntimeState,
-    loop_state: &mut PumpLoopState,
-    text: String,
-) {
-    match loop_state.pending_turns.first_mut() {
-        Some(front) if loop_state.front_is_steer => {
-            front.push_str("\n\n");
-            front.push_str(&text);
-            state.dequeue_turns(1);
-        }
-        _ => {
-            loop_state.pending_turns.insert(0, text);
-            loop_state.front_is_steer = true;
-        }
-    }
-}
-
-/// A steer delivered into the turn but not taken (refused, or unconfirmed when the turn
-/// ended) runs as the next turn instead: counted again, and the session busy until it runs.
-pub(super) fn requeue_steer(
-    state: &mut SessionRuntimeState,
-    loop_state: &mut PumpLoopState,
-    text: String,
-) {
-    state.queued_turns = state.queued_turns.saturating_add(1);
-    if state.state == SessionState::Idle {
-        state.state = SessionState::Running;
-    }
-    queue_steer_turn(state, loop_state, text);
 }
 
 fn lock_state(ctx: &PumpContext) -> std::sync::MutexGuard<'_, SessionRuntimeState> {

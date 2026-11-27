@@ -13,7 +13,6 @@ use crate::subagents::BackgroundKind;
 
 use super::activity::track_activity;
 use super::approval::handle_approval_request;
-use super::controls::requeue_steer;
 use super::{
     persist_turn_update, FailoverRequest, PumpContext, PumpLoopState, SessionRuntimeState,
 };
@@ -182,7 +181,7 @@ pub(super) fn handle_event(
                 .position(|(id, _)| id == delivery_id)
             {
                 let (_, text) = loop_state.in_flight_steers.remove(at);
-                requeue_steer(&mut state, loop_state, text);
+                loop_state.requeue_steer(&mut state, text);
             }
         }
         SessionEvent::AssistantText { text, .. } => {
@@ -305,7 +304,7 @@ pub(super) fn handle_turn_ended(
     }
     // Steers the turn never confirmed run next, ahead of the queue (at least once).
     for (_, text) in std::mem::take(&mut loop_state.in_flight_steers) {
-        requeue_steer(state, loop_state, text);
+        loop_state.requeue_steer(state, text);
     }
     let failover_blocked_recovery =
         !interrupted && evaluate_turn_failover(state, loop_state, ctx, outcome, errors);
@@ -338,6 +337,7 @@ pub(super) fn handle_turn_ended(
 /// Maps a finished turn to a pool failover reason (`doc-88` §7). A turn that completed without
 /// external effects whose final reply is the runtime's in-band "credentials expired" signal
 /// ([`org_agent_runtime::AgentRuntime::reply_signals_auth_expired`]) counts as `auth_expired`.
+/// An interrupted turn never fails over, whatever its errors look like (`TASK-103`).
 pub(crate) fn classify_turn_failover_reason(
     runtime: &dyn org_agent_runtime::AgentRuntime,
     outcome: &org_agent_runtime::TurnOutcome,
@@ -346,6 +346,9 @@ pub(crate) fn classify_turn_failover_reason(
     has_effects: bool,
     rate_limited: bool,
 ) -> Option<&'static str> {
+    if matches!(outcome, org_agent_runtime::TurnOutcome::Interrupted) {
+        return None;
+    }
     let reply_auth_expired =
         !has_effects && turn_reply.is_some_and(|reply| runtime.reply_signals_auth_expired(reply));
     if matches!(outcome, org_agent_runtime::TurnOutcome::Completed) && !reply_auth_expired {

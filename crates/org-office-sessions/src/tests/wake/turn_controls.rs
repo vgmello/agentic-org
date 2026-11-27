@@ -15,6 +15,7 @@ use org_proto::ErrorCode;
 
 use super::*;
 use crate::stream_hub::{SessionStreamEvent, SessionStreamSubscription, StreamFilter, TurnEnd};
+use crate::wake::MidTurnLimits;
 
 /// A tool input no live frame, view or event may ever carry.
 const SECRET_TOOL_INPUT: &str = "cat /home/ada/.ssh/id_ed25519 TOPSECRET-TOOL-INPUT-7f3a";
@@ -318,8 +319,17 @@ fn controls_manager(
     fx: &WakeFixture,
     mode: SteerMode,
 ) -> (Arc<SessionManager>, Arc<ControlsRecorded>) {
+    controls_manager_with(fx, mode, CONTROLS_SCRIPT, MidTurnLimits::default())
+}
+
+fn controls_manager_with(
+    fx: &WakeFixture,
+    mode: SteerMode,
+    script_body: &str,
+    limits: MidTurnLimits,
+) -> (Arc<SessionManager>, Arc<ControlsRecorded>) {
     let script = fx._bin_dir.path().join(format!("tc-{}.sh", next_id()));
-    fs::write(&script, CONTROLS_SCRIPT).unwrap();
+    fs::write(&script, script_body).unwrap();
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
     let recorded = Arc::new(ControlsRecorded::default());
     let mut registry = RuntimeRegistry::production();
@@ -332,6 +342,7 @@ fn controls_manager(
     );
     let mut cfg = SessionManagerConfig::production(fx._sock_dir.path().join("office.sock"));
     cfg.runtimes = registry;
+    cfg.mid_turn_limits = limits;
     let mgr = Arc::new(SessionManager::new(Arc::clone(&fx.office), cfg));
     SessionManager::attach_self(&mgr);
     (mgr, recorded)
@@ -614,6 +625,90 @@ fn an_explicit_interrupt_idles_the_warm_session_and_never_fails_over() {
     assert_eq!(rec.launches(), 1);
     assert_eq!(rec.turns().len(), 2);
     assert!(permit_and_queue(&mgr, &fx).0.is_some());
+    let _ = mgr.stop_session(&fx.agent_a, "test_done");
+}
+
+/// A wake staged while a person's interrupt is pending or sent never goes into the turn being
+/// interrupted (it could restart an Agy turn, or be lost with a Codex or Claude one): it waits
+/// for the interrupted turn to end and runs as the next turn.
+#[test]
+fn a_staged_wake_is_never_delivered_into_a_turn_being_interrupted() {
+    let fx = WakeFixture::new(LOOP_ECHO_SCRIPT);
+    let gate = fx
+        ._bin_dir
+        .path()
+        .join(format!("interrupt-gate-{}", next_id()));
+    // The turn acknowledges the interrupt only once the gate exists: until then, the interrupt
+    // has reached the runtime and the turn is still running.
+    let script = CONTROLS_SCRIPT.replace(
+        r#"*'"op":"interrupt"'*) echo '{"kind":"interrupted"}' ;;"#,
+        &format!(
+            r#"*'"op":"interrupt"'*) while [ ! -f '{0}' ]; do sleep 0.02; done; rm -f '{0}'; echo '{{"kind":"interrupted"}}' ;;"#,
+            gate.display()
+        ),
+    );
+    assert_ne!(script, CONTROLS_SCRIPT, "the interrupt is gated");
+    let fast = MidTurnLimits {
+        coalesce_agent_ms: 20,
+        coalesce_person_ms: 20,
+        ..MidTurnLimits::default()
+    };
+    let (mgr, rec) = controls_manager_with(&fx, SteerMode::Native, &script, fast);
+    start(&mgr, &fx, "Long work");
+    wait_running_tool(&mgr, &fx);
+
+    mgr.interrupt_session(&fx.agent_a).unwrap();
+    assert!(
+        wait_until(
+            || view(&mgr, &fx).activity_phase == Some(ActivityPhase::Interrupting),
+            Duration::from_secs(5)
+        ),
+        "the interrupt never reached the runtime: {:?}",
+        view(&mgr, &fx)
+    );
+    assert_eq!(rec.interrupts(), 1);
+    let dm = PendingWakeItem {
+        item_id: "dm-int-1".into(),
+        kind: WakeKind::DirectMessage,
+        sender_id: fx.owner_id.clone(),
+        sender_name: "Owner".into(),
+        sender_handle: None,
+        sender_relation: None,
+        sender_is_person: true,
+        conversation_id: Some("dm-oa".into()),
+        source_id: "msg-int-1".into(),
+        summary: "Check the deploy after this".into(),
+        enqueued_at_ms: now_ms(),
+    };
+    assert_eq!(
+        mgr.enqueue_wake(&fx.agent_a, dm),
+        WakeOutcome::Queued {
+            reason: WakeHoldReason::Busy
+        }
+    );
+    // Many coalescing windows pass: nothing is delivered into the interrupting turn.
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(
+        rec.steers.lock().unwrap().is_empty(),
+        "a wake went into the interrupting turn: {:?}",
+        rec.steers.lock().unwrap()
+    );
+    assert_eq!(rec.turns().len(), 1);
+
+    // The interrupted turn ends; the wake runs as the next turn on the warm process.
+    fs::write(&gate, "go").unwrap();
+    assert!(
+        wait_until(|| rec.turns().len() >= 2, Duration::from_secs(5)),
+        "the staged wake never ran: {:?}",
+        view(&mgr, &fx)
+    );
+    assert!(
+        rec.turns()[1].contains("Check the deploy after this"),
+        "{}",
+        rec.turns()[1]
+    );
+    assert!(rec.steers.lock().unwrap().is_empty());
+    assert_eq!(rec.launches(), 1);
     let _ = mgr.stop_session(&fx.agent_a, "test_done");
 }
 

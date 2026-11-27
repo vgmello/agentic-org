@@ -77,14 +77,64 @@ fn a_full_queue_loses_frames_without_blocking_and_reports_the_lag_once() {
 }
 
 #[test]
-fn a_dropped_subscription_is_forgotten_on_the_next_publish() {
+fn a_dropped_subscription_is_forgotten_at_once_and_only_it() {
     let hub = SessionStreamHub::new();
     let kept = hub.subscribe(StreamFilter::All).unwrap();
+    assert!(hub.add_sink(StreamFilter::All, |_| true));
     drop(hub.subscribe(StreamFilter::All).unwrap());
-    assert_eq!(hub.subscriber_count(), 2);
+    assert_eq!(hub.subscriber_count(), 2, "removed before any publish");
     hub.publish(&frame("ada", None, "x"));
-    assert_eq!(hub.subscriber_count(), 1);
+    assert_eq!(hub.subscriber_count(), 2);
     assert_eq!(texts(&kept), ["x"]);
+    drop(kept);
+    assert_eq!(hub.subscriber_count(), 1, "the sink stays");
+}
+
+/// Ask Tess subscribes per caller partition (`TASK-80.4`): subscriptions that are dropped
+/// without a matching frame ever being published must not hold the hub's places.
+#[test]
+fn dropped_partition_subscriptions_never_exhaust_the_hub_without_a_publish() {
+    let hub = SessionStreamHub::new();
+    for round in 0..3 {
+        for n in 0..MAX_SUBSCRIBERS {
+            let sub = hub
+                .subscribe(StreamFilter::Partition {
+                    employee_id: "tess".into(),
+                    partition: format!("tess:ask:caller-{round}-{n}"),
+                })
+                .unwrap_or_else(|| panic!("round {round}: subscription {n} refused"));
+            drop(sub);
+        }
+        assert_eq!(hub.subscriber_count(), 0, "round {round}");
+    }
+    // Frames for other partitions never resurrect or block anything either.
+    hub.publish(&frame("tess", Some("tess:ask:someone-else"), "x"));
+    let held: Vec<_> = (0..MAX_SUBSCRIBERS)
+        .map(|n| {
+            hub.subscribe(StreamFilter::Partition {
+                employee_id: "tess".into(),
+                partition: format!("tess:ask:held-{n}"),
+            })
+            .unwrap()
+        })
+        .collect();
+    assert!(
+        hub.subscribe(StreamFilter::All).is_none(),
+        "the bound holds"
+    );
+    drop(held);
+    assert_eq!(hub.subscriber_count(), 0);
+    assert!(hub.subscribe(StreamFilter::All).is_some());
+}
+
+/// A subscription outliving its hub drops cleanly.
+#[test]
+fn a_subscription_outliving_its_hub_drops_cleanly() {
+    let hub = SessionStreamHub::new();
+    let sub = hub.subscribe(StreamFilter::All).unwrap();
+    drop(hub);
+    assert!(sub.try_recv().is_none());
+    drop(sub);
 }
 
 #[test]
@@ -123,8 +173,7 @@ fn the_hub_refuses_subscribers_beyond_its_bound() {
     assert!(hub.subscribe(StreamFilter::All).is_none());
     assert!(!hub.add_sink(StreamFilter::All, |_| true));
     drop(held);
-    hub.publish(&frame("ada", None, "gc"));
-    assert!(hub.subscribe(StreamFilter::All).is_some());
+    assert!(hub.subscribe(StreamFilter::All).is_some(), "freed on drop");
 }
 
 #[test]

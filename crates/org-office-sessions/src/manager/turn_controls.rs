@@ -4,22 +4,23 @@
 //! [`crate::pump::PumpCommand::SteerTurn`]); these only find the live session, refuse one that
 //! is locked or ending, and hand the request over.
 //!
-//! Callers authorize first ([`super::rpc`]): the owner or an active person, and only the owner
-//! on the Chief of Staff's sessions. Agents are refused.
+//! Interrupt callers authorize first ([`super::rpc`]): the owner or an active person, and only
+//! the owner on the Chief of Staff's sessions. Agents are refused. A steer carries its caller,
+//! so [`SessionManager::steer_session`] checks the same itself (one choke-point for every
+//! caller), and on the Chief of Staff it reaches only a turn of the caller's own partition
+//! (`tess:ask:<caller_id>`): never another member's conversation or `tess:wake`.
 
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
+use std::sync::MutexGuard;
 
 use org_proto::sessions::{SessionState, SessionView, MAX_STEER_TEXT_BYTES};
 use org_proto::{ApiError, ErrorCode};
 
 use crate::credentials::{now_ms, random_hex};
-use crate::pump::{queue_steer, PumpCommand, SessionRuntimeState, SteerRequest};
+use crate::partition::PartitionKey;
+use crate::pump::{queue_steer, PumpCommand, SteerRequest};
 use crate::wake::{compose_person_steer, PendingWakeItem, WakeKind};
 
-use super::SessionManager;
-
-type LiveTarget = (Arc<Mutex<SessionRuntimeState>>, Sender<PumpCommand>);
+use super::{LiveSessionHandle, SessionManager, SessionRegistry};
 
 impl SessionManager {
     /// Interrupts `employee_id`'s running turn: the turn stops, the process lives on, turns
@@ -28,17 +29,23 @@ impl SessionManager {
     /// locked or ending).
     pub fn interrupt_session(&self, employee_id: &str) -> Result<SessionView, ApiError> {
         self.require_agent(employee_id)?;
-        let (state, tx) = self.live_turn_target(employee_id, "interrupt")?;
-        if tx.send(PumpCommand::InterruptTurn).is_err() {
+        let reg = self.lock_registry();
+        let handle = self.live_turn_target(&reg, employee_id, "interrupt", None)?;
+        if handle.tx.send(PumpCommand::InterruptTurn).is_err() {
             return Err(session_ended());
         }
-        let view = state.lock().unwrap_or_else(|p| p.into_inner()).to_view();
+        let view = handle
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .to_view();
         Ok(view)
     }
 
-    /// Steers `employee_id`'s running turn with `text` from `caller_id` (a person): delivered
-    /// natively where the runtime steers, otherwise the turn is interrupted and the steer runs
-    /// next, ahead of queued turns; an idle live session runs it as its next turn.
+    /// Steers `employee_id`'s running turn with `text` from `caller_id` (the owner or an active
+    /// person; on the Chief of Staff, the owner, and only into the caller's own partition):
+    /// delivered natively where the runtime steers, otherwise the turn is interrupted and the
+    /// steer runs next, ahead of queued turns; an idle live session runs it as its next turn.
     pub fn steer_session(
         &self,
         caller_id: &str,
@@ -55,49 +62,76 @@ impl SessionManager {
         employee_id: &str,
         text: &str,
     ) -> Result<SessionView, ApiError> {
+        self.authorize_owner_or_person_inner(caller_id, hq_attested_owner)?;
+        self.authorize_chief_of_staff_target_inner(caller_id, hq_attested_owner, employee_id)?;
         validate_steer_text(text)?;
-        self.require_agent(employee_id)?;
+        let employee = self.require_agent(employee_id)?;
+        let partition = Self::turn_partition(&employee, Some(caller_id));
         let request = self.compose_steer(caller_id, hq_attested_owner, text)?;
-        let (state, tx) = self.live_turn_target(employee_id, "steer")?;
-        if !queue_steer(&state, &tx, request) {
+        // Checked and queued in one `registry` critical section, like a warm send
+        // (`decide_start_or_send`): a partition switch can't slip between the two.
+        let reg = self.lock_registry();
+        let handle = self.live_turn_target(&reg, employee_id, "steer", partition.as_ref())?;
+        if !queue_steer(&handle.state, &handle.tx, request) {
             return Err(session_ended());
         }
-        let view = state.lock().unwrap_or_else(|p| p.into_inner()).to_view();
+        let view = handle
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .to_view();
         Ok(view)
     }
 
-    /// The live session a control goes to, refused when there is none or it is locked or
-    /// ending. The registry lock is released before the state lock is taken.
-    fn live_turn_target(&self, employee_id: &str, verb: &str) -> Result<LiveTarget, ApiError> {
-        let (state, tx) = {
-            let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-            let Some(handle) = reg.live.get(employee_id) else {
-                return Err(ApiError::new(
-                    ErrorCode::Conflict,
-                    format!("the agent has no live session to {verb}"),
-                ));
-            };
-            (Arc::clone(&handle.state), handle.tx.clone())
+    fn lock_registry(&self) -> MutexGuard<'_, SessionRegistry> {
+        self.registry.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// The live session a control goes to, under the caller's `registry` lock (its state lock
+    /// taken after it, the order `decide_start_or_send` takes them). Refused (`Conflict`) when
+    /// there is none, it is locked or ending, or, for a control bound to the Chief of Staff
+    /// partition `partition`, the process serves another partition or is idle with `partition`
+    /// due to rotate (its next turn starts a fresh process).
+    fn live_turn_target<'r>(
+        &self,
+        reg: &'r SessionRegistry,
+        employee_id: &str,
+        verb: &str,
+        partition: Option<&PartitionKey>,
+    ) -> Result<&'r LiveSessionHandle, ApiError> {
+        let Some(handle) = reg.live.get(employee_id) else {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                format!("the agent has no live session to {verb}"),
+            ));
         };
+        let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+        if st.recovery_required
+            || matches!(
+                st.state,
+                SessionState::StallLocked
+                    | SessionState::RecoveryRequired
+                    | SessionState::Stopping
+                    | SessionState::Stopped
+                    | SessionState::Suspended
+            )
         {
-            let st = state.lock().unwrap_or_else(|p| p.into_inner());
-            if st.recovery_required
-                || matches!(
-                    st.state,
-                    SessionState::StallLocked
-                        | SessionState::RecoveryRequired
-                        | SessionState::Stopping
-                        | SessionState::Stopped
-                        | SessionState::Suspended
-                )
-            {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                format!("the agent's session is locked or ending and takes no {verb}"),
+            ));
+        }
+        if let Some(expected) = partition {
+            let rotating = st.state == SessionState::Idle
+                && self.partitions.needs_rotation(employee_id, expected);
+            if handle.partition.as_ref() != Some(expected) || rotating {
                 return Err(ApiError::new(
                     ErrorCode::Conflict,
-                    format!("the agent's session is locked or ending and takes no {verb}"),
+                    format!("the Chief of Staff is not in your conversation; no {verb} sent"),
                 ));
             }
         }
-        Ok((state, tx))
+        Ok(handle)
     }
 
     /// The steer composed under the caller's verified identity (`sender_is_person`).

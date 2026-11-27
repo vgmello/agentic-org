@@ -562,8 +562,6 @@ fn activity_follows_redacted_events_coarsely_and_interrupting_sticks_until_the_t
 /// exactly one queued turn each until they run (`TASK-103`).
 #[test]
 fn steers_queue_at_the_front_fold_together_and_keep_the_queued_count_exact() {
-    use super::controls::{queue_steer_turn, requeue_steer};
-
     let dir = tempfile::tempdir().unwrap();
     let ctx = test_pump_ctx(dir.path(), None, None);
     let mut loop_state = PumpLoopState::new(false);
@@ -572,8 +570,8 @@ fn steers_queue_at_the_front_fold_together_and_keep_the_queued_count_exact() {
     // Two ordinary turns and two steers queued, each counted once by its sender.
     st.queued_turns = 4;
     loop_state.pending_turns = vec!["ordinary-1".into(), "ordinary-2".into()];
-    queue_steer_turn(&mut st, &mut loop_state, "steer-a".into());
-    queue_steer_turn(&mut st, &mut loop_state, "steer-b".into());
+    loop_state.queue_steer_turn(&mut st, "steer-a".into());
+    loop_state.queue_steer_turn(&mut st, "steer-b".into());
     assert_eq!(
         loop_state.pending_turns,
         ["steer-a\n\nsteer-b", "ordinary-1", "ordinary-2"]
@@ -581,7 +579,7 @@ fn steers_queue_at_the_front_fold_together_and_keep_the_queued_count_exact() {
     assert_eq!(st.queued_turns, 3, "the folded steer runs as one turn");
 
     // A steer the runtime never confirmed is counted again and keeps the session busy.
-    requeue_steer(&mut st, &mut loop_state, "steer-c".into());
+    loop_state.requeue_steer(&mut st, "steer-c".into());
     assert_eq!(st.queued_turns, 3);
     assert_eq!(st.state, SessionState::Running);
     assert_eq!(loop_state.pending_turns[0], "steer-a\n\nsteer-b\n\nsteer-c");
@@ -595,7 +593,7 @@ fn steers_queue_at_the_front_fold_together_and_keep_the_queued_count_exact() {
     // One ordinary turn and one steer, each counted once.
     st.queued_turns = 2;
     loop_state.pending_turns.push("ordinary-3".into());
-    queue_steer_turn(&mut st, &mut loop_state, "steer-d".into());
+    loop_state.queue_steer_turn(&mut st, "steer-d".into());
     assert_eq!(loop_state.pending_turns, ["steer-d", "ordinary-3"]);
     assert_eq!(st.queued_turns, 2);
 }
