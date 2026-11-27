@@ -498,7 +498,8 @@ function contextParts(ch, chId, slot = "ctx") {
    keeps the rest (project and members, a DM's kind and status). Details keeps every part. */
 const DESCRIPTION_PART = { channel: "Topic", dm: "Role", a2a: "Kind" };
 function description(ch) {
-  if (ch.kind === "dm") return M[ch.with].role || "";
+  /* Agents read "Engineering Manager · Agent" (owner); people show just their role */
+  if (ch.kind === "dm") return [M[ch.with].role, M[ch.with].kind === "agent" ? "Agent" : ""].filter(Boolean).join(" · ");
   return ch.kind === "a2a" ? "Between agents" : ch.topic || "";
 }
 const headerContext = (ch, chId) => joinSep(contextParts(ch, chId).filter(([k]) => k !== DESCRIPTION_PART[ch.kind]).map(([, v]) => (v ? `<span>${v}</span>` : "")));
@@ -603,7 +604,7 @@ function chatHeaderHtml(id, ch, title) {
     ${listButton(id)}
     <div class="ph-t chat-title">
       ${headerLead(ch)}
-      <div class="chat-heading">${backToAgent(ch)}${ch.kind === "dm" ? `<span class="chat-eyebrow">${esc(kindWord(ch.with))}</span>` : ""}${titleLine(title, description(ch))}
+      <div class="chat-heading">${backToAgent(ch)}${titleLine(title, description(ch))}
         ${context}
       </div>
       ${readAsTag(ch)}${requestsTag(ch, id)}
