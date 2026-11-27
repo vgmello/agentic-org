@@ -33,6 +33,7 @@ impl Hq {
             project: params.project.as_deref(),
             team: params.team.as_deref(),
             after: after.as_ref(),
+            has: org_proto::attachments::AttachmentFilter::new(params.has_image, params.has_file),
             limit: limit as usize + 1,
         };
         // The worker reads the organization's committed position (its directory generation)

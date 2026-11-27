@@ -1,10 +1,6 @@
+import { badgeInitials as initialsOf, relativeAge } from '$lib/format';
 import type { Member, OrgSnapshot, WorkItemSummary } from '$lib/proto';
-import {
-	deriveDecisionSpotlight,
-	initialsOf,
-	relativeAge,
-	type SpotlightDecision
-} from '$lib/home/model';
+import { deriveDecisionSpotlight, type SpotlightDecision } from '../../spotlight';
 import { KIND_WORD, type InboxItem, type InboxScope } from '../../types';
 
 export type TriageTab =

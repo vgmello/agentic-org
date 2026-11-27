@@ -51,14 +51,22 @@
 #main .chat .chat-att-grid { display: grid; gap: 4px; width: min(100%, 360px); }
 #main .chat .chat-att-grid:not([data-n="1"]) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 #main .chat .chat-att-grid[data-n="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); width: min(100%, 420px); }
-#main .chat .chat-att-img { position: relative; display: block; padding: 0; overflow: hidden; border: 0; border-radius: var(--radius-lg); cursor: zoom-in; background: color-mix(in srgb, var(--white) 6%, transparent); box-shadow: 0 1px 3px rgb(0 0 0 / .14); }
-#main .chat .chat-att-grid:not([data-n="1"]) .chat-att-img { aspect-ratio: 16 / 10; }
+/* A tile is the image with its file name under it; a corner badge says it opens larger. */
+#main .chat .chat-att-img { position: relative; display: flex; flex-direction: column; min-width: 0; padding: 0; overflow: hidden; border: 0; border-radius: var(--radius-lg); cursor: zoom-in; text-align: start; background: color-mix(in srgb, var(--white) 6%, transparent); box-shadow: 0 1px 3px rgb(0 0 0 / .14), inset 0 0 0 1px var(--line2); }
+#main .chat .chat-att-frame { position: relative; display: block; min-height: 0; overflow: hidden; }
+#main .chat .chat-att-grid:not([data-n="1"]) .chat-att-frame { aspect-ratio: 16 / 10; }
 /* Screenshots are read from the top-left, so a cropped tile keeps that corner. */
 #main .chat .chat-att-img img { display: block; width: 100%; height: 100%; max-height: 280px; object-fit: cover; object-position: left top; }
 /* One image keeps its own size up to the grid's width, never upscaled; a tiny one stays a 44px target. */
-#main .chat .chat-att-grid[data-n="1"] .chat-att-img { justify-self: start; display: grid; place-items: center; min-width: 44px; min-height: 44px; max-width: 100%; }
+#main .chat .chat-att-grid[data-n="1"] .chat-att-img { justify-self: start; min-width: 44px; min-height: 44px; max-width: 100%; }
 #main .chat .chat-att-grid[data-n="1"] .chat-att-img img { width: auto; max-width: 100%; height: auto; object-fit: contain; }
 #main .chat .chat-att-img:hover img { filter: brightness(1.06); }
+#main .chat .chat-att-zoom { position: absolute; top: 6px; right: 6px; display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: var(--radius-md); color: var(--white); background: color-mix(in srgb, var(--gray-950) 68%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--white) 18%, transparent); opacity: .9; transition: opacity .12s ease; }
+#main .chat .chat-att-img:is(:hover, :focus-visible) .chat-att-zoom { opacity: 1; background: var(--gray-950); }
+#main .chat .chat-att-cap { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 8px 5px; font-size: var(--fs-xs); line-height: 1.4; color: var(--gray-300); }
+#main .chat .chat-att-cap .ic14 { flex: none; color: var(--gray-400); }
+#main .chat .chat-att-cap-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#main .chat .chat-att-img:hover .chat-att-cap-name { color: var(--white); text-decoration: underline; text-underline-offset: 2px; }
 #main .chat .chat-att-img:focus-visible { outline: 2px solid var(--tone-accent); outline-offset: 2px; }
 #main .chat .chat-att-more { position: absolute; inset: 0; display: grid; place-items: center; font-size: var(--fs-lg); font-weight: 700; color: var(--white); background: color-mix(in srgb, var(--gray-950) 62%, transparent); }
 #main .chat .chat-att-files { display: grid; gap: 6px; }

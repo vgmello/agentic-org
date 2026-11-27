@@ -80,7 +80,7 @@ fn owner_verifier() -> Result<crate::accounts::verifier::Verifier, String> {
             let password = org_host_control::Password::new("synthetic custody password".into())
                 .map_err(|_| "an invalid password")?;
             let verifier =
-                crate::service::authentication::hash_password(&password).map_err(|e| e.message)?;
+                crate::authentication::hash_password(&password).map_err(|e| e.message)?;
             PHC.get_or_init(|| verifier.expose().to_owned())
         }
     };

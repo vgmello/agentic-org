@@ -2,8 +2,8 @@
 //! for this crate's tests and, through [`super::fixture::seed_administrator`], for the
 //! real-process tests of a `test-support` debug build. Never in a release build.
 use crate::accounts::identity::{AccountId, LoginKey};
+use crate::authentication::hash_password;
 use crate::hostdb::HostDb;
-use crate::service::authentication::hash_password;
 use org_host_control::Password;
 
 /// The seeded administrator's login.

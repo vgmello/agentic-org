@@ -27,6 +27,9 @@ const actor = (by) => (by === "you" || !M[by] ? "you" : M[by].name);
 function receiptLine(it) {
   const r = it.response;
   if (!r) return it.outcome || "Handled";
+  /* An outcome with its own wording says what changed ("T-A146 assigned to you · 10:14"). */
+  const own = it.receipts?.[r.verb];
+  if (own) return `${own}${r.time ? " · " + r.time : ""}`;
   return `${r.verb} by ${actor(r.by)}${r.time ? " · " + r.time : ""}${r.answer ? ": " + r.answer : ""}`;
 }
 /* `cls` styles the line for its surface; `after` adds a surface link (Chat's "View in Inbox"). */

@@ -23,7 +23,9 @@ mod verify;
 pub use assemble::{assemble_standing_instructions, InstructionInput, StandingInstructions};
 pub use identity::{resolve_placement, LeadLink, Placement};
 pub use objective::{compose_turn_objective, TurnSender, TurnTrigger, MAX_TURN_BODY_BYTES};
-pub use org_process::{BUILTIN_INSTRUCTIONS_MAX_BYTES, CORE_RULES, HR_LEAD, MANAGED_SESSION};
+pub use org_process::{
+    BUILTIN_INSTRUCTIONS_MAX_BYTES, CHIEF_OF_STAFF_GUIDANCE, CORE_RULES, HR_LEAD, MANAGED_SESSION,
+};
 pub use verify::{cited_command_lines, verify_command_references};
 
 /// Produces the live `agent-os` command table rendered into standing instructions (`INSTR-5`).

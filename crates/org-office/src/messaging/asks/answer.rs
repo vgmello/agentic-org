@@ -19,9 +19,10 @@ use crate::messaging::features::{
     append_send_recipient_states, effective_auto_members, is_active_employee, put_or_create_file,
     refusal, require_conversation_access, to_wire_header, upsert_participant_snapshot,
 };
+use crate::messaging::files::{self, Binding, MessageFiles, ANSWER_SCOPE, MESSAGE_SCOPE};
 use crate::messaging::ports::{MessagingRead, MessagingWrite};
 use crate::messaging::records::{
-    self, MessageRecord, ParticipantAnswerFile, SenderKind, SCHEMA_VERSION,
+    self, MessageAttachmentRecord, MessageRecord, ParticipantAnswerFile, SenderKind, SCHEMA_VERSION,
 };
 use crate::organization::ports::OrganizationRead;
 use crate::organization::records::{Employee, EmployeeKind};
@@ -213,9 +214,15 @@ pub(crate) fn render_answer_summary(card: &AskCard, answers: &[QuestionAnswer]) 
     lines.join("\n")
 }
 
+/// The files of one answer: on the participant's answer file and on the reply message.
+struct AnswerFiles {
+    answer: Vec<MessageAttachmentRecord>,
+    reply: Vec<MessageAttachmentRecord>,
+}
+
 #[expect(
     clippy::too_many_arguments,
-    reason = "answer command decision takes explicit transaction, identity, caller, params, and clock inputs"
+    reason = "answer command decision takes explicit transaction, identity, caller, params, files, and clock inputs"
 )]
 pub fn decide_chat_answer<E>(
     uow: &UnitOfWork<'_, E>,
@@ -223,6 +230,7 @@ pub fn decide_chat_answer<E>(
     owner: &Id,
     caller: &Id,
     params: &ChatAnswerParams,
+    files: &MessageFiles,
     reply_id: &str,
     org_seq: u64,
     now_utc: &str,
@@ -292,6 +300,28 @@ where
     }
     let raw_answers = normalize_submitted_answers(&card, params)?;
     let validated = validate_answer_set(&card, raw_answers)?;
+    org_proto::attachments::check_attachment_ids(&params.attachment_ids)
+        .map_err(|error| refusal(error.code, error.message))?;
+    if !files.is_empty() && Id::parse(&ask.id).is_err() {
+        return Err(refusal(
+            ErrorCode::InvalidRequest,
+            "files go only on an answer to an ask with a canonical UUIDv7 id",
+        ));
+    }
+    let binding = |scope: &'static str, key: &str| -> Result<_, Refusal> {
+        files.bind(&Binding {
+            organization_id: &here.organization_id,
+            conversation: &conv,
+            members: &active_members,
+            scope,
+            key,
+            created_at: now_utc,
+        })
+    };
+    let answer_files = AnswerFiles {
+        answer: binding(ANSWER_SCOPE, &format!("{}:{}", ask.id, responder.id))?,
+        reply: binding(MESSAGE_SCOPE, reply_id)?,
+    };
     let answer_record = AskAnswerRecord {
         by: caller.as_str().to_owned(),
         at: now_utc.to_owned(),
@@ -301,6 +331,7 @@ where
             .then(|| validated[0].text.clone())
             .flatten(),
         answers: validated,
+        attachments: Vec::new(),
     };
     persist_answer_and_reply(
         uow,
@@ -310,6 +341,7 @@ where
         responder,
         &employees,
         answer_record,
+        answer_files,
         reply_id,
         org_seq,
         now_utc,
@@ -362,7 +394,8 @@ fn persist_answer_and_reply<E>(
     card: &AskCard,
     responder: &Employee,
     employees: &[Employee],
-    answer_record: AskAnswerRecord,
+    mut answer_record: AskAnswerRecord,
+    answer_files: AnswerFiles,
     reply_id: &str,
     org_seq: u64,
     now_utc: &str,
@@ -371,7 +404,9 @@ where
     E: Engine,
     E::Tx: MessagingWrite,
 {
+    // The answer file keeps its files beside the envelope, never inside it.
     let envelope = AskOutcomeEnvelope::Answer(answer_record.clone());
+    answer_record.attachments = files::metas(&answer_files.answer, now_utc, Some(&responder.id));
     let answer_file = ParticipantAnswerFile {
         schema_version: SCHEMA_VERSION,
         revision: 1,
@@ -383,6 +418,7 @@ where
         accepted_at: Some(now_utc.to_owned()),
         reason: (ask.origin_office_id == here.office_id).then(|| "origin-close".to_owned()),
         answer: Some(serde_json::to_value(&envelope).expect("envelope serializes")),
+        attachments: answer_files.answer,
     };
     let ans_path = records::participant_answer_path(&ask.conversation_id, &responder.id, &ask.id);
     let change = put_or_create_file(
@@ -412,6 +448,7 @@ where
             asker_id,
             employees,
             &answer_record,
+            answer_files.reply,
             reply_id,
             org_seq,
             now_utc,
@@ -461,6 +498,7 @@ fn append_answer_reply_message(
     asker_id: &Id,
     employees: &[Employee],
     answer_record: &AskAnswerRecord,
+    attachments: Vec<MessageAttachmentRecord>,
     reply_id: &str,
     org_seq: u64,
     now_utc: &str,
@@ -511,7 +549,7 @@ fn append_answer_reply_message(
         org_epoch: 1,
         org_sequence: org_seq,
         content_sha256: String::new(),
-        attachments: Vec::new(),
+        attachments,
         mailbox_content_hash: None,
     };
     reply.content_sha256 = reply.compute_content_sha256();

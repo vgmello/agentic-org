@@ -295,18 +295,19 @@ pub struct Subscribe;
 /// position is beyond what this office has), it answers `snapshot_required`: take a fresh
 /// `org.snapshot` and subscribe from its position.
 ///
-/// With `from_work_position` (an office only): likewise for the office's work feed. The office
-/// sends the `work.changed` events after that position (e.g. the first page of a
-/// `work.snapshot`), then live ones. It answers `snapshot_required` if it can't: another
-/// incarnation, a position beyond its feed, or one older than the feed's 30-day retention. The
-/// error doesn't say which stream: a client that gave both positions takes both snapshots
-/// again. See [`crate::work`].
+/// `from_work_position`, which resumed the retired phase-1 work feed, is a
+/// [retired](crate::retired) field: any value, `null` included, makes the params invalid
+/// (`invalid_request`) rather than being ignored, and it is never written.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubscribeParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_position: Option<crate::org::Position>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub from_work_position: Option<crate::work::WorkPosition>,
+    #[serde(
+        default,
+        skip_serializing,
+        deserialize_with = "crate::retired::from_work_position"
+    )]
+    pub from_work_position: Option<crate::retired::Retired>,
 }
 
 impl Call for Subscribe {

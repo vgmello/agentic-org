@@ -11,7 +11,7 @@
 	import Check from '@lucide/svelte/icons/check';
 	import Clock from '@lucide/svelte/icons/clock';
 	import { Resource } from '$lib/components/resource.svelte';
-	import { isItemDone } from '$lib/home/model';
+	import { isItemDone } from '$lib/format';
 	import { releasesApi } from '$lib/modules/releases/api';
 	import { computeReleaseDetailReadiness } from '$lib/modules/releases/progress';
 	import type { ReleaseDetail, ReleaseRow } from '$lib/modules/releases/types';

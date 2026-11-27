@@ -6,3 +6,6 @@ export const tone = {
 	info: 'bg-info/10 text-info-text ring-info/20',
 	bad: 'bg-danger-emphasis/10 text-danger-text ring-danger-emphasis/20'
 } as const;
+
+/** Compact status-ring tone shared by WorkReadingPanel and the work module. */
+export type WorkStatusRingTone = 'active' | 'done' | 'blocked' | 'review' | 'neutral';

@@ -85,6 +85,11 @@ impl Caller {
                 .unwrap_or_else(|e| panic!("{}: {e}: {answer}", C::METHOD))),
         }
     }
+
+    /// The raw answer to `method`, for a method with no typed `Call`.
+    pub(super) fn raw(&mut self, method: &str, params: serde_json::Value) -> serde_json::Value {
+        self.0.call(method, params)
+    }
 }
 
 /// Creates the office through the worker and returns its owner's member id.
@@ -190,6 +195,8 @@ fn inbox_real_hq_registration_is_owner_only_read_only_and_changes_epoch_on_resta
         team: None,
         cursor: None,
         limit: None,
+        has_file: None,
+        has_image: None,
     };
     assert_eq!(
         api_code(client.call::<InboxList>(&params).unwrap_err()),
@@ -457,10 +464,11 @@ fn who_lists_the_directory_with_cards_for_the_owner_and_not_for_an_unbound_conne
     live.stop();
 }
 
-/// Messaging, status lines, work writes, `subscribe`, operation lookup and every organization
-/// command but `team.create` lived only in the old tables. Until their families are rebuilt
-/// on the office store (work B4, messaging and status B6, the rest B2) the real worker answers
-/// each of them `unsupported` to the owner, while the directory and `team.create` keep working.
+/// Messaging, status lines, `subscribe`, operation lookup and every organization command but
+/// `team.create` lived only in the old tables. Until their families are rebuilt on the office
+/// store (messaging and status B6, the rest B2) the real worker answers each of them
+/// `unsupported` to the owner, while the directory and `team.create` keep working. The retired
+/// phase-1 work writes have no host policy row: the owner's channel refuses them outright.
 #[test]
 fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker() {
     let _process = process_isolation();
@@ -470,7 +478,6 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
         MsgWaitParams, KIND_MSG,
     };
     use org_proto::org::{TeamRename, TeamRenameParams};
-    use org_proto::work::{TaskCreate, TaskCreateParams, WorkDelete, WorkDeleteParams};
     use org_proto::{ErrorCode, OperationGet, OperationGetParams, OperationKind};
     let world = World::new();
     let owner_id = seeded(&world);
@@ -504,6 +511,7 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
         body: "hello".into(),
         meta: Default::default(),
         reply_to: None,
+        attachment_ids: Vec::new(),
     };
     let inbox = MsgInboxParams {
         include_all: true,
@@ -516,16 +524,6 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
         timeout_ms: 30_000,
         from: None,
         urgent_only: false,
-    };
-    let task: TaskCreateParams = serde_json::from_value(serde_json::json!({
-        "change_id":command_id(3), "item_id":command_id(4),
-        "project_id":command_id(6), "title":"A task"
-    }))
-    .unwrap();
-    let delete = WorkDeleteParams {
-        change_id: command_id(5),
-        item_id: task.item_id.clone(),
-        expected_version: 1,
     };
 
     // `subscribe` on the office socket is served by B6 and refuses unbound callers.
@@ -561,12 +559,29 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
     let started = std::time::Instant::now();
     owner.call::<MsgWait>(&wait).unwrap_err();
     assert!(started.elapsed() < Duration::from_secs(10));
-    assert!(owner_unsupported(
-        owner.call::<TaskCreate>(&task).unwrap_err()
-    ));
-    assert!(owner_unsupported(
-        owner.call::<WorkDelete>(&delete).unwrap_err()
-    ));
+    // The retired phase-1 work writes fail closed on the owner's host channel.
+    for (method, params) in [
+        (
+            "task.create",
+            serde_json::json!({"change_id":command_id(3), "item_id":command_id(4),
+                "project_id":command_id(6), "title":"A task"}),
+        ),
+        (
+            "work.delete",
+            serde_json::json!({"change_id":command_id(5), "item_id":command_id(4),
+                "expected_version":1}),
+        ),
+    ] {
+        let answer = owner.raw(method, params);
+        assert_eq!(
+            answer["error"]["code"], "not_authorized",
+            "{method}: {answer}"
+        );
+        assert_eq!(
+            answer["error"]["message"], "request refused on host channel",
+            "{method}: {answer}"
+        );
+    }
     // operation.get is served for org receipts (unknown ID -> not_found).
     assert_eq!(
         owner

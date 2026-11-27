@@ -54,6 +54,7 @@ pub(super) fn stub_live_handle(
         suspended_since: None,
         pending_wake_count: 0,
         pending_wake_reason: None,
+        queued_turns: 0,
     }));
     let handle = LiveSessionHandle {
         state: runtime_state,
@@ -66,6 +67,7 @@ pub(super) fn stub_live_handle(
         active_permit: Arc::new(Mutex::new(None)),
         supports_mid_turn: false,
         bwrap_masked_siblings: None,
+        partition: None,
     };
     (handle, rx)
 }

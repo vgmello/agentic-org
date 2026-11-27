@@ -11,7 +11,7 @@
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import Play from '@lucide/svelte/icons/play';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
-	import { relativeAge } from '$lib/home/model';
+	import { relativeAge } from '$lib/format';
 	import { accountZone, eventTime } from '$lib/modules/preferences';
 	import {
 		filterStreamEntries,

@@ -15,13 +15,8 @@ import type {
 	UsageTotals
 } from './types';
 
-type Rec = Record<string, unknown>;
+import { asNum, asRec, asStr, type Rec } from '$lib/platform/http/decode';
 
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
-const asNum = (v: unknown): number | undefined =>
-	typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 const asNullableNum = (v: unknown): number | null => {
 	if (typeof v === 'number' && Number.isFinite(v)) return v;
 	return null;

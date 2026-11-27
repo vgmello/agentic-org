@@ -19,6 +19,8 @@ use org_agent_runtime::{
     UsageScope, VersionRange,
 };
 
+pub use crate::plan::{OPERATOR_RULES_DIR, OPERATOR_RULES_FILE_NAME};
+
 use crate::plan::{build_headless_plan, build_take_over_plan};
 use crate::probe::{TESTED_VERSION_MAX, TESTED_VERSION_MIN};
 use crate::session::CodexSession;

@@ -22,10 +22,10 @@ use org_host_control::OneTimeLinkUrl;
 use org_proto::{ApiError, ErrorCode};
 
 use crate::app_auth::AppPolicy;
+use crate::control_listener::Connection;
 use crate::hostdb::HostDb;
 use crate::links::{Issued, LinkKind, OneTimeLinks, Subject};
 use crate::peer::Received;
-use crate::service::listener::Connection;
 
 /// The single subject every registration link is for: the instance's administrator. Setup's
 /// link and every `admin reset` link share it, so issuing one cancels the previous.
@@ -49,17 +49,17 @@ pub(crate) trait Presence: Send + Sync {
 pub(crate) struct NativePresence;
 impl Presence for NativePresence {
     fn local(&self, connection: &Connection) -> bool {
-        crate::recovery::presence::local(connection)
+        crate::presence::local(connection.socket())
     }
     fn confirm(&self, cancelled: &dyn Fn() -> bool) -> Result<(), ()> {
-        crate::recovery::presence::confirm(cancelled)
+        crate::presence::confirm(cancelled)
     }
     fn confirm_for(
         &self,
         reason: org_platform_host::presence::ConfirmReason,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<(), ()> {
-        crate::recovery::presence::confirm_for(reason, cancelled)
+        crate::presence::confirm_for(reason, cancelled)
     }
 }
 

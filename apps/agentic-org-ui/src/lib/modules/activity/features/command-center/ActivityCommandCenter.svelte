@@ -12,7 +12,7 @@
 	import ListFilter from '@lucide/svelte/icons/list-filter';
 	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import { initialsOf } from '$lib/home/model';
+	import { badgeInitials as initialsOf } from '$lib/format';
 	import { activityApi } from '$lib/modules/activity/api';
 	import type { ActivityQuery, ActivityRow } from '$lib/modules/activity/types';
 	import { inboxApi } from '$lib/modules/inbox/api';

@@ -113,6 +113,18 @@ pub(crate) struct FailoverRequest {
     pub rate_limit_resets_at: Option<String>,
     /// The failed run's [`PumpContext::stop_epoch`]: a later explicit stop abandons the failover.
     pub stop_epoch: u64,
+    /// The Chief of Staff partition the failed run served (`TASK-80.1`): its relaunch serves the
+    /// same one and so acts for exactly the same caller ([`Self::acting_for_caller_id`]).
+    pub partition: Option<crate::partition::PartitionKey>,
+}
+
+impl FailoverRequest {
+    /// The member the failed run (and so its relaunch) acts for; `None` for nobody.
+    pub(crate) fn acting_for_caller_id(&self) -> Option<&str> {
+        self.partition
+            .as_ref()
+            .and_then(crate::partition::PartitionKey::caller_id)
+    }
 }
 pub(crate) type FailoverHook = Arc<dyn Fn(FailoverRequest) + Send + Sync>;
 /// Returns `true` when this Linux `bwrap` session's masked sibling set is stale because a new
@@ -167,9 +179,27 @@ pub(crate) struct SessionRuntimeState {
     pub suspended_since: Option<String>,
     pub pending_wake_count: u32,
     pub pending_wake_reason: Option<String>,
+    /// Turns queued on the pump (sent on its channel or waiting in its queue) that have not yet
+    /// been dispatched, refused or carried into a failover. A session with a queued turn is
+    /// never idle: only [`queue_turn`] raises it, and the pump lowers it (`TASK-80.1`).
+    pub queued_turns: usize,
 }
 
 impl SessionRuntimeState {
+    /// Forgets `n` turns that left the pump's queue: dispatched, refused or carried into a
+    /// failover objective.
+    pub(crate) fn dequeue_turns(&mut self, n: usize) {
+        self.queued_turns = self.queued_turns.saturating_sub(n);
+    }
+
+    /// Moves a busy session back to idle once no queued turn is left behind it, so a turn that
+    /// ends (or never starts) ahead of a queued one never shows the session idle in between.
+    pub(crate) fn settle_idle(&mut self) {
+        if self.state == SessionState::Running && self.queued_turns == 0 {
+            self.state = SessionState::Idle;
+        }
+    }
+
     pub(crate) fn to_view(&self) -> SessionView {
         SessionView {
             employee_id: self.employee_id.clone(),
@@ -201,6 +231,32 @@ impl SessionRuntimeState {
     }
 }
 
+/// Queues `text` on a live pump. In one critical section of the session's state lock the turn
+/// is counted in [`SessionRuntimeState::queued_turns`], an idle session is marked busy and the
+/// turn is sent, so the pump can never refuse, finish or fail the turn before it is counted and
+/// leave the session wedged busy. A send to a dead pump undoes both. `Sender::send` on the
+/// pump's unbounded channel never blocks (rules §3.4). Returns whether the pump received it.
+pub(crate) fn queue_turn(
+    state: &Mutex<SessionRuntimeState>,
+    tx: &Sender<PumpCommand>,
+    text: String,
+) -> bool {
+    let mut st = state.lock().unwrap_or_else(|p| p.into_inner());
+    st.queued_turns = st.queued_turns.saturating_add(1);
+    let flipped = st.state == SessionState::Idle;
+    if flipped {
+        st.state = SessionState::Running;
+    }
+    if tx.send(PumpCommand::SendTurn(text)).is_ok() {
+        return true;
+    }
+    st.dequeue_turns(1);
+    if flipped {
+        st.settle_idle();
+    }
+    false
+}
+
 pub(crate) struct PumpContext {
     pub employee_id: String,
     pub run_id: String,
@@ -225,6 +281,16 @@ pub(crate) struct PumpContext {
     /// The employee's explicit-stop epoch when this run was installed
     /// ([`crate::manager::SessionRegistry::stop_epoch`]), carried into every [`FailoverRequest`].
     pub stop_epoch: u64,
+    /// The Chief of Staff partition this run serves (`TASK-80.1`): the run records its
+    /// conversation and context use there, and carries it into every [`FailoverRequest`].
+    pub partition: Option<crate::partition::PartitionHandle>,
+}
+
+impl PumpContext {
+    /// The partition this run serves, for a [`FailoverRequest`].
+    pub(crate) fn partition_key(&self) -> Option<crate::partition::PartitionKey> {
+        self.partition.as_ref().map(|p| p.key().clone())
+    }
 }
 
 enum ReaderMsg {
@@ -345,6 +411,8 @@ pub(crate) fn run_pump(
     drop(commands);
     {
         let mut guard = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+        // Turns still queued die with the pump (a preserved failover carries its own objective).
+        guard.queued_turns = 0;
         if !matches!(
             guard.state,
             SessionState::StallLocked | SessionState::RecoveryRequired
@@ -397,12 +465,16 @@ fn should_exit_loop(
             // acquires/verifies its own permit right before `Control::Send` (`doc-88` §6).
             release_active_permit(ctx);
             loop_state.permit_lease_deadline = None;
-            if let Some(hook) = ctx
-                .hooks
-                .on_turn_ended
-                .as_ref()
-                .filter(|_| loop_state.pending_turns.is_empty())
-            {
+            // A turn queued behind this one keeps the session busy: the hook fires once the
+            // last queued turn ends.
+            let nothing_queued = loop_state.pending_turns.is_empty()
+                && ctx
+                    .state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .queued_turns
+                    == 0;
+            if let Some(hook) = ctx.hooks.on_turn_ended.as_ref().filter(|_| nothing_queued) {
                 hook(&ctx.employee_id);
             }
         }

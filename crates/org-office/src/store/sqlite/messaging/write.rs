@@ -19,6 +19,10 @@ use super::super::{
     SqliteTx,
 };
 
+use super::files::{
+    put_answer_files, put_message_files, remove_all_answer_files, remove_answer_files,
+    remove_message_files,
+};
 use super::mirror::{
     ensure_auto_conversation_membership, ensure_employee, ensure_office, ensure_org,
     ensure_project, ensure_team,
@@ -57,28 +61,7 @@ fn put_message_meta_and_attachments(
                 .map_or(Value::Null, text),
         ],
     )?;
-    run(
-        db,
-        "DELETE FROM message_attachments WHERE organization_id = ?1 AND message_id = ?2",
-        vec![text(scope), text(&record.id)],
-    )?;
-    for att in &record.attachments {
-        put(
-            db,
-            "message_attachments",
-            "organization_id, message_id, id, content_ref, media_type, byte_count, content_sha256",
-            3,
-            vec![
-                text(scope),
-                text(&record.id),
-                text(&att.id),
-                text(&att.content_ref),
-                text(&att.media_type),
-                whole(att.byte_count)?,
-                text(&att.content_sha256),
-            ],
-        )?;
-    }
+    put_message_files(db, scope, record)?;
     Ok(())
 }
 
@@ -263,11 +246,8 @@ impl MessagingWrite for SqliteTx {
     fn remove_message(&mut self, msg_id: &str) -> Result<(), EngineError> {
         let (db, scope) = self.msg_view()?;
         let pair = || vec![text(scope), text(msg_id)];
-        run(
-            db,
-            "DELETE FROM message_attachments WHERE organization_id = ?1 AND message_id = ?2",
-            pair(),
-        )?;
+        remove_message_files(db, scope, msg_id)?;
+        remove_all_answer_files(db, scope, msg_id)?;
         run(
             db,
             "DELETE FROM messaging_local_meta WHERE organization_id = ?1 AND message_id = ?2",
@@ -470,7 +450,8 @@ impl MessagingWrite for SqliteTx {
                 answer.reason.as_deref().map_or(Value::Null, text),
                 ans_json.as_deref().map_or(Value::Null, text),
             ],
-        )
+        )?;
+        put_answer_files(db, scope, answer)
     }
 
     fn remove_participant_answer(
@@ -479,6 +460,7 @@ impl MessagingWrite for SqliteTx {
         employee_id: &Id,
     ) -> Result<(), EngineError> {
         let (db, scope) = self.msg_view()?;
+        remove_answer_files(db, scope, message_id, employee_id)?;
         run(
             db,
             "DELETE FROM messaging_answers \

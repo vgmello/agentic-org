@@ -13,9 +13,10 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    change::{Bytes, DurablePath, Sha256, TEMP_PREFIX},
+    change::{Bytes, Sha256},
     disk::{Disk, RealDisk},
     error::FilesError,
+    path::{DurablePath, TEMP_PREFIX},
 };
 
 mod one;

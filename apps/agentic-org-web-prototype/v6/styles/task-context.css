@@ -121,3 +121,24 @@
 :is(.stc-ctx-files, .work-ctx-files) .ic14 { flex: none; margin-block-start: 2px; color: var(--gray-400); }
 :is(.stc-ctx-files, .work-ctx-files) > span { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 :is(.stc-ctx-files, .work-ctx-files) .ctx-file-name { color: var(--gray-300); }
+
+/* What goes with the task, directly above the send actions: "Sends with the task: 1 message · 📎 a.png b.pdf". */
+.stc-dialog .stc-sends {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; flex: none;
+  margin: 0; padding: 8px 18px; border-top: 1px solid var(--stc-line);
+  color: var(--gray-300); font-size: var(--fs-xs);
+}
+.stc-dialog .stc-sends-k { font-weight: 600; color: var(--white); }
+.stc-dialog .stc-sends-files { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+.stc-dialog .stc-sends-files .ic14 { color: var(--gray-400); }
+.stc-dialog .stc-sends-file {
+  min-width: 0; max-width: 100%; padding: 1px 6px; border-radius: var(--radius-md);
+  background: var(--stc-chip-bg); box-shadow: inset 0 0 0 1px var(--stc-line);
+  color: var(--white); overflow-wrap: anywhere;
+}
+.stc-dialog .stc-ctx-include {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 6px 0 4px;
+  border-radius: var(--radius-md); color: var(--tone-accent-ink); font-size: var(--fs-xs); font-weight: 500;
+}
+.stc-dialog .stc-ctx-include:hover { background: var(--stc-chip-hover); }
+.stc-dialog .stc-sends + .stc-foot { border-top: 0; padding-top: 6px; }

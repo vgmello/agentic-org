@@ -16,7 +16,7 @@ use crate::credentials::{format_rfc3339_ms, is_safe_id, now_ms};
 use crate::manager::SessionManager;
 
 use super::nonces::{verify_signature, NonceEntry};
-use super::{decode_pubkey, ExternalLeaseRecord};
+use super::{decode_pubkey, refuse_chief_of_staff, ExternalLeaseRecord};
 
 fn refused() -> ApiError {
     ApiError::new(
@@ -57,6 +57,7 @@ impl SessionManager {
         }
         let label = workspace_label(&params.workspace_label)?;
         let employee = self.require_active_agent(employee_id)?;
+        refuse_chief_of_staff(&employee)?;
         let emp_id = employee.id.as_str();
         let (entry, code) = self
             .external
@@ -106,6 +107,7 @@ impl SessionManager {
         session_id: &str,
         purpose: ChallengePurpose,
     ) -> Result<AuthChallengeResult, ApiError> {
+        self.refuse_chief_of_staff_id(employee_id)?;
         let now = now_ms();
         let lease = self
             .external_lease(employee_id)
@@ -193,6 +195,7 @@ impl SessionManager {
         employee_id: &str,
         params: &SignedChallengeParams,
     ) -> Result<AuthExchangeResult, ApiError> {
+        self.refuse_chief_of_staff_id(employee_id)?;
         let signed = self.verify_signed_answer(employee_id, params, ChallengePurpose::Exchange)?;
         let (lease, binding, expires_ms) = {
             let _serial = self

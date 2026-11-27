@@ -16,6 +16,7 @@ mod files;
 mod flusher;
 mod hooks;
 mod journal;
+mod path;
 mod rebuild;
 mod receipts;
 mod sequences;
@@ -26,8 +27,8 @@ pub mod testkit;
 mod writer;
 
 pub use change::{
-    Ack, Actor, Bytes, Change, Clock, DurablePath, FileChange, Id, Operation, Outcome, Receipt,
-    Refusal, Sha256, SystemClock, Timestamp, Tree,
+    Ack, Actor, Bytes, Change, Clock, FileChange, Id, Operation, Outcome, Receipt, Refusal, Sha256,
+    SystemClock, Timestamp,
 };
 pub use changes::{ChangeStream, Committed, Resync};
 pub use custody::{CustodyError, JournalHead, OfficeIdentity, WriterAuthority};
@@ -39,6 +40,7 @@ pub use journal::{
     Inspection, Journal, JournalPoint, OperationRecord, Predecessor, Recovered, MAX_ENTRY_BYTES,
     SEGMENT_BYTES,
 };
+pub use path::{DurablePath, Tree};
 pub use rebuild::{rebuild, RebuildReport};
 pub use receipts::{
     decode_receipt, encode_receipt, receipt_path, ReceiptProjector, ReceiptRetentionPolicy,

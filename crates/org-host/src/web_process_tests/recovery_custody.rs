@@ -10,7 +10,7 @@
 //! the package follow the persisted ledger; and acknowledgement deletes the
 //! custody copy.
 use super::{answer, create_hq, start_signed_in, Started, PASSWORD};
-use crate::{hostdb::HostDb, recovery::TestPresence, service::listener::Connection};
+use crate::{control_listener::Connection, hostdb::HostDb, recovery::TestPresence};
 use org_host_control::{ops, recovery as dto, SessionHandle};
 use org_proto::{ApiError, Call, ErrorCode};
 use std::{

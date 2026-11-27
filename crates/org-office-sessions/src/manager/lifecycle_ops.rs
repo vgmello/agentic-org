@@ -55,7 +55,7 @@ impl SessionManager {
 pub(crate) enum ClearableHandle {
     /// A dead or locked handle (`StallLocked`, `RecoveryRequired`, `Stopped`, `Suspended`, or
     /// flagged `recovery_required`) was removed; the start slot is reserved for its reap.
-    Removed(LiveSessionHandle),
+    Removed(Box<LiveSessionHandle>),
     /// A handle that is still running or tearing down (such as a `Stopping` pump that may be
     /// mid-failover) stays live. No start slot is reserved, so its own failover relaunch is never
     /// refused for contention, and its teardown outcome is unknown, so durable recovery evidence
@@ -112,7 +112,9 @@ pub(crate) fn take_clearable_live_handle(
     Ok(reg
         .live
         .remove(employee_id)
-        .map_or(ClearableHandle::Absent, ClearableHandle::Removed))
+        .map_or(ClearableHandle::Absent, |handle| {
+            ClearableHandle::Removed(Box::new(handle))
+        }))
 }
 
 /// Clears the persisted stall lock, and only when `clear_recovery` (no live handle remains whose
@@ -153,7 +155,7 @@ pub(super) fn clear_stall_lock_impl(
         found => {
             let slot_guard = StartSlotGuard::new(&mgr.registry, employee_id.to_owned());
             if let ClearableHandle::Removed(old) = found {
-                reap_cleared_handle(mgr, employee_id, old)?;
+                reap_cleared_handle(mgr, employee_id, *old)?;
             }
             // The start slot is held, so nothing can install a new handle in between.
             let live_handle_remains = mgr

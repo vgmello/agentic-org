@@ -1,6 +1,6 @@
 // Shared by the chat tests: the sample organization, a fixed clock and small helpers.
 import { sampleOrg } from '$lib/modules/organization/sample';
-import { applyChat, type ChatContext } from './engine';
+import { applyChat, type ChatContext } from './testing/chat-engine';
 import { chatContext } from './model';
 import { sampleChat } from '../../../../e2e/fakes/modules/chat-sample';
 import type { ChatAccepted, ChatCall, ChatMessage, ChatState } from './types';

@@ -30,6 +30,9 @@ pub const HOME_RETIRED: &str = "home is managed by the office";
 /// The message for the retired `app_token` field.
 pub const APP_TOKEN_RETIRED: &str = "app_token is retired";
 
+/// The message for `subscribe`'s retired `from_work_position`: the phase-1 work feed is gone.
+pub const FROM_WORK_POSITION_RETIRED: &str = "from_work_position is retired";
+
 /// The type of a retired field: it has no values, so a decoded `Option<Retired>` is always
 /// `None`. Use it only with the decoders in this module, which refuse every present value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -44,4 +47,10 @@ pub fn home<'de, D: Deserializer<'de>>(_: D) -> Result<Option<Retired>, D::Error
 /// appear in the error.
 pub fn app_token<'de, D: Deserializer<'de>>(_: D) -> Result<Option<Retired>, D::Error> {
     Err(D::Error::custom(APP_TOKEN_RETIRED))
+}
+
+/// Refuses a present `from_work_position` on `subscribe`, whatever its value: there is no work
+/// feed to resume, and ignoring it would let a client believe it resumed one.
+pub fn from_work_position<'de, D: Deserializer<'de>>(_: D) -> Result<Option<Retired>, D::Error> {
+    Err(D::Error::custom(FROM_WORK_POSITION_RETIRED))
 }
