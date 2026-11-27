@@ -13,7 +13,8 @@ use super::codes::{normalize_code, PendingInsert, MAX_PENDING_PER_EMPLOYEE, MAX_
 use super::nonces::{verify_signature, NonceEntry, MAX_NONCES_PER_SESSION};
 use super::{
     compute_workspace_familiarity, decode_pubkey, pubkey_fingerprint, refuse_builtin_agent,
-    validate_workspace_label, ExternalLeaseRecord, NonceBook, PendingLogins,
+    validate_optional_hostname, validate_optional_workspace_path, validate_workspace_label,
+    ExternalLeaseRecord, NonceBook, PendingLogins,
 };
 use org_proto::external_auth::{ExternalHistoryEntry, WorkspaceFamiliarity};
 
@@ -465,4 +466,200 @@ fn workspace_familiarity_classifies_all_three_states() {
         "fp-known",
     );
     assert_eq!(fam, WorkspaceFamiliarity::FirstTime);
+}
+
+#[test]
+fn workspace_familiarity_rejects_omitted_hostname_or_workspace_path_bypass() {
+    let recorded_full = vec![ExternalHistoryEntry {
+        at: "2026-11-26T10:00:00.000Z".into(),
+        event: "approved".into(),
+        session_id: Some("ext-1".into()),
+        actor_id: Some("owner-1".into()),
+        detail: None,
+        hostname: Some("mac-1".into()),
+        workspace_path: Some("/Users/ada/repo".into()),
+        workspace_label: Some("~/repo".into()),
+        pubkey_fingerprint: Some("fp-known".into()),
+    }];
+
+    // Omitting hostname when history recorded one MUST NOT match.
+    let (fam, by, at) = compute_workspace_familiarity(
+        &recorded_full,
+        None,
+        Some("/Users/ada/repo"),
+        "~/repo",
+        "fp-known",
+    );
+    assert_eq!(fam, WorkspaceFamiliarity::FirstTime);
+    assert!(by.is_none() && at.is_none());
+
+    // Omitting workspace_path when history recorded one MUST NOT fall back to workspace_label.
+    let (fam, _, _) =
+        compute_workspace_familiarity(&recorded_full, Some("mac-1"), None, "~/repo", "fp-known");
+    assert_eq!(fam, WorkspaceFamiliarity::FirstTime);
+
+    // Omitting both hostname and workspace_path MUST NOT match a recorded entry.
+    let (fam, _, _) =
+        compute_workspace_familiarity(&recorded_full, None, None, "~/repo", "fp-known");
+    assert_eq!(fam, WorkspaceFamiliarity::FirstTime);
+
+    // Reverse direction: history has hostname = None, request provides Some(...) -> first_time.
+    let history_no_host = vec![ExternalHistoryEntry {
+        hostname: None,
+        ..recorded_full[0].clone()
+    }];
+    let (fam, _, _) = compute_workspace_familiarity(
+        &history_no_host,
+        Some("mac-1"),
+        Some("/Users/ada/repo"),
+        "~/repo",
+        "fp-known",
+    );
+    assert_eq!(fam, WorkspaceFamiliarity::FirstTime);
+
+    // Reverse direction: history has workspace_path = None, request provides Some(...) -> first_time.
+    let history_no_path = vec![ExternalHistoryEntry {
+        workspace_path: None,
+        ..recorded_full[0].clone()
+    }];
+    let (fam, _, _) = compute_workspace_familiarity(
+        &history_no_path,
+        Some("mac-1"),
+        Some("/Users/ada/repo"),
+        "~/repo",
+        "fp-known",
+    );
+    assert_eq!(fam, WorkspaceFamiliarity::FirstTime);
+
+    // Fallback to workspace_label applies ONLY when BOTH entry and request omit workspace_path
+    // AND hostnames strictly match.
+    let (fam, _, _) =
+        compute_workspace_familiarity(&history_no_path, Some("mac-1"), None, "~/repo", "fp-known");
+    assert_eq!(fam, WorkspaceFamiliarity::ReturningKnownKey);
+
+    let history_both_none = vec![ExternalHistoryEntry {
+        hostname: None,
+        workspace_path: None,
+        ..recorded_full[0].clone()
+    }];
+    let (fam, _, _) =
+        compute_workspace_familiarity(&history_both_none, None, None, "~/repo", "fp-known");
+    assert_eq!(fam, WorkspaceFamiliarity::ReturningKnownKey);
+    let (fam, _, _) = compute_workspace_familiarity(
+        &history_both_none,
+        Some("mac-1"),
+        None,
+        "~/repo",
+        "fp-known",
+    );
+    assert_eq!(fam, WorkspaceFamiliarity::FirstTime);
+    let (fam, _, _) = compute_workspace_familiarity(
+        &history_both_none,
+        None,
+        Some("/Users/ada/repo"),
+        "~/repo",
+        "fp-known",
+    );
+    assert_eq!(fam, WorkspaceFamiliarity::FirstTime);
+}
+
+#[test]
+fn workspace_metadata_validators_reject_traversal_relative_trailing_slash_and_bidi_spoofing() {
+    assert_eq!(validate_optional_workspace_path(None).unwrap(), None);
+    assert_eq!(
+        validate_optional_workspace_path(Some("/"))
+            .unwrap()
+            .as_deref(),
+        Some("/")
+    );
+    assert_eq!(
+        validate_optional_workspace_path(Some(" /Users/ada/.config "))
+            .unwrap()
+            .as_deref(),
+        Some("/Users/ada/.config")
+    );
+    assert_eq!(
+        validate_optional_hostname(Some("  mac-1  "))
+            .unwrap()
+            .as_deref(),
+        Some("mac-1")
+    );
+
+    for bad_path in [
+        "",
+        "   ",
+        "Users/ada/repo",
+        "./repo",
+        "../repo",
+        "/Users/ada/a/../b",
+        "/../etc/passwd",
+        "/Users/ada/./repo",
+        "/Users/ada/.",
+        "/Users/ada/repo/",
+        "//",
+        "/Users//ada/repo",
+        "/Users/ada/\0repo",
+        "/Users/ada/repo\n",
+    ] {
+        assert_eq!(
+            validate_optional_workspace_path(Some(bad_path))
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidRequest,
+            "workspace_path should be rejected: {bad_path:?}"
+        );
+    }
+
+    let oversized = format!(
+        "/{}",
+        "a".repeat(org_proto::external_auth::MAX_WORKSPACE_PATH_BYTES)
+    );
+    assert_eq!(
+        validate_optional_workspace_path(Some(&oversized))
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidRequest
+    );
+
+    // Line/paragraph separators and bidi overrides/isolates must be rejected across all three
+    // validators (both embedded and trailing).
+    for ch in [
+        '\u{2028}', '\u{2029}', '\u{200E}', '\u{200F}', '\u{202A}', '\u{202E}', '\u{2066}',
+        '\u{2069}', '\x1b',
+    ] {
+        let embedded_label = format!("repo{ch}fake");
+        let trailing_label = format!("repo{ch}");
+        for label in [&embedded_label, &trailing_label] {
+            assert_eq!(
+                validate_workspace_label(label).unwrap_err().code,
+                ErrorCode::InvalidRequest,
+                "label should reject U+{:04X}: {label:?}",
+                ch as u32
+            );
+        }
+
+        let embedded_host = format!("mac{ch}1");
+        let trailing_host = format!("mac1{ch}");
+        for host in [&embedded_host, &trailing_host] {
+            assert_eq!(
+                validate_optional_hostname(Some(host)).unwrap_err().code,
+                ErrorCode::InvalidRequest,
+                "hostname should reject U+{:04X}: {host:?}",
+                ch as u32
+            );
+        }
+
+        let embedded_path = format!("/Users/ada/re{ch}po");
+        let trailing_path = format!("/Users/ada/repo{ch}");
+        for path in [&embedded_path, &trailing_path] {
+            assert_eq!(
+                validate_optional_workspace_path(Some(path))
+                    .unwrap_err()
+                    .code,
+                ErrorCode::InvalidRequest,
+                "workspace_path should reject U+{:04X}: {path:?}",
+                ch as u32
+            );
+        }
+    }
 }

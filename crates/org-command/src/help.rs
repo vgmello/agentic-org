@@ -42,7 +42,7 @@ impl CommandTable {
 }
 
 /// The catalogue's last line when the table has shorthands:
-/// `Shorthands: who = directory list; boot = session boot.`
+/// `Shorthands: who = directory list; context = session context.`
 pub(crate) fn shorthands_line(table: &CommandTable) -> Option<String> {
     let aliases = table.aliases();
     if aliases.is_empty() {

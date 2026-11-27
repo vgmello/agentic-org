@@ -295,12 +295,30 @@ impl WorkspaceState {
     }
 
     fn read_file(&self, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>, Refusal> {
+        let uid = org_platform::fs::effective_uid()
+            .map_err(|e| refusal(format!("cannot read this account's id: {e}")))?;
         let path = self.dir.join(name);
         let file = match org_platform::fs::open_nofollow_ro(&path) {
             Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(refusal(format!("cannot read {name}: {e}"))),
         };
+        let meta = file
+            .metadata()
+            .map_err(|e| refusal(format!("cannot inspect {name}: {e}")))?;
+        if !meta.file_type().is_file() {
+            return Err(refusal(format!("{name} must be a regular file")));
+        }
+        if meta.uid() != uid {
+            return Err(refusal(format!(
+                "{name} is not owned by the current account"
+            )));
+        }
+        if (meta.mode() & 0o7077) != 0 {
+            return Err(refusal(format!(
+                "{name} permissions are too permissive (require owner-only 0600)"
+            )));
+        }
         let mut bytes = Zeroizing::new(Vec::new());
         file.take(MAX_STATE_FILE_BYTES + 1)
             .read_to_end(&mut bytes)

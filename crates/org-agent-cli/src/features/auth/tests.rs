@@ -191,3 +191,68 @@ fn top_level_help_lists_the_workspace_sign_in_verbs() {
         );
     }
 }
+
+#[test]
+fn client_sanitizers_reject_bidi_line_separators_and_omit_oversized_or_unclean_workspace_paths() {
+    use std::path::Path;
+
+    use org_proto::external_auth::MAX_WORKSPACE_PATH_BYTES;
+
+    use super::client::{optional_workspace_path, sanitize_hostname};
+
+    assert_eq!(
+        sanitize_hostname("workstation\n").as_deref(),
+        Some("workstation")
+    );
+    assert_eq!(sanitize_hostname("  mac-1\r\n").as_deref(), Some("mac-1"));
+    for ch in [
+        '\u{2028}', '\u{2029}', '\u{200E}', '\u{200F}', '\u{202A}', '\u{202E}', '\u{2066}',
+        '\u{2069}', '\x1b',
+    ] {
+        assert_eq!(sanitize_hostname(&format!("host{ch}name")), None);
+        assert_eq!(sanitize_hostname(&format!("hostname{ch}")), None);
+    }
+    assert_eq!(sanitize_hostname("host\nname"), None);
+    assert_eq!(sanitize_hostname(&"a".repeat(256)), None);
+
+    assert_eq!(
+        optional_workspace_path(Path::new("/")).as_deref(),
+        Some("/")
+    );
+    assert_eq!(
+        optional_workspace_path(Path::new("/Users/ada/repo")).as_deref(),
+        Some("/Users/ada/repo")
+    );
+    let exact = format!("/{}", "a".repeat(MAX_WORKSPACE_PATH_BYTES - 1));
+    assert_eq!(exact.len(), MAX_WORKSPACE_PATH_BYTES);
+    assert_eq!(
+        optional_workspace_path(Path::new(&exact)).as_deref(),
+        Some(exact.as_str())
+    );
+    let too_long = format!("/{}", "a".repeat(MAX_WORKSPACE_PATH_BYTES));
+    assert_eq!(optional_workspace_path(Path::new(&too_long)), None);
+    let multibyte_too_long = format!("/{}", "é".repeat(MAX_WORKSPACE_PATH_BYTES / 2));
+    assert!(multibyte_too_long.len() > MAX_WORKSPACE_PATH_BYTES);
+    assert_eq!(
+        optional_workspace_path(Path::new(&multibyte_too_long)),
+        None
+    );
+    for bad in [
+        "",
+        "relative/repo",
+        "./repo",
+        "/Users/ada/a/../b",
+        "/Users/ada/./repo",
+        "/Users/ada/repo/",
+        "//",
+        "/Users//ada/repo",
+        "/Users/ada/re\u{202E}po",
+        "/Users/ada/repo\u{2028}",
+    ] {
+        assert_eq!(
+            optional_workspace_path(Path::new(bad)),
+            None,
+            "workspace_path should be omitted: {bad:?}"
+        );
+    }
+}

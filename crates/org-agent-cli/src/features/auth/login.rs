@@ -240,7 +240,7 @@ fn run_login(args: &[String], hooks: &LoginHooks) -> Result<Printed, LifecycleEr
         &pubkey,
         &label,
         client::local_hostname(),
-        Some(root.display().to_string()),
+        client::optional_workspace_path(&root),
     )?;
     eprintln!(
         "To approve this sign-in as @{}, a person runs:\n  {}\nor approves it on the agent's page in the Agentic Org web app ({}).\nWaiting for approval (the code expires at {})...",

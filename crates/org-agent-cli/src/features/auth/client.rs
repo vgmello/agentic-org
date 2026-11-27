@@ -1,7 +1,7 @@
 //! Office-socket calls of external sign-in (`auth.*`) and the workspace key (`TASK-137`).
 
 use std::io::Read as _;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use base64::Engine as _;
 use org_client::locator::{self, DiscoveredOffice, ResolveOfficeError};
@@ -10,6 +10,7 @@ use org_command::Refusal;
 use org_proto::external_auth::{
     challenge_message, AuthChallenge, AuthChallengeParams, AuthChallengeResult, AuthExchange,
     AuthExchangeResult, ChallengePurpose, SignedChallengeParams, MAX_HOSTNAME_BYTES,
+    MAX_WORKSPACE_PATH_BYTES,
 };
 use org_proto::location::{OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
 use org_proto::msg::{MsgBind, MsgBindParams};
@@ -171,9 +172,8 @@ pub fn load_or_generate_key(
     state: &WorkspaceState,
 ) -> Result<(Zeroizing<Vec<u8>>, String), Refusal> {
     state.preflight()?;
-    if let Some(existing) = state
-        .dir()
-        .exists()
+    if let Some(existing) = std::fs::symlink_metadata(state.dir())
+        .is_ok()
         .then(|| state.read_key())
         .transpose()?
         .flatten()
@@ -183,6 +183,51 @@ pub fn load_or_generate_key(
         }
     }
     generate_key()
+}
+
+/// Rejects control characters, Unicode line/paragraph separators, and bidirectional
+/// overrides/isolates that can spoof terminal or web approval surfaces.
+pub(crate) fn is_disallowed_display_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{200E}'
+                | '\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
+/// Formats `path` for the optional `workspace_path` wire field, omitting it (`None`) when it is
+/// non-UTF-8, exceeds `MAX_WORKSPACE_PATH_BYTES`, contains control/line-separator/bidi
+/// characters, or is not a clean absolute path.
+pub(crate) fn optional_workspace_path(path: &Path) -> Option<String> {
+    let text = path.to_str()?;
+    if text.is_empty()
+        || text.len() > MAX_WORKSPACE_PATH_BYTES
+        || text.chars().any(is_disallowed_display_char)
+        || !path.is_absolute()
+        || !path
+            .components()
+            .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
+    {
+        return None;
+    }
+    if text != "/" {
+        if text.ends_with('/') {
+            return None;
+        }
+        let rest = text.strip_prefix('/')?;
+        if rest
+            .split('/')
+            .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+        {
+            return None;
+        }
+    }
+    Some(text.to_owned())
 }
 
 /// Best-effort local host name (safe, zero `unsafe`, zero platform `#[cfg]`), sanitized to the
@@ -216,11 +261,11 @@ fn read_hostname_file(path: &Path) -> Option<String> {
     sanitize_hostname(&text)
 }
 
-fn sanitize_hostname(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
+pub(crate) fn sanitize_hostname(raw: &str) -> Option<String> {
+    let trimmed = raw.trim_matches([' ', '\r', '\n']);
     if trimmed.is_empty()
         || trimmed.len() > MAX_HOSTNAME_BYTES
-        || trimmed.chars().any(char::is_control)
+        || trimmed.chars().any(is_disallowed_display_char)
     {
         return None;
     }

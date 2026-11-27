@@ -6,7 +6,7 @@
 //! runtime directory and Unix socket without following symbolic links, and resolves active
 //! `<temp_folder>/o/<handle>/s.sock` sockets on both macOS and GNU/Linux.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
@@ -136,6 +136,27 @@ pub fn resolve_local_office(
     )
 }
 
+/// Stable deduplication key for a discovered socket, collapsing path aliases such as macOS
+/// `/tmp` vs `/private/tmp` or symlinked ancestor directories into one entry.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum SocketKey {
+    Inode(u64, u64),
+    Path(PathBuf),
+}
+
+fn socket_dedup_key(socket: &Path) -> SocketKey {
+    if let Ok(meta) = fs::symlink_metadata(socket) {
+        return SocketKey::Inode(meta.dev(), meta.ino());
+    }
+    let canonical = socket
+        .parent()
+        .and_then(|parent| fs::canonicalize(parent).ok())
+        .zip(socket.file_name())
+        .map(|(dir, name)| dir.join(name))
+        .unwrap_or_else(|| socket.to_path_buf());
+    SocketKey::Path(canonical)
+}
+
 /// Pure path-parameterized resolver used by [`resolve_local_office`] and unit tests.
 pub fn resolve_local_office_from(
     locator_path: Option<&Path>,
@@ -143,10 +164,12 @@ pub fn resolve_local_office_from(
     saved_context: Option<&SavedContext>,
     selector: Option<&str>,
 ) -> Result<DiscoveredOffice, ResolveOfficeError> {
-    let mut by_socket: BTreeMap<PathBuf, DiscoveredOffice> = BTreeMap::new();
+    let mut by_socket: BTreeMap<SocketKey, DiscoveredOffice> = BTreeMap::new();
     if let Some(locator) = locator_path {
         for office in discover_from_locator(locator) {
-            by_socket.entry(office.socket.clone()).or_insert(office);
+            by_socket
+                .entry(socket_dedup_key(&office.socket))
+                .or_insert(office);
         }
     }
     if let Some(home) = extra_office_home {
@@ -156,7 +179,9 @@ pub fn resolve_local_office_from(
             "office-home",
             None,
         ) {
-            by_socket.entry(office.socket.clone()).or_insert(office);
+            by_socket
+                .entry(socket_dedup_key(&office.socket))
+                .or_insert(office);
         }
     }
     let mut offices: Vec<DiscoveredOffice> = by_socket.into_values().collect();
@@ -189,6 +214,7 @@ pub fn discover_from_locator(locator_path: &Path) -> Vec<DiscoveredOffice> {
     let Some(entries) = doc.get("entries").and_then(Value::as_array) else {
         return Vec::new();
     };
+    let mut seen = BTreeSet::new();
     let mut found = Vec::new();
     for entry in entries {
         if entry.get("phase").and_then(Value::as_str) != Some("ready") {
@@ -212,12 +238,16 @@ pub fn discover_from_locator(locator_path: &Path) -> Vec<DiscoveredOffice> {
             .and_then(Value::as_str)
             .and_then(safe_abs_path)
             .map(|root| root.join("office-state").join(OFFICES_DIR_NAME));
-        found.extend(discover_in_runtime(
+        for office in discover_in_runtime(
             &runtime_dir,
             offices_dir.as_deref(),
             name,
             instance_id.as_deref(),
-        ));
+        ) {
+            if seen.insert(socket_dedup_key(&office.socket)) {
+                found.push(office);
+            }
+        }
     }
     found
 }
@@ -231,9 +261,10 @@ pub fn default_locator_path_from(
         if let Some(base) = env(DEV_ACCOUNT_BASE_ENV)
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
         {
-            return Some(base.join("locator").join("instances.json"));
+            return base
+                .is_absolute()
+                .then(|| base.join("locator").join("instances.json"));
         }
     }
     let home = env("HOME")
@@ -250,21 +281,18 @@ pub fn default_context_path_from(
     env: &dyn Fn(&str) -> Option<OsString>,
     development: bool,
 ) -> Option<PathBuf> {
-    let abs = |name: &str| {
-        env(name)
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
-    };
-    if let Some(dir) = abs(CONFIG_DIR_ENV) {
-        return Some(dir.join("cli-context.json"));
+    let set = |name: &str| env(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if let Some(dir) = set(CONFIG_DIR_ENV) {
+        return dir.is_absolute().then(|| dir.join("cli-context.json"));
     }
     if development {
-        if let Some(base) = abs(DEV_ACCOUNT_BASE_ENV) {
-            return Some(base.join("cli-context.json"));
+        if let Some(base) = set(DEV_ACCOUNT_BASE_ENV) {
+            return base.is_absolute().then(|| base.join("cli-context.json"));
         }
     }
-    abs("HOME").map(|home| home.join("cli-context.json"))
+    set("HOME")
+        .filter(|p| p.is_absolute())
+        .map(|home| home.join("cli-context.json"))
 }
 
 /// Reads non-secret saved selection from `cli-context.json` without following symlinks.

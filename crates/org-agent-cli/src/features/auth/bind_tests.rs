@@ -167,6 +167,8 @@ fn bind_workspace_refuses_bad_paths_bad_ttl_unsafe_state_and_unsafe_sockets_clos
         ("@ada", file_not_dir, None, None),
         ("@ada", ws.clone(), None, Some(60)),
         ("@ada", ws.clone(), Some("bad\nlabel"), None),
+        ("@ada", ws.clone(), Some("bad\u{202E}label"), None),
+        ("@ada", ws.clone(), Some("bad\u{2028}"), None),
         ("", ws.clone(), None, None),
     ] {
         let err = bind_workspace(

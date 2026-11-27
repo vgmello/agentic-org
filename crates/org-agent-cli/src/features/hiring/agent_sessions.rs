@@ -117,7 +117,7 @@ const REVOKE_INPUT: &[Field] = &[
 
 const PENDING_REQUEST_VIEW: &[Field] = &[
     Field::required("request_id", Type::String, "Pending request ID"),
-    Field::required("handle", Type::String, "Agent @handle"),
+    Field::optional("handle", Type::String, "Agent @handle"),
     Field::required("employee_id", Type::String, "Agent employee UUIDv7"),
     Field::required("office_id", Type::String, "Office UUIDv7"),
     Field::optional("office_name", Type::String, "Office display name"),

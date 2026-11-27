@@ -237,3 +237,203 @@ fn stale_socket_reserved_phase_and_symlinks_are_ignored_fail_closed() {
     std::os::unix::fs::symlink(&locator, &link).unwrap();
     assert!(discover_from_locator(&link).is_empty());
 }
+
+#[test]
+fn alias_and_symlinked_parent_paths_deduplicate_to_single_office() {
+    let tmp = tempfile::Builder::new().prefix("loc5").tempdir().unwrap();
+    let base = tmp.path().canonicalize().unwrap();
+    let real_parent = base.join("real");
+    let alias_parent = base.join("alias");
+    let real_home = real_parent.join("home");
+    let handle = &OFFICE_A[OFFICE_A.len() - 12..];
+    let sock_dir = real_home.join("run").join("o").join(handle);
+    fs::create_dir_all(&sock_dir).unwrap();
+    let real_socket = sock_dir.join("s.sock");
+    let _listener = UnixListener::bind(&real_socket).unwrap();
+
+    // Symlinked parent directory (models macOS `/tmp` -> `/private/tmp` and `/var` -> `/private/var`).
+    std::os::unix::fs::symlink(&real_parent, &alias_parent).unwrap();
+    let alias_home = alias_parent.join("home");
+
+    let locator = base.join("locator").join("instances.json");
+    write_locator(
+        &locator,
+        json!([
+            {
+                "phase": "ready",
+                "binding": {
+                    "name": "default",
+                    "id": INSTANCE_A,
+                    "root": real_home,
+                    "identity": { "device": 1, "inode": 1 },
+                    "temp_handle": "rta",
+                    "temp_folder": real_home.join("run")
+                }
+            },
+            {
+                "phase": "ready",
+                "binding": {
+                    "name": "alias-copy",
+                    "id": INSTANCE_A,
+                    "root": alias_home,
+                    "identity": { "device": 1, "inode": 1 },
+                    "temp_handle": "rta",
+                    "temp_folder": alias_home.join("run")
+                }
+            }
+        ]),
+    );
+
+    assert_eq!(discover_from_locator(&locator).len(), 1);
+    let resolved = resolve_local_office_from(Some(&locator), Some(&alias_home), None, None)
+        .expect("alias paths to the same socket must deduplicate instead of returning Ambiguous");
+    assert_eq!(resolved.socket, real_socket);
+    assert_eq!(resolved.instance_name, "default");
+}
+
+#[test]
+fn default_context_path_fails_closed_on_relative_overrides() {
+    let env_of = |pairs: &'static [(&'static str, &'static str)]| {
+        move |name: &str| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| OsString::from(v))
+        }
+    };
+
+    // Relative AGENTIC_ORG_CONFIG_DIR fails closed instead of falling back to HOME or dev base.
+    assert_eq!(
+        default_context_path_from(
+            &env_of(&[
+                (CONFIG_DIR_ENV, "relative/cfg"),
+                (DEV_ACCOUNT_BASE_ENV, "/tmp/dev"),
+                ("HOME", "/home/ada"),
+            ]),
+            true,
+        ),
+        None
+    );
+    assert_eq!(
+        default_context_path_from(
+            &env_of(&[(CONFIG_DIR_ENV, "relative/cfg"), ("HOME", "/home/ada")]),
+            false,
+        ),
+        None
+    );
+
+    // Absolute AGENTIC_ORG_CONFIG_DIR wins cleanly.
+    assert_eq!(
+        default_context_path_from(
+            &env_of(&[(CONFIG_DIR_ENV, "/tmp/cfg"), ("HOME", "/home/ada")]),
+            false,
+        ),
+        Some(PathBuf::from("/tmp/cfg/cli-context.json"))
+    );
+
+    // Relative ORG_DEV_ACCOUNT_BASE in development builds fails closed instead of falling back to HOME.
+    assert_eq!(
+        default_context_path_from(
+            &env_of(&[(DEV_ACCOUNT_BASE_ENV, "rel/dev"), ("HOME", "/home/ada")]),
+            true,
+        ),
+        None
+    );
+    assert_eq!(
+        default_locator_path_from(
+            &env_of(&[(DEV_ACCOUNT_BASE_ENV, "rel/dev"), ("HOME", "/home/ada")]),
+            true,
+        ),
+        None
+    );
+
+    // Absolute ORG_DEV_ACCOUNT_BASE in dev mode works; unset falls back to HOME.
+    assert_eq!(
+        default_context_path_from(
+            &env_of(&[(DEV_ACCOUNT_BASE_ENV, "/tmp/dev"), ("HOME", "/home/ada")]),
+            true,
+        ),
+        Some(PathBuf::from("/tmp/dev/cli-context.json"))
+    );
+    assert_eq!(
+        default_context_path_from(&env_of(&[("HOME", "/home/ada")]), false),
+        Some(PathBuf::from("/home/ada/cli-context.json"))
+    );
+}
+
+#[test]
+fn symlinked_sockets_root_handle_dir_and_socket_file_are_refused() {
+    let tmp = tempfile::Builder::new().prefix("loc6").tempdir().unwrap();
+    let base = tmp.path().canonicalize().unwrap();
+    let real = spawn_listening_office(&base, "real", OFFICE_A, Some("Real"));
+    let handle = &OFFICE_A[OFFICE_A.len() - 12..];
+
+    // 1. Symlinked `o/` directory under runtime_dir.
+    let rt_link_o = base.join("rt-lo");
+    fs::create_dir_all(&rt_link_o).unwrap();
+    std::os::unix::fs::symlink(real.runtime_dir.join("o"), rt_link_o.join("o")).unwrap();
+
+    // 2. Symlinked `<handle>/` directory under `o/`.
+    let rt_link_handle = base.join("rt-lh");
+    fs::create_dir_all(rt_link_handle.join("o")).unwrap();
+    std::os::unix::fs::symlink(
+        real.runtime_dir.join("o").join(handle),
+        rt_link_handle.join("o").join(handle),
+    )
+    .unwrap();
+
+    // 3. Symlinked `s.sock` inside real `o/<handle>/`.
+    let rt_link_sock = base.join("rt-ls");
+    let link_sock_dir = rt_link_sock.join("o").join(handle);
+    fs::create_dir_all(&link_sock_dir).unwrap();
+    std::os::unix::fs::symlink(&real.socket, link_sock_dir.join("s.sock")).unwrap();
+
+    let locator = base.join("locator").join("instances.json");
+    write_locator(
+        &locator,
+        json!([
+            {
+                "phase": "ready",
+                "binding": {
+                    "name": "link-o",
+                    "id": INSTANCE_A,
+                    "root": real.root,
+                    "identity": { "device": 1, "inode": 1 },
+                    "temp_handle": "rlo",
+                    "temp_folder": rt_link_o
+                }
+            },
+            {
+                "phase": "ready",
+                "binding": {
+                    "name": "link-handle",
+                    "id": INSTANCE_A,
+                    "root": real.root,
+                    "identity": { "device": 1, "inode": 2 },
+                    "temp_handle": "rlh",
+                    "temp_folder": rt_link_handle
+                }
+            },
+            {
+                "phase": "ready",
+                "binding": {
+                    "name": "link-sock",
+                    "id": INSTANCE_A,
+                    "root": real.root,
+                    "identity": { "device": 1, "inode": 3 },
+                    "temp_handle": "rls",
+                    "temp_folder": rt_link_sock
+                }
+            }
+        ]),
+    );
+
+    assert!(
+        discover_from_locator(&locator).is_empty(),
+        "symlinked o/, <handle>/, and s.sock must all be refused"
+    );
+    assert!(matches!(
+        resolve_local_office_from(Some(&locator), None, None, None),
+        Err(ResolveOfficeError::NotFound { selector: None })
+    ));
+}

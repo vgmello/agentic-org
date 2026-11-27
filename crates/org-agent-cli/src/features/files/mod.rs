@@ -1,7 +1,7 @@
 //! Unified `agent-os file` VSA slice (`TASK-98.4`, ADR-0037): `file upload|list|inspect|fetch|update`.
 //!
 //! Zero positional arguments, zero duplicate `attachment` resource, keeping the launch catalogue
-//! within `CATALOGUE_LIMIT = 4096` and `boot --offline <= 6 KiB`.
+//! within `CATALOGUE_LIMIT = 4096` and `context --offline <= 6 KiB`.
 
 mod handlers;
 mod schema;
