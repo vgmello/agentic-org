@@ -9,7 +9,9 @@ use org_proto::sessions::SessionState;
 use crate::instructions::{compose_turn_objective, TurnTrigger};
 
 use super::approval::{apply_approval_resolution, record_stop_note};
+use super::controls::{request_interrupt, steer};
 use super::events::apply_outputs;
+use super::queue::{merge_queued_turns, QueuedTurn};
 use super::{FailoverRequest, PumpCommand, PumpContext, PumpLoopState};
 
 pub(super) fn release_active_permit(ctx: &PumpContext) {
@@ -38,12 +40,14 @@ pub(super) fn mark_active_permit_release_pending(ctx: &PumpContext) {
 pub(super) fn build_stale_failover_request(
     ctx: &PumpContext,
     objective: String,
+    attachment_ids: Vec<String>,
 ) -> FailoverRequest {
     FailoverRequest {
         employee_id: ctx.employee_id.clone(),
         failed_run_id: ctx.run_id.clone(),
         failed_connection_id: ctx.connection_id.clone().unwrap_or_default(),
         objective,
+        attachment_ids,
         workspace: ctx.workspace.clone(),
         task_ref: ctx.task_ref.clone(),
         tried_connections: Vec::new(),
@@ -66,7 +70,9 @@ pub(super) fn drain_commands(
     let mut stop_preserve: Option<bool> = None;
     while let Ok(cmd) = commands.try_recv() {
         match cmd {
-            PumpCommand::SendTurn(text) => loop_state.pending_turns.push(text),
+            PumpCommand::SendTurn(turn) => loop_state.pending_turns.push(turn),
+            PumpCommand::InterruptTurn => request_interrupt(stdin, ctx, loop_state, session),
+            PumpCommand::SteerTurn(request) => steer(stdin, ctx, loop_state, session, request),
             PumpCommand::NotifyPendingWakes => {
                 loop_state.mid_turn_dirty = true;
                 loop_state.mid_turn_next_check = None;
@@ -134,9 +140,11 @@ pub(super) fn finalize_drained_stop(
     loop_state: &mut PumpLoopState,
 ) {
     match stop_preserve {
-        Some(true) if !loop_state.pending_turns.is_empty() => {
-            let objective = take_pending_turns(ctx, loop_state).join("\n\n");
-            loop_state.failover_pending = Some(build_stale_failover_request(ctx, objective));
+        Some(true) if loop_state.has_queued_turns() => {
+            let (objective, attachment_ids) =
+                merge_queued_turns(take_pending_turns(ctx, loop_state));
+            loop_state.failover_pending =
+                Some(build_stale_failover_request(ctx, objective, attachment_ids));
         }
         Some(_) => {
             loop_state.failover_pending = None;
@@ -147,8 +155,11 @@ pub(super) fn finalize_drained_stop(
 
 /// Takes every queued turn out of the pump's queue and forgets it in
 /// [`SessionRuntimeState::queued_turns`](super::SessionRuntimeState::queued_turns).
-pub(super) fn take_pending_turns(ctx: &PumpContext, loop_state: &mut PumpLoopState) -> Vec<String> {
-    let taken = std::mem::take(&mut loop_state.pending_turns);
+pub(super) fn take_pending_turns(
+    ctx: &PumpContext,
+    loop_state: &mut PumpLoopState,
+) -> Vec<QueuedTurn> {
+    let taken = loop_state.take_queued_turns();
     ctx.state
         .lock()
         .unwrap_or_else(|p| p.into_inner())
@@ -175,6 +186,6 @@ pub(super) fn enqueue_background_wakes(ctx: &PumpContext, loop_state: &mut PumpL
             label: wake.label,
             summary: wake.summary,
         });
-        loop_state.pending_turns.push(text);
+        loop_state.pending_turns.push(QueuedTurn::text_only(text));
     }
 }

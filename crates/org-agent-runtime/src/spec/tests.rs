@@ -278,6 +278,7 @@ fn spec_hash_changes_when_any_field_changes() {
 fn caps(deny_rules: bool, deny_write: bool, deny_read: bool, tools: bool) -> Capabilities {
     Capabilities {
         mid_turn_delivery: crate::MidTurnDelivery::None,
+        image_input: crate::ImageInputMode::None,
         interrupt_in_band: true,
         idle_interrupt_ends_turn: false,
         approval_bridge: true,

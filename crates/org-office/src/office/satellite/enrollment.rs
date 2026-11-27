@@ -287,6 +287,7 @@ fn provision_satellite_impl(
         clock_high_ms,
         runtime: crate::messaging::runtime::OfficeRuntime::new(),
         private_notes: companions.private_notes,
+        private_search: companions.private_search,
         attachments: companions.attachments,
         accounting: companions.accounting,
         budgets: companions.budgets,

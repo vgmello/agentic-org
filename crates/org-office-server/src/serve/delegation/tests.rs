@@ -87,6 +87,11 @@ impl ChiefOfStaffPort for FakePort {
             .map(|(_, conversation)| conversation.clone()))
     }
 
+    fn attachment_conversation(&self, _attachment_id: &str) -> Result<Option<String>, ApiError> {
+        self.fails()?;
+        Ok(None)
+    }
+
     fn resolve_member(&self, reference: &str) -> Result<Option<String>, ApiError> {
         self.fails()?;
         Ok(Some(reference.to_owned()))
@@ -154,7 +159,9 @@ fn secrets_and_owner_reads_are_never_hers_even_for_the_owner() {
         "member.agent_execution_set",
         "member.set_may_hire",
         "member.external_approve",
+        "member.external_bind",
         "git.push",
+        "search.query",
     ] {
         assert_eq!(access(method), Access::Never, "{method}");
         assert!(!allowed(access(method), &acting_for(owner())), "{method}");

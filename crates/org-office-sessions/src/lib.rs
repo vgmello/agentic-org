@@ -13,6 +13,8 @@
 //!   single-active-lease invariant (`TASK-137`)
 //! - Restart continuation & stall watchdog (`ADR-0030` / `LIVE-9..13`)
 //! - Browser-driven provider CLI enrollment & wrapped credential custody (`ADR-0032` / `ENROLL-1..6`)
+//! - Live turn controls: a person's interrupt and mid-turn steer of a warm session, and the
+//!   post-redaction [`SessionStreamHub`] of coarse turn activity (`TASK-103`)
 
 #![forbid(unsafe_code)]
 
@@ -32,9 +34,11 @@ pub mod recovery;
 pub mod redact;
 pub mod router;
 pub mod runtime_registry;
+pub mod stream_hub;
 pub mod subagents;
 pub mod subscription_usage;
 pub mod transcript;
+pub use org_turn_attachments as turn_attachments;
 pub mod wake;
 
 pub use binding::{
@@ -63,6 +67,10 @@ pub use recovery::{
 };
 pub use router::{HqPermitAcquireSpec, HqPermitCoordinator};
 pub use runtime_registry::{RuntimeRegistry, RuntimeRegistryError};
+pub use stream_hub::{
+    SessionActivity, SessionStreamEvent, SessionStreamFrame, SessionStreamHub, SessionStreamKey,
+    SessionStreamSubscription, StreamFilter, TurnEnd,
+};
 pub use subagents::{
     build_general_subagent_definition, subset_tools, BackgroundKind, BackgroundRegistry,
     BackgroundTaskState, BackgroundWake, SubagentDefinition,
@@ -71,6 +79,11 @@ pub use subscription_usage::{
     HttpUsageResponse, ProviderSubscriptionUsageCollector, SubscriptionUsageCollectOutcome,
     SubscriptionUsageCollectRequest, SubscriptionUsageCollector, SubscriptionUsageTransport,
     SystemHttpsUsageTransport, UsageTransportError,
+};
+pub use turn_attachments::{
+    LocalOfficeAttachmentResolver, TurnAttachmentRef, TurnAttachmentResolver,
+    MAX_DOC_STAGING_BYTES_PER_TURN, MAX_IMAGE_DERIVATIVE_BYTES, MAX_INLINE_IMAGES_PER_TURN,
+    UNTRUSTED_ATTACHMENTS_CLOSE, UNTRUSTED_ATTACHMENTS_OPEN,
 };
 pub use wake::{
     compose_coalesced_wake_objective, compose_mid_turn_notice_batch, sanitize_untrusted_body,

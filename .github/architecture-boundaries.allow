@@ -1,0 +1,71 @@
+# Architecture Health & Coupling Shrink-Only Ratchet Baseline (TASK-234 / P0-INT-4).
+#
+# Checked by `.github/scripts/check_architecture_health.py` on every CI run.
+# Rules: `.agents/rules/architecture-and-layout.md`
+#
+# THIS FILE ONLY SHRINKS:
+# - `[crate_loc]` lists the legacy large crates with a strict shrink-only non-test LOC
+#   ceiling. No unlisted crate may exceed 30,000 non-test LOC (warns at >= 25,000),
+#   no listed crate may exceed its ceiling, and `--base <sha>` rejects adding any new
+#   crate or raising any ceiling. Lower a ceiling (or delete it once <= 25,000 LOC)
+#   as domains are extracted into cohesive crates.
+# - `[coupling.*]` lists non-adapter production Rust files that still reference concrete
+#   storage/transport/sandbox primitives or place `#[allow(dead_code)]` on a `trait`,
+#   each at its exact occurrence count. Lower counts (or delete at 0) in the same PR
+#   so wins stay permanently locked in. `--base <sha>` fails if any count or total rises.
+#
+# To print current measured entries in this format:
+#   python3 .github/scripts/check_architecture_health.py --print-baseline
+
+[crate_loc]
+org-host 43500
+org-office 91500
+org-office-server 29000
+org-office-sessions 30000
+
+[coupling.rusqlite]
+
+[coupling.unix_socket]
+apps/agentic-org-web/src/transport/local_unix.rs 4
+crates/org-host/examples/fake_web.rs 4
+crates/org-host/src/app_auth.rs 2
+crates/org-host/src/authentication/browser.rs 1
+crates/org-host/src/authentication/grants.rs 3
+crates/org-host/src/control_listener/connection.rs 5
+crates/org-host/src/control_listener/connections.rs 3
+crates/org-host/src/control_listener/mod.rs 9
+crates/org-host/src/control_listener/outbound.rs 5
+crates/org-host/src/control_listener/serve.rs 3
+crates/org-host/src/human.rs 4
+crates/org-host/src/human/host.rs 4
+crates/org-host/src/human/recovery.rs 2
+crates/org-host/src/peer.rs 5
+crates/org-host/src/presence.rs 2
+crates/org-host/src/service/browser.rs 1
+crates/org-host/src/setup_flow/cli_session.rs 3
+crates/org-host/src/setup_flow/project_command.rs 3
+crates/org-host/src/setup_flow/sign_in_command.rs 2
+crates/org-host/src/setup_flow/wire.rs 3
+crates/org-host/src/startup.rs 1
+crates/org-host/src/supervisor/channels.rs 19
+crates/org-host/src/supervisor/channels/endpoint.rs 6
+crates/org-host/src/web/running.rs 11
+crates/org-host/src/writer.rs 3
+crates/org-office-server/src/bounded.rs 4
+crates/org-office-server/src/federation_stream/mod.rs 4
+crates/org-office-server/src/follow.rs 3
+crates/org-office-server/src/office_runtime.rs 1
+crates/org-office-server/src/serve/connection.rs 6
+crates/org-office-server/src/serve/host.rs 3
+crates/org-office-server/src/serve/listener.rs 10
+crates/org-office-server/src/serve/messaging.rs 2
+crates/org-office-server/src/serve/wire.rs 3
+crates/org-office-server/src/startup.rs 7
+crates/org-office-server/src/transfer/channels.rs 3
+crates/org-office-server/src/transfer/recovery.rs 2
+crates/org-office-server/src/transfer/writer.rs 4
+
+[coupling.sandbox]
+
+[coupling.dead_code_trait]
+crates/org-host/src/hostdb.rs 1

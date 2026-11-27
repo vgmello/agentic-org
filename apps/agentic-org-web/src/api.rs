@@ -23,17 +23,19 @@ mod open_routes;
 mod org_routes;
 mod process_routes;
 mod provider_routes;
+mod search_routes;
 mod session_routes;
 mod task_routes;
 
 pub use instance_routes::{CallerAuth, TlsEnableInput};
 
 use crate::{
-    host::{Failure, HostControl},
+    event_hub::{EventBus, EventHub, InMemoryEventBus},
+    host::HostControl,
     office::OfficeBridge,
+    ports::{ControlPlaneTransport, Failure, OfficeTransport},
     service::ApiReply,
     session::{rfc3339_millis, CookieName, PresentedPair, SessionCache},
-    sse::EventHub,
 };
 use hyper::StatusCode;
 use org_host_control::{
@@ -62,11 +64,11 @@ use std::{
 mod backend;
 mod sessions;
 
-/// The session routes over the web process's admitted host connection.
+/// The session routes over the web process's consumer-owned transport and event-bus ports.
 pub struct SessionApi {
-    host: Arc<HostControl>,
-    offices: OfficeBridge,
-    hub: EventHub,
+    host: Arc<dyn ControlPlaneTransport>,
+    offices: Arc<dyn OfficeTransport>,
+    events: Arc<dyn EventBus>,
     cache: Arc<SessionCache>,
     cookie: CookieName,
     origin: BrowserOrigin,
@@ -75,6 +77,38 @@ pub struct SessionApi {
 }
 
 impl SessionApi {
+    /// Constructs a [`SessionApi`] wired strictly through consumer-owned transport and event ports.
+    pub fn from_ports(
+        host: Arc<dyn ControlPlaneTransport>,
+        offices: Arc<dyn OfficeTransport>,
+        events: Arc<dyn EventBus>,
+        cache: Arc<SessionCache>,
+        origin: &ListenOrigin,
+        mode: org_host_control::listen::ListenMode,
+        auth_enabled: Arc<AtomicBool>,
+    ) -> Self {
+        use org_host_control::listen::ListenMode;
+        let scheme = origin.scheme().as_str();
+        Self {
+            listen_scheme: match mode {
+                ListenMode::Https => ListenScheme::Https,
+                ListenMode::HttpLoopback => ListenScheme::HttpLoopback,
+                ListenMode::HttpPublished => ListenScheme::HttpPublished,
+            },
+            cookie: CookieName::new(host.instance(), scheme == "https"),
+            origin: BrowserOrigin {
+                scheme: scheme.to_owned(),
+                host: origin.host().to_string(),
+                port: origin.port(),
+            },
+            host,
+            offices,
+            events,
+            cache,
+            auth_enabled,
+        }
+    }
+
     /// `origin` is the configured listen origin; its scheme decides the cookie's `Secure`.
     /// `mode` is the listener's, as `tls.fetch` answered it: the instance view's
     /// `listen_scheme`.
@@ -112,27 +146,11 @@ impl SessionApi {
         hub: EventHub,
         auth_enabled: Arc<AtomicBool>,
     ) -> Self {
-        use org_host_control::listen::ListenMode;
-        let scheme = origin.scheme().as_str();
-        let offices = OfficeBridge::new(Arc::clone(&host), hub.clone());
-        Self {
-            listen_scheme: match mode {
-                ListenMode::Https => ListenScheme::Https,
-                ListenMode::HttpLoopback => ListenScheme::HttpLoopback,
-                ListenMode::HttpPublished => ListenScheme::HttpPublished,
-            },
-            cookie: CookieName::new(host.instance(), scheme == "https"),
-            origin: BrowserOrigin {
-                scheme: scheme.to_owned(),
-                host: origin.host().to_string(),
-                port: origin.port(),
-            },
-            host,
-            offices,
-            hub,
-            cache,
-            auth_enabled,
-        }
+        let events: Arc<dyn EventBus> = Arc::new(InMemoryEventBus::new(hub));
+        let offices: Arc<dyn OfficeTransport> =
+            Arc::new(OfficeBridge::new(Arc::clone(&host), Arc::clone(&events)));
+        let host: Arc<dyn ControlPlaneTransport> = host;
+        Self::from_ports(host, offices, events, cache, origin, mode, auth_enabled)
     }
 }
 
@@ -169,6 +187,7 @@ pub enum Route {
     Git(git_routes::GitRoute),
     Process(process_routes::ProcessRoute),
     Docs(doc_routes::DocRoute),
+    Search(search_routes::SearchRoute),
     Cost(cost_routes::CostRoute),
     Provider(provider_routes::ProviderRoute),
     OfficeFederation(office_routes::OfficeFederationRoute),
@@ -213,6 +232,7 @@ pub enum Call {
     Git(git_routes::GitCall),
     Process(process_routes::ProcessCall),
     Docs(doc_routes::DocCall),
+    Search(search_routes::SearchCall),
     Cost(cost_routes::CostCall),
     Provider(provider_routes::ProviderCall),
     OfficeFederation(office_routes::OfficeFederationCall),

@@ -20,28 +20,39 @@ use crate::instructions::SAME_USER_ISOLATION_NOTICE;
 use crate::recovery::{SessionStore, StallWatchdog};
 use crate::subagents::BackgroundRegistry;
 
+mod activity;
 mod approval;
 mod commands;
+mod controls;
 mod events;
+mod queue;
 #[cfg(test)]
 mod tests;
 mod turn;
 
+use activity::settle_activity_idle;
 use approval::check_and_handle_stall;
 pub(crate) use approval::finalize_child;
 use commands::{
     drain_commands, enqueue_background_wakes, mark_active_permit_release_pending,
     release_active_permit,
 };
+use controls::drive_turn_controls;
+pub(crate) use controls::SteerRequest;
 use events::apply_outputs;
 #[cfg(test)]
 pub(crate) use events::classify_turn_failover_reason;
+pub(crate) use queue::QueuedTurn;
 use turn::{check_permit_heartbeat, dispatch_next_turn, maybe_deliver_mid_turn};
 
 const POST_EXIT_DRAIN_GRACE: Duration = Duration::from_millis(500);
 
 pub(crate) enum PumpCommand {
-    SendTurn(String),
+    SendTurn(QueuedTurn),
+    /// A person's explicit interrupt of the running turn: the process lives on (`TASK-103`).
+    InterruptTurn,
+    /// A person's mid-turn steer (`TASK-103`), counted as a queued turn ([`queue_steer`]).
+    SteerTurn(SteerRequest),
     NotifyPendingWakes,
     AnswerApproval {
         approval_id: String,
@@ -63,6 +74,7 @@ pub(crate) struct StagedMidTurnBatch {
     pub delivery_id: String,
     pub item_ids: Vec<String>,
     pub text: String,
+    pub attachment_ids: Vec<String>,
     pub has_agent_item: bool,
     pub agent_sender_convs: Vec<(String, String)>,
 }
@@ -104,6 +116,8 @@ pub(crate) struct FailoverRequest {
     pub failed_run_id: String,
     pub failed_connection_id: String,
     pub objective: String,
+    /// Lightweight bound attachment IDs preserved across heterogeneous runtime failover (`TASK-98.3`).
+    pub attachment_ids: Vec<String>,
     pub workspace: Option<String>,
     pub task_ref: Option<String>,
     pub tried_connections: Vec<String>,
@@ -183,6 +197,8 @@ pub(crate) struct SessionRuntimeState {
     /// been dispatched, refused or carried into a failover. A session with a queued turn is
     /// never idle: only [`queue_turn`] raises it, and the pump lowers it (`TASK-80.1`).
     pub queued_turns: usize,
+    /// Coarse, ephemeral activity of the running turn (`TASK-103`).
+    pub activity: crate::stream_hub::SessionActivity,
 }
 
 impl SessionRuntimeState {
@@ -227,6 +243,10 @@ impl SessionRuntimeState {
             suspended_since: self.suspended_since.clone(),
             pending_wake_count: self.pending_wake_count,
             pending_wake_reason: self.pending_wake_reason.clone(),
+            activity_phase: self.activity.phase,
+            active_tool_name: self.activity.active_tool_name.clone(),
+            active_tool_started_at: self.activity.active_tool_started_at.clone(),
+            supports_steer: self.activity.supports_steer,
         }
     }
 }
@@ -236,10 +256,39 @@ impl SessionRuntimeState {
 /// turn is sent, so the pump can never refuse, finish or fail the turn before it is counted and
 /// leave the session wedged busy. A send to a dead pump undoes both. `Sender::send` on the
 /// pump's unbounded channel never blocks (rules §3.4). Returns whether the pump received it.
+#[cfg(test)]
 pub(crate) fn queue_turn(
     state: &Mutex<SessionRuntimeState>,
     tx: &Sender<PumpCommand>,
     text: String,
+) -> bool {
+    queue_turn_with_attachments(state, tx, QueuedTurn::text_only(text))
+}
+
+/// Queues a turn carrying lightweight `attachment_ids` on a live pump with [`queue_turn`]'s
+/// exact busy-state and `queued_turns` accounting (`TASK-98.3`).
+pub(crate) fn queue_turn_with_attachments(
+    state: &Mutex<SessionRuntimeState>,
+    tx: &Sender<PumpCommand>,
+    turn: QueuedTurn,
+) -> bool {
+    queue_counted(state, tx, PumpCommand::SendTurn(turn))
+}
+
+/// Queues a person's steer on a live pump with exactly [`queue_turn`]'s accounting: until the
+/// steer is delivered into the running turn, it is a queued turn (`TASK-103`).
+pub(crate) fn queue_steer(
+    state: &Mutex<SessionRuntimeState>,
+    tx: &Sender<PumpCommand>,
+    request: SteerRequest,
+) -> bool {
+    queue_counted(state, tx, PumpCommand::SteerTurn(request))
+}
+
+fn queue_counted(
+    state: &Mutex<SessionRuntimeState>,
+    tx: &Sender<PumpCommand>,
+    command: PumpCommand,
 ) -> bool {
     let mut st = state.lock().unwrap_or_else(|p| p.into_inner());
     st.queued_turns = st.queued_turns.saturating_add(1);
@@ -247,7 +296,7 @@ pub(crate) fn queue_turn(
     if flipped {
         st.state = SessionState::Running;
     }
-    if tx.send(PumpCommand::SendTurn(text)).is_ok() {
+    if tx.send(command).is_ok() {
         return true;
     }
     st.dequeue_turns(1);
@@ -284,6 +333,14 @@ pub(crate) struct PumpContext {
     /// The Chief of Staff partition this run serves (`TASK-80.1`): the run records its
     /// conversation and context use there, and carries it into every [`FailoverRequest`].
     pub partition: Option<crate::partition::PartitionHandle>,
+    /// Where the run publishes its coarse live activity (`TASK-103`); `None` publishes nothing.
+    pub stream: Option<crate::stream_hub::StreamPublisher>,
+    /// Stable `<runtime_dir>/attachments` root exposed read-only to the sandbox (`TASK-98.3`).
+    pub attachments_root: std::path::PathBuf,
+    /// Whether the admitted route's model accepts image/vision inputs (`TASK-98.3` AC #4).
+    pub model_supports_vision: bool,
+    /// Consumer-owned port resolving policy-authorized attachment payloads at turn preparation.
+    pub attachment_resolver: Arc<dyn crate::turn_attachments::TurnAttachmentResolver>,
 }
 
 impl PumpContext {
@@ -302,7 +359,7 @@ enum ReaderMsg {
 struct PumpLoopState {
     out_framer: LineFramer,
     err_framer: LineFramer,
-    pending_turns: Vec<String>,
+    pending_turns: Vec<QueuedTurn>,
     ready: bool,
     turn_active: bool,
     stop_requested: bool,
@@ -318,6 +375,12 @@ struct PumpLoopState {
     last_permit_renew: Instant,
     permit_lease_deadline: Option<Instant>,
     current_objective: String,
+    current_attachment_ids: Vec<String>,
+    current_turn_staged_id: Option<String>,
+    current_turn_had_protocol_images: bool,
+    current_turn_image_fallback_retried: bool,
+    current_turn_remaining_staging_budget: u64,
+    current_turn_remaining_attachment_slots: usize,
     turn_reply: Option<String>,
     turns_dispatched: u64,
     oauth_refresh_attempted: bool,
@@ -325,8 +388,20 @@ struct PumpLoopState {
     mid_turn_dirty: bool,
     mid_turn_next_check: Option<Instant>,
     in_flight_delivery: Option<StagedMidTurnBatch>,
+    in_flight_delivery_staged_id: Option<String>,
+    mid_turn_staged_ids: Vec<String>,
     mid_turn_total_this_turn: u32,
     mid_turn_agent_this_turn: u32,
+    /// `pending_turns[0]` is a person's steer: a later steer folds into it (`TASK-103`).
+    front_is_steer: bool,
+    /// A person asked to interrupt the running turn; [`controls`] sends it once it can.
+    interrupt_wanted: bool,
+    /// The interrupt reached the runtime: the turn it ends never fails over.
+    interrupt_sent: bool,
+    /// A native steer the runtime was not ready for, retried every pass (one queued turn).
+    pending_steer: Option<SteerRequest>,
+    /// Steers delivered natively and not yet confirmed: `(delivery_id, turn text)`.
+    in_flight_steers: Vec<(String, String)>,
 }
 
 impl PumpLoopState {
@@ -350,6 +425,14 @@ impl PumpLoopState {
             last_permit_renew: Instant::now(),
             permit_lease_deadline: None,
             current_objective: String::new(),
+            current_attachment_ids: Vec::new(),
+            current_turn_staged_id: None,
+            current_turn_had_protocol_images: false,
+            current_turn_image_fallback_retried: false,
+            current_turn_remaining_staging_budget:
+                crate::turn_attachments::MAX_DOC_STAGING_BYTES_PER_TURN,
+            current_turn_remaining_attachment_slots:
+                crate::turn_attachments::MAX_ATTACHMENTS_PER_TURN,
             turn_reply: None,
             turns_dispatched: 0,
             oauth_refresh_attempted,
@@ -357,9 +440,62 @@ impl PumpLoopState {
             mid_turn_dirty: false,
             mid_turn_next_check: None,
             in_flight_delivery: None,
+            in_flight_delivery_staged_id: None,
+            mid_turn_staged_ids: Vec::new(),
             mid_turn_total_this_turn: 0,
             mid_turn_agent_this_turn: 0,
+            front_is_steer: false,
+            interrupt_wanted: false,
+            interrupt_sent: false,
+            pending_steer: None,
+            in_flight_steers: Vec::new(),
         }
+    }
+
+    /// Whether any turn waits to run (a steer the runtime was not ready for included).
+    fn has_queued_turns(&self) -> bool {
+        !self.pending_turns.is_empty() || self.pending_steer.is_some()
+    }
+
+    /// Takes every turn waiting to run, steers first: each is one of
+    /// [`SessionRuntimeState::queued_turns`], which the caller lowers by the count taken.
+    fn take_queued_turns(&mut self) -> Vec<QueuedTurn> {
+        let mut taken: Vec<QueuedTurn> = self
+            .pending_steer
+            .take()
+            .map(|s| QueuedTurn::text_only(s.turn))
+            .into_iter()
+            .collect();
+        taken.append(&mut self.pending_turns);
+        self.front_is_steer = false;
+        taken
+    }
+
+    /// Puts a person's steer at the front of the queue, ahead of queued turns, folding it into
+    /// a steer already waiting there (`TASK-103`). The steer is counted once in
+    /// `queued_turns` by its caller; a fold lowers the count by the one it absorbed.
+    fn queue_steer_turn(&mut self, state: &mut SessionRuntimeState, text: String) {
+        match self.pending_turns.first_mut() {
+            Some(front) if self.front_is_steer => {
+                front.text.push_str("\n\n");
+                front.text.push_str(&text);
+                state.dequeue_turns(1);
+            }
+            _ => {
+                self.pending_turns.insert(0, QueuedTurn::text_only(text));
+                self.front_is_steer = true;
+            }
+        }
+    }
+
+    /// A steer delivered into the turn but not taken (refused, or unconfirmed when the turn
+    /// ended) runs as the next turn instead: counted again, and the session busy until it runs.
+    fn requeue_steer(&mut self, state: &mut SessionRuntimeState, text: String) {
+        state.queued_turns = state.queued_turns.saturating_add(1);
+        if state.state == SessionState::Idle {
+            state.state = SessionState::Running;
+        }
+        self.queue_steer_turn(state, text);
     }
 }
 
@@ -390,6 +526,7 @@ pub(crate) fn run_pump(
 
     loop {
         drain_commands(&commands, &mut stdin, &ctx, &mut loop_state, &mut session);
+        drive_turn_controls(&mut stdin, &ctx, &mut loop_state, &mut session);
         enqueue_background_wakes(&ctx, &mut loop_state);
         dispatch_next_turn(&mut stdin, &ctx, &mut loop_state, &mut session);
         maybe_deliver_mid_turn(&mut stdin, &ctx, &mut loop_state, &mut session);
@@ -420,6 +557,8 @@ pub(crate) fn run_pump(
             guard.state = SessionState::Stopping;
         }
     }
+    // Whatever the turn was doing is over with the run.
+    settle_activity_idle(&ctx);
 
     finish_pump(
         child,

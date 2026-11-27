@@ -10,15 +10,17 @@ use org_proto::attachments::{
 };
 use org_store::Id;
 
-use super::{invalid, not_found, record_ref, target_ref, Answer, Office};
+use super::{invalid, not_found, record_ref, target_ref, Answer, Office, OfficeFacts};
 use crate::attachments::blobs::ContentHash;
 use crate::attachments::media::{self, MediaType, ModelDerivative};
 use crate::attachments::records::AttachmentRecord;
 use crate::attachments::remote::{bytes_unavailable, BlobPull};
 use crate::attachments::user_space::satellite_refusal;
-use crate::authz::PrincipalContext;
+use crate::attachments::{DeliveryAttachmentPayload, DeliveryScope};
+use crate::authz::{ParentFacts, PrincipalContext, PrincipalKind, ResourceFacts as _};
 use crate::error::OfficeError;
 use crate::office::storage;
+use crate::organization::records::BuiltinKey;
 use crate::store::open::attachment_ops::AttachmentsForTarget;
 
 const DEFAULT_LIST_LIMIT: u32 = 50;
@@ -235,6 +237,44 @@ impl Office {
         }))
     }
 
+    /// Reads and hash-verifies all bytes of an already-authorized `record`, pulling a shared
+    /// blob from HQ on a satellite when `pull` is supplied and the blob is not cached locally.
+    fn read_authorized_blob_all(
+        &self,
+        record: &AttachmentRecord,
+        max_bytes: u64,
+        pull: Option<BlobPull<'_>>,
+    ) -> Answer<Vec<u8>> {
+        if record.scope() == AttachmentScope::UserPrivate && self.attachments.private.is_none() {
+            return Ok(Err(satellite_refusal()));
+        }
+        let bytes = match self.local_blob_all(record, max_bytes)? {
+            Some(bytes) => bytes,
+            None => match pull.filter(|_| self.may_pull(record)) {
+                None => {
+                    return Ok(Err(bytes_unavailable(
+                        "the attachment's bytes are not on this office",
+                    )))
+                }
+                Some(pull) => match self.pull_shared_blob(record, pull)? {
+                    Ok(bytes) => bytes,
+                    Err(refusal) => return Ok(Err(refusal)),
+                },
+            },
+        };
+        if bytes.len() as u64 > max_bytes {
+            return Err(OfficeError::Invalid(
+                "an attachment blob exceeds its size bound",
+            ));
+        }
+        if ContentHash::of(&bytes) != record.content_sha256 {
+            return Err(OfficeError::Invalid(
+                "an attachment blob does not match its hash",
+            ));
+        }
+        Ok(Ok(bytes))
+    }
+
     /// The bounded copy of a readable image a model reads (at most 1568 px on its longest
     /// side and 1 MiB), made from the stored bytes.
     pub fn attachment_model_derivative(
@@ -242,6 +282,19 @@ impl Office {
         actor: &str,
         attachment_id: &str,
     ) -> Answer<ModelDerivative> {
+        Ok(self
+            .attachment_model_derivative_with(actor, attachment_id, None)?
+            .map(|(_, derivative)| derivative))
+    }
+
+    /// Bounded model derivative for an image attachment, optionally pulling missing shared bytes
+    /// from HQ on a satellite (`TASK-98.3`, `TASK-98.6`).
+    pub fn attachment_model_derivative_with(
+        &self,
+        actor: &str,
+        attachment_id: &str,
+        pull: Option<BlobPull<'_>>,
+    ) -> Answer<(AttachmentRecord, ModelDerivative)> {
         let caller = match self.attachment_caller(actor)? {
             Ok(caller) => caller,
             Err(refusal) => return Ok(Err(refusal)),
@@ -255,19 +308,165 @@ impl Office {
                 "only images have a model derivative",
             )));
         };
-        if record.scope() == AttachmentScope::UserPrivate && self.attachments.private.is_none() {
-            return Ok(Err(satellite_refusal()));
+        let bytes = match self.read_authorized_blob_all(&record, media.max_bytes(), pull)? {
+            Ok(bytes) => bytes,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        match media::model_derivative(media, &bytes) {
+            Ok(derivative) => Ok(Ok((record, derivative))),
+            Err(err) => Ok(Err(err)),
         }
-        let Some(bytes) = self.local_blob_all(&record, media.max_bytes())? else {
-            return Ok(Err(bytes_unavailable(
-                "the attachment's bytes are not on this office",
+    }
+
+    /// Resolves one policy-authorized attachment for model turn delivery (`TASK-98.3`):
+    /// - Enforces Chief of Staff `caller ∩ tess` partition isolation via `delivery_scope`.
+    /// - Allowlisted images return their bounded [`ModelDerivative`] (`<= 1568px`, `<= 1 MiB`).
+    /// - Allowlisted documents return raw bytes when `record.byte_count <= remaining_budget`,
+    ///   or `bytes: None` when staging would exceed the caller's remaining per-turn staging budget
+    ///   (without loading or pulling the oversized blob).
+    pub fn attachment_read_for_delivery_with(
+        &self,
+        actor: &str,
+        attachment_id: &str,
+        delivery_scope: &DeliveryScope,
+        remaining_budget: u64,
+        pull: Option<BlobPull<'_>>,
+    ) -> Answer<DeliveryAttachmentPayload> {
+        let caller = match self.attachment_caller(actor)? {
+            Ok(caller) => caller,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        let Some(actor_employee) = self.load_employee(&caller.employee_id)? else {
+            return Ok(Err(not_found()));
+        };
+        let is_chief_of_staff = actor_employee.builtin_key == Some(BuiltinKey::ChiefOfStaff);
+        let record = match self.readable(&caller, attachment_id)? {
+            Ok(record) => record,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        if is_chief_of_staff {
+            if let Err(refusal) =
+                self.enforce_chief_of_staff_delivery_scope(&record, attachment_id, delivery_scope)?
+            {
+                return Ok(Err(refusal));
+            }
+        }
+        let Some(media) = MediaType::from_mime(&record.mime_type) else {
+            return Ok(Err(media::unsupported(
+                "attachment media type is not allowlisted for model delivery",
             )));
         };
-        if ContentHash::of(&bytes) != record.content_sha256 {
-            return Err(OfficeError::Invalid(
-                "an attachment blob does not match its hash",
-            ));
+        if media.is_image() {
+            let bytes = match self.read_authorized_blob_all(&record, media.max_bytes(), pull)? {
+                Ok(bytes) => bytes,
+                Err(refusal) => return Ok(Err(refusal)),
+            };
+            return match media::model_derivative(media, &bytes) {
+                Ok(derivative) => Ok(Ok(DeliveryAttachmentPayload::Image { record, derivative })),
+                Err(err) => Ok(Err(err)),
+            };
         }
-        Ok(media::model_derivative(media, &bytes))
+        if record.byte_count > media.max_bytes() {
+            return Ok(Err(media::unsupported(
+                "document attachment exceeds per-file size limit",
+            )));
+        }
+        if record.byte_count > remaining_budget {
+            return Ok(Ok(DeliveryAttachmentPayload::Document {
+                record,
+                bytes: None,
+            }));
+        }
+        let read_limit = media.max_bytes().min(remaining_budget);
+        let bytes = match self.read_authorized_blob_all(&record, read_limit, pull)? {
+            Ok(bytes) => bytes,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        Ok(Ok(DeliveryAttachmentPayload::Document {
+            record,
+            bytes: Some(bytes),
+        }))
+    }
+
+    fn enforce_chief_of_staff_delivery_scope(
+        &self,
+        record: &AttachmentRecord,
+        attachment_id: &str,
+        scope: &DeliveryScope,
+    ) -> Answer<()> {
+        let is_message_file = matches!(
+            record.target_kind,
+            AttachmentTargetKind::Message | AttachmentTargetKind::AskAnswer
+        );
+        match scope {
+            DeliveryScope::ActingForPerson(caller_id) => {
+                let delegated = match self.attachment_caller(caller_id)? {
+                    Ok(c) if c.active && c.kind == PrincipalKind::Person => c,
+                    Ok(_) | Err(_) => return Ok(Err(not_found())),
+                };
+                if let Err(refusal) = self.readable(&delegated, attachment_id)? {
+                    return Ok(Err(refusal));
+                }
+                if is_message_file {
+                    return self.require_conversation_participant_or_channel(
+                        record,
+                        Some(&delegated.employee_id),
+                    );
+                }
+                Ok(Ok(()))
+            }
+            DeliveryScope::DirectSender(sender_id) => {
+                let sender = match self.attachment_caller(sender_id)? {
+                    Ok(c) if c.active => c,
+                    Ok(_) | Err(_) => return Ok(Err(not_found())),
+                };
+                if let Err(refusal) = self.readable(&sender, attachment_id)? {
+                    return Ok(Err(refusal));
+                }
+                if is_message_file {
+                    return self.require_conversation_participant_or_channel(
+                        record,
+                        Some(&sender.employee_id),
+                    );
+                }
+                Ok(Ok(()))
+            }
+            DeliveryScope::None => {
+                if is_message_file {
+                    return self.require_conversation_participant_or_channel(record, None);
+                }
+                Ok(Ok(()))
+            }
+        }
+    }
+
+    /// Enforces strict conversation membership for Chief of Staff message/answer attachments
+    /// without owner DM supervision bypass (`serve/delegation/scope/files.rs`):
+    /// - Channels (`open == true`) are allowed.
+    /// - DM/GroupDm (`open == false`) require `participant_id` to be an actual active member.
+    ///   `None` (`tess:wake`) refuses every DM/GroupDm attachment fail-closed.
+    fn require_conversation_participant_or_channel(
+        &self,
+        record: &AttachmentRecord,
+        participant_id: Option<&str>,
+    ) -> Answer<()> {
+        let target = target_ref(
+            record.target_kind,
+            record.target_id.as_ref(),
+            &record.uploaded_by_employee_id,
+        );
+        let facts = OfficeFacts(self).facts(&target)?;
+        let allowed = match facts {
+            ParentFacts::Message { members, open, .. }
+            | ParentFacts::AskAnswer { members, open } => {
+                open || participant_id.is_some_and(|id| members.contains(id))
+            }
+            _ => false,
+        };
+        if allowed {
+            Ok(Ok(()))
+        } else {
+            Ok(Err(not_found()))
+        }
     }
 }

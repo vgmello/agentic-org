@@ -25,6 +25,12 @@ pub(super) fn build_sandbox_json(spec: &SessionSpec, ctx: &LaunchContext) -> Val
         .iter()
         .map(|p| p.as_str().to_owned())
         .collect();
+    for dir in &spec.read_only_dirs {
+        let path = dir.as_str();
+        if !deny_write.iter().any(|p| p == path) {
+            deny_write.push(path.to_owned());
+        }
+    }
     let mut deny_read: Vec<String> = spec
         .sandbox
         .deny_read
@@ -246,8 +252,8 @@ fn build_sandbox_network_json(
 #[cfg(test)]
 mod tests {
     use super::{
-        append_linux_privileged_socket_denies, build_sandbox_network_json,
-        filter_linux_bwrap_deny_write, normalize_bwrap_pattern,
+        append_linux_privileged_socket_denies, apply_linux_bwrap_sandbox_rules,
+        build_sandbox_network_json, filter_linux_bwrap_deny_write, normalize_bwrap_pattern,
         normalize_linux_bwrap_concrete_globs, split_trailing_globstar,
     };
     use org_agent_runtime::SpecPath;
@@ -335,6 +341,49 @@ mod tests {
     }
 
     #[test]
+    fn co_hosted_neighbour_masks_are_atomic_bwrap_masks_and_never_bwrap_write_denies() {
+        // What `org-office-sessions` denies a co-hosted satellite's agent (`TASK-204`): another
+        // organization, its HQ's data roots, a sibling satellite and the office folders, each
+        // exactly and as `dir/**`, in both `denyRead` and `denyWrite`.
+        let org = "/data/0195a000-0000-7000-8000-00000000a001";
+        let neighbours = [
+            "/data/0195a000-0000-7000-8000-00000000b001".to_owned(),
+            format!("{org}/durable"),
+            format!("{org}/runtime"),
+            format!("{org}/offices/0195a000-0000-7000-8000-00000000a0a2"),
+            "/home/office-state/offices".to_owned(),
+        ];
+        let patterns: Vec<String> = neighbours
+            .iter()
+            .flat_map(|n| [n.clone(), format!("{n}/**")])
+            .collect();
+        let worktree = format!("{org}/offices/0195a000-0000-7000-8000-00000000a0a1/runtime/w/me");
+        let hooks = format!("{worktree}/.git/hooks/**");
+        let bwrap = |is_linux_bwrap: bool| {
+            let mut deny_read = patterns.clone();
+            let mut deny_write = patterns.clone();
+            deny_write.push(hooks.clone());
+            apply_linux_bwrap_sandbox_rules(
+                &mut deny_read,
+                &mut deny_write,
+                std::slice::from_ref(&worktree),
+                is_linux_bwrap,
+                false,
+            );
+            (deny_read, deny_write)
+        };
+        // Linux `bwrap`: one atomic mask per neighbour, and no write deny outside the writable
+        // worktree (`/` is mounted read-only), so nothing is ever made on the host for one.
+        let (deny_read, deny_write) = bwrap(true);
+        assert_eq!(deny_read, neighbours);
+        assert_eq!(deny_write, vec![format!("{worktree}/.git/hooks")]);
+        // Elsewhere both forms are kept as given.
+        let (deny_read, deny_write) = bwrap(false);
+        assert_eq!(deny_read, patterns);
+        assert_eq!(deny_write.len(), patterns.len() + 1);
+    }
+
+    #[test]
     fn filter_linux_bwrap_deny_write_keeps_only_entries_overlapping_allow_write() {
         let writable = vec![
             "/work/t-1".to_owned(),
@@ -381,5 +430,51 @@ mod tests {
                 "expected {must_drop} outside allowWrite to be dropped: {kept:?}"
             );
         }
+    }
+
+    #[test]
+    fn seatbelts_keep_attachments_dir_in_deny_write_while_linux_bwrap_filters_non_overlapping() {
+        let att_dir = "/office/agents/ada/runtime/attachments";
+        let writable = vec!["/work/t-1".to_owned(), "/tmp/t-1".to_owned()];
+
+        // macOS Seatbelt (`is_linux_bwrap = false`): `denyWrite` retains `att_dir` and `att_dir/**`.
+        let mut mac_read = Vec::new();
+        let mut mac_write = vec![att_dir.to_owned(), format!("{att_dir}/**")];
+        super::apply_linux_bwrap_sandbox_rules(
+            &mut mac_read,
+            &mut mac_write,
+            &writable,
+            false,
+            false,
+        );
+        assert!(
+            mac_write.iter().any(|p| p == att_dir),
+            "macOS Seatbelt denyWrite must contain exact attachments dir: {mac_write:?}"
+        );
+        assert!(
+            mac_write.iter().any(|p| p == &format!("{att_dir}/**")),
+            "macOS Seatbelt denyWrite must contain attachments dir glob: {mac_write:?}"
+        );
+
+        // Linux bwrap (`is_linux_bwrap = true`): non-overlapping `att_dir` is cleanly dropped so
+        // bwrap never creates host 0-byte stubs, while an overlapping path stays normalized.
+        let mut lnx_read = Vec::new();
+        let mut lnx_write = vec![
+            att_dir.to_owned(),
+            format!("{att_dir}/**"),
+            "/work/t-1/attachments/**".to_owned(),
+        ];
+        super::apply_linux_bwrap_sandbox_rules(
+            &mut lnx_read,
+            &mut lnx_write,
+            &writable,
+            true,
+            false,
+        );
+        assert!(
+            !lnx_write.iter().any(|p| p.contains(att_dir)),
+            "Linux bwrap must drop non-overlapping attachments dir from denyWrite: {lnx_write:?}"
+        );
+        assert_eq!(lnx_write, vec!["/work/t-1/attachments"]);
     }
 }

@@ -34,8 +34,21 @@ fn view(upload: &StagedUpload) -> StagedUploadView {
 }
 
 impl Office {
+    /// Whether `employee_id` is this organization's Chief of Staff, failing closed (`true`)
+    /// if the lookup cannot confirm otherwise (`TASK-240`).
+    fn is_chief_of_staff_fail_closed(&self, employee_id: &str) -> bool {
+        match self.chief_of_staff() {
+            Ok(Some(tess)) => tess.id.as_str() == employee_id,
+            Ok(None) => false,
+            Err(_) => true,
+        }
+    }
+
     /// The caller's staged upload, after the policy said they may touch it. Anyone but the
-    /// uploader is told it does not exist.
+    /// uploader is told it does not exist, and so is the Chief of Staff once her run acts for
+    /// another member than the one she staged it for (`TASK-240`). Every chunk, commit, abort
+    /// and binding of an upload (`attachment.attach` and the files of a message, ask or
+    /// answer) comes through here.
     pub(super) fn staged_for(
         &self,
         caller: &PrincipalContext,
@@ -53,6 +66,14 @@ impl Office {
         };
         if let Err(refusal) = self.decide(|policy| policy.can_write(caller, &resource))? {
             return Ok(Err(refusal));
+        }
+        if self.is_chief_of_staff_fail_closed(&upload.uploaded_by)
+            && upload.acting_for_caller_id.is_none()
+        {
+            return Ok(Err(not_found()));
+        }
+        if !self.attachments.staging.made_for_now(&upload) {
+            return Ok(Err(not_found()));
         }
         Ok(Ok(upload))
     }
@@ -83,6 +104,7 @@ impl Office {
             return Ok(Err(media::too_large(media)));
         }
         let upload_id = self.mint_attachment_id();
+        let require_acting_for = self.is_chief_of_staff_fail_closed(&caller.employee_id);
         let begun = self.attachments.staging.begin(&NewUpload {
             upload_id: &upload_id,
             uploaded_by: &caller.employee_id,
@@ -90,6 +112,7 @@ impl Office {
             media,
             declared_bytes: params.byte_count,
             now_ms: self.attachment_now_ms(),
+            require_acting_for,
         })?;
         Ok(begun.map(|upload| AttachmentUploadBeginResult {
             upload: view(&upload),

@@ -80,6 +80,7 @@ fn organization() -> Organization {
         name: "Example".into(),
         organization_repository_id: id(REPOSITORY),
         state_branch: "org/state".into(),
+        default_dod: None,
         meta: meta(),
     }
 }

@@ -266,16 +266,27 @@ pub(super) fn build_staged_mid_turn_batch(
         return MidTurnStageOutcome::None;
     }
     let id_set: HashSet<&str> = item_ids.iter().map(String::as_str).collect();
+    let included: Vec<&crate::wake::PendingWakeItem> = eligible
+        .iter()
+        .filter(|item| id_set.contains(item.item_id.as_str()))
+        .collect();
     let mut has_agent_item = false;
     let mut agent_sender_convs = Vec::new();
-    for item in eligible
-        .iter()
-        .filter(|item| id_set.contains(item.item_id.as_str()) && !item.sender_is_person)
-    {
-        has_agent_item = true;
-        let key = sender_conv_key(item);
-        if !agent_sender_convs.contains(&key) {
-            agent_sender_convs.push(key);
+    let mut attachment_ids = Vec::new();
+    let mut seen_atts = HashSet::new();
+    for item in included {
+        if !item.sender_is_person {
+            has_agent_item = true;
+            let key = sender_conv_key(item);
+            if !agent_sender_convs.contains(&key) {
+                agent_sender_convs.push(key);
+            }
+        }
+        for raw_att in &item.attachment_ids {
+            let trimmed = raw_att.trim();
+            if !trimmed.is_empty() && seen_atts.insert(trimmed.to_owned()) {
+                attachment_ids.push(trimmed.to_owned());
+            }
         }
     }
     let seq = delivery_seq.fetch_add(1, Ordering::Relaxed);
@@ -283,6 +294,7 @@ pub(super) fn build_staged_mid_turn_batch(
         delivery_id: format!("mt-{ts}-{seq}"),
         item_ids,
         text,
+        attachment_ids,
         has_agent_item,
         agent_sender_convs,
     })

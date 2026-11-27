@@ -11,7 +11,8 @@ use super::super::layout;
 use super::super::sqlite::{
     accounting::SqliteAccountingStore, budgets::SqliteBudgetStore,
     private_notes::SqlitePrivateNotesStore, providers::SqliteProviderPoolStore,
-    replication::SqliteReplicationProjection, user_space::SqliteUserSpaceStore,
+    replication::SqliteReplicationProjection, search::private::SqlitePrivateNotesSearch,
+    user_space::SqliteUserSpaceStore,
 };
 use super::EngineChoice;
 use crate::{
@@ -31,6 +32,7 @@ use crate::{
         durable::{DurableReplicationParams, DurableReplicationStore},
         ReplicationStore,
     },
+    search::ports::{PrivateNotesSearch, SatelliteNoPrivateSearch},
 };
 
 /// Creates `folder`, one of the office's durable folders, below `durable_root`.
@@ -38,24 +40,51 @@ fn lay_out(durable_root: &Path, folder: &Path) -> Result<(), OfficeError> {
     private_dir_synced(durable_root, folder).map_err(OfficeError::storage)
 }
 
+/// The private notes store and its search index.
+pub(crate) struct PrivateNotesOpened {
+    pub store: Arc<dyn PrivateNotesStore>,
+    pub search: Arc<dyn PrivateNotesSearch>,
+}
+
 /// Opens the isolated HQ-authoritative per-author private task notes store (`TASK-50`, `L8`,
-/// `ADR-0016`, `doc-79`, `TASK-97` ARCH-01, `TASK-52` ARCH-02). On satellites (`is_hq == false`),
-/// returns a fail-closed stub without creating `<durable-root>/private/task-notes.db`.
+/// `ADR-0016`, `doc-79`, `TASK-97` ARCH-01, `TASK-52` ARCH-02) and its disposable search index
+/// (`TASK-91`, `runtime/<office-id>/protected/private/task-notes-search.db`, made anew). On
+/// satellites (`is_hq == false`), returns fail-closed stubs without creating
+/// `<durable-root>/private/task-notes.db` or any search index.
 pub(crate) fn open_private_notes(
     engine: EngineChoice,
     durable_root: &Path,
+    runtime_root: &Path,
+    office_id: &str,
+    org_id: &str,
     is_hq: bool,
-) -> Result<Arc<dyn PrivateNotesStore>, OfficeError> {
+) -> Result<PrivateNotesOpened, OfficeError> {
     if !is_hq {
-        return Ok(Arc::new(SatelliteRefusedPrivateNotesStore));
+        return Ok(PrivateNotesOpened {
+            store: Arc::new(SatelliteRefusedPrivateNotesStore),
+            search: Arc::new(SatelliteNoPrivateSearch),
+        });
     }
     lay_out(durable_root, &layout::private_notes(durable_root))?;
     match engine {
-        EngineChoice::Sqlite => Ok(Arc::new(SqlitePrivateNotesStore::open(durable_root)?)),
+        EngineChoice::Sqlite => {
+            let store = SqlitePrivateNotesStore::open(durable_root)?;
+            let search =
+                SqlitePrivateNotesSearch::open(durable_root, runtime_root, office_id, org_id)?;
+            Ok(PrivateNotesOpened {
+                store: Arc::new(store),
+                search: Arc::new(search),
+            })
+        }
         #[cfg(any(test, feature = "testkit"))]
-        EngineChoice::Memory => Ok(Arc::new(
-            crate::private_notes::memory::MemoryPrivateNotesStore::new(),
-        )),
+        EngineChoice::Memory => {
+            let store = Arc::new(crate::private_notes::memory::MemoryPrivateNotesStore::new());
+            let search = crate::search::testkit::MemoryPrivateNotesSearch::new(Arc::clone(&store));
+            Ok(PrivateNotesOpened {
+                store,
+                search: Arc::new(search),
+            })
+        }
     }
 }
 

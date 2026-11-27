@@ -166,6 +166,7 @@ fn validate_state_dir_accepts_org_with_tasks_and_processes_and_rejects_private_f
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         )
         .unwrap()

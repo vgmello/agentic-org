@@ -209,10 +209,12 @@ impl Session for CodexSession {
             return Err(ControlError::Closed);
         }
         match cmd {
-            Control::Send { text } => handle_send(self, text),
-            Control::DeliverMidTurn { delivery_id, text } => {
-                handle_deliver_mid_turn(self, delivery_id, text)
-            }
+            Control::Send { text, images } => handle_send(self, text, images),
+            Control::DeliverMidTurn {
+                delivery_id,
+                text,
+                images,
+            } => handle_deliver_mid_turn(self, delivery_id, text, images),
             Control::Interrupt => handle_interrupt(self),
             Control::Answer {
                 request_id,

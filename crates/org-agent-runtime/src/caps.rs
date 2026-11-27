@@ -17,6 +17,25 @@ pub enum MidTurnDelivery {
     StepHook,
 }
 
+/// How a runtime receives image attachments alongside a turn's text (`TASK-98.3`).
+///
+/// **Exhaustive on purpose**: every adapter declares its delivery contract, and the office adapts
+/// staging and serialization to match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ImageInputMode {
+    /// Inline base64-encoded image content blocks in the turn protocol frame (e.g. Claude
+    /// `stream-json` Anthropic `{"type":"image","source":{"type":"base64",...}}`).
+    InlineBase64,
+    /// Local filesystem path items referencing turn-scoped read-only staged images (e.g. Codex
+    /// `turn/start` and `turn/steer` `{"type":"localImage","path":...}`).
+    LocalPath,
+    /// No non-text protocol blocks: the runtime receives only text with the staged read-only file
+    /// path in an untrusted-data manifest (e.g. Agy ACP `session/prompt`).
+    StagedFileOnly,
+    /// The runtime does not accept image attachments.
+    None,
+}
+
 /// What a runtime can and can't do. Fixed per adapter (and version range); the office reads it
 /// to choose how to act, e.g. staging non-destructive mid-turn messages where supported.
 ///
@@ -66,6 +85,8 @@ pub struct Capabilities {
     /// How this runtime supports non-destructive mid-turn message delivery
     /// ([`crate::Control::DeliverMidTurn`]).
     pub mid_turn_delivery: MidTurnDelivery,
+    /// How this runtime receives image attachments ([`crate::TurnImage`]).
+    pub image_input: ImageInputMode,
     /// [`crate::Control::Interrupt`] stops the turn in-band and the process lives on.
     /// Otherwise interrupting means stopping the process and resuming.
     pub interrupt_in_band: bool,
@@ -142,6 +163,15 @@ impl Capabilities {
     /// Whether this runtime supports non-destructive mid-turn delivery (`NativeSteer` or `StepHook`).
     pub const fn supports_mid_turn_delivery(&self) -> bool {
         !matches!(self.mid_turn_delivery, MidTurnDelivery::None)
+    }
+
+    /// Whether this runtime accepts protocol-level [`crate::TurnImage`] items (`InlineBase64` or
+    /// `LocalPath`). `StagedFileOnly` and `None` runtimes receive text-only frames.
+    pub const fn supports_protocol_images(&self) -> bool {
+        matches!(
+            self.image_input,
+            ImageInputMode::InlineBase64 | ImageInputMode::LocalPath
+        )
     }
 }
 

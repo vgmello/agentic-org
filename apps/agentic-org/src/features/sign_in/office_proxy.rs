@@ -18,7 +18,7 @@
 //! the table refuses (exit 2) or answers alone (`--help`, `--schema`) never reaches the host.
 //! `sign-in -- <command>` reads its line the same way ([`sign_in_and_execute`]).
 
-use org_agent_cli::dispatch::{OfficeTransport, TransportOffice};
+use org_agent_cli::{OfficeTransport, TransportOffice};
 use org_cli_shell::context::{ColorMode, ExecutionContext};
 use org_command::{Command, Office, Output, Refusal};
 use org_host::setup_flow::{ApprovedOfficeChannel, HostCliError, HostCliErrorKind};
@@ -105,7 +105,7 @@ impl OfficeTransport for LazyGrantTransport {
     fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
         self.channel_mut()?
             .call_method(method, params)
-            .map_err(org_agent_cli::office::api_refusal)
+            .map_err(org_agent_cli::api_refusal)
     }
 }
 
@@ -171,12 +171,26 @@ fn hoist(scanned: &Selectors, ctx: &mut ExecutionContext) -> Result<(), CliError
 /// Runs office command `words` (`<resource> <verb> ...`) for the selected office.
 pub(crate) fn run(words: Vec<String>, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let scanned = prepare(&words, ctx)?;
+    let (bind_workspace, hire_args) = super::hr_bind::split_bind_workspace(&scanned.forwarded)?;
     let target = crate::selection::select(scanned.instance.as_deref(), scanned.office.as_deref())?;
-    let mut transport = TransportOffice(LazyGrantTransport::new(
-        target.explicit_instance(),
-        target.explicit_office(),
-    ));
-    execute(scanned.forwarded, ctx, &mut transport)
+    let mut transport =
+        LazyGrantTransport::new(target.explicit_instance(), target.explicit_office());
+    if let Some(workspace) = bind_workspace {
+        let shown = shown(&hire_args, ctx);
+        return super::hr_bind::execute_hire_and_bind(
+            hire_args,
+            super::hr_bind::HireBindOptions {
+                workspace: &workspace,
+                target_office: target.office(),
+                office_selector: target.explicit_office(),
+                shown,
+                state_root: None,
+            },
+            ctx,
+            &mut transport,
+        );
+    }
+    execute(scanned.forwarded, ctx, &mut TransportOffice(transport))
 }
 
 /// `agentic-org sign-in -- <command>`: signs in to the selected office and runs `forwarded`
@@ -191,6 +205,33 @@ pub(super) fn sign_in_and_execute(
     office: Option<&str>,
     ctx: &mut ExecutionContext,
 ) -> Result<(), CliError> {
+    if resource_and_verb(&forwarded) == Some(("agent", "bind")) {
+        return Err(
+            CliError::usage("`agent bind` runs via `agentic-org agent bind`")
+                .with_help("Run `agentic-org agent bind --member <id> --workspace <dir>` (or `agentic-org sign-in -- agent bind ...`)."),
+        );
+    }
+    let (bind_workspace, hire_args) = super::hr_bind::split_bind_workspace(&forwarded)?;
+    if let Some(workspace) = bind_workspace {
+        let shown = shown(&hire_args, ctx);
+        let mut transport = LazyGrantTransport::new(instance, office);
+        let result = super::hr_bind::execute_hire_and_bind(
+            hire_args,
+            super::hr_bind::HireBindOptions {
+                workspace: &workspace,
+                target_office: office,
+                office_selector: office,
+                shown,
+                state_root: None,
+            },
+            ctx,
+            &mut transport,
+        );
+        if let Some(error) = transport.failed.take() {
+            return Err(error.into());
+        }
+        return result;
+    }
     let mut transport = TransportOffice(LazyGrantTransport::new(instance, office));
     let answered = ask(forwarded, ctx, &mut transport);
     let grant = &mut transport.0;
@@ -233,7 +274,7 @@ pub(super) fn execute(
 fn ask(mut forwarded: Vec<String>, ctx: &ExecutionContext, office: &mut dyn Office) -> Answered {
     let shown = shown(&forwarded, ctx);
     let command = resource_and_verb(&forwarded)
-        .and_then(|(resource, verb)| org_agent_cli::table::runtime_table().find(resource, verb));
+        .and_then(|(resource, verb)| org_agent_cli::runtime_table().find(resource, verb));
     // The words the run adds go right after the command path, before every flag and value
     // the caller wrote and before any `--`: never at the end, where a value-taking flag left
     // without its value (`--body`) would take `--dry-run` or `--format` as its text and a dry

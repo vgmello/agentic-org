@@ -14,9 +14,9 @@ mod protocol;
 mod session;
 
 use org_agent_runtime::{
-    AgentRuntime, Capabilities, CostBasis, LaunchContext, LaunchPlan, MidTurnDelivery, PlanError,
-    Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun, RuntimeId, Session, SessionSpec,
-    UsageScope, VersionRange,
+    AgentRuntime, Capabilities, CostBasis, ImageInputMode, LaunchContext, LaunchPlan,
+    MidTurnDelivery, PlanError, Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun, RuntimeId,
+    Session, SessionSpec, UsageScope, VersionRange,
 };
 
 pub use crate::plan::{OPERATOR_RULES_DIR, OPERATOR_RULES_FILE_NAME};
@@ -48,6 +48,7 @@ impl AgentRuntime for CodexRuntime {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             mid_turn_delivery: MidTurnDelivery::NativeSteer,
+            image_input: ImageInputMode::LocalPath,
             interrupt_in_band: true,
             idle_interrupt_ends_turn: false,
             approval_bridge: true,

@@ -147,6 +147,11 @@ pub(super) fn validate_tasks<Tx: TasksWrite>(tx: &Tx) -> Result<(), ProjectionEr
                 return Err(refuse(&path, "task repository does not exist"));
             }
         }
+        if let Some(summary) = &t.final_summary {
+            if tx.employee(&summary.by_id)?.is_none() {
+                return Err(refuse(&path, "final_summary author does not exist"));
+            }
+        }
         validate_history(histories.get(&t.id), t, &path)?;
         folders.insert(t.id.clone(), records::task_folder(&location, &t.id));
     }

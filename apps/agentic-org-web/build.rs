@@ -3,6 +3,9 @@
 //! Also marks release-profile (`release_profile`) and app-bundle (`ORG_BUNDLE=1`,
 //! `bundle_build`) builds, so `lib.rs` refuses to compile one with debug assertions on:
 //! the unpinned development startup path is compiled in exactly when they are.
+
+#![forbid(unsafe_code)]
+
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-env-changed=ORG_BUNDLE");

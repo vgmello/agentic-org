@@ -19,6 +19,7 @@ org-platform = { path = "../org-platform" }
 org-process = { path = "../org-process" }
 org-proto = { path = "../org-proto" }
 org-supervise = { path = "../org-supervise" }
+org-turn-attachments = { path = "../org-turn-attachments" }
 ring = "=0.17.14"
 serde.workspace = true
 serde_json.workspace = true

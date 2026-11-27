@@ -167,6 +167,7 @@ impl Fixture {
             conversation_id: Some("dm-bea-tess".into()),
             source_id: format!("msg-{id}"),
             summary: "Bea: what is the owner planning?".into(),
+            attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
         }
     }
@@ -222,6 +223,7 @@ fn stub_handle(
         pending_wake_count: 0,
         pending_wake_reason: None,
         queued_turns: 0,
+        activity: Default::default(),
     }));
     let handle = LiveSessionHandle {
         state: runtime_state,
@@ -552,6 +554,7 @@ fn failover(f: &Fixture, partition: Option<PartitionKey>) -> FailoverRequest {
         failed_run_id: "run-live".into(),
         failed_connection_id: "conn-1".into(),
         objective: "Owner: draft the board update".into(),
+        attachment_ids: Vec::new(),
         workspace: None,
         task_ref: None,
         tried_connections: vec!["conn-1".into()],
@@ -704,6 +707,7 @@ fn wake_item(
         conversation_id: Some(format!("conv-of-{id}")),
         source_id: format!("msg-{id}"),
         summary: summary.into(),
+        attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
     }
 }
@@ -800,7 +804,7 @@ fn queued_dms_of_different_senders_never_share_a_turn_or_a_conversation() {
         let turns: Vec<String> = cmds
             .into_iter()
             .filter_map(|c| match c {
-                PumpCommand::SendTurn(text) => Some(text),
+                PumpCommand::SendTurn(turn) => Some(turn.text),
                 _ => None,
             })
             .collect();
@@ -877,7 +881,7 @@ fn turns_sent_to(f: &Fixture, partition: PartitionKey) -> Vec<String> {
     assert!(stop_reasons(&cmds).is_empty(), "never switched");
     cmds.into_iter()
         .filter_map(|c| match c {
-            PumpCommand::SendTurn(text) => Some(text),
+            PumpCommand::SendTurn(turn) => Some(turn.text),
             _ => None,
         })
         .collect()
@@ -1010,7 +1014,7 @@ fn her_required_ask_never_suspends_her_and_a_dm_answer_runs_in_the_answerers_par
     );
     assert!(cmds
         .iter()
-        .any(|c| matches!(c, PumpCommand::SendTurn(text) if text.contains(ANSWER))));
+        .any(|c| matches!(c, PumpCommand::SendTurn(turn) if turn.text.contains(ANSWER))));
     assert!(f.queued().is_empty());
     assert!(f
         .manager
@@ -1061,4 +1065,106 @@ fn a_held_partition_never_borrows_or_blocks_another_partitions_hold() {
         }
     );
     assert_eq!(f.queued(), ["w-agent"]);
+}
+
+fn steers(cmds: &[PumpCommand]) -> Vec<String> {
+    cmds.iter()
+        .filter_map(|c| match c {
+            PumpCommand::SteerTurn(request) => Some(request.turn.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn queued_turns(f: &Fixture) -> usize {
+    let reg = f.manager.registry.lock().unwrap();
+    reg.live
+        .get(&f.tess)
+        .map_or(0, |h| h.state.lock().unwrap().queued_turns)
+}
+
+/// The owner's steer (`TASK-103`) is the owner's private message: it reaches only a turn of the
+/// owner's own partition, never a member's live conversation or `tess:wake`, busy or idle.
+#[test]
+fn the_owners_steer_never_lands_in_another_partitions_turn() {
+    // (state, serving Bea's `tess:ask:` partition rather than `tess:wake`)
+    for (state, beas) in [
+        (SessionState::Running, true),
+        (SessionState::Idle, true),
+        (SessionState::Running, false),
+        (SessionState::WaitingApproval, false),
+        (SessionState::Idle, false),
+    ] {
+        let f = Fixture::new();
+        let partition = if beas {
+            f.member_key()
+        } else {
+            PartitionKey::tess_wake()
+        };
+        let rx = f.install(state, Some(partition.clone()), Some("conv-other"));
+        let refused = f
+            .manager
+            .steer_session(&f.owner, &f.tess, "OWNER-PRIVATE: our acquisition plan")
+            .unwrap_err();
+        assert_eq!(refused.code, ErrorCode::Conflict, "{state:?} {partition}");
+        assert!(
+            drained(&rx).is_empty(),
+            "{state:?} {partition}: no steer reached the other partition's run"
+        );
+        assert_eq!(queued_turns(&f), 0, "{state:?} {partition}");
+        assert_eq!(f.live_state(), Some(state));
+    }
+}
+
+/// An idle process of the owner's own partition that is due to rotate is not steered either: the
+/// owner's next turn starts a fresh conversation.
+#[test]
+fn the_owners_steer_never_reaches_a_partition_due_to_rotate() {
+    let f = Fixture::new();
+    for _ in 0..crate::partition::ROTATE_AFTER_TURNS {
+        f.manager.partitions.begin_turn(&f.tess, &f.owner_key());
+    }
+    let rx = f.install(SessionState::Idle, Some(f.owner_key()), Some("conv-owner"));
+    let refused = f
+        .manager
+        .steer_session(&f.owner, &f.tess, "Owner: and the budget?")
+        .unwrap_err();
+    assert_eq!(refused.code, ErrorCode::Conflict);
+    assert!(drained(&rx).is_empty());
+    assert_eq!(queued_turns(&f), 0);
+}
+
+/// The owner steers a turn of the owner's own partition; nobody else steers Tess, even through
+/// the direct Rust entry point and even in their own partition.
+#[test]
+fn only_the_owner_steers_her_and_only_in_the_owners_partition() {
+    let f = Fixture::new();
+    let rx = f.install(
+        SessionState::Running,
+        Some(f.owner_key()),
+        Some("conv-owner"),
+    );
+    f.manager
+        .steer_session(&f.owner, &f.tess, "Owner: use staging")
+        .unwrap();
+    let sent = steers(&drained(&rx));
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].contains("Owner: use staging"), "{}", sent[0]);
+    assert_eq!(queued_turns(&f), 1);
+
+    let f = Fixture::new();
+    let rx = f.install(
+        SessionState::Running,
+        Some(f.member_key()),
+        Some("conv-bea"),
+    );
+    for caller in [f.member.clone(), f.tess.clone()] {
+        let refused = f
+            .manager
+            .steer_session(&caller, &f.tess, "let me in")
+            .unwrap_err();
+        assert_eq!(refused.code, ErrorCode::NotAuthorized, "{caller}");
+    }
+    assert!(drained(&rx).is_empty());
+    assert_eq!(queued_turns(&f), 0);
 }

@@ -127,6 +127,16 @@ impl SqlitePrivateNotesStore {
     }
 }
 
+/// Note `note_id` with its tags, for the private search index, which only ever reads the
+/// notes database (`store/sqlite/search/private.rs`).
+pub(crate) fn load_note_for_index(
+    conn: &Connection,
+    org_id: &str,
+    note_id: &str,
+) -> Result<Option<PrivateNoteRecord>, OfficeError> {
+    load_note(conn, org_id, note_id)
+}
+
 fn begin(conn: &mut Connection) -> Result<Transaction<'_>, OfficeError> {
     conn.transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(OfficeError::storage)

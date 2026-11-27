@@ -114,6 +114,7 @@ fn wake_item(sender: &str, id: &str) -> PendingWakeItem {
         conversation_id: Some("conv-ext".into()),
         source_id: id.into(),
         summary: "please look".into(),
+        attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
     }
 }

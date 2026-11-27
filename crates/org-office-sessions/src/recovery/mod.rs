@@ -55,6 +55,9 @@ pub struct ActiveTurnRecord {
     pub started_identity: Option<String>,
     pub boot_identity: Option<String>,
     pub objective: String,
+    /// Lightweight IDs of bound attachments for this active turn (`TASK-98.3`). Never base64.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<String>,
     #[serde(default)]
     pub accepted_commands: Vec<String>,
     #[serde(default)]

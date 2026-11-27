@@ -229,6 +229,7 @@ mod tests {
             modified_files: Vec::new(),
             repositories: repos,
             details: None,
+            final_summary: None,
             meta: TaskMeta::created(
                 &Id::parse("018bce83-1200-7000-8000-000000000003").unwrap(),
                 "2026-11-26T00:00:00.000Z",

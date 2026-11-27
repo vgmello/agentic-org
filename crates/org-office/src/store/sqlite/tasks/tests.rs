@@ -7,7 +7,8 @@ use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
 use org_proto::tasks::{
-    LabelMatchMode, TaskPriority, TaskSortMode, TaskStatus, TaskStatusScope, TasksListParams,
+    ChecklistSection, LabelMatchMode, TaskPriority, TaskSortMode, TaskStatus, TaskStatusScope,
+    TasksListParams,
 };
 use org_proto::ErrorCode;
 use org_store::{testkit::MemoryEngine, Engine, Id};
@@ -20,8 +21,9 @@ use crate::tasks::features::{decode_refusal, inspect_task, list_tasks};
 use crate::tasks::ports::{TasksRead, TasksWrite};
 use crate::tasks::query::{LabelFilter, TaskListQuery, TaskStatusSet};
 use crate::tasks::records::{
-    ChecklistStepRecord, TaskCommentRecord, TaskDetailsRecord, TaskEventRecord, TaskLinkRecord,
-    TaskMeta, TaskRecord, TaskRepositoryRecord, TaskWatcherRecord,
+    ChecklistStepRecord, DoneAnywayRecord, FinalSummaryRecord, TaskCommentRecord,
+    TaskDetailsRecord, TaskEventRecord, TaskLinkRecord, TaskMeta, TaskRecord, TaskRepositoryRecord,
+    TaskWatcherRecord,
 };
 use crate::time::parse_rfc3339_ms;
 
@@ -126,8 +128,17 @@ fn task(n: u64) -> TaskRecord {
             Vec::new()
         },
         details: (n.is_multiple_of(8)).then(|| TaskDetailsRecord {
-            definition_of_done: Some("shipped".to_owned()),
+            what_happened: Some("shipped".to_owned()),
+            done_anyway: n.is_multiple_of(16).then(|| DoneAnywayRecord {
+                reason: "Waived by the owner".to_owned(),
+                steps: vec![id(5, n * 10 + 1)],
+            }),
             ..TaskDetailsRecord::default()
+        }),
+        final_summary: n.is_multiple_of(10).then(|| FinalSummaryRecord {
+            text: format!("Summary of task {n}"),
+            at: "2026-11-27T00:00:00.000Z".to_owned(),
+            by_id: id(4, 1),
         }),
         meta: TaskMeta {
             revision: 1,
@@ -149,7 +160,12 @@ fn seed<Tx: TasksWrite>(tx: &mut Tx, range: RangeInclusive<u64>) {
             let steps: Vec<ChecklistStepRecord> = (0..2)
                 .map(|p| ChecklistStepRecord {
                     id: id(5, n * 10 + p),
-                    position: p,
+                    section: if p == 0 {
+                        ChecklistSection::Dod
+                    } else {
+                        ChecklistSection::Work
+                    },
+                    position: 0,
                     text: format!("step {p}"),
                     required: true,
                     done: p == 0,

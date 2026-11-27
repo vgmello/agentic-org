@@ -3,8 +3,8 @@
 use org_store::{DurablePath, Id};
 use serde_json::{json, Value};
 
-use super::yaml::Fields;
 use super::yaml::RecordError;
+use super::yaml::{Fields, Reader};
 use super::{
     checked, id, is_branch, is_office_code, is_remote_url, is_slug, line, optional_line,
     optional_time, path, time, yaml, Meta, SCHEMA_VERSION,
@@ -20,7 +20,29 @@ pub struct Organization {
     pub name: String,
     pub organization_repository_id: Id,
     pub state_branch: String,
+    /// The default definition of done a new task copies when neither it nor its project names
+    /// one (`TASK-88`). Written only when set.
+    pub default_dod: Option<Vec<String>>,
     pub meta: Meta,
+}
+
+/// `default_dod`, a list of step texts, when the file has it (`TASK-88`).
+pub(crate) fn read_default_dod(reader: &mut Reader) -> Result<Option<Vec<String>>, RecordError> {
+    if !reader.has("default_dod") {
+        return Ok(None);
+    }
+    let items = reader.strings("default_dod")?;
+    match org_proto::tasks::normalize_dod_items(&items) {
+        Ok(normalized) if normalized == items => Ok(Some(items)),
+        _ => Err(reader.error("default_dod", "not a list of definition-of-done items")),
+    }
+}
+
+/// Writes `default_dod` when set (`TASK-88`), so a record without one keeps its bytes.
+pub(crate) fn write_default_dod(default_dod: Option<&Vec<String>>, fields: &mut Fields) {
+    if let Some(items) = default_dod {
+        fields.insert("default_dod".into(), json!(items));
+    }
 }
 
 pub fn organization_path() -> DurablePath {
@@ -36,6 +58,7 @@ pub fn encode_organization(record: &Organization) -> Vec<u8> {
     let repository = record.organization_repository_id.as_str();
     fields.insert("organization_repository_id".into(), json!(repository));
     fields.insert("state_branch".into(), json!(record.state_branch));
+    write_default_dod(record.default_dod.as_ref(), &mut fields);
     yaml::encode(&fields)
 }
 
@@ -48,6 +71,7 @@ pub fn decode_organization(bytes: &[u8]) -> Result<Organization, RecordError> {
         name: line(&mut reader, "name")?,
         organization_repository_id: id(&mut reader, "organization_repository_id")?,
         state_branch: checked(&mut reader, "state_branch", is_branch, "not a branch name")?,
+        default_dod: read_default_dod(&mut reader)?,
     };
     reader.finish()?;
     Ok(record)

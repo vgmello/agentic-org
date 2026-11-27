@@ -109,11 +109,74 @@ pub struct SessionView {
     pub pending_wake_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_wake_reason: Option<String>,
+    /// Coarse, ephemeral live activity of the running turn (`TASK-103`); `None` between turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_phase: Option<ActivityPhase>,
+    /// The running tool's name only, while [`ActivityPhase::RunningTool`]: never its input,
+    /// output, diff or the agent's thinking (`doc-40` CHAT-4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_tool_name: Option<String>,
+    /// When the running tool started (RFC 3339 UTC).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_tool_started_at: Option<String>,
+    /// The live runtime takes a person's steer into a running turn natively, without
+    /// interrupting it. Otherwise `member.session_steer` interrupts the turn and sends the
+    /// steer as the next turn (the warm process lives on either way).
+    #[serde(default)]
+    pub supports_steer: bool,
 }
 
 fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
+
+/// Coarse live activity of a running turn (`TASK-103`). Ephemeral: never persisted, never
+/// carrying tool inputs, outputs, diffs, file contents or thinking text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ActivityPhase {
+    /// The model is reasoning (or the turn just began).
+    Thinking,
+    /// A tool call is running (its name only rides along).
+    RunningTool,
+    /// The model is writing its reply.
+    Responding,
+    /// A person interrupted the turn; it is winding down.
+    Interrupting,
+    #[serde(other)]
+    Unknown,
+}
+
+/// `member.activity_changed` on the organization's `presence` feed: one agent's coalesced
+/// coarse live activity, the latest per member (`TASK-103`). `phase: null` is idle. A
+/// non-owner never gets the Chief of Staff's tool name or start time (her turns serve one
+/// caller's private partition).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberActivityChangedData {
+    pub member_id: String,
+    pub phase: Option<ActivityPhase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_tool_started_at: Option<String>,
+    #[serde(default)]
+    pub supports_steer: bool,
+    /// When this activity began (RFC 3339 UTC).
+    pub changed_at: String,
+}
+
+impl MemberActivityChangedData {
+    /// The same frame without the tool detail: what a caller who may not see the turn gets.
+    pub fn without_tool_detail(mut self) -> Self {
+        self.active_tool_name = None;
+        self.active_tool_started_at = None;
+        self
+    }
+}
+
+/// The largest steer text `member.session_steer` takes, in UTF-8 bytes: one fenced message body.
+pub const MAX_STEER_TEXT_BYTES: usize = 2_048;
 
 /// Result of `member.session_inspect` (also backing `agent-os session inspect` / CLI-9).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,6 +249,45 @@ pub struct MemberSessionStopParams {
 impl Call for MemberSessionStop {
     const METHOD: &'static str = "member.session_stop";
     type Params = MemberSessionStopParams;
+    type Result = SessionView;
+}
+
+/// `member.session_interrupt`: destructively stop the agent's running turn while keeping its
+/// warm process alive (unlike `member.session_stop`, which ends the process). Turns queued
+/// behind it still run; an idle live session is left as it is (`TASK-103`).
+pub struct MemberSessionInterrupt;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemberSessionInterruptParams {
+    pub command_id: String,
+    pub employee_id: String,
+}
+
+impl Call for MemberSessionInterrupt {
+    const METHOD: &'static str = "member.session_interrupt";
+    type Params = MemberSessionInterruptParams;
+    type Result = SessionView;
+}
+
+/// `member.session_steer`: a person's explicit mid-turn direction (`TASK-103`). Delivered into
+/// the running turn natively where the runtime steers ([`SessionView::supports_steer`]);
+/// otherwise the turn is interrupted and the steer runs as the next turn, ahead of queued
+/// turns. An idle live session runs it as its next turn.
+pub struct MemberSessionSteer;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemberSessionSteerParams {
+    pub command_id: String,
+    pub employee_id: String,
+    /// At most [`MAX_STEER_TEXT_BYTES`]; never empty.
+    pub text: String,
+}
+
+impl Call for MemberSessionSteer {
+    const METHOD: &'static str = "member.session_steer";
+    type Params = MemberSessionSteerParams;
     type Result = SessionView;
 }
 
@@ -630,3 +732,7 @@ impl Call for ProviderCredentialRevoke {
     type Params = ProviderCredentialRevokeParams;
     type Result = ProviderCredentialView;
 }
+
+#[cfg(test)]
+#[path = "sessions_tests.rs"]
+mod tests;

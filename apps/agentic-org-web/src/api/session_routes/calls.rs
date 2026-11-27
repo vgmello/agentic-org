@@ -4,21 +4,25 @@ use hyper::StatusCode;
 use org_proto::sessions::{
     MemberSessionApprovalDecide, MemberSessionApprovalDecideParams, MemberSessionClearStall,
     MemberSessionClearStallParams, MemberSessionGrants, MemberSessionGrantsParams,
-    MemberSessionInspect, MemberSessionInspectParams, MemberSessionList, MemberSessionStart,
-    MemberSessionStartParams, MemberSessionStop, MemberSessionStopParams, MemberSessionTranscript,
-    ProviderCredentialRevoke, ProviderCredentialRevokeParams, ProviderCredentialStatus,
-    ProviderCredentialStatusParams, ProviderEnrollmentCancel, ProviderEnrollmentCancelParams,
-    ProviderEnrollmentStart, ProviderEnrollmentStartParams, ProviderEnrollmentStatus,
-    ProviderEnrollmentStatusParams, ProviderEnrollmentSubmit, ProviderEnrollmentSubmitParams,
+    MemberSessionInspect, MemberSessionInspectParams, MemberSessionInterrupt,
+    MemberSessionInterruptParams, MemberSessionList, MemberSessionStart, MemberSessionStartParams,
+    MemberSessionSteer, MemberSessionSteerParams, MemberSessionStop, MemberSessionStopParams,
+    MemberSessionTranscript, ProviderCredentialRevoke, ProviderCredentialRevokeParams,
+    ProviderCredentialStatus, ProviderCredentialStatusParams, ProviderEnrollmentCancel,
+    ProviderEnrollmentCancelParams, ProviderEnrollmentStart, ProviderEnrollmentStartParams,
+    ProviderEnrollmentStatus, ProviderEnrollmentStatusParams, ProviderEnrollmentSubmit,
+    ProviderEnrollmentSubmitParams, MAX_STEER_TEXT_BYTES,
 };
 use org_proto::web::{ReadResponse, WebError, WebErrorCode};
 use serde_json::Value;
 
 use super::super::hq_context::{resolve_hq_office, revalidate_and_resolve_hq};
-use super::super::{failure, not_found, result, unavailable, Call, CallerAuth, SessionApi};
+use super::super::{
+    failure, invalid, not_found, result, unavailable, Call, CallerAuth, SessionApi,
+};
 use super::{
-    decode_mut, read_call, ApprovalBody, CommandOnlyBody, EnrollStartBody, EnrollSubmitBody,
-    SessionCall, SessionRoute, StartBody, StopBody,
+    decode_mut, prepare_mut, read_call, ApprovalBody, CommandOnlyBody, EnrollStartBody,
+    EnrollSubmitBody, SessionCall, SessionRoute, StartBody, SteerBody, StopBody,
 };
 use crate::host::Failure;
 use crate::office::OfficeFailure;
@@ -43,6 +47,7 @@ pub(in crate::api) fn prepare(
         | SessionRoute::Stop(..)
         | SessionRoute::Approval(..)
         | SessionRoute::ClearStall(..) => prepare_agent_mut(route, bytes),
+        SessionRoute::Interrupt(..) | SessionRoute::Steer(..) => prepare_turn_control(route, bytes),
         _ => prepare_provider_mut(route, bytes),
     }
 }
@@ -114,6 +119,54 @@ pub(super) fn prepare_agent_mut(
                 )
             },
         ),
+        _ => unreachable!(),
+    }
+}
+
+/// A person's live turn controls (`TASK-103`): `interrupt` takes only a `command_id`; `steer`
+/// takes one non-blank `text` of at most [`MAX_STEER_TEXT_BYTES`], refused here before the
+/// office is asked (which checks it again).
+pub(super) fn prepare_turn_control(
+    route: SessionRoute,
+    bytes: &[u8],
+) -> Result<PreparedCall<Call>, ApiReply> {
+    match route {
+        SessionRoute::Interrupt(c, o, id) => decode_mut(
+            bytes,
+            |b: &CommandOnlyBody| &b.command_id,
+            |b| {
+                SessionCall::Interrupt(
+                    c,
+                    o,
+                    MemberSessionInterruptParams {
+                        command_id: b.command_id,
+                        employee_id: id,
+                    },
+                )
+            },
+        ),
+        SessionRoute::Steer(c, o, id) => {
+            let body: SteerBody = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+            if body.text.trim().is_empty() || body.text.len() > MAX_STEER_TEXT_BYTES {
+                return Err(invalid());
+            }
+            prepare_mut(
+                body,
+                bytes.len(),
+                |b: &SteerBody| &b.command_id,
+                |b| {
+                    SessionCall::Steer(
+                        c,
+                        o,
+                        MemberSessionSteerParams {
+                            command_id: b.command_id,
+                            employee_id: id,
+                            text: b.text,
+                        },
+                    )
+                },
+            )
+        }
         _ => unreachable!(),
     }
 }
@@ -265,6 +318,8 @@ pub(in crate::api) async fn execute(api: &SessionApi, call: SessionCall) -> ApiR
     match call {
         SessionCall::Start(..)
         | SessionCall::Stop(..)
+        | SessionCall::Interrupt(..)
+        | SessionCall::Steer(..)
         | SessionCall::Inspect(..)
         | SessionCall::ListSessions(..)
         | SessionCall::Transcript(..)
@@ -281,6 +336,12 @@ pub(super) async fn execute_agent(api: &SessionApi, call: SessionCall) -> ApiRep
             run_office::<MemberSessionStart>(api, c, &o, &p, false).await
         }
         SessionCall::Stop(c, o, p) => run_office::<MemberSessionStop>(api, c, &o, &p, false).await,
+        SessionCall::Interrupt(c, o, p) => {
+            run_office::<MemberSessionInterrupt>(api, c, &o, &p, false).await
+        }
+        SessionCall::Steer(c, o, p) => {
+            run_office::<MemberSessionSteer>(api, c, &o, &p, false).await
+        }
         SessionCall::Inspect(c, o, employee_id) => {
             let params = MemberSessionInspectParams {
                 employee_id: Some(employee_id),

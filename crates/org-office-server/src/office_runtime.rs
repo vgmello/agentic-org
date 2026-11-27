@@ -435,6 +435,44 @@ fn start_channel_watcher(
     channel_watcher
 }
 
+/// Federation-backed [`org_office_sessions::TurnAttachmentResolver`] for satellite offices:
+/// authorizes reads locally and pulls missing shared blobs from HQ via [`federation::HqBlobRemote`].
+struct SatelliteAttachmentResolver {
+    office: Arc<Office>,
+}
+
+impl SatelliteAttachmentResolver {
+    fn new(office: Arc<Office>) -> Self {
+        Self { office }
+    }
+}
+
+impl org_office_sessions::TurnAttachmentResolver for SatelliteAttachmentResolver {
+    fn resolve_for_turn(
+        &self,
+        employee_id: &str,
+        delivery_scope: &org_office::attachments::DeliveryScope,
+        attachment_id: &str,
+        remaining_staging_budget: u64,
+    ) -> Result<
+        Result<org_office::attachments::DeliveryAttachmentPayload, org_proto::ApiError>,
+        org_office::OfficeError,
+    > {
+        let remote = federation::HqBlobRemote::new(Arc::clone(&self.office));
+        let pull = org_office::attachments::remote::BlobPull {
+            remote: &remote,
+            cache_max_bytes: federation::blob_cache_max_bytes(),
+        };
+        self.office.attachment_read_for_delivery_with(
+            employee_id,
+            attachment_id,
+            delivery_scope,
+            remaining_staging_budget,
+            Some(pull),
+        )
+    }
+}
+
 pub(crate) fn start_session_manager(
     office: Arc<Office>,
     socket: &Path,
@@ -444,6 +482,9 @@ pub(crate) fn start_session_manager(
         cfg.hq_permits = Some(Arc::new(federation::SatelliteHqPermitCoordinator::new(
             Arc::clone(&office),
         )));
+        cfg.attachment_resolver = Some(Arc::new(SatelliteAttachmentResolver::new(Arc::clone(
+            &office,
+        ))));
     }
     let needs_snapshot = office
         .sync_status()

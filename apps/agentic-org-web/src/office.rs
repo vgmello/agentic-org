@@ -1,8 +1,12 @@
-//! Async multiplexed browser-to-office bridge (B2 Q8, TASK-16): opens host-issued
+//! Async multiplexed browser-to-office bridge (B2 Q8, TASK-16, TASK-232): opens host-issued
 //! Web channels to offices, negotiates `org-proto` v2 `hello`, attaches per-request
 //! HMAC grants minted by the host, and multiplexes concurrent reads and mutations
-//! over Tokio `UnixStream` tasks without touching the host `BlockingPool` or any
+//! over Tokio stream tasks without touching the host `BlockingPool` or any
 //! office database/key.
+//!
+//! [`OfficeBridge`] (`LocalUnixOfficeTransport`) is the sole production [`OfficeTransport`]
+//! adapter. Concrete Unix socket conversion is isolated in [`crate::transport::local_unix`].
+
 use std::{
     collections::BTreeMap,
     sync::{
@@ -16,40 +20,26 @@ use org_host_control::{
     browser::{BrowserSessionGrant, BrowserSessionGrantParams},
     organization::BrowserAuth,
 };
-use org_proto::{
-    org::{ProjectCreate, ProjectCreateParams},
-    projects::{
-        ProjectInspect, ProjectInspectParams, ProjectList, ProjectListParams, ProjectListResult,
-        ProjectRecord,
-    },
-    web::org_mutations::OrgMutation,
-    Empty, OperationGet, OperationGetParams, OperationKind as NativeOperationKind,
-    OperationOutcome, OrgSnapshot, OrgSnapshotCall, Outcome, Principal, Request, Response,
-};
+use org_proto::{Outcome, Principal, Request, Response};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
+pub use crate::ports::{OfficeCallOptions, OfficeFailure, OfficeTransport};
 use crate::{
-    event_hub::EventHub,
+    event_hub::EventBus,
     host::{Failure, HostControl},
+    ports::BoxFuture,
 };
 
 mod channel;
 
 use channel::{evict_channel, negotiate};
 
-const OFFICE_DEADLINE: Duration = Duration::from_secs(5);
 const CHANNEL_WRITE_QUEUE: usize = 64;
+const MAX_ISOLATED_COLLECT_CHANNELS: usize = 2;
 
-#[derive(Debug)]
-pub enum OfficeFailure {
-    /// Failed before writing to the office channel (auth, missing office, or host/channel setup).
-    BeforeDispatch(Failure),
-    /// The office refused a read request with an `ApiError`.
-    Refused(org_proto::ApiError),
-    /// Transport or protocol failure on the office stream.
-    Transport,
-}
+/// The sole production [`OfficeTransport`] adapter over host-transferred local Unix channels.
+pub type LocalUnixOfficeTransport = OfficeBridge;
 
 type PendingMap = Arc<Mutex<BTreeMap<u64, oneshot::Sender<Value>>>>;
 
@@ -59,8 +49,6 @@ struct MultiplexedChannel {
     pending: PendingMap,
 }
 
-const MAX_ISOLATED_COLLECT_CHANNELS: usize = 2;
-
 /// Manages async multiplexed host-opened Web channels to offices.
 #[derive(Clone)]
 pub struct OfficeBridge {
@@ -68,18 +56,18 @@ pub struct OfficeBridge {
     channels: Arc<Mutex<BTreeMap<String, Arc<MultiplexedChannel>>>>,
     open_locks: Arc<Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     isolated_slots: Arc<tokio::sync::Semaphore>,
-    hub: EventHub,
+    events: Arc<dyn EventBus>,
     next_id: Arc<AtomicU64>,
 }
 
 impl OfficeBridge {
-    pub fn new(host: Arc<HostControl>, hub: EventHub) -> Self {
+    pub fn new(host: Arc<HostControl>, events: Arc<dyn EventBus>) -> Self {
         Self {
             host,
             channels: Arc::new(Mutex::new(BTreeMap::new())),
             open_locks: Arc::new(Mutex::new(BTreeMap::new())),
             isolated_slots: Arc::new(tokio::sync::Semaphore::new(MAX_ISOLATED_COLLECT_CHANNELS)),
-            hub,
+            events,
             next_id: Arc::new(AtomicU64::new(2)),
         }
     }
@@ -120,12 +108,12 @@ impl OfficeBridge {
             .open_office_channel_async(auth.clone(), office_id.to_owned())
             .await
             .map_err(OfficeFailure::BeforeDispatch)?;
-        let channel = MultiplexedChannel::from_std(
+        let channel = MultiplexedChannel::from_local_unix(
             office_id.to_owned(),
             channel_id.clone(),
             stream,
             Arc::clone(&self.channels),
-            self.hub.clone(),
+            Arc::clone(&self.events),
         )
         .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
         if negotiate(&channel).await.is_err() {
@@ -160,63 +148,38 @@ impl OfficeBridge {
         })
     }
 
-    /// Sends one typed `org-proto` RPC over the authenticated host channel to `office_id`.
-    /// Reads may pass `retry_on_transport = true` to retry once after evicting a stale channel;
-    /// mutations pass `false` so an uncertain transport failure is never auto-retried blindly.
-    pub async fn call_typed<C: org_proto::Call>(
+    async fn call_raw_inner(
         &self,
         auth: &BrowserAuth,
         office_id: &str,
-        params: &C::Params,
-        retry_on_transport: bool,
-    ) -> Result<C::Result, OfficeFailure> {
-        self.call_typed_with_timeout::<C>(
-            auth,
-            office_id,
-            params,
-            retry_on_transport,
-            OFFICE_DEADLINE,
-        )
-        .await
-    }
-
-    /// Sends one typed `org-proto` RPC with an explicit reply deadline (used by push-woken
-    /// `chat.events_poll` waiters so long-held waits do not expire at `OFFICE_DEADLINE`, `TASK-140`).
-    pub async fn call_typed_with_timeout<C: org_proto::Call>(
-        &self,
-        auth: &BrowserAuth,
-        office_id: &str,
-        params: &C::Params,
-        retry_on_transport: bool,
-        deadline: Duration,
-    ) -> Result<C::Result, OfficeFailure> {
+        method: &'static str,
+        params: Value,
+        options: OfficeCallOptions,
+    ) -> Result<Value, OfficeFailure> {
+        if options.isolated {
+            return self
+                .call_isolated_raw(auth, office_id, method, params)
+                .await;
+        }
         match self
-            .call_typed_once::<C>(auth, office_id, params, deadline)
+            .call_multiplexed_once(auth, office_id, method, &params, options.deadline)
             .await
         {
-            Err(OfficeFailure::Transport) if retry_on_transport => {
-                self.call_typed_once::<C>(auth, office_id, params, deadline)
+            Err(OfficeFailure::Transport) if options.retry_on_transport => {
+                self.call_multiplexed_once(auth, office_id, method, &params, options.deadline)
                     .await
             }
             other => other,
         }
     }
 
-    /// Sends one typed `org-proto` RPC over a bounded dedicated one-shot host channel (capped at
-    /// `MAX_ISOLATED_COLLECT_CHANNELS = 2` so ordinary Web channels always retain capacity).
-    /// Runs the channel roundtrip in a spawned task so the permit stays held until the office
-    /// finishes even if the caller drops the HTTP request early.
-    pub async fn call_typed_isolated<C>(
+    async fn call_isolated_raw(
         &self,
         auth: &BrowserAuth,
         office_id: &str,
-        params: &C::Params,
-    ) -> Result<C::Result, OfficeFailure>
-    where
-        C: org_proto::Call,
-        C::Params: Clone + Send + Sync + 'static,
-        C::Result: Send + 'static,
-    {
+        method: &'static str,
+        params: Value,
+    ) -> Result<Value, OfficeFailure> {
         let Ok(permit) = Arc::clone(&self.isolated_slots).try_acquire_owned() else {
             return Err(OfficeFailure::Refused(org_proto::ApiError::new(
                 org_proto::ErrorCode::Conflict,
@@ -226,23 +189,25 @@ impl OfficeBridge {
         let bridge = self.clone();
         let auth = auth.clone();
         let office_id = office_id.to_owned();
-        let params = params.clone();
+        // Run the channel roundtrip in a spawned task so the permit stays held until the office
+        // finishes even if the caller drops the HTTP request early.
         tokio::spawn(async move {
             bridge
-                .call_typed_isolated_inner::<C>(&auth, &office_id, &params, permit)
+                .call_isolated_inner(&auth, &office_id, method, params, permit)
                 .await
         })
         .await
         .map_err(|_| OfficeFailure::Transport)?
     }
 
-    async fn call_typed_isolated_inner<C: org_proto::Call>(
+    async fn call_isolated_inner(
         &self,
         auth: &BrowserAuth,
         office_id: &str,
-        params: &C::Params,
+        method: &'static str,
+        params: Value,
         permit: tokio::sync::OwnedSemaphorePermit,
-    ) -> Result<C::Result, OfficeFailure> {
+    ) -> Result<Value, OfficeFailure> {
         let (channel_id, stream) = self
             .host
             .open_office_channel_async(auth.clone(), office_id.to_owned())
@@ -251,12 +216,12 @@ impl OfficeBridge {
         let isolated_channels = Arc::new(Mutex::new(BTreeMap::new()));
         // Move `permit` into the socket's read loop so the admission slot stays held until the
         // office physically closes its end of the channel (EOF), even on early reply timeout.
-        let channel = MultiplexedChannel::from_std_with_permit(
+        let channel = MultiplexedChannel::from_local_unix_with_permit(
             office_id.to_owned(),
             channel_id.clone(),
             stream,
             isolated_channels,
-            self.hub.clone(),
+            Arc::clone(&self.events),
             Some(permit),
         )
         .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
@@ -269,30 +234,22 @@ impl OfficeBridge {
             Err(error) => return Err(OfficeFailure::BeforeDispatch(error)),
         };
         let rpc_id = self.next_rpc_id();
-        let request = Request::new::<C>(rpc_id, params)
-            .and_then(|req| req.with_principal(&principal))
-            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
+        let request = build_request(rpc_id, method, params, &principal)?;
         let raw = channel
             .roundtrip_raw(&request, rpc_id)
             .await
             .map_err(|_| OfficeFailure::Transport)?;
-        let response: Response =
-            serde_json::from_value(raw).map_err(|_| OfficeFailure::Transport)?;
-        match response.outcome {
-            Outcome::Result(value) => {
-                serde_json::from_value(value).map_err(|_| OfficeFailure::Transport)
-            }
-            Outcome::Error(error) => Err(OfficeFailure::Refused(error)),
-        }
+        decode_response(raw)
     }
 
-    async fn call_typed_once<C: org_proto::Call>(
+    async fn call_multiplexed_once(
         &self,
         auth: &BrowserAuth,
         office_id: &str,
-        params: &C::Params,
+        method: &'static str,
+        params: &Value,
         deadline: Duration,
-    ) -> Result<C::Result, OfficeFailure> {
+    ) -> Result<Value, OfficeFailure> {
         let channel = self.get_or_open(auth, office_id).await?;
         let principal = match self.grant(auth, office_id, &channel.channel_id).await {
             Ok(principal) => principal,
@@ -303,9 +260,7 @@ impl OfficeBridge {
             Err(error) => return Err(OfficeFailure::BeforeDispatch(error)),
         };
         let rpc_id = self.next_rpc_id();
-        let request = Request::new::<C>(rpc_id, params)
-            .and_then(|req| req.with_principal(&principal))
-            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
+        let request = build_request(rpc_id, method, params.clone(), &principal)?;
         let raw = match channel
             .roundtrip_raw_with_timeout(&request, rpc_id, deadline)
             .await
@@ -316,270 +271,19 @@ impl OfficeBridge {
                 return Err(OfficeFailure::Transport);
             }
         };
-        let response: Response =
-            serde_json::from_value(raw).map_err(|_| OfficeFailure::Transport)?;
-        match response.outcome {
-            Outcome::Result(value) => {
-                serde_json::from_value(value).map_err(|_| OfficeFailure::Transport)
-            }
-            Outcome::Error(error) => Err(OfficeFailure::Refused(error)),
-        }
+        decode_response(raw)
     }
 
-    /// Reads `org.snapshot` asynchronously over the multiplexed office channel.
-    /// If a cached channel went stale (e.g., office restart), evicts and retries once.
-    pub async fn org_snapshot(
+    async fn dispatch_mutation_inner(
         &self,
         auth: &BrowserAuth,
         office_id: &str,
-    ) -> Result<OrgSnapshot, OfficeFailure> {
-        match self.org_snapshot_once(auth, office_id).await {
-            Err(OfficeFailure::Transport) => self.org_snapshot_once(auth, office_id).await,
-            other => other,
-        }
-    }
-
-    async fn org_snapshot_once(
-        &self,
-        auth: &BrowserAuth,
-        office_id: &str,
-    ) -> Result<OrgSnapshot, OfficeFailure> {
-        let channel = self.get_or_open(auth, office_id).await?;
-        let principal = match self.grant(auth, office_id, &channel.channel_id).await {
-            Ok(principal) => principal,
-            Err(Failure::Unavailable) => {
-                self.evict(office_id, &channel.channel_id);
-                return Err(OfficeFailure::Transport);
-            }
-            Err(error) => return Err(OfficeFailure::BeforeDispatch(error)),
-        };
-        let rpc_id = self.next_rpc_id();
-        let request = Request::new::<OrgSnapshotCall>(rpc_id, &Empty {})
-            .and_then(|req| req.with_principal(&principal))
-            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
-        let raw = match channel.roundtrip_raw(&request, rpc_id).await {
-            Ok(raw) => raw,
-            Err(_) => {
-                self.evict(office_id, &channel.channel_id);
-                return Err(OfficeFailure::Transport);
-            }
-        };
-        let response: Response =
-            serde_json::from_value(raw).map_err(|_| OfficeFailure::Transport)?;
-        match response.outcome {
-            Outcome::Result(value) => {
-                serde_json::from_value(value).map_err(|_| OfficeFailure::Transport)
-            }
-            Outcome::Error(error) => Err(OfficeFailure::Refused(error)),
-        }
-    }
-
-    /// Reads `operation.get` (`kind: org`) asynchronously over the multiplexed office channel.
-    /// If a cached channel went stale (e.g., office restart), evicts and retries once.
-    pub async fn org_operation_get(
-        &self,
-        auth: &BrowserAuth,
-        office_id: &str,
-        operation_id: &str,
-    ) -> Result<OperationOutcome, OfficeFailure> {
-        match self
-            .org_operation_get_once(auth, office_id, operation_id)
-            .await
-        {
-            Err(OfficeFailure::Transport) => {
-                self.org_operation_get_once(auth, office_id, operation_id)
-                    .await
-            }
-            other => other,
-        }
-    }
-
-    async fn org_operation_get_once(
-        &self,
-        auth: &BrowserAuth,
-        office_id: &str,
-        operation_id: &str,
-    ) -> Result<OperationOutcome, OfficeFailure> {
-        let channel = self.get_or_open(auth, office_id).await?;
-        let principal = match self.grant(auth, office_id, &channel.channel_id).await {
-            Ok(principal) => principal,
-            Err(Failure::Unavailable) => {
-                self.evict(office_id, &channel.channel_id);
-                return Err(OfficeFailure::Transport);
-            }
-            Err(error) => return Err(OfficeFailure::BeforeDispatch(error)),
-        };
-        let rpc_id = self.next_rpc_id();
-        let params = OperationGetParams {
-            kind: NativeOperationKind::Org,
-            id: operation_id.to_owned(),
-        };
-        let request = Request::new::<OperationGet>(rpc_id, &params)
-            .and_then(|req| req.with_principal(&principal))
-            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
-        let raw = match channel.roundtrip_raw(&request, rpc_id).await {
-            Ok(raw) => raw,
-            Err(_) => {
-                self.evict(office_id, &channel.channel_id);
-                return Err(OfficeFailure::Transport);
-            }
-        };
-        let response: Response =
-            serde_json::from_value(raw).map_err(|_| OfficeFailure::Transport)?;
-        match response.outcome {
-            Outcome::Result(value) => {
-                serde_json::from_value(value).map_err(|_| OfficeFailure::Transport)
-            }
-            Outcome::Error(error) => Err(OfficeFailure::Refused(error)),
-        }
-    }
-
-    /// Lists projects asynchronously over the multiplexed office channel (`project.list`).
-    pub async fn projects_list(
-        &self,
-        auth: &BrowserAuth,
-        office_id: &str,
-        include_archived: bool,
-    ) -> Result<ProjectListResult, OfficeFailure> {
-        match self
-            .projects_list_once(auth, office_id, include_archived)
-            .await
-        {
-            Err(OfficeFailure::Transport) => {
-                self.projects_list_once(auth, office_id, include_archived)
-                    .await
-            }
-            other => other,
-        }
-    }
-
-    async fn projects_list_once(
-        &self,
-        auth: &BrowserAuth,
-        office_id: &str,
-        include_archived: bool,
-    ) -> Result<ProjectListResult, OfficeFailure> {
-        let channel = self.get_or_open(auth, office_id).await?;
-        let principal = match self.grant(auth, office_id, &channel.channel_id).await {
-            Ok(principal) => principal,
-            Err(Failure::Unavailable) => {
-                self.evict(office_id, &channel.channel_id);
-                return Err(OfficeFailure::Transport);
-            }
-            Err(error) => return Err(OfficeFailure::BeforeDispatch(error)),
-        };
-        let rpc_id = self.next_rpc_id();
-        let params = ProjectListParams { include_archived };
-        let request = Request::new::<ProjectList>(rpc_id, &params)
-            .and_then(|req| req.with_principal(&principal))
-            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
-        let raw = match channel.roundtrip_raw(&request, rpc_id).await {
-            Ok(raw) => raw,
-            Err(_) => {
-                self.evict(office_id, &channel.channel_id);
-                return Err(OfficeFailure::Transport);
-            }
-        };
-        let response: Response =
-            serde_json::from_value(raw).map_err(|_| OfficeFailure::Transport)?;
-        match response.outcome {
-            Outcome::Result(value) => {
-                serde_json::from_value(value).map_err(|_| OfficeFailure::Transport)
-            }
-            Outcome::Error(error) => Err(OfficeFailure::Refused(error)),
-        }
-    }
-
-    /// Inspects one project by ID, `P-<number>`, or slug (`project.inspect`).
-    pub async fn project_inspect(
-        &self,
-        auth: &BrowserAuth,
-        office_id: &str,
-        project: &str,
-    ) -> Result<ProjectRecord, OfficeFailure> {
-        match self.project_inspect_once(auth, office_id, project).await {
-            Err(OfficeFailure::Transport) => {
-                self.project_inspect_once(auth, office_id, project).await
-            }
-            other => other,
-        }
-    }
-
-    async fn project_inspect_once(
-        &self,
-        auth: &BrowserAuth,
-        office_id: &str,
-        project: &str,
-    ) -> Result<ProjectRecord, OfficeFailure> {
-        let channel = self.get_or_open(auth, office_id).await?;
-        let principal = match self.grant(auth, office_id, &channel.channel_id).await {
-            Ok(principal) => principal,
-            Err(Failure::Unavailable) => {
-                self.evict(office_id, &channel.channel_id);
-                return Err(OfficeFailure::Transport);
-            }
-            Err(error) => return Err(OfficeFailure::BeforeDispatch(error)),
-        };
-        let rpc_id = self.next_rpc_id();
-        let params = ProjectInspectParams {
-            project: project.to_owned(),
-        };
-        let request = Request::new::<ProjectInspect>(rpc_id, &params)
-            .and_then(|req| req.with_principal(&principal))
-            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
-        let raw = match channel.roundtrip_raw(&request, rpc_id).await {
-            Ok(raw) => raw,
-            Err(_) => {
-                self.evict(office_id, &channel.channel_id);
-                return Err(OfficeFailure::Transport);
-            }
-        };
-        let response: Response =
-            serde_json::from_value(raw).map_err(|_| OfficeFailure::Transport)?;
-        match response.outcome {
-            Outcome::Result(value) => {
-                serde_json::from_value(value).map_err(|_| OfficeFailure::Transport)
-            }
-            Outcome::Error(error) => Err(OfficeFailure::Refused(error)),
-        }
-    }
-
-    /// Dispatches `project.create` asynchronously over the multiplexed office channel.
-    pub async fn project_create(
-        &self,
-        auth: &BrowserAuth,
-        office_id: &str,
-        params: &ProjectCreateParams,
+        method: &str,
+        params: Value,
     ) -> Result<Option<Value>, OfficeFailure> {
         let (channel, principal) = self.channel_and_grant(auth, office_id).await?;
         let rpc_id = self.next_rpc_id();
-        let request = Request::new::<ProjectCreate>(rpc_id, params)
-            .and_then(|req| req.with_principal(&principal))
-            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
-        match channel.roundtrip_raw(&request, rpc_id).await {
-            Ok(reply) => Ok(Some(reply)),
-            Err(_) => {
-                self.evict(office_id, &channel.channel_id);
-                Ok(None)
-            }
-        }
-    }
-
-    /// Dispatches one validated organization mutation asynchronously. Returns
-    /// `Err(BeforeDispatch)` only when nothing could have been written; returns
-    /// `Ok(None)` on transport failure after possible dispatch (`504 unknown`).
-    pub async fn org_mutation(
-        &self,
-        auth: &BrowserAuth,
-        office_id: &str,
-        mutation: &OrgMutation,
-    ) -> Result<Option<Value>, OfficeFailure> {
-        let (channel, principal) = self.channel_and_grant(auth, office_id).await?;
-        let rpc_id = self.next_rpc_id();
-        let request = mutation
-            .native_request(rpc_id)
-            .and_then(|req| req.with_principal(&principal))
-            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
+        let request = build_request(rpc_id, method, params, &principal)?;
         match channel.roundtrip_raw(&request, rpc_id).await {
             Ok(reply) => Ok(Some(reply)),
             Err(_) => {
@@ -608,6 +312,53 @@ impl OfficeBridge {
             }
             Err(error) => Err(OfficeFailure::BeforeDispatch(error)),
         }
+    }
+}
+
+impl OfficeTransport for OfficeBridge {
+    fn call_raw<'a>(
+        &'a self,
+        auth: &'a BrowserAuth,
+        office_id: &'a str,
+        method: &'static str,
+        params: Value,
+        options: OfficeCallOptions,
+    ) -> BoxFuture<'a, Result<Value, OfficeFailure>> {
+        Box::pin(self.call_raw_inner(auth, office_id, method, params, options))
+    }
+
+    fn dispatch_mutation_raw<'a>(
+        &'a self,
+        auth: &'a BrowserAuth,
+        office_id: &'a str,
+        method: &'a str,
+        params: Value,
+    ) -> BoxFuture<'a, Result<Option<Value>, OfficeFailure>> {
+        Box::pin(self.dispatch_mutation_inner(auth, office_id, method, params))
+    }
+}
+
+fn build_request(
+    rpc_id: u64,
+    method: &str,
+    params: Value,
+    principal: &Principal,
+) -> Result<Request, OfficeFailure> {
+    Request {
+        id: rpc_id,
+        method: method.to_owned(),
+        principal: None,
+        params,
+    }
+    .with_principal(principal)
+    .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))
+}
+
+fn decode_response(raw: Value) -> Result<Value, OfficeFailure> {
+    let response: Response = serde_json::from_value(raw).map_err(|_| OfficeFailure::Transport)?;
+    match response.outcome {
+        Outcome::Result(value) => Ok(value),
+        Outcome::Error(error) => Err(OfficeFailure::Refused(error)),
     }
 }
 

@@ -79,10 +79,16 @@ pub(super) fn messaging_db_path(office_db_path: &Path) -> PathBuf {
     dir.join("protected").join("messaging.db")
 }
 
+/// The message search index's DDL (`search/messages.rs`), loaded after the adapter's.
+fn messaging_search() -> &'static str {
+    super::search::MESSAGING_SEARCH_DDL.as_str()
+}
+
 pub(super) fn messaging_schema_digest() -> String {
     let fmt = MESSAGING_ADAPTER_FORMAT.to_be_bytes();
     let len1 = (MESSAGING_CONTRACT.len() as u64).to_be_bytes();
     let len2 = (MESSAGING_ADAPTER.len() as u64).to_be_bytes();
+    let len3 = (messaging_search().len() as u64).to_be_bytes();
     Sha256::of_parts(&[
         b"messaging-adapter",
         &fmt,
@@ -90,6 +96,8 @@ pub(super) fn messaging_schema_digest() -> String {
         MESSAGING_CONTRACT.as_bytes(),
         &len2,
         MESSAGING_ADAPTER.as_bytes(),
+        &len3,
+        messaging_search().as_bytes(),
     ])
     .to_hex()
 }
@@ -100,6 +108,7 @@ pub(super) fn create_messaging_schema(db: &Connection) -> Result<(), EngineError
         db.execute_batch("BEGIN IMMEDIATE")?;
         db.execute_batch(MESSAGING_CONTRACT)?;
         db.execute_batch(MESSAGING_ADAPTER)?;
+        db.execute_batch(messaging_search())?;
         db.execute(
             "INSERT INTO messaging_schema (id, digest) VALUES (1, ?1)",
             [digest],

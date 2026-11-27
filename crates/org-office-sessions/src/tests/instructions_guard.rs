@@ -5,7 +5,7 @@
 use crate::instructions::{cited_command_lines, verify_command_references};
 
 fn problems(text: &str) -> Vec<String> {
-    verify_command_references(text, &org_agent_cli::table::table())
+    verify_command_references(text, &org_agent_cli::table())
 }
 
 fn assert_fails(text: &str, why: &str) {
@@ -117,7 +117,7 @@ agent-os msg inbox --state unread | head -5
 not a command line
 ```
 ";
-    let cited = cited_command_lines(text, &org_agent_cli::table::table());
+    let cited = cited_command_lines(text, &org_agent_cli::table());
     assert_eq!(cited.len(), 7, "{cited:#?}");
     assert!(
         !cited

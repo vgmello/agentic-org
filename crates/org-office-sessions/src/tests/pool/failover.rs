@@ -364,6 +364,7 @@ done
             conversation_id: Some("conv-1".into()),
             source_id: "ask-live2-1".into(),
             summary: "Can we deploy?".into(),
+            attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
         },
     );

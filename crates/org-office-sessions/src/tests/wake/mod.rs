@@ -37,6 +37,7 @@ mod mid_turn;
 mod queue;
 mod suspend;
 mod task_processes;
+mod turn_controls;
 
 #[derive(Default)]
 struct RecordedLaunches {
@@ -161,6 +162,7 @@ impl AgentRuntime for WakeScriptedRuntime {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,
+            image_input: org_agent_runtime::ImageInputMode::StagedFileOnly,
             interrupt_in_band: false,
             idle_interrupt_ends_turn: false,
             approval_bridge: false,

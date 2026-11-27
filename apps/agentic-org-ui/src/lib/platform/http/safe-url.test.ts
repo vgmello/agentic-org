@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { safeInternalPath, splitSafeHref } from './safe-url';
+import { parseNormalizedInternalUrl, safeInternalPath, splitSafeHref } from './safe-url';
 
 describe('safeInternalPath', () => {
 	it('accepts clean app-relative paths with optional query and hash', () => {
@@ -32,5 +32,31 @@ describe('safeInternalPath', () => {
 			suffix: '?tab=approvals#item-1'
 		});
 		expect(splitSafeHref('/work')).toEqual({ pathname: '/work', suffix: '' });
+	});
+
+	it('normalizes safe internal URLs into decoded segments while rejecting unsafe targets', () => {
+		expect(parseNormalizedInternalUrl('/work//T-121?tab=1#top')).toEqual({
+			pathname: '/work/T-121',
+			segments: ['work', 'T-121'],
+			search: '?tab=1',
+			hash: '#top'
+		});
+		expect(parseNormalizedInternalUrl('/settings/../work/T-121')).toEqual({
+			pathname: '/work/T-121',
+			segments: ['work', 'T-121'],
+			search: '',
+			hash: ''
+		});
+		for (const bad of [
+			'https://evil.test/x',
+			'//evil.test/x',
+			'/\\evil.test/x',
+			'/settings/%2e%2e/search',
+			'/(shell)/work/T-121',
+			'/projects/[id]/work',
+			'/%ZZ'
+		]) {
+			expect(parseNormalizedInternalUrl(bad), bad).toBeUndefined();
+		}
 	});
 });

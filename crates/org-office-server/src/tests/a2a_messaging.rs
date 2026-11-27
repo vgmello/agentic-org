@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use org_agent_cli::office::Binding;
+use org_agent_cli::Binding;
 use org_agent_runtime::{
     encode_line, AgentRuntime, Capabilities, Control, ControlError, CostBasis, ExitInfo,
     LaunchContext, LaunchPlan, Output, PlanError, Probe, ProbeContext, ProbeOutput, ProbeResult,
@@ -202,6 +202,7 @@ impl AgentRuntime for RecordingRuntime {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,
+            image_input: org_agent_runtime::ImageInputMode::StagedFileOnly,
             interrupt_in_band: true,
             idle_interrupt_ends_turn: false,
             approval_bridge: false,
@@ -2223,6 +2224,7 @@ fn task192_satellite_worktree_prepare_and_push_on_hq_task_preserves_persistent_s
                 modified_files: Vec::new(),
                 depends_on: Vec::new(),
                 details: None,
+                dod: None,
             },
         )
         .unwrap()
@@ -2331,6 +2333,8 @@ fn task192_satellite_worktree_prepare_and_push_on_hq_task_preserves_persistent_s
             blocked_reason: None,
             resolution: Some("Merged".into()),
             note: None,
+            done_anyway_reason: None,
+            final_summary: None,
         },
     )
     .unwrap()
@@ -2418,6 +2422,7 @@ fn assert_sat_owned_worktree_syncs_to_hq(
                 modified_files: Vec::new(),
                 depends_on: Vec::new(),
                 details: None,
+                dod: None,
             },
         )
         .unwrap()
@@ -2498,6 +2503,7 @@ fn assert_sat_worktree_rejects_hq_durable_conflicts(
                 modified_files: Vec::new(),
                 depends_on: Vec::new(),
                 details: None,
+                dod: None,
             },
         )
         .unwrap()

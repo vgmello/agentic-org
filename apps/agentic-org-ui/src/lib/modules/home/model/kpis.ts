@@ -195,6 +195,31 @@ function countOpenAndCriticalBugs(
 	};
 }
 
+function deriveThroughputPoints(
+	doneItems: readonly WorkItemSummary[],
+	doneCount: number,
+	nowMs: number
+): number[] {
+	const DAYS = 7;
+	const DAY_MS = 24 * 3600 * 1000;
+	const buckets = Array.from({ length: DAYS }, () => 0);
+	let placed = 0;
+	for (const item of doneItems) {
+		const ts = Date.parse(item.updated_at ?? item.created_at ?? '');
+		if (!Number.isFinite(ts)) continue;
+		const daysAgo = Math.floor((nowMs - ts) / DAY_MS);
+		if (daysAgo >= 0 && daysAgo < DAYS) {
+			buckets[DAYS - 1 - daysAgo] += 1;
+			placed += 1;
+		}
+	}
+	if (placed === 0 && doneCount > 0) {
+		// Fall back to monotonic cumulative progress endpoint when only aggregate counts exist.
+		buckets[DAYS - 1] = doneCount;
+	}
+	return buckets;
+}
+
 export function deriveKpiMetrics(
 	snapshot: OrgSnapshot,
 	items: readonly WorkItemSummary[],
@@ -294,7 +319,8 @@ export function deriveKpiMetrics(
 		atRiskProjects,
 		openBugs,
 		criticalBugs,
-		firstTryPassPct
+		firstTryPassPct,
+		throughputPoints: deriveThroughputPoints(doneItems, doneCount, nowMs)
 	};
 }
 

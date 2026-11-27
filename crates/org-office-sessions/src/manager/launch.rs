@@ -84,6 +84,25 @@ impl SessionManager {
         requested_workspace: Option<&str>,
         partition: Option<&PartitionKey>,
     ) -> Result<StartReservation, ApiError> {
+        self.reserve_start_or_send_with_attachments(
+            employee,
+            objective,
+            Vec::new(),
+            task_ref,
+            requested_workspace,
+            partition,
+        )
+    }
+
+    pub(crate) fn reserve_start_or_send_with_attachments(
+        &self,
+        employee: &Employee,
+        objective: Option<String>,
+        attachment_ids: Vec<String>,
+        task_ref: Option<&str>,
+        requested_workspace: Option<&str>,
+        partition: Option<&PartitionKey>,
+    ) -> Result<StartReservation, ApiError> {
         let emp_id = employee.id.as_str();
         // Load the lease cache now, so the check under the registry lock below never misses it.
         let _ = self.external_lease(emp_id);
@@ -96,7 +115,7 @@ impl SessionManager {
                 emp_id,
                 snapshot.as_ref(),
                 freshness,
-                objective.is_some(),
+                objective.is_some() || !attachment_ids.is_empty(),
                 requested_workspace,
                 partition,
             )?;
@@ -134,6 +153,7 @@ impl SessionManager {
                             route_digest: target.route_digest,
                             active_permit: target.active_permit,
                             text: objective.unwrap_or_default(),
+                            attachment_ids,
                             start_stop_epoch: target.start_stop_epoch,
                         },
                     )?;
@@ -278,11 +298,12 @@ impl SessionManager {
         employee: &Employee,
         params: &MemberSessionStartParams,
         objective: String,
+        attachment_ids: Vec<String>,
         opts: LaunchRouteOpts<'_>,
     ) -> Result<PreparedSessionLaunch, ApiError> {
         let objective = self.prepend_watch_notices(employee.id.as_str(), objective);
         let planned = self.plan_session_launch(employee, params, opts)?;
-        self.issue_and_spawn_launch(objective, planned)
+        self.issue_and_spawn_launch(objective, attachment_ids, planned)
     }
 
     pub(super) fn plan_session_launch(
@@ -338,7 +359,7 @@ impl SessionManager {
             None
         };
 
-        let preset_cfg = self.build_employee_preset_cfg(
+        let mut preset_cfg = self.build_employee_preset_cfg(
             &emp_id,
             PermissionPreset::effective_for(employee.builtin_key, admitted.preset),
             admitted.sandbox_enabled,
@@ -346,18 +367,21 @@ impl SessionManager {
             true,
         )?;
         let (runtime_dir, tmpdir) = self.prepare_run_dirs(&emp_id)?;
+        let attachments_root = crate::turn_attachments::attachments_root(&runtime_dir);
+        Self::append_attachments_write_denies(&mut preset_cfg, &attachments_root);
         let subagent_def =
             build_general_subagent_definition(preset_cfg.allowed_tools.as_deref(), None);
         let _ = write_subagent_definition(&runtime_dir, &subagent_def);
 
         let instructions =
             self.build_instructions(employee, &home, &workspace_real, &preset_cfg)?;
-        let read_only_dirs = self.collect_session_read_only_dirs(
+        let mut read_only_dirs = self.collect_session_read_only_dirs(
             admitted.adapter.id(),
             &home,
             &workspace_real,
             preset_cfg.sandbox.enabled,
         );
+        Self::append_attachments_read_only_dir(&mut read_only_dirs, &attachments_root);
         let spec = build_session_spec_for_launch(
             admitted.adapter.id(),
             employee,
@@ -412,6 +436,7 @@ impl SessionManager {
             runtime_id: admitted.adapter.id().as_str().to_owned(),
             runtime: Arc::clone(&admitted.adapter),
             supports_mid_turn: admitted.adapter.capabilities().supports_mid_turn_delivery(),
+            model_supports_vision: admitted.model_supports_vision,
             bwrap_masked_siblings,
             connection_id: admitted.connection_id,
             route_digest: admitted.route_digest_suffix,
@@ -427,6 +452,7 @@ impl SessionManager {
             home,
             workspace_real,
             runtime_dir,
+            attachments_root,
             tmpdir,
             preset_cfg,
             spec_hash,
@@ -440,6 +466,7 @@ impl SessionManager {
     pub(super) fn issue_and_spawn_launch(
         &self,
         objective: String,
+        attachment_ids: Vec<String>,
         planned: PlannedSessionLaunch,
     ) -> Result<PreparedSessionLaunch, ApiError> {
         let PlannedSessionLaunch {
@@ -452,6 +479,7 @@ impl SessionManager {
             runtime_id,
             runtime,
             supports_mid_turn,
+            model_supports_vision,
             bwrap_masked_siblings,
             connection_id,
             route_digest,
@@ -467,6 +495,7 @@ impl SessionManager {
             home,
             workspace_real,
             runtime_dir,
+            attachments_root,
             tmpdir,
             preset_cfg,
             spec_hash,
@@ -529,6 +558,7 @@ impl SessionManager {
             &session_id,
             &mark_str,
             &objective,
+            &attachment_ids,
             persisted_stalls,
             launch
                 .lifecycle
@@ -546,6 +576,7 @@ impl SessionManager {
             runtime_id,
             runtime,
             supports_mid_turn,
+            model_supports_vision,
             bwrap_masked_siblings,
             connection_id,
             route_digest,
@@ -559,11 +590,13 @@ impl SessionManager {
             start_stop_epoch,
             partition,
             home,
+            attachments_root,
             tmpdir,
             binding_file,
             preset_cfg,
             spec_hash,
             objective,
+            attachment_ids,
             persisted_stalls,
             spawned,
             session,
@@ -573,7 +606,7 @@ impl SessionManager {
 
     #[expect(
         clippy::too_many_arguments,
-        reason = "spawn persistence records prepared process, identifiers, mark, objective, stalls, and runtime session"
+        reason = "spawn persistence records prepared process, identifiers, mark, objective, attachment ids, stalls, and runtime session"
     )]
     pub(super) fn spawn_and_persist(
         &self,
@@ -583,6 +616,7 @@ impl SessionManager {
         session_id: &str,
         mark_str: &str,
         objective: &str,
+        attachment_ids: &[String],
         persisted_stalls: u32,
         runtime_session_id: Option<&str>,
     ) -> Result<org_supervise::Spawned, ApiError> {
@@ -621,6 +655,7 @@ impl SessionManager {
                     started_identity: Some(ident.started.clone()),
                     boot_identity: Some(ident.boot.clone()),
                     objective: objective.to_owned(),
+                    attachment_ids: attachment_ids.to_vec(),
                     accepted_commands: Vec::new(),
                     resume_attempts: 0,
                     consecutive_stalls: persisted_stalls,

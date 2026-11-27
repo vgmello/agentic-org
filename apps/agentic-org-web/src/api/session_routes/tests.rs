@@ -27,3 +27,34 @@ fn transcript_query_and_session_id_validation() {
     assert!(valid_session_id("a..b").is_err());
     assert!(valid_session_id("").is_err());
 }
+
+#[test]
+fn turn_control_bodies_become_interrupt_and_steer_params_for_the_named_agent() {
+    let op = "01a1c554-5200-7000-8000-000000000006";
+    let agent = "0193a5c0-0000-7000-8000-000000000050";
+    let route = |build: fn(CallerAuth, String, String) -> SessionRoute| {
+        build(CallerAuth::LocalAuthless, "org".into(), agent.into())
+    };
+    let interrupt = calls::prepare(
+        route(SessionRoute::Interrupt),
+        format!(r#"{{"command_id":"{op}"}}"#).as_bytes(),
+    );
+    assert!(interrupt.is_ok());
+    let steer = calls::prepare(
+        route(SessionRoute::Steer),
+        format!(r#"{{"command_id":"{op}","text":"Use staging"}}"#).as_bytes(),
+    );
+    assert!(steer.is_ok());
+    for bad in [
+        format!(r#"{{"command_id":"{op}","text":""}}"#),
+        format!(r#"{{"command_id":"{op}","text":"\n\t "}}"#),
+        format!(r#"{{"command_id":"{op}"}}"#),
+        r#"{"text":"t"}"#.to_owned(),
+    ] {
+        assert!(
+            calls::prepare(route(SessionRoute::Steer), bad.as_bytes()).is_err(),
+            "{bad}"
+        );
+    }
+    assert!(is_known_agent_action("interrupt") && is_known_agent_action("steer"));
+}

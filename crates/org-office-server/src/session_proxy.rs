@@ -18,8 +18,8 @@ pub(crate) struct SessionHooks {
 fn proxied_session_target_employee(request: &org_proto::Request) -> Option<String> {
     use org_proto::sessions::{
         MemberSessionApprovalDecide, MemberSessionClearStall, MemberSessionGrants,
-        MemberSessionInspect, MemberSessionList, MemberSessionStart, MemberSessionStop,
-        MemberSessionTranscript,
+        MemberSessionInspect, MemberSessionInterrupt, MemberSessionList, MemberSessionStart,
+        MemberSessionSteer, MemberSessionStop, MemberSessionTranscript,
     };
     if request.is::<MemberSessionStart>() {
         request
@@ -29,6 +29,17 @@ fn proxied_session_target_employee(request: &org_proto::Request) -> Option<Strin
     } else if request.is::<MemberSessionStop>() {
         request
             .params::<MemberSessionStop>()
+            .ok()
+            .map(|p| p.employee_id)
+    } else if request.is::<MemberSessionInterrupt>() {
+        // A person's live turn controls go to the office the agent runs on (`TASK-103`).
+        request
+            .params::<MemberSessionInterrupt>()
+            .ok()
+            .map(|p| p.employee_id)
+    } else if request.is::<MemberSessionSteer>() {
+        request
+            .params::<MemberSessionSteer>()
             .ok()
             .map(|p| p.employee_id)
     } else if request.is::<MemberSessionApprovalDecide>() {
@@ -281,6 +292,15 @@ impl serve::ExternalAuthPort for ExternalAuth {
         params: &ext::MemberExternalApproveParams,
     ) -> Result<ext::ExternalSessionView, org_proto::ApiError> {
         self.0.external_approve(actor, params)
+    }
+
+    fn bind(
+        &self,
+        actor: &str,
+        employee_id: &str,
+        params: &ext::MemberExternalBindParams,
+    ) -> Result<ext::ExternalSessionView, org_proto::ApiError> {
+        self.0.external_bind(actor, employee_id, params)
     }
 
     fn sessions(

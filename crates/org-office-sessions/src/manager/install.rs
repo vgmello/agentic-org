@@ -30,11 +30,73 @@ impl SessionManager {
             self.config.stall_timeout,
             &prepared,
         )));
+        let (tx, rx) = mpsc::channel();
+        let (pump_ctx, pre_pump_meta, handoff) =
+            self.decompose_prepared_launch(prepared, &runtime_state, &tx);
+        let ready = ensure_pre_pump_isolation(
+            self,
+            &handoff.emp_id,
+            handoff.spawned,
+            handoff.session,
+            pump_ctx,
+            pre_pump_meta,
+        )?;
+        // Enqueue the initial turn BEFORE starting the pump thread so `run_pump` always sees
+        // Turn 1 immediately upon `Ready` without transitioning `Starting -> Idle` prematurely.
+        if !handoff.objective.is_empty() || !handoff.attachment_ids.is_empty() {
+            let _ = crate::pump::queue_turn_with_attachments(
+                &runtime_state,
+                &tx,
+                crate::pump::QueuedTurn::new(handoff.objective, handoff.attachment_ids),
+            );
+        }
+        let thread = spawn_pump_thread(
+            self,
+            &handoff.emp_id,
+            ready.spawned,
+            ready.session,
+            rx,
+            ready.pump_ctx,
+            ready.meta,
+        )?;
+        let view = runtime_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .to_view();
+        register_live_session_or_abort(
+            self,
+            handoff.emp_id,
+            handoff.start_stop_epoch,
+            slot,
+            LiveSessionHandle {
+                state: runtime_state,
+                tx,
+                thread: Some(thread),
+                connection_id: handoff.connection_id,
+                route_digest: handoff.route_digest,
+                oauth_expires_at_ms: handoff.oauth_expires_at_ms,
+                workspace: handoff.workspace_arg,
+                active_permit: handoff.active_permit,
+                supports_mid_turn: handoff.supports_mid_turn,
+                bwrap_masked_siblings: handoff.bwrap_masked_siblings,
+                partition: handoff.partition,
+            },
+        )?;
+        Ok(view)
+    }
+
+    fn decompose_prepared_launch(
+        &self,
+        prepared: PreparedSessionLaunch,
+        runtime_state: &Arc<Mutex<SessionRuntimeState>>,
+        tx: &Sender<PumpCommand>,
+    ) -> (PumpContext, PrePumpHandleMeta, LaunchInstallHandoff) {
         let PreparedSessionLaunch {
             emp_id,
             run_id,
             runtime,
             supports_mid_turn,
+            model_supports_vision,
             bwrap_masked_siblings,
             connection_id,
             route_digest,
@@ -47,15 +109,16 @@ impl SessionManager {
             tried_connections,
             start_stop_epoch,
             partition,
+            attachments_root,
             binding_file,
             objective,
+            attachment_ids,
             spawned,
             session,
             lifecycle,
             ..
         } = prepared;
         let active_permit = Arc::new(Mutex::new(permit));
-        let (tx, rx) = mpsc::channel();
         let hooks = self.build_pump_hooks(
             &emp_id,
             route_digest.clone(),
@@ -78,7 +141,7 @@ impl SessionManager {
             oauth_token_fp,
             store: self.store.clone(),
             bindings: self.bindings.clone(),
-            state: Arc::clone(&runtime_state),
+            state: Arc::clone(runtime_state),
             stop_plan: lifecycle.stop,
             cleanup_paths: lifecycle.cleanup_after_exit,
             binding_file,
@@ -89,10 +152,21 @@ impl SessionManager {
             partition: partition.clone().map(|key| {
                 crate::partition::PartitionHandle::new(self.partitions.clone(), emp_id.clone(), key)
             }),
+            stream: Some(crate::stream_hub::StreamPublisher::new(
+                self.stream_hub.clone(),
+                crate::stream_hub::SessionStreamKey {
+                    org_id: self.office.info().org_id.clone(),
+                    employee_id: emp_id.clone(),
+                    partition: partition.as_ref().map(|key| key.as_str().to_owned()),
+                },
+            )),
+            attachments_root,
+            model_supports_vision,
+            attachment_resolver: Arc::clone(&self.attachment_resolver),
         };
         let pre_pump_meta = PrePumpHandleMeta {
             tx: tx.clone(),
-            state: Arc::clone(&runtime_state),
+            state: Arc::clone(runtime_state),
             connection_id: connection_id.clone(),
             route_digest: route_digest.clone(),
             oauth_expires_at_ms,
@@ -102,47 +176,41 @@ impl SessionManager {
             bwrap_masked_siblings: bwrap_masked_siblings.clone(),
             partition: partition.clone(),
         };
-        let ready =
-            ensure_pre_pump_isolation(self, &emp_id, spawned, session, pump_ctx, pre_pump_meta)?;
-        // Enqueue the initial turn BEFORE starting the pump thread so `run_pump` always sees
-        // Turn 1 immediately upon `Ready` without transitioning `Starting -> Idle` prematurely.
-        if !objective.is_empty() {
-            let _ = crate::pump::queue_turn(&runtime_state, &tx, objective);
-        }
-        let thread = spawn_pump_thread(
-            self,
-            &emp_id,
-            ready.spawned,
-            ready.session,
-            rx,
-            ready.pump_ctx,
-            ready.meta,
-        )?;
-        let view = runtime_state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .to_view();
-        register_live_session_or_abort(
-            self,
+        let handoff = LaunchInstallHandoff {
             emp_id,
             start_stop_epoch,
-            slot,
-            LiveSessionHandle {
-                state: runtime_state,
-                tx,
-                thread: Some(thread),
-                connection_id,
-                route_digest,
-                oauth_expires_at_ms,
-                workspace: workspace_arg,
-                active_permit,
-                supports_mid_turn,
-                bwrap_masked_siblings,
-                partition,
-            },
-        )?;
-        Ok(view)
+            connection_id,
+            route_digest,
+            oauth_expires_at_ms,
+            workspace_arg,
+            active_permit,
+            supports_mid_turn,
+            bwrap_masked_siblings,
+            partition,
+            objective,
+            attachment_ids,
+            spawned,
+            session,
+        };
+        (pump_ctx, pre_pump_meta, handoff)
     }
+}
+
+struct LaunchInstallHandoff {
+    emp_id: String,
+    start_stop_epoch: u64,
+    connection_id: Option<String>,
+    route_digest: String,
+    oauth_expires_at_ms: Option<u64>,
+    workspace_arg: Option<String>,
+    active_permit: Arc<Mutex<Option<(String, u64)>>>,
+    supports_mid_turn: bool,
+    bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+    partition: Option<crate::partition::PartitionKey>,
+    objective: String,
+    attachment_ids: Vec<String>,
+    spawned: org_supervise::Spawned,
+    session: Box<dyn org_agent_runtime::Session>,
 }
 
 pub(crate) struct PrePumpHandleMeta {

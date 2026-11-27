@@ -2,6 +2,7 @@
 //! with optional `-- <command...>`, and the office resources (`task`, `msg`, `who`, ...) that
 //! run over the approved, grant-bound office channel.
 
+mod hr_bind;
 mod login;
 pub(crate) mod office_proxy;
 mod render;
@@ -42,4 +43,18 @@ pub(crate) struct SignInArgs {
     /// One office command to run once signed in (after `--`)
     #[arg(last = true, value_name = "COMMAND")]
     command: Vec<String>,
+}
+
+impl SignInArgs {
+    pub(crate) fn instance_name(&self) -> Option<&str> {
+        self.instance.name.as_deref()
+    }
+
+    pub(crate) fn office_id(&self) -> Option<&str> {
+        self.office.as_deref()
+    }
+
+    pub(crate) fn command(&self) -> &[String] {
+        &self.command
+    }
 }

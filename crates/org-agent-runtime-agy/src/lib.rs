@@ -15,9 +15,9 @@ mod protocol;
 mod session;
 
 use org_agent_runtime::{
-    AgentRuntime, Capabilities, CostBasis, LaunchContext, LaunchPlan, MidTurnDelivery, PlanError,
-    Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun, RuntimeId, Session, SessionSpec,
-    UsageScope, VersionRange,
+    AgentRuntime, Capabilities, CostBasis, ImageInputMode, LaunchContext, LaunchPlan,
+    MidTurnDelivery, PlanError, Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun, RuntimeId,
+    Session, SessionSpec, UsageScope, VersionRange,
 };
 
 pub use crate::plan::AGY_CONFIG_CREDENTIAL_FILES;
@@ -48,6 +48,7 @@ impl AgentRuntime for AgyRuntime {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             mid_turn_delivery: MidTurnDelivery::NativeSteer,
+            image_input: ImageInputMode::StagedFileOnly,
             interrupt_in_band: true,
             idle_interrupt_ends_turn: false,
             approval_bridge: true,

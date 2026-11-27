@@ -392,7 +392,10 @@ impl Session for EchoSession {
                 }
                 Err(ControlError::Busy)
             }
-            Control::Send { text, .. } => {
+            Control::Send { text, images } => {
+                if !images.is_empty() {
+                    return Err(ControlError::Unsupported);
+                }
                 self.state = State::Busy;
                 Ok(vec![
                     Self::write(json!({"type": "user", "text": text})),
@@ -639,6 +642,7 @@ impl AgentRuntime for EchoRuntime {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,
+            image_input: org_agent_runtime::ImageInputMode::None,
             interrupt_in_band: true,
             idle_interrupt_ends_turn: false,
             approval_bridge: true,
@@ -857,7 +861,13 @@ fn a_session_runs_a_turn_through_the_port() {
     assert_eq!(hello.as_bytes(), b"{\"type\":\"hello\"}\n");
     assert_eq!(session.next_deadline(), Some(t0 + OPEN_TIMEOUT));
     assert_eq!(
-        session.control(Control::Send { text: "hi".into() }, t0),
+        session.control(
+            Control::Send {
+                text: "hi".into(),
+                images: Vec::new(),
+            },
+            t0
+        ),
         Err(ControlError::NotReady)
     );
 
@@ -872,6 +882,7 @@ fn a_session_runs_a_turn_through_the_port() {
         .control(
             Control::Send {
                 text: "line\u{2028}two".into(),
+                images: Vec::new(),
             },
             t0,
         )
@@ -890,6 +901,7 @@ fn a_session_runs_a_turn_through_the_port() {
         session.control(
             Control::Send {
                 text: "more".into(),
+                images: Vec::new(),
             },
             t0
         ),
@@ -900,6 +912,7 @@ fn a_session_runs_a_turn_through_the_port() {
             Control::DeliverMidTurn {
                 delivery_id: "d-1".into(),
                 text: "more".into(),
+                images: Vec::new(),
             },
             t0
         ),
@@ -1112,7 +1125,10 @@ fn ready_session(now: Instant) -> (Box<dyn Session>, LineFramer) {
 }
 
 fn send(text: &str) -> Control {
-    Control::Send { text: text.into() }
+    Control::Send {
+        text: text.into(),
+        images: Vec::new(),
+    }
 }
 
 /// The fake's fixture lines for the testkit: `ready` opens, the Send alone starts the turn,
@@ -1535,4 +1551,28 @@ fn root_is_never_the_workspace_or_a_writable_root() {
         EchoRuntime.plan_session(&self::spec(), &ctx),
         Err(PlanError::InvalidSpec(_))
     ));
+}
+
+#[test]
+fn steer_route_follows_mid_turn_delivery_and_in_band_interrupt() {
+    use org_agent_runtime::{ControlError, MidTurnDelivery};
+    let mut caps = EchoRuntime.capabilities();
+    // No mid-turn delivery but an in-band interrupt: interrupt, then send (`TASK-103`).
+    assert_eq!(caps.steer_route(), Err(ControlError::NeedsInterrupt));
+    assert!(!caps.supports_native_steer());
+    caps.mid_turn_delivery = MidTurnDelivery::StepHook;
+    assert_eq!(caps.steer_route(), Err(ControlError::NeedsInterrupt));
+    caps.mid_turn_delivery = MidTurnDelivery::NativeSteer;
+    assert_eq!(caps.steer_route(), Ok(()));
+    assert!(caps.supports_native_steer());
+    // Native steering never needs the interrupt.
+    caps.interrupt_in_band = false;
+    assert_eq!(caps.steer_route(), Ok(()));
+    // Neither: the steer can only queue behind the turn.
+    caps.mid_turn_delivery = MidTurnDelivery::None;
+    assert_eq!(caps.steer_route(), Err(ControlError::Unsupported));
+    assert_eq!(
+        ControlError::NeedsInterrupt.to_string(),
+        "the running turn must be interrupted first"
+    );
 }

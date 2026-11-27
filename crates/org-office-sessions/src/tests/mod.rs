@@ -63,6 +63,7 @@ mod instructions;
 mod instructions_fencing;
 mod instructions_guard;
 mod launch;
+mod multimodal_attachments;
 mod office_masks;
 mod pool;
 mod presets;
@@ -260,6 +261,7 @@ impl AgentRuntime for ScriptedRuntime {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,
+            image_input: org_agent_runtime::ImageInputMode::StagedFileOnly,
             interrupt_in_band: false,
             idle_interrupt_ends_turn: false,
             approval_bridge: false,
@@ -600,6 +602,7 @@ fn seed_project_task_wake_fixture(
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         )
         .unwrap()
@@ -706,6 +709,7 @@ fn spawn_stub_bwrap_handle(
         pending_wake_count: 0,
         pending_wake_reason: None,
         queued_turns: 0,
+        activity: Default::default(),
     }));
     (
         crate::manager::LiveSessionHandle {

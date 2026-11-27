@@ -25,6 +25,7 @@ use super::organization_view;
 use super::process_routes;
 use super::provider_routes;
 use super::result;
+use super::search_routes;
 use super::session_routes;
 use super::task_routes;
 use super::unavailable;
@@ -119,12 +120,12 @@ impl SessionApi {
             ));
         }
         let targets = collect_poll_targets(&request, &hq_by_org, self.auth(&caller));
-        WebReply::Stream(sse::open_stream_with_offices(
-            &self.hub,
+        WebReply::Stream(sse::open_stream_on_bus(
+            self.events.as_ref(),
             self.host.instance().to_owned(),
             session.session_id,
             request,
-            Some(self.offices.clone()),
+            Some(Arc::clone(&self.offices)),
             targets,
         ))
     }
@@ -376,6 +377,7 @@ impl ApiBackend for SessionApi {
             Route::Git(route) => return git_routes::prepare(route, bytes),
             Route::Process(route) => return process_routes::prepare(route, bytes),
             Route::Docs(route) => return doc_routes::prepare(route, bytes),
+            Route::Search(route) => return search_routes::prepare(route, bytes),
             Route::Cost(route) => return cost_routes::prepare(route, bytes),
             Route::Provider(route) => return provider_routes::prepare(route, bytes),
             Route::OfficeFederation(route) => return office_routes::prepare(route, bytes),
@@ -509,6 +511,12 @@ impl ApiBackend for SessionApi {
                 ),
                 streaming: false,
             },
+            Call::Search(call) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(search_routes::execute(&self, call).await)
+                }),
+                streaming: false,
+            },
             Call::Cost(call) => AsyncDispatch::Async {
                 future: Box::pin(
                     async move { WebReply::Json(cost_routes::execute(&self, call).await) },
@@ -566,7 +574,7 @@ impl ApiBackend for SessionApi {
             Call::Sessions(_) => unreachable!("Call::Sessions is dispatched asynchronously"),
             Call::Chat(_) => unreachable!("Call::Chat is dispatched asynchronously"),
             Call::Tasks(_) | Call::Notes(_) => unreachable!("dispatched asynchronously"),
-            Call::Git(_) => unreachable!("Call::Git is dispatched asynchronously"),
+            Call::Git(_) | Call::Search(_) => unreachable!("dispatched asynchronously"),
             Call::Process(_) | Call::Docs(_) => unreachable!("dispatched asynchronously"),
             Call::Cost(_) => unreachable!("Call::Cost is dispatched asynchronously"),
             Call::Provider(_) => unreachable!("Call::Provider is dispatched asynchronously"),

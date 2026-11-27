@@ -10,7 +10,9 @@
 //!   external leases, answering approvals, changing her own execution or hiring power, reading
 //!   chats as the owner, her private task notes (one bucket every caller's turns would share),
 //!   the mailbox reads that consume or summarise every message at once (`msg.read`,
-//!   `msg.wait`, `msg.notify`, `chat.events_poll`), and long-polling an ask (`chat.wait_ask`).
+//!   `msg.wait`, `msg.notify`, `chat.events_poll`), long-polling an ask (`chat.wait_ask`), and
+//!   cross-entity search (`search.query`, which would otherwise span every DM she is in and her
+//!   private notes across callers).
 //!   Refused even when she acts for the owner.
 //! - **the caller is the owner**: organization-wide spend and budgets, structure changes,
 //!   starting, stopping and reading other sessions (hers included), and any method not named
@@ -20,8 +22,13 @@
 //! - **open**: reads and messages any active member may make; still checked against her own
 //!   authority by the method itself, and what a read answers is narrowed to what the caller
 //!   may also see ([`scope`]): a DM is shown only to a participant of it. A call that acts on
-//!   one conversation or message (`dm.open`, marking read, muting, reacting, replying,
-//!   answering, triage) is refused when the caller is not in it.
+//!   one conversation or message (`dm.open`, sending, asking, marking read, muting, reacting,
+//!   replying, answering, triage) is refused when the caller is not in it; only for the owner
+//!   does a message, ask or answer carry staged files (`TASK-240`).
+//!
+//! A file bound to a message, an ask or an answer is inspected, read, listed, edited or
+//! re-attached only for a caller in its conversation (`TASK-240`), even for the owner: she is
+//! in every member's DM with her, the owner is not.
 //!
 //! A run acting for a member who is no longer an active person may do nothing at all. A run
 //! acting for nobody (a wake) gets only the open class, and no DM at all. When the office
@@ -55,6 +62,9 @@ pub trait ChiefOfStaffPort: Send + Sync {
     /// The conversation message `message_id` (a chat or mailbox message, or an ask) is in;
     /// `None` for an unknown message.
     fn message_conversation(&self, message_id: &str) -> Result<Option<String>, ApiError>;
+    /// The conversation a file bound to a message, an ask or an answer is in; `None` for any
+    /// other file and for an unknown one (`TASK-240`).
+    fn attachment_conversation(&self, attachment_id: &str) -> Result<Option<String>, ApiError>;
     /// The member a `dm.open` participant reference (an ID, handle, name or `owner`) names,
     /// read without writing anything; `None` when it names nobody.
     fn resolve_member(&self, reference: &str) -> Result<Option<String>, ApiError>;
@@ -96,6 +106,7 @@ const NEVER: &[&str] = &[
     "git.push",
     "member.agent_execution_set",
     "member.external_approve",
+    "member.external_bind",
     "member.external_revoke",
     "member.external_sessions",
     "member.session_approval",
@@ -105,6 +116,7 @@ const NEVER: &[&str] = &[
     "msg.wait",
     "office.remove",
     "office.restart",
+    "search.query",
 ];
 const NEVER_PREFIXES: &[&str] = &[
     "auth.",
@@ -149,7 +161,7 @@ const OPEN: &[&str] = &[
     "who",
     "worktree.list",
 ];
-const OPEN_PREFIXES: &[&str] = &["chat.", "dm.", "msg.", "skill.", "tasks.", "work."];
+const OPEN_PREFIXES: &[&str] = &["chat.", "dm.", "msg.", "skill.", "tasks."];
 
 /// The class of `method`. A method named nowhere needs the owner.
 pub(super) fn access(method: &str) -> Access {

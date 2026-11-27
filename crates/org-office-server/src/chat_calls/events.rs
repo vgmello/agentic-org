@@ -77,6 +77,11 @@ impl ChatService {
             .after_presence_seq
             .map(|after| self.live.presence_since(after, head.presence).0)
             .unwrap_or_default();
+        // Agents' coarse live activity rides the presence cursor (`TASK-103`).
+        let activity_changes = params
+            .after_presence_seq
+            .map(|after| self.live.activity_since(after, head.presence, is_owner))
+            .unwrap_or_default();
         Ok(ChatEventsPollResult {
             org_head_seq,
             live_head_seq: head.messages,
@@ -87,6 +92,7 @@ impl ChatService {
             messages_received,
             message_states,
             presence_changes,
+            activity_changes,
             inbox_changes,
         })
     }
@@ -154,5 +160,6 @@ fn events_poll_has_updates(result: &ChatEventsPollResult) -> bool {
         || !result.messages_received.is_empty()
         || !result.message_states.is_empty()
         || !result.presence_changes.is_empty()
+        || !result.activity_changes.is_empty()
         || !result.inbox_changes.is_empty()
 }

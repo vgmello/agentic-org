@@ -9,15 +9,15 @@
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
 	import Eye from '@lucide/svelte/icons/eye';
 	import Minimize2 from '@lucide/svelte/icons/minimize-2';
 	import Wrench from '@lucide/svelte/icons/wrench';
 	import { toAppError } from '$lib/proto';
 	import { membersApi } from '../../api';
-	import { reportedText } from '../../present';
 	import type { MemberProfile, RunNowResult, Turn } from '../../types';
+	import AgentAnalysisToolsDrawer from './AgentAnalysisToolsDrawer.svelte';
+	import AgentAnalysisTurnCard from './AgentAnalysisTurnCard.svelte';
 	import { NeuralOrbEngine, type OrbState } from './neural-orb';
 
 	let {
@@ -256,49 +256,7 @@
 					</div>
 
 					{#if showToolsDrawer}
-						<div class="af-tools-drawer" id="af-tools-drawer">
-							<div class="af-tools-sec">
-								<h3 class="af-tools-lbl">Agent context</h3>
-								<dl class="af-tools-dl">
-									<div>
-										<dt>Office</dt>
-										<dd>{profile.office ? profile.office.name : 'Unplaced'}</dd>
-									</div>
-									{#if profile.office}
-										<div>
-											<dt>Heartbeat</dt>
-											<dd>{reportedText(profile.office.observedAt)}</dd>
-										</div>
-									{/if}
-									<div>
-										<dt>Health</dt>
-										<dd>{profile.supervision?.health ?? 'Not reported'}</dd>
-									</div>
-								</dl>
-							</div>
-							<div class="af-tools-sec">
-								<h3 class="af-tools-lbl">Current work</h3>
-								{#if profile.currentTask}
-									<a
-										href={resolve(`/work/${encodeURIComponent(profile.currentTask.ref)}` as '/')}
-										onclick={closeOverlay}
-										class="af-task-link"
-									>
-										<span class="font-mono">{profile.currentTask.ref}</span>
-										<span>{profile.currentTask.title}</span>
-									</a>
-								{:else}
-									<p class="text-xs text-[var(--exec-muted)]">No active task assigned.</p>
-								{/if}
-							</div>
-							<div class="af-tools-sec">
-								<h3 class="af-tools-lbl">Recent runs</h3>
-								<p class="text-xs text-[var(--exec-muted)] tabular-nums">
-									{turns.length}
-									{turns.length === 1 ? 'session' : 'sessions'} recorded
-								</p>
-							</div>
-						</div>
+						<AgentAnalysisToolsDrawer {profile} turnsCount={turns.length} onClose={closeOverlay} />
 					{/if}
 				</section>
 
@@ -329,71 +287,12 @@
 							{:else}
 								<div class="af-thread">
 									{#each turns as turn (turn.id)}
-										{@const processing = turn.state === 'running' || turn.state === 'accepted'}
-										{@const traceOpen = isTraceExpanded(turn.id)}
-										<article class="af-turn">
-											<div class="af-msg-user">
-												<div class="af-user-bubble">{turnPromptText(turn)}</div>
-											</div>
-											{#if turn.summary || turn.failure}
-												<div class="af-reply-text">
-													{turn.summary ?? turn.failure}
-												</div>
-											{/if}
-											<div class="af-turn-trace">
-												<div class={['c-trace-wrap', traceOpen && 'is-open']}>
-													<div class="c-trace-bar">
-														{#if processing}
-															<span class="c-thinking-cue" role="status">
-																<span class="c-thinking-dots" aria-hidden="true">
-																	<i></i><i></i><i></i>
-																</span>
-																<span>Thinking…</span>
-															</span>
-														{/if}
-														<button
-															type="button"
-															class="c-trace-toggle"
-															aria-expanded={traceOpen}
-															aria-controls="trace-{turn.id}"
-															onclick={() => toggleTrace(turn.id)}
-														>
-															<span class="c-trace-rule" aria-hidden="true"></span>
-															<span>{traceOpen ? 'Hide trace' : 'Follow trace'}</span>
-														</button>
-													</div>
-													{#if traceOpen}
-														<div class="c-trace-panel" id="trace-{turn.id}">
-															<div class="c-trace-summary">
-																State: {turn.state} · Started {new Date(
-																	turn.startedAt
-																).toLocaleTimeString()}
-																{#if turn.endedAt}
-																	· Ended {new Date(turn.endedAt).toLocaleTimeString()}
-																{/if}
-															</div>
-															{#if turn.attempts.length > 0}
-																<div class="c-steps">
-																	{#each turn.attempts as att (att.n)}
-																		<div class="c-step">
-																			<span class="c-step-dot"></span>
-																			<span class="c-step-tool">Attempt #{att.n}</span>
-																			<span class="c-step-arg">{att.reason ?? att.outcome}</span>
-																		</div>
-																	{/each}
-																</div>
-															{:else}
-																<p class="c-trace-empty">
-																	{processing
-																		? 'Live run in progress at office…'
-																		: 'No tool-call breakdown recorded for this session.'}
-																</p>
-															{/if}
-														</div>
-													{/if}
-												</div>
-											</div>
-										</article>
+										<AgentAnalysisTurnCard
+											{turn}
+											promptText={turnPromptText(turn)}
+											traceOpen={isTraceExpanded(turn.id)}
+											onToggleTrace={() => toggleTrace(turn.id)}
+										/>
 									{/each}
 								</div>
 							{/if}
@@ -460,7 +359,6 @@
 		border-left-color: var(--exec-border, var(--line));
 		box-shadow: none;
 	}
-
 	.af-corner-actions {
 		position: absolute;
 		top: 16px;
@@ -494,7 +392,6 @@
 		color: var(--exec-ink, var(--fg));
 		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
 	}
-
 	.af-stage {
 		flex: 1 1 auto;
 		min-height: 0;
@@ -598,66 +495,6 @@
 	.af-speed.is-live b {
 		color: var(--tone-ok-ink, var(--tone-ok));
 	}
-
-	.af-tools-drawer {
-		width: min(380px, 100%);
-		border-radius: 14px;
-		background: var(--exec-well, var(--surface-raised));
-		box-shadow: inset 0 0 0 1px var(--exec-border-hi, var(--line-strong));
-		padding: 14px 16px;
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-	}
-	.af-tools-sec {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		padding-top: 10px;
-		border-top: 1px solid var(--exec-border, var(--line));
-	}
-	.af-tools-sec:first-child {
-		padding-top: 0;
-		border-top: 0;
-	}
-	.af-tools-lbl {
-		margin: 0;
-		font-size: 0.75rem;
-		font-weight: 650;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		color: var(--exec-muted, var(--fg-muted));
-	}
-	.af-tools-dl {
-		margin: 0;
-		display: grid;
-		gap: 4px;
-		font-size: 0.75rem;
-	}
-	.af-tools-dl > div {
-		display: flex;
-		justify-content: space-between;
-		gap: 8px;
-	}
-	.af-tools-dl dt {
-		color: var(--exec-muted, var(--fg-muted));
-	}
-	.af-tools-dl dd {
-		margin: 0;
-		color: var(--exec-body, var(--fg-secondary));
-	}
-	.af-task-link {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 6px;
-		font-size: 0.8125rem;
-		color: var(--tone-accent-ink, var(--link));
-		text-decoration: none;
-	}
-	.af-task-link:hover {
-		text-decoration: underline;
-	}
-
 	.af-chat-col {
 		height: 100%;
 		min-width: 0;
@@ -709,180 +546,6 @@
 		color: var(--exec-muted, var(--fg-muted));
 		font-size: 0.875rem;
 	}
-	.af-turn {
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
-	}
-	.af-msg-user {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-end;
-	}
-	.af-user-bubble {
-		max-width: min(82%, 540px);
-		padding: 9px 14px;
-		border-radius: 13px;
-		border-bottom-right-radius: 4px;
-		background: var(--tone-accent-bg);
-		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
-		color: var(--exec-ink, var(--fg));
-		font-size: 0.875rem;
-		line-height: 1.5;
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
-	}
-	.af-reply-text {
-		color: var(--exec-body, var(--fg-secondary));
-		font-size: 0.9375rem;
-		line-height: 1.62;
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
-		max-width: 64ch;
-	}
-	.af-turn-trace {
-		margin-top: -6px;
-	}
-
-	/* Discreet Follow trace disclosure (TASK-119) */
-	.c-trace-wrap {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-	.c-trace-bar {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		flex-wrap: wrap;
-	}
-	.c-thinking-cue {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--exec-body, var(--fg-secondary));
-	}
-	.c-thinking-dots {
-		display: inline-flex;
-		align-items: center;
-		gap: 3px;
-	}
-	.c-thinking-dots i {
-		width: 5px;
-		height: 5px;
-		border-radius: 99px;
-		background: var(--tone-accent, var(--brand));
-		opacity: 0.35;
-		animation: trace-dot 1.2s ease-in-out infinite;
-	}
-	.c-thinking-dots i:nth-child(2) {
-		animation-delay: 0.18s;
-	}
-	.c-thinking-dots i:nth-child(3) {
-		animation-delay: 0.36s;
-	}
-	@keyframes trace-dot {
-		0%,
-		80%,
-		100% {
-			opacity: 0.28;
-			transform: scale(0.85);
-		}
-		40% {
-			opacity: 1;
-			transform: scale(1.15);
-		}
-	}
-	.c-trace-toggle {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 0 4px 2px 0;
-		border-radius: 4px;
-		border: 0;
-		background: transparent;
-		color: var(--exec-muted, var(--fg-muted));
-		font-size: 0.75rem;
-		font-weight: 500;
-		opacity: 0.55;
-		cursor: pointer;
-		transition:
-			opacity 0.16s ease,
-			color 0.16s ease;
-	}
-	.c-trace-rule {
-		display: inline-block;
-		width: 10px;
-		height: 1px;
-		background: currentColor;
-		opacity: 0.7;
-		transition:
-			width 0.16s ease,
-			background-color 0.16s ease;
-	}
-	.af-turn:is(:hover, :focus-within) .c-trace-toggle {
-		opacity: 0.85;
-	}
-	.c-trace-toggle:is(:hover, :focus-visible),
-	.c-trace-wrap.is-open .c-trace-toggle {
-		opacity: 1;
-		color: var(--exec-ink, var(--fg));
-	}
-	.c-trace-wrap.is-open .c-trace-rule {
-		width: 14px;
-		background: var(--tone-accent-ink, var(--link));
-		opacity: 1;
-	}
-	.c-trace-panel {
-		border-radius: 8px;
-		background: var(--exec-well, var(--surface-sunken));
-		box-shadow: inset 0 0 0 1px var(--exec-border, var(--line));
-		padding: 10px 12px;
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 0.75rem;
-	}
-	.c-trace-summary {
-		color: var(--exec-muted, var(--fg-muted));
-		padding-bottom: 6px;
-		border-bottom: 1px solid var(--exec-border, var(--line));
-	}
-	.c-steps {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-	.c-step {
-		display: grid;
-		grid-template-columns: auto auto minmax(0, 1fr);
-		align-items: center;
-		gap: 8px;
-	}
-	.c-step-dot {
-		width: 5px;
-		height: 5px;
-		border-radius: 99px;
-		background: var(--tone-accent, var(--brand));
-	}
-	.c-step-tool {
-		color: var(--tone-accent-ink, var(--link));
-		font-weight: 600;
-	}
-	.c-step-arg {
-		color: var(--exec-muted, var(--fg-muted));
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.c-trace-empty {
-		margin: 0;
-		color: var(--exec-muted, var(--fg-muted));
-	}
-
 	.af-composer-pill {
 		flex: none;
 		display: flex;
@@ -926,7 +589,6 @@
 		opacity: 0.45;
 		cursor: not-allowed;
 	}
-
 	@media (max-width: 959px) {
 		.af-stage {
 			padding: 48px 14px 16px;
@@ -951,9 +613,6 @@
 		.af-chat-col,
 		.af-corner-actions {
 			transition: none;
-		}
-		.c-thinking-dots i {
-			animation: none;
 		}
 	}
 </style>

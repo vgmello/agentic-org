@@ -118,6 +118,7 @@ fn begin(area: &StagingArea, n: u64, by: &str, bytes: u64, now: u64) -> Result<S
         media: MediaType::PlainText,
         declared_bytes: bytes,
         now_ms: now,
+        require_acting_for: false,
     })
     .unwrap()
     .map(|_| id)

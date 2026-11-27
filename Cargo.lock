@@ -1472,6 +1472,7 @@ dependencies = [
  "org-process",
  "org-proto",
  "org-supervise",
+ "org-turn-attachments",
  "ring",
  "serde",
  "serde_json",
@@ -1596,6 +1597,19 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "org-turn-attachments"
+version = "0.0.0"
+dependencies = [
+ "base64",
+ "org-agent-runtime",
+ "org-office",
+ "org-platform",
+ "org-proto",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

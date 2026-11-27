@@ -152,7 +152,7 @@ fn a_sender_name_cannot_forge_the_verified_badge() {
 
 #[test]
 fn trigger_and_wake_hints_cite_commands_that_hold_against_the_live_table() {
-    let table = org_agent_cli::table::table();
+    let table = org_agent_cli::table();
     for trigger in triggers("Body") {
         let text = compose_turn_objective(&trigger);
         let problems = verify_command_references(&text, &table);
@@ -192,6 +192,7 @@ fn wake_item(kind: WakeKind, body: &str) -> PendingWakeItem {
         conversation_id: Some("c-1".to_owned()),
         source_id: "src-1".to_owned(),
         summary: body.to_owned(),
+        attachment_ids: Vec::new(),
         enqueued_at_ms: 1,
     }
 }
@@ -223,6 +224,7 @@ fn no_autonomous_wake_body_can_break_out_of_its_fence() {
                 answered_by: "Mallory".to_owned(),
                 answered_at: "2026-11-26T00:00:00Z".to_owned(),
                 asked_by_subagent: false,
+                attachment_ids: Vec::new(),
             }],
             &[],
             &[SuspendedAskEntry {

@@ -33,6 +33,7 @@ fn help_subcommand_routes_to_command_help() {
         &["help", "provider", "bind"],
         &["help", "release", "install"],
         &["help", "msg"],
+        &["help", "agent", "bind"],
         &["help", "task", "create"],
         &["help", "who"],
         &["help", "sign-in"],
@@ -169,7 +170,7 @@ fn cli_reference_documents_every_top_level_and_office_command() {
     for sub in ["create", "list", "inspect"] {
         assert_cli_reference_entry_has_use_when(&format!("`agentic-org org {sub}"));
     }
-    for sub in ["approve", "sessions", "revoke"] {
+    for sub in ["approve", "bind", "sessions", "revoke"] {
         assert_cli_reference_entry_has_use_when(&format!("`agentic-org agent {sub}"));
     }
     for verb in ["login", "whoami", "logout", "exec"] {

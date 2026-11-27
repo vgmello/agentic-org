@@ -9,8 +9,8 @@ use crate::federation_runtime::HqFederationSlot;
 use crate::session_proxy::build_session_hooks;
 use crate::{
     attachment_calls, chat_calls, cost_calls, directory, doc_calls, federation_calls, follow,
-    git_calls, live, mailbox_store, org_feed, process_calls, provider_calls, serve, task_calls,
-    wake_bridge, watcher,
+    git_calls, live, mailbox_store, org_feed, process_calls, provider_calls, search_calls, serve,
+    task_calls, wake_bridge, watcher,
 };
 use org_office::{Office, OfficeError};
 
@@ -317,6 +317,13 @@ pub(crate) fn build_office_ports(
     sync_wake: Arc<dyn Fn() + Send + Sync>,
 ) -> serve::OfficePorts {
     let session_hooks = build_session_hooks(&office, &session_manager, &hq_fed_slot);
+    // An upload the Chief of Staff stages names the member her run acts for, and binds only
+    // for that member (`TASK-240`). Weak: the session manager already holds the office.
+    let runs = Arc::downgrade(&session_manager);
+    office.set_attachment_acting_for(Box::new(move |member| {
+        runs.upgrade()
+            .and_then(|sessions| sessions.bindings().acting_for_caller_id(member))
+    }));
     let hiring = build_hiring_port(
         &office,
         wake,
@@ -420,6 +427,12 @@ pub(crate) fn build_office_ports(
             let o = Arc::clone(&office);
             Some(gate_rpc_port(&office, move |member, request| {
                 doc_calls::dispatch_doc_rpc(&o, member, request)
+            }))
+        },
+        search: {
+            let o = Arc::clone(&office);
+            Some(gate_rpc_port(&office, move |member, request| {
+                search_calls::dispatch_search_rpc(&o, member, request)
             }))
         },
         costs: {

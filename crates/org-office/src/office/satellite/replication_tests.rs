@@ -40,6 +40,7 @@ fn task_json(id: &str, code: &str, number: u64, team_id: &str, actor: &str) -> V
         modified_files: Vec::new(),
         repositories: Vec::new(),
         details: None,
+        final_summary: None,
         meta: TaskMeta::created(&Id::parse(actor).unwrap(), "2026-11-26T00:00:00.000Z"),
     };
     encode_task_md(&rec, &[]).unwrap()
@@ -77,6 +78,7 @@ fn satellite_work_outbox_filter_accepts_only_valid_local_work_entries() {
                 modified_files: Vec::new(),
                 depends_on: Vec::new(),
                 details: None,
+                dod: None,
             },
         )
         .unwrap()

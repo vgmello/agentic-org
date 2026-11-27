@@ -18,11 +18,20 @@
 //!   caller sees by the same rule. `dm.open` needs a caller named among its participants,
 //!   checked before it runs so a refused call opens or reopens nothing, and answers only a DM
 //!   the caller is in.
+//! - **Sends and asks** ([`sends`], `TASK-240`): a message or ask goes only to a conversation
+//!   the caller sees or to the caller themself, and carries staged files only for the owner.
+//! - **Files of messages, asks and answers** ([`files`], `TASK-240`): read, listed, edited or
+//!   re-attached only for a caller who sees their conversation.
 //! - **Her mailbox**: a message is shown only when the caller sent it or received it. Acting
 //!   for nobody, none is.
 //!
 //! A read the gate cannot narrow (its answer does not decode, or the office cannot say what
 //! the caller sees) is refused, never passed through.
+
+mod files;
+mod sends;
+
+use std::cell::OnceCell;
 
 use org_proto::ask::{ChatAnswer, MsgWithdraw};
 use org_proto::chat::{
@@ -50,7 +59,66 @@ pub(super) fn admit(
     delegation: &Delegation,
 ) -> Result<(), Response> {
     admit_hire(request, port, delegation)?;
-    admit_conversation(request, port, member, delegation)
+    let view = View::new(request.id, port, member, delegation.caller_id.as_deref());
+    sends::admit(request, &view, delegation)?;
+    files::admit(request, &view)?;
+    admit_conversation(request, &view, delegation)
+}
+
+/// What one call may act on for the member she acts for: the conversations they see
+/// ([`visible_ids`]), read once, when a check first needs them.
+struct View<'a> {
+    id: u64,
+    port: &'a dyn ChiefOfStaffPort,
+    member: &'a str,
+    caller: Option<&'a str>,
+    visible: OnceCell<Vec<String>>,
+}
+
+impl<'a> View<'a> {
+    fn new(
+        id: u64,
+        port: &'a dyn ChiefOfStaffPort,
+        member: &'a str,
+        caller: Option<&'a str>,
+    ) -> Self {
+        Self {
+            id,
+            port,
+            member,
+            caller,
+            visible: OnceCell::new(),
+        }
+    }
+
+    /// The office's failure to answer a read the gate needs, as this call's refusal.
+    fn fail(&self, err: ApiError) -> Response {
+        Response::error(self.id, err)
+    }
+
+    fn visible(&self) -> Result<&[String], Response> {
+        if let Some(visible) = self.visible.get() {
+            return Ok(visible);
+        }
+        let listed = visible_ids(self.port, self.member, self.caller).map_err(|e| self.fail(e))?;
+        Ok(self.visible.get_or_init(|| listed))
+    }
+
+    /// Admitted only for a conversation the caller sees.
+    fn conversation(&self, conversation: &str) -> Result<(), Response> {
+        let seen = self.visible()?.iter().any(|v| v == conversation);
+        require(self.id, seen)
+    }
+
+    /// Admitted only for a message in a conversation the caller sees; an unknown message is
+    /// the method's to refuse.
+    fn message(&self, message: &str) -> Result<(), Response> {
+        match self.port.message_conversation(message) {
+            Ok(Some(conversation)) => self.conversation(&conversation),
+            Ok(None) => Ok(()),
+            Err(err) => Err(self.fail(err)),
+        }
+    }
 }
 
 /// The hire flow, per team.
@@ -83,25 +151,15 @@ fn admit_hire(
 /// Calls that act on one conversation or message: only one the caller sees ([`visible_ids`]).
 fn admit_conversation(
     request: &Request,
-    port: &dyn ChiefOfStaffPort,
-    member: &str,
+    view: &View<'_>,
     delegation: &Delegation,
 ) -> Result<(), Response> {
-    let id = request.id;
-    let in_view = |conversation: &str| {
-        let visible = visible_ids(port, member, delegation.caller_id.as_deref())
-            .map_err(|err| Response::error(id, err))?;
-        require(id, visible.iter().any(|v| v == conversation))
-    };
-    let on_message = |message: &str| match port.message_conversation(message) {
-        Ok(Some(conversation)) => in_view(&conversation),
-        Ok(None) => Ok(()),
-        Err(err) => Err(Response::error(id, err)),
-    };
+    let in_view = |conversation: &str| view.conversation(conversation);
+    let on_message = |message: &str| view.message(message);
     match request.method.as_str() {
         // She opens or resumes a DM only for a caller who will be in it, checked before it
         // runs, and shows only one they are in ([`narrow`]).
-        DmOpen::METHOD => dm_open_includes_caller(id, port, request, delegation),
+        DmOpen::METHOD => dm_open_includes_caller(view.id, view.port, request, delegation),
         ChatMarkRead::METHOD => {
             params::<ChatMarkRead>(request).map_or(Ok(()), |p| in_view(&p.conversation_id))
         }
@@ -212,7 +270,11 @@ pub(super) fn narrow(
             Some(true)
         }),
         DmOpen::METHOD => narrow_dm_open(caller, response),
-        _ => response,
+        _ => files::narrow(
+            request,
+            &View::new(response.id, port, member, caller),
+            response,
+        ),
     }
 }
 

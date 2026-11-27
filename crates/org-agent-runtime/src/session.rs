@@ -3,7 +3,7 @@
 use std::fmt;
 use std::time::Instant;
 
-use crate::{ApprovalId, ExitInfo, Line, SessionEvent};
+use crate::{ApprovalId, ExitInfo, Line, SessionEvent, SpecPath};
 
 /// One live session's protocol, as a pure state machine. **It does no I/O**: it never
 /// spawns, reads, writes, sleeps, or reads the clock.
@@ -112,6 +112,130 @@ pub enum Output {
     CloseStdin,
 }
 
+/// One pre-resolved image attachment handed into [`Control::Send`] or [`Control::DeliverMidTurn`]
+/// (`TASK-98.3`).
+///
+/// Callers resolve and bound image derivatives before calling [`Session::control`], keeping
+/// [`Session`] 100% sans-I/O. `Debug` never prints raw image bytes or base64 data.
+#[derive(Clone, PartialEq, Eq)]
+pub struct TurnImage {
+    /// MIME media type of the image derivative (e.g. `image/png`, `image/jpeg`).
+    pub media_type: String,
+    /// Pre-resolved image payload matching the target runtime's [`crate::ImageInputMode`].
+    pub source: TurnImageSource,
+}
+
+impl TurnImage {
+    /// Builds an inline base64 image from raw bounded derivative bytes.
+    pub fn inline_bytes(media_type: impl Into<String>, bytes: &[u8]) -> Self {
+        Self {
+            media_type: media_type.into(),
+            source: TurnImageSource::InlineBase64 {
+                data_base64: encode_base64_standard(bytes),
+                byte_len: bytes.len(),
+            },
+        }
+    }
+
+    /// Builds an inline base64 image from already-encoded standard RFC 4648 base64 text and its
+    /// decoded byte length.
+    pub fn inline_base64(
+        media_type: impl Into<String>,
+        data_base64: String,
+        byte_len: usize,
+    ) -> Self {
+        Self {
+            media_type: media_type.into(),
+            source: TurnImageSource::InlineBase64 {
+                data_base64,
+                byte_len,
+            },
+        }
+    }
+
+    /// Builds a local-path image pointing to a turn-scoped read-only staged file.
+    pub fn local_path(media_type: impl Into<String>, path: SpecPath) -> Self {
+        Self {
+            media_type: media_type.into(),
+            source: TurnImageSource::LocalPath { path },
+        }
+    }
+}
+
+impl fmt::Debug for TurnImage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TurnImage")
+            .field("media_type", &self.media_type)
+            .field("source", &self.source)
+            .finish()
+    }
+}
+
+/// Pre-resolved payload for a [`TurnImage`] (`TASK-98.3`).
+///
+/// **Exhaustive on purpose**: adapters match every delivery representation explicitly and refuse
+/// mismatches cleanly without mutating state.
+#[derive(Clone, PartialEq, Eq)]
+pub enum TurnImageSource {
+    /// Bounded image derivative bytes encoded as standard RFC 4648 base64 (for
+    /// [`crate::ImageInputMode::InlineBase64`] runtimes such as Claude).
+    InlineBase64 {
+        /// Standard base64 text of the bounded derivative bytes.
+        data_base64: String,
+        /// Decoded byte length of the derivative.
+        byte_len: usize,
+    },
+    /// Validated absolute path to a turn-scoped read-only staged image file (for
+    /// [`crate::ImageInputMode::LocalPath`] runtimes such as Codex).
+    LocalPath {
+        /// Canonical path inside the agent's read-only staged attachment directory.
+        path: SpecPath,
+    },
+}
+
+impl fmt::Debug for TurnImageSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TurnImageSource::InlineBase64 {
+                data_base64,
+                byte_len,
+            } => f
+                .debug_struct("InlineBase64")
+                .field("base64_len", &data_base64.len())
+                .field("byte_len", byte_len)
+                .finish(),
+            TurnImageSource::LocalPath { path } => {
+                f.debug_struct("LocalPath").field("path", path).finish()
+            }
+        }
+    }
+}
+
+/// Minimal standard RFC 4648 base64 encoder so `org-agent-runtime` stays dependency-free.
+fn encode_base64_standard(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = *chunk.get(1).unwrap_or(&0);
+        let b2 = *chunk.get(2).unwrap_or(&0);
+        let n = (u32::from(b0) << 16) | (u32::from(b1) << 8) | u32::from(b2);
+        out.push(TABLE[((n >> 18) & 0x3f) as usize] as char);
+        out.push(TABLE[((n >> 12) & 0x3f) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[((n >> 6) & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(n & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
 /// A command from the office to a live session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -123,6 +247,8 @@ pub enum Control {
     Send {
         /// The turn input text.
         text: String,
+        /// Pre-resolved image attachments for this turn (empty when none or `StagedFileOnly`).
+        images: Vec<TurnImage>,
     },
     /// Deliver an addressed message non-destructively into a running turn (`doc-101`, `ADR-0035`).
     ///
@@ -138,6 +264,9 @@ pub enum Control {
         delivery_id: String,
         /// The fenced mid-turn message payload.
         text: String,
+        /// Pre-resolved image attachments for runtimes that accept images mid-turn (e.g. Codex
+        /// `turn/steer`). Empty for text-only mid-turn runtimes.
+        images: Vec<TurnImage>,
     },
     /// Destructively stop the running turn (explicit authorized Stop/Interrupt, security fast-stop,
     /// or offboard); the process lives on. While idle it's accepted and does nothing visible on
@@ -192,6 +321,11 @@ pub enum ControlError {
     Closed,
     /// This runtime can't do it (or doesn't know the command).
     Unsupported,
+    /// The input can reach the running turn only by interrupting it: send
+    /// [`Control::Interrupt`], then send the input as the next turn once the interrupted turn
+    /// ends (a person's explicit steer on a runtime without native steering, see
+    /// [`crate::Capabilities::steer_route`]).
+    NeedsInterrupt,
 }
 
 impl fmt::Display for ControlError {
@@ -203,7 +337,37 @@ impl fmt::Display for ControlError {
             ControlError::UnknownApproval => "no pending approval has this id",
             ControlError::Closed => "the session is closed",
             ControlError::Unsupported => "not supported by this runtime",
+            ControlError::NeedsInterrupt => "the running turn must be interrupted first",
         })
+    }
+}
+
+impl crate::Capabilities {
+    /// How a person's explicit steer reaches a running turn (`TASK-103`).
+    ///
+    /// - `Ok(())`: the runtime steers natively and immediately, without interrupting the turn
+    ///   ([`crate::MidTurnDelivery::NativeSteer`]: send it with [`Control::DeliverMidTurn`]).
+    /// - [`ControlError::NeedsInterrupt`]: the runtime can only take it promptly by interrupting
+    ///   the turn in-band ([`Self::interrupt_in_band`]) and sending it as the next turn. A
+    ///   [`crate::MidTurnDelivery::StepHook`] runtime counts here: its hook waits for the next
+    ///   tool boundary, which a person redirecting the agent can't wait for.
+    /// - [`ControlError::Unsupported`]: neither; the steer can only queue behind the turn.
+    pub const fn steer_route(&self) -> Result<(), ControlError> {
+        match (self.mid_turn_delivery, self.interrupt_in_band) {
+            (crate::MidTurnDelivery::NativeSteer, _) => Ok(()),
+            (crate::MidTurnDelivery::StepHook | crate::MidTurnDelivery::None, true) => {
+                Err(ControlError::NeedsInterrupt)
+            }
+            (crate::MidTurnDelivery::StepHook | crate::MidTurnDelivery::None, false) => {
+                Err(ControlError::Unsupported)
+            }
+        }
+    }
+
+    /// Whether a person's steer reaches a running turn natively, without interrupting it
+    /// ([`Self::steer_route`] is `Ok`).
+    pub const fn supports_native_steer(&self) -> bool {
+        self.steer_route().is_ok()
     }
 }
 

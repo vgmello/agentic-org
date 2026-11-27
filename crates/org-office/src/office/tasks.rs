@@ -4,8 +4,8 @@ use org_proto::tasks::{
     TaskDependenciesResult, TaskInspectResult, TasksAddDependencyParams, TasksAssignParams,
     TasksChecklistAddParams, TasksChecklistCheckParams, TasksChecklistEditParams,
     TasksChecklistMoveParams, TasksChecklistRemoveParams, TasksChecklistResult, TasksCommentParams,
-    TasksCommentResult, TasksCommentsResult, TasksCreateParams, TasksHistoryResult,
-    TasksLabelsParams, TasksLabelsResult, TasksListParams, TasksListResult,
+    TasksCommentResult, TasksCommentsResult, TasksCreateParams, TasksFinalSummaryParams,
+    TasksHistoryResult, TasksLabelsParams, TasksLabelsResult, TasksListParams, TasksListResult,
     TasksRemoveDependencyParams, TasksTransitionParams, TasksUnwatchParams, TasksUpdateParams,
     TasksWatchParams,
 };
@@ -17,9 +17,9 @@ use crate::office::{storage, Office};
 use crate::store::open::task_ops::{
     TaskAddDependencyOp, TaskAssignOp, TaskChecklistAddOp, TaskChecklistCheckOp,
     TaskChecklistEditOp, TaskChecklistMoveOp, TaskChecklistRemoveOp, TaskCommentOp,
-    TaskCommentsRead, TaskCreateOp, TaskDependenciesRead, TaskHistoryRead, TaskInspectRead,
-    TaskLabelsRead, TaskListRead, TaskRemoveDependencyOp, TaskTransitionOp, TaskUnwatchOp,
-    TaskUpdateOp, TaskWatchOp,
+    TaskCommentsRead, TaskCreateOp, TaskDependenciesRead, TaskFinalSummaryOp, TaskHistoryRead,
+    TaskInspectRead, TaskLabelsRead, TaskListRead, TaskRemoveDependencyOp, TaskTransitionOp,
+    TaskUnwatchOp, TaskUpdateOp, TaskWatchOp,
 };
 use crate::tasks::features::TaskWriteOutcome;
 
@@ -126,6 +126,28 @@ impl Office {
         let res = self
             .store
             .run(TaskTransitionOp {
+                actor: actor.to_owned(),
+                params,
+            })
+            .map_err(storage)?;
+        if res.is_ok() {
+            let _ = self.sync_satellite_work_outbox();
+        }
+        Ok(res)
+    }
+
+    /// Sets a task's attributed final summary (`TASK-88`).
+    pub fn task_final_summary(
+        &self,
+        actor: &str,
+        params: TasksFinalSummaryParams,
+    ) -> Result<Result<TaskWriteOutcome, ApiError>, OfficeError> {
+        if let Err(err) = ensure_local_task_write_authority(self, &params.task)? {
+            return Ok(Err(err));
+        }
+        let res = self
+            .store
+            .run(TaskFinalSummaryOp {
                 actor: actor.to_owned(),
                 params,
             })
