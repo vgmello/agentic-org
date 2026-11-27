@@ -3,7 +3,7 @@ const S = { theme: "ocean", fontStyle: "inter", homeState: "filled", inboxKind: 
   scopedWorkView: "all", scopedWorkLayout: "list", scopedWorkStatus: "all", scopedWorkProject: "all", scopedWorkTeam: "all", scopedWorkGroup: "status", scopedWorkSubgroup: "none", scopedWorkSort: "default", scopedWorkOrder: "asc",
   actView: "assembly", actProject: "all", actFilter: "all", actPanel: null,
   projectActView: "assembly", projectActFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
-  consoleView: "activity", consoleScope: "all", consoleTools: false, agentFocusTools: false, openTraces: {}, openKnow: {}, openIdeation: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefView: "highlights", searchOpen: {}, projectQuery: "", pjDecision: null, calDate: null, calView: "week", calEvent: null, calPicker: false, calPickerMonth: null, navWorkspace: ["work", "chat", "activity", "insights", "projects"], briefExpanded: false, confirmDeny: null, briefCopied: false };
+  consoleView: "activity", consoleScope: "all", consoleTools: false, agentFocusTools: false, openTraces: {}, openKnow: {}, openIdeation: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefView: "highlights", searchOpen: {}, projectQuery: "", pjDecision: null, calDate: null, calView: "week", calEvent: null, calPicker: false, calPickerMonth: null, navWorkspace: ["work", "chat", "activity", "insights", "projects"], navOrg: ["teams", "settings"], briefExpanded: false, confirmDeny: null, briefCopied: false };
 const ORG_NAME_STORE = "agentic-org.v6.organizationName";
 let orgName = "Agentic Org";
 try { orgName = localStorage.getItem(ORG_NAME_STORE)?.trim().slice(0, 80) || orgName; } catch (e) {}
@@ -60,6 +60,9 @@ const NAV_WS_STORE = "agentic-org.v6.navWorkspace.v2";
 try { const saved = JSON.parse(localStorage.getItem(NAV_WS_STORE) || "null"); if (Array.isArray(saved)) S.navWorkspace = saved; } catch (e) {}
 try { const favs = JSON.parse(localStorage.getItem("agentic-org.v6.favProjs") || "null"); if (Array.isArray(favs)) S.favProjs = favs.filter((x) => typeof x === "string"); } catch (e) {}
 function saveNavWorkspace() { try { localStorage.setItem(NAV_WS_STORE, JSON.stringify(S.navWorkspace)); } catch (e) {} }
+const NAV_ORG_STORE = "agentic-org.v6.navOrg.v1";
+try { const saved = JSON.parse(localStorage.getItem(NAV_ORG_STORE) || "null"); if (Array.isArray(saved)) S.navOrg = saved.filter((k) => typeof k === "string"); } catch (e) {}
+function saveNavOrg() { try { localStorage.setItem(NAV_ORG_STORE, JSON.stringify(S.navOrg)); } catch (e) {} }
 const FONT_STORE = "agentic-org.v6.fontStyle.v5";
 const FONT_OPTIONS = [
   ["inter", "Inter"],
@@ -203,6 +206,7 @@ const overlayOpen = () => !!(document.querySelector(".sheet, dialog[open], .menu
 const qs = () => new URLSearchParams((location.hash.split("?")[1]) || "");
 
 export {
+  saveNavOrg,
   saveNavWorkspace,
   ARCHIVE_AFTER_DAYS_STORE,
   ARCHIVE_DAY_OPTIONS,

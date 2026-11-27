@@ -53,24 +53,36 @@ function navFavoritesHtml(favs, r0, r1, homeError, favsOpen) {
     </li>`;
 }
 
-/* Teams is a plain entry (owner): no fold arrow or team sub-list; it opens on the Org chart */
-function navTeamsGroupHtml(r0) {
-  const inTeams = r0 === "teams" || r0 === "members";
-  return `<li>
-          <div class="nav-row">
-            <a class="nav-item" href="#/teams" title="Teams" ${inTeams ? 'aria-current="page"' : ""}>${ic("user-group")}<span class="lbl">Teams</span></a>
-          </div>
-        </li>`;
-}
 
-/* Organization: Processes, Standards and Development processes sit folded under "More" (owner) */
-function navOrgMoreHtml(r0, r1, item) {
-  const proc = r0 === "processes" && r1 !== "standards", std = r0 === "processes" && r1 === "standards", dev = r0 === "dev-processes";
-  const open = S.v4Open["nav-org-more"] ?? (proc || std || dev);
+/* Organization is organizable like Workspace (owner): pinned items show, the rest sit under "More"; hover an item
+   for the pin icon to move it either way. Saved per browser (S.navOrg). */
+const ORG_ITEMS = [
+  ["teams", "#/teams", "Teams", "user-group"],
+  ["settings", "#/settings", "Settings", "cog"],
+  ["processes", "#/processes", "Processes", "refresh"],
+  ["standards", "#/processes/standards", "Standards", "scale"],
+  ["dev-processes", "#/dev-processes", "Development processes", "files"],
+];
+function orgCurrent(key, r0, r1) {
+  if (key === "teams") return r0 === "teams" || r0 === "members";
+  if (key === "settings") return r0 === "settings" || r0 === "preferences";
+  if (key === "processes") return r0 === "processes" && r1 !== "standards";
+  if (key === "standards") return r0 === "processes" && r1 === "standards";
+  return r0 === key;
+}
+function orgItemHtml([key, href, label, icon], cur, pinned) {
+  const pin = `<button class="nav-pin" type="button" data-act="nav-org-pin" data-v="${key}" aria-label="${pinned ? "Move" : "Pin"} ${esc(label)} ${pinned ? "to More" : "to the sidebar"}" title="${pinned ? "Move to More" : "Pin to sidebar"}">${ic(pinned ? "minimize" : "plus", "ic14")}</button>`;
+  return `<li class="nav-org-item"><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon)}<span class="lbl">${esc(label)}</span></a>${pin}</li>`;
+}
+function orgNavHtml(r0, r1) {
+  const isCur = (k) => orgCurrent(k, r0, r1);
+  const pinned = S.navOrg.map((k) => ORG_ITEMS.find((it) => it[0] === k)).filter(Boolean), extra = ORG_ITEMS.filter(([k]) => !S.navOrg.includes(k));
+  const head = pinned.map((it) => orgItemHtml(it, isCur(it[0]), true)).join("");
+  if (!extra.length) return head;
+  const open = S.v4Open["nav-org-more"] ?? extra.some(([k]) => isCur(k));
   const btn = `<li><button class="nav-item nav-more-btn" type="button" data-act="v4-acc" data-id="nav-org-more" aria-expanded="${!!open}" aria-controls="nav-org-more-list" title="More">${ic("ellipsis")}<span class="lbl">More</span>${ic("chev-down", "ic14 nav-more-chev")}</button></li>`;
-  const list = open ? `<li><ul class="nav-list nav-more-list" id="nav-org-more-list" role="list" aria-label="More organization pages">
-    ${item("#/processes", "Processes", "refresh", proc)}${item("#/processes/standards", "Standards", "scale", std)}${item("#/dev-processes", "Development processes", "files", dev)}</ul></li>` : "";
-  return btn + list;
+  const list = open ? `<li><ul class="nav-list nav-more-list" id="nav-org-more-list" role="list" aria-label="More organization pages">${extra.map((it) => orgItemHtml(it, isCur(it[0]), false)).join("")}</ul></li>` : "";
+  return head + btn + list;
 }
 
 /* Workspace group is organizable: pinned items show in the list (registry order), the rest sit under
@@ -195,9 +207,7 @@ function renderNav(route) {
     <li>
       <div class="nav-label">Organization</div>
       <ul class="nav-list" role="list">
-        ${navTeamsGroupHtml(r0)}
-        ${item("#/settings", "Settings", "cog", r0 === "settings" || r0 === "preferences")}
-        ${navOrgMoreHtml(r0, r1, item)}
+        ${orgNavHtml(r0, r1)}
       </ul>
     </li>
   </ul>`;

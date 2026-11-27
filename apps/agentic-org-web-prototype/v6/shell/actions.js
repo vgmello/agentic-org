@@ -19,7 +19,7 @@ import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRe
 import { endNavigationKeys, getNavigationKeys, handleNavigationKeys } from "./keyboard.js";
 import { pageSearchInput, render, route } from "./router.js";
 import { askTessInPanel, clearCompanionHistory, clearReadNotifications, closeCompanion, dismissCompanionContext, handleCompanionEscape, handleCompanionInput, isCompanionModal, markAllNotificationsRead, markNotificationRead, openTessPanel, toggleExpandCompanion, toggleNotificationRead, toggleTessPanel } from "./topbar-utils.js";
-import { applyCozyContrast, applyFontStyle, applyShortcuts, applyTheme, ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, inTextField, ORG_NAME_STORE, overlayOpen, qs, S, saveNavWorkspace, setOrgName, showOrgName, SR, toggleNavPinned, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, writeSingleKey } from "../state.js";
+import { applyCozyContrast, applyFontStyle, applyShortcuts, applyTheme, ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, inTextField, ORG_NAME_STORE, overlayOpen, qs, S, saveNavOrg, saveNavWorkspace, setOrgName, showOrgName, SR, toggleNavPinned, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, writeSingleKey } from "../state.js";
 import { spotQueue, toast } from "../ui.js";
 
 /* ---------------------------------------------------------------- actions */
@@ -439,6 +439,11 @@ const CLICK_ACTIONS = {
   "notif-mark-all": () => markAllNotificationsRead(),
   "notif-clear-read": () => clearReadNotifications(),
   "brief-lens": (_e, _t, _id, v) => { S.briefLens = v; S.briefCopied = false; render(false); document.querySelector(`[data-act="brief-lens"][data-v="${CSS.escape(v || "")}"]`)?.focus(); },
+  "nav-org-pin": (_e, _t, _id, v) => {
+    S.navOrg = S.navOrg.includes(v) ? S.navOrg.filter((k) => k !== v) : [...S.navOrg, v];
+    saveNavOrg(); render(false);
+    document.querySelector(`.nav [data-act="nav-org-pin"][data-v="${CSS.escape(v)}"]`)?.focus();
+  },
   "nav-pin": (_e, _t, _id, v) => {
     S.navWorkspace = S.navWorkspace.includes(v) ? S.navWorkspace.filter((k) => k !== v) : [...S.navWorkspace, v];
     saveNavWorkspace(); render(false);
