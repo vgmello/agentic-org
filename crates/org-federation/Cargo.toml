@@ -1,0 +1,33 @@
+[package]
+name = "org-federation"
+description = "Multi-office Org-CA mTLS federation listener, persistent satellite sync, blob shipping, and paged snapshot transfer."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Test helpers shared with downstream integration suites; never enabled in production builds.
+testkit = []
+
+[dependencies]
+base64.workspace = true
+org-office = { path = "../org-office" }
+org-office-sessions = { path = "../org-office-sessions" }
+org-pki = { path = "../org-pki" }
+org-platform = { path = "../org-platform" }
+org-proto = { path = "../org-proto" }
+org-socket = { path = "../org-socket" }
+org-store = { path = "../org-store" }
+org-sync = { path = "../org-sync" }
+org-sync-proto = { path = "../org-sync-proto" }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+org-office = { path = "../org-office", features = ["testkit"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true
