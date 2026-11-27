@@ -88,7 +88,7 @@
 		font-weight: 550;
 		overflow-wrap: anywhere;
 	}
-	:global(.ao-crumb-sep) {
+	.ao-crumb :global(.ao-crumb-sep) {
 		color: var(--exec-dim, var(--fg-subtle));
 	}
 	@media (prefers-reduced-motion: reduce) {

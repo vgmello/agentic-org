@@ -3,29 +3,17 @@ import type { GatewayHttpTransport } from '$lib/platform/http/gateway-errors';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgApi } from '$lib/modules/organization/api';
 import { isOpen, normalizeRef } from './present';
-import {
-	buildChoices,
-	buildOrgLookup,
-	buildViewer,
-	mapTaskDetail,
-	mapTaskLink,
-	mapTaskRow,
-	type OrgLookup,
-	type WireProject,
-	type WireTaskInspect,
-	type WireTaskView
-} from './wire-map';
+import { buildChoices, buildViewer, mapTaskDetail, mapTaskLink, mapTaskRow } from './wire-map';
 import {
 	buildClosePayload,
 	buildCreateBody,
 	defaultUuidV7,
-	isWireProject,
 	isWireTaskView,
 	normalizeUuidV7,
 	type PendingIds
 } from './http-api-payloads';
 import { createWorkItemNotesHandlers } from './http-api-notes';
-import { createWorkItemTransport } from './http-api-transport';
+import { createWorkItemTransport, orgBase } from './http-api-transport';
 import type { WorkItemsApi } from './api';
 import type {
 	AssignmentChange,
@@ -69,75 +57,10 @@ export function createHttpWorkItemsApi({
 		return created;
 	}
 
-	function orgBase(orgId: string): string {
-		return `/api/v1/organizations/${encodeURIComponent(orgId)}`;
-	}
-
-	const { readJson, postJson } = createWorkItemTransport(http);
-
-	async function readProjects(
-		organizationId: string,
-		signal?: AbortSignal
-	): Promise<WireProject[]> {
-		try {
-			const res = await readJson(
-				`${orgBase(organizationId)}/projects?include_archived=true`,
-				'Projects could not be loaded.',
-				signal
-			);
-			return Array.isArray(res.projects) ? res.projects.filter(isWireProject) : [];
-		} catch (err) {
-			if (signal?.aborted) throw err;
-			return [];
-		}
-	}
-
-	async function loadLookup(
-		organizationId: string,
-		signal?: AbortSignal
-	): Promise<{ lookup: OrgLookup; projects: WireProject[] }> {
-		const [view, projects] = await Promise.all([
-			orgApi.view(organizationId, signal),
-			readProjects(organizationId, signal)
-		]);
-		return { lookup: buildOrgLookup(view.snapshot, projects), projects };
-	}
-
-	async function readTasks(
-		organizationId: string,
-		params?: URLSearchParams,
-		signal?: AbortSignal
-	): Promise<WireTaskView[]> {
-		const qs = params?.toString();
-		const res = await readJson(
-			`${orgBase(organizationId)}/tasks${qs ? `?${qs}` : ''}`,
-			'Work items could not be loaded.',
-			signal
-		);
-		if (!Array.isArray(res.tasks)) {
-			throw {
-				source: 'api',
-				code: 'unavailable',
-				message: 'The tasks response could not be read.'
-			} satisfies AppError;
-		}
-		return res.tasks.filter(isWireTaskView);
-	}
-
-	async function inspectRaw(organizationId: string, refOrId: string): Promise<WireTaskInspect> {
-		const res = await readJson(
-			`${orgBase(organizationId)}/tasks/${encodeURIComponent(refOrId)}`,
-			'The work item could not be loaded.'
-		);
-		if (!isWireTaskView(res.task)) {
-			throw {
-				source: 'api',
-				code: 'unavailable',
-				message: 'The work item could not be read.'
-			} satisfies AppError;
-		}
-		return res as unknown as WireTaskInspect;
-	}
+	const { readJson, postJson, loadLookup, readTasks, inspectRaw } = createWorkItemTransport(
+		http,
+		orgApi
+	);
 
 	const notesHandlers = createWorkItemNotesHandlers({
 		orgBase,

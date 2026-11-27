@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount, tick, untrack } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
@@ -175,27 +175,19 @@
 		suggested = undefined;
 	}
 
-	$effect(() => {
-		if (!open) flow.cancel();
-	});
-
-	$effect(() => {
-		if (open) {
-			untrack(() => {
-				title = happened = severity = expected = steps = '';
-				sentence = '';
-				before = drafted = suggested = undefined;
-				draftedValues = {};
-				flow.cancel();
-				area = areas.find((a) => a.general)?.id ?? areas[0]?.id ?? '';
-				// Prefilled from where the app runs; the reporter can change it.
-				environment = environmentLine();
-				error = undefined;
-				busy = false;
-				touched = false;
-			});
-		}
-	});
+	function resetOnOpen() {
+		title = happened = severity = expected = steps = '';
+		sentence = '';
+		before = drafted = suggested = undefined;
+		draftedValues = {};
+		flow.cancel();
+		area = areas.find((a) => a.general)?.id ?? areas[0]?.id ?? '';
+		// Prefilled from where the app runs; the reporter can change it.
+		environment = environmentLine();
+		error = undefined;
+		busy = false;
+		touched = false;
+	}
 
 	const similar = $derived(similarBugs(bugs, title));
 	const missing = $derived(title.trim() === '' || happened.trim() === '' || severity === '');
@@ -233,8 +225,16 @@
 		'w-full rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus';
 </script>
 
-<Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent class="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+<Dialog
+	bind:open
+	onOpenChange={(next) => {
+		if (!next) {
+			if (busy) open = true;
+			else flow.cancel();
+		}
+	}}
+>
+	<DialogContent onOpenAutoFocus={resetOnOpen} class="max-h-[90vh] overflow-y-auto sm:max-w-xl">
 		<DialogHeader>
 			<DialogTitle text={'Report a bug'} />
 			<DialogDescription

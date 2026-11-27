@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import {
@@ -72,27 +71,26 @@
 	let asking = $state(false);
 	let field = $state<HTMLTextAreaElement | undefined>();
 
-	$effect(() => {
-		if (open) {
-			untrack(() => {
-				text = '';
-				kind = 'feature';
-				projectId = defaultProjectId ?? '';
-				picked = undefined;
-				pickedAt = undefined;
-				other = '';
-				touched = false;
-				error = undefined;
-				busy = false;
-				confirmed = false;
-				asking = false;
-				active = { token: undefined, index: 0 };
-				closedFor = undefined;
-			});
-			// The words come first: the field has the focus as soon as the panel opens (RQS-1).
-			queueMicrotask(() => field?.focus());
+	function resetOnOpen(event: Event) {
+		text = '';
+		kind = 'feature';
+		projectId = defaultProjectId ?? '';
+		picked = undefined;
+		pickedAt = undefined;
+		other = '';
+		touched = false;
+		error = undefined;
+		busy = false;
+		confirmed = false;
+		asking = false;
+		active = { token: undefined, index: 0 };
+		closedFor = undefined;
+		// The words come first: the field has the focus as soon as the panel opens (RQS-1).
+		if (field) {
+			event.preventDefault();
+			field.focus();
 		}
-	});
+	}
 
 	const projects = $derived((snapshot.projects ?? []).filter((p) => !p.archived));
 	const suggestions = $derived(suggestScopers(snapshot, kind, projectId || undefined));
@@ -321,6 +319,7 @@
 
 <Dialog bind:open={() => open, setOpen}>
 	<DialogContent
+		onOpenAutoFocus={resetOnOpen}
 		class="max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] overflow-y-auto sm:max-w-xl"
 	>
 		<!-- The close button sits in the corner: the title's first line leaves room for it (a float), the lines below use the full width. -->

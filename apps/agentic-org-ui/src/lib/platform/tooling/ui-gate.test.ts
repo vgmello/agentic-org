@@ -1517,6 +1517,7 @@ describe('selector', () => {
 				'e2e/work\\.spec\\.ts$',
 				'e2e/tasks\\.spec\\.ts$',
 				'e2e/dialog-block-title\\.spec\\.ts$',
+				'e2e/dialog-focus-webkit\\.spec\\.ts$',
 				'e2e/bugs\\.spec\\.ts$'
 			].sort()
 		);

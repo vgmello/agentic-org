@@ -4,9 +4,50 @@
  * seamlessly from badged local summary fallback to live streaming LLM turns.
  */
 
+import type { HomeDomainData, OrgAiAnswer } from '$lib/modules/home/model';
+import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
+
 export type TessRuntimeStatus = 'ready' | 'no_runtime' | 'offline';
 
 export type TessTurnMode = 'offline_summary' | 'live';
+
+export type TessCompanionMode = 'hidden' | 'pill' | 'open' | 'expanded';
+
+export interface TessTurn {
+	id: string;
+	organizationId?: string;
+	serverTurnId?: string;
+	query: string;
+	createdAt: number;
+	mode: TessTurnMode;
+	streaming?: boolean;
+	streamText?: string;
+	toolCalls?: TessToolCall[];
+	blocks?: TessUiBlock[];
+	followUps?: string[];
+	errorMessage?: string;
+	answer: OrgAiAnswer;
+	contextLabel?: string;
+}
+
+export interface TessContextSnapshot {
+	organizationId?: string;
+	snapshot?: OrgSnapshot;
+	items: readonly WorkItemSummary[];
+	offices: readonly OfficeInfo[];
+	ownerId: string;
+	domain?: HomeDomainData;
+	routeLabel?: string;
+	routePath?: string;
+	offline?: boolean;
+}
+
+export const TESS_STARTERS: readonly string[] = [
+	'What needs me first?',
+	'Which projects need attention?',
+	'Budget, offices & active agents',
+	'Where is task time going?'
+];
 
 export interface TessContextRef {
 	route?: string;

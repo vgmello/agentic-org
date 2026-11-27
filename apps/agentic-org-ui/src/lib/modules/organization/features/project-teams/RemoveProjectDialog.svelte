@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Dialog,
@@ -33,19 +32,16 @@
 
 	let busy = $state(false);
 	let error = $state<string | undefined>();
-	let shown = $state<typeof target>();
+	let lastTarget = $state<typeof target>();
+	const shown = $derived(open ? (target ?? lastTarget) : lastTarget);
 	let confirmed = false;
-	$effect(() => {
+
+	function resetOnOpen() {
 		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
-		if (open) {
-			untrack(() => {
-				if (!target) return;
-				shown = target;
-				error = undefined;
-				confirmed = false;
-			});
-		}
-	});
+		if (target) lastTarget = target;
+		error = undefined;
+		confirmed = false;
+	}
 
 	async function confirm() {
 		if (!shown || busy) return;
@@ -68,6 +64,7 @@
 	<DialogContent
 		{opener}
 		{fallback}
+		onOpenAutoFocus={resetOnOpen}
 		onCloseAutoFocus={(e) => {
 			// When confirmed, `ondone` reloads the row and moves focus to Assign team; don't focus the gone chip first.
 			if (confirmed) e.preventDefault();

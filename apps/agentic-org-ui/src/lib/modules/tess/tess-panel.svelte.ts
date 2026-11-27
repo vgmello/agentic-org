@@ -1,11 +1,6 @@
 import { createContext } from 'svelte';
-import type { HomeDomainData, OrgAiAnswer } from '$lib/modules/home/model';
-import {
-	isBuiltInAgent,
-	type OfficeInfo,
-	type OrgSnapshot,
-	type WorkItemSummary
-} from '$lib/proto';
+import type { HomeDomainData } from '$lib/modules/home/model';
+import { isBuiltInAgent } from '$lib/proto';
 import type { ShellAiAskOptions, ShellAiDecisionContext } from '$lib/platform/workspace/shell-ai';
 import { defaultTessApi } from './api';
 import {
@@ -16,51 +11,20 @@ import {
 } from './tess-stream';
 import type {
 	TessApi,
+	TessCompanionMode,
 	TessContextRef,
+	TessContextSnapshot,
 	TessRuntimeStatus,
-	TessToolCall,
-	TessTurnMode,
+	TessTurn,
 	TessUiBlock
 } from './types';
-export type { TessTurnMode } from './types';
-
-export interface TessTurn {
-	id: string;
-	organizationId?: string;
-	serverTurnId?: string;
-	query: string;
-	createdAt: number;
-	mode: TessTurnMode;
-	streaming?: boolean;
-	streamText?: string;
-	toolCalls?: TessToolCall[];
-	blocks?: TessUiBlock[];
-	followUps?: string[];
-	errorMessage?: string;
-	answer: OrgAiAnswer;
-	contextLabel?: string;
-}
-
-export interface TessContextSnapshot {
-	organizationId?: string;
-	snapshot?: OrgSnapshot;
-	items: readonly WorkItemSummary[];
-	offices: readonly OfficeInfo[];
-	ownerId: string;
-	domain?: HomeDomainData;
-	routeLabel?: string;
-	routePath?: string;
-	offline?: boolean;
-}
-
-export const TESS_STARTERS: readonly string[] = [
-	'What needs me first?',
-	'Which projects need attention?',
-	'Budget, offices & active agents',
-	'Where is task time going?'
-];
-
-export type TessCompanionMode = 'hidden' | 'pill' | 'open' | 'expanded';
+export {
+	TESS_STARTERS,
+	type TessCompanionMode,
+	type TessContextSnapshot,
+	type TessTurn,
+	type TessTurnMode
+} from './types';
 
 /**
  * Embedded Tess Companion controller (TASK-80.5 / doc-97).

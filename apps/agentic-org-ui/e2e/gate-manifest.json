@@ -487,6 +487,7 @@
 				"work.spec.ts",
 				"tasks.spec.ts",
 				"dialog-block-title.spec.ts",
+				"dialog-focus-webkit.spec.ts",
 				"bugs.spec.ts"
 			],
 			"sources": [

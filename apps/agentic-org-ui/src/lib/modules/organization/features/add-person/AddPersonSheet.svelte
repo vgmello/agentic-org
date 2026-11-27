@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import Info from '@lucide/svelte/icons/info';
@@ -52,20 +51,16 @@
 	let busy = $state(false);
 	let touched = $state(false);
 
-	$effect(() => {
-		if (open) {
-			untrack(() => {
-				name = presetName;
-				contact = '';
-				manager = '';
-				teamIds.clear();
-				if (presetTeamId) teamIds.add(presetTeamId);
-				failure = undefined;
-				busy = false;
-				touched = false;
-			});
-		}
-	});
+	function resetOnOpen() {
+		name = presetName;
+		contact = '';
+		manager = '';
+		teamIds.clear();
+		if (presetTeamId) teamIds.add(presetTeamId);
+		failure = undefined;
+		busy = false;
+		touched = false;
+	}
 
 	// The clash is answered as they type (PEOPLE-4); Add stays disabled until the name is free.
 	const check = $derived(checkPersonName(snapshot, name, organization));
@@ -119,7 +114,7 @@
 </script>
 
 <Sheet bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<SheetContent side="right" class="w-full max-w-md overflow-y-auto">
+	<SheetContent onOpenAutoFocus={resetOnOpen} side="right" class="w-full max-w-md overflow-y-auto">
 		<SheetHeader>
 			<SheetTitle>Add person</SheetTitle>
 			<SheetDescription>People can be in teams and have agents report to them.</SheetDescription>

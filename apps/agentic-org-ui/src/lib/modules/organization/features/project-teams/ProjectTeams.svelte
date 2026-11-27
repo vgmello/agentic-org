@@ -5,6 +5,7 @@
 	import { toast } from 'svelte-sonner';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import ProjectTeamDialog from '$lib/modules/organization/features/project-teams/ProjectTeamDialog.svelte';
 	import RemoveProjectDialog from '$lib/modules/organization/features/project-teams/RemoveProjectDialog.svelte';
 	import { toAppError } from '$lib/proto';
@@ -96,14 +97,15 @@
 			data-team={team.id}
 		>
 			{team.name}
-			<button
-				type="button"
-				aria-label="Remove {row.project.name} from {team.name}"
-				title="Remove {row.project.name} from {team.name}"
-				onclick={(e) => take(team.id, team.name, e)}
-				class="inline-flex size-6 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-				><HeroIcon variant="mini" name="x-mark" class="size-4!" /></button
-			>
+			<ModalTooltip label="Remove {row.project.name} from {team.name}">
+				<button
+					type="button"
+					aria-label="Remove {row.project.name} from {team.name}"
+					onclick={(e) => take(team.id, team.name, e)}
+					class="inline-flex size-6 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+					><HeroIcon variant="mini" name="x-mark" class="size-4!" /></button
+				>
+			</ModalTooltip>
 		</span>
 	{/each}
 	{#if row.shared}<Badge variant="secondary">Shared</Badge>{/if}

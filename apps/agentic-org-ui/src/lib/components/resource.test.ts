@@ -119,4 +119,33 @@ describe('Resource', () => {
 		expect(r.message).toBe('');
 		expect(r.reloading).toBe(false);
 	});
+
+	it('passes an AbortSignal and aborts the previous in-flight load on reload and dispose', async () => {
+		const signals: AbortSignal[] = [];
+		const pending: { resolve: (v: string) => void; reject: (e: unknown) => void }[] = [];
+		const r = new Resource<string>((signal) => {
+			if (signal) signals.push(signal);
+			return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+		});
+
+		expect(signals).toHaveLength(1);
+		expect(signals[0].aborted).toBe(false);
+
+		void r.reload();
+		expect(signals).toHaveLength(2);
+		expect(signals[0].aborted).toBe(true);
+		expect(signals[1].aborted).toBe(false);
+
+		r.dispose();
+		expect(signals[1].aborted).toBe(true);
+		expect(r.reloading).toBe(false);
+
+		pending[1].resolve('after-dispose');
+		await settle();
+		expect(r.data).toBeUndefined();
+		expect(r.state).toBe('loading');
+
+		await r.reload();
+		expect(signals).toHaveLength(2);
+	});
 });

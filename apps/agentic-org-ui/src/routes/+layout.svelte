@@ -2,6 +2,7 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
+	import { installOverlayOpenerTracking } from '$lib/components/focus';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { areaCapability } from '$lib/platform/workspace/capabilities';
 	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
@@ -12,6 +13,7 @@
 	const capability = $derived(areaCapability(page.url.pathname));
 	onMount(() => {
 		uiPrefs.hydrate();
+		installOverlayOpenerTracking();
 		document.documentElement.dataset.hydrated = 'true';
 		return appSession.onSessionEnded(() => uiPrefs.clearFavorites());
 	});

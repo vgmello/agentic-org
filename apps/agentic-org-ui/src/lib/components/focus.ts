@@ -80,6 +80,7 @@ const INTERACTIVE_OPENER =
 const POINTER_OPENER_MAX_AGE_MS = 1500;
 let lastPointerEl: HTMLElement | null = null;
 let lastPointerAt = 0;
+let lastKeydownAt = 0;
 let pointerTrackingInstalled = false;
 
 function onDocumentPointerDown(event: Event): void {
@@ -99,18 +100,28 @@ function onDocumentPointerDown(event: Event): void {
 	}
 }
 
-function ensurePointerOpenerTracking(): void {
+function onDocumentKeyDown(): void {
+	lastKeydownAt = Date.now();
+}
+
+/**
+ * Installs capture-phase pointer/keyboard listeners on `document` so the very first pointer-opened
+ * (including lazy-loaded) dialog or sheet knows which control opened it in WebKit.
+ */
+export function installOverlayOpenerTracking(): void {
 	if (pointerTrackingInstalled || typeof document === 'undefined') return;
 	pointerTrackingInstalled = true;
 	document.addEventListener('pointerdown', onDocumentPointerDown, { capture: true, passive: true });
+	document.addEventListener('keydown', onDocumentKeyDown, { capture: true, passive: true });
 }
 
-if (typeof document !== 'undefined') ensurePointerOpenerTracking();
+if (typeof document !== 'undefined') installOverlayOpenerTracking();
 
 /** Reset tracked pointer opener state (for unit tests). */
 export function resetPointerOpenerTrackingForTests(): void {
 	lastPointerEl = null;
 	lastPointerAt = 0;
+	lastKeydownAt = 0;
 	pointerTrackingInstalled = false;
 }
 
@@ -136,12 +147,20 @@ function isRecentPointerOpener(el: HTMLElement | null, within?: Element | null):
 
 /**
  * Captures the control that opened an overlay across both keyboard and WebKit mouse interactions.
- * WebKit leaves `document.activeElement` on `document.body` after a pointer click on a button,
- * so we fall back to the most recently clicked interactive control recorded on `pointerdown`.
+ * WebKit leaves `document.activeElement` on `document.body` (or a previously focused heading/control)
+ * after a pointer click on a button, so when the latest interaction was a pointer click we prefer
+ * the clicked interactive control recorded on `pointerdown`.
  */
 export function captureOverlayOpener(within?: Element | null): HTMLElement | null {
 	if (typeof document === 'undefined') return null;
-	ensurePointerOpenerTracking();
+	installOverlayOpenerTracking();
+	if (
+		lastPointerAt > 0 &&
+		lastPointerAt >= lastKeydownAt &&
+		isRecentPointerOpener(lastPointerEl, within)
+	) {
+		return lastPointerEl;
+	}
 	if (isActiveOpener(document.activeElement, within)) return document.activeElement;
 	return isRecentPointerOpener(lastPointerEl, within) ? lastPointerEl : null;
 }

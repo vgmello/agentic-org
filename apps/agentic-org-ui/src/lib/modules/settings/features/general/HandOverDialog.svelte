@@ -46,13 +46,12 @@
 	let error = $state<string | undefined>();
 	let passwordInput = $state<HTMLInputElement | null>(null);
 	const person = $derived(general.handOverCandidates.find((c) => c.memberId === chosen));
-	$effect(() => {
-		if (open) {
-			chosen = '';
-			password = '';
-			error = undefined;
-		}
-	});
+
+	function resetOnOpen() {
+		chosen = '';
+		password = '';
+		error = undefined;
+	}
 
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
@@ -84,7 +83,11 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent {onCloseAutoFocus} class="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+	<DialogContent
+		onOpenAutoFocus={resetOnOpen}
+		{onCloseAutoFocus}
+		class="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+	>
 		<form class="grid gap-6" onsubmit={submit} novalidate>
 			<DialogHeader>
 				<DialogTitle text="Hand over administrator" />

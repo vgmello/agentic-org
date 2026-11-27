@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Dialog,
@@ -38,19 +37,17 @@
 	let error = $state<string | undefined>();
 	let busy = $state(false);
 	// Kept while the dialog closes, so its text doesn't flash empty.
-	let shownTeam = $state<Team | undefined>();
-	let shownProject = $state<{ id: string; name: string } | undefined>();
+	let lastTeam = $state<Team | undefined>();
+	let lastProject = $state<{ id: string; name: string } | undefined>();
+	const shownTeam = $derived(open ? (team ?? lastTeam) : lastTeam);
+	const shownProject = $derived(open ? (project ?? lastProject) : lastProject);
 
-	$effect(() => {
-		if (open) {
-			untrack(() => {
-				shownTeam = team;
-				shownProject = project;
-				choice = '';
-				error = undefined;
-			});
-		}
-	});
+	function resetOnOpen() {
+		lastTeam = team;
+		lastProject = project;
+		choice = '';
+		error = undefined;
+	}
 
 	const projects = $derived(shownTeam ? projectsToAdd(snapshot, shownTeam.id) : []);
 	const teams = $derived(shownProject ? teamOptions(snapshot) : []);
@@ -85,7 +82,7 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = false)}>
-	<DialogContent>
+	<DialogContent onOpenAutoFocus={resetOnOpen}>
 		<DialogHeader>
 			{#if shownTeam}
 				<DialogTitle text={`Add a project to ${shownTeam.name ?? ''}`} />

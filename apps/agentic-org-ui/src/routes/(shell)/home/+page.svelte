@@ -40,7 +40,7 @@
 	const tessPanel = useTessPanel();
 
 	const live = new HomeLiveState({
-		overview: (id) => officesApi.overview(id),
+		overview: (id, signal) => officesApi.overview(id, signal),
 		layer: layerOffices
 	});
 

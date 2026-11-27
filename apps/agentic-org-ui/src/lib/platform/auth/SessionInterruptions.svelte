@@ -55,15 +55,13 @@
 	onMount(() => signOutFlow.listen());
 
 	$effect(() => {
+		const open = ended && !dismissed;
 		if (!ended && !elsewhere) {
 			dismissed = false;
 			discardAsk = false;
 			password = '';
 			failure = passwordError = undefined;
 		}
-	});
-	$effect(() => {
-		const open = ended && !dismissed;
 		if (!dialog) return;
 		if (open && !dialog.open) {
 			editable = drafts.hasEditable();

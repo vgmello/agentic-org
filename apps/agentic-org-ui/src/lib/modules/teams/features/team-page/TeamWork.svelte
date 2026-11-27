@@ -33,7 +33,8 @@
 
 	let query = $state('');
 	let openRowRef = $state<string | null>(null);
-	let openSnapshot = $state<WorkRow | null>(null);
+	// Plain non-reactive cache so ?item= deep links stay mounted if the row leaves the list on reload.
+	const lastSeen: { row: WorkRow | null } = { row: null };
 	let lastTriggerEl: HTMLElement | null = null;
 	let dismissedUrlItem = $state<string | null>(null);
 
@@ -64,14 +65,20 @@
 		const rows = work.state === 'ready' ? (work.data ?? []) : [];
 		return rows.find((r) => normalizeRef(r.ref) === requestedRef) ?? null;
 	});
-	// Keep the reading panel mounted if an already-open item leaves the team list (e.g. cancelled)
+	// Keep the reading panel mounted if an already-open item (clicked or ?item= deep-linked) leaves the team list
 	// so the user sees the confirmation inside WorkDetailPage and closing still strips ?item= and restores focus.
 	const activeOpenRow = $derived<WorkRow | null>(
 		matchedRow ??
-			(requestedRef && openSnapshot && normalizeRef(openSnapshot.ref) === requestedRef
-				? openSnapshot
+			(requestedRef && lastSeen.row && normalizeRef(lastSeen.row.ref) === requestedRef
+				? lastSeen.row
 				: null)
 	);
+
+	function rememberOpenRow(row: WorkRow) {
+		return () => {
+			lastSeen.row = row;
+		};
+	}
 
 	function readingStatusTone(state: WorkState): WorkStatusRingTone {
 		if (state === 'done') return 'done';
@@ -101,15 +108,15 @@
 		lastTriggerEl =
 			triggerEl ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
 		openRowRef = row.ref;
-		openSnapshot = row;
+		lastSeen.row = row;
 		dismissedUrlItem = null;
 	}
 
 	function closeInlineDetail(restoreFocus = true) {
-		const closedRef = activeOpenRow?.ref ?? openRowRef ?? openSnapshot?.ref ?? null;
+		const closedRef = activeOpenRow?.ref ?? openRowRef ?? lastSeen.row?.ref ?? null;
 		const trigger = lastTriggerEl;
 		openRowRef = null;
-		openSnapshot = null;
+		lastSeen.row = null;
 		lastTriggerEl = null;
 		if (urlItem) {
 			const dismissed = normalizeRef(urlItem);
@@ -236,7 +243,7 @@
 
 {#if activeOpenRow}
 	{@const pri = readingPriority(activeOpenRow.priority)}
-	<div class="work-workspace has-work-detail">
+	<div class="work-workspace has-work-detail" {@attach rememberOpenRow(activeOpenRow)}>
 		<WorkReadingPanel
 			itemId={activeOpenRow.ref}
 			refLabel={activeOpenRow.ref}
@@ -256,7 +263,7 @@
 					refParam={activeOpenRow.ref}
 					embedded
 					onchanged={() => {
-						if (matchedRow) openSnapshot = matchedRow;
+						if (matchedRow) lastSeen.row = matchedRow;
 						void work.reload();
 					}}
 				/>

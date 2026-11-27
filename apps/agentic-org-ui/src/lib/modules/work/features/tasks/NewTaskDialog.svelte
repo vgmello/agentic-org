@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { DraftableText } from '$lib/modules/copilot/ui';
 	import { Button } from '$lib/components/ui/button';
 	import {
@@ -48,21 +47,17 @@
 	let touched = $state(false);
 	let confirmed = $state(false);
 
-	$effect(() => {
-		if (open) {
-			untrack(() => {
-				title = '';
-				description = '';
-				definitionOfDone = '';
-				priority = 'normal';
-				assignee = '';
-				error = undefined;
-				busy = false;
-				touched = false;
-				confirmed = false;
-			});
-		}
-	});
+	function resetOnOpen() {
+		title = '';
+		description = '';
+		definitionOfDone = '';
+		priority = 'normal';
+		assignee = '';
+		error = undefined;
+		busy = false;
+		touched = false;
+		confirmed = false;
+	}
 
 	const people: { member: Member; label: string }[] = $derived(assigneeOptions(snapshot));
 	const titleError = $derived(
@@ -102,7 +97,7 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent class="sm:max-w-lg">
+	<DialogContent onOpenAutoFocus={resetOnOpen} class="sm:max-w-lg">
 		<DialogHeader>
 			<DialogTitle text={'New task'} />
 			<DialogDescription>In {projectName}. It starts in To do.</DialogDescription>

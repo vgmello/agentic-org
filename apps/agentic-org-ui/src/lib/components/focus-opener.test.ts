@@ -164,4 +164,30 @@ describe('captureOverlayOpener & returnFocus (WebKit pointer-open support)', () 
 			vi.useRealTimers();
 		}
 	});
+
+	it('prefers recent clicked button over stale focused heading on WebKit pointer open, and activeElement after keydown', () => {
+		vi.useFakeTimers();
+		try {
+			const heading = new FakeElement('h1', { tabindex: '-1' });
+			const clickedBtn = new FakeElement('button');
+			const tabbedBtn = new FakeElement('button');
+			captureOverlayOpener(null);
+			const dispatch = (
+				globalThis.document as unknown as { dispatch: (t: string, el: FakeElement) => void }
+			).dispatch;
+
+			// Route navigation left activeElement on a heading, then user clicks clickedBtn in WebKit.
+			(globalThis.document as unknown as { activeElement: unknown }).activeElement = heading;
+			dispatch('pointerdown', clickedBtn);
+			expect(captureOverlayOpener(null)).toBe(clickedBtn);
+
+			// Subsequent keyboard activation uses activeElement instead of the earlier pointer click.
+			vi.advanceTimersByTime(50);
+			(globalThis.document as unknown as { activeElement: unknown }).activeElement = tabbedBtn;
+			dispatch('keydown', tabbedBtn);
+			expect(captureOverlayOpener(null)).toBe(tabbedBtn);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });

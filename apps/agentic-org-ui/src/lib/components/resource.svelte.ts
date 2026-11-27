@@ -7,44 +7,64 @@ import { UNAVAILABLE_MESSAGE } from '$lib/platform/unavailable-api';
 
 export type ResourceState = 'loading' | 'ready' | 'error' | 'unavailable' | 'unsupported';
 
+function errorStateFor(failure: ReturnType<typeof toAppError>): ResourceState {
+	if (failure.source !== 'api') return 'error';
+	if (failure.code === 'unavailable' && failure.message === UNAVAILABLE_MESSAGE) {
+		return 'unavailable';
+	}
+	return failure.code === 'unsupported' ? 'unsupported' : 'error';
+}
+
 export class Resource<T> {
 	state = $state<ResourceState>('loading');
 	data = $state.raw<T | undefined>(undefined);
 	message = $state('');
 	reloading = $state(false);
-	#load: () => Promise<T>;
+	#load: (signal?: AbortSignal) => Promise<T>;
 	#run = 0;
+	#activeAbort: AbortController | undefined;
+	#disposed = false;
 
-	constructor(load: () => Promise<T>) {
+	constructor(load: (signal?: AbortSignal) => Promise<T>) {
 		this.#load = load;
 		void this.reload();
 	}
 
+	#isStale(run: number, signal: AbortSignal): boolean {
+		return run !== this.#run || this.#disposed || signal.aborted;
+	}
+
 	async reload(): Promise<void> {
+		if (this.#disposed) return;
+		this.#activeAbort?.abort();
+		const controller = new AbortController();
+		this.#activeAbort = controller;
 		const run = ++this.#run;
 		this.reloading = true;
 		try {
-			const value = await this.#load();
-			if (run !== this.#run) return;
+			const value = await this.#load(controller.signal);
+			if (this.#isStale(run, controller.signal)) return;
 			this.data = value;
 			this.state = 'ready';
 			this.message = '';
 		} catch (e) {
-			if (run !== this.#run) return;
+			if (this.#isStale(run, controller.signal)) return;
 			const failure = toAppError(e);
 			this.message = failure.message;
-			this.state =
-				failure.source === 'api' &&
-				failure.code === 'unavailable' &&
-				failure.message === UNAVAILABLE_MESSAGE
-					? 'unavailable'
-					: failure.source === 'api' && failure.code === 'unsupported'
-						? 'unsupported'
-						: 'error';
+			this.state = errorStateFor(failure);
 			// An old answer is never shown beside a failure it no longer matches.
 			this.data = undefined;
 		} finally {
+			if (this.#activeAbort === controller) this.#activeAbort = undefined;
 			if (run === this.#run) this.reloading = false;
 		}
+	}
+
+	dispose(): void {
+		this.#disposed = true;
+		this.#run++;
+		this.#activeAbort?.abort();
+		this.#activeAbort = undefined;
+		this.reloading = false;
 	}
 }

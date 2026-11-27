@@ -18,7 +18,7 @@ import { loadShellWorkItems } from '$lib/modules/workitems/shell-summary';
 import { toAppError } from '$lib/proto';
 
 export interface HomeOfficesAdapter<TOverview = unknown> {
-	overview(organizationId: string): Promise<TOverview>;
+	overview(organizationId: string, signal?: AbortSignal): Promise<TOverview>;
 	layer(base: OfficeInfo[], overview: TOverview | undefined): OfficeInfo[];
 }
 
@@ -55,6 +55,7 @@ export class HomeLiveState<TOverview = unknown> {
 	#officesAdapter: HomeOfficesAdapter<TOverview>;
 	#loadSeq = 0;
 	#destroyed = false;
+	#activeAbort: AbortController | undefined;
 
 	constructor(officesAdapter: HomeOfficesAdapter<TOverview>) {
 		this.#officesAdapter = officesAdapter;
@@ -102,6 +103,8 @@ export class HomeLiveState<TOverview = unknown> {
 		void this.load(targetOrgId, baseConnectionOffices, () => cancelled);
 		return () => {
 			cancelled = true;
+			this.#activeAbort?.abort();
+			this.#activeAbort = undefined;
 		};
 	}
 
@@ -110,6 +113,10 @@ export class HomeLiveState<TOverview = unknown> {
 		baseConnectionOffices: OfficeInfo[],
 		isCancelled: () => boolean = () => false
 	): Promise<void> {
+		this.#activeAbort?.abort();
+		const controller = new AbortController();
+		this.#activeAbort = controller;
+		const signal = controller.signal;
 		const seq = ++this.#loadSeq;
 		const retryingFromError = untrack(() => this.loadError !== undefined);
 		this.loadError = undefined;
@@ -120,18 +127,19 @@ export class HomeLiveState<TOverview = unknown> {
 			this.retryingWork = true;
 			this.allowShellFallback = false;
 		}
-		const isStale = () => this.#destroyed || isCancelled() || seq !== this.#loadSeq;
+		const isStale = () =>
+			this.#destroyed || isCancelled() || signal.aborted || seq !== this.#loadSeq;
 
-		let latestBaseOffices = baseConnectionOffices;
-		let latestOverview: TOverview | undefined;
-		const syncOffices = () => {
-			if (!isStale()) {
-				this.loadedOrganizationId = targetOrgId;
-				this.offices = this.#officesAdapter.layer(latestBaseOffices, latestOverview);
-			}
-		};
+		const workPromise = this.#loadWorkSlice(targetOrgId, signal, isStale);
+		const inboxPromise = this.#loadInboxSlice(targetOrgId, signal, isStale);
+		this.#loadOfficeSlices(targetOrgId, baseConnectionOffices, signal, isStale);
+		this.#loadSecondarySlices(targetOrgId, isStale);
 
-		const workPromise = loadShellWorkItems(targetOrgId).then(
+		return Promise.allSettled([workPromise, inboxPromise]).then(() => undefined);
+	}
+
+	#loadWorkSlice(targetOrgId: string, signal: AbortSignal, isStale: () => boolean): Promise<void> {
+		return loadShellWorkItems(targetOrgId, signal).then(
 			(items) => {
 				if (isStale()) return;
 				this.loadedOrganizationId = targetOrgId;
@@ -143,24 +151,30 @@ export class HomeLiveState<TOverview = unknown> {
 			},
 			(err) => {
 				if (isStale()) return;
-				this.loadedOrganizationId = targetOrgId;
-				this.retryingWork = false;
-				this.allowShellFallback = false;
-				const appErr = toAppError(err);
-				if (appErr.source === 'api' && appErr.code === 'unsupported') {
-					this.items = [];
-					this.workFromSeed = false;
-				} else {
-					if (this.workFromSeed) {
-						this.items = undefined;
-						this.workFromSeed = false;
-					}
-					this.loadError = appErr.message;
-				}
+				this.#applyWorkError(targetOrgId, err);
 			}
 		);
+	}
 
-		const inboxPromise = inboxApi.list(targetOrgId).then(
+	#applyWorkError(targetOrgId: string, err: unknown): void {
+		this.loadedOrganizationId = targetOrgId;
+		this.retryingWork = false;
+		this.allowShellFallback = false;
+		const appErr = toAppError(err);
+		if (appErr.source === 'api' && appErr.code === 'unsupported') {
+			this.items = [];
+			this.workFromSeed = false;
+			return;
+		}
+		if (this.workFromSeed) {
+			this.items = undefined;
+			this.workFromSeed = false;
+		}
+		this.loadError = appErr.message;
+	}
+
+	#loadInboxSlice(targetOrgId: string, signal: AbortSignal, isStale: () => boolean): Promise<void> {
+		return inboxApi.list(targetOrgId, signal).then(
 			(rows) => {
 				if (isStale()) return;
 				this.loadedOrganizationId = targetOrgId;
@@ -175,6 +189,21 @@ export class HomeLiveState<TOverview = unknown> {
 				this.inboxSettled = true;
 			}
 		);
+	}
+
+	#loadOfficeSlices(
+		targetOrgId: string,
+		baseConnectionOffices: OfficeInfo[],
+		signal: AbortSignal,
+		isStale: () => boolean
+	): void {
+		let latestBaseOffices = baseConnectionOffices;
+		let latestOverview: TOverview | undefined;
+		const syncOffices = () => {
+			if (isStale()) return;
+			this.loadedOrganizationId = targetOrgId;
+			this.offices = this.#officesAdapter.layer(latestBaseOffices, latestOverview);
+		};
 
 		void officeApi.peekOrganizations().then(
 			(orgs) => {
@@ -185,116 +214,104 @@ export class HomeLiveState<TOverview = unknown> {
 			() => undefined
 		);
 
-		void this.#officesAdapter.overview(targetOrgId).then(
+		void this.#officesAdapter.overview(targetOrgId, signal).then(
 			(overview) => {
 				latestOverview = overview;
 				syncOffices();
 			},
 			() => syncOffices()
 		);
+	}
 
-		void accountZone
-			.ensure(targetOrgId)
-			.catch(() => undefined)
-			.then(() => {
-				if (isStale()) return;
-				const timeZone = accountZone.zone || 'UTC';
-				return costsApi.organizationCost(targetOrgId, { kind: 'this_month', timeZone });
-			})
-			.then(
-				(cost) => {
-					if (!isStale() && cost !== undefined) {
-						this.loadedOrganizationId = targetOrgId;
-						this.orgCost = cost;
-					}
+	#loadSecondarySlices(targetOrgId: string, isStale: () => boolean): void {
+		const settle = <T>(promise: Promise<T>, onValue: (value: T) => void, onError: () => void) => {
+			void promise.then(
+				(value) => {
+					if (isStale()) return;
+					this.loadedOrganizationId = targetOrgId;
+					onValue(value);
 				},
 				() => {
-					if (!isStale()) {
-						this.loadedOrganizationId = targetOrgId;
-						this.orgCost = undefined;
-					}
+					if (isStale()) return;
+					this.loadedOrganizationId = targetOrgId;
+					onError();
 				}
 			);
+		};
 
-		void costsApi.agentBudgets(targetOrgId).then(
+		settle(
+			accountZone
+				.ensure(targetOrgId)
+				.catch(() => undefined)
+				.then(() => {
+					if (isStale()) return undefined;
+					return costsApi.organizationCost(targetOrgId, {
+						kind: 'this_month',
+						timeZone: accountZone.zone || 'UTC'
+					});
+				}),
+			(cost) => {
+				if (cost !== undefined) this.orgCost = cost;
+			},
+			() => {
+				this.orgCost = undefined;
+			}
+		);
+
+		settle(
+			costsApi.agentBudgets(targetOrgId),
 			(budgets) => {
-				if (!isStale()) {
-					this.loadedOrganizationId = targetOrgId;
-					this.agentBudgets = budgets;
-				}
+				this.agentBudgets = budgets;
 			},
 			() => {
-				if (!isStale()) {
-					this.loadedOrganizationId = targetOrgId;
-					this.agentBudgets = undefined;
-				}
+				this.agentBudgets = undefined;
 			}
 		);
 
-		void membersApi.directory(targetOrgId).then(
+		settle(
+			membersApi.directory(targetOrgId),
 			(rows) => {
-				if (!isStale()) {
-					this.loadedOrganizationId = targetOrgId;
-					this.memberRows = rows;
-				}
+				this.memberRows = rows;
 			},
 			() => {
-				if (!isStale()) {
-					this.loadedOrganizationId = targetOrgId;
-					this.memberRows = undefined;
-				}
+				this.memberRows = undefined;
 			}
 		);
 
-		void projectsApi.list(targetOrgId).then(
+		settle(
+			projectsApi.list(targetOrgId),
 			(res) => {
-				if (!isStale()) {
-					this.loadedOrganizationId = targetOrgId;
-					this.projectRows = res.projects;
-				}
+				this.projectRows = res.projects;
 			},
 			() => {
-				if (!isStale()) {
-					this.loadedOrganizationId = targetOrgId;
-					this.projectRows = undefined;
-				}
+				this.projectRows = undefined;
 			}
 		);
 
-		void homeApi.projects(targetOrgId).then(
+		settle(
+			homeApi.projects(targetOrgId),
 			(rows) => {
-				if (!isStale()) {
-					this.loadedOrganizationId = targetOrgId;
-					this.homeProjects = rows;
-				}
+				this.homeProjects = rows;
 			},
 			() => {
-				if (!isStale()) {
-					this.loadedOrganizationId = targetOrgId;
-					this.homeProjects = undefined;
-				}
+				this.homeProjects = undefined;
 			}
 		);
 
-		void activityApi.feed(targetOrgId, { kind: 'all' }, 12).then(
+		settle(
+			activityApi.feed(targetOrgId, { kind: 'all' }, 12),
 			(res) => {
-				if (!isStale()) {
-					this.loadedOrganizationId = targetOrgId;
-					this.activityRows = res.rows;
-				}
+				this.activityRows = res.rows;
 			},
 			() => {
-				if (!isStale()) {
-					this.loadedOrganizationId = targetOrgId;
-					this.activityRows = undefined;
-				}
+				this.activityRows = undefined;
 			}
 		);
-
-		return Promise.allSettled([workPromise, inboxPromise]).then(() => undefined);
 	}
 
 	destroy(): void {
 		this.#destroyed = true;
+		this.#activeAbort?.abort();
+		this.#activeAbort = undefined;
 	}
 }

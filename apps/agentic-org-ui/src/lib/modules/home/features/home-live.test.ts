@@ -245,4 +245,58 @@ describe('HomeLiveState', () => {
 			live.destroy();
 		}
 	});
+
+	it('forwards an AbortSignal to work, inbox, and offices loads and aborts on cancel, overlap, and destroy', async () => {
+		const workSignals: AbortSignal[] = [];
+		const inboxSignals: AbortSignal[] = [];
+		const officeSignals: AbortSignal[] = [];
+
+		workSnapshot.mockImplementation(
+			(_orgId: string, _a?: unknown, _b?: unknown, signal?: AbortSignal) => {
+				if (signal) workSignals.push(signal);
+				return new Promise(() => {});
+			}
+		);
+		inboxList.mockImplementation((_orgId: string, signal?: AbortSignal) => {
+			if (signal) inboxSignals.push(signal);
+			return new Promise(() => {});
+		});
+		const overview = vi.fn((_orgId: string, signal?: AbortSignal) => {
+			if (signal) officeSignals.push(signal);
+			return new Promise(() => {});
+		});
+
+		const live = new HomeLiveState({ overview, layer: (base) => base });
+		const cancelFirst = live.connect('org-1', baseOffices);
+		await flushMicrotasks();
+
+		expect(workSignals).toHaveLength(1);
+		expect(inboxSignals).toHaveLength(1);
+		expect(officeSignals).toHaveLength(1);
+		expect(workSignals[0].aborted).toBe(false);
+		expect(inboxSignals[0].aborted).toBe(false);
+		expect(officeSignals[0].aborted).toBe(false);
+
+		cancelFirst();
+		expect(workSignals[0].aborted).toBe(true);
+		expect(inboxSignals[0].aborted).toBe(true);
+		expect(officeSignals[0].aborted).toBe(true);
+
+		void live.load('org-1', baseOffices);
+		await flushMicrotasks();
+		expect(workSignals).toHaveLength(2);
+		expect(workSignals[1].aborted).toBe(false);
+
+		void live.load('org-2', baseOffices);
+		await flushMicrotasks();
+		expect(workSignals[1].aborted).toBe(true);
+		expect(inboxSignals[1].aborted).toBe(true);
+		expect(officeSignals[1].aborted).toBe(true);
+		expect(workSignals[2].aborted).toBe(false);
+
+		live.destroy();
+		expect(workSignals[2].aborted).toBe(true);
+		expect(inboxSignals[2].aborted).toBe(true);
+		expect(officeSignals[2].aborted).toBe(true);
+	});
 });
