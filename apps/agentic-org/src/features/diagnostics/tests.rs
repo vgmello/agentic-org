@@ -8,7 +8,8 @@ use org_office::{EngineChoice, Office, TestOffice};
 use org_platform::service::{Registration, ServiceError, ServiceManager, ServiceStatus, Unit};
 use serde_json::json;
 
-use super::doctor::{check_linux_apparmor_userns_at, CheckStatus, DoctorCheck};
+use super::doctor::{CheckStatus, DoctorCheck};
+use super::doctor_apparmor::check_linux_apparmor_userns_at;
 use super::doctor_host::{
     check_permissions, check_release_pin_at, check_sockets, validate_marker_content,
 };
@@ -957,16 +958,18 @@ fn doctor_release_pin_marker_permissions_sockets_and_path_redaction() {
         .any(|c| c.id == "runtime.office_sockets" && c.status == CheckStatus::Fail));
 
     // PermissionDenied during check_permissions reports Fail instead of silently passing.
-    let locked_parent = dir.path().join("no-exec-parent");
-    let locked_child = locked_parent.join("office-state");
-    fs::create_dir_all(&locked_child).unwrap();
-    fs::set_permissions(&locked_parent, fs::Permissions::from_mode(0o000)).unwrap();
-    let mut perm_paths = paths.clone();
-    perm_paths.office_home = locked_child;
-    let mut perm_checks = Vec::new();
-    check_permissions(&perm_paths, &mut perm_checks);
-    fs::set_permissions(&locked_parent, fs::Permissions::from_mode(0o700)).unwrap();
-    assert_eq!(perm_checks[0].status, CheckStatus::Fail, "{perm_checks:?}");
+    if org_platform::posix::effective_uid() != 0 {
+        let locked_parent = dir.path().join("no-exec-parent");
+        let locked_child = locked_parent.join("office-state");
+        fs::create_dir_all(&locked_child).unwrap();
+        fs::set_permissions(&locked_parent, fs::Permissions::from_mode(0o000)).unwrap();
+        let mut perm_paths = paths.clone();
+        perm_paths.office_home = locked_child;
+        let mut perm_checks = Vec::new();
+        check_permissions(&perm_paths, &mut perm_checks);
+        fs::set_permissions(&locked_parent, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(perm_checks[0].status, CheckStatus::Fail, "{perm_checks:?}");
+    }
 
     // DoctorCheck constructors redact secrets in `path`.
     let secret = ["sk-ant-", "pathsecret987654321"].join("");
@@ -1191,21 +1194,23 @@ fn doctor_apparmor_userns_handles_missing_zero_unreadable_and_scoped_profile_sta
     );
 
     // Unreadable /sys/kernel/security/apparmor/profiles (0000 -> PermissionDenied) falls back cleanly to Pass.
-    let unreadable_profiles = dir.path().join("profiles-denied");
-    fs::write(&unreadable_profiles, "agentic-org-bwrap (unconfined)\n").unwrap();
-    fs::set_permissions(&unreadable_profiles, fs::Permissions::from_mode(0o000)).unwrap();
-    let pass_perm_denied =
-        check_linux_apparmor_userns_at(&sysctl_one, &scoped_aa, Some(&unreadable_profiles))
-            .unwrap();
-    fs::set_permissions(&unreadable_profiles, fs::Permissions::from_mode(0o600)).unwrap();
-    assert_eq!(
-        pass_perm_denied.status,
-        CheckStatus::Pass,
-        "{pass_perm_denied:?}"
-    );
-    assert!(pass_perm_denied
-        .message
-        .contains("scoped bwrap AppArmor profile present at"));
+    if org_platform::posix::effective_uid() != 0 {
+        let unreadable_profiles = dir.path().join("profiles-denied");
+        fs::write(&unreadable_profiles, "agentic-org-bwrap (unconfined)\n").unwrap();
+        fs::set_permissions(&unreadable_profiles, fs::Permissions::from_mode(0o000)).unwrap();
+        let pass_perm_denied =
+            check_linux_apparmor_userns_at(&sysctl_one, &scoped_aa, Some(&unreadable_profiles))
+                .unwrap();
+        fs::set_permissions(&unreadable_profiles, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            pass_perm_denied.status,
+            CheckStatus::Pass,
+            "{pass_perm_denied:?}"
+        );
+        assert!(pass_perm_denied
+            .message
+            .contains("scoped bwrap AppArmor profile present at"));
+    }
 
     // Readable profiles status confirming agentic-org-bwrap (unconfined) is loaded returns Pass.
     let loaded_profiles = dir.path().join("profiles-loaded");
@@ -1357,19 +1362,173 @@ fn doctor_apparmor_userns_handles_missing_zero_unreadable_and_scoped_profile_sta
     assert_eq!(warn_weird.status, CheckStatus::Warn, "{warn_weird:?}");
     assert_never_advises_global_sysctl_disable(&warn_weird);
 
-    // 9. Unreadable sysctl returns Warn.
-    let unreadable_sysctl = dir.path().join("sysctl-unreadable");
-    fs::write(&unreadable_sysctl, "1\n").unwrap();
-    fs::set_permissions(&unreadable_sysctl, fs::Permissions::from_mode(0o000)).unwrap();
-    let warn_unreadable =
-        check_linux_apparmor_userns_at(&unreadable_sysctl, &empty_aa, None).unwrap();
-    fs::set_permissions(&unreadable_sysctl, fs::Permissions::from_mode(0o600)).unwrap();
-    assert_eq!(
-        warn_unreadable.status,
-        CheckStatus::Warn,
-        "{warn_unreadable:?}"
+    // 9. Unreadable sysctl returns Warn (guarded for non-root UID).
+    if org_platform::posix::effective_uid() != 0 {
+        let unreadable_sysctl = dir.path().join("sysctl-unreadable");
+        fs::write(&unreadable_sysctl, "1\n").unwrap();
+        fs::set_permissions(&unreadable_sysctl, fs::Permissions::from_mode(0o000)).unwrap();
+        let warn_unreadable =
+            check_linux_apparmor_userns_at(&unreadable_sysctl, &empty_aa, None).unwrap();
+        fs::set_permissions(&unreadable_sysctl, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            warn_unreadable.status,
+            CheckStatus::Warn,
+            "{warn_unreadable:?}"
+        );
+        assert!(warn_unreadable
+            .message
+            .contains("could not read AppArmor userns sysctl"));
+    }
+}
+
+#[test]
+fn doctor_apparmor_userns_rejects_shadowing_wrong_attachment_enforcing_and_child_notation() {
+    let dir = tempfile::tempdir().unwrap();
+    let sysctl_one = dir.path().join("sysctl-1");
+    fs::write(&sysctl_one, "1\n").unwrap();
+
+    // 1. Coexisting active restricting /etc/apparmor.d/bwrap shadows valid agentic-org-bwrap -> Warn.
+    let shadow_aa = dir.path().join("aa-shadow");
+    fs::create_dir_all(&shadow_aa).unwrap();
+    fs::write(
+        shadow_aa.join("agentic-org-bwrap"),
+        VALID_SCOPED_BWRAP_PROFILE,
+    )
+    .unwrap();
+    fs::write(
+        shadow_aa.join("bwrap"),
+        "abi <abi/4.0>,\nprofile bwrap /usr/bin/bwrap {\n  userns,\n}\n",
+    )
+    .unwrap();
+    let warn_shadow = check_linux_apparmor_userns_at(&sysctl_one, &shadow_aa, None).unwrap();
+    assert_eq!(warn_shadow.status, CheckStatus::Warn, "{warn_shadow:?}");
+    assert!(
+        warn_shadow.message.contains("shadows"),
+        "{}",
+        warn_shadow.message
     );
-    assert!(warn_unreadable
-        .message
-        .contains("could not read AppArmor userns sysctl"));
+    assert_never_advises_global_sysctl_disable(&warn_shadow);
+
+    // Disabling the shadowing `bwrap` profile allows `agentic-org-bwrap` to Pass.
+    fs::create_dir_all(shadow_aa.join("disable")).unwrap();
+    symlink(shadow_aa.join("bwrap"), shadow_aa.join("disable/bwrap")).unwrap();
+    let pass_unshadowed = check_linux_apparmor_userns_at(&sysctl_one, &shadow_aa, None).unwrap();
+    assert_eq!(
+        pass_unshadowed.status,
+        CheckStatus::Pass,
+        "{pass_unshadowed:?}"
+    );
+
+    // 2. Kernel loaded `bwrap (enforce)` alongside `agentic-org-bwrap (unconfined)` shadows it -> Warn.
+    let shadow_loaded = dir.path().join("profiles-shadow-enforce");
+    fs::write(
+        &shadow_loaded,
+        "agentic-org-bwrap (unconfined)\nbwrap (enforce)\n",
+    )
+    .unwrap();
+    let warn_kernel_shadow =
+        check_linux_apparmor_userns_at(&sysctl_one, &shadow_aa, Some(&shadow_loaded)).unwrap();
+    assert_eq!(
+        warn_kernel_shadow.status,
+        CheckStatus::Warn,
+        "{warn_kernel_shadow:?}"
+    );
+    assert!(warn_kernel_shadow.message.contains("shadows"));
+    assert_never_advises_global_sysctl_disable(&warn_kernel_shadow);
+
+    // 3. Nested child profile notation `bwrap//unpriv_bwrap (enforce)` in kernel profiles -> Warn.
+    let child_loaded = dir.path().join("profiles-child-notation");
+    fs::write(
+        &child_loaded,
+        "agentic-org-bwrap (unconfined)\nbwrap//unpriv_bwrap (enforce)\n",
+    )
+    .unwrap();
+    let warn_child =
+        check_linux_apparmor_userns_at(&sysctl_one, &shadow_aa, Some(&child_loaded)).unwrap();
+    assert_eq!(warn_child.status, CheckStatus::Warn, "{warn_child:?}");
+    assert!(warn_child.message.contains("unpriv_bwrap"));
+
+    // 4. Kernel loaded `agentic-org-bwrap (enforce)` instead of unconfined -> Warn.
+    let scoped_enforce_loaded = dir.path().join("profiles-scoped-enforce");
+    fs::write(&scoped_enforce_loaded, "agentic-org-bwrap (enforce)\n").unwrap();
+    let warn_scoped_enforce =
+        check_linux_apparmor_userns_at(&sysctl_one, &shadow_aa, Some(&scoped_enforce_loaded))
+            .unwrap();
+    assert_eq!(
+        warn_scoped_enforce.status,
+        CheckStatus::Warn,
+        "{warn_scoped_enforce:?}"
+    );
+    assert!(warn_scoped_enforce.message.contains("enforce"));
+
+    // 5. Wrong attachment `/usr/bin/true` must NOT match `agentic-org-bwrap` profile name.
+    let wrong_att_aa = dir.path().join("aa-wrong-att");
+    fs::create_dir_all(&wrong_att_aa).unwrap();
+    fs::write(
+        wrong_att_aa.join("agentic-org-bwrap"),
+        "abi <abi/4.0>,\nprofile agentic-org-bwrap /usr/bin/true flags=(unconfined) {\n  userns,\n}\n",
+    )
+    .unwrap();
+    let warn_wrong_att = check_linux_apparmor_userns_at(&sysctl_one, &wrong_att_aa, None).unwrap();
+    assert_eq!(
+        warn_wrong_att.status,
+        CheckStatus::Warn,
+        "{warn_wrong_att:?}"
+    );
+
+    // Unattached profile without attachment path must also Warn.
+    fs::write(
+        wrong_att_aa.join("agentic-org-bwrap"),
+        "abi <abi/4.0>,\nprofile agentic-org-bwrap flags=(unconfined) {\n  userns,\n}\n",
+    )
+    .unwrap();
+    let warn_unattached = check_linux_apparmor_userns_at(&sysctl_one, &wrong_att_aa, None).unwrap();
+    assert_eq!(
+        warn_unattached.status,
+        CheckStatus::Warn,
+        "{warn_unattached:?}"
+    );
+
+    // 6. Default-deny enforcing (non-unconfined) `bwrap` and `agentic-org-bwrap` profiles -> Warn.
+    let enforce_bwrap_aa = dir.path().join("aa-enforce-bwrap");
+    fs::create_dir_all(&enforce_bwrap_aa).unwrap();
+    fs::write(
+        enforce_bwrap_aa.join("bwrap"),
+        "abi <abi/4.0>,\nprofile bwrap /usr/bin/bwrap {\n  userns,\n}\n",
+    )
+    .unwrap();
+    let warn_enforce_bwrap =
+        check_linux_apparmor_userns_at(&sysctl_one, &enforce_bwrap_aa, None).unwrap();
+    assert_eq!(
+        warn_enforce_bwrap.status,
+        CheckStatus::Warn,
+        "{warn_enforce_bwrap:?}"
+    );
+
+    let enforce_scoped_aa = dir.path().join("aa-enforce-scoped");
+    fs::create_dir_all(&enforce_scoped_aa).unwrap();
+    fs::write(
+        enforce_scoped_aa.join("agentic-org-bwrap"),
+        "abi <abi/4.0>,\nprofile agentic-org-bwrap /{usr/,}bin/bwrap {\n  userns,\n}\n",
+    )
+    .unwrap();
+    let warn_enforce_scoped =
+        check_linux_apparmor_userns_at(&sysctl_one, &enforce_scoped_aa, None).unwrap();
+    assert_eq!(
+        warn_enforce_scoped.status,
+        CheckStatus::Warn,
+        "{warn_enforce_scoped:?}"
+    );
+
+    // 7. Unexpected sysctl content is sanitized (no raw ANSI escape sequences leak).
+    let ansi_sysctl = dir.path().join("sysctl-ansi");
+    fs::write(&ansi_sysctl, "\x1b[31m2\x1b[0m\n").unwrap();
+    let warn_ansi = check_linux_apparmor_userns_at(&ansi_sysctl, &wrong_att_aa, None).unwrap();
+    assert_eq!(warn_ansi.status, CheckStatus::Warn, "{warn_ansi:?}");
+    assert!(
+        !warn_ansi.message.contains('\x1b'),
+        "raw ANSI escape must be sanitized: {:?}",
+        warn_ansi.message
+    );
+    assert_never_advises_global_sysctl_disable(&warn_ansi);
 }

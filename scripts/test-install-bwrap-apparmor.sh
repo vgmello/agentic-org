@@ -65,10 +65,26 @@ if command -v apparmor_parser >/dev/null 2>&1; then
     || fail "apparmor_parser rejected canonical bwrap profile"
 fi
 
-# 3. Conflicting CLI flags fail cleanly with exit 2.
+# 3. Conflicting and extraneous CLI flags fail cleanly with exit 2.
 rc=0
 bash "$install_sh" --print-bwrap-apparmor --install-bwrap-apparmor >/dev/null 2>&1 || rc=$?
 [[ "$rc" -eq 2 ]] || fail "expected exit 2 for conflicting flags, got ${rc}"
+
+rc=0
+bash "$install_sh" --print-bwrap-apparmor --bin-dir "${tmp_root}/bin" >/dev/null 2>&1 || rc=$?
+[[ "$rc" -eq 2 ]] || fail "expected exit 2 for --print-bwrap-apparmor --bin-dir, got ${rc}"
+
+rc=0
+bash "$install_sh" --install-bwrap-apparmor --no-restart >/dev/null 2>&1 || rc=$?
+[[ "$rc" -eq 2 ]] || fail "expected exit 2 for standalone --install-bwrap-apparmor --no-restart, got ${rc}"
+
+rc=0
+bash "$install_sh" --install-bwrap-apparmor --bin-dir "${tmp_root}/bin" >/dev/null 2>&1 || rc=$?
+[[ "$rc" -eq 2 ]] || fail "expected exit 2 for standalone --install-bwrap-apparmor --bin-dir, got ${rc}"
+
+rc=0
+bash "$install_sh" --install-bwrap-apparmor --store "${tmp_root}/store" >/dev/null 2>&1 || rc=$?
+[[ "$rc" -eq 2 ]] || fail "expected exit 2 for standalone --install-bwrap-apparmor --store, got ${rc}"
 
 # Following tests exercise Linux staging paths (skip cleanly on non-Linux hosts).
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -294,5 +310,182 @@ out_9f="$(
   bash "$install_sh" --archive "$dummy_archive" --allow-unsigned --bin-dir "$fake_bin" 2>&1
 )"
 assert_not_contains "$out_9f" "--install-bwrap-apparmor" "9f missing bwrap stays quiet"
+
+# 10. P1-1: Trailing-slash symlink, relative AppArmor dir, and directory-at-target all fail closed in strict=1.
+real_dir_10="${tmp_root}/real-aa-10"
+mkdir -p "$real_dir_10"
+sym_dir_10="${tmp_root}/sym-aa-10"
+ln -s "$real_dir_10" "$sym_dir_10"
+rc=0
+AGENTIC_ORG_APPARMOR_DIR="${sym_dir_10}/" \
+AGENTIC_ORG_SKIP_APPARMOR_PARSER=1 \
+bash "$install_sh" --install-bwrap-apparmor >/dev/null 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] || fail "10a expected failure for trailing-slash symlinked AppArmor dir"
+[[ ! -e "${real_dir_10}/agentic-org-bwrap" ]] || fail "10a trailing-slash symlinked dir must not be written"
+
+rc=0
+AGENTIC_ORG_APPARMOR_DIR="relative/apparmor.d" \
+AGENTIC_ORG_SKIP_APPARMOR_PARSER=1 \
+bash "$install_sh" --install-bwrap-apparmor >/dev/null 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] || fail "10b expected failure for relative AppArmor dir"
+
+dir_target_aa="${tmp_root}/dir-target-aa"
+mkdir -p "${dir_target_aa}/agentic-org-bwrap"
+rc=0
+AGENTIC_ORG_APPARMOR_DIR="$dir_target_aa" \
+AGENTIC_ORG_SKIP_APPARMOR_PARSER=1 \
+bash "$install_sh" --install-bwrap-apparmor >/dev/null 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] || fail "10c expected failure when target profile path is a directory"
+dir_contents="$(find "${dir_target_aa}/agentic-org-bwrap" -mindepth 1)"
+[[ -z "$dir_contents" ]] || fail "10c mv moved temp file into existing target directory: ${dir_contents}"
+
+# 11. P1-2: Non-strict release install hook (strict=0) NEVER aborts on symlinked dir, dir target, or parser failure.
+out_11a="$(
+  HOME="$fake_home" \
+  AGENTIC_ORG_APPARMOR_DIR="${sym_dir}/" \
+  AGENTIC_ORG_USERNS_SYSCTL="$sysctl_one" \
+  AGENTIC_ORG_BWRAP_BIN="$fake_bwrap" \
+  bash "$install_sh" --archive "$dummy_archive" --allow-unsigned --bin-dir "$fake_bin" 2>&1
+)"
+assert_contains "$out_11a" "agentic-org 0.0.0-test" "11a release install succeeds despite symlinked AppArmor dir"
+assert_contains "$out_11a" "WARNING:" "11a emits warning on symlinked AppArmor dir"
+assert_contains "$out_11a" "--install-bwrap-apparmor" "11a prints manual remediation"
+
+out_11b="$(
+  HOME="$fake_home" \
+  AGENTIC_ORG_APPARMOR_DIR="$dir_target_aa" \
+  AGENTIC_ORG_USERNS_SYSCTL="$sysctl_one" \
+  AGENTIC_ORG_BWRAP_BIN="$fake_bwrap" \
+  bash "$install_sh" --archive "$dummy_archive" --allow-unsigned --bin-dir "$fake_bin" 2>&1
+)"
+assert_contains "$out_11b" "agentic-org 0.0.0-test" "11b release install succeeds despite directory-at-target"
+assert_contains "$out_11b" "WARNING:" "11b emits warning on non-regular target"
+
+failing_parser_dir="${tmp_root}/failing-parser-bin"
+mkdir -p "$failing_parser_dir"
+cat > "${failing_parser_dir}/apparmor_parser" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-r" ]]; then
+  echo "apparmor_parser: Operation not permitted" >&2
+  exit 1
+fi
+exit 0
+EOF
+chmod 0755 "${failing_parser_dir}/apparmor_parser"
+
+parser_fail_aa="${tmp_root}/parser-fail-aa"
+mkdir -p "$parser_fail_aa"
+out_11c="$(
+  HOME="$fake_home" \
+  PATH="${failing_parser_dir}:${PATH}" \
+  AGENTIC_ORG_APPARMOR_DIR="$parser_fail_aa" \
+  AGENTIC_ORG_USERNS_SYSCTL="$sysctl_one" \
+  AGENTIC_ORG_BWRAP_BIN="$fake_bwrap" \
+  bash "$install_sh" --archive "$dummy_archive" --allow-unsigned --bin-dir "$fake_bin" 2>&1
+)"
+assert_contains "$out_11c" "agentic-org 0.0.0-test" "11c release install succeeds when apparmor_parser -r fails in container"
+assert_contains "$out_11c" "WARNING:" "11c warns on apparmor_parser -r failure"
+assert_contains "$out_11c" "apparmor_parser -r" "11c prints manual reload steps"
+
+# Explicit --install-bwrap-apparmor (strict=1) STILL fails closed when apparmor_parser -r fails.
+rc=0
+PATH="${failing_parser_dir}:${PATH}" \
+AGENTIC_ORG_APPARMOR_DIR="$parser_fail_aa" \
+bash "$install_sh" --install-bwrap-apparmor >/dev/null 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] || fail "11d explicit --install-bwrap-apparmor must fail closed when apparmor_parser -r fails"
+
+# 12. P1-3: Stale kernel bwrap-userns-restrict is unloaded via -R even if disable/ symlink already exists.
+parser_log="${tmp_root}/parser.log"
+stub_parser_dir="${tmp_root}/stub-parser-bin"
+mkdir -p "$stub_parser_dir"
+cat > "${stub_parser_dir}/apparmor_parser" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "${parser_log}"
+exit 0
+EOF
+chmod 0755 "${stub_parser_dir}/apparmor_parser"
+
+pre_disabled_aa="${tmp_root}/pre-disabled-aa"
+mkdir -p "${pre_disabled_aa}/disable"
+cp "${conflict_dir}/bwrap-userns-restrict" "${pre_disabled_aa}/bwrap-userns-restrict"
+ln -s "${pre_disabled_aa}/bwrap-userns-restrict" "${pre_disabled_aa}/disable/bwrap-userns-restrict"
+PATH="${stub_parser_dir}:${PATH}" \
+AGENTIC_ORG_APPARMOR_DIR="$pre_disabled_aa" \
+bash "$install_sh" --install-bwrap-apparmor >/dev/null 2>&1
+parser_calls="$(cat "$parser_log")"
+assert_contains "$parser_calls" "-R ${pre_disabled_aa}/bwrap-userns-restrict" \
+  "12 must unconditionally unload bwrap-userns-restrict even when disable/ symlink exists"
+assert_contains "$parser_calls" "-r ${pre_disabled_aa}/agentic-org-bwrap" \
+  "12 must load agentic-org-bwrap via apparmor_parser -r"
+
+# 13. P1-4: Strict attachment, unconfined requirement, and shadowing /etc/apparmor.d/bwrap detection in install.sh.
+wrong_att_aa="${tmp_root}/aa-wrong-att"
+mkdir -p "$wrong_att_aa"
+cat > "${wrong_att_aa}/agentic-org-bwrap" <<'EOF'
+abi <abi/4.0>,
+profile agentic-org-bwrap /usr/bin/true flags=(unconfined) {
+  userns,
+}
+EOF
+out_13a="$(
+  HOME="$fake_home" \
+  AGENTIC_ORG_APPARMOR_DIR="$wrong_att_aa" \
+  AGENTIC_ORG_USERNS_SYSCTL="$sysctl_one" \
+  AGENTIC_ORG_BWRAP_BIN="$fake_bwrap" \
+  AGENTIC_ORG_SIMULATE_UNPRIVILEGED=1 \
+  bash "$install_sh" --archive "$dummy_archive" --allow-unsigned --bin-dir "$fake_bin" 2>&1
+)"
+assert_contains "$out_13a" "--install-bwrap-apparmor" "13a wrong attachment /usr/bin/true must NOT satisfy profile check"
+
+enforcing_scoped_aa="${tmp_root}/aa-enforcing-scoped"
+mkdir -p "$enforcing_scoped_aa"
+cat > "${enforcing_scoped_aa}/agentic-org-bwrap" <<'EOF'
+abi <abi/4.0>,
+profile agentic-org-bwrap /{usr/,}bin/bwrap {
+  userns,
+}
+EOF
+out_13b="$(
+  HOME="$fake_home" \
+  AGENTIC_ORG_APPARMOR_DIR="$enforcing_scoped_aa" \
+  AGENTIC_ORG_USERNS_SYSCTL="$sysctl_one" \
+  AGENTIC_ORG_BWRAP_BIN="$fake_bwrap" \
+  AGENTIC_ORG_SIMULATE_UNPRIVILEGED=1 \
+  bash "$install_sh" --archive "$dummy_archive" --allow-unsigned --bin-dir "$fake_bin" 2>&1
+)"
+assert_contains "$out_13b" "--install-bwrap-apparmor" "13b enforcing non-unconfined profile must NOT satisfy profile check"
+
+shadow_aa="${tmp_root}/aa-shadow-bwrap"
+mkdir -p "$shadow_aa"
+cp "$template_profile" "${shadow_aa}/agentic-org-bwrap"
+cat > "${shadow_aa}/bwrap" <<'EOF'
+abi <abi/4.0>,
+profile bwrap /usr/bin/bwrap {
+  userns,
+}
+EOF
+out_13c="$(
+  HOME="$fake_home" \
+  AGENTIC_ORG_APPARMOR_DIR="$shadow_aa" \
+  AGENTIC_ORG_USERNS_SYSCTL="$sysctl_one" \
+  AGENTIC_ORG_BWRAP_BIN="$fake_bwrap" \
+  AGENTIC_ORG_SIMULATE_UNPRIVILEGED=1 \
+  bash "$install_sh" --archive "$dummy_archive" --allow-unsigned --bin-dir "$fake_bin" 2>&1
+)"
+assert_contains "$out_13c" "--install-bwrap-apparmor" "13c shadowing active enforcing bwrap must NOT stay quiet"
+
+# 14. P2-8: Shell-quoted paths in manual remediation steps.
+spaced_aa="${tmp_root}/aa dir with space"
+mkdir -p "$spaced_aa"
+out_14="$(
+  HOME="$fake_home" \
+  AGENTIC_ORG_APPARMOR_DIR="$spaced_aa" \
+  AGENTIC_ORG_USERNS_SYSCTL="$sysctl_one" \
+  AGENTIC_ORG_BWRAP_BIN="$fake_bwrap" \
+  AGENTIC_ORG_SIMULATE_UNPRIVILEGED=1 \
+  bash "$install_sh" --archive "$dummy_archive" --allow-unsigned --bin-dir "$fake_bin" 2>&1
+)"
+printf -v expected_quoted_target '%q' "${spaced_aa}/agentic-org-bwrap"
+assert_contains "$out_14" "sudo tee ${expected_quoted_target} >/dev/null" "14 manual steps shell-quote paths"
 
 echo "ok (all bwrap AppArmor install checks passed)"
