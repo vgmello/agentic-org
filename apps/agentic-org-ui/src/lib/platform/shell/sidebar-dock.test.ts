@@ -130,16 +130,27 @@ describe('SidebarDockController', () => {
 		}
 	});
 
-	it('clears focused on next frame when a rail-only focused target unmounts without focusout', () => {
+	it('ignores [data-rail-only] focus while collapsed, self-heals unmounted focus, and cancels pending rAF', () => {
 		class FakeNode {}
 		class FakeHTMLElement extends FakeNode {
+			readonly #railOnly: boolean;
+			constructor(railOnly = false) {
+				super();
+				this.#railOnly = railOnly;
+			}
 			matches(selector: string) {
 				return selector === ':focus-visible';
+			}
+			closest(selector: string) {
+				return this.#railOnly && selector === '[data-rail-only]' ? this : null;
 			}
 		}
 
 		let rafCb: FrameRequestCallback | undefined;
-		const target = new FakeHTMLElement();
+		let nextId = 1;
+		const cancelRaf = vi.fn();
+		const railOnlyTarget = new FakeHTMLElement(true);
+		const target = new FakeHTMLElement(false);
 		const outside = new FakeNode();
 		let active: FakeNode = target;
 		const container = {
@@ -155,26 +166,48 @@ describe('SidebarDockController', () => {
 		});
 		vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
 			rafCb = cb;
-			return 1;
+			return nextId++;
 		});
-		vi.stubGlobal('cancelAnimationFrame', vi.fn());
+		vi.stubGlobal('cancelAnimationFrame', cancelRaf);
 
 		try {
+			let navCollapsed = true;
 			const dock = new SidebarDockController({
 				isSidebarKeyMode: () => false,
-				getNavCollapsed: () => true
+				getNavCollapsed: () => navCollapsed,
+				toggleNavCollapsed: () => {
+					navCollapsed = !navCollapsed;
+				}
 			});
 
+			// F1: focusing a [data-rail-only] trigger while collapsed must NOT expand and unmount it.
+			dock.onFocusIn({ target: railOnlyTarget } as unknown as FocusEvent, container);
+			expect(dock.focused).toBe(false);
+			expect(dock.collapsed).toBe(true);
+
+			// Defense-in-depth: if a normal focused target unmounts without focusout, next frame clears focused.
 			dock.onFocusIn({ target } as unknown as FocusEvent, container);
 			expect(dock.focused).toBe(true);
 			expect(dock.collapsed).toBe(false);
 
-			// Simulate target unmounting (activeElement falls back outside container, no focusout).
 			active = outside;
 			rafCb?.(16);
 			expect(dock.focused).toBe(false);
 			expect(dock.collapsed).toBe(true);
+
+			// F3: openForKeyMode(), togglePin(), and dispose() cancel pending focus rAFs cleanly.
+			dock.onFocusIn({ target } as unknown as FocusEvent, container);
+			dock.openForKeyMode();
+			expect(cancelRaf).toHaveBeenCalledTimes(1);
+
+			dock.onFocusIn({ target } as unknown as FocusEvent, container);
+			dock.togglePin();
+			expect(cancelRaf).toHaveBeenCalledTimes(2);
+
+			navCollapsed = true;
+			dock.onFocusIn({ target } as unknown as FocusEvent, container);
 			dock.dispose();
+			expect(cancelRaf).toHaveBeenCalledTimes(3);
 		} finally {
 			vi.unstubAllGlobals();
 		}

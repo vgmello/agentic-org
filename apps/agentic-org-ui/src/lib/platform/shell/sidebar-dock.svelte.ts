@@ -54,7 +54,8 @@ export class SidebarDockController {
 
 	#syncFocusContainment(container: HTMLElement | null): void {
 		if (this.#disposed || this.menuOpen) return;
-		const active = typeof document !== 'undefined' ? document.activeElement : null;
+		if (typeof document === 'undefined' || typeof Node === 'undefined') return;
+		const active = document.activeElement;
 		this.focused = Boolean(active instanceof Node && container?.contains(active));
 	}
 
@@ -90,11 +91,13 @@ export class SidebarDockController {
 	onFocusIn(event: FocusEvent, container?: HTMLElement | null): void {
 		const target = event.target;
 		if (!(target instanceof HTMLElement) || !target.matches(':focus-visible')) return;
+		// Rail-only triggers unmount if the dock expands; keep collapsed so focus stays on the trigger.
+		if (this.collapsed && target.closest('[data-rail-only]')) return;
 		clearTimeout(this.#focusTimer);
 		this.focused = true;
 		if (!container || typeof requestAnimationFrame === 'undefined') return;
-		// If expanding from rail mode unmounts the focused rail-only trigger (no focusout fires),
-		// re-verify containment on the next animation frame so `focused` cannot leak true.
+		// Defense-in-depth: if expanding unmounts another focused child (no focusout fires),
+		// re-verify containment on the next frame so `focused` cannot leak true.
 		this.#cancelFocusRaf();
 		this.#focusRaf = requestAnimationFrame(() => {
 			this.#focusRaf = undefined;
@@ -116,6 +119,7 @@ export class SidebarDockController {
 	openForKeyMode(): void {
 		if (this.#navCollapsed()) {
 			clearTimeout(this.#focusTimer);
+			this.#cancelFocusRaf();
 			this.focused = true;
 		}
 	}
@@ -123,6 +127,7 @@ export class SidebarDockController {
 	togglePin(): void {
 		clearTimeout(this.#hoverTimer);
 		clearTimeout(this.#focusTimer);
+		this.#cancelFocusRaf();
 		if (this.#opts.toggleNavCollapsed) this.#opts.toggleNavCollapsed();
 		else uiPrefs.toggleNavCollapsed();
 		if (this.#navCollapsed()) {
@@ -158,9 +163,6 @@ export class SidebarDockController {
 		this.#focusTimer = undefined;
 		this.#reflowObserver?.disconnect();
 		this.#reflowObserver = undefined;
-		if (this.#focusRaf !== undefined && typeof cancelAnimationFrame !== 'undefined') {
-			cancelAnimationFrame(this.#focusRaf);
-			this.#focusRaf = undefined;
-		}
+		this.#cancelFocusRaf();
 	}
 }

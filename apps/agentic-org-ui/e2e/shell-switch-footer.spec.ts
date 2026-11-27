@@ -191,24 +191,40 @@ test(
 		await page.keyboard.press('Escape');
 		await expect(processesItem).toHaveCount(0);
 		await expect(aside).toHaveAttribute('data-collapsed', 'true');
-		// At 200% text (32px root), opening rail More and unzooming out of textReflowRail never sticks menuOpen.
+		await expect(railMore).toBeFocused();
+		// Pin the sidebar open, then enter 200%-text reflow rail so unzooming deterministically unmounts rail More while open.
 		await page.setViewportSize({ width: 960, height: 900 });
+		await page
+			.getByRole('navigation', { name: 'Main', exact: true })
+			.getByRole('link', { name: 'Home', exact: true })
+			.hover();
+		await expect(aside).not.toHaveAttribute('data-collapsed', 'true');
+		await page.getByRole('button', { name: 'Pin sidebar open', exact: true }).click();
+		await page.mouse.move(940, 20);
 		const zoomTag = await page.addStyleTag({ content: 'html { font-size: 200% !important; }' });
 		await expect(railMore).toBeVisible();
+		await railMore.scrollIntoViewIfNeeded();
 		await railMore.hover();
+		await expect(
+			page.getByRole('tooltip', { name: 'More organization pages', exact: true })
+		).toBeVisible();
 		await railMore.click();
 		await expect(processesItem).toBeVisible();
 		await expect(
 			page.getByRole('tooltip', { name: 'More organization pages', exact: true })
 		).toHaveCount(0);
-		// Exit textReflowRail while the rail More dropdown is open; sidebar must still collapse cleanly after moving away.
+		// Unzoom out of textReflowRail while rail More is open; menu unmounts cleanly and auto-hide still collapses after.
 		await zoomTag.evaluate((el) => el.remove());
+		await expect(processesItem).toHaveCount(0);
+		await expect(aside).not.toHaveAttribute('data-collapsed', 'true');
+		await page.getByRole('button', { name: 'Auto-hide sidebar', exact: true }).click();
 		await page.mouse.move(940, 20);
 		await expect(aside).toHaveAttribute('data-collapsed', 'true');
 		await expect.poll(async () => Math.round((await aside.boundingBox())?.width ?? 0)).toBe(68);
 		// Re-enter 200%-text reflow rail, select Processes, and confirm destination heading receives focus.
 		await page.addStyleTag({ content: 'html { font-size: 200% !important; }' });
 		await expect(railMore).toBeVisible();
+		await expect(railMore).toHaveAttribute('aria-expanded', 'false');
 		await railMore.click();
 		await expect(processesItem).toBeVisible();
 		await processesItem.click();

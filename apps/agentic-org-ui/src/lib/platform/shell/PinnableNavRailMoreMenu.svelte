@@ -8,7 +8,7 @@
 <script lang="ts" generics="TId extends string">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { Tooltip } from 'bits-ui';
+	import { Tooltip, mergeProps } from 'bits-ui';
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import { tooltipContentClass } from '$lib/components/classes';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -30,11 +30,18 @@
 	let open = $state(false);
 	let tipOpen = $state(false);
 	let navigated = false;
+	let triggerEl: HTMLButtonElement | null = null;
 
 	async function selectItem(item: PinnableNavItem<TId>) {
 		navigated = true;
-		await goto(resolve(item.href));
-		await focusDestinationHeading();
+		const from = typeof window !== 'undefined' ? window.location.href : '';
+		try {
+			await goto(resolve(item.href));
+			await focusDestinationHeading();
+		} catch {
+			if (typeof window === 'undefined' || window.location.href !== from) return;
+			if (triggerEl?.isConnected) triggerEl.focus({ preventScroll: true });
+		}
 	}
 
 	function handleOpenChange(next: boolean) {
@@ -42,6 +49,10 @@
 			tipOpen = false;
 			navigated = false;
 		}
+	}
+
+	function handleTipOpenChange(next: boolean) {
+		if (next && open) tipOpen = false;
 	}
 
 	function handleCloseAutoFocus(event: Event) {
@@ -60,14 +71,21 @@
 	}}
 >
 	<DropdownMenu.Root bind:open onOpenChange={handleOpenChange}>
-		<Tooltip.Root bind:open={tipOpen} disabled={open}>
-			<Tooltip.Trigger>
-				{#snippet child({ props: tipProps })}
-					<DropdownMenu.Trigger {...tipProps}>
-						{#snippet child({ props })}
+		<Tooltip.Root bind:open={tipOpen} disabled={open} onOpenChange={handleTipOpenChange}>
+			<DropdownMenu.Trigger>
+				{#snippet child({ props: menuProps })}
+					<Tooltip.Trigger>
+						{#snippet child({ props: tipProps })}
 							<button
-								{...props}
+								{...mergeProps(tipProps, menuProps)}
+								{@attach (el) => {
+									triggerEl = el;
+									return () => {
+										if (triggerEl === el) triggerEl = null;
+									};
+								}}
 								type="button"
+								data-rail-only=""
 								aria-label={ariaLabel}
 								data-testid={testId}
 								class={['rail-more-trigger', active && 'is-active']}
@@ -75,14 +93,16 @@
 								<Ellipsis class="size-[18px] shrink-0" aria-hidden="true" />
 							</button>
 						{/snippet}
-					</DropdownMenu.Trigger>
+					</Tooltip.Trigger>
 				{/snippet}
-			</Tooltip.Trigger>
-			<Tooltip.Portal>
-				<Tooltip.Content role="tooltip" side="right" sideOffset={6} class={tooltipContentClass}
-					>{ariaLabel}</Tooltip.Content
-				>
-			</Tooltip.Portal>
+			</DropdownMenu.Trigger>
+			{#if !open}
+				<Tooltip.Portal>
+					<Tooltip.Content role="tooltip" side="right" sideOffset={6} class={tooltipContentClass}
+						>{ariaLabel}</Tooltip.Content
+					>
+				</Tooltip.Portal>
+			{/if}
 		</Tooltip.Root>
 		<DropdownMenu.Content
 			side="right"
