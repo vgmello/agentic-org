@@ -1298,4 +1298,111 @@ fn task_212_agent_os_format_precedence_and_json_before_after_subcommand() {
     let help_text = text(&help.stdout);
     assert!(help_text.contains("--input-json"), "{help_text}");
     assert!(help_text.contains("--json"), "{help_text}");
+
+    // 8. P1-1: `CLAUDECODE=1 AGENT_OS_FORMAT=xml` on a real PTY emits a pure valid JSON error
+    //    envelope on stderr/PTY (exit 2, zero leading `! ` prose!).
+    let mut bad_pty_cmd = sandbox.command(&["context", "show"]);
+    bad_pty_cmd
+        .env("CLAUDECODE", "1")
+        .env("AGENT_OS_FORMAT", "xml");
+    let mut bad_pty = Terminal::start(bad_pty_cmd);
+    let bad_pty_out = bad_pty.read_until("}", Duration::from_secs(10));
+    assert_eq!(wait(&mut bad_pty.child), Some(2), "{bad_pty_out:?}");
+    assert!(
+        !bad_pty_out.trim_start().starts_with('!'),
+        "stderr must not have prose warning before JSON envelope: {bad_pty_out:?}"
+    );
+    let parsed_bad: Value = serde_json::from_str(bad_pty_out.trim())
+        .unwrap_or_else(|e| panic!("expected pure JSON envelope on PTY: {e}: {bad_pty_out:?}"));
+    assert_eq!(parsed_bad["error"]["exit_code"], 2);
+
+    // 9. P1-1: invalid `AGENT_OS_FORMAT=xml` with explicit `--format yaml` or `--help` emits zero
+    //    stderr noise!
+    let ctx_yaml = sandbox
+        .command(&["context", "show", "--format", "yaml"])
+        .env("AGENT_OS_FORMAT", "xml")
+        .output()
+        .unwrap();
+    assert_eq!(
+        ctx_yaml.status.code(),
+        Some(0),
+        "{}",
+        text(&ctx_yaml.stderr)
+    );
+    assert!(ctx_yaml.stderr.is_empty(), "{}", text(&ctx_yaml.stderr));
+    assert!(text(&ctx_yaml.stdout).contains(OFFICE));
+
+    let task_yaml = sandbox
+        .command(&["task", "list", "--format", "yaml"])
+        .env("AGENT_OS_FORMAT", "xml")
+        .output()
+        .unwrap();
+    assert_eq!(
+        task_yaml.status.code(),
+        Some(1),
+        "explicit --format yaml beats invalid AGENT_OS_FORMAT (reaches host, never exit 2): {}",
+        text(&task_yaml.stderr)
+    );
+    assert!(
+        task_yaml.stderr.is_empty(),
+        "zero stderr noise on explicit --format yaml: {}",
+        text(&task_yaml.stderr)
+    );
+
+    let task_help = sandbox
+        .command(&["task", "list", "--help"])
+        .env("AGENT_OS_FORMAT", "xml")
+        .output()
+        .unwrap();
+    assert_eq!(task_help.status.code(), Some(0));
+    assert!(task_help.stderr.is_empty(), "{}", text(&task_help.stderr));
+
+    // 10. P0-3: `sign-in -- task list --format table`, `sign-in -- task list -q`, and
+    //     `AGENT_OS_FORMAT=yaml agentic-org sign-in -- task list` strip hoisted flags and reach
+    //     the host channel (exit 1, never usage exit 2).
+    for (args, env) in [
+        (
+            &["sign-in", "--", "task", "list", "--format", "table"][..],
+            None,
+        ),
+        (&["sign-in", "--", "task", "list", "-q"], None),
+        (&["--format", "yaml", "sign-in", "--", "task", "list"], None),
+        (
+            &["sign-in", "--", "task", "list"],
+            Some(("AGENT_OS_FORMAT", "yaml")),
+        ),
+    ] {
+        let mut cmd = sandbox.command(args);
+        if let Some((k, v)) = env {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{args:?} ({env:?}): stderr={} stdout={}",
+            text(&out.stderr),
+            text(&out.stdout)
+        );
+    }
+
+    // 11. P2-4: `--json --format json` is idempotent across host & office commands, while
+    //     `--json --format yaml` is refused (exit 2).
+    let idem = sandbox.run(&["--json", "--format", "json", "context", "show"]);
+    assert_eq!(idem.status.code(), Some(0), "{}", text(&idem.stderr));
+    let parsed: Value = serde_json::from_slice(&idem.stdout).unwrap();
+    assert_eq!(parsed["office_id"], OFFICE);
+
+    let conflict = sandbox.run(&["--json", "--format", "yaml", "context", "show"]);
+    assert_eq!(conflict.status.code(), Some(2));
+
+    let office_idem = sandbox.run(&["--json", "task", "list", "--format", "json"]);
+    assert_eq!(
+        office_idem.status.code(),
+        Some(1),
+        "idempotent --json + --format json reaches host (never usage exit 2): {}",
+        text(&office_idem.stderr)
+    );
+    let office_conflict = sandbox.run(&["--json", "task", "list", "--format", "yaml"]);
+    assert_eq!(office_conflict.status.code(), Some(2));
 }

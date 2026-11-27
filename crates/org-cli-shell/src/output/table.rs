@@ -111,146 +111,167 @@ pub(super) fn render_tsv(table: &Table) -> String {
     out
 }
 
-/// Computes the kept column indices and their content width budgets for `max_width`.
-fn plan_columns(headers: &[String], natural: &[usize], max_width: usize) -> Vec<(usize, usize)> {
-    let count = headers.len();
-    if count == 0 {
-        return Vec::new();
-    }
-    let priorities: Vec<ColumnPriority> = headers.iter().map(|h| column_priority(h)).collect();
-    let capped: Vec<usize> = natural.iter().map(|&w| w.min(CELL_MAX_WIDTH)).collect();
-    let mut widths = capped.clone();
-    let mut kept: Vec<usize> = (0..count).collect();
-
-    let total_width = |kept: &[usize], widths: &[usize]| -> usize {
-        let content: usize = kept.iter().map(|&i| widths[i]).sum();
-        content + EFFECTIVE_GUTTER * kept.len().saturating_sub(1)
-    };
-
-    if total_width(&kept, &widths) <= max_width {
-        return kept.into_iter().map(|i| (i, widths[i])).collect();
-    }
-
-    // Phase 1: shrink above each priority tier's soft floor, lowest priority first (widest first
-    // inside each tier).
-    for tier in [
-        ColumnPriority::Low,
-        ColumnPriority::Medium,
-        ColumnPriority::High,
-        ColumnPriority::Critical,
-    ] {
-        let floor = tier.soft_floor();
-        while total_width(&kept, &widths) > max_width {
-            let candidate = kept
-                .iter()
-                .copied()
-                .filter(|&i| priorities[i] == tier && widths[i] > floor)
-                .max_by_key(|&i| (widths[i], i));
-            let Some(idx) = candidate else { break };
-            widths[idx] -= 1;
-        }
-    }
-
-    // Phase 2a: elide Low-priority columns (rightmost first) before truncating higher tiers.
-    while total_width(&kept, &widths) > max_width && kept.len() > 1 {
-        let Some(pos) = kept
-            .iter()
-            .rposition(|&i| priorities[i] == ColumnPriority::Low)
-        else {
-            break;
-        };
-        kept.remove(pos);
-    }
-
-    // Phase 2b: shrink Medium columns down to 6, then elide Medium columns rightmost-first.
-    shrink_tier(
-        &kept,
-        &priorities,
-        &mut widths,
-        ColumnPriority::Medium,
-        6,
-        max_width,
-    );
-    while total_width(&kept, &widths) > max_width && kept.len() > 1 {
-        let Some(pos) = kept
-            .iter()
-            .rposition(|&i| priorities[i] == ColumnPriority::Medium)
-        else {
-            break;
-        };
-        kept.remove(pos);
-    }
-
-    // Phase 2c: shrink High columns down to 6; if Critical columns exist and still overflowing,
-    // elide High columns rightmost-first before crushing Critical identifiers.
-    shrink_tier(
-        &kept,
-        &priorities,
-        &mut widths,
-        ColumnPriority::High,
-        6,
-        max_width,
-    );
-    let has_critical = kept
-        .iter()
-        .any(|&i| priorities[i] == ColumnPriority::Critical);
-    if has_critical {
-        while total_width(&kept, &widths) > max_width && kept.len() > 1 {
-            let Some(pos) = kept
-                .iter()
-                .rposition(|&i| priorities[i] == ColumnPriority::High)
-            else {
-                break;
-            };
-            kept.remove(pos);
-        }
-    }
-
-    // Phase 3: last-resort shrink across remaining columns (lowest priority first, widest first).
-    while total_width(&kept, &widths) > max_width {
-        let candidate = kept
-            .iter()
-            .copied()
-            .filter(|&i| widths[i] > 1)
-            .max_by_key(|&i| (std::cmp::Reverse(priorities[i]), widths[i], i));
-        let Some(idx) = candidate else { break };
-        widths[idx] -= 1;
-    }
-
-    // Phase 4: reclaim slack opened by column elision, highest priority & largest deficit first.
-    while total_width(&kept, &widths) < max_width {
-        let candidate = kept
-            .iter()
-            .copied()
-            .filter(|&i| widths[i] < capped[i])
-            .max_by_key(|&i| (priorities[i], capped[i] - widths[i], std::cmp::Reverse(i)));
-        let Some(idx) = candidate else { break };
-        widths[idx] += 1;
-    }
-
-    kept.into_iter().map(|i| (i, widths[i])).collect()
+/// Column budgeting state for fitting a terminal table into `max_width`.
+struct ColumnPlan {
+    priorities: Vec<ColumnPriority>,
+    capped: Vec<usize>,
+    widths: Vec<usize>,
+    kept: Vec<usize>,
 }
 
-fn shrink_tier(
-    kept: &[usize],
-    priorities: &[ColumnPriority],
-    widths: &mut [usize],
-    tier: ColumnPriority,
-    floor: usize,
-    max_width: usize,
-) {
-    let total = |widths: &[usize]| -> usize {
-        let content: usize = kept.iter().map(|&i| widths[i]).sum();
-        content + EFFECTIVE_GUTTER * kept.len().saturating_sub(1)
-    };
-    while total(widths) > max_width {
-        let candidate = kept
-            .iter()
-            .copied()
-            .filter(|&i| priorities[i] == tier && widths[i] > floor)
-            .max_by_key(|&i| (widths[i], i));
-        let Some(idx) = candidate else { break };
-        widths[idx] -= 1;
+impl ColumnPlan {
+    fn new(headers: &[String], natural: &[usize]) -> Self {
+        let priorities = headers.iter().map(|h| column_priority(h)).collect();
+        let capped: Vec<usize> = natural.iter().map(|&w| w.min(CELL_MAX_WIDTH)).collect();
+        let widths = capped.clone();
+        let kept = (0..headers.len()).collect();
+        Self {
+            priorities,
+            capped,
+            widths,
+            kept,
+        }
+    }
+
+    fn total_width(&self) -> usize {
+        let content: usize = self.kept.iter().map(|&i| self.widths[i]).sum();
+        content + EFFECTIVE_GUTTER * self.kept.len().saturating_sub(1)
+    }
+
+    fn has_tier(&self, tier: ColumnPriority) -> bool {
+        self.kept.iter().any(|&i| self.priorities[i] == tier)
+    }
+
+    fn shrink_tier(&mut self, tier: ColumnPriority, floor: usize, max_width: usize) {
+        while self.total_width() > max_width {
+            let candidate = self
+                .kept
+                .iter()
+                .copied()
+                .filter(|&i| self.priorities[i] == tier && self.widths[i] > floor)
+                .max_by_key(|&i| (self.widths[i], i));
+            let Some(idx) = candidate else { break };
+            self.widths[idx] -= 1;
+        }
+    }
+
+    fn elide_tier(&mut self, tier: ColumnPriority, max_width: usize) {
+        while self.total_width() > max_width && self.kept.len() > 1 {
+            let Some(pos) = self.kept.iter().rposition(|&i| self.priorities[i] == tier) else {
+                break;
+            };
+            self.kept.remove(pos);
+        }
+    }
+
+    fn shrink_any(&mut self, max_width: usize) {
+        while self.total_width() > max_width {
+            let candidate = self
+                .kept
+                .iter()
+                .copied()
+                .filter(|&i| self.widths[i] > 1)
+                .max_by_key(|&i| (std::cmp::Reverse(self.priorities[i]), self.widths[i], i));
+            let Some(idx) = candidate else { break };
+            self.widths[idx] -= 1;
+        }
+    }
+
+    fn reclaim_slack(&mut self, max_width: usize) {
+        while self.total_width() < max_width {
+            let candidate = self
+                .kept
+                .iter()
+                .copied()
+                .filter(|&i| self.widths[i] < self.capped[i])
+                .max_by_key(|&i| {
+                    (
+                        self.priorities[i],
+                        self.capped[i] - self.widths[i],
+                        std::cmp::Reverse(i),
+                    )
+                });
+            let Some(idx) = candidate else { break };
+            self.widths[idx] += 1;
+        }
+    }
+
+    fn finish(self) -> Vec<(usize, usize)> {
+        self.kept.into_iter().map(|i| (i, self.widths[i])).collect()
+    }
+}
+
+/// Computes the kept column indices and their content width budgets for `max_width`.
+///
+/// Elides `Low`-priority metadata columns BEFORE shrinking `Critical` columns down to their
+/// 24-cell soft floor so distinguishing handles, names, and titles keep full width whenever
+/// dropping low-signal columns makes room.
+fn plan_columns(headers: &[String], natural: &[usize], max_width: usize) -> Vec<(usize, usize)> {
+    if headers.is_empty() {
+        return Vec::new();
+    }
+    let mut plan = ColumnPlan::new(headers, natural);
+    if plan.total_width() <= max_width {
+        return plan.finish();
+    }
+    plan.shrink_tier(
+        ColumnPriority::Low,
+        ColumnPriority::Low.soft_floor(),
+        max_width,
+    );
+    plan.shrink_tier(
+        ColumnPriority::Medium,
+        ColumnPriority::Medium.soft_floor(),
+        max_width,
+    );
+    plan.shrink_tier(
+        ColumnPriority::High,
+        ColumnPriority::High.soft_floor(),
+        max_width,
+    );
+    plan.elide_tier(ColumnPriority::Low, max_width);
+    plan.shrink_tier(
+        ColumnPriority::Critical,
+        ColumnPriority::Critical.soft_floor(),
+        max_width,
+    );
+    plan.shrink_tier(ColumnPriority::Medium, 6, max_width);
+    plan.elide_tier(ColumnPriority::Medium, max_width);
+    plan.shrink_tier(ColumnPriority::High, 6, max_width);
+    if plan.has_tier(ColumnPriority::Critical) {
+        plan.elide_tier(ColumnPriority::High, max_width);
+    }
+    plan.shrink_any(max_width);
+    plan.reclaim_slack(max_width);
+    plan.finish()
+}
+
+fn measure_natural_widths(upper_headers: &[String], table: &Table) -> Vec<usize> {
+    let col_count = upper_headers.len();
+    let mut natural: Vec<usize> = upper_headers
+        .iter()
+        .map(|h| measure_text_width(h))
+        .collect();
+    for row in &table.rows {
+        for (idx, cell) in row.cells.iter().enumerate().take(col_count) {
+            let plain = cell.render(true, false);
+            natural[idx] = natural[idx].max(measure_text_width(&plain));
+        }
+    }
+    natural
+}
+
+fn apply_column_budgets(grid: &mut tabled::Table, plan: &[(usize, usize)], natural: &[usize]) {
+    for (out_idx, &(col, alloc)) in plan.iter().enumerate() {
+        let cap = natural[col].min(CELL_MAX_WIDTH);
+        if alloc < cap {
+            let trunc = if alloc > ELLIPSIS.len() {
+                Width::truncate(alloc).suffix(ELLIPSIS)
+            } else {
+                Width::truncate(alloc)
+            };
+            grid.modify(Columns::new(out_idx..=out_idx), trunc);
+        }
     }
 }
 
@@ -268,18 +289,7 @@ pub(super) fn render_tty(table: &Table, color: bool, width: Option<usize>) -> St
         return String::new();
     }
 
-    let col_count = upper_headers.len();
-    let mut natural = vec![0usize; col_count];
-    for (idx, header) in upper_headers.iter().enumerate() {
-        natural[idx] = measure_text_width(header);
-    }
-    for row in &table.rows {
-        for (idx, cell) in row.cells.iter().enumerate().take(col_count) {
-            let plain = cell.render(true, false);
-            natural[idx] = natural[idx].max(measure_text_width(&plain));
-        }
-    }
-
+    let natural = measure_natural_widths(&upper_headers, table);
     let plan: Vec<(usize, usize)> = match width {
         Some(max_width) => plan_columns(&table.headers, &natural, max_width),
         None => natural
@@ -304,24 +314,15 @@ pub(super) fn render_tty(table: &Table, color: bool, width: Option<usize>) -> St
         Segment::all(),
         Width::truncate(CELL_MAX_WIDTH).suffix(ELLIPSIS),
     );
-    for (out_idx, &(col, alloc)) in plan.iter().enumerate() {
-        let cap = natural[col].min(CELL_MAX_WIDTH);
-        if alloc < cap {
-            let trunc = if alloc > ELLIPSIS.len() {
-                Width::truncate(alloc).suffix(ELLIPSIS)
-            } else {
-                Width::truncate(alloc)
-            };
-            grid.modify(Columns::new(out_idx..=out_idx), trunc);
-        }
-    }
+    apply_column_budgets(&mut grid, &plan, &natural);
     grid.modify(Columns::new(..last), Padding::new(0, COLUMN_GUTTER, 0, 0));
     if let Some(max_width) = width {
-        grid.with(
+        let trunc = if max_width > ELLIPSIS.len() {
+            Width::truncate(max_width).suffix(ELLIPSIS)
+        } else {
             Width::truncate(max_width)
-                .suffix(ELLIPSIS)
-                .priority(PriorityMax::default()),
-        );
+        };
+        grid.with(trunc.priority(PriorityMax::default()));
     }
     let mut out = String::new();
     for line in grid.to_string().lines() {

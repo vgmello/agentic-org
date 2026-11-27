@@ -106,8 +106,9 @@ fn resolve_output(explicit: Option<ExplicitFormat>, shown: Shown) -> EffectiveOu
         Some(ExplicitFormat::Compact) => EffectiveOutput::Compact,
         None => match shown {
             Shown::Quiet => EffectiveOutput::Quiet,
-            Shown::Rendered => EffectiveOutput::Rendered,
+            Shown::Rendered | Shown::Tsv => EffectiveOutput::Rendered,
             Shown::Json | Shown::AsWritten => EffectiveOutput::Json,
+            Shown::Yaml => EffectiveOutput::Yaml,
             Shown::Compact => EffectiveOutput::Compact,
         },
     }

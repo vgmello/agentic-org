@@ -770,7 +770,7 @@ fn b7_msg_ask_short_hold_wait_answer_withdraw_and_live_inbox_surfacing() {
             }
         ]
     });
-    let asked = run_cli(&["msg", "ask", "--json", &ask_json.to_string()]);
+    let asked = run_cli(&["msg", "ask", "--input-json", &ask_json.to_string()]);
     assert_eq!(asked["ok"], true, "{asked}");
     assert_eq!(asked["data"]["status"], "waiting", "{asked}");
     let ask_id = asked["data"]["ask_id"].as_str().unwrap().to_owned();
@@ -883,7 +883,7 @@ fn b7_msg_ask_short_hold_wait_answer_withdraw_and_live_inbox_surfacing() {
             "default_value": "no"
         }]
     });
-    let asked2 = run_cli(&["msg", "ask", "--json", &ask2_json.to_string()]);
+    let asked2 = run_cli(&["msg", "ask", "--input-json", &ask2_json.to_string()]);
     let ask2_id = asked2["data"]["ask_id"].as_str().unwrap().to_owned();
     let withdrawn = run_cli(&["msg", "withdraw", "--id", &ask2_id, "--reason", "Resolved"]);
     assert_eq!(withdrawn["data"]["ask_id"], ask2_id);
@@ -977,7 +977,7 @@ fn b7_open_ask_stays_in_owner_inbox_after_msg_read() {
         &[
             "msg".into(),
             "ask".into(),
-            "--json".into(),
+            "--input-json".into(),
             owner_ask_json.to_string(),
         ],
         hr_binding,

@@ -92,6 +92,44 @@ fn lifecycle_help_runs_without_a_binding_and_other_verbs_pass_through() {
     assert_eq!(env["error"]["code"], "invalid_request");
     let (_, code) = run(&words(&["exec", "--as", "@ada"])).unwrap();
     assert_eq!(code, 2, "exec without a command is a usage error");
+
+    // P1-5: bare `--json` before OR after lifecycle verbs works cleanly (and `--json` after `--`
+    // in `exec` stays untouched for the wrapped child command).
+    for verb in ["login", "whoami", "logout", "exec"] {
+        for line in [
+            vec!["--json", verb, "--help"],
+            vec![verb, "--json", "--help"],
+        ] {
+            let (stdout, code) = run(&words(&line)).unwrap();
+            assert_eq!(code, 0, "{line:?}: {stdout}");
+            assert!(stdout.starts_with("Usage: agent-os "), "{line:?}: {stdout}");
+        }
+    }
+    let parsed_exec = Flags::parse(
+        &words(&["--as", "@ada", "--json", "--", "claude", "--json"]),
+        &["as", "ttl", "office", "socket"],
+        &["takeover", "json"],
+        "usage",
+    )
+    .unwrap();
+    assert!(parsed_exec.switch("json"));
+    assert_eq!(parsed_exec.rest, words(&["claude", "--json"]));
+
+    // Duplicate `--json` before `--` or `--json=<val>` is refused with exit 2.
+    for bad in [
+        &["--json", "whoami", "--json"][..],
+        &["whoami", "--json", "--json"],
+        &["whoami", "--json=true"],
+        &["--json", "logout", "--json"],
+        &["--json", "login", "--as", "@ada", "--json"],
+        &["--json", "exec", "--as", "@ada", "--json", "--", "true"],
+    ] {
+        let (stdout, code) = run(&words(bad)).unwrap();
+        assert_eq!(code, 2, "{bad:?}: {stdout}");
+        let env: Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(env["ok"], false, "{bad:?}");
+        assert_eq!(env["error"]["code"], "invalid_request", "{bad:?}");
+    }
 }
 
 #[test]

@@ -130,13 +130,15 @@ pub fn run(args: Vec<OsString>) -> u8 {
     let explicit = ExplicitOutput {
         json: cli.global.json,
         quiet: cli.global.quiet,
-        format: cli.global.format.map(cli::FormatArg::into_shell),
+        format: cli.global.format.map(args::FormatArg::into_shell),
         table_format: false,
+        table_format_kind: None,
         dry_run: cli.global.dry_run,
     };
     let mut modes = cli.modes();
     let Some(top) = cli.command else {
         // `agentic-org` alone: its help, colored as standard output is (`--color always`).
+        modes.ignore_env_format = true;
         let mut ctx = ExecutionContext::detect(modes);
         org_cli_shell::prompt::sync_colors(&ctx);
         let help = cli::command().render_help();
@@ -205,13 +207,15 @@ fn clap_answer(error: &clap::Error, pre: &Prescan) -> u8 {
         error.kind(),
         ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
     ) {
+        let mut help_modes = modes;
+        help_modes.ignore_env_format = true;
         let styled = error.render();
-        let text = if resolve_color(&modes, terminal.stdout_tty, &env) {
+        let text = if resolve_color(&help_modes, terminal.stdout_tty, &env) {
             styled.ansi().to_string()
         } else {
             styled.to_string()
         };
-        let mut ctx = ExecutionContext::detect(modes);
+        let mut ctx = ExecutionContext::detect(help_modes);
         return write_or_closed(&mut ctx, &text);
     }
     let rendered = error.render().to_string();
@@ -254,14 +258,25 @@ struct ExplicitOutput {
     json: bool,
     quiet: bool,
     format: Option<OutputFormat>,
-    /// True when an office command carried `--format <json|yaml|compact|...>` inside its words.
+    /// True when a command carried `--format <...>` inside its trailing words.
     table_format: bool,
+    /// Parsed format of `table_format` when it named a known format (`json`, `yaml`, `compact`).
+    table_format_kind: Option<OutputFormat>,
     dry_run: bool,
 }
 
 impl ExplicitOutput {
+    fn has_format_flag(self) -> bool {
+        self.format.is_some() || self.table_format
+    }
+
     fn has_output_override(self) -> bool {
-        self.json || self.quiet || self.format.is_some() || self.table_format
+        self.json || self.quiet || self.has_format_flag()
+    }
+
+    fn has_non_json_format(self) -> bool {
+        self.format.is_some_and(|f| f != OutputFormat::Json)
+            || (self.table_format && self.table_format_kind != Some(OutputFormat::Json))
     }
 }
 
@@ -362,13 +377,110 @@ fn office_flag_takes_value(words: &[String], flag_name: &str) -> bool {
         .is_some_and(|cmd| cmd.flag_takes_value(flag_name) == Some(true))
 }
 
+/// Whether `sign-in -- <command...>` targets one of the operator-local clap verbs
+/// (`agent bind|renew|sessions`).
+fn is_sign_in_local_agent(command: &[String]) -> bool {
+    command.first().map(String::as_str) == Some("agent") && is_local_agent_verb(&command[1..])
+}
+
 #[derive(Default)]
 struct HoistedFlags {
     json: bool,
     quiet: bool,
     format: Option<OutputFormat>,
     table_format: bool,
+    table_format_kind: Option<OutputFormat>,
     passthrough_meta: bool,
+}
+
+/// Handles simple hoisted switches (`--json`, `-q`/`--quiet`, `--help`/`-h`/`--schema`/`--version`).
+fn hoist_switch(
+    arg: &str,
+    out: &mut Vec<String>,
+    hoisted: &mut HoistedFlags,
+) -> Result<bool, CliError> {
+    if arg.starts_with("--json=") {
+        return Err(CliError::usage(
+            "--json is a yes-or-no flag for JSON output and takes no value; pass a JSON object with --input-json <object>",
+        ));
+    }
+    match arg {
+        "--json" => hoisted.json = true,
+        "-q" | "--quiet" => hoisted.quiet = true,
+        "--help" | "-h" | "--schema" | "--version" => {
+            hoisted.passthrough_meta = true;
+            out.push(arg.to_owned());
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// Records a `--format` value: `table`/`tsv` are stripped into `hoisted.format`, while `org-command`
+/// formats (`json`, `yaml`, `compact`, or unknown) stay in `out` for table validation.
+fn hoist_format_value(
+    val: &str,
+    arg: &str,
+    out: &mut Vec<String>,
+    hoisted: &mut HoistedFlags,
+) -> bool {
+    match OutputFormat::parse(val) {
+        Some(fmt @ (OutputFormat::Table | OutputFormat::Tsv)) => {
+            hoisted.format = Some(fmt);
+            true
+        }
+        parsed => {
+            hoisted.table_format = true;
+            hoisted.table_format_kind = parsed;
+            out.push(arg.to_owned());
+            false
+        }
+    }
+}
+
+/// Handles split `--format <value>`, returning `true` when the next token must be forwarded verbatim.
+fn hoist_split_format(
+    words: &[String],
+    idx: &mut usize,
+    arg: &str,
+    out: &mut Vec<String>,
+    hoisted: &mut HoistedFlags,
+) -> bool {
+    let Some(next) = words.get(*idx) else {
+        hoisted.table_format = true;
+        out.push(arg.to_owned());
+        return false;
+    };
+    if hoist_format_value(next, arg, out, hoisted) {
+        *idx += 1;
+        return false;
+    }
+    true
+}
+
+/// Classifies one non-value word before `--`, returning `true` if the next word is its value.
+fn hoist_single_word(
+    words: &[String],
+    idx: &mut usize,
+    arg: &str,
+    out: &mut Vec<String>,
+    hoisted: &mut HoistedFlags,
+) -> Result<bool, CliError> {
+    if hoist_switch(arg, out, hoisted)? {
+        return Ok(false);
+    }
+    if arg == "--format" {
+        return Ok(hoist_split_format(words, idx, arg, out, hoisted));
+    }
+    if let Some(val) = arg.strip_prefix("--format=") {
+        let _ = hoist_format_value(val, arg, out, hoisted);
+        return Ok(false);
+    }
+    let awaiting = arg
+        .strip_prefix("--")
+        .is_some_and(|flag| !flag.contains('=') && office_flag_takes_value(words, flag));
+    out.push(arg.to_owned());
+    Ok(awaiting)
 }
 
 /// Scans `words` (`<resource> [<verb>] ...`) respecting `--` and value-taking flags, stripping
@@ -383,12 +495,8 @@ pub(crate) fn hoist_office_words(
     let mut awaiting_value = false;
     while let Some(arg) = words.get(idx) {
         idx += 1;
-        if awaiting_value {
+        if awaiting_value || after_terminator {
             awaiting_value = false;
-            out.push(arg.clone());
-            continue;
-        }
-        if after_terminator {
             out.push(arg.clone());
             continue;
         }
@@ -397,65 +505,42 @@ pub(crate) fn hoist_office_words(
             out.push(arg.clone());
             continue;
         }
-        if arg == "--json" {
-            hoisted.json = true;
-            continue;
-        }
-        if arg.starts_with("--json=") {
-            return Err(CliError::usage(
-                "--json is a yes-or-no flag for JSON output and takes no value; pass a JSON object with --input-json <object>",
-            ));
-        }
-        if arg == "-q" || arg == "--quiet" {
-            hoisted.quiet = true;
-            continue;
-        }
-        if arg == "--help" || arg == "-h" || arg == "--schema" || arg == "--version" {
-            hoisted.passthrough_meta = true;
-            out.push(arg.clone());
-            continue;
-        }
-        if arg == "--format" {
-            if let Some(next) = words.get(idx) {
-                match OutputFormat::parse(next) {
-                    Some(fmt @ (OutputFormat::Table | OutputFormat::Tsv)) => {
-                        idx += 1;
-                        hoisted.format = Some(fmt);
-                        continue;
-                    }
-                    _ => {
-                        hoisted.table_format = true;
-                        awaiting_value = true;
-                        out.push(arg.clone());
-                        continue;
-                    }
-                }
-            }
-            hoisted.table_format = true;
-            out.push(arg.clone());
-            continue;
-        }
-        if let Some(val) = arg.strip_prefix("--format=") {
-            match OutputFormat::parse(val) {
-                Some(fmt @ (OutputFormat::Table | OutputFormat::Tsv)) => {
-                    hoisted.format = Some(fmt);
-                    continue;
-                }
-                _ => {
-                    hoisted.table_format = true;
-                    out.push(arg.clone());
-                    continue;
-                }
-            }
-        }
-        if let Some(flag_name) = arg.strip_prefix("--") {
-            if !flag_name.contains('=') && office_flag_takes_value(words, flag_name) {
-                awaiting_value = true;
-            }
-        }
-        out.push(arg.clone());
+        awaiting_value = hoist_single_word(words, &mut idx, arg, &mut out, &mut hoisted)?;
     }
     Ok((out, hoisted))
+}
+
+fn validate_output_conflict(explicit: &ExplicitOutput) -> Result<(), CliError> {
+    if explicit.json && explicit.quiet {
+        return Err(CliError::usage(
+            "--quiet and --json cannot be used together",
+        ));
+    }
+    if explicit.quiet && explicit.has_format_flag() {
+        return Err(CliError::usage(
+            "--quiet and --format cannot be used together",
+        ));
+    }
+    if explicit.json && explicit.has_non_json_format() {
+        return Err(CliError::usage(
+            "--json cannot be combined with a non-json --format",
+        ));
+    }
+    Ok(())
+}
+
+fn check_format_agreement(
+    first: Option<OutputFormat>,
+    second: Option<OutputFormat>,
+) -> Result<(), CliError> {
+    if let (Some(a), Some(b)) = (first, second) {
+        if a != b {
+            return Err(CliError::usage(
+                "--format is given more than once with conflicting values",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn merge_hoisted(
@@ -464,57 +549,79 @@ fn merge_hoisted(
     modes: &mut Modes,
 ) -> Result<bool, CliError> {
     if hoisted.passthrough_meta {
+        modes.ignore_env_format = true;
         return Ok(true);
     }
+    check_format_agreement(explicit.format, hoisted.format)?;
+    check_format_agreement(explicit.format, hoisted.table_format_kind)?;
+    check_format_agreement(hoisted.format, hoisted.table_format_kind)?;
     explicit.json |= hoisted.json;
     explicit.quiet |= hoisted.quiet;
     explicit.table_format |= hoisted.table_format;
+    if hoisted.table_format_kind.is_some() {
+        explicit.table_format_kind = hoisted.table_format_kind;
+    }
     if let Some(fmt) = hoisted.format {
         explicit.format = Some(fmt);
     }
-    let has_any_format = explicit.format.is_some() || explicit.table_format;
-    if explicit.json && explicit.quiet {
-        return Err(CliError::usage(
-            "--quiet and --json cannot be used together",
-        ));
-    }
-    if explicit.quiet && has_any_format {
-        return Err(CliError::usage(
-            "--quiet and --format cannot be used together",
-        ));
-    }
-    if explicit.json && has_any_format {
-        return Err(CliError::usage(
-            "--json and --format cannot be used together",
-        ));
-    }
+    validate_output_conflict(explicit)?;
     modes.json = explicit.json;
     modes.quiet = explicit.quiet;
-    modes.format = explicit.format;
+    modes.format = explicit.format.or(explicit.table_format_kind);
+    modes.ignore_env_format = explicit.has_output_override();
     Ok(false)
 }
 
+fn record_local_format(val: &str, found: &mut HoistedFlags) {
+    match OutputFormat::parse(val) {
+        Some(fmt) => found.format = Some(fmt),
+        None => found.table_format = true,
+    }
+}
+
+fn is_local_agent_value_flag(arg: &str) -> bool {
+    matches!(
+        arg,
+        "--member"
+            | "--workspace"
+            | "--ttl"
+            | "--label"
+            | "--session"
+            | "--limit"
+            | "--history-limit"
+            | "--name"
+            | "--instance"
+            | "--office"
+            | "--color"
+    )
+}
+
 /// Scans `args` of a local clap verb (`agent bind|renew|sessions`) for explicit output/help flags
-/// without modifying `args`, so `-q` or `--json` cleanly overrides `AGENT_OS_FORMAT`.
+/// without modifying `args`, so `-q`, `--json`, or `--format` cleanly overrides `AGENT_OS_FORMAT`.
 fn scan_local_agent_flags(args: &[String]) -> HoistedFlags {
     let mut found = HoistedFlags::default();
-    let mut skip_next = false;
-    for arg in args.iter().skip(1) {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
+    let mut idx = 1;
+    while let Some(arg) = args.get(idx) {
+        idx += 1;
         if arg == "--" {
             break;
+        }
+        if let Some(val) = arg.strip_prefix("--format=") {
+            record_local_format(val, &mut found);
+            continue;
         }
         match arg.as_str() {
             "--help" | "-h" => found.passthrough_meta = true,
             "--json" => found.json = true,
             "-q" | "--quiet" => found.quiet = true,
-            "--member" | "--workspace" | "--ttl" | "--label" | "--session" | "--limit"
-            | "--history-limit" | "--name" | "--instance" | "--office" | "--color" => {
-                skip_next = true;
-            }
+            "--format" => match args.get(idx) {
+                Some(val) => {
+                    idx += 1;
+                    record_local_format(val, &mut found);
+                }
+                None => found.table_format = true,
+            },
+            other if is_local_agent_value_flag(other) => idx += 1,
             _ => {}
         }
     }
@@ -549,12 +656,22 @@ fn prepare_modes(
             return Ok((top, explicit, passthrough));
         }
     }
-    if let TopCommand::SignIn(args) = &top {
+    if let TopCommand::SignIn(args) = &mut top {
         if !args.command().is_empty() {
-            let (_, hoisted) = hoist_office_words(args.command())?;
+            let hoisted = if is_sign_in_local_agent(args.command()) {
+                scan_local_agent_flags(&args.command()[1..])
+            } else {
+                let (cleaned, hoisted) = hoist_office_words(args.command())?;
+                *args.command_mut() = cleaned;
+                hoisted
+            };
             let passthrough = merge_hoisted(hoisted, &mut explicit, modes)?;
             return Ok((top, explicit, passthrough));
         }
+    }
+    validate_output_conflict(&explicit)?;
+    if explicit.has_output_override() {
+        modes.ignore_env_format = true;
     }
     Ok((top, explicit, false))
 }
@@ -609,7 +726,7 @@ fn dispatch(
     match top {
         TopCommand::Serve(pass) => serve::run(pass.args, ctx),
         TopCommand::Setup(pass) => setup::run(&pass.args, ctx),
-        TopCommand::SignIn(args) => {
+        TopCommand::SignIn(mut args) => {
             if let Some(outcome) = agent::try_run_after_sign_in(
                 args.instance_name(),
                 args.office_id(),
@@ -617,6 +734,11 @@ fn dispatch(
                 ctx,
             ) {
                 return outcome;
+            }
+            if !args.command().is_empty() {
+                let words = std::mem::take(args.command_mut());
+                *args.command_mut() =
+                    apply_office_output_format(words, explicit, passthrough_meta, ctx);
             }
             sign_in::run(args, ctx)
         }

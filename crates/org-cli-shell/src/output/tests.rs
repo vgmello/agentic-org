@@ -476,3 +476,101 @@ fn agent_harness_pty_emits_untruncated_json_while_pipe_preserves_tsv() {
         "{yaml}"
     );
 }
+
+#[test]
+fn low_priority_columns_elide_before_shrinking_critical_columns_to_24() {
+    let title = "Migrate workspace lease renewal flow";
+    assert_eq!(title.len(), 36);
+    let table = Table {
+        headers: vec![
+            "handle".into(),
+            "title".into(),
+            "notes".into(),
+            "updated".into(),
+        ],
+        rows: vec![Row {
+            id: "1".into(),
+            cells: vec![
+                Cell::name("@backend-2"),
+                Cell::name(title),
+                Cell::plain("Secondary notes text here"),
+                Cell::dim("2026-11-27 14:00 UTC"),
+            ],
+        }],
+    };
+    let (mut ctx, streams) = captured(never_color(), tty(Some(60)), &[]);
+    ctx.render_table(&table, &Value::Null, &ListView::default())
+        .unwrap();
+    let text = streams.stdout.text();
+    assert!(
+        text.lines()
+            .all(|line| console::measure_text_width(line) <= 60),
+        "exceeded 60 cols:\n{text}"
+    );
+    assert!(
+        text.contains(title),
+        "Critical title must keep full 36 chars when Low columns can elide:\n{text}"
+    );
+    assert!(
+        !text.contains("NOTES") && !text.contains("UPDATED"),
+        "Low columns should elide before shrinking Critical title:\n{text}"
+    );
+}
+
+#[test]
+fn terminal_table_handles_zero_tiny_width_empty_rows_and_wide_unicode() {
+    let sample = Table {
+        headers: vec!["handle".into(), "title".into()],
+        rows: vec![Row {
+            id: "1".into(),
+            cells: vec![Cell::name("@ada"), Cell::name("Hello world")],
+        }],
+    };
+    for tiny in [0usize, 2] {
+        let rendered = table::render_tty(&sample, false, Some(tiny));
+        for line in rendered.lines() {
+            assert!(
+                console::measure_text_width(line) <= tiny,
+                "width={tiny}: line {line:?} exceeded width"
+            );
+        }
+    }
+
+    // Empty rows directly through `render_tty` and through `render_table`.
+    let empty_rows = Table {
+        headers: vec!["handle".into(), "status".into()],
+        rows: Vec::new(),
+    };
+    let header_only = table::render_tty(&empty_rows, false, Some(40));
+    assert_eq!(header_only.lines().count(), 1, "{header_only:?}");
+    let (mut ctx, streams) = captured(never_color(), tty(Some(40)), &[]);
+    ctx.render_table(&empty_rows, &Value::Null, &ListView::default())
+        .unwrap();
+    assert!(streams.stdout.text().is_empty());
+
+    // Multi-width CJK and emoji cells truncate cleanly at display-width boundaries without panic.
+    let unicode = Table {
+        headers: vec!["handle".into(), "title".into()],
+        rows: vec![
+            Row {
+                id: "1".into(),
+                cells: vec![Cell::name("@ada"), Cell::name("日本語テストタイトル確認")],
+            },
+            Row {
+                id: "2".into(),
+                cells: vec![Cell::name("@ben"), Cell::name("🚀🔥✨🎉🎯📦")],
+            },
+        ],
+    };
+    for width in [10usize, 11, 15] {
+        let rendered = table::render_tty(&unicode, false, Some(width));
+        assert_eq!(rendered.lines().count(), 3, "width={width}:\n{rendered}");
+        for line in rendered.lines() {
+            assert!(
+                console::measure_text_width(line) <= width,
+                "width={width}: line {line:?} width {} > {width}",
+                console::measure_text_width(line)
+            );
+        }
+    }
+}

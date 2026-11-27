@@ -377,7 +377,7 @@ fn flag_value(field: &Field, written: &[String]) -> Result<Value, String> {
     let flag = field.flag();
     let one = |ty: &Type, text: &str| -> Result<Value, String> {
         match ty {
-            // The same range as an integer in `--json`: an `i64`, or a `u64` above it.
+            // The same range as an integer in `--input-json`: an `i64`, or a `u64` above it.
             Type::Integer => text
                 .parse::<i64>()
                 .map(Value::from)

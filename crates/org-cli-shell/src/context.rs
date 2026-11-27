@@ -62,6 +62,9 @@ pub struct Modes {
     pub color: ColorMode,
     /// `--no-color`.
     pub no_color: bool,
+    /// Skip consulting `AGENT_OS_FORMAT` (e.g. help/version output or explicit post-subcommand
+    /// `--format` handled by the office command table).
+    pub ignore_env_format: bool,
 }
 
 pub(crate) fn set(env: &dyn Fn(&str) -> Option<OsString>, name: &str) -> Option<OsString> {
@@ -135,14 +138,13 @@ impl ExecutionContext {
             modes.no_input = true;
         }
         let agent_harness = is_agent_harness(env);
-        let (output_format, invalid_env_format) =
-            format::resolve_output_format_checked(&modes, &terminal, env);
+        let output_format = format::resolve_output_format(&modes, &terminal, env);
         if !modes.quiet && output_format == OutputFormat::Json {
             modes.json = true;
         }
         let stdout_color = resolve_color(&modes, terminal.stdout_tty, env);
         let stderr_color = resolve_color(&modes, terminal.stderr_tty, env);
-        let mut ctx = Self {
+        Self {
             modes,
             terminal,
             output_format,
@@ -151,13 +153,7 @@ impl ExecutionContext {
             stderr_color,
             out,
             err,
-        };
-        if let Some(bad) = invalid_env_format {
-            ctx.warn(&format!(
-                "ignoring invalid {OUTPUT_FORMAT_ENV}=`{bad}` (expected json, compact, yaml, tsv or table)"
-            ));
         }
-        ctx
     }
 
     pub fn modes(&self) -> &Modes {

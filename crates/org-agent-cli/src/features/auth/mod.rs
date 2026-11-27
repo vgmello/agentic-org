@@ -130,18 +130,22 @@ pub(crate) fn print(outcome: Result<Printed, LifecycleError>) -> Printed {
     outcome.unwrap_or_else(|error| failure(&error))
 }
 
-/// Runs `agent-os login|whoami|logout|exec`; `None` for any other command line.
+/// Runs `agent-os [--json] login|whoami|logout|exec`; `None` for any other command line.
 pub(crate) fn run_lifecycle(args: &[String], hooks: &LoginHooks) -> Option<(String, u8)> {
-    let verb = args.first()?.as_str();
+    let (leading_json, tail) = match args {
+        [flag, rest @ ..] if flag == "--json" => (true, rest),
+        _ => (false, args),
+    };
+    let verb = tail.first()?.as_str();
     if !LIFECYCLE_VERBS.contains(&verb) {
         return None;
     }
-    let rest = &args[1..];
+    let rest = &tail[1..];
     let printed = match verb {
-        "login" => login::login(rest, hooks),
-        "whoami" => login::whoami(rest),
-        "logout" => login::logout(rest),
-        _ => exec::exec(rest),
+        "login" => login::login(rest, leading_json, hooks),
+        "whoami" => login::whoami(rest, leading_json),
+        "logout" => login::logout(rest, leading_json),
+        _ => exec::exec(rest, leading_json),
     };
     Some((printed.stdout, printed.exit_code))
 }
@@ -155,13 +159,58 @@ pub(crate) struct Flags {
 }
 
 impl Flags {
+    fn parse_named(
+        &mut self,
+        args: &[String],
+        at: &mut usize,
+        body: &str,
+        valued: &[&str],
+        switches: &[&str],
+        usage: &str,
+    ) -> Result<(), LifecycleError> {
+        let bad = |message: String| LifecycleError::usage(format!("Usage: {message}"), usage);
+        let (name, inline) = match body.split_once('=') {
+            Some((name, value)) => (name, Some(value.to_owned())),
+            None => (body, None),
+        };
+        if switches.contains(&name) && inline.is_none() {
+            if name == "json" && self.switch("json") {
+                return Err(bad("--json is given twice.".to_owned()));
+            }
+            self.switches.push(name.to_owned());
+            return Ok(());
+        }
+        if name == "json" && inline.is_some() {
+            return Err(bad(
+                "--json is a yes-or-no flag for JSON output and takes no value.".to_owned(),
+            ));
+        }
+        if !valued.contains(&name) {
+            return Err(bad(format!("--{name} is not a flag of this command.")));
+        }
+        let value = match inline {
+            Some(value) => value,
+            None => {
+                let value = args
+                    .get(*at)
+                    .ok_or_else(|| bad(format!("--{name} needs a value.")))?;
+                *at += 1;
+                value.clone()
+            }
+        };
+        if self.values.iter().any(|(n, _)| n == name) {
+            return Err(bad(format!("--{name} is given twice.")));
+        }
+        self.values.push((name.to_owned(), value));
+        Ok(())
+    }
+
     pub(crate) fn parse(
         args: &[String],
         valued: &[&str],
         switches: &[&str],
         usage: &str,
     ) -> Result<Self, LifecycleError> {
-        let bad = |message: String| LifecycleError::usage(format!("Usage: {message}"), usage);
         let mut out = Self {
             values: Vec::new(),
             switches: Vec::new(),
@@ -180,34 +229,12 @@ impl Flags {
                 continue;
             }
             let Some(body) = arg.strip_prefix("--").filter(|b| !b.is_empty()) else {
-                return Err(bad(format!(
-                    "`{arg}` is a bare word; every value is a named flag."
-                )));
+                return Err(LifecycleError::usage(
+                    format!("Usage: `{arg}` is a bare word; every value is a named flag."),
+                    usage,
+                ));
             };
-            let (name, inline) = match body.split_once('=') {
-                Some((name, value)) => (name, Some(value.to_owned())),
-                None => (body, None),
-            };
-            if switches.contains(&name) && inline.is_none() {
-                out.switches.push(name.to_owned());
-            } else if valued.contains(&name) {
-                let value = match inline {
-                    Some(value) => value,
-                    None => {
-                        let value = args
-                            .get(at)
-                            .ok_or_else(|| bad(format!("--{name} needs a value.")))?;
-                        at += 1;
-                        value.clone()
-                    }
-                };
-                if out.values.iter().any(|(n, _)| n == name) {
-                    return Err(bad(format!("--{name} is given twice.")));
-                }
-                out.values.push((name.to_owned(), value));
-            } else {
-                return Err(bad(format!("--{name} is not a flag of this command.")));
-            }
+            out.parse_named(args, &mut at, body, valued, switches, usage)?;
         }
         Ok(out)
     }
@@ -221,6 +248,20 @@ impl Flags {
 
     pub(crate) fn switch(&self, name: &str) -> bool {
         self.switches.iter().any(|n| n == name)
+    }
+
+    pub(crate) fn check_leading_json(
+        &self,
+        leading_json: bool,
+        usage: &str,
+    ) -> Result<(), LifecycleError> {
+        if leading_json && self.switch("json") {
+            return Err(LifecycleError::usage(
+                "Usage: --json is given twice.",
+                usage,
+            ));
+        }
+        Ok(())
     }
 }
 

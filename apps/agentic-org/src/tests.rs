@@ -310,3 +310,94 @@ fn office_flag_hoisting_handles_json_before_and_after_subcommand_and_preserves_v
     assert_eq!(cleaned, owned(&["task", "list", "--format=yaml"]));
     assert!(hoisted.table_format);
 }
+
+#[test]
+fn sign_in_prepare_modes_strips_hoisted_flags_and_applies_office_output_format() {
+    use clap::FromArgMatches;
+    use org_cli_shell::context::testing::{captured, tty};
+    use org_cli_shell::context::{OutputFormat, OUTPUT_FORMAT_ENV};
+
+    let prepare = |argv: &[&str]| {
+        let mut cmd = cli::command();
+        let matches = cmd.try_get_matches_from_mut(words(argv)).unwrap();
+        let parsed = cli::Cli::from_arg_matches(&matches).unwrap();
+        let explicit = crate::ExplicitOutput {
+            json: parsed.global.json,
+            quiet: parsed.global.quiet,
+            format: parsed.global.format.map(crate::args::FormatArg::into_shell),
+            table_format: false,
+            table_format_kind: None,
+            dry_run: parsed.global.dry_run,
+        };
+        let mut modes = parsed.modes();
+        let (top, explicit, passthrough) =
+            crate::prepare_modes(parsed.command.unwrap(), explicit, &mut modes).unwrap();
+        (top, explicit, modes, passthrough)
+    };
+
+    // `sign-in -- task list --format table` strips `--format table` and sets `OutputFormat::Table`.
+    let (top, explicit, modes, passthrough) =
+        prepare(&["sign-in", "--", "task", "list", "--format", "table"]);
+    let cli::TopCommand::SignIn(args) = top else {
+        panic!("expected SignIn");
+    };
+    assert_eq!(args.command(), ["task", "list"]);
+    assert_eq!(modes.format, Some(OutputFormat::Table));
+    assert!(!passthrough);
+    let (ctx, _) = captured(modes, org_cli_shell::terminal::Terminal::piped(), &[]);
+    assert_eq!(
+        crate::apply_office_output_format(args.command().to_vec(), &explicit, passthrough, &ctx),
+        ["task", "list"]
+    );
+
+    // `sign-in -- task list -q` strips `-q` and sets `modes.quiet`.
+    let (top, explicit, modes, passthrough) = prepare(&["sign-in", "--", "task", "list", "-q"]);
+    let cli::TopCommand::SignIn(args) = top else {
+        panic!("expected SignIn");
+    };
+    assert_eq!(args.command(), ["task", "list"]);
+    assert!(modes.quiet);
+    let (ctx, _) = captured(modes, tty(Some(80)), &[]);
+    assert_eq!(
+        crate::apply_office_output_format(args.command().to_vec(), &explicit, passthrough, &ctx),
+        ["task", "list"]
+    );
+
+    // `AGENT_OS_FORMAT=yaml sign-in -- task list` injects `--format yaml` after `task list`.
+    let (top, explicit, modes, passthrough) = prepare(&["sign-in", "--", "task", "list"]);
+    let cli::TopCommand::SignIn(args) = top else {
+        panic!("expected SignIn");
+    };
+    let (ctx, _) = captured(modes, tty(Some(80)), &[(OUTPUT_FORMAT_ENV, "yaml")]);
+    assert_eq!(ctx.output_format(), OutputFormat::Yaml);
+    assert_eq!(
+        crate::apply_office_output_format(args.command().to_vec(), &explicit, passthrough, &ctx),
+        ["task", "list", "--format", "yaml"]
+    );
+
+    // `--format yaml sign-in -- task list` injects `--format yaml` after `task list`.
+    let (top, explicit, modes, passthrough) =
+        prepare(&["--format", "yaml", "sign-in", "--", "task", "list"]);
+    let cli::TopCommand::SignIn(args) = top else {
+        panic!("expected SignIn");
+    };
+    let (ctx, _) = captured(modes, tty(Some(80)), &[]);
+    assert_eq!(
+        crate::apply_office_output_format(args.command().to_vec(), &explicit, passthrough, &ctx),
+        ["task", "list", "--format", "yaml"]
+    );
+
+    // `sign-in -- agent sessions --member @ada --format yaml` keeps flags intact for clap and
+    // sets `OutputFormat::Yaml`.
+    let (top, _, modes, _) = prepare(&[
+        "sign-in", "--", "agent", "sessions", "--member", "@ada", "--format", "yaml",
+    ]);
+    let cli::TopCommand::SignIn(args) = top else {
+        panic!("expected SignIn");
+    };
+    assert_eq!(
+        args.command(),
+        ["agent", "sessions", "--member", "@ada", "--format", "yaml"]
+    );
+    assert_eq!(modes.format, Some(OutputFormat::Yaml));
+}

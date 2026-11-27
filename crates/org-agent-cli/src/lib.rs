@@ -143,6 +143,17 @@ fn is_help_flag(arg: &str) -> bool {
     arg == "--help" || arg == "-h"
 }
 
+/// Recognizes `[--json] session attach ...`, returning `(leading_json, &["session", "attach", ...])`.
+fn match_session_attach(args: &[String]) -> Option<(bool, &[String])> {
+    match args {
+        [flag, a, b, ..] if flag == "--json" && a == "session" && b == "attach" => {
+            Some((true, &args[1..]))
+        }
+        [a, b, ..] if a == "session" && b == "attach" => Some((false, args)),
+        _ => None,
+    }
+}
+
 /// Runs `agent-os`, writing the single envelope or help output to stdout and returning the exit
 /// code. `login|whoami|logout|exec` are the external lifecycle; every other command binds
 /// through `AGENT_OS_*` environment variables, else the signed-in workspace of the working
@@ -151,8 +162,8 @@ pub fn run(args: &[String]) -> u8 {
     if let Some((stdout, exit_code)) = registry::run_lifecycle(args) {
         return emit(&mut io::stdout().lock(), &stdout, exit_code);
     }
-    if matches!(args, [a, b, ..] if a == "session" && b == "attach") {
-        return run_session_attach(args, auth::env_office());
+    if let Some((leading_json, attach_args)) = match_session_attach(args) {
+        return run_session_attach(leading_json, attach_args, auth::env_office());
     }
     let env_fmt = env_format();
     let output = execute_bound(args, &mut auth::env_office(), env_fmt.as_deref());
@@ -184,13 +195,13 @@ pub fn run_attach_loop<R: BufRead, W: Write>(
     registry::run_attach_loop(program, reader, writer, office)
 }
 
-fn run_session_attach(args: &[String], mut office: BoundOffice) -> u8 {
+fn run_session_attach(leading_json: bool, args: &[String], mut office: BoundOffice) -> u8 {
     if features::session::wants_help(args) {
         return emit(&mut io::stdout().lock(), SESSION_ATTACH_HELP, 0);
     }
     // A flag is refused before anything binds: exit 2, as every command line that cannot be
     // read is.
-    if let Some(refusal) = features::session::usage_refusal(args) {
+    if let Some(refusal) = features::session::usage_refusal(args, leading_json) {
         let line = org_command::failure_envelope_json(&refusal, false);
         return emit(
             &mut io::stdout().lock(),

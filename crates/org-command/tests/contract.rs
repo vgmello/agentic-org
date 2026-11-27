@@ -2125,10 +2125,13 @@ fn json_output_switch_works_before_and_after_subcommand_and_honors_env_format_pr
     assert_eq!(compact.exit_code, 0, "{}", compact.stdout);
     assert!(!compact.stdout.starts_with('{'), "{}", compact.stdout);
 
-    // 2. Bare `--json` before OR after subcommand (and before shorthands) beats AGENT_OS_FORMAT.
+    // 2. Bare `--json` before OR after subcommand (and before shorthands, or idempotently with
+    //    `--format json`) beats AGENT_OS_FORMAT.
     for line in [
         &["--json", "sample", "list"][..],
         &["sample", "list", "--json"],
+        &["--json", "sample", "list", "--format", "json"],
+        &["sample", "list", "--json", "--format", "json"],
         &["--json", "ls"],
         &["ls", "--json"],
         &["--json", "sample", "ping"],

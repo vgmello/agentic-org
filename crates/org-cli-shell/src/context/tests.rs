@@ -352,7 +352,9 @@ fn output_format_precedence_ladder_and_harness_detection() {
     assert!(ctx.modes().quiet);
     assert!(!ctx.modes().json, "explicit -q must not set modes.json");
 
-    // Invalid AGENT_OS_FORMAT without explicit flag warns cleanly and falls back without panic.
+    // Invalid AGENT_OS_FORMAT never writes prose warnings from ExecutionContext::with_streams
+    // (callers validate strictly via `parse_env_format` and fail closed via `ctx.report`), so
+    // JSON error envelopes on agent-harness PTYs stay pure JSON on stderr.
     let (ctx, streams) = captured(
         Modes::default(),
         tty(Some(80)),
@@ -360,8 +362,37 @@ fn output_format_precedence_ladder_and_harness_detection() {
     );
     assert_eq!(ctx.output_format(), OutputFormat::Table);
     assert!(
-        streams.stderr.text().contains("AGENT_OS_FORMAT") && streams.stderr.text().contains("xml"),
-        "{}",
+        streams.stderr.text().is_empty(),
+        "with_streams must not emit stderr warnings: {:?}",
         streams.stderr.text()
     );
+
+    let (mut ctx, streams) = captured(
+        Modes::default(),
+        tty(Some(80)),
+        &[("CLAUDECODE", "1"), (OUTPUT_FORMAT_ENV, "xml")],
+    );
+    assert_eq!(ctx.output_format(), OutputFormat::Json);
+    assert!(ctx.modes().json);
+    assert!(streams.stderr.text().is_empty());
+    let usage = ShellError::InvalidArguments {
+        message: "AGENT_OS_FORMAT invalid".into(),
+    };
+    assert_eq!(ctx.report(&usage), 2);
+    let err_text = streams.stderr.text();
+    assert!(!err_text.starts_with('!'), "{err_text:?}");
+    let parsed: serde_json::Value = serde_json::from_str(&err_text)
+        .unwrap_or_else(|e| panic!("stderr must be pure JSON envelope: {e}: {err_text:?}"));
+    assert_eq!(parsed["error"]["exit_code"], 2);
+
+    // `ignore_env_format` skips consulting `AGENT_OS_FORMAT` altogether (e.g. help or
+    // post-subcommand `--format`).
+    let ignore = Modes {
+        ignore_env_format: true,
+        ..Modes::default()
+    };
+    let (ctx, streams) = captured(ignore, tty(Some(80)), &[(OUTPUT_FORMAT_ENV, "json")]);
+    assert_eq!(ctx.output_format(), OutputFormat::Table);
+    assert!(!ctx.modes().json);
+    assert!(streams.stderr.text().is_empty());
 }

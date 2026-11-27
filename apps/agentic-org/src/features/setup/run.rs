@@ -58,10 +58,11 @@ fn usage(message: impl Into<String>) -> SetupError {
 
 /// The global flags setup cannot honour (it reports in prose and has no preview), written
 /// among its own words where the global parser does not see them: refused, never ignored.
-const REFUSED_GLOBALS: [(&str, &str); 4] = [
+const REFUSED_GLOBALS: [(&str, &str); 5] = [
     ("--json", "--json"),
     ("-q", "--quiet"),
     ("--quiet", "--quiet"),
+    ("--format", "--format"),
     ("--dry-run", "--dry-run"),
 ];
 
@@ -86,10 +87,11 @@ pub(super) fn run_as(
     can_prompt: bool,
     out: &mut dyn Write,
 ) -> Result<SetUp, SetupError> {
-    if let Some((_, flag)) = REFUSED_GLOBALS
-        .iter()
-        .find(|(word, _)| arguments.iter().any(|arg| arg == word))
-    {
+    if let Some((_, flag)) = REFUSED_GLOBALS.iter().find(|(word, _)| {
+        arguments
+            .iter()
+            .any(|arg| arg == word || (*word == "--format" && arg.starts_with("--format=")))
+    }) {
         return Err(usage(format!("`setup` does not take {flag}")));
     }
     // Never write a fake HQ or enroll a satellite from here.

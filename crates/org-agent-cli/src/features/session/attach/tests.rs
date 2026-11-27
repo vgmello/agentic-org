@@ -253,8 +253,22 @@ fn shorthands_mean_the_same_command_in_attach() {
 #[test]
 fn session_attach_with_a_flag_is_a_usage_refusal() {
     let words = |line: &str| -> Vec<String> { line.split(' ').map(str::to_owned).collect() };
-    assert!(usage_refusal(&words("session attach")).is_none());
-    let refusal = usage_refusal(&words("session attach --limit 5")).expect("refused");
+    assert!(usage_refusal(&words("session attach"), false).is_none());
+    assert!(usage_refusal(&words("session attach"), true).is_none());
+    assert!(usage_refusal(&words("session attach --json"), false).is_none());
+    let dup_leading = usage_refusal(&words("session attach --json"), true).expect("dup refused");
+    assert_eq!(dup_leading.code, ErrorCode::InvalidRequest);
+    assert!(
+        dup_leading.message.contains("twice"),
+        "{}",
+        dup_leading.message
+    );
+    let dup_trailing =
+        usage_refusal(&words("session attach --json --json"), false).expect("dup refused");
+    assert_eq!(dup_trailing.code, ErrorCode::InvalidRequest);
+    let eq_val = usage_refusal(&words("session attach --json=true"), false).expect("val refused");
+    assert_eq!(eq_val.code, ErrorCode::InvalidRequest);
+    let refusal = usage_refusal(&words("session attach --limit 5"), false).expect("refused");
     assert_eq!(refusal.code, ErrorCode::InvalidRequest);
     assert!(refusal.message.contains("--limit 5"), "{}", refusal.message);
     assert!(refusal.hint.contains("--help"), "{}", refusal.hint);

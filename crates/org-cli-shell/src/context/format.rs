@@ -100,33 +100,18 @@ pub fn resolve_output_format(
     terminal: &Terminal,
     env: &dyn Fn(&str) -> Option<OsString>,
 ) -> OutputFormat {
-    resolve_output_format_checked(modes, terminal, env).0
-}
-
-/// Like [`resolve_output_format`], also returning any invalid `AGENT_OS_FORMAT` value that was
-/// consulted (i.e. when no explicit CLI flag overrode it) so callers can reject or warn cleanly.
-pub(crate) fn resolve_output_format_checked(
-    modes: &Modes,
-    terminal: &Terminal,
-    env: &dyn Fn(&str) -> Option<OsString>,
-) -> (OutputFormat, Option<String>) {
     if modes.json {
-        return (OutputFormat::Json, None);
+        return OutputFormat::Json;
     }
     if let Some(format) = modes.format {
-        return (format, None);
+        return format;
     }
-    if !modes.quiet {
-        match parse_env_format(env) {
-            Ok(Some(format)) => return (format, None),
-            Ok(None) => {}
-            Err(bad) => {
-                let fallback = fallback_format(terminal, env);
-                return (fallback, Some(bad));
-            }
+    if !modes.quiet && !modes.ignore_env_format {
+        if let Ok(Some(format)) = parse_env_format(env) {
+            return format;
         }
     }
-    (fallback_format(terminal, env), None)
+    fallback_format(terminal, env)
 }
 
 fn fallback_format(terminal: &Terminal, env: &dyn Fn(&str) -> Option<OsString>) -> OutputFormat {

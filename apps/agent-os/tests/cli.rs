@@ -1167,4 +1167,96 @@ fn task_212_agent_os_format_precedence_and_json_before_after_subcommand() {
     let env: Value = serde_json::from_slice(&input_json.stdout).unwrap();
     assert_eq!(env["ok"], true);
     assert_eq!(env["data"]["mode"], "offline_builtin_only");
+
+    // 6. P1-5: lifecycle verbs (`login`, `whoami`, `logout`, `exec`) and `session attach` accept
+    //    bare `--json` before OR after the verb (exit 0 for help, exit 1 when unbound/offline —
+    //    never exit 2 unknown-flag usage error).
+    for help_args in [
+        &["--json", "whoami", "--help"][..],
+        &["whoami", "--json", "--help"],
+        &["--json", "logout", "--help"],
+        &["logout", "--json", "--help"],
+        &["--json", "login", "--help"],
+        &["login", "--json", "--help"],
+        &["--json", "exec", "--help"],
+        &["exec", "--json", "--help"],
+        &["--json", "session", "attach", "--help"],
+        &["session", "attach", "--json", "--help"],
+    ] {
+        let out = bin().args(help_args).output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{help_args:?}: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+
+    let tmp_cwd = tempfile::tempdir().unwrap();
+    let dead_sock = tmp_cwd.path().join("no-office.sock");
+    for unbound_args in [
+        &["--json", "whoami"][..],
+        &["whoami", "--json"],
+        &["--json", "logout"],
+        &["logout", "--json"],
+        &[
+            "--json",
+            "login",
+            "--as",
+            "@ada",
+            "--socket",
+            dead_sock.to_str().unwrap(),
+        ],
+        &[
+            "login",
+            "--as",
+            "@ada",
+            "--socket",
+            dead_sock.to_str().unwrap(),
+            "--json",
+        ],
+        &[
+            "--json",
+            "exec",
+            "--as",
+            "@ada",
+            "--socket",
+            dead_sock.to_str().unwrap(),
+            "--",
+            "echo",
+            "--json",
+        ],
+        &[
+            "exec",
+            "--as",
+            "@ada",
+            "--socket",
+            dead_sock.to_str().unwrap(),
+            "--json",
+            "--",
+            "echo",
+            "--json",
+        ],
+        &["--json", "session", "attach"],
+        &["session", "attach", "--json"],
+    ] {
+        let out = bin()
+            .args(unbound_args)
+            .current_dir(tmp_cwd.path())
+            .env("XDG_STATE_HOME", tmp_cwd.path().join("state"))
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{unbound_args:?} must fail with refusal (1), not usage (2): {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let env: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(env["ok"], false, "{unbound_args:?}");
+        assert_ne!(
+            env["error"]["code"], "invalid_request",
+            "{unbound_args:?}: {env}"
+        );
+    }
 }

@@ -198,20 +198,26 @@ fn settled(polled: AuthLoginPollResult) -> Result<Option<String>, Refusal> {
     }
 }
 
-pub(super) fn login(args: &[String], hooks: &LoginHooks) -> Printed {
-    print(run_login(args, hooks))
+pub(super) fn login(args: &[String], leading_json: bool, hooks: &LoginHooks) -> Printed {
+    print(run_login(args, leading_json, hooks))
 }
 
-fn run_login(args: &[String], hooks: &LoginHooks) -> Result<Printed, LifecycleError> {
+fn run_login(
+    args: &[String],
+    leading_json: bool,
+    hooks: &LoginHooks,
+) -> Result<Printed, LifecycleError> {
+    const USAGE: &str = "agent-os login --as @<handle> [--office <id> | --socket <path>]";
     let flags = Flags::parse(
         args,
         &["as", "office", "socket", "wait", "workspace", "label"],
-        &[],
-        "agent-os login --as @<handle> [--office <id> | --socket <path>]",
+        &["json"],
+        USAGE,
     )?;
     if flags.help {
         return Ok(help(LOGIN_HELP));
     }
+    flags.check_leading_json(leading_json, USAGE)?;
     let member = flags.value("as").ok_or_else(|| {
         LifecycleError::usage(
             "Usage: agent-os login needs --as @<handle>.",
@@ -330,13 +336,17 @@ fn context_briefing(state: &WorkspaceState, hooks: &LoginHooks) -> Value {
     }
 }
 
-pub(super) fn whoami(args: &[String]) -> Printed {
-    let flags = match Flags::parse(args, &[], &[], "agent-os whoami") {
+pub(super) fn whoami(args: &[String], leading_json: bool) -> Printed {
+    const USAGE: &str = "agent-os whoami";
+    let flags = match Flags::parse(args, &[], &["json"], USAGE) {
         Ok(flags) => flags,
         Err(error) => return failure(&error),
     };
     if flags.help {
         return help(WHOAMI_HELP);
+    }
+    if let Err(error) = flags.check_leading_json(leading_json, USAGE) {
+        return failure(&error);
     }
     match super::env_office().call_method(AuthWhoami::METHOD, json!({})) {
         Ok(data) => success(&data),
@@ -344,20 +354,17 @@ pub(super) fn whoami(args: &[String]) -> Printed {
     }
 }
 
-pub(super) fn logout(args: &[String]) -> Printed {
-    print(run_logout(args))
+pub(super) fn logout(args: &[String], leading_json: bool) -> Printed {
+    print(run_logout(args, leading_json))
 }
 
-fn run_logout(args: &[String]) -> Result<Printed, LifecycleError> {
-    let flags = Flags::parse(
-        args,
-        &["workspace"],
-        &[],
-        "agent-os logout [--workspace <dir>]",
-    )?;
+fn run_logout(args: &[String], leading_json: bool) -> Result<Printed, LifecycleError> {
+    const USAGE: &str = "agent-os logout [--workspace <dir>]";
+    let flags = Flags::parse(args, &["workspace"], &["json"], USAGE)?;
     if flags.help {
         return Ok(help(LOGOUT_HELP));
     }
+    flags.check_leading_json(leading_json, USAGE)?;
     let root = store::state_root()?;
     let found = match flags.value("workspace") {
         Some(dir) => {

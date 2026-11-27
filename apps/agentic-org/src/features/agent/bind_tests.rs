@@ -89,6 +89,52 @@ fn parse_bind_args_accepts_help_and_rejects_missing_required_flags() {
     )
     .unwrap_err();
     assert_eq!(err.exit_code(), 2);
+
+    // Post-subcommand `--format` and idempotent `--json --format json` vs conflicting `--format yaml`.
+    let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
+    let parsed = parse_bind_args(
+        &words(&[
+            "--member",
+            "@ada",
+            "--workspace",
+            "/tmp",
+            "--format",
+            "yaml",
+        ]),
+        &mut ctx,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(parsed.format, Some(FormatArg::Yaml));
+    let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
+    assert!(parse_bind_args(
+        &words(&[
+            "--member",
+            "@ada",
+            "--workspace",
+            "/tmp",
+            "--json",
+            "--format",
+            "json",
+        ]),
+        &mut ctx,
+    )
+    .is_ok());
+    let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
+    let err = parse_bind_args(
+        &words(&[
+            "--member",
+            "@ada",
+            "--workspace",
+            "/tmp",
+            "--json",
+            "--format",
+            "yaml",
+        ]),
+        &mut ctx,
+    )
+    .unwrap_err();
+    assert_eq!(err.exit_code(), 2);
 }
 
 #[test]

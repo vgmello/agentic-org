@@ -3,9 +3,9 @@
 //! declared next to its slice (`features/<noun>/mod.rs`).
 
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
-use org_cli_shell::context::{ColorMode, Modes, OutputFormat};
+use org_cli_shell::context::{ColorMode, Modes};
 
-use crate::args::PassArgs;
+use crate::args::{FormatArg, PassArgs};
 use crate::features::{admin, backup, completion, context, diagnostics, office, org, project};
 use crate::features::{provider, release, service, sign_in, status};
 
@@ -51,28 +51,6 @@ pub(crate) enum ColorArg {
     Never,
 }
 
-/// `--format`.
-#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FormatArg {
-    Json,
-    Compact,
-    Yaml,
-    Tsv,
-    Table,
-}
-
-impl FormatArg {
-    pub(crate) fn into_shell(self) -> OutputFormat {
-        match self {
-            Self::Json => OutputFormat::Json,
-            Self::Compact => OutputFormat::Compact,
-            Self::Yaml => OutputFormat::Yaml,
-            Self::Tsv => OutputFormat::Tsv,
-            Self::Table => OutputFormat::Table,
-        }
-    }
-}
-
 /// The flags every command takes.
 #[derive(Args, Debug, Default)]
 #[command(next_help_heading = "Global Options")]
@@ -89,7 +67,7 @@ pub(crate) struct GlobalArgs {
         global = true,
         value_enum,
         value_name = "FORMAT",
-        conflicts_with_all = ["json", "quiet"]
+        conflicts_with = "quiet"
     )]
     pub(crate) format: Option<FormatArg>,
     /// Never prompt; fail instead when a value or a confirmation is missing
@@ -379,6 +357,7 @@ impl Cli {
                 ColorArg::Never => ColorMode::Never,
             },
             no_color: self.global.no_color,
+            ignore_env_format: false,
         }
     }
 }
