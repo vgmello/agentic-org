@@ -3,8 +3,8 @@
 //! `FC-150`, `TASK-216`).
 //!
 //! All filesystem discovery, bounded reads, and redaction happen inside the office over an
-//! agent's private home directory. Symlinks are refused (both at walk time and with
-//! `O_NOFOLLOW | O_NONBLOCK` + `dev`/`ino` verification on open), raw host paths are never
+//! agent's private home directory. Symlinks are refused (both at walk time and via component-wise
+//! `open_regular_beneath` with `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`), raw host paths are never
 //! exposed over RPC/HTTP, and vendor-specific JSONL parsing is delegated to each registered
 //! [`org_agent_runtime::AgentRuntime::transcript_parser`].
 
@@ -29,10 +29,16 @@ use crate::runtime_registry::RuntimeRegistry;
 
 mod discover;
 
-use discover::{discover_sessions, read_bounded_utf8, read_prefix_utf8};
+use discover::{discover_sessions, read_bounded_utf8_with_limit, read_prefix_utf8};
 
 /// Maximum bytes read from one transcript file (8 MiB).
 pub const MAX_TRANSCRIPT_READ_BYTES: u64 = 8 * 1024 * 1024;
+/// Maximum cumulative raw bytes read across the main transcript and all attached sub-agents (16 MiB).
+pub const MAX_TOTAL_TRANSCRIPT_BYTES: usize = 16 * 1024 * 1024;
+/// Maximum sub-agent transcripts discovered or attached for a single session.
+pub const MAX_SUBAGENTS_PER_TRANSCRIPT: usize = 32;
+/// Maximum entries retained per attached sub-agent transcript.
+pub const MAX_SUBAGENT_ENTRIES: usize = 256;
 /// Default page size when `limit` is omitted.
 pub const DEFAULT_TRANSCRIPT_LIMIT: usize = 500;
 /// Maximum page size for one transcript response.
@@ -73,6 +79,7 @@ struct DiscoveredSession {
     modified_ms: u64,
     size_bytes: u64,
     subagent_files: Vec<SubagentFile>,
+    subagents_capped: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -175,10 +182,24 @@ pub fn load_agent_transcript(
         return Ok(None);
     };
 
-    let (raw, read_truncated) = read_bounded_utf8(&target.path, &canon_home)?;
+    let (raw, mut read_truncated, main_bytes) =
+        read_bounded_utf8_with_limit(&target.path, &canon_home, MAX_TRANSCRIPT_READ_BYTES)?;
     let mut parsed = parser.parse(&raw);
     if query.include_subagents {
-        attach_discovered_subagents(parser, &mut parsed, target, &canon_home, &raw);
+        if target.subagents_capped {
+            read_truncated = true;
+        }
+        let remaining_budget = MAX_TOTAL_TRANSCRIPT_BYTES.saturating_sub(main_bytes);
+        if attach_discovered_subagents(
+            parser,
+            &mut parsed,
+            target,
+            &canon_home,
+            &raw,
+            remaining_budget,
+        ) {
+            read_truncated = true;
+        }
     }
 
     let format = format_from_id(&parsed.format_id);
@@ -242,24 +263,80 @@ fn select_session<'a>(
     discovered.first()
 }
 
+struct SubagentLoadState<'a> {
+    parser: &'a dyn TranscriptParser,
+    canon_home: &'a Path,
+    remaining_bytes: usize,
+    truncated: bool,
+    loaded: Vec<LoadedSubagentTranscript>,
+}
+
+impl SubagentLoadState<'_> {
+    fn try_load(
+        &mut self,
+        path: &Path,
+        agent_id: String,
+        label: Option<String>,
+        parent_tool_use_id: Option<String>,
+    ) -> bool {
+        if !is_safe_session_id(&agent_id) {
+            return true;
+        }
+        if self.loaded.len() >= MAX_SUBAGENTS_PER_TRANSCRIPT || self.remaining_bytes == 0 {
+            self.truncated = true;
+            return false;
+        }
+        let file_limit = (self.remaining_bytes as u64).min(MAX_TRANSCRIPT_READ_BYTES);
+        let Ok((sub_raw, sub_truncated, bytes_used)) =
+            read_bounded_utf8_with_limit(path, self.canon_home, file_limit)
+        else {
+            return true;
+        };
+        self.remaining_bytes = self.remaining_bytes.saturating_sub(bytes_used);
+        if sub_truncated {
+            self.truncated = true;
+        }
+        let mut sub_parsed = self.parser.parse(&sub_raw);
+        if sub_parsed.entries.len() > MAX_SUBAGENT_ENTRIES {
+            sub_parsed.entries.truncate(MAX_SUBAGENT_ENTRIES);
+            sub_parsed.files = rt::aggregate_file_touches(&sub_parsed.entries);
+            self.truncated = true;
+        }
+        self.loaded.push(LoadedSubagentTranscript {
+            agent_id,
+            label,
+            parent_tool_use_id,
+            parsed: sub_parsed,
+        });
+        true
+    }
+}
+
 fn attach_discovered_subagents(
     parser: &dyn TranscriptParser,
     parsed: &mut rt::ParsedTranscript,
     target: &DiscoveredSession,
     canon_home: &Path,
     raw: &str,
-) {
-    let mut loaded = Vec::new();
+    remaining_bytes: usize,
+) -> bool {
+    let mut state = SubagentLoadState {
+        parser,
+        canon_home,
+        remaining_bytes,
+        truncated: false,
+        loaded: Vec::new(),
+    };
     match parser.discovery_layout() {
         TranscriptDiscoveryLayout::RecursiveJsonl { .. } => {
             for sf in &target.subagent_files {
-                if let Ok((sub_raw, _)) = read_bounded_utf8(&sf.path, canon_home) {
-                    loaded.push(LoadedSubagentTranscript {
-                        agent_id: sf.agent_id.clone(),
-                        label: sf.label.clone(),
-                        parent_tool_use_id: sf.parent_tool_use_id.clone(),
-                        parsed: parser.parse(&sub_raw),
-                    });
+                if !state.try_load(
+                    &sf.path,
+                    sf.agent_id.clone(),
+                    sf.label.clone(),
+                    sf.parent_tool_use_id.clone(),
+                ) {
+                    break;
                 }
             }
         }
@@ -273,21 +350,17 @@ fn attach_discovered_subagents(
                     continue;
                 }
                 let sub_path = brain_dir.join(&r.agent_id).join(transcript_rel_path);
-                if let Ok((sub_raw, _)) = read_bounded_utf8(&sub_path, canon_home) {
-                    loaded.push(LoadedSubagentTranscript {
-                        agent_id: r.agent_id,
-                        label: r.label,
-                        parent_tool_use_id: r.parent_tool_use_id,
-                        parsed: parser.parse(&sub_raw),
-                    });
+                if !state.try_load(&sub_path, r.agent_id, r.label, r.parent_tool_use_id) {
+                    break;
                 }
             }
         }
         _ => {}
     }
-    if !loaded.is_empty() {
-        parser.attach_subagents(parsed, loaded);
+    if !state.loaded.is_empty() {
+        parser.attach_subagents(parsed, state.loaded);
     }
+    state.truncated
 }
 
 fn filter_entries(entries: Vec<TranscriptEntry>, query: TranscriptQuery) -> Vec<TranscriptEntry> {
@@ -443,14 +516,18 @@ fn convert_files(files: Vec<rt::TranscriptFileTouch>) -> Vec<FileTouchSummary> {
         .collect()
 }
 
-fn convert_subagent(sub: rt::SubagentTranscript) -> SubagentTranscriptView {
+fn convert_subagent(mut sub: rt::SubagentTranscript) -> SubagentTranscriptView {
+    if sub.entries.len() > MAX_SUBAGENT_ENTRIES {
+        sub.entries.truncate(MAX_SUBAGENT_ENTRIES);
+    }
+    let entries: Vec<TranscriptEntry> = sub.entries.into_iter().map(convert_entry).collect();
     SubagentTranscriptView {
         agent_id: sub.agent_id,
         label: sub.label,
         parent_tool_use_id: sub.parent_tool_use_id,
         format: format_from_id(&sub.format_id),
-        entry_count: sub.entry_count,
-        entries: sub.entries.into_iter().map(convert_entry).collect(),
+        entry_count: entries.len() as u32,
+        entries,
         files: convert_files(sub.files),
         usage: convert_usage(sub.usage),
     }

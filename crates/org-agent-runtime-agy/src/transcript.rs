@@ -74,7 +74,25 @@ pub(crate) fn parse_agy_jsonl(raw: &str) -> ParsedTranscript {
     }
 }
 
-/// Extracts deduplicated sub-agent references launched via `invoke_subagent`, skipping self-refs.
+/// Maximum deduplicated sub-agent references extracted from a single Agy transcript.
+///
+/// Bounded above the office's 32-subagent load limit (`32 * 2 = 64`) so office callers
+/// reliably observe overflow past 32 and set `truncated = true`, even when some referenced
+/// sibling conversation directories are missing on disk.
+pub(crate) const MAX_EXTRACTED_SUBAGENT_REFS: usize = 64;
+
+fn is_safe_agy_conversation_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && !id.contains("..")
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        && !id.starts_with('.')
+}
+
+/// Extracts deduplicated sub-agent references launched via `invoke_subagent`, skipping self-refs
+/// and unsafe conversation IDs.
 pub(crate) fn extract_agy_subagent_refs(
     raw: &str,
     parent_session_id: &str,
@@ -82,6 +100,9 @@ pub(crate) fn extract_agy_subagent_refs(
     let mut seen = BTreeSet::new();
     let mut refs = Vec::new();
     for line in raw.lines() {
+        if refs.len() >= MAX_EXTRACTED_SUBAGENT_REFS {
+            break;
+        }
         let Ok(val) = serde_json::from_str::<Value>(line.trim()) else {
             continue;
         };
@@ -92,7 +113,10 @@ pub(crate) fn extract_agy_subagent_refs(
         else {
             continue;
         };
-        if conv_id == parent_session_id || !seen.insert(conv_id.to_owned()) {
+        if conv_id == parent_session_id
+            || !is_safe_agy_conversation_id(conv_id)
+            || !seen.insert(conv_id.to_owned())
+        {
             continue;
         }
         let role = val
@@ -472,4 +496,30 @@ fn extract_agy_usage(val: Option<&Value>) -> Option<TranscriptUsage> {
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_agy_subagent_refs, MAX_EXTRACTED_SUBAGENT_REFS};
+
+    #[test]
+    fn extract_agy_subagent_refs_caps_and_filters_unsafe_ids() {
+        let mut lines = vec![
+            r#"{"type":"TOOL_RESPONSE","tool_call_id":"bad_0","result":{"conversationId":"../escape"}}"#.to_owned(),
+            r#"{"type":"TOOL_RESPONSE","tool_call_id":"bad_1","result":{"conversationId":".hidden"}}"#.to_owned(),
+        ];
+        for idx in 0..(MAX_EXTRACTED_SUBAGENT_REFS + 15) {
+            lines.push(format!(
+                r#"{{"type":"TOOL_RESPONSE","tool_call_id":"call_{idx}","result":{{"conversationId":"sub-{idx:03}"}},"spec":{{"role":"Worker {idx}"}}}}"#
+            ));
+        }
+        let raw = lines.join("\n");
+        let refs = extract_agy_subagent_refs(&raw, "parent-conv");
+        assert_eq!(refs.len(), MAX_EXTRACTED_SUBAGENT_REFS);
+        assert_eq!(refs[0].agent_id, "sub-000");
+        assert_eq!(
+            refs[MAX_EXTRACTED_SUBAGENT_REFS - 1].agent_id,
+            format!("sub-{:03}", MAX_EXTRACTED_SUBAGENT_REFS - 1)
+        );
+    }
 }

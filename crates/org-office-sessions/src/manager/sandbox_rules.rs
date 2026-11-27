@@ -302,6 +302,22 @@ pub(super) fn append_cargo_credential_denies(out: &mut Vec<PathPattern>) {
     }
 }
 
+fn is_plain_relative_path(rel: &str) -> bool {
+    let path = Path::new(rel);
+    !rel.is_empty()
+        && path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+fn push_relative_credential_denies(base: &Path, rel_paths: &[&str], out: &mut Vec<PathPattern>) {
+    for &rel in rel_paths {
+        if is_plain_relative_path(rel) {
+            push_exact_pattern(out, &base.join(rel));
+        }
+    }
+}
+
 pub(super) fn append_runtime_credential_denies(
     runtimes: &crate::runtime_registry::RuntimeRegistry,
     out: &mut Vec<PathPattern>,
@@ -310,20 +326,30 @@ pub(super) fn append_runtime_credential_denies(
         return;
     };
     let home = PathBuf::from(home);
+    append_runtime_credential_denies_for_home(runtimes, &home, out);
+}
+
+pub(super) fn append_runtime_credential_denies_for_home(
+    runtimes: &crate::runtime_registry::RuntimeRegistry,
+    home: &Path,
+    out: &mut Vec<PathPattern>,
+) {
+    if !home.is_absolute() {
+        return;
+    }
     for adapter in runtimes.adapters() {
         let profile = adapter.host_profile();
-        let Some(subdir) = profile.host_config_subdir else {
-            continue;
-        };
-        if profile.config_credential_files.is_empty() {
-            continue;
+        if let Some(subdir) = profile
+            .host_config_subdir
+            .filter(|s| is_plain_relative_path(s))
+        {
+            push_relative_credential_denies(
+                &home.join(subdir),
+                profile.config_credential_files,
+                out,
+            );
         }
-        let config_dir = home.join(subdir);
-        if config_dir.is_absolute() {
-            for rel in profile.config_credential_files {
-                push_exact_pattern(out, &config_dir.join(rel));
-            }
-        }
+        push_relative_credential_denies(home, profile.host_credential_files, out);
     }
 }
 

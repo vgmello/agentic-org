@@ -117,7 +117,8 @@ impl AgentRuntime for CodexRuntime {
     fn host_profile(&self) -> RuntimeHostProfile {
         RuntimeHostProfile {
             host_config_subdir: Some(".codex"),
-            config_credential_files: &[],
+            config_credential_files: &["auth.json"],
+            host_credential_files: &[],
             uses_host_oauth_token_injection: false,
             uses_linux_bwrap_sandbox: false,
             needs_explicit_sandbox_ro_dirs: false,
@@ -166,5 +167,13 @@ mod tests {
         ] {
             assert!(!runtime.reply_signals_auth_expired(reply), "{reply:?}");
         }
+    }
+
+    #[test]
+    fn host_profile_declares_codex_auth_json_credential_file() {
+        let profile = CodexRuntime::new().host_profile();
+        assert_eq!(profile.host_config_subdir, Some(".codex"));
+        assert_eq!(profile.config_credential_files, &["auth.json"]);
+        assert!(profile.host_credential_files.is_empty());
     }
 }
