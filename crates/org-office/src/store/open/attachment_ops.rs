@@ -264,12 +264,11 @@ impl ReadOp for ResourceFactsRead {
                 task_id,
                 comment_id,
             } => {
-                let found = match (id(&task_id), id(&comment_id)) {
-                    (Some(task), Some(comment)) => read
-                        .task_comments(&task)?
-                        .into_iter()
-                        .find(|c| c.id == comment),
-                    _ => None,
+                let found = match id(&comment_id) {
+                    Some(comment) => read
+                        .task_comment_by_id(&comment)?
+                        .filter(|c| task_id.is_empty() || c.task_id.as_str() == task_id.as_str()),
+                    None => None,
                 };
                 found.map_or(ParentFacts::Missing, |comment| ParentFacts::TaskComment {
                     author_id: comment.author_id.to_string(),

@@ -49,7 +49,7 @@ pub(super) const COMMANDS: &[Command] = &[
         errors: READ_ERRORS,
         example: Example {
             input: r#"{"task":"T-A1"}"#,
-            output: r#"{"task":{"id":"0193a5c0-0000-7000-8000-000000000100","key":"T-A1","type":"task","title":"Implement auth","status":"todo","priority":"high","team_id":"0193a5c0-0000-7000-8000-000000000010","rank_order":10,"labels":["backend","security"],"reference_files":["docs/auth.md"],"modified_files":["src/auth.rs"],"depends_on":[],"dependents":[],"revision":1,"checklist_total":0,"checklist_done":0,"comment_count":0,"watcher_count":0},"body_markdown":"","checklist":[],"comments":[],"depends_on_tasks":[],"dependent_tasks":[],"history":[]}"#,
+            output: r#"{"task":{"id":"0193a5c0-0000-7000-8000-000000000100","key":"T-A1","type":"task","title":"Implement auth","status":"todo","priority":"high","team_id":"0193a5c0-0000-7000-8000-000000000010","rank_order":10,"labels":["backend","security"],"reference_files":["docs/auth.md"],"modified_files":["src/auth.rs"],"depends_on":[],"dependents":[],"revision":1,"checklist_total":0,"checklist_done":0,"comment_count":0,"watcher_count":0},"body_markdown":"","checklist":[],"comments":[],"attachments":[],"depends_on_tasks":[],"dependent_tasks":[],"history":[]}"#,
         },
     },
     Command {
@@ -241,6 +241,7 @@ pub(super) fn read_task_inspect<T: OfficeTransport + ?Sized>(
         "body_markdown": res.task.body_markdown,
         "checklist": res.checklist,
         "comments": res.comments,
+        "attachments": res.attachments,
         "depends_on_tasks": res.depends_on_tasks,
         "dependent_tasks": res.dependent_tasks,
         "history": res.history,

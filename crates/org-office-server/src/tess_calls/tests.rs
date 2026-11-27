@@ -109,6 +109,7 @@ fn harness() -> Harness {
                 depends_on: Vec::new(),
                 details: None,
                 dod: None,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap()

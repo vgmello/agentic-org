@@ -4,9 +4,11 @@
 
 use org_office::{Office, TestOffice};
 use org_office_sessions::WakeKind;
+use org_proto::attachments::{ArtifactStatus, AttachmentMeta};
 use org_proto::chat::{ChatSendParams, ConversationKind, DeliveredBecause, DmOpenParams};
+use org_proto::tasks::{TaskCommentWire, TaskPriority, TaskStatus, TaskView, TasksCommentResult};
 
-use super::wake_kind_for_send;
+use super::{comment_wake_summary, wake_kind_for_send};
 
 #[test]
 fn an_owner_dm_mentioning_tess_wakes_her_as_a_direct_message() {
@@ -70,6 +72,86 @@ fn an_owner_dm_mentioning_tess_wakes_her_as_a_direct_message() {
             "{because:?}"
         );
     }
+}
+
+#[test]
+fn task_comment_wake_summary_carries_lightweight_attachment_ids_only() {
+    let att_id = "0193a5c0-0000-7000-8000-00000000a101";
+    let result = TasksCommentResult {
+        task: TaskView {
+            id: "0193a5c0-0000-7000-8000-000000000100".into(),
+            office_code: "A".into(),
+            number: 1,
+            key: "T-A1".into(),
+            revision: 2,
+            team_id: "0193a5c0-0000-7000-8000-000000000010".into(),
+            assigned_team_id: None,
+            assignee_id: None,
+            project_id: None,
+            task_type: "task".into(),
+            work_type: None,
+            title: "Attach".into(),
+            status: TaskStatus::Todo,
+            body_markdown: String::new(),
+            feature_id: None,
+            milestone_id: None,
+            priority: TaskPriority::Normal,
+            effort: None,
+            severity: None,
+            rank_order: None,
+            labels: vec![],
+            reference_files: vec![],
+            modified_files: vec![],
+            depends_on: vec![],
+            dependents: vec![],
+            blocked_reason: None,
+            resolution: None,
+            created_by_kind: "employee".into(),
+            created_by_id: None,
+            updated_by_kind: "employee".into(),
+            updated_by_id: None,
+            created_at: None,
+            updated_at: None,
+            checklist_total: 0,
+            checklist_done: 0,
+            ac_total: 0,
+            ac_done: 0,
+            dod_total: 0,
+            dod_done: 0,
+            work_steps_total: 0,
+            work_steps_done: 0,
+            comment_count: 1,
+            watcher_count: 0,
+            details: None,
+            final_summary: None,
+        },
+        comment: TaskCommentWire {
+            id: "0193a5c0-0000-7000-8000-000000000300".into(),
+            position: 0,
+            author_id: "0193a5c0-0000-7000-8000-000000000020".into(),
+            created_at: "2026-11-27T00:00:00.000Z".into(),
+            body_markdown: String::new(),
+            attachments: vec![AttachmentMeta {
+                id: att_id.into(),
+                filename: "report.pdf".into(),
+                title: "Report".into(),
+                description: None,
+                artifact_status: ArtifactStatus::Final,
+                mime_type: "application/pdf".into(),
+                byte_count: 512,
+                width: None,
+                height: None,
+                page_count: Some(2),
+                uploaded_by_employee_id: "0193a5c0-0000-7000-8000-000000000020".into(),
+                created_at: "2026-11-27T00:00:00.000Z".into(),
+            }],
+        },
+    };
+    let summary = comment_wake_summary(&result);
+    assert!(summary.contains("T-A1"), "{summary}");
+    assert!(summary.contains(att_id), "{summary}");
+    assert!(summary.contains("[attachment_ids:"), "{summary}");
+    assert!(!summary.contains("/tmp"), "{summary}");
 }
 
 #[test]

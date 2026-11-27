@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 
 use org_docs::{MAX_FRONT_MATTER_BYTES, MAX_SOURCE_BODY_BYTES};
+use org_proto::attachments::{AttachmentTargetKind, TASK_ATTACHMENTS_MAX};
 use org_proto::tasks::{
     TaskPriority, TaskStatus, WorkType, TASK_DONE_ANYWAY_REASON_MAX_CHARS,
     TASK_FINAL_SUMMARY_MAX_CHARS,
@@ -13,22 +14,25 @@ use org_proto::tasks::{
 use org_store::Id;
 use serde_json::{json, Map, Value};
 
+use super::attachments::{encode_attachments, read_attachments};
 use super::{
     is_valid_office_code, normalize_file_paths, normalize_labels, DoneAnywayRecord,
     FinalSummaryRecord, TaskDetailsRecord, TaskLinkRecord, TaskMeta, TaskRecord,
     TaskRepositoryRecord, SCHEMA_VERSION,
 };
+use crate::attachments::records::AttachmentRecord;
 use crate::organization::records::{
     is_stable_id,
     yaml::{self, Fields, Reader},
     RecordError,
 };
 
-/// A decoded `task.md`: the task and its typed links.
+/// A decoded `task.md`: the task, its typed links, and its task-scoped attachments.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TaskDoc {
     pub task: TaskRecord,
     pub links: Vec<TaskLinkRecord>,
+    pub attachments: Vec<AttachmentRecord>,
 }
 
 fn id_value(id: Option<&Id>) -> Value {
@@ -123,7 +127,11 @@ fn repository_fields(task: &TaskRecord, fields: &mut Fields) {
 }
 
 /// The front matter of `task.md`: also the `known_facts` of a task's creation event.
-pub fn task_fields(task: &TaskRecord, links: &[TaskLinkRecord]) -> Fields {
+pub fn task_fields(
+    task: &TaskRecord,
+    links: &[TaskLinkRecord],
+    attachments: &[AttachmentRecord],
+) -> Fields {
     let meta = &task.meta;
     let mut fields = Fields::new();
     let mut put = |key: &str, value: Value| {
@@ -181,16 +189,24 @@ pub fn task_fields(task: &TaskRecord, links: &[TaskLinkRecord]) -> Fields {
         "details",
         task.details.as_ref().map_or(Value::Null, details_fields),
     );
-    // Reserved for task attachments (`TASK-98.4`): always written, empty until supported.
-    put("attachments", json!([]));
+    put("attachments", encode_attachments(attachments));
     repository_fields(task, &mut fields);
     final_summary_fields(task.final_summary.as_ref(), &mut fields);
     fields
 }
 
 /// The bytes of `task.md`, or why they would not fit the `selected-task-resources/1` bounds.
-pub fn encode_task_md(task: &TaskRecord, links: &[TaskLinkRecord]) -> Result<Vec<u8>, String> {
-    let fields = task_fields(task, links);
+pub fn encode_task_md(
+    task: &TaskRecord,
+    links: &[TaskLinkRecord],
+    attachments: &[AttachmentRecord],
+) -> Result<Vec<u8>, String> {
+    if attachments.len() > TASK_ATTACHMENTS_MAX {
+        return Err(format!(
+            "a task carries at most {TASK_ATTACHMENTS_MAX} attachments"
+        ));
+    }
+    let fields = task_fields(task, links, attachments);
     let front = yaml::encode(&fields);
     if front.len() > MAX_FRONT_MATTER_BYTES {
         return Err(format!(
@@ -495,13 +511,18 @@ pub fn decode_task_md(bytes: &[u8]) -> Result<TaskDoc, RecordError> {
         return Err(RecordError::new("project_id", reason));
     }
     let links = read_links(&mut r, &task.id)?;
-    // Omitted reads as none; any attachment fails closed until `TASK-98.4`.
-    if r.has("attachments") && !r.strings("attachments").is_ok_and(|a| a.is_empty()) {
-        let reason = "task attachments are not supported by this office yet";
-        return Err(RecordError::new("attachments", reason));
-    }
+    let attachments = read_attachments(
+        &mut r,
+        AttachmentTargetKind::Task,
+        &task.id,
+        TASK_ATTACHMENTS_MAX,
+    )?;
     r.finish()?;
-    Ok(TaskDoc { task, links })
+    Ok(TaskDoc {
+        task,
+        links,
+        attachments,
+    })
 }
 
 #[cfg(test)]

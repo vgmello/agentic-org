@@ -21,9 +21,11 @@ use crate::attachments::user_space::{operation_reused, request_fingerprint, sate
 use crate::authz::{PrincipalContext, ResourceRef};
 use crate::error::OfficeError;
 use crate::office::storage;
+use crate::office::tasks::ensure_local_task_write_authority;
 use crate::store::open::attachment_ops::{
     attachment_operation, AttachmentWrite, AttachmentWriteOp,
 };
+use crate::store::open::task_ops::{TaskAttachOp, TaskUpdateAttachmentMetaOp};
 use crate::store::open::ReceiptById;
 use crate::time::format_rfc3339_ms;
 
@@ -54,7 +56,7 @@ fn unsupported_target(kind: AttachmentTargetKind) -> ApiError {
     ApiError::new(
         ErrorCode::Unsupported,
         format!(
-            "attaching to a `{}` is not available yet: Phase 1 binds project, organization and private files",
+            "attaching to a `{}` is not available through attachment.attach: bind project, organization, task and private files here",
             kind.as_str()
         ),
     )
@@ -109,6 +111,14 @@ impl Office {
                 Ok(Target {
                     kind,
                     resource: ResourceRef::Project(id.to_string()),
+                    id: Some(id),
+                })
+            }
+            AttachmentTargetKind::Task => {
+                let id = parse(target_id)?;
+                Ok(Target {
+                    kind,
+                    resource: ResourceRef::Task(id.to_string()),
                     id: Some(id),
                 })
             }
@@ -343,6 +353,66 @@ impl Office {
         Ok((!self.is_satellite()).then(|| Arc::clone(&self.attachments.shared)))
     }
 
+    fn check_task_bind_authority(&self, target: &Target) -> Answer<()> {
+        if self.is_satellite() {
+            return Ok(Err(ApiError::new(
+                ErrorCode::Unavailable,
+                "attaching files to tasks is handled at HQ; retry against the HQ office",
+            )));
+        }
+        if let Some(tid) = target.id.as_ref() {
+            return ensure_local_task_write_authority(self, tid.as_str());
+        }
+        Ok(Ok(()))
+    }
+
+    fn persist_bound_record(
+        &self,
+        private: bool,
+        is_task: bool,
+        caller: &PrincipalContext,
+        params: &AttachmentAttachParams,
+        fingerprint: &[u8],
+        record: AttachmentRecord,
+    ) -> Answer<AttachmentView> {
+        if private {
+            return Ok(self
+                .attachments
+                .user_space
+                .insert(
+                    &self.info.org_id,
+                    &params.command_id,
+                    &request_fingerprint(fingerprint),
+                    &record,
+                )?
+                .map(|r| r.to_view()));
+        }
+        let Some(operation) =
+            attachment_operation(&params.command_id, ATTACH, &caller.employee_id, fingerprint)
+        else {
+            return Ok(Err(invalid(
+                "command_id must be a canonical lowercase UUIDv7",
+            )));
+        };
+        if is_task {
+            return self
+                .store
+                .run(TaskAttachOp {
+                    operation,
+                    actor: caller.employee_id.clone(),
+                    command_id: params.command_id.clone(),
+                    record,
+                })
+                .map_err(storage);
+        }
+        self.store
+            .run(AttachmentWriteOp {
+                operation,
+                write: AttachmentWrite::Create(record),
+            })
+            .map_err(storage)
+    }
+
     /// Stores the bytes write-once where the target keeps them and records the binding.
     fn bind(
         &self,
@@ -353,6 +423,12 @@ impl Office {
         fingerprint: &[u8],
     ) -> Answer<AttachmentResult> {
         let private = target.kind == AttachmentTargetKind::UserPrivate;
+        let is_task = target.kind == AttachmentTargetKind::Task;
+        if is_task {
+            if let Err(err) = self.check_task_bind_authority(&target)? {
+                return Ok(Err(err));
+            }
+        }
         let store = match self.binding_store(private) {
             Ok(store) => store,
             Err(refusal) => return Ok(Err(refusal)),
@@ -395,31 +471,8 @@ impl Office {
             self.outbox().enqueue(&record, &source.bytes)?;
         }
         let record_id = record.id.clone();
-        let bound = if private {
-            self.attachments
-                .user_space
-                .insert(
-                    &self.info.org_id,
-                    &params.command_id,
-                    &request_fingerprint(fingerprint),
-                    &record,
-                )?
-                .map(|r| r.to_view())
-        } else {
-            let Some(operation) =
-                attachment_operation(&params.command_id, ATTACH, &caller.employee_id, fingerprint)
-            else {
-                return Ok(Err(invalid(
-                    "command_id must be a canonical lowercase UUIDv7",
-                )));
-            };
-            self.store
-                .run(AttachmentWriteOp {
-                    operation,
-                    write: AttachmentWrite::Create(record),
-                })
-                .map_err(storage)?
-        };
+        let bound =
+            self.persist_bound_record(private, is_task, caller, params, fingerprint, record)?;
         // Only this call's own record ships: a refused binding was never made, and a replay
         // (the same command answered concurrently) answered with its earlier record.
         if outboxed && !matches!(&bound, Ok(view) if view.id == record_id.as_str()) {
@@ -432,6 +485,53 @@ impl Office {
             }
         }
         Ok(bound.map(|attachment| AttachmentResult { attachment }))
+    }
+
+    fn validate_update_meta_params(params: &AttachmentUpdateMetaParams) -> Result<(), ApiError> {
+        if !org_proto::is_uuid_v7(&params.command_id) {
+            return Err(invalid("command_id must be a canonical lowercase UUIDv7"));
+        }
+        if params.title.is_none()
+            && params.description.is_none()
+            && params.artifact_status.is_none()
+        {
+            return Err(invalid(
+                "name a title, description or artifact_status to change",
+            ));
+        }
+        check_meta(params.title.as_deref(), params.description.as_deref())
+    }
+
+    fn resolve_updatable_attachment(
+        &self,
+        caller: &PrincipalContext,
+        attachment_id: &str,
+    ) -> Answer<AttachmentRecord> {
+        let Some(record) = self.find_attachment(attachment_id)? else {
+            return Ok(Err(not_found()));
+        };
+        let resource = record_ref(&record);
+        if let Err(refusal) = self.decide(|policy| policy.can_write(caller, &resource))? {
+            return Ok(Err(refusal));
+        }
+        let kind = record.target_kind;
+        if !matches!(
+            kind,
+            AttachmentTargetKind::Project
+                | AttachmentTargetKind::Organization
+                | AttachmentTargetKind::Task
+                | AttachmentTargetKind::UserPrivate
+        ) {
+            return Ok(Err(unsupported_target(kind)));
+        }
+        if kind == AttachmentTargetKind::Task {
+            if let Some(tid) = record.target_id.as_ref() {
+                if let Err(err) = ensure_local_task_write_authority(self, tid.as_str())? {
+                    return Ok(Err(err));
+                }
+            }
+        }
+        Ok(Ok(record))
     }
 
     /// `attachment.update_meta`.
@@ -447,38 +547,14 @@ impl Office {
             Ok(caller) => caller,
             Err(refusal) => return Ok(Err(refusal)),
         };
-        if !org_proto::is_uuid_v7(&params.command_id) {
-            return Ok(Err(invalid(
-                "command_id must be a canonical lowercase UUIDv7",
-            )));
-        }
-        if params.title.is_none()
-            && params.description.is_none()
-            && params.artifact_status.is_none()
-        {
-            return Ok(Err(invalid(
-                "name a title, description or artifact_status to change",
-            )));
-        }
-        if let Err(refusal) = check_meta(params.title.as_deref(), params.description.as_deref()) {
+        if let Err(refusal) = Self::validate_update_meta_params(&params) {
             return Ok(Err(refusal));
         }
-        let Some(record) = self.find_attachment(&params.attachment_id)? else {
-            return Ok(Err(not_found()));
+        let record = match self.resolve_updatable_attachment(&caller, &params.attachment_id)? {
+            Ok(record) => record,
+            Err(refusal) => return Ok(Err(refusal)),
         };
-        let resource = record_ref(&record);
-        if let Err(refusal) = self.decide(|policy| policy.can_write(&caller, &resource))? {
-            return Ok(Err(refusal));
-        }
         let kind = record.target_kind;
-        if !matches!(
-            kind,
-            AttachmentTargetKind::Project
-                | AttachmentTargetKind::Organization
-                | AttachmentTargetKind::UserPrivate
-        ) {
-            return Ok(Err(unsupported_target(kind)));
-        }
         // Only the named fields travel: each is applied where the write is decided, onto the
         // file as it is then.
         let patch = MetaPatch {
@@ -518,16 +594,27 @@ impl Office {
                 "command_id must be a canonical lowercase UUIDv7",
             )));
         };
-        let written = self
-            .store
-            .run(AttachmentWriteOp {
-                operation,
-                write: AttachmentWrite::Update {
-                    id: record.id,
+        let written = if kind == AttachmentTargetKind::Task {
+            self.store
+                .run(TaskUpdateAttachmentMetaOp {
+                    operation,
+                    actor: caller.employee_id.clone(),
+                    command_id: params.command_id.clone(),
+                    attachment_id: record.id,
                     patch,
-                },
-            })
-            .map_err(storage)?;
+                })
+                .map_err(storage)?
+        } else {
+            self.store
+                .run(AttachmentWriteOp {
+                    operation,
+                    write: AttachmentWrite::Update {
+                        id: record.id,
+                        patch,
+                    },
+                })
+                .map_err(storage)?
+        };
         Ok(written.map(|attachment| AttachmentResult { attachment }))
     }
 }

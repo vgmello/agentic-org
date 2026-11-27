@@ -6,15 +6,17 @@ use org_command::{
 use org_proto::ask::{
     AskStatus, ChatAnswerResult, ChatAskResult, MsgWithdrawResult, MAX_SHORT_HOLD_MS,
 };
+use org_proto::attachments::MESSAGE_ATTACHMENTS_MAX;
 use org_proto::ErrorCode;
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use super::msg_ask_input::questions;
 use super::schema::{RECIPIENT_PRESENCE_FIELD, STRING_TYPE, WOKE_AGENTS_FIELD, WRITE_ERRORS};
 use super::{insert_delivery, message_id_for, with_ack, AskOutcomeRef};
 use crate::runtime::domain::CommandCue;
+use crate::runtime::file_transfer::resolve_attach_ids;
 use crate::runtime::input::{
-    decode_err, insert_opt, opt_bool, opt_str, opt_u64, reject_dry_run, require_str,
+    decode_err, insert_opt, opt_bool, opt_str, opt_str_list, opt_u64, reject_dry_run, require_str,
 };
 use crate::runtime::transport::OfficeTransport;
 
@@ -128,6 +130,16 @@ const MSG_ASK_INPUT: &[Field] = &[
         "addressed_to",
         Type::String,
         "Optional explicit responder member ID or handle inside a channel",
+    ),
+    Field::optional(
+        "attach",
+        Type::List(&STRING_TYPE),
+        "Local file path to upload and attach (repeatable)",
+    ),
+    Field::optional(
+        "attachment_id",
+        Type::List(&STRING_TYPE),
+        "Pre-uploaded attachment UUIDv7 to attach (repeatable)",
     ),
 ];
 
@@ -333,10 +345,20 @@ pub(super) fn write_msg_ask<T: OfficeTransport + ?Sized>(
     let to = require_str(request, "to")?;
     let questions = questions(request)?;
     let id = message_id_for(request)?;
+    let wait_ms = opt_u64(request, "wait_ms")?;
+    let hold_ms = opt_u64(request, "hold_ms")?
+        .unwrap_or(MAX_SHORT_HOLD_MS)
+        .min(MAX_SHORT_HOLD_MS);
+    let attach = opt_str_list(request, "attach").unwrap_or_default();
+    let att_ids = opt_str_list(request, "attachment_id").unwrap_or_default();
+    let resolved = resolve_attach_ids(transport, &attach, &att_ids, MESSAGE_ATTACHMENTS_MAX)?;
     let mut params = Map::new();
     params.insert("id".into(), Value::String(id));
     params.insert("to".into(), Value::String(to.to_owned()));
     params.insert("questions".into(), questions);
+    if !resolved.ids.is_empty() {
+        params.insert("attachment_ids".into(), json!(resolved.ids));
+    }
     insert_opt(&mut params, "body", opt_str(request, "body"));
     insert_opt(&mut params, "subject", opt_str(request, "subject"));
     insert_opt(&mut params, "blocks", opt_str(request, "blocks"));
@@ -351,15 +373,18 @@ pub(super) fn write_msg_ask<T: OfficeTransport + ?Sized>(
     if opt_bool(request, "approval").unwrap_or(false) {
         params.insert("approval".into(), Value::Bool(true));
     }
-    if let Some(wait_ms) = opt_u64(request, "wait_ms")? {
+    if let Some(wait_ms) = wait_ms {
         params.insert("wait_ms".into(), Value::from(wait_ms));
     }
-    let hold_ms = opt_u64(request, "hold_ms")?
-        .unwrap_or(MAX_SHORT_HOLD_MS)
-        .min(MAX_SHORT_HOLD_MS);
     params.insert("hold_ms".into(), Value::from(hold_ms));
     let timeout = std::time::Duration::from_millis(hold_ms) + org_client::DEFAULT_TIMEOUT;
-    let raw = transport.call_method_with_timeout("chat.ask", Value::Object(params), timeout)?;
+    let raw = match transport.call_method_with_timeout("chat.ask", Value::Object(params), timeout) {
+        Ok(raw) => raw,
+        Err(err) => {
+            resolved.abort_staged(transport);
+            return Err(err);
+        }
+    };
     let res: ChatAskResult = serde_json::from_value(raw).map_err(|_| decode_err("chat.ask"))?;
     let mut obj = Map::new();
     obj.insert("ask_id".into(), Value::String(res.ask_id));
@@ -454,8 +479,37 @@ pub(super) fn write_msg_answer<T: OfficeTransport + ?Sized>(
             ));
         }
     }
+    let existing_att_ids = existing_answer_attachment_ids(&params)?;
+    let attach = opt_str_list(request, "attach").unwrap_or_default();
+    let att_ids = opt_str_list(request, "attachment_id").unwrap_or_default();
+    let total_att = existing_att_ids
+        .len()
+        .saturating_add(attach.len())
+        .saturating_add(att_ids.len());
+    if total_att > MESSAGE_ATTACHMENTS_MAX {
+        return Err(Refusal::new(
+            ErrorCode::TooLarge,
+            format!(
+                "At most {MESSAGE_ATTACHMENTS_MAX} attachments are allowed here (got {total_att})."
+            ),
+            "Attach fewer files and retry.",
+        ));
+    }
+    let remaining_cap = MESSAGE_ATTACHMENTS_MAX.saturating_sub(existing_att_ids.len());
+    let resolved = resolve_attach_ids(transport, &attach, &att_ids, remaining_cap)?;
+    if !resolved.ids.is_empty() {
+        let mut combined = existing_att_ids;
+        combined.extend(resolved.ids.iter().cloned());
+        params.insert("attachment_ids".into(), json!(combined));
+    }
     params.insert("ask_id".into(), Value::String(ask_id.to_owned()));
-    let raw = transport.call_method("chat.answer", Value::Object(params))?;
+    let raw = match transport.call_method("chat.answer", Value::Object(params)) {
+        Ok(raw) => raw,
+        Err(err) => {
+            resolved.abort_staged(transport);
+            return Err(err);
+        }
+    };
     let res: ChatAnswerResult =
         serde_json::from_value(raw).map_err(|_| decode_err("chat.answer"))?;
     let mut obj = Map::new();
@@ -466,6 +520,31 @@ pub(super) fn write_msg_answer<T: OfficeTransport + ?Sized>(
         Value::String(serde_json::to_string(&res.answer).unwrap_or_default()),
     );
     Ok(with_ack(Answer::completed(Value::Object(obj)), request))
+}
+
+fn existing_answer_attachment_ids(params: &Map<String, Value>) -> Result<Vec<String>, Refusal> {
+    match params.get("attachment_ids") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(arr)) => {
+            let mut ids = Vec::with_capacity(arr.len());
+            for item in arr {
+                let Some(id) = item.as_str() else {
+                    return Err(Refusal::new(
+                        ErrorCode::InvalidRequest,
+                        "`--answer` `attachment_ids` entries must be strings.",
+                        "Pass an array of attachment UUIDv7 strings in `attachment_ids`.",
+                    ));
+                };
+                ids.push(id.to_owned());
+            }
+            Ok(ids)
+        }
+        Some(_) => Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            "`--answer` `attachment_ids` must be an array of attachment UUIDv7 strings.",
+            "Pass an array of attachment UUIDv7 strings or omit `attachment_ids`.",
+        )),
+    }
 }
 
 pub(super) fn write_msg_accept<T: OfficeTransport + ?Sized>(

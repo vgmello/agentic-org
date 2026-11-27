@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{ChecklistSection, TaskPriority, TaskStatus, WorkType};
+use crate::attachments::AttachmentMeta;
 
 /// Why a task was completed with required checklist steps unticked, and which steps
 /// (`TASK-88`, `task_details.done_anyway_json`). The office sets it when `tasks.transition`
@@ -110,6 +111,9 @@ pub struct TaskCommentWire {
     pub author_id: String,
     pub created_at: String,
     pub body_markdown: String,
+    /// Files attached to this comment (`TASK-98.4`, max 10).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentMeta>,
 }
 
 /// One watcher entry on a task.
@@ -230,12 +234,15 @@ pub struct TaskView {
     pub watcher_count: u64,
 }
 
-/// Full inspected task with checklist, comments, watchers, history, and dependency summaries.
+/// Full inspected task with checklist, comments, attachments, watchers, history, and dependency summaries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskInspectResult {
     pub task: TaskView,
     pub checklist: Vec<ChecklistStepWire>,
     pub comments: Vec<TaskCommentWire>,
+    /// Files attached directly to the task (`TASK-98.4`, max 20).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentMeta>,
     pub watchers: Vec<TaskWatcherWire>,
     pub depends_on_tasks: Vec<TaskRefSummary>,
     pub dependent_tasks: Vec<TaskRefSummary>,

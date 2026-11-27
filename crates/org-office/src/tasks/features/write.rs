@@ -4,11 +4,13 @@
 //! history event, never `task.md`. Either way the task's effective revision is its latest
 //! event's.
 
+use org_proto::attachments::{AttachmentTargetKind, TASK_ATTACHMENTS_MAX};
 use org_proto::ErrorCode;
 use org_store::{Change, Id, Refusal};
 use serde_json::Value;
 
 use super::{refuse, storage_refusal};
+use crate::attachments::records::AttachmentRecord;
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{self, EventInput, Location, TaskLinkRecord, TaskRecord};
 
@@ -53,19 +55,20 @@ impl<'a> Writer<'a> {
         Ok(bytes)
     }
 
-    /// `task.md` at `task.meta.revision` (already advanced), with `links`, and the event of
-    /// that revision.
+    /// `task.md` at `task.meta.revision` (already advanced), with `links` and `attachments`,
+    /// and the event of that revision.
     pub(crate) fn task_and_event(
         &self,
         change: Change,
         location: &Location,
         task: &TaskRecord,
         links: &[TaskLinkRecord],
+        attachments: &[AttachmentRecord],
         event: Value,
     ) -> Result<Change, Refusal> {
         let path = records::task_md_path(location, &task.id).map_err(too_deep)?;
-        let bytes =
-            records::encode_task_md(task, links).map_err(|e| refuse(ErrorCode::TooLarge, e))?;
+        let bytes = records::encode_task_md(task, links, attachments)
+            .map_err(|e| refuse(ErrorCode::TooLarge, e))?;
         let event = self.event(&task.id, task.meta.revision, event)?;
         Ok(change
             .put(path, bytes)
@@ -117,6 +120,20 @@ pub(crate) fn current_links<R: TasksRead>(
     task: &TaskRecord,
 ) -> Result<Vec<TaskLinkRecord>, Refusal> {
     view.task_links_from(&task.id).map_err(storage_refusal)
+}
+
+/// The task's attachments as they stand, for a `task.md` rewrite that preserves or mutates them.
+pub(crate) fn current_attachments<R: TasksRead>(
+    view: &R,
+    task: &TaskRecord,
+) -> Result<Vec<AttachmentRecord>, Refusal> {
+    view.attachments_for_target(
+        AttachmentTargetKind::Task,
+        Some(&task.id),
+        None,
+        TASK_ATTACHMENTS_MAX,
+    )
+    .map_err(storage_refusal)
 }
 
 /// A child file's bytes, or the refusal for a file over its bound.

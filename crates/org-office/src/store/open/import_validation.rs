@@ -6,8 +6,9 @@ use org_store::{Id, Projector, StoreError};
 use super::super::sqlite::SqliteEngine;
 use super::OfficeEngine;
 use crate::{
-    organization::projector::OrganizationFiles, processes::projector::ProcessFiles,
-    projects::projector::ProjectFiles, tasks::projector::TaskFiles,
+    attachments::projector::AttachmentFiles, organization::projector::OrganizationFiles,
+    processes::projector::ProcessFiles, projects::projector::ProjectFiles,
+    tasks::projector::TaskFiles,
 };
 
 fn structure_doc_id_from_path(path: &org_store::DurablePath) -> Option<Id> {
@@ -28,13 +29,15 @@ fn apply_imported_to_engine<E: OfficeEngine>(
     use org_store::{CorePort, ProjectionError, Sha256};
 
     // Mount every shared `state/` family projector (`OrganizationFiles`, `ProjectFiles`,
-    // `TaskFiles`, `ProcessFiles`). Non-Git families (`MessagingFiles`, `OfficeLocalFiles`)
-    // stay intentionally excluded so private/local files smuggled into Git fail closed (`TASK-97`).
+    // `TaskFiles`, `ProcessFiles`, `AttachmentFiles`). Non-Git families (`MessagingFiles`,
+    // `OfficeLocalFiles`) stay intentionally excluded so private/local files smuggled into Git
+    // fail closed (`TASK-97`).
     let projectors: Vec<Box<dyn Projector<E>>> = vec![
         Box::new(OrganizationFiles::new(organization_id.clone())),
         Box::new(ProjectFiles::new(organization_id.clone())),
         Box::new(TaskFiles::shared(organization_id.clone())),
         Box::new(ProcessFiles::new()),
+        Box::new(AttachmentFiles::new()),
     ];
     engine
         .replace(&mut |tx| {

@@ -91,7 +91,7 @@ fn links() -> Vec<TaskLinkRecord> {
 #[test]
 fn every_field_of_a_task_survives_its_file() {
     let task = sample_task();
-    let bytes = encode_task_md(&task, &links()).unwrap();
+    let bytes = encode_task_md(&task, &links(), &[]).unwrap();
     let text = String::from_utf8(bytes.clone()).unwrap();
     assert!(text.starts_with("---\nassigned_team_id: "), "{text}");
     for key in [
@@ -114,7 +114,10 @@ fn every_field_of_a_task_survives_its_file() {
     sorted.reverse();
     assert_eq!(doc.links, sorted);
     // Re-encoding the decoded task gives the same bytes (no engine-dependent order).
-    assert_eq!(encode_task_md(&doc.task, &doc.links).unwrap(), bytes);
+    assert_eq!(
+        encode_task_md(&doc.task, &doc.links, &doc.attachments).unwrap(),
+        bytes
+    );
 }
 
 #[test]
@@ -134,11 +137,12 @@ fn a_minimal_task_round_trips_with_nulls_and_an_empty_body() {
     task.repositories.clear();
     task.details = None;
     task.body_markdown = String::new();
-    let bytes = encode_task_md(&task, &[]).unwrap();
+    let bytes = encode_task_md(&task, &[], &[]).unwrap();
     assert!(bytes.ends_with(b"---\n"));
     let doc = decode_task_md(&bytes).unwrap();
     assert_eq!(doc.task, task);
     assert!(doc.links.is_empty());
+    assert!(doc.attachments.is_empty());
 }
 
 #[test]
@@ -147,13 +151,13 @@ fn front_matter_past_its_bound_is_refused_when_written() {
     task.reference_files = (0..100)
         .map(|n| format!("src/{n:04}/{}", "p".repeat(900)))
         .collect();
-    let err = encode_task_md(&task, &[]).unwrap_err();
+    let err = encode_task_md(&task, &[], &[]).unwrap_err();
     assert!(err.contains("front matter"), "{err}");
 }
 
 #[test]
 fn a_file_that_is_not_a_task_is_refused() {
-    let good = String::from_utf8(encode_task_md(&sample_task(), &links()).unwrap()).unwrap();
+    let good = String::from_utf8(encode_task_md(&sample_task(), &links(), &[]).unwrap()).unwrap();
     let swap = |from: &str, to: &str| {
         assert!(good.contains(from), "{from}");
         good.replacen(from, to, 1)
@@ -219,7 +223,7 @@ fn a_task_written_before_task_88_still_reads_without_a_summary_or_a_done_anyway(
     if let Some(details) = task.details.as_mut() {
         details.done_anyway = None;
     }
-    let text = String::from_utf8(encode_task_md(&task, &[]).unwrap()).unwrap();
+    let text = String::from_utf8(encode_task_md(&task, &[], &[]).unwrap()).unwrap();
     assert!(text.contains("final_summary: null"), "{text}");
     let old = pre_task_88(&text);
     assert!(!old.contains("final_summary"), "{old}");
@@ -240,7 +244,7 @@ fn a_task_written_before_task_88_still_reads_without_a_summary_or_a_done_anyway(
 #[test]
 fn a_final_summary_is_all_four_fields_or_none() {
     let task = sample_task();
-    let text = String::from_utf8(encode_task_md(&task, &[]).unwrap()).unwrap();
+    let text = String::from_utf8(encode_task_md(&task, &[], &[]).unwrap()).unwrap();
     for (from, to) in [
         (
             "final_summary_by_kind: \"employee\"",

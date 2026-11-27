@@ -95,6 +95,7 @@ pub(super) fn require_disk(_dir: &File, _path: &Path) -> Result<(), FilesystemRe
     Ok(())
 }
 
+pub(super) use super::beneath::{open_regular_beneath, write_regular_beneath};
 pub(super) use super::shared::{
     create_owner_only_dir, create_owner_only_dir_all, create_symlink, effective_uid,
     ensure_symlink_at, open_nofollow_ro, open_or_create_owner_only_child, open_owner_only_child,

@@ -17,6 +17,7 @@ use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{ChecklistStepRecord, DoneAnywayRecord, FinalSummaryRecord};
 use crate::time::format_rfc3339_ms;
 
+use super::attachments::stale_revision_refusal;
 use super::summary::validate_final_summary;
 use super::{
     parse_uuid_v7, refuse, require_active_employee, require_task, rewrite_task, storage_refusal,
@@ -76,12 +77,10 @@ impl TransitionTask {
         let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
         let mut task = require_task(uow.view(), &self.params.task)?;
         if task.meta.revision != self.params.expected_revision {
-            return Err(refuse(
-                ErrorCode::Conflict,
-                format!(
-                    "stale expected_revision {}: task is at revision {}",
-                    self.params.expected_revision, task.meta.revision
-                ),
+            return Err(stale_revision_refusal(
+                uow.view(),
+                &task,
+                self.params.expected_revision,
             ));
         }
         let to = self.params.status;

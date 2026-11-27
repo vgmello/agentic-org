@@ -140,20 +140,45 @@ pub(crate) fn map_connect_error(error: ClientError, office_id: Option<&str>) -> 
 /// `retry_after_ms` for `rate_limited`, and the `field` and `rule` an input failed. The one
 /// mapping for `agent-os` and for `agentic-org`'s grant-bound channel alike.
 pub fn api_refusal(api: org_proto::ApiError) -> Refusal {
-    let hint = if let Some(server_hint) = api.hint.map(|h| h.0).filter(|h| !h.trim().is_empty()) {
-        server_hint
+    let hint = if let Some(server_hint) = api.hint().filter(|h| !h.trim().is_empty()) {
+        server_hint.to_owned()
     } else {
-        match (api.code, api.retry_after_ms, &api.field, &api.rule) {
+        match (
+            api.code,
+            api.retry_after_ms,
+            &api.field,
+            &api.rule,
+            api.conflict_detail(),
+        ) {
             (ErrorCode::NotAuthorized, ..) if api.message.contains("Ask your team lead.") => {
                 "Ask your team lead.".to_owned()
+            }
+            (ErrorCode::NotAuthorized, ..) if api.message.contains("1:1 direct message") => {
+                "To hand a file to one person, send it in a 1:1 direct message with --attach."
+                    .to_owned()
+            }
+            (ErrorCode::Conflict, _, _, _, Some(conflict)) => {
+                if conflict.changed_sections.is_empty() {
+                    format!(
+                        "Record is now at revision {}; re-inspect and retry with --if-match {}.",
+                        conflict.current_revision, conflict.current_revision
+                    )
+                } else {
+                    format!(
+                        "Record is now at revision {} (changed: {}); re-inspect and retry with --if-match {}.",
+                        conflict.current_revision,
+                        conflict.changed_sections.join(", "),
+                        conflict.current_revision
+                    )
+                }
             }
             (ErrorCode::RateLimited, Some(after), ..) => format!(
                 "Wait {after} ms (error.retry_after_ms), then retry the command with the same flags."
             ),
-            (_, _, Some(field), Some(rule)) => format!(
+            (_, _, Some(field), Some(rule), _) => format!(
                 "Fix `{field}`: it does not meet the `{rule}` rule (error.field, error.rule). Then retry."
             ),
-            (_, _, Some(field), None) => {
+            (_, _, Some(field), None, _) => {
                 format!("Fix `{field}` (error.field), then retry.")
             }
             (code, ..) => hint_for(code).to_owned(),

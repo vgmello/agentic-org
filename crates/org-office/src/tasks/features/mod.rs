@@ -1,5 +1,6 @@
 //! Engine-independent domain features and read queries for unified typed tasks (`TASK-49`, `TASK-77`).
 
+pub mod attachments;
 pub mod checklist;
 pub mod core;
 pub mod create;
@@ -12,6 +13,7 @@ mod write;
 
 use std::collections::{BTreeSet, VecDeque};
 
+use org_proto::attachments::AttachmentMeta;
 use org_proto::tasks::{
     ChecklistSection, ChecklistStepWire, TaskCommentWire, TaskDetailsWire, TaskEventWire,
     TaskRefSummary, TaskView, TaskWatcherWire, TASK_BODY_MAX_CHARS, TASK_TITLE_MAX_CHARS,
@@ -28,6 +30,9 @@ use crate::tasks::records::{
     TaskRecord, TaskWatcherRecord,
 };
 
+pub use self::attachments::{
+    AttachToTask, PreparedTaskFile, PreparedTaskFiles, UpdateTaskAttachmentMeta,
+};
 pub use self::checklist::{
     ChecklistAdd, ChecklistCheck, ChecklistEdit, ChecklistMove, ChecklistRemove,
 };
@@ -473,13 +478,17 @@ pub(crate) fn step_to_wire(step: &ChecklistStepRecord) -> ChecklistStepWire {
     }
 }
 
-pub(crate) fn comment_to_wire(comment: &TaskCommentRecord) -> TaskCommentWire {
+pub(crate) fn comment_to_wire(
+    comment: &TaskCommentRecord,
+    attachments: Vec<AttachmentMeta>,
+) -> TaskCommentWire {
     TaskCommentWire {
         id: comment.id.as_str().to_owned(),
         position: comment.position,
         author_id: comment.author_id.as_str().to_owned(),
         created_at: comment.created_at.clone(),
         body_markdown: comment.body_markdown.clone(),
+        attachments,
     }
 }
 

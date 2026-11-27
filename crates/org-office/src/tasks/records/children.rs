@@ -11,14 +11,17 @@
 //! document (`org_docs::SourceDoc`).
 
 use org_docs::MAX_FRONT_MATTER_BYTES;
+use org_proto::attachments::{AttachmentTargetKind, TASK_COMMENT_ATTACHMENTS_MAX};
 use org_proto::tasks::ChecklistSection;
 use org_store::Id;
 use serde_json::{json, Value};
 
+use super::attachments::{encode_attachments, read_attachments};
 use super::{
     is_valid_office_code, ChecklistStepRecord, OfficeTaskCounterRecord, TaskCommentRecord,
     TaskWatcherRecord, SCHEMA_VERSION,
 };
+use crate::attachments::records::AttachmentRecord;
 use crate::organization::records::{
     is_stable_id,
     yaml::{self, Fields, Reader},
@@ -67,7 +70,22 @@ fn bounded(fields: &Fields, what: &str) -> Result<Vec<u8>, String> {
 
 // ---- comments/<comment-id>.md ----
 
-pub fn encode_comment(comment: &TaskCommentRecord) -> Result<Vec<u8>, String> {
+/// A decoded `comments/<comment-id>.md`: the comment and its comment-scoped attachments.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CommentDoc {
+    pub comment: TaskCommentRecord,
+    pub attachments: Vec<AttachmentRecord>,
+}
+
+pub fn encode_comment(
+    comment: &TaskCommentRecord,
+    attachments: &[AttachmentRecord],
+) -> Result<Vec<u8>, String> {
+    if attachments.len() > TASK_COMMENT_ATTACHMENTS_MAX {
+        return Err(format!(
+            "a task comment carries at most {TASK_COMMENT_ATTACHMENTS_MAX} attachments"
+        ));
+    }
     let mut fields = Fields::new();
     fields.insert("schema_version".into(), json!(SCHEMA_VERSION));
     fields.insert("id".into(), json!(comment.id.as_str()));
@@ -75,13 +93,21 @@ pub fn encode_comment(comment: &TaskCommentRecord) -> Result<Vec<u8>, String> {
     fields.insert("author_id".into(), json!(comment.author_id.as_str()));
     fields.insert("created_at".into(), json!(comment.created_at));
     fields.insert("position".into(), json!(comment.position));
+    fields.insert("attachments".into(), encode_attachments(attachments));
+    let front = yaml::encode(&fields);
+    if front.len() > MAX_FRONT_MATTER_BYTES {
+        return Err(format!(
+            "the comment's front matter would be {} bytes, over the {MAX_FRONT_MATTER_BYTES}-byte limit",
+            front.len()
+        ));
+    }
     if comment.body_markdown.len() > org_docs::MAX_SOURCE_BODY_BYTES {
         return Err("the comment is over the body limit".into());
     }
     Ok(yaml::encode_document(&fields, &comment.body_markdown))
 }
 
-pub fn decode_comment(bytes: &[u8]) -> Result<TaskCommentRecord, RecordError> {
+pub fn decode_comment(bytes: &[u8]) -> Result<CommentDoc, RecordError> {
     let (mut r, body) = yaml::decode_source_document(bytes)?;
     schema(&mut r)?;
     let comment = TaskCommentRecord {
@@ -92,8 +118,17 @@ pub fn decode_comment(bytes: &[u8]) -> Result<TaskCommentRecord, RecordError> {
         position: r.number("position")?,
         body_markdown: body,
     };
+    let attachments = read_attachments(
+        &mut r,
+        AttachmentTargetKind::TaskComment,
+        &comment.id,
+        TASK_COMMENT_ATTACHMENTS_MAX,
+    )?;
     r.finish()?;
-    Ok(comment)
+    Ok(CommentDoc {
+        comment,
+        attachments,
+    })
 }
 
 // ---- checklist.yaml ----

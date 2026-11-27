@@ -14,8 +14,8 @@ use org_proto::ErrorCode;
 use serde_json::Value;
 
 use crate::features::{
-    auth, budget, git, hiring, messaging, office, organization, processes, projects, providers,
-    session, tess, work,
+    auth, budget, files, git, hiring, messaging, office, organization, processes, projects,
+    providers, session, tess, work,
 };
 use crate::runtime::domain::Domain;
 use crate::runtime::help::{self, Guidance};
@@ -29,6 +29,7 @@ const DOMAINS: &[Domain] = &[
     session::DOMAIN,
     messaging::DOMAIN,
     work::DOMAIN,
+    files::DOMAIN,
     git::DOMAIN,
     processes::DOMAIN,
     budget::DOMAIN,

@@ -138,24 +138,94 @@ impl ErrorHint {
     }
 }
 
+/// Structured optimistic-concurrency detail returned with [`ErrorCode::Conflict`] when a task
+/// update's `expected_revision` is stale (`TASK-98.4`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictDetail {
+    pub expected_revision: u64,
+    pub current_revision: u64,
+    /// Sorted section names modified after `expected_revision` (e.g. `"title"`, `"attachments"`,
+    /// `"comments"`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changed_sections: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct ApiErrorExtra {
+    hint: Option<ErrorHint>,
+    conflict: Option<ConflictDetail>,
+}
+
+/// Wire representation of [`ApiError`] so `hint` and `conflict` stay behind a single
+/// `Option<Box<_>>` on the stack (`size_of::<Response>() < 128`) while preserving exact flat JSON.
+#[derive(Serialize, Deserialize)]
+struct ApiErrorWire {
+    code: ErrorCode,
+    message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hint: Option<ErrorHint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retry_after_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rule: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    conflict: Option<ConflictDetail>,
+}
+
+impl From<ApiErrorWire> for ApiError {
+    fn from(w: ApiErrorWire) -> Self {
+        let extra = (w.hint.is_some() || w.conflict.is_some()).then(|| {
+            Box::new(ApiErrorExtra {
+                hint: w.hint,
+                conflict: w.conflict,
+            })
+        });
+        Self {
+            code: w.code,
+            message: w.message,
+            retry_after_ms: w.retry_after_ms,
+            field: w.field,
+            rule: w.rule,
+            extra,
+        }
+    }
+}
+
+impl From<ApiError> for ApiErrorWire {
+    fn from(e: ApiError) -> Self {
+        let (hint, conflict) = match e.extra {
+            Some(ex) => (ex.hint, ex.conflict),
+            None => (None, None),
+        };
+        Self {
+            code: e.code,
+            message: e.message,
+            hint,
+            retry_after_ms: e.retry_after_ms,
+            field: e.field,
+            rule: e.rule,
+            conflict,
+        }
+    }
+}
+
 /// An error returned by the server. `message` is for people; it never holds paths or SQL.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ApiErrorWire", into = "ApiErrorWire")]
 pub struct ApiError {
     pub code: ErrorCode,
     pub message: String,
-    /// Optional actionable hint supplied by the server (e.g. steering `policy_violation` to
-    /// `agent-os suggestion create`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hint: Option<Box<ErrorHint>>,
     /// With `rate_limited`: how long until a retry can succeed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after_ms: Option<u64>,
     /// With `invalid_request` for a credential rule: the input field (`login`, `password`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
     /// With `field`: the rule it failed (`format`, `taken`, `too_short`, `too_long`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<String>,
+    /// Optional server-supplied hint (`TASK-80.4`) and optimistic-concurrency detail (`TASK-98.4`),
+    /// boxed together so [`crate::Response`] stays under 128 bytes.
+    extra: Option<Box<ApiErrorExtra>>,
 }
 
 impl ApiError {
@@ -163,27 +233,47 @@ impl ApiError {
         Self {
             code,
             message: message.into(),
-            hint: None,
             retry_after_ms: None,
             field: None,
             rule: None,
+            extra: None,
         }
     }
 
     /// Attaches an actionable recovery hint to this error.
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
-        self.hint = Some(Box::new(ErrorHint(hint.into())));
+        self.extra
+            .get_or_insert_with(|| Box::new(ApiErrorExtra::default()))
+            .hint = Some(ErrorHint(hint.into()));
         self
     }
 
     /// Returns the server-supplied actionable hint, when present.
     pub fn hint(&self) -> Option<&str> {
-        self.hint.as_deref().map(ErrorHint::as_str)
+        self.extra
+            .as_deref()
+            .and_then(|e| e.hint.as_ref())
+            .map(ErrorHint::as_str)
+    }
+
+    /// Returns structured optimistic-concurrency conflict details, when present (`TASK-98.4`).
+    pub fn conflict_detail(&self) -> Option<&ConflictDetail> {
+        self.extra.as_deref().and_then(|e| e.conflict.as_ref())
     }
 
     /// `policy_violation` with a server-supplied actionable hint.
     pub fn policy_violation(message: impl Into<String>, hint: impl Into<String>) -> Self {
         Self::new(ErrorCode::PolicyViolation, message).with_hint(hint)
+    }
+
+    /// `conflict` carrying the current revision and sections changed since `expected_revision`.
+    pub fn conflict(message: impl Into<String>, detail: ConflictDetail) -> Self {
+        let mut error = Self::new(ErrorCode::Conflict, message);
+        error
+            .extra
+            .get_or_insert_with(|| Box::new(ApiErrorExtra::default()))
+            .conflict = Some(detail);
+        error
     }
 
     /// `rate_limited` with the delay until a retry can succeed.
@@ -278,5 +368,26 @@ mod tests {
             "Response must stay under Clippy's 128-byte result_large_err threshold, got {}",
             std::mem::size_of::<crate::Response>()
         );
+    }
+
+    #[test]
+    fn conflict_detail_roundtrips_and_omits_when_absent() {
+        let err = ApiError::conflict(
+            "stale expected_revision 1: task is at revision 3",
+            ConflictDetail {
+                expected_revision: 1,
+                current_revision: 3,
+                changed_sections: vec!["attachments".into(), "title".into()],
+            },
+        );
+        let wire = serde_json::to_value(&err).unwrap();
+        assert_eq!(wire["code"], "conflict");
+        assert_eq!(wire["conflict"]["expected_revision"], 1);
+        assert_eq!(wire["conflict"]["current_revision"], 3);
+        assert_eq!(
+            wire["conflict"]["changed_sections"],
+            serde_json::json!(["attachments", "title"])
+        );
+        assert_eq!(serde_json::from_value::<ApiError>(wire).unwrap(), err);
     }
 }

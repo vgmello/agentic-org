@@ -265,3 +265,383 @@ fn cli_15_task_and_checklist_commands_dispatch_with_task_77_fields() {
         0
     );
 }
+
+#[test]
+fn task_create_update_comment_inspect_attachments_and_zero_overhead() {
+    use crate::runtime::file_guard::{with_test_roots, FileRoots, RootEntry};
+
+    const STAGED_ID: &str = "0193a5c0-0000-7000-8000-000000000901";
+    const EXISTING_ID: &str = "0193a5c0-0000-7000-8000-000000000902";
+    const REMOVE_ID: &str = "0193a5c0-0000-7000-8000-000000000903";
+
+    struct TaskAttachMock {
+        seen: Vec<(String, Value)>,
+    }
+
+    fn task_json() -> Value {
+        json!({
+            "id": "0193a5c0-0000-7000-8000-000000000100",
+            "office_code": "A",
+            "number": 1,
+            "key": "T-A1",
+            "revision": 2,
+            "team_id": "0193a5c0-0000-7000-8000-000000000010",
+            "type": "task",
+            "title": "Test",
+            "status": "todo",
+            "body_markdown": "",
+            "priority": "normal",
+            "labels": [],
+            "reference_files": [],
+            "modified_files": [],
+            "depends_on": [],
+            "dependents": [],
+            "created_by_kind": "employee",
+            "updated_by_kind": "employee",
+            "checklist_total": 0,
+            "checklist_done": 0,
+            "comment_count": 1,
+            "watcher_count": 0
+        })
+    }
+
+    fn meta_json(id: &str) -> Value {
+        json!({
+            "id": id,
+            "filename": "spec.md",
+            "title": "Spec",
+            "artifact_status": "final",
+            "mime_type": "text/markdown",
+            "byte_count": 5,
+            "uploaded_by_employee_id": "0193a5c0-0000-7000-8000-000000000020",
+            "created_at": "2026-11-27T00:00:00.000Z"
+        })
+    }
+
+    impl OfficeTransport for TaskAttachMock {
+        fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
+            self.seen.push((method.to_owned(), params));
+            match method {
+                "attachment.upload_begin" => Ok(json!({
+                    "upload": {
+                        "upload_id": STAGED_ID,
+                        "filename": "spec.md",
+                        "mime_type": "text/markdown",
+                        "byte_count": 5,
+                        "received_bytes": 0,
+                        "committed": false,
+                        "expires_at": "2026-11-27T01:00:00.000Z"
+                    },
+                    "chunk_size_bytes": 524288
+                })),
+                "attachment.upload_chunk" => {
+                    Ok(json!({ "upload_id": STAGED_ID, "received_bytes": 5, "complete": true }))
+                }
+                "attachment.upload_commit" => Ok(json!({
+                    "upload": {
+                        "upload_id": STAGED_ID,
+                        "filename": "spec.md",
+                        "mime_type": "text/markdown",
+                        "byte_count": 5,
+                        "received_bytes": 5,
+                        "committed": true,
+                        "expires_at": "2026-11-27T01:00:00.000Z",
+                        "content_sha256": "0".repeat(64)
+                    }
+                })),
+                "tasks.create" | "tasks.update" => Ok(json!({ "task": task_json() })),
+                "tasks.comment" => Ok(json!({
+                    "task": task_json(),
+                    "comment": {
+                        "id": "0193a5c0-0000-7000-8000-000000000300",
+                        "position": 0,
+                        "author_id": "0193a5c0-0000-7000-8000-000000000020",
+                        "created_at": "2026-11-27T00:00:00.000Z",
+                        "body_markdown": "",
+                        "attachments": [meta_json(STAGED_ID)]
+                    }
+                })),
+                "tasks.inspect" => Ok(json!({
+                    "task": task_json(),
+                    "checklist": [],
+                    "comments": [{
+                        "id": "0193a5c0-0000-7000-8000-000000000300",
+                        "position": 0,
+                        "author_id": "0193a5c0-0000-7000-8000-000000000020",
+                        "created_at": "2026-11-27T00:00:00.000Z",
+                        "body_markdown": "",
+                        "attachments": [meta_json(STAGED_ID)]
+                    }],
+                    "attachments": [meta_json(EXISTING_ID)],
+                    "depends_on_tasks": [],
+                    "dependent_tasks": [],
+                    "watchers": [],
+                    "history": []
+                })),
+                other => panic!("unexpected RPC: {other}"),
+            }
+        }
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("spec.md"), b"hello").unwrap();
+    let roots = FileRoots {
+        cwd: tmp.path().to_path_buf(),
+        workspace_roots: vec![RootEntry::from_path(tmp.path().to_path_buf()).unwrap()],
+        ..FileRoots::default()
+    };
+
+    with_test_roots(roots, || {
+        // 1. Plain `task create` without `--attach`: only 1 RPC (`tasks.create`).
+        let mut t = TransportOffice(TaskAttachMock { seen: vec![] });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "task".into(),
+                "create".into(),
+                "--title".into(),
+                "Plain".into(),
+            ],
+            &mut t,
+        );
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        assert_eq!(t.0.seen.len(), 1);
+        assert_eq!(t.0.seen[0].0, "tasks.create");
+
+        // 2. `task create --attach --attachment-id`.
+        let mut t = TransportOffice(TaskAttachMock { seen: vec![] });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "task".into(),
+                "create".into(),
+                "--title".into(),
+                "With files".into(),
+                "--attach".into(),
+                "spec.md".into(),
+                "--attachment-id".into(),
+                EXISTING_ID.into(),
+            ],
+            &mut t,
+        );
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        let create = t.0.seen.last().unwrap();
+        assert_eq!(create.0, "tasks.create");
+        assert_eq!(create.1["attachment_ids"], json!([STAGED_ID, EXISTING_ID]));
+
+        // 3. `task update --if-match 1 --attach --add-attachment --remove-attachment`.
+        let mut t = TransportOffice(TaskAttachMock { seen: vec![] });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "task".into(),
+                "update".into(),
+                "--task".into(),
+                "T-A1".into(),
+                "--if-match".into(),
+                "1".into(),
+                "--attach".into(),
+                "spec.md".into(),
+                "--add-attachment".into(),
+                EXISTING_ID.into(),
+                "--remove-attachment".into(),
+                REMOVE_ID.into(),
+            ],
+            &mut t,
+        );
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        let update = t.0.seen.last().unwrap();
+        assert_eq!(update.0, "tasks.update");
+        assert_eq!(update.1["add_attachments"], json!([STAGED_ID, EXISTING_ID]));
+        assert_eq!(update.1["remove_attachments"], json!([REMOVE_ID]));
+
+        // 4. `task comment --attach` (body omitted!) and empty comment refusal.
+        let mut t = TransportOffice(TaskAttachMock { seen: vec![] });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "task".into(),
+                "comment".into(),
+                "--task".into(),
+                "T-A1".into(),
+                "--attach".into(),
+                "spec.md".into(),
+            ],
+            &mut t,
+        );
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        let comment = t.0.seen.last().unwrap();
+        assert_eq!(comment.0, "tasks.comment");
+        assert_eq!(comment.1["attachment_ids"], json!([STAGED_ID]));
+
+        let mut t = TransportOffice(TaskAttachMock { seen: vec![] });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "task".into(),
+                "comment".into(),
+                "--task".into(),
+                "T-A1".into(),
+            ],
+            &mut t,
+        );
+        assert_ne!(out.exit_code, 0, "{}", out.stdout);
+        assert!(t.0.seen.is_empty());
+
+        // 5. `task inspect` surfaces task and comment attachments.
+        let mut t = TransportOffice(TaskAttachMock { seen: vec![] });
+        let out = crate::execute_with_office(
+            "agent-os",
+            &[
+                "task".into(),
+                "inspect".into(),
+                "--task".into(),
+                "T-A1".into(),
+            ],
+            &mut t,
+        );
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        let env: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(env["data"]["attachments"][0]["id"], EXISTING_ID);
+        assert_eq!(
+            env["data"]["comments"][0]["attachments"][0]["id"],
+            STAGED_ID
+        );
+    });
+}
+
+#[test]
+fn task_attach_aborts_staged_uploads_on_downstream_rpc_error() {
+    use org_command::Refusal;
+    use org_proto::ErrorCode;
+
+    use crate::runtime::file_guard::{with_test_roots, FileRoots, RootEntry};
+    use crate::runtime::transport::{OfficeTransport, TransportOffice};
+
+    const STAGED_ID: &str = "0193a5c0-0000-7000-8000-000000000881";
+    const EXISTING_ID: &str = "0193a5c0-0000-7000-8000-000000000882";
+
+    struct FailingTaskMock {
+        fail_method: &'static str,
+        seen: Vec<(String, Value)>,
+    }
+
+    impl OfficeTransport for FailingTaskMock {
+        fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
+            self.seen.push((method.to_owned(), params));
+            match method {
+                "attachment.upload_begin" => Ok(json!({
+                    "upload": {
+                        "upload_id": STAGED_ID,
+                        "filename": "spec.md",
+                        "mime_type": "text/markdown",
+                        "byte_count": 5,
+                        "received_bytes": 0,
+                        "committed": false,
+                        "expires_at": "2026-11-27T01:00:00.000Z"
+                    },
+                    "chunk_size_bytes": 65536
+                })),
+                "attachment.upload_chunk" => Ok(json!({
+                    "upload_id": STAGED_ID,
+                    "received_bytes": 5,
+                    "complete": true
+                })),
+                "attachment.upload_commit" => Ok(json!({
+                    "upload": {
+                        "upload_id": STAGED_ID,
+                        "filename": "spec.md",
+                        "mime_type": "text/markdown",
+                        "byte_count": 5,
+                        "received_bytes": 5,
+                        "committed": true,
+                        "expires_at": "2026-11-27T01:00:00.000Z",
+                        "content_sha256": "0".repeat(64)
+                    }
+                })),
+                "attachment.upload_abort" => Ok(json!({"aborted": true})),
+                m if m == self.fail_method => Err(Refusal::new(
+                    ErrorCode::Conflict,
+                    format!("{m} failed"),
+                    "retry",
+                )),
+                other => panic!("unexpected RPC: {other}"),
+            }
+        }
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("spec.md"), b"hello").unwrap();
+    let roots = FileRoots {
+        cwd: tmp.path().to_path_buf(),
+        workspace_roots: vec![RootEntry::from_path(tmp.path().to_path_buf()).unwrap()],
+        ..FileRoots::default()
+    };
+
+    with_test_roots(roots, || {
+        let cases: &[(&'static str, Vec<&str>)] = &[
+            (
+                "tasks.create",
+                vec![
+                    "task",
+                    "create",
+                    "--title",
+                    "Fail",
+                    "--attach",
+                    "spec.md",
+                    "--attachment-id",
+                    EXISTING_ID,
+                ],
+            ),
+            (
+                "tasks.update",
+                vec![
+                    "task",
+                    "update",
+                    "--task",
+                    "T-A1",
+                    "--if-match",
+                    "1",
+                    "--attach",
+                    "spec.md",
+                    "--add-attachment",
+                    EXISTING_ID,
+                ],
+            ),
+            (
+                "tasks.comment",
+                vec![
+                    "task",
+                    "comment",
+                    "--task",
+                    "T-A1",
+                    "--attach",
+                    "spec.md",
+                    "--attachment-id",
+                    EXISTING_ID,
+                ],
+            ),
+        ];
+        for (fail_method, args) in cases {
+            let mut t = TransportOffice(FailingTaskMock {
+                fail_method,
+                seen: vec![],
+            });
+            let owned: Vec<String> = args.iter().map(|s| (*s).to_owned()).collect();
+            let out = crate::execute_with_office("agent-os", &owned, &mut t);
+            assert_ne!(out.exit_code, 0, "{fail_method}: {}", out.stdout);
+            let aborted: Vec<&str> =
+                t.0.seen
+                    .iter()
+                    .filter(|(m, _)| m == "attachment.upload_abort")
+                    .filter_map(|(_, p)| p["upload_id"].as_str())
+                    .collect();
+            assert_eq!(
+                aborted,
+                vec![STAGED_ID],
+                "{fail_method} must abort only freshly staged upload, calls: {:?}",
+                t.0.seen
+            );
+        }
+    });
+}

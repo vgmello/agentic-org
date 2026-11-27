@@ -2,6 +2,7 @@
 //! dep-remove`.
 
 use org_command::{Ack, Answer, Command, Example, IfMatch, Kind, Refusal, Request};
+use org_proto::attachments::{TASK_ATTACHMENTS_MAX, TASK_COMMENT_ATTACHMENTS_MAX};
 use org_proto::tasks::{
     PatchField, TaskPriority, TaskStatus, TasksAddDependency, TasksAddDependencyParams,
     TasksAssign, TasksAssignParams, TasksComment, TasksCommentParams, TasksCommentResult,
@@ -19,6 +20,7 @@ use super::schema::{
 };
 use super::{cmd_id, task_to_row, unreadable};
 use crate::runtime::domain::CommandCue;
+use crate::runtime::file_transfer::resolve_attach_ids;
 use crate::runtime::input::{
     entity_id, is_set, opt_str_list, opt_string, opt_u64, require_if_match, require_str,
     write_answer,
@@ -208,6 +210,7 @@ pub(super) fn write_task_create<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    let command_id = cmd_id(request)?;
     let i = &request.input;
     let priority = opt_string(i, "priority")
         .map(|s| {
@@ -231,29 +234,43 @@ pub(super) fn write_task_create<T: OfficeTransport + ?Sized>(
             })
         })
         .transpose()?;
+    let title = require_str(i, "title")?.to_owned();
+    let task_id = entity_id(request, None, "task-create")?;
+    let effort = opt_u64(i, "effort")?;
+    let rank_order = opt_u64(i, "order")?;
+    let attach = opt_str_list(i, "attach").unwrap_or_default();
+    let att_ids = opt_str_list(i, "attachment_id").unwrap_or_default();
+    let resolved = resolve_attach_ids(transport, &attach, &att_ids, TASK_ATTACHMENTS_MAX)?;
     let params = TasksCreateParams {
-        command_id: cmd_id(request)?,
-        task_id: entity_id(request, None, "task-create")?,
+        command_id,
+        task_id,
         team_id: opt_string(i, "team_id"),
         project_id: opt_string(i, "project_id"),
         assigned_team_id: opt_string(i, "assigned_team_id"),
         assignee_id: opt_string(i, "assignee_id"),
         task_type: opt_string(i, "type"),
         work_type,
-        title: require_str(i, "title")?.to_owned(),
+        title,
         body_markdown: opt_string(i, "body").unwrap_or_default(),
         priority,
-        effort: opt_u64(i, "effort")?,
+        effort,
         severity: opt_string(i, "severity"),
-        rank_order: opt_u64(i, "order")?,
+        rank_order,
         labels: opt_str_list(i, "labels").unwrap_or_default(),
         reference_files: opt_str_list(i, "reference_files").unwrap_or_default(),
         modified_files: opt_str_list(i, "modified_files").unwrap_or_default(),
         depends_on: opt_str_list(i, "depends_on").unwrap_or_default(),
+        attachment_ids: resolved.ids.clone(),
         details: None,
         dod: None,
     };
-    let raw = transport.call_method(TasksCreate::METHOD, json!(params))?;
+    let raw = match transport.call_method(TasksCreate::METHOD, json!(params)) {
+        Ok(raw) => raw,
+        Err(err) => {
+            resolved.abort_staged(transport);
+            return Err(err);
+        }
+    };
     let res: TasksMutationResult = serde_json::from_value(raw).map_err(unreadable)?;
     Ok(write_answer(
         request,
@@ -266,7 +283,10 @@ pub(super) fn write_task_update<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    let command_id = cmd_id(request)?;
+    let expected_revision = require_if_match(request)?;
     let i = &request.input;
+    let task = require_str(i, "task")?.to_owned();
     let priority = opt_string(i, "priority")
         .map(|s| {
             TaskPriority::parse(&s).ok_or_else(|| {
@@ -293,10 +313,13 @@ pub(super) fn write_task_update<T: OfficeTransport + ?Sized>(
         Some(s) => PatchField::Set(Some(s)),
         None => PatchField::Unchanged,
     };
+    let attach = opt_str_list(i, "attach").unwrap_or_default();
+    let add_att = opt_str_list(i, "add_attachment").unwrap_or_default();
+    let resolved = resolve_attach_ids(transport, &attach, &add_att, TASK_ATTACHMENTS_MAX)?;
     let params = TasksUpdateParams {
-        command_id: cmd_id(request)?,
-        task: require_str(i, "task")?.to_owned(),
-        expected_revision: require_if_match(request)?,
+        command_id,
+        task,
+        expected_revision,
         title: opt_string(i, "title"),
         body_markdown: opt_string(i, "body"),
         task_type: opt_string(i, "type"),
@@ -314,9 +337,17 @@ pub(super) fn write_task_update<T: OfficeTransport + ?Sized>(
         modified_files: opt_str_list(i, "modified_files"),
         add_modified_files: opt_str_list(i, "add_modified_files").unwrap_or_default(),
         remove_modified_files: opt_str_list(i, "remove_modified_files").unwrap_or_default(),
+        add_attachments: resolved.ids.clone(),
+        remove_attachments: opt_str_list(i, "remove_attachment").unwrap_or_default(),
         details: None,
     };
-    let raw = transport.call_method(TasksUpdate::METHOD, json!(params))?;
+    let raw = match transport.call_method(TasksUpdate::METHOD, json!(params)) {
+        Ok(raw) => raw,
+        Err(err) => {
+            resolved.abort_staged(transport);
+            return Err(err);
+        }
+    };
     let res: TasksMutationResult = serde_json::from_value(raw).map_err(unreadable)?;
     Ok(write_answer(
         request,
@@ -397,13 +428,35 @@ pub(super) fn write_task_comment<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
+    let command_id = cmd_id(request)?;
+    let i = &request.input;
+    let task = require_str(i, "task")?.to_owned();
+    let body_markdown = opt_string(i, "body").unwrap_or_default();
+    let attach = opt_str_list(i, "attach").unwrap_or_default();
+    let att_ids = opt_str_list(i, "attachment_id").unwrap_or_default();
+    if body_markdown.trim().is_empty() && attach.is_empty() && att_ids.is_empty() {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            "`task comment` requires `--body` or at least one `--attach` / `--attachment-id`.",
+            "Pass `--body <text>` (or `--input-file <path>`) or attach a file with `--attach <path>`.",
+        ));
+    }
+    let comment_id = entity_id(request, None, "task-comment")?;
+    let resolved = resolve_attach_ids(transport, &attach, &att_ids, TASK_COMMENT_ATTACHMENTS_MAX)?;
     let params = TasksCommentParams {
-        command_id: cmd_id(request)?,
-        task: require_str(&request.input, "task")?.to_owned(),
-        comment_id: entity_id(request, None, "task-comment")?,
-        body_markdown: require_str(&request.input, "body")?.to_owned(),
+        command_id,
+        task,
+        comment_id,
+        body_markdown,
+        attachment_ids: resolved.ids.clone(),
     };
-    let raw = transport.call_method(TasksComment::METHOD, json!(params))?;
+    let raw = match transport.call_method(TasksComment::METHOD, json!(params)) {
+        Ok(raw) => raw,
+        Err(err) => {
+            resolved.abort_staged(transport);
+            return Err(err);
+        }
+    };
     let res: TasksCommentResult = serde_json::from_value(raw).map_err(unreadable)?;
     Ok(write_answer(
         request,
