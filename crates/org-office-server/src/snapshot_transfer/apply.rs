@@ -226,11 +226,17 @@ fn apply_staged_deletions(
     relocated.retain(|path| {
         org_office::task_id_for_work_path(path).is_none_or(|tid| !protected_tasks.contains(&tid))
     });
+    // A shared file still in this satellite's outbox is not at HQ yet: its record stays, or
+    // its bytes would wait in the outbox for a record that is gone (`TASK-98.6`).
+    let unshipped_files = office.pending_blob_outbox_state_paths().map_err(|e| {
+        format!("failed listing un-shipped attachment records for snapshot reconciliation: {e}")
+    })?;
     let mut deletes: Vec<String> = local_paths
         .into_iter()
         .filter(|existing| {
             !staged.incoming_paths.contains(existing)
                 && !pending_work_paths.contains(existing)
+                && !unshipped_files.contains(existing)
                 && (relocated.contains(existing)
                     || (!org_office::is_immutable_state_path(existing)
                         && org_office::task_id_for_work_path(existing).is_none()))

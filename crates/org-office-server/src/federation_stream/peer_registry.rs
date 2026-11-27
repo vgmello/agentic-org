@@ -125,6 +125,14 @@ impl HqPeerHandle {
 
 type PeerSessionList = Vec<(u64, Arc<HqPeerHandle>)>;
 
+/// Satellite blob uploads HQ holds in memory (`TASK-98.6`): the bytes across every session,
+/// and the one upload each satellite may have in progress.
+#[derive(Default)]
+struct BlobBudget {
+    held: u64,
+    by_satellite: HashMap<String, u64>,
+}
+
 /// Registry of active satellite mTLS sessions connected to HQ, providing sub-millisecond push
 /// wakeups and synchronous HQ->Satellite session RPC proxying (`TASK-140`, `TASK-143` AC #3).
 #[derive(Default)]
@@ -132,6 +140,10 @@ pub(crate) struct HqPeerRegistry {
     sessions: Mutex<HashMap<String, PeerSessionList>>,
     next_conn_id: AtomicU64,
     next_rpc_id: AtomicU64,
+    /// Satellite blob uploads HQ holds in memory across all sessions (`TASK-98.6`).
+    blob_budget: Mutex<BlobBudget>,
+    /// How long an upload may wait for its next chunk, in milliseconds; 0 is the default.
+    blob_upload_idle_ms: AtomicU64,
 }
 
 pub(crate) struct HqPeerRegistration {
@@ -166,6 +178,55 @@ impl Drop for HqPeerRegistration {
 }
 
 impl HqPeerRegistry {
+    fn blob_budget(&self) -> std::sync::MutexGuard<'_, BlobBudget> {
+        self.blob_budget.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Reserves `bytes` of in-memory blob upload room for satellite `sat_id`: only while it
+    /// has no other upload in progress (on any session) and the total stays within `cap`, so
+    /// one satellite can never take the whole budget.
+    pub(crate) fn try_reserve_blob_bytes(&self, sat_id: &str, bytes: u64, cap: u64) -> bool {
+        let mut budget = self.blob_budget();
+        if budget.by_satellite.contains_key(sat_id) {
+            return false;
+        }
+        let Some(total) = budget.held.checked_add(bytes).filter(|total| *total <= cap) else {
+            return false;
+        };
+        budget.held = total;
+        budget.by_satellite.insert(sat_id.to_owned(), bytes);
+        true
+    }
+
+    /// Returns the room [`Self::try_reserve_blob_bytes`] reserved for `sat_id`.
+    pub(crate) fn release_blob_bytes(&self, sat_id: &str) {
+        let mut budget = self.blob_budget();
+        if let Some(bytes) = budget.by_satellite.remove(sat_id) {
+            budget.held = budget.held.saturating_sub(bytes);
+        }
+    }
+
+    /// The bytes of satellite uploads held in memory now (tests).
+    #[cfg(test)]
+    pub(crate) fn blob_bytes_in_flight(&self) -> u64 {
+        self.blob_budget().held
+    }
+
+    /// How long an upload may wait for its next chunk, when set other than the default.
+    pub(crate) fn blob_upload_idle(&self) -> Option<Duration> {
+        match self.blob_upload_idle_ms.load(Ordering::Acquire) {
+            0 => None,
+            ms => Some(Duration::from_millis(ms)),
+        }
+    }
+
+    /// Shortens the idle limit of uploads that start from now on (tests).
+    #[cfg(test)]
+    pub(crate) fn set_blob_upload_idle(&self, idle: Duration) {
+        let ms = u64::try_from(idle.as_millis()).unwrap_or(u64::MAX).max(1);
+        self.blob_upload_idle_ms.store(ms, Ordering::Release);
+    }
+
     pub(crate) fn register(self: &Arc<Self>, office_id: &str) -> io::Result<HqPeerRegistration> {
         let handle = Arc::new(HqPeerHandle::new()?);
         let conn_id = self.next_conn_id.fetch_add(1, Ordering::Relaxed) + 1;

@@ -3,23 +3,28 @@
 //! files of messages, asks and answers (`messages.rs`, `TASK-98.2`), each decided by
 //! [`AuthorizationPolicy`] and nothing else.
 //!
+//! Across offices (`TASK-98.6`): a satellite's new shared files wait in its outbox and ship to
+//! HQ (`shipping.rs`); HQ checks, stores and binds them and serves shared bytes to satellites
+//! (`custody.rs`); a satellite reads its outbox, its cache, or pulls from HQ (`local_blobs.rs`).
+//!
 //! Every call names the caller by employee ID (the connection's binding, never the wire), and
 //! answers `Ok(Err(..))` for a caller's mistake or refusal and `Err(..)` only for storage.
 
 mod attach;
+mod custody;
+mod local_blobs;
 mod messages;
 mod read;
+mod shipping;
 mod upload;
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 use org_proto::attachments::AttachmentTargetKind;
 use org_proto::{ApiError, ErrorCode};
 use org_store::{Id, Sha256};
 
 use super::{storage, Office};
-use crate::attachments::blobs::BlobStore;
 use crate::attachments::records::AttachmentRecord;
 use crate::authz::{
     AuthorizationPolicy, Denied, ParentFacts, PrincipalContext, ResourceFacts, ResourceRef,
@@ -54,11 +59,12 @@ fn not_found() -> ApiError {
     ApiError::new(ErrorCode::NotFound, "attachment not found")
 }
 
-/// A shared write on a satellite: not in this phase (its journal does not replicate to HQ).
+/// An edit of a file's details on a satellite: HQ owns every shared record once it holds it,
+/// so edits are made there.
 fn hq_only() -> ApiError {
     ApiError::new(
         ErrorCode::Unavailable,
-        "attachments are uploaded and attached at HQ; this satellite office serves reads only",
+        "a file's details are edited at HQ; this satellite office uploads, attaches and reads files",
     )
 }
 
@@ -193,15 +199,6 @@ impl Office {
             .get(&self.info.org_id, attachment_id)
     }
 
-    /// The blob store a record's bytes are in, if this office holds it.
-    fn blobs_for(&self, record: &AttachmentRecord) -> Option<Arc<dyn BlobStore>> {
-        if record.target_kind == AttachmentTargetKind::UserPrivate {
-            self.attachments.private.clone()
-        } else {
-            Some(Arc::clone(&self.attachments.shared))
-        }
-    }
-
     /// Removes every expired staged upload now; returns how many went.
     pub fn attachment_gc_staged(&self) -> Result<usize, OfficeError> {
         self.attachments.staging.gc(self.attachment_now_ms())
@@ -227,6 +224,18 @@ impl Office {
     #[cfg(any(test, feature = "testkit"))]
     pub fn attachment_staging_root(&self) -> std::path::PathBuf {
         self.attachments.staging.root().to_path_buf()
+    }
+
+    /// The satellite's outbox folder (tests and diagnostics).
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn attachment_outbox_root(&self) -> std::path::PathBuf {
+        self.outbox().root().to_path_buf()
+    }
+
+    /// The satellite's blob cache (tests and diagnostics).
+    #[cfg(any(test, feature = "testkit"))]
+    pub fn attachment_blob_cache(&self) -> crate::attachments::cache::BlobCache {
+        self.blob_cache()
     }
 }
 

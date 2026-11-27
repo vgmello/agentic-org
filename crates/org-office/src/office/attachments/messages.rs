@@ -17,7 +17,7 @@ use org_proto::attachments::{check_attachment_ids, AttachmentTargetKind};
 use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
 
-use super::{hq_only, Answer, Office};
+use super::{Answer, Office};
 use crate::attachments::blobs::ContentHash;
 use crate::attachments::media;
 use crate::attachments::records::AttachmentRecord;
@@ -49,9 +49,12 @@ impl Office {
                 "a message, ask or answer with attachments needs a canonical lowercase UUIDv7 id",
             )));
         }
-        // A satellite stages no upload and writes no shared blob.
+        // Message/ask/answer attachments promote into HQ's shared blob store directly.
         if self.is_satellite() {
-            return Ok(Err(hq_only()));
+            return Ok(Err(ApiError::new(
+                ErrorCode::Unavailable,
+                "attaching files to messages, asks or answers is handled at HQ; retry against the HQ office",
+            )));
         }
         let caller = match self.attachment_caller(actor)? {
             Ok(caller) => caller,

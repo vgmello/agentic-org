@@ -247,6 +247,57 @@ pub enum SyncFrame {
         outcome_json: String,
     },
 
+    // --- Shared attachment bytes (Satellite <-> HQ, `TASK-98.6`, ADR-0037) ---
+    // Blobs never ride in `OrgSnapshotChunk` or `OrgEvent`: only these frames carry them, at
+    // most `BLOB_CHUNK_MAX_BYTES` raw bytes per `BlobChunk`, and never a private file's bytes.
+    /// A satellite announces one shared attachment from its outbox: the attachment's canonical
+    /// record and the blob it names. HQ answers [`SyncFrame::BlobHasResponse`] (then waits for
+    /// the chunks when the blob is absent) or refuses with [`SyncFrame::BlobAck`].
+    BlobHasRequest {
+        request_id: String,
+        org_id: String,
+        attachment_id: String,
+        content_sha256: String,
+        byte_count: u64,
+        /// The attachment's canonical YAML record, base64.
+        record_b64: String,
+    },
+    /// Whether HQ's shared blob store already holds the announced bytes. When it does, no
+    /// chunk follows and HQ binds the record and acks at once.
+    BlobHasResponse {
+        request_id: String,
+        content_sha256: String,
+        present: bool,
+    },
+    /// One in-order piece of a blob: the satellite's upload, or HQ's answer to a fetch.
+    BlobChunk {
+        request_id: String,
+        content_sha256: String,
+        offset: u64,
+        total_bytes: u64,
+        data_b64: String,
+    },
+    /// The end of an upload or a fetch's refusal. `accepted` means HQ holds the verified bytes
+    /// durably and has bound the record: only then may a satellite drop its outbox entry.
+    BlobAck {
+        request_id: String,
+        attachment_id: String,
+        content_sha256: String,
+        accepted: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    /// A satellite asks for the bytes of one shared attachment, named only by
+    /// `(org_id, attachment_id)`: never by hash, so no blob is ever served unless HQ finds a
+    /// shared record that names it.
+    BlobFetchRequest {
+        request_id: String,
+        org_id: String,
+        attachment_id: String,
+    },
+
     // --- Keepalive / explicit refusal ---
     Ping {
         nonce: u64,

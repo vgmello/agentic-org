@@ -56,6 +56,8 @@ pub(crate) fn run_persistent_satellite_sync(
             match SatelliteSyncSession::connect_cancellable(Arc::clone(office), Some(stop)) {
                 Ok(s) => {
                     backoff = RECONNECT_MIN;
+                    // HQ is reachable again: wake the outbox shipper too (`TASK-98.6`).
+                    sat_wake.notify();
                     s
                 }
                 Err(_) => {

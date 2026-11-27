@@ -85,7 +85,17 @@ impl SatelliteSyncSession {
         timeout: Duration,
         expected_receipt_msg_id: Option<&str>,
     ) -> Result<Option<SyncFrame>, String> {
-        read_correlated_frame_opts(self, timeout, expected_receipt_msg_id, true)
+        read_correlated_frame_opts(self, timeout, expected_receipt_msg_id, true, None)
+    }
+
+    /// [`Self::read_correlated_frame`] that a shutdown (`stop`) ends within one socket read
+    /// slice (250 ms) rather than at `timeout`.
+    pub(crate) fn read_correlated_frame_cancellable(
+        &mut self,
+        timeout: Duration,
+        stop: Option<&AtomicBool>,
+    ) -> Result<Option<SyncFrame>, String> {
+        read_correlated_frame_opts(self, timeout, None, true, stop)
     }
 
     /// Streams, validates, stages to disk, applies in bounded dependency-safe batches, and installs
@@ -124,7 +134,7 @@ impl SatelliteSyncSession {
         let mut applied = 0usize;
         let mut burst = Vec::new();
         loop {
-            match read_correlated_frame_opts(self, FIRST_FRAME_DEADLINE, None, false) {
+            match read_correlated_frame_opts(self, FIRST_FRAME_DEADLINE, None, false, None) {
                 Ok(Some(ev @ SyncFrame::OrgEvent { .. })) => {
                     burst.push(ev);
                     if burst.len() >= ORG_EVENT_BATCH_MAX {
@@ -310,6 +320,7 @@ fn read_correlated_frame_opts(
     timeout: Duration,
     expected_receipt_msg_id: Option<&str>,
     buffer_org_events: bool,
+    stop: Option<&AtomicBool>,
 ) -> Result<Option<SyncFrame>, String> {
     let deadline = Instant::now() + timeout;
     loop {
@@ -317,7 +328,7 @@ fn read_correlated_frame_opts(
         if left.is_zero() {
             return Err("timed out waiting for HQ reply".into());
         }
-        match read_client_frame(&mut session.tls, &mut session.reader, left)? {
+        match read_client_frame(&mut session.tls, &mut session.reader, left, stop)? {
             Some(
                 frame @ (SyncFrame::MessageDeliver { .. }
                 | SyncFrame::WakeNotify { .. }
