@@ -16,7 +16,8 @@ use hyper::{http::request::Parts, Method, StatusCode};
 use org_proto::docs::{
     DocStatusWire, DocsCreate, DocsCreateParams, DocsIndex, DocsIndexParams, DocsInspect,
     DocsInspectParams, DocsList, DocsListParams, DocsMove, DocsMoveParams, DocsUpdate,
-    DocsUpdateParams, DOC_REF_MAX_BYTES,
+    DocsUpdateParams, DOC_KIND_MAX_BYTES, DOC_LIST_MAX_LIMIT, DOC_PATH_MAX_BYTES,
+    DOC_REF_MAX_BYTES, DOC_SECTION_MAX_BYTES,
 };
 use org_proto::web::{ReadResponse, WebError, WebErrorCode};
 use serde_json::Value;
@@ -96,7 +97,29 @@ fn parse_status(raw: &str) -> Result<DocStatusWire, ApiReply> {
     }
 }
 
-/// `docs.list`'s filters from the query string: each key at most once, none unknown.
+/// A query value of at most `max` bytes.
+fn bounded(value: String, max: usize) -> Result<String, ApiReply> {
+    (value.len() <= max).then_some(value).ok_or_else(invalid)
+}
+
+/// A page size from 1 to [`DOC_LIST_MAX_LIMIT`].
+fn parse_limit(raw: &str) -> Result<u32, ApiReply> {
+    raw.parse::<u32>()
+        .ok()
+        .filter(|limit| (1..=DOC_LIST_MAX_LIMIT).contains(limit))
+        .ok_or_else(invalid)
+}
+
+/// A write's `command_id`: a canonical lowercase UUIDv7, checked before the office is asked.
+fn valid_command_id(command_id: &str) -> Result<(), ApiReply> {
+    org_proto::is_uuid_v7(command_id)
+        .then_some(())
+        .ok_or_else(invalid)
+}
+
+/// `docs.list`'s filters from the query string: each key at most once, none unknown, each
+/// value within its field's bound (`section` 256, `kind` 64, `cursor` 512 bytes; `limit` 1 to
+/// 200).
 fn parse_list_query(project: String, query: Option<&str>) -> Result<DocsListParams, ApiReply> {
     let mut params = DocsListParams {
         project,
@@ -117,11 +140,11 @@ fn parse_list_query(project: String, query: Option<&str>) -> Result<DocsListPara
             return Err(invalid());
         }
         match key {
-            "section" => params.section = Some(value),
-            "kind" => params.kind = Some(value),
+            "section" => params.section = Some(bounded(value, DOC_SECTION_MAX_BYTES)?),
+            "kind" => params.kind = Some(bounded(value, DOC_KIND_MAX_BYTES)?),
             "status" => params.status = Some(parse_status(&value)?),
-            "limit" => params.limit = Some(value.parse().map_err(|_| invalid())?),
-            "cursor" => params.cursor = Some(value),
+            "limit" => params.limit = Some(parse_limit(&value)?),
+            "cursor" => params.cursor = Some(bounded(value, DOC_PATH_MAX_BYTES)?),
             _ => return Err(invalid()),
         }
     }
@@ -203,16 +226,19 @@ fn to_call(route: DocRoute, bytes: &[u8]) -> Result<DocCall, ApiReply> {
         }
         DocRoute::Create(pair, org, project) => {
             let mut params: DocsCreateParams = decode_body(bytes)?;
+            valid_command_id(&params.command_id)?;
             params.project = project;
             DocCall::Create(pair, org, params)
         }
         DocRoute::Update(pair, org, project, document_id) => {
             let mut params: DocsUpdateParams = decode_body(bytes)?;
+            valid_command_id(&params.command_id)?;
             (params.project, params.document_id) = (project, document_id);
             DocCall::Update(pair, org, params)
         }
         DocRoute::Move(pair, org, project, document_id) => {
             let mut params: DocsMoveParams = decode_body(bytes)?;
+            valid_command_id(&params.command_id)?;
             (params.project, params.document_id) = (project, document_id);
             DocCall::Move(pair, org, params)
         }

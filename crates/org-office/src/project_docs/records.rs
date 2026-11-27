@@ -3,7 +3,9 @@
 //! YAML sidecar beside its bytes. A document's path is where its file is, never a field: a move
 //! changes the location only.
 
-use org_proto::docs::{DOC_BODY_MAX_BYTES, DOC_KIND_MAX_BYTES, DOC_SUMMARY_MAX_BYTES};
+use org_proto::docs::{
+    DOC_BODY_MAX_BYTES, DOC_KIND_MAX_BYTES, DOC_MEDIA_MAX_BYTES, DOC_SUMMARY_MAX_BYTES,
+};
 use org_store::Id;
 use serde_json::{json, Value};
 
@@ -14,8 +16,9 @@ use crate::organization::records::{
     Meta, RecordError,
 };
 
-/// The largest media asset the tree keeps (the data contract's `documentation_media.bytes`).
-pub const MEDIA_RECORD_MAX_BYTES: u64 = 5 * 1024 * 1024;
+/// The largest media asset the tree keeps (the data contract's `documentation_media.bytes`):
+/// [`DOC_MEDIA_MAX_BYTES`], so every asset replicates to satellites as one `org-sync` payload.
+pub const MEDIA_RECORD_MAX_BYTES: u64 = DOC_MEDIA_MAX_BYTES as u64;
 
 /// Kinds the data contract reserves for documents outside the tree (a project brief, a
 /// release or deployment changelog).

@@ -1,15 +1,19 @@
 //! The office's `docs.*` calls (`TASK-55`, `L11`, `FC-180`): the project documentation tree
 //! read on one snapshot or written as one operation, each authorized for `caller` by the tree's
 //! own choke-point (`crate::project_docs::access`).
+//!
+//! HQ owns the tree: a satellite reads its replicated copy, and refuses every write with
+//! `unavailable` before anything is decided, so it never forks the tree it replicates.
 
 use org_proto::docs::{
     DocsCreateParams, DocsIndexParams, DocsIndexResult, DocsInspectParams, DocsInspectResult,
     DocsListParams, DocsListResult, DocsMoveParams, DocsPutMediaParams, DocsPutMediaResult,
     DocsUpdateParams, DocsWriteResult,
 };
-use org_proto::ApiError;
+use org_proto::{ApiError, ErrorCode};
 
 use crate::error::OfficeError;
+use crate::model::OfficeRole;
 use crate::store::open::project_doc_ops::{
     DocsCreateOp, DocsIndexRead, DocsInspectRead, DocsListRead, DocsMoveOp, DocsPutMediaOp,
     DocsUpdateOp,
@@ -19,7 +23,20 @@ use super::{storage, Office};
 
 type Answer<T> = Result<Result<T, ApiError>, OfficeError>;
 
+/// A documentation write on a satellite: HQ owns the tree, so it is edited there.
+fn hq_only() -> ApiError {
+    ApiError::new(
+        ErrorCode::Unavailable,
+        "project documentation is edited at HQ; this satellite office reads its replicated copy",
+    )
+}
+
 impl Office {
+    /// A write's refusal on a satellite office.
+    fn docs_write_refusal(&self) -> Option<ApiError> {
+        (self.info.role == OfficeRole::Satellite).then(hq_only)
+    }
+
     /// `docs.index`: the project's whole documentation tree.
     pub fn docs_index(&self, caller: &str, params: DocsIndexParams) -> Answer<DocsIndexResult> {
         let read = DocsIndexRead {
@@ -53,6 +70,9 @@ impl Office {
 
     /// `docs.create`.
     pub fn docs_create(&self, caller: &str, params: DocsCreateParams) -> Answer<DocsWriteResult> {
+        if let Some(refusal) = self.docs_write_refusal() {
+            return Ok(Err(refusal));
+        }
         self.store
             .run(DocsCreateOp {
                 caller: caller.to_owned(),
@@ -63,6 +83,9 @@ impl Office {
 
     /// `docs.update`.
     pub fn docs_update(&self, caller: &str, params: DocsUpdateParams) -> Answer<DocsWriteResult> {
+        if let Some(refusal) = self.docs_write_refusal() {
+            return Ok(Err(refusal));
+        }
         self.store
             .run(DocsUpdateOp {
                 caller: caller.to_owned(),
@@ -73,6 +96,9 @@ impl Office {
 
     /// `docs.move`.
     pub fn docs_move(&self, caller: &str, params: DocsMoveParams) -> Answer<DocsWriteResult> {
+        if let Some(refusal) = self.docs_write_refusal() {
+            return Ok(Err(refusal));
+        }
         self.store
             .run(DocsMoveOp {
                 caller: caller.to_owned(),
@@ -87,6 +113,9 @@ impl Office {
         caller: &str,
         params: DocsPutMediaParams,
     ) -> Answer<DocsPutMediaResult> {
+        if let Some(refusal) = self.docs_write_refusal() {
+            return Ok(Err(refusal));
+        }
         self.store
             .run(DocsPutMediaOp {
                 caller: caller.to_owned(),

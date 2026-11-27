@@ -330,6 +330,18 @@ mod tests {
                 vec![o, json, json],
                 Err(ApiRefusal::MediaType),
             ),
+            (Method::PATCH, vec![o, json], Ok(())),
+            (Method::PATCH, vec![o], Err(ApiRefusal::MediaType)),
+            (
+                Method::PATCH,
+                vec![o, ("content-type", "text/plain")],
+                Err(ApiRefusal::MediaType),
+            ),
+            (
+                Method::PATCH,
+                vec![o, ("content-type", "application/x-www-form-urlencoded")],
+                Err(ApiRefusal::MediaType),
+            ),
         ] {
             assert_eq!(
                 admission.check_api(&api(method.clone(), &headers)),

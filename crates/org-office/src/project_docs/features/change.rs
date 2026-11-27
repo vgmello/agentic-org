@@ -101,11 +101,20 @@ impl TreeEdit {
         self.change = edit(change);
     }
 
-    /// The change: every file put or removed, then the regenerated index, then `reply`.
-    pub fn finish(self, reply: Vec<u8>) -> Change {
+    /// The change: every file put or removed, then the regenerated index, then `reply`. A
+    /// write whose index would be over [`index::INDEX_MAX_BYTES`] is `too_large`, so the index
+    /// always replicates as one file.
+    pub fn finish(self, reply: Vec<u8>) -> Result<Change, Denied> {
         let rendered = index::render(&self.project, &self.docs, &self.media);
-        self.change
+        if rendered.len() > index::INDEX_MAX_BYTES {
+            return Err(refused(
+                ErrorCode::TooLarge,
+                "the project's documentation index would be over 256 KiB",
+            ));
+        }
+        Ok(self
+            .change
             .put(paths::index_path(&self.project), rendered)
-            .reply(reply)
+            .reply(reply))
     }
 }

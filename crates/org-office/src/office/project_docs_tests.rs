@@ -645,22 +645,20 @@ fn agents_outside_the_project_are_refused_on_every_docs_call_without_a_leak() {
             .office
             .docs_put_media(&fx.owner, media_params(&fx.project, "arch.png", &png(4, 4))));
         let missing = next_uuid();
-        for outsider in [&fx.outsider_agent, &fx.child_agent] {
-            for project in [
-                fx.project.as_str(),
-                "P-1",
-                "checkout",
-                missing.as_str(),
-                "nope",
-            ] {
-                let refusals = every_call(&fx, outsider, project, &doc.id);
-                for (call, error) in refusals {
-                    assert_eq!(
-                        (error.code, error.message.as_str()),
-                        (ErrorCode::NotFound, "project not found"),
-                        "{engine:?} {call} as an outsider on {project}"
-                    );
-                }
+        for project in [
+            fx.project.as_str(),
+            "P-1",
+            "checkout",
+            missing.as_str(),
+            "nope",
+        ] {
+            let refusals = every_call(&fx, &fx.outsider_agent, project, &doc.id);
+            for (call, error) in refusals {
+                assert_eq!(
+                    (error.code, error.message.as_str()),
+                    (ErrorCode::NotFound, "project not found"),
+                    "{engine:?} {call} as an outsider on {project}"
+                );
             }
         }
         // A member asking for a document of another project through its own is not told.
@@ -678,10 +676,12 @@ fn agents_outside_the_project_are_refused_on_every_docs_call_without_a_leak() {
         assert_eq!(leak.code, ErrorCode::NotFound);
         assert_eq!(leak.message, "document not found");
 
-        // The accountable and the contributing team's agents, the owner and any person may.
+        // The accountable and the contributing team's agents, an agent of a team below the
+        // accountable one, the owner and any person may.
         for member in [
             &fx.owning_agent,
             &fx.contributing_agent,
+            &fx.child_agent,
             &fx.owner,
             &fx.person,
         ] {
@@ -750,6 +750,13 @@ fn offboard(fx: &Fx, agent: &str) {
 
 /// Every `docs.*` call as `caller` on `project`, each expected to be refused.
 fn every_call(fx: &Fx, caller: &str, project: &str, doc: &str) -> Vec<(&'static str, ApiError)> {
+    let mut calls = every_read(fx, caller, project, doc);
+    calls.extend(every_write(fx, caller, project, doc));
+    calls
+}
+
+/// The three `docs.*` reads as `caller` on `project`, each expected to be refused.
+fn every_read(fx: &Fx, caller: &str, project: &str, doc: &str) -> Vec<(&'static str, ApiError)> {
     let o = &fx.office;
     let p = project.to_owned();
     vec![
@@ -772,11 +779,19 @@ fn every_call(fx: &Fx, caller: &str, project: &str, doc: &str) -> Vec<(&'static 
             err(o.docs_inspect(
                 caller,
                 DocsInspectParams {
-                    project: p.clone(),
+                    project: p,
                     document: doc.into(),
                 },
             )),
         ),
+    ]
+}
+
+/// The four `docs.*` writes as `caller` on `project`, each expected to be refused.
+fn every_write(fx: &Fx, caller: &str, project: &str, doc: &str) -> Vec<(&'static str, ApiError)> {
+    let o = &fx.office;
+    let p = project.to_owned();
+    vec![
         (
             "create",
             err(o.docs_create(caller, create_params(project, "Intrusion", None))),
@@ -906,3 +921,6 @@ fn a_stray_file_under_docs_is_skipped_by_the_rebuild_and_never_projected() {
         fx.office.close().unwrap();
     }
 }
+
+#[path = "project_docs_guard_tests.rs"]
+mod guards;

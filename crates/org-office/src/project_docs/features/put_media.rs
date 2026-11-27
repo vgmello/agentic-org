@@ -41,6 +41,10 @@ impl std::fmt::Debug for PreparedMedia {
     }
 }
 
+fn too_large() -> Denied {
+    refused(ErrorCode::TooLarge, "content_base64: at most 360 KiB")
+}
+
 /// Checks the file name, the type and the bytes of `params`, and sanitizes the image.
 pub fn prepare(params: &DocsPutMediaParams) -> Result<PreparedMedia, Denied> {
     let file = MediaFile::parse(params.file_name.trim())
@@ -62,19 +66,13 @@ pub fn prepare(params: &DocsPutMediaParams) -> Result<PreparedMedia, Denied> {
         ));
     }
     if params.content_base64.len() > DOC_MEDIA_MAX_BASE64_CHARS {
-        return Err(refused(
-            ErrorCode::TooLarge,
-            "content_base64: at most 512 KiB",
-        ));
+        return Err(too_large());
     }
     let raw = base64::engine::general_purpose::STANDARD
         .decode(params.content_base64.as_bytes())
         .map_err(|_| fields::invalid("content_base64", "standard base64"))?;
     if raw.len() > DOC_MEDIA_MAX_BYTES {
-        return Err(refused(
-            ErrorCode::TooLarge,
-            "content_base64: at most 512 KiB",
-        ));
+        return Err(too_large());
     }
     let kept = media::validate(declared, raw)?;
     if kept.media != declared {
@@ -86,7 +84,7 @@ pub fn prepare(params: &DocsPutMediaParams) -> Result<PreparedMedia, Denied> {
     if kept.bytes.is_empty() || kept.bytes.len() as u64 > MEDIA_RECORD_MAX_BYTES {
         return Err(refused(
             ErrorCode::TooLarge,
-            "the sanitized asset is over 5 MiB",
+            "the sanitized asset is over 360 KiB",
         ));
     }
     Ok(PreparedMedia {
@@ -156,5 +154,5 @@ pub fn decide<R: ProjectDocsRead>(
         media: wire::media(&record),
     };
     edit.put_media(record, prepared.bytes.clone())?;
-    Ok(edit.finish(reply(&answer)))
+    edit.finish(reply(&answer))
 }

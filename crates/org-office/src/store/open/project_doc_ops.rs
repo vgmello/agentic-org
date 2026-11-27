@@ -14,7 +14,7 @@ use org_store::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::project_docs::access::Denied;
+use crate::project_docs::access::{authorize, Denied, DocsAccess};
 use crate::project_docs::features::{
     create, decode_rejection, derive_id, put_media, read, refusal, update,
 };
@@ -200,7 +200,10 @@ impl StoreOp for DocsMoveOp {
     }
 }
 
-/// `docs.put_media`: the bytes are checked and sanitized before the write is submitted.
+/// `docs.put_media`: the caller is authorized on a snapshot before a byte of the asset is
+/// decoded, so an outsider or an inactive caller never reaches the image decoder; then the
+/// bytes are checked and sanitized, and the write is submitted, authorized again under the
+/// writer.
 pub struct DocsPutMediaOp {
     pub caller: String,
     pub params: DocsPutMediaParams,
@@ -219,6 +222,17 @@ impl StoreOp for DocsPutMediaOp {
             Ok(op) => op,
             Err(error) => return Ok(Err(error)),
         };
+        let admitted = store.read(|snapshot| {
+            settle(authorize(
+                snapshot,
+                &self.caller,
+                &self.params.project,
+                DocsAccess::Write,
+            ))
+        })?;
+        if let (Err(refusal), _) = admitted {
+            return Ok(Err(refusal));
+        }
         let prepared = match settle(put_media::prepare(&self.params))? {
             Ok(prepared) => prepared,
             Err(error) => return Ok(Err(error)),

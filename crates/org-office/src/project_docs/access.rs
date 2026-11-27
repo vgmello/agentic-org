@@ -5,8 +5,9 @@
 //! - Only an **active** employee is authorized for anything; anyone else (paused, offboarded,
 //!   unknown) is `not_authorized` before a project is even resolved.
 //! - **People** read and write every project's tree (Phase 1 organization policy).
-//! - **Agents** read and write only the trees of projects they belong to: their `home_team_id`
-//!   is the project's accountable `owner_team_id` or one of its `contributing_team_ids`.
+//! - **Agents** read and write only the trees of projects they belong to: their home team, or
+//!   a team above it, is the project's accountable `owner_team_id` or one of its
+//!   `contributing_team_ids` (`doc-86`, as `crate::authz` admits project members).
 //! - A project the caller may not see is `not_found` with the very message a missing project
 //!   gets: neither its existence, its name nor its tree leaks.
 //! - An archived project's tree is read-only.
@@ -60,15 +61,22 @@ pub fn refused(code: ErrorCode, message: impl Into<String>) -> Denied {
 }
 
 /// Whether `caller` belongs to `project` for its documentation: any person; an agent only
-/// through its home team being the accountable or a contributing team.
-pub fn may_see(caller: &Employee, project: &Project) -> bool {
-    match caller.kind {
-        EmployeeKind::Person => true,
-        EmployeeKind::Agent => {
-            caller.home_team_id == project.owner_team_id
-                || project.contributing_team_ids.contains(&caller.home_team_id)
-        }
+/// through its home team's chain (the home team and every team above it) holding the
+/// accountable or a contributing team. A home team whose chain is broken admits nothing.
+pub fn may_see<R: ProjectDocsRead>(
+    view: &R,
+    caller: &Employee,
+    project: &Project,
+) -> Result<bool, EngineError> {
+    if caller.kind == EmployeeKind::Person {
+        return Ok(true);
     }
+    let Some(chain) = view.team_chain(&caller.home_team_id)? else {
+        return Ok(false);
+    };
+    Ok(chain
+        .iter()
+        .any(|team| *team == project.owner_team_id || project.contributing_team_ids.contains(team)))
 }
 
 /// The active employee `caller_id` names, or `not_authorized`.
@@ -104,7 +112,7 @@ pub fn authorize<R: ProjectDocsRead>(
         return Err(refused(ErrorCode::InvalidRequest, "project: required"));
     }
     let project = match view.resolve_project(reference)? {
-        Some(project) if may_see(&caller, &project) => project,
+        Some(project) if may_see(view, &caller, &project)? => project,
         _ => return Err(refused(ErrorCode::NotFound, PROJECT_NOT_FOUND)),
     };
     if access == DocsAccess::Write && project.archived {

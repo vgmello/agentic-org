@@ -50,5 +50,5 @@ pub fn decide<R: ProjectDocsRead>(
         document: wire::doc_summary(&doc.entry()),
     };
     edit.put_doc(doc)?;
-    Ok(edit.finish(reply(&answer)))
+    edit.finish(reply(&answer))
 }

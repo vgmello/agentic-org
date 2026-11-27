@@ -163,8 +163,11 @@ fn validate_project<T: ProjectDocsRead + CoreRead>(
             "a documentation file the office does not account for (refused or duplicated)",
         ));
     }
-    let rendered = Sha256::of(&index::render(project, &docs, &media));
-    if tx.source_hash(&index_path)? != Some(rendered) {
+    let rendered = index::render(project, &docs, &media);
+    if rendered.len() > index::INDEX_MAX_BYTES {
+        return Err(refuse(&index_path, "index.yaml would be over 256 KiB"));
+    }
+    if tx.source_hash(&index_path)? != Some(Sha256::of(&rendered)) {
         return Err(refuse(
             &index_path,
             "index.yaml is missing or does not match the documentation tree",

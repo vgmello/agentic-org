@@ -37,10 +37,11 @@ fn write(view: &impl ProjectDocsRead, doc: ProjectDoc) -> Result<Change, Denied>
         document: wire::doc_summary(&doc.entry()),
     };
     edit.put_doc(doc)?;
-    Ok(edit.finish(reply(&answer)))
+    edit.finish(reply(&answer))
 }
 
-/// Decides `docs.update`. An absent field is kept; an empty summary or owner clears it.
+/// Decides `docs.update`. An absent field is kept; an empty summary or owner clears it (a
+/// `current` document's owner is never cleared).
 pub fn decide_update<R: ProjectDocsRead>(
     view: &R,
     now: Timestamp,
@@ -69,6 +70,13 @@ pub fn decide_update<R: ProjectDocsRead>(
     }
     if let Some(owner) = &params.owner_employee_id {
         doc.owner_employee_id = fields::owner(view, Some(owner))?;
+        // Clearing a current document's owner is refused, never quietly given to the caller.
+        if doc.owner_employee_id.is_none() && doc.status == DocStatus::Current {
+            return Err(fields::invalid(
+                "owner_employee_id",
+                "a current document keeps an owner: name another, or change its status first",
+            ));
+        }
     }
     if let Some(body) = &params.body_markdown {
         doc.body_markdown = fields::body(body)?;

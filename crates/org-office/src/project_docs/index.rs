@@ -16,6 +16,9 @@ use org_store::Id;
 const HEADER: &str =
     "# Maintained by the office: regenerated on every documentation change. Do not edit.\n";
 const INDEX_SCHEMA_VERSION: u64 = 1;
+/// Largest `index.yaml` (256 KiB, `doc-86`): it replicates to satellites as one file, inside
+/// both one `org-sync` org-journal payload and one frame.
+pub const INDEX_MAX_BYTES: usize = 256 * 1024;
 
 fn doc_entry(doc: &DocEntry) -> Value {
     json!({

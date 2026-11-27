@@ -38,11 +38,12 @@ pub const DOC_REF_MAX_BYTES: usize = 600;
 pub const DOC_LIST_DEFAULT_LIMIT: u32 = 50;
 /// Largest `docs.list` page.
 pub const DOC_LIST_MAX_LIMIT: u32 = 200;
-/// Largest decoded media asset `docs.put_media` takes (512 KiB): the request stays inside
-/// [`crate::MAX_FRAME_BYTES`].
-pub const DOC_MEDIA_MAX_BYTES: usize = 512 * 1024;
-/// Largest base64 text of a media asset: `4 * ceil(512 KiB / 3)`.
-pub const DOC_MEDIA_MAX_BASE64_CHARS: usize = 699_052;
+/// Largest media asset `docs.put_media` takes and keeps, decoded and sanitized (360 KiB): its
+/// base64 stays well inside one 512 KiB `org-sync` org-journal payload, so replicating the
+/// asset to satellites never wedges, and the request inside [`crate::MAX_FRAME_BYTES`].
+pub const DOC_MEDIA_MAX_BYTES: usize = 360 * 1024;
+/// Largest base64 text of a media asset: `4 * ceil(360 KiB / 3)`.
+pub const DOC_MEDIA_MAX_BASE64_CHARS: usize = 491_520;
 
 /// Lifecycle state of a project document. `deprecated` is how a document is archived.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +125,7 @@ pub struct DocSectionWire {
 pub struct DocsIndex;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DocsIndexParams {
     pub project: String,
 }
@@ -151,6 +153,7 @@ impl Call for DocsIndex {
 pub struct DocsList;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DocsListParams {
     pub project: String,
     /// Only documents in this folder or below it.
@@ -185,6 +188,7 @@ impl Call for DocsList {
 pub struct DocsInspect;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DocsInspectParams {
     pub project: String,
     /// The document's UUIDv7 `id` or its path relative to `docs/`.
@@ -213,6 +217,7 @@ pub struct DocsWriteResult {
 pub struct DocsCreate;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DocsCreateParams {
     pub command_id: String,
     /// Set from the route by the web gateway.
@@ -242,10 +247,11 @@ impl Call for DocsCreate {
 }
 
 /// `docs.update`: changes a document at `expected_revision`. An absent field is kept; an empty
-/// `summary` or `owner_employee_id` clears it.
+/// `summary` or `owner_employee_id` clears it, except that a `current` document keeps an owner.
 pub struct DocsUpdate;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DocsUpdateParams {
     pub command_id: String,
     /// Set from the route by the web gateway.
@@ -279,6 +285,7 @@ impl Call for DocsUpdate {
 pub struct DocsMove;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DocsMoveParams {
     pub command_id: String,
     /// Set from the route by the web gateway.
@@ -304,6 +311,7 @@ impl Call for DocsMove {
 pub struct DocsPutMedia;
 
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DocsPutMediaParams {
     pub command_id: String,
     #[serde(default)]

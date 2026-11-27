@@ -51,3 +51,26 @@ fn put_media_debug_never_prints_bytes_and_bodies_take_route_fields_by_default() 
     .unwrap();
     assert_eq!(media["type"], "diagram");
 }
+
+#[test]
+fn every_request_refuses_a_field_it_does_not_know() {
+    fn refuses<T: serde::de::DeserializeOwned>(json: &str) {
+        let known: serde_json::Value = serde_json::from_str(json).unwrap();
+        assert!(serde_json::from_value::<T>(known.clone()).is_ok(), "{json}");
+        let mut extra = known;
+        extra["is_admin"] = serde_json::Value::Bool(true);
+        assert!(
+            serde_json::from_value::<T>(extra).is_err(),
+            "{json} + is_admin"
+        );
+    }
+    refuses::<DocsIndexParams>(r#"{"project":"p"}"#);
+    refuses::<DocsListParams>(r#"{"project":"p","limit":5}"#);
+    refuses::<DocsInspectParams>(r#"{"project":"p","document":"d"}"#);
+    refuses::<DocsCreateParams>(r#"{"command_id":"c","kind":"guide","title":"T"}"#);
+    refuses::<DocsUpdateParams>(r#"{"command_id":"c","expected_revision":1}"#);
+    refuses::<DocsMoveParams>(r#"{"command_id":"c","expected_revision":1,"new_path":"a.md"}"#);
+    refuses::<DocsPutMediaParams>(
+        r#"{"command_id":"c","file_name":"a.png","media_type":"image/png","type":"image","title":"A","content_base64":""}"#,
+    );
+}
