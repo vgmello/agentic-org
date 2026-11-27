@@ -1520,7 +1520,7 @@ function pageWork() {
   S.workGroup = selection.group;
   S.workSubgroup = selection.subgroup;
   return `<header class="work-header queue-header">
-    ${queueHeadline("Work", `Across all work: ${W.filter(OPEN).length} open`, false, workNewTaskButton(), `<span class="work-head-needs"> · ${W.filter(needsMe).length} need you</span>`)}
+    ${queueHeadline("Work", `Across all work: ${W.filter(OPEN).length} open`, false, "", `<span class="work-head-needs"> · ${W.filter(needsMe).length} need you</span>`)}
     <div class="work-toolbar queue-toolbar">
       <div class="primary-tab-row" data-page-menu>
         <div class="queue-tabs" role="group" aria-label="Work views">
@@ -1532,6 +1532,7 @@ function pageWork() {
       ${workViewControls(selection.group, selection.subgroup)}
       ${workCalendarLink()}
       ${workArchivedChip(S.workLayout)}
+      ${workNewTaskButton()}
     </div>
   </header>${workWorkspace(workResults(filtered, selection), W, searchRow("work-search", "Search work", S.workQuery, "Search work… (Esc to close)", "work-search-row"))}`;
 }
