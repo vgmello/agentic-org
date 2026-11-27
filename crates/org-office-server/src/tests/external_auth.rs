@@ -1511,6 +1511,8 @@ fn one_step_bind_succeeds_for_non_owner_operators_warm_idle_sessions_and_full_pe
                 employee_id: w.ada.clone(),
                 instruction: Some("warm up".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .unwrap();

@@ -70,6 +70,7 @@ fn wake_store_redacts_pending_wakes_and_suspended_asks() {
         summary: corpus.text.clone(),
         attachment_ids: Vec::new(),
         enqueued_at_ms: 1,
+        session_affinity: None,
     });
     store.write_pending_wakes_redacted(&queue, &[]).unwrap();
     let raw = fs::read_to_string(store.pending_wakes_path("emp-redact").unwrap()).unwrap();

@@ -41,6 +41,8 @@ mod receipts;
 mod references;
 pub mod replication;
 mod reviews;
+#[cfg(test)]
+mod reviews_tests;
 mod schema;
 pub mod search;
 mod snapshot;

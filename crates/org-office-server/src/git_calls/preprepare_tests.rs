@@ -1073,6 +1073,8 @@ fn task160_mid_turn_worktree_prepare_rpc_signals_refresh_and_preserves_isolation
                 employee_id: h.self_agent.clone(),
                 instruction: Some("Begin turn with 0 worktrees".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .expect("start busy Turn 1");
@@ -1207,6 +1209,8 @@ fn warm_up_peer_and_self_idle(h: &TestHarness) {
                     employee_id: emp_id.clone(),
                     instruction: Some(msg.into()),
                     workspace: None,
+                    resume_runtime_session_id: None,
+                    fresh: false,
                 },
             )
             .expect("warm Turn 1");

@@ -76,6 +76,8 @@ pub(super) fn start_params(agent: &str, instruction: &str) -> MemberSessionStart
         employee_id: agent.to_owned(),
         instruction: Some(instruction.to_owned()),
         workspace: None,
+        resume_runtime_session_id: None,
+        fresh: false,
     }
 }
 
@@ -387,6 +389,7 @@ fn pause_during_a_warm_wake_send_keeps_the_durable_wakes_and_charges_no_quota() 
                     summary: "Peer handoff during pause".into(),
                     attachment_ids: Vec::new(),
                     enqueued_at_ms: now_ms(),
+                    session_affinity: None,
                 },
             )
         })
@@ -508,6 +511,7 @@ fn a_drain_during_a_warm_wake_send_sends_no_turn_and_keeps_the_durable_wake() {
                     summary: "Peer handoff during a drain".into(),
                     attachment_ids: Vec::new(),
                     enqueued_at_ms: now_ms(),
+                    session_affinity: None,
                 },
             )
         });

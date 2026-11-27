@@ -349,6 +349,9 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org task-note add|list|get|update|remove|publish` (alias: `agentic-org task note ...`)
   Manage private task notes over an approved office channel.
   **Use when:** keeping private working notes on a task or publishing a copy as a shared task comment.
+- `agentic-org review request|list|inspect|diff|route|finding|verdict|resubmit|close`
+  Manage universal code, doc, task, and artifact reviews over an approved office channel.
+  **Use when:** requesting reviews, reading bare-cache diffs, raising findings, submitting verdicts, resubmitting rounds (`--fresh` for clean final validation), or closing reviews from the terminal.
 - `agentic-org directory|person|member|session|grant|process|skill|budget <verb>`
   The remaining office resources, over the same approved office channel as `task` and `msg`.
   **Use when:** browsing the directory, people and membership, sessions and grants, organization, team and project processes and standards, agent skills or budgets from the terminal.
@@ -369,7 +372,7 @@ Contract rules every command follows:
 
 - **Output format & structured JSON input.** `--json` (bare switch, before or after the command) selects JSON output; `--format json|yaml|compact` picks an explicit format; `AGENT_OS_FORMAT` sets the default when neither flag is given (managed agent runtimes receive `AGENT_OS_FORMAT=json`). Structured JSON request bodies use `--input-json <object>` (or `--input-file` / `--stdin` with `--input-format json|yaml`).
 - **Lists are pages.** Every list takes `--limit` (1 to 200, default 20) and `--cursor`; `meta.next_cursor` names the next page and, on counted lists, `meta.total` counts every match (`msg inbox` reports no total, and `msg list` reports one only for a `--since-read` or `--after-id` read, whose `meta.next_cursor` is the message the next page starts after).
-- **Acknowledgements are truthful.** `--schema` shows each write's `ack`. Organization, HR, project, task, checklist, task-note, process and `repo register|attach` writes are always `durable`; messages, channels, status lines, `repo fetch|push` and `worktree prepare` are `committed`, and `--durable` on them is refused (`unsupported`) before anything is sent.
+- **Acknowledgements are truthful.** `--schema` shows each write's `ack`. Organization, HR, project, task, checklist, task-note, review, process and `repo register|attach` writes are always `durable`; messages, channels, status lines, `repo fetch|push` and `worktree prepare` are `committed`, and `--durable` on them is refused (`unsupported`) before anything is sent.
 - **Retries are safe.** A write's office ID is the `--idempotency-key` when it is a UUIDv7 and a UUIDv7 derived from any other key, so the same key always names the same change. `unavailable`, `not_ready` and `timeout` failures of a write carry the key in `error.retry_with`.
 - **Office error details reach you.** `error.retry_after_ms` (with `rate_limited`) and `error.field` / `error.rule` (an input that broke a rule) are printed when the office reports them.
 - **Yes-or-no flags take no value.** Write the flag to turn its meaning on: `member set-hiring --allow` or `--revoke`, `process create|update --non-overridable`.
@@ -400,6 +403,9 @@ Contract rules every command follows:
 - `agent-os task-note add|list|get|update|remove|publish` (alias: `agent-os task note ...`)
   Private task notes with optional copy-to-comment publishing and optional sparse `--checkpoint` upsert (`task-note add --task <task> --checkpoint --text <text>`) / filter (`task-note list --task <task> --checkpoint`).
   **Use when:** recording sparse private working notes or updating one pinned working checkpoint on a task (`add|list|get|update|remove`) without notifying the team until you choose to `publish` a copy as a public comment.
+- `agent-os review request|list|inspect|diff|route|finding|verdict|resubmit|close`
+  Universal reviews for code (pinned bare-cache commits and inter-round diffs), docs, tasks, and artifacts, with warm round-2..N continuity and `--fresh` independent validation passes.
+  **Use when:** opening a review (`request`), inspecting rounds/findings/staleness (`inspect --fields`), reading bounded commit diffs (`diff --since-round`), raising or resolving findings (`finding --action add|reply`), recording verdicts (`verdict`), resubmitting fixes (`resubmit --fresh`), or closing (`close`).
 - `agent-os repo register|list|attach|status|fetch|push`
   Git repository registry, office bare-cache status, on-demand origin fetch, and task-branch pushes.
   **Use when:** listing registered repos, verifying office bare-cache readiness (`repo status`), registering/attaching a repo, seeing branches pushed to the origin after your worktree was prepared (`repo fetch --repo <id-or-key>`), or pushing your task branch (`repo push`).

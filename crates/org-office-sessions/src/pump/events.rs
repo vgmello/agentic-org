@@ -136,7 +136,21 @@ pub(super) fn handle_event(
         SessionEvent::SessionStarted { runtime_session_id } => {
             let id = runtime_session_id.as_str().to_owned();
             state.runtime_session_id = Some(id.clone());
+            let affinity =
+                state
+                    .runtime_id
+                    .clone()
+                    .map(|runtime_id| crate::recovery::SessionAffinityEntry {
+                        runtime_session_id: id.clone(),
+                        runtime_id,
+                        workspace: state.workspace_spec.clone(),
+                        spec_hash: state.spec_hash.clone(),
+                        recorded_at: rfc3339_now(),
+                    });
             drop(state);
+            if let Some(entry) = affinity {
+                let _ = ctx.store.record_session_affinity(&ctx.employee_id, entry);
+            }
             // The partition keeps its own conversation from the moment the runtime names it, so
             // a stop, exit or crash of the run never loses it (`TASK-80.1`).
             if let Some(partition) = ctx.partition.as_ref() {

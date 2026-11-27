@@ -174,6 +174,7 @@ pub(crate) struct SessionRuntimeState {
     pub runtime_id: Option<String>,
     pub runtime_session_id: Option<String>,
     pub private_home: String,
+    pub workspace_spec: String,
     pub permission_preset: String,
     pub sandbox_enabled: bool,
     pub allow_host_auth: bool,

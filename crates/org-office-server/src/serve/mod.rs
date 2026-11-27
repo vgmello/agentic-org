@@ -160,6 +160,9 @@ pub type AttachmentsFn =
 /// Dispatches C7 repository, worktree, and Git push RPCs (`TASK-51`).
 pub type GitFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
+/// Dispatches universal `review.*` RPCs (`TASK-92.1`).
+pub type ReviewsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
 /// Dispatches C5 organization processes, standards, and built-in skills RPCs (`TASK-44`).
 pub type ProcessesFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
@@ -240,6 +243,8 @@ pub struct OfficePorts {
     pub attachments: Option<AttachmentsFn>,
     /// C7 repository, worktree, and Git push dispatcher (`TASK-51`).
     pub git: Option<GitFn>,
+    /// Universal `review.*` dispatcher (`TASK-92.1`).
+    pub reviews: Option<ReviewsFn>,
     /// C5 organization processes, standards, and built-in skills dispatcher (`TASK-44`).
     pub processes: Option<ProcessesFn>,
     /// The project documentation tree's `docs.*` dispatcher (`TASK-55`). `None`: they answer

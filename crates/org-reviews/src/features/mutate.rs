@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use org_proto::reviews::{
     ReviewCloseParams, ReviewMutationResult, ReviewResubmitParams, ReviewRoundResult,
     ReviewRouteParams, ReviewRouteResult, ReviewSessionMode, ReviewStatus, ReviewTargetKind,
-    REVIEW_SUMMARY_MAX_CHARS,
+    ReviewVerdict, REVIEW_SUMMARY_MAX_CHARS,
 };
 use org_proto::ErrorCode;
 use org_store::{Change, Id, Refusal};
@@ -13,15 +13,15 @@ use serde_json::json;
 
 use crate::time::format_rfc3339_ms;
 
-use super::super::ports::{ReviewContextRead, ReviewsRead};
+use super::super::ports::{ReviewActorInfo, ReviewContextRead, ReviewsRead};
 use super::super::records::{
     compute_review_status, has_open_blocker, reviewers_to_views, round_to_view, ResolvedCodePin,
     ReviewReviewerRecord, ReviewRoundRecord,
 };
 use super::super::validation::{
-    bad_req, check_resolved_code_pin, effective_session_mode, refuse, resolve_routing,
+    bad_req, check_resolved_code_pin, effective_session_mode, not_found, refuse, resolve_routing,
     storage_refusal, unauth, validate_close_reason, validate_oid, validate_text_limit,
-    ResolvedRouting,
+    ResolvedRouting, PROJECT_NOT_FOUND,
 };
 use super::{build_event, commit_doc, load_mutable_review, LoadedReview};
 
@@ -68,6 +68,9 @@ fn apply_round_routing(
                 row.attachment_ids.clear();
                 row.verdict_at = None;
             }
+            if was_removed || mode == ReviewSessionMode::Fresh {
+                row.runtime_session_id = None;
+            }
         } else {
             loaded.reviewers.push(
                 ReviewReviewerRecord::assigned(
@@ -83,6 +86,46 @@ fn apply_round_routing(
             );
         }
     }
+}
+
+fn is_round_submitter(loaded: &LoadedReview, actor: &Id) -> bool {
+    *actor == loaded.review.created_by
+        || loaded
+            .current_round()
+            .is_some_and(|r| r.submitted_by == *actor)
+}
+
+fn check_route_independent_dissent<C: ReviewContextRead>(
+    view: &C,
+    caller: &ReviewActorInfo,
+    loaded: &LoadedReview,
+    next_reviewers: &[Id],
+) -> Result<(), Refusal> {
+    if !loaded.review.independent {
+        return Ok(());
+    }
+    let rn = loaded.review.current_round;
+    let next: BTreeSet<&Id> = next_reviewers.iter().collect();
+    let drops_dissenter = loaded.reviewers.iter().any(|r| {
+        r.round_number == rn
+            && !r.removed
+            && r.verdict == Some(ReviewVerdict::ChangesRequested)
+            && !next.contains(&r.reviewer_id)
+    });
+    if !drops_dissenter {
+        return Ok(());
+    }
+    if caller.is_person {
+        return Ok(());
+    }
+    if !is_round_submitter(loaded, &caller.id)
+        && is_accountable_team_lead(view, &caller.id, loaded)?
+    {
+        return Ok(());
+    }
+    Err(unauth(
+        "only a person or non-submitter accountable team lead may remove a dissenting reviewer on an independent review",
+    ))
 }
 
 pub fn decide_route<V: ReviewsRead + ReviewContextRead>(
@@ -101,27 +144,34 @@ pub fn decide_route<V: ReviewsRead + ReviewContextRead>(
         "cannot route a closed review",
         false,
     )?;
-    let project = loaded
-        .review
-        .project_id
-        .as_ref()
-        .map(|pid| view.project_info(pid))
-        .transpose()
-        .map_err(storage_refusal)?
-        .flatten();
+    let project = match loaded.review.project_id.as_ref() {
+        Some(pid) => Some(
+            view.project_info(pid)
+                .map_err(storage_refusal)?
+                .ok_or_else(|| not_found(PROJECT_NOT_FOUND))?,
+        ),
+        None => None,
+    };
     let mode = effective_session_mode(
         loaded.review.independent,
         p.session_mode,
         loaded.review.session_mode,
     )?;
+    let mut excluded = vec![&loaded.review.created_by];
+    if let Some(rd) = loaded.current_round() {
+        if rd.submitted_by != loaded.review.created_by {
+            excluded.push(&rd.submitted_by);
+        }
+    }
     let res = resolve_routing(
         view,
         Some(&p.routing),
         project.as_ref(),
-        &loaded.review.created_by,
+        &excluded,
         loaded.review.independent,
         loaded.review.number.saturating_add(loaded.review.revision),
     )?;
+    check_route_independent_dissent(view, &caller, &loaded, &res.reviewer_ids)?;
     let (at, rn) = (format_rfc3339_ms(now_ms), loaded.review.current_round);
     apply_round_routing(&mut loaded, &res, mode, &caller.id, &at);
     let active: Vec<_> = loaded
@@ -292,6 +342,63 @@ pub fn decide_resubmit<V: ReviewsRead + ReviewContextRead>(
     ))
 }
 
+fn is_accountable_team_lead<C: ReviewContextRead>(
+    view: &C,
+    caller_id: &Id,
+    loaded: &LoadedReview,
+) -> Result<bool, Refusal> {
+    let root_team = if let Some(pid) = loaded.review.project_id.as_ref() {
+        view.project_info(pid)
+            .map_err(storage_refusal)?
+            .map(|p| p.owner_team_id)
+    } else {
+        view.employee_info(&loaded.review.created_by)
+            .map_err(storage_refusal)?
+            .map(|e| e.home_team_id)
+    };
+    let Some(tid) = root_team else {
+        return Ok(false);
+    };
+    let Some(chain) = view.team_chain(&tid).map_err(storage_refusal)? else {
+        return Ok(false);
+    };
+    for ancestor in &chain {
+        if view.team_lead(ancestor).map_err(storage_refusal)?.as_ref() == Some(caller_id) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn check_close_authorization<C: ReviewContextRead>(
+    view: &C,
+    caller: &super::super::ports::ReviewActorInfo,
+    loaded: &LoadedReview,
+) -> Result<(), Refusal> {
+    if caller.is_person {
+        return Ok(());
+    }
+    let is_submitter = is_round_submitter(loaded, &caller.id);
+    let is_reviewer = loaded.reviewers.iter().any(|r| {
+        r.round_number == loaded.review.current_round && !r.removed && r.reviewer_id == caller.id
+    });
+    let is_lead = is_accountable_team_lead(view, &caller.id, loaded)?;
+    if !(is_lead || is_reviewer || is_submitter) {
+        return Err(unauth(
+            "only a person, accountable team lead, assigned reviewer, or author may close a review",
+        ));
+    }
+    if loaded.review.independent
+        && is_submitter
+        && (loaded.review.status != ReviewStatus::Approved || has_open_blocker(&loaded.findings))
+    {
+        return Err(unauth(
+            "author or round submitter cannot close an unapproved independent review",
+        ));
+    }
+    Ok(())
+}
+
 pub fn decide_close<V: ReviewsRead + ReviewContextRead>(
     view: &V,
     now_ms: u64,
@@ -308,6 +415,7 @@ pub fn decide_close<V: ReviewsRead + ReviewContextRead>(
         "review is already closed",
         true,
     )?;
+    check_close_authorization(view, &caller, &loaded)?;
     let reason = validate_close_reason(p.reason.as_deref())?;
     let at = format_rfc3339_ms(now_ms);
     loaded.review.status = ReviewStatus::Closed;

@@ -2890,37 +2890,91 @@ CREATE TABLE review_reviewers (
 CREATE TRIGGER review_reviewers_independent_insert BEFORE INSERT ON review_reviewers
 WHEN NEW.removed = 0
 BEGIN
-  SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author or round submitter as reviewer') WHERE EXISTS (
     SELECT 1 FROM reviews r
     WHERE r.organization_id = NEW.organization_id AND r.id = NEW.review_id
-      AND r.independent = 1 AND r.created_by = NEW.reviewer_id
+      AND r.independent = 1
+      AND (
+        r.created_by = NEW.reviewer_id
+        OR EXISTS (
+          SELECT 1 FROM review_rounds rd
+          WHERE rd.organization_id = NEW.organization_id AND rd.review_id = NEW.review_id
+            AND rd.round_number = NEW.round_number AND rd.submitted_by = NEW.reviewer_id
+        )
+      )
   );
 END;
-CREATE TRIGGER review_reviewers_independent_update BEFORE UPDATE OF organization_id, review_id, reviewer_id, removed ON review_reviewers
+CREATE TRIGGER review_reviewers_independent_update BEFORE UPDATE OF organization_id, review_id, round_number, reviewer_id, removed ON review_reviewers
 WHEN NEW.removed = 0
 BEGIN
-  SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author or round submitter as reviewer') WHERE EXISTS (
     SELECT 1 FROM reviews r
     WHERE r.organization_id = NEW.organization_id AND r.id = NEW.review_id
-      AND r.independent = 1 AND r.created_by = NEW.reviewer_id
+      AND r.independent = 1
+      AND (
+        r.created_by = NEW.reviewer_id
+        OR EXISTS (
+          SELECT 1 FROM review_rounds rd
+          WHERE rd.organization_id = NEW.organization_id AND rd.review_id = NEW.review_id
+            AND rd.round_number = NEW.round_number AND rd.submitted_by = NEW.reviewer_id
+        )
+      )
   );
 END;
 CREATE TRIGGER reviews_independent_after_insert AFTER INSERT ON reviews
 WHEN NEW.independent = 1
 BEGIN
-  SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author or round submitter as reviewer') WHERE EXISTS (
     SELECT 1 FROM review_reviewers rr
     WHERE rr.organization_id = NEW.organization_id AND rr.review_id = NEW.id
-      AND rr.removed = 0 AND rr.reviewer_id = NEW.created_by
+      AND rr.removed = 0
+      AND (
+        rr.reviewer_id = NEW.created_by
+        OR EXISTS (
+          SELECT 1 FROM review_rounds rd
+          WHERE rd.organization_id = NEW.organization_id AND rd.review_id = NEW.id
+            AND rd.round_number = rr.round_number AND rd.submitted_by = rr.reviewer_id
+        )
+      )
   );
 END;
 CREATE TRIGGER reviews_independent_after_update AFTER UPDATE OF independent, created_by ON reviews
 WHEN NEW.independent = 1
 BEGIN
-  SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author or round submitter as reviewer') WHERE EXISTS (
     SELECT 1 FROM review_reviewers rr
     WHERE rr.organization_id = NEW.organization_id AND rr.review_id = NEW.id
-      AND rr.removed = 0 AND rr.reviewer_id = NEW.created_by
+      AND rr.removed = 0
+      AND (
+        rr.reviewer_id = NEW.created_by
+        OR EXISTS (
+          SELECT 1 FROM review_rounds rd
+          WHERE rd.organization_id = NEW.organization_id AND rd.review_id = NEW.id
+            AND rd.round_number = rr.round_number AND rd.submitted_by = rr.reviewer_id
+        )
+      )
+  );
+END;
+CREATE TRIGGER review_rounds_independent_after_insert AFTER INSERT ON review_rounds
+BEGIN
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author or round submitter as reviewer') WHERE EXISTS (
+    SELECT 1 FROM reviews r
+    JOIN review_reviewers rr
+      ON rr.organization_id = r.organization_id AND rr.review_id = r.id
+    WHERE r.organization_id = NEW.organization_id AND r.id = NEW.review_id
+      AND r.independent = 1 AND rr.round_number = NEW.round_number
+      AND rr.removed = 0 AND rr.reviewer_id = NEW.submitted_by
+  );
+END;
+CREATE TRIGGER review_rounds_independent_after_update AFTER UPDATE OF submitted_by ON review_rounds
+BEGIN
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author or round submitter as reviewer') WHERE EXISTS (
+    SELECT 1 FROM reviews r
+    JOIN review_reviewers rr
+      ON rr.organization_id = r.organization_id AND rr.review_id = r.id
+    WHERE r.organization_id = NEW.organization_id AND r.id = NEW.review_id
+      AND r.independent = 1 AND rr.round_number = NEW.round_number
+      AND rr.removed = 0 AND rr.reviewer_id = NEW.submitted_by
   );
 END;
 

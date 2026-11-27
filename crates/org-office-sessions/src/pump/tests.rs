@@ -51,6 +51,7 @@ fn test_pump_ctx(
         runtime_id: Some("claude".into()),
         runtime_session_id: None,
         private_home: dir.display().to_string(),
+        workspace_spec: "/tmp".into(),
         permission_preset: "autonomous_sandboxed".into(),
         sandbox_enabled: true,
         allow_host_auth: false,

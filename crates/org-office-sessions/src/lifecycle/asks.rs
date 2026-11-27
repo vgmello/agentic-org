@@ -232,6 +232,7 @@ impl SessionManager {
             source_id: ask_id.to_owned(),
             summary: format!("Question: {question_summary}\nAnswer: {answer_summary}"),
             attachment_ids: attachment_ids.to_vec(),
+            session_affinity: None,
             enqueued_at_ms: now_ms(),
         };
         self.enqueue_wake_durable(asker_id, item)

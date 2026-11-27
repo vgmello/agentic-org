@@ -540,6 +540,7 @@ impl SessionManager {
             ),
             attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
+            session_affinity: None,
         };
         self.enqueue_wake_durable(notice.employee_id, item).is_ok()
     }

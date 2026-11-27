@@ -162,6 +162,8 @@ pub(crate) fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) 
         employee_id: req.employee_id.clone(),
         instruction: Some(req.objective.clone()),
         workspace: req.workspace.clone(),
+        resume_runtime_session_id: None,
+        fresh: false,
     };
     let opts = failover_route_opts(&req, refreshed_same_conn);
     let objective = mgr.prepend_watch_notices(employee.id.as_str(), req.objective.clone());
@@ -208,6 +210,9 @@ pub(crate) fn failover_route_opts(
     }
     LaunchRouteOpts {
         resume_runtime_session_id: None,
+        force_fresh: false,
+        enforce_affinity_guard: false,
+        allow_sandbox_spec_change: false,
         task_ref: req.task_ref.as_deref(),
         is_failover_switch: !is_stale_recycle,
         oauth_refresh_attempted: req.oauth_refresh_attempted || refreshed_same_conn,
@@ -371,6 +376,7 @@ pub(super) fn enqueue_recovery_wake(
         source_id: req.failed_connection_id.clone(),
         summary: req.objective.clone(),
         attachment_ids: req.attachment_ids.clone(),
+        session_affinity: None,
         enqueued_at_ms: ts,
     });
     if let Some(reason) = hold {

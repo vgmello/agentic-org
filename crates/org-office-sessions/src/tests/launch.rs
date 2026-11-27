@@ -180,6 +180,8 @@ printf '{"kind":"reply","text":"Completed in %s with token=%s"}\n' "$pwd_now" "$
                 employee_id: agent_id.clone(),
                 instruction: Some("Say hello from your private home.".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .expect("session started");
@@ -525,6 +527,8 @@ printf '{"kind":"reply","text":"reply-two"}\n'
                 employee_id: agent_id.clone(),
                 instruction: Some("first objective".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .unwrap();
@@ -561,6 +565,8 @@ printf '{"kind":"reply","text":"reply-two"}\n'
                 employee_id: agent_id.clone(),
                 instruction: Some("second objective".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .unwrap();
@@ -601,6 +607,8 @@ printf '{"kind":"reply","text":"reply-two"}\n'
                 employee_id: agent_id.clone(),
                 instruction: Some("third objective after exit".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .unwrap();

@@ -9,8 +9,8 @@ use org_store::{DurablePath, Engine, Id, ProjectionError, Projector};
 
 use super::ports::{ReviewListQuery, ReviewsRead, ReviewsWrite};
 use super::records::{
-    self, decode_counter, decode_event, decode_versioned, ReviewDocument, ReviewRecord,
-    ReviewRoundRecord,
+    self, decode_counter, decode_event, decode_versioned, has_open_blocker, ReviewDocument,
+    ReviewFindingRecord, ReviewRecord, ReviewRoundRecord,
 };
 use super::validation::validate_oid;
 
@@ -216,7 +216,10 @@ fn validate_header(path: &DurablePath, r: &ReviewRecord) -> Result<(), Projectio
     Ok(())
 }
 
-fn validate_rounds<T: ReviewsRead>(tx: &T, r: &ReviewRecord) -> Result<(), ProjectionError> {
+fn validate_rounds<T: ReviewsRead>(
+    tx: &T,
+    r: &ReviewRecord,
+) -> Result<Vec<ReviewRoundRecord>, ProjectionError> {
     let rounds = tx.review_rounds(&r.id)?;
     let contiguous = rounds.len() == r.current_round as usize
         && rounds
@@ -244,12 +247,13 @@ fn validate_rounds<T: ReviewsRead>(tx: &T, r: &ReviewRecord) -> Result<(), Proje
             ));
         }
     }
-    Ok(())
+    Ok(rounds)
 }
 
 fn validate_reviewers<T: ReviewsRead>(
     tx: &T,
     r: &ReviewRecord,
+    rounds: &[ReviewRoundRecord],
     path: &DurablePath,
 ) -> Result<(), ProjectionError> {
     for rr in tx.review_reviewers(&r.id)? {
@@ -259,7 +263,13 @@ fn validate_reviewers<T: ReviewsRead>(
                 || (rr.summary_markdown.is_empty()
                     && rr.finding_ids.is_empty()
                     && rr.attachment_ids.is_empty()));
-        let indep_ok = !(r.independent && !rr.removed && rr.reviewer_id == r.created_by);
+        let round_submitter = rounds
+            .iter()
+            .find(|rd| rd.round_number == rr.round_number)
+            .map(|rd| &rd.submitted_by);
+        let indep_ok = !(r.independent
+            && !rr.removed
+            && (rr.reviewer_id == r.created_by || round_submitter == Some(&rr.reviewer_id)));
         if rr.round_number > r.current_round || !routing_ok || !verdict_ok || !indep_ok {
             return Err(refuse(path, "invalid reviewer assignment"));
         }
@@ -267,30 +277,46 @@ fn validate_reviewers<T: ReviewsRead>(
     Ok(())
 }
 
+fn finding_resolution_valid(f: &ReviewFindingRecord) -> bool {
+    match f.status {
+        FindingStatus::Open => {
+            f.resolved_by.is_none() && f.resolved_at.is_none() && f.resolved_in_round.is_none()
+        }
+        FindingStatus::Resolved | FindingStatus::WontFix => {
+            f.resolved_by.is_some() && f.resolved_at.is_some() && f.resolved_in_round.is_some()
+        }
+    }
+}
+
+fn validate_one_finding(
+    idx: usize,
+    f: &ReviewFindingRecord,
+    current_round: u32,
+    path: &DurablePath,
+) -> Result<(), ProjectionError> {
+    if f.number != (idx as u64) + 1
+        || f.round_number > current_round
+        || f.body_markdown.is_empty()
+        || !finding_resolution_valid(f)
+    {
+        return Err(refuse(path, "invalid finding invariants"));
+    }
+    f.anchor.check().map_err(|msg| refuse(path, msg))
+}
+
 fn validate_findings_and_replies<T: ReviewsRead>(
     tx: &T,
     r: &ReviewRecord,
     path: &DurablePath,
 ) -> Result<(), ProjectionError> {
+    let findings = tx.review_findings(&r.id)?;
+    if r.status == ReviewStatus::Approved && has_open_blocker(&findings) {
+        return Err(refuse(path, "approved review cannot have open blockers"));
+    }
     let mut fids = BTreeSet::new();
-    for (idx, f) in tx.review_findings(&r.id)?.into_iter().enumerate() {
-        let res_ok = match f.status {
-            FindingStatus::Open => {
-                f.resolved_by.is_none() && f.resolved_at.is_none() && f.resolved_in_round.is_none()
-            }
-            FindingStatus::Resolved | FindingStatus::WontFix => {
-                f.resolved_by.is_some() && f.resolved_at.is_some() && f.resolved_in_round.is_some()
-            }
-        };
-        if f.number != (idx as u64) + 1
-            || f.round_number > r.current_round
-            || f.body_markdown.is_empty()
-            || !res_ok
-        {
-            return Err(refuse(path, "invalid finding invariants"));
-        }
-        f.anchor.check().map_err(|msg| refuse(path, msg))?;
-        fids.insert(f.id);
+    for (idx, f) in findings.iter().enumerate() {
+        validate_one_finding(idx, f, r.current_round, path)?;
+        fids.insert(f.id.clone());
     }
     for rep in tx.review_finding_replies(&r.id)? {
         if !fids.contains(&rep.finding_id) || rep.round_number > r.current_round {
@@ -303,8 +329,8 @@ fn validate_findings_and_replies<T: ReviewsRead>(
 fn validate_one_review<T: ReviewsRead>(tx: &T, r: &ReviewRecord) -> Result<(), ProjectionError> {
     let path = review_path(&r.id);
     validate_header(&path, r)?;
-    validate_rounds(tx, r)?;
-    validate_reviewers(tx, r, &path)?;
+    let rounds = validate_rounds(tx, r)?;
+    validate_reviewers(tx, r, &rounds, &path)?;
     validate_findings_and_replies(tx, r, &path)?;
     let events = tx.review_events(&r.id)?;
     let events_ok = events.len() as u64 == r.revision

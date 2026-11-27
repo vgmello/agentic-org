@@ -78,6 +78,74 @@ fn resolve_scope<C: ReviewContextRead>(
     Ok((project, Some(task.id)))
 }
 
+fn verify_code_repository<C: ReviewContextRead>(
+    ctx: &C,
+    caller: &ReviewActorInfo,
+    project: Option<&ReviewProjectInfo>,
+    repo_raw: &str,
+) -> Result<Id, Refusal> {
+    let rid = validate_uuid(repo_raw, "repository_id")?;
+    if let Some(proj) = project {
+        if !proj.repository_ids.contains(&rid) {
+            return Err(bad_req("repository is not attached to project"));
+        }
+        if !ctx.repository_exists(&rid).map_err(storage_refusal)? {
+            return Err(not_found("repository not found"));
+        }
+        return Ok(rid);
+    }
+    if !ctx.repository_exists(&rid).map_err(storage_refusal)? {
+        return Err(not_found("repository not found"));
+    }
+    let attached = ctx.repository_project_ids(&rid).map_err(storage_refusal)?;
+    if !attached.is_empty() && !can_see_any_project(ctx, caller, &attached)? {
+        return Err(not_found("repository not found"));
+    }
+    Ok(rid)
+}
+
+fn can_see_any_project<C: ReviewContextRead>(
+    ctx: &C,
+    caller: &ReviewActorInfo,
+    project_ids: &[Id],
+) -> Result<bool, Refusal> {
+    for pid in project_ids {
+        if let Some(proj) = ctx.project_info(pid).map_err(storage_refusal)? {
+            if may_see_project(ctx, caller, &proj)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn resolve_code_pin(
+    p: &ReviewRequestParams,
+    pin: Option<&ResolvedCodePin>,
+) -> Result<(String, String), Refusal> {
+    match pin {
+        Some(cp) => {
+            let (b, h) = check_resolved_code_pin(cp, p.expected_head_oid.as_deref())?;
+            if let Some(raw_base) = p.base_oid.as_deref() {
+                if validate_oid(raw_base, "base_oid")? != b {
+                    return Err(refuse(ErrorCode::Conflict, "base_oid mismatch"));
+                }
+            }
+            Ok((b, h))
+        }
+        None => {
+            let need = || bad_req("code review requires base_oid and expected_head_oid");
+            Ok((
+                validate_oid(p.base_oid.as_deref().ok_or_else(need)?, "base_oid")?,
+                validate_oid(
+                    p.expected_head_oid.as_deref().ok_or_else(need)?,
+                    "expected_head_oid",
+                )?,
+            ))
+        }
+    }
+}
+
 fn resolve_target<C: ReviewContextRead>(
     ctx: &C,
     caller: &ReviewActorInfo,
@@ -107,36 +175,13 @@ fn resolve_target<C: ReviewContextRead>(
                 .repository_id
                 .as_deref()
                 .ok_or_else(|| bad_req("code review requires repository_id"))?;
-            let rid = validate_uuid(repo_raw, "repository_id")?;
-            if !ctx.repository_exists(&rid).map_err(storage_refusal)? {
-                return Err(not_found("repository not found"));
-            }
+            let rid = verify_code_repository(ctx, caller, t.project.as_ref(), repo_raw)?;
             let branch_raw = p
                 .branch
                 .as_deref()
                 .ok_or_else(|| bad_req("code review requires branch"))?;
             let branch = validate_ref_token(branch_raw, true, "branch")?;
-            let (base, head) = match pin {
-                Some(cp) => {
-                    let (b, h) = check_resolved_code_pin(cp, p.expected_head_oid.as_deref())?;
-                    if let Some(raw_base) = p.base_oid.as_deref() {
-                        if validate_oid(raw_base, "base_oid")? != b {
-                            return Err(refuse(ErrorCode::Conflict, "base_oid mismatch"));
-                        }
-                    }
-                    (b, h)
-                }
-                None => {
-                    let need = || bad_req("code review requires base_oid and expected_head_oid");
-                    (
-                        validate_oid(p.base_oid.as_deref().ok_or_else(need)?, "base_oid")?,
-                        validate_oid(
-                            p.expected_head_oid.as_deref().ok_or_else(need)?,
-                            "expected_head_oid",
-                        )?,
-                    )
-                }
-            };
+            let (base, head) = resolve_code_pin(p, pin)?;
             (t.repository_id, t.branch, t.base_oid, t.head_oid) =
                 (Some(rid), Some(branch), Some(base), Some(head));
         }
@@ -280,7 +325,7 @@ pub fn decide_request<V: ReviewsRead + ReviewContextRead>(
         view,
         p.routing.as_ref(),
         target.project.as_ref(),
-        &caller.id,
+        &[&caller.id],
         p.independent,
         number,
     )?;

@@ -448,6 +448,7 @@ fn task126_recycle_stale_warm_handle_atomicity_and_stale_failover_non_drop() {
         runtime_id: Some("claude".into()),
         runtime_session_id: None,
         private_home: "/tmp/home".into(),
+        workspace_spec: "/tmp".into(),
         permission_preset: "autonomous_sandboxed".into(),
         sandbox_enabled: true,
         allow_host_auth: false,

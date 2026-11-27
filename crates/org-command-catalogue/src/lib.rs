@@ -18,6 +18,7 @@ pub mod organization;
 pub mod processes;
 pub mod projects;
 pub mod providers;
+pub mod reviews;
 pub mod session;
 pub mod session_resume;
 pub mod shared;
@@ -39,6 +40,7 @@ const DOMAIN_ROW_GROUPS: &[&[&[Command]]] = &[
     session::ALL,
     messaging::ALL,
     work::ALL,
+    reviews::ALL,
     files::ALL,
     git::ALL,
     processes::ALL,

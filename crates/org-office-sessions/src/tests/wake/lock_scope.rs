@@ -31,6 +31,7 @@ pub(super) fn stub_live_handle(
         runtime_id: Some("claude".into()),
         runtime_session_id: None,
         private_home: format!("/tmp/home-{emp_id}"),
+        workspace_spec: "/tmp".into(),
         permission_preset: "workspace_edits".into(),
         sandbox_enabled: true,
         allow_host_auth: false,
@@ -88,6 +89,7 @@ fn person_wake(id: &str, sender: &str, summary: &str) -> PendingWakeItem {
         summary: summary.into(),
         attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
+        session_affinity: None,
     }
 }
 

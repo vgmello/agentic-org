@@ -13,6 +13,7 @@ pub(crate) mod organization;
 pub(crate) mod processes;
 pub(crate) mod projects;
 pub(crate) mod providers;
+pub(crate) mod reviews;
 pub(crate) mod session;
 pub(crate) mod tess;
 pub(crate) mod work;

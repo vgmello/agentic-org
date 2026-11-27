@@ -73,7 +73,16 @@ pub(crate) struct GitService {
 }
 
 impl GitService {
+    #[cfg(test)]
     pub(crate) fn new(office: Arc<Office>, live: Arc<LiveEvents>) -> Self {
+        Self::with_locks(office, live, Arc::new(RepoLocks::new()))
+    }
+
+    pub(crate) fn with_locks(
+        office: Arc<Office>,
+        live: Arc<LiveEvents>,
+        locks: Arc<RepoLocks>,
+    ) -> Self {
         let loaded = OfficeGitState::load(office.runtime_root(), &office.info().office_id)
             .unwrap_or_else(|e| {
                 eprintln!("agentic-org-office: failed loading git-state.json: {e}");
@@ -82,7 +91,7 @@ impl GitService {
         Self {
             office,
             live,
-            locks: Arc::new(RepoLocks::new()),
+            locks,
             state: Mutex::new(loaded),
             runner: Mutex::new(None),
             fetch_gate: FetchGate::new(FETCH_COOLDOWN),

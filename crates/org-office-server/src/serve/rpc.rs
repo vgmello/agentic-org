@@ -224,6 +224,15 @@ pub(super) fn git_rpc(request: &Request, shared: &Shared, binding: &Binding) -> 
     ))
 }
 
+pub(super) fn reviews_rpc(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+) -> Option<Response> {
+    crate::review_calls::is_review_method(request)
+        .then(|| dispatch_bound_port(request, binding, None, shared.ports.reviews.as_ref()))
+}
+
 pub(super) fn tasks_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
     if !crate::task_calls::is_task_method(request) {
         return None;

@@ -243,21 +243,44 @@ pub(super) fn acquire_live_handle_permit(
 /// the same items in between. A wake withdrawn while the permit RPC runs may still reach the
 /// session in this turn (as on the cold-start path, `launch_claimed_wakes`); it is pruned from
 /// the durable queue either way.
-pub(super) fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEndDrainCtx) {
-    if !ctx
+pub(super) fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEndDrainCtx) -> bool {
+    if ctx
         .store
-        .pending_wakes_path(employee_id)
-        .is_ok_and(|p| p.exists())
+        .read_pending_wakes(employee_id)
+        .ok()
+        .flatten()
+        .is_none_or(|q| q.items.is_empty())
     {
-        return;
+        return false;
     }
     let Some(_dispatch_guard) = DispatchWakeGuard::try_acquire(&ctx.dispatching_wakes, employee_id)
     else {
-        return;
+        return false;
     };
     let Some(claim) = claim_live_drain_batch(employee_id, ctx) else {
-        return;
+        return false;
     };
+    if claim.requires_session_recycle {
+        let run_id = {
+            let reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
+            reg.live.get(employee_id).and_then(|h| {
+                h.state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .run_id
+                    .clone()
+            })
+        };
+        if let Some(run_id) = run_id {
+            return recycle_stale_warm_handle(
+                employee_id,
+                &run_id,
+                "session_affinity_requested",
+                ctx,
+            );
+        }
+        return false;
+    }
     if !claim.task_refs.is_empty() {
         if let Some(mgr) = ctx.weak_mgr.as_ref().and_then(|w| w.upgrade()) {
             let refs: Vec<&str> = claim.task_refs.iter().map(String::as_str).collect();
@@ -270,7 +293,9 @@ pub(super) fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEn
         crate::pump::QueuedTurn::new(claim.objective.clone(), claim.attachment_ids.clone()),
         ctx,
     );
+    let busy_again = matches!(sent, Ok(true));
     commit_live_drain(employee_id, ctx, &claim, sent);
+    busy_again
 }
 
 /// Runs one turn-end drain for `employee_id` with `acquirer` standing in for the warm-permit
@@ -283,7 +308,7 @@ pub(crate) fn drain_into_live_pump_with_acquirer(
 ) {
     let mut ctx = mgr.turn_end_drain_ctx();
     ctx.acquire_warm_permit = acquirer;
-    drain_pending_wakes_into_live_pump(employee_id, &ctx);
+    let _ = drain_pending_wakes_into_live_pump(employee_id, &ctx);
 }
 
 /// Items claimed from the durable queue for one live-pump drain, with the provenance recorded in
@@ -295,6 +320,7 @@ pub(super) struct LiveDrainClaim {
     pub(super) task_id: Option<String>,
     pub(super) task_refs: Vec<String>,
     pub(super) person_triggered: bool,
+    pub(super) requires_session_recycle: bool,
     pub(super) trigger: serde_json::Value,
     pub(super) ts: u64,
 }
@@ -382,6 +408,7 @@ pub(super) fn claim_live_drain_batch(
         "at": rfc3339_now(),
     });
     let attachment_ids = crate::wake::collect_wake_attachment_ids(&queue.items);
+    let requires_session_recycle = queue.items.iter().any(|i| i.session_affinity.is_some());
     Some(LiveDrainClaim {
         item_ids: queue.items.iter().map(|i| i.item_id.clone()).collect(),
         objective,
@@ -389,6 +416,7 @@ pub(super) fn claim_live_drain_batch(
         task_id,
         task_refs: task_refs_owned,
         person_triggered,
+        requires_session_recycle,
         trigger,
         ts,
     })

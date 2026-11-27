@@ -214,6 +214,13 @@ impl HibernationState {
     pub(crate) fn has_sweeper_thread(&self) -> bool {
         lock(&self.sweeper_handle).is_some()
     }
+
+    #[cfg(test)]
+    pub(crate) fn is_turn_idle(&self, emp: &str) -> bool {
+        lock(&self.live_meta)
+            .get(emp)
+            .is_some_and(|meta| meta.3.is_some())
+    }
 }
 
 impl SessionManager {

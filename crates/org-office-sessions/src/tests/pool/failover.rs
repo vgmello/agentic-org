@@ -107,6 +107,8 @@ done
             employee_id: agent.clone(),
             instruction: Some("Deliver status report".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();
@@ -225,6 +227,8 @@ done
             employee_id: agent.clone(),
             instruction: Some("Mutate state".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();
@@ -319,6 +323,8 @@ done
             employee_id: agent_a.clone(),
             instruction: Some("HOLD_UNTIL_GATE ask B for approval".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();
@@ -367,6 +373,7 @@ done
             summary: "Can we deploy?".into(),
             attachment_ids: Vec::new(),
             enqueued_at_ms: now_ms(),
+            session_affinity: None,
         },
     );
     assert_eq!(
@@ -506,6 +513,8 @@ done
                 employee_id: agent.clone(),
                 instruction: Some("Hello".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .expect_err("missing vault credential must refuse session launch");
@@ -554,6 +563,8 @@ done
                 employee_id: agent,
                 instruction: Some("Hello again".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .expect_err("expired unrefreshable vault OAuth must refuse session launch");
@@ -676,6 +687,8 @@ done
             employee_id: agent_pro.clone(),
             instruction: Some("Proactive turn".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();
@@ -754,6 +767,8 @@ done
             employee_id: agent_react.clone(),
             instruction: Some("Reactive turn".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();
@@ -856,6 +871,8 @@ done
             employee_id: agent_op.clone(),
             instruction: Some("Wait then fail 401".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();
@@ -930,6 +947,8 @@ done
             employee_id: agent_ab.clone(),
             instruction: Some("Fail over to conn-b".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();
@@ -993,6 +1012,8 @@ done
             employee_id: agent_solo.clone(),
             instruction: Some("Exhaust auth".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();
@@ -1071,6 +1092,8 @@ fn task132_mixed_pool_exhaustion_preserves_pool_exhausted_and_earliest_cooldown(
                     employee_id: agent.clone(),
                     instruction: Some("Check mixed pool".into()),
                     workspace: None,
+                    resume_runtime_session_id: None,
+                    fresh: false,
                 },
             )
             .expect_err("mixed pool must refuse launch");
@@ -1160,6 +1183,8 @@ done
                 employee_id: agent.clone(),
                 instruction: Some("missing".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .is_err());
@@ -1191,6 +1216,8 @@ done
                 employee_id: agent.clone(),
                 instruction: Some("expired".into()),
                 workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
             },
         )
         .is_err());
@@ -1278,6 +1305,8 @@ done
             employee_id: agent.clone(),
             instruction: Some("run ok".into()),
             workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
         },
     )
     .unwrap();

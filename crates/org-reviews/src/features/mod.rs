@@ -28,7 +28,7 @@ use super::validation::{
     require_active_caller, require_project_scope, storage_refusal, validate_uuid, REVIEW_NOT_FOUND,
 };
 
-pub use self::findings::{decide_finding, decide_verdict};
+pub use self::findings::{decide_finding, decide_verdict, decide_verdict_with_session};
 pub use self::mutate::{decide_close, decide_resubmit, decide_route};
 pub use self::request::decide_request;
 

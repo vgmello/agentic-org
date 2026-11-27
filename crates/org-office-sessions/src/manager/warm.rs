@@ -27,6 +27,9 @@ pub(crate) struct StartReservation {
 
 pub(crate) struct LaunchRouteOpts<'a> {
     pub(super) resume_runtime_session_id: Option<&'a str>,
+    pub(super) force_fresh: bool,
+    pub(super) enforce_affinity_guard: bool,
+    pub(super) allow_sandbox_spec_change: bool,
     pub(super) task_ref: Option<&'a str>,
     pub(super) is_failover_switch: bool,
     pub(super) oauth_refresh_attempted: bool,
@@ -49,6 +52,9 @@ impl<'a> LaunchRouteOpts<'a> {
     ) -> Self {
         Self {
             resume_runtime_session_id,
+            force_fresh: false,
+            enforce_affinity_guard: false,
+            allow_sandbox_spec_change: false,
             task_ref,
             is_failover_switch: false,
             oauth_refresh_attempted: false,
@@ -57,6 +63,18 @@ impl<'a> LaunchRouteOpts<'a> {
             start_stop_epoch,
             partition,
         }
+    }
+
+    pub(super) fn with_affinity(
+        mut self,
+        force_fresh: bool,
+        enforce_affinity_guard: bool,
+        allow_sandbox_spec_change: bool,
+    ) -> Self {
+        self.force_fresh = force_fresh;
+        self.enforce_affinity_guard = enforce_affinity_guard;
+        self.allow_sandbox_spec_change = allow_sandbox_spec_change;
+        self
     }
 }
 

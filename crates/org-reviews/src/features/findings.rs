@@ -4,8 +4,9 @@ use std::collections::BTreeSet;
 
 use org_proto::reviews::{
     FindingSeverity, FindingStatus, ReviewFindingDraft, ReviewFindingOp, ReviewFindingParams,
-    ReviewFindingResult, ReviewFindingView, ReviewTargetKind, ReviewVerdict, ReviewVerdictParams,
-    ReviewVerdictResult, REVIEW_MAX_FINDINGS_PER_VERDICT, REVIEW_SUMMARY_MAX_CHARS,
+    ReviewFindingResult, ReviewFindingView, ReviewStatus, ReviewTargetKind, ReviewVerdict,
+    ReviewVerdictParams, ReviewVerdictResult, REVIEW_MAX_FINDINGS_PER_VERDICT,
+    REVIEW_SUMMARY_MAX_CHARS,
 };
 use org_proto::ErrorCode;
 use org_store::{Change, Id, Refusal};
@@ -13,7 +14,7 @@ use serde_json::json;
 
 use crate::time::format_rfc3339_ms;
 
-use super::super::ports::{ReviewContextRead, ReviewsRead};
+use super::super::ports::{ReviewActorInfo, ReviewContextRead, ReviewsRead};
 use super::super::records::{
     compute_review_status, finding_to_view, has_open_blocker, reviewer_verdict_to_view,
     ReviewFindingRecord, ReviewFindingReplyRecord,
@@ -25,10 +26,10 @@ use super::super::validation::{
 };
 use super::{load_mutable_review, LoadedReview};
 
-fn append_findings<V: ReviewsRead>(
+fn append_findings<V: ReviewsRead + ReviewContextRead>(
     view: &V,
     loaded: &mut LoadedReview,
-    actor: &Id,
+    caller: &ReviewActorInfo,
     drafts: &[ReviewFindingDraft],
     at: &str,
 ) -> Result<(Vec<Id>, Vec<ReviewFindingView>), Refusal> {
@@ -40,7 +41,8 @@ fn append_findings<V: ReviewsRead>(
     let mut seen = BTreeSet::new();
     let mut parsed = Vec::with_capacity(drafts.len());
     for d in drafts {
-        let (fid, atts) = validate_finding_draft(d)?;
+        let (fid, atts) =
+            validate_finding_draft(view, caller, loaded.review.project_id.as_ref(), d)?;
         if !seen.insert(fid.clone()) {
             return Err(bad_req("duplicate finding_id in batch"));
         }
@@ -69,7 +71,7 @@ fn append_findings<V: ReviewsRead>(
             review_id: loaded.review.id.clone(),
             number: next_num,
             round_number: loaded.review.current_round,
-            author_id: actor.clone(),
+            author_id: caller.id.clone(),
             severity: d.severity,
             status: FindingStatus::Open,
             anchor: d.anchor.clone(),
@@ -88,10 +90,28 @@ fn append_findings<V: ReviewsRead>(
     Ok((ids, views))
 }
 
-fn decide_reply<V: ReviewsRead>(
+fn is_review_submitter(loaded: &LoadedReview, actor: &Id, finding_round: u32) -> bool {
+    *actor == loaded.review.created_by
+        || loaded
+            .current_round()
+            .is_some_and(|r| r.submitted_by == *actor)
+        || loaded
+            .rounds
+            .iter()
+            .find(|r| r.round_number == finding_round)
+            .is_some_and(|r| r.submitted_by == *actor)
+}
+
+fn downgrade_approved_if_blocked(loaded: &mut LoadedReview) {
+    if loaded.review.status == ReviewStatus::Approved && has_open_blocker(&loaded.findings) {
+        loaded.review.status = ReviewStatus::Open;
+    }
+}
+
+fn decide_reply<V: ReviewsRead + ReviewContextRead>(
     view: &V,
     mut loaded: LoadedReview,
-    actor: &Id,
+    caller: &ReviewActorInfo,
     p: &ReviewFindingParams,
     at: &str,
 ) -> Result<Change, Refusal> {
@@ -110,7 +130,12 @@ fn decide_reply<V: ReviewsRead>(
         validate_uuid(reply_id, "reply_id")?,
     );
     let body = validate_reply_body(body_markdown, set_status.is_some())?;
-    let atts = validate_attachment_ids(attachment_ids)?;
+    let atts = validate_attachment_ids(
+        view,
+        caller,
+        loaded.review.project_id.as_ref(),
+        attachment_ids,
+    )?;
     if view
         .review_finding_reply_by_id(&rid)
         .map_err(storage_refusal)?
@@ -123,13 +148,28 @@ fn decide_reply<V: ReviewsRead>(
         .iter()
         .position(|f| f.id == fid)
         .ok_or_else(|| not_found("finding not found"))?;
+    let is_blocker = loaded.findings[idx].severity == FindingSeverity::Blocker;
+    let finding_round = loaded.findings[idx].round_number;
+    let closes_finding = matches!(
+        *set_status,
+        Some(FindingStatus::Resolved | FindingStatus::WontFix)
+    );
+    if loaded.review.independent
+        && is_blocker
+        && closes_finding
+        && is_review_submitter(&loaded, &caller.id, finding_round)
+    {
+        return Err(unauth(
+            "author or round submitter cannot resolve or wont_fix a blocker finding on an independent review",
+        ));
+    }
     let rn = loaded.review.current_round;
     loaded.replies.push(ReviewFindingReplyRecord {
         id: rid.clone(),
         finding_id: fid.clone(),
         review_id: loaded.review.id.clone(),
         round_number: rn,
-        author_id: actor.clone(),
+        author_id: caller.id.clone(),
         body_markdown: body,
         set_status: *set_status,
         attachment_ids: atts,
@@ -140,7 +180,7 @@ fn decide_reply<V: ReviewsRead>(
         let res = st != FindingStatus::Open;
         (f.status, f.resolved_by, f.resolved_at, f.resolved_in_round) = (
             st,
-            res.then(|| actor.clone()),
+            res.then(|| caller.id.clone()),
             res.then(|| at.to_owned()),
             res.then_some(rn),
         );
@@ -148,6 +188,7 @@ fn decide_reply<V: ReviewsRead>(
     f.revision = f.revision.saturating_add(1);
     f.updated_at = at.to_owned();
     let finding = finding_to_view(&loaded.findings[idx], &loaded.replies);
+    downgrade_approved_if_blocked(&mut loaded);
     loaded.bump(at);
     let payload = json!({ "finding_id": fid.as_str(), "reply_id": rid.as_str(), "round_number": rn, "set_status": set_status.map(FindingStatus::as_str) });
     let reply = ReviewFindingResult {
@@ -156,7 +197,7 @@ fn decide_reply<V: ReviewsRead>(
     };
     Ok(loaded.commit(
         "finding_replied",
-        actor,
+        &caller.id,
         &p.command_id,
         &payload,
         at,
@@ -183,14 +224,10 @@ pub fn decide_finding<V: ReviewsRead + ReviewContextRead>(
     let at = format_rfc3339_ms(now_ms);
     match &p.op {
         ReviewFindingOp::Add(draft) => {
-            let (_, mut added) = append_findings(
-                view,
-                &mut loaded,
-                &caller.id,
-                std::slice::from_ref(draft),
-                &at,
-            )?;
+            let (_, mut added) =
+                append_findings(view, &mut loaded, &caller, std::slice::from_ref(draft), &at)?;
             let finding = added.pop().expect("one finding added");
+            downgrade_approved_if_blocked(&mut loaded);
             loaded.bump(&at);
             let payload = json!({
                 "finding_id": &finding.id, "number": finding.number,
@@ -210,7 +247,7 @@ pub fn decide_finding<V: ReviewsRead + ReviewContextRead>(
                 &reply,
             ))
         }
-        ReviewFindingOp::Reply { .. } => decide_reply(view, loaded, &caller.id, p, &at),
+        ReviewFindingOp::Reply { .. } => decide_reply(view, loaded, &caller, p, &at),
     }
 }
 
@@ -280,6 +317,17 @@ pub fn decide_verdict<V: ReviewsRead + ReviewContextRead>(
     p: &ReviewVerdictParams,
     expected_revision: Option<u64>,
 ) -> Result<Change, Refusal> {
+    decide_verdict_with_session(view, now_ms, caller_id, p, expected_revision, None)
+}
+
+pub fn decide_verdict_with_session<V: ReviewsRead + ReviewContextRead>(
+    view: &V,
+    now_ms: u64,
+    caller_id: &str,
+    p: &ReviewVerdictParams,
+    expected_revision: Option<u64>,
+    runtime_session_id: Option<&str>,
+) -> Result<Change, Refusal> {
     let (caller, mut loaded) = load_mutable_review(
         view,
         caller_id,
@@ -296,9 +344,14 @@ pub fn decide_verdict<V: ReviewsRead + ReviewContextRead>(
         REVIEW_SUMMARY_MAX_CHARS,
         "summary_markdown",
     )?;
-    let atts = validate_attachment_ids(&p.attachment_ids)?;
+    let atts = validate_attachment_ids(
+        view,
+        &caller,
+        loaded.review.project_id.as_ref(),
+        &p.attachment_ids,
+    )?;
     let at = format_rfc3339_ms(now_ms);
-    let (batch_ids, findings) = append_findings(view, &mut loaded, &caller.id, &p.findings, &at)?;
+    let (batch_ids, findings) = append_findings(view, &mut loaded, &caller, &p.findings, &at)?;
     let row = &mut loaded.reviewers[ridx];
     (
         row.verdict,
@@ -313,6 +366,9 @@ pub fn decide_verdict<V: ReviewsRead + ReviewContextRead>(
         atts,
         Some(at.clone()),
     );
+    if let Some(sid) = runtime_session_id.map(str::trim).filter(|s| !s.is_empty()) {
+        row.runtime_session_id = Some(sid.to_owned());
+    }
     let verdict = reviewer_verdict_to_view(row).expect("verdict set");
     let rn = loaded.review.current_round;
     let active: Vec<_> = loaded

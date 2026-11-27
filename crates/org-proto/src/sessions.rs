@@ -227,6 +227,14 @@ pub struct MemberSessionStartParams {
     pub instruction: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
+    /// Optional prior runtime session ID to resume when workspace and spec hash still match
+    /// (`TASK-92.1`, ADR-0028). Cannot be combined with `fresh: true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_runtime_session_id: Option<String>,
+    /// Force a clean empty session, recycling any idle warm handle and ignoring hibernated
+    /// resume state (`TASK-92.1`, ADR-0028).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fresh: bool,
 }
 
 impl Call for MemberSessionStart {

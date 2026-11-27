@@ -148,15 +148,21 @@ impl SessionManager {
 fn build_turn_ended_hook(mgr: &SessionManager, partitioned: bool) -> TurnEndedHook {
     let drain_ctx = mgr.turn_end_drain_ctx();
     Arc::new(move |emp_id: &str| {
-        if let Some(mgr) = drain_ctx.weak_mgr.as_ref().and_then(|weak| weak.upgrade()) {
-            mgr.hibernation
-                .note_turn_idle(emp_id, std::time::Instant::now());
-        }
         let _ = flush_pending_usage(&drain_ctx.office, &drain_ctx.store, emp_id);
         let _ = drain_ctx.office.mark_budget_holds_stopped(emp_id);
         if !partitioned {
-            drain_pending_wakes_into_live_pump(emp_id, &drain_ctx);
+            let busy_again = drain_pending_wakes_into_live_pump(emp_id, &drain_ctx);
+            if !busy_again {
+                if let Some(mgr) = drain_ctx.weak_mgr.as_ref().and_then(|weak| weak.upgrade()) {
+                    mgr.hibernation
+                        .note_turn_idle(emp_id, std::time::Instant::now());
+                }
+            }
             return;
+        }
+        if let Some(mgr) = drain_ctx.weak_mgr.as_ref().and_then(|weak| weak.upgrade()) {
+            mgr.hibernation
+                .note_turn_idle(emp_id, std::time::Instant::now());
         }
         let queued = drain_ctx
             .store

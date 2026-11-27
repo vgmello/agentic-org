@@ -3009,13 +3009,13 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
 
         # Independent review refuses assigning the author as reviewer (INSERT, reviewer UPDATE,
         # and reviews.independent / reviews.created_by UPDATE — P1-5).
-        assert_refused(self, self.db, "independent review forbids assigning the author as reviewer",
+        assert_refused(self, self.db, "independent review forbids assigning the author or round submitter as reviewer",
                        lambda: insert(self.db, "review_reviewers", organization_id="org",
                                       review_id="rev-1", round_number=1, reviewer_id="reporter",
                                       routing="explicit", session_mode="fresh",
                                       assigned_by="reporter", assigned_at="2026-11-27T10:01:00.000Z",
                                       removed=0))
-        assert_refused(self, self.db, "independent review forbids assigning the author as reviewer",
+        assert_refused(self, self.db, "independent review forbids assigning the author or round submitter as reviewer",
                        "UPDATE reviews SET created_by='ana' WHERE id='rev-1'")
         insert(self.db, "reviews", organization_id="org", id="rev-2",
                office_id="numbering-a", office_code="A", number=2,
@@ -3033,9 +3033,9 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
                session_mode="warm", assigned_by="reporter",
                assigned_at="2026-11-27T10:00:00.000Z", removed=0)
         self.db.commit()
-        assert_refused(self, self.db, "independent review forbids assigning the author as reviewer",
+        assert_refused(self, self.db, "independent review forbids assigning the author or round submitter as reviewer",
                        "UPDATE reviews SET independent=1, session_mode='fresh' WHERE id='rev-2'")
-        assert_refused(self, self.db, "independent review forbids assigning the author as reviewer",
+        assert_refused(self, self.db, "independent review forbids assigning the author or round submitter as reviewer",
                        "UPDATE review_reviewers SET review_id='rev-1' WHERE review_id='rev-2' AND reviewer_id='reporter'")
 
         # Immutability triggers on review_rounds, review_finding_replies, and review_events

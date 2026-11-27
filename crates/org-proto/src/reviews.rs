@@ -9,6 +9,7 @@
 //! Each verb of `agent-os review` is one call here; [`REVIEW_METHODS`] lists them.
 
 mod calls;
+mod inspect_fields;
 mod kinds;
 mod limits;
 mod records;
@@ -23,6 +24,7 @@ pub use calls::{
     ReviewRoute, ReviewRouteParams, ReviewRouteResult, ReviewVerdictCall, ReviewVerdictParams,
     ReviewVerdictResult,
 };
+pub use inspect_fields::ReviewInspectSelection;
 pub use kinds::{
     AnchorKind, FindingSeverity, FindingStatus, ReviewDiffFileStatus, ReviewSessionMode,
     ReviewStatus, ReviewTargetKind, ReviewVerdict, RoutingMode,
