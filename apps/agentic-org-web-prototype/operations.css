@@ -3611,10 +3611,8 @@ body:has(.work-toolbar[data-values="hidden"]) .board-lanes .board-lanes-mode { d
 .filter-menu :is(.filter-facet-chev, .filter-back .ic) { color: var(--gray-400); }
 .filter-menu .filter-back { font-weight: 600; }
 .filter-menu .filter-empty { margin: 0; padding: 6px 12px; font-size: var(--fs-sm); color: var(--gray-400); }
-.filter-menu .filter-check {
-  flex: none; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-inline: 2px;
-  border-radius: 4px; box-shadow: inset 0 0 0 1.5px var(--gray-500);
-}
-.filter-menu .filter-check .ic { visibility: hidden; color: var(--tone-accent-ink); }
-.filter-menu [aria-checked="true"] .filter-check { background: var(--tone-accent-soft); box-shadow: inset 0 0 0 1.5px var(--tone-accent-ink); }
+/* Same look as Display: a plain check beside each ticked value, no boxes; one scrolling list (owner) */
+.filter-menu .filter-check { flex: none; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-inline: 2px; }
+.filter-menu .filter-check .ic { visibility: hidden; color: var(--white); }
 .filter-menu [aria-checked="true"] .filter-check .ic { visibility: visible; }
+.menu.filter-menu { max-height: min(70vh, 34rem); overflow-y: auto; overscroll-behavior: contain; }
