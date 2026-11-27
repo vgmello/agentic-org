@@ -620,16 +620,10 @@ document.addEventListener("mousedown", (e) => {
   if (e.target.closest?.(".cmdk-home-results .cmdk-opt, :is(.queue-header, .work-subbar-header, .section-toolbar) .menu button")) e.preventDefault();
 });
 
-function resetInboxSenderPreview(e) {
-  const sender = e.target.closest?.(".triage-from-member[data-preview-dismissed]");
-  if (sender && !sender.contains(e.relatedTarget)) delete sender.dataset.previewDismissed;
-}
-document.addEventListener("pointerover", resetInboxSenderPreview);
 document.addEventListener("pointerdown", () => endNavigationKeys());
 document.addEventListener("focusin", (e) => {
   const activeNavKeys = getNavigationKeys();
   if (activeNavKeys && !activeNavKeys.scope.contains(e.target)) endNavigationKeys();
-  resetInboxSenderPreview(e);
   if (e.target.closest && !e.target.closest(".menu-wrap")) closeMenus();
 });
 
@@ -750,8 +744,6 @@ function dismissLocalEscapeTarget(e) {
   }
   if (e.target.matches("#triage-comment")) { e.preventDefault(); document.querySelector(".triage-header h1").focus({ preventScroll: true }); return true; }
   if (S.actPanel && e.target.closest("#activity-panel, .activity-tools")) { e.preventDefault(); setActivityPanel(null); return true; }
-  const sender = document.querySelector(".triage-from-member:is(:hover, :focus-within):not([data-preview-dismissed])");
-  if (sender) { sender.dataset.previewDismissed = ""; e.preventDefault(); return true; }
   return false;
 }
 
