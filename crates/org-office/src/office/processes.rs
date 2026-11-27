@@ -4,12 +4,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use org_process::{
-    find_builtin_skill, list_builtin_skills, render_instructions, render_task_deltas,
+    find_builtin_skill, list_builtin_skills_by_category, render_instructions, render_task_deltas,
     resolve_single_chain, EffectiveSet, RenderInput, Rendered, Scope, SingleChainInputs,
-    OVERRIDABLE_CAP_BYTES,
+    SkillCategory, OVERRIDABLE_CAP_BYTES,
 };
 use org_proto::processes::{
-    ProcessWriteParams, ProcessWriteResult, SkillListResult, SkillReadResult, SkillSummaryWire,
+    ProcessWriteParams, ProcessWriteResult, SkillCategoryWire, SkillListResult, SkillReadResult,
+    SkillSummaryWire,
 };
 use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
@@ -197,16 +198,42 @@ impl Office {
         }))
     }
 
-    /// `skill.list` (`doc-28` §3.5): lists built-in product skills.
+    /// `skill.list` (`doc-28` §3.5): lists all built-in product skills.
     pub fn skill_list(&self) -> SkillListResult {
+        self.skill_list_by_category(None)
+    }
+
+    /// `skill.list` filtered by optional wire [`SkillCategoryWire`] (`TASK-80.4`).
+    pub fn skill_list_filtered(
+        &self,
+        category: Option<SkillCategoryWire>,
+    ) -> Result<SkillListResult, ApiError> {
+        let parsed = match category {
+            None => None,
+            Some(SkillCategoryWire::Workflow) => Some(SkillCategory::Workflow),
+            Some(SkillCategoryWire::ProductGuide) => Some(SkillCategory::ProductGuide),
+            Some(SkillCategoryWire::ChiefOfStaff) => Some(SkillCategory::ChiefOfStaff),
+            Some(_) => {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "unknown skill category; expected `workflow`, `product_guide`, or `chief_of_staff`",
+                ));
+            }
+        };
+        Ok(self.skill_list_by_category(parsed))
+    }
+
+    /// `skill.list` filtered by optional [`SkillCategory`] (`TASK-80.4`).
+    pub fn skill_list_by_category(&self, category: Option<SkillCategory>) -> SkillListResult {
         SkillListResult {
-            skills: list_builtin_skills()
-                .iter()
+            skills: list_builtin_skills_by_category(category)
+                .into_iter()
                 .map(|s| SkillSummaryWire {
                     key: s.key.to_owned(),
                     title: s.title.to_owned(),
                     description: s.description.to_owned(),
                     source: s.source.to_owned(),
+                    category: Some(skill_category_to_wire(s.category)),
                 })
                 .collect(),
         }
@@ -225,8 +252,17 @@ impl Office {
             title: skill.title.to_owned(),
             description: skill.description.to_owned(),
             source: skill.source.to_owned(),
+            category: Some(skill_category_to_wire(skill.category)),
             body_markdown: skill.body_markdown.to_owned(),
         })
+    }
+}
+
+fn skill_category_to_wire(category: SkillCategory) -> SkillCategoryWire {
+    match category {
+        SkillCategory::Workflow => SkillCategoryWire::Workflow,
+        SkillCategory::ProductGuide => SkillCategoryWire::ProductGuide,
+        SkillCategory::ChiefOfStaff => SkillCategoryWire::ChiefOfStaff,
     }
 }
 

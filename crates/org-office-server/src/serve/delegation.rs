@@ -32,6 +32,7 @@
 //! acting for nobody (a wake) gets only the open class, and no DM at all. When the office
 //! cannot read what the gate needs, every bound member is refused (fail closed).
 
+use org_agent_cli::MutationPolicy;
 use org_proto::chat::ConversationSummary;
 use org_proto::{ApiError, ErrorCode, Request, Response};
 
@@ -113,6 +114,7 @@ const NEVER: &[&str] = &[
     "msg.wait",
     "office.remove",
     "office.restart",
+    "suggestion.dismiss",
 ];
 const NEVER_PREFIXES: &[&str] = &[
     "auth.",
@@ -121,6 +123,9 @@ const NEVER_PREFIXES: &[&str] = &[
     "provider.",
     "tasks.notes.",
 ];
+/// Read-only provider pool/quota queries permitted when acting for the live owner, checked before
+/// `NEVER_PREFIXES` (`provider.`) so credentials, enrollment, and mutations stay `Access::Never`.
+const CALLER_OWNER_OVERRIDES: &[&str] = &["provider.connection.list", "provider.quota.status"];
 const CALLER_HIRES: &[&str] = &[
     "hr.hire",
     "hr.hire.confirm",
@@ -154,10 +159,62 @@ const OPEN: &[&str] = &[
     "role.list",
     "status.set",
     "subscribe",
+    "suggestion.create",
+    "suggestion.inspect",
+    "suggestion.list",
+    "suggestion.withdraw",
+    "ui.present",
     "who",
     "worktree.list",
 ];
 const OPEN_PREFIXES: &[&str] = &["chat.", "dm.", "msg.", "skill.", "tasks."];
+
+/// Read-only operator RPCs that execute with the verified live owner's actor identity after
+/// [`gate`] proves `caller.active && caller.is_person && caller.is_owner` (`TASK-80.4`).
+const OWNER_DELEGATED_READS: &[&str] = &[
+    "budget.get",
+    "budget.list",
+    "cost.price.list",
+    "cost.query",
+    "cost.subscription_usage.list",
+    "inbox.list",
+    "member.agent_execution_get",
+    "member.session_inspect",
+    "member.session_list",
+    "model_profile.list",
+    "provider.connection.list",
+    "provider.quota.status",
+];
+
+/// Non-CLI protocol and read-only wire calls outside `CommandTable::rows()`.
+const NON_CLI_READ_ONLY: &[&str] = &[
+    "attachment.inspect",
+    "attachment.list",
+    "attachment.read_chunk",
+    "auth.whoami",
+    "chat.conversations",
+    "chat.inbox",
+    "chat.messages",
+    "chat.watching_model_get",
+    "cost.export_csv",
+    "dm.open",
+    "docs.index",
+    "docs.inspect",
+    "docs.list",
+    "hello",
+    "member.session_transcript",
+    "model_profile.models",
+    "msg.bind",
+    "msg.get",
+    "msg.human_needs_you",
+    "msg.threads",
+    "operation.get",
+    "process.view",
+    "subscribe",
+];
+
+/// Non-CLI low-risk caller-reply / reaction wire calls outside `CommandTable::rows()`.
+const NON_CLI_AUTO_SAFE: &[&str] = &["chat.answer", "chat.react"];
 
 /// The class of `method`. A method named nowhere needs the owner.
 pub(super) fn access(method: &str) -> Access {
@@ -166,6 +223,8 @@ pub(super) fn access(method: &str) -> Access {
         Access::Never
     } else if OPEN.contains(&method) {
         Access::Open
+    } else if CALLER_OWNER_OVERRIDES.contains(&method) {
+        Access::CallerOwner
     } else if starts(NEVER_PREFIXES) {
         Access::Never
     } else if CALLER_HIRES.contains(&method) {
@@ -175,6 +234,49 @@ pub(super) fn access(method: &str) -> Access {
     } else {
         Access::CallerOwner
     }
+}
+
+/// Declarative mutation policy for an office RPC method (`TASK-80.4`), consulting the shared
+/// `agent-os` [`org_command::CommandTable`] first and failing closed to `ConfirmRequired` for any
+/// unknown method.
+pub(super) fn mutation_policy_for_rpc(method: &str) -> MutationPolicy {
+    if let Some(policy) = org_agent_cli::runtime_table().mutation_policy_for_call(method) {
+        return policy;
+    }
+    if NON_CLI_READ_ONLY.contains(&method) {
+        MutationPolicy::ReadOnly
+    } else if NON_CLI_AUTO_SAFE.contains(&method) {
+        MutationPolicy::AutoSafe
+    } else {
+        MutationPolicy::ConfirmRequired
+    }
+}
+
+/// Returns the verified live owner's member ID for read-only operator RPCs delegated through
+/// Tess while acting for the owner, so owner-only read endpoints authorize her read without
+/// widening any write or non-owner path.
+pub(super) fn delegated_owner_read_actor<'a>(
+    request: &Request,
+    delegation: Option<&'a Delegation>,
+) -> Option<&'a str> {
+    let delegation = delegation?;
+    if !(delegation.caller.active && delegation.caller.is_person && delegation.caller.is_owner) {
+        return None;
+    }
+    let method = request.method.as_str();
+    if !OWNER_DELEGATED_READS.contains(&method) {
+        return None;
+    }
+    if (method == "member.session_inspect" || method == "member.session_list")
+        && request
+            .params
+            .get("employee_id")
+            .and_then(serde_json::Value::as_str)
+            .is_none()
+    {
+        return None;
+    }
+    delegation.caller_id.as_deref()
 }
 
 /// Whether a run with `delegation` may call a method of class `access`.
@@ -213,7 +315,32 @@ pub(super) fn gate(
         return Err(denied(request.id));
     }
     scope::admit(request, port, member, &delegation)?;
+    if delegation.caller_id.is_some() {
+        enforce_mutation_policy(request)?;
+    }
     Ok(Some(delegation))
+}
+
+fn enforce_mutation_policy(request: &Request) -> Result<(), Response> {
+    match mutation_policy_for_rpc(&request.method) {
+        MutationPolicy::ReadOnly | MutationPolicy::AutoSafe => Ok(()),
+        MutationPolicy::ConfirmRequired => Err(policy_violation(request.id, &request.method)),
+        MutationPolicy::ForbiddenForAgent => Err(denied(request.id)),
+    }
+}
+
+fn policy_violation(id: u64, method: &str) -> Response {
+    Response::error(
+        id,
+        ApiError::policy_violation(
+            format!(
+                "direct mutation `{method}` requires caller confirmation when acting for a member"
+            ),
+            format!(
+                "Inspect the target record and revision first, then propose this change with `agent-os suggestion create` instead of calling `{method}` directly."
+            ),
+        ),
+    )
 }
 
 /// Narrows what a call the gate admitted answers to what the member her run acts for may also

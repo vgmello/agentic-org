@@ -38,6 +38,7 @@ pub(super) fn providers_rpc(
     request: &Request,
     shared: &Shared,
     binding: &Binding,
+    delegation: Option<&super::delegation::Delegation>,
 ) -> Option<Response> {
     if !crate::provider_calls::is_provider_pool_method(request) {
         return None;
@@ -48,8 +49,10 @@ pub(super) fn providers_rpc(
             ApiError::new(ErrorCode::NotBound, "connection is not bound"),
         ));
     };
+    let actor =
+        super::delegation::delegated_owner_read_actor(request, delegation).unwrap_or(member);
     if let Some(providers) = &shared.ports.providers {
-        if let Some(response) = providers(Some(member), request) {
+        if let Some(response) = providers(Some(actor), request) {
             return Some(response);
         }
     }
@@ -62,7 +65,12 @@ pub(super) fn providers_rpc(
     ))
 }
 
-pub(super) fn costs_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+pub(super) fn costs_rpc(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+    delegation: Option<&super::delegation::Delegation>,
+) -> Option<Response> {
     if !crate::cost_calls::is_cost_or_budget_method(request) {
         return None;
     }
@@ -72,8 +80,34 @@ pub(super) fn costs_rpc(request: &Request, shared: &Shared, binding: &Binding) -
             ApiError::new(ErrorCode::NotBound, "connection is not bound"),
         ));
     };
+    let actor =
+        super::delegation::delegated_owner_read_actor(request, delegation).unwrap_or(member);
     if let Some(costs) = &shared.ports.costs {
-        if let Some(response) = costs(Some(member), request) {
+        if let Some(response) = costs(Some(actor), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
+}
+
+pub(super) fn tess_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if !crate::tess_calls::is_tess_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if let Some(tess) = &shared.ports.tess {
+        if let Some(response) = tess(Some(member), request) {
             return Some(response);
         }
     }

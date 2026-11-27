@@ -115,9 +115,26 @@ pub enum ErrorCode {
     /// the same. Never stored as a write's answer. A build that doesn't know it reads it as
     /// [`ErrorCode::Unknown`].
     Unsupported,
+    /// A server-enforced mutation policy refused a direct write (for example, the Chief of Staff
+    /// attempting a `ConfirmRequired` mutation while acting for a human caller instead of
+    /// proposing it through `suggestion.create`). A build that doesn't know it reads it as
+    /// [`ErrorCode::Unknown`].
+    PolicyViolation,
     /// A code this build doesn't know (sent by a newer server).
     #[serde(other)]
     Unknown,
+}
+
+/// Boxed transparent wrapper for an optional server recovery hint so [`ApiError`] and
+/// [`crate::Response`] stay compact on the stack (`size_of::<Response>() < 128`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ErrorHint(pub String);
+
+impl ErrorHint {
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
 }
 
 /// An error returned by the server. `message` is for people; it never holds paths or SQL.
@@ -125,6 +142,10 @@ pub enum ErrorCode {
 pub struct ApiError {
     pub code: ErrorCode,
     pub message: String,
+    /// Optional actionable hint supplied by the server (e.g. steering `policy_violation` to
+    /// `agent-os suggestion create`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<Box<ErrorHint>>,
     /// With `rate_limited`: how long until a retry can succeed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after_ms: Option<u64>,
@@ -141,10 +162,27 @@ impl ApiError {
         Self {
             code,
             message: message.into(),
+            hint: None,
             retry_after_ms: None,
             field: None,
             rule: None,
         }
+    }
+
+    /// Attaches an actionable recovery hint to this error.
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(Box::new(ErrorHint(hint.into())));
+        self
+    }
+
+    /// Returns the server-supplied actionable hint, when present.
+    pub fn hint(&self) -> Option<&str> {
+        self.hint.as_deref().map(ErrorHint::as_str)
+    }
+
+    /// `policy_violation` with a server-supplied actionable hint.
+    pub fn policy_violation(message: impl Into<String>, hint: impl Into<String>) -> Self {
+        Self::new(ErrorCode::PolicyViolation, message).with_hint(hint)
     }
 
     /// `rate_limited` with the delay until a retry can succeed.
@@ -205,11 +243,39 @@ mod tests {
             serde_json::json!({ "code": "unsupported", "message": "not served by this office yet" })
         );
         assert_eq!(serde_json::from_value::<ApiError>(wire).unwrap(), error);
+        assert_eq!(error.hint(), None);
     }
 
     #[test]
     fn a_code_this_build_does_not_know_still_reads_as_unknown() {
         let code: ErrorCode = serde_json::from_str("\"some_newer_code\"").unwrap();
         assert_eq!(code, ErrorCode::Unknown);
+    }
+
+    #[test]
+    fn policy_violation_and_hint_serialize_cleanly() {
+        let error = ApiError::policy_violation(
+            "Direct durable writes require caller confirmation.",
+            "Propose this change with `agent-os suggestion create`.",
+        );
+        let wire = serde_json::to_value(&error).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "code": "policy_violation",
+                "message": "Direct durable writes require caller confirmation.",
+                "hint": "Propose this change with `agent-os suggestion create`."
+            })
+        );
+        assert_eq!(serde_json::from_value::<ApiError>(wire).unwrap(), error);
+        assert_eq!(
+            error.hint(),
+            Some("Propose this change with `agent-os suggestion create`.")
+        );
+        assert!(
+            std::mem::size_of::<crate::Response>() < 128,
+            "Response must stay under Clippy's 128-byte result_large_err threshold, got {}",
+            std::mem::size_of::<crate::Response>()
+        );
     }
 }

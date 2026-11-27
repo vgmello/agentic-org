@@ -19,6 +19,7 @@ use std::io::{self, BufRead, Write};
 use org_command::{Office, Output};
 
 pub use features::session::{CORE_RULES, SESSION_ATTACH_HELP, SKILL_INDEX};
+pub use org_command::{validate_input, Command, IfMatch, MutationPolicy};
 pub use registry::{catalogue_table, runtime_table, table};
 pub use runtime::binding::{api_refusal, Binding};
 pub use runtime::office::{BoundOffice, WorkspaceConnector};

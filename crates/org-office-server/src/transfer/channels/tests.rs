@@ -155,6 +155,7 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
             costs: None,
             providers: None,
             federation: None,
+            tess: None,
             directory,
         },
         crate::test_support::grant_key(),

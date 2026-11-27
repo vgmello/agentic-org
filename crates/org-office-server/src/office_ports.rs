@@ -10,7 +10,7 @@ use crate::session_proxy::build_session_hooks;
 use crate::{
     attachment_calls, chat_calls, cost_calls, directory, doc_calls, federation_calls, follow,
     git_calls, live, mailbox_store, org_feed, process_calls, provider_calls, serve, task_calls,
-    wake_bridge, watcher,
+    tess_calls, wake_bridge, watcher,
 };
 use org_office::{Office, OfficeError};
 
@@ -352,6 +352,15 @@ pub(crate) fn build_office_ports(
         Arc::clone(&office),
         Arc::clone(&live),
     ));
+    let tess_sessions = Arc::downgrade(&session_manager);
+    let tess_svc = Arc::new(tess_calls::TessService::new(
+        Arc::clone(&office),
+        Arc::new(move |member| {
+            tess_sessions
+                .upgrade()
+                .and_then(|sessions| sessions.bindings().acting_for_caller_id(member))
+        }),
+    ));
     serve::OfficePorts {
         operation_get: {
             let office = Arc::clone(&office);
@@ -463,6 +472,9 @@ pub(crate) fn build_office_ports(
                 )
             }))
         },
+        tess: Some(gate_rpc_port(&office, move |member, request| {
+            tess_svc.dispatch(member, request)
+        })),
         directory: messaging.directory,
         submit,
     }

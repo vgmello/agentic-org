@@ -6,50 +6,54 @@
 pub const SKILL_INDEX: &[(&str, &str)] = &[
     (
         "agent-os-basics",
-        "Command grammar, the JSON envelope, help and schemas, small answers, long text, writes and dry runs.",
+        "CLI grammar, envelopes, schemas, dry runs.",
     ),
-    (
-        "tasks-create",
-        "Search first, decide the scope, then write a durable why and testable acceptance criteria.",
-    ),
-    (
-        "tasks-execute",
-        "Read the task and its dependencies, plan privately against live code, start, and work in verified loops.",
-    ),
-    (
-        "tasks-finalize",
-        "Verify each criterion, tick the checklist with evidence, update docs, comment, and close.",
-    ),
+    ("tasks-create", "Search first, scope, criteria, and why."),
+    ("tasks-execute", "Deps, private planning, verified loops."),
+    ("tasks-finalize", "Verify criteria, checklist, docs, close."),
     (
         "messaging-and-asks",
-        "Inbox, sending and replying, handoffs, structured asks and answers, snoozing, and waiting well.",
+        "Inbox, replies, handoffs, asks, snoozes.",
     ),
-    (
-        "channels",
-        "Joining, summarizing with a question, reading, posting, and asking a channel.",
-    ),
+    ("channels", "Join, summarize, read, post, ask channels."),
     (
         "code-and-worktrees",
-        "Preparing a task worktree, working in it, and publishing the task branch through the office.",
+        "Prepare worktrees and publish branches.",
     ),
     (
         "hiring-and-directory",
-        "Finding people, teams and roles, who decides, and hiring agents through HR.",
+        "People, teams, roles, and HR hiring.",
     ),
     (
         "processes-and-standards",
-        "Which processes apply, must-follow versus overridable, the --why chain, and project conventions.",
+        "Effective rules, precedence, and --why.",
     ),
-    (
-        "budgets",
-        "Checking your and your task's budget, spending well, and what a budget hold means.",
-    ),
+    ("budgets", "Allowances, spend hygiene, budget holds."),
     (
         "errors-and-recovery",
-        "The error codes, optimistic concurrency, safe retries, and stalled or restarted sessions.",
+        "Error codes, retries, concurrency, stalls.",
+    ),
+    ("batch-and-attach", "Batch JSON commands on one connection."),
+    ("product-org-and-teams", "Orgs, teams, roles, hiring, caps."),
+    (
+        "product-projects-and-work",
+        "Projects, repos, worktrees, tasks.",
     ),
     (
-        "batch-and-attach",
-        "Running several commands over one connection, one JSON line in and one envelope out each.",
+        "product-processes-and-standards",
+        "Inheritance chains, rules, --why.",
     ),
+    (
+        "product-offices-and-runtimes",
+        "Offices, runtimes, profiles, pools.",
+    ),
+    (
+        "product-budgets-and-permissions",
+        "Budgets, holds, presets, sandbox.",
+    ),
+    (
+        "product-troubleshooting",
+        "Offices, stalls, limits, recovery.",
+    ),
+    ("tess-workflows", "Briefs, batching, proposals, UI."),
 ];

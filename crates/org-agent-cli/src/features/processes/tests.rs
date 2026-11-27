@@ -3,7 +3,8 @@ use org_command::{Answer, Refusal};
 use org_proto::processes::{
     DocumentKindWire, DocumentStatusWire, EffectiveProcessEntryWire, ProcessDocumentWire,
     ProcessEffectiveResult, ProcessLayerWire, ProcessShowParams, ProcessShowResult,
-    ProcessWhyResult, ProcessWriteResult, SkillListResult, SkillReadResult, SkillSummaryWire,
+    ProcessWhyResult, ProcessWriteResult, SkillCategoryWire, SkillListResult, SkillReadResult,
+    SkillSummaryWire,
 };
 use serde_json::Value;
 
@@ -67,6 +68,7 @@ impl OfficeTransport for StubTransport {
                     title: "Using agent-os".into(),
                     description: "Basics".into(),
                     source: "built_in".into(),
+                    category: Some(SkillCategoryWire::Workflow),
                 }],
             })
             .unwrap()),
@@ -75,6 +77,7 @@ impl OfficeTransport for StubTransport {
                 title: "Using agent-os".into(),
                 description: "Basics".into(),
                 source: "built_in".into(),
+                category: Some(SkillCategoryWire::Workflow),
                 body_markdown: "# Basics".into(),
             })
             .unwrap()),
@@ -150,6 +153,7 @@ fn process_and_skill_cli_commands_dispatch_expected_rpcs() {
             "# Setup",
         ],
         vec!["skill", "list"],
+        vec!["skill", "list", "--category", "product_guide"],
         vec!["skill", "read", "--name", "agent-os-basics"],
     ] {
         let owned: Vec<String> = args.into_iter().map(str::to_owned).collect();
@@ -166,9 +170,11 @@ fn process_and_skill_cli_commands_dispatch_expected_rpcs() {
             "process.why",
             "process.write",
             "skill.list",
+            "skill.list",
             "skill.read",
         ]
     );
+    assert_eq!(office.tr.seen[5].1["category"], "product_guide");
 
     // Passing both --task and --project is refused cleanly.
     let conflict_args: Vec<String> = vec!["process", "list", "--task", "T-1", "--project", "P-1"]

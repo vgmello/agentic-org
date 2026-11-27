@@ -35,8 +35,15 @@ pub use help::CATALOGUE_LIMIT;
 pub use node::Node;
 pub use office::{Answer, KeySource, Office, Refusal, RefusalDetails, Request, Sources, Status};
 pub use parse::{DEFAULT_LIMIT, MAX_INPUT_BYTES, MAX_LIMIT, MAX_YAML_INPUT_BYTES};
-pub use row::{Ack, Command, Example, Field, IfMatch, Kind, Type};
-pub use table::{Alias, CommandTable, TableError};
+pub use row::{Ack, Command, Example, Field, IfMatch, Kind, MutationPolicy, Type};
+pub use table::{Alias, CommandTable, PolicyOverride, TableError};
+
+/// Validates a JSON input object against a [`Command`]'s declared input schema (required fields,
+/// types, enum values, and unknown-field rejection). Used by server-side `suggestion.create`
+/// preflight so proposals cannot carry malformed or hallucinated flags.
+pub fn validate_input(command: &Command, input: &Map<String, Value>) -> Result<(), String> {
+    shape::validate(command.input, input)
+}
 
 use org_proto::ErrorCode;
 use parse::{Format, Parsed};

@@ -842,3 +842,135 @@ fn her_answers_never_carry_the_waiting_messages_hint() {
     assert_eq!(hint(TESS), None);
     assert_eq!(hint("ada"), Some(3));
 }
+
+#[test]
+fn mutation_policy_blocks_direct_confirm_required_writes_with_suggestion_hint_and_allows_auto_safe()
+{
+    use crate::serve::tests::{launch_key, ports, test_info};
+    use crate::serve::SnapshotFailure;
+
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let dir = tempfile::TempDir::new().unwrap();
+    let port = Arc::new(FakePort::new(TESS, the_owner()));
+    let mut p = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+    p.delegation = Some(Arc::clone(&port) as Arc<dyn ChiefOfStaffPort>);
+    let shared = Shared::new(&test_info(), &dir.path().join("m.sock"), p, launch_key());
+
+    // Direct ConfirmRequired mutations when Tess acts for a caller fail closed with
+    // ErrorCode::PolicyViolation and an actionable hint pointing to `agent-os suggestion create`.
+    for (method, params) in [
+        ("tasks.create", json!({"title": "Direct write"})),
+        (
+            "tasks.create",
+            json!({"title": "Bypass attempt", "dry_run": true}),
+        ),
+        ("tasks.update", json!({"task": "T-A1", "title": "Edit"})),
+        ("chat.channel_create", json!({"name": "ops"})),
+        (
+            "chat.channel_create",
+            json!({"name": "ops", "dry_run": true}),
+        ),
+        ("process.write", json!({"title": "Rule"})),
+        ("team.create", json!({"name": "NewTeam"})),
+        (
+            "project.add_team",
+            json!({"project_id": "p", "team_id": "t"}),
+        ),
+    ] {
+        let req = call(method, params);
+        let resp = shared.answer_for_test(&req, TESS, false);
+        match resp.outcome {
+            Outcome::Error(err) => {
+                assert_eq!(
+                    err.code,
+                    ErrorCode::PolicyViolation,
+                    "`{method}` must return PolicyViolation, got {err:?}"
+                );
+                let hint = err.hint().unwrap_or("");
+                assert!(
+                    hint.contains("agent-os suggestion create"),
+                    "`{method}` hint must steer to `agent-os suggestion create`, got `{hint}`"
+                );
+            }
+            Outcome::Result(v) => panic!("`{method}` should have been blocked, got {v}"),
+        }
+    }
+
+    // AutoSafe calls (`suggestion.create`, `suggestion.withdraw`, `ui.present`, `status.set`,
+    // `msg.reply`) are NOT blocked by PolicyViolation (they proceed past the gate to dispatch).
+    for (method, params) in [
+        ("suggestion.create", json!({})),
+        ("suggestion.withdraw", json!({})),
+        ("ui.present", json!({})),
+        ("status.set", json!({"text": "Reviewing brief"})),
+        (
+            "msg.reply",
+            json!({"id": "m1", "to_id": "m0", "body": "ok"}),
+        ),
+    ] {
+        let req = call(method, params);
+        let resp = shared.answer_for_test(&req, TESS, false);
+        assert!(
+            !matches!(
+                resp.outcome,
+                Outcome::Error(ref e) if e.code == ErrorCode::PolicyViolation
+            ),
+            "`{method}` is AutoSafe and must not fail with PolicyViolation: {resp:?}"
+        );
+    }
+
+    // Provider pool read-only methods are CallerOwner while credentials/writes stay Never;
+    // `suggestion.dismiss` is Never for Tess even when acting for Owner.
+    assert_eq!(access("provider.connection.list"), Access::CallerOwner);
+    assert_eq!(access("provider.quota.status"), Access::CallerOwner);
+    assert_eq!(access("suggestion.dismiss"), Access::Never);
+    assert!(!allowed(access("suggestion.dismiss"), &the_owner()));
+    assert_eq!(access("suggestion.create"), Access::Open);
+    assert_eq!(access("ui.present"), Access::Open);
+
+    // Owner-delegated read actor resolves ONLY for live Owner on read-only operator RPCs,
+    // never for Bob and never for writes.
+    let owner_del = the_owner();
+    let bob_del = acting_for_b();
+    for read_method in [
+        "inbox.list",
+        "cost.query",
+        "cost.price.list",
+        "cost.subscription_usage.list",
+        "budget.list",
+        "budget.get",
+        "provider.connection.list",
+        "provider.quota.status",
+        "model_profile.list",
+        "member.agent_execution_get",
+    ] {
+        let req = call(read_method, json!({}));
+        assert_eq!(
+            delegated_owner_read_actor(&req, Some(&owner_del)),
+            Some("owner"),
+            "{read_method} for Owner"
+        );
+        assert_eq!(
+            delegated_owner_read_actor(&req, Some(&bob_del)),
+            None,
+            "{read_method} for Bob"
+        );
+    }
+    let write_req = call("budget.set", json!({}));
+    assert_eq!(
+        delegated_owner_read_actor(&write_req, Some(&owner_del)),
+        None
+    );
+
+    // `member.session_list` delegates to Owner ONLY when targeting another employee_id.
+    let own_sessions = call("member.session_list", json!({}));
+    assert_eq!(
+        delegated_owner_read_actor(&own_sessions, Some(&owner_del)),
+        None
+    );
+    let other_sessions = call("member.session_list", json!({"employee_id": "ada"}));
+    assert_eq!(
+        delegated_owner_read_actor(&other_sessions, Some(&owner_del)),
+        Some("owner")
+    );
+}

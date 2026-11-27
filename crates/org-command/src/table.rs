@@ -8,7 +8,7 @@ use std::fmt;
 
 use serde_json::Value;
 
-use crate::row::{common_option, Command, Field, Type};
+use crate::row::{common_option, Command, Field, MutationPolicy, Type};
 use crate::shape;
 
 /// Why a table was refused.
@@ -34,11 +34,21 @@ pub struct Alias {
     pub command: &'static [&'static str],
 }
 
+/// An explicit [`MutationPolicy`] override for one `(resource, verb)` row in a [`CommandTable`],
+/// refining the row's default policy ([`Command::mutation_policy`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PolicyOverride {
+    pub resource: &'static str,
+    pub verb: &'static str,
+    pub policy: MutationPolicy,
+}
+
 /// The commands that exist. A command that is not in the table does not exist.
 #[derive(Debug, Clone)]
 pub struct CommandTable {
     rows: Vec<&'static Command>,
     aliases: &'static [Alias],
+    policies: &'static [PolicyOverride],
 }
 
 impl CommandTable {
@@ -59,7 +69,11 @@ impl CommandTable {
         for row in &rows {
             check_row(row).map_err(|problem| TableError(format!("`{}`: {problem}", row.name())))?;
         }
-        Ok(Self { rows, aliases: &[] })
+        Ok(Self {
+            rows,
+            aliases: &[],
+            policies: &[],
+        })
     }
 
     /// The same table without the checks, for an executable's start: a common command does
@@ -69,13 +83,57 @@ impl CommandTable {
     pub fn unchecked(domains: &[&'static [Command]]) -> Self {
         let mut rows: Vec<&'static Command> = domains.iter().flat_map(|rows| rows.iter()).collect();
         rows.sort_by_key(|row| (row.resource, row.verb));
-        Self { rows, aliases: &[] }
+        Self {
+            rows,
+            aliases: &[],
+            policies: &[],
+        }
     }
 
     /// The same table with `aliases` read as the commands they stand for ([`Self::expand`]).
     pub fn with_aliases(mut self, aliases: &'static [Alias]) -> Self {
         self.aliases = aliases;
         self
+    }
+
+    /// The same table with explicit [`PolicyOverride`] entries for commands whose
+    /// [`MutationPolicy`] differs from the default (`ReadOnly` for reads/lists,
+    /// `ConfirmRequired` for writes).
+    pub fn with_policies(mut self, policies: &'static [PolicyOverride]) -> Self {
+        self.policies = policies;
+        self
+    }
+
+    /// The explicit mutation policy overrides registered on this table.
+    pub fn policies(&self) -> &'static [PolicyOverride] {
+        self.policies
+    }
+
+    /// The effective [`MutationPolicy`] of `command`: explicit table override if present, else
+    /// [`Command::mutation_policy`].
+    pub fn mutation_policy(&self, command: &Command) -> MutationPolicy {
+        self.policies
+            .iter()
+            .find(|o| o.resource == command.resource && o.verb == command.verb)
+            .map_or_else(|| command.mutation_policy(), |o| o.policy)
+    }
+
+    /// The effective [`MutationPolicy`] of `(resource, verb)`, or `None` when not in the table.
+    pub fn mutation_policy_by_name(&self, resource: &str, verb: &str) -> Option<MutationPolicy> {
+        self.find(resource, verb)
+            .map(|row| self.mutation_policy(row))
+    }
+
+    /// The effective [`MutationPolicy`] for all rows backed by wire RPC `call`, picking the
+    /// strictest policy when multiple commands share a wire call (fail closed). `None` when no
+    /// row in the table declares `call`.
+    pub fn mutation_policy_for_call(&self, call: &str) -> Option<MutationPolicy> {
+        self.rows
+            .iter()
+            .copied()
+            .filter(|row| row.call == call)
+            .map(|row| self.mutation_policy(row))
+            .max_by_key(|policy| policy.strictness())
     }
 
     /// The shorthands of the table.
@@ -228,4 +286,124 @@ fn check_row(row: &Command) -> Result<(), String> {
         .map_err(|e| format!("the example output is not JSON: {e}"))?;
     shape::validate_data(row, &output).map_err(|e| format!("the example output: {e}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use org_proto::ErrorCode;
+    use serde_json::json;
+
+    use super::*;
+    use crate::row::{Ack, Example, IfMatch, Kind};
+
+    const IN: &[Field] = &[Field::required("name", Type::String, "Name")];
+    const OUT: &[Field] = &[Field::required("ok", Type::Boolean, "Done")];
+    const ERRS: &[ErrorCode] = &[ErrorCode::InvalidRequest];
+
+    const ROWS: &[Command] = &[
+        Command {
+            resource: "item",
+            verb: "list",
+            summary: "List items",
+            call: "item.list",
+            kind: Kind::List,
+            input: &[],
+            content_field: None,
+            output: OUT,
+            errors: ERRS,
+            example: Example {
+                input: "{}",
+                output: r#"[{"ok":true}]"#,
+            },
+        },
+        Command {
+            resource: "item",
+            verb: "create",
+            summary: "Create item",
+            call: "item.write",
+            kind: Kind::Write {
+                ack: Ack::Durable,
+                if_match: IfMatch::No,
+            },
+            input: IN,
+            content_field: None,
+            output: OUT,
+            errors: ERRS,
+            example: Example {
+                input: r#"{"name":"a"}"#,
+                output: r#"{"ok":true}"#,
+            },
+        },
+        Command {
+            resource: "item",
+            verb: "set",
+            summary: "Set item",
+            call: "item.write",
+            kind: Kind::Write {
+                ack: Ack::Committed,
+                if_match: IfMatch::No,
+            },
+            input: IN,
+            content_field: None,
+            output: OUT,
+            errors: ERRS,
+            example: Example {
+                input: r#"{"name":"a"}"#,
+                output: r#"{"ok":true}"#,
+            },
+        },
+    ];
+
+    const OVERRIDES: &[PolicyOverride] = &[PolicyOverride {
+        resource: "item",
+        verb: "set",
+        policy: MutationPolicy::AutoSafe,
+    }];
+
+    #[test]
+    fn mutation_policy_defaults_overrides_and_strictest_call_merge() {
+        let table = CommandTable::new(&[ROWS])
+            .expect("valid table")
+            .with_policies(OVERRIDES);
+        assert_eq!(
+            table.mutation_policy_by_name("item", "list"),
+            Some(MutationPolicy::ReadOnly)
+        );
+        assert_eq!(
+            table.mutation_policy_by_name("item", "create"),
+            Some(MutationPolicy::ConfirmRequired)
+        );
+        assert_eq!(
+            table.mutation_policy_by_name("item", "set"),
+            Some(MutationPolicy::AutoSafe)
+        );
+        // Two commands share `item.write` (one AutoSafe, one ConfirmRequired): strictest wins.
+        assert_eq!(
+            table.mutation_policy_for_call("item.write"),
+            Some(MutationPolicy::ConfirmRequired)
+        );
+        assert_eq!(
+            table.mutation_policy_for_call("item.list"),
+            Some(MutationPolicy::ReadOnly)
+        );
+        assert_eq!(table.mutation_policy_for_call("unknown.call"), None);
+        assert_eq!(table.policies().len(), 1);
+    }
+
+    #[test]
+    fn validate_input_enforces_required_and_unknown_fields() {
+        let table = CommandTable::new(&[ROWS]).expect("valid table");
+        let cmd = table.find("item", "create").unwrap();
+        let good = json!({"name": "alpha"}).as_object().cloned().unwrap();
+        assert!(crate::validate_input(cmd, &good).is_ok());
+
+        let missing = serde_json::Map::new();
+        assert!(crate::validate_input(cmd, &missing).is_err());
+
+        let extra = json!({"name": "alpha", "bogus": 1})
+            .as_object()
+            .cloned()
+            .unwrap();
+        assert!(crate::validate_input(cmd, &extra).is_err());
+    }
 }

@@ -75,7 +75,7 @@ fn answer_with_peer(
         Ok(delegation) => delegation,
         Err(refused) => return refused,
     };
-    let response = answer_ungated(request, shared, binding, peer_pid);
+    let response = answer_ungated(request, shared, binding, peer_pid, delegation.as_ref());
     match delegation {
         Some(delegation) => {
             super::delegation::narrow(request, shared, binding, &delegation, response)
@@ -89,14 +89,17 @@ fn answer_ungated(
     shared: &Shared,
     binding: &mut Binding,
     peer_pid: Option<libc::pid_t>,
+    delegation: Option<&super::delegation::Delegation>,
 ) -> Response {
     if let Some(response) = answer_operator(request, shared, binding) {
         return response;
     }
-    if let Some(response) = answer_inbox_or_operation(request, shared, binding) {
+    if let Some(response) = answer_inbox_or_operation(request, shared, binding, delegation) {
         return response;
     }
-    if let Some(response) = answer_directory_or_session(request, shared, binding, peer_pid) {
+    if let Some(response) =
+        answer_directory_or_session(request, shared, binding, peer_pid, delegation)
+    {
         return response;
     }
     if let Some(response) = answer_org_command(request, shared, binding) {
@@ -115,18 +118,22 @@ fn answer_inbox_or_operation(
     request: &Request,
     shared: &Shared,
     binding: &Binding,
+    delegation: Option<&super::delegation::Delegation>,
 ) -> Option<Response> {
     if request.is::<org_proto::inbox::InboxList>() {
         let inbox = shared.inbox.as_ref()?;
-        if !matches!(live_owner(shared, binding), Ok(true)) {
+        let delegated_owner = super::delegation::delegated_owner_read_actor(request, delegation);
+        if !matches!(live_owner(shared, binding), Ok(true)) && delegated_owner.is_none() {
             return Some(bind_error(
                 request.id,
                 ErrorCode::NotAuthorized,
                 "inbox is for the live owner",
             ));
         }
-        if let (Some(mb), Binding::Member { id, .. }) = (&shared.ports.mailbox, binding) {
-            let _ = mb.release_due_snoozes_for(id);
+        if let Some(mb) = &shared.ports.mailbox {
+            if let Some(owner_id) = delegated_owner.or_else(|| binding.member()) {
+                let _ = mb.release_due_snoozes_for(owner_id);
+            }
         }
         return Some(match request.params::<org_proto::inbox::InboxList>() {
             Ok(params) => match inbox.list(params) {
@@ -191,11 +198,12 @@ fn answer_directory_or_session(
     shared: &Shared,
     binding: &mut Binding,
     peer_pid: Option<libc::pid_t>,
+    delegation: Option<&super::delegation::Delegation>,
 ) -> Option<Response> {
     if request.is::<OrgSnapshotCall>() {
         return Some(org_snapshot(request, shared, binding));
     }
-    if let Some(response) = project_or_hiring(request, shared, binding) {
+    if let Some(response) = project_or_hiring(request, shared, binding, delegation) {
         return Some(response);
     }
     if request.is::<Who>() {

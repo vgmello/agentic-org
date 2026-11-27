@@ -896,6 +896,7 @@ pub(super) fn ports(snapshot: SnapshotFn) -> OfficePorts {
         costs: None,
         providers: None,
         federation: None,
+        tess: None,
         directory,
     }
 }
@@ -1364,6 +1365,7 @@ fn serving(
             costs: None,
             providers: None,
             federation: None,
+            tess: None,
             directory,
         },
         launch_key(),
@@ -1847,6 +1849,7 @@ fn following_with(
                 costs: None,
                 providers: None,
                 federation: None,
+                tess: None,
                 directory,
             },
             launch_key(),
@@ -2354,6 +2357,7 @@ fn asking(
             costs: None,
             providers: None,
             federation: None,
+            tess: None,
             directory,
         },
         launch_key(),

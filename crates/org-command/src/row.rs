@@ -112,6 +112,54 @@ impl Kind {
     }
 }
 
+/// Declarative mutation safety policy for a command when an agent acts on behalf of a human
+/// caller (Chief of Staff / Ask Tess mode, `TASK-80.4`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MutationPolicy {
+    /// Read-only query or inspection: always allowed directly when authorized.
+    ReadOnly,
+    /// Low-risk non-durable or caller-scoped action (`suggestion create|withdraw`, `ui present`,
+    /// `status set|clear`, private `task-note`, caller reply): allowed directly.
+    AutoSafe,
+    /// Durable org, work, hiring, budget, process, or config write: must be proposed via
+    /// `agent-os suggestion create` when acting for a caller.
+    ConfirmRequired,
+    /// Forbidden for agents even when acting for the owner (credentials, external approvals,
+    /// execution policy changes, Git pushes).
+    ForbiddenForAgent,
+}
+
+impl MutationPolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read_only",
+            Self::AutoSafe => "auto_safe",
+            Self::ConfirmRequired => "confirm_required",
+            Self::ForbiddenForAgent => "forbidden_for_agent",
+        }
+    }
+
+    /// Default mutation policy derived from a command's [`Kind`]: reads and lists default to
+    /// [`MutationPolicy::ReadOnly`]; writes default to [`MutationPolicy::ConfirmRequired`].
+    pub const fn default_for(kind: Kind) -> Self {
+        match kind {
+            Kind::Read | Kind::List => Self::ReadOnly,
+            Kind::Write { .. } => Self::ConfirmRequired,
+        }
+    }
+
+    /// Strictness rank (`ForbiddenForAgent` > `ConfirmRequired` > `AutoSafe` > `ReadOnly`)
+    /// so combining multiple rows mapped to one RPC always fails closed.
+    pub const fn strictness(self) -> u8 {
+        match self {
+            Self::ReadOnly => 0,
+            Self::AutoSafe => 1,
+            Self::ConfirmRequired => 2,
+            Self::ForbiddenForAgent => 3,
+        }
+    }
+}
+
 /// An input the command accepts and the `data` it then answers, both as JSON text. The contract
 /// tests feed the input through the parser and the schema, and the stub office answers the output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +231,13 @@ impl Command {
             Kind::Write { ack, .. } => Some(ack),
             _ => None,
         }
+    }
+
+    /// Default mutation policy derived from [`Self::kind`]: reads/lists are `ReadOnly`, writes
+    /// default to `ConfirmRequired`. Use [`crate::CommandTable::mutation_policy`] for effective
+    /// table policy including explicit `AutoSafe` / `ForbiddenForAgent` overrides.
+    pub const fn mutation_policy(&self) -> MutationPolicy {
+        MutationPolicy::default_for(self.kind)
     }
 }
 

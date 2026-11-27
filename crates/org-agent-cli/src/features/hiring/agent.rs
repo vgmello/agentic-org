@@ -3,6 +3,7 @@
 
 use org_command::{Ack, Answer, Command, Example, Field, IfMatch, Kind, Request, Type};
 use org_proto::hiring::AgentExecutionRecord;
+use org_proto::providers::AgentReadinessResult;
 use serde_json::{json, Map};
 
 use super::schema::{EFFORT_TYPE, READ_ERRORS, STRING_TYPE, WRITE_ERRORS};
@@ -99,6 +100,51 @@ const AGENT_EXECUTION_SET_INPUT: &[Field] = &[
         "system_prompt_markdown",
         Type::String,
         "Agent system prompt markdown",
+    ),
+];
+
+const AGENT_READINESS_INPUT: &[Field] = &[
+    Field::required("member", Type::String, "Agent employee UUIDv7"),
+    Field::optional(
+        "task_id",
+        Type::String,
+        "Optional task UUIDv7 for budget check",
+    ),
+];
+
+const AGENT_READINESS_CANDIDATE_FIELDS: &[Field] = &[
+    Field::required("connection_id", Type::String, "Provider connection UUIDv7"),
+    Field::required("priority", Type::Integer, "Failover priority order"),
+    Field::required(
+        "eligible",
+        Type::Boolean,
+        "Whether candidate is currently ready",
+    ),
+    Field::optional("skip_reason", Type::String, "Why candidate is skipped"),
+    Field::optional("cooldown_until", Type::String, "Cooldown expiry timestamp"),
+    Field::optional("driver_model_id", Type::String, "Driver-specific model ID"),
+];
+const AGENT_READINESS_CANDIDATE_TYPE: Type = Type::Object(AGENT_READINESS_CANDIDATE_FIELDS);
+
+const AGENT_READINESS_OUTPUT: &[Field] = &[
+    Field::required("employee_id", Type::String, "Agent employee UUIDv7"),
+    Field::required("ready", Type::Boolean, "Whether agent can start a turn now"),
+    Field::required("status", Type::String, "Readiness diagnostic code"),
+    Field::optional(
+        "model_profile_id",
+        Type::String,
+        "Configured model profile UUIDv7",
+    ),
+    Field::optional("model_id", Type::String, "Configured model identifier"),
+    Field::required(
+        "candidates",
+        Type::List(&AGENT_READINESS_CANDIDATE_TYPE),
+        "Evaluated provider connection candidates",
+    ),
+    Field::optional(
+        "earliest_cooldown_until",
+        Type::String,
+        "Earliest cooldown expiry if pool is exhausted",
     ),
 ];
 
@@ -242,6 +288,21 @@ pub(super) const COMMANDS: &[Command] = &[
             output: r#"{"id":"0193a5c0-0000-7000-8000-000000000051","revision":1,"generation":10}"#,
         },
     },
+    Command {
+        resource: "agent",
+        verb: "readiness",
+        summary: "Check agent turn readiness and provider candidates",
+        call: "member.agent_readiness",
+        kind: Kind::Read,
+        input: AGENT_READINESS_INPUT,
+        content_field: None,
+        output: AGENT_READINESS_OUTPUT,
+        errors: READ_ERRORS,
+        example: Example {
+            input: r#"{"member":"0193a5c0-0000-7000-8000-000000000051"}"#,
+            output: r#"{"employee_id":"0193a5c0-0000-7000-8000-000000000051","ready":true,"status":"READY","model_profile_id":"0193a5c0-0000-7000-8000-000000000060","model_id":"sonnet","candidates":[]}"#,
+        },
+    },
 ];
 
 /// `Use when:` guidance of each `agent` command here.
@@ -252,6 +313,7 @@ pub(super) const CUES: &[CommandCue] = &[
     ("agent", "move", "re-assigning an agent to a different home team (requires `--if-match`)."),
     ("agent", "offboard", "permanently offboarding an agent and ending its active work (requires `--if-match`)."),
     ("agent", "pause", "temporarily suspending an active agent without offboarding it (requires `--if-match`)."),
+    ("agent", "readiness", "diagnosing whether an agent is ready to take a turn and why candidate provider connections are eligible or skipped."),
     ("agent", "resume", "re-activating a paused agent so it can take turns again (requires `--if-match`)."),
     ("agent", "update", "editing an agent's profile fields, role, reporting manager, or instructions body (requires `--if-match`)."),
 ];
@@ -270,6 +332,7 @@ pub(super) fn dispatch<T: OfficeTransport + ?Sized>(
         "offboard" => write_agent_offboard(transport, request),
         "execution-get" => read_agent_execution_get(transport, request),
         "execution-set" => write_agent_execution_set(transport, request),
+        "readiness" => read_agent_readiness(transport, request),
         _ => return None,
     })
 }
@@ -395,4 +458,21 @@ fn write_agent_execution_set<T: OfficeTransport + ?Sized>(
         json!(system_prompt_markdown),
     );
     send_entity_write(transport, request, "member.agent_execution_set", params)
+}
+
+fn read_agent_readiness<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let employee_id = require_str(request, "member")?;
+    let mut params = Map::new();
+    params.insert("employee_id".into(), json!(employee_id));
+    copy_opt_str(request, &mut params, "task_id", "task_id");
+    let raw = transport.call_method("member.agent_readiness", serde_json::Value::Object(params))?;
+    let record: AgentReadinessResult =
+        serde_json::from_value(raw).map_err(|_| decode_err("member.agent_readiness"))?;
+    Ok(Answer::completed(encode(
+        &record,
+        "member.agent_readiness",
+    )?))
 }

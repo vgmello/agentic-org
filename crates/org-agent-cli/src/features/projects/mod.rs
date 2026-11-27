@@ -10,7 +10,8 @@ use serde_json::{json, Map, Value};
 
 use crate::runtime::domain::{CommandCue, Domain};
 use crate::runtime::input::{
-    decode_err, entity_id, opt_bool, opt_str, require_str, send_command, MUTATION_OUTPUT,
+    decode_err, entity_id, opt_bool, opt_str, require_if_match, require_str, send_command,
+    MUTATION_OUTPUT,
 };
 use crate::runtime::transport::{paginate, parse_cursor, OfficeTransport, Refusal};
 
@@ -100,6 +101,25 @@ const PROJECT_CREATE_INPUT: &[Field] = &[
     Field::optional("project_id", Type::String, "Caller-supplied project UUIDv7"),
 ];
 
+const PROJECT_ADD_TEAM_INPUT: &[Field] = &[
+    Field::required("project_id", Type::String, "Project UUIDv7"),
+    Field::required("team_id", Type::String, "Contributing team UUIDv7"),
+    Field::optional(
+        "project_team_id",
+        Type::String,
+        "Caller-supplied project-team link UUIDv7",
+    ),
+];
+
+const PROJECT_REMOVE_TEAM_INPUT: &[Field] = &[
+    Field::required("project_team_id", Type::String, "Project-team link UUIDv7"),
+    Field::optional(
+        "areas_to_team_id",
+        Type::String,
+        "Remaining team UUIDv7 to inherit areas owned by the leaving team",
+    ),
+];
+
 /// The `project` rows.
 const COMMANDS: &[Command] = &[
     Command {
@@ -150,13 +170,51 @@ const COMMANDS: &[Command] = &[
             output: r#"{"id":"0193a5c0-0000-7000-8000-000000000030","status":"committed","position":{"epoch":1,"seq":11}}"#,
         },
     },
+    Command {
+        resource: "project",
+        verb: "add-team",
+        summary: "Add a contributing team to a project",
+        call: "project.add_team",
+        kind: Kind::Write {
+            ack: Ack::Durable,
+            if_match: IfMatch::No,
+        },
+        input: PROJECT_ADD_TEAM_INPUT,
+        content_field: None,
+        output: MUTATION_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"project_id":"0193a5c0-0000-7000-8000-000000000030","team_id":"0193a5c0-0000-7000-8000-000000000011"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000031","status":"committed","position":{"epoch":1,"seq":12}}"#,
+        },
+    },
+    Command {
+        resource: "project",
+        verb: "remove-team",
+        summary: "Remove a contributing team from a project",
+        call: "project.remove_team",
+        kind: Kind::Write {
+            ack: Ack::Durable,
+            if_match: IfMatch::Required,
+        },
+        input: PROJECT_REMOVE_TEAM_INPUT,
+        content_field: None,
+        output: MUTATION_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"project_team_id":"0193a5c0-0000-7000-8000-000000000031"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000031","status":"committed","position":{"epoch":1,"seq":13}}"#,
+        },
+    },
 ];
 
 /// `Use when:` guidance of each `project` command.
 const CUES: &[CommandCue] = &[
+    ("project", "add-team", "adding a contributing team to an existing project."),
     ("project", "create", "creating a new project with an existing or newly created accountable owning team."),
     ("project", "inspect", "fetching one project's owning team, contributing teams, key, slug, and archive status."),
     ("project", "list", "discovering active (or archived) projects and their `P-<n>` keys, slugs, and owning teams."),
+    ("project", "remove-team", "removing a contributing team link from a project (requires `--if-match`)."),
 ];
 
 fn dispatch(
@@ -171,6 +229,8 @@ fn dispatch(
         "list" => read_project_list(transport, request),
         "inspect" => read_project_inspect(transport, request),
         "create" => write_project_create(transport, request),
+        "add-team" => write_project_add_team(transport, request),
+        "remove-team" => write_project_remove_team(transport, request),
         _ => return None,
     })
 }
@@ -227,6 +287,47 @@ fn write_project_create<T: OfficeTransport + ?Sized>(
         params.insert("contributing_team_ids".into(), contrib.clone());
     }
     send_command(transport, request, "project.create", params, &project_id)
+}
+
+fn write_project_add_team<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let project_id = require_str(request, "project_id")?;
+    let team_id = require_str(request, "team_id")?;
+    let project_team_id = entity_id(request, Some("project_team_id"), "project.add_team.id")?;
+    let mut params = Map::new();
+    params.insert("project_team_id".into(), json!(project_team_id));
+    params.insert("project_id".into(), json!(project_id));
+    params.insert("team_id".into(), json!(team_id));
+    send_command(
+        transport,
+        request,
+        "project.add_team",
+        params,
+        &project_team_id,
+    )
+}
+
+fn write_project_remove_team<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    request: &Request,
+) -> Result<Answer, Refusal> {
+    let project_team_id = require_str(request, "project_team_id")?;
+    let expected = require_if_match(request)?;
+    let mut params = Map::new();
+    params.insert("project_team_id".into(), json!(project_team_id));
+    params.insert("expected_version".into(), json!(expected));
+    if let Some(areas_to) = opt_str(request, "areas_to_team_id") {
+        params.insert("areas_to_team_id".into(), json!(areas_to));
+    }
+    send_command(
+        transport,
+        request,
+        "project.remove_team",
+        params,
+        project_team_id,
+    )
 }
 
 fn project_value(project: &ProjectRecord) -> Value {
