@@ -263,9 +263,7 @@ fn acting_for_the_owner_she_never_shows_another_members_dm_with_her() {
         w.narrowed::<ChatMessages>(
             ChatMessagesParams {
                 conversation: Some(conversation.to_owned()),
-                thread_id: None,
-                limit: None,
-                cursor: None,
+                ..Default::default()
             },
             &for_owner,
             |office, tess, p| office.chat_messages(tess, p).unwrap().unwrap(),
@@ -504,9 +502,7 @@ fn msg_reply_in_another_members_dm_posts_nothing_and_marks_nothing_read() {
                 &w.owner,
                 ChatMessagesParams {
                     conversation: Some(w.owner_dm.clone()),
-                    thread_id: None,
-                    limit: None,
-                    cursor: None,
+                    ..Default::default()
                 },
             )
             .unwrap()
