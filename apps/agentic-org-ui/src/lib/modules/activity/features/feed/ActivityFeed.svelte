@@ -24,7 +24,8 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { accountZone, ZoneNotice } from '$lib/modules/preferences';
+	import { accountZone } from '$lib/modules/preferences';
+	import { ZoneNotice } from '$lib/modules/preferences/ui';
 	import { activityApi } from '../../api';
 	import { matchesQuery, queryFromParams, queryToParams } from '../../filter';
 	import { dayBlocks } from '../../group';

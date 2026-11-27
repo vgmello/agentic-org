@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { DocumentEditor, editorMode } from '$lib/modules/processes';
+	import { editorMode } from '$lib/modules/processes';
+	import DocumentEditor from '$lib/modules/processes/features/editor/DocumentEditor.svelte';
 
 	let { data } = $props();
 </script>

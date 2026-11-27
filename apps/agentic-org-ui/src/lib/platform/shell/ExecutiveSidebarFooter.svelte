@@ -8,7 +8,7 @@
 	import WifiOff from '@lucide/svelte/icons/wifi-off';
 	import type { Connection } from '$lib/proto';
 	import ShellAccountMenu from './ShellAccountMenu.svelte';
-	import { UI_THEMES, uiPrefs } from './ui-preferences.svelte';
+	import { UI_THEMES, uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	interface FooterOfficeState {
 		label: string;

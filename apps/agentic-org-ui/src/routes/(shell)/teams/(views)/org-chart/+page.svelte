@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { pageTitle } from '$lib/nav';
-	import { OrgChartPage } from '$lib/modules/org-chart';
+	import OrgChartPage from '$lib/modules/org-chart/features/chart/OrgChartPage.svelte';
 
 	let { data } = $props();
 </script>

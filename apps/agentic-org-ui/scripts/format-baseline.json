@@ -207,7 +207,6 @@
 	"src/lib/platform/http/gateway-public-http.test.ts": "sha256:7a057df1be7a36aa91efa0931f3665c003c996e08d1510487eca7ada2421b1b0",
 	"src/lib/platform/http/json-http.test.ts": "sha256:26c2c6289a97c2db44b27942ea2c6f8dacfb6653891144dbd36ea785c15c920c",
 	"src/lib/platform/shell/desktop-navigation.ts": "sha256:44511b26c838a04b2d971b9e4f1d630a84b33b3963280fb2aa65ce97ec8b5d2a",
-	"src/lib/platform/shell/modal-back.ts": "sha256:cc6a63cf0a1680f4195848f5a1c08205ec0dda104000d6eecea7e491ba76e627",
 	"src/lib/platform/tooling/auth-build-exclusion.test.ts": "sha256:ca149b160f138940308d7f6d78de32f318a85b5b6914cfff737c814dfc58bf89",
 	"src/lib/platform/tooling/production-import-guard.test.ts": "sha256:af55c60c0ff78eba4a174465684be1d8c92157532d4deaf8624741d6b4caab86",
 	"src/lib/platform/tooling/production-import-guard.ts": "sha256:e25470d5665b2b50e136cee3d679df7839f1684669ce8a765d907b74fe6726dc",

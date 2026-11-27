@@ -19,8 +19,8 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
-	import { singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
+	import { focusDestinationHeading } from '$lib/platform/workspace/focus-destination';
+	import { singleKeyShortcutsOn } from '$lib/platform/workspace/shortcuts';
 
 	let {
 		tabs,

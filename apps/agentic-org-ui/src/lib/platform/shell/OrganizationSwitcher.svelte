@@ -10,7 +10,7 @@
 	import { officeApi } from '$lib/modules/offices/office-api';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { toAppError, type Connection } from '$lib/proto';
-	import { areaCapability } from './capabilities';
+	import { areaCapability } from '$lib/platform/workspace/capabilities';
 
 	/**
 	 * Quick organization switcher in the shell sidebar header. Lists authorized organizations via
@@ -30,7 +30,7 @@
 	let open = $state(false);
 	let loading = $state(false);
 	let switching = $state<string>();
-	let items = $state<OrgItem[]>([]);
+	let items = $state.raw<OrgItem[]>([]);
 
 	const session = $derived(
 		appSession.state.kind === 'signed-in' ? appSession.state.session : undefined

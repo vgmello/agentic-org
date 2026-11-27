@@ -3,6 +3,3 @@
 export { preferencesApi, type PreferencesApi } from './api';
 export { accountZone } from './account-zone.svelte';
 export * from './time';
-export { default as ZoneNotice } from './ZoneNotice.svelte';
-export { default as KeyboardSection } from './features/keyboard/KeyboardSection.svelte';
-export { default as TimeZoneSection } from './features/time-zone/TimeZoneSection.svelte';

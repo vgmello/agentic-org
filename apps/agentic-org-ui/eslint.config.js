@@ -176,8 +176,8 @@ const LEGACY_LOCAL_STORAGE_FILES = [
 	'src/lib/modules/work/features/tasks/TasksBoard.svelte',
 	'src/lib/modules/workitems/filters.ts',
 	'src/lib/platform/organizations/selection.ts',
-	'src/lib/platform/shell/shortcuts.ts',
-	'src/lib/platform/shell/ui-preferences.svelte.ts'
+	'src/lib/platform/workspace/shortcuts.ts',
+	'src/lib/platform/workspace/ui-preferences.svelte.ts'
 ];
 
 /** Caller-scoped device storage modules permitted to use localStorage + sessionStorage. */

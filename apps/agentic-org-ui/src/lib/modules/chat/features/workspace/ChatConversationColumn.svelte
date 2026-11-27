@@ -8,8 +8,6 @@
 	import Unplug from '@lucide/svelte/icons/unplug';
 	import Callout from '$lib/components/Callout.svelte';
 	import {
-		Composer,
-		MessageRow,
 		titleOf,
 		useOptionalDraftStore,
 		type ChatContext,
@@ -22,6 +20,7 @@
 		type MessageRows,
 		type Sidebar
 	} from '$lib/modules/messaging';
+	import { Composer, MessageRow } from '$lib/modules/messaging/ui';
 	import { pendingToMessage } from '../../helpers';
 	import type { PendingMessage } from '../../types';
 	import { jumpToLatestMessage, type FeedScrollState } from './chat-scroll';

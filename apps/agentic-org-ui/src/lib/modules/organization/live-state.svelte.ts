@@ -1,3 +1,5 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
+
 // What the shell shows about the live feed, kept outside the layout so it survives the layout being replaced (going to
 // the welcome screen and back) and is readable by whatever loads the organization.
 export const liveState = $state({
@@ -5,4 +7,9 @@ export const liveState = $state({
 	paused: {} as Record<string, boolean>,
 	/** When each organization's structure was last loaded by the screens. */
 	loadedAt: {} as Record<string, Date>
+});
+
+appSession.onSessionEnded(() => {
+	liveState.paused = {};
+	liveState.loadedAt = {};
 });

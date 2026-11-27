@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { ProjectFrame } from '$lib/modules/projects';
+	import ProjectFrame from '$lib/modules/projects/features/frame/ProjectFrame.svelte';
 
 	let { data, children } = $props();
 	const projectId = $derived(page.params.id ?? '');

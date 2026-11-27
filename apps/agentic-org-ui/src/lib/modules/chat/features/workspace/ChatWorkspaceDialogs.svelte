@@ -5,14 +5,12 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
 	import {
-		ChannelDialog,
-		CommandDialog,
-		NewMessageDialog,
 		type BrowseRow,
 		type ChatContext,
 		type CommandForm,
 		type Conversation
 	} from '$lib/modules/messaging';
+	import { ChannelDialog, CommandDialog, NewMessageDialog } from '$lib/modules/messaging/ui';
 	import type { sender } from '../../api';
 	import BrowseChannelsDialog from '../browse-channels/BrowseChannelsDialog.svelte';
 

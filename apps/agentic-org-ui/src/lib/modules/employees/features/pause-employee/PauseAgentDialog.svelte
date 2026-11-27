@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Dialog,
@@ -31,28 +30,8 @@
 
 	let busy = $state(false);
 	let error = $state<string | undefined>();
-	let shown = $state<Member | undefined>();
-	$effect(() => {
-		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
-		if (open) {
-			untrack(() => {
-				if (!agent) return;
-				shown = agent;
-				error = undefined;
-			});
-		}
-	});
+	const shown = $derived(agent);
 	const teams = $derived(shown ? teamsOfMember(snapshot, shown.id).map((t) => t.name) : []);
-
-	// After a stale edit (HQ changed the agent meanwhile) the page reloads: take the latest as the baseline and the
-	// version to send, but leave anything the owner typed alone, so "Here's the latest" is true and a retry can work.
-	$effect(() => {
-		const latest = agent;
-		untrack(() => {
-			if (open && shown && latest && latest.id === shown.id && latest.version !== shown.version)
-				shown = latest;
-		});
-	});
 
 	async function confirm() {
 		if (!shown || busy) return;
@@ -74,7 +53,16 @@
 	}
 </script>
 
-<Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
+<Dialog
+	bind:open
+	onOpenChange={(next) => {
+		if (next) error = undefined;
+		else if (busy) open = true;
+	}}
+	onOpenChangeComplete={(next) => {
+		if (!next) error = undefined;
+	}}
+>
 	<DialogContent>
 		<DialogHeader>
 			<DialogTitle text={`Pause ${shown?.name ?? ''}?`} />

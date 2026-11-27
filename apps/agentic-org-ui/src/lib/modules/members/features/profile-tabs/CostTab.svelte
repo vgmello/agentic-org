@@ -6,7 +6,7 @@
 -->
 <script lang="ts">
 	import EmptyState from '$lib/components/EmptyState.svelte';
-	import { MemberCostView } from '$lib/modules/costs';
+	import { MemberCostView } from '$lib/modules/costs/ui';
 	import { accountZone } from '$lib/modules/preferences';
 	import { profileContext } from '../profile/context.svelte';
 

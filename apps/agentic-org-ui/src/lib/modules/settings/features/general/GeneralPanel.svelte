@@ -9,7 +9,7 @@
 		ARCHIVE_AFTER_DAYS_OPTIONS,
 		uiPrefs,
 		type ArchiveAfterDays
-	} from '$lib/platform/shell/ui-preferences.svelte';
+	} from '$lib/platform/workspace/ui-preferences.svelte';
 	import { settingsApi } from '../../api';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import { tone } from '$lib/components/pills';

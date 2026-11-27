@@ -32,7 +32,7 @@
 	import { toAppError } from '$lib/proto';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { drafts } from '$lib/platform/auth/draft-registry';
-	import { registerModalBack } from '$lib/platform/shell/modal-back';
+	import { registerModalBack } from '$lib/platform/workspace/modal-back';
 	import { newStableId } from '$lib/modules/organization/commands';
 	import { rolesApi } from '../../api';
 	import {

@@ -30,7 +30,8 @@
 		}
 	}
 
-	function scheduleOpen() {
+	function scheduleOpen(event: PointerEvent) {
+		if (event.pointerType === 'touch') return;
 		clearTimer();
 		hoverTimer = setTimeout(() => {
 			hoverTimer = undefined;
@@ -51,8 +52,10 @@
 		}
 	}
 
-	function onKeydown(event: KeyboardEvent) {
+	function onKeydownCapture(event: KeyboardEvent) {
 		if (open && event.key === 'Escape') {
+			event.preventDefault();
+			event.stopPropagation();
 			close();
 		}
 	}
@@ -76,7 +79,7 @@
 	onDestroy(clearTimer);
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydowncapture={onKeydownCapture} />
 
 <span use:trackTooltip class={cn('relative inline-flex', className)}>
 	{@render children()}

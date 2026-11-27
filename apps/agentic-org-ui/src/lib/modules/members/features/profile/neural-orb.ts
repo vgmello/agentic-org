@@ -180,7 +180,7 @@ export class NeuralOrbEngine {
 	private raf: number | null = null;
 	private lastDraw = 0;
 	private cachedThemeKey = '';
-	private cachedColors: OrbColors = { primary: '#38bdf8', secondary: '#2563eb', ring: '#38bdf8' };
+	private cachedColors: OrbColors = resolveOrbColors('idle');
 	private glowSprite: HTMLCanvasElement | null = null;
 
 	constructor(canvas: HTMLCanvasElement, initialState: OrbState = 'idle') {

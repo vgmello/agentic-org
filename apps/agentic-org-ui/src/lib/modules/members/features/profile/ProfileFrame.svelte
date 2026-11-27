@@ -17,7 +17,7 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
-	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
+	import InteriorSearchBar from '$lib/components/shell/InteriorSearchBar.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import TabsNav from '$lib/components/TabsNav.svelte';
 	import { mobileButton } from '$lib/components/classes';

@@ -5,7 +5,7 @@
 <script lang="ts">
 	import Loaded from '$lib/components/Loaded.svelte';
 	import { Resource } from '$lib/components/resource.svelte';
-	import { ActivityRows } from '$lib/modules/members';
+	import { ActivityRows } from '$lib/modules/members/ui';
 	import { teamsApi } from '../../api';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import { teamPageContext } from './context';

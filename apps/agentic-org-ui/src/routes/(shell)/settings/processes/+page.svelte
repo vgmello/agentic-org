@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ProcessesPage } from '$lib/modules/processes';
+	import ProcessesPage from '$lib/modules/processes/features/place-view/ProcessesPage.svelte';
 
 	let { data } = $props();
 </script>

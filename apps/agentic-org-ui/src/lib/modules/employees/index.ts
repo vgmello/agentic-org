@@ -1,8 +1,2 @@
 // The employees module's public entry. Other modules and routes import from here, never from its folders.
-export { default as EditAgentDialog } from './features/edit-profile/EditAgentDialog.svelte';
-export { default as HowItRunsDialog } from './features/configure-run/HowItRunsDialog.svelte';
-export { default as OffboardAgentDialog } from './features/offboard-employee/OffboardAgentDialog.svelte';
-export { default as PauseAgentDialog } from './features/pause-employee/PauseAgentDialog.svelte';
-export { default as HireFlow } from './features/hire/HireFlow.svelte';
-export { default as HireRequests } from './features/hire-requests/HireRequests.svelte';
 export { HIRE_REQUESTS_URL, hireUrl } from './hire';

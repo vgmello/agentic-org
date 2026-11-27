@@ -21,7 +21,7 @@
 		formatRelativeNotificationTime,
 		useNotifications,
 		type NotificationIcon
-	} from './notifications.svelte';
+	} from '$lib/platform/workspace/notifications.svelte';
 
 	let {
 		offline = false,

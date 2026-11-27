@@ -104,7 +104,7 @@
 		const a = shown.agent;
 		const change: AgentChange = {};
 		if (!isBuiltIn && name.trim() !== shown.name) change.name = name;
-		if (role.trim() !== a.role) change.role = role;
+		if (!isBuiltIn && role.trim() !== a.role) change.role = role;
 		if (title.trim() !== a.title) change.title = title;
 		if (focus.trim() !== (a.focus ?? '')) change.focus = focus;
 		if (runtime !== 'unknown' && JSON.stringify(runtimeValue) !== JSON.stringify(a.runtime))
@@ -151,7 +151,12 @@
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div class="space-y-2">
 					<Label for="agent-role">Role</Label>
-					<Input id="agent-role" bind:value={role} disabled={busy} autocomplete="off" />
+					<Input
+						id="agent-role"
+						bind:value={role}
+						disabled={busy || isBuiltIn}
+						autocomplete="off"
+					/>
 				</div>
 				<div class="space-y-2">
 					<Label for="agent-title">Title</Label>

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { SessionLogView } from '$lib/modules/members';
+	import SessionLogView from '$lib/modules/members/features/session-log/SessionLogView.svelte';
 
 	let { data } = $props();
 </script>

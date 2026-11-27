@@ -442,6 +442,7 @@
 				"src/lib/modules/organization/people-edit*",
 				"src/lib/modules/organization/team-edit*",
 				"src/lib/modules/org-chart/**",
+				"src/lib/modules/organization/ui.ts",
 				"src/lib/modules/organization/features/{add-person/AddPersonSheet,teams/{MoveTeamDialog,NewTeamSheet,RenameTeamDialog},project-teams/{ProjectTeamDialog,RemoveProjectDialog}}.svelte",
 				"e2e/org-chart-menu.ts"
 			]
@@ -575,7 +576,7 @@
 		},
 		{
 			"from": "src/lib/modules/members/features/directory/MembersDirectory.svelte",
-			"to": "src/lib/modules/organization/features/add-person/AddPersonSheet.svelte",
+			"to": "src/lib/modules/organization/ui.ts",
 			"why": "The Members directory's Add a person opens the organization's existing add-a-person flow, as the top-bar New and a team's page do, without owning it; the org-chart specs cover that flow. It moves into the members module when the org chart slice is rebuilt."
 		},
 		{
@@ -615,7 +616,7 @@
 		},
 		{
 			"from": "src/lib/modules/teams/features/{team-actions/TeamDialogs,team-page/AddPersonToTeam}.svelte",
-			"to": "src/lib/modules/organization/{features/teams/{NewTeamSheet,MoveTeamDialog,RenameTeamDialog}.svelte,team-edit.ts}",
+			"to": "src/lib/modules/organization/{ui,team-edit}.ts",
 			"why": "The Teams index and a team's page reuse the org chart's team dialogs (new, move, rename) through TeamDialogs, and read the org chart's team helpers (the team list for Home team, Delete's effects on contributed projects), without owning them; the org-chart specs cover those dialogs and helpers. Archive, Delete and Add a person from a team are the teams module's own (team-page.spec.ts)."
 		},
 		{
@@ -630,7 +631,7 @@
 		},
 		{
 			"from": "src/lib/modules/offices/features/list/OfficesPage.svelte",
-			"to": "src/lib/modules/employees/index.ts",
+			"to": "src/lib/modules/employees/{index,ui}.ts",
 			"why": "Offices lists unplaced agents and opens the employees module's Offboard agent dialog; the org-chart category owns and tests that dialog."
 		},
 		{
@@ -655,7 +656,7 @@
 		},
 		{
 			"from": "src/lib/modules/{teams/features/team-page/TeamProcesses,members/features/profile-tabs/ProcessesTab}.svelte",
-			"to": "src/lib/modules/processes/index.ts",
+			"to": "src/lib/modules/processes/{index,ui}.ts",
 			"why": "A team's and an agent's Processes tab (processes-ux §2 \"Where\") embed the processes module's own view through its public index (PlaceProcesses, readPlace), so the inheritance view has one owner; the processes specs cover it and team-page/member-profile specs open those tabs."
 		},
 		{
@@ -750,6 +751,8 @@
 			"src/lib/platform/organizations/{readers,selection}.ts",
 			"src/lib/platform/tooling/**",
 			"src/lib/platform/shell/**",
+			"src/lib/platform/workspace/**",
+			"src/lib/components/shell/**",
 			"src/lib/styles/**",
 			"src/lib/modules/shell/**",
 			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,agent-setup,projects,workitems,docs,features,releases,insights,costs,budgets,access,updates,tess}/**",

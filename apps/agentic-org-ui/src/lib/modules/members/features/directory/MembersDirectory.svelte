@@ -10,7 +10,7 @@
 	import { invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
-	import AddPersonSheet from '$lib/modules/organization/features/add-person/AddPersonSheet.svelte';
+	import { AddPersonSheet } from '$lib/modules/organization/ui';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';

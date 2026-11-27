@@ -20,7 +20,7 @@
 	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
 	import Callout from '$lib/components/Callout.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
-	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
+	import InteriorSearchBar from '$lib/components/shell/InteriorSearchBar.svelte';
 	import TabsNav from '$lib/components/TabsNav.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { Resource } from '$lib/components/resource.svelte';

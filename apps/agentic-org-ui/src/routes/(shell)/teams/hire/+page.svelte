@@ -3,7 +3,7 @@
 	import { afterNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { pageTitle } from '$lib/nav';
-	import { HireFlow } from '$lib/modules/employees';
+	import HireFlow from '$lib/modules/employees/features/hire/HireFlow.svelte';
 
 	let { data } = $props();
 

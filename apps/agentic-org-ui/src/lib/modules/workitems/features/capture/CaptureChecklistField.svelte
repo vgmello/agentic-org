@@ -8,6 +8,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import { errorClass, inputClass } from '$lib/components/classes';
 	import { splitSteps, stepError } from '../../present';
 
@@ -26,9 +27,19 @@
 	} = $props();
 
 	let stepInputError = $state<string | undefined>();
+	let nextStepId = 1;
+	let stepIds = $state<number[]>([]);
+	const stepRows = $derived(
+		draftSteps.map((text, idx) => ({
+			id: stepIds[idx] ?? -(idx + 1),
+			text,
+			idx
+		}))
+	);
 
 	export function resetError() {
 		stepInputError = undefined;
+		if (draftSteps.length === 0) stepIds = [];
 	}
 
 	function appendDraftSteps(raw: string) {
@@ -38,6 +49,9 @@
 			stepInputError = err;
 			return;
 		}
+		const baseIds =
+			stepIds.length === draftSteps.length ? stepIds : draftSteps.map(() => nextStepId++);
+		stepIds = [...baseIds, ...lines.map(() => nextStepId++)];
 		draftSteps = [...draftSteps, ...lines];
 		stepInput = '';
 		stepInputError = undefined;
@@ -57,6 +71,9 @@
 	}
 
 	function removeDraftStep(index: number) {
+		if (stepIds.length === draftSteps.length) {
+			stepIds = stepIds.filter((_, i) => i !== index);
+		}
 		draftSteps = draftSteps.filter((_, i) => i !== index);
 	}
 </script>
@@ -65,21 +82,23 @@
 	<Label for="{uid}-ac-step" class="block text-sm/6 font-medium text-fg">
 		Acceptance criteria (optional)
 	</Label>
-	{#if draftSteps.length > 0}
+	{#if stepRows.length > 0}
 		<ul role="list" class="flex flex-col gap-1" data-testid="composer-draft-steps">
-			{#each draftSteps as stepText, idx (`${idx}-${stepText}`)}
+			{#each stepRows as row (row.id)}
 				<li
 					class="flex items-center justify-between gap-2 rounded-md bg-surface-raised px-2.5 py-1.5 text-xs/5 text-fg ring-1 ring-line"
 				>
-					<span class="min-w-0 flex-1 [overflow-wrap:anywhere]">{stepText}</span>
-					<button
-						type="button"
-						aria-label="Remove step {idx + 1}"
-						onclick={() => removeDraftStep(idx)}
-						class="shrink-0 rounded p-0.5 text-fg-muted hover:text-fg"
-					>
-						<X class="size-3.5" aria-hidden="true" />
-					</button>
+					<span class="min-w-0 flex-1 [overflow-wrap:anywhere]">{row.text}</span>
+					<ModalTooltip label="Remove step {row.idx + 1}" side="left">
+						<button
+							type="button"
+							aria-label="Remove step {row.idx + 1}"
+							onclick={() => removeDraftStep(row.idx)}
+							class="shrink-0 rounded p-0.5 text-fg-muted hover:text-fg"
+						>
+							<X class="size-3.5" aria-hidden="true" />
+						</button>
+					</ModalTooltip>
 				</li>
 			{/each}
 		</ul>

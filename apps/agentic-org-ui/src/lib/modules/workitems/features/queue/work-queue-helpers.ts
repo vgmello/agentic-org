@@ -1,5 +1,5 @@
 import { tick } from 'svelte';
-import { isEditableTarget } from '$lib/platform/shell/shortcuts';
+import { isEditableTarget } from '$lib/platform/workspace/shortcuts';
 import type { WorkStatusRingTone } from '$lib/modules/work/compact';
 import type { ShowView } from '../../filters';
 import type { GroupBy } from '../../present';

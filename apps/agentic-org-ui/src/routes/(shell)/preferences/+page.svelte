@@ -2,11 +2,12 @@
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import Section from '$lib/components/Section.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { KeyboardSection, TimeZoneSection } from '$lib/modules/preferences';
+	import KeyboardSection from '$lib/modules/preferences/features/keyboard/KeyboardSection.svelte';
+	import TimeZoneSection from '$lib/modules/preferences/features/time-zone/TimeZoneSection.svelte';
 	import { pageTitle } from '$lib/nav';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import ChangePasswordDialog from '$lib/platform/auth/ChangePasswordDialog.svelte';
-	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	let { data } = $props();
 	let changePasswordOpen = $state(false);

@@ -10,9 +10,9 @@
 	import { toast } from 'svelte-sonner';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import { newId } from '$lib/modules/organization/commands';
-	import { useNotifications } from '$lib/platform/shell/notifications.svelte';
-	import { useShellAi } from '$lib/platform/shell/shell-ai';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { useNotifications } from '$lib/platform/workspace/notifications.svelte';
+	import { useShellAi } from '$lib/platform/workspace/shell-ai';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
 	import { toAppError } from '$lib/proto';
 	import {
 		Dialog,

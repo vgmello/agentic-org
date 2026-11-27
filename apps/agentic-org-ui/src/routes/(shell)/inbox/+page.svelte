@@ -4,7 +4,7 @@
 	import { pageTitle } from '$lib/nav';
 	import { toAppError } from '$lib/proto';
 	import { owner } from '$lib/modules/organization/model';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
 	import InboxTriageWorkspace from '$lib/modules/inbox/features/triage/InboxTriageWorkspace.svelte';
 
 	let { data } = $props();

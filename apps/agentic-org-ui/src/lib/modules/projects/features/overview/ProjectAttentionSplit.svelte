@@ -8,7 +8,7 @@
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import SectionHead from '$lib/components/SectionHead.svelte';
 	import { deriveTriageItems, executeDecisionAction, type TriageItem } from '$lib/modules/inbox';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
 	import { toAppError } from '$lib/proto';
 
 	let {

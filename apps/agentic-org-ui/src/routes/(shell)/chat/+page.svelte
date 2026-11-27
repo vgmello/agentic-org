@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ChatWorkspace } from '$lib/modules/chat';
+	import ChatWorkspace from '$lib/modules/chat/features/workspace/ChatWorkspace.svelte';
 
 	let { data } = $props();
 </script>

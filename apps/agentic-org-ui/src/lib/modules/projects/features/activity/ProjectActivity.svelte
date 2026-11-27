@@ -8,10 +8,10 @@
 -->
 <script lang="ts">
 	import { Resource } from '$lib/components/resource.svelte';
-	import { ActivityCommandCenter } from '$lib/modules/activity';
+	import { ActivityCommandCenter } from '$lib/modules/activity/ui';
 	import { releasesApi } from '$lib/modules/releases/api';
 	import type { ReleaseDetail, ReleaseRow } from '$lib/modules/releases/types';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
 	import type { OrgSnapshot } from '$lib/proto';
 	import { projectsApi } from '../../api';
 	import { projectFrame } from '../frame/context';

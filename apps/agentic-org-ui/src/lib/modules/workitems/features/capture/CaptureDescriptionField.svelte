@@ -6,6 +6,7 @@
 	import { tick } from 'svelte';
 	import X from '@lucide/svelte/icons/x';
 	import { Label } from '$lib/components/ui/label';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import { textareaClass } from '$lib/components/classes';
 	import type { EmployeeChoice, TaskType } from '../../types';
 	import {
@@ -161,14 +162,16 @@
 					{#if emp.role}
 						<span class="text-fg-muted">{emp.role}</span>
 					{/if}
-					<button
-						type="button"
-						aria-label="Remove {emp.name}"
-						onclick={() => removeMention(emp.id)}
-						class="ml-0.5 rounded-full p-0.5 text-fg-muted hover:text-fg"
-					>
-						<X class="size-3" aria-hidden="true" />
-					</button>
+					<ModalTooltip label="Remove {emp.name}">
+						<button
+							type="button"
+							aria-label="Remove {emp.name}"
+							onclick={() => removeMention(emp.id)}
+							class="ml-0.5 rounded-full p-0.5 text-fg-muted hover:text-fg"
+						>
+							<X class="size-3" aria-hidden="true" />
+						</button>
+					</ModalTooltip>
 				</span>
 			{/each}
 		</div>

@@ -233,20 +233,37 @@ export interface Member {
 	version: number;
 }
 
+export function isBuiltInHandle(
+	kind: MemberKind | undefined,
+	handle?: string | null,
+	role?: string | null,
+	builtinKey?: string | null
+): boolean {
+	if (kind !== 'agent') return false;
+	if (typeof builtinKey === 'string' && builtinKey.length > 0) {
+		return builtinKey === 'hr' || builtinKey === 'chief_of_staff';
+	}
+	const h = (handle ?? '').trim().toLowerCase().replace(/^@/, '');
+	const r = (role ?? '').trim().toLowerCase();
+	if (h === 'hr' || h === 'chief-of-staff' || h === 'tess-cos' || /^tess-cos-\d+$/.test(h)) {
+		return true;
+	}
+	if (h === 'tess' && (r === '' || r.includes('chief of staff'))) return true;
+	return false;
+}
+
 /**
  * True for built-in organization agents (HR and Chief of Staff / Tess) that cannot be renamed,
  * offboarded, or deleted while the organization exists (TASK-80.1, doc-78).
  */
 export function isBuiltInAgent(member: Member | undefined): boolean {
-	if (!member || member.kind !== 'agent') return false;
-	if (typeof member.builtin_key === 'string' && member.builtin_key.length > 0) {
-		return member.builtin_key === 'hr' || member.builtin_key === 'chief_of_staff';
-	}
-	const handle = (member.handle ?? member.agent?.messaging_name ?? '').trim().toLowerCase();
-	const role = (member.agent?.role ?? '').trim().toLowerCase();
-	if (handle === 'hr') return true;
-	if (handle === 'tess' && role.includes('chief of staff')) return true;
-	return false;
+	if (!member) return false;
+	return isBuiltInHandle(
+		member.kind,
+		member.handle ?? member.agent?.messaging_name,
+		member.agent?.role,
+		member.builtin_key
+	);
 }
 
 /** A team working on a project. Usually one per project; several teams can share one. */

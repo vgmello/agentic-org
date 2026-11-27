@@ -7,7 +7,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { beforeNavigate } from '$app/navigation';
-	import { registerModalBack } from '$lib/platform/shell/modal-back';
+	import { registerModalBack } from '$lib/platform/workspace/modal-back';
 	import { toAppError } from '$lib/proto';
 	import { Button } from '$lib/components/ui/button';
 	import {
@@ -52,9 +52,6 @@
 
 	let busy = $state(false);
 	let error = $state<string | undefined>();
-	$effect(() => {
-		if (open) error = undefined;
-	});
 	// Back with a confirmation open closes it only (never navigates) unless an action is in flight (app-shell-ux §6).
 	$effect(() => {
 		if (open)
@@ -91,8 +88,16 @@
 
 <Dialog
 	bind:open
-	onOpenChange={(next) => !next && busy && (open = true)}
-	onOpenChangeComplete={(next) => !next && (busy = false)}
+	onOpenChange={(next) => {
+		if (next) error = undefined;
+		else if (busy) open = true;
+	}}
+	onOpenChangeComplete={(next) => {
+		if (!next) {
+			busy = false;
+			error = undefined;
+		}
+	}}
 >
 	<DialogContent
 		{onCloseAutoFocus}

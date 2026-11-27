@@ -45,8 +45,14 @@ describe('look tokens guard', () => {
 				problems.push(
 					`${name}:${lineOf(text, m.index ?? 0)}  ${m[0]}  → use a look token from src/app.css`
 				);
-			if (name.endsWith('.css')) {
-				for (const m of text.matchAll(cssHex))
+			if (
+				name.endsWith('.css') ||
+				(name.endsWith('.ts') &&
+					!name.endsWith('.test.ts') &&
+					!name.startsWith('src/lib/platform/tooling/'))
+			) {
+				const hexRe = name.endsWith('.css') ? cssHex : /['"`]#[0-9a-fA-F]{3,8}['"`]/g;
+				for (const m of text.matchAll(hexRe))
 					problems.push(
 						`${name}:${lineOf(text, m.index ?? 0)}  ${m[0]}  → use a look token from src/app.css`
 					);

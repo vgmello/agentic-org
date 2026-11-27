@@ -19,7 +19,7 @@
 		SheetHeader,
 		SheetTitle
 	} from '$lib/components/ui/sheet';
-	import { registerModalBack } from '$lib/platform/shell/modal-back';
+	import { registerModalBack } from '$lib/platform/workspace/modal-back';
 	import DiffView from '../../components/DiffView.svelte';
 	import DocumentText from '../../components/DocumentText.svelte';
 	import Glyph from '../../components/Glyph.svelte';

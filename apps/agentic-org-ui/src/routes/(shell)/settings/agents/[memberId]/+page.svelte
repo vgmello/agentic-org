@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { AgentSetupPage } from '$lib/modules/agent-setup';
+	import AgentSetupPage from '$lib/modules/agent-setup/features/agent-page/AgentSetupPage.svelte';
 
 	let { data } = $props();
 </script>

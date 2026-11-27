@@ -11,7 +11,11 @@
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import Minus from '@lucide/svelte/icons/minus';
 	import Plus from '@lucide/svelte/icons/plus';
-	import { WORKSPACE_NAV_IDS, uiPrefs, type WorkspaceNavId } from './ui-preferences.svelte';
+	import {
+		WORKSPACE_NAV_IDS,
+		uiPrefs,
+		type WorkspaceNavId
+	} from '$lib/platform/workspace/ui-preferences.svelte';
 
 	interface WorkspaceNavMeta {
 		id: WorkspaceNavId;

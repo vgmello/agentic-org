@@ -25,6 +25,7 @@
 		DropdownMenuTrigger
 	} from '$lib/components/ui/dropdown-menu';
 	import { kindWord, reportedText } from '$lib/modules/members';
+	import { isBuiltInHandle } from '$lib/proto';
 	import { listText, reportsText, type TreeNode } from '../../tree';
 	import type { ChartEmployee } from '../../types';
 	import Self from './ChartNode.svelte';
@@ -81,29 +82,34 @@
 			: ''}"
 	>
 		{#if hasReports}
-			<button
-				type="button"
-				class="col-start-1 row-start-1 mr-3 -my-0.5 flex size-7 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:-my-2.5 max-[639px]:size-11"
-				aria-expanded={open}
-				aria-controls="reports-{e.id}"
-				aria-label="{open ? 'Collapse' : 'Expand'} {e.name}'s reports"
-				data-node-toggle={e.id}
-				onclick={() => ontoggle(e.id)}
+			<Tooltip.ModalTooltip
+				label="{open ? 'Collapse' : 'Expand'} {e.name}'s reports"
+				class="col-start-1 row-start-1 mr-3 -my-0.5 shrink-0 max-[639px]:-my-2.5"
 			>
-				<svg
-					viewBox="0 0 20 20"
-					fill="currentColor"
-					aria-hidden="true"
-					class="size-5 transition-transform duration-150 motion-reduce:transition-none {open
-						? 'rotate-90'
-						: ''}"
-					><path
-						fill-rule="evenodd"
-						d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z"
-						clip-rule="evenodd"
-					/></svg
+				<button
+					type="button"
+					class="flex size-7 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:size-11"
+					aria-expanded={open}
+					aria-controls="reports-{e.id}"
+					aria-label="{open ? 'Collapse' : 'Expand'} {e.name}'s reports"
+					data-node-toggle={e.id}
+					onclick={() => ontoggle(e.id)}
 				>
-			</button>
+					<svg
+						viewBox="0 0 20 20"
+						fill="currentColor"
+						aria-hidden="true"
+						class="size-5 transition-transform duration-150 motion-reduce:transition-none {open
+							? 'rotate-90'
+							: ''}"
+						><path
+							fill-rule="evenodd"
+							d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z"
+							clip-rule="evenodd"
+						/></svg
+					>
+				</button>
+			</Tooltip.ModalTooltip>
 		{:else}
 			<span
 				aria-hidden="true"
@@ -164,7 +170,7 @@
 				<DropdownMenuItem class="max-[639px]:min-h-11" onSelect={() => onaction('manager', e)}
 					>Change manager…</DropdownMenuItem
 				>
-				{#if canMove && e.homeTeam}
+				{#if canMove && e.homeTeam && !isBuiltInHandle(e.kind, e.handle)}
 					<DropdownMenuItem class="max-[639px]:min-h-11" onSelect={() => onaction('move', e)}
 						>Move home team…</DropdownMenuItem
 					>

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { pageTitle } from '$lib/nav';
-	import { OfficesPage } from '$lib/modules/offices';
+	import OfficesPage from '$lib/modules/offices/features/list/OfficesPage.svelte';
 
 	let { data } = $props();
 </script>

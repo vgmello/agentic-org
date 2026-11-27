@@ -6,8 +6,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { agentSetupHref } from '$lib/modules/agent-setup';
-	import { RoleBody } from '$lib/modules/roles';
-	import { areaCapability } from '$lib/platform/shell/capabilities';
+	import { RoleBody } from '$lib/modules/roles/ui';
+	import { areaCapability } from '$lib/platform/workspace/capabilities';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import { membersApi } from '../../api';
 	import { profileContext } from '../profile/context.svelte';

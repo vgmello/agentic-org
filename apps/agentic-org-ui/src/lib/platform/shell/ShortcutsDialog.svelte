@@ -7,7 +7,7 @@
 	import { resolve } from '$app/paths';
 	import { Dialog } from 'bits-ui';
 	import { Button } from '$lib/components/ui/button';
-	import { uiPrefs } from './ui-preferences.svelte';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	let { open = $bindable(false) }: { open: boolean } = $props();
 

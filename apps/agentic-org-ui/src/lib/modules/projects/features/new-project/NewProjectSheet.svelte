@@ -33,7 +33,7 @@
 	} from '$lib/components/ui/sheet';
 	import { newId } from '$lib/modules/organization/commands';
 	import { toAppError } from '$lib/proto';
-	import { registerModalBack } from '$lib/platform/shell/modal-back';
+	import { registerModalBack } from '$lib/platform/workspace/modal-back';
 	import { projectsApi } from '../../api';
 	import { OUTCOME_UNKNOWN } from '../../outcome';
 	import { nameProblem, slugFrom, slugProblem } from '../../present';

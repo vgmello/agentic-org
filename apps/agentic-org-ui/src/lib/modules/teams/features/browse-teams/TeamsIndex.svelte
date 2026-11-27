@@ -17,7 +17,7 @@
 	import { HIRE_REQUESTS_URL, hireUrl } from '$lib/modules/employees';
 	import { orgApi } from '$lib/modules/organization/api';
 	import { sessionFor } from '$lib/modules/organization/session';
-	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
+	import { focusDestinationHeading } from '$lib/platform/workspace/focus-destination';
 	import type { OrgSnapshot } from '$lib/proto';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import { Resource } from '$lib/components/resource.svelte';

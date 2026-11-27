@@ -5,15 +5,13 @@
 <script lang="ts">
 	import type { OrgSnapshot } from '$lib/proto';
 	import {
-		MembersPanel,
-		MessageRow,
-		ThreadPanel,
 		type ChatContext,
 		type ChatMessage,
 		type ChatState,
 		type Conversation,
 		type MessageRows
 	} from '$lib/modules/messaging';
+	import { MembersPanel, MessageRow, ThreadPanel } from '$lib/modules/messaging/ui';
 	import { followsWords, pendingToMessage } from '../../helpers';
 	import type { PendingMessage } from '../../types';
 	import PinsPanel from '../pin-message/PinsPanel.svelte';

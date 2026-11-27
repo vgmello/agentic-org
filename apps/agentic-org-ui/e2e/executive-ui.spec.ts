@@ -714,7 +714,7 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 
 	// Comment validity reset, per-item unsent draft preservation, live status announcement, and reload persistence
 	const commentBox = page.getByLabel('Add a device-only note on this request');
-	const sendCommentBtn = page.getByRole('button', { name: 'Send comment' });
+	const sendCommentBtn = page.getByRole('button', { name: 'Save local note' });
 	const otherRow = page.locator('[data-triage-row]:not([data-triage-row="in1"])').first();
 
 	// Save a valid unsent draft on another item first

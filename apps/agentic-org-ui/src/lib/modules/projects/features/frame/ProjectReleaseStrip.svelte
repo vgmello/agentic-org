@@ -15,7 +15,7 @@
 	import { releasesApi } from '$lib/modules/releases/api';
 	import { computeReleaseDetailReadiness } from '$lib/modules/releases/progress';
 	import type { ReleaseDetail, ReleaseRow } from '$lib/modules/releases/types';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
 	import { countedTasks, projectHref } from '../../present';
 	import type { TaskCounts } from '../../types';
 

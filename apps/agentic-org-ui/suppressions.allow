@@ -1,6 +1,6 @@
 # Production suppression & $effect ratchet (shrink-only; never raise or add new entries).
 # Sorted by path. Every eslint-disable and svelte-ignore must carry "-- <reason>".
-src/lib/components/ConfirmDialog.svelte eslint=0 svelte=0 effect=2
+src/lib/components/ConfirmDialog.svelte eslint=0 svelte=0 effect=1
 src/lib/components/CopyButton.svelte eslint=0 svelte=0 effect=1
 src/lib/components/SkeletonRows.svelte eslint=0 svelte=0 effect=1
 src/lib/components/TabsNav.svelte eslint=0 svelte=0 effect=1
@@ -13,14 +13,13 @@ src/lib/modules/activity/features/command-center/AssemblyLineMatrix.svelte eslin
 src/lib/modules/activity/features/feed/ActivityFeed.svelte eslint=0 svelte=0 effect=4
 src/lib/modules/activity/features/thread/ActivityThreadPanel.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/agent-setup/features/agent-page/AgentSetupPage.svelte eslint=0 svelte=0 effect=1
-src/lib/modules/chat/features/workspace/ChatWorkspace.svelte eslint=1 svelte=0 effect=6
+src/lib/modules/chat/features/workspace/ChatWorkspace.svelte eslint=1 svelte=0 effect=5
 src/lib/modules/copilot/features/draft-text/DraftableText.svelte eslint=0 svelte=1 effect=1
 src/lib/modules/employees/features/configure-run/HowItRunsDialog.svelte eslint=0 svelte=0 effect=2
 src/lib/modules/employees/features/edit-profile/EditAgentDialog.svelte eslint=0 svelte=0 effect=2
 src/lib/modules/employees/features/hire/HiringProgress.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/employees/features/hire/HrDrafting.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/employees/features/offboard-employee/OffboardAgentDialog.svelte eslint=0 svelte=0 effect=2
-src/lib/modules/employees/features/pause-employee/PauseAgentDialog.svelte eslint=0 svelte=0 effect=2
 src/lib/modules/employees/poll.svelte.ts eslint=0 svelte=0 effect=1
 src/lib/modules/inbox/features/triage/InboxDetailPane.svelte eslint=0 svelte=0 effect=4
 src/lib/modules/inbox/features/triage/InboxNotificationsSplit.svelte eslint=1 svelte=0 effect=0
@@ -44,10 +43,8 @@ src/lib/modules/messaging/features/send-message/Composer.svelte eslint=0 svelte=
 src/lib/modules/messaging/markdown.ts eslint=1 svelte=0 effect=0
 src/lib/modules/offices/features/add-office/AddOfficeDialog.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/offices/features/approve-join/ApproveJoinDialog.svelte eslint=0 svelte=0 effect=1
-src/lib/modules/offices/features/details/OfficeDetailsSheet.svelte eslint=0 svelte=0 effect=5
 src/lib/modules/offices/features/list/OfficesPage.svelte eslint=1 svelte=0 effect=2
 src/lib/modules/offices/features/list/live.svelte.ts eslint=3 svelte=0 effect=5
-src/lib/modules/offices/features/remove-office/RemoveOfficeDialog.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/offices/features/unplaced/PlaceAgentDialog.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/org-chart/features/chart/ChartSkeleton.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/org-chart/features/chart/OrgChartCanvas.svelte eslint=0 svelte=0 effect=1
@@ -81,7 +78,7 @@ src/lib/modules/teams/features/change-lead/ChangeLeadDialog.svelte eslint=0 svel
 src/lib/modules/teams/features/team-actions/TeamDialogs.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/teams/features/team-page/AddPersonToTeam.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/teams/features/team-page/TeamOverview.svelte eslint=0 svelte=0 effect=1
-src/lib/modules/teams/features/team-page/TeamWork.svelte eslint=1 svelte=0 effect=3
+src/lib/modules/teams/features/team-page/TeamWork.svelte eslint=1 svelte=0 effect=2
 src/lib/modules/teams/features/team-page/reload.svelte.ts eslint=0 svelte=0 effect=1
 src/lib/modules/teams/person.ts eslint=1 svelte=0 effect=0
 src/lib/modules/tess/TessPanel.svelte eslint=0 svelte=0 effect=2
@@ -105,7 +102,7 @@ src/lib/name.ts eslint=1 svelte=0 effect=0
 src/lib/platform/auth/ChangePasswordDialog.svelte eslint=0 svelte=0 effect=1
 src/lib/platform/auth/SessionInterruptions.svelte eslint=0 svelte=0 effect=4
 src/lib/platform/shell/ExecutiveCommandBar.svelte eslint=1 svelte=0 effect=1
-src/lib/platform/shell/MobileNavigation.svelte eslint=0 svelte=0 effect=2
+src/lib/platform/shell/MobileNavigation.svelte eslint=0 svelte=0 effect=1
 src/lib/platform/shell/NewMenu.svelte eslint=3 svelte=0 effect=0
 src/lib/utils.ts eslint=2 svelte=0 effect=0
 src/routes/(onboarding)/create/+page.svelte eslint=0 svelte=0 effect=1

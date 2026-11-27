@@ -2,14 +2,17 @@ import { createContext } from 'svelte';
 import { answerExecutiveQuestion } from '$lib/modules/home/model';
 import type { HomeDomainData, OrgAiAnswer } from '$lib/modules/home/model';
 import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
-import type { ShellAiAskOptions, ShellAiDecisionContext } from '$lib/platform/shell/shell-ai';
+import type { ShellAiAskOptions, ShellAiDecisionContext } from '$lib/platform/workspace/shell-ai';
 import { defaultTessApi } from './api';
+import {
+	applyStreamEventToTurn,
+	isProtectedBuiltInProposal,
+	updateProposalInBlocks
+} from './tess-stream';
 import type {
-	TessActionProposal,
 	TessApi,
 	TessContextRef,
 	TessRuntimeStatus,
-	TessStreamEvent,
 	TessToolCall,
 	TessTurnMode,
 	TessUiBlock
@@ -92,56 +95,6 @@ function buildLocalFallbackAnswer(
 		decisionId: opts?.decisionId ?? activeDecision?.id,
 		decision: opts?.decision
 	});
-}
-
-function upsertToolCall(
-	calls: readonly TessToolCall[] | undefined,
-	next: TessToolCall
-): TessToolCall[] {
-	const list = calls ? [...calls] : [];
-	const idx = list.findIndex((c) => c.id === next.id);
-	if (idx >= 0) {
-		list[idx] = { ...list[idx], ...next };
-		return list;
-	}
-	return [...list, next];
-}
-
-function applyStreamEventToTurn(turn: TessTurn, event: TessStreamEvent): TessTurn {
-	switch (event.type) {
-		case 'turn.started':
-			return { ...turn, serverTurnId: event.turnId || turn.serverTurnId, streaming: true };
-		case 'tool.progress':
-			return { ...turn, toolCalls: upsertToolCall(turn.toolCalls, event.call) };
-		case 'text.delta':
-			return { ...turn, streamText: `${turn.streamText ?? ''}${event.delta}` };
-		case 'ui.block':
-			if (event.block.kind === 'follow_ups') {
-				return { ...turn, followUps: event.block.prompts.slice(0, 3) };
-			}
-			return { ...turn, blocks: [...(turn.blocks ?? []), event.block] };
-		case 'turn.completed':
-			return {
-				...turn,
-				streaming: false,
-				followUps: event.followUps?.length ? event.followUps.slice(0, 3) : turn.followUps
-			};
-		case 'turn.error':
-			return { ...turn, streaming: false, errorMessage: event.message };
-	}
-}
-
-function updateProposalInBlocks(
-	blocks: readonly TessUiBlock[] | undefined,
-	proposalId: string,
-	updater: (proposal: TessActionProposal) => TessActionProposal
-): TessUiBlock[] | undefined {
-	if (!blocks) return blocks;
-	return blocks.map((block) =>
-		block.kind === 'action_proposal' && block.proposal.id === proposalId
-			? { ...block, proposal: updater(block.proposal) }
-			: block
-	);
 }
 
 /**
@@ -271,7 +224,15 @@ export class TessPanelState {
 	}
 
 	#patchTurn(turnId: string, updater: (turn: TessTurn) => TessTurn): void {
-		this.turns = this.turns.map((t) => (t.id === turnId ? updater(t) : t));
+		const idx = this.turns.findIndex((t) => t.id === turnId);
+		if (idx < 0) return;
+		this.turns[idx] = updater(this.turns[idx]);
+	}
+
+	#appendStreamDelta(turnId: string, delta: string): void {
+		const idx = this.turns.findIndex((t) => t.id === turnId);
+		if (idx < 0) return;
+		this.turns[idx].streamText = `${this.turns[idx].streamText ?? ''}${delta}`;
 	}
 
 	async stopActiveTurn(): Promise<void> {
@@ -301,6 +262,19 @@ export class TessPanelState {
 			block.proposal.status === 'applied' ||
 			block.proposal.status === 'dismissed'
 		) {
+			return;
+		}
+		if (isProtectedBuiltInProposal(block.proposal)) {
+			const msg = 'Built-in agents (HR and Tess) cannot be modified, moved, paused, or removed.';
+			this.#patchTurn(turnId, (t) => ({
+				...t,
+				blocks: updateProposalInBlocks(t.blocks, proposalId, (p) => ({
+					...p,
+					status: 'error',
+					errorMessage: msg
+				}))
+			}));
+			this.liveAnnouncement = msg;
 			return;
 		}
 		const sessionGen = this.#sessionGen;
@@ -522,7 +496,11 @@ export class TessPanelState {
 			{
 				onEvent: (event) => {
 					if (isStale()) return;
-					this.#patchTurn(localTurnId, (t) => applyStreamEventToTurn(t, event));
+					if (event.type === 'text.delta') {
+						this.#appendStreamDelta(localTurnId, event.delta);
+					} else {
+						this.#patchTurn(localTurnId, (t) => applyStreamEventToTurn(t, event));
+					}
 					if (event.type === 'turn.completed') {
 						this.liveAnnouncement = 'Tess finished responding.';
 					}

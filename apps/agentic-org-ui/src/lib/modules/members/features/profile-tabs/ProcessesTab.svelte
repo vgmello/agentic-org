@@ -5,7 +5,8 @@
   sentence. Read and shown by the processes module.
 -->
 <script lang="ts">
-	import { PlaceProcesses, readPlace } from '$lib/modules/processes';
+	import { readPlace } from '$lib/modules/processes';
+	import { PlaceProcesses } from '$lib/modules/processes/ui';
 	import { profileContext } from '../profile/context.svelte';
 	import { tabResource } from './reload.svelte';
 

@@ -30,7 +30,7 @@
 	}: { organizationId: string; projectId: string; projectName: string; snapshot: OrgSnapshot } =
 		$props();
 
-	let all = $state<WorkItemSummary[] | undefined>();
+	let all = $state.raw<WorkItemSummary[] | undefined>();
 	let loadError = $state<string | undefined>();
 	let filter = $state<BugFilter>('open');
 	let reporting = $state(false);

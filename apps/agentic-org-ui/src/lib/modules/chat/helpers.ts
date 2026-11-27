@@ -44,8 +44,9 @@ export function copyFreshness(copyAt: string | undefined, now: string): string |
 }
 
 export function isTextInputTarget(field: EventTarget | null): boolean {
-	if (field instanceof HTMLTextAreaElement) return field.value !== '';
-	if (field instanceof HTMLInputElement) {
+	if (typeof HTMLTextAreaElement !== 'undefined' && field instanceof HTMLTextAreaElement)
+		return field.value !== '';
+	if (typeof HTMLInputElement !== 'undefined' && field instanceof HTMLInputElement) {
 		return /^(text|search|email|url|tel|password|number)$/.test(field.type) && field.value !== '';
 	}
 	return false;

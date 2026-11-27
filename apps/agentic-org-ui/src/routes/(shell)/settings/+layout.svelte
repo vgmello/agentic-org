@@ -6,7 +6,7 @@
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import TabsNav, { type Tab } from '$lib/components/TabsNav.svelte';
-	import { singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
+	import { singleKeyShortcutsOn } from '$lib/platform/workspace/shortcuts';
 
 	let { children } = $props();
 	const shortcutsEnabled = $derived(singleKeyShortcutsOn());

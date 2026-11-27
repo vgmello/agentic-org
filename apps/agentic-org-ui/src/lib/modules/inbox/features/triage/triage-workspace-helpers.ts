@@ -1,4 +1,4 @@
-import { isEditableTarget } from '$lib/platform/shell/shortcuts';
+import { isEditableTarget } from '$lib/platform/workspace/shortcuts';
 import type { OrgSnapshot } from '$lib/proto';
 import { isDenyAction } from '../../spotlight';
 import {

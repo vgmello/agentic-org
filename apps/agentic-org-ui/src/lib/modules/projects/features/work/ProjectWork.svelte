@@ -4,7 +4,7 @@
   with Tasks, Bugs and Requests tabs, board/list views, filters, and project-derived accountable team capture.
 -->
 <script lang="ts">
-	import { WorkQueueView } from '$lib/modules/workitems';
+	import { WorkQueueView } from '$lib/modules/workitems/ui';
 	import { projectFrame } from '../frame/context';
 
 	const frame = projectFrame();

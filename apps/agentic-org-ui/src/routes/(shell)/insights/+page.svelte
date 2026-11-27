@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Organization Insights `/insights`: thin route composing OrganizationInsightsView with the viewer's time zone.
 	import { pageTitle } from '$lib/nav';
-	import { OrganizationInsightsView } from '$lib/modules/costs';
+	import OrganizationInsightsView from '$lib/modules/costs/features/insights/OrganizationInsightsView.svelte';
 	import { accountZone } from '$lib/modules/preferences';
 
 	let { data } = $props();

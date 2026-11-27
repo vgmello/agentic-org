@@ -8,8 +8,8 @@
 	import type { Connection, ProjectSummary } from '$lib/proto';
 	import ExecutiveSidebar from './ExecutiveSidebar.svelte';
 	import * as Sheet from '$lib/components/ui/sheet';
-	import { registerModalBack } from './modal-back';
-	import { focusDestinationHeading } from './focus-destination';
+	import { registerModalBack } from '$lib/platform/workspace/modal-back';
+	import { focusDestinationHeading } from '$lib/platform/workspace/focus-destination';
 
 	let {
 		open = $bindable(false),
@@ -30,9 +30,9 @@
 	let closingForNavigation = false;
 
 	// A viewport change must release the modal before the desktop navigation takes over.
-	$effect(() => {
-		if ((innerWidth.current ?? 0) >= 640 && open) open = false;
-	});
+	function handleResize() {
+		if (window.innerWidth >= 640 && open) open = false;
+	}
 
 	$effect.pre(() => {
 		if (open)
@@ -87,6 +87,8 @@
 		}
 	}
 </script>
+
+<svelte:window onresize={handleResize} />
 
 <Tooltip.Provider delayDuration={150}>
 	<Sheet.Root bind:open onOpenChange={menuOpenChanged}>

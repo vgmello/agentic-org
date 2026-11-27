@@ -4,6 +4,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import { Input } from '$lib/components/ui/input';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import { newId } from '$lib/modules/organization/commands';
 	import { WORK_LIMITS, type WorkItem } from '$lib/proto';
 	import type { WorkDraft } from '$lib/modules/work';
@@ -65,18 +66,20 @@
 						: 'text-fg'}">{step.text}</span
 				>
 				{#if step.required}<Badge variant="secondary">Required</Badge>{/if}
-				<button
-					type="button"
-					class="rounded p-1 text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-focus"
-					aria-label={`Remove step ${step.text}`}
-					disabled={busy}
-					onclick={() =>
-						void onchange({
-							method: 'checklist.remove',
-							step_id: step.id,
-							expected_version: step.version
-						})}><Trash2 class="size-4" aria-hidden="true" /></button
-				>
+				<ModalTooltip label="Remove step" side="left">
+					<button
+						type="button"
+						class="rounded p-1 text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-focus"
+						aria-label={`Remove step ${step.text}`}
+						disabled={busy}
+						onclick={() =>
+							void onchange({
+								method: 'checklist.remove',
+								step_id: step.id,
+								expected_version: step.version
+							})}><Trash2 class="size-4" aria-hidden="true" /></button
+					>
+				</ModalTooltip>
 			</li>
 		{:else}
 			<li class="px-3 py-2 text-sm/6 text-fg-muted">No steps yet.</li>

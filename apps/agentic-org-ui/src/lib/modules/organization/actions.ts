@@ -589,9 +589,8 @@ export async function updateAgent(
 	seenVersion?: number
 ): Promise<void> {
 	const m = await currentMember(api, memberId, seenVersion);
-	if (change.name !== undefined || change.messagingName !== undefined) {
-		assertMutableAgent(m, 'Built-in agents cannot be renamed or have their handle changed.');
-	}
+	if ((change.name ?? change.messagingName ?? change.role) !== undefined)
+		assertMutableAgent(m, 'Built-in agents cannot change name, role, or handle.');
 	const clear = (v: string | undefined) => v !== undefined && v.trim() === '';
 	const given = (v: string | undefined) => (v !== undefined && v.trim() !== '' ? v : undefined);
 	await api.command({

@@ -3,12 +3,12 @@
 	import ExecutiveSidebar from '$lib/platform/shell/ExecutiveSidebar.svelte';
 	import MobileNavigation from '$lib/platform/shell/MobileNavigation.svelte';
 	import ShortcutsDialog from '$lib/platform/shell/ShortcutsDialog.svelte';
-	import { provideNotifications } from '$lib/platform/shell/notifications.svelte';
+	import { provideNotifications } from '$lib/platform/workspace/notifications.svelte';
 	import HomeScrollHint from '$lib/modules/home/features/HomeScrollHint.svelte';
 	import TessPanel from '$lib/modules/tess/TessPanel.svelte';
 	import { createHttpTessApi } from '$lib/modules/tess/api';
 	import { provideTessPanel, TessPanelState } from '$lib/modules/tess/tess-panel.svelte';
-	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 	import LiveBanner from '$lib/components/LiveBanner.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
 
@@ -23,15 +23,15 @@
 	import { liveState } from '$lib/modules/organization/live-state.svelte';
 	import { areaFor } from '$lib/nav';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
-	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
-	import { noteModalBackNavigation } from '$lib/platform/shell/modal-back';
+	import { focusDestinationHeading } from '$lib/platform/workspace/focus-destination';
+	import { noteModalBackNavigation } from '$lib/platform/workspace/modal-back';
 	import { NavKeyController } from '$lib/platform/shell/nav-keys.svelte';
 	import {
 		createScopedSearchHost,
 		setScopedSearchContext
-	} from '$lib/platform/shell/scoped-search.svelte';
-	import { provideShellAi, type ShellAiAskOptions } from '$lib/platform/shell/shell-ai';
-	import { provideShellCommand } from '$lib/platform/shell/shell-command';
+	} from '$lib/platform/workspace/scoped-search.svelte';
+	import { provideShellAi, type ShellAiAskOptions } from '$lib/platform/workspace/shell-ai';
+	import { provideShellCommand } from '$lib/platform/workspace/shell-command';
 	import { provideShellData } from '$lib/platform/shell/shell-data.svelte';
 	import { provideDraftStore } from '$lib/modules/messaging/drafts/context';
 	import { officesApi } from '$lib/modules/offices/api';

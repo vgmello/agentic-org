@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import DraftableText from '$lib/modules/copilot/features/draft-text/DraftableText.svelte';
+	import { DraftableText } from '$lib/modules/copilot/ui';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Dialog,

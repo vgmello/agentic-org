@@ -16,15 +16,15 @@
 	import {
 		WORK_PRIORITY_LABELS,
 		WORK_STATE_LABELS,
-		WorkRows,
 		type WorkRow,
 		type WorkState
 	} from '$lib/modules/members';
+	import { WorkRows } from '$lib/modules/members/ui';
 	import type { WorkStatusRingTone } from '$lib/modules/work/compact';
-	import WorkDetailPage from '$lib/modules/workitems/features/detail/WorkDetailPage.svelte';
+	import { WorkDetailPage } from '$lib/modules/workitems/ui';
 	import { normalizeRef, taskHref } from '$lib/modules/workitems/present';
-	import { isEditableTarget } from '$lib/platform/shell/shortcuts';
-	import { useScopedSearchContext } from '$lib/platform/shell/scoped-search.svelte';
+	import { isEditableTarget } from '$lib/platform/workspace/shortcuts';
+	import { useScopedSearchContext } from '$lib/platform/workspace/scoped-search.svelte';
 	import { teamPageContext } from './context';
 
 	const team = teamPageContext();
@@ -81,12 +81,6 @@
 				? openSnapshot
 				: null)
 	);
-
-	$effect(() => {
-		if (!urlItem) {
-			dismissedUrlItem = null;
-		}
-	});
 
 	function readingStatusTone(state: WorkState): WorkStatusRingTone {
 		if (state === 'done') return 'done';

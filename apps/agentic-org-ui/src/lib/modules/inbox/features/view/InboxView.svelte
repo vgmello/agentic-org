@@ -28,7 +28,8 @@
 		DropdownMenuSeparator,
 		DropdownMenuTrigger
 	} from '$lib/components/ui/dropdown-menu';
-	import { accountZone, ZoneNotice } from '$lib/modules/preferences';
+	import { accountZone } from '$lib/modules/preferences';
+	import { ZoneNotice } from '$lib/modules/preferences/ui';
 	import { inboxApi } from '../../api';
 	import { neighbour, openCount, scopeOptions, tabCounts, tabItems } from '../../items';
 	import { TABS, type InboxItem, type InboxRequest, type InboxTab } from '../../types';

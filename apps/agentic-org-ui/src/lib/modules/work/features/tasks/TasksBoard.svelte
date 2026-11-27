@@ -48,7 +48,7 @@
 	}: { organizationId: string; projectId: string; projectName: string; snapshot: OrgSnapshot } =
 		$props();
 
-	let tasks = $state<WorkItemSummary[] | undefined>();
+	let tasks = $state.raw<WorkItemSummary[] | undefined>();
 	let loadError = $state<string | undefined>();
 	let showAllDone = $state(false);
 	let adding = $state(false);

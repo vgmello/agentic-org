@@ -4,7 +4,7 @@ import { sender, workApi } from '$lib/modules/work';
 import { workItemsApi } from '$lib/modules/workitems/api';
 import { taskHref } from '$lib/modules/workitems/present';
 import type { Priority, Severity } from '$lib/modules/workitems/types';
-import { areaCapability } from '$lib/platform/shell/capabilities';
+import { areaCapability } from '$lib/platform/workspace/capabilities';
 import { inboxApi } from './api';
 import type { SpotlightDecision } from './spotlight';
 

@@ -4,7 +4,7 @@
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import Undo from '@lucide/svelte/icons/undo';
-	import DraftableText from '$lib/modules/copilot/features/draft-text/DraftableText.svelte';
+	import { DraftableText } from '$lib/modules/copilot/ui';
 	import { Alert, AlertDescription, AlertTitle } from '$lib/components/ui/alert';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';

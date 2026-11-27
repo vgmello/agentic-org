@@ -11,7 +11,7 @@
 	import { resolve } from '$app/paths';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { accountZone, eventTime } from '$lib/modules/preferences';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
 	import { teamsApi } from '../../api';
 	import { teamHref } from '../../team-page';
 	import { teamPageContext } from './context';

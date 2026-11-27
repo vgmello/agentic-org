@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { signInHref } from '$lib/platform/auth/return-target';
-import { areaCapability } from '$lib/platform/shell/capabilities';
+import { areaCapability } from '$lib/platform/workspace/capabilities';
 import { loadConnections } from '$lib/modules/offices/load';
 import { toAppError } from '$lib/proto';
 

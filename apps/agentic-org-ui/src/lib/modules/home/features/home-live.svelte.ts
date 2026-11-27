@@ -14,7 +14,7 @@ import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
 import { projectsApi } from '$lib/modules/projects/api';
 import type { ProjectRow } from '$lib/modules/projects/types';
 import { officeApi } from '$lib/modules/offices/office-api';
-import { loadShellWorkItems } from '$lib/platform/shell/shell-data.svelte';
+import { loadShellWorkItems } from '$lib/modules/workitems/shell-summary';
 import { toAppError } from '$lib/proto';
 
 export interface HomeOfficesAdapter<TOverview = unknown> {

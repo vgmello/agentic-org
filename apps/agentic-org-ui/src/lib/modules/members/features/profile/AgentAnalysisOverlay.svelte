@@ -1,18 +1,11 @@
-<!--
-  @component
-  Full-Screen Agent Analysis Mode studio (TASK-119, Prototype Release 06fb02ef):
-  - Expands smoothly (280ms) from the 340px right rail while keeping the left navigation sidebar visible.
-  - Left pane: floating NeuralOrb + minimal monospace state pill + toggleable Tools & context drawer.
-  - Right pane: clean framed live session transcript + discreet Follow trace disclosure under each turn
-    + detached composer pill wired to live `membersApi.runNow`.
-  - Top-right 3 quiet icon toggles: Show all traces, Tools & context, Exit (Esc).
--->
+<!-- @component Full-Screen Agent Analysis Mode studio (TASK-119). -->
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import Eye from '@lucide/svelte/icons/eye';
 	import Minimize2 from '@lucide/svelte/icons/minimize-2';
 	import Wrench from '@lucide/svelte/icons/wrench';
+	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import { toAppError } from '$lib/proto';
 	import { membersApi } from '../../api';
 	import type { MemberProfile, RunNowResult, Turn } from '../../types';
@@ -200,36 +193,39 @@
 			role="toolbar"
 			aria-label="{profile.name} Analysis Mode controls"
 		>
-			<button
-				type="button"
-				class="af-icon-btn"
-				aria-pressed={showAllTraces}
-				aria-label="Show all traces"
-				title="Show all traces"
-				onclick={toggleAllTraces}
-			>
-				<Eye class="size-4" aria-hidden="true" />
-			</button>
-			<button
-				type="button"
-				class="af-icon-btn"
-				aria-pressed={showToolsDrawer}
-				aria-controls="af-tools-drawer"
-				aria-label="Tools & context"
-				title="Tools & context"
-				onclick={() => (showToolsDrawer = !showToolsDrawer)}
-			>
-				<Wrench class="size-4" aria-hidden="true" />
-			</button>
-			<button
-				type="button"
-				class="af-icon-btn"
-				aria-label="Exit Analysis Mode"
-				title="Exit Analysis Mode (Esc)"
-				onclick={closeOverlay}
-			>
-				<Minimize2 class="size-4" aria-hidden="true" />
-			</button>
+			<ModalTooltip label="Show all traces">
+				<button
+					type="button"
+					class="af-icon-btn"
+					aria-pressed={showAllTraces}
+					aria-label="Show all traces"
+					onclick={toggleAllTraces}
+				>
+					<Eye class="size-4" aria-hidden="true" />
+				</button>
+			</ModalTooltip>
+			<ModalTooltip label="Tools & context">
+				<button
+					type="button"
+					class="af-icon-btn"
+					aria-pressed={showToolsDrawer}
+					aria-controls="af-tools-drawer"
+					aria-label="Tools & context"
+					onclick={() => (showToolsDrawer = !showToolsDrawer)}
+				>
+					<Wrench class="size-4" aria-hidden="true" />
+				</button>
+			</ModalTooltip>
+			<ModalTooltip label="Exit Analysis Mode (Esc)">
+				<button
+					type="button"
+					class="af-icon-btn"
+					aria-label="Exit Analysis Mode"
+					onclick={closeOverlay}
+				>
+					<Minimize2 class="size-4" aria-hidden="true" />
+				</button>
+			</ModalTooltip>
 		</div>
 
 		<div class="af-stage">

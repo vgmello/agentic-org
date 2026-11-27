@@ -7,9 +7,9 @@
 	import { toast } from 'svelte-sonner';
 	import { accountZone } from '$lib/modules/preferences';
 	import { toAppError } from '$lib/proto';
-	import { useNotifications } from '$lib/platform/shell/notifications.svelte';
-	import { singleKeyShortcutsOn } from '$lib/platform/shell/shortcuts';
-	import type { ShellRefreshResult } from '$lib/platform/shell/shell-data.svelte';
+	import { useNotifications } from '$lib/platform/workspace/notifications.svelte';
+	import { singleKeyShortcutsOn } from '$lib/platform/workspace/shortcuts';
+	import type { ShellRefreshResult } from '$lib/platform/workspace/shell-data-context';
 	import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import { inboxApi } from '../../api';
 	import { readInboxDividersPreference, writeInboxDividersPreference } from '../../device-comments';

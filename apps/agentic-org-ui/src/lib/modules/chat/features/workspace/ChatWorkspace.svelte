@@ -7,7 +7,6 @@
 	import { Button } from '$lib/components/ui/button';
 	import { shellApi } from '$lib/modules/shell/api';
 	import {
-		ChatSidebar,
 		type CommandEnv,
 		browseChannels,
 		chatContext,
@@ -25,6 +24,7 @@
 		type ChatSnapshot,
 		type ChatView
 	} from '$lib/modules/messaging';
+	import { ChatSidebar } from '$lib/modules/messaging/ui';
 	import type { OrgSnapshot } from '$lib/proto';
 	import { chatApi, sender } from '../../api';
 	import { conversationSubtitle, copyFreshness, urlLocation } from '../../helpers';
@@ -50,7 +50,7 @@
 	const conversationsId = `${componentId}-conversations`;
 	const send = $derived(sender(organizationId));
 
-	let chat = $state<ChatSnapshot | undefined>();
+	let chat = $state.raw<ChatSnapshot | undefined>();
 	let loadError = $state<string | undefined>();
 	let now = $state(new Date().toISOString());
 	let inboxCount = $state<number | undefined>();
@@ -75,7 +75,7 @@
 	let started = false;
 	let lastSearch = '';
 	let pendingPlace = $state.raw<URL>();
-	let documentPlace = $state('Chat');
+	let settledPlace = $state('Chat');
 	let listEl = $state<HTMLElement | undefined>();
 	let chatEl = $state<HTMLElement | undefined>();
 	let heading = $state<HTMLHeadingElement | undefined>();
@@ -206,9 +206,9 @@
 	);
 	const newAt = $derived(findNewMarkerMessageId(readMarker, convView?.shown, ctx.owner));
 
-	$effect(() => {
-		if (!pendingPlace || page.url.href === pendingPlace.href) documentPlace = viewTitle;
-	});
+	const documentPlace = $derived(
+		!pendingPlace || page.url.href === pendingPlace.href ? viewTitle : settledPlace
+	);
 
 	let mounted = false;
 	const loader = createChatSnapshotLoader({
@@ -311,6 +311,7 @@
 		options: { replaceState?: boolean; state?: typeof page.state } = {}
 	) {
 		if (next.href === (pendingPlace ?? page.url).href) return;
+		settledPlace = viewTitle;
 		pendingPlace = next;
 		const destination = `${resolve('/chat')}${next.search}`;
 		// eslint-disable-next-line svelte/no-navigation-without-resolve -- destination is built from resolve('/chat') + search params

@@ -1,13 +1,14 @@
-import { isEditableTarget, isPlainKey, singleKeyShortcutsOn } from './shortcuts';
-
+import {
+	isEditableTarget,
+	isPlainKey,
+	singleKeyShortcutsOn
+} from '$lib/platform/workspace/shortcuts';
 export type NavKeyScope = 'sidebar' | 'inbox' | 'page';
-
 export interface NavKeyCandidate {
 	label: string;
 	element: HTMLElement;
 	onActivate?: () => void;
 }
-
 /** Pure letter matcher: picks the next candidate whose trimmed label starts with `letter` (case-insensitive). */
 export function matchNavCandidate(
 	candidates: readonly { label: string }[],
@@ -18,13 +19,11 @@ export function matchNavCandidate(
 	if (needle.length !== 1 || !/[a-z]/.test(needle)) return -1;
 	const matching: number[] = [];
 	for (let i = 0; i < candidates.length; i++) {
-		const text = candidates[i].label.trim().toLowerCase();
-		if (text.startsWith(needle)) matching.push(i);
+		if (candidates[i].label.trim().toLowerCase().startsWith(needle)) matching.push(i);
 	}
 	if (matching.length === 0) return -1;
 	const currentPos = matching.indexOf(currentIndex);
-	if (currentPos >= 0) return matching[(currentPos + 1) % matching.length];
-	return matching[0];
+	return currentPos >= 0 ? matching[(currentPos + 1) % matching.length] : matching[0];
 }
 
 const MODAL_OVERLAY_SELECTOR =

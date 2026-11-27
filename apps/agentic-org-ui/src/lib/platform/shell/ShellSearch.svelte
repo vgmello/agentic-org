@@ -14,7 +14,7 @@
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { shellApi } from '$lib/modules/shell/api';
 	import type { SearchGroup, SearchHit, SearchResults } from '$lib/modules/shell/types';
-	import { focusDestinationHeading } from './focus-destination';
+	import { focusDestinationHeading } from '$lib/platform/workspace/focus-destination';
 
 	let { organizationId, shortcutHint = false }: { organizationId: string; shortcutHint?: boolean } =
 		$props();

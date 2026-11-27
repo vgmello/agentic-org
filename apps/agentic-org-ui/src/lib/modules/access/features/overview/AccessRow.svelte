@@ -15,7 +15,8 @@
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { mobileButton } from '$lib/components/classes';
 	import { Button } from '$lib/components/ui/button';
-	import { expiryUntil, type SignInAction } from '$lib/modules/members';
+	import { expiryUntil } from '$lib/modules/members';
+	import type { SignInAction } from '$lib/modules/members/ui';
 	import { stateWord } from '../../present';
 	import type { AccessPerson } from '../../types';
 

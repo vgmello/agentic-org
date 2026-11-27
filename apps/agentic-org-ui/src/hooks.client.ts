@@ -1,4 +1,4 @@
-import { installModalBack } from '$lib/platform/shell/modal-back';
+import { installModalBack } from '$lib/platform/workspace/modal-back';
 
 export function init() {
 	installModalBack();

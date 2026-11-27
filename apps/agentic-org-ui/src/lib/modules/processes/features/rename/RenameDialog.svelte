@@ -17,7 +17,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { toAppError } from '$lib/proto';
-	import { registerModalBack } from '$lib/platform/shell/modal-back';
+	import { registerModalBack } from '$lib/platform/workspace/modal-back';
 	import { processesApi } from '../../api';
 	import { KIND_WORD, draftOf, validKey } from '../../present';
 	import type { ProcessDocument } from '../../types';

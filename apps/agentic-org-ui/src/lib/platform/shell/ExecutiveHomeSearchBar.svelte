@@ -5,7 +5,7 @@
 -->
 <script lang="ts">
 	import Search from '@lucide/svelte/icons/search';
-	import NotificationsButton from './NotificationsButton.svelte';
+	import NotificationsButton from '$lib/components/shell/NotificationsButton.svelte';
 	import type CommandPaletteResultsType from './CommandPaletteResults.svelte';
 	import type { CommandEntry } from './command-palette-entries';
 

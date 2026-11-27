@@ -119,7 +119,7 @@
 				{dropped === 1 ? 'it is' : 'they are'} created without it.
 			</p>{/if}
 		<ul class="flex flex-col gap-2" aria-label="Tasks to create">
-			{#each drafts as d, i (i)}
+			{#each drafts as d, i (d)}
 				<li class="flex flex-wrap items-center gap-x-2">
 					<input type="checkbox" bind:checked={d.keep} aria-label="Create task {i + 1}" />
 					<Input

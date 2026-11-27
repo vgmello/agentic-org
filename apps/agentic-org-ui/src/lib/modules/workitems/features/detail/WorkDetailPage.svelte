@@ -10,7 +10,7 @@
 	import Loaded from '$lib/components/Loaded.svelte';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { pageTitle } from '$lib/nav';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
 	import { toAppError } from '$lib/proto';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';

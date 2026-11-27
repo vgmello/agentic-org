@@ -1,5 +1,5 @@
 <script lang="ts">
-	import DraftableText from '$lib/modules/copilot/features/draft-text/DraftableText.svelte';
+	import { DraftableText } from '$lib/modules/copilot/ui';
 	import { onDestroy, untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { resolve } from '$app/paths';

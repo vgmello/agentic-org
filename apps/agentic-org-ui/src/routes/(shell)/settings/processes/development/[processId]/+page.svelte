@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { DevProcessPage } from '$lib/modules/processes';
+	import DevProcessPage from '$lib/modules/processes/features/dev-process/DevProcessPage.svelte';
 
 	let { data } = $props();
 </script>

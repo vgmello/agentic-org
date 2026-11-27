@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import {
-		MessageRow,
 		dayLabel,
 		nameOf,
 		titleOf,
@@ -11,6 +10,7 @@
 		type Conversation,
 		type MessageRows
 	} from '$lib/modules/messaging';
+	import { MessageRow } from '$lib/modules/messaging/ui';
 	import type { ConversationView, Sidebar } from '$lib/modules/messaging/model';
 	import type { ChatState } from '$lib/modules/messaging/types';
 	import { dayChanged } from '../../helpers';
@@ -296,13 +296,13 @@
 	.chat-day.is-today::after {
 		display: none;
 	}
-	:global(.chat-day.is-stuck) {
+	.chat-day:global(.is-stuck) {
 		background: color-mix(in srgb, var(--exec-panel-bg, var(--surface)) 92%, transparent);
 		-webkit-backdrop-filter: blur(8px);
 		backdrop-filter: blur(8px);
 		box-shadow: 0 1px 0 var(--exec-border, var(--line-subtle));
 	}
-	:global(.chat-day.is-past) {
+	.chat-day:global(.is-past) {
 		visibility: hidden;
 	}
 	.chat-day-text {

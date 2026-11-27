@@ -29,7 +29,7 @@
 		type SignInAction,
 		type SignInOutcome,
 		type SignInPerson
-	} from '$lib/modules/members';
+	} from '$lib/modules/members/ui';
 	import { accessApi } from '../../api';
 	import {
 		MANAGERS_ONLY,

@@ -8,7 +8,7 @@
 	import type { ActivityEntry } from '$lib/modules/members';
 	import { accountZone } from '$lib/modules/preferences';
 	import type { ReleaseMilestone } from '$lib/modules/releases/types';
-	import { useShellData } from '$lib/platform/shell/shell-data.svelte';
+	import { useShellData } from '$lib/platform/workspace/shell-data-context';
 	import type { OrgSnapshot } from '$lib/proto';
 	import ActivityDockControls from './ActivityDockControls.svelte';
 	import ActivityLiveBanner from './ActivityLiveBanner.svelte';

@@ -11,9 +11,9 @@
 	import Search from '@lucide/svelte/icons/search';
 	import X from '@lucide/svelte/icons/x';
 	import NotificationsButton from './NotificationsButton.svelte';
-	import { useScopedSearchContext } from './scoped-search.svelte';
-	import { useShellCommand } from './shell-command';
-	import { isEditableTarget, singleKeyShortcutsOn } from './shortcuts';
+	import { useScopedSearchContext } from '$lib/platform/workspace/scoped-search.svelte';
+	import { useShellCommand } from '$lib/platform/workspace/shell-command';
+	import { isEditableTarget, singleKeyShortcutsOn } from '$lib/platform/workspace/shortcuts';
 
 	let {
 		value,
