@@ -577,7 +577,7 @@ function memberStack(ch) {
   const who = channelMembers(ch);
   if (!who.length) return "";
   return `<button class="btn ghost sm chat-members-btn chat-member-stack" type="button" data-act="chat-members" aria-expanded="${local.members}" aria-controls="chat-members" aria-label="${esc(plural(who.length, "member", "members"))}" title="Members">
-    <span class="chat-stack-avs" aria-hidden="true">${who.slice(0, 3).map((k) => av(k, 24).replace(/ data-person="[^"]*"/, "")).join("")}</span><span class="tnum">${who.length}</span></button>`;
+    ${ic("user-group", "ic16")}<span>${esc(plural(who.length, "member", "members"))}</span></button>`;
 }
 function channelMeta(ch) {
   if (ch.kind !== "channel") return "";
