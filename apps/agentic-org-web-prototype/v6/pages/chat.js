@@ -579,13 +579,20 @@ function memberStack(ch) {
   return `<button class="btn ghost sm chat-members-btn chat-member-stack" type="button" data-act="chat-members" aria-expanded="${local.members}" aria-controls="chat-members" aria-label="${esc(plural(who.length, "member", "members"))}" title="Members">
     ${ic("user-group", "ic16")}<span>${esc(plural(who.length, "member", "members"))}</span></button>`;
 }
-function channelMeta(ch) {
+/* A DM's kind and request status sit with the header actions too (owner), so the title is one line everywhere */
+function dmMeta(ch, id) {
+  const parts = contextParts(ch, id).filter(([k]) => k !== "Role" && k !== "Status").map(([, v]) => v).filter(Boolean);
+  const status = contextParts(ch, id).find(([k]) => k === "Status")?.[1] || "";
+  return `<div class="chat-head-meta chat-head-dm">${parts.map((v) => `<span class="chat-kind-chip">${v}</span>`).join("")}${status}</div>`;
+}
+function channelMeta(ch, id) {
+  if (ch.kind === "dm") return dmMeta(ch, id);
   if (ch.kind !== "channel") return "";
   const proj = ch.proj ? `<span class="chat-proj-chip">${ic("folder", "ic14")}${plink(ch.proj)}</span>` : "";
   return `<div class="chat-head-meta">${proj}${memberStack(ch)}</div>`;
 }
 function chatHeaderHtml(id, ch, title) {
-  const context = ch.kind === "channel" ? ""
+  const context = ch.kind === "channel" || ch.kind === "dm" ? ""
     : `<p class="chat-context"><span class="chat-ctx-full">${headerContext(ch, id)}</span><span class="chat-ctx-summary">${headerSummary(ch)}</span></p>`;
   return `<header class="ph chhead">
     ${listButton(id)}
@@ -596,7 +603,7 @@ function chatHeaderHtml(id, ch, title) {
       </div>
       ${readAsTag(ch)}${requestsTag(ch, id)}
     </div>
-    ${headerActions(id, title, channelMeta(ch))}
+    ${headerActions(id, title, channelMeta(ch, id))}
     ${detailsPanel(ch, id)}
   </header>`;
 }

@@ -149,7 +149,14 @@
 #main .chat .chat-stack-avs > .av { box-shadow: 0 0 0 2px var(--side-panel-surface, var(--gray-900)); }
 #main .chat .chat-stack-avs > .av + .av { margin-inline-start: -8px; }
 #main .chat .chat-stack-avs > .av { position: relative; flex: none; }
-@media (max-width: 700px) { #main .chat .chat-head-meta { display: none; } }
+#main .chat .chat-kind-chip { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; background: var(--hover); color: var(--gray-300); font-size: var(--fs-sm); white-space: nowrap; }
+#main .chat .chat-head-dm .chat-status { display: inline-flex; align-items: center; gap: 6px; color: var(--gray-300); font-size: var(--fs-sm); white-space: nowrap; }
+@media (max-width: 1000px) {
+  #main .chat .chat-head-meta { display: none; }
+  /* The project, members and request status are then in Details */
+  #main .chat > .chhead .chat-details-btn { display: inline-flex; }
+}
+#main .chat .chat-titleline > .chat-desc { overflow-wrap: break-word; word-break: normal; }
 .chat-find-empty { padding: 12px 8px 0; font-size: var(--fs-sm); color: var(--gray-400); }
 .chat .chlist .chat-person { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 6px 8px; border-radius: var(--radius-md); text-align: start; font-weight: 500; color: var(--gray-300); }
 .chat .chlist .chat-person:hover { background: var(--hover); color: var(--white); }
