@@ -7,6 +7,7 @@ pub mod directory;
 pub mod features;
 pub mod import;
 pub(crate) mod names;
+pub(crate) mod ops;
 pub mod owner;
 pub mod ports;
 pub mod projector;

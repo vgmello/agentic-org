@@ -1530,6 +1530,54 @@ class GapPreservationTests(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError): self.db.execute("UPDATE task_details SET request_outcome_json='[]'")
         self.db.rollback()
 
+    def test_checklist_sections_default_dod_and_attributed_final_summary(self):
+        """TASK-88: per-section checklist positions, default DoD arrays, all-or-nothing summary."""
+        columns = [row[1] for row in self.db.execute("PRAGMA table_info(task_details)")]
+        self.assertNotIn("definition_of_done", columns)
+        self.assertIn("done_anyway_json", columns)
+        step = dict(organization_id="org", target_kind="task", target_id="task", required=1, done=0)
+        for identity, section in (("ac", "acceptance"), ("dod", "dod"), ("work", "work")):
+            insert(self.db, "checklist_steps", **step, id=identity, section=section, position=0, text=identity)
+        insert(self.db, "checklist_steps", **step, id="default", position=1, text="Defaults to work")
+        self.db.commit()
+        self.assertEqual(self.db.execute(
+            "SELECT section FROM checklist_steps WHERE id='default'").fetchone()[0], "work")
+        for bad in (dict(id="dup", section="dod", position=0), dict(id="odd", section="notes", position=5)):
+            with self.subTest(bad=bad), self.assertRaises(sqlite3.IntegrityError):
+                insert(self.db, "checklist_steps", **step, text="x", **bad)
+            self.db.rollback()
+
+        self.db.execute("UPDATE organizations SET default_dod_json='[\"Tests pass\"]' WHERE id='org'")
+        self.db.execute("UPDATE projects SET default_dod_json='[]' WHERE id='project'")
+        self.db.commit()
+        for statement in ("UPDATE organizations SET default_dod_json='{\"a\":1}'",
+                          "UPDATE projects SET default_dod_json='not json'"):
+            with self.subTest(statement=statement), self.assertRaises(sqlite3.IntegrityError):
+                self.db.execute(statement)
+            self.db.rollback()
+
+        self.db.execute("UPDATE tasks SET final_summary='Shipped the fix',final_summary_at='2026-11-27T00:00:00Z',"
+                        "final_summary_by_kind='employee',final_summary_by_id='reporter' WHERE id='task'")
+        self.db.commit()
+        for statement in (
+            "UPDATE tasks SET final_summary_by_id=NULL WHERE id='task'",
+            "UPDATE tasks SET final_summary='   ' WHERE id='task'",
+            "UPDATE tasks SET final_summary=printf('%.8001c', 'x') WHERE id='task'",
+            "UPDATE tasks SET final_summary_by_kind='system' WHERE id='task'",
+            "UPDATE tasks SET final_summary=NULL WHERE id='task'",
+        ):
+            with self.subTest(statement=statement), self.assertRaises(sqlite3.IntegrityError):
+                self.db.execute(statement)
+                self.db.commit()
+            self.db.rollback()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE tasks SET final_summary_by_id='nobody' WHERE id='task'")
+            self.db.commit()
+        self.db.rollback()
+        self.db.execute("UPDATE tasks SET final_summary=NULL,final_summary_at=NULL,final_summary_by_kind=NULL,"
+                        "final_summary_by_id=NULL WHERE id='task'")
+        self.db.commit()
+
     def test_feature_replacement_must_stay_in_the_same_project(self):
         for identity,project in (("a","project"),("b","project")):
             insert(self.db,"features",organization_id="org",id=identity,schema_version=1,revision=1,project_id=project,local_slug=identity,title=identity,status="planned")

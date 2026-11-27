@@ -1,5 +1,5 @@
-//! Office service ports: federation, providers, costs, processes, documentation, Git, tasks and
-//! attachments.
+//! Office service ports: federation, providers, costs, processes, documentation, search, Git,
+//! tasks and attachments.
 
 use org_proto::{ApiError, ErrorCode, Request, Response};
 
@@ -138,6 +138,33 @@ pub(super) fn docs_rpc(request: &Request, shared: &Shared, binding: &Binding) ->
     ))
 }
 
+/// `search.query` (`TASK-91`): a connection bound to nobody is refused `NotAuthorized`, as a
+/// member who may not search is.
+pub(super) fn search_rpc(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+) -> Option<Response> {
+    if !crate::search_calls::is_search_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(crate::search_calls::not_authorized(request.id));
+    };
+    if let Some(search) = &shared.ports.search {
+        if let Some(response) = search(Some(member), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
+}
+
 pub(super) fn git_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
     if !crate::git_calls::is_git_method(request) {
         return None;
@@ -183,6 +210,18 @@ pub(super) fn tasks_rpc(request: &Request, shared: &Shared, binding: &Binding) -
             ApiError::new(ErrorCode::NotBound, "connection is not bound"),
         ));
     };
+    if (request.is::<org_proto::tasks::OrganizationDefaultDodSet>()
+        || request.is::<org_proto::tasks::ProjectDefaultDodSet>())
+        && !binding.via_grant()
+    {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::NotAuthorized,
+                "setting default definitions of done requires a verified person grant",
+            ),
+        ));
+    }
     if let Some(tasks) = &shared.ports.tasks {
         if let Some(response) = tasks(Some(member), request) {
             return Some(response);

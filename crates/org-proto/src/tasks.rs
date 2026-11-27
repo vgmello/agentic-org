@@ -6,6 +6,7 @@
 //! authenticated active employee bound to the connection (`ADR-0031`, `TASKAUTH-1..3`).
 
 mod calls;
+mod dod;
 mod records;
 
 pub use calls::{
@@ -15,16 +16,22 @@ pub use calls::{
     TasksChecklistRemove, TasksChecklistRemoveParams, TasksChecklistResult, TasksComment,
     TasksCommentParams, TasksCommentResult, TasksComments, TasksCommentsParams,
     TasksCommentsResult, TasksCreate, TasksCreateParams, TasksDependencies,
-    TasksDependenciesParams, TasksHistory, TasksHistoryParams, TasksHistoryResult, TasksInspect,
-    TasksInspectParams, TasksLabels, TasksLabelsParams, TasksLabelsResult, TasksList,
-    TasksListParams, TasksListResult, TasksMutationResult, TasksRemoveDependency,
-    TasksRemoveDependencyParams, TasksTransition, TasksTransitionParams, TasksUnwatch,
-    TasksUnwatchParams, TasksUpdate, TasksUpdateParams, TasksWatch, TasksWatchParams,
+    TasksDependenciesParams, TasksFinalSummary, TasksFinalSummaryParams, TasksHistory,
+    TasksHistoryParams, TasksHistoryResult, TasksInspect, TasksInspectParams, TasksLabels,
+    TasksLabelsParams, TasksLabelsResult, TasksList, TasksListParams, TasksListResult,
+    TasksMutationResult, TasksRemoveDependency, TasksRemoveDependencyParams, TasksTransition,
+    TasksTransitionParams, TasksUnwatch, TasksUnwatchParams, TasksUpdate, TasksUpdateParams,
+    TasksWatch, TasksWatchParams,
+};
+pub use dod::{
+    normalize_dod_items, OrganizationDefaultDodGet, OrganizationDefaultDodGetParams,
+    OrganizationDefaultDodResult, OrganizationDefaultDodSet, OrganizationDefaultDodSetParams,
+    ProjectDefaultDodSet, ProjectDefaultDodSetParams,
 };
 pub use records::{
     ChecklistStepWire, PatchField, TaskCommentWire, TaskDependenciesResult, TaskDependencyEdge,
-    TaskDetailsWire, TaskEventWire, TaskInspectResult, TaskLabelSummary, TaskRefSummary, TaskView,
-    TaskWatcherWire,
+    TaskDetailsWire, TaskDoneAnywayWire, TaskEventWire, TaskFinalSummaryWire, TaskInspectResult,
+    TaskLabelSummary, TaskRefSummary, TaskView, TaskWatcherWire,
 };
 
 use serde::{Deserialize, Serialize};
@@ -49,6 +56,54 @@ pub const TASK_MAX_FILES_PER_ROLE: usize = 256;
 pub const TASK_FILE_PATH_MAX_LEN: usize = 1024;
 /// Maximum direct dependencies per task.
 pub const TASK_MAX_DEPENDENCIES: usize = 128;
+/// Maximum definition-of-done items one task, project or organization names (`TASK-88`).
+pub const TASK_MAX_DOD_ITEMS: usize = 25;
+/// Maximum final summary length in Unicode scalar values (`TASK-88`).
+pub const TASK_FINAL_SUMMARY_MAX_CHARS: usize = 8000;
+/// Maximum "done anyway" reason length in Unicode scalar values (`TASK-88`).
+pub const TASK_DONE_ANYWAY_REASON_MAX_CHARS: usize = 1000;
+
+/// The section a checklist step belongs to (`TASK-88`): acceptance criteria, the definition
+/// of done, or work steps. Each section numbers its steps from 0 on its own; a task lists
+/// them in this order.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ChecklistSection {
+    Acceptance,
+    Dod,
+    #[default]
+    Work,
+}
+
+impl ChecklistSection {
+    /// Every section, in the order a task lists them.
+    pub const ALL: [Self; 3] = [Self::Acceptance, Self::Dod, Self::Work];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Acceptance => "acceptance",
+            Self::Dod => "dod",
+            Self::Work => "work",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "acceptance" => Some(Self::Acceptance),
+            "dod" => Some(Self::Dod),
+            "work" => Some(Self::Work),
+            _ => None,
+        }
+    }
+
+    /// Whether a new step in this section is required when the caller does not say:
+    /// acceptance criteria and the definition of done are; work steps are not.
+    pub fn required_by_default(self) -> bool {
+        !matches!(self, Self::Work)
+    }
+}
 
 /// Unified task lifecycle status (`doc-77`: same closed list across `task`, `bug`, `request`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

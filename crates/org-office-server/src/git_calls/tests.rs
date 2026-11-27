@@ -241,6 +241,7 @@ fn real_office_register_attach_prepare_commit_and_push_end_to_end() {
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         )
         .unwrap()
@@ -312,6 +313,7 @@ fn real_office_register_attach_prepare_commit_and_push_end_to_end() {
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         )
         .unwrap()
@@ -374,6 +376,8 @@ fn real_office_register_attach_prepare_commit_and_push_end_to_end() {
                 blocked_reason: None,
                 note: None,
                 expected_revision: current_rev,
+                done_anyway_reason: None,
+                final_summary: None,
             },
         )
         .unwrap()
@@ -436,6 +440,7 @@ fn real_office_register_attach_prepare_commit_and_push_end_to_end() {
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         )
         .unwrap()

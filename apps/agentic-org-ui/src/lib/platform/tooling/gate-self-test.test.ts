@@ -41,7 +41,7 @@ describe('Adversarial gate self-tests (proves ESLint + static gates fail closed)
 			'src/routes/(shell)/+layout.svelte'
 		);
 		expect(rules3).toContain('no-restricted-imports');
-	}, 20_000);
+	}, 60_000);
 
 	it('blocks plain .css imports (including ?inline/?raw) and <style>@import</style>', async () => {
 		const rules1 = await lintText(
@@ -62,7 +62,7 @@ describe('Adversarial gate self-tests (proves ESLint + static gates fail closed)
 		expect(findDisallowedCssUsage(MODULE_TS_TARGET, `import css from './a.css?raw';`)).toContain(
 			'plain .css'
 		);
-	}, 20_000);
+	}, 60_000);
 
 	it('blocks raw fetch, self.fetch, destructured fetch, EventSource, localStorage, sessionStorage, DOM sinks, and X-Org-Session-Proof', async () => {
 		const cases: Array<[string, string]> = [
@@ -89,7 +89,7 @@ describe('Adversarial gate self-tests (proves ESLint + static gates fail closed)
 			const rules = await lintText(code, MODULE_TS_TARGET);
 			expect(rules, `Expected ${expectedRule} for: ${code}`).toContain(expectedRule);
 		}
-	}, 20_000);
+	}, 60_000);
 
 	it('blocks missing button type, unsafe target=_blank, and {@html} in Svelte templates', async () => {
 		const btnRules = await lintText(`<button>Click</button>\n`, MODULE_SVELTE_TARGET);

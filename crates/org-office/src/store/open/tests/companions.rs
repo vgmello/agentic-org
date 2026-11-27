@@ -24,7 +24,7 @@ fn companion_folders(engine: EngineChoice, office: &str) -> BTreeSet<String> {
     std::fs::create_dir_all(&durable).unwrap();
     std::fs::create_dir_all(&runtime).unwrap();
     let is_hq = office == HQ;
-    open_private_notes(engine, &durable, is_hq).unwrap();
+    open_private_notes(engine, &durable, &runtime, office, ORG, is_hq).unwrap();
     open_accounting(engine, &durable, &runtime, office, ORG).unwrap();
     open_budgets(engine, &durable, &runtime, office, ORG, is_hq).unwrap();
     open_providers(engine, &durable, &runtime, office, ORG, is_hq).unwrap();

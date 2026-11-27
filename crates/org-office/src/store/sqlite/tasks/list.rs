@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use org_proto::tasks::{LabelMatchMode, TaskSortMode, TaskStatus};
+use org_proto::tasks::{ChecklistSection, LabelMatchMode, TaskSortMode, TaskStatus};
 use org_store::{EngineError, Id};
 use rusqlite::{types::Value, Connection};
 
@@ -241,17 +241,20 @@ pub(super) fn rollups(
         let steps = fetch(
             db,
             &format!(
-                "SELECT target_id, COUNT(*), SUM(done <> 0) FROM checklist_steps \
+                "SELECT target_id, section, COUNT(*), SUM(done <> 0) FROM checklist_steps \
                  WHERE organization_id = ?1 AND target_kind = 'task' AND target_id IN {targets} \
-                 GROUP BY target_id"
+                 GROUP BY target_id, section"
             ),
             values.clone(),
-            |r| Ok((id(r, 0)?, number(r, 1)?, number(r, 2)?)),
+            |r| {
+                let section: String = r.get(1)?;
+                let section = ChecklistSection::parse(&section)
+                    .ok_or_else(|| super::bad_col(1, "invalid section"))?;
+                Ok((id(r, 0)?, section, number(r, 2)?, number(r, 3)?))
+            },
         )?;
-        for (task, total, done) in steps {
-            let rollup = out.entry(task).or_default();
-            rollup.checklist_total = total;
-            rollup.checklist_done = done;
+        for (task, section, total, done) in steps {
+            out.entry(task).or_default().add_steps(section, total, done);
         }
         for (table, set) in [
             ("comments", set_comments as fn(&mut TaskRollup, u64)),

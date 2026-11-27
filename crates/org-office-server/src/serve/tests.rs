@@ -893,6 +893,7 @@ pub(super) fn ports(snapshot: SnapshotFn) -> OfficePorts {
         git: None,
         processes: None,
         docs: None,
+        search: None,
         costs: None,
         providers: None,
         federation: None,
@@ -954,6 +955,68 @@ fn operation_get_returns_stored_outcomes_for_each_legacy_binding() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn default_dod_setters_refuse_non_grant_office_socket_callers() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+    ports.tasks = Some(Box::new(|_caller, request| {
+        Some(Response {
+            id: request.id,
+            outcome: org_proto::Outcome::Result(serde_json::json!({"ok": true})),
+            waiting_messages: None,
+        })
+    }));
+    let shared = Shared::new(
+        &test_info(),
+        &dir.path().join("s.sock"),
+        ports,
+        launch_key(),
+    );
+    let org_req = Request::new::<org_proto::tasks::OrganizationDefaultDodSet>(
+        1,
+        &org_proto::tasks::OrganizationDefaultDodSetParams {
+            command_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e1".into(),
+            expected_revision: 1,
+            default_dod: Some(vec!["Tests pass".into()]),
+        },
+    )
+    .unwrap();
+    let proj_req = Request::new::<org_proto::tasks::ProjectDefaultDodSet>(
+        2,
+        &org_proto::tasks::ProjectDefaultDodSetParams {
+            command_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e2".into(),
+            project: "P-1".into(),
+            expected_revision: 1,
+            default_dod: Some(vec!["Tests pass".into()]),
+        },
+    )
+    .unwrap();
+    for request in [&org_req, &proj_req] {
+        let mut socket_agent = Binding::Member {
+            id: "agent-lead".into(),
+            via_grant: false,
+        };
+        assert_eq!(
+            code_of(answer(request, &shared, &mut socket_agent).outcome),
+            ErrorCode::NotAuthorized,
+            "non-grant caller must be refused on {}",
+            request.method
+        );
+        let mut person_grant = Binding::Member {
+            id: "owner".into(),
+            via_grant: true,
+        };
+        assert!(
+            matches!(
+                answer(request, &shared, &mut person_grant).outcome,
+                org_proto::Outcome::Result(_)
+            ),
+            "verified grant must pass RPC gate on {}",
+            request.method
+        );
     }
 }
 
@@ -1361,6 +1424,7 @@ fn serving(
             git: None,
             processes: None,
             docs: None,
+            search: None,
             costs: None,
             providers: None,
             federation: None,
@@ -1844,6 +1908,7 @@ fn following_with(
                 git: None,
                 processes: None,
                 docs: None,
+                search: None,
                 costs: None,
                 providers: None,
                 federation: None,
@@ -2351,6 +2416,7 @@ fn asking(
             git: None,
             processes: None,
             docs: None,
+            search: None,
             costs: None,
             providers: None,
             federation: None,

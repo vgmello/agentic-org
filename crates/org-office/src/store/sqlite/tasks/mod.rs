@@ -79,12 +79,20 @@ pub(crate) mod statements {
 
 const TASK_COLS: &str = "id, office_code, number, team_id, assigned_team_id, project_id, \
     type, work_type, title, status, assignee_id, body_markdown, feature_id, milestone_id, \
-    priority, effort, severity, resolution, blocked_reason, rank_order";
+    priority, effort, severity, resolution, blocked_reason, rank_order, final_summary, \
+    final_summary_at, final_summary_by_kind, final_summary_by_id";
 
-const DETAIL_COLS: &str = "definition_of_done, what_happened, expected, steps, environment, \
+/// The column `task_row` reads the task's `META` from: right after [`TASK_COLS`].
+const TASK_META_AT: usize = 24;
+
+const DETAIL_COLS: &str = "what_happened, expected, steps, environment, \
     severity_confirmed, reopen_count, duplicate_of_task_id, closed_reason, affects_feature_id, \
     request_kind, request_text, route_reason, routing_source, routed_by_employee_id, \
-    merged_into_task_id, suggested_triager_id, suggested_verifier_id";
+    merged_into_task_id, suggested_triager_id, suggested_verifier_id, done_anyway_json";
+
+/// The checklist's order (`TASK-88`): section by section, then position within one.
+const STEP_ORDER: &str = "CASE section WHEN 'acceptance' THEN 0 WHEN 'dod' THEN 1 ELSE 2 END, \
+    position";
 
 fn bad_col(col: usize, msg: &str) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(col, Type::Text, msg.into())

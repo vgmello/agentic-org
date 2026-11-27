@@ -1,13 +1,10 @@
-//! Core task lifecycle mutations: update, transition and assign (`TASK-49`, `TASK-77`). Each
-//! rewrites `task.md` at the task's next revision with that revision's history event and is
-//! answered `durable` (`doc-79`, `ADR-0014`).
+//! Core task mutations: update and assign (`TASK-49`, `TASK-77`; a transition is
+//! [`super::transition`]'s). Each rewrites `task.md` at the task's next revision with that
+//! revision's history event and is answered `durable` (`doc-79`, `ADR-0014`).
 
 use std::collections::BTreeSet;
 
-use org_proto::tasks::{
-    PatchField, TaskStatus, TasksAssignParams, TasksTransitionParams, TasksUpdateParams,
-    TASK_MAX_DEPENDENCIES,
-};
+use org_proto::tasks::{PatchField, TasksAssignParams, TasksUpdateParams, TASK_MAX_DEPENDENCIES};
 use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, Refusal, UnitOfWork};
 use serde_json::{json, Value};
@@ -47,13 +44,18 @@ pub(crate) fn rewrite_task<R: TasksRead>(
 
 pub(crate) fn derive_link_id(source: &Id, target: &Id, salt: u32) -> Id {
     let salt_bytes = salt.to_be_bytes();
-    let digest = org_store::Sha256::of_parts(&[
+    derived_id(&[
         b"task-link-v1:",
         source.as_str().as_bytes(),
         b"->",
         target.as_str().as_bytes(),
         &salt_bytes,
-    ]);
+    ])
+}
+
+/// A UUIDv7-shaped ID derived from `parts` alone, so a retry derives the same one.
+pub(crate) fn derived_id(parts: &[&[u8]]) -> Id {
+    let digest = org_store::Sha256::of_parts(parts);
     let mut b = [0u8; 16];
     b.copy_from_slice(&digest.as_bytes()[..16]);
     b[6] = (b[6] & 0x0f) | 0x70;
@@ -62,7 +64,7 @@ pub(crate) fn derive_link_id(source: &Id, target: &Id, salt: u32) -> Id {
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
         b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
     );
-    Id::parse(&formatted).expect("derived UUIDv7 link id")
+    Id::parse(&formatted).expect("derived UUIDv7 id")
 }
 
 /// Updates core task fields, `rank_order`, `labels`, `reference_files`, `modified_files`, and `details`.
@@ -164,7 +166,10 @@ fn apply_scalar_updates<R: TasksRead>(
         changed.push("rank_order");
     }
     if let Some(ref details) = params.details {
-        task.details = Some(parse_details(view, &task.id, details)?);
+        let mut next = parse_details(view, &task.id, details)?;
+        // Only a transition sets or clears the "done anyway" record (`TASK-88`).
+        next.done_anyway = task.details.as_ref().and_then(|d| d.done_anyway.clone());
+        task.details = Some(next);
         changed.push("details");
     }
     Ok(())
@@ -254,100 +259,6 @@ fn apply_file_role_update(
         changed.push(field_name);
     }
     Ok(())
-}
-
-/// Transitions a task's status (`todo`, `in_progress`, `blocked`, `cancelled`, `done`).
-pub struct TransitionTask {
-    pub actor_member_id: String,
-    pub params: TasksTransitionParams,
-}
-
-impl TransitionTask {
-    pub fn decide<E: Engine>(&self, uow: &mut UnitOfWork<'_, E>) -> Result<(Change, Id), Refusal>
-    where
-        E::Tx: TasksRead,
-    {
-        let actor = require_active_employee(uow.view(), &self.actor_member_id)?;
-        let _cmd_id = parse_uuid_v7(&self.params.command_id, "command_id")?;
-        let mut task = require_task(uow.view(), &self.params.task)?;
-        if task.meta.revision != self.params.expected_revision {
-            return Err(refuse(
-                ErrorCode::Conflict,
-                format!(
-                    "stale expected_revision {}: task is at revision {}",
-                    self.params.expected_revision, task.meta.revision
-                ),
-            ));
-        }
-        if self.params.status == TaskStatus::Blocked
-            && self
-                .params
-                .blocked_reason
-                .as_deref()
-                .map(str::trim)
-                .is_none_or(str::is_empty)
-        {
-            return Err(refuse(
-                ErrorCode::InvalidRequest,
-                "transitioning to `blocked` requires a non-empty `blocked_reason`",
-            ));
-        }
-        let from_status = task.status;
-        task.status = self.params.status;
-        task.blocked_reason = if self.params.status == TaskStatus::Blocked {
-            self.params
-                .blocked_reason
-                .as_deref()
-                .map(|s| s.trim().to_owned())
-        } else {
-            None
-        };
-        task.resolution = match self.params.status {
-            TaskStatus::Done => Some(
-                self.params
-                    .resolution
-                    .as_deref()
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or("completed")
-                    .to_owned(),
-            ),
-            TaskStatus::Cancelled => Some(
-                self.params
-                    .resolution
-                    .as_deref()
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or("cancelled")
-                    .to_owned(),
-            ),
-            _ => None,
-        };
-        if matches!(from_status, TaskStatus::Done | TaskStatus::Cancelled)
-            && !matches!(task.status, TaskStatus::Done | TaskStatus::Cancelled)
-        {
-            let det = task.details.get_or_insert_with(Default::default);
-            det.reopen_count =
-                super::validate_i64_u64(det.reopen_count.saturating_add(1), "reopen_count")?;
-        }
-
-        let at = format_rfc3339_ms(uow.now().0);
-        task.meta.touch(&actor.id, &at);
-        let change = rewrite_task(
-            uow.view(),
-            &task,
-            &actor.id,
-            &at,
-            &self.params.command_id,
-            json!({
-                "type": "status_changed",
-                "from": from_status.as_str(),
-                "to": task.status.as_str(),
-                "blocked_reason": task.blocked_reason,
-                "resolution": task.resolution,
-                "note": self.params.note,
-            }),
-        )?;
-        Ok((change, task.id))
-    }
 }
 
 /// Atomically updates `assigned_team_id` and `assignee_id` (`doc-77`, `doc-84`, `AVAIL-2`).

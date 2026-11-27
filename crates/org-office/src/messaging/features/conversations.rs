@@ -88,7 +88,7 @@ pub(super) fn summarize_conversation(
     })
 }
 
-pub(super) fn all_conversations_including_auto(
+pub(crate) fn all_conversations_including_auto(
     read: &impl MessagingRead,
     now_utc: &str,
 ) -> Result<Vec<ConversationRecord>, org_store::EngineError> {

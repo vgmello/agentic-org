@@ -1,19 +1,23 @@
 //! Browser HTTP routes for unified typed tasks, checklists, comments, watchers, history,
 //! dependency hierarchy, searchable labels, reference/modified files, and ordering
-//! (`TASK-49` B4/B5 + `TASK-77` B4b). Private task notes are `note_routes`'.
+//! (`TASK-49` B4/B5 + `TASK-77` B4b), final summaries and default definitions of done
+//! (`TASK-88`). Private task notes are `note_routes`'.
 
 use hyper::{http::request::Parts, Method, StatusCode};
 use org_proto::tasks::{
-    LabelMatchMode, TaskSortMode, TaskStatus, TaskStatusScope, TasksAddDependency,
+    LabelMatchMode, OrganizationDefaultDodGet, OrganizationDefaultDodGetParams,
+    OrganizationDefaultDodSet, OrganizationDefaultDodSetParams, ProjectDefaultDodSet,
+    ProjectDefaultDodSetParams, TaskSortMode, TaskStatus, TaskStatusScope, TasksAddDependency,
     TasksAddDependencyParams, TasksAssign, TasksAssignParams, TasksChecklistAdd,
     TasksChecklistAddParams, TasksChecklistCheck, TasksChecklistCheckParams, TasksChecklistEdit,
     TasksChecklistEditParams, TasksChecklistMove, TasksChecklistMoveParams, TasksChecklistRemove,
     TasksChecklistRemoveParams, TasksComment, TasksCommentParams, TasksComments,
     TasksCommentsParams, TasksCreate, TasksCreateParams, TasksDependencies,
-    TasksDependenciesParams, TasksHistory, TasksHistoryParams, TasksInspect, TasksInspectParams,
-    TasksLabels, TasksLabelsParams, TasksList, TasksListParams, TasksRemoveDependency,
-    TasksRemoveDependencyParams, TasksTransition, TasksTransitionParams, TasksUnwatch,
-    TasksUnwatchParams, TasksUpdate, TasksUpdateParams, TasksWatch, TasksWatchParams,
+    TasksDependenciesParams, TasksFinalSummary, TasksFinalSummaryParams, TasksHistory,
+    TasksHistoryParams, TasksInspect, TasksInspectParams, TasksLabels, TasksLabelsParams,
+    TasksList, TasksListParams, TasksRemoveDependency, TasksRemoveDependencyParams,
+    TasksTransition, TasksTransitionParams, TasksUnwatch, TasksUnwatchParams, TasksUpdate,
+    TasksUpdateParams, TasksWatch, TasksWatchParams,
 };
 use org_proto::web::{ReadResponse, WebError, WebErrorCode};
 use serde_json::Value;
@@ -47,6 +51,10 @@ pub enum TaskRoute {
     ChecklistEdit(CallerAuth, String),
     ChecklistRemove(CallerAuth, String),
     ChecklistMove(CallerAuth, String),
+    FinalSummary(CallerAuth, String),
+    DefaultDod(CallerAuth, String),
+    SetDefaultDod(CallerAuth, String),
+    SetProjectDefaultDod(CallerAuth, String),
 }
 
 pub enum TaskCall {
@@ -70,6 +78,10 @@ pub enum TaskCall {
     ChecklistEdit(CallerAuth, String, TasksChecklistEditParams),
     ChecklistRemove(CallerAuth, String, TasksChecklistRemoveParams),
     ChecklistMove(CallerAuth, String, TasksChecklistMoveParams),
+    FinalSummary(CallerAuth, String, Box<TasksFinalSummaryParams>),
+    DefaultDod(CallerAuth, String),
+    SetDefaultDod(CallerAuth, String, Box<OrganizationDefaultDodSetParams>),
+    SetProjectDefaultDod(CallerAuth, String, Box<ProjectDefaultDodSetParams>),
 }
 
 fn valid_org_id(id: &str) -> Result<(), ApiReply> {
@@ -97,6 +109,7 @@ fn is_reserved_task_action(segment: &str) -> bool {
             | "dependencies"
             | "checklist"
             | "notes"
+            | "final-summary"
     )
 }
 
@@ -218,6 +231,17 @@ pub(super) fn try_route(
 ) -> Option<Result<Route, ApiReply>> {
     let is_get = matches!(request.method, Method::GET | Method::HEAD);
     match tail {
+        // `TASK-88`: the organization's default definition of done, and a project's.
+        ["task-defaults", "dod"] if is_get && !query => {
+            Some(auth_org(api, request, org, TaskRoute::DefaultDod))
+        }
+        ["task-defaults", "dod"] if post => {
+            Some(auth_org(api, request, org, TaskRoute::SetDefaultDod))
+        }
+        ["task-defaults", "dod", "project"] if post => {
+            Some(auth_org(api, request, org, TaskRoute::SetProjectDefaultDod))
+        }
+        ["task-defaults", ..] => Some(Err(invalid())),
         ["task-labels"] if is_get => Some((|| {
             let pair = api.caller_auth(request)?;
             valid_org_id(org)?;
@@ -292,6 +316,7 @@ fn route_task_post_action(
         "comment" => TaskRoute::Comment,
         "watch" => TaskRoute::Watch,
         "unwatch" => TaskRoute::Unwatch,
+        "final-summary" => TaskRoute::FinalSummary,
         _ => return Some(Err(not_found())),
     };
     Some(auth_org(api, request, org, build))
@@ -366,6 +391,15 @@ pub(super) fn prepare(route: TaskRoute, bytes: &[u8]) -> Result<PreparedCall<Cal
         TaskRoute::ChecklistEdit(c, o) => TaskCall::ChecklistEdit(c, o, decode(bytes)?),
         TaskRoute::ChecklistRemove(c, o) => TaskCall::ChecklistRemove(c, o, decode(bytes)?),
         TaskRoute::ChecklistMove(c, o) => TaskCall::ChecklistMove(c, o, decode(bytes)?),
+        TaskRoute::FinalSummary(c, o) => TaskCall::FinalSummary(c, o, Box::new(decode(bytes)?)),
+        TaskRoute::DefaultDod(c, o) => {
+            empty(bytes)?;
+            TaskCall::DefaultDod(c, o)
+        }
+        TaskRoute::SetDefaultDod(c, o) => TaskCall::SetDefaultDod(c, o, Box::new(decode(bytes)?)),
+        TaskRoute::SetProjectDefaultDod(c, o) => {
+            TaskCall::SetProjectDefaultDod(c, o, Box::new(decode(bytes)?))
+        }
     };
     Ok(PreparedCall::read(Call::Tasks(call), bytes.len()))
 }
@@ -424,10 +458,13 @@ fn map_office_failure(error: OfficeFailure) -> ApiReply {
                 WebErrorCode::NotAuthorized | WebErrorCode::OwnerProtected => StatusCode::FORBIDDEN,
                 WebErrorCode::NotFound => return not_found(),
                 WebErrorCode::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+                // `TASK-88`: completing with required steps unticked conflicts with the task's
+                // state; clients branch on the code ("Mark done anyway…").
                 WebErrorCode::Conflict
                 | WebErrorCode::AlreadyExists
                 | WebErrorCode::NotEmpty
-                | WebErrorCode::OperationReused => StatusCode::CONFLICT,
+                | WebErrorCode::OperationReused
+                | WebErrorCode::ChecklistIncomplete => StatusCode::CONFLICT,
                 WebErrorCode::Expired => StatusCode::GONE,
                 _ => return unavailable(),
             };
@@ -484,60 +521,21 @@ pub(super) async fn execute(api: &SessionApi, call: TaskCall) -> ApiReply {
         TaskCall::ChecklistMove(c, o, p) => {
             run_office::<TasksChecklistMove>(api, c, &o, &p, false).await
         }
+        TaskCall::FinalSummary(c, o, p) => {
+            run_office::<TasksFinalSummary>(api, c, &o, &p, false).await
+        }
+        TaskCall::DefaultDod(c, o) => {
+            let params = OrganizationDefaultDodGetParams {};
+            run_office::<OrganizationDefaultDodGet>(api, c, &o, &params, true).await
+        }
+        TaskCall::SetDefaultDod(c, o, p) => {
+            run_office::<OrganizationDefaultDodSet>(api, c, &o, &p, false).await
+        }
+        TaskCall::SetProjectDefaultDod(c, o, p) => {
+            run_office::<ProjectDefaultDodSet>(api, c, &o, &p, false).await
+        }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn task_list_query_parses_multi_labels_sort_and_rejects_unknown_params() {
-        let p = parse_list_query(Some(
-            "type=bug&status=in_progress&labels=backend,security&label=p0&label_match=any&sort=order&q=auth+token&limit=25",
-        ))
-        .ok()
-        .expect("valid query");
-        assert_eq!(p.task_type.as_deref(), Some("bug"));
-        assert_eq!(p.status, Some(TaskStatus::InProgress));
-        assert_eq!(p.labels, vec!["backend", "security", "p0"]);
-        assert_eq!(p.label_match, LabelMatchMode::Any);
-        assert_eq!(p.sort, TaskSortMode::Order);
-        assert_eq!(p.query.as_deref(), Some("auth token"));
-        assert_eq!(p.limit, Some(25));
-
-        assert!(parse_list_query(Some("unknown=1")).is_err());
-        assert!(parse_list_query(Some("status=bogus")).is_err());
-        assert!(parse_list_query(Some("sort=random")).is_err());
-
-        // `TASK-105`: the lifecycle scope and the done-since instant pass through.
-        let board = parse_list_query(Some(
-            "status_scope=open&done_since=2026-11-20T00%3A00%3A00Z&project_id=p",
-        ))
-        .ok()
-        .expect("valid board query");
-        assert_eq!(board.status_scope, Some(TaskStatusScope::Open));
-        assert_eq!(board.done_since.as_deref(), Some("2026-11-20T00:00:00Z"));
-        assert_eq!(board.project_id.as_deref(), Some("p"));
-        assert_eq!(parse_list_query(None).ok().unwrap().status_scope, None);
-        assert!(parse_list_query(Some("status_scope=recent")).is_err());
-        assert!(parse_list_query(Some("status_scope=Open")).is_err());
-
-        let lp = parse_labels_query(Some("q=sec"))
-            .ok()
-            .expect("valid labels query");
-        assert_eq!(lp.query.as_deref(), Some("sec"));
-        assert!(parse_labels_query(Some("bad=1")).is_err());
-
-        // UTF-8 percent-decoding + malformed escape rejection + reserved action guard.
-        let utf8 = parse_list_query(Some("q=caf%C3%A9"))
-            .ok()
-            .expect("valid utf8 query");
-        assert_eq!(utf8.query.as_deref(), Some("café"));
-        assert!(parse_list_query(Some("q=%ZZ")).is_err());
-        assert!(parse_list_query(Some("q=%2")).is_err());
-        assert!(is_reserved_task_action("update"));
-        assert!(is_reserved_task_action("notes"));
-        assert!(!is_reserved_task_action("T-A1"));
-    }
-}
+mod tests;
