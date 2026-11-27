@@ -503,7 +503,7 @@ fn a_wake_never_drains_into_or_joins_a_members_live_turn() {
         .unwrap()
         .state = SessionState::Idle;
     let acquirer: crate::lifecycle::WarmPermitAcquirer =
-        Arc::new(|_, _, _, _, _, _| panic!("a drain into her process never gets this far"));
+        Arc::new(|_, _, _, _, _, _, _| panic!("a drain into her process never gets this far"));
     crate::lifecycle::drain_into_live_pump_with_acquirer(&f.manager, &f.tess, acquirer);
     assert_eq!(sent_turns(&drained(&rx)), 0);
     assert_eq!(f.queued(), ["w-1"]);

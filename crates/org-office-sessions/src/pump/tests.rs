@@ -285,7 +285,7 @@ fn handle_approval_request_enforces_writable_roots_only_when_sandboxed() {
     // Sandboxed: write inside writable_roots is allowed; write outside is auto-denied.
     let (inside_ctrl, inside_denied) =
         handle_approval_request(&mut st, &make_req(ws.join("a.rs")), &[]);
-    assert!(!inside_denied);
+    assert!(inside_denied.is_none());
     assert!(matches!(
         inside_ctrl,
         Some(Control::Answer {
@@ -295,7 +295,7 @@ fn handle_approval_request_enforces_writable_roots_only_when_sandboxed() {
     ));
     let (outside_ctrl, outside_denied) =
         handle_approval_request(&mut st, &make_req(outside.join("b.rs")), &[]);
-    assert!(outside_denied);
+    assert!(outside_denied.is_some());
     assert!(matches!(
         outside_ctrl,
         Some(Control::Answer {
@@ -308,7 +308,7 @@ fn handle_approval_request_enforces_writable_roots_only_when_sandboxed() {
     st.sandbox_enabled = false;
     let (unsandboxed_ctrl, unsandboxed_denied) =
         handle_approval_request(&mut st, &make_req(outside.join("b.rs")), &[]);
-    assert!(!unsandboxed_denied);
+    assert!(unsandboxed_denied.is_none());
     assert!(matches!(
         unsandboxed_ctrl,
         Some(Control::Answer {
@@ -366,7 +366,7 @@ fn pump_event_history_and_approval_views_go_through_the_redaction_choke_point() 
     );
     escalated.capability = Some(org_agent_runtime::ToolCapability::Unknown);
     let (esc_ctrl, esc_denied) = handle_approval_request(&mut st, &escalated, &[]);
-    assert!(esc_ctrl.is_none() && !esc_denied);
+    assert!(esc_ctrl.is_none() && esc_denied.is_none());
     let pending = st.pending_approvals.last().expect("escalated to the owner");
     assert_no_corpus_secret(&corpus, &pending.tool, "pump/approval tool");
     assert_no_corpus_secret(
@@ -389,7 +389,7 @@ fn pump_event_history_and_approval_views_go_through_the_redaction_choke_point() 
                 decision: Decision::Deny { message, .. },
                 ..
             }),
-            true,
+            Some(_),
         ) => assert_no_corpus_secret(
             &corpus,
             message.as_deref().unwrap_or_default(),

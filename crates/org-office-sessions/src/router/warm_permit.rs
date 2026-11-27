@@ -204,6 +204,7 @@ fn warm_conflict(msg: &str) -> WarmPermitOutcome {
 }
 
 /// Validates warm-session config/readiness/route digest and acquires a fresh turn permit.
+#[cfg(test)]
 pub(crate) fn acquire_warm_permit_for_office(
     office: &Office,
     hq_permits: Option<&dyn HqPermitCoordinator>,

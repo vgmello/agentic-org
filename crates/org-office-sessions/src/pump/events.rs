@@ -102,14 +102,19 @@ pub(super) fn apply_outputs(
                 // Coarse live activity comes from the redacted event only (`TASK-103`).
                 track_activity(ctx, &event, loop_state.interrupt_sent);
                 let ctrl = if let Some(raw_req) = unredacted_approval {
-                    let (ctrl, auto_denied) = {
+                    let (ctrl, denied_reason) = {
                         let mut state = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
                         state.watchdog.record_activity(Instant::now());
                         handle_approval_request(&mut state, &raw_req, &refs)
                     };
-                    if auto_denied {
+                    if let Some(reason) = denied_reason {
                         if let Some(t) = ctx.telemetry.as_ref() {
-                            t.on_sandbox_denial(&ctx.employee_id, 1);
+                            t.on_auto_deny(
+                                &ctx.employee_id,
+                                &raw_req.tool,
+                                raw_req.tool_use_id.as_deref(),
+                                Some(&reason),
+                            );
                         }
                     }
                     ctrl
@@ -274,10 +279,19 @@ pub(super) fn handle_event(
                 cb(&emp_id, &run_id, usage);
             }
         }
-        SessionEvent::ActionDenied { .. } => {
+        SessionEvent::ActionDenied {
+            tool,
+            tool_use_id,
+            message,
+        } => {
             drop(state);
             if let Some(t) = ctx.telemetry.as_ref() {
-                t.on_sandbox_denial(&ctx.employee_id, 1);
+                t.on_action_denied(
+                    &ctx.employee_id,
+                    tool,
+                    tool_use_id.as_deref(),
+                    message.as_deref(),
+                );
             }
         }
         SessionEvent::Notice { text, .. } => {

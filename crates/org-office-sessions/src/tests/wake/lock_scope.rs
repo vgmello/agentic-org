@@ -148,7 +148,7 @@ fn task170_wake_for_b_completes_while_a_is_blocked_in_hq_permit_rpc_and_a_keeps_
     let locks = Arc::clone(&mgr.employee_locks);
     let registry = Arc::clone(&mgr.registry);
     let acquirer: crate::lifecycle::WarmPermitAcquirer =
-        Arc::new(move |_office, _hq, conn, emp, _task, _digest| {
+        Arc::new(move |_office, _hq, conn, emp, _task, _digest, _override| {
             assert_eq!(conn, "c-a");
             let registry_free = registry.try_lock().is_ok();
             entered_tx

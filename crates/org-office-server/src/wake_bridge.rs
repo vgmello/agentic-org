@@ -348,7 +348,7 @@ pub(crate) fn on_task_comment_committed(
         .map(|a| a.id.clone())
         .collect();
     let task_override =
-        org_office_sessions::parse_task_routing_labels(&inspected.task.labels).unwrap_or_default();
+        org_office_sessions::parse_task_routing_labels_or_default(&inspected.task.labels);
     let ts = now_ms();
     for target_id in targets {
         let item = PendingWakeItem {

@@ -157,7 +157,7 @@ fn overflow(fx: &WakeFixture, task: &ProjectTask) {
 }
 
 fn granted() -> crate::lifecycle::WarmPermitAcquirer {
-    Arc::new(|_office, _hq, _conn, _emp, _task, _digest| {
+    Arc::new(|_office, _hq, _conn, _emp, _task, _digest, _override| {
         WarmPermitOutcome::Granted(("permit-a".into(), 7))
     })
 }

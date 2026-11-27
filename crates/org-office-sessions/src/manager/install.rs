@@ -148,7 +148,7 @@ impl SessionManager {
         let rss_sampler = Arc::clone(&self.config.resource_limits.memory_sampler);
         let pump_telemetry = crate::telemetry::PumpTelemetry {
             collector: Arc::clone(&self.telemetry),
-            sample_rss: Arc::new(move |pid| rss_sampler.process_rss_bytes(pid)),
+            sample_rss: Arc::new(move |pid| rss_sampler.process_tree_rss_bytes(pid)),
             child_pid,
             active_model: active_model.clone(),
             active_effort: active_effort.clone(),

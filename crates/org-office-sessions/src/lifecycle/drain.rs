@@ -75,12 +75,6 @@ pub(super) fn try_send_wake_on_live_handle(
     };
     if pinned_override != *turn_override {
         recycle_stale_warm_handle(employee_id, &run_id, "model_or_effort_changed", ctx);
-        if let Some(mgr) = ctx.weak_mgr.as_ref().and_then(|w| w.upgrade()) {
-            let emp = employee_id.to_owned();
-            crate::manager::spawn_bg_worker(&mgr, "org-override-wake", move |m| {
-                let _ = m.process_due_wakes_for(&emp);
-            });
-        }
         return Ok(false);
     }
     if crate::host_auth::is_oauth_expiring(oauth_expires_at_ms, now_ms()) {
@@ -114,6 +108,7 @@ pub(super) fn try_send_wake_on_live_handle(
         &active_permit,
         employee_id,
         queue_task_id,
+        turn_override,
     ) {
         Ok(permit) => permit,
         Err(LivePermitError::Stale) => {
@@ -196,9 +191,10 @@ pub(super) enum LivePermitError {
     Hold(WakeHoldReason),
 }
 
-/// Acquires a warm turn permit for a live handle: [`crate::router::acquire_warm_permit_for_office`]
-/// in production, which on a satellite is an HQ permit RPC (after worktree and bare-repository
-/// digest walks). The drain calls it with no employee lock held (`TASK-170`).
+/// Acquires a warm turn permit for a live handle:
+/// [`crate::router::acquire_warm_permit_for_office_with_override`] in production, which on a
+/// satellite is an HQ permit RPC (after worktree and bare-repository digest walks). The drain
+/// calls it with no employee lock held (`TASK-170`, `TASK-136`).
 pub(crate) type WarmPermitAcquirer = Arc<
     dyn Fn(
             &Office,
@@ -207,6 +203,7 @@ pub(crate) type WarmPermitAcquirer = Arc<
             &str,
             Option<&str>,
             Option<&str>,
+            Option<&crate::router::TurnModelOverride>,
         ) -> crate::router::WarmPermitOutcome
         + Send
         + Sync,
@@ -214,7 +211,7 @@ pub(crate) type WarmPermitAcquirer = Arc<
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "permit acquisition takes the acquirer, office, HQ port, route, permit slot, employee, and task"
+    reason = "permit acquisition takes the acquirer, office, HQ port, route, permit slot, employee, task, and model/effort override"
 )]
 pub(super) fn acquire_live_handle_permit(
     acquire_warm_permit: &WarmPermitAcquirer,
@@ -225,6 +222,7 @@ pub(super) fn acquire_live_handle_permit(
     active_permit: &Arc<Mutex<Option<(String, u64)>>>,
     employee_id: &str,
     task_id: Option<&str>,
+    turn_override: &crate::router::TurnModelOverride,
 ) -> Result<Option<(String, u64)>, LivePermitError> {
     let Some(cid) = conn_id else {
         return Ok(None);
@@ -236,7 +234,15 @@ pub(super) fn acquire_live_handle_permit(
     {
         return Ok(None);
     }
-    match acquire_warm_permit(office, hq_permits, cid, employee_id, task_id, route_digest) {
+    match acquire_warm_permit(
+        office,
+        hq_permits,
+        cid,
+        employee_id,
+        task_id,
+        route_digest,
+        Some(turn_override),
+    ) {
         crate::router::WarmPermitOutcome::Granted(p) => Ok(Some(p)),
         crate::router::WarmPermitOutcome::StaleWarm => Err(LivePermitError::Stale),
         crate::router::WarmPermitOutcome::Unavailable { .. } => {
@@ -317,6 +323,15 @@ pub(super) fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEn
     let busy_again = matches!(sent, Ok(true));
     commit_live_drain(employee_id, ctx, &claim, sent);
     busy_again
+}
+
+/// Runs one turn-end drain using the production `turn_end_drain_ctx()` (`TASK-136` tests).
+#[cfg(test)]
+pub(crate) fn drain_pending_wakes_into_live_pump_for_test(
+    mgr: &SessionManager,
+    employee_id: &str,
+) -> bool {
+    drain_pending_wakes_into_live_pump(employee_id, &mgr.turn_end_drain_ctx())
 }
 
 /// Runs one turn-end drain for `employee_id` with `acquirer` standing in for the warm-permit
@@ -566,7 +581,9 @@ impl SessionManager {
             office: Arc::clone(&self.office),
             sandbox_runner: Arc::clone(&self.sandbox_runner),
             hq_permits: self.config.hq_permits.clone(),
-            acquire_warm_permit: Arc::new(crate::router::acquire_warm_permit_for_office),
+            acquire_warm_permit: Arc::new(
+                crate::router::acquire_warm_permit_for_office_with_override,
+            ),
             weak_mgr: self.weak_self(),
             hourly_limit: self.config.hourly_wake_limit,
             window_ms: self.config.wake_window.as_millis() as u64,

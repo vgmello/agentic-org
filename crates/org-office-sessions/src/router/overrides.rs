@@ -96,17 +96,66 @@ pub fn validate_turn_override(
     })
 }
 
+/// Returns `true` when `raw` (trimmed, case-insensitively) uses a reserved `model:` or
+/// `effort:` task routing label prefix (`TASK-136`).
+pub fn is_task_routing_label(raw: &str) -> bool {
+    let lower = raw.trim().to_ascii_lowercase();
+    lower.starts_with("model:") || lower.starts_with("effort:")
+}
+
+/// Validates every `(model, effort)` pair in a wake batch and returns the last non-empty
+/// atomic pair without ever mixing `model` from one item with `effort` from another (`TASK-136`).
+pub(crate) fn select_atomic_turn_override<'a>(
+    pairs: impl IntoIterator<Item = (Option<&'a str>, Option<&'a str>)>,
+) -> Result<TurnModelOverride, ApiError> {
+    let mut effective = TurnModelOverride::default();
+    for (model, effort) in pairs {
+        let candidate = validate_turn_override(model, effort)?;
+        if !candidate.is_empty() {
+            effective = candidate;
+        }
+    }
+    Ok(effective)
+}
+
 /// Extracts optional validated `model:<id>` and `effort:<tier>` routing overrides from task
-/// labels (`TASK-136`). Fails closed if a routing-prefixed label carries an invalid value.
+/// labels (`TASK-136`). Fails closed on invalid values, non-canonical prefix casing/whitespace,
+/// or duplicate/conflicting `model:*` / `effort:*` labels.
 pub fn parse_task_routing_labels(labels: &[String]) -> Result<TurnModelOverride, ApiError> {
     let mut model = None;
     let mut effort = None;
     for label in labels {
         if let Some(raw_effort) = label.strip_prefix("effort:") {
-            effort = validate_effort_override(Some(raw_effort))?;
+            let parsed = validate_effort_override(Some(raw_effort))?;
+            if effort.is_some() {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "duplicate or conflicting effort:* task routing labels; specify at most one effort:<tier> label",
+                ));
+            }
+            effort = parsed;
         } else if let Some(raw_model) = label.strip_prefix("model:") {
-            model = validate_model_override(Some(raw_model))?;
+            let parsed = validate_model_override(Some(raw_model))?;
+            if model.is_some() {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "duplicate or conflicting model:* task routing labels; specify at most one model:<id> label",
+                ));
+            }
+            model = parsed;
+        } else if is_task_routing_label(label) {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "task routing labels must use lowercase `model:<id>` or `effort:<tier>` without surrounding whitespace",
+            ));
         }
     }
     Ok(TurnModelOverride { model, effort })
+}
+
+/// Parses task routing labels for wake delivery, falling back safely to the empty default
+/// override if a legacy task carries malformed or conflicting routing labels so assignment and
+/// comment wakes are never silently dropped (`TASK-136`).
+pub fn parse_task_routing_labels_or_default(labels: &[String]) -> TurnModelOverride {
+    parse_task_routing_labels(labels).unwrap_or_default()
 }

@@ -255,10 +255,17 @@ pub(super) fn tasks_rpc(request: &Request, shared: &Shared, binding: &Binding) -
             ),
         ));
     }
-    Some(dispatch_actor_port(
-        request,
-        member,
-        shared.ports.tasks.as_ref(),
+    if let Some(handler) = shared.ports.tasks.as_ref() {
+        if let Some(response) = handler(Some(member), binding.via_grant(), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
     ))
 }
 

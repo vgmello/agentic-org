@@ -66,8 +66,9 @@ pub use recovery::{
     MAX_CONSECUTIVE_STALLS, MAX_RESUME_ATTEMPTS,
 };
 pub use router::{
-    parse_task_routing_labels, validate_effort_override, validate_model_override,
-    validate_turn_override, HqPermitAcquireSpec, HqPermitCoordinator, TurnModelOverride,
+    is_task_routing_label, parse_task_routing_labels, parse_task_routing_labels_or_default,
+    validate_effort_override, validate_model_override, validate_turn_override, HqPermitAcquireSpec,
+    HqPermitCoordinator, TurnModelOverride,
 };
 pub use runtime_registry::{RuntimeRegistry, RuntimeRegistryError};
 pub use stream_hub::{

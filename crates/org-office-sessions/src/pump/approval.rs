@@ -14,13 +14,28 @@ use crate::credentials::{format_rfc3339_ms, now_ms, rfc3339_now};
 use crate::preset::{decide_escalation_with_roots, EscalationDisposition};
 use crate::redact::redact_text;
 
-use super::{persist_turn_update, PumpContext, SessionRuntimeState};
+use super::{PumpContext, SessionRuntimeState};
+
+/// Applies `mutate` to this run's durable `active-turn.v1.json` record (a newer run's record is
+/// never touched) and stamps `updated_at`.
+pub(super) fn persist_turn_update(
+    ctx: &PumpContext,
+    mutate: impl FnOnce(&mut crate::recovery::ActiveTurnRecord),
+) {
+    let _ = ctx.store.update_active_turn(&ctx.employee_id, |persisted| {
+        if persisted.run_id != ctx.run_id {
+            return;
+        }
+        mutate(persisted);
+        persisted.updated_at = rfc3339_now();
+    });
+}
 
 pub(super) fn handle_approval_request(
     state: &mut SessionRuntimeState,
     req: &ApprovalRequest,
     active_tokens: &[&str],
-) -> (Option<Control>, bool) {
+) -> (Option<Control>, Option<String>) {
     let writable_roots = state
         .sandbox_enabled
         .then_some(state.writable_roots.as_slice());
@@ -36,18 +51,21 @@ pub(super) fn handle_approval_request(
                 request_id: req.id.clone(),
                 decision: Decision::AllowOnce,
             }),
-            false,
+            None,
         ),
-        EscalationDisposition::AutoDeny { reason } => (
-            Some(Control::Answer {
-                request_id: req.id.clone(),
-                decision: Decision::Deny {
-                    message: Some(redact_text(&reason, active_tokens)),
-                    stop_turn: false,
-                },
-            }),
-            true,
-        ),
+        EscalationDisposition::AutoDeny { reason } => {
+            let redacted = redact_text(&reason, active_tokens);
+            (
+                Some(Control::Answer {
+                    request_id: req.id.clone(),
+                    decision: Decision::Deny {
+                        message: Some(redacted.clone()),
+                        stop_turn: false,
+                    },
+                }),
+                Some(redacted),
+            )
+        }
         EscalationDisposition::EscalateToOwner { warning } => {
             state.state = SessionState::WaitingApproval;
             state.pending_approvals.push(PendingApprovalView {
@@ -57,7 +75,7 @@ pub(super) fn handle_approval_request(
                 reason: Some(redact_text(&warning, active_tokens)),
                 requested_at: format_rfc3339_ms(now_ms()),
             });
-            (None, false)
+            (None, None)
         }
     }
 }

@@ -25,15 +25,16 @@ mod warm_permit;
 
 use warm_permit::compute_route_digest;
 
+pub(crate) use overrides::select_atomic_turn_override;
 pub use overrides::{
-    parse_task_routing_labels, validate_effort_override, validate_model_override,
-    validate_turn_override, TurnModelOverride,
+    is_task_routing_label, parse_task_routing_labels, parse_task_routing_labels_or_default,
+    validate_effort_override, validate_model_override, validate_turn_override, TurnModelOverride,
 };
 #[cfg(test)]
-pub(crate) use warm_permit::compute_route_digest_with_wt;
+pub(crate) use warm_permit::{acquire_warm_permit_for_office, compute_route_digest_with_wt};
 pub(crate) use warm_permit::{
-    acquire_warm_permit_for_office, acquire_warm_permit_for_office_with_override,
-    compute_worktree_sandbox_digest, WarmPermitOutcome,
+    acquire_warm_permit_for_office_with_override, compute_worktree_sandbox_digest,
+    WarmPermitOutcome,
 };
 
 pub(crate) struct AdmittedRoute {
@@ -441,13 +442,15 @@ fn admit_default_adapter_route(
     override_model: Option<&str>,
     override_effort: Option<ReasoningEffort>,
 ) -> Result<AdmittedRoute, ApiError> {
+    if override_model.is_some() {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "MODEL_UNVERIFIED: explicit model override requires a configured agent execution route with a confirmed provider connection",
+        ));
+    }
     let adapter = runtimes
         .default_adapter()
         .ok_or_else(|| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
-    let model_token = override_model
-        .map(Token::try_from)
-        .transpose()
-        .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid model override"))?;
     let effort = override_effort
         .map(|e| Token::try_from(e.as_str()))
         .transpose()
@@ -459,7 +462,7 @@ fn admit_default_adapter_route(
         })?;
     Ok(AdmittedRoute {
         adapter,
-        model_token,
+        model_token: None,
         model_supports_vision: true,
         effort,
         auth_mode: None,

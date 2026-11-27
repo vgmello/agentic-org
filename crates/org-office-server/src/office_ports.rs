@@ -514,8 +514,8 @@ pub(crate) fn build_office_ports(
         feed: Some(messaging.feed),
         mailbox: Some(messaging.mailbox),
         chat: Some(messaging.chat),
-        tasks: Some(Box::new(move |member, request| {
-            task_svc.dispatch(member, request)
+        tasks: Some(Box::new(move |member, via_grant, request| {
+            task_svc.dispatch_with_grant(member, via_grant, request)
         })),
         attachments: Some(build_attachments_port(
             &office,

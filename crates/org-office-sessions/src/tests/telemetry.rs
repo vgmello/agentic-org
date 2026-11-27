@@ -182,3 +182,103 @@ fn office_metrics_rpc_enforces_owner_only_and_aggregates_telemetry() {
     assert_eq!(bot.peak_rss_bytes, Some(64 * 1024 * 1024));
     assert_eq!(bot.sandbox_denial_count, 1);
 }
+
+#[test]
+fn crashed_turn_before_turn_ended_is_finalized_as_failed_with_tree_rss_sampler() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingTreeSampler(AtomicUsize);
+    impl crate::manager::ProcessMemorySampler for CountingTreeSampler {
+        fn process_tree_rss_bytes(&self, _root_pid: u32) -> Option<u64> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Some(99 * 1024 * 1024)
+        }
+    }
+
+    let _ = org_platform::process::harden_self();
+    let bin_dir = tempfile::tempdir().unwrap();
+    let sock_dir = tempfile::tempdir().unwrap();
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = office.owner_member_id().to_owned();
+    let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+
+    let (agent_id, _conn_id) = hire_agent_with_runtime(
+        &office,
+        &owner,
+        &root_team,
+        "anthropic",
+        "claude",
+        "crash-bot",
+        "claude-sonnet-4-6",
+    );
+
+    // Fake Claude binary: completes initialize handshake (`Ready` -> pump sends Turn 1 ->
+    // `TurnStarted`), emits `system/init`, then exits immediately WITHOUT emitting a `result`
+    // (`TurnEnded`) line so `finish_pump` must finalize the orphaned `InFlightTurn`.
+    let fake_bin = write_fake_cli(
+        bin_dir.path(),
+        "claude",
+        r#"#!/bin/sh
+read init_line
+echo '{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":["crash-bot"],"current_permission_mode":"default","pid":1234,"version":"2.1.311"}}}'
+read user_line
+echo '{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000aa","permissionMode":"default"}'
+sleep 0.05
+exit 1
+"#,
+    );
+
+    let sampler = Arc::new(CountingTreeSampler(AtomicUsize::new(0)));
+    let mut reg = RuntimeRegistry::production();
+    reg.register(
+        Arc::new(org_agent_runtime_claude::ClaudeRuntime::new()),
+        Some(fake_bin),
+    );
+    let mut cfg = SessionManagerConfig::production(sock_dir.path().join("office.sock"));
+    cfg.runtimes = reg;
+    cfg.helper_dir = Some(bin_dir.path().to_path_buf());
+    cfg.resource_limits.memory_sampler =
+        Arc::clone(&sampler) as Arc<dyn crate::manager::ProcessMemorySampler>;
+    let mgr = SessionManager::new(Arc::clone(&office), cfg);
+
+    mgr.start_session(
+        &owner,
+        &org_proto::sessions::MemberSessionStartParams {
+            command_id: new_uuid_v7(),
+            employee_id: agent_id.clone(),
+            instruction: Some("Do work then crash".into()),
+            workspace: None,
+            resume_runtime_session_id: None,
+            fresh: false,
+            model: None,
+            effort: None,
+        },
+    )
+    .expect("session starts");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(snap) = mgr.telemetry().snapshot_agent(&agent_id) {
+            if snap.total_turn_count >= 1 {
+                assert_eq!(snap.recent_turns.len(), 1);
+                let sample = &snap.recent_turns[0];
+                assert!(
+                    !sample.succeeded,
+                    "pre-TurnEnded crash must finalize orphaned turn as succeeded=false"
+                );
+                assert_eq!(sample.rss_bytes, Some(99 * 1024 * 1024));
+                assert!(
+                    sampler.0.load(Ordering::SeqCst) >= 1,
+                    "turn-end telemetry must sample via process_tree_rss_bytes"
+                );
+                break;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for crashed turn finalization in finish_pump"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    mgr.stop_all("test");
+}

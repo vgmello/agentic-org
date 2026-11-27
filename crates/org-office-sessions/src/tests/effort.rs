@@ -699,3 +699,367 @@ fn invalid_effort_and_model_overrides_fail_closed_and_task_wake_persists_valid_o
     );
     assert_eq!(wakes.items[0].effort_override.as_deref(), Some("xhigh"));
 }
+
+#[test]
+fn default_adapter_route_fails_closed_on_unverified_model_override() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let runtimes = RuntimeRegistry::production();
+    let info = office.info();
+    let vault = CredentialVault::new(
+        office.durable_root().to_path_buf(),
+        info.org_id.clone(),
+        info.office_id.clone(),
+        Some([0x44u8; 32]),
+    );
+    let unconfigured_emp = new_uuid_v7();
+    let excluded = std::collections::HashSet::new();
+
+    // Explicit model override with no configured AgentExecution MUST fail closed.
+    let model_ov = crate::router::validate_turn_override(Some("claude-opus-4-6"), None).unwrap();
+    let err = select_and_admit_route(AdmitRouteRequest {
+        office: &office,
+        vault: &vault,
+        runtimes: &runtimes,
+        hq_permits: None,
+        oauth_refresh: None,
+        employee_id: &unconfigured_emp,
+        task_id: None,
+        is_failover_switch: false,
+        excluded_connections: &excluded,
+        turn_override: Some(&model_ov),
+    })
+    .err()
+    .expect("unconfigured agent with explicit model override must fail closed");
+    assert_eq!(err.code, org_proto::ErrorCode::InvalidRequest);
+    assert!(err.message.contains("MODEL_UNVERIFIED"), "{err:?}");
+
+    // Default (no model override) still admits the default adapter cleanly.
+    let admitted = select_and_admit_route(AdmitRouteRequest {
+        office: &office,
+        vault: &vault,
+        runtimes: &runtimes,
+        hq_permits: None,
+        oauth_refresh: None,
+        employee_id: &unconfigured_emp,
+        task_id: None,
+        is_failover_switch: false,
+        excluded_connections: &excluded,
+        turn_override: None,
+    })
+    .expect("default adapter without model override succeeds");
+    assert_eq!(admitted.model_token, None);
+}
+
+#[test]
+fn duplicate_routing_labels_and_atomic_wake_overrides_never_mix_items() {
+    use crate::router::parse_task_routing_labels;
+    use crate::wake::{extract_wake_model_override, PendingWakeItem, WakeKind};
+
+    for bad in [
+        vec!["effort:low".to_owned(), "effort:high".to_owned()],
+        vec!["effort:low".to_owned(), "effort:low".to_owned()],
+        vec!["model:a".to_owned(), "model:b".to_owned()],
+        vec!["model:a".to_owned(), "model:a".to_owned()],
+        vec!["EFFORT:high".to_owned()],
+        vec![" model:claude-sonnet-4-6".to_owned()],
+    ] {
+        let err = parse_task_routing_labels(&bad).unwrap_err();
+        assert_eq!(err.code, org_proto::ErrorCode::InvalidRequest, "{bad:?}");
+    }
+
+    let mk = |id: &str, model: Option<&str>, effort: Option<&str>| PendingWakeItem {
+        item_id: id.into(),
+        kind: WakeKind::TaskAssignment,
+        sender_id: "owner".into(),
+        sender_name: "Owner".into(),
+        sender_handle: None,
+        sender_relation: None,
+        sender_is_person: true,
+        conversation_id: None,
+        source_id: id.into(),
+        summary: "work".into(),
+        enqueued_at_ms: 1,
+        attachment_ids: Vec::new(),
+        session_affinity: None,
+        model_override: model.map(str::to_owned),
+        effort_override: effort.map(str::to_owned),
+    };
+
+    // Item A has model-only (e.g. Agy model); Item B has effort-only -> NEVER mixed!
+    let mixed = extract_wake_model_override(&[
+        mk("w1", Some("gemini-4-neon-low"), None),
+        mk("w2", None, Some("high")),
+    ])
+    .unwrap();
+    assert_eq!(mixed.model, None);
+    assert_eq!(mixed.effort_str(), Some("high"));
+
+    // A trailing wake with no override preserves the earlier atomic pair intact.
+    let preserved = extract_wake_model_override(&[
+        mk("w1", Some("claude-haiku-4-5"), Some("low")),
+        mk("w2", None, None),
+    ])
+    .unwrap();
+    assert_eq!(preserved.model.as_deref(), Some("claude-haiku-4-5"));
+    assert_eq!(preserved.effort_str(), Some("low"));
+
+    // Invalid earlier item still fails closed even if a later item carries a valid override.
+    let err = extract_wake_model_override(&[
+        mk("w1", Some("--inject"), None),
+        mk("w2", Some("claude-sonnet-4-6"), Some("low")),
+    ])
+    .unwrap_err();
+    assert_eq!(err.code, org_proto::ErrorCode::InvalidRequest);
+}
+
+#[test]
+fn turn_end_drain_reuses_warm_handle_across_two_queued_wakes_with_same_override() {
+    use crate::lifecycle::drain_pending_wakes_into_live_pump_for_test;
+    use crate::manager::LiveSessionHandle;
+    use crate::pump::{PumpCommand, SessionRuntimeState};
+    use crate::router::validate_turn_override;
+    use crate::wake::{PendingWakeItem, PendingWakeQueueRecord, WakeKind};
+    use std::sync::mpsc;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = hired_agent(Some("medium"));
+    agent.refresh_models(&[MODEL, "claude-haiku-4-5"]);
+
+    let turn_ov = validate_turn_override(Some("claude-haiku-4-5"), Some("low")).unwrap();
+    let admitted = agent.admit_with_override(&turn_ov);
+
+    let mgr = Arc::new(SessionManager::new(
+        Arc::clone(&agent.office),
+        SessionManagerConfig::production(tmp.path().join("office.sock")),
+    ));
+    SessionManager::attach_self(&mgr);
+
+    let (tx, rx) = mpsc::channel();
+    let runtime_state = Arc::new(Mutex::new(SessionRuntimeState {
+        employee_id: agent.agent.clone(),
+        office_id: agent.office.info().office_id.clone(),
+        state: org_proto::sessions::SessionState::Idle,
+        run_id: Some("run-warm-override".into()),
+        session_id: Some("sess-warm-override".into()),
+        runtime_id: Some("claude".into()),
+        runtime_session_id: None,
+        private_home: tmp.path().display().to_string(),
+        workspace_spec: tmp.path().display().to_string(),
+        permission_preset: "workspace_edits".into(),
+        sandbox_enabled: true,
+        allow_host_auth: false,
+        spec_hash: "h".into(),
+        watchdog: crate::recovery::StallWatchdog::new(Duration::from_secs(60), Instant::now()),
+        recovery_required: false,
+        last_reply: None,
+        last_error: None,
+        backgrounds: crate::subagents::BackgroundRegistry::default(),
+        pending_approvals: Vec::new(),
+        policy: org_agent_runtime::PermissionPolicy {
+            version: 1,
+            allow: Vec::new(),
+            deny: Vec::new(),
+        },
+        preset: PermissionPreset::WorkspaceEdits,
+        allowed_tools: None,
+        writable_roots: Vec::new(),
+        suspended_on_asks: Vec::new(),
+        waiting_for_member_id: None,
+        waiting_for_name: None,
+        suspended_since: None,
+        pending_wake_count: 0,
+        pending_wake_reason: None,
+        queued_turns: 0,
+        activity: Default::default(),
+    }));
+    let active_permit = Arc::new(Mutex::new(None));
+    let handle = LiveSessionHandle {
+        state: Arc::clone(&runtime_state),
+        tx,
+        thread: None,
+        connection_id: Some(agent.connection.clone()),
+        route_digest: admitted.route_digest_suffix.clone(),
+        oauth_expires_at_ms: None,
+        workspace: None,
+        active_permit: Arc::clone(&active_permit),
+        supports_mid_turn: false,
+        sandbox_plan: crate::manager::SandboxPlan::host_native(),
+        partition: None,
+        active_model: Some("claude-haiku-4-5".into()),
+        active_effort: Some("low".into()),
+        pinned_override: turn_ov.clone(),
+    };
+    mgr.registry
+        .lock()
+        .unwrap()
+        .live
+        .insert(agent.agent.clone(), handle);
+
+    // Drain TWO consecutive queued wakes carrying the identical (model, effort) override and prove
+    // both reuse the warm handle cleanly (SendTurn, never StaleWarm Stop!).
+    for idx in 1..=2 {
+        let mut queue = PendingWakeQueueRecord::empty(&agent.agent);
+        queue.push_dedup(PendingWakeItem {
+            item_id: format!("wake-ov-{idx}"),
+            kind: WakeKind::TaskAssignment,
+            sender_id: agent.owner.clone(),
+            sender_name: "Owner".into(),
+            sender_handle: None,
+            sender_relation: None,
+            sender_is_person: true,
+            conversation_id: None,
+            source_id: format!("T-OV-{idx}"),
+            summary: format!("Queued overridden work #{idx}"),
+            enqueued_at_ms: idx,
+            attachment_ids: Vec::new(),
+            session_affinity: None,
+            model_override: Some("claude-haiku-4-5".into()),
+            effort_override: Some("low".into()),
+        });
+        mgr.store.write_pending_wakes(&queue).unwrap();
+
+        assert!(
+            drain_pending_wakes_into_live_pump_for_test(&mgr, &agent.agent),
+            "wake #{idx} with matching override must reuse warm handle"
+        );
+        match rx.try_recv().expect("expected PumpCommand on warm handle") {
+            PumpCommand::SendTurn(t) => {
+                assert!(t.text.contains(&format!("Queued overridden work #{idx}")));
+            }
+            PumpCommand::Stop { reason } => {
+                panic!("warm handle unexpectedly recycled on wake #{idx}: {reason}");
+            }
+            _ => panic!("unexpected PumpCommand on wake #{idx}"),
+        }
+        // Release permit and settle idle as the pump would at turn end before wake #2.
+        if let Some((pid, _)) = active_permit.lock().unwrap().take() {
+            let _ = agent.office.release_turn_permit(&pid);
+        }
+        let mut st = runtime_state.lock().unwrap();
+        st.dequeue_turns(1);
+        st.settle_idle();
+    }
+}
+
+#[test]
+fn unsupported_effort_on_agy_maps_to_invalid_request_with_actionable_guidance() {
+    let tmp = tempfile::tempdir().unwrap();
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = office.owner_member_id().to_owned();
+    let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+
+    let conn_id = new_uuid_v7();
+    let prof_id = new_uuid_v7();
+    rpc::<ProviderConnectionCreate>(
+        &office,
+        &owner,
+        &ProviderConnectionCreateParams {
+            command_id: new_uuid_v7(),
+            connection_id: conn_id.clone(),
+            default_profile_id: prof_id.clone(),
+            key: "agy-effort".into(),
+            name: "Agy Effort".into(),
+            provider_type: "google".into(),
+            auth_mode: "subscription_cli".into(),
+            subscription_identity: Some("dev@example.com".into()),
+            runtime_driver: "agy".into(),
+            endpoint_url: None,
+            max_concurrent_turns: 2,
+        },
+    );
+    office
+        .provider_binding_set(
+            &owner,
+            org_proto::providers::ProviderBindingSetParams {
+                operation_id: new_uuid_v7(),
+                connection_id: conn_id.clone(),
+                expected_revision: None,
+                auth_context_ref: "subscription://local".into(),
+                runtime_binary_path: None,
+                account_identity_ref: Some("dev@example.com".into()),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .provider_connection_refresh(
+            &owner,
+            org_proto::providers::ProviderConnectionRefreshParams {
+                connection_id: conn_id.clone(),
+                driver_version: Some("1.0.0".into()),
+                auth_signed_in: Some(true),
+                observed_subscription_identity: Some("dev@example.com".into()),
+                operator_attested_subscription: true,
+                models: vec![org_proto::providers::DiscoveredModelInput {
+                    model_id: "gemini-4-neon-low".into(),
+                    driver_model_id: "gemini-4-neon-low".into(),
+                    entitlement: org_proto::providers::DiscoveredModelEntitlement::Confirmed,
+                    capabilities_json: "{}".into(),
+                }],
+                issue_code: None,
+                ttl_seconds: Some(300),
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+    let agent_id = new_uuid_v7();
+    rpc::<HrHire>(
+        &office,
+        &owner,
+        &HrHireParams {
+            command_id: new_uuid_v7(),
+            request_id: new_uuid_v7(),
+            employee_id: agent_id.clone(),
+            home_team_id: root_team,
+            role_id: None,
+            proposal: HireProposalWire {
+                name: "Agy Bot".into(),
+                handle: "agy-bot".into(),
+                title_in_team: Some("Engineer".into()),
+                reports_to_employee_id: Some(owner.clone()),
+                model_profile_id: Some(prof_id),
+                model_id: Some("gemini-4-neon-low".into()),
+                permission_preset: Some("workspace_edits".into()),
+                ..HireProposalWire::default()
+            },
+            reason: "Agy effort mapping test".into(),
+        },
+    );
+
+    // Point `agy` runtime binary at `/bin/true` so `resolve_binary` succeeds and `plan_session` runs.
+    let mut reg = RuntimeRegistry::production();
+    reg.register(
+        Arc::new(org_agent_runtime_agy::AgyRuntime::new()),
+        Some(PathBuf::from("/bin/true")),
+    );
+    let mut cfg = SessionManagerConfig::with_runtimes(tmp.path().join("office.sock"), reg);
+    cfg.agent_os_state_roots = Vec::new();
+    let mgr = SessionManager::new(Arc::clone(&office), cfg);
+    mgr.enrollment()
+        .vault()
+        .store_wrapped(&conn_id, "google", b"dummy-agy-token", None, None)
+        .unwrap();
+
+    let err = mgr
+        .start_session(
+            &owner,
+            &MemberSessionStartParams {
+                command_id: new_uuid_v7(),
+                employee_id: agent_id,
+                instruction: Some("test".into()),
+                workspace: None,
+                resume_runtime_session_id: None,
+                fresh: false,
+                model: None,
+                effort: Some("high".into()),
+            },
+        )
+        .unwrap_err();
+    assert_eq!(err.code, org_proto::ErrorCode::InvalidRequest, "{err:?}");
+    assert!(
+        err.message
+            .contains("does not support a separate reasoning effort override"),
+        "expected actionable effort guidance, got: {err:?}"
+    );
+}

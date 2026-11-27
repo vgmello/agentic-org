@@ -4,7 +4,7 @@
 //! tokens), computed cache-hit ratios, live/peak child RSS bytes, and sandbox/policy denial
 //! counts in bounded ring buffers per agent (zero unbounded memory growth, strictly secret-free).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
@@ -31,6 +31,26 @@ const MAX_RUN_WATERMARKS_PER_AGENT: usize = 8;
 
 /// Maximum length of redacted metadata identifiers (`runtime_id`, `model`, `effort`).
 const MAX_META_LEN: usize = 128;
+
+/// Maximum deduplication digests tracked per active turn (strictly bounded, zero raw text).
+const MAX_DENIAL_DEDUP_KEYS: usize = 64;
+
+fn denial_digest(tag: &str, raw: &str, normalize_case: bool) -> [u8; 16] {
+    let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
+    ctx.update(tag.as_bytes());
+    ctx.update(&[0u8]);
+    let trimmed = raw.trim();
+    if normalize_case {
+        let lower = trimmed.to_ascii_lowercase();
+        ctx.update(lower.as_bytes());
+    } else {
+        ctx.update(trimmed.as_bytes());
+    }
+    let digest = ctx.finish();
+    let mut out = [0u8; 16];
+    out.copy_from_slice(&digest.as_ref()[..16]);
+    out
+}
 
 /// Computes `cached_read_tokens / (input_tokens + cached_read_tokens)` when the denominator
 /// is positive, or `None` when no input tokens were observed.
@@ -96,6 +116,21 @@ struct InFlightTurn {
     sandbox_denial_count: u64,
     model: Option<String>,
     effort: Option<String>,
+    denied_tool_keys: HashSet<[u8; 16]>,
+    unkeyed_auto_denies: HashMap<[u8; 16], u64>,
+    seen_denial_texts: HashSet<[u8; 16]>,
+}
+
+impl InFlightTurn {
+    fn note_denial_text(&mut self, text: Option<&str>) {
+        let Some(raw) = text.map(str::trim).filter(|s| !s.is_empty()) else {
+            return;
+        };
+        if self.seen_denial_texts.len() < MAX_DENIAL_DEDUP_KEYS {
+            self.seen_denial_texts
+                .insert(denial_digest("txt", raw, true));
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -259,6 +294,9 @@ impl TelemetryCollector {
     ) {
         let mut st = lock_state(&self.state);
         let rec = st.entry_mut(emp_id);
+        // Defensively clear any orphaned in-flight turn so a new session can never inherit
+        // stale latency, tokens, or denial counters from a dead run (`TASK-136`).
+        rec.active_turn = None;
         rec.runtime_id = sanitize_meta(runtime_id);
         rec.active_model = sanitize_meta(model);
         rec.active_effort = sanitize_meta(effort);
@@ -291,6 +329,9 @@ impl TelemetryCollector {
                 sandbox_denial_count: 0,
                 model: clean_model,
                 effort: clean_effort,
+                denied_tool_keys: HashSet::new(),
+                unkeyed_auto_denies: HashMap::new(),
+                seen_denial_texts: HashSet::new(),
             });
         }
     }
@@ -330,6 +371,133 @@ impl TelemetryCollector {
         }
     }
 
+    /// Records an Office `AutoDeny` for one tool call, deduplicated by `tool_use_id` so a later
+    /// runtime `ActionDenied` or matching notice/error does not double-count the same denial.
+    pub fn record_auto_deny(
+        &self,
+        emp_id: &str,
+        tool: &str,
+        tool_use_id: Option<&str>,
+        reason: Option<&str>,
+    ) {
+        let mut st = lock_state(&self.state);
+        let rec = st.entry_mut(emp_id);
+        if let Some(turn) = rec.active_turn.as_mut() {
+            turn.note_denial_text(reason);
+            if let Some(tid) = tool_use_id.map(str::trim).filter(|s| !s.is_empty()) {
+                let key = denial_digest("tu", tid, false);
+                if turn.denied_tool_keys.contains(&key) {
+                    return;
+                }
+                if turn.denied_tool_keys.len() < MAX_DENIAL_DEDUP_KEYS {
+                    turn.denied_tool_keys.insert(key);
+                }
+            } else {
+                let tkey = denial_digest("tool", tool, true);
+                if turn.unkeyed_auto_denies.contains_key(&tkey)
+                    || turn.unkeyed_auto_denies.len() < MAX_DENIAL_DEDUP_KEYS
+                {
+                    let slot = turn.unkeyed_auto_denies.entry(tkey).or_insert(0);
+                    *slot = slot.saturating_add(1);
+                }
+            }
+            turn.sandbox_denial_count = turn.sandbox_denial_count.saturating_add(1);
+        }
+        rec.sandbox_denial_count = rec.sandbox_denial_count.saturating_add(1);
+    }
+
+    /// Records a runtime `ActionDenied` event, suppressing duplicates already counted via Office
+    /// `AutoDeny` for the same `tool_use_id` (or unmatched unkeyed auto-deny for the same tool).
+    pub fn record_action_denied(
+        &self,
+        emp_id: &str,
+        tool: &str,
+        tool_use_id: Option<&str>,
+        message: Option<&str>,
+    ) {
+        let mut st = lock_state(&self.state);
+        let rec = st.entry_mut(emp_id);
+        if let Some(turn) = rec.active_turn.as_mut() {
+            turn.note_denial_text(message);
+            if let Some(tid) = tool_use_id.map(str::trim).filter(|s| !s.is_empty()) {
+                let key = denial_digest("tu", tid, false);
+                if turn.denied_tool_keys.contains(&key) {
+                    return;
+                }
+                if turn.denied_tool_keys.len() < MAX_DENIAL_DEDUP_KEYS {
+                    turn.denied_tool_keys.insert(key);
+                }
+            } else {
+                let tkey = denial_digest("tool", tool, true);
+                if let Some(pending) = turn.unkeyed_auto_denies.get_mut(&tkey) {
+                    if *pending > 0 {
+                        *pending -= 1;
+                        return;
+                    }
+                }
+            }
+            turn.sandbox_denial_count = turn.sandbox_denial_count.saturating_add(1);
+        }
+        rec.sandbox_denial_count = rec.sandbox_denial_count.saturating_add(1);
+    }
+
+    /// Records a sandbox/policy denial surfaced in a runtime `Notice`, deduplicating repeated
+    /// normalized messages within the active turn without retaining raw text.
+    pub fn record_denial_notice(&self, emp_id: &str, text: &str) {
+        if !is_sandbox_denial_text(text) {
+            return;
+        }
+        let key = denial_digest("txt", text, true);
+        let mut st = lock_state(&self.state);
+        let rec = st.entry_mut(emp_id);
+        if let Some(turn) = rec.active_turn.as_mut() {
+            if turn.seen_denial_texts.contains(&key) {
+                return;
+            }
+            if turn.seen_denial_texts.len() < MAX_DENIAL_DEDUP_KEYS {
+                turn.seen_denial_texts.insert(key);
+            }
+            turn.sandbox_denial_count = turn.sandbox_denial_count.saturating_add(1);
+        }
+        rec.sandbox_denial_count = rec.sandbox_denial_count.saturating_add(1);
+    }
+
+    /// Records fallback sandbox/policy denials from `TurnEnded.errors` only when no structured
+    /// denial or notice already accounted for denials during the active turn.
+    pub fn record_turn_end_denial_errors(&self, emp_id: &str, errors: &[String]) {
+        let mut st = lock_state(&self.state);
+        let rec = st.entry_mut(emp_id);
+        if rec
+            .active_turn
+            .as_ref()
+            .is_some_and(|t| t.sandbox_denial_count > 0)
+        {
+            return;
+        }
+        let mut added = 0u64;
+        let mut local_seen = HashSet::new();
+        for err in errors {
+            if !is_sandbox_denial_text(err) {
+                continue;
+            }
+            let key = denial_digest("txt", err, true);
+            if !local_seen.insert(key) {
+                continue;
+            }
+            if let Some(turn) = rec.active_turn.as_mut() {
+                if turn.seen_denial_texts.contains(&key) {
+                    continue;
+                }
+                if turn.seen_denial_texts.len() < MAX_DENIAL_DEDUP_KEYS {
+                    turn.seen_denial_texts.insert(key);
+                }
+                turn.sandbox_denial_count = turn.sandbox_denial_count.saturating_add(1);
+            }
+            added = added.saturating_add(1);
+        }
+        rec.sandbox_denial_count = rec.sandbox_denial_count.saturating_add(added);
+    }
+
     pub fn record_rss_sample(&self, emp_id: &str, rss_bytes: u64) {
         if rss_bytes == 0 {
             return;
@@ -354,7 +522,8 @@ impl TelemetryCollector {
     ) {
         let mut st = lock_state(&self.state);
         let rec = st.entry_mut(emp_id);
-        if let Some(bytes) = rss_bytes.filter(|&b| b > 0) {
+        let current_rss = rss_bytes.filter(|&b| b > 0);
+        if let Some(bytes) = current_rss {
             rec.note_rss(bytes);
         }
         let in_flight = rec.active_turn.take();
@@ -390,7 +559,7 @@ impl TelemetryCollector {
             cached_read_tokens: cache_read,
             thought_tokens: thought,
             cache_hit_ratio: compute_cache_hit_ratio(in_tok, cache_read),
-            rss_bytes: rss_bytes.or(rec.last_rss_bytes),
+            rss_bytes: current_rss,
             sandbox_denial_count: denials,
             model,
             effort,
@@ -451,25 +620,35 @@ impl PumpTelemetry {
         self.collector.record_usage(emp_id, run_id, usage);
     }
 
-    pub(crate) fn on_sandbox_denial(&self, emp_id: &str, count: u64) {
-        self.collector.record_sandbox_denial(emp_id, count);
+    pub(crate) fn on_auto_deny(
+        &self,
+        emp_id: &str,
+        tool: &str,
+        tool_use_id: Option<&str>,
+        reason: Option<&str>,
+    ) {
+        self.collector
+            .record_auto_deny(emp_id, tool, tool_use_id, reason);
+    }
+
+    pub(crate) fn on_action_denied(
+        &self,
+        emp_id: &str,
+        tool: &str,
+        tool_use_id: Option<&str>,
+        message: Option<&str>,
+    ) {
+        self.collector
+            .record_action_denied(emp_id, tool, tool_use_id, message);
     }
 
     pub(crate) fn on_notice(&self, emp_id: &str, text: &str) {
-        if is_sandbox_denial_text(text) {
-            self.collector.record_sandbox_denial(emp_id, 1);
-        }
+        self.collector.record_denial_notice(emp_id, text);
     }
 
-    /// Samples child RSS unlocked and finalizes the completed turn telemetry record.
+    /// Samples child process-tree RSS unlocked and finalizes the completed turn telemetry record.
     pub(crate) fn on_turn_ended(&self, emp_id: &str, succeeded: bool, errors: &[String]) {
-        let denial_errors = errors
-            .iter()
-            .filter(|err| is_sandbox_denial_text(err))
-            .count() as u64;
-        if denial_errors > 0 {
-            self.collector.record_sandbox_denial(emp_id, denial_errors);
-        }
+        self.collector.record_turn_end_denial_errors(emp_id, errors);
         let rss_bytes = self.child_pid.and_then(|pid| (self.sample_rss)(pid));
         self.collector
             .record_turn_finished(emp_id, succeeded, rss_bytes, Instant::now(), now_ms());

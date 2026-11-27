@@ -27,7 +27,10 @@ mod wake_turn;
 #[cfg(test)]
 pub(crate) use crate::manager::recycle_stale_warm_handle_in;
 #[cfg(test)]
-pub(crate) use drain::{drain_into_live_pump_with_acquirer, WarmPermitAcquirer};
+pub(crate) use drain::{
+    drain_into_live_pump_with_acquirer, drain_pending_wakes_into_live_pump_for_test,
+    WarmPermitAcquirer,
+};
 use usage::flush_pending_usage;
 
 struct DispatchWakeGuard {

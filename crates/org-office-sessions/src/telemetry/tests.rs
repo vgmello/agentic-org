@@ -164,7 +164,19 @@ fn pump_telemetry_counts_denials_without_storing_raw_secrets_or_prompts() {
         "bwrap: Operation not permitted while reading Authorization: Bearer ghp_1234567890abcdefghijklmnopqrstuvwx",
     );
     pump.on_notice("emp-sec", "sandbox enabled: normal status line");
-    pump.on_sandbox_denial("emp-sec", 1);
+    pump.on_auto_deny(
+        "emp-sec",
+        "Write",
+        Some("tu-sec-1"),
+        Some("denied by office policy: prompt=TOP_SECRET_USER_PROMPT_PAYLOAD sk-ant-oat01-ABCDEF1234567890"),
+    );
+    // Matching ActionDenied + TurnEnded.errors for the same denial must be deduplicated.
+    pump.on_action_denied(
+        "emp-sec",
+        "Write",
+        Some("tu-sec-1"),
+        Some("denied by office policy: prompt=TOP_SECRET_USER_PROMPT_PAYLOAD sk-ant-oat01-ABCDEF1234567890"),
+    );
     pump.on_turn_ended(
         "emp-sec",
         false,
@@ -174,7 +186,7 @@ fn pump_telemetry_counts_denials_without_storing_raw_secrets_or_prompts() {
     );
 
     let snap = collector.snapshot_agent("emp-sec").unwrap();
-    assert_eq!(snap.sandbox_denial_count, 3);
+    assert_eq!(snap.sandbox_denial_count, 2);
     assert_eq!(snap.last_rss_bytes, Some(12_345_678));
 
     let json = serde_json::to_string(&snap.recent_turns).unwrap();
@@ -190,6 +202,121 @@ fn pump_telemetry_counts_denials_without_storing_raw_secrets_or_prompts() {
             .contains("SECRETTOKENVALUE"),
         "metadata must pass through org-redact"
     );
+}
+
+#[test]
+fn denial_deduplication_none_rss_preservation_and_orphaned_turn_reset() {
+    let collector = TelemetryCollector::new();
+    let t0 = Instant::now();
+
+    // 1. AutoDeny + ActionDenied + matching Notice + TurnEnded.errors count ONCE per tool call.
+    collector.record_session_started("emp-dedup", Some("claude"), Some("claude-sonnet-4-6"), None);
+    collector.record_turn_started("emp-dedup", None, None, t0);
+    collector.record_auto_deny(
+        "emp-dedup",
+        "Write",
+        Some("tu-1"),
+        Some("write outside writable roots denied by office policy"),
+    );
+    collector.record_action_denied(
+        "emp-dedup",
+        "Write",
+        Some("tu-1"),
+        Some("write outside writable roots denied by office policy"),
+    );
+    collector.record_denial_notice(
+        "emp-dedup",
+        "write outside writable roots denied by office policy",
+    );
+    // Unkeyed AutoDeny + ActionDenied on the same tool also deduplicates to 1.
+    collector.record_auto_deny("emp-dedup", "Bash", None, Some("blocked by sandbox"));
+    collector.record_action_denied("emp-dedup", "Bash", None, Some("blocked by sandbox"));
+    // TurnEnded errors must NOT double-count once structured denials were already counted.
+    collector.record_turn_end_denial_errors(
+        "emp-dedup",
+        &[
+            "write outside writable roots denied by office policy".into(),
+            "permission denied".into(),
+        ],
+    );
+    collector.record_turn_finished(
+        "emp-dedup",
+        false,
+        Some(20_000_000),
+        t0 + Duration::from_millis(50),
+        1,
+    );
+
+    // 2. Fallback TurnEnded.errors counts once when no prior AutoDeny/ActionDenied/Notice fired,
+    //    AND `rss_bytes = None` is preserved on the TurnTelemetrySample (never copying stale RSS).
+    let t1 = t0 + Duration::from_millis(200);
+    collector.record_turn_started("emp-dedup", None, None, t1);
+    collector.record_turn_end_denial_errors(
+        "emp-dedup",
+        &[
+            "sandbox-exec: operation not permitted".into(),
+            "sandbox-exec: operation not permitted".into(),
+        ],
+    );
+    collector.record_turn_finished("emp-dedup", false, None, t1 + Duration::from_millis(40), 2);
+
+    let snap = collector.snapshot_agent("emp-dedup").unwrap();
+    assert_eq!(snap.recent_turns.len(), 2);
+    assert_eq!(snap.recent_turns[0].sandbox_denial_count, 2);
+    assert_eq!(snap.recent_turns[0].rss_bytes, Some(20_000_000));
+    assert_eq!(snap.recent_turns[1].sandbox_denial_count, 1);
+    assert_eq!(
+        snap.recent_turns[1].rss_bytes, None,
+        "missing RSS sample must stay None rather than copying stale last_rss_bytes"
+    );
+    assert_eq!(snap.last_rss_bytes, Some(20_000_000));
+    assert_eq!(snap.peak_rss_bytes, Some(20_000_000));
+    assert_eq!(snap.sandbox_denial_count, 3);
+
+    // 3. Orphaned active_turn is cleared defensively on `record_session_started` so a new session
+    //    cannot inherit stale tokens, denials, or latency from a crashed turn.
+    let stale_t = t0 + Duration::from_millis(500);
+    collector.record_turn_started(
+        "emp-orphan",
+        Some("claude-sonnet-4-6"),
+        Some("high"),
+        stale_t,
+    );
+    collector.record_usage(
+        "emp-orphan",
+        "run-dead",
+        &make_usage(UsageScope::TurnDelta, "claude-sonnet-4-6", 9_999, 500, 0, 0),
+    );
+    collector.record_sandbox_denial("emp-orphan", 4);
+    // New session starts without prior turn finishing:
+    collector.record_session_started(
+        "emp-orphan",
+        Some("claude"),
+        Some("claude-haiku-4-5"),
+        Some("low"),
+    );
+    let fresh_t = stale_t + Duration::from_secs(60);
+    collector.record_turn_started("emp-orphan", Some("claude-haiku-4-5"), Some("low"), fresh_t);
+    collector.record_usage(
+        "emp-orphan",
+        "run-new",
+        &make_usage(UsageScope::TurnDelta, "claude-haiku-4-5", 100, 20, 50, 0),
+    );
+    collector.record_turn_finished(
+        "emp-orphan",
+        true,
+        None,
+        fresh_t + Duration::from_millis(15),
+        3,
+    );
+    let orphan_snap = collector.snapshot_agent("emp-orphan").unwrap();
+    assert_eq!(orphan_snap.recent_turns.len(), 1);
+    let fresh_sample = &orphan_snap.recent_turns[0];
+    assert_eq!(fresh_sample.wall_latency_ms, 15);
+    assert_eq!(fresh_sample.input_tokens, 100);
+    assert_eq!(fresh_sample.sandbox_denial_count, 0);
+    assert_eq!(fresh_sample.model.as_deref(), Some("claude-haiku-4-5"));
+    assert_eq!(fresh_sample.effort.as_deref(), Some("low"));
 }
 
 #[test]

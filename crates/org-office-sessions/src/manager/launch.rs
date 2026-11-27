@@ -3,7 +3,7 @@
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-use org_office::organization_family::records::{Employee, PermissionPreset};
+use org_office::organization_family::records::Employee;
 use org_proto::sessions::{MemberSessionStartParams, SessionView};
 use org_proto::{ApiError, ErrorCode};
 use org_supervise::SessionMark;
@@ -12,34 +12,25 @@ use crate::credentials::rfc3339_now;
 use crate::partition::{PartitionKey, PartitionTurn};
 use crate::pump::{PumpCommand, SessionRuntimeState};
 use crate::recovery::{ActiveTurnRecord, PendingStartRecord};
-use crate::subagents::{build_general_subagent_definition, write_subagent_definition};
 
 use super::affinity::{
     affinity_entry, control_stop_reason, ensure_warm_sandbox_not_stale, is_warm_state_reusable,
-    next_uuid_v4, prepend_fallback_notice, resolve_and_audit_resume, ResumeAffinityCheck,
-    WarmReuseControl,
+    prepend_fallback_notice, WarmReuseControl,
 };
 use super::chief_of_staff::partition_switch_reason;
-use super::environment::{
-    apply_build_concurrency_env, assemble_launch_env, resolve_workspace,
-    write_owner_only_binding_file, SessionEnvInput,
-};
-use super::operator_home::ensure_operator_home;
+use super::environment::{write_owner_only_binding_file, SessionEnvInput};
 use super::registry_guards::{
     check_registry_startable, ensure_live_handle_not_recovery_required, ensure_not_stopped_since,
 };
 use super::sandbox_runner::{SandboxPlan, SandboxPrepareContext, SandboxVerifyContext};
-use super::spec::{
-    build_launch_context, build_session_spec, canonical_or_spec, compute_launch_spec_hash,
-    ModelChoice,
-};
+use super::spec::assemble_planned_session_launch;
 use super::warm::{
     dispatch_warm_handle_turn, warm_handle_stop_reason, LaunchRouteOpts, StartReservation,
     WarmFreshness, WarmHandleTurn,
 };
 use super::{
-    next_entropy_hex, BindingGuard, LiveSessionHandle, PermitGuard, PlannedSessionLaunch,
-    PreparedSessionLaunch, SessionManager,
+    BindingGuard, LiveSessionHandle, PermitGuard, PlannedSessionLaunch, PreparedSessionLaunch,
+    SessionManager,
 };
 
 /// Times a start re-plans when its warm handle is replaced while freshness checks run unlocked.
@@ -351,250 +342,61 @@ impl SessionManager {
         params: &MemberSessionStartParams,
         opts: LaunchRouteOpts<'_>,
     ) -> Result<PlannedSessionLaunch, ApiError> {
-        let emp_id = employee.id.as_str().to_owned();
-        // A stop that overtook this start while its watch notices were read skips admission,
-        // disk setup and the spawn (registration re-checks atomically, `TASK-190`).
-        ensure_not_stopped_since(&self.registry, &emp_id, opts.start_stop_epoch)?;
-        // Reclaim overdue idle warm sessions and enforce any office RSS budget before launching
-        // a new supervised runtime process (`TASK-133`).
-        self.sweep_resource_limits();
-        // Before creating this agent's runtime directory or session-binding token on disk,
-        // ensure no already-running sandboxed sibling lacks isolation for `emp_id` (`TASK-166`).
-        self.sandbox_runner
-            .enforce_sibling_isolation(self, &emp_id)?;
-        let home = self
-            .office
-            .ensure_private_home(&emp_id)
-            .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not prepare agent home"))?;
-        let workspace_real = resolve_workspace(&home, params.workspace.as_deref())?;
-        ensure_operator_home(employee, &home, &workspace_real, &self.config.runtimes)?;
-        let workspace_spec = canonical_or_spec(&workspace_real)?;
-        let workspace_spec_str = workspace_spec.as_str().to_owned();
-
-        // Auto-pre-prepare any repository-linked task worktrees BEFORE route admission (which
-        // hashes `worktree_sandbox_digest`) and BEFORE sandbox planning so Turn 1 always launches
-        // with exact least-privilege bare-cache grants (`TASK-135` AC #4).
-        if let Some(task_ref) = opts.task_ref {
-            self.preprepare_task_worktrees(&emp_id, &[task_ref]);
-        }
-
-        let admitted = crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
-            office: &self.office,
-            vault: self.enrollment.vault(),
-            runtimes: &self.config.runtimes,
-            hq_permits: self.config.hq_permits.as_deref(),
-            oauth_refresh: Some(&self.vault_oauth_refresh),
-            employee_id: &emp_id,
-            task_id: opts.task_ref,
-            is_failover_switch: opts.is_failover_switch,
-            excluded_connections: &opts.excluded_connections,
-            turn_override: Some(&opts.turn_override),
-        })?;
+        let emp_id = employee.id.as_str();
+        let workspace = self.prepare_launch_workspace(
+            employee,
+            params.workspace.as_deref(),
+            opts.task_ref,
+            opts.start_stop_epoch,
+        )?;
+        let mut admitted =
+            crate::router::select_and_admit_route(crate::router::AdmitRouteRequest {
+                office: &self.office,
+                vault: self.enrollment.vault(),
+                runtimes: &self.config.runtimes,
+                hq_permits: self.config.hq_permits.as_deref(),
+                oauth_refresh: Some(&self.vault_oauth_refresh),
+                employee_id: emp_id,
+                task_id: opts.task_ref,
+                is_failover_switch: opts.is_failover_switch,
+                excluded_connections: &opts.excluded_connections,
+                turn_override: Some(&opts.turn_override),
+            })?;
         let mut permit_guard = PermitGuard::new(
             &self.office,
             self.config.hq_permits.as_deref(),
-            admitted.permit,
+            admitted.permit.take(),
         );
         let binary = self
             .config
             .runtimes
             .resolve_binary(admitted.adapter.as_ref(), None)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
-
-        let host_profile = admitted.adapter.host_profile();
         let sandbox_plan = self.sandbox_runner.prepare_launch(&SandboxPrepareContext {
             office: &self.office,
             office_socket: &self.config.office_socket,
             agent_os_state_roots: &self.config.agent_os_state_roots,
-            employee_id: &emp_id,
+            employee_id: emp_id,
             sandbox_enabled: admitted.sandbox_enabled,
-            host_profile,
+            host_profile: admitted.adapter.host_profile(),
         })?;
-
-        let mut preset_cfg = self.build_employee_preset_cfg(
-            &emp_id,
-            PermissionPreset::effective_for(employee.builtin_key, admitted.preset),
-            admitted.sandbox_enabled,
-            &workspace_spec,
-            true,
-        )?;
-        let (runtime_dir, tmpdir) = self.prepare_run_dirs(&emp_id)?;
-        let attachments_root = crate::turn_attachments::attachments_root(&runtime_dir);
-        Self::append_attachments_write_denies(&mut preset_cfg, &attachments_root);
-        let subagent_def =
-            build_general_subagent_definition(preset_cfg.allowed_tools.as_deref(), None);
-        let _ = write_subagent_definition(&runtime_dir, &subagent_def);
-
-        let active_model = admitted.model_token.as_ref().map(|t| t.as_str().to_owned());
-        let active_effort = admitted.effort.as_ref().map(|t| t.as_str().to_owned());
-        let (spec, spec_hash) = self.assemble_launch_spec(
+        let invocation = self.plan_runtime_invocation(
             employee,
-            admitted.adapter.as_ref(),
-            ModelChoice {
-                model: admitted.model_token,
-                effort: admitted.effort,
-            },
-            &admitted.route_digest_suffix,
-            &home,
-            &workspace_real,
-            workspace_spec,
-            &attachments_root,
-            &preset_cfg,
-            &sandbox_plan,
-        )?;
-        let run_id = format!("run-{}", next_entropy_hex(10)?);
-        let session_id = next_uuid_v4()?;
-        let mark_str = format!("m-{}", next_entropy_hex(12)?);
-        let allow_host_auth = crate::host_auth::allows_host_subscription_auth(
-            &admitted.auth_env,
-            admitted.auth_mode,
-            host_profile.uses_host_oauth_token_injection,
-        );
-        let (effective_resume, fallback_notice) = self.resolve_effective_resume_for_launch(
-            &emp_id,
-            admitted.adapter.as_ref(),
-            &workspace_spec_str,
-            &spec_hash,
-            &opts,
-        );
-        let ctx = build_launch_context(
+            &mut admitted,
             binary,
-            &runtime_dir,
-            &tmpdir,
-            &session_id,
-            effective_resume.as_deref(),
-            host_profile.host_config_subdir,
-            allow_host_auth,
-        )?;
-        let (mut plan, session) = admitted
-            .adapter
-            .plan_session(&spec, &ctx)
-            .map_err(|_| ApiError::new(ErrorCode::Unavailable, "runtime rejected session spec"))?;
-
-        let mut launch_env = assemble_launch_env(admitted.auth_env, admitted.endpoint_env);
-        let oauth_expires_at_ms = admitted.oauth_expires_at_ms;
-        let oauth_token_fp = admitted.oauth_token_fp;
-        apply_build_concurrency_env(
-            &mut plan,
-            &mut launch_env,
-            self.config.resource_limits.build_concurrency_jobs,
-        );
-
-        Ok(PlannedSessionLaunch {
-            emp_id,
-            employee_name: employee.name.clone(),
-            employee_handle: employee.handle.clone(),
-            run_id,
-            session_id,
-            mark_str,
-            runtime_id: admitted.adapter.id().as_str().to_owned(),
-            runtime: Arc::clone(&admitted.adapter),
-            supports_mid_turn: admitted.adapter.capabilities().supports_mid_turn_delivery(),
-            model_supports_vision: admitted.model_supports_vision,
-            allow_host_auth,
+            &workspace,
             sandbox_plan,
-            connection_id: admitted.connection_id,
-            route_digest: admitted.route_digest_suffix,
-            oauth_expires_at_ms,
-            oauth_token_fp,
-            oauth_refresh_attempted: opts.oauth_refresh_attempted,
-            workspace_arg: params.workspace.clone(),
-            permit: permit_guard.take(),
-            task_ref: opts.task_ref.map(str::to_owned),
-            tried_connections: opts.tried_connections,
-            start_stop_epoch: opts.start_stop_epoch,
-            partition: opts.partition,
-            active_model,
-            active_effort,
-            turn_override: opts.turn_override,
-            home,
-            workspace_real,
-            workspace_spec: workspace_spec_str,
-            runtime_dir,
-            attachments_root,
-            tmpdir,
-            preset_cfg,
-            spec_hash,
-            fallback_notice,
-            auth_env: launch_env,
-            ctx,
-            plan,
-            session,
-        })
-    }
-
-    fn resolve_effective_resume_for_launch(
-        &self,
-        emp_id: &str,
-        adapter: &dyn org_agent_runtime::AgentRuntime,
-        workspace_spec_str: &str,
-        spec_hash: &str,
-        opts: &LaunchRouteOpts<'_>,
-    ) -> (Option<String>, Option<String>) {
-        let runtime_id = adapter.id().as_str().to_owned();
-        let resume_res = resolve_and_audit_resume(
-            &self.store,
-            &self.bindings,
-            &ResumeAffinityCheck {
-                employee_id: emp_id,
-                requested_resume: opts.resume_runtime_session_id,
-                force_fresh: opts.force_fresh,
-                enforce_affinity_guard: opts.enforce_affinity_guard,
-                allow_sandbox_spec_change: opts.allow_sandbox_spec_change,
-                runtime_id: &runtime_id,
-                workspace: workspace_spec_str,
-                spec_hash,
-                capabilities: adapter.capabilities(),
-            },
-        );
-        let effective = if let Some(explicit) = resume_res.effective_resume {
-            Some(explicit)
-        } else if opts.force_fresh || resume_res.fallback_notice.is_some() {
-            None
-        } else {
-            self.resolve_hibernated_resume_id(emp_id, &runtime_id, spec_hash, opts)
-        };
-        (effective, resume_res.fallback_notice)
-    }
-
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "session spec assembly combines employee, runtime adapter, model choice, paths, preset, and sandbox plan"
-    )]
-    fn assemble_launch_spec(
-        &self,
-        employee: &Employee,
-        adapter: &dyn org_agent_runtime::AgentRuntime,
-        choice: ModelChoice,
-        route_digest_suffix: &str,
-        home: &std::path::Path,
-        workspace_real: &std::path::Path,
-        workspace_spec: org_agent_runtime::SpecPath,
-        attachments_root: &std::path::Path,
-        preset_cfg: &crate::preset::PresetConfig,
-        sandbox_plan: &SandboxPlan,
-    ) -> Result<(org_agent_runtime::SessionSpec, String), ApiError> {
-        let instructions = self.build_instructions(employee, home, workspace_real, preset_cfg)?;
-        let mut read_only_dirs = self.collect_session_read_only_dirs(
-            adapter,
-            home,
-            workspace_real,
-            preset_cfg.sandbox.enabled,
-        );
-        Self::append_attachments_read_only_dir(&mut read_only_dirs, attachments_root);
-        let mut spec = build_session_spec(
-            adapter.id(),
-            employee,
-            choice,
-            workspace_spec,
-            read_only_dirs,
-            instructions,
-            preset_cfg,
+            &opts,
         )?;
-        self.sandbox_runner
-            .adapt_session_spec(sandbox_plan, &mut spec);
-        let spec_hash = compute_launch_spec_hash(&spec, route_digest_suffix);
-        Ok((spec, spec_hash))
+        Ok(assemble_planned_session_launch(
+            employee,
+            admitted,
+            permit_guard.take(),
+            workspace,
+            params.workspace.clone(),
+            opts,
+            invocation,
+        ))
     }
 
     pub(super) fn issue_and_spawn_launch(
@@ -845,22 +647,5 @@ impl SessionManager {
             .chain(reg.starting.iter())
             .cloned()
             .collect()
-    }
-
-    fn resolve_hibernated_resume_id(
-        &self,
-        emp_id: &str,
-        runtime_id: &str,
-        spec_hash: &str,
-        opts: &LaunchRouteOpts<'_>,
-    ) -> Option<String> {
-        if opts.resume_runtime_session_id.is_some()
-            || opts.partition.is_some()
-            || opts.is_failover_switch
-        {
-            return None;
-        }
-        self.hibernation
-            .matching_resume_id(emp_id, runtime_id, spec_hash, opts.start_stop_epoch)
     }
 }
