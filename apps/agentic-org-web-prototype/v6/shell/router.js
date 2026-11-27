@@ -9,7 +9,10 @@ import { pageHome } from "../pages/home.js";
 import { pageInbox } from "../pages/inbox.js";
 import { pageInsights } from "../pages/org-insights.js";
 import { mountProjectQueue, pageProject, pageProjects } from "../pages/projects.js";
-import { SET, notFound, pagePreferences, pageSearch, pageSettings } from "../pages/settings.js";
+import { processesTitle } from "../pages/processes.js";
+/* Updates are part of Settings › Offices (owner); old Updates links land there */
+function redirectToOffices(sub) { location.replace(`#/settings/offices${sub === "releases" || sub === "history" ? "/" + sub : ""}`); return ""; }
+import { SET, notFound, pageOrgProcesses, pagePreferences, pageSearch, pageSettings } from "../pages/settings.js";
 import { pageMember, pageMembersDir, pageOrgChart, pageTeam, pageTeams } from "../pages/teams.js";
 import { boardPlace, fitTextarea, mountBoard, mountWorkToolbar, pageWork, restoreBoardPlace, setWorkPanelExpanded, settleWorkResults, showSidePanel, workPanelOpener } from "../pages/work.js";
 import { adoptBoardReturn, takeBoardReturnPlace } from "./board-return.js";
@@ -23,7 +26,7 @@ import { esc, ic } from "../ui.js";
 /* ---------------------------------------------------------------- router */
 function route() { const h = location.hash.replace(/^#\/?/, "").split("?")[0] || "home"; return h.split("/").filter(Boolean).map((s) => { try { return decodeURIComponent(s); } catch (e) { return s; } }); }
 const own = (o, k) => k != null && Object.prototype.hasOwnProperty.call(o, k);
-const TITLES = { home: "Home", inbox: "Inbox", projects: "Projects", work: "Work", chat: "Chat", activity: "Activity", insights: "Insights", calendar: "Calendar", teams: "Teams", members: "Member", settings: "Organization settings", preferences: "Your preferences", search: "Search" };
+const TITLES = { home: "Home", inbox: "Inbox", projects: "Projects", work: "Work", chat: "Chat", activity: "Activity", insights: "Insights", calendar: "Calendar", teams: "Teams", members: "Member", settings: "Organization settings", updates: "Updates", preferences: "Your preferences", search: "Search" };
 const MEMBER_ALIASES = ["members", "people", "everyone"];
 const homeToolbar = document.getElementById("home-toolbar");
 const drawerButton = homeToolbar.querySelector(".menu-btn");
@@ -104,15 +107,19 @@ function normalizeRouteRedirects() {
 const ROUTE_RENDERERS = {
   home: () => pageHome(),
   inbox: (r1, r2) => pageInbox(r1, r2),
-  projects: (r1, r2) => (!r1 ? pageProjects() : own(P, r1) ? pageProject(r1, r2) : notFound()),
+  projects: (r1, r2, r3) => (!r1 ? pageProjects() : own(P, r1) ? pageProject(r1, r2, r3) : notFound()),
   work: () => pageWork(),
   chat: (r1) => pageChat(r1), /* Chat resolves unknown ids; dm-<member> opens or creates that DM */
   activity: () => pageActivity(),
   insights: () => pageInsights(),
   calendar: () => pageCalendar(),
-  teams: (r1, r2) => (MEMBER_ALIASES.includes(r1) ? pageMembersDir() : r1 === "org-chart" ? pageOrgChart() : !r1 ? pageTeams() : own(TEAMS, r1) ? pageTeam(r1, r2) : notFound()),
+  teams: (r1, r2) => (MEMBER_ALIASES.includes(r1) ? pageMembersDir() : r1 === "org-chart" || !r1 ? pageOrgChart() : r1 === "all" ? pageTeams() : own(TEAMS, r1) ? pageTeam(r1, r2) : notFound()),
   members: (r1, r2, r3) => (own(M, r1) ? pageMember(r1, r2, r3) : notFound()),
-  settings: (r1, r2) => (!r1 || SET.some(([k]) => k === r1) ? pageSettings(r1, own(M, r2) ? r2 : null) : notFound()),
+  /* Updates moved out of Settings (TASK-250); the old address still opens it */
+  settings: (r1, r2) => (r1 === "updates" ? redirectToOffices(r2) : r1 === "offices" ? pageSettings("offices", r2) : r1 === "processes" || r1 === "dev-processes" ? pageOrgProcesses(r1, r2) : !r1 || SET.some(([k]) => k === r1) ? pageSettings(r1, own(M, r2) ? r2 : null) : notFound()),
+  processes: (r1) => pageOrgProcesses("processes", r1),
+  "dev-processes": () => pageOrgProcesses("dev-processes"),
+  updates: (r1) => redirectToOffices(r1),
   preferences: () => pagePreferences(),
   search: () => pageSearch(qs().get("q") || ""),
 };
@@ -190,7 +197,10 @@ function syncActivityScopeState(r0, projectId) {
   const activityScope = r0 === "activity" ? "portfolio" : projectId;
   const sameActivity = activityScope && document.querySelector(".activity-workspace")?.dataset.activityScope === activityScope;
   if (activityScope && !sameActivity) {
-    S.actPanel = "release";
+    /* The viewer's last choice (open panel, or none) is remembered locally; first visit opens Release gates */
+    let saved = null;
+    try { saved = localStorage.getItem("ao.activityPanel"); } catch (e) {}
+    S.actPanel = saved === null ? "release" : saved || null;
     if (projectId) { S.projectActView = "assembly"; S.projectActFilter = "all"; }
   }
   return sameActivity;
@@ -198,6 +208,7 @@ function syncActivityScopeState(r0, projectId) {
 
 function pageTitle(r0, r1) {
   if (r0 === "members" && own(M, r1)) return M[r1].name;
+  if (r0 === "processes" || (r0 === "settings" && r1 === "processes")) return processesTitle(); /* "<place> · Processes" (PROC-32) */
   if (r0 === "chat") return chatDocTitle(r1); /* Chat resolves conversations and its Mentions and Threads views */
   return TITLES[r0] || "Not found";
 }

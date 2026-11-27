@@ -15,8 +15,10 @@ import { listIsOverlay, watchListMode } from "./chat-layout.js";
 import { bindPanelResize, panelWidthStyle } from "./chat-panel-width.js";
 import { closeAssist, mentionsIn, onAssistKeydown, parseCommand, recheckAssist, updateAssist } from "./chat-compose-assist.js";
 import {
-  DEFAULT_CHAT, chatTitle, dmSources, inboxItem, listedConversations, openAsks, openDirectMessage, resolveChatId, sentAt, sourceHref, sourceLabel, splitTime,
+  DEFAULT_CHAT, chatTitle, dmSources, inboxItem, openAsks, openDirectMessage, reopenDm, resolveChatId, sentAt, shownConversations, sourceHref, sourceLabel, splitTime,
 } from "./chat-model.js";
+import { dmHeaderMenu } from "./chat-dm-close.js";
+import { channelIntroHtml, openAddMembers } from "./chat-channel-new.js";
 import "./chat-attach-seed.js";
 import { THREAD_SUM_CLICKS, markRoot, rootOpen, setRootOpen, threadSummaryHtml } from "./chat-thread-sum.js";
 import { ATTACH_CLICKS, attachButton, attachmentsForSend, bindAttachments, clearAttachments, trayHtml } from "./chat-attachments.js";
@@ -52,7 +54,9 @@ function mentionRef(match, name) {
   const key = Object.keys(M).find((k) => k === lower || M[k].name.split(" ")[0].toLowerCase() === lower);
   return key && !M[key].owner ? `<a class="alink chat-ref" href="#/members/${key}" data-person="${key}">@${esc(M[key].name)}</a>` : match;
 }
-const richText = (text) => esc(text).replace(/\bT-A\d+\b/g, workRef).replace(/@([A-Za-z]+)/g, mentionRef);
+/* `#channel` in a message links to that channel when it exists */
+const channelRef = (m, pre, name) => { const k = Object.keys(CH).find((x) => CH[x].kind === "channel" && CH[x].name === name); return k ? `${pre}<a class="alink chat-chan-ref" href="#/chat/${k}">#${name}</a>` : m; };
+const richText = (text) => esc(text).replace(/\bT-A\d+\b/g, workRef).replace(/@([A-Za-z]+)/g, mentionRef).replace(/(^|[\s(])#([a-z0-9][a-z0-9-]*)/g, channelRef);
 
 /* ---------------------------------------------------------------- one message */
 /* Hover tools on wide pointers; one touch-sized menu (with the message's time) on narrow or touch screens. */
@@ -130,6 +134,7 @@ function messageHtml(m, prev, opts = {}) {
 const msgHtml = (m, i, list) => messageHtml(m, list && i ? list[i - 1] : null);
 
 function emptyConversation(ch) {
+  if (ch.kind === "channel") return channelIntroHtml(ch);
   const dm = ch.kind === "dm", name = dm ? M[ch.with].name : chatTitle(ch);
   const text = dm ? `Messages here go only to ${name}.` : ch.topic || "";
   return `<div class="chat-empty">${dm ? av(ch.with, 32) : ic("hash", "ic20")}<h2>This is the start of ${dm ? "your conversation with " : ""}${esc(name)}</h2>${text ? `<p>${esc(text)}</p>` : ""}</div>`;
@@ -466,12 +471,12 @@ function dmRequests(who, chId) {
    summary and Details use the same words, in the same order. */
 function elsewhereWord(here, elsewhere, short) {
   if (!here.length) return `${plural(elsewhere.length, "request", "requests")} in Inbox`;
-  return short ? `${elsewhere.length} more` : `${elsewhere.length} more ${elsewhere.length === 1 ? "request" : "requests"}`;
+  return short ? `${elsewhere.length} more` : `${elsewhere.length} more in Inbox`;
 }
 function dmWaiting(who, chId, slot, short = false) {
   const { here, elsewhere } = dmRequests(who, chId), parts = [];
   const card = here.length && CH[chId].msgs.find((x) => x.needs === here[0]);
-  if (card) parts.push(`<a class="alink chat-here-link" href="#/chat/${esc(chId)}/${esc(card.id)}" aria-label="${esc(plural(here.length, "request", "requests"))} in this DM">${here.length} in this DM</a>`);
+  if (card) parts.push(`<a class="alink chat-here-link" href="#/chat/${esc(chId)}/${esc(card.id)}" aria-label="${esc(plural(here.length, "request", "requests"))} for you here">${ic("bell", "ic14")}${esc(plural(here.length, "request", "requests"))} here</a>`);
   if (elsewhere.length) parts.push(requestsMenu(elsewhere, who, slot, `${elsewhereWord(here, elsewhere, short)}${ic("chev-down", "ic14 chat-more-chev")}`));
   return parts.join(" · ");
 }
@@ -498,7 +503,8 @@ function contextParts(ch, chId, slot = "ctx") {
    keeps the rest (project and members, a DM's kind and status). Details keeps every part. */
 const DESCRIPTION_PART = { channel: "Topic", dm: "Role", a2a: "Kind" };
 function description(ch) {
-  if (ch.kind === "dm") return M[ch.with].role || "";
+  /* Agents read "Engineering Manager · Agent" (owner); people show just their role */
+  if (ch.kind === "dm") return [M[ch.with].role, M[ch.with].kind === "agent" ? "Agent" : ""].filter(Boolean).join(" · ");
   return ch.kind === "a2a" ? "Between agents" : ch.topic || "";
 }
 const headerContext = (ch, chId) => joinSep(contextParts(ch, chId).filter(([k]) => k !== DESCRIPTION_PART[ch.kind]).map(([, v]) => (v ? `<span>${v}</span>` : "")));
@@ -518,7 +524,7 @@ function dmSummary(who) {
   if (presence(who) !== "needs") return [word];
   const { here, elsewhere } = dmRequests(who, `dm-${who}`);
   if (!here.length && !elsewhere.length) return [word];
-  return [here.length ? `${here.length} in this DM` : "", elsewhere.length ? elsewhereWord(here, elsewhere, false) : ""];
+  return [here.length ? `${plural(here.length, "request", "requests")} here` : "", elsewhere.length ? elsewhereWord(here, elsewhere, false) : ""];
 }
 function summaryParts(ch) {
   if (ch.kind === "dm") return dmSummary(ch.with);
@@ -533,21 +539,28 @@ function detailsPanel(ch, chId) {
   return `<dl class="chat-details" id="chat-details" aria-label="Conversation details">${rows}</dl>`;
 }
 function headerLead(ch) {
-  if (ch.kind === "dm") return av(ch.with, 32);
+  /* An agent's avatar carries the sparkle badge, as Tess's does in the sidebar (owner); hover names the kind */
+  if (ch.kind === "dm") {
+    const agent = M[ch.with]?.kind === "agent";
+    const star = agent ? `<span class="chat-av-star" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24"><path d="M12 2l2.1 6.4L20.5 10.5l-6.4 2.1L12 19l-2.1-6.4L3.5 10.5l6.4-2.1L12 2z" fill="currentColor" stroke="none"/></svg></span>` : "";
+    return `<span class="chat-head-av" title="${esc(kindWord(ch.with))}">${av(ch.with, 32)}${star}</span>`;
+  }
   return ch.kind === "a2a" ? `<span class="chat-pair" aria-hidden="true">${ch.pair.map((k) => av(k, 24)).join("")}</span>` : "";
 }
-function headerActions(id, title) {
+function headerActions(id, title, meta = "", menu = "") {
   const open = local.search?.id === id;
   return `<div class="ph-actions chat-actions">
+      ${meta}
       ${filesButton(local.files, title)}
       <button class="btn ghost sm chat-details-btn" type="button" data-act="chat-details" aria-expanded="${local.details}" aria-controls="chat-details" title="Details">${ic("info", "ic16")}<span class="chat-details-word">Details</span></button>
-      <button class="btn ghost icon chat-search" type="button" data-act="chat-search" aria-expanded="${open}" aria-controls="chat-search-row" aria-label="Search in ${esc(title)}" title="Search in ${esc(title)}">${ic("search", "ic20")}</button>
+      <button class="btn ghost icon chat-search" type="button" data-act="chat-search" aria-expanded="${open}" aria-controls="chat-search-row" aria-label="Search in ${esc(title)}" title="Search in ${esc(title)} (/)" aria-keyshortcuts="/">${ic("search", "ic20")}</button>
+      ${menu}
     </div>`;
 }
 /* Asks waiting in other conversations, each counted once; unread elsewhere shows as a dot. */
 function listButton(id) {
   const here = new Set(CH[id] ? openAsks(CH[id]) : []);
-  const others = listedConversations().filter((k) => k !== id);
+  const others = shownConversations().filter((k) => k !== id);
   const elsewhere = new Set(others.flatMap((k) => openAsks(CH[k])).filter((x) => !here.has(x))).size;
   const unread = others.some((k) => CH[k].unread);
   /* The name always begins with the visible word, whatever the width hides; the badge and dot are described in it. */
@@ -570,17 +583,39 @@ function backToAgent(ch) {
   const who = ch.pair.includes(S.chatA2AFrom) ? S.chatA2AFrom : ch.pair[0];
   return `<a class="chat-back" href="#/members/${esc(who)}">${ic("chev-left", "ic16")}Back to ${esc(M[who].name)}</a>`;
 }
+/* A channel's project and members sit with the header actions (owner): a project chip and an avatar stack with the
+   count, so the title is one line. DMs keep their status line under the title. */
+function memberStack(ch) {
+  const who = channelMembers(ch);
+  if (!who.length) return "";
+  return `<button class="btn ghost sm chat-head-btn chat-members-btn chat-member-stack" type="button" data-act="chat-members" aria-expanded="${local.members}" aria-controls="chat-members" aria-label="${esc(plural(who.length, "member", "members"))}" title="Members">
+    ${ic("user-group", "ic16")}<span>${esc(plural(who.length, "member", "members"))}</span></button>`;
+}
+/* A DM's kind and request status sit with the header actions too (owner), so the title is one line everywhere */
+function dmMeta(ch, id) {
+  const parts = contextParts(ch, id).filter(([k]) => k !== "Role" && k !== "Status" && k !== "Kind").map(([, v]) => v).filter(Boolean);
+  const status = contextParts(ch, id).find(([k]) => k === "Status")?.[1] || "";
+  return `<div class="chat-head-meta chat-head-dm">${parts.map((v) => `<span class="chat-kind-chip">${v}</span>`).join("")}${status}</div>`;
+}
+function channelMeta(ch, id) {
+  if (ch.kind === "dm") return dmMeta(ch, id);
+  if (ch.kind !== "channel") return "";
+  const proj = ch.proj ? `<a class="btn ghost sm chat-head-btn" href="#/projects/${esc(ch.proj)}" title="Open project">${ic("folder", "ic16")}<span>${esc(P[ch.proj].name)}</span></a>` : "";
+  return `<div class="chat-head-meta">${proj}${memberStack(ch)}</div>`;
+}
 function chatHeaderHtml(id, ch, title) {
+  const context = ch.kind === "channel" || ch.kind === "dm" ? ""
+    : `<p class="chat-context"><span class="chat-ctx-full">${headerContext(ch, id)}</span><span class="chat-ctx-summary">${headerSummary(ch)}</span></p>`;
   return `<header class="ph chhead">
     ${listButton(id)}
     <div class="ph-t chat-title">
       ${headerLead(ch)}
       <div class="chat-heading">${backToAgent(ch)}${titleLine(title, description(ch))}
-        <p class="chat-context"><span class="chat-ctx-full">${headerContext(ch, id)}</span><span class="chat-ctx-summary">${headerSummary(ch)}</span></p>
+        ${context}
       </div>
       ${readAsTag(ch)}${requestsTag(ch, id)}
     </div>
-    ${headerActions(id, title)}
+    ${headerActions(id, title, channelMeta(ch, id), ch.kind === "dm" ? dmHeaderMenu(id) : "")}
     ${detailsPanel(ch, id)}
   </header>`;
 }
@@ -681,6 +716,7 @@ function pageChat(id) {
   if (isChatView(id)) return pageChatView(id);
   id = resolveChatId(id);
   const ch = CH[id];
+  reopenDm(id);
   startVisit(id);
   if (S.chatList && S.chatList !== id) S.chatList = null;
   takeLink(id);
@@ -905,6 +941,7 @@ const CLICKS = {
   "chat-open-thread": (_id, t) => openViewThread(t),
   "chat-search": (_id, _t, chId) => toggleSearch(chId),
   "chat-details": () => toggleDetails(),
+  "chat-add-members": (_id, t, chId) => openAddMembers(t, chId),
   "chat-task": (id, t, chId) => turnIntoTask(t, chId, id),
   "chat-asks-jump": () => jumpToAsk(),
   "chat-send-plain": (_id, t) => sendChatMessage(t.closest("form"), true),
@@ -972,10 +1009,12 @@ function mountOverlays(root) {
    Swapping the lines resizes the observed element, so the swap waits for the next frame: changing it inside the
    observer callback raised "ResizeObserver loop completed with undelivered notifications" while the app nav
    animated (the Bun dev overlay showed it at 1024 px). */
+/* Headers without a context line (channels and DMs since the one-line header) still place their description, so
+   the watcher observes the header itself. */
 function watchContext(root) {
-  const ctx = root.querySelector(".chhead .chat-context"), full = ctx?.querySelector(".chat-ctx-full");
-  if (!full || !root.querySelector(".chat-details-btn")) return;
-  const measure = () => { root.classList.toggle("ctx-overflow", full.scrollWidth > full.clientWidth + 1); placeDescription(root); };
+  const ctx = root.querySelector(".chhead .chat-context") || root.querySelector(".chhead"), full = ctx?.querySelector(".chat-ctx-full");
+  if (!ctx) return;
+  const measure = () => { if (full && root.querySelector(".chat-details-btn")) root.classList.toggle("ctx-overflow", full.scrollWidth > full.clientWidth + 1); placeDescription(root); };
   let frame = 0;
   const ro = new ResizeObserver(() => {
     if (!ctx.isConnected) { ro.disconnect(); return; }

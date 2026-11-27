@@ -1,4 +1,5 @@
 import { ALL_STATUSES, IN, KIND, M, OPEN, P, STATUSES, TEAMS, W, WORK_DISCUSSIONS, executionHold, needsMe, ownerAsks } from "../data.js";
+import { projectDevProcess } from "../devproc-data.js";
 import { detailCommentDrafts, detailEvent, inboxActivityTime, localDetailRecords, workCommentsHtml } from "./inbox.js";
 import { closeMenus } from "../shell/actions.js";
 import { bindBoardTips } from "./board-tip.js";
@@ -7,6 +8,7 @@ import { S, WORK_ARCHIVED_STORE, qs } from "../state.js";
 import { SEP, av, displayCheckbox, esc, ic, iconWithTooltip, kindWord, memberIds, mlink, pill, plink, queueHeadline, searchRow, searchToggle, showMenu, toast } from "../ui.js";
 import { savedTaskContext, workDetailContext } from "./task-context.js";
 import { clearFacets, facetValues, filterMenu, hasFacetFilters, matchesFacets, singleValue } from "./work-filter.js";
+import { featureRef, getFeature, getMilestone, getRelease, milestoneRef, releaseRef } from "../plan-data.js";
 
 /* Work with a pending owner ask (a fix waiting for your approval) is never archived out of sight */
 function isArchivedWork(w) {
@@ -86,14 +88,17 @@ function scopedWorkView(currentRoute, type) {
 const SCOPED_WORK_GROUPS = {
   agent: [["status", "Status"], ["project", "Project"]],
   person: [["status", "Status"], ["project", "Project"]],
-  project: [["status", "Status"], ["assignee", "Assignee"]],
+  project: [["status", "Status"], ["assignee", "Assignee"], ["milestone", "Milestone"], ["feature", "Feature"]],
   team: [["status", "Status"], ["project", "Project"], ["assignee", "Assignee"]],
 };
 
+/* A project's development process can declare work views (Requests, Bugs…); they are Work's own views, not
+   separate project tabs (owner). A board view is Work's List/Board switch, so it adds no view here. */
+const processWorkViews = (type, id) => (type === "project" ? (projectDevProcess(id)?.tabs || []).filter((t) => t.view === "work" && t.layout !== "board") : []);
 function scopedWorkPresets(type, id) {
   if (type === "person" && id === "you") return [["all", "All"], ["needs-me", "Needs you"]];
   const mineLabel = isRequestedMineScope(type, id) ? "Requested by me" : "Mine";
-  return [["all", "All"], ["needs-me", "Needs you"], ["mine", mineLabel]];
+  return [["all", "All"], ["needs-me", "Needs you"], ["mine", mineLabel], ...processWorkViews(type, id).map((t) => [t.key, t.title])];
 }
 
 /* A non-default history is said in the toolbar, with one click back to the default */
@@ -132,6 +137,8 @@ function scopedWorkBaseItems(type, items, query = "", archivedOnly = false) {
 }
 
 function scopedWorkPresetItems(items, view, type, id) {
+  const pv = processWorkViews(type, id).find((t) => t.key === view);
+  if (pv) return items.filter((w) => (pv.types || []).includes(w.kind || "task"));
   if (view === "needs-me") return items.filter(needsMe);
   if (view === "mine") {
     return isRequestedMineScope(type, id)
@@ -400,9 +407,12 @@ function workGroups(items, field) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(item);
   }
-  const keys = field === "status" ? WORK_STATUS_ORDER.filter((status) => groups.has(status)) : [...groups.keys()];
+  const keys = field === "status" ? WORK_STATUS_ORDER.filter((status) => groups.has(status))
+    : field === "milestone" || field === "feature" ? [...groups.keys()].sort((a, b) => (a === "none") - (b === "none") || planGroupLabel(field, a).localeCompare(planGroupLabel(field, b), undefined, { numeric: true }))
+    : [...groups.keys()];
   return keys.map((key) => {
     const label = field === "status" ? key : field === "proj" ? P[key].name
+      : field === "milestone" ? planGroupLabel("milestone", key) : field === "feature" ? planGroupLabel("feature", key)
       : M[key] ? M[key].name + " · " + kindWord(key) : "Unassigned";
     return { label, rows: groups.get(key) };
   });
@@ -1386,7 +1396,7 @@ function fitTextarea(field) {
 const WORK_PRESETS = [["all", "All"], ["needs-me", "Needs you"], ["mine", "Mine"]];
 const WORK_DEFAULT_GROUP = "status";
 const WORK_GROUPS = [["project", "Project"], ["status", "Status"], ["assignee", "Assignee"]];
-const WORK_GROUP_FIELDS = { project: "proj", status: "status", assignee: "who" };
+const WORK_GROUP_FIELDS = { project: "proj", status: "status", assignee: "who", milestone: "milestone", feature: "feature" };
 const WORK_SORTS = [["default", "Original order"], ["title", "Title"], ["priority", "Priority"], ["eta", "ETA"]];
 /* On the board the default order is Attention first (expiring owner asks, other owner asks, then priority);
    Priority is the explicit priority-only order */
@@ -1760,7 +1770,18 @@ async function createWorkTask(form) {
   }
 }
 
+/* Milestone and feature groups name the record (TASK-244); tasks without one come last. */
+function planGroupLabel(field, key) {
+  if (field === "milestone") {
+    const m = getMilestone(key), r = m && getRelease(m.release_id);
+    return m ? `${releaseRef(r)} › ${milestoneRef(m)} ${m.title}` : "No milestone";
+  }
+  const f = getFeature(key);
+  return f ? `${featureRef(f)} ${f.title}` : "No feature";
+}
+
 export {
+  workStatus,
   boardItemHref,
   clearWorkFilterState,
   focusRevealedWork,

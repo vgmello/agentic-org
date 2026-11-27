@@ -135,7 +135,35 @@
 .chat-find .field { width: 100%; min-height: var(--control-height); padding-inline: 32px 28px; }
 .chat-find kbd { position: absolute; z-index: 1; right: 10px; font-size: var(--fs-xs); color: var(--gray-400); pointer-events: none; }
 .chat-find .field:not(:placeholder-shown) ~ kbd { display: none; }
-.chat-new { justify-content: flex-start; width: 100%; color: var(--gray-300); }
+/* New message is a compose icon beside Find (owner) */
+.chat-find-row { display: flex; align-items: center; gap: 6px; }
+.chat-find-row > .chat-find { flex: 1 1 auto; min-width: 0; }
+/* Compose sits inside the right end of Find, so the two read as one control (owner) */
+#main .chat .chat-find .field { padding-inline-end: 40px; }
+#main .chat .chat-find > .chat-new { position: absolute; z-index: 1; inset-inline-end: 4px; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0; justify-content: center; color: var(--gray-300); border-radius: calc(var(--radius-md) - 2px); }
+#main .chat .chat-find > .chat-new:hover { color: var(--white); background: var(--hover); }
+/* Header side info (owner): a channel's project and members, a DM's kind and request status, beside Files and Search.
+   Project and members are identical ghost buttons: icon + text, background on hover only. */
+#main .chat .chat-head-meta { display: flex; align-items: center; gap: 4px; margin-inline-end: 4px; }
+#main .chat .chhead .chat-head-btn { display: inline-flex; align-items: center; gap: 6px; min-height: var(--control-height); padding-inline: 8px 10px; border: 0; border-radius: var(--radius-md); background: transparent; box-shadow: none; color: var(--gray-300); font-size: var(--fs-sm); font-weight: 500; text-decoration: none; white-space: nowrap; }
+#main .chat .chhead .chat-head-btn:hover, #main .chat .chhead .chat-head-btn[aria-expanded="true"] { background: var(--hover); color: var(--white); }
+#main .chat .chhead a.chat-head-btn > span { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; }
+#main .chat .chat-kind-chip { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; background: var(--hover); color: var(--gray-300); font-size: var(--fs-sm); white-space: nowrap; }
+#main .chat .chat-head-dm .chat-status { display: inline-flex; align-items: center; gap: 6px; color: var(--gray-300); font-size: var(--fs-sm); white-space: nowrap; }
+@media (max-width: 1000px) {
+  #main .chat .chat-head-meta { display: none; }
+  /* The project, members and request status are then in Details */
+  #main .chat > .chhead .chat-details-btn { display: inline-flex; }
+}
+#main .chat .chat-titleline > .chat-desc { overflow-wrap: break-word; word-break: normal; }
+/* DM header: the agent's avatar carries the sparkle badge (as Tess in the sidebar), and a small kind label sits above
+   the name (owner) */
+#main .chat .chat-head-av { position: relative; display: inline-flex; flex: none; }
+#main .chat .chat-av-star { position: absolute; top: -3px; right: -3px; display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 999px; background: var(--gray-900); color: var(--tone-accent-ink); }
+#main .chat .chat-av-star .ic { width: 11px; height: 11px; }
+#main .chat .chat-here-link { display: inline-flex; align-items: center; gap: 4px; }
+#main .chat .chat-here-link .ic { color: var(--tone-warn-ink); }
+#main .chat .chat-eyebrow { display: block; margin-block-end: -2px; color: var(--gray-400); font-size: var(--fs-xs); font-weight: 500; line-height: 1.3; }
 .chat-find-empty { padding: 12px 8px 0; font-size: var(--fs-sm); color: var(--gray-400); }
 .chat .chlist .chat-person { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 6px 8px; border-radius: var(--radius-md); text-align: start; font-weight: 500; color: var(--gray-300); }
 .chat .chlist .chat-person:hover { background: var(--hover); color: var(--white); }
