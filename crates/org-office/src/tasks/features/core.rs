@@ -10,7 +10,7 @@ use org_proto::attachments::{
 use org_proto::tasks::{PatchField, TasksAssignParams, TasksUpdateParams, TASK_MAX_DEPENDENCIES};
 use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, Refusal, UnitOfWork};
-use serde_json::json;
+use serde_json::{json, Map, Value};
 
 use crate::attachments::records::AttachmentRecord;
 use crate::organization::records::EmployeeKind;
@@ -22,7 +22,8 @@ use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{normalize_file_paths, normalize_labels, TaskLinkRecord, TaskRecord};
 use crate::time::format_rfc3339_ms;
 
-use super::attachments::{stale_revision_refusal, PreparedTaskFiles};
+use super::attachments::PreparedTaskFiles;
+use super::conflict::stale_revision_refusal;
 use super::{
     check_dependency_acyclic, parse_details, parse_uuid_v7, refuse, require_active_employee,
     require_task, storage_refusal, validate_active_employee, validate_active_team, validate_body,
@@ -58,8 +59,15 @@ impl UpdateTask {
         }
 
         let mut changed_fields: Vec<&'static str> = Vec::new();
-        apply_scalar_updates(uow.view(), &mut task, &self.params, &mut changed_fields)?;
-        apply_collection_updates(&mut task, &self.params, &mut changed_fields)?;
+        let mut deltas = Map::new();
+        apply_scalar_updates(
+            uow.view(),
+            &mut task,
+            &self.params,
+            &mut changed_fields,
+            &mut deltas,
+        )?;
+        apply_collection_updates(&mut task, &self.params, &mut changed_fields, &mut deltas)?;
 
         let at = format_rfc3339_ms(uow.now().0);
         let UpdatedAttachments {
@@ -91,6 +99,9 @@ impl UpdateTask {
             "rank_order": task.rank_order,
             "labels": task.labels,
         });
+        if !deltas.is_empty() {
+            event["changes"] = Value::Object(deltas);
+        }
         if !added_ids.is_empty() {
             event["added_attachment_ids"] = json!(added_ids);
         }
@@ -187,49 +198,115 @@ fn apply_attachment_updates<R: TasksRead>(
     })
 }
 
+fn record_delta<T: serde::Serialize>(
+    changed: &mut Vec<&'static str>,
+    deltas: &mut Map<String, Value>,
+    field: &'static str,
+    from: &T,
+    to: &T,
+) {
+    changed.push(field);
+    deltas.insert(field.into(), json!({ "from": from, "to": to }));
+}
+
+fn append_separator(existing: &str) -> &'static str {
+    if existing.is_empty() || existing.ends_with("\n\n") {
+        ""
+    } else if existing.ends_with('\n') {
+        "\n"
+    } else {
+        "\n\n"
+    }
+}
+
+fn apply_body_update(
+    task: &mut TaskRecord,
+    params: &TasksUpdateParams,
+    changed: &mut Vec<&'static str>,
+    deltas: &mut Map<String, Value>,
+) -> Result<(), Refusal> {
+    if params.body_markdown.is_some() && params.append_body.is_some() {
+        return Err(refuse(
+            ErrorCode::InvalidRequest,
+            "cannot combine `body_markdown` and `append_body` in one update",
+        ));
+    }
+    let before_chars = task.body_markdown.chars().count();
+    let mode = if let Some(ref body) = params.body_markdown {
+        task.body_markdown = validate_body(body)?;
+        "replaced"
+    } else if let Some(ref fragment) = params.append_body {
+        if fragment.trim().is_empty() {
+            return Err(refuse(
+                ErrorCode::InvalidRequest,
+                "append_body cannot be empty",
+            ));
+        }
+        let sep = append_separator(&task.body_markdown);
+        task.body_markdown = validate_body(&format!("{}{sep}{fragment}", task.body_markdown))?;
+        "appended"
+    } else {
+        return Ok(());
+    };
+    changed.push("body_markdown");
+    deltas.insert(
+        "body_markdown".into(),
+        json!({ "mode": mode, "before_chars": before_chars, "after_chars": task.body_markdown.chars().count() }),
+    );
+    Ok(())
+}
+
 fn apply_scalar_updates<R: TasksRead>(
     view: &R,
     task: &mut TaskRecord,
     params: &TasksUpdateParams,
     changed: &mut Vec<&'static str>,
+    deltas: &mut Map<String, Value>,
 ) -> Result<(), Refusal> {
     if let Some(ref title) = params.title {
-        task.title = validate_title(title)?;
-        changed.push("title");
+        let prev = std::mem::replace(&mut task.title, validate_title(title)?);
+        record_delta(changed, deltas, "title", &prev, &task.title);
     }
-    if let Some(ref body) = params.body_markdown {
-        task.body_markdown = validate_body(body)?;
-        changed.push("body_markdown");
-    }
+    apply_body_update(task, params, changed, deltas)?;
     if let Some(ref kind) = params.task_type {
-        task.task_type = validate_task_type(kind)?;
-        changed.push("type");
+        let prev = std::mem::replace(&mut task.task_type, validate_task_type(kind)?);
+        record_delta(changed, deltas, "type", &prev, &task.task_type);
     }
     if let PatchField::Set(wt) = params.work_type {
-        task.work_type = wt;
-        changed.push("work_type");
+        let prev = std::mem::replace(&mut task.work_type, wt);
+        record_delta(changed, deltas, "work_type", &prev, &task.work_type);
     }
     if let Some(prio) = params.priority {
-        task.priority = prio;
-        changed.push("priority");
+        let prev = std::mem::replace(&mut task.priority, prio);
+        record_delta(changed, deltas, "priority", &prev, &task.priority);
     }
+    apply_patch_scalar_updates(view, task, params, changed, deltas)
+}
+
+fn apply_patch_scalar_updates<R: TasksRead>(
+    view: &R,
+    task: &mut TaskRecord,
+    params: &TasksUpdateParams,
+    changed: &mut Vec<&'static str>,
+    deltas: &mut Map<String, Value>,
+) -> Result<(), Refusal> {
     if let PatchField::Set(effort) = params.effort {
         if let Some(v) = effort {
             super::validate_i64_u64(v, "effort")?;
         }
-        task.effort = effort;
-        changed.push("effort");
+        let prev = std::mem::replace(&mut task.effort, effort);
+        record_delta(changed, deltas, "effort", &prev, &task.effort);
     }
     if let PatchField::Set(ref sev) = params.severity {
-        task.severity = sev.clone();
-        changed.push("severity");
+        let prev = std::mem::replace(&mut task.severity, sev.clone());
+        record_delta(changed, deltas, "severity", &prev, &task.severity);
     }
     if let PatchField::Set(order) = params.rank_order {
         if let Some(v) = order {
             super::validate_i64_u64(v, "rank_order")?;
         }
-        task.rank_order = order;
-        changed.push("rank_order");
+        let prev = std::mem::replace(&mut task.rank_order, order);
+        record_delta(changed, deltas, "rank_order", &prev, &task.rank_order);
     }
     if let Some(ref details) = params.details {
         let mut next = parse_details(view, &task.id, details)?;
@@ -237,6 +314,61 @@ fn apply_scalar_updates<R: TasksRead>(
         next.done_anyway = task.details.as_ref().and_then(|d| d.done_anyway.clone());
         task.details = Some(next);
         changed.push("details");
+        deltas.insert("details".into(), json!({ "updated": true }));
+    }
+    Ok(())
+}
+
+fn diff_set(before: &[String], after: &[String]) -> Value {
+    let old: BTreeSet<&str> = before.iter().map(String::as_str).collect();
+    let new: BTreeSet<&str> = after.iter().map(String::as_str).collect();
+    let added: Vec<&str> = new.difference(&old).copied().collect();
+    let removed: Vec<&str> = old.difference(&new).copied().collect();
+    json!({ "added": added, "removed": removed })
+}
+
+struct SetPatch<'a> {
+    replace: Option<&'a Vec<String>>,
+    add: &'a [String],
+    remove: &'a [String],
+    field_name: &'static str,
+}
+
+fn apply_string_set_update<F>(
+    target: &mut Vec<String>,
+    patch: SetPatch<'_>,
+    normalize: F,
+    changed: &mut Vec<&'static str>,
+    deltas: &mut Map<String, Value>,
+) -> Result<(), Refusal>
+where
+    F: Fn(&[String]) -> Result<Vec<String>, org_proto::ApiError>,
+{
+    let norm = |items: &[String]| normalize(items).map_err(|e| refuse(e.code, e.message));
+    if let Some(rep) = patch.replace {
+        if !patch.add.is_empty() || !patch.remove.is_empty() {
+            return Err(refuse(
+                ErrorCode::InvalidRequest,
+                format!(
+                    "cannot combine `{}` replacement with incremental add/remove",
+                    patch.field_name
+                ),
+            ));
+        }
+        let prev = std::mem::replace(target, norm(rep)?);
+        changed.push(patch.field_name);
+        deltas.insert(patch.field_name.into(), diff_set(&prev, target));
+    } else if !patch.add.is_empty() || !patch.remove.is_empty() {
+        let drop_set: BTreeSet<String> = norm(patch.remove)?.into_iter().collect();
+        let mut next: Vec<String> = target
+            .iter()
+            .filter(|v| !drop_set.contains(*v))
+            .cloned()
+            .collect();
+        next.extend(patch.add.iter().cloned());
+        let prev = std::mem::replace(target, norm(&next)?);
+        changed.push(patch.field_name);
+        deltas.insert(patch.field_name.into(), diff_set(&prev, target));
     }
     Ok(())
 }
@@ -245,86 +377,44 @@ fn apply_collection_updates(
     task: &mut TaskRecord,
     params: &TasksUpdateParams,
     changed: &mut Vec<&'static str>,
+    deltas: &mut Map<String, Value>,
 ) -> Result<(), Refusal> {
-    if let Some(ref replace) = params.labels {
-        if !params.add_labels.is_empty() || !params.remove_labels.is_empty() {
-            return Err(refuse(
-                ErrorCode::InvalidRequest,
-                "cannot combine `labels` replacement with `add_labels` or `remove_labels`",
-            ));
-        }
-        task.labels = normalize_labels(replace).map_err(|e| refuse(e.code, e.message))?;
-        changed.push("labels");
-    } else if !params.add_labels.is_empty() || !params.remove_labels.is_empty() {
-        let to_remove: BTreeSet<String> = normalize_labels(&params.remove_labels)
-            .map_err(|e| refuse(e.code, e.message))?
-            .into_iter()
-            .collect();
-        let mut next: Vec<String> = task
-            .labels
-            .iter()
-            .filter(|l| !to_remove.contains(*l))
-            .cloned()
-            .collect();
-        next.extend(params.add_labels.iter().cloned());
-        task.labels = normalize_labels(&next).map_err(|e| refuse(e.code, e.message))?;
-        changed.push("labels");
-    }
-
-    apply_file_role_update(
+    apply_string_set_update(
+        &mut task.labels,
+        SetPatch {
+            replace: params.labels.as_ref(),
+            add: &params.add_labels,
+            remove: &params.remove_labels,
+            field_name: "labels",
+        },
+        normalize_labels,
+        changed,
+        deltas,
+    )?;
+    apply_string_set_update(
         &mut task.reference_files,
-        params.reference_files.as_ref(),
-        &params.add_reference_files,
-        &params.remove_reference_files,
-        "reference",
-        "reference_files",
+        SetPatch {
+            replace: params.reference_files.as_ref(),
+            add: &params.add_reference_files,
+            remove: &params.remove_reference_files,
+            field_name: "reference_files",
+        },
+        |v| normalize_file_paths(v, "reference"),
         changed,
+        deltas,
     )?;
-    apply_file_role_update(
+    apply_string_set_update(
         &mut task.modified_files,
-        params.modified_files.as_ref(),
-        &params.add_modified_files,
-        &params.remove_modified_files,
-        "modified",
-        "modified_files",
+        SetPatch {
+            replace: params.modified_files.as_ref(),
+            add: &params.add_modified_files,
+            remove: &params.remove_modified_files,
+            field_name: "modified_files",
+        },
+        |v| normalize_file_paths(v, "modified"),
         changed,
-    )?;
-    Ok(())
-}
-
-fn apply_file_role_update(
-    target: &mut Vec<String>,
-    replace: Option<&Vec<String>>,
-    add: &[String],
-    remove: &[String],
-    role: &str,
-    field_name: &'static str,
-    changed: &mut Vec<&'static str>,
-) -> Result<(), Refusal> {
-    if let Some(rep) = replace {
-        if !add.is_empty() || !remove.is_empty() {
-            return Err(refuse(
-                ErrorCode::InvalidRequest,
-                format!("cannot combine `{field_name}` replacement with incremental add/remove"),
-            ));
-        }
-        *target = normalize_file_paths(rep, role).map_err(|e| refuse(e.code, e.message))?;
-        changed.push(field_name);
-    } else if !add.is_empty() || !remove.is_empty() {
-        let drop_set: BTreeSet<String> = normalize_file_paths(remove, role)
-            .map_err(|e| refuse(e.code, e.message))?
-            .into_iter()
-            .collect();
-        let mut next: Vec<String> = target
-            .iter()
-            .filter(|p| !drop_set.contains(*p))
-            .cloned()
-            .collect();
-        next.extend(add.iter().cloned());
-        *target = normalize_file_paths(&next, role).map_err(|e| refuse(e.code, e.message))?;
-        changed.push(field_name);
-    }
-    Ok(())
+        deltas,
+    )
 }
 
 /// Atomically updates `assigned_team_id` and `assignee_id` (`doc-77`, `doc-84`, `AVAIL-2`).

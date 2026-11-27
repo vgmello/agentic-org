@@ -1883,6 +1883,7 @@ fn a_refusal_carries_the_offices_retry_delay_field_and_rule() {
             retry_after_ms: Some(1500),
             field: Some("title".to_owned()),
             rule: Some("too_long".to_owned()),
+            conflict: None,
         })),
         ..Refusal::new(
             ErrorCode::RateLimited,
@@ -1993,4 +1994,100 @@ fn a_shorthand_is_its_command_for_a_call_its_help_its_schema_and_a_check() {
     );
     // Without the shorthands the same words are not a command.
     assert!(org_command::check(&sample_table(), "agent-os", &args(&["ls"]), &mut sources).is_err());
+}
+
+#[test]
+fn fields_option_propagates_deduplicated_top_level_roots_to_request() {
+    let table = sample_table();
+    let (out_with, office_with) = run_stub(
+        &table,
+        &args(&[
+            "sample",
+            "inspect",
+            "--id",
+            "S-1",
+            "--fields",
+            "id,title,labels,id",
+        ]),
+        &mut StubSources::default(),
+    );
+    assert_eq!(out_with.exit_code, 0, "{}", out_with.stdout);
+    assert_eq!(
+        office_with.calls[0].fields,
+        Some(vec!["id".into(), "title".into(), "labels".into()])
+    );
+
+    let (out_without, office_without) = run_stub(
+        &table,
+        &args(&["sample", "inspect", "--id", "S-1"]),
+        &mut StubSources::default(),
+    );
+    assert_eq!(out_without.exit_code, 0, "{}", out_without.stdout);
+    assert_eq!(office_without.calls[0].fields, None);
+}
+
+#[test]
+fn conflict_refusal_serializes_structured_conflict_and_validates_against_envelope_schema() {
+    use org_proto::{ConflictDetail, ConflictEvent, ConflictSummary};
+
+    let table = sample_table();
+    let detail = ConflictDetail {
+        expected_revision: 3,
+        current_revision: 5,
+        changed_sections: vec!["title".into(), "checklist".into()],
+        events_since: vec![ConflictEvent {
+            revision: 4,
+            occurred_at: Some("2026-11-27T10:00:00.000Z".into()),
+            actor_kind: "employee".into(),
+            actor_id: Some("0193a5c0-0000-7000-8000-000000000001".into()),
+            change: json!({"type": "task_updated", "fields": ["title"]}),
+        }],
+        events_truncated: false,
+        omitted_events: 0,
+        reread_recommended: false,
+        current_summary: Some(ConflictSummary {
+            key: Some("T-A1".into()),
+            title: "Updated".into(),
+            status: "in_progress".into(),
+            priority: "high".into(),
+            assignee_id: None,
+            assigned_team_id: None,
+            checklist_total: 2,
+            checklist_done: 1,
+            ac_total: 1,
+            ac_done: 1,
+            dod_total: 1,
+            dod_done: 0,
+            work_steps_total: 0,
+            work_steps_done: 0,
+            comment_count: 0,
+            watcher_count: 1,
+        }),
+    };
+    let mut retry_with = serde_json::Map::new();
+    retry_with.insert("if-match".into(), json!(5));
+    let mut refusal = Refusal::new(
+        ErrorCode::Conflict,
+        "revision conflict: expected 3, current is 5",
+        "Retry with --if-match 5.",
+    )
+    .with_conflict(detail);
+    refusal.retry_with = Some(retry_with);
+
+    let output = answered(&table, &["sample", "inspect", "--id", "S-1"], Err(refusal));
+    assert_eq!(output.exit_code, 1);
+    let envelope: Value = serde_json::from_str(&output.stdout).expect("json");
+    assert_eq!(validate_schema(&envelope_schema(), &envelope), Ok(()));
+    assert_eq!(envelope["error"]["code"], "conflict");
+    assert_eq!(envelope["error"]["retry_with"]["if-match"], 5);
+    assert_eq!(envelope["error"]["conflict"]["expected_revision"], 3);
+    assert_eq!(envelope["error"]["conflict"]["current_revision"], 5);
+    assert_eq!(
+        envelope["error"]["conflict"]["events_since"][0]["revision"],
+        4
+    );
+    assert_eq!(
+        envelope["error"]["conflict"]["current_summary"]["title"],
+        "Updated"
+    );
 }

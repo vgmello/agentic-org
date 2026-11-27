@@ -186,6 +186,9 @@ pub struct WebError {
     pub field: Option<CredentialField>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<CredentialRule>,
+    /// Structured optimistic-concurrency conflict detail on HTTP 409 (`TASK-90`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict: Option<Box<crate::ConflictDetail>>,
 }
 
 /// The input a rule refusal names: a credential, or a field of the create-organization
@@ -239,6 +242,8 @@ impl<'de> Deserialize<'de> for WebError {
             field: Option<CredentialField>,
             #[serde(default)]
             rule: Option<CredentialRule>,
+            #[serde(default)]
+            conflict: Option<Box<crate::ConflictDetail>>,
         }
         let raw = Object::<Raw>::deserialize(d)?.0;
         if raw.code == WebErrorCode::RateLimited && raw.retry_after_ms.is_none() {
@@ -256,6 +261,7 @@ impl<'de> Deserialize<'de> for WebError {
             state: raw.state,
             field: raw.field,
             rule: raw.rule,
+            conflict: raw.conflict,
         })
     }
 }
@@ -282,6 +288,7 @@ impl WebError {
             state: None,
             field: None,
             rule: None,
+            conflict: None,
         }
     }
 
@@ -334,6 +341,9 @@ impl From<crate::ApiError> for WebError {
         let code = serde_json::to_value(error.code)
             .and_then(serde_json::from_value)
             .unwrap_or(WebErrorCode::Unknown);
+        let conflict = (code == WebErrorCode::Conflict)
+            .then(|| error.conflict_detail().cloned().map(Box::new))
+            .flatten();
         let mut out = Self::new(code.clone(), error.message);
         // Only a rate limit carries a delay; only an input refusal names a rule.
         // A pair either side cannot name is dropped whole rather than half-sent.
@@ -353,6 +363,7 @@ impl From<crate::ApiError> for WebError {
                 out.rule = Some(rule);
             }
         }
+        out.conflict = conflict;
         out
     }
 }

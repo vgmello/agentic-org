@@ -137,64 +137,78 @@ pub(crate) fn map_connect_error(error: ClientError, office_id: Option<&str>) -> 
 }
 
 /// The refusal of an office error, with everything the office said in its structured fields:
-/// `retry_after_ms` for `rate_limited`, and the `field` and `rule` an input failed. The one
+/// `retry_after_ms` for `rate_limited`, `field` and `rule` an input failed, and `conflict`
+/// (with `retry_with.if-match`) for optimistic-concurrency conflicts (`TASK-90`). The one
 /// mapping for `agent-os` and for `agentic-org`'s grant-bound channel alike.
 pub fn api_refusal(api: org_proto::ApiError) -> Refusal {
-    let hint = if let Some(server_hint) = api.hint().filter(|h| !h.trim().is_empty()) {
-        server_hint.to_owned()
-    } else {
-        match (
-            api.code,
-            api.retry_after_ms,
-            &api.field,
-            &api.rule,
-            api.conflict_detail(),
-        ) {
-            (ErrorCode::NotAuthorized, ..) if api.message.contains("Ask your team lead.") => {
-                "Ask your team lead.".to_owned()
-            }
-            (ErrorCode::NotAuthorized, ..) if api.message.contains("1:1 direct message") => {
-                "To hand a file to one person, send it in a 1:1 direct message with --attach."
-                    .to_owned()
-            }
-            (ErrorCode::Conflict, _, _, _, Some(conflict)) => {
-                if conflict.changed_sections.is_empty() {
-                    format!(
-                        "Record is now at revision {}; re-inspect and retry with --if-match {}.",
-                        conflict.current_revision, conflict.current_revision
-                    )
-                } else {
-                    format!(
-                        "Record is now at revision {} (changed: {}); re-inspect and retry with --if-match {}.",
-                        conflict.current_revision,
-                        conflict.changed_sections.join(", "),
-                        conflict.current_revision
-                    )
-                }
-            }
-            (ErrorCode::RateLimited, Some(after), ..) => format!(
-                "Wait {after} ms (error.retry_after_ms), then retry the command with the same flags."
-            ),
-            (_, _, Some(field), Some(rule), _) => format!(
-                "Fix `{field}`: it does not meet the `{rule}` rule (error.field, error.rule). Then retry."
-            ),
-            (_, _, Some(field), None, _) => {
-                format!("Fix `{field}` (error.field), then retry.")
-            }
-            (code, ..) => hint_for(code).to_owned(),
-        }
-    };
-    let details =
-        (api.retry_after_ms.is_some() || api.field.is_some() || api.rule.is_some()).then(|| {
-            Box::new(RefusalDetails {
-                retry_after_ms: api.retry_after_ms,
-                field: api.field,
-                rule: api.rule,
-            })
-        });
+    let conflict = api.conflict_detail().cloned();
+    let hint = api_refusal_hint(&api, conflict.as_ref());
+    let retry_with = conflict.as_ref().map(|c| {
+        let mut map = serde_json::Map::new();
+        map.insert("if-match".into(), serde_json::json!(c.current_revision));
+        map
+    });
+    let details = (api.retry_after_ms.is_some()
+        || api.field.is_some()
+        || api.rule.is_some()
+        || conflict.is_some())
+    .then(|| {
+        Box::new(RefusalDetails {
+            retry_after_ms: api.retry_after_ms,
+            field: api.field,
+            rule: api.rule,
+            conflict,
+        })
+    });
     Refusal {
+        retry_with,
         details,
         ..Refusal::new(api.code, api.message, hint)
+    }
+}
+
+fn api_refusal_hint(
+    api: &org_proto::ApiError,
+    conflict: Option<&org_proto::ConflictDetail>,
+) -> String {
+    if let Some(server_hint) = api.hint().filter(|h| !h.trim().is_empty()) {
+        return server_hint.to_owned();
+    }
+    match (api.code, api.retry_after_ms, &api.field, &api.rule, conflict) {
+        (ErrorCode::NotAuthorized, ..) if api.message.contains("Ask your team lead.") => {
+            "Ask your team lead.".to_owned()
+        }
+        (ErrorCode::NotAuthorized, ..) if api.message.contains("1:1 direct message") => {
+            "To hand a file to one person, send it in a 1:1 direct message with --attach."
+                .to_owned()
+        }
+        (ErrorCode::Conflict, _, _, _, Some(c)) => format_conflict_hint(c),
+        (ErrorCode::RateLimited, Some(after), ..) => format!(
+            "Wait {after} ms (error.retry_after_ms), then retry the command with the same flags."
+        ),
+        (_, _, Some(field), Some(rule), _) => format!(
+            "Fix `{field}`: it does not meet the `{rule}` rule (error.field, error.rule). Then retry."
+        ),
+        (_, _, Some(field), None, _) => format!("Fix `{field}` (error.field), then retry."),
+        (code, ..) => hint_for(code).to_owned(),
+    }
+}
+
+fn format_conflict_hint(conflict: &org_proto::ConflictDetail) -> String {
+    let rev = conflict.current_revision;
+    let changed = if conflict.changed_sections.is_empty() {
+        String::new()
+    } else {
+        format!(" (changed: {})", conflict.changed_sections.join(", "))
+    };
+    if conflict.reread_recommended {
+        format!(
+            "Record is now at revision {rev}{changed}; review error.conflict.events_since, re-inspect, and retry with --if-match {rev}."
+        )
+    } else {
+        format!(
+            "Record is now at revision {rev}{changed}; review error.conflict.events_since and retry with --if-match {rev}."
+        )
     }
 }
 

@@ -49,7 +49,7 @@ pub(super) const COMMANDS: &[Command] = &[
         errors: READ_ERRORS,
         example: Example {
             input: r#"{"task":"T-A1"}"#,
-            output: r#"{"task":{"id":"0193a5c0-0000-7000-8000-000000000100","key":"T-A1","type":"task","title":"Implement auth","status":"todo","priority":"high","team_id":"0193a5c0-0000-7000-8000-000000000010","rank_order":10,"labels":["backend","security"],"reference_files":["docs/auth.md"],"modified_files":["src/auth.rs"],"depends_on":[],"dependents":[],"revision":1,"checklist_total":0,"checklist_done":0,"comment_count":0,"watcher_count":0},"body_markdown":"","checklist":[],"comments":[],"attachments":[],"depends_on_tasks":[],"dependent_tasks":[],"history":[]}"#,
+            output: r#"{"task":{"id":"0193a5c0-0000-7000-8000-000000000100","key":"T-A1","type":"task","title":"Implement auth","status":"todo","priority":"high","team_id":"0193a5c0-0000-7000-8000-000000000010","rank_order":10,"labels":["backend","security"],"reference_files":["docs/auth.md"],"modified_files":["src/auth.rs"],"depends_on":[],"dependents":[],"revision":1,"checklist_total":0,"checklist_done":0,"comment_count":0,"watcher_count":0},"body_markdown":"","checklist":[],"comments":[],"attachments":[],"watchers":[],"depends_on_tasks":[],"dependent_tasks":[],"history":[]}"#,
         },
     },
     Command {
@@ -64,7 +64,7 @@ pub(super) const COMMANDS: &[Command] = &[
         errors: READ_ERRORS,
         example: Example {
             input: r#"{"task":"T-A1"}"#,
-            output: r#"[{"task_id":"0193a5c0-0000-7000-8000-000000000100","revision":1,"occurred_at":"2026-11-22T00:00:00.000Z","actor_kind":"employee","actor_id":"0193a5c0-0000-7000-8000-000000000020","payload_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}]"#,
+            output: r#"[{"task_id":"0193a5c0-0000-7000-8000-000000000100","revision":1,"occurred_at":"2026-11-22T00:00:00.000Z","actor_kind":"employee","actor_id":"0193a5c0-0000-7000-8000-000000000020","change":{"type":"created"},"payload_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}]"#,
         },
     },
     Command {
@@ -103,7 +103,7 @@ pub(super) const COMMANDS: &[Command] = &[
 pub(super) const CUES: &[CommandCue] = &[
     ("task", "deps", "inspecting direct and transitive upstream/downstream dependency edges around a task."),
     ("task", "history", "auditing the immutable revision event log for a task."),
-    ("task", "inspect", "reading a task's full details, Markdown body, checklist, comments, dependencies, and history."),
+    ("task", "inspect", "reading a task's details, Markdown body, checklist, comments, watchers, dependencies, and history (use `--fields` to prune unrequested sections server-side)."),
     ("task", "labels", "discovering existing normalized task labels and counts before filtering or tagging tasks."),
     ("task", "list", "querying, sorting and paging tasks by status (or `--exclude-status`), team, assignee (or `--unassigned`), project, labels, dependencies, `--modified-file` or search text; `--count` for the total only."),
 ];
@@ -233,19 +233,35 @@ pub(super) fn read_task_inspect<T: OfficeTransport + ?Sized>(
 ) -> Result<Answer, Refusal> {
     let params = TasksInspectParams {
         task: require_str(&request.input, "task")?.to_owned(),
+        fields: request.fields.clone(),
     };
     let raw = transport.call_method(TasksInspect::METHOD, json!(params))?;
     let res: TaskInspectResult = serde_json::from_value(raw).map_err(unreadable)?;
-    Ok(Answer::completed(json!({
-        "task": task_to_row(&res.task),
-        "body_markdown": res.task.body_markdown,
-        "checklist": res.checklist,
-        "comments": res.comments,
-        "attachments": res.attachments,
-        "depends_on_tasks": res.depends_on_tasks,
-        "dependent_tasks": res.dependent_tasks,
-        "history": res.history,
-    })))
+    let include = |name: &str| {
+        request
+            .fields
+            .as_ref()
+            .is_none_or(|roots| roots.iter().any(|r| r == name))
+    };
+    let mut data = Map::new();
+    data.insert("task".into(), task_to_row(&res.task));
+    type SectionRow = (&'static str, fn(&TaskInspectResult) -> Value);
+    let sections: [SectionRow; 8] = [
+        ("body_markdown", |r| json!(r.task.body_markdown)),
+        ("checklist", |r| json!(r.checklist)),
+        ("comments", |r| json!(r.comments)),
+        ("attachments", |r| json!(r.attachments)),
+        ("watchers", |r| json!(r.watchers)),
+        ("depends_on_tasks", |r| json!(r.depends_on_tasks)),
+        ("dependent_tasks", |r| json!(r.dependent_tasks)),
+        ("history", |r| json!(r.history)),
+    ];
+    for (name, build) in sections {
+        if include(name) {
+            data.insert(name.into(), build(&res));
+        }
+    }
+    Ok(Answer::completed(Value::Object(data)))
 }
 
 pub(super) fn read_task_history<T: OfficeTransport + ?Sized>(

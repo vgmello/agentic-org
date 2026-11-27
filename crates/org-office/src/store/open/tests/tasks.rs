@@ -354,6 +354,7 @@ fn assert_checklist_lifecycle(s: &Seed, task_key: &str) {
                     text: text.into(),
                     required: Some(required),
                     section: None,
+                    steps: vec![],
                 },
                 authority: TaskWriteAuthority::Unrestricted,
             })
@@ -367,6 +368,9 @@ fn assert_checklist_lifecycle(s: &Seed, task_key: &str) {
                 command_id: next_uuid(),
                 task: task_key.to_owned(),
                 step_id: step2.clone(),
+                from_section: None,
+                index: None,
+                expected_revision: None,
                 position: 0,
                 section: None,
             },
@@ -381,6 +385,9 @@ fn assert_checklist_lifecycle(s: &Seed, task_key: &str) {
                 command_id: next_uuid(),
                 task: task_key.to_owned(),
                 step_id: step2.clone(),
+                section: None,
+                index: None,
+                expected_revision: None,
                 text: Some("Run full security audit".into()),
                 required: Some(true),
             },
@@ -396,6 +403,9 @@ fn assert_checklist_lifecycle(s: &Seed, task_key: &str) {
                 command_id: next_uuid(),
                 task: task_key.to_owned(),
                 step_id: step2.clone(),
+                section: None,
+                indices: vec![],
+                expected_revision: None,
                 done: true,
             },
             authority: TaskWriteAuthority::Unrestricted,
@@ -417,6 +427,9 @@ fn assert_checklist_lifecycle(s: &Seed, task_key: &str) {
                 command_id: next_uuid(),
                 task: task_key.to_owned(),
                 step_id: step1,
+                section: None,
+                index: None,
+                expected_revision: None,
             },
             authority: TaskWriteAuthority::Unrestricted,
         })
@@ -505,6 +518,7 @@ fn assert_sqlite_rebuild_parity(s: Seed) {
     let (inspected_res, _) = reopened
         .read(TaskInspectRead {
             task: "T-A1".into(),
+            fields: None,
         })
         .unwrap();
     let inspected = inspected_res.unwrap();
@@ -743,6 +757,7 @@ fn assert_files_and_dependency_removal(
                 expected_revision: a.revision,
                 title: None,
                 body_markdown: None,
+                append_body: None,
                 task_type: None,
                 work_type: PatchField::Unchanged,
                 priority: None,
@@ -779,6 +794,7 @@ fn assert_files_and_dependency_removal(
                 expected_revision: a.revision,
                 title: None,
                 body_markdown: None,
+                append_body: None,
                 task_type: None,
                 work_type: PatchField::Unchanged,
                 priority: None,
@@ -834,6 +850,7 @@ fn assert_files_and_dependency_removal(
         .store
         .read(TaskInspectRead {
             task: a.key.clone(),
+            fields: None,
         })
         .unwrap();
     assert!(after_rm.unwrap().task.dependents.is_empty());
@@ -1114,6 +1131,7 @@ fn assert_validation_bounds_and_cap_swap(s: &Seed) {
                 expected_revision: capped.revision,
                 title: None,
                 body_markdown: None,
+                append_body: None,
                 task_type: None,
                 work_type: PatchField::Unchanged,
                 priority: None,
@@ -1147,6 +1165,7 @@ fn assert_validation_bounds_and_cap_swap(s: &Seed) {
         .store
         .read(TaskInspectRead {
             task: "T-A9999999999999999999".into(),
+            fields: None,
         })
         .unwrap();
     assert_eq!(huge_key.unwrap_err().code, ErrorCode::NotFound);
@@ -1282,6 +1301,7 @@ fn atomic_task_write_authority_enforced_inside_unit_of_work() {
             .store
             .read(TaskInspectRead {
                 task: hq_task.key.clone(),
+                fields: None,
             })
             .unwrap()
             .0
@@ -1356,6 +1376,7 @@ fn atomic_task_write_authority_enforced_inside_unit_of_work() {
             .store
             .read(TaskInspectRead {
                 task: sat_task_id.as_str().to_owned(),
+                fields: None,
             })
             .unwrap()
             .0
@@ -1525,6 +1546,7 @@ fn atomic_task_write_authority_enforced_inside_unit_of_work() {
             .store
             .read(TaskInspectRead {
                 task: hq_task.key.clone(),
+                fields: None,
             })
             .unwrap()
             .0
@@ -1622,6 +1644,7 @@ fn assert_checklist_ops_refused(s: &Seed, task_key: &str, authority: &TaskWriteA
             text: "denied".into(),
             required: None,
             section: None,
+            steps: vec![],
         },
         authority: authority.clone(),
     });
@@ -1633,6 +1656,9 @@ fn assert_checklist_ops_refused(s: &Seed, task_key: &str, authority: &TaskWriteA
             command_id: next_uuid(),
             task: task_key.into(),
             step_id: next_uuid(),
+            section: None,
+            indices: vec![],
+            expected_revision: None,
             done: true,
         },
         authority: authority.clone(),
@@ -1645,6 +1671,9 @@ fn assert_checklist_ops_refused(s: &Seed, task_key: &str, authority: &TaskWriteA
             command_id: next_uuid(),
             task: task_key.into(),
             step_id: next_uuid(),
+            section: None,
+            index: None,
+            expected_revision: None,
             text: Some("denied".into()),
             required: None,
         },
@@ -1658,6 +1687,9 @@ fn assert_checklist_ops_refused(s: &Seed, task_key: &str, authority: &TaskWriteA
             command_id: next_uuid(),
             task: task_key.into(),
             step_id: next_uuid(),
+            section: None,
+            index: None,
+            expected_revision: None,
         },
         authority: authority.clone(),
     });
@@ -1669,6 +1701,9 @@ fn assert_checklist_ops_refused(s: &Seed, task_key: &str, authority: &TaskWriteA
             command_id: next_uuid(),
             task: task_key.into(),
             step_id: next_uuid(),
+            from_section: None,
+            index: None,
+            expected_revision: None,
             position: 0,
             section: None,
         },

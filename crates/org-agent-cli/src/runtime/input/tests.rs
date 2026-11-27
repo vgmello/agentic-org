@@ -23,6 +23,7 @@ fn request(resource: &str, verb: &str, input: Value) -> Request {
         idempotency_key: Some("key-1".into()),
         if_match: None,
         durable: false,
+        fields: None,
     }
 }
 

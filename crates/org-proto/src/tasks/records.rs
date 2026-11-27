@@ -110,6 +110,7 @@ pub struct TaskCommentWire {
     pub position: u64,
     pub author_id: String,
     pub created_at: String,
+    #[serde(default)]
     pub body_markdown: String,
     /// Files attached to this comment (`TASK-98.4`, max 10).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -166,6 +167,7 @@ pub struct TaskView {
     pub status: TaskStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assignee_id: Option<String>,
+    #[serde(default)]
     pub body_markdown: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feature_id: Option<String>,
@@ -238,14 +240,20 @@ pub struct TaskView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskInspectResult {
     pub task: TaskView,
+    #[serde(default)]
     pub checklist: Vec<ChecklistStepWire>,
+    #[serde(default)]
     pub comments: Vec<TaskCommentWire>,
     /// Files attached directly to the task (`TASK-98.4`, max 20).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<AttachmentMeta>,
+    #[serde(default)]
     pub watchers: Vec<TaskWatcherWire>,
+    #[serde(default)]
     pub depends_on_tasks: Vec<TaskRefSummary>,
+    #[serde(default)]
     pub dependent_tasks: Vec<TaskRefSummary>,
+    #[serde(default)]
     pub history: Vec<TaskEventWire>,
 }
 

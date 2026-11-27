@@ -97,6 +97,11 @@ pub(crate) fn failure(refusal: &Refusal, dry_run: bool) -> Node {
         if let Some(after) = details.retry_after_ms {
             error.push(("retry_after_ms".to_owned(), Node::Number(after.into())));
         }
+        if let Some(conflict) = &details.conflict {
+            if let Ok(value) = serde_json::to_value(conflict) {
+                error.push(("conflict".to_owned(), Node::from_value(&value)));
+            }
+        }
     }
     if let Some(retry_with) = &refusal.retry_with {
         error.push((
@@ -157,11 +162,66 @@ pub fn envelope_schema() -> Value {
                             "field": {"type": "string"},
                             "rule": {"type": "string"},
                             "retry_after_ms": {"type": "integer", "minimum": 0},
-                            "retry_with": {"type": "object"}
+                            "retry_with": {"type": "object"},
+                            "conflict": conflict_schema()
                         }
                     }
                 }
             }
         ]
+    })
+}
+
+fn conflict_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["expected_revision", "current_revision"],
+        "additionalProperties": false,
+        "properties": {
+            "expected_revision": {"type": "integer", "minimum": 0},
+            "current_revision": {"type": "integer", "minimum": 0},
+            "changed_sections": {"type": "array", "items": {"type": "string"}},
+            "events_since": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["revision", "actor_kind", "change"],
+                    "additionalProperties": false,
+                    "properties": {
+                        "revision": {"type": "integer", "minimum": 0},
+                        "occurred_at": {"type": "string"},
+                        "actor_kind": {"type": "string"},
+                        "actor_id": {"type": "string"},
+                        "change": {}
+                    }
+                }
+            },
+            "events_truncated": {"type": "boolean"},
+            "omitted_events": {"type": "integer", "minimum": 0},
+            "reread_recommended": {"type": "boolean"},
+            "current_summary": {
+                "type": "object",
+                "required": ["title", "status", "priority", "checklist_total", "checklist_done"],
+                "additionalProperties": false,
+                "properties": {
+                    "key": {"type": "string"},
+                    "title": {"type": "string"},
+                    "status": {"type": "string"},
+                    "priority": {"type": "string"},
+                    "assignee_id": {"type": "string"},
+                    "assigned_team_id": {"type": "string"},
+                    "checklist_total": {"type": "integer", "minimum": 0},
+                    "checklist_done": {"type": "integer", "minimum": 0},
+                    "ac_total": {"type": "integer", "minimum": 0},
+                    "ac_done": {"type": "integer", "minimum": 0},
+                    "dod_total": {"type": "integer", "minimum": 0},
+                    "dod_done": {"type": "integer", "minimum": 0},
+                    "work_steps_total": {"type": "integer", "minimum": 0},
+                    "work_steps_done": {"type": "integer", "minimum": 0},
+                    "comment_count": {"type": "integer", "minimum": 0},
+                    "watcher_count": {"type": "integer", "minimum": 0}
+                }
+            }
+        }
     })
 }

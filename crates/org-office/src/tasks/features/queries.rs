@@ -8,8 +8,8 @@ use org_proto::attachments::{
 };
 use org_proto::tasks::{
     TaskCommentWire, TaskDependenciesResult, TaskDependencyEdge, TaskInspectResult,
-    TaskLabelSummary, TaskRefSummary, TasksCommentsResult, TasksHistoryResult, TasksLabelsParams,
-    TasksLabelsResult,
+    TaskInspectSelection, TaskLabelSummary, TaskRefSummary, TasksCommentsResult,
+    TasksHistoryResult, TasksLabelsParams, TasksLabelsResult,
 };
 use org_store::{Id, Refusal};
 
@@ -44,66 +44,93 @@ fn hydrate_comments<R: TasksRead>(
     Ok(out)
 }
 
-pub fn inspect_task<R: TasksRead>(view: &R, reference: &str) -> Result<TaskInspectResult, Refusal> {
-    let task = require_task(view, reference)?;
-    let task_view = build_task_view(view, &task)?;
-    let checklist = view
-        .checklist_steps(&task.id)
-        .map_err(storage_refusal)?
-        .iter()
-        .map(step_to_wire)
-        .collect();
-    let comment_records = view.task_comments(&task.id).map_err(storage_refusal)?;
-    let comments = hydrate_comments(view, &comment_records)?;
-    let attachments = view
-        .attachments_for_target(
-            AttachmentTargetKind::Task,
-            Some(&task.id),
-            None,
-            TASK_ATTACHMENTS_MAX,
-        )
-        .map_err(storage_refusal)?
-        .iter()
-        .map(AttachmentRecord::to_meta)
-        .collect();
-    let watchers = view
-        .task_watchers(&task.id)
-        .map_err(storage_refusal)?
-        .iter()
-        .map(watcher_to_wire)
-        .collect();
-    let history = view
-        .task_events(&task.id)
-        .map_err(storage_refusal)?
-        .iter()
-        .map(event_to_wire)
-        .collect();
+fn load_dep_summaries<R: TasksRead>(
+    view: &R,
+    ids: &[String],
+) -> Result<Vec<TaskRefSummary>, Refusal> {
+    let mut out = Vec::with_capacity(ids.len());
+    for id_str in ids {
+        if let Ok(id) = Id::parse(id_str) {
+            if let Some(dep) = view.task(&id).map_err(storage_refusal)? {
+                out.push(build_ref_summary(&dep));
+            }
+        }
+    }
+    Ok(out)
+}
 
-    let mut depends_on_tasks = Vec::new();
-    for id_str in &task_view.depends_on {
-        if let Ok(id) = Id::parse(id_str) {
-            if let Some(dep) = view.task(&id).map_err(storage_refusal)? {
-                depends_on_tasks.push(build_ref_summary(&dep));
-            }
-        }
+fn map_vec<T, U>(
+    enabled: bool,
+    load: impl FnOnce() -> Result<Vec<T>, org_store::EngineError>,
+    f: fn(&T) -> U,
+) -> Result<Vec<U>, Refusal> {
+    if !enabled {
+        return Ok(Vec::new());
     }
-    let mut dependent_tasks = Vec::new();
-    for id_str in &task_view.dependents {
-        if let Ok(id) = Id::parse(id_str) {
-            if let Some(dep) = view.task(&id).map_err(storage_refusal)? {
-                dependent_tasks.push(build_ref_summary(&dep));
-            }
-        }
+    Ok(load().map_err(storage_refusal)?.iter().map(f).collect())
+}
+
+pub fn inspect_task<R: TasksRead>(view: &R, reference: &str) -> Result<TaskInspectResult, Refusal> {
+    inspect_task_with_fields(view, reference, None)
+}
+
+/// Inspects a task, skipping storage reads and serialization of unrequested sections when
+/// `fields` is `Some(...)` (`TASK-90`).
+pub fn inspect_task_with_fields<R: TasksRead>(
+    view: &R,
+    reference: &str,
+    fields: Option<&[String]>,
+) -> Result<TaskInspectResult, Refusal> {
+    let sel = TaskInspectSelection::try_from_fields(fields)
+        .map_err(|msg| super::refuse(org_proto::ErrorCode::InvalidRequest, msg))?;
+    let task = require_task(view, reference)?;
+    let mut task_view = build_task_view(view, &task)?;
+    if !sel.body {
+        task_view.body_markdown.clear();
     }
+    let comments = if sel.comments {
+        hydrate_comments(
+            view,
+            &view.task_comments(&task.id).map_err(storage_refusal)?,
+        )?
+    } else {
+        Vec::new()
+    };
+    let deps = |on: bool, ids: &[String]| {
+        if on {
+            load_dep_summaries(view, ids)
+        } else {
+            Ok(Vec::new())
+        }
+    };
     Ok(TaskInspectResult {
-        task: task_view,
-        checklist,
+        checklist: map_vec(
+            sel.checklist,
+            || view.checklist_steps(&task.id),
+            step_to_wire,
+        )?,
         comments,
-        attachments,
-        watchers,
-        depends_on_tasks,
-        dependent_tasks,
-        history,
+        attachments: map_vec(
+            sel.attachments,
+            || {
+                view.attachments_for_target(
+                    AttachmentTargetKind::Task,
+                    Some(&task.id),
+                    None,
+                    TASK_ATTACHMENTS_MAX,
+                )
+            },
+            AttachmentRecord::to_meta,
+        )?,
+        watchers: map_vec(
+            sel.watchers,
+            || view.task_watchers(&task.id),
+            watcher_to_wire,
+        )?,
+        depends_on_tasks: deps(sel.depends_on, &task_view.depends_on)?,
+        dependent_tasks: deps(sel.dependents, &task_view.dependents)?,
+        history: map_vec(sel.history, || view.task_events(&task.id), event_to_wire)?,
+        task: task_view,
     })
 }
 

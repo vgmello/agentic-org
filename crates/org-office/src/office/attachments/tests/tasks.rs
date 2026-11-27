@@ -49,6 +49,7 @@ fn empty_update(task: &str, expected_revision: u64) -> TasksUpdateParams {
         expected_revision,
         title: None,
         body_markdown: None,
+        append_body: None,
         task_type: None,
         work_type: PatchField::Unchanged,
         priority: None,

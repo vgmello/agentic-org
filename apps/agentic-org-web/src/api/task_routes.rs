@@ -482,7 +482,7 @@ pub(super) async fn execute(api: &SessionApi, call: TaskCall) -> ApiReply {
         TaskCall::Create(c, o, p) => run_office::<TasksCreate>(api, c, &o, &p, false).await,
         TaskCall::Labels(c, o, p) => run_office::<TasksLabels>(api, c, &o, &p, true).await,
         TaskCall::Inspect(c, o, task) => {
-            run_office::<TasksInspect>(api, c, &o, &TasksInspectParams { task }, true).await
+            run_office::<TasksInspect>(api, c, &o, &TasksInspectParams::new(task), true).await
         }
         TaskCall::Update(c, o, p) => run_office::<TasksUpdate>(api, c, &o, &p, false).await,
         TaskCall::Transition(c, o, p) => run_office::<TasksTransition>(api, c, &o, &p, false).await,

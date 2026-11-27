@@ -202,7 +202,7 @@ pub(super) const CUES: &[CommandCue] = &[
     ("task", "dep-remove", "removing a direct dependency link between two tasks."),
     ("task", "transition", "moving a task's lifecycle status (`todo`, `in_progress`, `blocked`, `done`, `cancelled`; requires `--if-match`)."),
     ("task", "unwatch", "unsubscribing from updates on a task you no longer need to watch."),
-    ("task", "update", "editing a task's title, body, priority, order, labels, or reference/modified files (requires `--if-match`)."),
+    ("task", "update", "editing a task's title, body (or `--append-body`), work type, priority, effort, severity, order, labels, or files (requires `--if-match`)."),
     ("task", "watch", "subscribing to updates on a task you care about."),
 ];
 
@@ -279,6 +279,75 @@ pub(super) fn write_task_create<T: OfficeTransport + ?Sized>(
     ))
 }
 
+fn parse_priority(raw: &str) -> Result<TaskPriority, Refusal> {
+    TaskPriority::parse(raw).ok_or_else(|| {
+        Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!("invalid priority `{raw}`"),
+            "Use urgent, high, normal, or low.",
+        )
+    })
+}
+
+fn parse_work_type(raw: &str) -> Result<WorkType, Refusal> {
+    WorkType::parse(raw).ok_or_else(|| {
+        Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!("invalid work_type `{raw}`"),
+            "Use build or run.",
+        )
+    })
+}
+
+fn reject_pair(both: bool, a: &str, b: &str) -> Result<(), Refusal> {
+    if both {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!("cannot pass both `{a}` and `{b}`"),
+            format!("Pass either `{a}` or `{b}`, not both."),
+        ));
+    }
+    Ok(())
+}
+
+fn patch_u64(
+    i: &serde_json::Map<String, serde_json::Value>,
+    set_key: &str,
+    clear_key: &str,
+    set_flag: &str,
+    clear_flag: &str,
+) -> Result<PatchField<u64>, Refusal> {
+    let val = opt_u64(i, set_key)?;
+    let clear = is_set(i, clear_key);
+    reject_pair(val.is_some() && clear, set_flag, clear_flag)?;
+    Ok(if clear {
+        PatchField::Set(None)
+    } else if let Some(n) = val {
+        PatchField::Set(Some(n))
+    } else {
+        PatchField::Unchanged
+    })
+}
+
+fn patch_opt_str(
+    i: &serde_json::Map<String, serde_json::Value>,
+    set_key: &str,
+    clear_key: &str,
+    set_flag: &str,
+    clear_flag: &str,
+) -> Result<PatchField<String>, Refusal> {
+    let val = opt_string(i, set_key);
+    let clear = is_set(i, clear_key);
+    reject_pair(val.is_some() && clear, set_flag, clear_flag)?;
+    Ok(if clear {
+        PatchField::Set(None)
+    } else if let Some(s) = val {
+        PatchField::Set(Some(s))
+    } else {
+        PatchField::Unchanged
+    })
+}
+
 pub(super) fn write_task_update<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
@@ -287,32 +356,41 @@ pub(super) fn write_task_update<T: OfficeTransport + ?Sized>(
     let expected_revision = require_if_match(request)?;
     let i = &request.input;
     let task = require_str(i, "task")?.to_owned();
+    let body_markdown = opt_string(i, "body");
+    let append_body = opt_string(i, "append_body");
+    reject_pair(
+        body_markdown.is_some() && append_body.is_some(),
+        "--body",
+        "--append-body",
+    )?;
     let priority = opt_string(i, "priority")
-        .map(|s| {
-            TaskPriority::parse(&s).ok_or_else(|| {
-                Refusal::new(
-                    ErrorCode::InvalidRequest,
-                    format!("invalid priority `{s}`"),
-                    "Use urgent, high, normal, or low.",
-                )
-            })
-        })
+        .map(|s| parse_priority(&s))
         .transpose()?;
-    let rank_order = if is_set(i, "clear_order") {
+    let work_type_val = opt_string(i, "work_type")
+        .map(|s| parse_work_type(&s))
+        .transpose()?;
+    let clear_work_type = is_set(i, "clear_work_type");
+    reject_pair(
+        work_type_val.is_some() && clear_work_type,
+        "--work-type",
+        "--clear-work-type",
+    )?;
+    let work_type = if clear_work_type {
         PatchField::Set(None)
-    } else if let Some(n) = opt_u64(i, "order")? {
-        PatchField::Set(Some(n))
+    } else if let Some(wt) = work_type_val {
+        PatchField::Set(Some(wt))
     } else {
         PatchField::Unchanged
     };
-    let effort = match opt_u64(i, "effort")? {
-        Some(n) => PatchField::Set(Some(n)),
-        None => PatchField::Unchanged,
-    };
-    let severity = match opt_string(i, "severity") {
-        Some(s) => PatchField::Set(Some(s)),
-        None => PatchField::Unchanged,
-    };
+    let rank_order = patch_u64(i, "order", "clear_order", "--order", "--clear-order")?;
+    let effort = patch_u64(i, "effort", "clear_effort", "--effort", "--clear-effort")?;
+    let severity = patch_opt_str(
+        i,
+        "severity",
+        "clear_severity",
+        "--severity",
+        "--clear-severity",
+    )?;
     let attach = opt_str_list(i, "attach").unwrap_or_default();
     let add_att = opt_str_list(i, "add_attachment").unwrap_or_default();
     let resolved = resolve_attach_ids(transport, &attach, &add_att, TASK_ATTACHMENTS_MAX)?;
@@ -321,9 +399,10 @@ pub(super) fn write_task_update<T: OfficeTransport + ?Sized>(
         task,
         expected_revision,
         title: opt_string(i, "title"),
-        body_markdown: opt_string(i, "body"),
+        body_markdown,
+        append_body,
         task_type: opt_string(i, "type"),
-        work_type: PatchField::Unchanged,
+        work_type,
         priority,
         effort,
         severity,

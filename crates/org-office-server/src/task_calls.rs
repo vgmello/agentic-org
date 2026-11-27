@@ -15,13 +15,14 @@ use org_proto::private_notes::{
     TasksNotesUpdate,
 };
 use org_proto::tasks::{
-    OrganizationDefaultDodGet, OrganizationDefaultDodSet, ProjectDefaultDodSet, TasksAddDependency,
-    TasksAssign, TasksChecklistAdd, TasksChecklistCheck, TasksChecklistEdit, TasksChecklistMove,
-    TasksChecklistRemove, TasksComment, TasksComments, TasksCreate, TasksDependencies,
-    TasksFinalSummary, TasksHistory, TasksInspect, TasksLabels, TasksList, TasksMutationResult,
-    TasksRemoveDependency, TasksTransition, TasksUnwatch, TasksUpdate, TasksWatch,
+    OrganizationDefaultDodGet, OrganizationDefaultDodSet, ProjectDefaultDodSet,
+    TaskInspectSelection, TasksAddDependency, TasksAssign, TasksChecklistAdd, TasksChecklistCheck,
+    TasksChecklistEdit, TasksChecklistMove, TasksChecklistRemove, TasksComment, TasksComments,
+    TasksCreate, TasksDependencies, TasksFinalSummary, TasksHistory, TasksInspect, TasksLabels,
+    TasksList, TasksMutationResult, TasksRemoveDependency, TasksTransition, TasksUnwatch,
+    TasksUpdate, TasksWatch,
 };
-use org_proto::{ApiError, Call, ErrorCode, Request, Response};
+use org_proto::{ApiError, Call, ErrorCode, Outcome, Request, Response};
 
 use crate::live::LiveEvents;
 
@@ -155,9 +156,7 @@ impl TaskService {
             return Some(run_call::<TasksList>(request, |p| self.office.task_list(p)));
         }
         if request.is::<TasksInspect>() {
-            return Some(run_call::<TasksInspect>(request, |p| {
-                self.office.task_inspect(&p.task)
-            }));
+            return Some(self.dispatch_inspect(request));
         }
         if request.is::<TasksUpdate>() {
             return Some(self.run_write::<TasksUpdate>(member, request, |p| {
@@ -442,6 +441,74 @@ impl TaskService {
             attachment_ids,
         );
     }
+
+    fn dispatch_inspect(&self, request: &Request) -> Response {
+        let Ok(params) = request.params::<TasksInspect>() else {
+            return invalid_params(request.id, TasksInspect::METHOD);
+        };
+        let selection = match TaskInspectSelection::try_from_fields(params.fields.as_deref()) {
+            Ok(sel) => sel,
+            Err(msg) => {
+                return Response::error(
+                    request.id,
+                    ApiError::new(org_proto::ErrorCode::InvalidRequest, msg),
+                );
+            }
+        };
+        match self
+            .office
+            .task_inspect_with_fields(&params.task, params.fields.clone())
+        {
+            Ok(Ok(result)) => match params.fields.as_deref() {
+                None => ok_reply::<TasksInspect>(request.id, &result),
+                Some(_) => match serde_json::to_value(&result) {
+                    Ok(val) => {
+                        let pruned = prune_inspect_value(val, selection);
+                        Response {
+                            id: request.id,
+                            outcome: Outcome::Result(pruned),
+                            waiting_messages: None,
+                        }
+                    }
+                    Err(_) => storage_err(request.id),
+                },
+            },
+            Ok(Err(refusal)) => Response::error(request.id, refusal),
+            Err(error) => {
+                crate::logged(TasksInspect::METHOD, &error);
+                storage_err(request.id)
+            }
+        }
+    }
+}
+
+fn prune_inspect_value(mut val: serde_json::Value, sel: TaskInspectSelection) -> serde_json::Value {
+    let Some(obj) = val.as_object_mut() else {
+        return val;
+    };
+    if !sel.body {
+        if let Some(task) = obj
+            .get_mut("task")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            task.remove("body_markdown");
+        }
+    }
+    let sections = [
+        ("checklist", sel.checklist),
+        ("comments", sel.comments),
+        ("attachments", sel.attachments),
+        ("watchers", sel.watchers),
+        ("depends_on_tasks", sel.depends_on),
+        ("dependent_tasks", sel.dependents),
+        ("history", sel.history),
+    ];
+    for (key, keep) in sections {
+        if !keep {
+            obj.remove(key);
+        }
+    }
+    val
 }
 
 fn run_call<C: Call>(

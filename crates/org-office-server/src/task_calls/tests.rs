@@ -173,13 +173,8 @@ fn task_service_dispatches_create_list_dependencies_and_transition() {
         svc.dispatch(Some(&owner), &tr_req).unwrap().outcome,
         Outcome::Result(_)
     ));
-    let insp_req = Request::new::<TasksInspect>(
-        8,
-        &TasksInspectParams {
-            task: res1.task.key,
-        },
-    )
-    .unwrap();
+    let insp_req =
+        Request::new::<TasksInspect>(8, &TasksInspectParams::new(res1.task.key)).unwrap();
     let inspected: org_proto::tasks::TaskInspectResult =
         match svc.dispatch(Some(&owner), &insp_req).unwrap().outcome {
             Outcome::Result(v) => serde_json::from_value(v).unwrap(),
@@ -886,4 +881,127 @@ fn task_service_serves_default_definitions_of_done_the_closing_gate_and_final_su
     assert_eq!(written.text, "Shipped; docs follow in T-A9");
     assert_eq!(written.by_id, owner);
     assert_eq!(summarized.revision, closed.revision + 1);
+}
+
+#[test]
+fn tasks_inspect_server_side_fields_pruning_omits_unrequested_wire_keys() {
+    use org_proto::tasks::{
+        ChecklistSection, TasksChecklistAddParams, TasksCommentParams, TasksWatchParams,
+    };
+
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = office.owner_member_id().to_owned();
+    let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+    let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+    let svc = TaskService::new(Arc::clone(&office), live, None);
+
+    let mut params = create_params(4001, Some(&root_team), None);
+    params.body_markdown = "LARGE_MARKDOWN_BODY_TO_PRUNE".into();
+    let task = answer::<TasksCreate>(&svc, &owner, &params).unwrap().task;
+    let _ = answer::<TasksChecklistAdd>(
+        &svc,
+        &owner,
+        &TasksChecklistAddParams {
+            command_id: uuid(4002),
+            task: task.key.clone(),
+            step_id: uuid(4003),
+            text: "Wire step".into(),
+            required: Some(true),
+            section: Some(ChecklistSection::Acceptance),
+            steps: vec![],
+        },
+    )
+    .unwrap();
+    let _ = answer::<TasksComment>(
+        &svc,
+        &owner,
+        &TasksCommentParams {
+            command_id: uuid(4004),
+            task: task.key.clone(),
+            comment_id: uuid(4005),
+            body_markdown: "Public wire comment".into(),
+            attachment_ids: vec![],
+        },
+    )
+    .unwrap();
+    let _ = answer::<TasksWatch>(
+        &svc,
+        &owner,
+        &TasksWatchParams {
+            command_id: uuid(4006),
+            task: task.key.clone(),
+        },
+    )
+    .unwrap();
+
+    // Pruned request omits body_markdown and unrequested top-level keys on the wire.
+    let pruned_req = Request::new::<TasksInspect>(
+        10,
+        &TasksInspectParams {
+            task: task.key.clone(),
+            fields: Some(vec![
+                "key".into(),
+                "title".into(),
+                "status".into(),
+                "revision".into(),
+                "checklist".into(),
+            ]),
+        },
+    )
+    .unwrap();
+    let Outcome::Result(wire_pruned) = svc.dispatch(Some(&owner), &pruned_req).unwrap().outcome
+    else {
+        panic!("expected pruned inspect result");
+    };
+    let obj = wire_pruned.as_object().expect("json object");
+    assert!(obj["task"].get("body_markdown").is_none(), "{wire_pruned}");
+    assert_eq!(obj["checklist"].as_array().unwrap().len(), 1);
+    for omitted in [
+        "comments",
+        "attachments",
+        "watchers",
+        "depends_on_tasks",
+        "dependent_tasks",
+        "history",
+    ] {
+        assert!(
+            !obj.contains_key(omitted),
+            "expected `{omitted}` omitted: {wire_pruned}"
+        );
+    }
+
+    // Unfiltered request returns full body and sections.
+    let full_req = Request::new::<TasksInspect>(11, &TasksInspectParams::new(task.key)).unwrap();
+    let Outcome::Result(wire_full) = svc.dispatch(Some(&owner), &full_req).unwrap().outcome else {
+        panic!("expected full inspect result");
+    };
+    assert_eq!(
+        wire_full["task"]["body_markdown"],
+        "LARGE_MARKDOWN_BODY_TO_PRUNE"
+    );
+    assert_eq!(wire_full["comments"].as_array().unwrap().len(), 1);
+    assert_eq!(wire_full["watchers"].as_array().unwrap().len(), 1);
+    assert!(!wire_full["history"].as_array().unwrap().is_empty());
+
+    // Invalid, unknown, or empty `fields` entries fail closed with InvalidRequest.
+    for bad in [
+        vec!["chcklist".to_owned()],
+        vec!["".to_owned()],
+        vec!["task.nonexistent".to_owned()],
+        vec!["checklist.".to_owned()],
+        vec![],
+    ] {
+        let bad_req = Request::new::<TasksInspect>(
+            12,
+            &TasksInspectParams {
+                task: "T-A1".into(),
+                fields: Some(bad.clone()),
+            },
+        )
+        .unwrap();
+        let Outcome::Error(err) = svc.dispatch(Some(&owner), &bad_req).unwrap().outcome else {
+            panic!("expected InvalidRequest for bad fields {bad:?}");
+        };
+        assert_eq!(err.code, ErrorCode::InvalidRequest, "{bad:?}");
+    }
 }

@@ -2,6 +2,7 @@
 
 pub mod attachments;
 pub mod checklist;
+pub mod conflict;
 pub mod core;
 pub mod create;
 pub mod list;
@@ -46,7 +47,8 @@ pub use self::create::{CreateTask, CreatedTask, TaskNumbering, TASK_NUMBER_BLOCK
 pub use self::list::list_tasks;
 pub use self::ops::{AddDependency, CommentTask, RemoveDependency, UnwatchTask, WatchTask};
 pub use self::queries::{
-    inspect_task, list_comments, list_history, list_labels, task_dependencies,
+    inspect_task, inspect_task_with_fields, list_comments, list_history, list_labels,
+    task_dependencies,
 };
 pub use self::summary::SetFinalSummary;
 pub use self::transition::TransitionTask;
