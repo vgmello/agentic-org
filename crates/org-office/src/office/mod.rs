@@ -436,6 +436,19 @@ impl Office {
         &self.durable
     }
 
+    /// Runs a read-only [`ReadOp`] against one consistent projection snapshot.
+    pub fn read_snapshot<R: crate::store::open::ReadOp>(
+        &self,
+        op: R,
+    ) -> Result<R::Out, OfficeError> {
+        Ok(self.store.read(op).map_err(storage)?.0)
+    }
+
+    /// Current monotonic office timestamp in Unix milliseconds.
+    pub fn now_ms(&self) -> u64 {
+        self.monotonic_now_ms()
+    }
+
     /// The canonical UUIDv7 member ID of the organization's current owner (or local satellite
     /// custody ID on a satellite office).
     pub fn owner_member_id(&self) -> &str {

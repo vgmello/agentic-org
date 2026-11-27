@@ -2,17 +2,20 @@
 
 use org_command::{Answer, Refusal, Request};
 use org_proto::private_notes::{
-    TaskNotePublishResult, TaskNoteRemovedResult, TaskNoteResult, TasksNotesAdd,
-    TasksNotesAddParams, TasksNotesGet, TasksNotesGetParams, TasksNotesList, TasksNotesListParams,
-    TasksNotesListResult, TasksNotesPublish, TasksNotesPublishParams, TasksNotesRemove,
-    TasksNotesRemoveParams, TasksNotesUpdate, TasksNotesUpdateParams,
+    PrivateNoteAddParams, PrivateNoteKind, PrivateNoteListParams, TaskNotePublishResult,
+    TaskNoteRemovedResult, TaskNoteResult, TasksNotesAdd, TasksNotesGet, TasksNotesGetParams,
+    TasksNotesList, TasksNotesListResult, TasksNotesPublish, TasksNotesPublishParams,
+    TasksNotesRemove, TasksNotesRemoveParams, TasksNotesUpdate, TasksNotesUpdateParams,
+    PRIVATE_NOTE_CHECKPOINT_TAG,
 };
 use org_proto::Call;
 use serde_json::{json, Value};
 
 use super::{cmd_id, unreadable};
 use crate::runtime::domain::CommandCue;
-use crate::runtime::input::{entity_id, opt_string, require_if_match, require_str, write_answer};
+use crate::runtime::input::{
+    entity_id, is_set, opt_string, require_if_match, require_str, write_answer,
+};
 use crate::runtime::transport::{paginate, parse_cursor, OfficeTransport};
 
 /// `Use when:` guidance of each `task-note` command.
@@ -44,11 +47,18 @@ pub(super) fn write_note_add<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
 ) -> Result<Answer, Refusal> {
-    let params = TasksNotesAddParams {
+    let params = PrivateNoteAddParams {
         command_id: cmd_id(request)?,
-        task: require_str(&request.input, "task")?.to_owned(),
+        task: Some(require_str(&request.input, "task")?.to_owned()),
+        project_id: None,
         note_id: entity_id(request, None, "task-note-add")?,
+        kind: PrivateNoteKind::Note,
+        title: None,
+        why: None,
+        alternatives: None,
+        tags: Vec::new(),
         body_markdown: require_str(&request.input, "text")?.to_owned(),
+        checkpoint: is_set(&request.input, "checkpoint"),
     };
     let raw = transport.call_method(TasksNotesAdd::METHOD, json!(params))?;
     let res: TaskNoteResult = serde_json::from_value(raw).map_err(unreadable)?;
@@ -64,9 +74,16 @@ pub(super) fn read_note_list<T: OfficeTransport + ?Sized>(
     request: &Request,
 ) -> Result<Answer, Refusal> {
     parse_cursor(request.cursor.as_deref())?;
-    let params = TasksNotesListParams {
-        task: require_str(&request.input, "task")?.to_owned(),
+    let params = PrivateNoteListParams {
+        task: Some(require_str(&request.input, "task")?.to_owned()),
+        project_id: None,
+        kind: None,
+        tag: is_set(&request.input, "checkpoint").then(|| PRIVATE_NOTE_CHECKPOINT_TAG.to_owned()),
+        since: None,
         author_id: opt_string(&request.input, "author_id"),
+        limit: None,
+        cursor: None,
+        fields: Vec::new(),
     };
     let raw = transport.call_method(TasksNotesList::METHOD, json!(params))?;
     let res: TasksNotesListResult = serde_json::from_value(raw).map_err(unreadable)?;

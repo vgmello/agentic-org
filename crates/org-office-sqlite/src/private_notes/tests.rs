@@ -179,6 +179,7 @@ fn content(kind: PrivateNoteKind, body: &str, tags: &[&str]) -> NoteContent {
         alternatives: None,
         tags: tags.iter().map(|t| (*t).to_owned()).collect(),
         body_markdown: body.to_owned(),
+        checkpoint: false,
     })
     .unwrap()
 }

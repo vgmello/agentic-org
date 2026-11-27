@@ -5,6 +5,7 @@
 mod attach;
 mod context;
 mod inspect;
+mod resume;
 mod skills;
 
 use org_command::{Answer, CommandTable, Request};
@@ -26,7 +27,7 @@ pub(crate) const DOMAIN: Domain = Domain {
         ("grant", "inspecting effective permission presets, tool rules, and sandbox boundaries for an agent."),
         ("session", "loading your rules and catalogue (`agent-os context`), inspecting agent session state/usage, or batching commands over a persistent socket (`session attach`)."),
     ],
-    cues: &[CONTEXT_CUES, inspect::CUES, inspect::GRANT_CUES],
+    cues: &[CONTEXT_CUES, resume::CUES, inspect::CUES, inspect::GRANT_CUES],
     dispatch,
 };
 
@@ -62,6 +63,7 @@ fn dispatch(
             request,
             &table.catalogue(),
         )),
+        ("session", "resume") => Some(resume::read_session_resume(transport, request)),
         ("grant", "list") => Some(inspect::read_grant_list(transport, request)),
         _ => None,
     }

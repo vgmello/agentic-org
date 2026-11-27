@@ -186,6 +186,17 @@ pub type TessFn = Box<
         + Sync,
 >;
 
+/// Dispatches the one-call `agent.resume` dashboard RPC (`TASK-220`).
+pub type ResumeFn = Box<
+    dyn Fn(
+            Option<&str>,
+            Option<org_proto::external_auth::SessionMode>,
+            &Request,
+        ) -> Option<Response>
+        + Send
+        + Sync,
+>;
+
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
@@ -243,6 +254,8 @@ pub struct OfficePorts {
     pub federation: Option<ProvidersFn>,
     /// Chief of Staff (Tess) `suggestion.*` and `ui.present` dispatcher (`TASK-80.4`).
     pub tess: Option<TessFn>,
+    /// One-call agent wake/resume dashboard (`agent.resume`, `TASK-220`).
+    pub resume: Option<ResumeFn>,
     /// Who a `msg.bind` names.
     pub directory: Arc<dyn MemberDirectory + Send + Sync>,
 }

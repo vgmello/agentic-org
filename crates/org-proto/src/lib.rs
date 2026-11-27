@@ -107,6 +107,7 @@ pub mod private_notes;
 pub mod processes;
 pub mod projects;
 pub mod providers;
+pub mod resume;
 pub mod retired;
 pub mod reviews;
 pub mod rfc3339;

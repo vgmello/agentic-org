@@ -897,6 +897,7 @@ pub(super) fn ports(snapshot: SnapshotFn) -> OfficePorts {
         providers: None,
         federation: None,
         tess: None,
+        resume: None,
         directory,
     }
 }
@@ -1428,6 +1429,7 @@ fn serving(
             providers: None,
             federation: None,
             tess: None,
+            resume: None,
             directory,
         },
         launch_key(),
@@ -1912,6 +1914,7 @@ fn following_with(
                 providers: None,
                 federation: None,
                 tess: None,
+                resume: None,
                 directory,
             },
             launch_key(),
@@ -2420,6 +2423,7 @@ fn asking(
             providers: None,
             federation: None,
             tess: None,
+            resume: None,
             directory,
         },
         launch_key(),
