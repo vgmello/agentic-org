@@ -3,73 +3,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isNonProductionModule } from './production-import-guard';
+import { scanSuppressionSource, type SuppressionCounts } from './suppressions-ratchet';
 
 const UI_ROOT = resolve(import.meta.dirname, '../../../..');
 const ALLOW_PATH = resolve(UI_ROOT, 'suppressions.allow');
 
-interface FileCounts {
-	eslint: number;
-	svelte: number;
-	effect: number;
-}
-
-const ESLINT_DISABLE_LINE_RE = /(?:\/\/|\/\*|<!--)\s*eslint-disable(?:-next-line|-line)?\b([^\n]*)/g;
-const SVELTE_IGNORE_LINE_RE = /(?:\/\/|\/\*|<!--)\s*svelte-ignore\b([^\n]*)/g;
-const EFFECT_CALL_RE = /\$effect(?:\.pre)?\s*\(/g;
-
-function hasEslintReason(tail: string): boolean {
-	const cleaned = tail.replace(/(?:\*\/|-->)\s*$/, '').trim();
-	const idx = cleaned.indexOf('--');
-	return idx >= 0 && cleaned.slice(idx + 2).trim().length >= 3;
-}
-
-function hasSvelteIgnoreReason(lines: readonly string[], lineIndex: number): boolean {
-	const line = lines[lineIndex] ?? '';
-	const before = line.slice(0, line.indexOf('svelte-ignore'));
-	if (/<!--\s*[^-][\s\S]{2,}-->/.test(before) || /\/\*\s*[\s\S]{3,}\*\//.test(before)) {
-		return true;
-	}
-	for (let i = lineIndex - 1; i >= 0; i--) {
-		const prev = lines[i].trim();
-		if (!prev) return false;
-		if (prev.includes('svelte-ignore')) continue;
-		return /^(?:\/\/|\/\*|<!--)/.test(prev) && prev.replace(/^[/<!\s*-]+|[-/>\s*]+$/g, '').length >= 3;
-	}
-	return false;
-}
-
-function scanFile(absPath: string, rel: string): { counts: FileCounts; missingReason: string[] } {
-	const source = readFileSync(absPath, 'utf8');
-	const missingReason: string[] = [];
-	let eslint = 0;
-	let svelte = 0;
-
-	const lines = source.split('\n');
-	for (let i = 0; i < lines.length; i++) {
-		const line = lines[i];
-		for (const m of line.matchAll(ESLINT_DISABLE_LINE_RE)) {
-			eslint++;
-			if (!hasEslintReason(m[1] ?? '')) {
-				missingReason.push(`${rel}:${i + 1}: eslint-disable must include "-- <reason>"`);
-			}
-		}
-		for (const _m of line.matchAll(SVELTE_IGNORE_LINE_RE)) {
-			void _m;
-			svelte++;
-			if (!hasSvelteIgnoreReason(lines, i)) {
-				missingReason.push(
-					`${rel}:${i + 1}: svelte-ignore must have a reason comment immediately before it`
-				);
-			}
-		}
-	}
-
-	const effect = (source.match(EFFECT_CALL_RE) ?? []).length;
-	return { counts: { eslint, svelte, effect }, missingReason };
-}
-
-function parseAllow(text: string): { entries: Map<string, FileCounts>; errors: string[] } {
-	const entries = new Map<string, FileCounts>();
+function parseAllow(text: string): { entries: Map<string, SuppressionCounts>; errors: string[] } {
+	const entries = new Map<string, SuppressionCounts>();
 	const errors: string[] = [];
 	const lines = text.split('\n');
 	let prev = '';
@@ -109,23 +49,28 @@ function resolveBaseRef(): string | undefined {
 }
 
 describe('UI suppressions & $effect ratchet', () => {
-	it('requires -- <reason> on every eslint-disable / svelte-ignore and locks counts shrink-only', () => {
-		const tracked = execFileSync('git', ['ls-files', '-z', '--', 'src'], {
-			cwd: UI_ROOT,
-			encoding: 'utf8'
-		})
+	it('bans inline ESLint configs and block eslint-disable, requires reasons, and locks counts shrink-only', () => {
+		const files = execFileSync(
+			'git',
+			['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', 'src'],
+			{
+				cwd: UI_ROOT,
+				encoding: 'utf8'
+			}
+		)
 			.split('\0')
 			.filter((rel) => rel.length > 0 && /\.(?:svelte|ts|js)$/.test(rel))
 			.filter((rel) => !isNonProductionModule(`/${rel}`))
 			.filter((rel) => existsSync(resolve(UI_ROOT, rel)))
 			.sort();
 
-		const actual = new Map<string, FileCounts>();
-		const reasonErrors: string[] = [];
+		const actual = new Map<string, SuppressionCounts>();
+		const scanErrors: string[] = [];
 
-		for (const rel of tracked) {
-			const { counts, missingReason } = scanFile(resolve(UI_ROOT, rel), rel);
-			reasonErrors.push(...missingReason);
+		for (const rel of files) {
+			const source = readFileSync(resolve(UI_ROOT, rel), 'utf8');
+			const { counts, errors } = scanSuppressionSource(source, rel);
+			scanErrors.push(...errors);
 			if (counts.eslint > 0 || counts.svelte > 0 || counts.effect > 0) {
 				actual.set(rel, counts);
 			}
@@ -138,7 +83,7 @@ describe('UI suppressions & $effect ratchet', () => {
 			console.log(lines.join('\n'));
 		}
 
-		const errors: string[] = [...reasonErrors];
+		const errors: string[] = [...scanErrors];
 		if (!existsSync(ALLOW_PATH)) {
 			errors.push('Missing apps/agentic-org-ui/suppressions.allow');
 			expect(errors).toEqual([]);
@@ -160,7 +105,9 @@ describe('UI suppressions & $effect ratchet', () => {
 				if (c[key] > max[key]) {
 					errors.push(`${rel}: ${key} grew from ${max[key]} to ${c[key]}`);
 				} else if (c[key] < max[key]) {
-					errors.push(`${rel}: ${key} shrank from ${max[key]} to ${c[key]}; lower suppressions.allow`);
+					errors.push(
+						`${rel}: ${key} shrank from ${max[key]} to ${c[key]}; lower suppressions.allow`
+					);
 				}
 			}
 		}
@@ -171,7 +118,6 @@ describe('UI suppressions & $effect ratchet', () => {
 			}
 		}
 
-		// Shrink-only check against base
 		const baseRef = resolveBaseRef();
 		if (baseRef) {
 			try {

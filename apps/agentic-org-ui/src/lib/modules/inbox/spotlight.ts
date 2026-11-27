@@ -426,9 +426,7 @@ function workItemToSpotlight(
 		(item.project_id ? projects.get(item.project_id)?.name : undefined) ?? 'Organization';
 	const kind = classifyWorkSpotlightKind(item);
 	const urgent =
-		item.priority === 'urgent' ||
-		item.severity === 'critical' ||
-		kind === 'blocked_task';
+		item.priority === 'urgent' || item.severity === 'critical' || kind === 'blocked_task';
 
 	const copy = workSpotlightCopy(kind, item, actorName, projectName, urgent);
 	const signals = workSpotlightSignals(kind, item, projectName, urgent);

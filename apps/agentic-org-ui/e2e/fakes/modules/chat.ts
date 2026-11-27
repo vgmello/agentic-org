@@ -1,7 +1,12 @@
 import { orgApi } from '$lib/modules/organization/api';
 import type { OrgApi } from '../../../src/lib/modules/organization/api';
 import { chatSender, type ChatApi, type ChatDraft } from '../../../src/lib/modules/messaging/api';
-import { applyChat, emptyChat, syncAuto, tick } from '../../../src/lib/modules/messaging/testing/chat-engine';
+import {
+	applyChat,
+	emptyChat,
+	syncAuto,
+	tick
+} from '../../../src/lib/modules/messaging/testing/chat-engine';
 import { chatContext } from '../../../src/lib/modules/messaging/model';
 import type {
 	ChatAccepted,

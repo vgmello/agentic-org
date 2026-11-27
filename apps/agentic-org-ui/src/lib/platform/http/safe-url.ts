@@ -88,7 +88,7 @@ export function safeInternalPath(
 	const parsed = parseAppRelativeUrl(trimmed);
 	if (!parsed) return undefined;
 
-	const pathname = parsed.pathname.replace(/\/+/g, '/');
+	const pathname = parsed.pathname;
 	if (!pathname.startsWith('/') || pathname.startsWith('//') || pathname.includes('\\')) {
 		return undefined;
 	}

@@ -1,5 +1,6 @@
 import { createContext } from 'svelte';
-import { answerExecutiveQuestion, type HomeDomainData, type OrgAiAnswer } from '$lib/modules/home/model';
+import { answerExecutiveQuestion } from '$lib/modules/home/model';
+import type { HomeDomainData, OrgAiAnswer } from '$lib/modules/home/model';
 import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 import type { ShellAiAskOptions, ShellAiDecisionContext } from '$lib/platform/shell/shell-ai';
 import { defaultTessApi } from './api';
@@ -13,7 +14,6 @@ import type {
 	TessTurnMode,
 	TessUiBlock
 } from './types';
-
 export type { TessTurnMode } from './types';
 
 export interface TessTurn {

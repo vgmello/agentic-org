@@ -17,8 +17,8 @@ src/lib/modules/docs/features/list/DocsTab.svelte 954
 src/lib/modules/features/features/detail/FeaturePage.svelte 1094
 src/lib/modules/home/features/DecisionSpotlight.svelte 877
 src/lib/modules/inbox/features/triage/InboxDetailPane.svelte 1744
-src/lib/modules/inbox/features/triage/InboxTriageWorkspace.svelte 1645
-src/lib/modules/inbox/features/triage/triage-model.ts 836
+src/lib/modules/inbox/features/triage/InboxTriageWorkspace.svelte 1604
+src/lib/modules/inbox/features/triage/triage-model.ts 823
 src/lib/modules/members/features/profile/AgentAnalysisOverlay.svelte 959
 src/lib/modules/members/features/profile/ProfileFrame.svelte 797
 src/lib/modules/messaging/http-api.ts 855

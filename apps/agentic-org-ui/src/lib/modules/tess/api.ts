@@ -1,5 +1,6 @@
 import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { asNum, asRec, asStr as rawStr, type Rec } from '$lib/platform/http/decode';
+import { safeInternalPath } from '$lib/platform/http/safe-url';
 import type {
 	TessActionProposal,
 	TessApi,
@@ -37,13 +38,7 @@ function readRisk(v: unknown): TessProposalRisk {
 }
 
 function safeAppHref(raw: unknown): string | undefined {
-	const s = asStr(raw)?.trim();
-	if (!s || !s.startsWith('/') || s.startsWith('//') || s.startsWith('/\\')) return undefined;
-	for (let i = 0; i < s.length; i++) {
-		const code = s.charCodeAt(i);
-		if (code <= 0x1f || code === 0x7f) return undefined;
-	}
-	return s;
+	return safeInternalPath(raw, { disallowApi: true });
 }
 
 function decodeParams(raw: unknown): TessProposalParam[] {

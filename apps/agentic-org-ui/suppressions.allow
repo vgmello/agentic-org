@@ -77,7 +77,6 @@ src/lib/modules/roles/features/list/RolesList.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/roles/features/role-page/RolePage.svelte eslint=0 svelte=0 effect=2
 src/lib/modules/roles/present.ts eslint=1 svelte=0 effect=0
 src/lib/modules/settings/features/general/HandOverDialog.svelte eslint=0 svelte=0 effect=1
-src/lib/modules/teams/features/browse-teams/TeamsIndex.svelte eslint=1 svelte=0 effect=0
 src/lib/modules/teams/features/change-lead/ChangeLeadDialog.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/teams/features/team-actions/TeamDialogs.svelte eslint=0 svelte=0 effect=1
 src/lib/modules/teams/features/team-page/AddPersonToTeam.svelte eslint=0 svelte=0 effect=1

@@ -463,20 +463,22 @@ export function registerModalBack(close: () => void, options?: { locked?: () => 
 		const pending = { key: source, arrive };
 		returningTo = pending;
 
-		requestAnimationFrame(async () => {
-			try {
-				if (navigation.currentEntry?.key === destination) {
-					// Chromium can finish the traversal promise before delivering popstate.
-					await Promise.all([navigation.traverseTo(source).finished, arrived]);
-				} else if (navigation.currentEntry?.key === source) {
-					await arrived;
+		requestAnimationFrame(() => {
+			void (async () => {
+				try {
+					if (navigation.currentEntry?.key === destination) {
+						// Chromium can finish the traversal promise before delivering popstate.
+						await Promise.all([navigation.traverseTo(source).finished, arrived]);
+					} else if (navigation.currentEntry?.key === source) {
+						await arrived;
+					}
+				} catch {
+					// A newer navigation can abort the return.
+				} finally {
+					if (returningTo === pending) returningTo = undefined;
+					if (onModalPopState === handlePopState) close();
 				}
-			} catch {
-				// A newer navigation can abort the return.
-			} finally {
-				if (returningTo === pending) returningTo = undefined;
-				if (onModalPopState === handlePopState) close();
-			}
+			})();
 		});
 	}
 

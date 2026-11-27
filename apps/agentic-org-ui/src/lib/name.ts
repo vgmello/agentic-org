@@ -9,7 +9,8 @@ export type NameCheck = { ok: true; name: string } | { ok: false; message: strin
 
 // "Trimmed" is Unicode White_Space, which is what Rust's `str::trim` removes. JavaScript's own `trim()`
 // differs: it strips U+FEFF and keeps U+0085.
-const WHITE_SPACE = '\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const WHITE_SPACE =
+	'\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
 const EDGES = new RegExp(`^[${WHITE_SPACE}]+|[${WHITE_SPACE}]+$`, 'g');
 
 export const trimWhiteSpace = (s: string) => s.replace(EDGES, '');
@@ -29,8 +30,12 @@ export function validateName(raw: string, empty = 'Give the organization a name.
 	if (name === '') return { ok: false, message: empty };
 	if ([...name].length > ORGANIZATION_NAME_MAX_CHARS)
 		return { ok: false, message: `Use ${ORGANIZATION_NAME_MAX_CHARS} characters or fewer.` };
-	if (CONTROL.test(name)) return { ok: false, message: "The name can't contain control characters." };
+	if (CONTROL.test(name))
+		return { ok: false, message: "The name can't contain control characters." };
 	if ([...name].some((c) => INVISIBLE.test(c) && !ALLOWED_INVISIBLE.has(c)))
-		return { ok: false, message: "The name can't contain invisible or direction-changing characters." };
+		return {
+			ok: false,
+			message: "The name can't contain invisible or direction-changing characters."
+		};
 	return { ok: true, name };
 }

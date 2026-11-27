@@ -83,7 +83,9 @@ export function deriveCatchUpDigest(
 				? `${activeAgents
 						.slice(0, 3)
 						.map((a) => a.name)
-						.join(', ')}${activeAgents.length > 3 ? ` +${activeAgents.length - 3} more` : ''} standing by across ${(snapshot.projects ?? []).length} projects.`
+						.join(
+							', '
+						)}${activeAgents.length > 3 ? ` +${activeAgents.length - 3} more` : ''} standing by across ${(snapshot.projects ?? []).length} projects.`
 				: 'Hire or place an agent in Offices to start autonomous delivery.',
 		timeLabel: 'Live',
 		tone: 'live',
@@ -132,7 +134,8 @@ function buildQueueSummary(
 		return `${spotlight.length} ${spotlight.length === 1 ? 'decision is' : 'decisions are'} queued for your review, led by “${spotlight[0].title}” (${spotlight[0].kindLabel} · ${spotlight[0].projectName}).`;
 	}
 	if (inboxLoading) return 'Checking Inbox for pending decisions…';
-	if (inboxUnavailable) return 'Inbox status unavailable — check Inbox directly for pending decisions.';
+	if (inboxUnavailable)
+		return 'Inbox status unavailable — check Inbox directly for pending decisions.';
 	return 'Your decision queue is clear — nothing is waiting on owner sign-off right now.';
 }
 

@@ -2,15 +2,13 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { findDisallowedCssUsage } from './file-size-ratchet';
 import { isNonProductionModule } from './production-import-guard';
 
 const UI_ROOT = resolve(import.meta.dirname, '../../../..');
 const ALLOW_PATH = resolve(UI_ROOT, 'large-files.allow');
 const CAP = 700;
 const NEW_FILE_CAP = 500;
-
-const CSS_IMPORT_RE =
-	/(?:^|[\n;])\s*import\s+['"][^'"]+\.css(?:[?#][^'"]*)?['"]|\bimport\(\s*['"][^'"]+\.css(?:[?#][^'"]*)?['"]\s*\)/;
 
 function countLinesFromBuffer(buf: Buffer): number {
 	if (buf.length === 0) return 0;
@@ -25,11 +23,15 @@ function countLines(filePath: string): number {
 	return countLinesFromBuffer(readFileSync(filePath));
 }
 
-function listTrackedProductionFiles(): string[] {
-	const raw = execFileSync('git', ['ls-files', '-z', '--', 'src'], {
-		cwd: UI_ROOT,
-		encoding: 'utf8'
-	});
+function listProductionFiles(): string[] {
+	const raw = execFileSync(
+		'git',
+		['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', 'src'],
+		{
+			cwd: UI_ROOT,
+			encoding: 'utf8'
+		}
+	);
 	return raw
 		.split('\0')
 		.filter((rel) => rel.length > 0 && /\.(?:svelte|ts|js|css)$/.test(rel))
@@ -68,7 +70,7 @@ function gitRenamedPaths(baseRef: string): Map<string, string> {
 	try {
 		const raw = execFileSync(
 			'git',
-			['diff', '--find-renames=50%', '--name-status', '-z', baseRef, '--', 'apps/agentic-org-ui/src'],
+			['diff', '--find-renames=50%', '--name-status', '-z', baseRef, '--', 'src'],
 			{ cwd: UI_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
 		);
 		const tokens = raw.split('\0');
@@ -132,24 +134,21 @@ function parseAllowlist(text: string): { entries: Map<string, number>; errors: s
 }
 
 describe('UI file-size ratchet (CAP=700 legacy, NEW_FILE_CAP=500, no CSS extraction)', () => {
-	it('enforces exact allowlist counts, bans plain .css imports under lib, and caps unlisted files', () => {
-		const files = listTrackedProductionFiles();
+	it('enforces exact allowlist counts, bans plain .css imports & @import under lib/routes, and caps unlisted files', () => {
+		const files = listProductionFiles();
 		const actualCounts = new Map<string, number>();
 		const cssImportErrors: string[] = [];
 
 		for (const rel of files) {
 			const abs = resolve(UI_ROOT, rel);
 			actualCounts.set(rel, countLines(abs));
-			if (
-				/^src\/lib\/(?:modules|components|platform)\//.test(rel) &&
-				/\.(?:svelte|ts|js)$/.test(rel)
-			) {
-				const source = readFileSync(abs, 'utf8');
-				if (CSS_IMPORT_RE.test(source)) {
-					cssImportErrors.push(
-						`${rel}: imports a plain .css file (keep component styles scoped in <style> blocks)`
-					);
-				}
+			const isCssRestricted =
+				(/^src\/lib\/(?:modules|components|platform)\//.test(rel) ||
+					(rel.startsWith('src/routes/') && rel !== 'src/routes/+layout.svelte')) &&
+				/\.(?:svelte|ts|js)$/.test(rel);
+			if (isCssRestricted) {
+				const err = findDisallowedCssUsage(rel, readFileSync(abs, 'utf8'));
+				if (err) cssImportErrors.push(err);
 			}
 		}
 
@@ -218,13 +217,11 @@ describe('UI file-size ratchet (CAP=700 legacy, NEW_FILE_CAP=500, no CSS extract
 					`${p} (${count}): newly added to large-files.allow (only genuine git renames of removed entries are permitted)`
 				);
 			} else if (count > prevRenamed) {
-				errors.push(
-					`${p} (${count}): renamed from ${renamedFrom} (${prevRenamed}) may not grow`
-				);
+				errors.push(`${p} (${count}): renamed from ${renamedFrom} (${prevRenamed}) may not grow`);
 			}
 		}
 
-		for (const rel of listTrackedProductionFiles()) {
+		for (const rel of listProductionFiles()) {
 			if (headAllow.has(rel)) continue;
 			const actual = countLines(resolve(UI_ROOT, rel));
 			if (actual <= NEW_FILE_CAP) continue;

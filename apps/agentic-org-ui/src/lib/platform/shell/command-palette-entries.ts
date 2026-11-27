@@ -9,7 +9,10 @@ export interface PaletteConversation {
 	kind: string;
 	name?: string;
 	archived?: boolean;
-	auto?: { type: 'general' } | { type: 'project'; project_id: string } | { type: 'team'; team_id: string };
+	auto?:
+		| { type: 'general' }
+		| { type: 'project'; project_id: string }
+		| { type: 'team'; team_id: string };
 }
 
 export type CommandIcon =
@@ -399,9 +402,7 @@ export function buildWorkspaceEntries(input: {
 			tag: 'Command',
 			icon: 'panel-left',
 			label: 'Toggle sidebar',
-			sub: input.navCollapsed
-				? 'Pin the navigation sidebar open'
-				: 'Auto-hide the navigation rail',
+			sub: input.navCollapsed ? 'Pin the navigation sidebar open' : 'Auto-hide the navigation rail',
 			keywords: 'collapse expand sidebar rail navigation',
 			action: input.onToggleNav
 		},
@@ -429,18 +430,16 @@ export function buildWorkspaceEntries(input: {
 					}
 				]
 			: []),
-		...UI_THEMES.map(
-			(t): CommandEntry => ({
-				id: `theme-${t.id}`,
-				group: 'Workspace',
-				tag: 'Theme',
-				icon: 'palette',
-				label: `Theme: ${t.label}`,
-				sub: t.description,
-				keywords: `appearance theme ${t.id} ${t.shortLabel}`,
-				action: () => input.onSetTheme(t.id)
-			})
-		)
+		...UI_THEMES.map((t): CommandEntry => ({
+			id: `theme-${t.id}`,
+			group: 'Workspace',
+			tag: 'Theme',
+			icon: 'palette',
+			label: `Theme: ${t.label}`,
+			sub: t.description,
+			keywords: `appearance theme ${t.id} ${t.shortLabel}`,
+			action: () => input.onSetTheme(t.id)
+		}))
 	];
 }
 

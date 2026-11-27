@@ -1,11 +1,6 @@
 import { isItemDone } from '$lib/format';
 import type { AgentBudgets, OrganizationCost } from '$lib/modules/costs/types';
-import {
-	agentsOf,
-	isFormer,
-	nonOwners,
-	peopleOf
-} from '$lib/modules/organization/model';
+import { agentsOf, isFormer, nonOwners, peopleOf } from '$lib/modules/organization/model';
 import type { ProjectRow } from '$lib/modules/projects/types';
 import { needsYou } from '$lib/modules/work/saved';
 import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
@@ -163,7 +158,10 @@ function deriveTeamHeadcount(
 	};
 }
 
-function officeStatusPill(offices: readonly OfficeInfo[], offlineOffices: number): {
+function officeStatusPill(
+	offices: readonly OfficeInfo[],
+	offlineOffices: number
+): {
 	officePillLabel: string;
 	officePillTone: SignalTone;
 } {

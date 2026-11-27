@@ -1,7 +1,16 @@
 {
-	"shellJsGzipKb": 256,
-	"shellCssGzipKb": 52,
-	"shellTotalGzipKb": 306,
+	"shellJsGzipKb": 262,
+	"shellCssGzipKb": 51,
+	"shellTotalGzipKb": 312,
+	"onboardingShellJsGzipKb": 89,
+	"onboardingShellCssGzipKb": 46,
+	"onboardingShellTotalGzipKb": 134,
+	"nestedLayoutMaxJsGzipKb": 150,
+	"nestedLayoutOverrides": {
+		"members/[memberId]/(profile)/+layout.svelte": 219,
+		"projects/[id]/+layout.svelte": 364,
+		"teams/[teamId]/+layout.svelte": 416
+	},
 	"routeMaxJsGzipKb": 150,
 	"routeOverrides": {
 		"members/[memberId]/(profile)/+page.svelte": 219,
@@ -39,5 +48,7 @@
 		"teams/[teamId]/processes/+page.svelte": 416,
 		"teams/[teamId]/projects/+page.svelte": 416,
 		"teams/[teamId]/work/+page.svelte": 416
-	}
+	},
+	"onboardingRouteMaxJsGzipKb": 150,
+	"onboardingRouteOverrides": {}
 }

@@ -32,20 +32,22 @@ describe('Tess HTTP + SSE API client (doc-97 §5.C)', () => {
 					}
 				}
 			}),
-			openSseStream: vi.fn().mockResolvedValueOnce(
-				new Response(
-					sseStream([
-						': heartbeat\n\n',
-						'event: turn.started\ndata: {"turn_id":"turn-42"}\n\n',
-						'event: tool.progress\ndata: {"id":"c1","label":"Checking projects…","state":"running","started_at":100}\n\n',
-						'event: tool.progress\ndata: {"id":"c1","label":"Checked 3 projects","state":"done","duration_ms":840}\n\n',
-						'event: text.delta\ndata: {"delta":"All 3 projects look healthy. See T-12."}\n\n',
-						'event: ui.block\ndata: {"kind":"action_proposal","id":"sug-1","title":"Create project","risk":"reversible","cta_label":"Create project","parameters":[{"label":"Name","value":"iOS App"}],"edit_href":"/projects?new"}\n\n',
-						'event: turn.completed\ndata: {"turn_id":"turn-42","follow_ups":["Show blocked tasks","Check budget"]}\n\n'
-					]),
-					{ status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+			openSseStream: vi
+				.fn()
+				.mockResolvedValueOnce(
+					new Response(
+						sseStream([
+							': heartbeat\n\n',
+							'event: turn.started\ndata: {"turn_id":"turn-42"}\n\n',
+							'event: tool.progress\ndata: {"id":"c1","label":"Checking projects…","state":"running","started_at":100}\n\n',
+							'event: tool.progress\ndata: {"id":"c1","label":"Checked 3 projects","state":"done","duration_ms":840}\n\n',
+							'event: text.delta\ndata: {"delta":"All 3 projects look healthy. See T-12."}\n\n',
+							'event: ui.block\ndata: {"kind":"action_proposal","id":"sug-1","title":"Create project","risk":"reversible","cta_label":"Create project","parameters":[{"label":"Name","value":"iOS App"}],"edit_href":"/projects?new"}\n\n',
+							'event: turn.completed\ndata: {"turn_id":"turn-42","follow_ups":["Show blocked tasks","Check budget"]}\n\n'
+						]),
+						{ status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+					)
 				)
-			)
 		};
 
 		const api = createHttpTessApi({ session });
@@ -180,9 +182,11 @@ describe('Tess HTTP + SSE API client (doc-97 §5.C)', () => {
 				controller.close();
 			}
 		});
-		const openSseStream = vi.fn().mockResolvedValueOnce(
-			new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
-		);
+		const openSseStream = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+			);
 		const api = createHttpTessApi({
 			session: { submit: vi.fn(), openSseStream }
 		});

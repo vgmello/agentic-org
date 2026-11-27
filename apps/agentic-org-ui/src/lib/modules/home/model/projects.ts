@@ -1,12 +1,7 @@
 import { badgeInitials as initialsOf, isItemDone } from '$lib/format';
 import type { HomeProject } from '$lib/modules/home/types';
 import type { InboxItem } from '$lib/modules/inbox/types';
-import {
-	isFormer,
-	leadOf,
-	nonOwners,
-	teamsOfProject
-} from '$lib/modules/organization/model';
+import { isFormer, leadOf, nonOwners, teamsOfProject } from '$lib/modules/organization/model';
 import type { ProjectRow } from '$lib/modules/projects/types';
 import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 import {
@@ -32,7 +27,8 @@ function resolveProjectDoneTotal(
 	row: ProjectRow | undefined,
 	homeProj: HomeProject | undefined
 ): { doneCount: number; totalCount: number } {
-	if (homeProj && homeProj.total > 0) return { doneCount: homeProj.done, totalCount: homeProj.total };
+	if (homeProj && homeProj.total > 0)
+		return { doneCount: homeProj.done, totalCount: homeProj.total };
 	const rowTotal = row
 		? row.tasks.todo + row.tasks.inProgress + row.tasks.blocked + row.tasks.done
 		: 0;
@@ -118,8 +114,7 @@ function deriveApprovalBlocker(
 ): BlockerPresentation {
 	const n = projApprovals.length;
 	const first = projApprovals[0];
-	const actionLabel =
-		n > 1 ? `Review (${n})` : healthTone === 'ok' ? 'Sign off' : 'Review';
+	const actionLabel = n > 1 ? `Review (${n})` : healthTone === 'ok' ? 'Sign off' : 'Review';
 	return {
 		blockerText: n === 1 ? first.title : `${n} sign-offs waiting in Inbox`,
 		blockerTone: healthTone === 'warn' ? 'warn' : 'sky',
@@ -315,7 +310,10 @@ export function deriveProjectCards(
 
 		const dueDt = homeProj?.due ? parseIsoDateUtc(homeProj.due) : null;
 		const isOverdue = Boolean(
-			dueDt && dueDt.getTime() < todayUtc && signals.totalCount > 0 && signals.doneCount < signals.totalCount
+			dueDt &&
+			dueDt.getTime() < todayUtc &&
+			signals.totalCount > 0 &&
+			signals.doneCount < signals.totalCount
 		);
 		const unassignedTeam = teams.length === 0 && !row;
 
@@ -385,8 +383,8 @@ export function deriveUpcomingMilestones(
 	nowMs = Date.now(),
 	domain?: Pick<HomeDomainData, 'projectRows' | 'homeProjects' | 'inboxItems'>
 ): HomeMilestone[] {
-	const dated = (domain?.homeProjects ?? []).filter(
-		(p): p is HomeProject & { due: string } => Boolean(p.due)
+	const dated = (domain?.homeProjects ?? []).filter((p): p is HomeProject & { due: string } =>
+		Boolean(p.due)
 	);
 	if (dated.length === 0) return [];
 

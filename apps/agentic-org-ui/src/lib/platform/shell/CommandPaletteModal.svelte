@@ -148,7 +148,9 @@
 					role="combobox"
 					aria-autocomplete="list"
 					aria-expanded={modalMode === 'cmd' && entries.length > 0}
-					aria-controls={modalMode === 'cmd' && entries.length > 0 ? 'exec-cmdk-listbox' : undefined}
+					aria-controls={modalMode === 'cmd' && entries.length > 0
+						? 'exec-cmdk-listbox'
+						: undefined}
 					aria-activedescendant={modalMode === 'cmd' ? activeOptionId : undefined}
 					placeholder={modalMode === 'ai'
 						? "Ask Tess — what's blocked, release pace, budget, or idle agents…"

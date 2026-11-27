@@ -8,8 +8,15 @@ interface BundleBudget {
 	shellJsGzipKb: number;
 	shellCssGzipKb: number;
 	shellTotalGzipKb: number;
+	onboardingShellJsGzipKb: number;
+	onboardingShellCssGzipKb: number;
+	onboardingShellTotalGzipKb: number;
+	nestedLayoutMaxJsGzipKb: number;
+	nestedLayoutOverrides: Record<string, number>;
 	routeMaxJsGzipKb: number;
 	routeOverrides: Record<string, number>;
+	onboardingRouteMaxJsGzipKb: number;
+	onboardingRouteOverrides: Record<string, number>;
 }
 
 const args = process.argv.slice(2);
@@ -110,32 +117,62 @@ async function gzipKb(clientRoot: string, files: string[]): Promise<number> {
 	return +(bytes / 1024).toFixed(1);
 }
 
-async function checkRouteBudgets(
+async function checkClosureBudget(
+	label: string,
 	clientRoot: string,
 	manifest: ViteManifest,
-	nodeMap: Map<string, string>,
-	shellJsSet: Set<string>,
-	budget: BundleBudget
-): Promise<number> {
-	let checkedRoutes = 0;
-	for (const [comp, key] of nodeMap.entries()) {
-		if (!comp.startsWith('src/routes/(shell)/') || !comp.endsWith('+page.svelte')) continue;
-		checkedRoutes++;
-		const routeName = comp.slice('src/routes/(shell)/'.length);
-		const closure = collectClosure(manifest, [key]);
-		const incJs = closure.js.filter((f) => !shellJsSet.has(f));
-		const incJsKb = await gzipKb(clientRoot, incJs);
-		const limit = budget.routeOverrides[routeName] ?? budget.routeMaxJsGzipKb;
+	entryKeys: string[],
+	limits: { js: number; css: number; total: number }
+): Promise<{ jsFiles: Set<string>; jsKb: number; cssKb: number; totalKb: number }> {
+	const closure = collectClosure(manifest, entryKeys);
+	const jsKb = await gzipKb(clientRoot, closure.js);
+	const cssKb = await gzipKb(clientRoot, closure.css);
+	const totalKb = +(jsKb + cssKb).toFixed(1);
+	if (jsKb > limits.js) problems.push(`${label} JS ${jsKb} kB > budget ${limits.js} kB gzip.`);
+	if (cssKb > limits.css) problems.push(`${label} CSS ${cssKb} kB > budget ${limits.css} kB gzip.`);
+	if (totalKb > limits.total) {
+		problems.push(`${label} JS+CSS ${totalKb} kB > budget ${limits.total} kB gzip.`);
+	}
+	return { jsFiles: new Set(closure.js), jsKb, cssKb, totalKb };
+}
+
+async function checkIncrementalGroup(options: {
+	label: string;
+	clientRoot: string;
+	manifest: ViteManifest;
+	nodeMap: Map<string, string>;
+	prefix: string;
+	suffix: string;
+	excludeExact?: string;
+	baseJsSet: Set<string>;
+	defaultLimit: number;
+	overrides: Record<string, number>;
+}): Promise<number> {
+	const seen = new Set<string>();
+	for (const [comp, key] of options.nodeMap.entries()) {
+		if (!comp.startsWith(options.prefix) || !comp.endsWith(options.suffix)) continue;
+		if (comp === options.excludeExact) continue;
+		const routeName = comp.slice(options.prefix.length);
+		seen.add(routeName);
+		const closure = collectClosure(options.manifest, [key]);
+		const incJs = closure.js.filter((f) => !options.baseJsSet.has(f));
+		const incJsKb = await gzipKb(options.clientRoot, incJs);
+		const limit = options.overrides[routeName] ?? options.defaultLimit;
 		if (incJsKb > limit) {
 			problems.push(
-				`Route "${routeName}" incremental JS is ${incJsKb} kB > budget ${limit} kB gzip.`
+				`${options.label} "${routeName}" incremental JS is ${incJsKb} kB > budget ${limit} kB gzip.`
 			);
 		}
 	}
-	if (checkedRoutes === 0) {
-		problems.push('Zero (shell) page routes discovered in manifest (fail-closed).');
+	if (seen.size === 0) {
+		problems.push(`Zero ${options.label} entries discovered in manifest (fail-closed).`);
 	}
-	return checkedRoutes;
+	for (const overrideKey of Object.keys(options.overrides)) {
+		if (!seen.has(overrideKey)) {
+			problems.push(`Stale ${options.label} override "${overrideKey}" in bundle-budget.json.`);
+		}
+	}
+	return seen.size;
 }
 
 async function checkBundleBudgets(): Promise<string> {
@@ -156,44 +193,79 @@ async function checkBundleBudgets(): Promise<string> {
 
 	const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as ViteManifest;
 	const keys = Object.keys(manifest);
-	const appEntry = keys.find((k) => k.endsWith('client/entry.js') || k.includes('entry/start.js'));
+	const startEntry = keys.find(
+		(k) => k.endsWith('client/entry.js') || k.includes('entry/start.js')
+	);
+	const appEntry = keys.find(
+		(k) => k.endsWith('client-optimized/app.js') || k.endsWith('client/app.js')
+	);
 	const nodeMap = await mapRouteNodes(manifest);
 	const rootLayout = nodeMap.get('src/routes/+layout.svelte');
 	const shellLayout = nodeMap.get('src/routes/(shell)/+layout.svelte');
+	const onboardingLayout = nodeMap.get('src/routes/(onboarding)/+layout.svelte');
 
-	if (!appEntry || !rootLayout || !shellLayout) {
+	if (!startEntry || !appEntry || !rootLayout || !shellLayout || !onboardingLayout) {
 		problems.push(
-			`Could not locate required manifest entries (appEntry=${Boolean(appEntry)}, rootLayout=${Boolean(rootLayout)}, shellLayout=${Boolean(shellLayout)}).`
+			`Could not locate required manifest entries (start=${Boolean(startEntry)}, app=${Boolean(appEntry)}, root=${Boolean(rootLayout)}, shell=${Boolean(shellLayout)}, onboarding=${Boolean(onboardingLayout)}).`
 		);
 		return '';
 	}
 
-	const shell = collectClosure(manifest, [appEntry, rootLayout, shellLayout]);
-	const shellJsKb = await gzipKb(clientRoot, shell.js);
-	const shellCssKb = await gzipKb(clientRoot, shell.css);
-	const shellTotalKb = +(shellJsKb + shellCssKb).toFixed(1);
+	const shell = await checkClosureBudget(
+		'Shell first-paint',
+		clientRoot,
+		manifest,
+		[startEntry, appEntry, rootLayout, shellLayout],
+		{ js: budget.shellJsGzipKb, css: budget.shellCssGzipKb, total: budget.shellTotalGzipKb }
+	);
+	const onboarding = await checkClosureBudget(
+		'Onboarding first-paint',
+		clientRoot,
+		manifest,
+		[startEntry, appEntry, rootLayout, onboardingLayout],
+		{
+			js: budget.onboardingShellJsGzipKb,
+			css: budget.onboardingShellCssGzipKb,
+			total: budget.onboardingShellTotalGzipKb
+		}
+	);
 
-	if (shellJsKb > budget.shellJsGzipKb) {
-		problems.push(`Shell first-paint JS ${shellJsKb} kB > budget ${budget.shellJsGzipKb} kB gzip.`);
-	}
-	if (shellCssKb > budget.shellCssGzipKb) {
-		problems.push(`Shell first-paint CSS ${shellCssKb} kB > budget ${budget.shellCssGzipKb} kB gzip.`);
-	}
-	if (shellTotalKb > budget.shellTotalGzipKb) {
-		problems.push(
-			`Shell first-paint JS+CSS ${shellTotalKb} kB > budget ${budget.shellTotalGzipKb} kB gzip.`
-		);
-	}
-
-	const checkedRoutes = await checkRouteBudgets(
+	const nestedCount = await checkIncrementalGroup({
+		label: 'Nested (shell) layout',
 		clientRoot,
 		manifest,
 		nodeMap,
-		new Set(shell.js),
-		budget
-	);
+		prefix: 'src/routes/(shell)/',
+		suffix: '+layout.svelte',
+		excludeExact: 'src/routes/(shell)/+layout.svelte',
+		baseJsSet: shell.jsFiles,
+		defaultLimit: budget.nestedLayoutMaxJsGzipKb,
+		overrides: budget.nestedLayoutOverrides
+	});
+	const shellRoutes = await checkIncrementalGroup({
+		label: '(shell) route',
+		clientRoot,
+		manifest,
+		nodeMap,
+		prefix: 'src/routes/(shell)/',
+		suffix: '+page.svelte',
+		baseJsSet: shell.jsFiles,
+		defaultLimit: budget.routeMaxJsGzipKb,
+		overrides: budget.routeOverrides
+	});
+	const onboardingRoutes = await checkIncrementalGroup({
+		label: '(onboarding) route',
+		clientRoot,
+		manifest,
+		nodeMap,
+		prefix: 'src/routes/(onboarding)/',
+		suffix: '+page.svelte',
+		baseJsSet: onboarding.jsFiles,
+		defaultLimit: budget.onboardingRouteMaxJsGzipKb,
+		overrides: budget.onboardingRouteOverrides
+	});
 
-	return ` Shell first-paint: ${shellJsKb} kB JS + ${shellCssKb} kB CSS = ${shellTotalKb} kB gzip (budget <= ${budget.shellTotalGzipKb} kB); ${checkedRoutes} routes checked.`;
+	return ` Shell: ${shell.jsKb}+${shell.cssKb}=${shell.totalKb} kB (<= ${budget.shellTotalGzipKb} kB); Onboarding: ${onboarding.jsKb}+${onboarding.cssKb}=${onboarding.totalKb} kB (<= ${budget.onboardingShellTotalGzipKb} kB); ${nestedCount} nested layouts, ${shellRoutes} shell routes, ${onboardingRoutes} onboarding routes checked.`;
 }
 
 try {

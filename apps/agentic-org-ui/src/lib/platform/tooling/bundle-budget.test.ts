@@ -7,8 +7,15 @@ interface BundleBudget {
 	shellJsGzipKb: number;
 	shellCssGzipKb: number;
 	shellTotalGzipKb: number;
+	onboardingShellJsGzipKb: number;
+	onboardingShellCssGzipKb: number;
+	onboardingShellTotalGzipKb: number;
+	nestedLayoutMaxJsGzipKb: number;
+	nestedLayoutOverrides: Record<string, number>;
 	routeMaxJsGzipKb: number;
 	routeOverrides: Record<string, number>;
+	onboardingRouteMaxJsGzipKb: number;
+	onboardingRouteOverrides: Record<string, number>;
 }
 
 const UI_ROOT = resolve(import.meta.dirname, '../../../..');
@@ -28,20 +35,41 @@ function resolveBaseRef(): string | undefined {
 	}
 }
 
+function checkOverrides(
+	label: string,
+	overrides: Record<string, number>,
+	defaultMax: number,
+	baseOverrides: Record<string, number> | undefined,
+	errors: string[]
+): void {
+	for (const [route, kb] of Object.entries(overrides)) {
+		if (kb <= defaultMax) {
+			errors.push(`${label}["${route}"] (${kb}) <= ${defaultMax}; delete entry`);
+		}
+		if (!baseOverrides) continue;
+		const prev = baseOverrides[route];
+		if (prev === undefined) {
+			errors.push(`${label} added new route "${route}" (${kb} kB)`);
+		} else if (kb > prev) {
+			errors.push(`${label}["${route}"] raised from ${prev} to ${kb}`);
+		}
+	}
+}
+
 describe('UI bundle-budget.json ratchet', () => {
 	it('keeps budgets valid and strictly shrink-only relative to base', () => {
 		const current = JSON.parse(readFileSync(BUDGET_PATH, 'utf8')) as BundleBudget;
 		const errors: string[] = [];
 
-		if (current.routeMaxJsGzipKb > 150) {
-			errors.push(`routeMaxJsGzipKb (${current.routeMaxJsGzipKb}) must stay <= 150`);
-		}
-		for (const [route, kb] of Object.entries(current.routeOverrides)) {
-			if (kb <= current.routeMaxJsGzipKb) {
-				errors.push(`routeOverrides["${route}"] (${kb}) <= ${current.routeMaxJsGzipKb}; delete entry`);
-			}
+		for (const [k, v] of [
+			['routeMaxJsGzipKb', current.routeMaxJsGzipKb],
+			['nestedLayoutMaxJsGzipKb', current.nestedLayoutMaxJsGzipKb],
+			['onboardingRouteMaxJsGzipKb', current.onboardingRouteMaxJsGzipKb]
+		] as const) {
+			if (v > 150) errors.push(`${k} (${v}) must stay <= 150`);
 		}
 
+		let base: BundleBudget | undefined;
 		const baseRef = resolveBaseRef();
 		if (baseRef) {
 			try {
@@ -50,29 +78,51 @@ describe('UI bundle-budget.json ratchet', () => {
 					['show', `${baseRef}:apps/agentic-org-ui/bundle-budget.json`],
 					{ cwd: UI_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
 				);
-				const base = JSON.parse(baseText) as BundleBudget;
-				for (const key of [
-					'shellJsGzipKb',
-					'shellCssGzipKb',
-					'shellTotalGzipKb',
-					'routeMaxJsGzipKb'
-				] as const) {
-					if (current[key] > base[key]) {
-						errors.push(`${key} raised from ${base[key]} to ${current[key]} (shrink-only)`);
-					}
-				}
-				for (const [route, kb] of Object.entries(current.routeOverrides)) {
-					const prev = base.routeOverrides[route];
-					if (prev === undefined) {
-						errors.push(`routeOverrides added new route "${route}" (${kb} kB)`);
-					} else if (kb > prev) {
-						errors.push(`routeOverrides["${route}"] raised from ${prev} to ${kb}`);
-					}
-				}
+				base = JSON.parse(baseText) as BundleBudget;
 			} catch {
 				// Base predates bundle-budget.json.
 			}
 		}
+
+		if (base) {
+			for (const key of [
+				'shellJsGzipKb',
+				'shellCssGzipKb',
+				'shellTotalGzipKb',
+				'onboardingShellJsGzipKb',
+				'onboardingShellCssGzipKb',
+				'onboardingShellTotalGzipKb',
+				'nestedLayoutMaxJsGzipKb',
+				'routeMaxJsGzipKb',
+				'onboardingRouteMaxJsGzipKb'
+			] as const) {
+				if (typeof base[key] === 'number' && current[key] > base[key]) {
+					errors.push(`${key} raised from ${base[key]} to ${current[key]} (shrink-only)`);
+				}
+			}
+		}
+
+		checkOverrides(
+			'nestedLayoutOverrides',
+			current.nestedLayoutOverrides,
+			current.nestedLayoutMaxJsGzipKb,
+			base?.nestedLayoutOverrides,
+			errors
+		);
+		checkOverrides(
+			'routeOverrides',
+			current.routeOverrides,
+			current.routeMaxJsGzipKb,
+			base?.routeOverrides,
+			errors
+		);
+		checkOverrides(
+			'onboardingRouteOverrides',
+			current.onboardingRouteOverrides,
+			current.onboardingRouteMaxJsGzipKb,
+			base?.onboardingRouteOverrides,
+			errors
+		);
 
 		expect(errors).toEqual([]);
 	});

@@ -136,9 +136,7 @@
 					]}
 				>
 					{@render renderIcon(entry.icon)}
-					<span
-						class="exec-cmdk-opt-txt flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden"
-					>
+					<span class="exec-cmdk-opt-txt flex min-w-0 flex-1 items-baseline gap-2 overflow-hidden">
 						<span class="exec-cmdk-opt-lbl shrink-0">{entry.label}</span>
 						<span class="exec-cmdk-opt-sub hidden min-w-0 truncate sm:inline">
 							{entry.sub}

@@ -247,25 +247,23 @@
 						<p
 							class="-mt-2 flex w-full flex-wrap gap-x-2 pl-(--indent) text-xs/5 text-fg-muted min-[1024px]:contents min-[1024px]:text-sm/6"
 						>
-							<!-- The spaces must be mustaches: Svelte trims an element's leading whitespace. -->
-							<!-- eslint-disable svelte/no-useless-mustaches -- preserves leading space trimmed by Svelte compiler -->
+							<!-- Use &#32; because Svelte trims raw leading whitespace inside inline spans. -->
 							<span class="min-[1024px]:text-fg-secondary [overflow-wrap:anywhere]"
-								>{team.lead ? team.lead.name : 'No lead'}<span class="sr-only">{' '}leads it</span
-								><span class="min-[1024px]:hidden">{' '}leads</span></span
+								>{team.lead ? team.lead.name : 'No lead'}<span class="sr-only">&#32;leads it</span
+								><span class="min-[1024px]:hidden">&#32;leads</span></span
 							>
 							<span aria-hidden="true" class="min-[1024px]:hidden">·</span>
 							<span class="tabular-nums min-[1024px]:text-right min-[1024px]:text-fg-secondary"
 								>{team.people}<span class="min-[1024px]:sr-only"
-									>{' '}{team.people === 1 ? 'person' : 'people'}</span
+									>&#32;{team.people === 1 ? 'person' : 'people'}</span
 								></span
 							>
 							<span aria-hidden="true" class="min-[1024px]:hidden">·</span>
 							<span class="tabular-nums min-[1024px]:text-right min-[1024px]:text-fg-secondary"
 								>{team.agents}<span class="min-[1024px]:sr-only"
-									>{' '}{team.agents === 1 ? 'agent' : 'agents'}</span
+									>&#32;{team.agents === 1 ? 'agent' : 'agents'}</span
 								></span
 							>
-							<!-- eslint-enable svelte/no-useless-mustaches -->
 						</p>
 						{#if team.projects.length > 0}
 							<ul

@@ -201,7 +201,8 @@
 	{:else}
 		<ol class="divide-y divide-line-subtle" data-testid="checklist-items">
 			{#each steps as step, index (step.id)}
-				<!-- drag-and-drop reorder paired with keyboard up/down buttons --> <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+				<!-- drag-and-drop reorder paired with keyboard up/down buttons -->
+				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 				<li
 					draggable={editable}
 					ondragstart={() => (dragIndex = index)}

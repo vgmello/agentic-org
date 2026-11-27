@@ -197,7 +197,8 @@
 {/snippet}
 
 {#snippet navigation()}
-	<!-- keyboard roving handler delegated at nav landmark --> <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+	<!-- keyboard roving handler delegated at nav landmark -->
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<nav
 		bind:this={nav}
 		onkeydown={handleNavKeydown}
