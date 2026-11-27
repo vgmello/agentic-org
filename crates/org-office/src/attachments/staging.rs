@@ -106,6 +106,7 @@ pub struct NewUpload<'a> {
     pub media: MediaType,
     pub declared_bytes: u64,
     pub now_ms: u64,
+    pub require_acting_for: bool,
 }
 
 /// Who a member's live run acts for (`TASK-80.1`): the member the Chief of Staff's run acts
@@ -309,6 +310,12 @@ impl StagingArea {
     ) -> Result<Result<StagedUpload, ApiError>, OfficeError> {
         // Read before the lock: the reader takes the session registry's.
         let acting_for_caller_id = self.acting_for(new.uploaded_by);
+        if new.require_acting_for && acting_for_caller_id.is_none() {
+            return Ok(Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "this member may stage files only while acting for a member",
+            )));
+        }
         let _guard = self.guard();
         self.gc_locked(new.now_ms)?;
         let mine: Vec<StagedUpload> = self

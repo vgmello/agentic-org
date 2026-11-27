@@ -46,7 +46,9 @@ fn decide<S: TasksRead + AttachmentsRead>(
 ) -> Result<Change, Refusal> {
     let (record, create) = match write {
         AttachmentWrite::Create(record) => {
-            if view.attachment(&record.id)?.is_some() {
+            if view.attachment(&record.id)?.is_some()
+                || view.message_file(record.id.as_str())?.is_some()
+            {
                 return Err(refused(ErrorCode::AlreadyExists, "attachment id in use"));
             }
             (record.clone(), true)

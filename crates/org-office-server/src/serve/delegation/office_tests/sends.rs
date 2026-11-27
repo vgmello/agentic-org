@@ -173,9 +173,12 @@ fn acting_for_bob_she_still_writes_to_him_and_in_a_channel_he_is_in() {
             );
         }
     }
-    // `msg.ask` must not hold, even for the owner; parameters that do not decode are refused.
+    // `msg.ask` must not hold, even for the owner; parameters that do not decode or `@`-prefixed
+    // targets are refused fail-closed.
     let holding = json!({"id": next_id(), "to": "owner", "body": "?", "wait_ms": 5_000});
     assert!(refused(&w.admit("msg.ask", holding, &for_owner)));
+    let at_owner = json!({"id": next_id(), "to": "@owner", "body": "x"});
+    assert!(refused(&w.admit("chat.send", at_owner, &for_owner)));
     assert!(refused(&w.admit(
         "chat.send",
         json!({"to": ["owner"]}),
@@ -183,9 +186,8 @@ fn acting_for_bob_she_still_writes_to_him_and_in_a_channel_he_is_in() {
     )));
 }
 
-/// `asker` asks the owner with a five-second hold while the owner answers at once: what the
-/// call answers.
-fn ask_the_owner(w: &World, asker: &str) -> (ChatAskResult, Duration) {
+/// `asker` asks the owner with `hold_ms` while the owner answers at once: what the call answers.
+fn ask_the_owner(w: &World, asker: &str, hold_ms: Option<u64>) -> (ChatAskResult, Duration) {
     let chat = Arc::clone(
         &crate::office_ports::build_messaging_ports(
             &w.office,
@@ -204,7 +206,7 @@ fn ask_the_owner(w: &World, asker: &str) -> (ChatAskResult, Duration) {
         .chat_svc,
     );
     let mut params = ask_params("owner");
-    params.hold_ms = Some(5_000);
+    params.hold_ms = hold_ms;
     let ask_id = params.id.clone();
     let (office, owner, answerer_chat) =
         (Arc::clone(&w.office), w.owner.clone(), Arc::clone(&chat));
@@ -244,12 +246,14 @@ fn ask_the_owner(w: &World, asker: &str) -> (ChatAskResult, Duration) {
 fn she_never_holds_an_ask_for_its_answer_in_its_call() {
     let w = world();
     // Bob's ask holds and comes back answered, the owner's reply inline.
-    let (bobs, _) = ask_the_owner(&w, &w.bob);
+    let (bobs, _) = ask_the_owner(&w, &w.bob, Some(5_000));
     assert_eq!(bobs.status, AskStatus::Answered);
     assert!(bobs.answer.is_some());
-    // Hers is answered at once, still waiting, with no answer in it.
-    let (hers, took) = ask_the_owner(&w, &w.tess);
-    assert_eq!(hers.status, AskStatus::Waiting, "{hers:?}");
-    assert!(hers.answer.is_none(), "{hers:?}");
-    assert!(took < Duration::from_secs(5), "{took:?}");
+    // Hers is answered at once, still waiting, with no answer in it — both explicit and default.
+    for hold in [Some(5_000), None] {
+        let (hers, took) = ask_the_owner(&w, &w.tess, hold);
+        assert_eq!(hers.status, AskStatus::Waiting, "{hold:?}: {hers:?}");
+        assert!(hers.answer.is_none(), "{hold:?}: {hers:?}");
+        assert!(took < Duration::from_secs(5), "{hold:?}: {took:?}");
+    }
 }

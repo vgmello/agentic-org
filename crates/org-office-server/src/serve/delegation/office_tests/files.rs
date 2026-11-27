@@ -409,3 +409,62 @@ fn an_upload_staged_for_the_owner_is_never_bound_for_another_member_or_a_wake() 
     assert_eq!(sent.result.conversation_id, w.owner_dm);
     assert_eq!(sent.message.attachments.len(), 1);
 }
+
+#[test]
+fn legacy_tess_upload_without_acting_for_fails_closed_even_during_wake() {
+    let w = world();
+    let acting = acting_as(&w);
+    // Starting an upload as Tess while her run acts for nobody (wake) fails closed.
+    let wake_begin = w
+        .office
+        .attachment_upload_begin(
+            &w.tess,
+            AttachmentUploadBeginParams {
+                filename: "wake.txt".into(),
+                mime_type: "text/plain".into(),
+                byte_count: 4,
+            },
+        )
+        .unwrap();
+    assert_eq!(wake_begin.unwrap_err().code, ErrorCode::NotAuthorized);
+
+    // Stage for Owner, then strip `acting_for_caller_id` from meta.json (legacy/tampered).
+    *acting.lock().unwrap() = Some(w.owner.clone());
+    let upload = staged(&w.office, &w.tess, "legacy.txt", b"LEGACY-TESS-FILE");
+    let meta_path = w
+        .office
+        .attachment_staging_root()
+        .join(&upload)
+        .join("meta.json");
+    let mut meta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&meta_path).unwrap()).unwrap();
+    meta.as_object_mut().unwrap().remove("acting_for_caller_id");
+    std::fs::write(&meta_path, serde_json::to_vec(&meta).unwrap()).unwrap();
+
+    for now in [Some(w.owner.clone()), Some(w.bob.clone()), None] {
+        *acting.lock().unwrap() = now.clone();
+        let sent = w
+            .office
+            .chat_send(&w.tess, send_params(&w.owner, vec![upload.clone()]))
+            .unwrap();
+        assert_eq!(sent.unwrap_err().code, ErrorCode::NotFound, "{now:?}");
+        let attached = w.office.attachment_attach(
+            &w.tess,
+            AttachmentAttachParams {
+                command_id: next_id(),
+                upload_id: Some(upload.clone()),
+                source_attachment_id: None,
+                target_kind: AttachmentTargetKind::Organization,
+                target_id: None,
+                title: None,
+                description: None,
+                artifact_status: None,
+            },
+        );
+        assert_eq!(
+            attached.unwrap().unwrap_err().code,
+            ErrorCode::NotFound,
+            "{now:?}"
+        );
+    }
+}

@@ -210,8 +210,9 @@ impl Office {
             present,
         };
         // A file HQ already bound (a retry after a lost ack) is answered as it is, whatever
-        // has changed since: nothing new is granted.
-        if let Some(existing) = self.shared_record(&record.id)? {
+        // has changed since: nothing new is granted. Check message/answer files too so a
+        // colliding standalone ingest ID can never shadow an existing HQ message attachment.
+        if let Some(existing) = self.shared_file(&record.id)? {
             if !same_file(&existing, &record) {
                 return Ok(Err(id_in_use()));
             }
@@ -237,7 +238,7 @@ impl Office {
             return Ok(Err(hq_custody_only()));
         }
         let record = &shipped.record;
-        let bound = match self.shared_record(&record.id)? {
+        let bound = match self.shared_file(&record.id)? {
             Some(existing) if !same_file(&existing, record) => return Ok(Err(id_in_use())),
             existing => existing.is_some(),
         };
@@ -272,7 +273,7 @@ impl Office {
     }
 
     fn bind_shipped(&self, record: &AttachmentRecord) -> Answer<()> {
-        if let Some(existing) = self.shared_record(&record.id)? {
+        if let Some(existing) = self.shared_file(&record.id)? {
             return Ok(if same_file(&existing, record) {
                 Ok(())
             } else {
@@ -298,7 +299,7 @@ impl Office {
         match written {
             Ok(_) => Ok(Ok(())),
             // A replay that raced this one: what is bound now decides.
-            Err(refusal) => match self.shared_record(&record.id)? {
+            Err(refusal) => match self.shared_file(&record.id)? {
                 Some(existing) if same_file(&existing, record) => Ok(Ok(())),
                 _ => Ok(Err(refusal)),
             },
