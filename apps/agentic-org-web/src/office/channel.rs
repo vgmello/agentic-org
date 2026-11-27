@@ -1,56 +1,70 @@
 //! One multiplexed office channel: negotiation, its read and write loops, round trips and eviction.
+//!
+//! Generic over any `AsyncRead` / `AsyncWrite` halves; concrete Unix socket conversion stays
+//! consolidated in [`crate::transport::local_unix::LocalUnixOfficeStream`].
 
-use super::MultiplexedChannel;
-use super::PendingMap;
-use super::CHANNEL_WRITE_QUEUE;
-use super::OFFICE_DEADLINE;
-use crate::event_hub::EventHub;
-use crate::event_hub::HubEvent;
-use org_proto::ApiRange;
-use org_proto::Hello;
-use org_proto::HelloParams;
-use org_proto::HelloResult;
-use org_proto::Outcome;
-use org_proto::Request;
-use org_proto::Response;
-use org_proto::MAX_FRAME_BYTES;
-use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io;
-use std::os::unix::net::UnixStream as StdUnixStream;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::AsyncBufReadExt;
-use tokio::io::AsyncWriteExt;
-use tokio::io::BufReader;
-use tokio::net::UnixStream;
-use tokio::sync::mpsc;
-use tokio::sync::oneshot;
+
+use org_proto::{
+    ApiRange, Hello, HelloParams, HelloResult, Outcome, Request, Response, MAX_FRAME_BYTES,
+};
+use serde_json::Value;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::sync::{mpsc, oneshot};
 use tokio::time;
 
+use super::{MultiplexedChannel, PendingMap, CHANNEL_WRITE_QUEUE};
+use crate::event_hub::{EventBus, HubEvent};
+use crate::ports::OFFICE_DEADLINE;
+use crate::transport::local_unix::LocalUnixOfficeStream;
+
 impl MultiplexedChannel {
-    pub(super) fn from_std(
+    pub(super) fn from_local_unix(
         office_id: String,
         channel_id: String,
-        stream: StdUnixStream,
+        stream: LocalUnixOfficeStream,
         channels: Arc<Mutex<BTreeMap<String, Arc<Self>>>>,
-        hub: EventHub,
+        events: Arc<dyn EventBus>,
     ) -> io::Result<Arc<Self>> {
-        Self::from_std_with_permit(office_id, channel_id, stream, channels, hub, None)
+        Self::from_local_unix_with_permit(office_id, channel_id, stream, channels, events, None)
     }
 
-    pub(super) fn from_std_with_permit(
+    pub(super) fn from_local_unix_with_permit(
         office_id: String,
         channel_id: String,
-        stream: StdUnixStream,
+        stream: LocalUnixOfficeStream,
         channels: Arc<Mutex<BTreeMap<String, Arc<Self>>>>,
-        hub: EventHub,
+        events: Arc<dyn EventBus>,
         slot_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) -> io::Result<Arc<Self>> {
-        stream.set_nonblocking(true)?;
-        let stream = UnixStream::from_std(stream)?;
-        let (read_half, write_half) = stream.into_split();
+        let (read_half, write_half) = stream.into_async_split()?;
+        Ok(Self::from_async_halves(
+            office_id,
+            channel_id,
+            read_half,
+            write_half,
+            channels,
+            events,
+            slot_permit,
+        ))
+    }
+
+    pub(super) fn from_async_halves<R, W>(
+        office_id: String,
+        channel_id: String,
+        read_half: R,
+        write_half: W,
+        channels: Arc<Mutex<BTreeMap<String, Arc<Self>>>>,
+        events: Arc<dyn EventBus>,
+        slot_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    ) -> Arc<Self>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
         let (writer, write_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_WRITE_QUEUE);
         let pending: PendingMap = Arc::new(Mutex::new(BTreeMap::new()));
         let channel = Arc::new(Self {
@@ -65,10 +79,10 @@ impl MultiplexedChannel {
             channels,
             office_id,
             channel_id,
-            hub,
+            events,
             slot_permit,
         ));
-        Ok(channel)
+        channel
     }
 
     pub(super) async fn roundtrip_raw(&self, request: &Request, rpc_id: u64) -> io::Result<Value> {
@@ -162,8 +176,8 @@ pub(super) async fn negotiate(channel: &MultiplexedChannel) -> io::Result<()> {
     Ok(())
 }
 
-pub(super) async fn write_loop(
-    mut write_half: tokio::net::unix::OwnedWriteHalf,
+pub(super) async fn write_loop<W: AsyncWrite + Unpin>(
+    mut write_half: W,
     mut rx: mpsc::Receiver<Vec<u8>>,
 ) {
     while let Some(frame) = rx.recv().await {
@@ -174,13 +188,13 @@ pub(super) async fn write_loop(
     let _ = write_half.shutdown().await;
 }
 
-pub(super) async fn read_loop(
-    read_half: tokio::net::unix::OwnedReadHalf,
+pub(super) async fn read_loop<R: AsyncRead + Unpin>(
+    read_half: R,
     pending: PendingMap,
     channels: Arc<Mutex<BTreeMap<String, Arc<MultiplexedChannel>>>>,
     office_id: String,
     channel_id: String,
-    hub: EventHub,
+    events: Arc<dyn EventBus>,
     slot_permit: Option<tokio::sync::OwnedSemaphorePermit>,
 ) {
     let _slot_permit = slot_permit;
@@ -206,7 +220,7 @@ pub(super) async fn read_loop(
                 let _ = tx.send(value);
             }
         } else if let Some(event) = value.get("event").and_then(Value::as_str) {
-            forward_office_event(&hub, event, &value);
+            forward_office_event(events.as_ref(), event, &value);
         }
     }
     if let Ok(mut map) = pending.lock() {
@@ -215,11 +229,11 @@ pub(super) async fn read_loop(
     evict_channel(&channels, &office_id, &channel_id);
 }
 
-pub(super) fn forward_office_event(hub: &EventHub, event: &str, frame: &Value) {
+pub(super) fn forward_office_event(events: &dyn EventBus, event: &str, frame: &Value) {
     let data = frame.get("data").cloned().unwrap_or(Value::Null);
     if let Some(org_id) = data.get("organization_id").and_then(Value::as_str) {
         let seq = frame.get("seq").and_then(Value::as_u64).unwrap_or(0);
-        hub.publish(HubEvent::OrganizationChanged {
+        events.publish(HubEvent::OrganizationChanged {
             org_id: org_id.to_owned(),
             cursor: format!("org:{org_id}:1:{seq}"),
             event: event.to_owned(),

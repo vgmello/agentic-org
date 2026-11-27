@@ -1,40 +1,36 @@
 //! Actual single-thread host-managed entry. No public socket/path fallback.
 use crate::{
     api::SessionApi,
-    host::{EventSink, HostControl},
+    event_hub::{observe_host_event_on_bus, EventBus, InMemoryEventBus},
+    host::{EventSink, LocalUnixHostTransport},
+    office::LocalUnixOfficeTransport,
+    ports::{ControlPlaneTransport, OfficeTransport},
     service::{self, ApiLimits, WebConfig},
     session::SessionCache,
-    sse::EventHub,
     tls::TlsCertificates,
-    transport::{HttpLimits, ListenMode},
+    transport::{local_unix, HttpLimits, ListenMode},
     Hsts,
 };
-use org_host_control::{
-    ops::{TlsFetchResult, HOST_SOCK_MARKER},
-    web::{
-        LandlockEnforcement, LandlockStatus, WebFd, WebFirstLine, WebHandoff, WebReadyForSecrets,
-        WEB_HANDOFF_FDS,
-    },
-};
-use org_platform::confinement::{self, Enforcement};
-use org_socket::rights::{self, ReceiveError, StreamReceiver};
+use org_host_control::{ops::TlsFetchResult, web::WebFirstLine};
+use org_platform::confinement;
 use std::{
     io::{self, BufRead, Read, Write},
-    net::TcpListener,
-    os::{
-        fd::{AsRawFd, OwnedFd},
-        unix::net::{UnixDatagram, UnixStream},
-    },
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc, Mutex, OnceLock,
+        mpsc, Arc, OnceLock,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio_rustls::rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
 
-const WAIT: Duration = Duration::from_secs(5);
+#[cfg(test)]
+use crate::{host::HostControl, transport::local_unix::handoff_descriptors as descriptors};
+#[cfg(test)]
+use org_host_control::ops::HOST_SOCK_MARKER;
+#[cfg(test)]
+use std::{net::TcpListener, os::fd::OwnedFd};
+
 const HEADER: usize = 1024;
 fn failure() -> io::Error {
     io::Error::other("authenticated web process startup unavailable")
@@ -163,105 +159,16 @@ fn first_line(reader: &mut impl BufRead) -> io::Result<WebFirstLine> {
     }
     serde_json::from_slice(&bytes).map_err(|_| failure())
 }
-fn send(stream: &mut UnixStream, message: &impl serde::Serialize) -> io::Result<()> {
-    let mut bytes = serde_json::to_vec(message).map_err(|_| failure())?;
-    if bytes.len() >= HEADER {
-        return Err(failure());
-    }
-    bytes.push(b'\n');
-    stream.write_all(&bytes)
-}
-fn byte(
-    receiver: &mut StreamReceiver,
-    count: usize,
-    until: Instant,
-    fence: &Mutex<()>,
-) -> io::Result<(u8, Vec<OwnedFd>)> {
-    loop {
-        match receiver.receive_byte(count, fence) {
-            Ok(value) => return Ok(value),
-            Err(ReceiveError::WouldBlock) => {
-                let remaining = until
-                    .checked_duration_since(Instant::now())
-                    .ok_or_else(failure)?;
-                let fd = receiver.fd().ok_or_else(failure)?;
-                if !org_socket::poll_readable(fd.as_raw_fd(), remaining)? {
-                    return Err(failure());
-                }
-            }
-            // Fatal ancillary framing requires process termination, even before
-            // secret handoff: macOS may have installed unreported descriptors.
-            Err(ReceiveError::Fatal(_)) => fatal(),
-        }
-    }
-}
-/// Decodes the descriptors exactly as the host sends them: the marker byte
-/// carries [`WEB_HANDOFF_FDS`] in order, [Transfer, Listener], and nothing
-/// else. Each descriptor's socket type is checked before any ACK is sent.
-fn descriptors(marker: u8, fds: Vec<OwnedFd>) -> io::Result<(UnixDatagram, TcpListener)> {
-    if marker != HOST_SOCK_MARKER || fds.len() != WEB_HANDOFF_FDS.len() {
-        return Err(failure());
-    }
-    let mut transfer = None;
-    let mut listener = None;
-    for (kind, fd) in WEB_HANDOFF_FDS.into_iter().zip(fds) {
-        match kind {
-            WebFd::Transfer => transfer = Some(rights::unix_datagram(fd)?),
-            WebFd::Listener => listener = Some(rights::tcp_listener(fd)?),
-        }
-    }
-    Ok((transfer.ok_or_else(failure)?, listener.ok_or_else(failure)?))
-}
-/// The ready line for what confinement reported. A Landlock ABI is reported only by an
-/// adapter that restricted this process under it in full; seccomp has no wire field.
-fn ready(enforcement: Enforcement) -> WebReadyForSecrets {
-    WebReadyForSecrets {
-        landlock: enforcement.landlock_abi.map(|abi| LandlockStatus {
-            abi,
-            enforcement: LandlockEnforcement::FullyEnforced,
-        }),
-    }
-}
-fn handoff(
-    mut stream: UnixStream,
-    enforcement: Enforcement,
-) -> io::Result<(OwnedFd, OwnedFd, TcpListener)> {
-    stream.set_write_timeout(Some(WAIT))?;
-    send(&mut stream, &ready(enforcement))?;
-    let mut receiver = StreamReceiver::new(stream.try_clone()?);
-    let until = Instant::now() + WAIT;
-    let fence = Mutex::new(()); // still the only thread; no concurrent spawn exists
-    let mut header = Vec::new();
-    loop {
-        let (value, descriptors) = byte(&mut receiver, 0, until, &fence)?;
-        drop(descriptors);
-        if value == b'\n' {
-            break;
-        }
-        if header.len() >= HEADER - 1 {
-            return Err(failure());
-        }
-        header.push(value);
-    }
-    let _: WebHandoff = serde_json::from_slice(&header).map_err(|_| failure())?;
-    let (marker, fds) = byte(&mut receiver, WEB_HANDOFF_FDS.len(), until, &fence)?;
-    let (transfer, listener) = descriptors(marker, fds)?;
-    // Type checks precede ACK, and sole receiver has consumed exactly through
-    // the marker. Its duplicate is dropped before the actor becomes the reader.
-    drop(receiver);
-    send(
-        &mut stream,
-        &serde_json::json!({"v":org_host_control::API_VERSION,"event":"fds.received","of":"handoff"}),
-    )?;
-    Ok((stream.into(), transfer.into(), listener))
-}
 
 /// The host holds the write end of stdin for the web process's whole life and
 /// never writes after the first line. Its EOF (or a read error) means the host is
 /// gone: the connection is closed, so serving ends and the listener closes, even
 /// if the control connection's EOF were never observed. Later bytes are ignored,
 /// so nothing can swap the launch input mid-life.
-fn watch_stdin(mut input: impl Read + Send + 'static, host: Arc<HostControl>) -> io::Result<()> {
+fn watch_stdin<H: ControlPlaneTransport + ?Sized + 'static>(
+    mut input: impl Read + Send + 'static,
+    host: Arc<H>,
+) -> io::Result<()> {
     std::thread::Builder::new()
         .name("web-host-stdin".into())
         .spawn(move || {
@@ -404,7 +311,7 @@ pub fn renewal_kept_line(reason: &str) -> String {
 /// swap keeps the current one and writes one line saying so ([`renewal_kept_line`]); a
 /// different listener ends the process.
 fn follow_renewals(
-    host: Arc<HostControl>,
+    host: Arc<dyn ControlPlaneTransport>,
     tls: Arc<TlsCertificates>,
     current: (
         org_host_control::listen::ListenOrigin,
@@ -441,7 +348,7 @@ fn follow_renewals(
 
 /// Resolves once the host connection is gone (control EOF, a failed call or
 /// stdin EOF): serving stops and the listener closes with the process.
-async fn host_lost(host: Arc<HostControl>) {
+async fn host_lost<H: ControlPlaneTransport + ?Sized>(host: Arc<H>) {
     while host.live() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -492,16 +399,17 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         let line = format!("{}\n", landlock_not_applied_line(reason));
         let _ = io::stderr().write_all(line.as_bytes());
     }
-    let (control, transfer, listener) = handoff(confined.stream, confined.enforcement)?;
+    let (control, transfer, listener) =
+        local_unix::handoff(confined.stream, confined.enforcement, fatal)?;
     // Concurrency starts only after enforced readiness and the complete handoff.
     // The cache exists before the connection so the reader can apply every
     // `session.ended` event, in arrival order, from the first frame on.
     let cache = Arc::new(SessionCache::default());
-    let hub = EventHub::default();
+    let events: Arc<dyn EventBus> = Arc::new(InMemoryEventBus::default());
     let generation = Arc::new(OnceLock::new());
     let auth_enabled = Arc::new(AtomicBool::new(true));
     let (renewed, renewals) = mpsc::channel();
-    let events_hub = hub.clone();
+    let events_sink = Arc::clone(&events);
     let session_sink = session_events_with_access(
         Arc::clone(&cache),
         Arc::clone(&generation),
@@ -509,15 +417,20 @@ pub fn serve(assets: &Path) -> io::Result<()> {
     );
     let combined_sink: EventSink = Arc::new(move |name: &str, data: &serde_json::Value| {
         session_sink(name, data);
-        events_hub.observe_host_event(name, data);
+        observe_host_event_on_bus(events_sink.as_ref(), name, data);
     });
-    let host = HostControl::from_handoff(
+    let local_host = LocalUnixHostTransport::from_handoff(
         control,
         transfer,
         line.instance_id,
         Arc::new(|| fatal()),
         with_renewals(combined_sink, renewed),
     )?;
+    let offices: Arc<dyn OfficeTransport> = Arc::new(LocalUnixOfficeTransport::new(
+        Arc::clone(&local_host),
+        Arc::clone(&events),
+    ));
+    let host: Arc<dyn ControlPlaneTransport> = local_host;
     let _ = generation.set(host.generation());
     let fetched = host.fetch_listener().map_err(|_| failure())?;
     let scheme = fetched.listen().ok_or_else(failure)?.0;
@@ -576,12 +489,13 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         config,
         files,
         move || {
-            let backend = SessionApi::with_access(
+            let backend = SessionApi::from_ports(
                 Arc::clone(&host),
+                offices,
+                events,
                 cache,
                 &browser_origin,
                 scheme,
-                hub,
                 auth_enabled,
             );
             Ok((backend, host_lost(host)))

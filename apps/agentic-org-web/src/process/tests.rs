@@ -1,4 +1,6 @@
 use super::*;
+use std::os::unix::net::{UnixDatagram, UnixStream};
+use std::sync::Mutex;
 
 /// After `tls.renew`: a pair for the same origin and `hsts` is swapped in; `unavailable`
 /// or a pair that does not load keeps the current one; another listener is a host bug

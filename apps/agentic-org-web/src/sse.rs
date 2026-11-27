@@ -6,6 +6,7 @@ use std::{
     convert::Infallible,
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -21,10 +22,12 @@ use org_proto::web::{
     EventFrame, Feed, Milliseconds, ResponseScope, ResumeCursor, Scope, StreamRequest,
     Subscription, SubscriptionCursor,
 };
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 
-pub use crate::event_hub::{EventBus, EventHub, HubEvent, InMemoryEventBus};
-use crate::office::OfficeBridge;
+pub use crate::event_hub::{
+    EventBus, EventHub, EventRecvError, EventSubscription, HubEvent, InMemoryEventBus,
+};
+use crate::ports::OfficeTransport;
 
 mod deliver;
 mod office_poll;
@@ -157,7 +160,7 @@ pub fn open_stream_with_offices(
     instance_id: String,
     session_id: String,
     request: StreamRequest,
-    offices: Option<OfficeBridge>,
+    offices: Option<Arc<dyn OfficeTransport>>,
     targets: Vec<OfficePollTarget>,
 ) -> Response<WebBody> {
     let bus = InMemoryEventBus::new(hub.clone());
@@ -165,13 +168,14 @@ pub fn open_stream_with_offices(
 }
 
 /// Spawns an SSE stream task subscribed to `bus`, with optional live office polling: the
-/// stream depends on the [`EventBus`] seam only, never on how events travel.
+/// stream depends on the [`EventBus`] and [`OfficeTransport`] ports only, never on how
+/// events or office RPCs travel.
 pub fn open_stream_on_bus(
     bus: &dyn EventBus,
     instance_id: String,
     session_id: String,
     request: StreamRequest,
-    offices: Option<OfficeBridge>,
+    offices: Option<Arc<dyn OfficeTransport>>,
     targets: Vec<OfficePollTarget>,
 ) -> Response<WebBody> {
     let (tx, rx) = mpsc::channel::<Bytes>(STREAM_QUEUE);
@@ -191,20 +195,20 @@ pub fn open_stream_on_bus(
                         break;
                     }
                 }
-                Ok(Err(broadcast::error::RecvError::Lagged(_))) => {
+                Ok(Err(EventRecvError::Lagged(_))) => {
                     if btx.send(StreamInput::Lagged).await.is_err() {
                         break;
                     }
                 }
-                Ok(Err(broadcast::error::RecvError::Closed)) => break,
+                Ok(Err(EventRecvError::Closed)) => break,
             }
         }
     });
-    if let Some(bridge) = offices {
+    if let Some(offices) = offices {
         for target in targets {
-            let b = bridge.clone();
+            let offices = Arc::clone(&offices);
             let ptx = merged_tx.clone();
-            tokio::spawn(async move { poll_office_loop(b, target, ptx).await });
+            tokio::spawn(async move { poll_office_loop(offices, target, ptx).await });
         }
     }
     drop(merged_tx);

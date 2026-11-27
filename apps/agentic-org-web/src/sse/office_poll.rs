@@ -1,5 +1,7 @@
 //! Polling HQ offices for live chat events and emitting their frames.
 
+use std::sync::Arc;
+
 use org_proto::chat::{ChatEventsPoll, ChatEventsPollParams, ChatEventsPollResult};
 use org_proto::web::{Feed, ResyncReason};
 use serde_json::Value;
@@ -10,8 +12,7 @@ use super::{
     OFFICE_RETRY_BACKOFF,
 };
 use crate::event_hub::HubEvent;
-use crate::host::Failure;
-use crate::office::{OfficeBridge, OfficeFailure};
+use crate::ports::{Failure, OfficeFailure, OfficeTransport};
 use crate::sse::race_until_closed;
 
 pub(super) fn is_permanent_poll_denial(err: &OfficeFailure) -> bool {
@@ -26,7 +27,7 @@ pub(super) fn is_permanent_poll_denial(err: &OfficeFailure) -> bool {
 }
 
 pub(super) async fn poll_office_loop(
-    bridge: OfficeBridge,
+    offices: Arc<dyn OfficeTransport>,
     target: OfficePollTarget,
     tx: mpsc::Sender<StreamInput>,
 ) {
@@ -50,7 +51,7 @@ pub(super) async fn poll_office_loop(
         };
         let Some(call_res) = race_until_closed(
             &tx,
-            bridge.call_typed_with_timeout::<ChatEventsPoll>(
+            offices.call_typed_with_timeout::<ChatEventsPoll>(
                 &target.auth,
                 &target.office_id,
                 &params,
