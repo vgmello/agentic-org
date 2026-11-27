@@ -1,3 +1,4 @@
+import "./pages/project-new.js";
 import { loadWorkTasks } from "./pages/work.js";
 import { render } from "./shell/router.js";
 import { applyNavCollapsed } from "./state.js";

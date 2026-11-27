@@ -28,7 +28,8 @@ function pageProjects() {
     { icon: "filter", label: "Filter projects", active: S.showArchived });
   const search = searchToggle("projects-search", "Search projects", S.projectQuery);
   const empty = ids.length ? "" : `<p class="empty-row">No projects match “${esc(S.projectQuery.trim())}”.</p>`;
-  return hdr("Projects", `${active} active · ${Object.keys(P).length - active} archived`, search + filter) +
+  const create = `<button class="btn primary" type="button" data-act="new-project">${ic("plus", "ic16")}New project</button>`;
+  return hdr("Projects", `${active} active · ${Object.keys(P).length - active} archived`, search + filter + create) +
   searchRow("projects-search", "Search projects", S.projectQuery, "Search projects by name, lead or team… (Esc to close)", "work-search-row") + empty +
   `<ul class="rows" role="list">${ids.map((p) => {
     const pr = P[p], ws = W.filter((w) => w.proj === p), openN = ws.filter(OPEN).length;
