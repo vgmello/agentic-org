@@ -97,6 +97,56 @@ pub type Semver = (u64, u64, u64);
 /// Inclusive `(min, max)` tested semantic version range.
 pub type SemverRange = (Semver, Semver);
 
+/// How [`org_agent_runtime::LaunchContext::config_dir`] or
+/// [`org_agent_runtime::ProbeContext::config_dir`] maps onto a vendor's `config_dir_env` variable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigDirMapping {
+    /// Pass `config_dir` verbatim (e.g. `AGY_CONFIG_DIR`, `KIMI_SHARE_DIR`).
+    Direct,
+    /// Vendor treats `config_dir_env` as a `$HOME`-like parent holding `<subdir>` (e.g. Gemini CLI
+    /// reads `$GEMINI_CLI_HOME/.gemini`). If `config_dir` ends with `/<subdir>`, pass its non-root
+    /// parent so `.gemini/.gemini` double nesting never occurs.
+    HomeParentOf(&'static str),
+    /// Vendor expects a nested child subdirectory inside its root dotdir (e.g. Pi expects
+    /// `PI_CODING_AGENT_DIR` at `.../.pi/agent`, never `.../.pi` root). If `config_dir` ends with
+    /// `/<root_dir>`, append `/<child_rel>`.
+    NestedChildOf {
+        /// Root folder name (e.g. `".pi"`).
+        root_dir: &'static str,
+        /// Nested child directory relative path (e.g. `"agent"`).
+        child_rel: &'static str,
+    },
+}
+
+impl ConfigDirMapping {
+    /// Resolves `config_dir` into the exact path value expected by the vendor's `config_dir_env`.
+    pub fn resolve_env_value(self, config_dir: &str) -> String {
+        let trimmed = config_dir.trim_end_matches('/');
+        match self {
+            Self::Direct => config_dir.to_owned(),
+            Self::HomeParentOf(subdir) => {
+                let suffix = format!("/{subdir}");
+                if let Some(parent) = trimmed.strip_suffix(&suffix) {
+                    if !parent.is_empty() && parent != "/" {
+                        return parent.to_owned();
+                    }
+                }
+                config_dir.to_owned()
+            }
+            Self::NestedChildOf {
+                root_dir,
+                child_rel,
+            } => {
+                let suffix = format!("/{root_dir}");
+                if trimmed.ends_with(&suffix) {
+                    return format!("{trimmed}/{child_rel}");
+                }
+                config_dir.to_owned()
+            }
+        }
+    }
+}
+
 /// Complete declarative specification of a JSON-RPC 2.0 ACP vendor CLI.
 pub struct AcpProfile {
     /// Canonical [`org_agent_runtime::RuntimeId`] string (e.g. `"agy"`, `"gemini"`).
@@ -129,6 +179,8 @@ pub struct AcpProfile {
     pub probe_env_add: &'static [(&'static str, &'static str)],
     /// Environment variable pointing to `LaunchContext::config_dir` / `ProbeContext::config_dir`.
     pub config_dir_env: &'static str,
+    /// Path mapping applied when formatting `config_dir` for `config_dir_env`.
+    pub config_dir_mapping: ConfigDirMapping,
     /// Allowlisted authentication environment variable names accepted from the office vault.
     pub auth_env_names: &'static [&'static str],
     /// Environment variable names redacted whenever they appear in runtime output.

@@ -175,15 +175,25 @@ fn all_four_acp_runtimes_fail_closed_on_banned_missing_and_drifting_permission_m
             "{id}: expected ModeMismatch on missing mode, got {res:?}"
         );
 
-        // 2. Banned bypass modes fail closed with ModeMismatch + CloseStdin.
+        // 2. Banned bypass modes (including snake_case, kebab-case, and whitespace variants) fail
+        //    closed with ModeMismatch + CloseStdin.
         for banned in [
             "yolo",
             "auto",
             "full-auto",
+            "full_auto",
             "dontAsk",
+            "dont_ask",
+            "dont-ask",
             "bypassPermissions",
+            "bypass_permissions",
+            "bypass-permissions",
+            "bypass permissions",
             "danger-full-access",
+            "danger_full_access",
             "allow-all",
+            "allow_all",
+            "allow all",
         ] {
             let (_, mut s) = rt.plan_session(&spec, &ctx).unwrap();
             let _ = s.start(now);
@@ -258,11 +268,19 @@ fn all_four_acp_runtimes_classify_bypass_sandbox_and_never_select_allow_always()
             )
             .unwrap();
 
-        // Deeply nested BypassSandbox / dangerouslyDisableSandbox must trigger SandboxBypass.
+        // Deeply nested BypassSandbox / dangerouslyDisableSandbox / yolo / sandbox:false variants
+        // must trigger SandboxBypass.
         for (req_id, payload) in [
             ("b1", r#"{"command":"id","BypassSandbox":true}"#),
             ("b2", r#"{"nested":{"dangerously_disable_sandbox":"yes"}}"#),
             ("b3", r#"{"opts":[{"unsandboxed":1}]}"#),
+            ("b4", r#"{"command":"id","yolo":true}"#),
+            ("b5", r#"{"command":"id","sandbox":false}"#),
+            ("b6", r#"{"command":"id","useSandbox":false}"#),
+            ("b7", r#"{"nested":{"use_sandbox":false}}"#),
+            ("b8", r#"{"command":"id","sandboxed":false}"#),
+            ("b9", r#"{"sandbox":{"enabled":false}}"#),
+            ("b10", r#"{"sandbox":"none"}"#),
         ] {
             let line = format!(
                 r#"{{"jsonrpc":"2.0","id":"{req_id}","method":"session/request_permission","params":{{"sessionId":"s-1","toolCall":{{"toolCallId":"tc-{req_id}","name":"bash","rawInput":{payload}}},"options":[{{"optionId":"allow","kind":"allow_once"}},{{"optionId":"deny","kind":"reject_once"}}]}}}}"#
@@ -293,6 +311,38 @@ fn all_four_acp_runtimes_classify_bypass_sandbox_and_never_select_allow_always()
                 o,
                 Output::Write(l) if String::from_utf8_lossy(l.as_bytes()).contains(r#""optionId":"deny""#)
             )));
+        }
+
+        // Benign sandbox-enabled flags (`sandbox: true`, `useSandbox: true`, `sandboxed: true`,
+        // `yolo: false`) must NOT produce false-positive SandboxBypass escalations.
+        for (req_id, payload) in [
+            ("ok1", r#"{"command":"ls","sandbox":true}"#),
+            ("ok2", r#"{"command":"ls","useSandbox":true}"#),
+            ("ok3", r#"{"command":"ls","sandboxed":true}"#),
+            ("ok4", r#"{"command":"ls","yolo":false}"#),
+            ("ok5", r#"{"command":"ls","sandbox":{"enabled":true}}"#),
+        ] {
+            let line = format!(
+                r#"{{"jsonrpc":"2.0","id":"{req_id}","method":"session/request_permission","params":{{"sessionId":"s-1","toolCall":{{"toolCallId":"tc-{req_id}","name":"bash","rawInput":{payload}}},"options":[{{"optionId":"allow","kind":"allow_once"}},{{"optionId":"deny","kind":"reject_once"}}]}}}}"#
+            );
+            let out = s.on_line(line.as_bytes(), now);
+            assert!(
+                out.iter().any(|o| matches!(
+                    o,
+                    Output::Event(SessionEvent::ApprovalRequested(req))
+                        if req.escalation == Escalation::None && req.kind == ApprovalKind::Command
+                )),
+                "{id}/{req_id}: unexpected SandboxBypass on benign payload: {out:?}"
+            );
+            let _ = s
+                .control(
+                    Control::Answer {
+                        request_id: ApprovalId::new(req_id),
+                        decision: Decision::AllowOnce,
+                    },
+                    now,
+                )
+                .unwrap();
         }
 
         // Only `allow_always` offered -> `Decision::AllowOnce` fails closed with `cancelled`.
@@ -497,11 +547,20 @@ fn probes_take_over_guards_host_credentials_and_non_overlapping_transcript_layou
             assert_eq!(take_over, Err(PlanError::Unsupported("take-over")));
         }
 
-        // Host credential deny lists are non-empty and never use Claude's OAuth token injection.
+        // Host profiles: Agy preserves host `.gemini` config parity, while Gemini, Kimi, and Pi
+        // are strictly vault-only (`host_config_subdir: None`, `uses_host_oauth_token_injection: true`)
+        // with explicit `$HOME`-relative host credential directory denies.
         let hp = rt.host_profile();
-        assert!(!hp.uses_host_oauth_token_injection, "{id}");
-        assert!(hp.host_config_subdir.is_some(), "{id}");
-        assert!(!hp.config_credential_files.is_empty(), "{id}");
+        if id == "agy" {
+            assert!(!hp.uses_host_oauth_token_injection, "{id}");
+            assert_eq!(hp.host_config_subdir, Some(".gemini"), "{id}");
+            assert!(!hp.config_credential_files.is_empty(), "{id}");
+        } else {
+            assert!(hp.uses_host_oauth_token_injection, "{id}");
+            assert!(hp.host_config_subdir.is_none(), "{id}");
+            assert!(hp.config_credential_files.is_empty(), "{id}");
+            assert!(!hp.host_credential_files.is_empty(), "{id}");
+        }
 
         // Transcript layouts have unique, non-overlapping discovery roots.
         let parser = rt.transcript_parser().expect("transcript parser");

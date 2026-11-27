@@ -103,9 +103,18 @@ impl SessionManager {
         self.denied_office_globs_for(None)
     }
 
+    #[cfg(test)]
     pub(crate) fn denied_office_globs_for(
         &self,
         self_employee_id: Option<&str>,
+    ) -> Vec<PathPattern> {
+        self.denied_office_globs_for_runtime(self_employee_id, None)
+    }
+
+    pub(crate) fn denied_office_globs_for_runtime(
+        &self,
+        self_employee_id: Option<&str>,
+        active_host_config_subdir: Option<&str>,
     ) -> Vec<PathPattern> {
         let mut out = Vec::new();
         push_glob_pattern(&mut out, self.office.folder());
@@ -124,7 +133,11 @@ impl SessionManager {
         );
         self.append_sibling_and_socket_denies(&mut out, &office_local, office_id, self_employee_id);
         append_cargo_credential_denies(&mut out);
-        append_runtime_credential_denies(&self.config.runtimes, &mut out);
+        append_runtime_credential_denies(
+            &self.config.runtimes,
+            active_host_config_subdir,
+            &mut out,
+        );
         // Other agents' external (BYOA) keys and fast tokens (`TASK-137`).
         for root in &self.config.agent_os_state_roots {
             push_glob_pattern(&mut out, root);
@@ -519,9 +532,29 @@ impl SessionManager {
         workspace: &SpecPath,
         create_root: bool,
     ) -> Result<PresetConfig, ApiError> {
+        self.build_employee_preset_cfg_for_runtime(
+            employee_id,
+            preset,
+            sandbox_enabled,
+            workspace,
+            create_root,
+            None,
+        )
+    }
+
+    pub(super) fn build_employee_preset_cfg_for_runtime(
+        &self,
+        employee_id: &str,
+        preset: PermissionPreset,
+        sandbox_enabled: bool,
+        workspace: &SpecPath,
+        create_root: bool,
+        active_host_config_subdir: Option<&str>,
+    ) -> Result<PresetConfig, ApiError> {
         let socket_str = self.config.office_socket.display().to_string();
         let socket_spec = SpecPath::try_from(socket_str.as_str()).ok();
-        let denied_globs = self.denied_office_globs_for(Some(employee_id));
+        let denied_globs =
+            self.denied_office_globs_for_runtime(Some(employee_id), active_host_config_subdir);
         let mut cfg = build_session_policy(
             preset,
             sandbox_enabled,

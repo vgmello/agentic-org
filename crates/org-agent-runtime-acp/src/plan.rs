@@ -3,11 +3,10 @@
 use serde_json::{json, Value};
 
 use org_agent_runtime::{
-    expand_capability_allowlist, runtime_env_add, static_env_names, validate_operator_shell,
-    validate_plan_paths, validate_standard_session_kind, Capabilities, EnvName, FileLocation,
-    LaunchContext, LaunchPlan, PlanError, PlannedDir, PlannedFile, RelPath, Rule, RuleScope,
-    SessionId, SessionKind, SessionSpec, SignalTarget, Stdio, StopPlan, StopSignal, StopStep,
-    ToolCapability,
+    expand_capability_allowlist, static_env_names, validate_operator_shell, validate_plan_paths,
+    validate_standard_session_kind, Capabilities, EnvName, FileLocation, LaunchContext, LaunchPlan,
+    PlanError, PlannedDir, PlannedFile, RelPath, Rule, RuleScope, SessionId, SessionKind,
+    SessionSpec, SignalTarget, Stdio, StopPlan, StopSignal, StopStep, ToolCapability,
 };
 
 use crate::profile::{
@@ -152,7 +151,7 @@ pub(crate) fn build_headless_plan(
         }
     }
 
-    let mut env_add = runtime_env_add(profile.env_add, profile.config_dir_env, ctx);
+    let mut env_add = profile_env_add(profile, ctx);
     let mut files = Vec::new();
     let standing = Some(spec.standing_prompt()).filter(|p| !p.is_empty());
     let system_prompt_append = stage_system_prompt(
@@ -256,7 +255,7 @@ pub(crate) fn build_take_over_plan(
         program: ctx.runtime_path.clone(),
         args,
         cwd: spec.workspace.clone(),
-        env_add: runtime_env_add(profile.env_add, profile.config_dir_env, ctx),
+        env_add: profile_env_add(profile, ctx),
         dirs: Vec::new(),
         files: Vec::new(),
         stdio: Stdio::Pty { cols, rows },
@@ -272,6 +271,28 @@ pub(crate) fn build_take_over_plan(
         secret_env_names: static_env_names(profile.secret_env_names),
         auth_env_names: static_env_names(profile.auth_env_names),
     })
+}
+
+fn profile_env_add(profile: &'static AcpProfile, ctx: &LaunchContext) -> Vec<(EnvName, String)> {
+    let mut env: Vec<(EnvName, String)> = profile
+        .env_add
+        .iter()
+        .map(|&(name, value)| {
+            (
+                EnvName::try_from(name).expect("static env name is valid"),
+                value.to_owned(),
+            )
+        })
+        .collect();
+    if let Some(cfg_dir) = &ctx.config_dir {
+        env.push((
+            EnvName::try_from(profile.config_dir_env).expect("static config dir env is valid"),
+            profile
+                .config_dir_mapping
+                .resolve_env_value(cfg_dir.as_str()),
+        ));
+    }
+    env
 }
 
 fn append_state_dir_args(
@@ -496,5 +517,65 @@ mod plan_unit_tests {
             p_cfg.system_prompt_append.as_deref(),
             Some("Standing instructions.\n\nYou are agent.")
         );
+    }
+
+    #[test]
+    fn gemini_cli_home_and_pi_coding_agent_dir_avoid_path_nesting_and_root_drift() {
+        // Gemini CLI reads `$GEMINI_CLI_HOME/.gemini`: passing `<home>/.gemini` maps to `<home>`
+        // so `.gemini/.gemini` double nesting never occurs, while `<home>` stays `<home>`.
+        let mut g_ctx_dot = minimal_ctx("/usr/local/bin/gemini");
+        g_ctx_dot.config_dir = Some(SpecPath::try_from("/agents/emp-1/home/.gemini").unwrap());
+        let (g_plan_dot, _) = build_headless_plan(
+            &GEMINI_PROFILE,
+            &minimal_spec("gemini"),
+            &g_ctx_dot,
+            &GeminiRuntime::new().capabilities(),
+        )
+        .unwrap();
+        assert!(g_plan_dot
+            .env_add
+            .iter()
+            .any(|(k, v)| { k.as_str() == "GEMINI_CLI_HOME" && v == "/agents/emp-1/home" }));
+
+        let mut g_ctx_home = minimal_ctx("/usr/local/bin/gemini");
+        g_ctx_home.config_dir = Some(SpecPath::try_from("/agents/emp-1/home").unwrap());
+        let (g_plan_home, _) = build_headless_plan(
+            &GEMINI_PROFILE,
+            &minimal_spec("gemini"),
+            &g_ctx_home,
+            &GeminiRuntime::new().capabilities(),
+        )
+        .unwrap();
+        assert!(g_plan_home
+            .env_add
+            .iter()
+            .any(|(k, v)| { k.as_str() == "GEMINI_CLI_HOME" && v == "/agents/emp-1/home" }));
+
+        // Pi expects `PI_CODING_AGENT_DIR` at `<home>/.pi/agent` (never `<home>/.pi` root).
+        let mut p_ctx_root = minimal_ctx("/usr/local/bin/pi-acp");
+        p_ctx_root.config_dir = Some(SpecPath::try_from("/agents/emp-1/home/.pi").unwrap());
+        let (p_plan_root, _) = build_headless_plan(
+            &PI_PROFILE,
+            &minimal_spec("pi"),
+            &p_ctx_root,
+            &PiRuntime::new().capabilities(),
+        )
+        .unwrap();
+        assert!(p_plan_root.env_add.iter().any(|(k, v)| {
+            k.as_str() == "PI_CODING_AGENT_DIR" && v == "/agents/emp-1/home/.pi/agent"
+        }));
+
+        let mut p_ctx_agent = minimal_ctx("/usr/local/bin/pi-acp");
+        p_ctx_agent.config_dir = Some(SpecPath::try_from("/agents/emp-1/home/.pi/agent").unwrap());
+        let (p_plan_agent, _) = build_headless_plan(
+            &PI_PROFILE,
+            &minimal_spec("pi"),
+            &p_ctx_agent,
+            &PiRuntime::new().capabilities(),
+        )
+        .unwrap();
+        assert!(p_plan_agent.env_add.iter().any(|(k, v)| {
+            k.as_str() == "PI_CODING_AGENT_DIR" && v == "/agents/emp-1/home/.pi/agent"
+        }));
     }
 }

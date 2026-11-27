@@ -74,7 +74,8 @@ impl EnrollmentDriver for CliEnrollmentDriver {
         provider: &str,
         _temp_dir: &Path,
     ) -> Result<EnrollmentPrompt, EnrollmentVaultError> {
-        let normalized = org_office::accounting::canonical_provider_namespace(provider);
+        let trimmed = provider.trim();
+        let normalized = org_office::accounting::canonical_provider_namespace(trimmed);
         match normalized.as_str() {
             "anthropic" => Ok(EnrollmentPrompt {
                 state: EnrollmentState::AwaitingCode,
@@ -98,9 +99,9 @@ impl EnrollmentDriver for CliEnrollmentDriver {
                         .to_owned(),
                 ),
             }),
-            "google" => {
-                let is_gemini_cli = provider.eq_ignore_ascii_case("gemini")
-                    || provider.eq_ignore_ascii_case("gemini-cli");
+            "google" | "gemini-cli" => {
+                let is_gemini_cli = trimmed.eq_ignore_ascii_case("gemini")
+                    || trimmed.eq_ignore_ascii_case("gemini-cli");
                 let (auth_url, message) = if is_gemini_cli {
                     (
                         "https://aistudio.google.com/app/apikey",
@@ -509,4 +510,59 @@ pub(super) fn find_owned_mut<'a>(
         ));
     }
     Ok(entry)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_enrollment_driver_matches_gemini_aliases_untrimmed_inputs_and_all_acp_vendors() {
+        let driver = CliEnrollmentDriver;
+        let tmp = Path::new("/tmp/enroll-test");
+
+        for gemini in ["gemini", "gemini-cli", " gemini ", " GEMINI-CLI "] {
+            let prompt = driver
+                .start(gemini, tmp)
+                .unwrap_or_else(|e| panic!("provider `{gemini}` failed: {e}"));
+            assert_eq!(prompt.state, EnrollmentState::AwaitingCode);
+            assert_eq!(
+                prompt.auth_url.as_deref(),
+                Some("https://aistudio.google.com/app/apikey"),
+                "provider `{gemini}` must route to Gemini CLI auth URL"
+            );
+        }
+
+        for agy in ["agy", " agy ", "google", "antigravity"] {
+            let prompt = driver.start(agy, tmp).unwrap();
+            assert_eq!(prompt.state, EnrollmentState::AwaitingCode);
+            assert_eq!(
+                prompt.auth_url.as_deref(),
+                Some("https://antigravity.google/auth"),
+                "provider `{agy}` must route to Antigravity auth URL"
+            );
+        }
+
+        for kimi in ["kimi", " kimi ", "kimi-cli", "kimi-code", "moonshot"] {
+            let prompt = driver.start(kimi, tmp).unwrap();
+            assert_eq!(prompt.state, EnrollmentState::AwaitingCode);
+            assert_eq!(
+                prompt.auth_url.as_deref(),
+                Some("https://platform.moonshot.ai/console/api-keys"),
+                "provider `{kimi}` must route to Moonshot/Kimi auth URL"
+            );
+        }
+
+        for pi in ["pi", " pi ", "pi-acp", "pi-coding-agent"] {
+            let prompt = driver.start(pi, tmp).unwrap();
+            assert_eq!(prompt.state, EnrollmentState::AwaitingCode);
+            assert!(prompt.auth_url.is_none());
+            assert!(prompt.message.as_deref().unwrap_or("").contains("Pi ACP"));
+        }
+
+        assert!(matches!(
+            driver.start("unknown-provider", tmp),
+            Err(EnrollmentVaultError::InvalidInput(_))
+        ));
+    }
 }

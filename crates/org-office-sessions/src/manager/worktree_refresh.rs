@@ -339,13 +339,22 @@ impl SessionManager {
         let fresh_plan = adapter
             .as_deref()
             .and_then(|rt| self.prepare_fresh_sandbox_plan(employee_id, snap.sandbox_enabled, rt));
+        let active_host_config_subdir = snap
+            .allow_host_auth
+            .then(|| {
+                adapter
+                    .as_deref()
+                    .and_then(|rt| rt.host_profile().host_config_subdir)
+            })
+            .flatten();
         let effective_preset = PermissionPreset::effective_for(employee.builtin_key, snap.preset);
-        let Ok(mut preset_cfg) = self.build_employee_preset_cfg(
+        let Ok(mut preset_cfg) = self.build_employee_preset_cfg_for_runtime(
             employee_id,
             effective_preset,
             snap.sandbox_enabled,
             &workspace_spec,
             true,
+            active_host_config_subdir,
         ) else {
             return (false, false);
         };

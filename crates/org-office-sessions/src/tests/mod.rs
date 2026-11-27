@@ -262,6 +262,10 @@ impl AgentRuntime for ScriptedRuntime {
         "scripted-agent"
     }
 
+    fn aliases(&self) -> &'static [&'static str] {
+        &["anthropic", "claude-code"]
+    }
+
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,

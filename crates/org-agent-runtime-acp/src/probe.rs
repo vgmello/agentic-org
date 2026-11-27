@@ -10,7 +10,9 @@ use org_agent_runtime::{
 };
 
 use crate::profile::{AcpProfile, AuthProbeStrategy};
-use crate::protocol::{encode_initialize, is_auth_rpc_error, rpc_error, rpc_result};
+use crate::protocol::{
+    encode_initialize, encode_session_open, is_auth_rpc_error, rpc_error, rpc_result,
+};
 
 const AUTH_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -49,10 +51,20 @@ fn build_probe_env(profile: &'static AcpProfile, ctx: &ProbeContext) -> Vec<(Env
     if let Some(cfg_dir) = &ctx.config_dir {
         env_add.push((
             EnvName::try_from(profile.config_dir_env).expect("static config dir env"),
-            cfg_dir.as_str().to_owned(),
+            profile
+                .config_dir_mapping
+                .resolve_env_value(cfg_dir.as_str()),
         ));
     }
     env_add
+}
+
+fn probe_session_cwd(ctx: &ProbeContext) -> String {
+    ctx.runtime_dir
+        .as_ref()
+        .or(ctx.config_dir.as_ref())
+        .map(|p| p.as_str().to_owned())
+        .unwrap_or_else(|| ".".to_owned())
 }
 
 fn plan_auth_probe(
@@ -83,7 +95,11 @@ fn plan_auth_probe(
                 stdin_lines: Vec::new(),
                 timeout_ms: 15_000,
             },
-            session: Box::new(AcpAuthProbeSession::new(profile.display_name, method)),
+            session: Box::new(AcpAuthProbeSession::new(
+                profile.display_name,
+                method,
+                probe_session_cwd(ctx),
+            )),
         }),
     }
 }
@@ -198,28 +214,39 @@ fn extract_semver(text: &str) -> Option<(u64, u64, u64)> {
     None
 }
 
-/// Sans-I/O JSON-RPC 2.0 ACP `initialize` probe session checking binary readiness and sign-in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthProbePhase {
+    NotStarted,
+    AwaitingInitialize,
+    AwaitingSessionNew,
+    Done,
+}
+
+/// Sans-I/O JSON-RPC 2.0 ACP `initialize` + `session/new` probe session checking binary readiness
+/// and actual credential acceptance (failing closed on unauthenticated `initialize` responses).
 pub(crate) struct AcpAuthProbeSession {
     display_name: &'static str,
     method: &'static str,
-    sent: bool,
-    done: bool,
+    probe_cwd: String,
+    phase: AuthProbePhase,
+    saw_auth_methods: bool,
     deadline: Option<Instant>,
 }
 
 impl AcpAuthProbeSession {
-    pub(crate) fn new(display_name: &'static str, method: &'static str) -> Self {
+    pub(crate) fn new(display_name: &'static str, method: &'static str, probe_cwd: String) -> Self {
         Self {
             display_name,
             method,
-            sent: false,
-            done: false,
+            probe_cwd,
+            phase: AuthProbePhase::NotStarted,
+            saw_auth_methods: false,
             deadline: None,
         }
     }
 
     fn finish(&mut self, result: ProbeResult) -> Vec<ProbeStep> {
-        self.done = true;
+        self.phase = AuthProbePhase::Done;
         self.deadline = None;
         vec![ProbeStep::Done(result)]
     }
@@ -271,6 +298,75 @@ impl AcpAuthProbeSession {
                 method: None,
             });
         }
+        self.saw_auth_methods = response_has_auth_methods(result);
+        self.phase = AuthProbePhase::AwaitingSessionNew;
+        let org_agent_runtime::Output::Write(line) =
+            encode_session_open(2, &self.probe_cwd, &[], None, None, "session/new")
+        else {
+            unreachable!("encode_session_open always returns Output::Write");
+        };
+        vec![ProbeStep::Write(line)]
+    }
+
+    fn evaluate_session_new_response(&mut self, val: &Value) -> Vec<ProbeStep> {
+        if let Some(err) = rpc_error(val) {
+            if is_auth_rpc_error(err) || self.saw_auth_methods {
+                return self.finish(ProbeResult::Auth {
+                    signed_in: false,
+                    method: None,
+                });
+            }
+            return self.finish(ProbeResult::Unavailable {
+                reason: Unavailable::Other {
+                    detail: format!(
+                        "{} ACP session/new probe returned an error",
+                        self.display_name
+                    ),
+                },
+            });
+        }
+        let Some(result) = rpc_result(val) else {
+            if self.saw_auth_methods {
+                return self.finish(ProbeResult::Auth {
+                    signed_in: false,
+                    method: None,
+                });
+            }
+            return self.finish(ProbeResult::Unavailable {
+                reason: Unavailable::Other {
+                    detail: format!(
+                        "{} ACP session/new probe response missing result",
+                        self.display_name
+                    ),
+                },
+            });
+        };
+        if response_reports_signed_out(result) {
+            return self.finish(ProbeResult::Auth {
+                signed_in: false,
+                method: None,
+            });
+        }
+        let has_session_id = result
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.trim().is_empty());
+        if !has_session_id {
+            if self.saw_auth_methods {
+                return self.finish(ProbeResult::Auth {
+                    signed_in: false,
+                    method: None,
+                });
+            }
+            return self.finish(ProbeResult::Unavailable {
+                reason: Unavailable::Other {
+                    detail: format!(
+                        "{} ACP session/new probe response missing sessionId",
+                        self.display_name
+                    ),
+                },
+            });
+        }
         self.finish(ProbeResult::Auth {
             signed_in: true,
             method: Some(self.method.to_owned()),
@@ -279,7 +375,7 @@ impl AcpAuthProbeSession {
 }
 
 fn response_reports_signed_out(result: &Value) -> bool {
-    let explicitly_false = [
+    [
         result.get("authenticated"),
         result.get("signedIn"),
         result.pointer("/auth/authenticated"),
@@ -287,16 +383,22 @@ fn response_reports_signed_out(result: &Value) -> bool {
     ]
     .into_iter()
     .flatten()
-    .any(|v| v.as_bool() == Some(false));
-    explicitly_false
+    .any(|v| v.as_bool() == Some(false))
+}
+
+fn response_has_auth_methods(result: &Value) -> bool {
+    [result.get("authMethods"), result.get("auth_methods")]
+        .into_iter()
+        .flatten()
+        .any(|v| v.as_array().is_some_and(|arr| !arr.is_empty()))
 }
 
 impl ProbeSession for AcpAuthProbeSession {
     fn start(&mut self, now: Instant) -> Vec<ProbeStep> {
-        if self.sent || self.done {
+        if self.phase != AuthProbePhase::NotStarted {
             return Vec::new();
         }
-        self.sent = true;
+        self.phase = AuthProbePhase::AwaitingInitialize;
         self.deadline = Some(now + AUTH_PROBE_TIMEOUT);
         let org_agent_runtime::Output::Write(line) = encode_initialize(1) else {
             unreachable!("encode_initialize always returns Output::Write");
@@ -305,7 +407,10 @@ impl ProbeSession for AcpAuthProbeSession {
     }
 
     fn on_line(&mut self, line: &[u8], _now: Instant) -> Vec<ProbeStep> {
-        if self.done {
+        if matches!(
+            self.phase,
+            AuthProbePhase::NotStarted | AuthProbePhase::Done
+        ) {
             return Vec::new();
         }
         let Ok(text) = std::str::from_utf8(line) else {
@@ -317,14 +422,25 @@ impl ProbeSession for AcpAuthProbeSession {
         let Ok(val) = serde_json::from_str::<Value>(text) else {
             return Vec::new();
         };
-        if val.get("id").and_then(Value::as_u64) != Some(1) {
-            return Vec::new();
+        match self.phase {
+            AuthProbePhase::AwaitingInitialize => {
+                if val.get("id").and_then(Value::as_u64) != Some(1) {
+                    return Vec::new();
+                }
+                self.evaluate_init_response(&val)
+            }
+            AuthProbePhase::AwaitingSessionNew => {
+                if val.get("id").and_then(Value::as_u64) != Some(2) {
+                    return Vec::new();
+                }
+                self.evaluate_session_new_response(&val)
+            }
+            AuthProbePhase::NotStarted | AuthProbePhase::Done => Vec::new(),
         }
-        self.evaluate_init_response(&val)
     }
 
     fn on_tick(&mut self, now: Instant) -> Vec<ProbeStep> {
-        if self.done {
+        if self.phase == AuthProbePhase::Done {
             return Vec::new();
         }
         if self.deadline.is_some_and(|d| now >= d) {
@@ -338,12 +454,24 @@ impl ProbeSession for AcpAuthProbeSession {
     }
 
     fn on_stdout_closed(&mut self, _now: Instant) -> ProbeResult {
-        self.done = true;
+        let prev = self.phase;
+        self.phase = AuthProbePhase::Done;
         self.deadline = None;
+        if prev == AuthProbePhase::AwaitingSessionNew && self.saw_auth_methods {
+            return ProbeResult::Auth {
+                signed_in: false,
+                method: None,
+            };
+        }
+        let stage = if prev == AuthProbePhase::AwaitingSessionNew {
+            "session/new"
+        } else {
+            "initialize"
+        };
         ProbeResult::Unavailable {
             reason: Unavailable::Other {
                 detail: format!(
-                    "{} ACP probe closed stdout before initialize response",
+                    "{} ACP probe closed stdout before {stage} response",
                     self.display_name
                 ),
             },
@@ -360,25 +488,46 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::profiles::GEMINI_PROFILE;
+    use crate::profiles::{GEMINI_PROFILE, PI_PROFILE};
 
     #[test]
-    fn acp_auth_probe_session_handles_ok_auth_error_signed_out_and_timeout() {
+    fn acp_auth_probe_requires_session_new_acceptance_and_fails_closed_on_unauth_init() {
         let now = Instant::now();
-        let Some(ProbeRun::Conversation { plan, mut session }) = plan_probe(
-            &GEMINI_PROFILE,
-            Probe::Auth,
-            &ProbeContext::new(PathBuf::from("/usr/local/bin/gemini")),
-        ) else {
+        let mut pctx = ProbeContext::new(PathBuf::from("/usr/local/bin/gemini"));
+        pctx.runtime_dir = Some(SpecPath::try_from("/runtime/agent-1").unwrap());
+        pctx.config_dir = Some(SpecPath::try_from("/agents/emp-1/home/.gemini").unwrap());
+        let Some(ProbeRun::Conversation { plan, mut session }) =
+            plan_probe(&GEMINI_PROFILE, Probe::Auth, &pctx)
+        else {
             panic!("expected conversation auth probe for gemini");
         };
         assert_eq!(plan.args, vec!["--acp".to_owned()]);
+        // Probe env maps GEMINI_CLI_HOME to parent of `.gemini` (no `.gemini/.gemini` nesting).
+        assert!(plan
+            .env_add
+            .iter()
+            .any(|(k, v)| { k.as_str() == "GEMINI_CLI_HOME" && v == "/agents/emp-1/home" }));
+
+        // 1. Authenticated flow: initialize -> writes session/new -> session/new ok -> signed_in: true.
         let start_steps = session.start(now);
         assert_eq!(start_steps.len(), 1);
         assert!(matches!(start_steps[0], ProbeStep::Write(_)));
 
+        let after_init = session.on_line(
+            br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"authMethods":[{"id":"oauth","name":"OAuth"}],"agentInfo":{"name":"gemini","version":"0.24.0"}}}"#,
+            now,
+        );
+        assert_eq!(after_init.len(), 1);
+        let ProbeStep::Write(ref session_new_line) = after_init[0] else {
+            panic!("initialize must probe session/new before concluding signed_in: {after_init:?}");
+        };
+        let req: Value = serde_json::from_slice(session_new_line.as_bytes()).unwrap();
+        assert_eq!(req["id"], 2);
+        assert_eq!(req["method"], "session/new");
+        assert_eq!(req["params"]["cwd"], "/runtime/agent-1");
+
         let ok = session.on_line(
-            br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"gemini","version":"0.24.0"}}}"#,
+            br#"{"jsonrpc":"2.0","id":2,"result":{"sessionId":"probe-sess-1"}}"#,
             now,
         );
         assert_eq!(
@@ -389,7 +538,44 @@ mod tests {
             })]
         );
 
-        let mut auth_err = AcpAuthProbeSession::new("Gemini", "gemini-acp");
+        // 2. Standard unauthenticated ACP agent: initialize succeeds with protocolVersion: 1 +
+        //    authMethods, then session/new returns -32000 Authentication required -> signed_in: false.
+        let mut unauth_session = AcpAuthProbeSession::new("Gemini", "gemini-acp", ".".to_owned());
+        unauth_session.start(now);
+        let next = unauth_session.on_line(
+            br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"authMethods":[{"id":"api-key","name":"API Key"}]}}"#,
+            now,
+        );
+        assert!(matches!(next.as_slice(), [ProbeStep::Write(_)]));
+        let denied = unauth_session.on_line(
+            br#"{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"Authentication required"}}"#,
+            now,
+        );
+        assert_eq!(
+            denied,
+            vec![ProbeStep::Done(ProbeResult::Auth {
+                signed_in: false,
+                method: None,
+            })]
+        );
+
+        // 3. Agent advertising authMethods that closes stdout before session/new -> signed_in: false.
+        let mut eof_unauth = AcpAuthProbeSession::new("Gemini", "gemini-acp", ".".to_owned());
+        eof_unauth.start(now);
+        let _ = eof_unauth.on_line(
+            br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"authMethods":[{"id":"oauth"}]}}"#,
+            now,
+        );
+        assert_eq!(
+            eof_unauth.on_stdout_closed(now),
+            ProbeResult::Auth {
+                signed_in: false,
+                method: None,
+            }
+        );
+
+        // 4. Early initialize auth error -> immediate signed_in: false.
+        let mut auth_err = AcpAuthProbeSession::new("Gemini", "gemini-acp", ".".to_owned());
         auth_err.start(now);
         let res = auth_err.on_line(
             br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"Authentication required"}}"#,
@@ -403,7 +589,20 @@ mod tests {
             })]
         );
 
-        let mut timed_out = AcpAuthProbeSession::new("Gemini", "gemini-acp");
+        // 5. Pi probe maps `<home>/.pi` -> `<home>/.pi/agent`.
+        let mut pi_ctx = ProbeContext::new(PathBuf::from("/usr/local/bin/pi-acp"));
+        pi_ctx.config_dir = Some(SpecPath::try_from("/agents/emp-1/home/.pi").unwrap());
+        let Some(ProbeRun::Conversation { plan: pi_plan, .. }) =
+            plan_probe(&PI_PROFILE, Probe::Auth, &pi_ctx)
+        else {
+            panic!("expected conversation auth probe for pi");
+        };
+        assert!(pi_plan.env_add.iter().any(|(k, v)| {
+            k.as_str() == "PI_CODING_AGENT_DIR" && v == "/agents/emp-1/home/.pi/agent"
+        }));
+
+        // 6. Timeout fails closed as Unavailable.
+        let mut timed_out = AcpAuthProbeSession::new("Gemini", "gemini-acp", ".".to_owned());
         timed_out.start(now);
         let deadline = timed_out.next_deadline().expect("deadline set");
         let expired = timed_out.on_tick(deadline);

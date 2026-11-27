@@ -190,6 +190,10 @@ impl AgentRuntime for MidTurnScriptedRuntime {
     fn binary_name(&self) -> &'static str {
         "mid-turn-scripted"
     }
+
+    fn aliases(&self) -> &'static [&'static str] {
+        &["anthropic", "claude-code"]
+    }
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             mid_turn_delivery: self.delivery_mode,

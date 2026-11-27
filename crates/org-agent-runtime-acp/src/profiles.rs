@@ -10,7 +10,7 @@ use org_agent_runtime::{
 use crate::plan::{build_headless_plan, build_take_over_plan};
 use crate::probe::{parse_probe, plan_probe};
 use crate::profile::{
-    AcpProfile, AuthProbeStrategy, ExpectedMode, ModeMapping, StateDirStrategy,
+    AcpProfile, AuthProbeStrategy, ConfigDirMapping, ExpectedMode, ModeMapping, StateDirStrategy,
     SystemPromptDelivery, TakeOverStrategy,
 };
 use crate::session::AcpSession;
@@ -23,37 +23,31 @@ pub const AGY_CONFIG_CREDENTIAL_FILES: &[&str] = &[
     "antigravity-cli/antigravity-oauth-token",
     "oauth_creds.json",
     "google_accounts.json",
-];
-
-/// Host credential paths inside `~/.gemini` denied for Gemini CLI sessions (`S2`).
-pub const GEMINI_CONFIG_CREDENTIAL_FILES: &[&str] = &[
-    "oauth_creds.json",
-    "google_accounts.json",
     "mcp-oauth-tokens.json",
+    "settings.json",
+    ".env",
 ];
 
-/// Additional `$HOME`-relative credential paths denied for Gemini CLI sessions (`S2`).
+/// `$HOME`-relative host credential files and directories denied for Gemini CLI sessions (`S2`).
+///
+/// Gemini CLI sessions are strictly vault-only (`host_config_subdir: None`); `.gemini/**` is
+/// enforced whenever host Agy auth is not active while individual `.gemini/*` secret files stay
+/// denied unconditionally.
 pub const GEMINI_HOST_CREDENTIAL_FILES: &[&str] = &[
-    ".config/gemini/oauth_creds.json",
-    ".config/gemini/google_accounts.json",
-    ".config/gemini/credentials.json",
+    ".gemini/**",
+    ".gemini/oauth_creds.json",
+    ".gemini/google_accounts.json",
+    ".gemini/mcp-oauth-tokens.json",
+    ".gemini/settings.json",
+    ".gemini/.env",
+    ".config/gemini/**",
 ];
 
-/// Host credential paths inside `~/.kimi` denied for Kimi Code CLI sessions (`S2`).
-pub const KIMI_CONFIG_CREDENTIAL_FILES: &[&str] =
-    &["credentials.json", "auth.json", "config.toml", "oauth.json"];
+/// `$HOME`-relative host credential directories denied for Kimi Code CLI sessions (`S2`).
+pub const KIMI_HOST_CREDENTIAL_FILES: &[&str] = &[".kimi/**", ".config/kimi/**"];
 
-/// Additional `$HOME`-relative credential paths denied for Kimi Code CLI sessions (`S2`).
-pub const KIMI_HOST_CREDENTIAL_FILES: &[&str] =
-    &[".config/kimi/credentials.json", ".config/kimi/config.toml"];
-
-/// Host credential paths inside `~/.pi` denied for Pi ACP sessions (`S2`).
-pub const PI_CONFIG_CREDENTIAL_FILES: &[&str] =
-    &["agent/auth.json", "auth.json", "credentials.json"];
-
-/// Additional `$HOME`-relative credential paths denied for Pi ACP sessions (`S2`).
-pub const PI_HOST_CREDENTIAL_FILES: &[&str] =
-    &[".config/pi/auth.json", ".config/pi/credentials.json"];
+/// `$HOME`-relative host credential directories denied for Pi ACP sessions (`S2`).
+pub const PI_HOST_CREDENTIAL_FILES: &[&str] = &[".pi/**", ".config/pi/**"];
 
 const STANDARD_ACP_MODES: ModeMapping = ModeMapping {
     ask: ExpectedMode {
@@ -113,6 +107,7 @@ pub static AGY_PROFILE: AcpProfile = AcpProfile {
     ],
     probe_env_add: &[("AGY_DISABLE_AUTOUPDATE", "1")],
     config_dir_env: "AGY_CONFIG_DIR",
+    config_dir_mapping: ConfigDirMapping::Direct,
     auth_env_names: &[
         "GEMINI_API_KEY",
         "GOOGLE_API_KEY",
@@ -170,6 +165,7 @@ pub static GEMINI_PROFILE: AcpProfile = AcpProfile {
     env_add: &[("GEMINI_TELEMETRY_ENABLED", "false"), ("NO_COLOR", "1")],
     probe_env_add: &[("GEMINI_TELEMETRY_ENABLED", "false"), ("NO_COLOR", "1")],
     config_dir_env: "GEMINI_CLI_HOME",
+    config_dir_mapping: ConfigDirMapping::HomeParentOf(".gemini"),
     auth_env_names: &[
         "GEMINI_API_KEY",
         "GOOGLE_API_KEY",
@@ -186,10 +182,10 @@ pub static GEMINI_PROFILE: AcpProfile = AcpProfile {
     subscription_auth_env_var: "GEMINI_OAUTH_TOKEN",
     api_key_auth_env_var: "GEMINI_API_KEY",
     host_profile: RuntimeHostProfile {
-        host_config_subdir: Some(".gemini"),
-        config_credential_files: GEMINI_CONFIG_CREDENTIAL_FILES,
+        host_config_subdir: None,
+        config_credential_files: &[],
         host_credential_files: GEMINI_HOST_CREDENTIAL_FILES,
-        uses_host_oauth_token_injection: false,
+        uses_host_oauth_token_injection: true,
         uses_mount_mask_sandbox: false,
         needs_explicit_sandbox_ro_dirs: false,
         sandbox_settings_file: None,
@@ -220,6 +216,7 @@ pub static KIMI_PROFILE: AcpProfile = AcpProfile {
     env_add: &[("NO_COLOR", "1")],
     probe_env_add: &[("NO_COLOR", "1")],
     config_dir_env: "KIMI_SHARE_DIR",
+    config_dir_mapping: ConfigDirMapping::Direct,
     auth_env_names: &[
         "KIMI_API_KEY",
         "MOONSHOT_API_KEY",
@@ -236,10 +233,10 @@ pub static KIMI_PROFILE: AcpProfile = AcpProfile {
     subscription_auth_env_var: "KIMI_OAUTH_TOKEN",
     api_key_auth_env_var: "KIMI_API_KEY",
     host_profile: RuntimeHostProfile {
-        host_config_subdir: Some(".kimi"),
-        config_credential_files: KIMI_CONFIG_CREDENTIAL_FILES,
+        host_config_subdir: None,
+        config_credential_files: &[],
         host_credential_files: KIMI_HOST_CREDENTIAL_FILES,
-        uses_host_oauth_token_injection: false,
+        uses_host_oauth_token_injection: true,
         uses_mount_mask_sandbox: false,
         needs_explicit_sandbox_ro_dirs: false,
         sandbox_settings_file: None,
@@ -268,16 +265,20 @@ pub static PI_PROFILE: AcpProfile = AcpProfile {
     env_add: &[("NO_COLOR", "1")],
     probe_env_add: &[("NO_COLOR", "1")],
     config_dir_env: "PI_CODING_AGENT_DIR",
+    config_dir_mapping: ConfigDirMapping::NestedChildOf {
+        root_dir: ".pi",
+        child_rel: "agent",
+    },
     auth_env_names: &["PI_API_KEY", "PI_OAUTH_TOKEN", "PI_BASE_URL"],
     secret_env_names: &["PI_API_KEY", "PI_OAUTH_TOKEN", "PI_SESSION_TOKEN"],
     endpoint_env_var: Some("PI_BASE_URL"),
     subscription_auth_env_var: "PI_OAUTH_TOKEN",
     api_key_auth_env_var: "PI_API_KEY",
     host_profile: RuntimeHostProfile {
-        host_config_subdir: Some(".pi"),
-        config_credential_files: PI_CONFIG_CREDENTIAL_FILES,
+        host_config_subdir: None,
+        config_credential_files: &[],
         host_credential_files: PI_HOST_CREDENTIAL_FILES,
-        uses_host_oauth_token_injection: false,
+        uses_host_oauth_token_injection: true,
         uses_mount_mask_sandbox: false,
         needs_explicit_sandbox_ro_dirs: false,
         sandbox_settings_file: None,

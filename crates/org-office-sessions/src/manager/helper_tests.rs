@@ -455,6 +455,7 @@ fn pattern_exists_for_bwrap_preserves_root_glob_and_agy_credential_denies_match_
     let mut agy_denies = Vec::new();
     append_runtime_credential_denies(
         &crate::runtime_registry::RuntimeRegistry::production(),
+        None,
         &mut agy_denies,
     );
     if std::env::var_os("HOME").is_some() {
@@ -464,12 +465,9 @@ fn pattern_exists_for_bwrap_preserves_root_glob_and_agy_credential_denies_match_
                 "missing agy credential deny for `{rel}`: {agy_denies:?}"
             );
         }
-        for rel in org_agent_runtime_acp::GEMINI_CONFIG_CREDENTIAL_FILES
+        for rel in org_agent_runtime_acp::GEMINI_HOST_CREDENTIAL_FILES
             .iter()
-            .chain(org_agent_runtime_acp::GEMINI_HOST_CREDENTIAL_FILES)
-            .chain(org_agent_runtime_acp::KIMI_CONFIG_CREDENTIAL_FILES)
             .chain(org_agent_runtime_acp::KIMI_HOST_CREDENTIAL_FILES)
-            .chain(org_agent_runtime_acp::PI_CONFIG_CREDENTIAL_FILES)
             .chain(org_agent_runtime_acp::PI_HOST_CREDENTIAL_FILES)
         {
             assert!(
@@ -1004,7 +1002,7 @@ impl CredentialDenyFixture {
             .collect();
         let runtimes = crate::runtime_registry::RuntimeRegistry::production();
         let mut cred_denies = Vec::new();
-        append_runtime_credential_denies_for_home(&runtimes, &fake_home, &mut cred_denies);
+        append_runtime_credential_denies_for_home(&runtimes, &fake_home, None, &mut cred_denies);
         for expected in &expected_strs {
             assert!(
                 cred_denies.iter().any(|p| p.as_str() == expected),
@@ -1236,6 +1234,15 @@ fn session_manager_build_employee_preset_propagates_host_credential_denies() {
         ".gemini/antigravity-cli/antigravity-oauth-token",
         ".gemini/oauth_creds.json",
         ".gemini/google_accounts.json",
+        ".gemini/mcp-oauth-tokens.json",
+        ".gemini/settings.json",
+        ".gemini/.env",
+        ".gemini/**",
+        ".config/gemini/**",
+        ".kimi/**",
+        ".config/kimi/**",
+        ".pi/**",
+        ".config/pi/**",
     ] {
         let expected = real_home.join(rel).display().to_string();
         assert!(
@@ -1247,6 +1254,137 @@ fn session_manager_build_employee_preset_propagates_host_credential_denies() {
             "SessionManager sandbox deny_read missing `{expected}`"
         );
     }
+}
+
+#[test]
+fn host_credential_directory_denies_cover_gemini_kimi_pi_and_gate_dot_gemini_on_agy_host_auth() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake_home = dir.path().canonicalize().unwrap().join("host-home");
+    std::fs::create_dir_all(fake_home.join(".kimi")).unwrap();
+    std::fs::create_dir_all(fake_home.join(".gemini")).unwrap();
+    let runtimes = crate::runtime_registry::RuntimeRegistry::production();
+
+    // 1. When host Agy auth is NOT active (`active_host_config_subdir = None`):
+    //    `~/.gemini/**` AND all other vendor config dirs + specific secret files are denied.
+    let mut denies_no_host_auth = Vec::new();
+    append_runtime_credential_denies_for_home(
+        &runtimes,
+        &fake_home,
+        None,
+        &mut denies_no_host_auth,
+    );
+    fn as_strs(v: &[PathPattern]) -> Vec<&str> {
+        v.iter().map(PathPattern::as_str).collect()
+    }
+    let strs_none = as_strs(&denies_no_host_auth);
+    for rel in [
+        ".gemini/**",
+        ".gemini/antigravity-cli/antigravity-oauth-token",
+        ".gemini/oauth_creds.json",
+        ".gemini/google_accounts.json",
+        ".gemini/mcp-oauth-tokens.json",
+        ".gemini/settings.json",
+        ".gemini/.env",
+        ".config/gemini/**",
+        ".kimi/**",
+        ".config/kimi/**",
+        ".pi/**",
+        ".config/pi/**",
+        ".codex/**",
+        ".codex/auth.json",
+        ".claude/.credentials.json",
+    ] {
+        let expected = fake_home.join(rel).display().to_string();
+        assert!(
+            strs_none.contains(&expected.as_str()),
+            "missing deny `{expected}` when host auth inactive: {strs_none:?}"
+        );
+    }
+
+    // 2. When host Agy auth IS active (`active_host_config_subdir = Some(".gemini")`):
+    //    broad `~/.gemini/**` is omitted so Agy reads its own runtime config, while every secret
+    //    file inside `~/.gemini` AND every other vendor directory remain denied.
+    let mut denies_agy_host_auth = Vec::new();
+    append_runtime_credential_denies_for_home(
+        &runtimes,
+        &fake_home,
+        Some(".gemini"),
+        &mut denies_agy_host_auth,
+    );
+    let strs_agy = as_strs(&denies_agy_host_auth);
+    let dot_gemini_glob = fake_home.join(".gemini/**").display().to_string();
+    assert!(
+        !strs_agy.contains(&dot_gemini_glob.as_str()),
+        "host Agy auth must not blanket-deny `{dot_gemini_glob}`: {strs_agy:?}"
+    );
+    for rel in [
+        ".gemini/antigravity-cli/antigravity-oauth-token",
+        ".gemini/oauth_creds.json",
+        ".gemini/google_accounts.json",
+        ".gemini/mcp-oauth-tokens.json",
+        ".gemini/settings.json",
+        ".gemini/.env",
+        ".config/gemini/**",
+        ".kimi/**",
+        ".config/kimi/**",
+        ".pi/**",
+        ".config/pi/**",
+        ".codex/**",
+        ".codex/auth.json",
+    ] {
+        let expected = fake_home.join(rel).display().to_string();
+        assert!(
+            strs_agy.contains(&expected.as_str()),
+            "missing deny `{expected}` when host Agy auth active: {strs_agy:?}"
+        );
+    }
+
+    // 3. Linux bwrap pruning cleanly normalizes existing dirs (`.kimi/**` -> `.kimi`, `.gemini/**`
+    //    -> `.gemini`) and prunes absent dirs (`.pi/**`, `.config/gemini/**`) without stubs.
+    let ws = dir.path().canonicalize().unwrap().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let ws_spec = CredentialDenyFixture::sp(&ws);
+    let preset_cfg = build_session_policy(
+        PermissionPreset::AutonomousSandboxed,
+        true,
+        &ws_spec,
+        None,
+        &denies_no_host_auth,
+        1,
+    )
+    .unwrap();
+    let mut spec = SessionSpec {
+        runtime: RuntimeId::try_from("claude").unwrap(),
+        kind: SessionKind::Home {},
+        agent: AgentIdentity {
+            name: AgentName::try_from("eng").unwrap(),
+            description: "Engineer".to_owned(),
+            prompt: "Engineer".to_owned(),
+        },
+        model: None,
+        effort: None,
+        workspace: ws_spec,
+        read_only_dirs: Vec::new(),
+        instructions: String::new(),
+        repository_instructions: String::new(),
+        permission_mode: preset_cfg.permission_mode,
+        policy: preset_cfg.policy,
+        sandbox: preset_cfg.sandbox,
+        mcp_servers: Default::default(),
+        tools: preset_cfg.allowed_tools,
+        operator_shell_prefixes: Vec::new(),
+    };
+    apply_linux_claude_bwrap_pruning(&mut spec);
+    let bwrap_read: Vec<&str> = spec
+        .sandbox
+        .deny_read
+        .iter()
+        .map(PathPattern::as_str)
+        .collect();
+    assert!(bwrap_read.contains(&fake_home.join(".kimi").to_str().unwrap()));
+    assert!(bwrap_read.contains(&fake_home.join(".gemini").to_str().unwrap()));
+    assert!(!bwrap_read.iter().any(|p| p.contains(".pi")));
+    assert!(!bwrap_read.iter().any(|p| p.contains(".config/gemini")));
 }
 
 #[test]

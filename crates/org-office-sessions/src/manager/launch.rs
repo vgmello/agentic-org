@@ -363,6 +363,14 @@ impl SessionManager {
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
 
         let host_profile = admitted.adapter.host_profile();
+        let allow_host_auth = crate::host_auth::allows_host_subscription_auth(
+            &admitted.auth_env,
+            admitted.auth_mode,
+            host_profile.uses_host_oauth_token_injection,
+        );
+        let active_host_config_subdir = allow_host_auth
+            .then_some(host_profile.host_config_subdir)
+            .flatten();
         let sandbox_plan = self.sandbox_runner.prepare_launch(&SandboxPrepareContext {
             office: &self.office,
             office_socket: &self.config.office_socket,
@@ -372,12 +380,13 @@ impl SessionManager {
             host_profile,
         })?;
 
-        let mut preset_cfg = self.build_employee_preset_cfg(
+        let mut preset_cfg = self.build_employee_preset_cfg_for_runtime(
             &emp_id,
             PermissionPreset::effective_for(employee.builtin_key, admitted.preset),
             admitted.sandbox_enabled,
             &workspace_spec,
             true,
+            active_host_config_subdir,
         )?;
         let (runtime_dir, tmpdir) = self.prepare_run_dirs(&emp_id)?;
         let attachments_root = crate::turn_attachments::attachments_root(&runtime_dir);
@@ -413,11 +422,6 @@ impl SessionManager {
         let run_id = format!("run-{}", next_entropy_hex(10)?);
         let session_id = next_uuid_v4()?;
         let mark_str = format!("m-{}", next_entropy_hex(12)?);
-        let allow_host_auth = crate::host_auth::allows_host_subscription_auth(
-            &admitted.auth_env,
-            admitted.auth_mode,
-            host_profile.uses_host_oauth_token_injection,
-        );
         let hibernated_resume = self.resolve_hibernated_resume_id(
             &emp_id,
             admitted.adapter.id().as_str(),

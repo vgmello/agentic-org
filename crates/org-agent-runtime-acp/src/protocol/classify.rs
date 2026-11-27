@@ -9,21 +9,25 @@ use org_agent_runtime::{
 
 use super::{first_str, first_u64, AcpUsage};
 
+fn normalize_identifier(raw: &str) -> String {
+    raw.chars()
+        .filter(|&c| c != '_' && c != '-' && !c.is_ascii_whitespace())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
 /// Returns `true` for ACP permission modes that bypass office approval enforcement.
 pub(crate) fn is_banned_mode(mode: &str) -> bool {
     matches!(
-        mode.trim().to_ascii_lowercase().as_str(),
+        normalize_identifier(mode).as_str(),
         "yolo"
             | "bypasspermissions"
-            | "danger-full-access"
+            | "dangerfullaccess"
             | "auto"
-            | "full-auto"
-            | "auto_approve"
-            | "auto-approve"
+            | "fullauto"
+            | "autoapprove"
             | "dontask"
-            | "dont-ask"
-            | "allow-all"
-            | "allow_all"
+            | "allowall"
             | "unrestricted"
     )
 }
@@ -158,16 +162,48 @@ fn is_bypass_flag_triggered(val: Option<&Value>) -> bool {
     }
 }
 
-fn is_sandbox_bypass_key(key: &str) -> bool {
-    let normalized: String = key
-        .chars()
-        .filter(|&c| c != '_' && c != '-')
-        .map(|c| c.to_ascii_lowercase())
-        .collect();
-    matches!(
-        normalized.as_str(),
-        "bypasssandbox" | "dangerouslydisablesandbox" | "unsandboxed"
-    )
+fn is_sandbox_disabled_value(val: &Value) -> bool {
+    match val {
+        Value::Bool(false) => true,
+        Value::Bool(true) | Value::Null => false,
+        Value::Number(n) => n.as_u64() == Some(0) || n.as_i64() == Some(0),
+        Value::String(s) => matches!(
+            normalize_identifier(s).as_str(),
+            "false"
+                | "off"
+                | "none"
+                | "disabled"
+                | "disable"
+                | "no"
+                | "0"
+                | "bypass"
+                | "dangerfullaccess"
+                | "unsandboxed"
+        ),
+        Value::Object(map) => map.get("enabled").is_some_and(is_sandbox_disabled_value),
+        // Fail closed on unexpected non-object/non-bool values.
+        Value::Array(_) => true,
+    }
+}
+
+enum SandboxBypassKey {
+    /// Positive-polarity bypass flag (`BypassSandbox: true`, `yolo: true`).
+    BypassFlag,
+    /// Negative-polarity sandbox toggle (`sandbox: false`, `useSandbox: false`, `sandboxed: false`).
+    SandboxToggle,
+}
+
+fn classify_sandbox_bypass_key(key: &str) -> Option<SandboxBypassKey> {
+    match normalize_identifier(key).as_str() {
+        "bypasssandbox"
+        | "dangerouslydisablesandbox"
+        | "unsandboxed"
+        | "nosandbox"
+        | "disablesandbox"
+        | "yolo" => Some(SandboxBypassKey::BypassFlag),
+        "sandbox" | "usesandbox" | "sandboxed" => Some(SandboxBypassKey::SandboxToggle),
+        _ => None,
+    }
 }
 
 fn input_requests_sandbox_bypass(input: &Value) -> bool {
@@ -176,7 +212,12 @@ fn input_requests_sandbox_bypass(input: &Value) -> bool {
         match node {
             Value::Object(map) => {
                 for (key, val) in map {
-                    if is_sandbox_bypass_key(key) && is_bypass_flag_triggered(Some(val)) {
+                    let triggered = match classify_sandbox_bypass_key(key) {
+                        Some(SandboxBypassKey::BypassFlag) => is_bypass_flag_triggered(Some(val)),
+                        Some(SandboxBypassKey::SandboxToggle) => is_sandbox_disabled_value(val),
+                        None => false,
+                    };
+                    if triggered {
                         return true;
                     }
                     if matches!(val, Value::Object(_) | Value::Array(_)) {
@@ -355,8 +396,13 @@ pub(crate) fn is_auth_rpc_error(err: &Value) -> bool {
     code == Some(-32000)
         || lower.contains("authentication required")
         || lower.contains("not authenticated")
+        || lower.contains("unauthenticated")
         || lower.contains("unauthorized")
         || lower.contains("not logged in")
+        || lower.contains("login required")
+        || lower.contains("invalid api key")
+        || lower.contains("missing api key")
+        || lower.contains("please sign in")
 }
 
 pub(crate) fn classify_rpc_error_outcome(err: &Value) -> (TurnOutcome, Vec<String>) {

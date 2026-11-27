@@ -23,13 +23,12 @@ mod session;
 mod transcript;
 
 pub use crate::profile::{
-    AcpProfile, AuthProbeStrategy, ExpectedMode, ModeMapping, StateDirStrategy,
+    AcpProfile, AuthProbeStrategy, ConfigDirMapping, ExpectedMode, ModeMapping, StateDirStrategy,
     SystemPromptDelivery, TakeOverStrategy,
 };
 pub use crate::profiles::{
     AgyRuntime, GeminiRuntime, KimiRuntime, PiRuntime, AGY_CONFIG_CREDENTIAL_FILES,
-    GEMINI_CONFIG_CREDENTIAL_FILES, GEMINI_HOST_CREDENTIAL_FILES, KIMI_CONFIG_CREDENTIAL_FILES,
-    KIMI_HOST_CREDENTIAL_FILES, PI_CONFIG_CREDENTIAL_FILES, PI_HOST_CREDENTIAL_FILES,
+    GEMINI_HOST_CREDENTIAL_FILES, KIMI_HOST_CREDENTIAL_FILES, PI_HOST_CREDENTIAL_FILES,
 };
 
 #[cfg(test)]

@@ -33,13 +33,17 @@ fn fake_acp_server_script(vendor_name: &str, mode_id: &str) -> String {
 while IFS= read -r line; do
   case "$line" in
     *'"method":"initialize"'*)
-      if [ "${{FAKE_ACP_UNAUTH:-0}}" = "1" ]; then
+      if [ "${{FAKE_ACP_AUTH_MODE:-ok}}" = "init_unauth" ]; then
         printf '{{"jsonrpc":"2.0","id":1,"error":{{"code":-32000,"message":"Authentication required"}}}}\n'
         exit 0
       fi
-      printf '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentInfo":{{"name":"{vendor_name}","version":"1.5.17"}}}}}}\n'
+      printf '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"authMethods":[{{"id":"oauth","name":"OAuth"}}],"agentInfo":{{"name":"{vendor_name}","version":"1.5.17"}}}}}}\n'
       ;;
     *'"method":"session/new"'*)
+      if [ "${{FAKE_ACP_AUTH_MODE:-ok}}" = "session_unauth" ]; then
+        printf '{{"jsonrpc":"2.0","id":2,"error":{{"code":-32000,"message":"Authentication required"}}}}\n'
+        exit 0
+      fi
       printf '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"live-{vendor_name}-1","models":{{"currentModelId":"default-model"}},"modes":{{"currentModeId":"default"}}}}}}\n'
       ;;
     *'"method":"session/set_mode"'*)
@@ -348,7 +352,11 @@ fn live_fake_acp_auth_probe_session_verifies_signed_in_and_unauthenticated_binar
             bin_name,
             &fake_acp_server_script(id, expected_mode),
         );
-        for (unauth, expected_signed_in) in [("0", true), ("1", false)] {
+        for (auth_mode, expected_signed_in) in [
+            ("ok", true),
+            ("session_unauth", false),
+            ("init_unauth", false),
+        ] {
             let Some(ProbeRun::Conversation { plan, mut session }) =
                 runtime.plan_probe(Probe::Auth, &ProbeContext::new(bin.clone()))
             else {
@@ -356,7 +364,7 @@ fn live_fake_acp_auth_probe_session_verifies_signed_in_and_unauthenticated_binar
             };
             let mut child = Command::new(&plan.program)
                 .args(&plan.args)
-                .env("FAKE_ACP_UNAUTH", unauth)
+                .env("FAKE_ACP_AUTH_MODE", auth_mode)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
@@ -373,17 +381,35 @@ fn live_fake_acp_auth_probe_session_verifies_signed_in_and_unauthenticated_binar
                     stdin.flush().unwrap();
                 }
             }
-            let line = read_framed_line(&mut stdout, &mut framer).expect("probe response");
-            let steps = session.on_line(&line, now);
+            let mut done_result = None;
+            for _ in 0..4 {
+                let Some(line) = read_framed_line(&mut stdout, &mut framer) else {
+                    done_result = Some(session.on_stdout_closed(now));
+                    break;
+                };
+                for step in session.on_line(&line, now) {
+                    match step {
+                        ProbeStep::Write(out_line) => {
+                            stdin.write_all(out_line.as_bytes()).unwrap();
+                            stdin.flush().unwrap();
+                        }
+                        ProbeStep::Done(result) => {
+                            done_result = Some(result);
+                        }
+                    }
+                }
+                if done_result.is_some() {
+                    break;
+                }
+            }
             drop(stdin);
             let _ = child.wait();
             assert!(
-                steps.iter().any(|s| matches!(
-                    s,
-                    ProbeStep::Done(ProbeResult::Auth { signed_in, .. })
-                        if *signed_in == expected_signed_in
-                )),
-                "{id} (unauth={unauth}): unexpected probe steps: {steps:?}"
+                matches!(
+                    done_result,
+                    Some(ProbeResult::Auth { signed_in, .. }) if signed_in == expected_signed_in
+                ),
+                "{id} (auth_mode={auth_mode}): unexpected probe result: {done_result:?}"
             );
         }
     }

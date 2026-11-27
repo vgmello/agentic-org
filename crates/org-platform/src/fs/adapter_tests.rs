@@ -697,3 +697,91 @@ fn write_regular_beneath_is_atomic_tightens_0644_to_0600_and_never_leaks_temp_fi
         assert!(temp_entries_in(&ro_dir).is_empty());
     }
 }
+
+#[test]
+fn safe_executable_validation_enforces_exec_bits_blocks_setuid_setgid_and_rejects_bad_paths() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let bin_dir = root.join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+
+    // Valid 0755 executable and symlink pointing to it are accepted.
+    let good = bin_dir.join("good-cli");
+    fs::write(&good, b"#!/bin/sh\n").unwrap();
+    fs::set_permissions(&good, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(super::is_safe_executable_file(&good));
+    assert_eq!(
+        super::resolve_safe_executable_file(&good),
+        Some(good.clone())
+    );
+    let good_link = bin_dir.join("good-link");
+    std::os::unix::fs::symlink(&good, &good_link).unwrap();
+    assert!(super::is_safe_executable_file(&good_link));
+    assert_eq!(
+        super::resolve_safe_executable_file(&good_link),
+        Some(good.clone())
+    );
+
+    // Non-executable regular file (0644), directory, broken symlink, symlink loop, FIFO, missing.
+    let non_exec = bin_dir.join("non-exec");
+    fs::write(&non_exec, b"#!/bin/sh\n").unwrap();
+    fs::set_permissions(&non_exec, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(!super::is_safe_executable_file(&non_exec));
+
+    let subdir = bin_dir.join("subdir");
+    fs::create_dir(&subdir).unwrap();
+    assert!(!super::is_safe_executable_file(&subdir));
+
+    let broken = bin_dir.join("broken");
+    std::os::unix::fs::symlink(bin_dir.join("does-not-exist"), &broken).unwrap();
+    assert!(!super::is_safe_executable_file(&broken));
+
+    let looping = bin_dir.join("loop");
+    std::os::unix::fs::symlink(&looping, &looping).unwrap();
+    assert!(!super::is_safe_executable_file(&looping));
+
+    let fifo = bin_dir.join("fifo");
+    let c_fifo = c_path(&fifo);
+    // SAFETY: `c_fifo` is a live NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c_fifo.as_ptr(), 0o755) }, 0);
+    assert!(!super::is_safe_executable_file(&fifo));
+    assert!(!super::is_safe_executable_file(Path::new("")));
+    assert!(!super::is_safe_executable_file(&bin_dir.join("missing")));
+
+    // Setuid (04755) and setgid (02755) executables must be rejected.
+    let suid = bin_dir.join("suid-cli");
+    fs::write(&suid, b"#!/bin/sh\n").unwrap();
+    fs::set_permissions(&suid, fs::Permissions::from_mode(0o4755)).unwrap();
+    if (fs::metadata(&suid).unwrap().permissions().mode() & 0o4000) != 0 {
+        assert!(!super::is_safe_executable_file(&suid));
+    }
+    let sgid = bin_dir.join("sgid-cli");
+    fs::write(&sgid, b"#!/bin/sh\n").unwrap();
+    fs::set_permissions(&sgid, fs::Permissions::from_mode(0o2755)).unwrap();
+    if (fs::metadata(&sgid).unwrap().permissions().mode() & 0o2000) != 0 {
+        assert!(!super::is_safe_executable_file(&sgid));
+    }
+
+    // `find_safe_executable_in_dirs` rejects traversal/slash/backslash/empty names and skips
+    // empty or relative directories (never probing CWD).
+    for bad_name in ["", ".", "..", "../good-cli", "a/b", r"a\b", "good\0cli"] {
+        assert!(
+            super::find_safe_executable_in_dirs(vec![bin_dir.clone()], bad_name).is_none(),
+            "bad binary name `{bad_name}` must fail closed"
+        );
+    }
+    assert!(super::find_safe_executable_in_dirs(
+        vec![std::path::PathBuf::new(), std::path::PathBuf::from(".")],
+        "good-cli"
+    )
+    .is_none());
+    assert_eq!(
+        super::find_safe_executable_in_dirs(
+            vec![std::path::PathBuf::new(), bin_dir.clone()],
+            "good-cli"
+        ),
+        Some(good)
+    );
+}
