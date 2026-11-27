@@ -3,7 +3,8 @@ import {
 	createHttpTessApi,
 	decodeUiBlock,
 	parseTessSseEvent,
-	splitCanonicalRefSegments
+	splitCanonicalRefSegments,
+	type TessSessionTransport
 } from './api';
 import type { TessStreamEvent } from './types';
 
@@ -19,37 +20,37 @@ function sseStream(chunks: string[]): ReadableStream<Uint8Array> {
 
 describe('Tess HTTP + SSE API client (doc-97 §5.C)', () => {
 	it('decodes streaming ask responses and parses SSE tool.progress, text.delta, ui.block, and turn.completed events', async () => {
-		const fetchMock = vi
-			.fn<typeof fetch>()
-			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
-						ok: true,
-						result: {
-							turn_id: 'turn-42',
-							status: 'streaming',
-							stream_url: '/api/v1/organizations/org-1/tess/turns/turn-42/stream'
-						}
-					}),
-					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+		const session: TessSessionTransport = {
+			submit: vi.fn().mockResolvedValueOnce({
+				status: 200,
+				body: {
+					ok: true,
+					result: {
+						turn_id: 'turn-42',
+						status: 'streaming',
+						stream_url: '/api/v1/organizations/org-1/tess/turns/turn-42/stream'
+					}
+				}
+			}),
+			openSseStream: vi
+				.fn()
+				.mockResolvedValueOnce(
+					new Response(
+						sseStream([
+							': heartbeat\n\n',
+							'event: turn.started\ndata: {"turn_id":"turn-42"}\n\n',
+							'event: tool.progress\ndata: {"id":"c1","label":"Checking projects…","state":"running","started_at":100}\n\n',
+							'event: tool.progress\ndata: {"id":"c1","label":"Checked 3 projects","state":"done","duration_ms":840}\n\n',
+							'event: text.delta\ndata: {"delta":"All 3 projects look healthy. See T-12."}\n\n',
+							'event: ui.block\ndata: {"kind":"action_proposal","id":"sug-1","title":"Create project","risk":"reversible","cta_label":"Create project","parameters":[{"label":"Name","value":"iOS App"}],"edit_href":"/projects?new"}\n\n',
+							'event: turn.completed\ndata: {"turn_id":"turn-42","follow_ups":["Show blocked tasks","Check budget"]}\n\n'
+						]),
+						{ status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+					)
 				)
-			)
-			.mockResolvedValueOnce(
-				new Response(
-					sseStream([
-						': heartbeat\n\n',
-						'event: turn.started\ndata: {"turn_id":"turn-42"}\n\n',
-						'event: tool.progress\ndata: {"id":"c1","label":"Checking projects…","state":"running","started_at":100}\n\n',
-						'event: tool.progress\ndata: {"id":"c1","label":"Checked 3 projects","state":"done","duration_ms":840}\n\n',
-						'event: text.delta\ndata: {"delta":"All 3 projects look healthy. See T-12."}\n\n',
-						'event: ui.block\ndata: {"kind":"action_proposal","id":"sug-1","title":"Create project","risk":"reversible","cta_label":"Create project","parameters":[{"label":"Name","value":"iOS App"}],"edit_href":"/projects?new"}\n\n',
-						'event: turn.completed\ndata: {"turn_id":"turn-42","follow_ups":["Show blocked tasks","Check budget"]}\n\n'
-					]),
-					{ status: 200, headers: { 'Content-Type': 'text/event-stream' } }
-				)
-			);
+		};
 
-		const api = createHttpTessApi({ fetch: fetchMock, getProof: () => 'proof-token' });
+		const api = createHttpTessApi({ session });
 		const askRes = await api.ask('org-1', { prompt: 'Create an iOS project' });
 		expect(askRes).toEqual({
 			kind: 'streaming',
@@ -85,20 +86,22 @@ describe('Tess HTTP + SSE API client (doc-97 §5.C)', () => {
 	});
 
 	it('returns unavailable cleanly on 404/501 when TASK-80.4 is not yet deployed', async () => {
-		const fetchMock = vi
-			.fn<typeof fetch>()
-			.mockResolvedValueOnce(new Response('', { status: 404 }));
-		const api = createHttpTessApi({ fetch: fetchMock });
+		const session: TessSessionTransport = {
+			submit: vi.fn().mockResolvedValueOnce({ status: 404, body: undefined }),
+			openSseStream: vi.fn()
+		};
+		const api = createHttpTessApi({ session });
 		const res = await api.ask('org-1', { prompt: 'Hello' });
 		expect(res.kind).toBe('unavailable');
 	});
 
 	it('handles two-phase applyProposal receipts and 409 stale revision conflicts', async () => {
-		const fetchMock = vi
-			.fn<typeof fetch>()
-			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
+		const session: TessSessionTransport = {
+			submit: vi
+				.fn()
+				.mockResolvedValueOnce({
+					status: 200,
+					body: {
 						ok: true,
 						result: {
 							receipt: {
@@ -107,21 +110,19 @@ describe('Tess HTTP + SSE API client (doc-97 §5.C)', () => {
 								entity_label: 'Open iOS App'
 							}
 						}
-					}),
-					{ status: 200 }
-				)
-			)
-			.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
+					}
+				})
+				.mockResolvedValueOnce({
+					status: 409,
+					body: {
 						ok: false,
 						error: { code: 'conflict', message: 'Record changed since preview.' }
-					}),
-					{ status: 409 }
-				)
-			);
+					}
+				}),
+			openSseStream: vi.fn()
+		};
 
-		const api = createHttpTessApi({ fetch: fetchMock });
+		const api = createHttpTessApi({ session });
 		const okRes = await api.applyProposal('org-1', 'sug-1', 'rev-3');
 		expect(okRes).toEqual({
 			ok: true,
@@ -181,19 +182,21 @@ describe('Tess HTTP + SSE API client (doc-97 §5.C)', () => {
 				controller.close();
 			}
 		});
-		const fetchMock = vi
-			.fn<typeof fetch>()
+		const openSseStream = vi
+			.fn()
 			.mockResolvedValueOnce(
 				new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
 			);
-		const api = createHttpTessApi({ fetch: fetchMock });
+		const api = createHttpTessApi({
+			session: { submit: vi.fn(), openSseStream }
+		});
 		const events: TessStreamEvent[] = [];
 		await api.streamTurn('org-1', 'turn-crlf', '/ignored/evil/path', {
 			onEvent: (ev) => events.push(ev)
 		});
-		expect(fetchMock).toHaveBeenCalledWith(
+		expect(openSseStream).toHaveBeenCalledWith(
 			'/api/v1/organizations/org-1/tess/turns/turn-crlf/stream',
-			expect.objectContaining({ mode: 'same-origin', redirect: 'error', cache: 'no-store' })
+			undefined
 		);
 		expect(events).toEqual([{ type: 'text.delta', delta: '  indented' }]);
 	});

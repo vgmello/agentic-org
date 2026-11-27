@@ -13,10 +13,14 @@ export type Inline =
 	| { t: 'chip'; ref: string }
 	| { t: 'mention'; handle: string };
 
-export type Block = { t: 'p'; inline: Inline[] } | { t: 'quote'; inline: Inline[] } | { t: 'ul'; items: Inline[][] } | { t: 'code'; text: string };
+export type Block =
+	| { t: 'p'; inline: Inline[] }
+	| { t: 'quote'; inline: Inline[] }
+	| { t: 'ul'; items: Inline[][] }
+	| { t: 'code'; text: string };
 
 /** Control characters (but not newline or tab), zero-width and direction-changing characters, and the byte order mark. */
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- strips unsafe ASCII control characters from user markdown
 const UNSAFE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
 export const clean = (text: string): string => text.replace(/\r\n?/g, '\n').replace(UNSAFE, '');
 
@@ -36,7 +40,11 @@ function misleading(text: string, href: string): { host: string } | Record<strin
 	if (!looks) return {};
 	const host = new URL(href).hostname.toLowerCase();
 	const shown = looks[1].toLowerCase();
-	return shown === host || shown === host.replace(/^www\./, '') || host === shown.replace(/^www\./, '') ? {} : { host };
+	return shown === host ||
+		shown === host.replace(/^www\./, '') ||
+		host === shown.replace(/^www\./, '')
+		? {}
+		: { host };
 }
 
 // ---- the inline scanner ------------------------------------------------------------------------------------------------
@@ -54,7 +62,8 @@ const MAX_LINK_TEXT = 200;
 const MAX_HREF = 2000;
 const MAX_MENTION = 64;
 
-const CHIP = /(?:[a-z]{2,4}-[TB]-\d{1,6}|(?:REQ|AREA)-\d{1,6}|(?:ADR|FEAT|DEBT)-\d{4}|[TB]-\d{1,6})(?![\w-])/y;
+const CHIP =
+	/(?:[a-z]{2,4}-[TB]-\d{1,6}|(?:REQ|AREA)-\d{1,6}|(?:ADR|FEAT|DEBT)-\d{4}|[TB]-\d{1,6})(?![\w-])/y;
 const MENTION = /[a-zA-Z0-9][\w-]{0,63}/y;
 const isWord = (ch: string | undefined) => ch !== undefined && /\w/.test(ch);
 const isWordOrDash = (ch: string | undefined) => ch !== undefined && /[\w-]/.test(ch);
@@ -93,7 +102,8 @@ function scan(text: string, depth: number): Inline[] {
 		i = end;
 		at = end;
 	};
-	const children = (inner: string): Inline[] => (depth < 3 ? scan(inner, depth + 1) : [{ t: 'text', text: inner }]);
+	const children = (inner: string): Inline[] =>
+		depth < 3 ? scan(inner, depth + 1) : [{ t: 'text', text: inner }];
 	while (i < text.length) {
 		scanStats.steps++;
 		const ch = text[i];
@@ -209,13 +219,15 @@ export function markdown(source: string): Block[] {
 		} else if (/^\s*[-*]\s+/.test(line)) {
 			flush();
 			const items: Inline[][] = [];
-			for (; i < lines.length && /^\s*[-*]\s+/.test(lines[i]); i++) items.push(inline(lines[i].replace(/^\s*[-*]\s+/, '')));
+			for (; i < lines.length && /^\s*[-*]\s+/.test(lines[i]); i++)
+				items.push(inline(lines[i].replace(/^\s*[-*]\s+/, '')));
 			i--;
 			blocks.push({ t: 'ul', items });
 		} else if (/^>\s?/.test(line)) {
 			flush();
 			const quote: string[] = [];
-			for (; i < lines.length && /^>\s?/.test(lines[i]); i++) quote.push(lines[i].replace(/^>\s?/, ''));
+			for (; i < lines.length && /^>\s?/.test(lines[i]); i++)
+				quote.push(lines[i].replace(/^>\s?/, ''));
 			i--;
 			blocks.push({ t: 'quote', inline: inline(quote.join('\n')) });
 		} else if (line.trim() === '') flush();
@@ -238,9 +250,22 @@ export function plain(source: string): string {
 		plainCache.set(source, cached);
 		return cached;
 	}
-	const text = (xs: Inline[]): string => xs.map((x) => (x.t === 'bold' || x.t === 'italic' ? text(x.children) : x.t === 'chip' ? x.ref : x.t === 'mention' ? `@${x.handle}` : x.text)).join('');
+	const text = (xs: Inline[]): string =>
+		xs
+			.map((x) =>
+				x.t === 'bold' || x.t === 'italic'
+					? text(x.children)
+					: x.t === 'chip'
+						? x.ref
+						: x.t === 'mention'
+							? `@${x.handle}`
+							: x.text
+			)
+			.join('');
 	const result = markdown(source)
-		.map((b) => (b.t === 'ul' ? b.items.map(text).join(' ') : b.t === 'code' ? b.text : text(b.inline)))
+		.map((b) =>
+			b.t === 'ul' ? b.items.map(text).join(' ') : b.t === 'code' ? b.text : text(b.inline)
+		)
 		.join(' ')
 		.replace(/\s+/g, ' ')
 		.trim();

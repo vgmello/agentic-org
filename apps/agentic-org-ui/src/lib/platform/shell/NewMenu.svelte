@@ -55,11 +55,11 @@
 	let loading = $state(false);
 
 	// Loaded on demand on first open and kept mounted so dirty-close guards & bits-ui focus return stay intact.
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- lazily imported Svelte component props vary per dialog
 	let CaptureDialogComp = $state.raw<Component<any> | undefined>();
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- lazily imported Svelte component props vary per dialog
 	let NewMessageDialogComp = $state.raw<Component<any> | undefined>();
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- lazily imported Svelte component props vary per dialog
 	let AddPersonSheetComp = $state.raw<Component<any> | undefined>();
 
 	async function startCaptureFlow(mode: 'work_item' | 'request') {

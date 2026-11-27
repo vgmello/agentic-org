@@ -76,7 +76,7 @@ export function checkDraft(draft: RoleDraft): Partial<Record<RoleField, string>>
 	const errors: Partial<Record<RoleField, string>> = {};
 	if (!draft.name) errors.name = 'Give the role a name.';
 	else if (draft.name.length > 120) errors.name = 'Use a name of 120 characters or fewer.';
-	// eslint-disable-next-line no-control-regex
+	// eslint-disable-next-line no-control-regex -- rejects ASCII control characters in role names
 	else if (/[\u0000-\u001f\u007f]/.test(draft.name))
 		errors.name = 'Use a name without line breaks or tabs.';
 	if (draft.key !== undefined) {

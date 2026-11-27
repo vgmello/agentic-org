@@ -20,6 +20,7 @@ import {
 import "./chat-attach-seed.js";
 import { THREAD_SUM_CLICKS, markRoot, rootOpen, setRootOpen, threadSummaryHtml } from "./chat-thread-sum.js";
 import { ATTACH_CLICKS, attachButton, attachmentsForSend, bindAttachments, clearAttachments, trayHtml } from "./chat-attachments.js";
+import { refChipsHtml } from "./chat-attach-refs.js";
 import { VIEW_CLICKS, attachmentNameHit, closeViewer, filesButton, filesPanelHtml, messageAttachmentsHtml, viewerOpen } from "./chat-attach-view.js";
 import { render, route } from "../shell/router.js";
 import { CHAT_SEND_SHORTCUTS, S } from "../state.js";
@@ -120,7 +121,7 @@ function messageHtml(m, prev, opts = {}) {
   const status = cont && m.pending ? sendingStatus() : "";
   const tools = opts.tools ? messageTools(m, opts.readOnly) : "";
   const needs = messageNeeds(m, opts.tools && S.thread === m.id ? "in-thread" : opts.cards, opts.ch, opts.threadRoot);
-  const text = m.text || status ? `<p class="tx">${richText(m.text || "")}${status}</p>` : "";
+  const text = m.text || status ? `<p class="tx">${refChipsHtml(richText(m.text || ""), m, opts.ch)}${status}</p>` : "";
   return `<div class="msg${cont ? " cont" : ""}${m.pending ? " is-pending" : ""}" data-mid="${esc(m.id)}">${gutter}<div class="body">${head}
     ${text}${messageAttachmentsHtml(m, opts.ch)}${tools}
     ${askLine(m)}${sourceLine(m)}${threadCopyLine(m)}${threadHitLine(m, opts.q)}${needs}${threadButton(m)}</div></div>`;
@@ -162,7 +163,10 @@ function streamHtml(id) {
     const [day] = splitTime(m.time);
     /* A static rule marks where the day starts; its label sticks to the stream's top edge until the next day's
        label replaces it, so the first visible message always has a date. */
-    const divider = day !== lastDay ? `<div class="chat-day-rule" aria-hidden="true"></div><h2 class="chat-day"><span>${esc(day)}</span></h2>` : "";
+    /* Owner: "Today" isn't announced on its own; only older days get a label. Today keeps its rule only after an
+       older day, so that day's sticky label doesn't sit over today's messages. */
+    const showDay = day !== lastDay && (day !== "Today" || lastDay);
+    const divider = showDay ? `<div class="chat-day-rule" aria-hidden="true"></div><h2 class="chat-day"><span>${esc(day)}</span></h2>` : "";
     lastDay = day;
     /* Where this visit's unread messages begin. */
     const fresh = m.id === newFrom ? `<p class="chat-new-rule"><span>New messages</span></p>` : "";
@@ -1117,3 +1121,5 @@ export {
   startNewMessage,
   toggleChatList,
 };
+/* Agents' conversations are read inside the agent's page (agent-conversations.js), with Chat's own stream. */
+export { streamHtml };

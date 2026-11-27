@@ -18,6 +18,22 @@
 #main .chat .chat-att-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: left top; }
 #main .chat .chat-att-thumb .chat-att-icon { width: 40px; height: 40px; }
 
+/* ---------------------------------------------------------------- references: "Image 1" tags and inline chips
+   A tag labels an attachment in the tray and under a sent message; a chip is the same label inside the message's
+   text, where the owner typed it. Hovering or focusing one marks the other (.is-ref-hit). */
+#main .chat .chat-att-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#main .chat .chat-att-line .chat-att-name { min-width: 0; }
+#main .chat .chat-att-tag { flex: none; padding: 0 6px; border-radius: var(--radius-md); font-size: var(--fs-xs); font-weight: 600; line-height: 1.6; white-space: nowrap; color: var(--tone-accent-ink); background: var(--tone-accent-soft); }
+#main .chat .chat-ref-chip { display: inline-flex; align-items: center; gap: 4px; margin-inline: 1px; padding: 0 6px; border: 0; border-radius: var(--radius-md); font: inherit; font-size: .92em; font-weight: 600; line-height: 1.5; white-space: nowrap; vertical-align: baseline; cursor: pointer; text-decoration: none; color: var(--tone-accent-ink); background: var(--tone-accent-soft); box-shadow: inset 0 0 0 1px transparent; transition: box-shadow .12s ease, background-color .12s ease; }
+#main .chat .chat-ref-chip .ic14 { flex: none; }
+#main .chat .chat-ref-chip:is(:hover, .is-ref-hit) { box-shadow: inset 0 0 0 1px var(--tone-accent-ring); background: color-mix(in srgb, var(--tone-accent) 22%, transparent); }
+#main .chat .chat-ref-chip:focus-visible { outline: 2px solid var(--tone-accent); outline-offset: 2px; }
+#main .chat :is(.chat-att-img, .chat-att-file).is-ref-hit { outline: 2px solid var(--tone-accent); outline-offset: 2px; }
+/* A labelled caption wraps the name under its tag on a narrow tile, so the name keeps its distinguishing end. */
+#main .chat .chat-att-img .chat-att-cap { flex-wrap: wrap; row-gap: 2px; }
+#main .chat .chat-att-img .chat-att-cap .chat-att-tag { margin-block-start: 1px; }
+#main .chat .chat-att-img .chat-att-cap .chat-att-tag + .chat-att-cap-name { flex: 1 1 7rem; }
+
 /* ---------------------------------------------------------------- composer: Attach, tray, errors */
 #main .chat .chat-att-wrap { display: contents; }
 #main .chat .chat-compose-row > .chat-attach-btn { flex: none; width: var(--control-height); min-width: var(--control-height); height: var(--control-height); color: var(--gray-400); }
@@ -130,5 +146,5 @@
   #main .chat .chat-lb-next { right: calc(50% - 52px); }
 }
 @media (prefers-reduced-motion: reduce) {
-  #main .chat .chat-att-bar > span { transition: none; }
+  #main .chat .chat-att-bar > span, #main .chat .chat-ref-chip { transition: none; }
 }

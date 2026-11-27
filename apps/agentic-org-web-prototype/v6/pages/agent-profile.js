@@ -1,5 +1,6 @@
 import { CH, M, OFFICES, P, PAST_SESSIONS } from "../data.js";
-import { agentConversations } from "./chat-model.js";
+import { conversationHref } from "./agent-conversations.js";
+import { agentConversations, lastActiveLabel } from "./chat-model.js";
 import { S } from "../state.js";
 import { SEP, av, esc, ic, iconWithTooltip, pill, plural, toast } from "../ui.js";
 
@@ -888,16 +889,14 @@ function agentRailContextHtml(sess, canCompact) {
     </div>`;
 }
 
-/* Conversations with other agents: every agents' conversation this agent is in, newest first, each opening in Chat
-   (read as the owner). */
+/* Conversations with other agents: every agents' conversation this agent is in, newest first, each opening in this
+   agent's Conversations tab (read as the owner). That tab lists them itself, so the rail leaves them out there. */
 function agentConversationRow(aid, k) {
-  const ch = CH[k], other = ch.pair.find((x) => x !== aid) || aid, last = ch.msgs[ch.msgs.length - 1];
-  return `<li><a class="c-a2a-row" href="#/chat/${esc(k)}">${av(other, 24)}<span class="c-a2a-who">With ${esc(M[other].name)}</span>${last ? `<time class="c-a2a-time">${esc(last.time)}</time>` : ""}</a></li>`;
+  const ch = CH[k], other = ch.pair.find((x) => x !== aid) || aid, when = lastActiveLabel(ch);
+  return `<li><a class="c-a2a-row" href="${esc(conversationHref(aid, k))}">${av(other, 24)}<span class="c-a2a-who">With ${esc(M[other].name)}</span>${when ? `<time class="c-a2a-time">${esc(when)}</time>` : ""}</a></li>`;
 }
 function agentConversationsHtml(aid) {
   const keys = agentConversations(aid);
-  /* The agent whose page lists them: an opened agents' conversation offers "Back to <agent>". */
-  S.chatA2AFrom = aid;
   const body = keys.length
     ? `<ul class="c-a2a-list">${keys.map((k) => agentConversationRow(aid, k)).join("")}</ul>`
     : `<p class="muted c-a2a-empty">No conversations with other agents yet.</p>`;
@@ -923,7 +922,7 @@ function agentRailHtml(aid, tab) {
     </div>
     ${agentRailNowHtml(curNow, avail, avail.active && (sess.busy || !!sess.current))}
     ${agentRailContextHtml(sess, avail.active && !sess.busy)}
-    ${agentConversationsHtml(aid)}
+    ${tab === "conversations" ? "" : agentConversationsHtml(aid)}
   </aside>`;
 }
 

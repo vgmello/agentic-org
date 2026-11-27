@@ -350,7 +350,8 @@
   /* The muted line, lifted toward the muted text so a 1px rule still reads on every theme surface */
   --page-subtitle-divider: color-mix(in srgb, var(--gray-400) 45%, var(--line2));
   --toolbar-group-gap: 16px;
-  --toolbar-divider-color: var(--line2);
+  /* Lifted toward the muted text so the 1px separator reads on every theme (owner: "I can almost not see it") */
+  --toolbar-divider-color: color-mix(in srgb, var(--gray-400) 70%, var(--line2));
   --toolbar-seg-bg: rgb(6 13 25 / .44);
   --toolbar-seg-border: var(--line2);
   --toolbar-seg-active-bg: var(--ocean-selected, rgb(255 255 255 / .12));
@@ -2705,8 +2706,11 @@ html:is([data-theme="classic"], [data-theme="report-dark"])[data-interior-page]
   color: var(--white);
   border: 0;
   border-inline-start: 1px solid var(--line2);
-  box-shadow: -12px 0 28px -16px rgb(0 0 0 / .38);
+  box-shadow: var(--side-panel-shadow);
 }
+/* The edge shadow has to read on near-black canvases too (owner: "shadow missing"); light themes get a softer one */
+:root { --side-panel-shadow: -20px 0 48px -12px rgb(0 0 0 / .62), -1px 0 0 rgb(0 0 0 / .35); }
+html:is([data-theme="graphite-light"], [data-theme="report"]) { --side-panel-shadow: -16px 0 40px -14px rgb(15 23 42 / .20); }
 .side-panel::backdrop { background: rgb(0 0 0 / .24); }
 .side-panel-header {
   position: sticky;

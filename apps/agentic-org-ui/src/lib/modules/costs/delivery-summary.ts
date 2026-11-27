@@ -252,7 +252,9 @@ export function deriveProjectDeliverySummary(input: {
 	const reviewRefs = buildReviewInboxSet(input.inboxItems, input.projectId, workByRef);
 	const activeAreas = (input.snapshot.areas ?? [])
 		.filter((a) => a.project_id === input.projectId && !a.deleted)
-		.sort((a, b) => (Boolean(a.general) !== Boolean(b.general) ? (a.general ? 1 : -1) : byName(a, b)));
+		.sort((a, b) =>
+			Boolean(a.general) !== Boolean(b.general) ? (a.general ? 1 : -1) : byName(a, b)
+		);
 
 	const tracks =
 		activeAreas.length > 1
@@ -260,6 +262,10 @@ export function deriveProjectDeliverySummary(input: {
 			: groupByWorkKind(input.projectId, projectItems, reviewRefs, ownerId, stageCounts);
 
 	const totalItems =
-		stageCounts.queue + stageCounts.agents + stageCounts.ci + stageCounts.review + stageCounts.merged;
+		stageCounts.queue +
+		stageCounts.agents +
+		stageCounts.ci +
+		stageCounts.review +
+		stageCounts.merged;
 	return { stageCounts, totalItems, tracks };
 }

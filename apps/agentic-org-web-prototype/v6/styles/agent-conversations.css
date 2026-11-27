@@ -1,0 +1,57 @@
+/* An agent's conversations with other agents, inside the agent's page (v6/pages/agent-conversations.js).
+   Token colours only, so every theme applies. Rules carry #main so they never depend on stylesheet order: the
+   transcript reuses Chat's .chat message styles, whose frame rules (base.css, chat.css) are overridden here. */
+
+/* ---------------------------------------------------------------- frame: list beside the transcript */
+#main .ac { container: ac / inline-size; min-width: 0; }
+#main .ac .ac-split { display: grid; grid-template-columns: minmax(200px, 17.5rem) minmax(0, 1fr); align-items: start; min-height: 24rem; }
+
+/* ---------------------------------------------------------------- list */
+#main .ac .ac-nav { position: sticky; top: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 20px 16px 24px var(--gutter); }
+#main .ac .ac-nav-h { margin: 0; font-size: var(--fs-xs); line-height: 1.125rem; font-weight: 600; color: var(--gray-400); }
+#main .ac .ac-list { display: grid; gap: 2px; margin: 0 -8px; padding: 0; list-style: none; }
+#main .ac .ac-row { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 8px; border-radius: var(--radius-md); color: var(--gray-300); text-decoration: none; }
+#main .ac .ac-row:hover { color: var(--white); background: var(--hover); }
+#main .ac .ac-row:focus-visible { outline: 2px solid var(--tone-accent-ink); outline-offset: -2px; }
+#main .ac .ac-row[aria-current="true"] { color: var(--white); background: var(--hover); box-shadow: inset 3px 0 0 var(--tone-accent); }
+#main .ac .ac-row .av { flex: none; }
+#main .ac .ac-row-main { display: grid; gap: 2px; flex: 1 1 auto; min-width: 0; }
+#main .ac .ac-row-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+#main .ac .ac-row-who { flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); font-weight: 600; overflow-wrap: anywhere; }
+#main .ac .ac-row-time { flex: none; font-size: var(--fs-xs); color: var(--gray-400); }
+#main .ac .ac-row-last { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: var(--fs-xs); line-height: 1.125rem; color: var(--gray-400); overflow-wrap: anywhere; }
+#main .ac .ac-empty { margin: 0; font-size: var(--fs-sm); color: var(--gray-400); }
+
+/* ---------------------------------------------------------------- transcript (Chat's stream, in the page's flow) */
+#main .ac .ac-transcript { display: flex; flex-direction: column; min-width: 0; height: auto; min-height: 0; padding: 20px var(--gutter) 32px 24px; border-inline-start: 1px solid var(--line); }
+#main .ac .ac-head { display: grid; gap: 6px; padding-block-end: 12px; border-block-end: 1px solid var(--line); }
+#main .ac .ac-back { display: none; align-items: center; gap: 4px; justify-self: start; min-height: 32px; margin-inline-start: -4px; padding-inline: 4px; border-radius: var(--radius-md); font-size: var(--fs-sm); font-weight: 500; color: var(--gray-300); text-decoration: none; }
+#main .ac .ac-back:hover { color: var(--white); background: var(--hover); }
+#main .ac .ac-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+#main .ac .ac-title h2 { margin: 0; font-size: var(--fs-md); font-weight: 600; color: var(--white); overflow-wrap: anywhere; }
+#main .ac .ac-title h2:focus { outline: none; }
+#main .ac .ac-title h2:focus-visible { outline: 2px solid var(--tone-accent-ink); outline-offset: 2px; border-radius: 2px; }
+/* Every part leads with its separator, and the row starts one separator to the left with the overflow clipped, so a
+   part that wraps to a new line never starts with a stray dot. */
+#main .ac .ac-context { --ac-sep: 18px; margin: 0; padding-block: 2px; overflow: hidden; font-size: var(--fs-xs); color: var(--gray-400); }
+#main .ac .ac-context-in { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; margin-inline-start: calc(-1 * var(--ac-sep)); }
+#main .ac .ac-context-in > * { display: inline-flex; align-items: center; gap: 4px; }
+#main .ac .ac-context-in > *::before { content: "·"; flex: none; width: var(--ac-sep); text-align: center; color: var(--gray-400); }
+#main .ac .ac-transcript > .chmain { display: flex; flex-direction: column; min-height: 0; }
+#main .ac .ac-transcript .msgs { flex: none; overflow: visible; padding: 16px 0 20px; }
+/* The page scrolls, not the stream, so day labels stay in place rather than sticking under the page header. */
+#main .ac .ac-transcript .chat-day { position: static; }
+#main .ac .ac-foot { padding: 14px 0 0; }
+#main .ac .ac-missing p { margin: 8px 0 0; font-size: var(--fs-sm); color: var(--gray-400); }
+
+/* ---------------------------------------------------------------- narrow pane: the list, then a chosen transcript */
+@container ac (max-width: 40rem) {
+  #main .ac .ac-split { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  #main .ac .ac-nav { position: static; padding: 16px var(--gutter) 24px; }
+  #main .ac .ac-transcript { padding: 12px var(--gutter) 28px; border-inline-start: 0; }
+  #main .ac .ac-back { display: inline-flex; }
+  /* "Reading as the owner" already says whose conversation it is; the kind would wrap the line on phones. */
+  #main .ac .ac-kind { display: none; }
+  #main .ac[data-picked="true"] .ac-nav, #main .ac[data-picked="false"] .ac-transcript { display: none; }
+}
+@media (pointer: coarse) { #main .ac .ac-back { min-height: 44px; } }

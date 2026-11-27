@@ -38,7 +38,7 @@ export class OfficesLive {
 	/** True from the first failure until the office answers again: the Retry button stays while it works. */
 	retryingProbe = $state(false);
 	// Replaced whole on every sample, never mutated: a plain map in raw state.
-	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- immutable snapshot replaced wholesale in $state.raw
 	#deadlineSamples = $state.raw<ReadonlyMap<string, RestartDeadlineSample>>(new Map());
 	#countdownClock = $state(Date.now());
 	#reportedFor = '';
