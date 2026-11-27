@@ -541,7 +541,7 @@ function headerActions(id, title) {
   return `<div class="ph-actions chat-actions">
       ${filesButton(local.files, title)}
       <button class="btn ghost sm chat-details-btn" type="button" data-act="chat-details" aria-expanded="${local.details}" aria-controls="chat-details" title="Details">${ic("info", "ic16")}<span class="chat-details-word">Details</span></button>
-      <button class="btn ghost icon chat-search" type="button" data-act="chat-search" aria-expanded="${open}" aria-controls="chat-search-row" aria-label="Search in ${esc(title)}" title="Search in ${esc(title)}">${ic("search", "ic20")}</button>
+      <button class="btn ghost icon chat-search" type="button" data-act="chat-search" aria-expanded="${open}" aria-controls="chat-search-row" aria-label="Search in ${esc(title)}" title="Search in ${esc(title)} (/)" aria-keyshortcuts="/">${ic("search", "ic20")}</button>
     </div>`;
 }
 /* Asks waiting in other conversations, each counted once; unread elsewhere shows as a dot. */

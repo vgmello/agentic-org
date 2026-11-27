@@ -831,11 +831,21 @@ function isSingleKeyBlocked(e) {
   return !S.singleKey || e.isComposing || e.repeat || inTextField(e.target) || overlayOpen();
 }
 
+/* In a conversation, "/" opens that conversation's own search, not the command palette (owner). */
+function openChatSearch() {
+  const btn = document.querySelector("#main .chat .chhead .chat-search");
+  if (!btn) return false;
+  if (btn.getAttribute("aria-expanded") !== "true") btn.click();
+  requestAnimationFrame(() => document.getElementById("chat-search-input")?.focus());
+  return true;
+}
+
 function tryPunctuationShortcut(e) {
   if (!isPlainAltGrOrUnmodified(e)) return false;
   if (e.key === "#" && route()[0] === "chat") { e.preventDefault(); findConversation(); return true; }
   if (e.key === "/") {
     e.preventDefault();
+    if (openChatSearch()) return true;
     const inline = document.querySelector('#main [data-act="search-toggle"]');
     const input = pageSearchInput();
     if (inline) openInlineSearch(inline.dataset.v); else if (input) input.focus(); else openCmdk();
