@@ -14,6 +14,8 @@ import CapacityBreakdown from './CapacityBreakdown.svelte';
 import ExecutiveBriefCard from './ExecutiveBriefCard.svelte';
 import HomeDayOne from './HomeDayOne.svelte';
 import HomeKpiStrip from './HomeKpiStrip.svelte';
+import HomeSkeleton from './HomeSkeleton.svelte';
+import HomeThroughputSparkline from './HomeThroughputSparkline.svelte';
 import ProjectScorecard from './ProjectScorecard.svelte';
 import SpotlightActionBar from './SpotlightActionBar.svelte';
 import SpotlightHeaderBar from './SpotlightHeaderBar.svelte';
@@ -330,6 +332,150 @@ describe('Home Prototype Parity (TASK-262)', () => {
 		expect(body).toContain('Show more');
 		expect(body).not.toContain('Show full brief');
 		expect(body).not.toContain('Executive Brief');
+
+		// Lead sentence is never duplicated verbatim inside the highlight list
+		const leadMatch = body.match(/<p class="brief-lead[^"]*">([^<]+)<\/p>/);
+		expect(leadMatch).toBeTruthy();
+		const leadSentence = leadMatch![1].trim();
+		const listSection = body.slice(body.indexOf('<ul'));
+		expect(listSection).not.toContain(leadSentence);
+
+		// Single-section brief renders cleanly without an empty <ul> or duplicated sentence
+		const singleBrief = {
+			...brief,
+			lenses: {
+				...brief.lenses,
+				today: {
+					...brief.lenses.today,
+					sections: [
+						{
+							id: 'solo',
+							kicker: 'Live Status',
+							tone: 'ok' as const,
+							body: 'Everything is tracking smoothly today.'
+						}
+					]
+				}
+			}
+		};
+		const soloRender = render(ExecutiveBriefCard, {
+			props: { brief: singleBrief, catchUp: [], lens: 'today' }
+		});
+		expect(soloRender.body).toContain('Live Status');
+		expect(soloRender.body.match(/Everything is tracking smoothly today\./g)).toHaveLength(1);
+		expect(soloRender.body).not.toContain('dg-list');
+	});
+
+	it('renders a sliding window in SpotlightHeaderBar so active dot is visible when spotlight.length > 6', () => {
+		const snap = sampleOrg('hq');
+		const eightItems = Array.from({ length: 8 }, (_, idx) => ({
+			id: `in-${idx + 1}`,
+			kind: 'question' as const,
+			source: 'Chat ask',
+			title: `Decision item ${idx + 1}`,
+			who: { id: 'ada', name: 'Ada', kind: 'agent' as const },
+			why: 'Needs input.',
+			created_at: `2026-11-27T1${idx}:00:00Z`,
+			actions: ['reply' as const],
+			state: 'open' as const
+		}));
+		const spotlight = deriveDecisionSpotlight(
+			[],
+			snap,
+			'you',
+			Date.parse('2026-11-27T20:00:00Z'),
+			eightItems
+		);
+		expect(spotlight).toHaveLength(8);
+
+		const { body } = render(SpotlightHeaderBar, {
+			props: {
+				currentDecision: spotlight[7],
+				spotlight,
+				safeIdx: 7,
+				onSelect: () => {}
+			}
+		});
+
+		expect(body).toContain(`aria-label="Decision 8 of 8: ${spotlight[7].title}"`);
+		expect(body).toContain('aria-current="true"');
+		expect(body).toContain('Priority 8 of 8');
+	});
+
+	it('labels non-inbox consequential routes accurately in SpotlightActionBar and renders 4 cards in HomeSkeleton', () => {
+		const snap = sampleOrg('hq');
+		const [chatDecision, projectDecision] = deriveDecisionSpotlight(
+			[],
+			snap,
+			'you',
+			Date.parse('2026-11-27T12:00:00Z'),
+			[
+				{
+					id: 'chat-1',
+					kind: 'approval',
+					source: 'Chat approval',
+					title: 'Confirm channel policy',
+					who: { id: 'ada', name: 'Ada', kind: 'agent' },
+					why: 'Review thread context.',
+					created_at: '2026-11-27T11:30:00Z',
+					actions: [],
+					open: { path: '/chat/general', label: 'Open conversation' },
+					state: 'open'
+				},
+				{
+					id: 'proj-1',
+					kind: 'approval',
+					source: 'Release gate',
+					title: 'Review release checklist',
+					who: { id: 'kai', name: 'Kai', kind: 'agent' },
+					why: 'Check project release details.',
+					created_at: '2026-11-27T11:00:00Z',
+					actions: [],
+					open: { path: '/projects/p1/releases', label: 'Inspect release' },
+					state: 'open'
+				}
+			]
+		);
+
+		const noop = () => {};
+		const baseProps = {
+			totalCount: 2,
+			busy: false,
+			declining: false,
+			declineReason: '',
+			replying: false,
+			replyText: '',
+			restoreDenyFocus: false,
+			onClearRestoreDenyFocus: noop,
+			onPrimary: noop,
+			onSecondary: noop,
+			onArmDeny: noop,
+			onCancelDeny: noop,
+			onOpenReply: noop,
+			onSubmitReply: noop,
+			onCancelReply: noop
+		};
+
+		const chatRender = render(SpotlightActionBar, {
+			props: { ...baseProps, decision: chatDecision }
+		});
+		expect(chatRender.body).toContain('Open in Chat');
+		expect(chatRender.body).not.toContain('Review in Inbox');
+
+		const projRender = render(SpotlightActionBar, {
+			props: { ...baseProps, decision: projectDecision }
+		});
+		expect(projRender.body).toContain('Review details');
+		expect(projRender.body).not.toContain('Review in Inbox');
+
+		const skelRender = render(HomeSkeleton);
+		expect(skelRender.body).toContain('xl:grid-cols-4');
+		expect(skelRender.body.match(/class="exec-card/g)).toHaveLength(4);
+
+		const emptySpark = render(HomeThroughputSparkline, {
+			props: { points: [0, 0, 0, 0, 0, 0, 0] }
+		});
+		expect(emptySpark.body).not.toContain('home-throughput-sparkline');
 	});
 
 	it('renders HomeDayOne empty-org CTAs and cleared-in-session receipt state', () => {

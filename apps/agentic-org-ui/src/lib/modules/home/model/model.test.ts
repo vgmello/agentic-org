@@ -934,4 +934,70 @@ describe('executive home view model', () => {
 		expect(match?.leadId).toBe('ada-id');
 		expect(match?.leadName).toBe('Ada');
 	});
+
+	it('keeps throughputPoints all zeros when only historical closures exist (> 7 days ago)', () => {
+		const snap = sampleOrg('hq');
+		const nowMs = Date.parse('2026-11-27T12:00:00Z');
+		const historicalItems = [
+			makeItem({
+				id: 'old-1',
+				status: 'done',
+				created_at: '2026-11-01T08:00:00Z',
+				updated_at: '2026-11-02T12:00:00Z'
+			}),
+			makeItem({
+				id: 'old-2',
+				status: 'done',
+				created_at: '2026-11-05T08:00:00Z',
+				updated_at: '2026-11-06T12:00:00Z'
+			})
+		];
+
+		const kpis = deriveKpiMetrics(snap, historicalItems, offices, 'you', undefined, nowMs);
+		expect(kpis.doneCount).toBe(2);
+		expect(kpis.closedLast7d).toBe(0);
+		expect(kpis.throughputPoints).toEqual([0, 0, 0, 0, 0, 0, 0]);
+	});
+
+	it('forwards explicit nowMs deterministically inside deriveExecutiveBrief', () => {
+		const snap = sampleOrg('hq');
+		const firstProject = snap.projects![0];
+		const onlineOffices: OfficeInfo[] = [{ ...offices[0], status: 'active' }];
+		const domain = {
+			homeProjects: [
+				{
+					id: firstProject.id,
+					name: firstProject.name,
+					done: 1,
+					total: 4,
+					open: 3,
+					blocked: 0,
+					members: 2,
+					due: '2026-11-25'
+				}
+			]
+		};
+
+		const beforeDue = deriveExecutiveBrief(
+			snap,
+			[],
+			onlineOffices,
+			'you',
+			'Acme',
+			Date.parse('2026-11-24T12:00:00Z'),
+			domain
+		);
+		const afterDue = deriveExecutiveBrief(
+			snap,
+			[],
+			onlineOffices,
+			'you',
+			'Acme',
+			Date.parse('2026-11-27T12:00:00Z'),
+			domain
+		);
+
+		expect(beforeDue.lenses.today.sections[1].body).not.toContain(`${firstProject.name} (At risk)`);
+		expect(afterDue.lenses.today.sections[1].body).toContain(`${firstProject.name} (At risk)`);
+	});
 });

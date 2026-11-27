@@ -96,7 +96,7 @@
 		heroHref="/projects"
 		heroTitle="{kpis.projectsTotal} active projects: {onTrackProjects} on track, {kpis.atRiskProjects} at risk, {kpis.offTrackProjects} off track"
 		subGridClass="grid-cols-[1.35fr_0.9fr] gap-2.5"
-		isFirst
+		index={0}
 	>
 		{#snippet icon()}
 			<Folder class="size-3.5 text-[var(--exec-accent-ink)]" aria-hidden="true" />
@@ -184,6 +184,7 @@
 		pillTone={deliveryPillTone}
 		heroHref="/insights"
 		heroTitle="Share of completed items approved on the first try"
+		index={1}
 	>
 		{#snippet icon()}
 			<CheckCircle2 class="size-3.5 text-[var(--exec-ok)]" aria-hidden="true" />
@@ -261,6 +262,7 @@
 		heroHref="/teams/members"
 		heroTitle="Share of work running autonomously without needing your input"
 		subGridClass="grid-cols-[1.35fr_0.9fr] gap-2.5"
+		index={2}
 	>
 		{#snippet icon()}
 			<Users class="size-3.5 text-[var(--exec-accent-ink)]" aria-hidden="true" />
@@ -342,7 +344,7 @@
 		pillHref={finPillHref}
 		pillTone={kpis.financials.pillTone}
 		heroHref="/settings/costs"
-		isLast
+		index={3}
 	>
 		{#snippet icon()}
 			<DollarSign class="size-3.5 text-[var(--exec-warn)]" aria-hidden="true" />

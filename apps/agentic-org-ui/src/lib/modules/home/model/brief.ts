@@ -247,9 +247,9 @@ export function deriveExecutiveBrief(
 	nowMs = Date.now(),
 	domain?: HomeDomainData
 ): ExecutiveBrief {
-	const kpis = deriveKpiMetrics(snapshot, items, offices, ownerId, domain);
+	const kpis = deriveKpiMetrics(snapshot, items, offices, ownerId, domain, nowMs);
 	const spotlight = deriveDecisionSpotlight(items, snapshot, ownerId, nowMs, domain?.inboxItems);
-	const projects = deriveProjectCards(snapshot, items, domain);
+	const projects = deriveProjectCards(snapshot, items, domain, nowMs);
 	const attentionProjects = projects.filter((p) => p.health !== 'On track');
 	const recentActivity = domain?.activityRows ?? [];
 	const spendPhrase = buildSpendSentence(kpis);

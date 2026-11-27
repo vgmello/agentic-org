@@ -17,7 +17,21 @@
 
 	let { currentDecision, spotlight, safeIdx, handledIds, onSelect }: Props = $props();
 
-	const visibleDots = $derived(spotlight.slice(0, 6));
+	const MAX_VISIBLE_DOTS = 6;
+	const windowStart = $derived(
+		spotlight.length <= MAX_VISIBLE_DOTS
+			? 0
+			: Math.max(
+					0,
+					Math.min(safeIdx - Math.floor(MAX_VISIBLE_DOTS / 2), spotlight.length - MAX_VISIBLE_DOTS)
+				)
+	);
+	const visibleDots = $derived(
+		spotlight.slice(windowStart, windowStart + MAX_VISIBLE_DOTS).map((decision, offset) => ({
+			decision,
+			index: windowStart + offset
+		}))
+	);
 	const isCurrentHandled = $derived(Boolean(handledIds?.has(currentDecision.id)));
 	const disableNav = $derived(spotlight.length <= 1);
 </script>
@@ -41,22 +55,22 @@
 	<Tooltip.Provider delayDuration={200} ignoreNonKeyboardFocus>
 		<div class="flex flex-wrap items-center gap-2.5">
 			<div class="queue-dots flex items-center" role="group" aria-label="Priority queue">
-				{#each visibleDots as d, i (d.id)}
-					{@const cleared = Boolean(handledIds?.has(d.id))}
-					{@const dotLabel = `Decision ${i + 1} of ${spotlight.length}: ${d.title}`}
+				{#each visibleDots as entry (entry.decision.id)}
+					{@const cleared = Boolean(handledIds?.has(entry.decision.id))}
+					{@const dotLabel = `Decision ${entry.index + 1} of ${spotlight.length}: ${entry.decision.title}`}
 					<Tooltip.Root>
 						<Tooltip.Trigger>
 							{#snippet child({ props })}
 								<button
 									{...props}
 									type="button"
-									onclick={() => onSelect(i)}
+									onclick={() => onSelect(entry.index)}
 									aria-label={dotLabel}
-									aria-current={i === safeIdx ? 'true' : undefined}
+									aria-current={entry.index === safeIdx ? 'true' : undefined}
 									class={[
 										'dot-btn',
-										i === safeIdx && 'is-cur',
-										d.urgent && !cleared && 'is-urgent',
+										entry.index === safeIdx && 'is-cur',
+										entry.decision.urgent && !cleared && 'is-urgent',
 										cleared && 'is-cleared'
 									]}
 								></button>

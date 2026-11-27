@@ -144,7 +144,9 @@
 		};
 	});
 
-	const kpis = $derived(deriveKpiMetrics(snapshot, workItems, activeOffices, ownerId, domain));
+	const kpis = $derived(
+		deriveKpiMetrics(snapshot, workItems, activeOffices, ownerId, domain, live.nowMs)
+	);
 	const spotlight = $derived(
 		deriveDecisionSpotlight(workItems, snapshot, ownerId, live.nowMs, hydratedInboxItems)
 	);
@@ -416,6 +418,11 @@
 		.stage-head-brief {
 			order: 2;
 			margin-top: 0.75rem;
+		}
+		.home-stage.is-report .stage-head-brief {
+			margin-top: 0;
+			padding-top: 24px;
+			border-top: var(--exec-col-divider);
 		}
 		.stage-body-brief {
 			order: 3;

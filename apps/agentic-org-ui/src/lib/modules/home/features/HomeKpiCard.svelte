@@ -14,8 +14,7 @@
 		heroHref: string;
 		heroTitle?: string;
 		subGridClass?: string;
-		isFirst?: boolean;
-		isLast?: boolean;
+		index: number;
 		icon: Snippet;
 		hero: Snippet;
 		sub: Snippet;
@@ -32,8 +31,7 @@
 		heroHref,
 		heroTitle,
 		subGridClass = 'grid-cols-2 gap-3',
-		isFirst = false,
-		isLast = false,
+		index,
 		icon,
 		hero,
 		sub
@@ -50,9 +48,11 @@
 <article
 	class={[
 		'kpi-pillar flex flex-col gap-3',
-		isFirst && 'is-first',
-		isLast && 'is-last',
-		!isFirst && 'has-prev'
+		index === 0 && 'is-first',
+		index === 3 && 'is-last',
+		index > 0 && 'has-prev',
+		index % 2 === 0 ? 'is-md-left' : 'is-md-right',
+		index >= 2 && 'is-md-row2'
 	]}
 	aria-labelledby={id}
 >
@@ -103,8 +103,28 @@
 		background: var(--exec-panel-bg-hover);
 		box-shadow: var(--exec-panel-shadow-hover);
 	}
-	.kpi-pillar.has-prev {
-		border-top: var(--exec-col-divider);
+	@media (max-width: 767px) {
+		.kpi-pillar.has-prev {
+			border-top: var(--exec-col-divider);
+		}
+	}
+	@media (min-width: 768px) and (max-width: 1279px) {
+		.kpi-pillar {
+			padding: var(--exec-pillar-pad);
+		}
+		.kpi-pillar.is-md-left {
+			border-left: 0;
+			padding-left: var(--exec-pillar-edge-pad);
+		}
+		.kpi-pillar.is-md-right {
+			border-left: var(--exec-col-divider);
+			padding-right: var(--exec-pillar-edge-pad);
+		}
+		.kpi-pillar.is-md-row2 {
+			border-top: var(--exec-col-divider);
+			padding-top: var(--exec-proj-row-pt-md);
+			margin-top: var(--exec-proj-row-mt-md);
+		}
 	}
 	@media (min-width: 1280px) {
 		.kpi-pillar {

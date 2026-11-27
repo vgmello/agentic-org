@@ -42,7 +42,11 @@
 		void organizationId;
 		return 0;
 	});
-	let busyId = $state<string | undefined>(undefined);
+	let destroyed = false;
+	let actionSeq = 0;
+	let busyAction = $state<{ orgId: string; decisionId: string; seq: number } | undefined>(
+		undefined
+	);
 	let decliningId = $derived.by<string | undefined>(() => {
 		void organizationId;
 		return undefined;
@@ -82,7 +86,10 @@
 	let pulseTimer: ReturnType<typeof setTimeout> | undefined;
 	let panelEl = $state<HTMLElement | null>(null);
 	let titleEl = $state<HTMLHeadingElement | null>(null);
-	onDestroy(() => clearTimeout(pulseTimer));
+	onDestroy(() => {
+		destroyed = true;
+		clearTimeout(pulseTimer);
+	});
 
 	export function jumpToDecision(id: string): boolean {
 		const idx = spotlight.findIndex((item) => item.id === id);
@@ -185,72 +192,95 @@
 		});
 	}
 
+	const isCurrentBusy = $derived(
+		busyAction !== undefined &&
+			busyAction.orgId === organizationId &&
+			busyAction.decisionId === currentDecision?.id
+	);
+
+	function isOrgBusy(): boolean {
+		return busyAction !== undefined && busyAction.orgId === organizationId;
+	}
+
+	function outcomeLabelFor(decision: SpotlightDecision, kind: 'primary' | 'secondary'): string {
+		if (kind === 'secondary') {
+			return isDenyAction(decision.secondaryAction)
+				? 'Denied'
+				: (decision.secondaryAction?.label ?? 'Handled');
+		}
+		if (decision.primaryAction.kind === 'approve_inbox') return 'Approved';
+		if (decision.primaryAction.kind === 'choose_inbox') {
+			return `Chose: ${decision.primaryAction.label}`;
+		}
+		return decision.primaryAction.label;
+	}
+
+	async function runGuardedAction(
+		decisionId: string,
+		work: (targetOrgId: string, isActive: () => boolean) => Promise<void>
+	) {
+		if (isOrgBusy()) return;
+		const targetOrgId = organizationId;
+		const seq = ++actionSeq;
+		const isActive = () => !destroyed && organizationId === targetOrgId && seq === actionSeq;
+		busyAction = { orgId: targetOrgId, decisionId, seq };
+		try {
+			await work(targetOrgId, isActive);
+		} catch (e) {
+			if (isActive()) toast.error(toAppError(e).message);
+		} finally {
+			if (busyAction?.seq === seq) busyAction = undefined;
+		}
+	}
+
 	async function submitReply() {
 		const decision = currentDecision;
 		const inboxItem = decision?.inboxItem;
-		if (!decision || !inboxItem || busyId) return;
 		const text = replyText.trim();
-		if (!text) return;
-		busyId = decision.id;
-		try {
-			await inboxApi.act(organizationId, inboxItem.id, { type: 'reply', text });
+		if (!decision || !inboxItem || !text) return;
+		await runGuardedAction(decision.id, async (targetOrgId, isActive) => {
+			await inboxApi.act(targetOrgId, inboxItem.id, { type: 'reply', text });
+			if (!isActive()) return;
 			replyingId = undefined;
 			replyText = '';
 			recordHandled(decision, 'Answered', text);
 			toast.success(`Sent answer to ${decision.actorName}.`);
 			await onRefresh();
-		} catch (e) {
-			toast.error(toAppError(e).message);
-		} finally {
-			busyId = undefined;
-		}
+		});
 	}
 
 	async function runAction(kind: 'primary' | 'secondary') {
-		if (!currentDecision || busyId) return;
+		const decision = currentDecision;
+		if (!decision || isOrgBusy()) return;
 		if (
 			kind === 'secondary' &&
-			isDenyAction(currentDecision.secondaryAction) &&
-			decliningId !== currentDecision.id
+			isDenyAction(decision.secondaryAction) &&
+			decliningId !== decision.id
 		) {
-			armDeny(currentDecision.id);
+			armDeny(decision.id);
 			return;
 		}
-		const decision = currentDecision;
 		const reasonSnapshot = declineReason.trim();
-		busyId = decision.id;
-		try {
+		await runGuardedAction(decision.id, async (targetOrgId, isActive) => {
 			const res = await executeDecisionAction(
-				organizationId,
+				targetOrgId,
 				decision,
 				kind,
 				snapshot,
 				reasonSnapshot
 			);
+			if (!isActive()) return;
 			decliningId = undefined;
 			declineReason = '';
 			if (res.navigateTo) {
 				await goto(resolve(res.navigateTo as '/work'));
 				return;
 			}
-			const outcome =
-				kind === 'secondary'
-					? isDenyAction(decision.secondaryAction)
-						? 'Denied'
-						: (decision.secondaryAction?.label ?? 'Handled')
-					: decision.primaryAction.kind === 'approve_inbox'
-						? 'Approved'
-						: decision.primaryAction.kind === 'choose_inbox'
-							? `Chose: ${decision.primaryAction.label}`
-							: decision.primaryAction.label;
-			recordHandled(decision, outcome, kind === 'secondary' ? reasonSnapshot : undefined);
+			const note = kind === 'secondary' ? reasonSnapshot : undefined;
+			recordHandled(decision, outcomeLabelFor(decision, kind), note);
 			if (res.message) toast.success(res.message);
 			await onRefresh();
-		} catch (e) {
-			toast.error(toAppError(e).message);
-		} finally {
-			busyId = undefined;
-		}
+		});
 	}
 </script>
 
@@ -352,7 +382,7 @@
 		<SpotlightActionBar
 			decision={currentDecision}
 			totalCount={spotlight.length}
-			busy={busyId === currentDecision.id}
+			busy={isCurrentBusy}
 			receipt={currentReceipt}
 			declining={decliningId === currentDecision.id}
 			bind:declineReason

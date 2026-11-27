@@ -213,7 +213,6 @@ function medianOf(values: readonly number[]): number | null {
 
 function deriveDeliveryWindowStats(
 	doneItems: readonly WorkItemSummary[],
-	doneCount: number,
 	nowMs: number
 ): {
 	throughputPoints: number[];
@@ -242,10 +241,6 @@ function deriveDeliveryWindowStats(
 		} else if (daysAgo >= DAYS && daysAgo < DAYS * 2) {
 			closedPrior7d += 1;
 		}
-	}
-
-	if (closedLast7d === 0 && doneCount > 0) {
-		buckets[DAYS - 1] = doneCount;
 	}
 
 	return {
@@ -331,7 +326,7 @@ export function deriveKpiMetrics(
 		financials.available && financials.budgetMicroUsd !== null
 			? Math.max(0, Math.min(100, 100 - financials.usagePct))
 			: null;
-	const deliveryStats = deriveDeliveryWindowStats(doneItems, doneCount, nowMs);
+	const deliveryStats = deriveDeliveryWindowStats(doneItems, nowMs);
 
 	return {
 		financials,

@@ -72,6 +72,13 @@
 			decision.primaryAction.kind === 'open_inbox' &&
 			!canReplyInline
 	);
+	const routeCtaLabel = $derived(
+		decision.detailHref.startsWith('/inbox')
+			? 'Review in Inbox'
+			: decision.detailHref.startsWith('/chat')
+				? 'Open in Chat'
+				: 'Review details'
+	);
 	const routeReason = $derived(
 		decision.inboxItem?.open?.label || 'Full context and checks live in Inbox'
 	);
@@ -110,7 +117,7 @@
 				<span class="exec-cta-fill" aria-hidden="true"></span>
 				<span class="exec-cta-sheen" aria-hidden="true"></span>
 				<span class="exec-cta-inner">
-					<span>Review in Inbox</span>
+					<span>{routeCtaLabel}</span>
 					<ChevronRight class="size-4" aria-hidden="true" />
 				</span>
 			</a>

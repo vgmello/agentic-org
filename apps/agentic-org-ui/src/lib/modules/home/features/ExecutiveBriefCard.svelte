@@ -12,6 +12,7 @@
 	import List from '@lucide/svelte/icons/list';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import type { BriefLens, CatchUpRow, ExecutiveBrief } from '$lib/modules/home/model';
+	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	interface Props {
 		brief: ExecutiveBrief;
@@ -27,6 +28,7 @@
 	let copiedLens = $state<BriefLens | null>(null);
 	let briefCopyTimer: ReturnType<typeof setTimeout> | undefined;
 
+	const isReport = $derived(uiPrefs.theme === 'report' || uiPrefs.theme === 'report-dark');
 	const briefCopied = $derived(copiedLens === lens);
 	const activeBrief = $derived(brief.lenses[lens]);
 	const sigHref = $derived(
@@ -35,11 +37,58 @@
 	const sigName = $derived(brief.chiefOfStaff?.name ?? 'Tess');
 	const sigRole = $derived(brief.chiefOfStaff?.role ?? 'Chief of Staff');
 
-	function firstSentence(text: string): string {
+	function splitFirstSentence(text: string): { first: string; rest: string } {
 		const trimmed = text.trim();
-		const match = trimmed.match(/^.+?[.!?](?:\s|$)/);
-		return match ? match[0].trim() : trimmed;
+		const match = trimmed.match(/^(.+?[.!?])(?:\s+([\s\S]+))?$/);
+		if (!match) return { first: trimmed, rest: '' };
+		return { first: match[1].trim(), rest: (match[2] ?? '').trim() };
 	}
+
+	function firstSentence(text: string): string {
+		return splitFirstSentence(text).first;
+	}
+
+	const highlightLayout = $derived.by(() => {
+		const sections = activeBrief.sections;
+		const leadSec = sections[0];
+		if (!leadSec) {
+			return {
+				leadSec: undefined,
+				leadText: '',
+				showLeadKicker: false,
+				rows: [] as { id: string; kicker: string; tone: 'ok' | 'warn' | 'accent'; detail: string }[]
+			};
+		}
+		const { first: leadText, rest: leadRest } = splitFirstSentence(leadSec.body);
+		const tailRows = sections.slice(1).map((sec) => ({
+			id: sec.id,
+			kicker: sec.kicker,
+			tone: sec.tone,
+			detail: firstSentence(sec.body)
+		}));
+		if (leadRest) {
+			return {
+				leadSec,
+				leadText,
+				showLeadKicker: false,
+				rows: [
+					{
+						id: leadSec.id,
+						kicker: leadSec.kicker,
+						tone: leadSec.tone,
+						detail: firstSentence(leadRest)
+					},
+					...tailRows
+				]
+			};
+		}
+		return {
+			leadSec,
+			leadText,
+			showLeadKicker: true,
+			rows: tailRows
+		};
+	});
 
 	/** Emphasize the opening factual lead phrase of a brief paragraph without raw HTML injection. */
 	function splitLead(text: string): { lead: string; rest: string } | null {
@@ -73,7 +122,7 @@
 </script>
 
 <aside
-	class="brief-panel flex flex-col gap-3.5"
+	class={['brief-panel flex flex-col gap-3.5', isReport && 'is-report']}
 	aria-labelledby={ariaLabelledby}
 	aria-label={ariaLabelledby ? undefined : 'Executive digest'}
 >
@@ -86,35 +135,43 @@
 			tabindex="0"
 		>
 			{#if briefMode === 'highlights'}
-				{#if activeBrief.sections[0]}
-					{@const leadSec = activeBrief.sections[0]}
-					<p class="brief-lead text-[0.9375rem] leading-[1.58] text-[var(--exec-body)]">
-						{firstSentence(leadSec.body)}
-					</p>
-				{/if}
-				<ul class="dg-list flex flex-col" role="list">
-					{#each activeBrief.sections as sec (sec.id)}
-						<li class={['dg-item grid items-start gap-3', `tone-${sec.tone}`]}>
-							<span class="dg-ic mt-0.5 inline-flex shrink-0" aria-hidden="true">
-								{#if sec.tone === 'ok'}
-									<CheckCircle2 class="size-4" />
-								{:else if sec.tone === 'warn'}
-									<AlertTriangle class="size-4" />
-								{:else}
-									<Sparkles class="size-4" />
-								{/if}
+				{#if highlightLayout.leadSec}
+					<div class="flex flex-col gap-1">
+						{#if highlightLayout.showLeadKicker}
+							<span class={['brief-kicker', `tone-${highlightLayout.leadSec.tone}`]}>
+								{highlightLayout.leadSec.kicker}
 							</span>
-							<div class="flex min-w-0 flex-col gap-0.5">
-								<span class="dg-title text-sm font-semibold text-[var(--exec-ink)]">
-									{sec.kicker}
+						{/if}
+						<p class="brief-lead text-[0.9375rem] leading-[1.58] text-[var(--exec-body)]">
+							{highlightLayout.leadText}
+						</p>
+					</div>
+				{/if}
+				{#if highlightLayout.rows.length > 0}
+					<ul class="dg-list flex flex-col" role="list">
+						{#each highlightLayout.rows as row (row.id)}
+							<li class={['dg-item grid items-start gap-3', `tone-${row.tone}`]}>
+								<span class="dg-ic mt-0.5 inline-flex shrink-0" aria-hidden="true">
+									{#if row.tone === 'ok'}
+										<CheckCircle2 class="size-4" />
+									{:else if row.tone === 'warn'}
+										<AlertTriangle class="size-4" />
+									{:else}
+										<Sparkles class="size-4" />
+									{/if}
 								</span>
-								<span class="dg-detail text-xs leading-relaxed text-[var(--exec-muted)]">
-									{firstSentence(sec.body)}
-								</span>
-							</div>
-						</li>
-					{/each}
-				</ul>
+								<div class="flex min-w-0 flex-col gap-0.5">
+									<span class="dg-title text-sm font-semibold text-[var(--exec-ink)]">
+										{row.kicker}
+									</span>
+									<span class="dg-detail text-xs leading-relaxed text-[var(--exec-muted)]">
+										{row.detail}
+									</span>
+								</div>
+							</li>
+						{/each}
+					</ul>
+				{/if}
 			{:else}
 				{#each activeBrief.sections as sec (sec.id)}
 					{@const split = splitLead(sec.body)}
@@ -257,14 +314,17 @@
 		box-shadow: var(--exec-panel-shadow);
 		border-radius: var(--exec-panel-radius);
 		padding: var(--exec-brief-pad-sm);
-		border-top: var(--exec-col-divider);
+	}
+	.brief-panel.is-report {
+		padding: 0;
 	}
 	.brief-panel:hover {
 		background: var(--exec-panel-bg-hover);
 		box-shadow: var(--exec-panel-shadow-hover);
 	}
 	@media (min-width: 1280px) {
-		.brief-panel {
+		.brief-panel,
+		.brief-panel.is-report {
 			padding: var(--exec-brief-pad);
 			border-top: 0;
 			border-left: var(--exec-col-divider);
