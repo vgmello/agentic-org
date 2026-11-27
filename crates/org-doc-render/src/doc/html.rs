@@ -1,4 +1,5 @@
-//! HTML+CSS -> [`Document`] converter backed by `scraper` (`html5ever`).
+//! HTML+CSS -> [`Document`] converter backed by `scraper` (`html5ever`) with strict recursion
+//! depth (`MAX_NESTING_DEPTH = 64`) and cooperative deadline enforcement.
 
 use std::collections::BTreeMap;
 
@@ -7,10 +8,49 @@ use scraper::{ElementRef, Html, Node};
 use crate::css::{
     parse_and_validate_css, parse_inline_style, parse_length_pt, ParsedStylesheet, Rgb, StyleProps,
 };
-use crate::model::{RenderError, ResolvedImage};
+use crate::model::{check_deadline, RenderDeadline, RenderError, ResolvedImage, MAX_NESTING_DEPTH};
 use crate::sanitize::validate_image_url;
 
-use super::{resolve_image_bytes, Block, Document, InlineSpan, TableCell, TableRow};
+use super::{resolve_image_source, Block, Document, InlineSpan, TableCell, TableRow};
+
+struct HtmlConvertCtx<'a> {
+    sheet: &'a ParsedStylesheet,
+    attachments: &'a BTreeMap<String, ResolvedImage>,
+    deadline: Option<&'a RenderDeadline>,
+    steps: usize,
+}
+
+impl HtmlConvertCtx<'_> {
+    fn tick(&mut self) -> Result<(), RenderError> {
+        self.steps = self.steps.wrapping_add(1);
+        if self.steps & 0xff == 0 {
+            check_deadline(self.deadline)?;
+        }
+        Ok(())
+    }
+
+    fn element_style(&self, el: &scraper::node::Element) -> Result<StyleProps, RenderError> {
+        let classes: Vec<String> = el.classes().map(str::to_owned).collect();
+        let inline = match el.attr("style") {
+            Some(raw) => Some(parse_inline_style(raw, &|u| {
+                validate_image_url(u, self.attachments).map(|_| ())
+            })?),
+            None => None,
+        };
+        Ok(self
+            .sheet
+            .resolve(el.name(), &classes, el.id(), inline.as_ref()))
+    }
+}
+
+fn check_depth(depth: usize) -> Result<(), RenderError> {
+    if depth > MAX_NESTING_DEPTH {
+        return Err(RenderError::ForbiddenContent {
+            reason: "HTML nesting depth exceeds maximum allowed (64)",
+        });
+    }
+    Ok(())
+}
 
 /// Converts validated HTML + optional external CSS into a [`Document`].
 pub(crate) fn html_to_document(
@@ -18,31 +58,28 @@ pub(crate) fn html_to_document(
     extra_css: Option<&str>,
     title: Option<&str>,
     attachments: &BTreeMap<String, ResolvedImage>,
+    deadline: Option<&RenderDeadline>,
 ) -> Result<Document, RenderError> {
+    check_deadline(deadline)?;
     let parsed = Html::parse_document(html);
     let mut sheet = ParsedStylesheet::default();
     let mut html_title = None;
     let mut body_el = None;
 
-    for node in parsed.tree.nodes() {
+    for (idx, node) in parsed.tree.nodes().enumerate() {
+        if idx & 0xff == 0 {
+            check_deadline(deadline)?;
+        }
         let Some(el_ref) = ElementRef::wrap(node) else {
             continue;
         };
-        let tag = el_ref.value().name().to_ascii_lowercase();
-        if tag == "style" {
-            let css_text: String = el_ref.text().collect();
-            sheet.merge(parse_and_validate_css(&css_text, &|u| {
-                validate_image_url(u, attachments).map(|_| ())
-            })?);
-        } else if tag == "title" && html_title.is_none() {
-            let text: String = el_ref.text().collect();
-            let trimmed = text.trim();
-            if !trimmed.is_empty() {
-                html_title = Some(trimmed.to_owned());
-            }
-        } else if tag == "body" && body_el.is_none() {
-            body_el = Some(el_ref);
-        }
+        collect_document_head_node(
+            el_ref,
+            attachments,
+            &mut sheet,
+            &mut html_title,
+            &mut body_el,
+        )?;
     }
     if let Some(css_text) = extra_css {
         sheet.merge(parse_and_validate_css(css_text, &|u| {
@@ -52,7 +89,13 @@ pub(crate) fn html_to_document(
 
     let root = body_el.unwrap_or_else(|| parsed.root_element());
     let mut blocks = Vec::new();
-    collect_html_blocks(root, &sheet, attachments, &mut blocks)?;
+    let mut ctx = HtmlConvertCtx {
+        sheet: &sheet,
+        attachments,
+        deadline,
+        steps: 0,
+    };
+    collect_html_blocks(root, &mut ctx, 0, &mut blocks)?;
     Ok(Document {
         title: title.map(str::to_owned).or(html_title),
         page: sheet.page,
@@ -60,27 +103,39 @@ pub(crate) fn html_to_document(
     })
 }
 
-fn element_style(
-    el: &scraper::node::Element,
-    sheet: &ParsedStylesheet,
+fn collect_document_head_node<'a>(
+    el_ref: ElementRef<'a>,
     attachments: &BTreeMap<String, ResolvedImage>,
-) -> Result<StyleProps, RenderError> {
-    let classes: Vec<String> = el.classes().map(str::to_owned).collect();
-    let inline = match el.attr("style") {
-        Some(raw) => Some(parse_inline_style(raw, &|u| {
+    sheet: &mut ParsedStylesheet,
+    html_title: &mut Option<String>,
+    body_el: &mut Option<ElementRef<'a>>,
+) -> Result<(), RenderError> {
+    let tag = el_ref.value().name().to_ascii_lowercase();
+    if tag == "style" {
+        let css_text: String = el_ref.text().collect();
+        sheet.merge(parse_and_validate_css(&css_text, &|u| {
             validate_image_url(u, attachments).map(|_| ())
-        })?),
-        None => None,
-    };
-    Ok(sheet.resolve(el.name(), &classes, el.id(), inline.as_ref()))
+        })?);
+    } else if tag == "title" && html_title.is_none() {
+        let text: String = el_ref.text().collect();
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            *html_title = Some(trimmed.to_owned());
+        }
+    } else if tag == "body" && body_el.is_none() {
+        *body_el = Some(el_ref);
+    }
+    Ok(())
 }
 
 fn collect_html_blocks(
     parent: ElementRef<'_>,
-    sheet: &ParsedStylesheet,
-    attachments: &BTreeMap<String, ResolvedImage>,
+    ctx: &mut HtmlConvertCtx<'_>,
+    depth: usize,
     out: &mut Vec<Block>,
 ) -> Result<(), RenderError> {
+    check_depth(depth)?;
+    ctx.tick()?;
     let mut loose_spans = Vec::new();
     for child in parent.children() {
         match child.value() {
@@ -94,34 +149,39 @@ fn collect_html_blocks(
                 let Some(child_el) = ElementRef::wrap(child) else {
                     continue;
                 };
-                let tag = el.name().to_ascii_lowercase();
-                if matches!(tag.as_str(), "head" | "style" | "title" | "meta") {
-                    continue;
-                }
-                if is_inline_html_tag(&tag) {
-                    collect_inline_el(
-                        child_el,
-                        InlineCtx::default(),
-                        sheet,
-                        attachments,
-                        &mut loose_spans,
-                    )?;
-                    continue;
-                }
-                flush_loose_spans(&mut loose_spans, sheet, out);
-                let style = element_style(el, sheet, attachments)?;
-                if style.page_break_before {
-                    out.push(Block::PageBreak);
-                }
-                convert_html_block(child_el, &tag, style.clone(), sheet, attachments, out)?;
-                if style.page_break_after {
-                    out.push(Block::PageBreak);
-                }
+                collect_html_child_element(child_el, el, ctx, depth, &mut loose_spans, out)?;
             }
             _ => {}
         }
     }
-    flush_loose_spans(&mut loose_spans, sheet, out);
+    flush_loose_spans(&mut loose_spans, ctx.sheet, out);
+    Ok(())
+}
+
+fn collect_html_child_element(
+    child_el: ElementRef<'_>,
+    el: &scraper::node::Element,
+    ctx: &mut HtmlConvertCtx<'_>,
+    depth: usize,
+    loose_spans: &mut Vec<InlineSpan>,
+    out: &mut Vec<Block>,
+) -> Result<(), RenderError> {
+    let tag = el.name().to_ascii_lowercase();
+    if matches!(tag.as_str(), "head" | "style" | "title" | "meta") {
+        return Ok(());
+    }
+    if is_inline_html_tag(&tag) {
+        return collect_inline_el(child_el, InlineCtx::default(), ctx, depth + 1, loose_spans);
+    }
+    flush_loose_spans(loose_spans, ctx.sheet, out);
+    let style = ctx.element_style(el)?;
+    if style.page_break_before {
+        out.push(Block::PageBreak);
+    }
+    convert_html_block(child_el, &tag, style.clone(), ctx, depth + 1, out)?;
+    if style.page_break_after {
+        out.push(Block::PageBreak);
+    }
     Ok(())
 }
 
@@ -161,10 +221,12 @@ fn convert_html_block(
     el_ref: ElementRef<'_>,
     tag: &str,
     style: StyleProps,
-    sheet: &ParsedStylesheet,
-    attachments: &BTreeMap<String, ResolvedImage>,
+    ctx: &mut HtmlConvertCtx<'_>,
+    depth: usize,
     out: &mut Vec<Block>,
 ) -> Result<(), RenderError> {
+    check_depth(depth)?;
+    ctx.tick()?;
     match tag {
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
             let level = tag.as_bytes()[1] - b'0';
@@ -172,8 +234,8 @@ fn convert_html_block(
             collect_inline_children(
                 el_ref,
                 InlineCtx::from_style(&style),
-                sheet,
-                attachments,
+                ctx,
+                depth + 1,
                 &mut spans,
             )?;
             if !spans.is_empty() {
@@ -189,8 +251,8 @@ fn convert_html_block(
             collect_inline_children(
                 el_ref,
                 InlineCtx::from_style(&style),
-                sheet,
-                attachments,
+                ctx,
+                depth + 1,
                 &mut spans,
             )?;
             if !spans.is_empty() {
@@ -203,32 +265,47 @@ fn convert_html_block(
         }),
         "blockquote" => {
             let mut inner = Vec::new();
-            collect_html_blocks(el_ref, sheet, attachments, &mut inner)?;
+            collect_html_blocks(el_ref, ctx, depth + 1, &mut inner)?;
             out.push(Block::Quote { blocks: inner });
         }
-        "ul" | "ol" => convert_html_list(el_ref, tag == "ol", sheet, attachments, out)?,
-        "table" => {
-            let mut headers = Vec::new();
-            let mut rows = Vec::new();
-            collect_table_rows(el_ref, false, sheet, attachments, &mut headers, &mut rows)?;
-            if !headers.is_empty() || !rows.is_empty() {
-                out.push(Block::Table { headers, rows });
-            }
-        }
-        "img" => {
-            let el = el_ref.value();
-            if let Some(src) = el.attr("src") {
-                let bytes = resolve_image_bytes(src, attachments)?;
-                out.push(Block::Image {
-                    bytes,
-                    alt: el.attr("alt").unwrap_or("").to_owned(),
-                    width_pt: el.attr("width").and_then(parse_length_pt),
-                    height_pt: el.attr("height").and_then(parse_length_pt),
-                });
-            }
-        }
+        "ul" | "ol" => convert_html_list(el_ref, tag == "ol", ctx, depth + 1, out)?,
+        "table" => convert_html_table(el_ref, ctx, depth + 1, out)?,
+        "img" => convert_html_image(el_ref, ctx.attachments, out)?,
         "hr" => out.push(Block::HorizontalRule),
-        _ => collect_html_blocks(el_ref, sheet, attachments, out)?,
+        _ => collect_html_blocks(el_ref, ctx, depth + 1, out)?,
+    }
+    Ok(())
+}
+
+fn convert_html_table(
+    el_ref: ElementRef<'_>,
+    ctx: &mut HtmlConvertCtx<'_>,
+    depth: usize,
+    out: &mut Vec<Block>,
+) -> Result<(), RenderError> {
+    let mut headers = Vec::new();
+    let mut rows = Vec::new();
+    collect_table_rows(el_ref, false, ctx, depth, &mut headers, &mut rows)?;
+    if !headers.is_empty() || !rows.is_empty() {
+        out.push(Block::Table { headers, rows });
+    }
+    Ok(())
+}
+
+fn convert_html_image(
+    el_ref: ElementRef<'_>,
+    attachments: &BTreeMap<String, ResolvedImage>,
+    out: &mut Vec<Block>,
+) -> Result<(), RenderError> {
+    let el = el_ref.value();
+    if let Some(src) = el.attr("src") {
+        let source = resolve_image_source(src, attachments)?;
+        out.push(Block::Image {
+            source,
+            alt: el.attr("alt").unwrap_or("").to_owned(),
+            width_pt: el.attr("width").and_then(parse_length_pt),
+            height_pt: el.attr("height").and_then(parse_length_pt),
+        });
     }
     Ok(())
 }
@@ -236,10 +313,11 @@ fn convert_html_block(
 fn convert_html_list(
     el_ref: ElementRef<'_>,
     ordered: bool,
-    sheet: &ParsedStylesheet,
-    attachments: &BTreeMap<String, ResolvedImage>,
+    ctx: &mut HtmlConvertCtx<'_>,
+    depth: usize,
     out: &mut Vec<Block>,
 ) -> Result<(), RenderError> {
+    check_depth(depth)?;
     let start = el_ref
         .value()
         .attr("start")
@@ -249,7 +327,7 @@ fn convert_html_list(
     for child in el_ref.children().filter_map(ElementRef::wrap) {
         if child.value().name().eq_ignore_ascii_case("li") {
             let mut item_blocks = Vec::new();
-            collect_html_blocks(child, sheet, attachments, &mut item_blocks)?;
+            collect_html_blocks(child, ctx, depth + 1, &mut item_blocks)?;
             items.push(item_blocks);
         }
     }
@@ -266,19 +344,19 @@ fn convert_html_list(
 fn collect_table_rows(
     el_ref: ElementRef<'_>,
     in_thead: bool,
-    sheet: &ParsedStylesheet,
-    attachments: &BTreeMap<String, ResolvedImage>,
+    ctx: &mut HtmlConvertCtx<'_>,
+    depth: usize,
     headers: &mut Vec<TableRow>,
     rows: &mut Vec<TableRow>,
 ) -> Result<(), RenderError> {
+    check_depth(depth)?;
+    ctx.tick()?;
     for child in el_ref.children().filter_map(ElementRef::wrap) {
         match child.value().name().to_ascii_lowercase().as_str() {
-            "thead" => collect_table_rows(child, true, sheet, attachments, headers, rows)?,
-            "tbody" | "tfoot" => {
-                collect_table_rows(child, false, sheet, attachments, headers, rows)?;
-            }
+            "thead" => collect_table_rows(child, true, ctx, depth + 1, headers, rows)?,
+            "tbody" | "tfoot" => collect_table_rows(child, false, ctx, depth + 1, headers, rows)?,
             "tr" => {
-                let (cells, all_th) = collect_row_cells(child, in_thead, sheet, attachments)?;
+                let (cells, all_th) = collect_row_cells(child, in_thead, ctx, depth + 1)?;
                 if !cells.is_empty() {
                     if in_thead || all_th {
                         headers.push(TableRow { cells });
@@ -296,9 +374,10 @@ fn collect_table_rows(
 fn collect_row_cells(
     row_el: ElementRef<'_>,
     in_thead: bool,
-    sheet: &ParsedStylesheet,
-    attachments: &BTreeMap<String, ResolvedImage>,
+    ctx: &mut HtmlConvertCtx<'_>,
+    depth: usize,
 ) -> Result<(Vec<TableCell>, bool), RenderError> {
+    check_depth(depth)?;
     let mut cells = Vec::new();
     let mut all_th = true;
     for cell_el in row_el.children().filter_map(ElementRef::wrap) {
@@ -310,13 +389,13 @@ fn collect_row_cells(
         if cname == "td" {
             all_th = false;
         }
-        let cstyle = element_style(cell_el.value(), sheet, attachments)?;
+        let cstyle = ctx.element_style(cell_el.value())?;
         let mut spans = Vec::new();
         collect_inline_children(
             cell_el,
             InlineCtx::from_style(&cstyle),
-            sheet,
-            attachments,
+            ctx,
+            depth + 1,
             &mut spans,
         )?;
         cells.push(TableCell {
@@ -349,32 +428,19 @@ impl InlineCtx {
 
 fn collect_inline_children(
     parent: ElementRef<'_>,
-    ctx: InlineCtx,
-    sheet: &ParsedStylesheet,
-    attachments: &BTreeMap<String, ResolvedImage>,
+    inline_ctx: InlineCtx,
+    ctx: &mut HtmlConvertCtx<'_>,
+    depth: usize,
     out: &mut Vec<InlineSpan>,
 ) -> Result<(), RenderError> {
+    check_depth(depth)?;
+    ctx.tick()?;
     for child in parent.children() {
         match child.value() {
-            Node::Text(t) => {
-                let text = if ctx.code {
-                    t.text.to_string()
-                } else {
-                    collapse_ws(&t.text)
-                };
-                if !text.is_empty() {
-                    out.push(InlineSpan {
-                        text,
-                        bold: ctx.bold,
-                        italic: ctx.italic,
-                        code: ctx.code,
-                        color: ctx.color,
-                    });
-                }
-            }
+            Node::Text(t) => push_inline_text(&t.text, &inline_ctx, out),
             Node::Element(_) => {
                 if let Some(el_ref) = ElementRef::wrap(child) {
-                    collect_inline_el(el_ref, ctx.clone(), sheet, attachments, out)?;
+                    collect_inline_el(el_ref, inline_ctx.clone(), ctx, depth + 1, out)?;
                 }
             }
             _ => {}
@@ -383,36 +449,55 @@ fn collect_inline_children(
     Ok(())
 }
 
+fn push_inline_text(raw: &str, inline_ctx: &InlineCtx, out: &mut Vec<InlineSpan>) {
+    let text = if inline_ctx.code {
+        raw.to_owned()
+    } else {
+        collapse_ws(raw)
+    };
+    if !text.is_empty() {
+        out.push(InlineSpan {
+            text,
+            bold: inline_ctx.bold,
+            italic: inline_ctx.italic,
+            code: inline_ctx.code,
+            color: inline_ctx.color,
+        });
+    }
+}
+
 fn collect_inline_el(
     el_ref: ElementRef<'_>,
-    mut ctx: InlineCtx,
-    sheet: &ParsedStylesheet,
-    attachments: &BTreeMap<String, ResolvedImage>,
+    mut inline_ctx: InlineCtx,
+    ctx: &mut HtmlConvertCtx<'_>,
+    depth: usize,
     out: &mut Vec<InlineSpan>,
 ) -> Result<(), RenderError> {
+    check_depth(depth)?;
+    ctx.tick()?;
     let el = el_ref.value();
     let tag = el.name().to_ascii_lowercase();
     if tag == "br" {
         out.push(InlineSpan::plain("\n"));
         return Ok(());
     }
-    let style = element_style(el, sheet, attachments)?;
+    let style = ctx.element_style(el)?;
     if matches!(tag.as_str(), "strong" | "b") || style.bold == Some(true) {
-        ctx.bold = true;
+        inline_ctx.bold = true;
     }
     if matches!(tag.as_str(), "em" | "i") || style.italic == Some(true) {
-        ctx.italic = true;
+        inline_ctx.italic = true;
     }
     if tag == "code" || style.monospace == Some(true) {
-        ctx.code = true;
+        inline_ctx.code = true;
     }
     if let Some(c) = style.color {
-        ctx.color = Some(c);
+        inline_ctx.color = Some(c);
     }
     if tag == "a" && el.attr("href").is_some() {
-        ctx.color = ctx.color.or(Some(Rgb::LINK));
+        inline_ctx.color = inline_ctx.color.or(Some(Rgb::LINK));
     }
-    collect_inline_children(el_ref, ctx, sheet, attachments, out)
+    collect_inline_children(el_ref, inline_ctx, ctx, depth + 1, out)
 }
 
 fn collapse_ws(text: &str) -> String {

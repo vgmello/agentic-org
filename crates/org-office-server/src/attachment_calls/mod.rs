@@ -23,6 +23,7 @@ use org_proto::{ApiError, Call, ErrorCode, Outcome, Request, Response};
 use crate::failure::logged;
 use crate::federation::{blob_cache_max_bytes, HqBlobRemote};
 
+pub(crate) use render::RenderDelegation;
 #[cfg(test)]
 pub(crate) use render::RenderRuntime;
 
@@ -90,19 +91,37 @@ fn run<C: Call>(
 }
 
 /// Answers one attachment call for the bound `member`, or `None` for any other method.
+#[cfg(test)]
 pub(crate) fn dispatch_attachment_rpc(
     office: &Arc<Office>,
     member: Option<&str>,
     request: &Request,
 ) -> Option<Response> {
-    dispatch_attachment_rpc_with(office, render::default_runtime(), member, request)
+    dispatch_attachment_rpc_with(office, render::default_runtime(), member, None, request)
+}
+
+/// Answers one attachment call with optional Chief-of-Staff delegation context (`TASK-240`).
+pub(crate) fn dispatch_attachment_rpc_delegated(
+    office: &Arc<Office>,
+    member: Option<&str>,
+    delegation: Option<RenderDelegation<'_>>,
+    request: &Request,
+) -> Option<Response> {
+    dispatch_attachment_rpc_with(
+        office,
+        render::default_runtime(),
+        member,
+        delegation,
+        request,
+    )
 }
 
 /// Answers one attachment call using an explicit [`render::RenderRuntime`].
-fn dispatch_attachment_rpc_with(
+pub(crate) fn dispatch_attachment_rpc_with(
     office: &Arc<Office>,
     render_runtime: &render::RenderRuntime,
     member: Option<&str>,
+    delegation: Option<RenderDelegation<'_>>,
     request: &Request,
 ) -> Option<Response> {
     if !is_attachment_method(request) {
@@ -115,7 +134,7 @@ fn dispatch_attachment_rpc_with(
         ));
     };
     dispatch_uploads(office, caller, request)
-        .or_else(|| dispatch_files(office, render_runtime, caller, request))
+        .or_else(|| dispatch_files(office, render_runtime, caller, delegation, request))
 }
 
 fn dispatch_uploads(office: &Office, caller: &str, request: &Request) -> Option<Response> {
@@ -163,6 +182,7 @@ fn dispatch_files(
     office: &Arc<Office>,
     render_runtime: &render::RenderRuntime,
     caller: &str,
+    delegation: Option<RenderDelegation<'_>>,
     request: &Request,
 ) -> Option<Response> {
     if request.is::<AttachmentAttach>() {
@@ -192,7 +212,7 @@ fn dispatch_files(
     }
     if request.is::<AttachmentRender>() {
         return Some(run::<AttachmentRender>(request, |p| {
-            render::handle_render(office, render_runtime, caller, p)
+            render::handle_render(office, render_runtime, caller, delegation, p)
         }));
     }
     None

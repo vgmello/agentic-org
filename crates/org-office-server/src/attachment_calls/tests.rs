@@ -750,7 +750,8 @@ fn attachment_render_supports_chunked_large_input_and_chunked_large_pdf_output()
 
     let call_rt = |member: &str, params: &AttachmentRenderParams| {
         let req = Request::new::<AttachmentRender>(30, params).unwrap();
-        let resp = dispatch_attachment_rpc_with(&office, &runtime, Some(member), &req).unwrap();
+        let resp =
+            dispatch_attachment_rpc_with(&office, &runtime, Some(member), None, &req).unwrap();
         let mut wire = Vec::new();
         frame::write_message(&mut wire, &resp).expect("every chunk reply fits MAX_FRAME_BYTES");
         match resp.outcome {
@@ -837,4 +838,79 @@ fn attachment_render_supports_chunked_large_input_and_chunked_large_pdf_output()
     )
     .unwrap_err();
     assert_eq!(evicted.code, ErrorCode::NotFound);
+
+    // 4. Per-caller staged-input cap prevents one caller from starving others for 300s.
+    let mut agent_stages = Vec::new();
+    for i in 0..6 {
+        let s = call_rt(
+            &agent,
+            &AttachmentRenderParams {
+                format: RenderFormat::Pdf,
+                source_kind: RenderSourceKind::Markdown,
+                source_chunk_base64: Some(STANDARD.encode(format!("# Draft {i}\n"))),
+                input_eof: Some(false),
+                return_bytes: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        agent_stages.push(s.render_id.unwrap());
+    }
+    // Owner can still open and finalize a staged input immediately despite agent's 6 drafts.
+    let owner_stage = call_rt(
+        &owner,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Markdown,
+            source_chunk_base64: Some(STANDARD.encode(b"# Owner ok\n")),
+            input_eof: Some(false),
+            return_bytes: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let owner_id = owner_stage.render_id.unwrap();
+    let owner_done = call_rt(
+        &owner,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Markdown,
+            render_id: Some(owner_id),
+            source_chunk_base64: Some(STANDARD.encode(b"done\n")),
+            input_eof: Some(true),
+            return_bytes: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(owner_done.page_count, 1);
+
+    // Agent's oldest staged input was evicted by the per-caller cap.
+    let evicted_stage = call_rt(
+        &agent,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Markdown,
+            render_id: Some(agent_stages[0].clone()),
+            source_chunk_base64: Some(STANDARD.encode(b"tail")),
+            input_eof: Some(true),
+            return_bytes: true,
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(evicted_stage.code, ErrorCode::NotFound);
+
+    // 5. Huge u64 chunk_offset fails cleanly with InvalidRequest (never truncates via `as usize`).
+    let bad_offset = call_rt(
+        &owner,
+        &AttachmentRenderParams {
+            return_bytes: true,
+            render_id: Some(owner_done.render_id.unwrap()),
+            chunk_offset: Some(u64::MAX),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(bad_offset.code, ErrorCode::InvalidRequest);
 }

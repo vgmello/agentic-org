@@ -18,9 +18,10 @@ mod tests;
 
 pub use bounded::{BoundedDocumentRenderer, PdfWriterRenderer};
 pub use model::{
-    DocumentRenderer, RenderError, RenderLimits, RenderRequest, RenderedPdf, ResolvedImage,
-    SourceKind, DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_PAGES, DEFAULT_TIMEOUT, MAX_EMBEDDED_IMAGES,
-    MAX_IMAGE_DECODED_BYTES, MAX_IMAGE_DIMENSION, MAX_PDF_BYTES, MAX_SOURCE_BYTES,
+    DocumentRenderer, RenderDeadline, RenderError, RenderLimits, RenderRequest, RenderedPdf,
+    ResolvedImage, SourceKind, DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_PAGES, DEFAULT_TIMEOUT,
+    MAX_EMBEDDED_IMAGES, MAX_IMAGE_DECODED_BYTES, MAX_IMAGE_DIMENSION, MAX_PDF_BYTES,
+    MAX_SOURCE_BYTES, MAX_TOTAL_IMAGE_DECODED_BYTES,
 };
 pub use pdf::count_pdf_pages;
 pub use sanitize::extract_attachment_refs;

@@ -6,7 +6,7 @@
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
-use org_command::{Answer, Refusal, Request};
+use org_command::{Answer, Command, CommandTable, Refusal, Request};
 use org_proto::attachments::{
     ArtifactStatus, AttachmentRender, AttachmentRenderParams, AttachmentRenderResult, RenderFormat,
     ATTACHMENT_CHUNK_MAX_BYTES, ATTACHMENT_DOCUMENT_MAX_BYTES,
@@ -25,9 +25,9 @@ use crate::runtime::input::{
 };
 use crate::runtime::transport::OfficeTransport;
 
-/// Maximum combined raw UTF-8 source + CSS bytes sent inline in one JSON RPC frame (512 KiB),
-/// staying safely below `MAX_FRAME_BYTES` (1 MiB) even with JSON escaping overhead.
-const INLINE_SOURCE_FRAME_CAP: usize = 512 * 1024;
+/// Maximum serialized JSON payload byte length sent inline in one `attachment.render` frame
+/// (768 KiB), leaving >= 256 KiB headroom inside `MAX_FRAME_BYTES` (1 MiB) for the RPC envelope.
+const MAX_INLINE_FRAME_BYTES: usize = 768 * 1024;
 
 enum RenderDest {
     Hosted(TargetResolution),
@@ -36,47 +36,78 @@ enum RenderDest {
 
 /// Rewrites `--format <doc-format>` / `--format=<doc-format>` on `file render` into `--to`
 /// whenever `<doc-format>` is not one of `org-command`'s global stdout envelope formats
-/// (`json`, `yaml`, `compact`).
-pub(crate) fn rewrite_render_args(args: &[String]) -> Option<Vec<String>> {
+/// (`json`, `yaml`, `compact`). Steps over flag values via [`Command::flag_takes_value`] so a
+/// value like `--title --format` is never misinterpreted as a flag.
+pub(crate) fn rewrite_render_args(table: &CommandTable, args: &[String]) -> Option<Vec<String>> {
     let [resource, verb, rest @ ..] = args else {
         return None;
     };
     if resource != "file" || verb != "render" {
         return None;
     }
+    let command = table.find(resource, verb)?;
     let mut out = Vec::with_capacity(args.len());
     out.push(resource.clone());
     out.push(verb.clone());
     let mut changed = false;
     let mut i = 0usize;
-    while i < rest.len() {
-        let arg = &rest[i];
+    while let Some(arg) = rest.get(i) {
         if arg == "--" {
             out.extend_from_slice(&rest[i..]);
             break;
         }
-        if arg == "--format" {
-            if let Some(val) = rest.get(i + 1) {
-                if !is_envelope_format(val) {
-                    out.push("--to".to_owned());
-                    out.push(val.clone());
-                    changed = true;
-                    i += 2;
-                    continue;
-                }
-            }
-        } else if let Some(val) = arg.strip_prefix("--format=") {
-            if !is_envelope_format(val) {
-                out.push(format!("--to={val}"));
-                changed = true;
-                i += 1;
-                continue;
-            }
-        }
-        out.push(arg.clone());
-        i += 1;
+        changed |= rewrite_render_token(command, arg, rest, &mut i, &mut out);
     }
     changed.then_some(out)
+}
+
+fn rewrite_render_token(
+    command: &Command,
+    arg: &str,
+    rest: &[String],
+    i: &mut usize,
+    out: &mut Vec<String>,
+) -> bool {
+    if arg == "--format" {
+        return rewrite_split_format_flag(rest, i, out);
+    }
+    if let Some(val) = arg.strip_prefix("--format=") {
+        if !is_envelope_format(val) {
+            out.push(format!("--to={val}"));
+            *i += 1;
+            return true;
+        }
+    }
+    out.push(arg.to_owned());
+    *i += 1;
+    let flag_name = arg
+        .strip_prefix("--")
+        .filter(|n| !n.is_empty() && !n.contains('='));
+    if flag_name.is_some_and(|n| command.flag_takes_value(n) == Some(true)) {
+        if let Some(val) = rest.get(*i) {
+            out.push(val.clone());
+            *i += 1;
+        }
+    }
+    false
+}
+
+fn rewrite_split_format_flag(rest: &[String], i: &mut usize, out: &mut Vec<String>) -> bool {
+    let Some(val) = rest.get(*i + 1) else {
+        out.push("--format".to_owned());
+        *i += 1;
+        return false;
+    };
+    *i += 2;
+    if is_envelope_format(val) {
+        out.push("--format".to_owned());
+        out.push(val.clone());
+        false
+    } else {
+        out.push("--to".to_owned());
+        out.push(val.clone());
+        true
+    }
 }
 
 fn is_envelope_format(val: &str) -> bool {
@@ -238,40 +269,60 @@ fn build_base_params(
     }
 }
 
+enum RenderChunkKind {
+    Source,
+    Css,
+}
+
 fn send_render_rpc<T: OfficeTransport + ?Sized>(
     transport: &mut T,
-    mut base: AttachmentRenderParams,
+    base: AttachmentRenderParams,
     local: &LocalRenderInputs,
 ) -> Result<AttachmentRenderResult, Refusal> {
-    let total_raw = local
-        .source
-        .len()
-        .saturating_add(local.css.as_deref().map_or(0, str::len));
-    if total_raw <= INLINE_SOURCE_FRAME_CAP {
-        base.source = local.source.clone();
-        base.css = local.css.clone();
-        let raw = transport.call_method(AttachmentRender::METHOD, json!(base))?;
+    let mut inline = base.clone();
+    inline.source = local.source.clone();
+    inline.css = local.css.clone();
+    if serde_json::to_vec(&inline).is_ok_and(|bytes| bytes.len() <= MAX_INLINE_FRAME_BYTES) {
+        let raw = transport.call_method(AttachmentRender::METHOD, json!(inline))?;
         return serde_json::from_value(raw).map_err(|_| decode_err(AttachmentRender::METHOD));
     }
+    stream_chunked_render_inputs(transport, &base, local)
+}
 
-    // Stream oversized (<= 2 MiB) source + CSS in <= 512 KiB base64 chunks so every request
-    // fits comfortably inside `MAX_FRAME_BYTES` (1 MiB).
+/// Streams source chunks FIRST, then CSS chunks in separate frames (never putting both large
+/// chunks in the same JSON frame), setting `input_eof: Some(true)` ONLY on the final frame.
+fn stream_chunked_render_inputs<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+    base: &AttachmentRenderParams,
+    local: &LocalRenderInputs,
+) -> Result<AttachmentRenderResult, Refusal> {
     let chunk_max = ATTACHMENT_CHUNK_MAX_BYTES as usize;
-    let src_chunks: Vec<&[u8]> = local.source.as_bytes().chunks(chunk_max).collect();
-    let css_chunks: Vec<&[u8]> = local
-        .css
-        .as_deref()
-        .map(|c| c.as_bytes().chunks(chunk_max).collect())
-        .unwrap_or_default();
-    let total_steps = src_chunks.len().max(css_chunks.len()).max(1);
-    let mut render_id: Option<String> = None;
+    let mut frames: Vec<(RenderChunkKind, &[u8])> = local
+        .source
+        .as_bytes()
+        .chunks(chunk_max)
+        .map(|c| (RenderChunkKind::Source, c))
+        .collect();
+    if frames.is_empty() {
+        frames.push((RenderChunkKind::Source, b""));
+    }
+    if let Some(css) = local.css.as_deref().filter(|c| !c.is_empty()) {
+        frames.extend(
+            css.as_bytes()
+                .chunks(chunk_max)
+                .map(|c| (RenderChunkKind::Css, c)),
+        );
+    }
 
-    for step in 0..total_steps {
+    let mut render_id: Option<String> = None;
+    for (idx, (kind, chunk)) in frames.iter().enumerate() {
         let mut req = base.clone();
         req.render_id = render_id.clone();
-        req.source_chunk_base64 = src_chunks.get(step).map(|c| STANDARD.encode(c));
-        req.css_chunk_base64 = css_chunks.get(step).map(|c| STANDARD.encode(c));
-        let is_last = step + 1 == total_steps;
+        match kind {
+            RenderChunkKind::Source => req.source_chunk_base64 = Some(STANDARD.encode(chunk)),
+            RenderChunkKind::Css => req.css_chunk_base64 = Some(STANDARD.encode(chunk)),
+        }
+        let is_last = idx + 1 == frames.len();
         req.input_eof = Some(is_last);
         let raw = transport.call_method(AttachmentRender::METHOD, json!(req))?;
         let reply: AttachmentRenderResult =

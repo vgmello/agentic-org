@@ -437,3 +437,290 @@ fn debug_implementations_redact_payload_bytes() {
     map.insert("a".to_owned(), img);
     assert_eq!(map.len(), 1);
 }
+
+fn solid_png_bytes(width: u32, height: u32, rgba: [u8; 4]) -> Vec<u8> {
+    let img = RgbaImage::from_pixel(width, height, Rgba(rgba));
+    let mut out = Cursor::new(Vec::new());
+    img.write_to(&mut out, ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+#[test]
+fn multibyte_utf8_in_css_never_panics_and_renders_valid_pdf() {
+    let renderer = BoundedDocumentRenderer::production();
+    let css = r#"
+@page {
+  @top-left { content: —; }
+  @top-right { content: "Café — €100 " counter(page) "/" counter(pages); }
+}
+h1 { color: #€; background: #€€; }
+.über-klasse { color: #123456; }
+p { color: #€a; }
+"#;
+    let pdf = renderer
+        .render_html_to_pdf(
+            &RenderRequest::html(r#"<h1 class="über-klasse">Über</h1><p>Résumé €100 — ok</p>"#)
+                .with_css(css),
+        )
+        .expect("multibyte UTF-8 CSS must not panic");
+    assert_valid_pdf(&pdf, 1);
+}
+
+#[test]
+fn image_decompression_bomb_deduplication_and_markdown_raw_img_limit() {
+    let renderer = BoundedDocumentRenderer::production();
+    let att_id = "0193a5c0-0000-7000-8000-000000000777";
+
+    // (a) Small compressed high-dimension PNG bomb (2048x2048 -> 16 MiB RGBA > 4 MiB per-image cap).
+    let bomb = solid_png_bytes(2048, 2048, [10, 20, 30, 255]);
+    assert!(bomb.len() < 100_000, "solid PNG compresses tiny");
+    let mut bomb_req = RenderRequest::html(format!(r#"<img src="attachment:{att_id}">"#));
+    bomb_req.attachments.insert(
+        att_id.to_owned(),
+        ResolvedImage {
+            mime_type: "image/png".to_owned(),
+            bytes: bomb,
+        },
+    );
+    let err = renderer.render_html_to_pdf(&bomb_req).unwrap_err();
+    assert!(
+        matches!(err, RenderError::ForbiddenContent { .. }),
+        "{err:?}"
+    );
+
+    // (b) 32x repeated 512x512 RGBA image (1 MiB each): deduplicates cleanly within 16 MiB cap!
+    let tile = solid_png_bytes(512, 512, [40, 80, 120, 255]);
+    let repeated_html: String = (0..32)
+        .map(|_| format!(r#"<img src="attachment:{att_id}" width="16pt">"#))
+        .collect();
+    let mut dedup_req = RenderRequest::html(repeated_html);
+    dedup_req.attachments.insert(
+        att_id.to_owned(),
+        ResolvedImage {
+            mime_type: "image/png".to_owned(),
+            bytes: tile,
+        },
+    );
+    let dedup_pdf = renderer
+        .render_html_to_pdf(&dedup_req)
+        .expect("32x repeated image deduplicates cleanly");
+    assert_valid_pdf(&dedup_pdf, 1);
+
+    // (b2) 5 distinct 1024x1024 RGBA images (5 * 4 MiB = 20 MiB > 16 MiB cumulative cap) fail closed.
+    let mut over_budget_html = String::new();
+    let mut over_req = RenderRequest::html(String::new());
+    for i in 1..=5u8 {
+        let id = format!("0193a5c0-0000-7000-8000-00000000078{i}");
+        over_budget_html.push_str(&format!(r#"<img src="attachment:{id}" width="16pt">"#));
+        over_req.attachments.insert(
+            id,
+            ResolvedImage {
+                mime_type: "image/png".to_owned(),
+                bytes: solid_png_bytes(1024, 1024, [i * 20, 40, 60, 255]),
+            },
+        );
+    }
+    over_req.source = over_budget_html;
+    let err = renderer.render_html_to_pdf(&over_req).unwrap_err();
+    assert!(
+        matches!(err, RenderError::ForbiddenContent { .. }),
+        "{err:?}"
+    );
+
+    // (c) 40 raw `<img src="attachment:...">` tags in Markdown share MAX_EMBEDDED_IMAGES=32 cap.
+    let tiny = tiny_png_bytes();
+    let forty_raw_md: String = (0..40)
+        .map(|_| format!("<img src=\"attachment:{att_id}\">\n"))
+        .collect();
+    let mut md_req = RenderRequest::markdown(forty_raw_md);
+    md_req.attachments.insert(
+        att_id.to_owned(),
+        ResolvedImage {
+            mime_type: "image/png".to_owned(),
+            bytes: tiny,
+        },
+    );
+    let err = renderer.render_markdown_to_pdf(&md_req).unwrap_err();
+    assert!(
+        matches!(err, RenderError::ForbiddenContent { .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn deeply_nested_html_and_markdown_fail_closed_without_stack_overflow() {
+    let renderer = BoundedDocumentRenderer::production();
+
+    let deep_divs = format!("{}{}", "<div>".repeat(5_000), "</div>".repeat(5_000));
+    let err = renderer
+        .render_html_to_pdf(&RenderRequest::html(deep_divs))
+        .unwrap_err();
+    assert!(
+        matches!(err, RenderError::ForbiddenContent { .. }),
+        "{err:?}"
+    );
+
+    let deep_spans = format!("{}x{}", "<span>".repeat(5_000), "</span>".repeat(5_000));
+    let err = renderer
+        .render_html_to_pdf(&RenderRequest::html(deep_spans))
+        .unwrap_err();
+    assert!(
+        matches!(err, RenderError::ForbiddenContent { .. }),
+        "{err:?}"
+    );
+
+    let deep_quotes = format!("{}deep", "> ".repeat(200));
+    let err = renderer
+        .render_markdown_to_pdf(&RenderRequest::markdown(deep_quotes))
+        .unwrap_err();
+    assert!(
+        matches!(err, RenderError::ForbiddenContent { .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn multiline_markdown_html_blocks_template_tag_and_css_blocklist_fail_closed() {
+    let renderer = BoundedDocumentRenderer::production();
+
+    for bad_md in [
+        "<style>\n@import \"http://evil.example/a.css\";\n</style>\n\n# Hi",
+        "<script\nsrc=\"http://evil.example/x.js\"></script>\n\n# Hi",
+        "<img\nsrc=\"file:///etc/passwd\">\n\n# Hi",
+        "text <img\nsrc=\"file:///etc/passwd\">",
+        "<template><img src=\"http://evil.example/x.png\"></template>\n",
+        "hello <style>@import \"http://evil.example/a.css\";</style>",
+        "<script src=\"http://evil.example/x.js\"",
+        "<div data-unclosed=\"1\"",
+        "hello <script>alert(1)",
+        "hello <iframe src=\"https://evil.example\">",
+    ] {
+        let err = renderer
+            .render_markdown_to_pdf(&RenderRequest::markdown(bad_md))
+            .expect_err(&format!(
+                "expected Markdown vector to fail closed: {bad_md}"
+            ));
+        assert!(
+            matches!(
+                err,
+                RenderError::ForbiddenContent { .. } | RenderError::ForbiddenResourceUrl { .. }
+            ),
+            "unexpected error for `{bad_md}`: {err:?}"
+        );
+    }
+
+    let tmpl_err = renderer
+        .render_html_to_pdf(&RenderRequest::html(
+            r#"<template><img src="http://evil.example/x.png"></template><p>ok</p>"#,
+        ))
+        .unwrap_err();
+    assert!(
+        matches!(tmpl_err, RenderError::ForbiddenContent { .. }),
+        "{tmpl_err:?}"
+    );
+
+    for bad_css in [
+        r#"body { background-image: image-set(url("https://evil.example/a.png") 1x); }"#,
+        r#"body { background-image: -webkit-image-set("https://evil.example/a.png" 1x); }"#,
+        r#"@font-face { font-family: x; src: url("https://evil.example/a.woff2"); }"#,
+        r#"@namespace url("http://www.w3.org/1999/xhtml");"#,
+        "body { width: expression \t\n (alert(1)); }",
+    ] {
+        let err = renderer
+            .render_html_to_pdf(&RenderRequest::html("<p>safe</p>").with_css(bad_css))
+            .expect_err(&format!("expected CSS vector to fail closed: {bad_css}"));
+        assert!(
+            matches!(
+                err,
+                RenderError::ForbiddenContent { .. } | RenderError::ForbiddenResourceUrl { .. }
+            ),
+            "unexpected CSS error for `{bad_css}`: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn cooperative_deadline_aborts_timeout_and_releases_semaphore_permit_promptly() {
+    use crate::RenderDeadline;
+
+    struct CooperativeSlowRenderer {
+        real: PdfWriterRenderer,
+    }
+
+    impl DocumentRenderer for CooperativeSlowRenderer {
+        fn render_markdown_to_pdf(&self, req: &RenderRequest) -> Result<RenderedPdf, RenderError> {
+            self.real.render_markdown_to_pdf(req)
+        }
+        fn render_html_to_pdf(&self, req: &RenderRequest) -> Result<RenderedPdf, RenderError> {
+            self.real.render_html_to_pdf(req)
+        }
+        fn render_with_deadline(
+            &self,
+            req: &RenderRequest,
+            deadline: Option<&RenderDeadline>,
+        ) -> Result<RenderedPdf, RenderError> {
+            if req.source.contains("SPIN") {
+                for _ in 0..500 {
+                    if let Some(d) = deadline {
+                        d.check()?;
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }
+            self.real.render_with_deadline(req, deadline)
+        }
+    }
+
+    let bounded = BoundedDocumentRenderer::new(
+        CooperativeSlowRenderer {
+            real: PdfWriterRenderer::default(),
+        },
+        RenderLimits {
+            max_concurrency: 1,
+            timeout: Duration::from_millis(35),
+            ..RenderLimits::default()
+        },
+    );
+
+    let err = bounded
+        .render_markdown_to_pdf(&RenderRequest::markdown("SPIN forever"))
+        .unwrap_err();
+    assert!(matches!(err, RenderError::Timeout { .. }), "{err:?}");
+
+    // Cooperative cancel aborts the worker promptly so the sole permit is immediately reusable!
+    let recovered = bounded
+        .render_markdown_to_pdf(&RenderRequest::markdown("# Fast Recovery"))
+        .expect("single semaphore permit must be released promptly after timeout");
+    assert_valid_pdf(&recovered, 1);
+
+    // Real PdfWriterRenderer also honors tiny deadline fail-closed.
+    let real_tiny = BoundedDocumentRenderer::new(
+        PdfWriterRenderer::default(),
+        RenderLimits {
+            max_concurrency: 1,
+            timeout: Duration::from_nanos(1),
+            ..RenderLimits::default()
+        },
+    );
+    let mut big_rows = String::from("<table>");
+    for i in 0..400 {
+        big_rows.push_str(&format!("<tr><td>R{i}</td><td>Row {i}</td></tr>"));
+    }
+    big_rows.push_str("</table>");
+    let err = real_tiny
+        .render_html_to_pdf(&RenderRequest::html(big_rows))
+        .unwrap_err();
+    assert!(matches!(err, RenderError::Timeout { .. }), "{err:?}");
+}
+
+#[test]
+fn count_pdf_pages_uses_max_of_pages_count_and_page_leaves() {
+    let forged = b"%PDF-1.7\n\
+1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n\
+2 0 obj<< /Type /Pages /Count 1 /Kids [3 0 R 4 0 R 5 0 R] >>endobj\n\
+3 0 obj<< /Type /Page /Parent 2 0 R >>endobj\n\
+4 0 obj<< /Type /Page /Parent 2 0 R >>endobj\n\
+5 0 obj<< /Type /Page /Parent 2 0 R >>endobj\n\
+xref\n0 1\n0000000000 65535 f \ntrailer<<>>\nstartxref\n10\n%%EOF\n";
+    assert_eq!(count_pdf_pages(forged).unwrap(), 3);
+}

@@ -312,19 +312,8 @@ fn reject_dangerous_css(
     validate_url: &impl Fn(&str) -> Result<(), RenderError>,
 ) -> Result<(), RenderError> {
     let lower = css.to_ascii_lowercase();
-    if lower.contains("@import") {
-        return Err(RenderError::ForbiddenResourceUrl {
-            url: "@import".to_owned(),
-            reason: "CSS @import rules are forbidden",
-        });
-    }
-    for forbidden in ["expression(", "expression (", "-moz-binding", "behavior:"] {
-        if lower.contains(forbidden) {
-            return Err(RenderError::ForbiddenContent {
-                reason: "legacy active CSS expressions or bindings are forbidden",
-            });
-        }
-    }
+    reject_forbidden_css_at_rules(&lower)?;
+    reject_forbidden_css_functions(&lower)?;
     if lower.contains("javascript:") || lower.contains("vbscript:") {
         return Err(RenderError::ForbiddenResourceUrl {
             url: "script-uri".to_owned(),
@@ -332,6 +321,52 @@ fn reject_dangerous_css(
         });
     }
     scan_css_urls(css, &lower, validate_url)
+}
+
+fn reject_forbidden_css_at_rules(lower: &str) -> Result<(), RenderError> {
+    for (rule, reason) in [
+        ("@import", "CSS @import rules are forbidden"),
+        ("@font-face", "CSS @font-face rules are forbidden"),
+        ("@namespace", "CSS @namespace rules are forbidden"),
+    ] {
+        if lower.contains(rule) {
+            return Err(RenderError::ForbiddenResourceUrl {
+                url: rule.to_owned(),
+                reason,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn reject_forbidden_css_functions(lower: &str) -> Result<(), RenderError> {
+    if contains_css_function_call(lower, "image-set") {
+        return Err(RenderError::ForbiddenResourceUrl {
+            url: "image-set(...)".to_owned(),
+            reason: "CSS image-set() resource references are forbidden",
+        });
+    }
+    if contains_css_function_call(lower, "expression")
+        || lower.contains("-moz-binding")
+        || lower.contains("behavior:")
+    {
+        return Err(RenderError::ForbiddenContent {
+            reason: "legacy active CSS expressions or bindings are forbidden",
+        });
+    }
+    Ok(())
+}
+
+fn contains_css_function_call(lower: &str, name: &str) -> bool {
+    let mut offset = 0usize;
+    while let Some(rel) = lower[offset..].find(name) {
+        let after = offset + rel + name.len();
+        if lower[after..].trim_start().starts_with('(') {
+            return true;
+        }
+        offset = after;
+    }
+    false
 }
 
 fn scan_css_urls(
@@ -484,38 +519,54 @@ fn parse_margin_box(body: &str) -> MarginBoxSpec {
 /// Parses a CSS `@page` `content:` expression supporting strings and `counter(page)` / `counter(pages)`.
 fn parse_css_content(raw: &str) -> String {
     let mut out = String::new();
-    let bytes = raw.as_bytes();
     let mut i = 0usize;
-    while i < bytes.len() {
-        let ch = bytes[i];
-        if ch == b'"' || ch == b'\'' {
-            let q = ch;
-            i += 1;
-            let start = i;
-            while i < bytes.len() && bytes[i] != q {
-                i += 1;
-            }
-            out.push_str(&raw[start..i]);
-            if i < bytes.len() {
-                i += 1;
-            }
-        } else if raw[i..].to_ascii_lowercase().starts_with("counter(") {
-            if let Some(end) = raw[i..].find(')') {
-                let name = raw[i + 8..i + end].trim().to_ascii_lowercase();
-                if name == "page" {
-                    out.push_str("{page}");
-                } else if name == "pages" {
-                    out.push_str("{pages}");
-                }
-                i += end + 1;
-            } else {
-                break;
-            }
+    while let Some(ch) = raw[i..].chars().next() {
+        if ch == '"' || ch == '\'' {
+            i = consume_quoted_css_string(raw, i, ch, &mut out);
+        } else if let Some(next_i) = consume_css_counter(raw, i, &mut out) {
+            i = next_i;
         } else {
-            i += 1;
+            i += ch.len_utf8();
         }
     }
     out
+}
+
+fn consume_quoted_css_string(
+    raw: &str,
+    start_quote: usize,
+    quote: char,
+    out: &mut String,
+) -> usize {
+    let mut i = start_quote + quote.len_utf8();
+    let content_start = i;
+    while let Some(ch) = raw[i..].chars().next() {
+        if ch == quote {
+            out.push_str(&raw[content_start..i]);
+            return i + ch.len_utf8();
+        }
+        i += ch.len_utf8();
+    }
+    out.push_str(&raw[content_start..i]);
+    i
+}
+
+fn consume_css_counter(raw: &str, start: usize, out: &mut String) -> Option<usize> {
+    let slice = &raw[start..];
+    if !slice
+        .get(..8)
+        .is_some_and(|p| p.eq_ignore_ascii_case("counter("))
+    {
+        return None;
+    }
+    let end = slice.find(')')?;
+    let name = slice[8..end].trim().to_ascii_lowercase();
+    if name == "page" {
+        out.push_str("{page}");
+    } else if name == "pages" {
+        out.push_str("{pages}");
+    }
+    Some(start + end + 1)
 }
 
 fn apply_page_decl(page: &mut PageStyle, key: &str, val: &str) {
@@ -716,6 +767,9 @@ fn parse_color(raw: &str) -> Option<Rgb> {
 
 fn parse_hex_color(hex: &str) -> Option<Rgb> {
     let bytes = hex.as_bytes();
+    if !bytes.iter().all(u8::is_ascii_hexdigit) {
+        return None;
+    }
     let (r, g, b) = match bytes.len() {
         3 => (
             u8::from_str_radix(&hex[0..1], 16).ok()? * 17,

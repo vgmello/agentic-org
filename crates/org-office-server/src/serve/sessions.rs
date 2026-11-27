@@ -107,7 +107,7 @@ pub(super) fn project_or_hiring(
         .or_else(|| hiring_rpc(request, shared, binding, delegation))
         .or_else(|| sessions_rpc(request, shared, binding, delegation))
         .or_else(|| tasks_rpc(request, shared, binding))
-        .or_else(|| attachments_rpc(request, shared, binding))
+        .or_else(|| attachments_rpc(request, shared, binding, delegation))
         .or_else(|| git_rpc(request, shared, binding))
         .or_else(|| processes_rpc(request, shared, binding))
         .or_else(|| docs_rpc(request, shared, binding))

@@ -1464,6 +1464,7 @@ dependencies = [
  "org-sync-proto",
  "org-tess",
  "proc-macro2",
+ "ring",
  "rustls",
  "serde",
  "serde_json",

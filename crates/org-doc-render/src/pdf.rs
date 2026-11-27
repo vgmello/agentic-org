@@ -8,15 +8,28 @@ use flate2::Compression;
 use pdf_writer::types::FontFlags;
 use pdf_writer::{Content, Filter, Finish, Name, Pdf, Rect, Ref, Str, TextStr};
 
-use crate::layout::{DrawOp, EmbeddedImage, FontKind, LayoutPlan};
-use crate::model::{RenderError, RenderedPdf};
+use crate::layout::{DrawOp, EmbeddedImage, FontKind, LayoutPlan, PagePlan};
+use crate::model::{check_deadline, RenderDeadline, RenderError, RenderedPdf};
 
 const INFLATE_BUDGET: u64 = 32 * 1024 * 1024;
 const MAX_OBJECT_STREAMS: usize = 2_048;
 const TAIL_BYTES: usize = 2_048;
 
+const FONT_SPECS: [(FontKind, &[u8]); 6] = [
+    (FontKind::Regular, b"Helvetica"),
+    (FontKind::Bold, b"Helvetica-Bold"),
+    (FontKind::Italic, b"Helvetica-Oblique"),
+    (FontKind::BoldItalic, b"Helvetica-BoldOblique"),
+    (FontKind::Mono, b"Courier"),
+    (FontKind::MonoBold, b"Courier-Bold"),
+];
+
 /// Emits a valid PDF 1.7 document from a paginated [`LayoutPlan`].
-pub(crate) fn emit_pdf(plan: &LayoutPlan) -> Result<RenderedPdf, RenderError> {
+pub(crate) fn emit_pdf(
+    plan: &LayoutPlan,
+    deadline: Option<&RenderDeadline>,
+) -> Result<RenderedPdf, RenderError> {
+    check_deadline(deadline)?;
     let mut pdf = Pdf::new();
     let mut next_id = 1i32;
     let mut alloc = || {
@@ -29,82 +42,39 @@ pub(crate) fn emit_pdf(plan: &LayoutPlan) -> Result<RenderedPdf, RenderError> {
     let pages_id = alloc();
     let info_id = alloc();
     let font_ids = [alloc(), alloc(), alloc(), alloc(), alloc(), alloc()];
-    let font_specs: [(FontKind, &[u8]); 6] = [
-        (FontKind::Regular, b"Helvetica"),
-        (FontKind::Bold, b"Helvetica-Bold"),
-        (FontKind::Italic, b"Helvetica-Oblique"),
-        (FontKind::BoldItalic, b"Helvetica-BoldOblique"),
-        (FontKind::Mono, b"Courier"),
-        (FontKind::MonoBold, b"Courier-Bold"),
-    ];
-
-    let mut image_refs = Vec::with_capacity(plan.images.len());
-    for img in &plan.images {
-        let img_id = alloc();
-        let smask_id = img.alpha.as_ref().map(|_| alloc());
-        image_refs.push((img_id, smask_id));
-    }
-
-    let mut page_ids = Vec::with_capacity(plan.pages.len());
-    let mut content_ids = Vec::with_capacity(plan.pages.len());
-    for _ in &plan.pages {
-        page_ids.push(alloc());
-        content_ids.push(alloc());
-    }
+    let image_refs: Vec<(Ref, Option<Ref>)> = plan
+        .images
+        .iter()
+        .map(|img| (alloc(), img.alpha.as_ref().map(|_| alloc())))
+        .collect();
+    let page_ids: Vec<Ref> = plan.pages.iter().map(|_| alloc()).collect();
+    let content_ids: Vec<Ref> = plan.pages.iter().map(|_| alloc()).collect();
 
     pdf.catalog(catalog_id).pages(pages_id);
     pdf.pages(pages_id)
         .kids(page_ids.iter().copied())
         .count(i32::try_from(page_ids.len()).unwrap_or(i32::MAX));
 
-    let mut info = pdf.document_info(info_id);
-    if let Some(title) = plan.title.as_deref() {
-        info.title(TextStr(title));
-    }
-    info.producer(TextStr("Agentic Org org-doc-render"));
-    info.finish();
-
-    for (idx, (_, base_font)) in font_specs.iter().enumerate() {
-        let mut font = pdf.type1_font(font_ids[idx]);
-        font.base_font(Name(base_font));
-        font.encoding_predefined(Name(b"WinAnsiEncoding"));
-        let _ = FontFlags::NON_SYMBOLIC;
-        font.finish();
-    }
+    write_document_info_and_fonts(&mut pdf, info_id, plan.title.as_deref(), &font_ids);
 
     for (img, (img_id, smask_id)) in plan.images.iter().zip(&image_refs) {
+        check_deadline(deadline)?;
         write_image_xobject(&mut pdf, *img_id, *smask_id, img)?;
     }
 
     let media_box = Rect::new(0.0, 0.0, plan.page.width_pt, plan.page.height_pt);
     for (idx, page_plan) in plan.pages.iter().enumerate() {
-        let mut page = pdf.page(page_ids[idx]);
-        page.parent(pages_id);
-        page.media_box(media_box);
-        page.contents(content_ids[idx]);
-        {
-            let mut resources = page.resources();
-            {
-                let mut fonts = resources.fonts();
-                for (f_idx, (kind, _)) in font_specs.iter().enumerate() {
-                    fonts.pair(Name(kind.pdf_name()), font_ids[f_idx]);
-                }
-            }
-            if !image_refs.is_empty() {
-                let mut xobjs = resources.x_objects();
-                for (img_idx, (img_id, _)) in image_refs.iter().enumerate() {
-                    let name = format!("Im{}", img_idx + 1);
-                    xobjs.pair(Name(name.as_bytes()), *img_id);
-                }
-            }
-        }
-        page.finish();
-
-        let stream_bytes = build_page_content(&page_plan.ops);
-        let compressed = compress_zlib(&stream_bytes)?;
-        let mut stream = pdf.stream(content_ids[idx], &compressed);
-        stream.filter(Filter::FlateDecode);
-        stream.finish();
+        check_deadline(deadline)?;
+        write_pdf_page(
+            &mut pdf,
+            page_ids[idx],
+            pages_id,
+            content_ids[idx],
+            media_box,
+            &font_ids,
+            &image_refs,
+            page_plan,
+        )?;
     }
 
     let bytes = pdf.finish();
@@ -115,6 +85,72 @@ pub(crate) fn emit_pdf(plan: &LayoutPlan) -> Result<RenderedPdf, RenderError> {
         page_count,
         byte_count,
     })
+}
+
+fn write_document_info_and_fonts(
+    pdf: &mut Pdf,
+    info_id: Ref,
+    title: Option<&str>,
+    font_ids: &[Ref; 6],
+) {
+    let mut info = pdf.document_info(info_id);
+    if let Some(title) = title {
+        info.title(TextStr(title));
+    }
+    info.producer(TextStr("Agentic Org org-doc-render"));
+    info.finish();
+
+    for (idx, (_, base_font)) in FONT_SPECS.iter().enumerate() {
+        let mut font = pdf.type1_font(font_ids[idx]);
+        font.base_font(Name(base_font));
+        font.encoding_predefined(Name(b"WinAnsiEncoding"));
+        let _ = FontFlags::NON_SYMBOLIC;
+        font.finish();
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "writes one PDF page dictionary and its compressed content stream"
+)]
+fn write_pdf_page(
+    pdf: &mut Pdf,
+    page_id: Ref,
+    pages_id: Ref,
+    content_id: Ref,
+    media_box: Rect,
+    font_ids: &[Ref; 6],
+    image_refs: &[(Ref, Option<Ref>)],
+    page_plan: &PagePlan,
+) -> Result<(), RenderError> {
+    let mut page = pdf.page(page_id);
+    page.parent(pages_id);
+    page.media_box(media_box);
+    page.contents(content_id);
+    {
+        let mut resources = page.resources();
+        {
+            let mut fonts = resources.fonts();
+            for (f_idx, (kind, _)) in FONT_SPECS.iter().enumerate() {
+                fonts.pair(Name(kind.pdf_name()), font_ids[f_idx]);
+            }
+        }
+        if !image_refs.is_empty() {
+            let mut xobjs = resources.x_objects();
+            for (img_idx, (img_id, _)) in image_refs.iter().enumerate() {
+                let name = format!("Im{}", img_idx + 1);
+                xobjs.pair(Name(name.as_bytes()), *img_id);
+            }
+        }
+    }
+    page.finish();
+
+    let stream_bytes = build_page_content(&page_plan.ops);
+    let compressed = compress_zlib(&stream_bytes)?;
+    let mut stream = pdf.stream(content_id, &compressed);
+    stream.filter(Filter::FlateDecode);
+    stream.finish();
+    Ok(())
 }
 
 fn write_image_xobject(
@@ -337,11 +373,7 @@ struct PageCounts {
 
 impl PageCounts {
     fn total(&self) -> u32 {
-        let raw = if self.pages_nodes > 0 {
-            self.max_pages_count
-        } else {
-            self.leaves
-        };
+        let raw = self.max_pages_count.max(self.leaves);
         u32::try_from(raw).unwrap_or(u32::MAX)
     }
 

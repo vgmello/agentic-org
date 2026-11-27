@@ -1,15 +1,15 @@
-//! Markdown -> [`Document`] converter (`pulldown-cmark` + fail-closed raw HTML handling).
+//! Markdown -> [`Document`] converter (`pulldown-cmark` + buffered raw HTML block handling).
 
 use std::collections::BTreeMap;
 
 use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
 
 use crate::css::{parse_and_validate_css, ParsedStylesheet, Rgb};
-use crate::model::{RenderError, ResolvedImage};
+use crate::model::{check_deadline, RenderDeadline, RenderError, ResolvedImage, MAX_NESTING_DEPTH};
 use crate::sanitize::{markdown_options, validate_image_url};
 
 use super::html::html_to_document;
-use super::{resolve_image_bytes, Block, Document, InlineSpan, TableCell, TableRow};
+use super::{resolve_image_source, Block, Document, ImageSource, InlineSpan, TableCell, TableRow};
 
 /// Converts validated Markdown + optional CSS into a [`Document`].
 pub(crate) fn markdown_to_document(
@@ -17,7 +17,9 @@ pub(crate) fn markdown_to_document(
     css: Option<&str>,
     title: Option<&str>,
     attachments: &BTreeMap<String, ResolvedImage>,
+    deadline: Option<&RenderDeadline>,
 ) -> Result<Document, RenderError> {
+    check_deadline(deadline)?;
     let mut sheet = ParsedStylesheet::default();
     if let Some(css_text) = css {
         sheet.merge(parse_and_validate_css(css_text, &|u| {
@@ -25,12 +27,15 @@ pub(crate) fn markdown_to_document(
         })?);
     }
     let (blocks, first_heading) = {
-        let mut builder = MdBuilder::new(&sheet, attachments);
+        let mut builder = MdBuilder::new(&sheet, attachments, deadline);
         let parser = Parser::new_ext(md, markdown_options());
-        for event in parser {
+        for (idx, event) in parser.enumerate() {
+            if idx & 0xff == 0 {
+                check_deadline(deadline)?;
+            }
             builder.push(event)?;
         }
-        builder.finish()
+        builder.finish()?
     };
     Ok(Document {
         title: title.map(str::to_owned).or(first_heading),
@@ -42,8 +47,10 @@ pub(crate) fn markdown_to_document(
 struct MdBuilder<'a> {
     sheet: &'a ParsedStylesheet,
     attachments: &'a BTreeMap<String, ResolvedImage>,
+    deadline: Option<&'a RenderDeadline>,
     stack: Vec<MdFrame>,
     root: Vec<Block>,
+    html_block: Option<String>,
     bold: usize,
     italic: usize,
     link: Option<String>,
@@ -78,18 +85,24 @@ enum MdFrame {
         is_head: bool,
     },
     Image {
-        bytes: Vec<u8>,
+        source: ImageSource,
         alt: String,
     },
 }
 
 impl<'a> MdBuilder<'a> {
-    fn new(sheet: &'a ParsedStylesheet, attachments: &'a BTreeMap<String, ResolvedImage>) -> Self {
+    fn new(
+        sheet: &'a ParsedStylesheet,
+        attachments: &'a BTreeMap<String, ResolvedImage>,
+        deadline: Option<&'a RenderDeadline>,
+    ) -> Self {
         Self {
             sheet,
             attachments,
+            deadline,
             stack: Vec::new(),
             root: Vec::new(),
+            html_block: None,
             bold: 0,
             italic: 0,
             link: None,
@@ -150,7 +163,7 @@ impl<'a> MdBuilder<'a> {
     fn push(&mut self, event: Event<'_>) -> Result<(), RenderError> {
         match event {
             Event::Start(tag) => self.start_tag(tag)?,
-            Event::End(end) => self.end_tag(end),
+            Event::End(end) => self.end_tag(end)?,
             Event::Text(t) => self.push_span(InlineSpan {
                 text: t.into_string(),
                 bold: self.bold > 0,
@@ -171,19 +184,35 @@ impl<'a> MdBuilder<'a> {
             Event::TaskListMarker(checked) => {
                 self.push_span(InlineSpan::plain(if checked { "[x] " } else { "[ ] " }));
             }
-            Event::Html(raw) | Event::InlineHtml(raw) => {
-                let frag = html_to_document(&raw, None, None, self.attachments)?;
-                for b in frag.blocks {
-                    self.push_block(b);
+            Event::Html(raw) => {
+                if let Some(buf) = self.html_block.as_mut() {
+                    buf.push_str(&raw);
+                } else {
+                    self.push_html_fragment(&raw)?;
                 }
             }
+            Event::InlineHtml(raw) => self.push_html_fragment(&raw)?,
             _ => {}
         }
         Ok(())
     }
 
+    fn push_html_fragment(&mut self, raw: &str) -> Result<(), RenderError> {
+        let frag = html_to_document(raw, None, None, self.attachments, self.deadline)?;
+        for b in frag.blocks {
+            self.push_block(b);
+        }
+        Ok(())
+    }
+
     fn start_tag(&mut self, tag: Tag<'_>) -> Result<(), RenderError> {
+        if self.stack.len() >= MAX_NESTING_DEPTH {
+            return Err(RenderError::ForbiddenContent {
+                reason: "Markdown nesting depth exceeds maximum allowed (64)",
+            });
+        }
         match tag {
+            Tag::HtmlBlock => self.html_block = Some(String::new()),
             Tag::Paragraph => self.stack.push(MdFrame::Paragraph(Vec::new())),
             Tag::Heading { level, .. } => self.stack.push(MdFrame::Heading {
                 level: heading_num(level),
@@ -197,6 +226,26 @@ impl<'a> MdBuilder<'a> {
                 items: Vec::new(),
             }),
             Tag::Item => self.stack.push(MdFrame::Item(Vec::new())),
+            Tag::Table(_) | Tag::TableHead | Tag::TableRow | Tag::TableCell => {
+                self.start_table_tag(tag);
+            }
+            Tag::Strong => self.bold += 1,
+            Tag::Emphasis => self.italic += 1,
+            Tag::Link { dest_url, .. } => self.link = Some(dest_url.into_string()),
+            Tag::Image { dest_url, .. } => {
+                let source = resolve_image_source(&dest_url, self.attachments)?;
+                self.stack.push(MdFrame::Image {
+                    source,
+                    alt: String::new(),
+                });
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn start_table_tag(&mut self, tag: Tag<'_>) {
+        match tag {
             Tag::Table(_) => self.stack.push(MdFrame::Table {
                 headers: Vec::new(),
                 rows: Vec::new(),
@@ -231,23 +280,17 @@ impl<'a> MdBuilder<'a> {
                     is_head,
                 });
             }
-            Tag::Strong => self.bold += 1,
-            Tag::Emphasis => self.italic += 1,
-            Tag::Link { dest_url, .. } => self.link = Some(dest_url.into_string()),
-            Tag::Image { dest_url, .. } => {
-                let bytes = resolve_image_bytes(&dest_url, self.attachments)?;
-                self.stack.push(MdFrame::Image {
-                    bytes,
-                    alt: String::new(),
-                });
-            }
             _ => {}
         }
-        Ok(())
     }
 
-    fn end_tag(&mut self, end: TagEnd) {
+    fn end_tag(&mut self, end: TagEnd) -> Result<(), RenderError> {
         match end {
+            TagEnd::HtmlBlock => {
+                if let Some(buf) = self.html_block.take() {
+                    self.push_html_fragment(&buf)?;
+                }
+            }
             TagEnd::Strong => self.bold = self.bold.saturating_sub(1),
             TagEnd::Emphasis => self.italic = self.italic.saturating_sub(1),
             TagEnd::Link => self.link = None,
@@ -289,9 +332,9 @@ impl<'a> MdBuilder<'a> {
                 self.end_table_part(end);
             }
             TagEnd::Image => {
-                if let Some(MdFrame::Image { bytes, alt }) = self.stack.pop() {
+                if let Some(MdFrame::Image { source, alt }) = self.stack.pop() {
                     self.push_block(Block::Image {
-                        bytes,
+                        source,
                         alt,
                         width_pt: None,
                         height_pt: None,
@@ -300,6 +343,7 @@ impl<'a> MdBuilder<'a> {
             }
             _ => {}
         }
+        Ok(())
     }
 
     fn end_paragraph(&mut self) {
@@ -380,8 +424,11 @@ impl<'a> MdBuilder<'a> {
         }
     }
 
-    fn finish(self) -> (Vec<Block>, Option<String>) {
-        (self.root, self.first_heading)
+    fn finish(mut self) -> Result<(Vec<Block>, Option<String>), RenderError> {
+        if let Some(buf) = self.html_block.take() {
+            self.push_html_fragment(&buf)?;
+        }
+        Ok((self.root, self.first_heading))
     }
 }
 

@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
@@ -20,8 +22,45 @@ pub const MAX_PDF_BYTES: usize = 25 * 1024 * 1024;
 pub const MAX_EMBEDDED_IMAGES: usize = 32;
 /// Maximum decoded byte size of one embedded raster image (4 MiB).
 pub const MAX_IMAGE_DECODED_BYTES: usize = 4 * 1024 * 1024;
+/// Maximum cumulative decoded raster image bytes across one document (16 MiB).
+pub const MAX_TOTAL_IMAGE_DECODED_BYTES: usize = 16 * 1024 * 1024;
 /// Maximum width or height in pixels of one embedded raster image.
 pub const MAX_IMAGE_DIMENSION: u32 = 4_096;
+/// Maximum DOM / layout recursion depth allowed before failing closed.
+pub(crate) const MAX_NESTING_DEPTH: usize = 64;
+
+/// Cooperative wall-clock deadline and cancellation flag shared with a bounded render worker.
+#[derive(Clone, Debug)]
+pub struct RenderDeadline {
+    deadline: Instant,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl RenderDeadline {
+    /// Creates a cooperative deadline backed by `deadline` and `cancelled`.
+    pub fn new(deadline: Instant, cancelled: Arc<AtomicBool>) -> Self {
+        Self {
+            deadline,
+            cancelled,
+        }
+    }
+
+    /// Fails closed with [`RenderError::Timeout`] when cancelled or past the wall-clock deadline.
+    pub fn check(&self) -> Result<(), RenderError> {
+        if self.cancelled.load(Ordering::Acquire) || Instant::now() >= self.deadline {
+            return Err(RenderError::Timeout { timeout_ms: 0 });
+        }
+        Ok(())
+    }
+}
+
+/// Checks an optional [`RenderDeadline`].
+pub(crate) fn check_deadline(deadline: Option<&RenderDeadline>) -> Result<(), RenderError> {
+    if let Some(d) = deadline {
+        d.check()?;
+    }
+    Ok(())
+}
 
 /// Source markup format accepted by [`DocumentRenderer`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -193,5 +232,15 @@ pub trait DocumentRenderer: Send + Sync {
             SourceKind::Markdown => self.render_markdown_to_pdf(request),
             SourceKind::Html => self.render_html_to_pdf(request),
         }
+    }
+
+    /// Renders `request` with a cooperative deadline checked across parsing, layout, and PDF
+    /// emission. Defaults to [`Self::render`] for custom implementations.
+    fn render_with_deadline(
+        &self,
+        request: &RenderRequest,
+        _deadline: Option<&RenderDeadline>,
+    ) -> Result<RenderedPdf, RenderError> {
+        self.render(request)
     }
 }

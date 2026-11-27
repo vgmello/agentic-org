@@ -34,6 +34,7 @@ org-platform = { path = "../org-platform" }
 org-agent-cli = { path = "../org-agent-cli" }
 org-tess = { path = "../org-tess" }
 libc.workspace = true
+ring = "=0.17.14"
 serde.workspace = true
 serde_json.workspace = true
 hmac.workspace = true

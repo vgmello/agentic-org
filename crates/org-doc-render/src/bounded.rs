@@ -1,15 +1,18 @@
 //! Concrete pure-Rust [`PdfWriterRenderer`] and fail-closed [`BoundedDocumentRenderer`]
-//! enforcing input size, air-gap sanitization, bounded concurrency (`max = 2`), wall-clock
-//! timeout (`<= 10s`), output magic/trailer validation, and `<= 100` page cap.
+//! enforcing input size, air-gap sanitization, bounded concurrency (`max = 2`), cooperative
+//! wall-clock timeout (`<= 10s`), output magic/trailer validation, and `<= 100` page cap.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::doc::{html_to_document, markdown_to_document};
 use crate::layout::paginate;
-use crate::model::{DocumentRenderer, RenderError, RenderLimits, RenderRequest, RenderedPdf};
+use crate::model::{
+    DocumentRenderer, RenderDeadline, RenderError, RenderLimits, RenderRequest, RenderedPdf,
+};
 use crate::pdf::{count_pdf_pages, emit_pdf};
-use crate::sanitize::audit_request;
+use crate::sanitize::{audit_request_with_deadline, validate_input_budget};
 
 /// Concrete pure-Rust [`DocumentRenderer`] backed by Typst's `pdf-writer`, `pulldown-cmark`,
 /// `scraper`, `image`, and `flate2` — zero Chrome, zero filesystem I/O, zero network fetches.
@@ -34,10 +37,10 @@ impl PdfWriterRenderer {
         }
     }
 
-    fn render_with_deadline(
+    fn render_internal(
         &self,
         request: &RenderRequest,
-        deadline: Option<Instant>,
+        deadline: Option<&RenderDeadline>,
     ) -> Result<RenderedPdf, RenderError> {
         let doc = match request.source_kind {
             crate::model::SourceKind::Markdown => markdown_to_document(
@@ -45,16 +48,18 @@ impl PdfWriterRenderer {
                 request.css.as_deref(),
                 request.title.as_deref(),
                 &request.attachments,
+                deadline,
             )?,
             crate::model::SourceKind::Html => html_to_document(
                 &request.source,
                 request.css.as_deref(),
                 request.title.as_deref(),
                 &request.attachments,
+                deadline,
             )?,
         };
-        let plan = paginate(doc, self.max_pages, deadline)?;
-        emit_pdf(&plan)
+        let plan = paginate(doc, &request.attachments, self.max_pages, deadline)?;
+        emit_pdf(&plan, deadline)
     }
 }
 
@@ -62,13 +67,21 @@ impl DocumentRenderer for PdfWriterRenderer {
     fn render_markdown_to_pdf(&self, request: &RenderRequest) -> Result<RenderedPdf, RenderError> {
         let mut req = request.clone();
         req.source_kind = crate::model::SourceKind::Markdown;
-        self.render_with_deadline(&req, None)
+        self.render_internal(&req, None)
     }
 
     fn render_html_to_pdf(&self, request: &RenderRequest) -> Result<RenderedPdf, RenderError> {
         let mut req = request.clone();
         req.source_kind = crate::model::SourceKind::Html;
-        self.render_with_deadline(&req, None)
+        self.render_internal(&req, None)
+    }
+
+    fn render_with_deadline(
+        &self,
+        request: &RenderRequest,
+        deadline: Option<&RenderDeadline>,
+    ) -> Result<RenderedPdf, RenderError> {
+        self.render_internal(request, deadline)
     }
 }
 
@@ -162,7 +175,8 @@ impl<R: DocumentRenderer + 'static> BoundedDocumentRenderer<R> {
     }
 
     fn execute(&self, request: &RenderRequest) -> Result<RenderedPdf, RenderError> {
-        audit_request(request, self.limits.max_input_bytes)?;
+        // Keep ONLY O(1) size/emptiness checks outside the semaphore & catch_unwind worker.
+        validate_input_budget(request, self.limits.max_input_bytes)?;
 
         let deadline = Instant::now() + self.limits.timeout;
         let permit = self.slots.acquire_until(deadline)?;
@@ -171,7 +185,7 @@ impl<R: DocumentRenderer + 'static> BoundedDocumentRenderer<R> {
             return Err(timeout_err(self.limits.timeout));
         }
 
-        let rendered = self.run_bounded_worker(request.clone(), permit, remaining)?;
+        let rendered = self.run_bounded_worker(request.clone(), permit, deadline, remaining)?;
         self.validate_output(rendered)
     }
 
@@ -179,19 +193,24 @@ impl<R: DocumentRenderer + 'static> BoundedDocumentRenderer<R> {
         &self,
         request: RenderRequest,
         permit: SemaphorePermit,
+        deadline: Instant,
         remaining: Duration,
     ) -> Result<RenderedPdf, RenderError> {
         let inner = Arc::clone(&self.inner);
+        let max_input_bytes = self.limits.max_input_bytes;
         let timeout_limit = self.limits.timeout;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_deadline = RenderDeadline::new(deadline, Arc::clone(&cancelled));
         let (tx, rx) = mpsc::sync_channel(1);
         let spawn = std::thread::Builder::new()
             .name("org-doc-render".into())
             .spawn(move || {
-                // Hold the RAII permit for the entire lifetime of the worker thread so a timed-out
-                // render never allows unbounded background CPU threads to pile up.
+                // Hold the RAII permit for the entire lifetime of the worker thread; cooperative
+                // deadline checks abort promptly on timeout so permits never stay wedged.
                 let _permit = permit;
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    inner.render(&request)
+                    audit_request_with_deadline(&request, max_input_bytes, Some(&worker_deadline))?;
+                    inner.render_with_deadline(&request, Some(&worker_deadline))
                 }))
                 .unwrap_or_else(|_| {
                     Err(RenderError::RenderFailed(
@@ -209,12 +228,16 @@ impl<R: DocumentRenderer + 'static> BoundedDocumentRenderer<R> {
         match rx.recv_timeout(remaining) {
             Ok(Ok(pdf)) => Ok(pdf),
             Ok(Err(RenderError::Timeout { .. })) | Err(mpsc::RecvTimeoutError::Timeout) => {
+                cancelled.store(true, Ordering::Release);
                 Err(timeout_err(timeout_limit))
             }
             Ok(Err(err)) => Err(err),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(RenderError::RenderFailed(
-                "render worker terminated without replying".to_owned(),
-            )),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                cancelled.store(true, Ordering::Release);
+                Err(RenderError::RenderFailed(
+                    "render worker terminated without replying".to_owned(),
+                ))
+            }
         }
     }
 

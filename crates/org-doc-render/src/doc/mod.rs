@@ -56,6 +56,24 @@ pub(crate) struct TableRow {
     pub cells: Vec<TableCell>,
 }
 
+/// Authorized raster image source referenced by a [`Block::Image`].
+#[derive(Clone, Debug)]
+pub(crate) enum ImageSource {
+    /// Pre-authorized attachment UUIDv7 resolved zero-copy from `RenderRequest::attachments`.
+    Attachment(String),
+    /// Validated inline `data:image/...;base64,...` image with canonical deduplication key.
+    Inline { key: String, bytes: Vec<u8> },
+}
+
+impl ImageSource {
+    pub(crate) fn cache_key(&self) -> String {
+        match self {
+            Self::Attachment(id) => format!("attachment:{id}"),
+            Self::Inline { key, .. } => key.clone(),
+        }
+    }
+}
+
 /// Block-level document element.
 #[derive(Clone, Debug)]
 pub(crate) enum Block {
@@ -85,7 +103,7 @@ pub(crate) enum Block {
         rows: Vec<TableRow>,
     },
     Image {
-        bytes: Vec<u8>,
+        source: ImageSource,
         alt: String,
         width_pt: Option<f32>,
         height_pt: Option<f32>,
@@ -94,18 +112,24 @@ pub(crate) enum Block {
     PageBreak,
 }
 
-pub(super) fn resolve_image_bytes(
+pub(super) fn resolve_image_source(
     raw_url: &str,
     attachments: &BTreeMap<String, ResolvedImage>,
-) -> Result<Vec<u8>, RenderError> {
+) -> Result<ImageSource, RenderError> {
     match validate_image_url(raw_url, attachments)? {
-        SafeImageRef::Inline { bytes, .. } => Ok(bytes),
-        SafeImageRef::Attachment { id } => attachments
-            .get(&id)
-            .map(|img| img.bytes.clone())
-            .ok_or_else(|| RenderError::ForbiddenResourceUrl {
-                url: format!("attachment:{id}"),
-                reason: "referenced attachment is not authorized or not found",
-            }),
+        SafeImageRef::Inline { mime_type, bytes } => Ok(ImageSource::Inline {
+            key: format!("inline:{mime_type}:{}", raw_url.trim()),
+            bytes,
+        }),
+        SafeImageRef::Attachment { id } => {
+            if attachments.contains_key(&id) {
+                Ok(ImageSource::Attachment(id))
+            } else {
+                Err(RenderError::ForbiddenResourceUrl {
+                    url: format!("attachment:{id}"),
+                    reason: "referenced attachment is not authorized or not found",
+                })
+            }
+        }
     }
 }

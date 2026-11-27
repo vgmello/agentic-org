@@ -187,7 +187,27 @@ pub(super) fn attachments_rpc(
     request: &Request,
     shared: &Shared,
     binding: &Binding,
+    delegation: Option<&Delegation>,
 ) -> Option<Response> {
-    crate::attachment_calls::is_attachment_method(request)
-        .then(|| dispatch_bound_port(request, binding, None, shared.ports.attachments.as_ref()))
+    if !crate::attachment_calls::is_attachment_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if let Some(handler) = shared.ports.attachments.as_ref() {
+        if let Some(response) = handler(Some(member), delegation, request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
 }

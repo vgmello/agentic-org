@@ -208,6 +208,13 @@ impl OfficeTransport for FileMockTransport {
                 }))
             }
             "attachment.render" => {
+                if params.get("input_eof").and_then(Value::as_bool) == Some(false) {
+                    return Ok(json!({
+                        "render_id": "0193a5c0-0000-7000-8000-000000000598",
+                        "page_count": 0,
+                        "byte_count": 0
+                    }));
+                }
                 if params.get("return_bytes").and_then(Value::as_bool) == Some(true) {
                     let pdf = b"%PDF-1.7\n%mock-rendered-pdf-bytes\n%%EOF\n";
                     let offset = params
@@ -1294,4 +1301,167 @@ fn file_render_enforces_two_layer_confinement_on_from_css_and_output_plus_privat
         .expect("file render row");
     assert_eq!(row.content_field, None);
     let _ = safe_css;
+}
+
+#[test]
+fn file_render_streams_large_source_and_css_in_separate_bounded_frames() {
+    use org_proto::{Request as WireRequest, MAX_FRAME_BYTES};
+
+    let dir = tempfile::tempdir().unwrap();
+    let ws = dir.path().join("workspace");
+    fs::create_dir_all(&ws).unwrap();
+    let html_path = ws.join("large.html");
+    let css_path = ws.join("large.css");
+    let large_html = format!("<p>{}</p>", "x".repeat(450 * 1024));
+    let large_css = format!("/* {} */ body {{ color: black; }}", "y".repeat(450 * 1024));
+    fs::write(&html_path, &large_html).unwrap();
+    fs::write(&css_path, &large_css).unwrap();
+
+    let roots = FileRoots::from_parts(ws.clone(), Some(EMP_ID.into()), None, None);
+    with_test_roots(roots.clone(), || {
+        let mut office = TransportOffice(FileMockTransport::new(Some(EMP_ID)));
+        let args: Vec<String> = [
+            "file",
+            "render",
+            "--from",
+            html_path.to_str().unwrap(),
+            "--css",
+            css_path.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--scope",
+            "org",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        let out = crate::execute_with_office("agent-os", &args, &mut office);
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+
+        let frames: Vec<&Value> = office
+            .0
+            .calls
+            .iter()
+            .filter(|(m, _)| m == "attachment.render")
+            .map(|(_, p)| p)
+            .collect();
+        assert_eq!(frames.len(), 2, "expected 1 source frame + 1 css frame");
+        let mut reassembled_src = Vec::new();
+        let mut reassembled_css = Vec::new();
+        let mut seen_css = false;
+        for (idx, p) in frames.iter().enumerate() {
+            let wire = WireRequest {
+                id: 1,
+                method: "attachment.render".into(),
+                principal: None,
+                params: (*p).clone(),
+            };
+            let wire_len = serde_json::to_vec(&wire).unwrap().len();
+            assert!(
+                wire_len <= MAX_FRAME_BYTES,
+                "frame {idx} exceeded MAX_FRAME_BYTES ({wire_len} > {MAX_FRAME_BYTES})"
+            );
+            let has_src = p.get("source_chunk_base64").and_then(Value::as_str);
+            let has_css = p.get("css_chunk_base64").and_then(Value::as_str);
+            assert!(
+                !(has_src.is_some() && has_css.is_some()),
+                "frame {idx} must never carry both source_chunk_base64 and css_chunk_base64"
+            );
+            if let Some(b64) = has_src {
+                assert!(!seen_css, "source frames must precede css frames");
+                reassembled_src.extend_from_slice(&STANDARD.decode(b64).unwrap());
+            }
+            if let Some(b64) = has_css {
+                seen_css = true;
+                reassembled_css.extend_from_slice(&STANDARD.decode(b64).unwrap());
+            }
+            assert_eq!(
+                p.get("input_eof").and_then(Value::as_bool),
+                Some(idx + 1 == frames.len())
+            );
+        }
+        assert_eq!(String::from_utf8(reassembled_src).unwrap(), large_html);
+        assert_eq!(String::from_utf8(reassembled_css).unwrap(), large_css);
+    });
+
+    // JSON-escaped payload whose raw UTF-8 is < 512 KiB but serialized JSON > 768 KiB also chunks.
+    let quoted_path = ws.join("escaped.md");
+    let escaped_md = "\"".repeat(420 * 1024);
+    fs::write(&quoted_path, &escaped_md).unwrap();
+    with_test_roots(roots, || {
+        let mut office = TransportOffice(FileMockTransport::new(Some(EMP_ID)));
+        let args: Vec<String> = [
+            "file",
+            "render",
+            "--from",
+            quoted_path.to_str().unwrap(),
+            "--format",
+            "pdf",
+            "--scope",
+            "org",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        let out = crate::execute_with_office("agent-os", &args, &mut office);
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        let p = &office.0.calls[0].1;
+        assert!(
+            p.get("source_chunk_base64").is_some(),
+            "escaped payload must fall back to chunked framing"
+        );
+    });
+}
+
+#[test]
+fn rewrite_render_args_skips_flag_values_like_title_named_format() {
+    let table = crate::registry::runtime_table();
+    let owned = |slice: &[&str]| -> Vec<String> { slice.iter().map(|s| (*s).to_owned()).collect() };
+
+    // `--title --format` must NOT rewrite `--format` (it is the value of `--title`).
+    assert_eq!(
+        super::rewrite_render_args(
+            table,
+            &owned(&["file", "render", "--from", "a.md", "--title", "--format", "--scope", "org"]),
+        ),
+        None
+    );
+    assert_eq!(
+        super::rewrite_render_args(
+            table,
+            &owned(&[
+                "file",
+                "render",
+                "--from",
+                "a.md",
+                "--title",
+                "--format=pdf",
+                "--scope",
+                "org"
+            ]),
+        ),
+        None
+    );
+    // When `--title --format` is followed by a real `--format pdf`, ONLY the real flag rewrites!
+    assert_eq!(
+        super::rewrite_render_args(
+            table,
+            &owned(&[
+                "file", "render", "--from", "a.md", "--title", "--format", "--format", "pdf",
+                "--scope", "org",
+            ]),
+        ),
+        Some(owned(&[
+            "file", "render", "--from", "a.md", "--title", "--format", "--to", "pdf", "--scope",
+            "org",
+        ]))
+    );
+    // Global stdout envelope formats stay untouched.
+    assert_eq!(
+        super::rewrite_render_args(
+            table,
+            &owned(&["file", "render", "--from", "a.md", "--format", "json", "--scope", "org"]),
+        ),
+        None
+    );
 }

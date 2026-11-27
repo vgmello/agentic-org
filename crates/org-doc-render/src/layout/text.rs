@@ -1,8 +1,10 @@
 //! Text measurement, word wrapping, table row sizing, and bounded image decoding.
 
+use std::io::Cursor;
+
 use crate::css::Rgb;
 use crate::doc::{InlineSpan, TableRow};
-use crate::model::{RenderError, MAX_IMAGE_DIMENSION};
+use crate::model::{RenderError, MAX_IMAGE_DECODED_BYTES, MAX_IMAGE_DIMENSION};
 
 /// Standard PDF Base-14 font slot used during layout and emission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,6 +39,15 @@ pub(crate) struct EmbeddedImage {
     pub alpha: Option<Vec<u8>>,
 }
 
+impl EmbeddedImage {
+    /// Conservative decoded RGBA pixel byte footprint for per-document memory budgeting.
+    pub(super) fn decoded_rgba_bytes(&self) -> usize {
+        (self.width as usize)
+            .saturating_mul(self.height as usize)
+            .saturating_mul(4)
+    }
+}
+
 pub(super) struct MeasuredRow {
     pub cells: Vec<Vec<Vec<PlacedRun>>>,
     pub height: f32,
@@ -49,6 +60,39 @@ pub(super) struct PlacedRun {
     pub font: FontKind,
     pub color: Rgb,
     pub width: f32,
+}
+
+struct WrapState {
+    lines: Vec<Vec<PlacedRun>>,
+    line_w: f32,
+    avail: f32,
+}
+
+impl WrapState {
+    fn new(max_w: f32) -> Self {
+        Self {
+            lines: vec![Vec::new()],
+            line_w: 0.0,
+            avail: max_w.max(24.0),
+        }
+    }
+
+    fn newline(&mut self) {
+        self.lines.push(Vec::new());
+        self.line_w = 0.0;
+    }
+
+    fn push_run(&mut self, text: String, font: FontKind, color: Rgb, width: f32) {
+        if let Some(cur) = self.lines.last_mut() {
+            cur.push(PlacedRun {
+                text,
+                font,
+                color,
+                width,
+            });
+        }
+        self.line_w += width;
+    }
 }
 
 pub(super) fn measure_row(
@@ -91,59 +135,55 @@ pub(super) fn wrap_spans(
     force_bold: bool,
     default_color: Option<Rgb>,
 ) -> Vec<Vec<PlacedRun>> {
-    let mut lines: Vec<Vec<PlacedRun>> = vec![Vec::new()];
-    let mut line_w = 0.0_f32;
-    let avail = max_w.max(24.0);
-
+    let mut state = WrapState::new(max_w);
     for span in spans {
         let font = select_font(span.bold || force_bold, span.italic, span.code);
         let color = span.color.or(default_color).unwrap_or(Rgb::BLACK);
         for (seg_idx, segment) in span.text.split('\n').enumerate() {
             if seg_idx > 0 {
-                lines.push(Vec::new());
-                line_w = 0.0;
+                state.newline();
             }
-            for token in split_words_keeping_spaces(segment) {
-                let w = measure_text(&token, font, size);
-                if line_w > 0.0 && line_w + w > avail {
-                    lines.push(Vec::new());
-                    line_w = 0.0;
-                    if token.trim().is_empty() {
-                        continue;
-                    }
-                }
-                if w > avail && token.chars().count() > 1 {
-                    for chunk in break_long_token(&token, font, size, avail) {
-                        let cw = measure_text(&chunk, font, size);
-                        if line_w > 0.0 && line_w + cw > avail {
-                            lines.push(Vec::new());
-                            line_w = 0.0;
-                        }
-                        if let Some(cur) = lines.last_mut() {
-                            cur.push(PlacedRun {
-                                text: chunk,
-                                font,
-                                color,
-                                width: cw,
-                            });
-                        }
-                        line_w += cw;
-                    }
-                    continue;
-                }
-                if let Some(cur) = lines.last_mut() {
-                    cur.push(PlacedRun {
-                        text: token,
-                        font,
-                        color,
-                        width: w,
-                    });
-                }
-                line_w += w;
-            }
+            wrap_segment(&mut state, segment, font, color, size);
         }
     }
-    lines
+    state.lines
+}
+
+fn wrap_segment(state: &mut WrapState, segment: &str, font: FontKind, color: Rgb, size: f32) {
+    for token in split_words_keeping_spaces(segment) {
+        push_wrapped_token(state, token, font, color, size);
+    }
+}
+
+fn push_wrapped_token(state: &mut WrapState, token: String, font: FontKind, color: Rgb, size: f32) {
+    let w = measure_text(&token, font, size);
+    if state.line_w > 0.0 && state.line_w + w > state.avail {
+        state.newline();
+        if token.trim().is_empty() {
+            return;
+        }
+    }
+    if w > state.avail && token.chars().count() > 1 {
+        push_long_token_chunks(state, &token, font, color, size);
+        return;
+    }
+    state.push_run(token, font, color, w);
+}
+
+fn push_long_token_chunks(
+    state: &mut WrapState,
+    token: &str,
+    font: FontKind,
+    color: Rgb,
+    size: f32,
+) {
+    for chunk in break_long_token(token, font, size, state.avail) {
+        let cw = measure_text(&chunk, font, size);
+        if state.line_w > 0.0 && state.line_w + cw > state.avail {
+            state.newline();
+        }
+        state.push_run(chunk, font, color, cw);
+    }
 }
 
 fn split_words_keeping_spaces(text: &str) -> Vec<String> {
@@ -251,23 +291,45 @@ fn char_width_em(ch: char, font: FontKind) -> f32 {
     }
 }
 
-pub(super) fn decode_bounded_image(bytes: &[u8]) -> Result<EmbeddedImage, RenderError> {
-    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|e| RenderError::RenderFailed(format!("unsupported embedded image: {e}")))?;
-    let (w, h) = reader
-        .into_dimensions()
-        .map_err(|e| RenderError::RenderFailed(format!("unreadable image dimensions: {e}")))?;
+fn check_image_dimensions(w: u32, h: u32) -> Result<(), RenderError> {
     if w == 0 || h == 0 || w > MAX_IMAGE_DIMENSION || h > MAX_IMAGE_DIMENSION {
         return Err(RenderError::ForbiddenContent {
             reason: "embedded image dimensions exceed 4096x4096 safety bound",
         });
     }
-    let dyn_img = image::load_from_memory(bytes)
-        .map_err(|e| RenderError::RenderFailed(format!("could not decode embedded image: {e}")))?;
+    let rgba_bytes = u64::from(w).saturating_mul(u64::from(h)).saturating_mul(4);
+    if rgba_bytes > MAX_IMAGE_DECODED_BYTES as u64 {
+        return Err(RenderError::ForbiddenContent {
+            reason: "embedded image decoded size exceeds 4 MiB safety bound",
+        });
+    }
+    Ok(())
+}
+
+pub(super) fn decode_bounded_image(bytes: &[u8]) -> Result<EmbeddedImage, RenderError> {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
+    limits.max_image_height = Some(MAX_IMAGE_DIMENSION);
+    limits.max_alloc = Some(MAX_IMAGE_DECODED_BYTES as u64);
+
+    let mut dim_reader = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| RenderError::RenderFailed(format!("unsupported embedded image: {e}")))?;
+    dim_reader.limits(limits.clone());
+    let (w, h) = dim_reader.into_dimensions().map_err(map_image_err)?;
+    check_image_dimensions(w, h)?;
+
+    let mut reader = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| RenderError::RenderFailed(format!("unsupported embedded image: {e}")))?;
+    reader.limits(limits);
+    let dyn_img = reader.decode().map_err(map_image_err)?;
+    let (dw, dh) = (dyn_img.width(), dyn_img.height());
+    check_image_dimensions(dw, dh)?;
+
     let has_alpha = dyn_img.color().has_alpha();
     let rgba = dyn_img.to_rgba8();
-    let pixel_count = (w as usize).saturating_mul(h as usize);
+    let pixel_count = (dw as usize).saturating_mul(dh as usize);
     let mut rgb = Vec::with_capacity(pixel_count * 3);
     let mut alpha = has_alpha.then(|| Vec::with_capacity(pixel_count));
     for px in rgba.pixels() {
@@ -277,9 +339,18 @@ pub(super) fn decode_bounded_image(bytes: &[u8]) -> Result<EmbeddedImage, Render
         }
     }
     Ok(EmbeddedImage {
-        width: w,
-        height: h,
+        width: dw,
+        height: dh,
         rgb,
         alpha,
     })
+}
+
+fn map_image_err(err: image::ImageError) -> RenderError {
+    match err {
+        image::ImageError::Limits(_) => RenderError::ForbiddenContent {
+            reason: "embedded image exceeds decoder memory or dimension limits",
+        },
+        other => RenderError::RenderFailed(format!("could not decode embedded image: {other}")),
+    }
 }
