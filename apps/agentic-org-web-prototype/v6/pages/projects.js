@@ -1,3 +1,4 @@
+import { openNewChannel } from "./chat-channel-new.js";
 import { CH, IN, KIND, M, OPEN, P, TEAMS, W, needsMe } from "../data.js";
 import { pageActivity, projectReleaseSummary } from "./activity.js";
 import { calendarHtml } from "./calendar.js";
@@ -5,10 +6,20 @@ import { msgHtml } from "./chat.js";
 import { INSIGHT_DAY, INSIGHT_TODAY, insightCompletions, projectInsights } from "./insights.js";
 import { notFound } from "./settings.js";
 import { scopedWorkToolbar, scopedWorkWorkspace } from "./work.js";
+import { pageFeature, pageFeatures } from "./project-plan-features.js";
+import { pageRelease, pageReleases } from "./project-plan-releases.js";
+import { docCrumbs, docsCount, docsSectionBar, pageDocs, setDocsExtra } from "./docs.js";
+import { takeDocsTabAction, processTabBody, processTabs, tabCount } from "./project-tabs.js";
+import { featureRef, getFeature, getRelease, projectFeatures, projectReleases, releaseRef } from "../plan-data.js";
 import { render } from "../shell/router.js";
 import { S } from "../state.js";
 import { acts, av, avStack, crumbs, esc, feed, hdr, ic, itemActions, kindWord, leadOf, leadTxt, linkTabs, menuItem, moreMenu, needsCard, pill, plural, presPill, progress, projMembers, projPill, recommendationCallout, searchRow, searchToggle, sectionHead, sectionTabs, SEP, showMenu, statusLine, toast } from "../ui.js";
 
+/* A star toggles a project in the sidebar's Favorite projects (owner); filled when it is a favorite */
+function favStar(p, cls = "") {
+  const on = S.favProjs.includes(p), name = esc(P[p].name);
+  return `<button class="btn ghost icon proj-fav${on ? " is-fav" : ""}${cls ? " " + cls : ""}" type="button" data-act="fav-proj" data-id="${p}" aria-pressed="${on}" aria-label="${on ? "Remove " + name + " from favorites" : "Add " + name + " to favorites"}" title="${on ? "Remove from favorites" : "Add to favorites"}">${ic("star", "ic16")}</button>`;
+}
 function pageProjects() {
   const q = S.projectQuery.trim().toLowerCase();
   const matchesQuery = (p) => !q || [P[p].name, leadTxt(p), ...P[p].teams.map((t) => TEAMS[t].name)].join(" ").toLowerCase().includes(q);
@@ -18,19 +29,50 @@ function pageProjects() {
     { icon: "filter", label: "Filter projects", active: S.showArchived });
   const search = searchToggle("projects-search", "Search projects", S.projectQuery);
   const empty = ids.length ? "" : `<p class="empty-row">No projects match “${esc(S.projectQuery.trim())}”.</p>`;
-  return hdr("Projects", `${active} active · ${Object.keys(P).length - active} archived`, search + filter) +
+  const create = `<button class="btn primary" type="button" data-act="new-project">${ic("plus", "ic16")}New project</button>`;
+  return hdr("Projects", `${active} active · ${Object.keys(P).length - active} archived`, search + filter + create) +
   searchRow("projects-search", "Search projects", S.projectQuery, "Search projects by name, lead or team… (Esc to close)", "work-search-row") + empty +
   `<ul class="rows" role="list">${ids.map((p) => {
     const pr = P[p], ws = W.filter((w) => w.proj === p), openN = ws.filter(OPEN).length;
     return `<li class="linked"><span class="chip-i" style="margin-left:0;width:32px;height:32px;font-size:12px" aria-hidden="true">${esc(pr.name[0])}</span>
-      <div class="grow"><p class="rt"><a class="stretch" href="#/projects/${p}">${esc(pr.name)}</a>${leadOf(p) ? `<span class="sec">${esc(leadTxt(p))}</span>` : ""}</p>
+      <div class="grow"><p class="rt"><a class="stretch" href="#/projects/${p}">${esc(pr.name)}</a>${pr.archived ? "" : favStar(p, "proj-fav-row")}${leadOf(p) ? `<span class="sec">${esc(leadTxt(p))}</span>` : ""}</p>
       <div class="meta"><span>${pr.teams.map((t) => `<a href="#/teams/${t}">${esc(TEAMS[t].name)}</a>`).join(", ")}</span>${SEP}<span>${openN} open</span>${pr.due ? SEP + `<span>Due ${esc(pr.due)}</span>` : ""}${SEP}<span>Updated ${esc(pr.updated)}</span></div>
       <div style="max-width:320px;margin-top:8px">${progress(p)}</div></div>
       <span class="hide-sm">${avStack(projMembers(p), 4)}</span>${projPill(p)}${ic("chev-right", "ic20 chev")}</li>`;
   }).join("")}</ul>`;
 }
 
-function pageProject(id, tab) {
+function planTabCount(id, t) {
+  if (t.view === "features") return projectFeatures(id).filter((f) => f.status !== "retired").length || null;
+  if (t.view === "releases") return projectReleases(id).length || null;
+  return tabCount(id, t);
+}
+
+/* Features and Releases (TASK-244): a detail page sits under its tab, named in the breadcrumb. */
+function planCrumbs(id, tab, sub) {
+  const base = "#/projects/" + id;
+  if (tab !== "features" && tab !== "releases") return [];
+  const label = tab === "features" ? "Features" : "Releases";
+  if (!sub) return [[null, label]];
+  const rec = tab === "features" ? getFeature(sub) : getRelease(sub);
+  const ref = rec ? (tab === "features" ? featureRef(rec) : releaseRef(rec)) : "Not found";
+  return [[`${base}/${tab}`, label], [null, ref]];
+}
+const inDocs = (t) => t.view === "documents" || t.view === "features";
+/* Work views a process declares (Requests, Bugs, Board) live inside the Work tab */
+const inWork = (t) => t.view === "work";
+/* An old link to a process work view (…/bugs, …/board) opens Work on that view */
+function openWorkView(id, tab) {
+  const t = processTabs(id).find((x) => x.key === tab && inWork(x));
+  if (!t) return;
+  location.replace(`#/projects/${id}/work`);
+  S.scopedWorkView = tab;
+  if (t.layout === "board") S.scopedWorkLayout = "board";
+}
+/* The release strip is for the working tabs; Activity, Releases and everything under Docs leave it out */
+const NO_STRIP = new Set(["activity", "releases", "docs"]);
+const stripShown = (tab, docsKeys) => !NO_STRIP.has(tab) && !docsKeys.includes(tab);
+function pageProject(id, tab, sub) {
   const pr = P[id]; if (!pr) return notFound();
   tab = tab || "overview";
   const ws = W.filter((w) => w.proj === id);
@@ -38,18 +80,46 @@ function pageProject(id, tab) {
     ["", "Overview"],
     ["activity", "Activity"],
     ["work", "Work", `${ws.filter(OPEN).length} open`],
-    ["calendar", "Calendar"],
+    /* Owner's order: Work, Insights, Docs; Conversations is gone (its channels are listed on Overview) */
     ["insights", "Insights"],
-    ["conversations", "Conversations"],
+    ["docs", "Docs", docsCount(id) || null],
+    ...processTabs(id).filter((t) => !inDocs(t) && !inWork(t)).map((t) => [t.key, t.title, planTabCount(id, t)]),
+    ["calendar", "Calendar"],
     ["team", "Team", projMembers(id).length],
   ];
-  const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit"), "ghost");
-  return crumbs([["#/projects", "Projects"], [null, pr.name]]) + `<div class="section-header project-header">
-    ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id))}
-    ${sectionTabs(linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab), more)}
-  </div>` + (tab === "activity" ? "" : projectReleaseSummary(id)) + projectBody(id, tab);
+  /* Product, Technical and Features are sections of Docs, not tabs of their own (owner) */
+  const docsKeys = processTabs(id).filter(inDocs).map((t) => t.key);
+  openWorkView(id, tab);
+  setDocsExtra(processTabs(id).filter(inDocs).map((t) => `<a class="queue-tab" href="#/projects/${esc(id)}/${esc(t.key)}"${tab === t.key ? ' aria-current="page"' : ""}>${esc(t.title)}<span>${planTabCount(id, t) ?? ""}</span></a>`).join(""));
+  const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit") + `<button role="menuitem" type="button" data-dev-act="choose" data-id="${esc(id)}">${ic("files", "ic20")}Development process…</button>`, "ghost");
+  const trail = tab === "docs" ? docCrumbs(id, sub) : planCrumbs(id, tab, sub);
+  return crumbs([["#/projects", "Projects"], [trail.length ? "#/projects/" + id : null, pr.name], ...trail]) + `<div class="section-header project-header">
+    ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", (pr.archived ? "" : favStar(id)) + projPill(id))}
+    ${sectionTabs(linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : docsKeys.includes(tab) ? "docs" : tab), more)}
+  </div>` + (stripShown(tab, docsKeys) ? projectReleaseSummary(id) : "") + projectBody(id, tab, sub);
 }
-function projectBody(id, tab) {
+/* New channel from a project: the Create channel dialog with this project chosen; the new channel opens in Chat */
+document.addEventListener("click", (e) => {
+  const t = e.target.closest?.('[data-act="project-new-channel"]');
+  if (!t) return;
+  openNewChannel(t, (chId) => { location.hash = `#/chat/${chId}`; });
+  const sel = document.querySelector('dialog[open] select[name="project"], dialog[open] select[name="proj"]');
+  if (sel) sel.value = t.dataset.id;
+});
+/* The project's chat channels (owner): every channel linked to the project, with its topic, members and unread */
+function projectChannelsHtml(id) {
+  const chans = Object.entries(CH).filter(([, c]) => c.kind === "channel" && (c.proj === id || P[id].channel === c.name));
+  const rows = chans.map(([k, c]) => {
+    const n = (c.members || []).length, unread = c.unread ? `<span class="pj-chan-unread">${c.unread} unread</span>` : "";
+    return `<li class="linked"><span class="chip-i pj-chan-ic" aria-hidden="true">${ic("hash", "ic16")}</span>
+      <div class="grow"><p class="rt"><a class="stretch" href="#/chat/${esc(k)}">${esc(c.name)}</a>${c.topic ? `<span class="sec">${esc(c.topic)}</span>` : ""}</p></div>
+      <span class="pj-chan-meta">${unread}<span>${ic("user-group", "ic14")}${n}</span></span>${ic("chev-right", "ic20 chev")}</li>`;
+  }).join("");
+  const create = `<button class="link" type="button" data-act="project-new-channel" data-id="${esc(id)}">${ic("plus", "ic16")}New channel</button>`;
+  return `<section class="project-sec" aria-labelledby="pj-chan-h">${sectionHead({ id: "pj-chan-h", title: "Channels", count: chans.length ? String(chans.length) : "", right: create })}
+    ${rows ? `<ul class="rows pj-chan-rows" role="list">${rows}</ul>` : `<p class="muted">No channels for this project yet.</p>`}</section>`;
+}
+function projectBody(id, tab, sub) {
   const pr = P[id], ws = W.filter((w) => w.proj === id);
   if (tab === "overview") {
     const needs = IN.filter((i) => i.proj === id && (!i.handled || i.handledNow));
@@ -58,6 +128,7 @@ function projectBody(id, tab) {
       <p class="pj-goal"><span>Goal</span>${esc(pr.goal)}</p>
       ${projectSummaryHtml(id, ws)}
       <section class="project-sec" aria-labelledby="pj-needs-h">${sectionHead({ id: "pj-needs-h", title: "Needs your attention", count: pending ? `${pending} pending` : "", right: `<a class="link" href="#/inbox">Open inbox${ic("chev-right", "ic16")}</a>` })}${needs.length ? projectDecisionsHtml(needs) : `<p class="muted">Nothing needs you on this project.</p>`}</section>
+      ${projectChannelsHtml(id)}
       <section class="project-sec" aria-labelledby="pj-act-h">${sectionHead({ id: "pj-act-h", title: "Recent activity", right: `<a class="link" href="#/projects/${esc(id)}/activity">All activity${ic("chev-right", "ic16")}</a>` })}${feed(acts().filter((a) => a.proj === id).slice(0, 6), { noProj: true })}</section>
     </div>`;
   }
@@ -66,7 +137,12 @@ function projectBody(id, tab) {
   if (tab === "team") return `<div class="pj-team">${projectTeams(id)}${memberRows(projMembers(id), { emptyText: "No members yet." })}</div>`;
   if (tab === "activity") return pageActivity(id);
   if (tab === "insights") return projectInsights(id);
-  if (tab === "conversations") return `<div class="section">${conversationPreview(pr.channel)}</div>`;
+  if (tab === "features") return sub ? pageFeature(id, sub) : docsSectionBar(id) + pageFeatures(id);
+  if (tab === "releases") return sub ? pageRelease(id, sub) : pageReleases(id);
+  if (tab === "docs") return pageDocs(id, sub);
+  const processTab = processTabBody(id, tab);
+  if (processTab != null) return (processTabs(id).some((t) => t.key === tab && inDocs(t)) ? docsSectionBar(id, takeDocsTabAction()) : "") + processTab;
+  if (tab === "conversations") { location.replace(`#/projects/${id}`); return ""; }
   return notFound();
 }
 

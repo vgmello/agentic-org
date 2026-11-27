@@ -30,6 +30,13 @@ function mentionItems(chId, q, agentsOnly) {
   const offerHere = ch?.kind === "channel" && !agentsOnly && "here".startsWith(q);
   return (offerHere ? [{ value: "here", label: "@here", hint: "Everyone in this channel" }, ...items] : items).slice(0, 8);
 }
+/* `#` lists channels (this project's first), to reference one in a message */
+function channelItems(chId, q) {
+  const proj = CH[chId]?.proj;
+  return Object.entries(CH).filter(([, c]) => c.kind === "channel" && c.name.toLowerCase().includes(q))
+    .sort(([, a], [, b]) => (b.proj === proj && !!proj) - (a.proj === proj && !!proj) || (!a.name.startsWith(q)) - (!b.name.startsWith(q)) || a.name.localeCompare(b.name))
+    .slice(0, 8).map(([, c]) => ({ value: c.name, label: "#" + c.name, hint: c.topic || "" }));
+}
 const commandItems = (q) => COMMANDS.filter((c) => c.name.startsWith(q)).map((c) => ({ value: c.name, label: "/" + c.name, hint: c.hint }));
 
 /* ---------------------------------------------------------------- what the caret is in */
@@ -38,6 +45,8 @@ function triggerAt(field, allowCommands) {
   const before = field.value.slice(0, field.selectionStart);
   const cmd = allowCommands && /^\/(\w*)$/.exec(before);
   if (cmd) return { kind: "command", q: cmd[1].toLowerCase(), from: 0 };
+  const hash = /(^|\s)#([\w.-]*)$/.exec(before);
+  if (hash) return { kind: "channel", q: hash[2].toLowerCase(), from: before.length - hash[2].length - 1 };
   const at = /(^|\s)@([\w.-]*)$/.exec(before);
   if (!at) return null;
   const agentsOnly = /^\/(ask|assign) @[\w.-]*$/.test(before);
@@ -64,7 +73,7 @@ function listboxEl(field) {
 }
 function paint() {
   const { field, items, kind } = assist, box = listboxEl(field);
-  box.setAttribute("aria-label", kind === "command" ? "Commands" : "People and agents to mention");
+  box.setAttribute("aria-label", kind === "command" ? "Commands" : kind === "channel" ? "Channels" : "People and agents to mention");
   box.innerHTML = items.map((it, i) => optionHtml(field, it, i)).join("");
   field.setAttribute("aria-expanded", "true");
   field.setAttribute("aria-controls", box.id);
@@ -82,7 +91,7 @@ function closeAssist() {
 /* Called on every input in a composer. */
 function updateAssist(field, chId, allowCommands) {
   const t = triggerAt(field, allowCommands);
-  const items = !t ? [] : t.kind === "command" ? commandItems(t.q) : mentionItems(chId, t.q, t.agentsOnly);
+  const items = !t ? [] : t.kind === "command" ? commandItems(t.q) : t.kind === "channel" ? channelItems(chId, t.q) : mentionItems(chId, t.q, t.agentsOnly);
   if (!items.length) { closeAssist(); return; }
   if (assist.field && assist.field !== field) closeAssist();
   Object.assign(assist, { field, kind: t.kind, from: t.from, items, active: Math.min(assist.active, items.length - 1), chId, allowCommands });
@@ -102,7 +111,7 @@ function recheckAssist() {
    (so completing "@ma|ya" leaves no "ya" behind). Null once the caret has left it. */
 function mentionRange(field) {
   const t = triggerAt(field, assist.allowCommands);
-  if (!t || t.kind !== "mention" || t.from !== assist.from) return null;
+  if (!t || t.kind !== assist.kind || t.kind === "command" || t.from !== assist.from) return null;
   const caret = field.selectionStart, tail = /^[\w.-]*/.exec(field.value.slice(caret))[0];
   return { from: t.from, to: caret + tail.length };
 }
@@ -116,11 +125,11 @@ function replaceTrigger(field, text, to = field.selectionStart) {
 function choose(i) {
   const { field, items, kind } = assist, it = items[i];
   if (!it) return;
-  if (kind === "mention") {
-    const range = mentionRange(field);
+  if (kind === "mention" || kind === "channel") {
+    const range = mentionRange(field), sym = kind === "channel" ? "#" : "@";
     closeAssist();
     /* Never write over words the caret has moved to: a stale list only closes. */
-    if (range) replaceTrigger(field, `@${it.value}${/^\s/.test(field.value.slice(range.to)) ? "" : " "}`, range.to);
+    if (range) replaceTrigger(field, `${sym}${it.value}${/^\s/.test(field.value.slice(range.to)) ? "" : " "}`, range.to);
     return;
   }
   const cmd = COMMANDS.find((c) => c.name === it.value);

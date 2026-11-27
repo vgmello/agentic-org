@@ -2,9 +2,12 @@ import { M, OFFICES, officeName } from "../data.js";
 import { agentSetupFields } from "./teams.js";
 import { searchResults } from "../shell/cmdk.js";
 import { ARCHIVE_DAY_OPTIONS, CHAT_SEND_SHORTCUTS, FONT_OPTIONS, S, THEME_OPTIONS, getOrgName } from "../state.js";
+import { settingsProcesses } from "./processes.js";
+import { pageDevProcesses } from "./dev-processes.js";
+import { officesSection } from "./updates.js";
 import { SEP, av, avStack, crumbs, empty, esc, hdr, ic, mlink, pill, plural, presPill, seg } from "../ui.js";
 
-const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["processes", "Processes", "refresh"], ["access", "Members and access", "key"], ["updates", "Updates", "download"], ["appearance", "Appearance", "adjustments"]];
+const SET = [["general", "General", "cog"], ["offices", "Offices", "office"], ["agents", "Agent setup", "chip"], ["roles", "Roles", "id"], ["access", "Members and access", "key"], ["appearance", "Appearance", "adjustments"]];
 const health = (a) => (M[a].offboarded ? "Offboarded" : M[a].setup.needs ? "Needs setup: " + M[a].setup.needs : M[a].paused ? "Paused" : "Ready");
 const healthMark = (a) => { const h = health(a); const [icon, tone] = h === "Ready" ? ["check-circle", "green"] : (h === "Paused" || h === "Offboarded") ? ["pause", "gray"] : ["wrench", "amber"]; return pill(h, tone, icon); };
 function settingsFrame(active, header, content) {
@@ -21,6 +24,11 @@ function settingsFrame(active, header, content) {
     <div class="settings-body">${content}</div>
   </div>`;
 }
+/* Processes, Standards and Development processes are Organization pages in the sidebar (owner), not Settings */
+function pageOrgProcesses(sec, sub) {
+  const { header, body } = sec === "processes" ? settingsProcesses(sub) : pageDevProcesses();
+  return `<div class="settings org-standalone">${header}<div class="settings-body">${body}</div></div>`;
+}
 function pageSettings(sec = "general", sub) {
   if (sec === "appearance") return pagePreferences();
   const label = SET.find(([key]) => key === sec)[1];
@@ -31,11 +39,7 @@ function pageSettings(sec = "general", sub) {
     <div><label for="o-owner">Owner</label><input class="field" id="o-owner" value="You" disabled></div><div><label for="o-data">Data location</label><input class="field" id="o-data" value="This Mac · HQ office" disabled><p class="help">Change where things run in Offices.</p></div>
     <div><button class="btn primary" type="submit">Save changes</button></div></form>`;
   else if (sec === "offices") {
-    header = hdr("Offices", "2 offices · 1 online");
-    body = `<p class="desc">Where your agents run. HQ is this Mac; another office syncs with it.</p><ul class="rows settings-rows" role="list" style="margin-top:8px">${Object.entries(OFFICES).map(([k, o]) => {
-    const here = agents.filter((a) => M[a].setup.office === k);
-    return `<li>${ic("office", "ic20 chev")}<div class="grow"><p class="rt">${esc(o.name)}<span class="sec">${esc(o.machine)}</span></p><div class="meta"><span>${esc(o.note)}</span>${SEP}<span>${plural(here.length, "agent", "agents")}: ${here.map((a) => mlink(a)).join(", ")}</span></div><div style="margin-top:8px">${avStack(here, 10)}</div></div>${pill(o.status, o.tone, o.icon)}</li>`;
-  }).join("")}</ul><div class="section"><button class="btn outline" type="button" data-act="proto" data-v="Add an office">${ic("plus", "ic20")}Add an office</button></div>`;
+    ({ header, body } = officesSection(sub));
   } else if (sec === "agents" && M[sub]?.kind === "agent") {
     const agent = M[sub];
     header = crumbs([["#/settings", "Settings"], ["#/settings/agents", "Agent setup"], [null, agent.name]]) + hdr(agent.name, esc(agent.role) + " · Agent setup", `<a class="btn outline" href="#/members/${sub}/sessions">${ic("terminal", "ic20")}Sessions</a><a class="btn outline" href="#/members/${sub}">${ic("user", "ic20")}View profile</a>`);
@@ -51,9 +55,7 @@ function pageSettings(sec = "general", sub) {
   } else {
     const [icon, description] = {
       roles: ["id", "Roles define what each agent does."],
-      processes: ["refresh", "Processes define how work moves through the organization."],
       access: ["key", "Members and access manages who can use this organization."],
-      updates: ["download", "Updates installs new versions of Agentic Org."],
     }[sec];
     body = empty(icon, "Not available in this prototype", description);
   }
@@ -94,6 +96,7 @@ function pageSearch(q) {
 function notFound() { return hdr("Not found", "") + empty("question", "This page doesn't exist", "The link may be from an older version of the prototype."); }
 
 export {
+  pageOrgProcesses,
   SET,
   healthMark,
   notFound,

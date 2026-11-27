@@ -351,7 +351,7 @@
   --page-subtitle-divider: color-mix(in srgb, var(--gray-400) 45%, var(--line2));
   --toolbar-group-gap: 16px;
   /* Lifted toward the muted text so the 1px separator reads on every theme (owner: "I can almost not see it") */
-  --toolbar-divider-color: color-mix(in srgb, var(--gray-400) 70%, var(--line2));
+  --toolbar-divider-color: color-mix(in srgb, var(--gray-400) 45%, var(--line2));
   --toolbar-seg-bg: rgb(6 13 25 / .44);
   --toolbar-seg-border: var(--line2);
   --toolbar-seg-active-bg: var(--ocean-selected, rgb(255 255 255 / .12));
@@ -3006,6 +3006,29 @@ html[data-theme^="graphite"]:has(.triage-workspace) {
   inset-inline-end: calc(100% + 8px);
 }
 #assembly-play .icon-tooltip { inset-inline: 0 auto; }
+/* Owner: no tool rail on the right; the panel toggles live in the toolbar after Filter and Display, and the panel
+   opens beside the main view */
+#main .activity-body { grid-template-columns: minmax(0, 1fr) 0px; grid-template-areas: "main panel"; }
+#main .activity-body[data-panel-open] { grid-template-columns: minmax(0, 1fr) clamp(17rem, 27%, 24rem); }
+#main .queue-controls > .activity-tools { grid-area: auto; flex-direction: row; gap: 2px; padding: 0; border: 0; background: none; }
+/* Same "|" group separators as the Work toolbar (owner): tabs | Filter · Display | panel toggles */
+#main :is(.activity-toolbar, .project-subbar, .triage-toolbar) .queue-controls { position: relative; align-items: center; }
+#main :is(.activity-toolbar, .triage-toolbar) > .primary-tab-row + .queue-controls { margin-inline-start: var(--toolbar-group-gap); }
+#main :is(.activity-toolbar, .triage-toolbar) > .primary-tab-row + .queue-controls::before,
+#main :is(.activity-toolbar, .project-subbar) .queue-controls > .activity-tools::before {
+  content: ""; position: absolute; inset-inline-start: calc(var(--toolbar-group-gap) / -2); inset-block-start: 50%;
+  translate: -50% -50%; width: 1px; height: 18px; background: var(--toolbar-divider-color); pointer-events: none;
+}
+#main .project-subbar .project-activity-controls > .queue-controls { margin-inline-start: var(--toolbar-group-gap); }
+#main .project-subbar .project-activity-controls > .queue-controls::before {
+  content: ""; position: absolute; inset-inline-start: calc(var(--toolbar-group-gap) / -2); inset-block-start: 50%;
+  translate: -50% -50%; width: 1px; height: 18px; background: var(--toolbar-divider-color); pointer-events: none;
+}
+#main :is(.activity-toolbar, .project-subbar) .queue-controls > .activity-tools { position: relative; margin-inline-start: var(--toolbar-group-gap); }
+#main .queue-controls > .activity-tools .activity-tool .icon-tooltip { inset-block-start: calc(100% + 6px); inset-inline-end: 0; }
+@container activity (max-width: 42.5rem) {
+  #main .activity-body, #main .activity-body[data-panel-open] { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "panel"; }
+}
 .activity-body[data-panel-open] .activity-panel { visibility: visible; }
 @container activity (max-width: 42.5rem) {
   .activity-body, .activity-body[data-panel-open] {
@@ -3099,7 +3122,13 @@ html[data-assembly-dividers] .assembly-table tbody tr:not(.assembly-milestone) +
 .assembly-table small { display: block; color: var(--gray-400); font-size: var(--fs-xs); font-weight: 400; }
 /* Assembly rows read like the Work list (TASK-242): a feature is a task title (size, weight, colour) over a muted
    line, and a milestone is a group header ("To do 7"): semibold small text with its muted progress beside it. */
-.assembly-table tbody tr:not(.assembly-milestone) > th { color: var(--white); font-size: var(--fs-md); font-weight: var(--fw-item); line-height: 1.4; }
+.assembly-table tbody tr:not(.assembly-milestone) > th { color: var(--white); font-size: var(--fs-base); font-weight: 500; line-height: 1.45; }
+/* Column headers are quiet labels, not bold titles (owner): one size across the table, hierarchy from weight/colour */
+#main .assembly-table thead th { color: var(--gray-300); font-size: var(--fs-base); font-weight: 500; line-height: 1.45; }
+/* Owner: the table's labels are at least 14px; the small muted lines (counts, "4 tasks") stay 12px */
+#main .assembly-table .assembly-milestone th { font-size: var(--fs-base); }
+#main .assembly-table .assembly-progress { font-size: var(--fs-xs); }
+#main .assembly-table thead th small { color: var(--gray-400); }
 .assembly-table tbody tr:not(.assembly-milestone) > th > small { margin-block-start: 2px; line-height: 1.5; }
 .assembly-table .assembly-milestone th {
   color: var(--white);
@@ -3611,10 +3640,8 @@ body:has(.work-toolbar[data-values="hidden"]) .board-lanes .board-lanes-mode { d
 .filter-menu :is(.filter-facet-chev, .filter-back .ic) { color: var(--gray-400); }
 .filter-menu .filter-back { font-weight: 600; }
 .filter-menu .filter-empty { margin: 0; padding: 6px 12px; font-size: var(--fs-sm); color: var(--gray-400); }
-.filter-menu .filter-check {
-  flex: none; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-inline: 2px;
-  border-radius: 4px; box-shadow: inset 0 0 0 1.5px var(--gray-500);
-}
-.filter-menu .filter-check .ic { visibility: hidden; color: var(--tone-accent-ink); }
-.filter-menu [aria-checked="true"] .filter-check { background: var(--tone-accent-soft); box-shadow: inset 0 0 0 1.5px var(--tone-accent-ink); }
+/* Same look as Display: a plain check beside each ticked value, no boxes; one scrolling list (owner) */
+.filter-menu .filter-check { flex: none; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-inline: 2px; }
+.filter-menu .filter-check .ic { visibility: hidden; color: var(--white); }
 .filter-menu [aria-checked="true"] .filter-check .ic { visibility: visible; }
+.menu.filter-menu { max-height: min(70vh, 34rem); overflow-y: auto; overscroll-behavior: contain; }

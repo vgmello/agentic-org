@@ -31,7 +31,10 @@ pub use resolve::{
     resolve_single_chain, EffectiveEntry, EffectiveSet, Layer, LayerOutcome, SingleChainInputs,
     Winner, WinnerKind,
 };
-pub use skills::{find_builtin_skill, list_builtin_skills, BuiltinSkill, SKILL_MAX_BYTES};
+pub use skills::{
+    find_builtin_skill, list_builtin_skills, list_builtin_skills_by_category, BuiltinSkill,
+    SkillCategory, SKILL_MAX_BYTES,
+};
 pub use write::{validate_write, CallerKind, WriteCheckInput, WriteViolation};
 
 #[cfg(test)]

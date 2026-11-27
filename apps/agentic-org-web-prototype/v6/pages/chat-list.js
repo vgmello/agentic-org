@@ -3,7 +3,9 @@
 import { CH, M } from "../data.js";
 import { S } from "../state.js";
 import { av, esc, ic, kindWord, plural, presence } from "../ui.js";
-import { chatTitle, findConversations, listedConversations, matchReason, openAsks, openDirectMessage, recipients } from "./chat-model.js";
+import { chatTitle, findConversations, isClosedDm, matchReason, openAsks, openDirectMessage, recipients, shownConversations } from "./chat-model.js";
+import { closeButton, closeConversation, neighbourFocus } from "./chat-dm-close.js";
+import { openNewChannel } from "./chat-channel-new.js";
 import { viewLinks } from "./chat-views.js";
 
 /* Agents' conversations are not listed here: the owner reads them from an agent's page ("Conversations with other
@@ -17,7 +19,7 @@ const needsCount = (n, text = "waiting on you") => `<span class="chat-attn">${ic
 const unreadDot = '<span class="chat-unread" aria-hidden="true"></span>';
 
 function rowLead(ch) {
-  if (ch.kind === "channel") return ic("hash", "ic16");
+  if (ch.kind === "channel") return ic(ch.private ? "lock" : "hash", "ic16");
   return ch.kind === "dm" ? av(ch.with, 24) : ic("eye", "ic16");
 }
 /* A DM's presence word, under or beside the name; a row with requests shows its count instead. */
@@ -33,15 +35,54 @@ function rowTrail(ch, unread) {
   return `<span class="chat-row-attn">${needs ? needsCount(needs) : ""}</span><span class="chat-row-dot">${unread ? unreadDot : ""}</span>`;
 }
 /* `why`: while finding, what matched when the name doesn't show it (a project, a task id, a message's words). */
-function chatLinkHtml(k, activeId, why = "") {
-  const ch = CH[k], unread = ch.unread && k !== activeId;
+/* A DM row (outside Find) carries its Close control after the link: a sibling, as a button cannot sit in a link. */
+function chatLinkHtml(k, activeId, why = "", closable = false) {
+  const ch = CH[k], unread = ch.unread && k !== activeId, close = closable && ch.kind === "dm" && !isClosedDm(k);
   const attrs = (k === activeId ? ' aria-current="page"' : "") + (unread ? ' class="is-unread"' : "");
   const unreadText = unread ? `<span class="sr-only">, ${plural(ch.unread, "unread message", "unread messages")}</span>` : "";
   const reason = why ? `<span class="chat-row-why"><span class="sr-only">, </span>${esc(why)}</span>` : "";
-  return `<li><a href="#/chat/${k}"${attrs}>${rowLead(ch)}<span class="chat-row-main"><span class="chat-row-name">${esc(ch.kind === "channel" ? ch.name : chatTitle(ch))}${reason}</span>${rowWord(ch)}</span>${unreadText}${rowTrail(ch, unread)}</a></li>`;
+  return `<li${close ? ' class="chat-dm-row"' : ""}><a href="#/chat/${k}"${attrs}>${rowLead(ch)}<span class="chat-row-main"><span class="chat-row-name">${esc(ch.kind === "channel" ? ch.name : chatTitle(ch))}${reason}</span>${rowWord(ch)}</span>${unreadText}${rowTrail(ch, unread)}</a>${close ? closeButton(k) : ""}</li>`;
+}
+/* Outside Find, the Channels heading carries New channel. */
+function groupHead(kind, label, q) {
+  if (kind !== "channel" || q) return `<h2>${label}</h2>`;
+  return `<div class="chat-group-head"><h2>${label}</h2><button class="btn ghost icon chat-group-add" type="button" data-act="chat-channel-new" aria-label="New channel" title="New channel">${ic("plus", "ic16")}</button></div>`;
+}
+/* A channel whose name extends another channel's name ("agentic-org-v1-tech" after "agentic-org-v1") nests under it,
+   one level only (owner): its parent is the shortest channel name it extends. The parent row keeps its link and gets
+   a fold toggle; children show the rest of their name. */
+const foldsClosed = new Set();
+function parentOf(k, rows) {
+  const name = CH[k].name;
+  const cands = rows.filter((x) => x !== k && name.startsWith(CH[x].name + "-"));
+  return cands.sort((a, b) => CH[a].name.length - CH[b].name.length)[0] || null;
+}
+function channelTree(rows) {
+  const parent = new Map(rows.map((k) => [k, parentOf(k, rows)]));
+  return rows.filter((k) => !parent.get(k)).map((k) => ({ k, kids: rows.filter((x) => parent.get(x) === k) }));
+}
+function foldToggle(k, n, open) {
+  return `<button class="btn ghost icon chat-fold" type="button" data-act="chat-fold" data-id="${esc(k)}" aria-expanded="${open}" aria-controls="chat-fold-${esc(k)}" aria-label="${open ? "Collapse" : "Expand"} ${n} channels under #${esc(CH[k].name)}">${ic("chev-right", "ic14")}</button>`;
+}
+function channelNode({ k, kids }, activeId) {
+  if (!kids.length) return chatLinkHtml(k, activeId, "", true);
+  const open = !foldsClosed.has(k) || kids.includes(activeId);
+  const row = chatLinkHtml(k, activeId, "", true).replace(/^<li/, `<li class="chat-has-kids"`).replace(/<\/li>$/, `${foldToggle(k, kids.length, open)}</li>`);
+  const pre = CH[k].name + "-";
+  const list = open ? `<li class="chat-kids-wrap"><ul class="chat-kids" id="chat-fold-${esc(k)}">${kids.map((x) => chatLinkHtml(x, activeId, "", true).replace(`>${esc(CH[x].name)}<`, `>${esc(CH[x].name.slice(pre.length))}<`)).join("")}</ul></li>` : "";
+  return row + list;
 }
 function groupHtml(kind, label, rows, activeId, q) {
-  return rows.length ? `<h2>${label}</h2><ul>${rows.map((k) => chatLinkHtml(k, activeId, q ? matchReason(CH[k], q) : "")).join("")}</ul>` : "";
+  if (!rows.length) return "";
+  const html = kind === "channel" && !q ? channelTree(rows).map((n) => channelNode(n, activeId)).join("")
+    : rows.map((k) => chatLinkHtml(k, activeId, q ? matchReason(CH[k], q) : "", !q)).join("");
+  return `${groupHead(kind, label, q)}<ul>${html}</ul>`;
+}
+function toggleFold(root, id) {
+  if (foldsClosed.has(id)) foldsClosed.delete(id); else foldsClosed.add(id);
+  root.querySelector("#chat-nav").innerHTML = navInner(root.dataset.ch);
+  root.querySelector(`[data-act="chat-fold"][data-id="${CSS.escape(id)}"]`)?.focus();
+  return "handled";
 }
 function recipientButton(k, act = "chat-to") {
   return `<li><button class="chat-person" type="button" data-act="${act}" data-id="${esc(k)}">${av(k, 24)}<span class="chat-row-name">${esc(M[k].name)}</span><span class="chat-row-word">${esc(kindWord(k))}</span></button></li>`;
@@ -54,19 +95,20 @@ function noConversation(q) {
 }
 function navInner(activeId) {
   const q = list.q.trim().toLowerCase();
-  const keys = q ? findConversations(q) : listedConversations();
+  const keys = q ? findConversations(q) : shownConversations();
   if (!keys.length) return noConversation(q);
   return (q ? "" : viewLinks(activeId)) + GROUPS.map(([kind, label]) => groupHtml(kind, label, keys.filter((k) => CH[k].kind === kind), activeId, q)).join("");
 }
 const findStatus = () => (list.q.trim() ? plural(findConversations(list.q.trim().toLowerCase()).length, "conversation", "conversations") : "");
 
 function findHtml() {
-  const kbd = S.singleKey ? '<kbd aria-hidden="true">#</kbd>' : "";
   return `<div class="chlist-tools">
-      <div class="chat-find">${ic("search", "ic16")}<label class="sr-only" for="chat-find">Find a conversation</label>
-        <input class="field" id="chat-find" type="search" placeholder="Find a conversation" value="${esc(list.q)}" autocomplete="off" aria-controls="chat-nav" aria-describedby="chat-find-status"${S.singleKey ? ' aria-keyshortcuts="#"' : ""}>${kbd}</div>
+      <div class="chat-find-row">
+        <div class="chat-find">${ic("search", "ic16")}<label class="sr-only" for="chat-find">Find a conversation</label>
+          <input class="field" id="chat-find" type="search" placeholder="Find" title="Find a conversation${S.singleKey ? " (#)" : ""}" value="${esc(list.q)}" autocomplete="off" aria-controls="chat-nav" aria-describedby="chat-find-status"${S.singleKey ? ' aria-keyshortcuts="#"' : ""}>
+          <button class="btn ghost icon chat-new" id="chat-new" type="button" data-act="chat-new" aria-label="New message" title="New message">${ic("pencil", "ic16")}</button></div>
+      </div>
       <p class="sr-only" id="chat-find-status" role="status">${findStatus()}</p>
-      <button class="btn ghost sm chat-new" id="chat-new" type="button" data-act="chat-new">${ic("pencil", "ic16")}<span>New message</span></button>
     </div>`;
 }
 function pickerList() {
@@ -77,6 +119,7 @@ function pickerHtml() {
   return `<section class="chat-picker" id="chat-picker" aria-labelledby="chat-picker-title">
       <div class="chat-picker-head"><h2 id="chat-picker-title">New message</h2>
         <button class="btn ghost sm" type="button" data-act="chat-new-cancel">Cancel</button></div>
+      <button class="chat-person chat-create-channel" type="button" data-act="chat-channel-new"><span class="chat-create-ic">${ic("hash", "ic16")}</span><span class="chat-row-name">Create a channel</span></button>
       <label class="chat-picker-to" for="chat-to">To</label>
       <input class="field" id="chat-to" type="search" placeholder="Name or role" value="${esc(list.to)}" autocomplete="off" aria-controls="chat-to-list">
       <ul id="chat-to-list" aria-label="People and agents">${pickerList()}</ul>
@@ -131,8 +174,20 @@ function startMessage(root, who) {
   location.hash = hash;
   return "";
 }
+/* A new channel opens with its composer focused; the picker and drawer close. */
+function openCreatedChannel(id) {
+  Object.assign(list, { picker: false, to: "", q: "", focusAfter: "compose" });
+  S.chatList = null;
+  location.hash = "#/chat/" + id;
+}
+const queueListFocus = (target) => { list.focusAfter = target; };
 const LIST_CLICKS = {
+  "chat-fold": (root, id) => toggleFold(root, id),
   "chat-new": (root) => setPicker(root, true),
+  "chat-channel-new": (_root, _id, t) => { openNewChannel(t, openCreatedChannel); return "handled"; },
+  /* From a row (focus moves to the neighbouring row) or from the open DM's header menu (to the next conversation's
+     heading). */
+  "chat-dm-close": (_root, id, t) => { closeConversation(id, neighbourFocus(t), queueListFocus); return "handled"; },
   "chat-new-cancel": (root) => setPicker(root, false),
   "chat-to": (root, id) => startMessage(root, id),
 };
@@ -151,7 +206,7 @@ function onListClick(e, root) {
   if (link) return chooseConversation(e, link);
   const t = e.target.closest("[data-act]");
   const fn = t && LIST_CLICKS[t.dataset.act];
-  return fn ? fn(root, t.dataset.id) : "";
+  return fn ? fn(root, t.dataset.id, t) : "";
 }
 function onListInput(e, root) {
   const t = e.target;
@@ -175,11 +230,15 @@ function onListKeydown(e, root) {
   }
 }
 /* After a navigation started here (picker, "#", New message command), the intended field takes focus. */
+/* `focusAfter` is an id or a selector; a target the layout hides (a row of the closed drawer) falls back to the
+   conversation's heading. */
 function takeListFocus() {
-  const el = list.focusAfter ? document.getElementById(list.focusAfter) : null;
+  const want = list.focusAfter;
   list.focusAfter = "";
-  el?.focus();
-  return Boolean(el);
+  const el = want ? document.getElementById(want) || document.querySelector(want) : null;
+  const target = el && !el.getClientRects().length ? document.getElementById("ch-title") : el;
+  target?.focus();
+  return Boolean(target);
 }
 /* Prepares the list for the next render: the recipient picker, or the conversation filter. */
 function prepareList(mode) {
@@ -194,6 +253,7 @@ export {
   onListInput,
   onListKeydown,
   prepareList,
+  queueListFocus,
   syncPicking,
   takeListFocus,
   unreadDot,

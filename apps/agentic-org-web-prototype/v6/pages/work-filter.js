@@ -77,9 +77,22 @@ function facetValuesHtml({ facets, items, archived }, index) {
   return `<button role="menuitem" type="button" class="filter-back" data-act="work-filter-facet" data-v="" aria-label="Back to all filters">${ic("chev-left", "ic16")}<span>${esc(facet.label)}</span></button><hr>
     <div role="group" aria-label="${esc(facet.label)}">${rows}</div>${empty}`;
 }
-function panelHtml(id, panel) {
-  const config = menus.get(id);
-  return panel === "" || panel == null || !config.facets[panel] ? facetListHtml(config) : facetValuesHtml(config, Number(panel));
+/* One flat list, like Display: a heading per facet with its values as check items; several can be ticked (owner) */
+function facetSectionHtml({ facets, items, archived }, index) {
+  const facet = facets[index], sel = selectedValues(facet.state), counts = facetCounts(facet, facets, items);
+  const hidden = facetCounts(facet, facets, archived);
+  const values = facet.options().map(String).filter((v) => counts.get(v) || hidden.get(v) || sel.includes(v));
+  if (!values.length) return "";
+  const rows = values.map((v) => `<button role="menuitemcheckbox" type="button" aria-checked="${sel.includes(v)}" data-act="work-filter-toggle" data-k="${esc(facet.state)}" data-v="${esc(v)}" data-facet="${index}"><span class="filter-check" aria-hidden="true">${ic("check", "ic14")}</span><span class="filter-value-name">${esc(facet.name(v) ?? v)}</span><span class="muted tnum">${counts.get(v) ?? 0}</span></button>`).join("");
+  return `<div role="group" aria-label="${esc(facet.label)}"><p class="menu-h" aria-hidden="true">${esc(facet.label)}</p>${rows}</div>`;
+}
+function flatPanelHtml(config) {
+  const sections = config.facets.map((_f, i) => facetSectionHtml(config, i)).filter(Boolean).join("<hr>");
+  const clear = hasFacetFilters(config.facets) ? `<hr><button role="menuitem" type="button" data-act="work-clear-filters">${ic("x", "ic20")}Clear filters</button>` : "";
+  return sections + clear;
+}
+function panelHtml(id) {
+  return flatPanelHtml(menus.get(id));
 }
 
 /* The Filter control. `items` are the surface's items before any facet (archived visibility and search applied), so

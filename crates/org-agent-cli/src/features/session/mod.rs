@@ -81,6 +81,7 @@ fn dispatch(
 ) -> Option<Result<Answer, Refusal>> {
     match (request.command.resource, request.command.verb) {
         ("session", "inspect") => Some(inspect::read_session_inspect(transport, request)),
+        ("session", "list") => Some(inspect::read_session_list(transport, request)),
         ("session", "boot") => Some(boot::read_session_boot(
             transport,
             request,

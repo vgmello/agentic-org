@@ -5,7 +5,8 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::{
-    list_builtin_skills, BUILTIN_INSTRUCTIONS_MAX_BYTES, BUILTIN_PROMPTS, CHIEF_OF_STAFF_GUIDANCE,
+    list_builtin_skills, list_builtin_skills_by_category, SkillCategory,
+    BUILTIN_INSTRUCTIONS_MAX_BYTES, BUILTIN_PROMPTS, CHIEF_OF_STAFF_GUIDANCE,
     CHIEF_OF_STAFF_GUIDANCE_MAX_BYTES, CORE_RULES, CORE_RULES_MAX_BYTES, HR_LEAD, MANAGED_SESSION,
     SKILL_MAX_BYTES,
 };
@@ -78,7 +79,32 @@ fn every_skill_file_is_in_the_catalogue_exactly_once_clean_and_within_budget() {
         files,
         "skills/ and the built-in skill catalogue must match one to one"
     );
-    assert_eq!(skills.len(), 12, "the Day-1 library has twelve guides");
+    assert_eq!(
+        skills.len(),
+        19,
+        "the library has 12 workflow guides, 6 product guides, and 1 Chief of Staff guide"
+    );
+    assert_eq!(
+        list_builtin_skills_by_category(Some(SkillCategory::Workflow)).len(),
+        12
+    );
+    assert_eq!(
+        list_builtin_skills_by_category(Some(SkillCategory::ProductGuide)).len(),
+        6
+    );
+    assert_eq!(
+        list_builtin_skills_by_category(Some(SkillCategory::ChiefOfStaff)).len(),
+        1
+    );
+    assert_eq!(list_builtin_skills_by_category(None).len(), 19);
+    for cat in [
+        SkillCategory::Workflow,
+        SkillCategory::ProductGuide,
+        SkillCategory::ChiefOfStaff,
+    ] {
+        assert_eq!(SkillCategory::parse(cat.as_str()), Some(cat));
+    }
+    assert_eq!(SkillCategory::parse("unknown"), None);
     for skill in skills {
         let file = format!("{}.md", skill.key);
         assert_clean(&file, skill.body_markdown);

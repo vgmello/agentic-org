@@ -6,12 +6,16 @@ use std::borrow::Cow;
 use std::io::{BufRead, Write};
 use std::sync::OnceLock;
 
-use org_command::{Alias, Answer, Command, CommandTable, Office, Output, Refusal, Request};
+use org_command::{
+    Alias, Answer, Command, CommandTable, MutationPolicy, Office, Output, PolicyOverride, Refusal,
+    Request,
+};
 use org_proto::ErrorCode;
 use serde_json::Value;
 
 use crate::features::{
-    auth, budget, git, hiring, messaging, organization, processes, projects, session, work,
+    auth, budget, git, hiring, messaging, office, organization, processes, projects, providers,
+    session, tess, work,
 };
 use crate::runtime::domain::Domain;
 use crate::runtime::help::{self, Guidance};
@@ -28,6 +32,96 @@ const DOMAINS: &[Domain] = &[
     git::DOMAIN,
     processes::DOMAIN,
     budget::DOMAIN,
+    providers::DOMAIN,
+    office::DOMAIN,
+    tess::DOMAIN,
+];
+
+/// Declarative mutation-policy overrides on top of `Command::mutation_policy()` defaults
+/// (`Read`/`List` -> `ReadOnly`, `Write` -> `ConfirmRequired`).
+///
+/// Enforced server-side by `org-office-server` when the Chief of Staff acts on behalf of a human
+/// caller (`TASK-80.4`): `AutoSafe` actions run directly; `ConfirmRequired` mutations require a
+/// preflighted `agent-os suggestion create` proposal; `ForbiddenForAgent` calls are always denied.
+const POLICY_OVERRIDES: &[PolicyOverride] = &[
+    // AutoSafe: proposal & UI presentation helpers, caller 1:1 DM reply (enforced server-side),
+    // status line, private task notes.
+    PolicyOverride {
+        resource: "suggestion",
+        verb: "create",
+        policy: MutationPolicy::AutoSafe,
+    },
+    PolicyOverride {
+        resource: "suggestion",
+        verb: "withdraw",
+        policy: MutationPolicy::AutoSafe,
+    },
+    PolicyOverride {
+        resource: "ui",
+        verb: "present",
+        policy: MutationPolicy::AutoSafe,
+    },
+    PolicyOverride {
+        resource: "status",
+        verb: "set",
+        policy: MutationPolicy::AutoSafe,
+    },
+    PolicyOverride {
+        resource: "status",
+        verb: "clear",
+        policy: MutationPolicy::AutoSafe,
+    },
+    PolicyOverride {
+        resource: "task-note",
+        verb: "add",
+        policy: MutationPolicy::AutoSafe,
+    },
+    PolicyOverride {
+        resource: "task-note",
+        verb: "update",
+        policy: MutationPolicy::AutoSafe,
+    },
+    PolicyOverride {
+        resource: "task-note",
+        verb: "remove",
+        policy: MutationPolicy::AutoSafe,
+    },
+    PolicyOverride {
+        resource: "msg",
+        verb: "reply",
+        policy: MutationPolicy::AutoSafe,
+    },
+    // ForbiddenForAgent: security/governance boundaries no agent may ever execute directly.
+    PolicyOverride {
+        resource: "repo",
+        verb: "push",
+        policy: MutationPolicy::ForbiddenForAgent,
+    },
+    PolicyOverride {
+        resource: "agent",
+        verb: "execution-set",
+        policy: MutationPolicy::ForbiddenForAgent,
+    },
+    PolicyOverride {
+        resource: "agent",
+        verb: "approve",
+        policy: MutationPolicy::ForbiddenForAgent,
+    },
+    PolicyOverride {
+        resource: "agent",
+        verb: "revoke",
+        policy: MutationPolicy::ForbiddenForAgent,
+    },
+    PolicyOverride {
+        resource: "agent",
+        verb: "sessions",
+        policy: MutationPolicy::ForbiddenForAgent,
+    },
+    PolicyOverride {
+        resource: "member",
+        verb: "set-hiring",
+        policy: MutationPolicy::ForbiddenForAgent,
+    },
 ];
 
 /// Every shorthand, in the order the catalogue lists them. The table rewrites them before it
@@ -71,6 +165,7 @@ pub fn table() -> CommandTable {
     CommandTable::new(&rows())
         .expect("agent-os command table is valid")
         .with_aliases(ALIASES)
+        .with_policies(POLICY_OVERRIDES)
 }
 
 /// The same rows for a running command, built once per process and without the checks:
@@ -78,7 +173,11 @@ pub fn table() -> CommandTable {
 /// `doc-7` #18), and [`table`]'s contract tests are what make skipping the checks safe.
 pub fn runtime_table() -> &'static CommandTable {
     static TABLE: OnceLock<CommandTable> = OnceLock::new();
-    TABLE.get_or_init(|| CommandTable::unchecked(&rows()).with_aliases(ALIASES))
+    TABLE.get_or_init(|| {
+        CommandTable::unchecked(&rows())
+            .with_aliases(ALIASES)
+            .with_policies(POLICY_OVERRIDES)
+    })
 }
 
 /// The [`runtime_table`] by value, for a composition root that takes a table builder (the

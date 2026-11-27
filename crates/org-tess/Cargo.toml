@@ -1,0 +1,15 @@
+[package]
+name = "org-tess"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+org-agent-cli = { path = "../org-agent-cli" }
+org-office = { path = "../org-office" }
+org-proto = { path = "../org-proto" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

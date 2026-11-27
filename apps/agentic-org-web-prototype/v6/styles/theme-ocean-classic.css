@@ -261,14 +261,14 @@ html[data-theme="classic"] .hb-spot-next { background: #1a2433; box-shadow: inse
 html[data-theme="classic"] .hb-spot-next:hover { background: #1e2939; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16); }
 html[data-theme="classic"] .hb-ai-brief {
   background: #16202e;
-  box-shadow: inset 3px 0 0 var(--indigo-400), inset 0 0 0 1px rgba(255, 255, 255, .10);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10);
 }
 html[data-theme="classic"] .hb-ai-eyebrow .ic { color: var(--tone-accent-ink); }
 html[data-theme="classic"] .hb-ai-chip { background: #1e2939; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10); color: #d1d5dc; }
 html[data-theme="classic"] .hb-ai-chip:hover { background: #263447; color: #ffffff; box-shadow: inset 0 0 0 1px var(--indigo-400); }
 html[data-theme="classic"] .hb-brief-lenses { background: #101828; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .09); }
 html[data-theme="classic"] .hb-brief-lenses button[aria-pressed="true"] { background: var(--tone-accent-solid); color: #ffffff; box-shadow: inset 0 0 0 1px var(--tone-accent-edge); }
-html[data-theme="classic"] .hb-cos-memo { --hb-cos-fade: #16202e; background: #16202e; box-shadow: inset 3px 0 0 var(--indigo-400), inset 0 0 0 1px rgba(255, 255, 255, .09); }
+html[data-theme="classic"] .hb-cos-memo { --hb-cos-fade: #16202e; background: #16202e; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .09); }
 html[data-theme="classic"] .hb-dig-item { background: #1a2433; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08); }
 html[data-theme="classic"] a.hb-dig-item:hover { background: #1e2939; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16); }
 html[data-theme="classic"] .hb-spot-foot .btn.outline,

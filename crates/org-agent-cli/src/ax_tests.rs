@@ -92,7 +92,7 @@ fn every_write_declares_its_ack_class_and_durable_is_refused_where_it_cannot_hol
     // of `TASK-137`, which declare their own commit acknowledgement).
     for name in &committed {
         assert!(
-            ["msg ", "channel ", "status "]
+            ["msg ", "channel ", "status ", "suggestion "]
                 .iter()
                 .any(|p| name.starts_with(p))
                 || [

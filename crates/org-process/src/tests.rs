@@ -543,9 +543,14 @@ fn render_budget_respects_separator_unique_omitted_count_and_preserves_notice() 
 #[test]
 fn builtin_skills_are_discoverable_and_readable() {
     let skills = list_builtin_skills();
-    assert_eq!(skills.len(), 12);
+    assert_eq!(skills.len(), 19);
     let skill = find_builtin_skill("processes-and-standards").expect("skill found");
     assert_eq!(skill.source, "built_in");
     assert!(skill.body_markdown.contains("agent-os process list"));
+    assert_eq!(skill.category, crate::SkillCategory::Workflow);
+    let tess = find_builtin_skill("tess-workflows").expect("tess skill found");
+    assert_eq!(tess.category, crate::SkillCategory::ChiefOfStaff);
+    let guide = find_builtin_skill("product-org-and-teams").expect("product guide found");
+    assert_eq!(guide.category, crate::SkillCategory::ProductGuide);
     assert!(find_builtin_skill("no-such-skill").is_none());
 }

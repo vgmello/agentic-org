@@ -1056,7 +1056,8 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 .hb-cos-expand .ic { width: 14px; height: 14px; transition: transform .18s ease; }
 .hb-cos-expand[aria-expanded="true"] .ic { transform: rotate(180deg); }
 @media (min-width: 1121px) {
-  .hb-stage:not(.is-single) .hb-catchup { height: 0; min-height: 100%; overflow: hidden; }
+  /* Both columns size to the taller one's content (no clipping, no stretch to the fold) */
+  .hb-stage:not(.is-single) .hb-catchup { height: auto; min-height: 0; overflow: visible; }
 }
 @media (max-width: 1120px) {
   .hb-cos-scroll {
@@ -1441,3 +1442,15 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 /* Where task time goes: header outside like the other Home sections */
 .hb-time-sec { display: flex; flex-direction: column; gap: 12px; }
 .hb-time-sec > .sec-head { margin: 0; }
+
+/* No stretched gap above the actions: the footer follows the content instead of sinking to the column bottom */
+html #main .hb-spot > .hb-spot-main { flex-grow: 0; }
+html #main .hb-spot > .hb-spot-foot { margin-top: 4px; }
+
+/* Scorecard card: "Project | Lead Ada" on the title line; the name opens the person panel */
+.hb-card-leadline { display: inline-flex; align-items: center; gap: 8px; margin-inline-start: 4px; color: var(--gray-400); font-size: var(--fs-sm); font-weight: 400; white-space: nowrap; }
+.hb-card-leadline .hb-card-sep { width: 1px; height: 14px; background: var(--toolbar-divider-color, var(--line2)); }
+.hb-card-leadline .hb-card-lead-name { position: relative; z-index: 2; color: var(--gray-300); }
+.hb-card-leadline .hb-card-lead-name:hover { color: var(--white); }
+.hb-card-id:has(.hb-card-leadline) { flex-wrap: wrap; row-gap: 2px; align-items: center; }
+.hb-card-id:has(.hb-card-leadline) > .hb-card-name { white-space: nowrap; }

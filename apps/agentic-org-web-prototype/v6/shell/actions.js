@@ -19,7 +19,7 @@ import { closeSheet, openAddTeam, openAssign, openConfirmOffboard, openConfirmRe
 import { endNavigationKeys, getNavigationKeys, handleNavigationKeys } from "./keyboard.js";
 import { pageSearchInput, render, route } from "./router.js";
 import { askTessInPanel, clearCompanionHistory, clearReadNotifications, closeCompanion, dismissCompanionContext, handleCompanionEscape, handleCompanionInput, isCompanionModal, markAllNotificationsRead, markNotificationRead, openTessPanel, toggleExpandCompanion, toggleNotificationRead, toggleTessPanel } from "./topbar-utils.js";
-import { applyCozyContrast, applyFontStyle, applyShortcuts, applyTheme, ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, inTextField, ORG_NAME_STORE, overlayOpen, qs, S, saveNavWorkspace, setOrgName, showOrgName, SR, toggleNavPinned, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, writeSingleKey } from "../state.js";
+import { applyCozyContrast, applyFontStyle, applyShortcuts, applyTheme, ARCHIVE_AFTER_DAYS_STORE, ASSEMBLY_DIVIDERS_STORE, CHAT_SEND_SHORTCUTS, CHAT_SEND_STORE, COZY_CONTRAST_STORE, INBOX_DIVIDERS_STORE, inTextField, ORG_NAME_STORE, overlayOpen, qs, S, saveNavOrg, saveNavWorkspace, setOrgName, showOrgName, SR, toggleNavPinned, WORK_ARCHIVED_STORE, WORK_DIVIDERS_STORE, WORK_SUBTASKS_STORE, writeSingleKey } from "../state.js";
 import { spotQueue, toast } from "../ui.js";
 
 /* ---------------------------------------------------------------- actions */
@@ -375,7 +375,12 @@ const CLICK_ACTIONS = {
       : document.querySelector('[aria-controls="menu-scoped-work-display"], [aria-controls="menu-work-display"]');
     trigger?.focus();
   },
-  "fav-proj": (_e, _t, id) => { const idx = S.favProjs.indexOf(id); if (idx >= 0) { S.favProjs.splice(idx, 1); toast(`Removed ${P[id].name} from favorites.`); } else { S.favProjs.push(id); toast(`Added ${P[id].name} to favorites.`); } render(false); },
+  "fav-proj": (_e, _t, id) => {
+    const idx = S.favProjs.indexOf(id);
+    if (idx >= 0) { S.favProjs.splice(idx, 1); toast(`Removed ${P[id].name} from favorites.`); } else { S.favProjs.push(id); toast(`Added ${P[id].name} to favorites.`); }
+    try { localStorage.setItem("agentic-org.v6.favProjs", JSON.stringify(S.favProjs)); } catch (e) {}
+    render(false);
+  },
   answer: (_e, t, id, v) => {
     if (/^Ask why/i.test(v)) { toast("Prototype: your question goes to the agent; the ask stays open."); return; }
     S.answered[id] = v;
@@ -434,6 +439,11 @@ const CLICK_ACTIONS = {
   "notif-mark-all": () => markAllNotificationsRead(),
   "notif-clear-read": () => clearReadNotifications(),
   "brief-lens": (_e, _t, _id, v) => { S.briefLens = v; S.briefCopied = false; render(false); document.querySelector(`[data-act="brief-lens"][data-v="${CSS.escape(v || "")}"]`)?.focus(); },
+  "nav-org-pin": (_e, _t, _id, v) => {
+    S.navOrg = S.navOrg.includes(v) ? S.navOrg.filter((k) => k !== v) : [...S.navOrg, v];
+    saveNavOrg(); render(false);
+    document.querySelector(`.nav [data-act="nav-org-pin"][data-v="${CSS.escape(v)}"]`)?.focus();
+  },
   "nav-pin": (_e, _t, _id, v) => {
     S.navWorkspace = S.navWorkspace.includes(v) ? S.navWorkspace.filter((k) => k !== v) : [...S.navWorkspace, v];
     saveNavWorkspace(); render(false);
@@ -831,11 +841,21 @@ function isSingleKeyBlocked(e) {
   return !S.singleKey || e.isComposing || e.repeat || inTextField(e.target) || overlayOpen();
 }
 
+/* In a conversation, "/" opens that conversation's own search, not the command palette (owner). */
+function openChatSearch() {
+  const btn = document.querySelector("#main .chat .chhead .chat-search");
+  if (!btn) return false;
+  if (btn.getAttribute("aria-expanded") !== "true") btn.click();
+  requestAnimationFrame(() => document.getElementById("chat-search-input")?.focus());
+  return true;
+}
+
 function tryPunctuationShortcut(e) {
   if (!isPlainAltGrOrUnmodified(e)) return false;
   if (e.key === "#" && route()[0] === "chat") { e.preventDefault(); findConversation(); return true; }
   if (e.key === "/") {
     e.preventDefault();
+    if (openChatSearch()) return true;
     const inline = document.querySelector('#main [data-act="search-toggle"]');
     const input = pageSearchInput();
     if (inline) openInlineSearch(inline.dataset.v); else if (input) input.focus(); else openCmdk();

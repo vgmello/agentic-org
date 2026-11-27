@@ -163,13 +163,11 @@ async function checkWorkBoard(page: Page) {
 /* Choose values in one Filter facet: open Filter, open the facet, tick each value, close */
 async function pickFilter(page: Page, facet: string, values: string[]) {
   await page.getByRole("button", { name: /^Filter work/ }).click();
-  await page.getByRole("menuitem", { name: new RegExp(`^${facet}\\b`) }).click();
   for (const value of values) await page.getByRole("group", { name: facet }).getByRole("menuitemcheckbox", { name: new RegExp(`^${value}\\s*\\d`) }).click();
   await page.keyboard.press("Escape");
 }
 
-/* The title row reads like Projects': New task at its end, centred on the title, at the header buttons' 36px and the
-   same end edge. Calendar sits in the toolbar right after Display. */
+/* New task ends the toolbar row, at the header buttons' 36px and the same end edge as the Projects actions. Calendar sits in the toolbar right after Display. */
 async function checkWorkHeaderLikeProjects(page: Page) {
   const work = await page.evaluate(() => {
     const box = (sel: string) => document.querySelector(sel)!.getBoundingClientRect().toJSON();
@@ -182,7 +180,8 @@ async function checkWorkHeaderLikeProjects(page: Page) {
   await page.goto(back);
   await page.locator("#main h1").first().waitFor();
   const mid = (r: { top: number; height: number }) => r.top + r.height / 2;
-  assert.ok(Math.abs(mid(work.action) - mid(work.h1)) <= 3, `New task is centred on the title (${mid(work.action)} vs ${mid(work.h1)})`);
+  /* Owner (2026-11-27): New task ends the toolbar row, after the tools, not the title row */
+  assert.ok(Math.abs(mid(work.action) - mid(work.display)) <= 4, `New task sits on the toolbar row (${mid(work.action)} vs ${mid(work.display)})`);
   assert.equal(Math.round(work.action.height), Math.round(projects.height), "New task is as tall as the Projects header actions");
   assert.equal(Math.round(work.action.right), Math.round(projects.right), "New task ends where the Projects actions end");
   assert.match(work.next ?? "", /\bwork-cal-btn\b/, "Calendar follows the view controls in the DOM");
@@ -199,7 +198,6 @@ async function checkMultiSelectFilter(page: Page, board: ReturnType<Page["locato
   await trigger.click();
   const menu = page.locator("#menu-work-filter");
   assert.ok(await menu.evaluate((el) => el.matches(":popover-open")), "Filter opens in the top layer");
-  await page.keyboard.press("ArrowRight");
   const statuses = page.getByRole("group", { name: "Status" });
   const fresh = statuses.getByRole("menuitemcheckbox", { name: /^New\s*\d/ });
   await fresh.click();
@@ -214,8 +212,6 @@ async function checkMultiSelectFilter(page: Page, board: ReturnType<Page["locato
   assert.ok(cards.length === want(["New", "Blocked"]) && cards.every((x) => ["New", "Blocked"].includes(x)), `Board shows New or Blocked cards (${cards})`);
   assert.equal(await trigger.getAttribute("aria-label"), "Filter work, Status New, Blocked, 2 selected", "The trigger names the selection");
   assert.equal((await trigger.locator(".menu-textbtn-count").innerText()).trim(), "2", "The trigger shows the selection count");
-  await page.keyboard.press("ArrowLeft");
-  assert.ok(await focusedIs(page.getByRole("menuitem", { name: "Status, 2 selected" })), "ArrowLeft returns to the facets, on Status");
   await page.keyboard.press("Escape");
   assert.ok(await focusedIs(trigger), "Escape closes the menu onto Filter");
   const summary = (await page.locator("#work-results > .board-filterbar").innerText()).replace(/\s+/g, " ");
@@ -983,11 +979,11 @@ async function checkPhoneLaneJump(page: Page) {
   await page.waitForTimeout(150);
   const rows = await page.locator(".work-toolbar > *").evaluateAll((els) => els.filter((el) => el.getClientRects().length).map((el) => el.getBoundingClientRect().top).sort((a, b) => a - b)
     .filter((top, i, tops) => i === 0 || top - tops[i - 1] > 20).length);
-  /* Two rows at 320px: the views, then layout, search, Filter and Display; nothing is clipped or scrolls sideways */
-  assert.equal(rows, 2, `The 320px toolbar has two rows (${rows})`);
-  /* New task is the page's primary action: at the end of the title row, above the toolbar, at every width */
-  const [titleBox, tabsTop, newBox] = await page.evaluate(() => [document.querySelector("#main h1")!.getBoundingClientRect().toJSON(), document.querySelector(".work-toolbar .primary-tab-row")!.getBoundingClientRect().top, document.getElementById("work-new-task")!.getBoundingClientRect().toJSON()]);
-  assert.ok(newBox.top < tabsTop && newBox.top < titleBox.bottom && newBox.left > titleBox.right, "New sits at the end of the title row, above the views");
+  /* At 320px: the views, then layout, search, Filter and Display, then New task ending the toolbar (owner: New
+     follows the tools); nothing is clipped or scrolls sideways */
+  assert.ok(rows <= 3, `The 320px toolbar has at most three rows (${rows})`);
+  const [ctlBox, newBox] = await page.evaluate(() => [document.querySelector(".work-toolbar > .queue-controls")!.getBoundingClientRect().toJSON(), document.getElementById("work-new-task")!.getBoundingClientRect().toJSON()]);
+  assert.ok(newBox.top >= ctlBox.top - 4, "New comes after the tools");
   assert.ok(newBox.right <= 320, "New stays inside the 320px viewport");
   assert.ok(newBox.width >= 44 && newBox.height >= 44, "New stays a 44px target");
   assert.match((await page.getByRole("button", { name: /^Filter work/ }).innerText()).trim(), /^Filter$/, "At 320px Filter keeps its word");
@@ -1047,7 +1043,7 @@ async function checkWork(page: Page, href: string) {
 
 async function checkActivityPanelAndSim(page: Page, theme: string) {
   const readiness = page.getByRole("progressbar", { name: "Portfolio readiness" });
-  const tools = page.getByRole("group", { name: "Activity sidebar tools" });
+  const tools = page.getByRole("group", { name: "Activity panels" });
   const gates = tools.getByRole("button", { name: "Release gates" });
   const simulation = tools.getByRole("button", { name: "Simulation" });
   const panel = page.locator("#activity-panel");
@@ -1066,14 +1062,13 @@ async function checkActivityPanelAndSim(page: Page, theme: string) {
   await assertAssemblyBounds();
   await panel.getByRole("heading", { name: "Release gates" }).waitFor();
   assert.equal(await gates.getAttribute("aria-expanded"), "true", "Release gates opens by default");
-  assert.equal(await page.locator(".activity-header").getByRole("button", { name: "Release gates" }).count(), 0);
+  /* Owner (2026-11-27): the panel toggles live in the Activity toolbar; no right-side icon rail */
+  assert.equal(await page.locator(".activity-header").getByRole("group", { name: "Activity panels" }).count(), 1, "Panel toggles sit in the Activity toolbar");
   const bounds = (await panel.boundingBox())!;
   const header = (await page.locator(".activity-header").boundingBox())!;
   const body = (await page.locator(".activity-body").boundingBox())!;
-  const toolbar = (await tools.boundingBox())!;
   assert.ok(Math.abs(bounds.y - header.y - header.height) <= 1, "Panel starts below the Activity header");
-  assert.ok(Math.abs(bounds.x + bounds.width - toolbar.x) <= 1, "Panel docks beside the right icon rail");
-  assert.ok(Math.abs(toolbar.x + toolbar.width - body.x - body.width) <= 1, "Icons stay at the right edge");
+  assert.ok(Math.abs(bounds.x + bounds.width - body.x - body.width) <= 1, "Panel docks at the right edge");
   assert.ok(Math.abs(bounds.height - body.height) <= 1, "Panel fits the available height");
   assert.notEqual(await panel.evaluate((element) => getComputedStyle(element).boxShadow), "none");
   if (theme === "cozy") {
@@ -1099,7 +1094,7 @@ async function checkActivityPanelAndSim(page: Page, theme: string) {
   await panel.getByRole("button", { name: "Reset simulation" }).click();
   await page.keyboard.press("Escape");
   await panel.waitFor({ state: "hidden" });
-  assert.ok((await activity.boundingBox())!.width > body.width - toolbar.width - 1, "Closing the panel frees its width");
+  assert.ok((await activity.boundingBox())!.width > body.width - 1, "Closing the panel frees its width");
   assert.ok(await simulation.evaluate((button) => button === document.activeElement), "Focus returns to the selected icon");
   await assertAssemblyBounds();
   await gates.click();
@@ -1136,11 +1131,11 @@ async function checkActivity(page: Page, theme: string) {
 }
 
 async function checkProjectActivitySim(page: Page) {
-  const release = page.getByRole("region", { name: "Release summary" });
-  const releaseReadiness = release.getByRole("progressbar", { name: "Release readiness" });
+  /* Owner (2026-11-27): no release strip on the Activity tab; the assembly line's release row carries readiness */
+  const releaseReadiness = page.locator(".assembly-milestone").getByRole("progressbar", { name: "Office federation progress" });
   const assemblyCycle = page.locator(".assembly-metrics [data-assembly-cycle]");
   const panel = page.getByRole("complementary", { name: "Release gates" });
-  const tools = page.getByRole("group", { name: "Activity sidebar tools" });
+  const tools = page.getByRole("group", { name: "Activity panels" });
   const simulation = tools.getByRole("button", { name: "Simulation" });
   const gates = tools.getByRole("button", { name: "Release gates" });
   const throughput = panel.getByRole("region", { name: "Throughput" });
@@ -1175,10 +1170,11 @@ async function checkProjectActivity(page: Page) {
   const feed = page.getByRole("tab", { name: "Activity feed" });
   const release = page.getByRole("region", { name: "Release summary" });
   const releaseReadiness = release.getByRole("progressbar", { name: "Release readiness" });
-  /* Readiness has one home on project pages: the release strip */
-  const readiness = releaseReadiness;
+  /* Owner (2026-11-27): the Activity tab shows no release strip; the assembly line's release row carries readiness.
+     The strip stays on Overview. */
+  const readiness = page.locator(".assembly-milestone").getByRole("progressbar", { name: "Office federation progress" });
   const panel = page.getByRole("complementary", { name: "Release gates" });
-  const gates = page.getByRole("group", { name: "Activity sidebar tools" }).getByRole("button", { name: "Release gates" });
+  const gates = page.getByRole("group", { name: "Activity panels" }).getByRole("button", { name: "Release gates" });
   await readiness.waitFor();
   const projectHeader = page.locator(".project-header");
   assert.equal(await projectHeader.getByRole("progressbar").count(), 0);
@@ -1189,12 +1185,9 @@ async function checkProjectActivity(page: Page) {
   const viewSettings = viewControls.getByRole("group", { name: "Activity view settings" });
   await viewControls.getByRole("tab", { name: "Assembly line", selected: true }).waitFor();
   await viewSettings.getByRole("button", { name: "Assembly line display" }).waitFor();
-  const orderedRelease = page.locator(".project-header + .activity-workspace > #project-release-summary:first-child");
-  await orderedRelease.waitFor();
-  assert.equal(await release.count(), 1, "The release summary moved out of the Assembly line table");
+  assert.equal(await release.count(), 0, "No release strip on the Activity tab");
   assert.equal(await page.getByRole("progressbar", { name: "Project readiness" }).count(), 0, "No second readiness bar inside Activity");
-  assert.equal(await releaseReadiness.getAttribute("max"), "4");
-  assert.deepEqual(await release.getByRole("link").allTextContents().then((links) => links.map((label) => label.trim())), ["File access ruling · Pending"]);
+  assert.equal(await readiness.getAttribute("max"), "4");
   assert.equal(await page.locator(".assembly-milestone").count(), 1);
   assert.equal(await page.locator('[data-assembly-work="T-A121"]').count(), 0);
   assert.equal(await gates.getAttribute("aria-expanded"), "true");
@@ -1207,7 +1200,7 @@ async function checkProjectActivity(page: Page) {
 
   await page.getByRole("button", { name: "Review T-A118" }).click();
   assert.equal(await feed.getAttribute("aria-selected"), "true");
-  await orderedRelease.waitFor();
+  assert.equal(await release.count(), 0, "No release strip in the Activity feed either");
   assert.ok(await page.locator("#activity-triage-in2").evaluate((element) => element === document.activeElement));
   assert.equal(await page.locator("#activity-triage-in1").count(), 0);
   await viewSettings.getByRole("button", { name: "Filter activity" }).press("Enter");
@@ -1378,7 +1371,7 @@ async function checkChatOverlays(page: Page) {
   await page.goBack();
   await page.locator(".thread").waitFor({ state: "detached" });
   assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("thr")), true, "Back closes the thread and restores focus");
-  await page.locator(".chat-context .chat-members-btn").click();
+  await page.locator(".chat-members-btn").first().click();
   assert.equal(await page.locator("#chat-members .chat-member").count(), 8, "Members come from the channel's membership");
   await page.keyboard.press("Escape");
   await nav("#/chat/dm-ada");
@@ -1452,7 +1445,8 @@ async function checkChatThreads(page: Page) {
 async function checkChatContext(page: Page) {
   const nav = (h: string) => page.evaluate((x) => { location.hash = x; }, h);
   await nav("#/chat/dm-ada");
-  await page.locator(".chat-context .chat-more-btn").click();
+  /* Owner (2026-11-27): a DM's request status sits with the header actions (.chat-head-meta), "N more in Inbox" */
+  await page.locator(".chat-head-meta .chat-more-btn").click();
   const more = page.locator("#menu-chat-more-ctx");
   await more.waitFor();
   assert.deepEqual(await more.getByRole("menuitem").evaluateAll((els) => els.map((e) => e.getAttribute("href"))), ["#/inbox/in1", "#/inbox/in4"], "Ada's other requests link to their Inbox records");
@@ -1476,6 +1470,9 @@ async function checkChatLayout(page: Page) {
     await page.setViewportSize({ width, height: width === 1440 ? 900 : 768 });
     await page.goto(page.url().split("#")[0] + "#/chat/general");
     await page.goto(page.url().split("#")[0] + "#/chat/agency-v1");
+    /* A conversation re-opened in the same session keeps the reader's last position (a boundary opening at 1440 can
+       re-open at 1024 on an earlier message's start), so the opening position is checked on a fresh load. */
+    await page.reload();
     await page.waitForTimeout(400);
     const pos = await page.evaluate(() => {
       const s = document.querySelector(".chmain .msgs[data-ch]")!, sr = s.getBoundingClientRect();
@@ -1637,17 +1634,18 @@ async function checkChoiceContext(page: Page) {
   assert.ok(await context.evaluate((el) => Boolean(el.compareDocumentPosition(el.parentElement!.querySelector(".actions")!) & Node.DOCUMENT_POSITION_FOLLOWING)), "Context sits above the answers");
   await card.getByRole("button", { name: "One tree", exact: true }).waitFor();
 }
-/* Agents' conversations: owner access by the title at 375; DM actions name their destination. */
+/* Agents' conversations: owner access in the header at every width; DM actions name their destination.
+   Owner (2026-11-27): they open inside the agent's page (#/members/<agent>/conversations/<id>), not in Chat; the
+   buttons read "Message <name>" and the access label sits in the conversation's context line. */
 async function checkA2AHeader(page: Page) {
   await navTo(page, "#/chat/a2a-kai-rowan");
-  assert.deepEqual(await page.locator(".readfoot .actions .btn").allInnerTexts(), ["DM Kai", "DM Rowan"]);
-  assert.equal(await page.locator(".chat-title .chat-readas-tag").isVisible(), false, "Wide: the context line carries access");
+  await page.waitForURL((u) => u.hash === "#/members/kai/conversations/a2a-kai-rowan");
+  assert.deepEqual(await page.locator(".readfoot .actions .btn").allInnerTexts(), ["Message Kai", "Message Rowan"]);
+  const tag = page.locator(".ac-head .chat-readas");
+  assert.ok(await tag.isVisible(), "Wide: the context line carries access");
   await page.setViewportSize({ width: 375, height: 667 });
-  const tag = page.locator(".chat-title .chat-readas-tag");
-  assert.ok(await tag.isVisible(), "Narrow: access label beside the title");
-  assert.equal(await tag.innerText(), "Reading as the owner");
-  const [title, label] = await Promise.all([page.locator("#ch-title").boundingBox(), tag.boundingBox()]);
-  assert.ok(title && label && label.y < title.y + title.height && label.y + label.height > title.y, "The label shares the title's row");
+  assert.ok(await tag.isVisible(), "Narrow: access stays in the header");
+  assert.equal((await tag.innerText()).trim(), "Reading as the owner");
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 /* Choosing any conversation in the drawer, the open one included, closes it and focuses the heading. */
@@ -1667,9 +1665,10 @@ async function checkDrawerChoice(page: Page) {
 async function checkCompactRequests(page: Page) {
   await page.setViewportSize({ width: 1024, height: 768 });
   await navTo(page, "#/chat/dm-ada");
-  const compact = page.locator(".chat-context .chat-more-btn");
-  assert.equal(await compact.innerText(), "2 more requests");
-  assert.equal(await page.locator(".chat").evaluate((el) => el.classList.contains("ctx-overflow")), false, "The context line fits");
+  /* Owner (2026-11-27): a DM's request status sits with the header actions and reads "N more in Inbox"; DMs have no
+     context line under the title */
+  const compact = page.locator(".chat-head-meta .chat-more-btn");
+  assert.equal(await compact.innerText(), "2 more in Inbox");
   await compact.click();
   const hrefs = await page.locator("#menu-chat-more-ctx").getByRole("menuitem").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
   assert.equal(hrefs.length, 2);
@@ -1744,16 +1743,20 @@ async function checkTaskContextFromChat(page: Page) {
   assert.doesNotMatch(await dlg.locator("#stc-prompt").inputValue(), /#\/chat\//, "The prompt carries no raw chat link");
   assert.equal(await dlg.locator(".stc-ctx-offer").count(), 0, "Chat's default excerpt replaces the page offer");
   assert.equal((await dlg.locator(".stc-sends").innerText()).replace(/\s+/g, " "), "Sends with the task: 1 message", "What is sent shows above the send actions");
-  await dlg.getByRole("button", { name: "Include 3 earlier messages" }).click();
-  assert.match(await card.locator(".stc-ctx-title").innerText(), /· 4 messages/, "Earlier messages are opt-in");
+  /* Owner (2026-11-27): the opt-in offers 5 earlier messages; #agentic-org-v1 now has 8 before m4 (older-day messages) */
+  await dlg.getByRole("button", { name: "Include 5 earlier messages" }).click();
+  assert.match(await card.locator(".stc-ctx-title").innerText(), /· 6 messages/, "Earlier messages are opt-in");
   assert.equal(await activeAttr(page, "data-stc"), "ctx-more", "Focus moves to the stepper");
-  assert.equal(await dlg.getByRole("button", { name: "Include one more earlier message" }).getAttribute("aria-disabled"), "true", "No earlier messages exist past the start");
+  const more = dlg.getByRole("button", { name: "Include one more earlier message" });
+  for (let i = 0; i < 3; i++) await more.click();
+  assert.match(await card.locator(".stc-ctx-title").innerText(), /· 9 messages/, "More earlier messages grows the excerpt");
+  assert.equal(await more.getAttribute("aria-disabled"), "true", "No earlier messages exist past the start");
   await dlg.getByRole("button", { name: "Include one fewer earlier message" }).click();
-  assert.match(await card.locator(".stc-ctx-title").innerText(), /· 3 messages/, "Fewer earlier messages shrinks the excerpt");
+  assert.match(await card.locator(".stc-ctx-title").innerText(), /· 8 messages/, "Fewer earlier messages shrinks the excerpt");
   assert.equal(await activeAttr(page, "data-stc"), "ctx-fewer", "Focus stays on the stepper");
-  assert.match(await dlg.locator(".stc-sends").innerText(), /3 messages/);
-  await dlg.getByRole("button", { name: "Show 3 messages" }).click();
-  assert.equal(await dlg.locator(".stc-ctx-lines li").count(), 3, "The preview expands to the excerpt's messages");
+  assert.match(await dlg.locator(".stc-sends").innerText(), /8 messages/);
+  await dlg.getByRole("button", { name: /^Show 8 messages/ }).click();
+  assert.equal(await dlg.locator(".stc-ctx-lines li").count(), 8, "The preview expands to the excerpt's messages");
   await dlg.getByRole("button", { name: /^Remove context: Conversation excerpt · #agentic-org-v1/ }).waitFor();
   await page.evaluate(() => (document.getElementById("work-task-dialog") as HTMLDialogElement).close());
   await dlg.waitFor({ state: "detached" });
@@ -1843,7 +1846,11 @@ async function checkAttachSend(page: Page) {
   await sent.locator(".chat-att-img img").waitFor();
   await page.waitForFunction(() => !document.querySelector("#main .chat .msg.is-pending"));
   assert.equal(await sent.locator(".chat-att-file .chat-att-name").innerText(), "notes.pdf", "A sent file renders as a card");
-  assert.equal(await sent.locator(".tx").count(), 0, "A message can carry only attachments");
+  /* Owner (2026-11-27): adding a file puts an inline "[Image 1]" reference at the caret, so an attachment-only message
+     carries only its reference chips as text */
+  assert.equal(await sent.locator(".tx").evaluate((tx) => [...tx.childNodes].filter((n) => !(n instanceof Element && n.matches(".chat-ref-chip"))).map((n) => n.textContent).join("").trim()), "",
+    "A message can carry only attachments");
+  assert.equal(await sent.locator(".tx .chat-ref-chip").count(), 2, "Each attachment is referenced inline");
   assert.equal(await trayItems(page).count(), 0, "Sending clears the tray");
   await mainComposer(page).getByRole("button", { name: "Send" }).click();
   assert.match(await mainComposer(page).locator(".chat-compose-hint").innerText(), /Write a message or attach a file first/);
@@ -2056,7 +2063,7 @@ async function headerBoxes(page: Page) {
   return page.evaluate(() => {
     const b = (s: string) => { const r = document.querySelector(s)!.getBoundingClientRect(); return { l: r.left, t: r.top, w: r.width, h: r.height, c: r.top + r.height / 2 }; };
     const d = document.querySelector(".chat-desc") as HTMLElement;
-    return { h1: b("#ch-title"), desc: b(".chat-desc"), sep: b(".chat-desc-sep"), meta: b(".chat-context"), head: b("#main .chat > .chhead"), actions: b("#main .chat > .chhead > .ph-actions"),
+    return { h1: b("#ch-title"), desc: b(".chat-desc"), sep: b(".chat-desc-sep"), head: b("#main .chat > .chhead"), actions: b("#main .chat > .chhead > .ph-actions"),
       cut: d.scrollWidth > d.clientWidth + 1 || d.scrollHeight > d.clientHeight + 1, below: document.querySelector("#main .chat")!.classList.contains("desc-below") };
   });
 }
@@ -2064,16 +2071,18 @@ async function checkHeaderTitleLine(page: Page) {
   await viewport(page, 1440, 900);
   await navTo(page, "#/chat/agency-v1");
   assert.equal(await page.locator(".chat-titleline .chat-desc").innerText(), "Shipping the first release", "The description sits on the title line");
-  assert.equal(await page.locator(".chat-ctx-full").innerText(), "Agentic Org v1.0 · 8 members", "The row under the title keeps project and members");
+  /* Owner (2026-11-27): project and members are header buttons beside the actions (no row under the title) */
+  assert.deepEqual(await page.locator(".chat-head-meta .chat-head-btn").allInnerTexts().then((t) => t.map((x) => x.trim())), ["Agentic Org v1.0", "8 members"], "The header keeps project and members");
   let m = await headerBoxes(page);
   assert.ok(Math.abs(m.desc.c - m.h1.c) < 3 && m.sep.w === 1 && m.sep.l > m.h1.l + m.h1.w, `Description centred on the title after a 1 px divider (${JSON.stringify(m)})`);
-  assert.ok(Math.abs(m.meta.l - m.h1.l) < 1, "The meta row starts at the title's left edge");
   assert.ok(Math.abs(m.actions.c - m.head.c) < 3, `Header actions are centred on the header (${m.actions.c} vs ${m.head.c})`);
   const long = "Shipping the first release: office sync, the Inbox, hiring through HR, the review gates and the codec split, with the CSP checks, release notes and every sign-off the owner gives before the tag";
   await page.evaluate((t) => { document.querySelector(".chat-desc")!.textContent = t; }, long);
   await viewport(page, 1024, 768);
   m = await headerBoxes(page);
-  assert.ok(!m.cut && !m.below && m.desc.h > 30 && m.desc.t < m.meta.t, `A long description wraps beside the title, whole (${JSON.stringify(m)})`);
+  /* Owner (2026-11-27): the header actions share the title row, so at 1024px a long description moves under the
+     title (desc-below) rather than squeezing beside it; either way it shows whole */
+  assert.ok(!m.cut && m.desc.h > 30, `A long description shows whole (${JSON.stringify(m)})`);
   await viewport(page, 800, 700);
   await page.waitForFunction(() => document.querySelector("#main .chat")!.classList.contains("desc-below"));
   m = await headerBoxes(page);
@@ -2081,7 +2090,9 @@ async function checkHeaderTitleLine(page: Page) {
   await navTo(page, "#/chat/general");
   await navTo(page, "#/chat/agency-v1");
   m = await headerBoxes(page);
-  assert.ok(!m.below && Math.abs(m.desc.c - m.h1.c) < 3, `At 800 a short description stays beside the title (${JSON.stringify(m)})`);
+  /* Owner (2026-11-27): the header actions share the title row, so at 800 even the short description can go under the
+     title; it shows whole, and beside the title only when centred on it */
+  assert.ok(!m.cut && (m.below ? m.sep.w === 0 && m.desc.t >= m.h1.t + m.h1.h - 1 : Math.abs(m.desc.c - m.h1.c) < 3), `At 800 a short description shows whole, beside or under the title (${JSON.stringify(m)})`);
   await viewport(page, 420, 900);
   assert.equal(await page.locator(".chat-desc").isVisible(), false, "Phones: the description moves to Details");
   await page.locator(".chat-details-btn").click();
@@ -2089,20 +2100,19 @@ async function checkHeaderTitleLine(page: Page) {
   await page.locator(".chat-details-btn").click();
   await viewport(page, 1440, 900);
 }
-/* A context row that would be cut shows a plain summary; its links move to Details, out of the tab order. */
+/* Owner (2026-11-27): the header side info (a DM's request status, a channel's project and members) sits with the
+   header actions; below 1000 px it moves to Details, out of the header and its tab order. */
 async function checkHeaderSummary(page: Page) {
   await viewport(page, 660, 800);
   await navTo(page, "#/chat/dm-ada");
-  await page.locator(".chat.ctx-overflow").waitFor();
-  assert.equal(await page.locator(".chat-ctx-summary").innerText(), "1 in this DM · 2 more requests");
-  assert.equal(await page.locator(".chat-ctx-full").evaluate((el) => getComputedStyle(el).visibility), "hidden", "The clipped links leave the tab order");
+  await page.locator(".chat-details-btn").waitFor();
+  assert.equal(await page.locator(".chat-head-meta").isVisible(), false, "Narrow: no side info in the header");
   await page.locator(".chat-details-btn").click();
   await page.locator('.chat-details .chat-here-link').waitFor();
   await page.locator(".chat-details-btn").click();
   await viewport(page, 1440, 900);
   await navTo(page, "#/chat/agency-v1");
-  await page.waitForFunction(() => !document.querySelector("#main .chat.ctx-overflow"));
-  assert.ok(await page.locator(".chat-ctx-full .chat-members-btn").isVisible(), "Wide: the full row with its links");
+  assert.ok(await page.locator(".chat-head-meta .chat-members-btn").isVisible(), "Wide: the header keeps its links");
   await checkHeaderTitleLine(page);
 }
 /* Agents' conversations name "Message Rowan about this" on desktop; the DM opens with its composer focused. */
@@ -2185,20 +2195,22 @@ async function checkA2ANotListed(page: Page) {
   await page.waitForFunction(() => !history.state?.chatOverlay);
   await viewport(page, 1440, 900);
 }
-/* An agent's page lists its conversations; one opens read-only in Chat with "Back to <agent>". A deep link still opens. */
+/* An agent's page lists its conversations; one opens read-only on the agent's Conversations tab. A deep link still
+   opens. Owner (2026-11-27): agents' conversations live at #/members/<agent>/conversations/<id>, not in Chat; the
+   transcript leads back to the agent's conversation list. */
 async function checkAgentProfileA2A(page: Page) {
   await navTo(page, "#/members/rowan");
   const rows = page.locator(".c-a2a .c-a2a-row");
   await rows.first().waitFor();
-  assert.deepEqual(await rows.evaluateAll((els) => els.map((e) => e.getAttribute("href"))), ["#/chat/a2a-kai-rowan", "#/chat/a2a-rowan-sage", "#/chat/a2a-ada-rowan"]);
+  assert.deepEqual(await rows.evaluateAll((els) => els.map((e) => e.getAttribute("href"))), ["#/members/rowan/conversations/a2a-kai-rowan", "#/members/rowan/conversations/a2a-rowan-sage", "#/members/rowan/conversations/a2a-ada-rowan"]);
   await rows.first().click();
-  await page.waitForURL((u) => u.hash === "#/chat/a2a-kai-rowan");
-  const back = page.locator(".chat-back");
-  assert.equal(await back.innerText(), "Back to Rowan", "It leads back to the agent it was opened from");
-  assert.equal(await back.getAttribute("href"), "#/members/rowan");
+  await page.waitForURL((u) => u.hash === "#/members/rowan/conversations/a2a-kai-rowan");
+  /* Wide: the agent's conversation list stays beside the transcript, the open one marked; narrow panes use the Back link */
+  assert.equal(await page.locator('.ac-row[aria-current="true"]').getAttribute("data-k"), "a2a-kai-rowan", "The list marks the open conversation");
+  assert.equal(await page.locator(".ac-back").getAttribute("href"), "#/members/rowan/conversations", "Back leads to the agent's conversations");
   assert.equal(await page.locator("#compose").count(), 0, "Read-only: no composer");
-  await back.click();
-  await page.waitForURL((u) => u.hash === "#/members/rowan");
+  await navTo(page, "#/chat/a2a-rowan-sage");
+  await page.waitForURL((u) => u.hash === "#/members/rowan/conversations/a2a-rowan-sage");
 }
 async function checkA2AScale(page: Page) {
   await checkA2ANotListed(page);
@@ -2386,7 +2398,8 @@ async function checkTaskContextAttachments(page: Page) {
   await page.locator("#compose").press("Control+Enter");
   const dlg = page.locator("#work-task-dialog");
   await dlg.locator(".stc-ctx-offer").click();
-  assert.match(await dlg.locator(".stc-ctx-preview").innerText(), /You: Attached: palette\.pdf/, "The preview names the file");
+  /* Owner (2026-11-27): the message text carries the inline "[File 1]" reference ahead of the attachment names */
+  assert.match(await dlg.locator(".stc-ctx-preview").innerText(), /You: (\[File 1\] · )?Attached: palette\.pdf/, "The preview names the file");
   assert.match(await dlg.locator(".stc-ctx-toggle").innerText(), /^Show \d+ messages? · 1 file$/, "The collapsed excerpt counts its files");
   assert.deepEqual(await dlg.locator(".stc-sends .stc-sends-file").allInnerTexts(), ["palette.pdf"], "The file is named above the send actions");
   await dlg.getByRole("button", { name: /^Show \d+ messages? · 1 file$/ }).click();
@@ -2494,18 +2507,15 @@ async function checkListRail(page: Page) {
   await viewport(page, 1440, 900);
 }
 const openDmHash = (who: string) => `#/chat/dm-${who}`;
-/* At 660 px a DM's header keeps the actionable status, in the same words as Details. */
+/* At 660 px a DM's actionable status is in Details. Owner (2026-11-27): one-line headers; below 1000 px the header
+   keeps no status summary and Details carries it, worded "1 request here · 2 more in Inbox". */
 async function checkCompactStatus(page: Page) {
   await viewport(page, 660, 800);
   await navTo(page, "#/chat/dm-ada");
-  const summary = page.locator(".chat-ctx-summary");
-  await summary.waitFor();
-  assert.equal(await summary.innerText(), "1 in this DM · 2 more requests", "The summary leads with the request here");
-  assert.ok(await summary.evaluate((e) => e.scrollWidth <= e.clientWidth + 1), "and is not cut off");
+  assert.equal(await page.locator(".chat-head-meta").isVisible(), false, "The header shows no status at 660");
   await page.locator(".chat-details-btn").click();
   assert.match(await page.locator("#chat-details").innerText(), /Engineering Manager/, "Role moves to Details");
-  assert.match(await page.locator("#chat-details .chat-status").innerText(), /^1 in this DM · 2 more requests$/, "Details agrees with the summary");
-  assert.equal(await summary.isVisible(), false, "With Details open, the status shows once");
+  assert.match(await page.locator("#chat-details .chat-status").innerText(), /^1 request here · 2 more in Inbox$/, "Details leads with the request here");
   await page.locator(".chat-details-btn").click();
   await viewport(page, 1440, 900);
 }
@@ -2650,11 +2660,12 @@ async function checkDenyArmed(page: Page) {
 async function checkAdaHeader(page: Page) {
   await viewport(page, 1440, 900);
   await navTo(page, "#/chat/dm-ada");
-  const here = page.locator(".chat-context .chat-here-link");
-  assert.equal(await here.innerText(), "1 in this DM");
+  /* Owner (2026-11-27): the status sits with the header actions (.chat-head-meta): "1 request here · 2 more in Inbox" */
+  const here = page.locator(".chat-head-meta .chat-here-link");
+  assert.equal((await here.innerText()).trim(), "1 request here");
   assert.equal(await here.getAttribute("href"), "#/chat/dm-ada/x3", "linked to the hand-off card");
-  assert.equal(await page.locator(".chat-context .chat-more-btn").innerText(), "2 more requests");
-  assert.ok(await page.locator(".chat-context .chat-status").evaluate((s) => s.textContent!.indexOf("this DM") < s.textContent!.indexOf("more")), "Here comes first");
+  assert.equal(await page.locator(".chat-head-meta .chat-more-btn").innerText(), "2 more in Inbox");
+  assert.ok(await page.locator(".chat-head-meta .chat-status").evaluate((s) => s.textContent!.indexOf("here") < s.textContent!.indexOf("more")), "Here comes first");
 }
 /* Back closes the image viewer first and returns focus to its thumbnail, in the stream and in a thread. */
 async function viewerBack(page: Page, scope: string, mid: string) {

@@ -49,12 +49,13 @@ async function checkAgentLists(page: Page) {
   await openFrom(page, '.bcard a[data-person="rowan"]');
   const p = panel(page);
   const a2a = await p.locator(".pp-a2a").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
-  assert.deepEqual(a2a, ["#/chat/a2a-kai-rowan", "#/chat/a2a-rowan-sage", "#/chat/a2a-ada-rowan"], "Rowan's A2A conversations, newest first");
+  assert.deepEqual(a2a, ["#/members/rowan/conversations/a2a-kai-rowan", "#/members/rowan/conversations/a2a-rowan-sage", "#/members/rowan/conversations/a2a-ada-rowan"], "Rowan's A2A conversations, newest first");
   const work = p.locator('section[aria-labelledby="pp-work-h"] a.pp-row');
   assert.ok(await work.count() >= 1 && await work.count() <= 3, "Up to three open items");
   assert.match((await work.first().getAttribute("href"))!, /^#\/work\?item=T-/);
   await p.locator(".pp-a2a").first().click();
-  await page.waitForURL((u) => u.hash === "#/chat/a2a-kai-rowan");
+  /* Owner (2026-11-27): agent-to-agent conversations live on the agent's page, not in Chat */
+  await page.waitForURL((u) => u.hash === "#/members/rowan/conversations/a2a-kai-rowan");
   await p.waitFor({ state: "hidden" });
 }
 
