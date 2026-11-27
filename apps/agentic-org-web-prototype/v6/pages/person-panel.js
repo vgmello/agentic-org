@@ -4,7 +4,8 @@
    On wide screens the panel is non-modal so the page stays usable beside it; at 959px and below (and over another
    modal dialog) it is modal with a backdrop, and on phones it fills the screen. */
 import { CH, M, OPEN, TEAMS, W } from "../data.js";
-import { agentConversations } from "./chat-model.js";
+import { agentConversations, lastActiveLabel } from "./chat-model.js";
+import { conversationHref } from "./agent-conversations.js";
 import { av, esc, ic, kindWord, plural, presInline, presence, statusLine } from "../ui.js";
 
 const NARROW = "(max-width: 959px)";
@@ -68,10 +69,10 @@ function workHtml(id) {
 }
 
 function a2aRow(id, ch, key) {
-  const other = ch.pair.find((x) => x !== id) || id, last = ch.msgs[ch.msgs.length - 1];
-  return `<li><a class="pp-row pp-a2a" href="#/chat/${esc(key)}">${av(other, 24)}
+  const other = ch.pair.find((x) => x !== id) || id, when = lastActiveLabel(ch);
+  return `<li><a class="pp-row pp-a2a" href="${esc(conversationHref(id, key))}">${av(other, 24)}
     <span class="pp-row-main">With ${esc(M[other].name)}</span>
-    ${last ? `<time class="pp-row-meta">${esc(last.time)}</time>` : ""}</a></li>`;
+    ${when ? `<time class="pp-row-meta">${esc(when)}</time>` : ""}</a></li>`;
 }
 
 function a2aHtml(id) {
