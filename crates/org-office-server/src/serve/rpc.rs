@@ -74,22 +74,83 @@ pub(super) fn costs_rpc(
         .then(|| dispatch_bound_port(request, binding, delegation, shared.ports.costs.as_ref()))
 }
 
+/// Matches every Chief of Staff (`suggestion.*`, `ui.present`, `tess.*`) RPC using explicit
+/// `request.is::<Call>()` checks so the host operation inventory AST scan recognizes each served
+/// method directly inside `org-office-server`.
 fn is_tess_method(request: &Request) -> bool {
     use org_proto::tess::{
-        SuggestionCreate, SuggestionDismiss, SuggestionInspect, SuggestionList, SuggestionWithdraw,
-        UiPresent,
+        SuggestionApply, SuggestionCreate, SuggestionDismiss, SuggestionInspect, SuggestionList,
+        SuggestionWithdraw, TessAsk, TessSessionReset, TessTurnCancel, TessTurnEvents, UiPresent,
     };
     request.is::<SuggestionCreate>()
         || request.is::<SuggestionList>()
         || request.is::<SuggestionInspect>()
         || request.is::<SuggestionWithdraw>()
         || request.is::<SuggestionDismiss>()
+        || request.is::<SuggestionApply>()
         || request.is::<UiPresent>()
+        || request.is::<TessAsk>()
+        || request.is::<TessTurnEvents>()
+        || request.is::<TessTurnCancel>()
+        || request.is::<TessSessionReset>()
 }
 
 pub(super) fn tess_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
-    is_tess_method(request)
-        .then(|| dispatch_bound_port(request, binding, None, shared.ports.tess.as_ref()))
+    if !is_tess_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if org_tess::requires_human_grant(request) && !binding.via_grant() {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::NotAuthorized,
+                "this Chief of Staff action requires a verified human HostChannel grant",
+            ),
+        ));
+    }
+    let Some(handler) = shared.ports.tess.as_ref() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::UnknownMethod,
+                format!("this office does not know `{}`", request.method),
+            ),
+        ));
+    };
+    let apply_exec = |caller_id: &str, sub_req: &Request| {
+        let mut human_binding = Binding::Member {
+            id: caller_id.to_owned(),
+            via_grant: true,
+        };
+        super::dispatch::answer(sub_req, shared, &mut human_binding)
+    };
+    let exec_ref: Option<&org_tess::ApplyExecFn<'_>> = request
+        .is::<org_proto::tess::SuggestionApply>()
+        .then_some(&apply_exec as &org_tess::ApplyExecFn<'_>);
+    Some(
+        handler(
+            Some(member),
+            binding.via_grant(),
+            &shared.stopping,
+            exec_ref,
+            request,
+        )
+        .unwrap_or_else(|| {
+            Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::UnknownMethod,
+                    format!("this office does not know `{}`", request.method),
+                ),
+            )
+        }),
+    )
 }
 
 pub(super) fn processes_rpc(

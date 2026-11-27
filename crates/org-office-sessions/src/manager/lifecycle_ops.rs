@@ -299,6 +299,58 @@ pub(super) fn stop_session_impl(
     Ok(reaped.view)
 }
 
+impl SessionManager {
+    /// Clears `employee_id`'s stored conversation state for `partition` and stops the live
+    /// session ONLY when that live handle is bound to `partition`, checked atomically under
+    /// `self.registry` (zero cross-caller TOCTOU for Ask Tess `tess.session_reset`). Never
+    /// disturbs another caller's running or starting session or `tess:wake`.
+    pub fn reset_partition_session(
+        &self,
+        employee_id: &str,
+        partition: &crate::partition::PartitionKey,
+        reason: &str,
+    ) -> Result<bool, ApiError> {
+        self.partitions.clear_partition(employee_id, partition);
+        let removed = {
+            let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+            let matches_partition = reg
+                .live
+                .get(employee_id)
+                .is_some_and(|h| h.partition.as_ref() == Some(partition));
+            if !matches_partition || reg.starting.contains(employee_id) {
+                None
+            } else {
+                let handle = reg.live.remove(employee_id);
+                if handle.is_some() {
+                    reg.starting.insert(employee_id.to_owned());
+                    reg.record_explicit_stop(employee_id);
+                }
+                handle
+            }
+        };
+        let Some(handle) = removed else {
+            return Ok(false);
+        };
+        let slot_guard = StartSlotGuard::new(&self.registry, employee_id.to_owned());
+        let reaped = super::reap::reap_live_handle(
+            self,
+            employee_id,
+            handle,
+            Some(reason),
+            super::reap::ReapMode::FailClosedRestore {
+                conflict_message: format!(
+                    "could not verify teardown of session `{employee_id}`; resolve recovery first"
+                ),
+            },
+        )?;
+        drop(slot_guard);
+        if reaped.permit_released && !is_admissions_closed(self) {
+            self.process_due_wakes();
+        }
+        Ok(true)
+    }
+}
+
 pub(super) fn reap_replaced_handle(
     mgr: &SessionManager,
     emp_id: &str,

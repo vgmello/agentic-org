@@ -74,16 +74,18 @@ pub(super) fn handle_present(
     let navigation = validate_navigation(svc, caller_id, authority, params.navigation)?;
     let follow_ups = validate_follow_ups(params.follow_ups)?;
 
-    Ok(UiPresentResult {
-        ui_block: UiBlock {
-            title,
-            entity_links,
-            metrics,
-            navigation,
-            follow_ups,
-            suggestion_id: None,
-        },
-    })
+    let ui_block = UiBlock {
+        title,
+        entity_links,
+        metrics,
+        navigation,
+        follow_ups,
+        suggestion_id: None,
+    };
+    if let CallerContext::TessActingFor { caller_id, .. } = context {
+        svc.publish_turn_ui_block(caller_id, ui_block.clone());
+    }
+    Ok(UiPresentResult { ui_block })
 }
 
 fn check_bounds(params: &UiPresentParams) -> Result<(), ApiError> {

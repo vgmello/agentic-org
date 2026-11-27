@@ -301,6 +301,41 @@ fn build_read_ports(
 }
 
 /// Composes the office RPC ports passed to `serve::Shared`.
+fn build_tess_port(
+    office: &Arc<Office>,
+    session_manager: &Arc<org_office_sessions::SessionManager>,
+    delegation_gate: &Arc<crate::chief_of_staff_port::ChiefOfStaffGate>,
+) -> serve::TessFn {
+    let draft_gate = Arc::clone(delegation_gate);
+    let tess_sessions = Arc::downgrade(session_manager);
+    let tess_svc = Arc::new(
+        tess_calls::TessService::new(
+            Arc::clone(office),
+            Arc::new(move |member| {
+                tess_sessions
+                    .upgrade()
+                    .and_then(|sessions| sessions.bindings().acting_for_caller_id(member))
+            }),
+        )
+        .with_draft_caller(Arc::new(move |request_id| {
+            use crate::serve::ChiefOfStaffPort;
+            draft_gate.draft_caller(request_id)
+        }))
+        .with_session_manager(Arc::clone(office), Arc::clone(session_manager)),
+    );
+    tess_calls::follow_tess_stream(&tess_svc, office, session_manager.stream_hub());
+    let o = Arc::clone(office);
+    Box::new(move |member, via_grant, stopping, apply_exec, request| {
+        if snapshot_pending(&o) {
+            return Some(org_proto::Response::error(
+                request.id,
+                snapshot_unavailable_api_error(),
+            ));
+        }
+        tess_svc.dispatch_with_context(member, via_grant, stopping, apply_exec, request)
+    })
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "composes the office's domain ports, federation handle, and sync wakeups"
@@ -356,22 +391,7 @@ pub(crate) fn build_office_ports(
         Arc::clone(&office),
         Arc::clone(&session_manager),
     ));
-    let draft_gate = Arc::clone(&delegation_gate);
-    let tess_sessions = Arc::downgrade(&session_manager);
-    let tess_svc = Arc::new(
-        tess_calls::TessService::new(
-            Arc::clone(&office),
-            Arc::new(move |member| {
-                tess_sessions
-                    .upgrade()
-                    .and_then(|sessions| sessions.bindings().acting_for_caller_id(member))
-            }),
-        )
-        .with_draft_caller(Arc::new(move |request_id| {
-            use crate::serve::ChiefOfStaffPort;
-            draft_gate.draft_caller(request_id)
-        })),
-    );
+    let tess = build_tess_port(&office, &session_manager, &delegation_gate);
     serve::OfficePorts {
         operation_get: {
             let office = Arc::clone(&office);
@@ -486,9 +506,7 @@ pub(crate) fn build_office_ports(
                 )
             }))
         },
-        tess: Some(gate_rpc_port(&office, move |member, request| {
-            tess_svc.dispatch(member, request)
-        })),
+        tess: Some(tess),
         directory: messaging.directory,
         submit,
     }

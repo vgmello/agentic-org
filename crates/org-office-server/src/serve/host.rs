@@ -33,12 +33,53 @@ impl Drop for HeldPollSlot<'_> {
 }
 
 fn is_blocking_events_poll(request: &Request) -> bool {
-    request.is::<org_proto::chat::ChatEventsPoll>()
+    let chat_poll = request.is::<org_proto::chat::ChatEventsPoll>()
         && request
             .params::<org_proto::chat::ChatEventsPoll>()
             .ok()
             .and_then(|p| p.wait_ms)
-            .is_some_and(|ms| ms > 0)
+            .is_some_and(|ms| ms > 0);
+    let tess_poll = request.is::<org_proto::tess::TessTurnEvents>()
+        && request
+            .params::<org_proto::tess::TessTurnEvents>()
+            .ok()
+            .and_then(|p| p.wait_ms)
+            .is_some_and(|ms| ms > 0);
+    chat_poll || tess_poll
+}
+
+fn dispatch_held_poll(
+    shared: &Shared,
+    owner: &str,
+    channel_stop: &Arc<std::sync::atomic::AtomicBool>,
+    request: &Request,
+) -> Response {
+    let id = request.id;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let dispatched = if request.is::<org_proto::tess::TessTurnEvents>() {
+            shared
+                .ports
+                .tess
+                .as_ref()
+                .and_then(|tess| tess(Some(owner), true, channel_stop, None, request))
+        } else {
+            shared
+                .ports
+                .chat
+                .as_ref()
+                .and_then(|chat| chat(Some(owner), true, channel_stop, request))
+        };
+        dispatched.unwrap_or_else(|| {
+            Response::error(
+                id,
+                ApiError::new(
+                    ErrorCode::UnknownMethod,
+                    format!("this office does not know `{}`", request.method),
+                ),
+            )
+        })
+    }))
+    .unwrap_or_else(|_| internal(id))
 }
 
 fn spawn_held_events_poll<'scope, 'env>(
@@ -100,23 +141,7 @@ fn spawn_held_events_poll<'scope, 'env>(
         .spawn_scoped(scope, move || {
             let _slot = HeldPollSlot { active: held_polls };
             let id = request.id;
-            let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                shared
-                    .ports
-                    .chat
-                    .as_ref()
-                    .and_then(|chat| chat(Some(&owner), true, channel_stop, &request))
-                    .unwrap_or_else(|| {
-                        Response::error(
-                            id,
-                            ApiError::new(
-                                ErrorCode::UnknownMethod,
-                                format!("this office does not know `{}`", request.method),
-                            ),
-                        )
-                    })
-            }))
-            .unwrap_or_else(|_| internal(id));
+            let answer = dispatch_held_poll(shared, &owner, channel_stop, &request);
             // Re-run full live authorization (session revocation, grant expiry, and live person
             // membership) before emitting any held event frame so offboarded/removed persons and
             // revoked browser sessions never receive post-revocation events (`doc-7` #9).

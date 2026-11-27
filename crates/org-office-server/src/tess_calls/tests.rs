@@ -1,3 +1,5 @@
+mod ask_apply_tests;
+
 use std::sync::{Arc, Mutex};
 
 use org_office::rules::OrgCommand;

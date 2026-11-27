@@ -12,7 +12,9 @@ use org_proto::{ApiError, ErrorCode, Request};
 use serde_json::{json, Map, Value};
 
 use self::hiring::preflight_hire;
-use self::messaging::{is_messaging_target_call, preflight_messaging};
+use self::messaging::{
+    caller_visible_conversations, is_messaging_target_call, preflight_messaging,
+};
 use super::{unavailable, DelegationAccess as Access, TessService};
 
 /// Uniform refusal text for missing or cross-team hire requests (prevents existence oracles).
@@ -163,6 +165,7 @@ pub(super) fn preflight_target(
     expected_revision: Option<u64>,
 ) -> Result<PreflightOutcome, ApiError> {
     enforce_delegation_access(svc, ctx.authority, call)?;
+    preflight_attachments(svc, ctx, input)?;
     if call.starts_with("hr.hire") {
         return preflight_hire(svc, ctx, call, input, expected_revision);
     }
@@ -213,6 +216,126 @@ fn enforce_delegation_access(
         )),
         Access::Open | Access::CallerOwner | Access::CallerHires => Ok(()),
     }
+}
+
+fn has_non_empty_value(val: &Value) -> bool {
+    match val {
+        Value::Null => false,
+        Value::String(s) => !s.trim().is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        _ => true,
+    }
+}
+
+fn collect_attachment_ids(input: &Map<String, Value>) -> Result<Vec<String>, ApiError> {
+    let mut ids = Vec::new();
+    for key in [
+        "attachment_id",
+        "attachment_ids",
+        "add_attachment",
+        "add_attachments",
+    ] {
+        let Some(val) = input.get(key) else {
+            continue;
+        };
+        match val {
+            Value::Null => {}
+            Value::String(s) if !s.trim().is_empty() => ids.push(s.trim().to_owned()),
+            Value::Array(items) => {
+                for item in items {
+                    let Some(s) = item.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
+                        return Err(ApiError::new(
+                            ErrorCode::InvalidRequest,
+                            format!("`{key}` entries must be non-empty attachment IDs"),
+                        ));
+                    };
+                    ids.push(s.to_owned());
+                }
+            }
+            _ => {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    format!("`{key}` must be an attachment ID string or array of strings"),
+                ));
+            }
+        }
+    }
+    Ok(ids)
+}
+
+/// Enforces `caller ∩ tess` attachment isolation on `suggestion.create` and `suggestion.apply`
+/// (Grade-A Security P1-3): forbids proposing raw local file paths (`attach`) and verifies every
+/// referenced attachment ID is readable by both caller and Tess and (when conversation-scoped)
+/// belongs to a conversation visible to both.
+fn preflight_attachments(
+    svc: &TessService,
+    ctx: &PreflightContext<'_>,
+    input: &Map<String, Value>,
+) -> Result<(), ApiError> {
+    if input.get("attach").is_some_and(has_non_empty_value) {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "local file paths (`attach`) cannot be proposed in suggestions; reference an authorized `attachment_id` instead",
+        ));
+    }
+    let ids = collect_attachment_ids(input)?;
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let mut visible_convs = None;
+    for id in ids {
+        svc.office()
+            .attachment_inspect(
+                ctx.caller_id,
+                org_proto::attachments::AttachmentInspectParams {
+                    attachment_id: id.clone(),
+                },
+            )
+            .map_err(|e| {
+                unavailable(
+                    "tess_calls.attachment_inspect",
+                    &e,
+                    "unable to inspect attachment",
+                )
+            })??;
+        svc.office()
+            .attachment_inspect(
+                ctx.tess_id,
+                org_proto::attachments::AttachmentInspectParams {
+                    attachment_id: id.clone(),
+                },
+            )
+            .map_err(|e| {
+                unavailable(
+                    "tess_calls.attachment_inspect",
+                    &e,
+                    "unable to inspect attachment",
+                )
+            })??;
+        let conv_id = svc.office().attachment_conversation_id(&id).map_err(|e| {
+            unavailable(
+                "tess_calls.attachment_conversation",
+                &e,
+                "unable to verify attachment conversation scope",
+            )
+        })?;
+        if let Some(conv_id) = conv_id {
+            let visible = match visible_convs.as_ref() {
+                Some(list) => list,
+                None => {
+                    let list = caller_visible_conversations(svc, ctx.caller_id, ctx.tess_id)?;
+                    visible_convs.insert(list)
+                }
+            };
+            if !visible.iter().any(|c| c.id == conv_id) {
+                return Err(ApiError::new(
+                    ErrorCode::NotAuthorized,
+                    "referenced attachment is outside caller and Chief of Staff visibility",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn preflight_agent_target(
@@ -358,7 +481,11 @@ fn preflight_task(
     expected_revision: Option<u64>,
 ) -> Result<PreflightOutcome, ApiError> {
     if call == "tasks.create" {
-        if let Some(project) = input.get("project").and_then(Value::as_str) {
+        if let Some(project) = input
+            .get("project_id")
+            .or_else(|| input.get("project"))
+            .and_then(Value::as_str)
+        {
             svc.office().inspect_project(project).map_err(|e| {
                 unavailable(
                     "tess_calls.inspect_project",
@@ -367,7 +494,11 @@ fn preflight_task(
                 )
             })??;
         }
-        if let Some(team) = input.get("team").and_then(Value::as_str) {
+        if let Some(team) = input
+            .get("team_id")
+            .or_else(|| input.get("team"))
+            .and_then(Value::as_str)
+        {
             let snap = svc.office().org_snapshot().map_err(|e| {
                 unavailable(
                     "tess_calls.org_snapshot",

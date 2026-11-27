@@ -120,6 +120,7 @@ const NEVER: &[&str] = &[
     "office.remove",
     "office.restart",
     "search.query",
+    "suggestion.apply",
     "suggestion.dismiss",
 ];
 const NEVER_PREFIXES: &[&str] = &[
@@ -128,6 +129,7 @@ const NEVER_PREFIXES: &[&str] = &[
     "office.invitation.",
     "provider.",
     "tasks.notes.",
+    "tess.",
 ];
 /// Read-only provider pool/quota queries permitted when acting for the live owner, checked before
 /// `NEVER_PREFIXES` (`provider.`) so credentials, enrollment, and mutations stay `Access::Never`.
@@ -321,13 +323,13 @@ pub(super) fn gate(
     if !allowed(access(&request.method), &delegation) {
         return Err(denied(request.id));
     }
-    if delegation.caller_id.is_some() {
-        enforce_method_mutation_policy(request)?;
-    }
-    scope::admit(request, port, member, &delegation)?;
+    enforce_method_mutation_policy(request)?;
     if let Some(caller_id) = delegation.caller_id.as_deref() {
         enforce_autosafe_target_policy(request, port, member, caller_id)?;
+    } else if is_caller_dm_only_reply(&request.method) {
+        return Err(policy_violation(request.id, &request.method));
     }
+    scope::admit(request, port, member, &delegation)?;
     Ok(Some(delegation))
 }
 

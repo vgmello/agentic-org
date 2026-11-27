@@ -112,7 +112,7 @@ pub(super) fn preflight_messaging(
     }
 }
 
-fn caller_visible_conversations(
+pub(super) fn caller_visible_conversations(
     svc: &TessService,
     caller_id: &str,
     tess_id: &str,
