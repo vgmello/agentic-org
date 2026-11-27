@@ -16,6 +16,8 @@ const METADATA_DEADLINE: Duration = Duration::from_secs(120);
 /// The web process opens no database (non-negotiable 7), so no SQLite crate either.
 const FORBIDDEN: &[&str] = &[
     "org-host",
+    "org-host-setup",
+    "org-host-sqlite",
     "org-office",
     "org-client",
     "rusqlite",

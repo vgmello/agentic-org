@@ -49,7 +49,7 @@ pub(super) fn run(args: ReEnrollArgs, ctx: &mut ExecutionContext) -> Result<(), 
     }
     let invitation = args.invitation.read()?;
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let joined = org_host::setup_flow::office_re_enroll(
+    let joined = org_host_setup::office_re_enroll(
         target.instance(),
         args.login.login.as_deref(),
         &args.office_id,

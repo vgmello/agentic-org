@@ -46,7 +46,7 @@ pub(super) fn run(args: CancelArgs, ctx: &mut ExecutionContext) -> Result<(), Cl
         return Ok(());
     }
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let done = org_host::setup_flow::office_cancel(
+    let done = org_host_setup::office_cancel(
         target.instance(),
         args.login.login.as_deref(),
         args.org.org.as_deref(),

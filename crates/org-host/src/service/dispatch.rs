@@ -76,7 +76,7 @@ impl Handler for Service {
             self.provisioning.as_ref(),
             &mut |name, data| connection.send_event(name, data),
         ) {
-            #[cfg(test)]
+            #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
             if connection.web_listen().is_some() {
                 self.organization_ops
                     .fetch_add(1, std::sync::atomic::Ordering::AcqRel);

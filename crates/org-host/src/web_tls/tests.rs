@@ -15,7 +15,8 @@ use x509_parser::prelude::{FromDer, X509Certificate};
 
 use super::*;
 use crate::host_secrets::{Error as SecretError, HostSecrets, Name, Value};
-use crate::hostdb::{HostDb, HostDbInit};
+use crate::hostdb::memory::MemoryHostStore;
+use crate::hostdb::WebTlsStore;
 
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071b0";
 const DAY: i64 = 86_400;
@@ -107,7 +108,7 @@ impl Secrets {
 
 pub(crate) struct Fixture {
     _home: tempfile::TempDir,
-    db: Arc<HostDb>,
+    db: Arc<MemoryHostStore>,
     secrets: Arc<Secrets>,
 }
 
@@ -115,11 +116,7 @@ fn fixture() -> Fixture {
     let home = tempfile::tempdir().unwrap();
     std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let secrets = Arc::new(Secrets::default());
-    let init = HostDbInit {
-        instance_id: INSTANCE.into(),
-        clock_high_ms: 1,
-    };
-    let db = Arc::new(HostDb::create(home.path(), &*secrets, &init).unwrap());
+    let db = Arc::new(MemoryHostStore::new(INSTANCE, 1));
     Fixture {
         _home: home,
         db,

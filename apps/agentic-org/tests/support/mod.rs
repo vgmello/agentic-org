@@ -5,7 +5,7 @@
 //! Every office a host starts needs the writer custody protected provisioning reserves, and
 //! names its office and organization by canonical UUIDv7 (`office.json` version 2). A
 //! registered home's [`TestHome::write_office`] stores an office as a create would have left
-//! it: the host-side custody reservation (`org_host::test_support::custody`), then its
+//! it: the host-side custody reservation (`org_host_sqlite::test_support::custody`), then its
 //! `office.json` and key. The fake server takes the custody admission the host sends.
 
 #![allow(
@@ -130,7 +130,7 @@ pub struct TestHome {
     instance_id: Option<String>,
     /// Each organization's owner, from its first custody reservation.
     #[cfg(debug_assertions)]
-    owners: Mutex<BTreeMap<String, org_host::test_support::custody::Owner>>,
+    owners: Mutex<BTreeMap<String, org_host_sqlite::test_support::custody::Owner>>,
 }
 
 impl TestHome {
@@ -152,7 +152,7 @@ impl TestHome {
         std::os::unix::fs::DirBuilderExt::mode(&mut fs::DirBuilder::new(), 0o700)
             .create(&temp)
             .unwrap();
-        let host = org_host::start_instance_for_test(
+        let host = org_host_sqlite::start_instance_for_test(
             home.config(),
             &base.join("l"),
             &temp,
@@ -186,7 +186,7 @@ impl TestHome {
     pub fn start(&self, config: Config) -> Result<Host, HostError> {
         if self.instance_id.is_some() {
             let base = self.dir.path().canonicalize().unwrap();
-            org_host::start_instance_for_test(
+            org_host_sqlite::start_instance_for_test(
                 config,
                 &base.join("l"),
                 &base.join("t"),
@@ -261,7 +261,7 @@ impl TestHome {
     #[cfg(debug_assertions)]
     pub fn reserve_custody(&self, organization_id: &str, office_id: &str) {
         let base = self.fixture_base();
-        let at = org_host::test_support::custody::InstanceAt::new(
+        let at = org_host_sqlite::test_support::custody::InstanceAt::new(
             &base.join("l"),
             &base.join("t"),
             None,
@@ -269,7 +269,7 @@ impl TestHome {
             &self.dir.path().join("k"),
         );
         let mut owners = self.owners.lock().unwrap();
-        let owner = org_host::test_support::custody::reserve_office(
+        let owner = org_host_sqlite::test_support::custody::reserve_office(
             &at,
             organization_id,
             office_id,

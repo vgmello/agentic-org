@@ -13,7 +13,7 @@ use std::path::Path;
 use org_cli_shell::context::ExecutionContext;
 use org_cli_shell::error::ShellError;
 use org_cli_shell::output::Cell;
-use org_host::setup_flow::cli_context;
+use org_host_setup::cli_context;
 use org_platform::service::{ServiceManager, ServiceStatus};
 use serde::Serialize;
 use serde_json::Value;

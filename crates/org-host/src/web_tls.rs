@@ -42,7 +42,8 @@ use files::FILE_LIMIT;
 pub(crate) use renewal::{Renewal, EVERY as RENEW_EVERY};
 #[cfg(test)]
 use store::StartRefusal;
-pub(crate) use store::{read_supplied, refusal_text, Unservable, WebTls};
+pub use store::{read_supplied, refusal_text};
+pub(crate) use store::{Unservable, WebTls};
 pub(crate) use verify::check;
 
 use std::fmt;
@@ -58,7 +59,7 @@ const DAY_SECS: i64 = 86_400;
 
 /// Who made the stored pair (the registry's record of it, `hostdb::web_tls`). It decides
 /// what a lost key means: one made here is made again, a supplied one refuses the start.
-pub(crate) use crate::hostdb::web_tls::Source;
+pub use crate::hostdb::web_tls::Source;
 
 impl Source {
     /// How the host log and setup name it.
@@ -74,7 +75,7 @@ impl Source {
 /// and the one thing about a pair the host prints. Displayed as uppercase hex pairs joined by
 /// colons, as browsers and `openssl x509 -fingerprint -sha256` show it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Fingerprint(pub(crate) [u8; 32]);
+pub struct Fingerprint(pub [u8; 32]);
 
 impl fmt::Display for Fingerprint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -89,7 +90,7 @@ impl fmt::Display for Fingerprint {
 }
 
 /// A pair that passed [`check`], in its normal form.
-pub(crate) struct Checked {
+pub struct Checked {
     /// The chain's `CERTIFICATE` blocks, leaf first, re-encoded: nothing else of the text.
     chain: String,
     /// The key's first block, re-encoded with the label of its form. A secret.
@@ -104,17 +105,17 @@ pub(crate) struct Checked {
 }
 
 impl Checked {
-    pub(crate) fn chain(&self) -> &str {
+    pub fn chain(&self) -> &str {
         &self.chain
     }
-    pub(crate) fn key(&self) -> &str {
+    pub fn key(&self) -> &str {
         &self.key
     }
     pub(crate) fn pair(&self) -> [u8; 32] {
         self.pair
     }
     /// The leaf's SHA-256 fingerprint, the one thing about the pair a command prints.
-    pub(crate) fn fingerprint(&self) -> Fingerprint {
+    pub fn fingerprint(&self) -> Fingerprint {
         self.leaf
     }
     #[cfg(test)]
@@ -130,7 +131,7 @@ impl Checked {
         self.not_after - now < RENEW_WITHIN_DAYS * DAY_SECS
     }
     /// One line: the fingerprint and the validity. No certificate or key bytes.
-    pub(crate) fn summary(&self, source: Source) -> String {
+    pub fn summary(&self, source: Source) -> String {
         let at = |secs| utc(secs).unwrap_or_else(|| "an unreadable date".into());
         format!(
             "{}, SHA-256 fingerprint {}, valid from {} until {}",
@@ -161,7 +162,7 @@ pub(crate) fn utc(secs: i64) -> Option<String> {
 }
 
 /// The wall clock, Unix seconds.
-pub(crate) fn now() -> Option<i64> {
+pub fn now() -> Option<i64> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()

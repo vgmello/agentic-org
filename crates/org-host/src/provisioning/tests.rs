@@ -1,8 +1,7 @@
 use super::*;
-use crate::host_secrets::{HostSecrets, Name, Value};
+use crate::host_secrets::{HostSecrets, Name};
 use crate::hostdb::accounts::Account;
 use crate::hostdb::provisioning::Reservation;
-use crate::hostdb::HostDb;
 use crate::keys::OfficeSecretsKeys;
 use crate::offices::Offices;
 use crate::writer::Writers;
@@ -427,127 +426,6 @@ fn custody_snapshot(custody: &dyn HostSecrets) -> Vec<(Name, Vec<u8>)> {
         .collect()
 }
 
-fn pending_registry_init(instance: &str) -> crate::hostdb::HostDbInit {
-    crate::hostdb::HostDbInit {
-        instance_id: instance.into(),
-        clock_high_ms: org_proto::uuid_v7_time_ms(&crate::ids::uuid_v7().unwrap()).unwrap() as i64,
-    }
-}
-fn seed_owner(db: &HostDb) {
-    let account = crate::ids::generate().unwrap();
-    let verifier = crate::authentication::hash_password(
-        &org_host_control::Password::new("synthetic pending recovery password".into()).unwrap(),
-    )
-    .unwrap();
-    db.seed_account(&account, "Owner", &verifier, true, 1)
-        .unwrap();
-}
-
-#[test]
-fn pending_recovery_survives_registry_loss_before_writer_reservation() {
-    use crate::host_secrets::dev::DevSecrets;
-    let directory = tempfile::tempdir().unwrap();
-    let base = tempfile::tempdir().unwrap();
-    for path in [directory.path(), base.path()] {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    let root = directory.path().canonicalize().unwrap();
-    let instance = crate::ids::uuid_v7().unwrap();
-    let (reservation, frozen, credentials) = {
-        let custody = Arc::new(DevSecrets::open(base.path(), &root, &instance).unwrap());
-        let db =
-            Arc::new(HostDb::create(&root, &*custody, &pending_registry_init(&instance)).unwrap());
-        seed_owner(&db);
-        let store: Arc<dyn HostStore> = db.clone();
-        let writers = Writers::open(custody.clone(), store.clone(), &instance, &root).unwrap();
-        let controller = Provisioning::new(
-            store,
-            custody.clone(),
-            Arc::new(crate::keys::memory::MemoryKeys::default()),
-            writers,
-            &instance,
-            &root,
-        );
-        let p = params();
-        let actor = account(&*db);
-        let handle = Name::parse(&format!("recovery.{}", p.operation_id)).unwrap();
-        // Stop at the actual production phase after custody/SQL reservation,
-        // before reserve_writer can allocate any writer or device identity.
-        let pending = controller
-            .new_pending(&actor, &p.operation_id, &p.plan, fp(&p), &handle)
-            .unwrap();
-        let reservation = db
-            .reserve_provisioning(&actor, &pending.reservation)
-            .unwrap();
-        let frozen = custody.load(&handle).unwrap().unwrap().expose().to_vec();
-        assert!(frozen == serde_json::to_vec(&pending).unwrap());
-        custody
-            .put(
-                &Name::parse(&format!("tls.{}", "cd".repeat(32))).unwrap(),
-                &Value::new(b"unrelated retained TLS key".to_vec()).unwrap(),
-            )
-            .unwrap();
-        let credentials = custody_snapshot(&*custody);
-        assert_eq!(credentials.len(), 2);
-        assert!(credentials.iter().all(|(name, _)| {
-            name.as_str() != "writer-device" && !name.as_str().starts_with("writer.")
-        }));
-        (reservation, frozen, credentials)
-    }; // Close the registry and all custody/controller/writer handles before loss.
-    let original_registry = std::fs::read(root.join("host-registry.db")).unwrap();
-    assert!(original_registry.starts_with(b"SQLite format 3\0"));
-    std::fs::rename(
-        root.join("host-registry.db"),
-        root.join("retained-registry.db"),
-    )
-    .unwrap();
-    let retained: Vec<_> = [
-        "host-registry.db-wal",
-        "host-registry.db-shm",
-        "host-registry.db-journal",
-        "host-registry.db.tmp",
-        "host-registry.db.tmp-wal",
-        "host-registry.db.tmp-shm",
-        "host-registry.db.tmp-journal",
-    ]
-    .into_iter()
-    .map(|name| {
-        let bytes = format!("retained {name}").into_bytes();
-        std::fs::write(root.join(name), &bytes).unwrap();
-        (name, bytes)
-    })
-    .collect();
-    let custody = DevSecrets::open(base.path(), &root, &instance).unwrap();
-    assert!(custody_snapshot(&custody) == credentials);
-    let replacement = pending_registry_init(&instance);
-    assert!(matches!(
-        HostDb::create(&root, &custody, &replacement),
-        Err(crate::hostdb::Error::Unsafe)
-    ));
-    assert!(!root.join("host-registry.db").exists());
-    assert!(custody_snapshot(&custody) == credentials);
-    let actual = custody
-        .load(&Name::parse(&reservation.recovery_handle).unwrap())
-        .unwrap()
-        .unwrap();
-    assert!(actual.expose() == frozen);
-    let original: Pending = serde_json::from_slice(&frozen).unwrap();
-    assert_eq!(original.reservation.prepared, reservation.prepared);
-    assert!(
-        crate::hostdb::pending_recovery::pending_recovery(&custody, &reservation)
-            .unwrap()
-            .expose()
-            == original.code.expose()
-    );
-    assert_eq!(
-        std::fs::read(root.join("retained-registry.db")).unwrap(),
-        original_registry
-    );
-    for (name, bytes) in retained {
-        assert_eq!(std::fs::read(root.join(name)).unwrap(), bytes);
-    }
-}
-
 #[test]
 fn pending_provisioning_retry_refuses_lost_writer_with_or_without_marker_and_device() {
     use sha2::{Digest, Sha256};
@@ -713,7 +591,7 @@ fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
         .provisioning_offices()
         .unwrap()
         .contains(&r.prepared.office_id));
-    auth.sqlite_for_test()
+    auth.memory_for_test()
         .change_authority_fixture(
             &crate::accounts::identity::AccountId::parse(actor.account_id()).unwrap(),
             true,

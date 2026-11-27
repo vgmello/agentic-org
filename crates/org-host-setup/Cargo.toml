@@ -1,0 +1,42 @@
+[package]
+name = "org-host-setup"
+description = "Interactive/non-interactive instance setup, service management, and host CLI commands."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Exposes registered-account and administrator seeding fixtures to integration tests.
+test-support = ["org-host/test-support", "dep:org-host-sqlite", "org-host-sqlite?/test-support"]
+
+[dependencies]
+libc.workspace = true
+org-host = { path = "../org-host" }
+org-host-control = { path = "../org-host-control" }
+org-host-sqlite = { path = "../org-host-sqlite", optional = true }
+org-platform = { path = "../org-platform" }
+org-platform-host = { path = "../org-platform-host" }
+org-proto = { path = "../org-proto" }
+org-release = { path = "../org-release" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+org-agent-cli = { path = "../org-agent-cli" }
+org-command = { path = "../org-command" }
+org-host = { path = "../org-host", features = ["test-support"] }
+org-host-setup = { path = ".", features = ["test-support"] }
+org-host-sqlite = { path = "../org-host-sqlite", features = ["test-support"] }
+org-office-launch = { path = "../org-office-launch" }
+org-platform = { path = "../org-platform", features = ["test-support"] }
+org-platform-host = { path = "../org-platform-host", features = ["test-support"] }
+org-socket = { path = "../org-socket" }
+rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", "ring", "pem"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
+tempfile.workspace = true
+time = { version = "=0.3.55", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

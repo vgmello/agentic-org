@@ -482,13 +482,13 @@ impl Directory {
 /// folder on the way; made when it is missing, and then removed again when this is dropped,
 /// from its parent's descriptor and only while that name is still the folder this made.
 /// Nothing else is made or removed.
-pub(crate) struct RootProbe {
+pub struct RootProbe {
     root: File,
     made: Option<(File, CString)>,
 }
 
 impl RootProbe {
-    pub(crate) fn open(path: &Path) -> Result<Self, Error> {
+    pub fn open(path: &Path) -> Result<Self, Error> {
         let path = absolute(path)?;
         let (parent_path, name) = match (path.parent(), path.file_name()) {
             (Some(parent), Some(name)) => (parent.to_owned(), cstring(name)?),
@@ -528,7 +528,7 @@ impl RootProbe {
         Ok(probe)
     }
 
-    pub(crate) fn descriptor(&self) -> std::os::fd::BorrowedFd<'_> {
+    pub fn descriptor(&self) -> std::os::fd::BorrowedFd<'_> {
         std::os::fd::AsFd::as_fd(&self.root)
     }
 }

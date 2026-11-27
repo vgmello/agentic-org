@@ -11,7 +11,7 @@ use super::{decode, encode, Config, Instance, InstancePaths, CONFIG, MAX_BYTES, 
 impl Instance {
     /// Setup holds the instance/root lock. Retry may repeat, never silently
     /// replace, the listener that the protected bootstrap is about to validate.
-    pub(crate) fn set_browser(
+    pub fn set_browser(
         &self,
         listen: &org_host_control::listen::ListenConfig,
     ) -> Result<(), Error> {
@@ -31,7 +31,7 @@ impl Instance {
     /// Opt-in HTTPS upgrade (ADR-0033 / TASK-62): switches the instance's browser listener from
     /// plain HTTP (`http_loopback` / `http_published`) to `https` (or updates `hsts` on `https`)
     /// while keeping the exact reserved `(address, port, origin host, origin port)`.
-    pub(crate) fn upgrade_browser_to_https(
+    pub fn upgrade_browser_to_https(
         &self,
         listen: &org_host_control::listen::ListenConfig,
     ) -> Result<(), Error> {
@@ -59,25 +59,25 @@ impl Instance {
     }
 
     /// Reserved browser listener, if setup configured one.
-    pub(crate) fn browser(&self) -> Result<Option<org_host_control::listen::ListenConfig>, Error> {
+    pub fn browser(&self) -> Result<Option<org_host_control::listen::ListenConfig>, Error> {
         self.config().map(|(config, _)| config.browser)
     }
-    pub(crate) fn id(&self) -> &str {
+    pub fn id(&self) -> &str {
         &self.binding.id
     }
-    pub(crate) fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         self.binding.name.as_str()
     }
-    pub(crate) fn root(&self) -> &Path {
+    pub fn root(&self) -> &Path {
         self.root.path()
     }
     /// The instance root itself, as the descriptor this reservation holds its lock on: the
     /// data root a credential directory must stay disjoint from.
-    pub(crate) fn root_descriptor(&self) -> std::os::fd::BorrowedFd<'_> {
+    pub fn root_descriptor(&self) -> std::os::fd::BorrowedFd<'_> {
         self.root.descriptor()
     }
 
-    pub(crate) fn prepare_layout(&self) -> Result<InstancePaths, Error> {
+    pub fn prepare_layout(&self) -> Result<InstancePaths, Error> {
         self.config()?;
         let office_home = self.root.child("office-state", true)?;
         office_home.child(org_office_launch::OFFICES_DIR_NAME, true)?;
@@ -101,7 +101,7 @@ impl Instance {
         Ok((config, bytes))
     }
 
-    pub(crate) fn verify(&self) -> Result<(), Error> {
+    pub fn verify(&self) -> Result<(), Error> {
         self.config()?;
         self.instance_temp()?.verify()?;
         Ok(())
@@ -109,7 +109,7 @@ impl Instance {
 
     /// Whether the host recorded that it created this instance's host registry. The marker
     /// holds the instance ID; any other content is refused rather than trusted.
-    pub(crate) fn registry_created(&self) -> Result<bool, Error> {
+    pub fn registry_created(&self) -> Result<bool, Error> {
         self.root.verify()?;
         match self.root.read(REGISTRY_CREATED, MAX_BYTES)? {
             None => Ok(false),
@@ -121,7 +121,7 @@ impl Instance {
     /// Records, durably and once, that the host registry exists. The caller holds this
     /// instance's root lock and `host.lock`, and calls it only after the registry is
     /// published. A later start that finds the marker without the registry refuses.
-    pub(crate) fn record_registry_created(&self) -> Result<(), Error> {
+    pub fn record_registry_created(&self) -> Result<(), Error> {
         if self.registry_created()? {
             return Ok(());
         }
@@ -130,7 +130,7 @@ impl Instance {
         Ok(())
     }
 
-    pub(crate) fn temp_folder(&self) -> &Path {
+    pub fn temp_folder(&self) -> &Path {
         &self.binding.temp_folder
     }
 

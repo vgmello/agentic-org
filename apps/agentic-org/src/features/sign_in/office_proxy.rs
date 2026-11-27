@@ -21,7 +21,7 @@
 use org_agent_cli::{OfficeTransport, TransportOffice};
 use org_cli_shell::context::{ColorMode, ExecutionContext};
 use org_command::{Command, Office, Output, Refusal};
-use org_host::setup_flow::{ApprovedOfficeChannel, HostCliError, HostCliErrorKind};
+use org_host_setup::{ApprovedOfficeChannel, HostCliError, HostCliErrorKind};
 use org_proto::ErrorCode;
 use serde_json::Value;
 
@@ -51,7 +51,7 @@ impl LazyGrantTransport {
     }
 
     fn open(&self) -> Result<ApprovedOfficeChannel, HostCliError> {
-        org_host::setup_flow::open_for_command(
+        org_host_setup::open_for_command(
             self.instance.as_deref(),
             self.office.as_deref(),
             &mut super::approval_link_stream(),

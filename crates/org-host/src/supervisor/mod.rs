@@ -392,7 +392,7 @@ impl Supervisor {
             .map_err(|_| "office inspector returned an unreadable response".to_owned())
     }
 
-    #[cfg(test)]
+    #[cfg(all(feature = "test-support", debug_assertions))]
     pub(crate) fn kill_office_for_test(&self, office_id: &str) {
         let state = lock(&self.state);
         if let Some(slot) = state.offices.get(office_id) {

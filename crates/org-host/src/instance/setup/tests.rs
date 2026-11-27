@@ -526,7 +526,11 @@ fn a_configuration_names_a_supplied_pair_only_for_https() {
     // pair's files are refused.
     let (_temp, base) = base();
     let journal = Journal::open(&base, None).unwrap();
-    let pin = crate::setup_flow::release_pin().unwrap();
+    let pin = crate::release::ReleasePin {
+        release_id: "development".into(),
+        sequence: 1,
+        manifest_sha256: "a".repeat(64),
+    };
     let record = journal
         .freeze_configured(configured.clone(), true, pin.clone())
         .unwrap();

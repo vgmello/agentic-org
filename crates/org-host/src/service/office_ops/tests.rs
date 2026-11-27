@@ -53,7 +53,7 @@ fn sign_in_native(
 fn office_list_and_restart_enforce_authority_scoping_and_idempotency() {
     let home = tempfile::tempdir().unwrap();
     let (_root, authentication, _) = crate::authentication::tests::fixture();
-    let db = authentication.sqlite_for_test();
+    let db = authentication.memory_for_test();
     let now = super::browser_now_ms().unwrap();
     let verifier =
         hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap();
@@ -225,7 +225,7 @@ fn browser_office_restart_and_sessionless_calls_enforce_boundaries() {
 
     let home = tempfile::tempdir().unwrap();
     let (_root, authentication, _) = crate::authentication::tests::fixture();
-    let db = authentication.sqlite_for_test();
+    let db = authentication.memory_for_test();
     let now = super::browser_now_ms().unwrap();
     let verifier =
         hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap();
@@ -434,7 +434,7 @@ fn browser_office_restart_and_sessionless_calls_enforce_boundaries() {
 fn satellite_admin_sees_and_restarts_unlinked_satellite_only() {
     let home = tempfile::tempdir().unwrap();
     let (_root, authentication, _) = crate::authentication::tests::fixture();
-    let db = authentication.sqlite_for_test();
+    let db = authentication.memory_for_test();
     let now = super::browser_now_ms().unwrap();
     let verifier =
         hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap();
@@ -597,7 +597,7 @@ fn browser_office_restart_refuses_unlinked_satellite_for_admin() {
 
     let home = tempfile::tempdir().unwrap();
     let (_root, authentication, _) = crate::authentication::tests::fixture();
-    let db = authentication.sqlite_for_test();
+    let db = authentication.memory_for_test();
     let now = super::browser_now_ms().unwrap();
     let verifier =
         hash_password(&Password::new("synthetic test password".into()).unwrap()).unwrap();

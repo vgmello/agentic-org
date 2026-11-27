@@ -1,16 +1,71 @@
 //! The registered start against a temp account base: setup's record and reservation are made
 //! directly, the host uses explicit development custody, and no worker binary is needed.
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use org_host_control::listen::ListenConfig;
 
 use super::*;
-use crate::hostdb::HostStore;
+use crate::hostdb::memory::MemoryHostStore;
+use crate::hostdb::{HostDbInit, HostStore};
 use crate::instance::setup::{Input, Record};
 use crate::links::{LinkKind, Subject};
+use crate::ports::{HostPorts, HostStoreOpener};
 use crate::release::ReleasePin;
+
+const TEST_REGISTRY_FILE: &str = "host-registry.mem";
+
+#[derive(Default)]
+struct MemoryStoreOpener {
+    stores: Mutex<BTreeMap<PathBuf, Arc<MemoryHostStore>>>,
+}
+
+impl HostStoreOpener for MemoryStoreOpener {
+    fn exists(&self, office_home: &Path) -> Result<bool, std::io::Error> {
+        Ok(fs::symlink_metadata(office_home.join(TEST_REGISTRY_FILE)).is_ok())
+    }
+
+    fn create(
+        &self,
+        office_home: &Path,
+        _custody: &dyn crate::host_secrets::HostSecrets,
+        init: &HostDbInit,
+    ) -> Result<Arc<dyn HostStore>, crate::hostdb::Error> {
+        let marker = office_home.join(TEST_REGISTRY_FILE);
+        if fs::symlink_metadata(&marker).is_ok() {
+            return Err(crate::hostdb::Error::Exists);
+        }
+        let store = Arc::new(MemoryHostStore::new(&init.instance_id, init.clock_high_ms));
+        fs::write(&marker, init.instance_id.as_bytes())?;
+        self.stores
+            .lock()
+            .unwrap()
+            .insert(office_home.to_path_buf(), Arc::clone(&store));
+        Ok(store)
+    }
+
+    fn open(
+        &self,
+        office_home: &Path,
+        _custody: &dyn crate::host_secrets::HostSecrets,
+    ) -> Result<Arc<dyn HostStore>, crate::hostdb::Error> {
+        let marker = office_home.join(TEST_REGISTRY_FILE);
+        if fs::symlink_metadata(&marker).is_err() {
+            return Err(crate::hostdb::Error::Io(std::io::ErrorKind::NotFound));
+        }
+        let store = self
+            .stores
+            .lock()
+            .unwrap()
+            .get(office_home)
+            .cloned()
+            .ok_or(crate::hostdb::Error::Unsafe)?;
+        Ok(store)
+    }
+}
 
 fn listen(port: u16) -> ListenConfig {
     serde_json::from_value(serde_json::json!({
@@ -23,6 +78,7 @@ fn listen(port: u16) -> ListenConfig {
 struct Fixture {
     paths: Paths,
     base: PathBuf,
+    opener: Arc<MemoryStoreOpener>,
     _temp: tempfile::TempDir,
 }
 
@@ -42,6 +98,7 @@ fn fixture() -> Fixture {
             user_temp: base.join("temp"),
         },
         base,
+        opener: Arc::new(MemoryStoreOpener::default()),
         _temp: temp,
     }
 }
@@ -95,12 +152,21 @@ impl Fixture {
         config
     }
 
+    fn ports(&self) -> HostPorts {
+        HostPorts {
+            store_opener: Some(Arc::clone(&self.opener) as Arc<dyn HostStoreOpener>),
+            ..HostPorts::default()
+        }
+    }
+
     fn start(&self) -> Result<Host, HostError> {
-        Host::start_registered_at(self.config(), &self.paths, None)
+        Host::start_registered_at_with_ports(self.config(), &self.paths, None, self.ports())
     }
 
     fn registry_db(&self) -> PathBuf {
-        self.base.join("instance/office-state/host-registry.db")
+        self.base
+            .join("instance/office-state")
+            .join(TEST_REGISTRY_FILE)
     }
 
     fn marker(&self) -> PathBuf {
@@ -299,7 +365,7 @@ fn a_start_without_admitted_runtime_refuses_before_touching_the_instance() {
     let locator = fs::read(&f.paths.locator).ok();
     let mut config = f.config();
     config.dev_key_dir = None;
-    let err = Host::start_registered_at(config, &f.paths, None)
+    let err = Host::start_registered_at_with_ports(config, &f.paths, None, f.ports())
         .err()
         .expect("refused");
     assert!(err.to_string().contains("admitting"), "{err}");
@@ -407,7 +473,7 @@ fn a_recorded_credential_directory_holds_a_development_builds_custody() {
         let mut config = f.config();
         config.dev_key_dir = None;
         walking_from(&walk_base, || {
-            Host::start_registered_at(config, &f.paths, None)
+            Host::start_registered_at_with_ports(config, &f.paths, None, f.ports())
         })
     };
     let host = match start() {
@@ -560,7 +626,7 @@ fn a_missing_development_key_folder_is_made_but_never_its_parent() {
     );
     let mut config = f.config();
     config.dev_key_dir = Some(f.base.join("absent/keys"));
-    let refused = Host::start_registered_at(config, &f.paths, None)
+    let refused = Host::start_registered_at_with_ports(config, &f.paths, None, f.ports())
         .err()
         .expect("refused")
         .to_string();
@@ -638,12 +704,6 @@ fn registered_start_and_cli_origin_accept_opt_in_https_upgrade_and_refuse_tamper
         let instance = registry.reserve(None, &f.base.join("instance")).unwrap();
         instance.upgrade_browser_to_https(&https_listen).unwrap();
     }
-
-    // CLI origin resolution (`admin tls set` / `admin reset`) now sees the upgraded https:// origin.
-    let (_rec, resolved_id, _sock, resolved_origin) =
-        crate::setup_flow::registered_with_origin(&f.paths, None).unwrap();
-    assert_eq!(resolved_id, id);
-    assert_eq!(resolved_origin.as_str(), "https://127.0.0.1:7420");
 
     // Registered host restarts cleanly on HTTPS (also persists HSTS updates).
     let upgraded_host = f
@@ -763,6 +823,7 @@ fn start_registered_with_ports_uses_injected_store_and_custody_without_sqlite() 
     config.dev_key_dir = None;
     let ports = crate::ports::HostPorts {
         store: Some(Arc::clone(&store)),
+        store_opener: None,
         secrets: Some(Arc::clone(&secrets)),
         keys: Some(Arc::clone(&keys)),
     };
@@ -797,12 +858,38 @@ fn start_registered_with_ports_uses_injected_store_and_custody_without_sqlite() 
     ));
     let bad_ports = crate::ports::HostPorts {
         store: Some(wrong_store),
+        store_opener: None,
+        secrets: Some(Arc::clone(&secrets)),
+        keys: Some(Arc::clone(&keys)),
+    };
+    assert!(
+        Host::start_registered_at_with_ports(config.clone(), &f.paths, None, bad_ports).is_err(),
+        "mismatched injected store instance ID must fail closed"
+    );
+
+    // Negative check: registered start with neither `store` nor `store_opener` fails closed.
+    let missing_store_ports = crate::ports::HostPorts {
+        store: None,
+        store_opener: None,
+        secrets: Some(Arc::clone(&secrets)),
+        keys: Some(Arc::clone(&keys)),
+    };
+    assert!(
+        Host::start_registered_at_with_ports(config.clone(), &f.paths, None, missing_store_ports)
+            .is_err(),
+        "registered start without store or store_opener must fail closed"
+    );
+
+    // Negative check: registered start with both `store` and `store_opener` fails closed.
+    let both_store_ports = crate::ports::HostPorts {
+        store: Some(store),
+        store_opener: Some(Arc::new(MemoryStoreOpener::default())),
         secrets: Some(secrets),
         keys: Some(keys),
     };
     assert!(
-        Host::start_registered_at_with_ports(config, &f.paths, None, bad_ports).is_err(),
-        "mismatched injected store instance ID must fail closed"
+        Host::start_registered_at_with_ports(config, &f.paths, None, both_store_ports).is_err(),
+        "registered start with both store and store_opener must fail closed"
     );
     assert!(!f.registry_db().exists());
 }

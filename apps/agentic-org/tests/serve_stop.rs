@@ -93,11 +93,11 @@ impl Foreground {
             fs::write(&file, text.to_string()).unwrap();
         };
         write(None);
-        let needs_volume = match org_host::setup_flow::configuration(&file) {
+        let needs_volume = match org_host_setup::configuration(&file) {
             Ok(_) => false,
             Err(refused) if refused.contains("needs \"credentials\"") => {
                 write(Some(&base.join("secrets")));
-                org_host::setup_flow::configuration(&file).unwrap();
+                org_host_setup::configuration(&file).unwrap();
                 true
             }
             Err(refused) => panic!("{refused}"),

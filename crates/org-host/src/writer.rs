@@ -98,8 +98,8 @@ pub(crate) struct Writers {
     root: Root,
     instance: String,
     active: Mutex<BTreeSet<String>>,
-    #[cfg(test)]
-    streams: Mutex<std::collections::HashMap<String, UnixStream>>,
+    #[cfg(all(feature = "test-support", debug_assertions))]
+    streams: Mutex<std::collections::HashMap<String, Box<dyn FnOnce() + Send>>>,
     gate: Mutex<()>,
 }
 impl std::fmt::Debug for Writers {
@@ -116,7 +116,7 @@ struct Lease {
 impl Drop for Lease {
     fn drop(&mut self) {
         lock(&self.writers.active).remove(&self.office);
-        #[cfg(test)]
+        #[cfg(all(feature = "test-support", debug_assertions))]
         lock(&self.writers.streams).remove(&self.office);
     }
 }
@@ -271,7 +271,7 @@ impl Writers {
             root: Root::read(root)?,
             instance: instance.into(),
             active: Mutex::default(),
-            #[cfg(test)]
+            #[cfg(all(feature = "test-support", debug_assertions))]
             streams: Mutex::default(),
             gate: Mutex::new(()),
         }))
@@ -557,9 +557,14 @@ impl Writers {
         if !lock(&self.active).insert(office.into()) {
             return Err(refused());
         }
-        #[cfg(test)]
+        #[cfg(all(feature = "test-support", debug_assertions))]
         if let Ok(cloned) = stream.try_clone() {
-            lock(&self.streams).insert(office.into(), cloned);
+            lock(&self.streams).insert(
+                office.into(),
+                Box::new(move || {
+                    let _ = cloned.shutdown(std::net::Shutdown::Both);
+                }),
+            );
         }
         let lease = Lease {
             writers: Arc::clone(self),
@@ -575,12 +580,12 @@ impl Writers {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(all(feature = "test-support", debug_assertions))]
     pub(crate) fn close_channel_for_test(&self, office: &str) -> bool {
-        let Some(stream) = lock(&self.streams).remove(office) else {
+        let Some(close) = lock(&self.streams).remove(office) else {
             return false;
         };
-        let _ = stream.shutdown(std::net::Shutdown::Both);
+        close();
         true
     }
 }

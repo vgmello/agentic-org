@@ -581,8 +581,7 @@ fn the_registered_account_fixture_serves_with_serve_name() {
     let app = account.base.join("app");
     std::fs::create_dir(&app).unwrap();
     std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let registered =
-        org_host::setup_flow::fixture::registered_account(&app, None, free_port()).unwrap();
+    let registered = org_host_setup::fixture::registered_account(&app, None, free_port()).unwrap();
     assert!(registered.root.starts_with(&app));
     let mut child = spawn(
         Command::new(BIN)

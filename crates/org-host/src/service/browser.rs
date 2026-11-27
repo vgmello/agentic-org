@@ -24,7 +24,7 @@ impl Service {
         if !is_browser_op(request) || connection.web_listen().is_none() {
             return false;
         }
-        #[cfg(test)]
+        #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
         self.browser_ops
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         if request.is::<InstanceView>() {

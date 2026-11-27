@@ -49,7 +49,7 @@ const FIELDS: [Column; 11] = [
 
 pub(super) fn run(args: SyncStatusArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let target = selection::select(args.instance.name.as_deref(), args.office.as_deref())?;
-    let status = org_host::setup_flow::office_sync_status(
+    let status = org_host_setup::office_sync_status(
         target.instance(),
         args.login.login.as_deref(),
         args.org.org.as_deref(),

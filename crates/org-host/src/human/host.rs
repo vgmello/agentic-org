@@ -12,7 +12,7 @@ use std::os::unix::net::UnixStream;
 
 /// How much of the host a command could establish.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VerifiedHost {
+pub enum VerifiedHost {
     /// Its running image: the signed host, or in a debug build this very executable.
     Image,
     /// Only the user it runs as: this system has no code identity for it.
@@ -22,7 +22,7 @@ pub(crate) enum VerifiedHost {
 impl VerifiedHost {
     /// Whether a command may send this host a password or a recovery secret. A host known
     /// only by its user may be any program of that user: it is sent neither.
-    pub(crate) fn may_receive_secrets(self) -> Result<(), String> {
+    pub fn may_receive_secrets(self) -> Result<(), String> {
         match self {
             VerifiedHost::Image => Ok(()),
             VerifiedHost::UserAlone => Err(
@@ -39,7 +39,7 @@ impl VerifiedHost {
 /// A host run by another user, and one that is neither the signed host, nor known by this
 /// user alone on a system that offers nothing more, nor a debug build's own executable, is
 /// refused.
-pub(crate) fn verify_host(stream: &UnixStream) -> Result<VerifiedHost, String> {
+pub fn verify_host(stream: &UnixStream) -> Result<VerifiedHost, String> {
     if !org_socket::peer_allowed(stream, org_socket::effective_uid()) {
         return Err("host peer refused".into());
     }
@@ -80,7 +80,7 @@ pub(crate) fn verify_host(stream: &UnixStream) -> Result<VerifiedHost, String> {
 /// `host.sock`: a peer the system names by its user alone, and that user is `uid`. Where
 /// the system identifies a peer's image instead, root has no route to another user's host
 /// (SIGN-33 is the dialog at the console there), and this refuses.
-pub(crate) fn verify_service_host(stream: &UnixStream, uid: u32) -> Result<(), String> {
+pub fn verify_service_host(stream: &UnixStream, uid: u32) -> Result<(), String> {
     match crate::peer::identity(stream) {
         Ok(host) if host.uid == Some(uid) => Ok(()),
         Ok(_) => Err("the socket is not served by that user's service".into()),
@@ -90,7 +90,7 @@ pub(crate) fn verify_service_host(stream: &UnixStream, uid: u32) -> Result<(), S
 
 /// Whether this system names a peer by its user alone, asked of a connection of this
 /// process to itself: what a command needs to know to say who may reset the administrator.
-pub(crate) fn host_is_named_by_user_alone() -> bool {
+pub fn host_is_named_by_user_alone() -> bool {
     UnixStream::pair().is_ok_and(|(one, _other)| {
         crate::peer::identity(&one).is_ok_and(|identity| identity.uid.is_some())
     })

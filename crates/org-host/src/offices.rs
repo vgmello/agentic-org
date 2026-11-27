@@ -340,7 +340,7 @@ impl Offices {
         lock(&self.catalog).insert(office);
     }
 
-    #[cfg(test)]
+    #[cfg(all(feature = "test-support", debug_assertions))]
     pub(crate) fn kill_office_for_test(&self, office_id: &str) {
         self.supervisor.kill_office_for_test(office_id);
     }

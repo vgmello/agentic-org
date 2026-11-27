@@ -32,7 +32,7 @@ impl ReleasePin {
             sequence: manifest.manifest().sequence(),
         }
     }
-    pub(crate) fn validate(&self) -> Result<(), Error> {
+    pub fn validate(&self) -> Result<(), Error> {
         let id = self.release_id.as_bytes();
         if id.is_empty()
             || id.len() > 96

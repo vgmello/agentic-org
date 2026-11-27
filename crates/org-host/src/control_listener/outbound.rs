@@ -11,7 +11,7 @@ use org_proto::frame::{self, FrameError};
 use org_proto::{ApiError, ErrorCode, Event, Response};
 use serde_json::Value;
 
-pub(super) enum Outbound {
+pub(crate) enum Outbound {
     Response(Response),
     /// A response line already encoded, holding a secret: written as is, then zeroed.
     Secret(SecretLine),

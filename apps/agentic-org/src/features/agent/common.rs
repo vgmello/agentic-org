@@ -7,7 +7,7 @@ use clap::Parser;
 use org_agent_cli::OfficeTransport;
 use org_cli_shell::context::{ColorMode, ExecutionContext};
 use org_command::Refusal;
-use org_host::setup_flow::ApprovedOfficeChannel;
+use org_host_setup::ApprovedOfficeChannel;
 use serde_json::Value;
 
 use crate::error::CliError;
@@ -164,6 +164,6 @@ pub(super) fn open_channel(
     instance: Option<&str>,
     office: Option<&str>,
 ) -> Result<ChannelTransport, CliError> {
-    let channel = org_host::setup_flow::open_for_command(instance, office, &mut io::stderr())?;
+    let channel = org_host_setup::open_for_command(instance, office, &mut io::stderr())?;
     Ok(ChannelTransport(channel))
 }

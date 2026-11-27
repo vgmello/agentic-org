@@ -17,7 +17,7 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 
 use org_cli_shell::error::ShellError;
-use org_host::setup_flow::{self, Platform, Request, ServiceReport, ServiceState};
+use org_host_setup::{Platform, Request, ServiceReport, ServiceState};
 
 pub(crate) fn own_program() -> Result<std::path::PathBuf, String> {
     std::env::current_exe()
@@ -35,7 +35,7 @@ pub(crate) fn configured(
     name: Option<&str>,
     out: &mut dyn Write,
 ) -> Result<(), String> {
-    apply(setup_flow::configuration(file)?, name, out).map(drop)
+    apply(org_host_setup::configuration(file)?, name, out).map(drop)
 }
 
 /// [`configured`] for `serve --setup`: the file must set up the foreground mode, in which
@@ -50,7 +50,7 @@ pub(crate) fn configured_foreground(
     name: Option<&str>,
     out: &mut dyn Write,
 ) -> Result<Option<org_host::BrowserListener>, String> {
-    let configuration = setup_flow::configuration(file)?;
+    let configuration = org_host_setup::configuration(file)?;
     if !configuration.foreground() {
         return Err(format!(
             "{} sets up a registered service, which its service manager runs; serve --setup \
@@ -62,7 +62,7 @@ pub(crate) fn configured_foreground(
 }
 
 fn apply(
-    configuration: setup_flow::Configuration,
+    configuration: org_host_setup::Configuration,
     name: Option<&str>,
     out: &mut dyn Write,
 ) -> Result<Option<org_host::BrowserListener>, String> {
@@ -87,7 +87,7 @@ fn apply(
         configuration: Some(configuration),
         federation: None,
     };
-    setup_flow::run(&platform, request, out)
+    org_host_setup::run(&platform, request, out)
 }
 
 /// Where a named instance's port search starts: 7421 in every build that people run. A
@@ -105,7 +105,7 @@ pub(crate) fn named_port_base() -> Result<u16, String> {
                     .to_owned()
             });
     }
-    Ok(setup_flow::NAMED_PORT_BASE)
+    Ok(org_host_setup::NAMED_PORT_BASE)
 }
 
 /// absolute path ([`development_keys`]).
@@ -114,7 +114,7 @@ pub(crate) fn service_environment() -> Result<Vec<(OsString, OsString)>, String>
     if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
         env.push(("HOME".into(), home));
     }
-    env.extend(setup_flow::path_environment());
+    env.extend(org_host_setup::path_environment());
     if cfg!(debug_assertions) {
         if let Some(value) = std::env::var_os("ORG_DEV_ACCOUNT_BASE").filter(|v| !v.is_empty()) {
             env.push(("ORG_DEV_ACCOUNT_BASE".into(), value));
@@ -151,7 +151,7 @@ pub(crate) fn development_keys() -> Result<Option<std::path::PathBuf>, String> {
 /// development stand-ins are for a registered service only.
 pub(crate) fn platform(foreground: bool) -> Result<Platform, String> {
     if foreground {
-        return setup_flow::platform(true);
+        return org_host_setup::platform(true);
     }
     #[cfg(all(debug_assertions, feature = "test-support"))]
     if let Some(service) = development_service()? {
@@ -166,12 +166,12 @@ pub(crate) fn platform(foreground: bool) -> Result<Platform, String> {
             service,
             disk: Box::new(FakeDiskEncryption(state)),
             // A development build keeps its secrets in its development key folder.
-            credentials: setup_flow::CredentialDirectory::Unused,
+            credentials: org_host_setup::CredentialDirectory::Unused,
         });
     }
     #[cfg(not(all(debug_assertions, feature = "test-support")))]
     refuse_development_service()?;
-    setup_flow::platform(false)
+    org_host_setup::platform(false)
 }
 
 /// The account's registered service manager alone, as [`platform`] chooses it (the
@@ -184,7 +184,7 @@ pub(crate) fn service_manager() -> Result<Box<dyn org_platform::service::Service
     }
     #[cfg(not(all(debug_assertions, feature = "test-support")))]
     refuse_development_service()?;
-    setup_flow::service_manager(false)
+    org_host_setup::service_manager(false)
 }
 
 /// A build without the development adapters refuses the variables that name one.
@@ -394,14 +394,14 @@ impl ServiceView {
 /// service manager): `status` reports what it can and never fails on it.
 pub(crate) fn service_view(instance: Option<&str>) -> Option<ServiceView> {
     let platform = platform(false).ok()?;
-    let report = setup_flow::service(
+    let report = org_host_setup::service(
         instance,
         &*platform.service,
-        setup_flow::ServiceAction::Status,
+        org_host_setup::ServiceAction::Status,
     )
     .ok()?;
     Some(ServiceView {
-        state: setup_flow::wire_name(&report.state),
+        state: org_host_setup::wire_name(&report.state),
         foreground: report.foreground,
         pid: report.pid,
         summary: service_summary(&report),

@@ -70,9 +70,15 @@ fn org_platform_links_the_c_library_only() {
     );
 }
 
-/// The host executable, the host library and the host-only platform crate: the only
+/// The host executable, the host libraries and the host-only platform crate: the only
 /// members that may link the host's own capabilities.
-const HOST_ONLY: [&str; 3] = ["agentic-org", "org-host", "org-platform-host"];
+const HOST_ONLY: [&str; 5] = [
+    "agentic-org",
+    "org-host",
+    "org-host-setup",
+    "org-host-sqlite",
+    "org-platform-host",
+];
 
 #[test]
 fn only_the_host_links_org_platform_host() {
@@ -107,6 +113,8 @@ fn only_the_host_links_org_platform_host() {
         for forbidden in [
             "org-platform-host",
             "org-host",
+            "org-host-setup",
+            "org-host-sqlite",
             "core-foundation",
             "core-foundation-sys",
             "security-framework",

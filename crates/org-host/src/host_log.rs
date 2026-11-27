@@ -27,8 +27,8 @@ const WRITE_WAIT: Duration = Duration::from_millis(100);
 const QUEUED: usize = 256;
 
 /// Logs one line. Never pass it secrets; pass text a server sent through [`untrusted`].
-pub(crate) fn log(message: &str) {
-    #[cfg(test)]
+pub fn log(message: &str) {
+    #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
     CAPTURED.with(|captured| {
         if let Some(lines) = captured.borrow_mut().as_mut() {
             lines.push(message.to_owned());
@@ -135,15 +135,15 @@ fn write_all(writer: &Writer) {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 thread_local! {
     static CAPTURED: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Runs `f` and returns what it logged on this thread, so a test can assert
 /// that no secret reaches the host log.
-#[cfg(test)]
-pub(crate) fn capture<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
+#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
+pub fn capture<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
     CAPTURED.with(|captured| *captured.borrow_mut() = Some(Vec::new()));
     let result = f();
     let lines = CAPTURED.with(|captured| captured.borrow_mut().take().unwrap_or_default());
@@ -153,7 +153,7 @@ pub(crate) fn capture<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
 /// Text a server sent (e.g. a `failed` message), made safe for one log line: control characters,
 /// line and paragraph separators and direction controls are escaped, so it can't forge lines or
 /// reorder what is shown, and it is cut to about 2 KiB.
-pub(crate) fn untrusted(text: &str) -> String {
+pub fn untrusted(text: &str) -> String {
     let mut out = String::new();
     for c in text.chars() {
         if out.len() >= MAX_UNTRUSTED_BYTES {

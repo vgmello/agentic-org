@@ -14,9 +14,10 @@ use std::sync::Arc;
 use crate::admin::{Admin, NativePresence};
 use crate::browser_listener::{browser_matches_setup, published_http_notice};
 use crate::home::{HostLock, Layout};
-use crate::hostdb::{HostDb, HostDbInit};
+use crate::hostdb::{HostDbInit, HostStore};
 use crate::instance::registry::Registry;
 use crate::instance::setup::{Journal, Paths};
+use crate::ports::HostStoreOpener;
 use crate::startup::startup_app_policy;
 use crate::{host_log, Config, Host, HostError};
 
@@ -28,15 +29,11 @@ fn refused(context: &'static str, why: impl std::fmt::Display) -> HostError {
 }
 
 impl Host {
-    /// Starts the registered instance `name` (the default instance when `None`) that setup
-    /// reserved for this account. Fails closed where the platform has no instance locations
-    /// or protected custody.
-    pub fn start_registered(config: Config, name: Option<&str>) -> Result<Self, HostError> {
-        Self::start_registered_with_ports(config, name, crate::ports::HostPorts::default())
-    }
-
     /// Starts the registered instance `name` with caller-supplied persistence and custody ports.
-    /// Any field left `None` in `ports` falls back to the default local adapter.
+    ///
+    /// Callers must supply either `ports.store` (a pre-opened [`HostStore`]) or
+    /// `ports.store_opener` (for example `org-host-sqlite`'s SQLite opener), never neither and
+    /// never both. Any custody field left `None` falls back to the local host custody adapter.
     pub fn start_registered_with_ports(
         config: Config,
         name: Option<&str>,
@@ -45,20 +42,6 @@ impl Host {
         let paths =
             crate::human::paths(name).map_err(|why| refused("locating the instance", why))?;
         Self::start_registered_at_with_ports(config, &paths, name, ports)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn start_registered_at(
-        config: Config,
-        paths: &Paths,
-        name: Option<&str>,
-    ) -> Result<Self, HostError> {
-        Self::start_registered_at_with_ports(
-            config,
-            paths,
-            name,
-            crate::ports::HostPorts::default(),
-        )
     }
 
     pub(crate) fn start_registered_at_with_ports(
@@ -70,6 +53,7 @@ impl Host {
         // Before any key or custody is read (this path opens custody before the ordinary
         // composition is reached).
         crate::config::harden()?;
+        validate_registered_ports(&ports)?;
         let record = Journal::snapshot(&paths.base, name)
             .map_err(|e| refused("reading the setup record", e))?;
         // Before anything is touched on disk (the record was only read): a release build
@@ -79,63 +63,7 @@ impl Host {
         let explicit_custody = (record.credentials.is_some() && keeps_secrets_in_a_directory())
             || (ports.secrets.is_some() && ports.keys.is_some());
         config.admit_runtime_with(explicit_custody)?;
-        let id = record.instance_id.clone().ok_or_else(|| {
-            refused(
-                "reading the setup record",
-                "setup has not reserved an instance yet",
-            )
-        })?;
-        let registry = Registry::open(&paths.locator, &paths.user_temp)
-            .map_err(|e| refused("opening the instance locator", e))?;
-        registry
-            .restore_temp_folders()
-            .map_err(|e| refused("restoring instance temp folders", e))?;
-        // Read-only first, so a name setup never reserved is refused instead of reserved here.
-        let (located, _) = registry
-            .locate(name, &record.input.root)
-            .map_err(|e| refused("locating the reserved instance", e))?;
-        if located != id {
-            return Err(refused(
-                "locating the reserved instance",
-                "the reserved instance is not the one setup recorded",
-            ));
-        }
-        let instance = registry
-            .reserve(name, &record.input.root)
-            .map_err(|e| match e {
-                // Another process holds the instance's state lock: its service host, setup or
-                // `admin reset`. Name that, not the lock file.
-                crate::instance::Error::Busy(_) => refused(
-                    "reopening the reserved instance",
-                    format!(
-                        "instance {} is in use by another agentic-org process (a running service, \
-                         setup or admin reset); stop it first",
-                        name.unwrap_or("default")
-                    ),
-                ),
-                e => refused("reopening the reserved instance", e),
-            })?;
-        if instance.id() != id {
-            return Err(refused(
-                "reopening the reserved instance",
-                "the reserved instance is not the one setup recorded",
-            ));
-        }
-        let browser = instance
-            .browser()
-            .map_err(|e| refused("reading the instance listener", e))?
-            .filter(|active| browser_matches_setup(active, &record.input.listen))
-            .ok_or_else(|| {
-                refused(
-                    "reading the instance listener",
-                    "the instance listener is missing or differs from setup",
-                )
-            })?;
-        // Said once per start, before anything is bound, using the active listener (omitted
-        // once an http_published instance has opted in to HTTPS).
-        if browser.scheme() == org_host_control::listen::ListenMode::HttpPublished {
-            host_log::log(&published_http_notice(&browser));
-        }
+        let (instance, browser) = reopen_reserved_instance(paths, name, &record)?;
         let policy = startup_app_policy(&config, true)?;
         let layout_paths = instance
             .prepare_layout()
@@ -152,8 +80,6 @@ impl Host {
             &layout_paths.office_home,
             &mut ports,
         )?;
-        let foreground = record.input.service == crate::instance::setup::Service::Foreground;
-
         let instance_name = instance.name().to_owned();
         // An `https` instance imports the pair setup verified at its first start.
         config.supplied_tls = record.tls.clone();
@@ -165,29 +91,125 @@ impl Host {
             release_directory,
             ports,
         )?;
-        let authentication = host.service.authentication.as_ref().ok_or_else(|| {
-            refused(
-                "opening the host registry",
-                "the registered host has no registry",
-            )
-        })?;
-        let admin = Admin::new(
-            authentication.accounts_store(),
-            authentication.links_store(),
-            &record.setup_operation,
-            browser.origin().clone(),
-            policy,
-            Arc::new(NativePresence),
-        );
-        if foreground {
-            admin.foreground_instance();
-        }
-        let installed = host.service.install_admin(Arc::new(admin));
-        debug_assert!(installed, "the administrator service is installed once");
-        let named = host.service.install_instance_name(&instance_name);
-        debug_assert!(named, "the instance name is installed once");
+        install_registered_admin(&host, &record, &browser, policy, &instance_name)?;
         Ok(host)
     }
+}
+
+fn validate_registered_ports(ports: &crate::ports::HostPorts) -> Result<(), HostError> {
+    match (&ports.store, &ports.store_opener) {
+        (Some(_), Some(_)) => Err(refused(
+            "opening the host registry",
+            "supply either HostPorts::store or HostPorts::store_opener, not both",
+        )),
+        (None, None) => Err(refused(
+            "opening the host registry",
+            "no HostStore or HostStoreOpener configured; compose with org-host-sqlite or inject HostPorts::store",
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn reopen_reserved_instance(
+    paths: &Paths,
+    name: Option<&str>,
+    record: &crate::instance::setup::Record,
+) -> Result<
+    (
+        crate::instance::registry::Instance,
+        org_host_control::listen::ListenConfig,
+    ),
+    HostError,
+> {
+    let id = record.instance_id.clone().ok_or_else(|| {
+        refused(
+            "reading the setup record",
+            "setup has not reserved an instance yet",
+        )
+    })?;
+    let registry = Registry::open(&paths.locator, &paths.user_temp)
+        .map_err(|e| refused("opening the instance locator", e))?;
+    registry
+        .restore_temp_folders()
+        .map_err(|e| refused("restoring instance temp folders", e))?;
+    // Read-only first, so a name setup never reserved is refused instead of reserved here.
+    let (located, _) = registry
+        .locate(name, &record.input.root)
+        .map_err(|e| refused("locating the reserved instance", e))?;
+    if located != id {
+        return Err(refused(
+            "locating the reserved instance",
+            "the reserved instance is not the one setup recorded",
+        ));
+    }
+    let instance = registry
+        .reserve(name, &record.input.root)
+        .map_err(|e| match e {
+            // Another process holds the instance's state lock: its service host, setup or
+            // `admin reset`. Name that, not the lock file.
+            crate::instance::Error::Busy(_) => refused(
+                "reopening the reserved instance",
+                format!(
+                    "instance {} is in use by another agentic-org process (a running service, \
+                     setup or admin reset); stop it first",
+                    name.unwrap_or("default")
+                ),
+            ),
+            e => refused("reopening the reserved instance", e),
+        })?;
+    if instance.id() != id {
+        return Err(refused(
+            "reopening the reserved instance",
+            "the reserved instance is not the one setup recorded",
+        ));
+    }
+    let browser = instance
+        .browser()
+        .map_err(|e| refused("reading the instance listener", e))?
+        .filter(|active| browser_matches_setup(active, &record.input.listen))
+        .ok_or_else(|| {
+            refused(
+                "reading the instance listener",
+                "the instance listener is missing or differs from setup",
+            )
+        })?;
+    // Said once per start, before anything is bound, using the active listener (omitted
+    // once an http_published instance has opted in to HTTPS).
+    if browser.scheme() == org_host_control::listen::ListenMode::HttpPublished {
+        host_log::log(&published_http_notice(&browser));
+    }
+    Ok((instance, browser))
+}
+
+fn install_registered_admin(
+    host: &Host,
+    record: &crate::instance::setup::Record,
+    browser: &org_host_control::listen::ListenConfig,
+    policy: crate::app_auth::AppPolicy,
+    instance_name: &str,
+) -> Result<(), HostError> {
+    let authentication = host.service.authentication.as_ref().ok_or_else(|| {
+        refused(
+            "opening the host registry",
+            "the registered host has no registry",
+        )
+    })?;
+    let admin = Admin::new(
+        authentication.accounts_store(),
+        authentication.links_store(),
+        &record.setup_operation,
+        browser.origin().clone(),
+        policy,
+        Arc::new(NativePresence),
+    );
+    if record.input.service == crate::instance::setup::Service::Foreground {
+        admin.foreground_instance();
+    }
+    let installed = host.service.install_admin(Arc::new(admin));
+    debug_assert!(installed, "the administrator service is installed once");
+    let named = host.service.install_instance_name(instance_name);
+    debug_assert!(named, "the instance name is installed once");
+    Ok(())
 }
 
 fn open_registered_custody_and_store(
@@ -204,14 +226,17 @@ fn open_registered_custody_and_store(
     ),
     HostError,
 > {
-    let uses_local_store = ports.store.is_none();
-    let uses_local_custody = ports.secrets.is_none() || ports.keys.is_none();
-    // Before any custody is opened: a SQLite registry the host once created and that is now
-    // missing is refused, never recreated empty (ADR-0022).
-    let reg_state = if uses_local_store {
-        Some(registry_state(instance, office_home)?)
+    let opener = if ports.store.is_none() {
+        ports.store_opener.take()
     } else {
         None
+    };
+    let uses_local_custody = ports.secrets.is_none() || ports.keys.is_none();
+    // Before any custody is opened: a persisted registry the host once created and that is now
+    // missing is refused, never recreated empty (ADR-0022).
+    let reg_state = match &opener {
+        Some(opener) => Some(registry_state_with(instance, office_home, &**opener)?),
+        None => None,
     };
     #[cfg(debug_assertions)]
     let dev_key_dir = config.dev_key_dir.clone();
@@ -241,15 +266,19 @@ fn open_registered_custody_and_store(
         )
         .map_err(|e| refused("opening protected account custody", format!("{e:?}")))?,
     };
-    if let Some(state) = reg_state {
-        if state == RegistryState::Absent {
-            create_registry(office_home, &*custody, instance.id())?;
-        }
+    if let (Some(opener), Some(state)) = (opener, reg_state) {
+        let store = match state {
+            RegistryState::Absent => {
+                create_registry_with(office_home, &*custody, instance.id(), &*opener)?
+            }
+            RegistryState::Present => open_registry_with(office_home, &*custody, &*opener)?,
+        };
         // Written after the registry is published, and repaired here if a start died between
         // the two: from now on a missing registry is refused.
         instance
             .record_registry_created()
             .map_err(|e| refused("recording the host registry", e))?;
+        ports.store = Some(store);
     }
     Ok((custody, release_directory))
 }
@@ -316,12 +345,12 @@ pub(crate) const FOREGROUND_WITHOUT_VOLUME: &str = "this foreground instance's s
      mounted secrets volume); the instance does not start; nothing was written";
 
 /// The message a start refuses with when the registry it once created is gone.
-pub(crate) const REGISTRY_MISSING: &str = "host registry missing: restore host-registry.db \
+pub const REGISTRY_MISSING: &str = "host registry missing: restore host-registry.db \
      from a backup of this instance; starting over without one needs the instance removed, \
      which uninstall does not offer yet (FC-022)";
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum RegistryState {
+pub enum RegistryState {
     /// The first start: neither the registry nor the host's marker exists.
     Absent,
     /// The registry exists (its marker may still need writing).
@@ -332,20 +361,15 @@ pub(crate) enum RegistryState {
 /// and `host.lock`, so no other host can race these checks. A registry recorded as created
 /// but now missing is refused with an explicit recovery message: recreating it empty would
 /// reopen the initial administrator link and drop the accounts and custody bound to it.
-pub(crate) fn registry_state(
+pub(crate) fn registry_state_with(
     instance: &crate::instance::registry::Instance,
     office_home: &Path,
+    opener: &dyn HostStoreOpener,
 ) -> Result<RegistryState, HostError> {
-    let exists = match std::fs::symlink_metadata(office_home.join("host-registry.db")) {
-        Ok(_) => true,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
-        Err(source) => {
-            return Err(HostError::Io {
-                context: "checking the host registry",
-                source,
-            })
-        }
-    };
+    let exists = opener.exists(office_home).map_err(|source| HostError::Io {
+        context: "checking the host registry",
+        source,
+    })?;
     let created = instance
         .registry_created()
         .map_err(|e| refused("checking the host registry", e))?;
@@ -360,11 +384,12 @@ pub(crate) fn registry_state(
 }
 
 /// Creates the host registry at the instance's first start, under the same locks.
-pub(crate) fn create_registry(
+pub(crate) fn create_registry_with(
     office_home: &Path,
     custody: &dyn crate::host_secrets::HostSecrets,
     instance_id: &str,
-) -> Result<(), HostError> {
+    opener: &dyn HostStoreOpener,
+) -> Result<Arc<dyn HostStore>, HostError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
@@ -374,11 +399,31 @@ pub(crate) fn create_registry(
         instance_id: instance_id.to_owned(),
         clock_high_ms: now,
     };
-    // The error names only a kind (an I/O kind, SQLite code or custody class), never bytes.
-    HostDb::create(office_home, custody, &init)
+    // The error names only a kind (an I/O kind, storage fault or custody class), never bytes.
+    let store = opener
+        .create(office_home, custody, &init)
         .map_err(|e| refused("creating the host registry", format!("{e:?}")))?;
     host_log::log("created the host registry at the instance's first start");
-    Ok(())
+    Ok(store)
+}
+
+fn open_registry_with(
+    office_home: &Path,
+    custody: &dyn crate::host_secrets::HostSecrets,
+    opener: &dyn HostStoreOpener,
+) -> Result<Arc<dyn HostStore>, HostError> {
+    opener
+        .open(office_home, custody)
+        .map_err(|error| match error {
+            crate::hostdb::Error::Outdated => refused(
+                "opening protected account registry",
+                crate::hostdb::sessions::OUTDATED,
+            ),
+            _ => refused(
+                "opening protected account registry",
+                "protected registry unavailable",
+            ),
+        })
 }
 
 /// Whether this system keeps a host's secrets in a directory (GNU/Linux), where a recorded

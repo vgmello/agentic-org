@@ -26,21 +26,22 @@ use crate::{
     THREAD_END_MARGIN,
 };
 
-#[cfg(test)]
+#[cfg(all(feature = "test-support", debug_assertions))]
 use crate::writer;
 
 /// Temporary test entry for the private bootstrap while setup's CLI is gated.
 #[cfg(all(feature = "test-support", debug_assertions))]
-pub fn start_instance_for_test(
+pub fn start_instance_for_test_with_ports(
     config: Config,
     locator: &Path,
     user_temp: &Path,
     name: Option<&str>,
     root: &Path,
+    ports: HostPorts,
 ) -> Result<Host, HostError> {
     let registry =
         instance::registry::Registry::open(locator, user_temp).map_err(instance_error)?;
-    Host::start_instance(config, &registry, name, root)
+    Host::start_instance_with_ports(config, &registry, name, root, ports)
 }
 
 /// A running host. [`Host::shutdown`] (or dropping it) stops it.
@@ -58,7 +59,7 @@ pub struct Host {
     pub(crate) service: Arc<Service>,
     /// Organization creation, kept to end its threads when the host stops.
     pub(crate) creating: Option<Arc<provisioning::Provisioning>>,
-    #[cfg(test)]
+    #[cfg(all(feature = "test-support", debug_assertions))]
     pub(crate) writers: Option<Arc<writer::Writers>>,
     /// How long the servers get to exit when the host stops.
     pub(crate) shutdown_grace: std::time::Duration,
@@ -76,16 +77,16 @@ impl Host {
 
     /// Starts an unregistered host with caller-supplied key custody.
     ///
-    /// Unregistered hosts have no instance registry; passing `ports.store` or `ports.secrets`
-    /// fails closed here — use [`Host::start_registered_with_ports`] to boot a registered
-    /// instance with injected persistence or secret custody ports.
+    /// Unregistered hosts have no instance registry; passing `ports.store`, `ports.store_opener`,
+    /// or `ports.secrets` fails closed here — use [`Host::start_registered_with_ports`] to boot
+    /// a registered instance with injected persistence or secret custody ports.
     pub fn start_with_ports(config: Config, ports: HostPorts) -> Result<Self, HostError> {
-        if ports.store.is_some() || ports.secrets.is_some() {
+        if ports.store.is_some() || ports.store_opener.is_some() || ports.secrets.is_some() {
             return Err(HostError::Io {
                 context: "starting unregistered host with injected ports",
                 source: std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    "injected HostStore or HostSecrets require Host::start_registered_with_ports",
+                    "injected HostStore, HostStoreOpener, or HostSecrets require Host::start_registered_with_ports",
                 ),
             });
         }
@@ -94,32 +95,26 @@ impl Host {
 
     /// Private composition entry for the matching debug test-support adapter.
     #[cfg(all(feature = "test-support", debug_assertions))]
-    fn start_instance(
+    fn start_instance_with_ports(
         config: Config,
         registry: &instance::registry::Registry,
         name: Option<&str>,
         root: &Path,
+        ports: HostPorts,
     ) -> Result<Self, HostError> {
         registry.restore_temp_folders().map_err(instance_error)?;
         let instance = registry.reserve(name, root).map_err(instance_error)?;
-        Self::start_inner(config, Some(instance))
+        Self::start_prepared_with_ports(config, Some(instance), None, ports)
     }
 
     #[cfg(all(feature = "test-support", debug_assertions))]
-    fn start_inner(
-        config: Config,
-        instance: Option<instance::registry::Instance>,
-    ) -> Result<Self, HostError> {
-        Self::start_prepared(config, instance, None)
-    }
-
-    #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
-    pub(super) fn start_prepared(
+    pub(crate) fn start_prepared_with_ports(
         config: Config,
         instance: Option<instance::registry::Instance>,
         prepared: Option<(HostLock, Arc<dyn host_secrets::HostSecrets>)>,
+        ports: HostPorts,
     ) -> Result<Self, HostError> {
-        Self::start_with(config, instance, prepared, None, HostPorts::default())
+        Self::start_with(config, instance, prepared, None, ports)
     }
 
     /// The composition. `release_directory` is the credential directory a registered start
@@ -135,6 +130,7 @@ impl Host {
     ) -> Result<Self, HostError> {
         let HostPorts {
             store: injected_store,
+            store_opener,
             secrets: injected_secrets,
             keys: injected_keys,
         } = ports;
@@ -189,6 +185,7 @@ impl Host {
             &instance,
             &mut custody,
             injected_store,
+            store_opener,
             dev_key_dir,
             release_directory.as_ref(),
         )?;
@@ -247,7 +244,7 @@ impl Host {
             supervisor,
             provisioning,
         } = startup_protected_services(&instance, &authentication, supervisor, &keys, &layout)?;
-        #[cfg(not(test))]
+        #[cfg(not(all(feature = "test-support", debug_assertions)))]
         let _ = writers;
         let broadcast = Arc::new(Broadcast::default());
         let offices = Offices::start(
@@ -322,13 +319,13 @@ impl Host {
             tls_renewal,
             service,
             creating,
-            #[cfg(test)]
+            #[cfg(all(feature = "test-support", debug_assertions))]
             writers,
             shutdown_grace: config.timings.shutdown_grace,
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(feature = "test-support", debug_assertions))]
     pub(crate) fn close_writer_channel_for_test(&self, office: &str) -> bool {
         self.writers
             .as_ref()

@@ -2,7 +2,7 @@
 //! own test binary so its process spawns never overlap the in-process hosts' pipes.
 //!
 //! Each host serves a registered instance (`serve --name default`) that A2's setup fixture
-//! (`org_host::setup_flow::fixture`) reserved under a temporary application base
+//! (`org_host_setup::fixture`) reserved under a temporary application base
 //! (`ORG_DEV_ACCOUNT_BASE`), with one stored office the fake server runs. A host that starts
 //! keeps its keys in a development key folder (`ORG_OFFICE_DEV_KEY_DIR`), which only a debug
 //! build reads (a release host uses the Keychain, which tests never touch), so every test that
@@ -30,7 +30,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 #[cfg(debug_assertions)]
-use org_host::setup_flow::fixture::{registered_account, RegisteredAccount};
+use org_host_setup::fixture::{registered_account, RegisteredAccount};
 use org_office_launch::OfficeFile;
 #[cfg(not(debug_assertions))]
 use support::TestHome;
@@ -118,13 +118,13 @@ impl Registered {
     /// `office.json` in the instance's office home and a key in the instance's development key
     /// folder (the layout `TestHome::write_office` uses for a registered home).
     fn store_office(&self, office: &OfficeFile) {
-        let at = org_host::test_support::custody::InstanceAt::account(
+        let at = org_host_sqlite::test_support::custody::InstanceAt::account(
             &self.base().join("a"),
             None,
             &self.base().join("k"),
         )
         .unwrap();
-        org_host::test_support::custody::reserve_office(
+        org_host_sqlite::test_support::custody::reserve_office(
             &at,
             &office.org_id,
             &office.office_id,

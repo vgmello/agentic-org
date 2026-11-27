@@ -22,12 +22,12 @@ pub struct BrowserListener(Arc<Mutex<Option<TcpListener>>>);
 
 impl BrowserListener {
     /// Binds the address of `listen`, as every start of the web process binds it.
-    pub(crate) fn bind(listen: &ListenConfig) -> io::Result<Self> {
+    pub fn bind(listen: &ListenConfig) -> io::Result<Self> {
         bind(listen).map(|listener| Self(Arc::new(Mutex::new(Some(listener)))))
     }
 
     /// The listener, once.
-    pub(crate) fn take(&self) -> Option<TcpListener> {
+    pub fn take(&self) -> Option<TcpListener> {
         lock(&self.0).take()
     }
 }

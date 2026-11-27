@@ -32,7 +32,7 @@ const COLUMNS: [Column; 7] = [
 
 pub(super) fn run(args: ListArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let listed = org_host::setup_flow::office_list(
+    let listed = org_host_setup::office_list(
         target.instance(),
         args.login.login.as_deref(),
         args.org.org.as_deref(),

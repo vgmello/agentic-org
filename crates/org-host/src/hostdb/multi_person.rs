@@ -4,8 +4,8 @@ use crate::accounts::identity::AccountId;
 use crate::links::{Refused, Subject};
 use crate::sessions::Ended;
 
-pub(crate) const INVITE_PREFIX: &str = "invite:";
-pub(crate) const ACCOUNT_PREFIX: &str = "account:";
+pub const INVITE_PREFIX: &str = "invite:";
+pub const ACCOUNT_PREFIX: &str = "account:";
 
 /// Builds the canonical registration-link subject `"invite:<org_id>:<member_id>"`.
 pub fn invite_subject(org_id: &str, member_id: &str) -> Result<Subject, crate::links::Error> {

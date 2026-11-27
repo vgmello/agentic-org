@@ -46,7 +46,7 @@ pub(super) fn run(args: DeclineArgs, ctx: &mut ExecutionContext) -> Result<(), C
         return Ok(());
     }
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let done = org_host::setup_flow::office_decline(
+    let done = org_host_setup::office_decline(
         target.instance(),
         args.login.login.as_deref(),
         args.org.org.as_deref(),

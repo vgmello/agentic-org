@@ -38,7 +38,7 @@ struct Binding {
 
 /// The one format check for an instance ID: canonical lowercase UUIDv7 text (non-negotiable 4).
 /// A ULID, the earlier form, and uppercase hex are refused.
-pub(crate) fn valid_instance_id(id: &str) -> bool {
+pub fn valid_instance_id(id: &str) -> bool {
     org_proto::is_uuid_v7(id)
 }
 
@@ -220,21 +220,21 @@ fn encode(value: &impl Serialize) -> Result<Vec<u8>, Error> {
 }
 
 /// Per-OS-user instance location only, never account credentials or office data.
-pub(crate) struct Registry {
+pub struct Registry {
     directory: Directory,
     user_temp: Directory,
 }
 
 /// A reserved/opened instance, holding the actual full root's exclusive inode lock.
-pub(crate) struct Instance {
+pub struct Instance {
     root: Directory,
     binding: Binding,
     user_temp: Directory,
 }
 
 /// Managed roots prepared while the instance owns its full-root lock.
-pub(crate) struct InstancePaths {
-    pub(crate) office_home: PathBuf,
+pub struct InstancePaths {
+    pub office_home: PathBuf,
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "nothing reads the agents root yet")
@@ -365,7 +365,7 @@ impl Registry {
     }
 
     /// Only the final directory may be created; callers resolve the trusted account base.
-    pub(crate) fn open(path: &Path, user_temp: &Path) -> Result<Self, Error> {
+    pub fn open(path: &Path, user_temp: &Path) -> Result<Self, Error> {
         let user_temp = Directory::open(user_temp, false)?;
         temp::validate_base(&user_temp)?;
         let path = absolute(path)?;
@@ -388,7 +388,7 @@ impl Registry {
 
     /// Startup re-creates all recorded instance folders before sessions build deny lists.
     /// The returned canonical paths are a snapshot taken under the locator lock.
-    pub(crate) fn restore_temp_folders(&self) -> Result<Vec<PathBuf>, Error> {
+    pub fn restore_temp_folders(&self) -> Result<Vec<PathBuf>, Error> {
         let lock = self.lock()?;
         let (locator, _previous) = self.load()?;
         self.user_temp.verify()?;
@@ -406,7 +406,7 @@ impl Registry {
     ///
     /// The registry lock serializes name/ID publication; the returned instance holds
     /// its root lock independently, so unrelated instances can run concurrently.
-    pub(crate) fn reserve(&self, name: Option<&str>, root: &Path) -> Result<Instance, Error> {
+    pub fn reserve(&self, name: Option<&str>, root: &Path) -> Result<Instance, Error> {
         let name = Name::parse(name)?;
         let path = absolute(root)?;
         self.directory.verify()?;
@@ -475,7 +475,7 @@ impl Registry {
     /// Whether the locator binds a reservation to `name`, read under the locator's lock:
     /// the durable evidence a failed setup reports, whatever that setup got to before it
     /// failed (X5 review, fourth round, P2-7).
-    pub(crate) fn reserved(&self, name: Option<&str>) -> Result<bool, Error> {
+    pub fn reserved(&self, name: Option<&str>) -> Result<bool, Error> {
         let name = Name::parse(name)?;
         let lock = self.lock()?;
         let (locator, _) = self.load()?;
@@ -485,18 +485,14 @@ impl Registry {
 
     /// Read-only routing to an already reserved instance while its writer owns
     /// the root lock. This does not create/repair/promote a root or grant access.
-    pub(crate) fn locate(
-        &self,
-        name: Option<&str>,
-        path: &Path,
-    ) -> Result<(String, PathBuf), Error> {
+    pub fn locate(&self, name: Option<&str>, path: &Path) -> Result<(String, PathBuf), Error> {
         let (id, temp, _) = self.locate_with_browser(name, path)?;
         Ok((id, temp))
     }
 
     /// Like [`locate`](Self::locate), also returning the active saved browser listener
     /// from `instance.json` (which reflects any opt-in HTTPS upgrade or HSTS change).
-    pub(crate) fn locate_with_browser(
+    pub fn locate_with_browser(
         &self,
         name: Option<&str>,
         path: &Path,
@@ -540,7 +536,7 @@ impl Registry {
     /// The browser ports registered instances saved, with each instance's name. An entry
     /// whose root or configuration cannot be read is skipped: setup uses this only to
     /// avoid choosing a port another instance already owns.
-    pub(crate) fn saved_browser_ports(&self) -> Result<Vec<(String, u16)>, Error> {
+    pub fn saved_browser_ports(&self) -> Result<Vec<(String, u16)>, Error> {
         let lock = self.lock()?;
         let (locator, _) = self.load()?;
         let mut ports = Vec::new();

@@ -37,7 +37,7 @@ struct StatusView {
     office: Option<String>,
     office_source: &'static str,
     manifest: Option<String>,
-    saved_context: Option<org_host::setup_flow::cli_context::CliContext>,
+    saved_context: Option<org_host_setup::cli_context::CliContext>,
     service: Option<crate::host::ServiceView>,
 }
 

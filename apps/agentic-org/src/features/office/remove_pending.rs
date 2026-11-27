@@ -37,7 +37,7 @@ pub(super) fn run(args: RemovePendingArgs, ctx: &mut ExecutionContext) -> Result
         return Ok(());
     }
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let done = org_host::setup_flow::office_remove_pending(
+    let done = org_host_setup::office_remove_pending(
         target.instance(),
         args.login.login.as_deref(),
         &args.office_id,

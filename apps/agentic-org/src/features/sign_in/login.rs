@@ -24,7 +24,7 @@ pub(crate) fn run(args: SignInArgs, ctx: &mut ExecutionContext) -> Result<(), Cl
         return office_proxy::sign_in_and_execute(args.command, instance, office, ctx);
     }
     let mut prompt = super::approval_link_stream();
-    let signed = org_host::setup_flow::sign_in_only(instance, office, &mut prompt)?;
+    let signed = org_host_setup::sign_in_only(instance, office, &mut prompt)?;
     let json = view::json(&signed)?;
     view::detail(ctx, &json, &json, "account", &FIELDS)?;
     if json["saved_context"] == Value::Null {

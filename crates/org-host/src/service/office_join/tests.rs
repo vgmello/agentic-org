@@ -213,7 +213,7 @@ impl JoinTestHarness {
         } else {
             crate::authentication::tests::fixture_without_accounts()
         };
-        let db = authentication.sqlite_for_test();
+        let db = authentication.memory_for_test();
         let now = super::browser_now_ms().unwrap();
         let session_login = if with_admin {
             let verifier =
@@ -249,7 +249,7 @@ impl JoinTestHarness {
                 log_max_bytes: 1024,
                 timings: Timings::default(),
                 keys: Arc::new(MemoryKeys::default()),
-                server_check: Arc::new(crate::server_check::ServerCheck::Skip),
+                server_check: Arc::new(crate::server_check::ServerCheck::ByPath),
                 sweep_orphans: false,
                 federation: None,
             },
@@ -441,7 +441,7 @@ fn office_join_fresh_instance_admits_local_peer_and_accounts_require_admin() {
         .authentication
         .as_ref()
         .unwrap()
-        .sqlite_for_test();
+        .memory_for_test();
     let verifier =
         hash_password(&Password::new("synthetic nonadmin password".into()).unwrap()).unwrap();
     let non_admin_acct = crate::ids::generate().unwrap();

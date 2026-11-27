@@ -1,9 +1,9 @@
 //! The steps of a host start: the server check, `host.sock`, the key store, the app policy,
 //! authentication, the catalog, the web listener's TLS pair and the web process.
 
+use std::io;
 use std::path::Path;
 use std::sync::Arc;
-use std::{fs, io};
 
 use org_platform_host::credentials::ReleaseRoot;
 
@@ -169,6 +169,7 @@ pub(super) fn startup_authentication(
     instance: &Option<instance::registry::Instance>,
     custody: &mut Option<Arc<dyn host_secrets::HostSecrets>>,
     injected_store: Option<Arc<dyn crate::hostdb::HostStore>>,
+    store_opener: Option<Arc<dyn crate::ports::HostStoreOpener>>,
     dev_key_dir: Option<&Path>,
     release_directory: Option<&ReleaseRoot>,
 ) -> Result<Option<Arc<crate::authentication::Authentication>>, HostError> {
@@ -184,23 +185,34 @@ pub(super) fn startup_authentication(
             })?;
         return Ok(Some(Arc::new(auth)));
     }
-    match fs::symlink_metadata(layout.home.join("host-registry.db")) {
-        Ok(_) => {
-            let custody = open_startup_custody(instance, custody, dev_key_dir, release_directory)?;
-            let auth =
-                crate::authentication::Authentication::open(&layout.home, custody, instance.id())
-                    .map_err(|_| HostError::Io {
-                    context: "opening protected account registry",
-                    source: io::Error::other("protected registry unavailable"),
-                })?;
-            Ok(Some(Arc::new(auth)))
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(HostError::Io {
+    let Some(opener) = store_opener else {
+        return Ok(None);
+    };
+    let exists = opener
+        .exists(&layout.home)
+        .map_err(|source| HostError::Io {
             context: "checking protected account registry",
             source,
-        }),
+        })?;
+    if !exists {
+        return Ok(None);
     }
+    let custody = open_startup_custody(instance, custody, dev_key_dir, release_directory)?;
+    let store = opener
+        .open(&layout.home, &*custody)
+        .map_err(|error| HostError::Io {
+            context: "opening protected account registry",
+            source: io::Error::other(match error {
+                crate::hostdb::Error::Outdated => crate::hostdb::sessions::OUTDATED,
+                _ => "protected registry unavailable",
+            }),
+        })?;
+    let auth = crate::authentication::Authentication::with_store(store, custody, instance.id())
+        .map_err(|_| HostError::Io {
+            context: "opening protected account registry",
+            source: io::Error::other("protected registry unavailable"),
+        })?;
+    Ok(Some(Arc::new(auth)))
 }
 
 pub(super) fn startup_catalog(

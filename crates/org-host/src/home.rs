@@ -16,17 +16,17 @@ pub(crate) use org_office_launch::HOST_LOCK_FILE_NAME;
 
 /// The paths the host uses inside one office home.
 #[derive(Debug, Clone)]
-pub(crate) struct Layout {
-    pub(crate) home: PathBuf,
-    pub(crate) run: PathBuf,
-    pub(crate) logs: PathBuf,
-    pub(crate) offices: PathBuf,
-    pub(crate) host_socket: PathBuf,
-    pub(crate) host_lock: PathBuf,
+pub struct Layout {
+    pub home: PathBuf,
+    pub run: PathBuf,
+    pub logs: PathBuf,
+    pub offices: PathBuf,
+    pub host_socket: PathBuf,
+    pub host_lock: PathBuf,
 }
 
 impl Layout {
-    pub(crate) fn new(home: &Path) -> Self {
+    pub fn new(home: &Path) -> Self {
         Self {
             home: home.to_path_buf(),
             run: home.join("run"),
@@ -37,7 +37,7 @@ impl Layout {
         }
     }
 
-    pub(crate) fn with_runtime(home: &Path, runtime: &Path) -> Self {
+    pub fn with_runtime(home: &Path, runtime: &Path) -> Self {
         Self {
             run: runtime.to_owned(),
             host_socket: location::host_socket_path(runtime),
@@ -48,7 +48,7 @@ impl Layout {
     /// Every office socket and every launch rendezvous in a home has the same length, so
     /// checking `host.sock` and one sample of each up front means no create or start fails on
     /// it later.
-    pub(crate) fn check_socket_paths(&self) -> Result<(), HostError> {
+    pub fn check_socket_paths(&self) -> Result<(), HostError> {
         let sample_id = "X".repeat(OFFICE_SOCKET_HANDLE_CHARS);
         let sample =
             location::office_socket_in(&self.run, &sample_id).expect("the sample id is plain");
@@ -74,7 +74,7 @@ impl Layout {
     /// home or folder that isn't a real directory owned by this user (e.g. a symlink planted by
     /// someone else). Each office's own socket folder, `run/o/<handle>/`, is made by its server
     /// just before it binds (`org_proto::location`).
-    pub(crate) fn prepare(&self) -> Result<(), HostError> {
+    pub fn prepare(&self) -> Result<(), HostError> {
         let io = |context| move |source| HostError::Io { context, source };
         DirBuilder::new()
             .recursive(true)
@@ -117,13 +117,13 @@ pub(crate) fn owner_only_dir(dir: &Path) -> Result<(), HostError> {
 }
 
 /// The effective user id of this process.
-pub(crate) fn euid() -> u32 {
+pub fn euid() -> u32 {
     org_platform::posix::effective_uid()
 }
 
 /// The effective group id of this process.
-#[cfg(test)]
-pub(crate) fn egid() -> u32 {
+#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
+pub fn egid() -> u32 {
     org_platform::posix::effective_gid()
 }
 
@@ -180,7 +180,7 @@ fn default_office_home_from(
 }
 
 /// This process's account home folder (`pw_dir`), if it is absolute.
-pub(crate) fn account_dir() -> Option<PathBuf> {
+pub fn account_dir() -> Option<PathBuf> {
     account_home(euid())
 }
 
@@ -268,14 +268,14 @@ fn account_home(uid: u32) -> Option<PathBuf> {
 
 /// `host.lock`, held (an exclusive `flock`) for as long as this value lives.
 #[derive(Debug)]
-pub(crate) struct HostLock {
+pub struct HostLock {
     _file: File,
 }
 
 impl HostLock {
     /// Takes the lock without waiting: another host on this home means
     /// [`HostError::AlreadyRunning`].
-    pub(crate) fn acquire(layout: &Layout) -> Result<Self, HostError> {
+    pub fn acquire(layout: &Layout) -> Result<Self, HostError> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)

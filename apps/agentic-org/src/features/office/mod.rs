@@ -21,7 +21,7 @@ use clap::{ArgGroup, Args, Subcommand};
 use org_cli_shell::context::ExecutionContext;
 use org_cli_shell::files::ReadRefusal;
 use org_cli_shell::prompt::require_confirmation;
-use org_host::setup_flow::InvitationTokenSecret;
+use org_host_setup::InvitationTokenSecret;
 use serde_json::Value;
 
 use crate::error::CliError;

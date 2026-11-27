@@ -5,7 +5,7 @@ use org_cli_shell::context::ExecutionContext;
 
 use crate::args::{InstanceArgs, LoginArgs, OrgArg};
 use crate::error::CliError;
-use org_host::setup_flow::OfficeInviteInput;
+use org_host_setup::OfficeInviteInput;
 use serde_json::json;
 
 use crate::selection;
@@ -69,11 +69,8 @@ pub(super) fn run(args: InviteArgs, ctx: &mut ExecutionContext) -> Result<(), Cl
         return Ok(ctx.render_dry_run(&summary, &plan)?);
     }
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let created = org_host::setup_flow::office_invite(
-        target.instance(),
-        args.login.login.as_deref(),
-        &input,
-    )?;
+    let created =
+        org_host_setup::office_invite(target.instance(), args.login.login.as_deref(), &input)?;
     let json = view::json(&created)?;
     // `-q` prints the token: what the satellite needs.
     view::detail(ctx, &json, &json, "token", &FIELDS)?;

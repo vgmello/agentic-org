@@ -4,7 +4,8 @@
 use super::*;
 use crate::broadcast::Subscriber;
 use crate::host_secrets::HostSecrets;
-use crate::hostdb::HostDb;
+use crate::hostdb::memory::MemoryHostStore;
+use crate::hostdb::{HostAccountsStore, ProvisioningStore};
 use crate::provisioning::Hq;
 use crate::writer::Writers;
 use org_host_control::browser::{BrowserOrigin, Digest32, SessionSignInParams};
@@ -122,7 +123,7 @@ struct Host {
     _root: tempfile::TempDir,
     _state: tempfile::TempDir,
     authentication: Arc<Authentication>,
-    db: Arc<HostDb>,
+    db: Arc<MemoryHostStore>,
     custody: Arc<dyn HostSecrets>,
     provisioning: Arc<Provisioning>,
     hq: Arc<FakeHq>,
@@ -137,7 +138,11 @@ struct Parts {
     office_home: std::path::PathBuf,
 }
 impl Parts {
-    fn provisioning(&self, db: &Arc<HostDb>, custody: &Arc<dyn HostSecrets>) -> Arc<Provisioning> {
+    fn provisioning(
+        &self,
+        db: &Arc<MemoryHostStore>,
+        custody: &Arc<dyn HostSecrets>,
+    ) -> Arc<Provisioning> {
         Arc::new(Provisioning::new(
             Arc::clone(db) as Arc<dyn crate::hostdb::HostStore>,
             Arc::clone(custody),
@@ -160,7 +165,7 @@ fn host(worker: Worker) -> Host {
     let instance = crate::ids::uuid_v7().unwrap();
     let (root, authentication, _) = crate::authentication::tests::fixture_for(&instance);
     let (store, custody) = authentication.provisioning_storage();
-    let db = authentication.sqlite_for_test();
+    let db = authentication.memory_for_test();
     let state = tempfile::tempdir().unwrap();
     std::fs::set_permissions(
         state.path(),
@@ -1233,21 +1238,6 @@ fn an_administrator_revoked_inside_the_reservation_commit_is_not_authorized_and_
     assert_eq!(host.hq.calls.load(Ordering::Acquire), 0);
 }
 
-fn registry_file(root: &std::path::Path) -> std::path::PathBuf {
-    let mut folders = vec![root.to_owned()];
-    while let Some(folder) = folders.pop() {
-        for entry in std::fs::read_dir(folder).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                folders.push(path);
-            } else if path.file_name().unwrap() == "host-registry.db" {
-                return path;
-            }
-        }
-    }
-    panic!("no host registry under the fixture");
-}
-
 #[test]
 fn a_registry_that_cannot_be_read_fails_the_list_instead_of_hiding_organizations() {
     let host = host(Worker::Creates);
@@ -1258,10 +1248,8 @@ fn a_registry_that_cannot_be_read_fails_the_list_instead_of_hiding_organizations
     host.completed(&auth, &id);
     host.idle();
     assert_eq!(host.list(&auth).organizations.len(), 1);
-    // The linked row no longer reads: a second connection breaks its stored plan.
-    crate::hostdb::sqlite::corrupt_provisioning_prepared_for_test(&registry_file(
-        host._root.path(),
-    ));
+    // The linked row no longer reads: simulate an unreadable provisioning store.
+    host.db.fail_provisioning_reads();
     assert_eq!(
         code(host.call::<List>(true, &ListParams { auth: auth.clone() })),
         ErrorCode::Unavailable

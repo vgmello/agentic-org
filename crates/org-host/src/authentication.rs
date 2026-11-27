@@ -18,8 +18,8 @@ use crate::accounts::identity::AccountId;
 use crate::control_listener::Connection;
 use crate::host_secrets::HostSecrets;
 use crate::hostdb::{
-    accounts::Account, journal::Verifier, HostAccountsStore, HostDb, HostStore,
-    OperationJournalStore, ProvisioningStore, RecoveryStore, WebTlsStore,
+    accounts::Account, journal::Verifier, HostAccountsStore, HostStore, OperationJournalStore,
+    ProvisioningStore, RecoveryStore, WebTlsStore,
 };
 use crate::links::OneTimeLinks;
 
@@ -40,7 +40,7 @@ const IDLE: Duration = Duration::from_secs(30 * 60);
 pub(crate) struct Authentication {
     db: Arc<dyn HostStore>,
     #[cfg(test)]
-    sqlite_for_test: Option<Arc<HostDb>>,
+    memory_for_test: Option<Arc<crate::hostdb::memory::MemoryHostStore>>,
     // Retain custody lifetime (including the debug store's exclusive lock).
     _custody: Arc<dyn HostSecrets>,
     dummy: Verifier,
@@ -252,7 +252,7 @@ fn random_handle() -> Result<SessionHandle, ApiError> {
     .map_err(|_| unavailable())
 }
 impl Authentication {
-    #[cfg(test)]
+    #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
     pub(crate) fn provisioning_storage(&self) -> (Arc<dyn HostStore>, Arc<dyn HostSecrets>) {
         (Arc::clone(&self.db), Arc::clone(&self._custody))
     }
@@ -278,11 +278,11 @@ impl Authentication {
         Arc::clone(&self.db) as Arc<dyn OneTimeLinks + Send + Sync>
     }
     #[cfg(test)]
-    pub(crate) fn sqlite_for_test(&self) -> Arc<HostDb> {
+    pub(crate) fn memory_for_test(&self) -> Arc<crate::hostdb::memory::MemoryHostStore> {
         Arc::clone(
-            self.sqlite_for_test
+            self.memory_for_test
                 .as_ref()
-                .expect("SQLite test fixture required"),
+                .expect("in-memory test fixture required"),
         )
     }
     /// The name the organization was created with; empty when no create of this host
@@ -436,27 +436,15 @@ impl Authentication {
             channels.retain(|_, c| !c.connection.ptr_eq(&alive) && c.live());
         }
     }
-    pub(crate) fn open(
-        home: &std::path::Path,
+    #[cfg(test)]
+    pub(crate) fn with_memory_for_test(
+        memory: Arc<crate::hostdb::memory::MemoryHostStore>,
         custody: Arc<dyn HostSecrets>,
         instance: &str,
     ) -> Result<Self, ApiError> {
-        let sqlite = Arc::new(HostDb::open(home, &*custody).map_err(|e| match e {
-            crate::hostdb::Error::Outdated => {
-                ApiError::new(ErrorCode::Unavailable, crate::hostdb::sessions::OUTDATED)
-            }
-            e => storage(e),
-        })?);
-        #[cfg(test)]
-        let sqlite_for_test = Some(Arc::clone(&sqlite));
-        let db: Arc<dyn HostStore> = sqlite;
-        let auth = Self::with_store(db, custody, instance)?;
-        #[cfg(test)]
-        let mut auth = auth;
-        #[cfg(test)]
-        {
-            auth.sqlite_for_test = sqlite_for_test;
-        }
+        let db: Arc<dyn HostStore> = Arc::clone(&memory) as Arc<dyn HostStore>;
+        let mut auth = Self::with_store(db, custody, instance)?;
+        auth.memory_for_test = Some(memory);
         Ok(auth)
     }
     pub(crate) fn with_store(
@@ -476,7 +464,7 @@ impl Authentication {
         Ok(Self {
             db,
             #[cfg(test)]
-            sqlite_for_test: None,
+            memory_for_test: None,
             _custody: custody,
             dummy,
             hashing: AtomicUsize::new(0),

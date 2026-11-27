@@ -10,7 +10,7 @@ use std::os::unix::fs::{symlink, DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-use org_host::setup_flow::fixture::{registered_account, seed_administrator, RegisteredAccount};
+use org_host_setup::fixture::{registered_account, seed_administrator, RegisteredAccount};
 use serde_json::Value;
 
 const BIN: &str = env!("CARGO_BIN_EXE_agentic-org");

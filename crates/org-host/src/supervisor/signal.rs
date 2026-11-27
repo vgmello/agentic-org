@@ -27,6 +27,6 @@ pub(crate) enum Signal {
     /// without tripping crash backoff.
     Reload,
     /// Tests only: SIGKILL the live office worker so supervision observes a real crash.
-    #[cfg(test)]
+    #[cfg(all(feature = "test-support", debug_assertions))]
     KillForTest,
 }

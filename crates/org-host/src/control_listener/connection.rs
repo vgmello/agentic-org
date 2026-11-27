@@ -77,7 +77,7 @@ pub(crate) enum DescriptorError {
 }
 
 impl Connection {
-    pub(super) fn new(stream: UnixStream, accepted: Accepted) -> (Arc<Self>, Receiver<Outbound>) {
+    pub(crate) fn new(stream: UnixStream, accepted: Accepted) -> (Arc<Self>, Receiver<Outbound>) {
         let (outbound, queue) = mpsc::sync_channel(OUTBOUND_QUEUE);
         let connection = Self {
             outbound,

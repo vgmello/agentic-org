@@ -148,9 +148,7 @@ impl RestoreArgs {
 /// The office home of the selected instance.
 fn office_home(instance: &InstanceArgs) -> Result<PathBuf, CliError> {
     let target = crate::selection::select(instance.name.as_deref(), None)?;
-    Ok(org_host::setup_flow::instance_office_home(
-        target.instance(),
-    )?)
+    Ok(org_host_setup::instance_office_home(target.instance())?)
 }
 
 /// A library refusal as the command line reports it.

@@ -32,7 +32,7 @@ pub struct Config {
     /// Client connections beyond this are closed on arrival.
     pub max_connections: usize,
     /// The browser listener setup bound for this instance, held since setup checked its
-    /// address (`setup_flow::run` returns it in the foreground mode): the web process's
+    /// address (`org_host_setup::run` returns it in the foreground mode): the web process's
     /// first start serves on it instead of binding the address again. A listener that is
     /// not on the instance's address and port is refused by that start.
     pub browser_listener: Option<BrowserListener>,

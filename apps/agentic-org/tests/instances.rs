@@ -8,7 +8,8 @@ use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use org_host::{start_instance_for_test, Config};
+use org_host::Config;
+use org_host_sqlite::start_instance_for_test;
 use org_proto::OfficeStatus;
 
 const OFFICE: &str = "0190a5d2-7c3e-7000-8000-00000000000a";
@@ -61,8 +62,8 @@ fn two_long_root_instances_run_the_same_office_id_with_separate_data_sockets_and
         // Each instance holds its own writer custody for the same office ID, reserved as
         // protected provisioning reserves it; that makes the office's folder.
         let organization = support::uuid7(0x10a + index as u64);
-        org_host::test_support::custody::reserve_office(
-            &org_host::test_support::custody::InstanceAt::new(
+        org_host_sqlite::test_support::custody::reserve_office(
+            &org_host_sqlite::test_support::custody::InstanceAt::new(
                 &locator,
                 &temporary,
                 Some(name),

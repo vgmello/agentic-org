@@ -46,7 +46,7 @@ fn malformed_cli_arguments_do_not_collect_credentials_or_open_a_socket() {
             &mut out,
         )
         .unwrap_err();
-        assert_eq!(refused.kind, crate::setup_flow::HostCliErrorKind::Usage);
+        assert_eq!(refused.kind, crate::cli_error::HostCliErrorKind::Usage);
         assert_eq!(refused.help.as_deref(), Some(HELP));
         assert!(out.is_empty());
     }

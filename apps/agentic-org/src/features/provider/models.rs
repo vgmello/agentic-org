@@ -35,7 +35,7 @@ const COLUMNS: [Column; 5] = [
 
 pub(super) fn run(args: ModelsArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let target = selection::select(args.instance.name.as_deref(), args.office.as_deref())?;
-    let listed = org_host::setup_flow::provider_models(
+    let listed = org_host_setup::provider_models(
         target.instance(),
         args.login.login.as_deref(),
         args.org.org.as_deref(),

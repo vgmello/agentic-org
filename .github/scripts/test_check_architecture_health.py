@@ -484,7 +484,7 @@ class TestInfraCouplingDetection(unittest.TestCase):
                 root,
                 [
                     "crates/org-office",
-                    "crates/org-host",
+                    "crates/org-host-sqlite",
                     "crates/org-platform",
                     "crates/org-socket",
                     "crates/org-client",
@@ -521,9 +521,9 @@ class TestInfraCouplingDetection(unittest.TestCase):
                             ),
                         },
                     ),
-                    "crates/org-host": (
-                        '[package]\nname = "org-host"\nversion = "0.0.0"\n',
-                        {"src/hostdb/sqlite/mod.rs": "use rusqlite::Connection;\n"},
+                    "crates/org-host-sqlite": (
+                        '[package]\nname = "org-host-sqlite"\nversion = "0.0.0"\n',
+                        {"src/lib.rs": "use rusqlite::Connection;\n"},
                     ),
                     "crates/org-platform": (
                         '[package]\nname = "org-platform"\nversion = "0.0.0"\n',

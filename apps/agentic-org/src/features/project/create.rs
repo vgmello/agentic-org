@@ -5,7 +5,7 @@ use org_cli_shell::context::ExecutionContext;
 
 use crate::args::{InstanceArgs, LoginArgs, OrgArg};
 use crate::error::CliError;
-use org_host::setup_flow::ProjectCreateInput;
+use org_host_setup::ProjectCreateInput;
 use serde_json::json;
 
 use super::RECORD;
@@ -56,11 +56,8 @@ pub(super) fn run(args: CreateArgs, ctx: &mut ExecutionContext) -> Result<(), Cl
         return Ok(ctx.render_dry_run(&format!("would create project \"{}\"", args.name), &plan)?);
     }
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let created = org_host::setup_flow::project_create(
-        target.instance(),
-        args.login.login.as_deref(),
-        &input,
-    )?;
+    let created =
+        org_host_setup::project_create(target.instance(), args.login.login.as_deref(), &input)?;
     let json = view::json(&created)?;
     view::detail(ctx, &json, &json, "id", &RECORD)?;
     ctx.success(&format!("Created project \"{}\".", args.name));

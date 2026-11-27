@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     accounts::identity::AccountId,
-    hostdb::{HostDb, HostDbInit},
+    hostdb::{memory::MemoryHostStore, HostAccountsStore},
 };
 use org_office_launch::writer::HighWaters;
 use std::os::unix::fs::PermissionsExt;
@@ -51,11 +51,7 @@ fn fixture() -> (tempfile::TempDir, Arc<Writers>, Input) {
         crate::host_secrets::dev::DevSecrets::open(&keys, &home, &input.instance).unwrap(),
     );
     let password = org_host_control::Password::new("synthetic writer password".into()).unwrap();
-    let init = HostDbInit {
-        instance_id: input.instance.clone(),
-        clock_high_ms: 1,
-    };
-    let db = Arc::new(HostDb::create(&home, &*custody, &init).unwrap());
+    let db = Arc::new(MemoryHostStore::new(&input.instance, 1));
     db.seed_account(
         &input.account,
         "Owner",
@@ -553,31 +549,8 @@ fn copied_root_missing_custody_replaced_root_and_changed_epoch_never_promote() {
     fs::create_dir(&writers.root.path).unwrap();
     fs::set_permissions(&writers.root.path, fs::Permissions::from_mode(0o700)).unwrap();
     assert!(writers.verify(&record, &input.office).is_err());
-    assert!(!writers
-        .root
-        .path
-        .join("office-state/host-registry.db")
-        .exists());
-    assert!(moved.join("office-state/host-registry.db").is_file());
-}
-#[test]
-fn missing_registry_cannot_sweep_retained_writer_custody() {
-    let (_root, writers, input) = fixture();
-    writers.reserve(OPERATION, &input.binding()).unwrap();
-    let home = writers.root.path.join("office-state");
-    // Actual restoration loss; preserve the complete old DB and every secret.
-    fs::rename(home.join("host-registry.db"), home.join("retained.db")).unwrap();
-    let before = writers.custody.list().unwrap();
-    let init = HostDbInit {
-        instance_id: writers.instance.clone(),
-        clock_high_ms: 1,
-    };
-    assert!(matches!(
-        HostDb::create(&home, &*writers.custody, &init),
-        Err(crate::hostdb::Error::Unsafe)
-    ));
-    assert_eq!(writers.custody.list().unwrap(), before);
-    assert!(home.join("retained.db").exists());
+    assert!(!writers.root.path.join("office-state").exists());
+    assert!(moved.join("office-state").is_dir());
 }
 
 #[test]
@@ -780,7 +753,22 @@ fn reopen_marker_writer(root: &Path, input: &Input) -> Arc<Writers> {
         crate::host_secrets::dev::DevSecrets::open(&root.join("keys"), &home, &input.instance)
             .unwrap(),
     );
-    let db = Arc::new(HostDb::open(&home, &*custody).unwrap());
+    let db = Arc::new(MemoryHostStore::new(&input.instance, 1));
+    let password = org_host_control::Password::new("synthetic writer password".into()).unwrap();
+    db.seed_account(
+        &input.account,
+        "Owner",
+        &crate::authentication::hash_password(&password).unwrap(),
+        true,
+        1,
+    )
+    .unwrap();
+    let admin = db
+        .account_authority(&AccountId::parse(&input.account).unwrap())
+        .unwrap()
+        .unwrap();
+    db.establish_organization_owner(&admin, &input.organization, &input.member)
+        .unwrap();
     Writers::open(custody, db, &input.instance, &instance_root).unwrap()
 }
 

@@ -19,7 +19,7 @@ use super::{Binding, Writers};
 #[cfg(test)]
 pub(crate) struct TestCustody {
     pub(crate) writers: Arc<Writers>,
-    pub(crate) db: Arc<crate::hostdb::HostDb>,
+    pub(crate) db: Arc<crate::hostdb::memory::MemoryHostStore>,
     pub(crate) account: String,
     pub(crate) organization: String,
     pub(crate) member: String,
@@ -78,11 +78,8 @@ impl TestCustody {
             ),
             fail: Arc::clone(&unreadable),
         });
-        let init = crate::hostdb::HostDbInit {
-            instance_id: instance.into(),
-            clock_high_ms: 1,
-        };
-        let db = Arc::new(crate::hostdb::HostDb::create(&home, &*custody, &init).unwrap());
+        use crate::hostdb::HostAccountsStore;
+        let db = Arc::new(crate::hostdb::memory::MemoryHostStore::new(instance, 1));
         let account = crate::ids::generate().unwrap();
         let password =
             org_host_control::Password::new("synthetic custody password".into()).unwrap();

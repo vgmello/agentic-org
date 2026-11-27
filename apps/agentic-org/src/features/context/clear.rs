@@ -3,7 +3,7 @@
 use clap::Args;
 use org_cli_shell::context::ExecutionContext;
 use org_cli_shell::prompt::require_confirmation;
-use org_host::setup_flow::cli_context;
+use org_host_setup::cli_context;
 use serde::Serialize;
 
 use crate::args::YesArgs;

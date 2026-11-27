@@ -36,7 +36,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use org_host::setup_flow::fixture::{
+use org_host_setup::fixture::{
     registered_account, seed_administrator, RegisteredAccount, SeededAdministrator,
 };
 use serde_json::Value;

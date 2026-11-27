@@ -9,7 +9,7 @@ use clap::{Args, Subcommand};
 use org_cli_shell::context::ExecutionContext;
 use org_cli_shell::output::Cell;
 use org_cli_shell::terminal::{sanitize, sanitize_lines};
-use org_host::setup_flow::ServiceAction;
+use org_host_setup::ServiceAction;
 use serde_json::json;
 
 use crate::args::InstanceArgs;
@@ -73,15 +73,15 @@ fn act(
 ) -> Result<(), CliError> {
     let target = selection::select(args.name.as_deref(), None)?;
     if ctx.modes().dry_run && action != ServiceAction::Status {
-        let plan = json!({"action": format!("service_{}", org_host::setup_flow::wire_name(&action)), "instance": target.instance().unwrap_or("default")});
+        let plan = json!({"action": format!("service_{}", org_host_setup::wire_name(&action)), "instance": target.instance().unwrap_or("default")});
         return Ok(ctx.render_dry_run("would change the instance's registered service", &plan)?);
     }
     let platform = host::platform(false)?;
-    let report = org_host::setup_flow::service(target.instance(), &*platform.service, action)?;
+    let report = org_host_setup::service(target.instance(), &*platform.service, action)?;
     if ctx.modes().json {
         return Ok(ctx.write_json(&report)?);
     }
-    let state = org_host::setup_flow::wire_name(&report.state);
+    let state = org_host_setup::wire_name(&report.state);
     if ctx.modes().quiet {
         return Ok(ctx.out(&format!("{state}\n"))?);
     }

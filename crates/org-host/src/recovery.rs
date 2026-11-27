@@ -33,7 +33,7 @@ pub(crate) struct Recovery {
     instance: String,
     policy: AppPolicy,
     inflight: AtomicBool,
-    #[cfg(test)]
+    #[cfg(all(feature = "test-support", debug_assertions))]
     test_presence: std::sync::Mutex<Option<Arc<dyn TestPresence>>>,
 }
 struct Reservation<'a>(&'a AtomicBool);
@@ -92,12 +92,12 @@ impl Recovery {
             instance: instance.into(),
             policy,
             inflight: AtomicBool::new(false),
-            #[cfg(test)]
+            #[cfg(all(feature = "test-support", debug_assertions))]
             test_presence: std::sync::Mutex::new(None),
         }
     }
     fn local(&self, c: &Connection) -> bool {
-        #[cfg(test)]
+        #[cfg(all(feature = "test-support", debug_assertions))]
         {
             let adapter = self.test_presence.lock().unwrap().clone();
             if let Some(adapter) = adapter {
@@ -107,7 +107,7 @@ impl Recovery {
         presence::local(c.socket())
     }
     fn confirm(&self, cancelled: impl Fn() -> bool) -> Result<(), ()> {
-        #[cfg(test)]
+        #[cfg(all(feature = "test-support", debug_assertions))]
         {
             let adapter = self.test_presence.lock().unwrap().clone();
             if let Some(adapter) = adapter {
@@ -118,7 +118,7 @@ impl Recovery {
     }
     /// Private disposable test seam. No request/environment/build-release option
     /// can select it; production always calls the actual SDK functions above.
-    #[cfg(test)]
+    #[cfg(all(feature = "test-support", debug_assertions))]
     pub(crate) fn with_test_presence<T>(
         &self,
         adapter: Arc<dyn TestPresence>,
@@ -341,8 +341,8 @@ impl Recovery {
     }
 }
 
-#[cfg(test)]
-pub(crate) trait TestPresence: Send + Sync {
+#[cfg(all(feature = "test-support", debug_assertions))]
+pub trait TestPresence: Send + Sync {
     fn local(&self, connection: &Connection) -> bool;
     fn confirm(&self, cancelled: &dyn Fn() -> bool) -> Result<(), ()>;
 }

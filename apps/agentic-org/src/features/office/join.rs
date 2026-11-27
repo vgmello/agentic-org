@@ -46,7 +46,7 @@ pub(super) fn run(args: JoinArgs, ctx: &mut ExecutionContext) -> Result<(), CliE
     }
     let invitation = args.invitation.read()?;
     let target = selection::select(args.instance.name.as_deref(), None)?;
-    let joined = org_host::setup_flow::office_join(
+    let joined = org_host_setup::office_join(
         target.instance(),
         args.login.login.as_deref(),
         invitation,

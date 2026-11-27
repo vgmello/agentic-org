@@ -185,7 +185,7 @@ pub(crate) struct Custody {
 
 /// The development custody under the name the tests of other modules open it by
 /// (`hostdb`, `provisioning`, `writer`).
-#[cfg(all(test, debug_assertions))]
+#[cfg(all(any(test, feature = "test-support"), debug_assertions))]
 pub(crate) mod dev {
     pub(crate) use super::Custody as DevSecrets;
 }
