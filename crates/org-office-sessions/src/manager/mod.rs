@@ -198,6 +198,29 @@ impl SessionRegistry {
         let epoch = self.stop_epochs.entry(employee_id.to_owned()).or_insert(0);
         *epoch = epoch.saturating_add(1);
     }
+
+    /// Whether `employee_id` has a live *managed* turn (starting, running or awaiting approval,
+    /// or an unmanaged socket binding) while the caller already holds `registry`.
+    pub(crate) fn has_active_managed_turn(
+        &self,
+        bindings: &RunBindingRegistry,
+        employee_id: &str,
+    ) -> bool {
+        if self.starting.contains(employee_id) {
+            return true;
+        }
+        if let Some(handle) = self.live.get(employee_id) {
+            let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+            return matches!(
+                state.state,
+                org_proto::sessions::SessionState::Starting
+                    | org_proto::sessions::SessionState::Running
+                    | org_proto::sessions::SessionState::WaitingApproval
+            );
+        }
+        // Only treat an unmanaged socket binding (no SessionManager pump) as active (`High #1`).
+        bindings.has_active(employee_id)
+    }
 }
 
 struct BgSpawnGuard<'a> {
@@ -507,6 +530,11 @@ impl SessionManager {
 
     pub fn bindings(&self) -> &RunBindingRegistry {
         &self.bindings
+    }
+
+    /// Registered runtime adapters configured on this session manager.
+    pub fn runtimes(&self) -> &RuntimeRegistry {
+        &self.config.runtimes
     }
 
     /// Returns the lock-free per-employee `AtomicU32` counter tracking pending wakes/messages

@@ -104,10 +104,6 @@ const KNOWN_CYCLES: &[(&str, &[&str])] = &[
         &["caps", "event", "spec", "usage"],
     ),
     ("crates/org-agent-runtime/src/lib.rs", &["path", "token"]),
-    (
-        "crates/org-office-sessions/src/lib.rs",
-        &["external", "lifecycle", "manager", "pump", "recovery"],
-    ),
     ("crates/org-supervise/src/lib.rs", &["child", "stop"]),
 ];
 

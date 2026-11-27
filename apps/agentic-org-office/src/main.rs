@@ -1,18 +1,30 @@
 //! # agentic-org-office: the office daemon
 //!
 //! A thin binary: it moves its control pipe out of the way, installs a panic hook, wires the
-//! `agent-os` command catalogue into the session manager, and runs `org_office_server::run`.
-//! All logic lives in library crates.
+//! `agent-os` command catalogue and concrete runtime adapters into the session manager, and
+//! runs `org_office_server::run_with_runtimes`. All logic lives in library crates.
 
 #![forbid(unsafe_code)]
 
 use std::ffi::OsStr;
 use std::io::{self, Write};
+use std::sync::Arc;
+
+use org_agent_runtime::AgentRuntime;
 
 /// What `--help` prints. The office is only ever started by its host.
 const HELP: &str = "agentic-org-office: the host-managed office worker\n\
 Started only by its host, which hands it a verified control pipe; run by hand it opens no \
 socket and touches no office.\n";
+
+/// Concrete runtime adapters injected from the office composition root (`TASK-216`).
+fn production_runtimes() -> org_office_sessions::RuntimeRegistry {
+    org_office_sessions::RuntimeRegistry::with_adapters([
+        Arc::new(org_agent_runtime_claude::ClaudeRuntime::new()) as Arc<dyn AgentRuntime>,
+        Arc::new(org_agent_runtime_codex::CodexRuntime::new()) as Arc<dyn AgentRuntime>,
+        Arc::new(org_agent_runtime_agy::AgyRuntime::new()) as Arc<dyn AgentRuntime>,
+    ])
+}
 
 /// The answer to `--help`/`-h` or `--version`/`-V` given alone, if that is the command line.
 fn standalone_answer(args: &[&OsStr]) -> Option<String> {
@@ -66,9 +78,13 @@ fn main() {
         }
     };
     org_office_server::install_panic_hook();
-    // Composition root: agents' standing instructions list the live `agent-os` commands, from
-    // the unchecked runtime rows (the contract tests check them; a session start does not).
+    // Composition root: inject the live `agent-os` command table and concrete runtime adapters.
     org_office_sessions::install_command_catalogue(org_agent_cli::catalogue_table);
+    org_office_sessions::install_default_runtimes(production_runtimes);
     let args: Vec<String> = std::env::args().skip(1).collect();
-    std::process::exit(org_office_server::run(&args, control));
+    std::process::exit(org_office_server::run_with_runtimes(
+        &args,
+        control,
+        production_runtimes(),
+    ));
 }

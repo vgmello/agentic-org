@@ -5,21 +5,51 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use org_proto::sessions::{
-    SubagentTranscriptView, TranscriptEntry, TranscriptEntryKind, TranscriptFormat, TranscriptUsage,
+use org_agent_runtime::transcript::{
+    aggregate_file_touches, base_entry, extract_file_event_from_tool, merge_usage, truncate_output,
+    LoadedSubagentTranscript, ParsedTranscript, SubagentTranscript, SubagentTranscriptRef,
+    TranscriptDiscoveryLayout, TranscriptEntry, TranscriptEntryKind, TranscriptParser,
+    TranscriptUsage,
 };
 use serde_json::Value;
 
-use super::{
-    aggregate_file_touches, extract_file_event_from_tool, merge_usage, truncate_output,
-    ParsedTranscript,
-};
+/// Sans-I/O Antigravity transcript parser registered by [`crate::AgyRuntime`].
+pub(crate) struct AgyTranscriptParser;
 
-#[derive(Debug, Clone)]
-pub(crate) struct AgySubagentRef {
-    pub conversation_id: String,
-    pub label: Option<String>,
-    pub tool_call_id: Option<String>,
+/// Static parser instance returned by [`crate::AgyRuntime::transcript_parser`].
+pub(crate) static AGY_TRANSCRIPT_PARSER: AgyTranscriptParser = AgyTranscriptParser;
+
+impl TranscriptParser for AgyTranscriptParser {
+    fn format_id(&self) -> &'static str {
+        "agy"
+    }
+
+    fn discovery_layout(&self) -> TranscriptDiscoveryLayout {
+        TranscriptDiscoveryLayout::ConversationDir {
+            brain_root: ".gemini/antigravity-cli/brain",
+            transcript_rel_path: ".system_generated/logs/transcript.jsonl",
+        }
+    }
+
+    fn extract_subagent_refs(
+        &self,
+        raw: &str,
+        parent_session_id: &str,
+    ) -> Vec<SubagentTranscriptRef> {
+        extract_agy_subagent_refs(raw, parent_session_id)
+    }
+
+    fn parse(&self, raw: &str) -> ParsedTranscript {
+        parse_agy_jsonl(raw)
+    }
+
+    fn attach_subagents(
+        &self,
+        parent: &mut ParsedTranscript,
+        subagents: Vec<LoadedSubagentTranscript>,
+    ) {
+        attach_agy_subagents(parent, subagents);
+    }
 }
 
 /// Parses an Antigravity (`agy`) `transcript.jsonl` file.
@@ -37,7 +67,7 @@ pub(crate) fn parse_agy_jsonl(raw: &str) -> ParsedTranscript {
     }
     let files = aggregate_file_touches(&state.entries);
     ParsedTranscript {
-        format: TranscriptFormat::Agy,
+        format_id: "agy".to_owned(),
         entries: state.entries,
         files,
         usage: state.usage,
@@ -45,7 +75,10 @@ pub(crate) fn parse_agy_jsonl(raw: &str) -> ParsedTranscript {
 }
 
 /// Extracts deduplicated sub-agent references launched via `invoke_subagent`, skipping self-refs.
-pub(crate) fn extract_agy_subagent_refs(raw: &str, parent_session_id: &str) -> Vec<AgySubagentRef> {
+pub(crate) fn extract_agy_subagent_refs(
+    raw: &str,
+    parent_session_id: &str,
+) -> Vec<SubagentTranscriptRef> {
     let mut seen = BTreeSet::new();
     let mut refs = Vec::new();
     for line in raw.lines() {
@@ -70,10 +103,10 @@ pub(crate) fn extract_agy_subagent_refs(raw: &str, parent_session_id: &str) -> V
             .get("tool_call_id")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned);
-        refs.push(AgySubagentRef {
-            conversation_id: conv_id.to_owned(),
+        refs.push(SubagentTranscriptRef {
+            agent_id: conv_id.to_owned(),
             label: role,
-            tool_call_id,
+            parent_tool_use_id: tool_call_id,
         });
     }
     refs
@@ -83,27 +116,33 @@ pub(crate) fn extract_agy_subagent_refs(raw: &str, parent_session_id: &str) -> V
 /// (matched by `tool_call_id` first, then FIFO for unlinked refs; `SUB-6`).
 pub(crate) fn attach_agy_subagents(
     parent: &mut ParsedTranscript,
-    subagents: Vec<(AgySubagentRef, ParsedTranscript)>,
+    subagents: Vec<LoadedSubagentTranscript>,
 ) {
-    let mut by_call_id: BTreeMap<String, Vec<SubagentTranscriptView>> = BTreeMap::new();
-    let mut fifo_unlinked: VecDeque<SubagentTranscriptView> = VecDeque::new();
+    let mut by_call_id: BTreeMap<String, Vec<SubagentTranscript>> = BTreeMap::new();
+    let mut fifo_unlinked: VecDeque<SubagentTranscript> = VecDeque::new();
     let mut seen_ids = BTreeSet::new();
-    for (r, parsed) in subagents {
-        if !seen_ids.insert(r.conversation_id.clone()) {
+    for sub in subagents {
+        let LoadedSubagentTranscript {
+            agent_id,
+            label,
+            parent_tool_use_id,
+            parsed,
+        } = sub;
+        if !seen_ids.insert(agent_id.clone()) {
             continue;
         }
         merge_usage(&mut parent.usage, &parsed.usage);
-        let view = SubagentTranscriptView {
-            agent_id: r.conversation_id,
-            label: r.label,
-            parent_tool_use_id: r.tool_call_id.clone(),
-            format: parsed.format,
+        let view = SubagentTranscript {
+            agent_id,
+            label,
+            parent_tool_use_id: parent_tool_use_id.clone(),
+            format_id: parsed.format_id,
             entry_count: parsed.entries.len() as u32,
             entries: parsed.entries,
             files: parsed.files,
             usage: parsed.usage,
         };
-        if let Some(cid) = r.tool_call_id {
+        if let Some(cid) = parent_tool_use_id {
             by_call_id.entry(cid).or_default().push(view);
         } else {
             fifo_unlinked.push_back(view);
@@ -127,9 +166,9 @@ pub(crate) fn attach_agy_subagents(
 
 fn attach_matching_agy(
     entry: &mut TranscriptEntry,
-    by_call_id: &mut BTreeMap<String, Vec<SubagentTranscriptView>>,
-    fifo_unlinked: &mut VecDeque<SubagentTranscriptView>,
-) -> Vec<SubagentTranscriptView> {
+    by_call_id: &mut BTreeMap<String, Vec<SubagentTranscript>>,
+    fifo_unlinked: &mut VecDeque<SubagentTranscript>,
+) -> Vec<SubagentTranscript> {
     if entry.kind != TranscriptEntryKind::ToolCall
         || entry.tool_name.as_deref() != Some("invoke_subagent")
         || entry.subagent.is_some()
@@ -152,7 +191,7 @@ fn attach_matching_agy(
     Vec::new()
 }
 
-fn make_agy_subagent_entry(turn_index: u32, sub: SubagentTranscriptView) -> TranscriptEntry {
+fn make_agy_subagent_entry(turn_index: u32, sub: SubagentTranscript) -> TranscriptEntry {
     let agent_id = sub.agent_id.clone();
     TranscriptEntry {
         id: format!("subagent-{agent_id}"),
@@ -394,35 +433,6 @@ impl AgyParseState {
         );
         entry.raw_type = Some(raw_type.to_owned());
         self.entries.push(entry);
-    }
-}
-
-fn base_entry(
-    id: String,
-    turn_index: u32,
-    kind: TranscriptEntryKind,
-    timestamp: Option<String>,
-    role: Option<&str>,
-    text: Option<String>,
-) -> TranscriptEntry {
-    TranscriptEntry {
-        id,
-        turn_index,
-        kind,
-        timestamp,
-        role: role.map(ToOwned::to_owned),
-        text,
-        tool_name: None,
-        tool_use_id: None,
-        tool_input: None,
-        tool_output: None,
-        is_error: false,
-        file_path: None,
-        file_action: None,
-        diff_preview: None,
-        usage: None,
-        raw_type: None,
-        subagent: None,
     }
 }
 

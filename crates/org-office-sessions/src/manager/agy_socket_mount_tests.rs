@@ -9,7 +9,7 @@ use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use org_agent_runtime::{PathPattern, RuntimeId};
+use org_agent_runtime::PathPattern;
 use org_office::{Office, TestOffice};
 
 use super::sandbox_rules::collect_agy_read_only_dirs;
@@ -354,8 +354,8 @@ fn manager(rt: &Runtime, helper_dir: PathBuf) -> (SessionManager, String) {
 }
 
 fn agy_mounts(rt: &Runtime, mgr: &SessionManager) -> Vec<PathBuf> {
-    let agy = RuntimeId::try_from("agy").unwrap();
-    mgr.collect_session_read_only_dirs(agy, &rt.root.join("home"), &rt.root.join("ws"), true)
+    let agy = org_agent_runtime_agy::AgyRuntime::new();
+    mgr.collect_session_read_only_dirs(&agy, &rt.root.join("home"), &rt.root.join("ws"), true)
         .iter()
         .map(|spec| PathBuf::from(spec.as_str()))
         .collect()
@@ -386,18 +386,18 @@ fn the_session_manager_mounts_its_own_socket_folder_for_agy_only_and_keeps_runti
     let (mgr, me) = manager(&rt, rt.root.join("no-helpers"));
     let home = rt.root.join("home");
     let ws = rt.root.join("ws");
-    let agy = RuntimeId::try_from("agy").unwrap();
+    let agy = org_agent_runtime_agy::AgyRuntime::new();
 
     let mounts = agy_mounts(&rt, &mgr);
     assert!(mounts.contains(&rt.own), "{mounts:?}");
     assert!(!mounts.contains(&rt.sockets) && !mounts.contains(&rt.other));
     rt.assert_nothing_else_in_runtime(&mounts);
     assert!(mgr
-        .collect_session_read_only_dirs(agy, &home, &ws, false)
+        .collect_session_read_only_dirs(&agy, &home, &ws, false)
         .is_empty());
-    let claude = RuntimeId::try_from("claude").unwrap();
+    let claude = org_agent_runtime_claude::ClaudeRuntime::new();
     assert!(mgr
-        .collect_session_read_only_dirs(claude, &home, &ws, true)
+        .collect_session_read_only_dirs(&claude, &home, &ws, true)
         .is_empty());
 
     // `host.sock`, `<run>/r/**` and other agents' `<run>/t/<slug>/**` stay denied in the runtime

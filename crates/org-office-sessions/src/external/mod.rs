@@ -26,12 +26,10 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 mod codes;
-mod lease;
 mod nonces;
-mod signin;
 
 pub(crate) use codes::PendingLogins;
-pub(crate) use nonces::NonceBook;
+pub(crate) use nonces::{verify_signature, NonceBook, NonceEntry};
 
 /// Current on-disk lease format.
 pub const EXTERNAL_LEASE_VERSION: u32 = 1;
@@ -75,7 +73,7 @@ pub(crate) struct ExternalAuthState {
     leases: Mutex<HashMap<String, Option<ExternalLeaseRecord>>>,
     /// Serializes approvals, revocations, logouts and the final check-and-issue of a token
     /// exchange (rare actions). Taken before `registry` and `leases`.
-    lease_mutation: Mutex<()>,
+    pub(crate) lease_mutation: Mutex<()>,
     /// Agents whose lease RAM holds revoked but whose file still says active (a failed durable
     /// write): the next revocation call or approval writes it.
     unpersisted: Mutex<HashSet<String>>,
@@ -103,7 +101,7 @@ impl ExternalAuthState {
     }
 
     /// Fills the cache from a disk read unless an approval or revocation got there first.
-    fn fill(&self, employee_id: &str, loaded: Option<ExternalLeaseRecord>) {
+    pub(crate) fn fill(&self, employee_id: &str, loaded: Option<ExternalLeaseRecord>) {
         self.leases
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -112,7 +110,7 @@ impl ExternalAuthState {
     }
 
     /// Replaces the cached lease, answering the previous cache entry.
-    fn replace(
+    pub(crate) fn replace(
         &self,
         employee_id: &str,
         lease: Option<ExternalLeaseRecord>,
@@ -124,7 +122,7 @@ impl ExternalAuthState {
     }
 
     /// Records that `employee_id`'s revocation is in RAM but not yet on disk.
-    fn mark_unpersisted(&self, employee_id: &str) {
+    pub(crate) fn mark_unpersisted(&self, employee_id: &str) {
         self.unpersisted
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -132,7 +130,7 @@ impl ExternalAuthState {
     }
 
     /// Whether `employee_id`'s lease file still owes a revocation RAM already made.
-    fn owes_disk(&self, employee_id: &str) -> bool {
+    pub(crate) fn owes_disk(&self, employee_id: &str) -> bool {
         self.unpersisted
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -140,7 +138,7 @@ impl ExternalAuthState {
     }
 
     /// `employee_id`'s lease file now says what RAM says.
-    fn settle_persisted(&self, employee_id: &str) {
+    pub(crate) fn settle_persisted(&self, employee_id: &str) {
         self.unpersisted
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -148,7 +146,7 @@ impl ExternalAuthState {
     }
 
     /// Restores a cache entry after a failed durable write.
-    fn restore(&self, employee_id: &str, previous: Option<Option<ExternalLeaseRecord>>) {
+    pub(crate) fn restore(&self, employee_id: &str, previous: Option<Option<ExternalLeaseRecord>>) {
         let mut leases = self.leases.lock().unwrap_or_else(|p| p.into_inner());
         match previous {
             Some(lease) => {
@@ -239,70 +237,4 @@ pub(crate) fn refuse_builtin_agent(
         org_proto::ErrorCode::NotAuthorized,
         message,
     ))
-}
-
-impl crate::manager::SessionManager {
-    /// [`refuse_builtin_agent`] by employee ID; an unreadable record is refused too.
-    pub(crate) fn refuse_builtin_agent_id(
-        &self,
-        employee_id: &str,
-    ) -> Result<(), org_proto::ApiError> {
-        match self.office.load_employee(employee_id) {
-            Ok(Some(employee)) => refuse_builtin_agent(&employee),
-            Ok(None) => Ok(()),
-            Err(_) => Err(org_proto::ApiError::new(
-                org_proto::ErrorCode::StorageError,
-                "could not read the agent's record",
-            )),
-        }
-    }
-
-    /// `member.external_bind`: atomically authorizes and installs an external workspace lease for
-    /// `employee_id` in one operator call (`TASK-211`), bypassing `PendingLogins` entirely so
-    /// unauthenticated pending-login traffic can never DoS binding or leak approval codes.
-    pub fn external_bind(
-        &self,
-        actor: &str,
-        employee_id: &str,
-        params: &org_proto::external_auth::MemberExternalBindParams,
-    ) -> Result<org_proto::external_auth::ExternalSessionView, org_proto::ApiError> {
-        use org_proto::external_auth::{
-            DEFAULT_LEASE_TTL_SECS, MAX_LEASE_TTL_SECS, MIN_LEASE_TTL_SECS,
-        };
-        use org_proto::{ApiError, ErrorCode};
-
-        let ttl = params.ttl_secs.unwrap_or(DEFAULT_LEASE_TTL_SECS);
-        if !(MIN_LEASE_TTL_SECS..=MAX_LEASE_TTL_SECS).contains(&ttl) {
-            return Err(ApiError::new(
-                ErrorCode::InvalidRequest,
-                format!("--ttl must be between {MIN_LEASE_TTL_SECS}s and {MAX_LEASE_TTL_SECS}s"),
-            ));
-        }
-        if decode_pubkey(&params.pubkey_ed25519_b64).is_none() {
-            return Err(ApiError::new(
-                ErrorCode::InvalidRequest,
-                "pubkey_ed25519_b64 must be a base64 Ed25519 public key (32 bytes)",
-            ));
-        }
-        let label = validate_workspace_label(&params.workspace_label)?;
-        self.authorize_owner_or_person_inner(actor, false)?;
-        let _serial = self
-            .external
-            .lease_mutation
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        let employee = self.require_agent(employee_id)?;
-        refuse_builtin_agent(&employee)?;
-        self.authorize_external_operator(actor, &employee)?;
-        let employee = self.require_active_agent(employee_id)?;
-        self.commit_external_lease(lease::LeaseCommit {
-            actor,
-            employee: &employee,
-            pubkey_ed25519_b64: params.pubkey_ed25519_b64.trim(),
-            workspace_label: &label,
-            ttl,
-            takeover: params.takeover,
-            verb: "bind",
-        })
-    }
 }

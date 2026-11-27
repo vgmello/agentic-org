@@ -302,12 +302,26 @@ pub(super) fn append_cargo_credential_denies(out: &mut Vec<PathPattern>) {
     }
 }
 
-pub(super) fn append_agy_credential_denies(out: &mut Vec<PathPattern>) {
-    if let Some(home) = std::env::var_os("HOME") {
-        let gemini = PathBuf::from(home).join(".gemini");
-        if gemini.is_absolute() {
-            for rel in org_agent_runtime_agy::AGY_CONFIG_CREDENTIAL_FILES {
-                push_exact_pattern(out, &gemini.join(rel));
+pub(super) fn append_runtime_credential_denies(
+    runtimes: &crate::runtime_registry::RuntimeRegistry,
+    out: &mut Vec<PathPattern>,
+) {
+    let Some(home) = std::env::var_os("HOME") else {
+        return;
+    };
+    let home = PathBuf::from(home);
+    for adapter in runtimes.adapters() {
+        let profile = adapter.host_profile();
+        let Some(subdir) = profile.host_config_subdir else {
+            continue;
+        };
+        if profile.config_credential_files.is_empty() {
+            continue;
+        }
+        let config_dir = home.join(subdir);
+        if config_dir.is_absolute() {
+            for rel in profile.config_credential_files {
+                push_exact_pattern(out, &config_dir.join(rel));
             }
         }
     }

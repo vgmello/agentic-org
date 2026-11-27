@@ -22,9 +22,12 @@ use super::environment::{office_env_names, sanitize_agent_name};
 use super::rust_toolchain::canonicalize_with_tail;
 use super::PreparedSessionLaunch;
 
-pub(super) fn is_linux_claude_bwrap(sandbox_enabled: bool, runtime_id: &str) -> bool {
+pub(super) fn is_linux_bwrap_sandbox(
+    sandbox_enabled: bool,
+    profile: org_agent_runtime::RuntimeHostProfile,
+) -> bool {
     sandbox_enabled
-        && runtime_id == "claude"
+        && profile.uses_linux_bwrap_sandbox
         && !org_platform::confinement::unix_socket_path_filter_supported()
 }
 
@@ -97,7 +100,7 @@ pub(super) fn build_launch_context(
     tmpdir: &Path,
     session_id: &str,
     resume_runtime_session_id: Option<&str>,
-    runtime_name: &str,
+    host_config_subdir: Option<&str>,
     allow_host_auth: bool,
 ) -> Result<LaunchContext, ApiError> {
     let resume = resume_runtime_session_id.and_then(|raw| SessionId::try_from(raw).ok());
@@ -116,7 +119,7 @@ pub(super) fn build_launch_context(
         office_env_names: office_env_names(),
         new_session_id,
         resume,
-        config_dir: crate::host_auth::host_config_dir_for(runtime_name, allow_host_auth),
+        config_dir: crate::host_auth::host_config_dir_for(host_config_subdir, allow_host_auth),
     })
 }
 

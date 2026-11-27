@@ -36,11 +36,11 @@ const MAX_VERSION_OUTPUT_BYTES: u64 = 4096;
 pub(crate) fn spawn_readiness_refresh_loop(
     office: Arc<Office>,
     stop: Arc<AtomicBool>,
+    runtimes: RuntimeRegistry,
 ) -> Option<JoinHandle<()>> {
     thread::Builder::new()
         .name("provider-readiness".into())
         .spawn(move || {
-            let runtimes = RuntimeRegistry::production();
             while !stop.load(Ordering::SeqCst) {
                 refresh_ready_bindings_once(&office, &runtimes, &stop);
                 sleep_interruptible(REFRESH_TICK, &stop);

@@ -4,15 +4,46 @@
 //! `turn_context`, plus flat `item.*` / `thread.*` JSONL events from `codex exec --json`).
 //! Unrecognized frames are preserved as `TranscriptEntryKind::Raw`.
 
-use org_proto::sessions::{
-    FileEventKind, TranscriptEntry, TranscriptEntryKind, TranscriptFormat, TranscriptUsage,
+use org_agent_runtime::transcript::{
+    aggregate_file_touches, base_entry, extract_file_event_from_tool, merge_usage, truncate_output,
+    ParsedTranscript, TranscriptDiscoveryLayout, TranscriptEntry, TranscriptEntryKind,
+    TranscriptFileEventKind, TranscriptParser, TranscriptUsage,
 };
 use serde_json::Value;
 
-use super::{
-    aggregate_file_touches, extract_file_event_from_tool, merge_usage, truncate_output,
-    ParsedTranscript,
-};
+/// Sans-I/O Codex transcript parser registered by [`crate::CodexRuntime`].
+pub(crate) struct CodexTranscriptParser;
+
+/// Static parser instance returned by [`crate::CodexRuntime::transcript_parser`].
+pub(crate) static CODEX_TRANSCRIPT_PARSER: CodexTranscriptParser = CodexTranscriptParser;
+
+impl TranscriptParser for CodexTranscriptParser {
+    fn format_id(&self) -> &'static str {
+        "codex"
+    }
+
+    fn discovery_layout(&self) -> TranscriptDiscoveryLayout {
+        TranscriptDiscoveryLayout::RecursiveJsonl {
+            search_roots: &[".codex/sessions", ".codex/archived_sessions"],
+            skip_parent_dir: None,
+            subagents_subdir: None,
+            subagent_stem_prefix: None,
+        }
+    }
+
+    fn extract_session_id_from_prefix(&self, prefix: &str) -> Option<String> {
+        let first = prefix.lines().next()?.trim();
+        let val: Value = serde_json::from_str(first).ok()?;
+        val.pointer("/payload/id")
+            .or_else(|| val.get("thread_id"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    }
+
+    fn parse(&self, raw: &str) -> ParsedTranscript {
+        parse_codex_jsonl(raw)
+    }
+}
 
 /// Parses a Codex rollout or `codex exec --json` JSONL transcript.
 pub(crate) fn parse_codex_jsonl(raw: &str) -> ParsedTranscript {
@@ -29,7 +60,7 @@ pub(crate) fn parse_codex_jsonl(raw: &str) -> ParsedTranscript {
     }
     let files = aggregate_file_touches(&state.entries);
     ParsedTranscript {
-        format: TranscriptFormat::Codex,
+        format_id: "codex".to_owned(),
         entries: state.entries,
         files,
         usage: state.usage,
@@ -397,9 +428,9 @@ impl CodexParseState {
                             continue;
                         };
                         let action = match ch.get("kind").and_then(Value::as_str) {
-                            Some("add" | "create") => FileEventKind::Write,
-                            Some("delete" | "remove") => FileEventKind::Delete,
-                            _ => FileEventKind::Edit,
+                            Some("add" | "create") => TranscriptFileEventKind::Write,
+                            Some("delete" | "remove") => TranscriptFileEventKind::Delete,
+                            _ => TranscriptFileEventKind::Edit,
                         };
                         let mut fe = base_entry(
                             self.next_id("fe"),
@@ -464,35 +495,6 @@ impl CodexParseState {
     }
 }
 
-fn base_entry(
-    id: String,
-    turn_index: u32,
-    kind: TranscriptEntryKind,
-    timestamp: Option<String>,
-    role: Option<&str>,
-    text: Option<String>,
-) -> TranscriptEntry {
-    TranscriptEntry {
-        id,
-        turn_index,
-        kind,
-        timestamp,
-        role: role.map(ToOwned::to_owned),
-        text,
-        tool_name: None,
-        tool_use_id: None,
-        tool_input: None,
-        tool_output: None,
-        is_error: false,
-        file_path: None,
-        file_action: None,
-        diff_preview: None,
-        usage: None,
-        raw_type: None,
-        subagent: None,
-    }
-}
-
 fn extract_codex_message_text(content: Option<&Value>) -> Option<String> {
     let val = content?;
     if let Some(s) = val.as_str() {
@@ -520,16 +522,16 @@ fn parse_arguments_value(raw: Option<&Value>) -> Value {
     }
 }
 
-fn extract_apply_patch_files(patch: &str) -> Vec<(String, FileEventKind)> {
+fn extract_apply_patch_files(patch: &str) -> Vec<(String, TranscriptFileEventKind)> {
     let mut out = Vec::new();
     for line in patch.lines() {
         let trimmed = line.trim();
         if let Some(path) = trimmed.strip_prefix("*** Update File: ") {
-            out.push((path.trim().to_owned(), FileEventKind::Edit));
+            out.push((path.trim().to_owned(), TranscriptFileEventKind::Edit));
         } else if let Some(path) = trimmed.strip_prefix("*** Add File: ") {
-            out.push((path.trim().to_owned(), FileEventKind::Write));
+            out.push((path.trim().to_owned(), TranscriptFileEventKind::Write));
         } else if let Some(path) = trimmed.strip_prefix("*** Delete File: ") {
-            out.push((path.trim().to_owned(), FileEventKind::Delete));
+            out.push((path.trim().to_owned(), TranscriptFileEventKind::Delete));
         }
     }
     out

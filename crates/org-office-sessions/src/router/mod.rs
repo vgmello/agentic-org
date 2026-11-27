@@ -47,7 +47,27 @@ pub(crate) struct AdmittedRoute {
     pub route_digest_suffix: String,
 }
 
-/// Maps a validated per-connection `endpoint_url` into the adapter's non-secret base-URL env var.
+/// Maps a validated per-connection `endpoint_url` into `adapter`'s non-secret base-URL env var.
+pub fn endpoint_env_for_adapter(
+    adapter: &dyn AgentRuntime,
+    endpoint_url: &str,
+) -> Result<(&'static str, String), ApiError> {
+    if !validate_endpoint_url(endpoint_url) {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "invalid provider connection endpoint_url",
+        ));
+    }
+    let var = adapter.endpoint_env_var().ok_or_else(|| {
+        ApiError::new(
+            ErrorCode::InvalidRequest,
+            "agent runtime does not support custom endpoint_url",
+        )
+    })?;
+    Ok((var, endpoint_url.to_owned()))
+}
+
+/// Maps a validated per-connection `endpoint_url` into the registered runtime's base-URL env var.
 pub fn endpoint_env_for(
     driver: &str,
     endpoint_url: &str,
@@ -58,47 +78,27 @@ pub fn endpoint_env_for(
             "invalid provider connection endpoint_url",
         ));
     }
-    let lower = driver.to_ascii_lowercase();
-    let var = if lower.contains("google")
-        || lower.contains("agy")
-        || lower.contains("antigravity")
-        || lower.contains("gemini")
-    {
-        "GOOGLE_GEMINI_BASE_URL"
-    } else if lower.contains("openai") || lower.contains("codex") || lower.contains("gpt") {
-        "OPENAI_BASE_URL"
-    } else {
-        "ANTHROPIC_BASE_URL"
-    };
-    Ok((var, endpoint_url.to_owned()))
+    let runtimes = RuntimeRegistry::production();
+    let adapter = runtimes
+        .resolve(driver)
+        .map_err(|_| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
+    endpoint_env_for_adapter(adapter.as_ref(), endpoint_url)
 }
 
-/// Maps a provider driver and auth mode to the runtime's allowlisted auth env variable name.
-pub fn auth_env_var_for(driver: &str, mode: ProviderAuthMode, secret: &str) -> &'static str {
-    let lower = driver.to_ascii_lowercase();
-    if lower.contains("google")
-        || lower.contains("agy")
-        || lower.contains("antigravity")
-        || lower.contains("gemini")
-    {
-        return if mode == ProviderAuthMode::SubscriptionCli {
-            "AGY_AUTH_TOKEN"
-        } else {
-            "GEMINI_API_KEY"
-        };
-    }
-    if lower.contains("openai") || lower.contains("codex") || lower.contains("gpt") {
-        return if mode == ProviderAuthMode::SubscriptionCli {
-            "CODEX_ACCESS_TOKEN"
-        } else {
-            "OPENAI_API_KEY"
-        };
-    }
-    if mode == ProviderAuthMode::SubscriptionCli || secret.starts_with("sk-ant-oat") {
-        "CLAUDE_CODE_OAUTH_TOKEN"
-    } else {
-        "ANTHROPIC_API_KEY"
-    }
+/// Maps an adapter and auth mode to the runtime's allowlisted auth env variable name.
+pub fn auth_env_var_for_adapter(
+    adapter: &dyn AgentRuntime,
+    mode: ProviderAuthMode,
+    secret: &str,
+) -> Result<&'static str, ApiError> {
+    adapter
+        .auth_env_var(mode == ProviderAuthMode::SubscriptionCli, secret)
+        .ok_or_else(|| {
+            ApiError::new(
+                ErrorCode::Unavailable,
+                "agent runtime does not declare an auth environment variable",
+            )
+        })
 }
 
 const FAILOVER_PATTERNS: &[(&[&str], &str)] = &[
@@ -412,8 +412,8 @@ pub(crate) fn select_and_admit_route(
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not load execution config"))?;
     let Some(cfg) = exec else {
         let adapter = runtimes
-            .resolve("claude")
-            .map_err(|_| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
+            .default_adapter()
+            .ok_or_else(|| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
         return Ok(AdmittedRoute {
             adapter,
             model_token: None,
@@ -596,12 +596,12 @@ fn finalize_admitted_connection(
         let secret_str = std::str::from_utf8(&secret).map_err(|_| {
             ApiError::new(ErrorCode::Unavailable, "provider credential is not UTF-8")
         })?;
-        let var_name = auth_env_var_for(&conn.runtime_driver, conn.auth_mode, secret_str);
+        let var_name = auth_env_var_for_adapter(adapter.as_ref(), conn.auth_mode, secret_str)?;
         auth_env.push((OsString::from(var_name), OsString::from(secret_str)));
     }
     let mut endpoint_env = Vec::new();
     if let Some(ref url) = conn.endpoint_url {
-        let (var, val) = endpoint_env_for(&conn.runtime_driver, url)?;
+        let (var, val) = endpoint_env_for_adapter(adapter.as_ref(), url)?;
         endpoint_env.push((OsString::from(var), OsString::from(val)));
     }
     let model_token = Token::try_from(resolved_model)

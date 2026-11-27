@@ -1,7 +1,11 @@
 use std::fs;
 use std::os::unix::fs::symlink;
 
+use org_agent_runtime::transcript::{LoadedSubagentTranscript, TranscriptEntryKind as RtEntryKind};
+use org_agent_runtime::AgentRuntime as _;
 use org_proto::sessions::{FileEventKind, TranscriptEntryKind, TranscriptFormat};
+
+use crate::runtime_registry::RuntimeRegistry;
 
 use super::{list_agent_sessions, load_agent_transcript, TranscriptQuery};
 
@@ -18,6 +22,7 @@ fn temp_home(label: &str) -> std::path::PathBuf {
 #[test]
 fn claude_parser_nests_subagent_applies_toggles_and_redacts_secrets() {
     let home = temp_home("claude");
+    let runtimes = RuntimeRegistry::production();
     let proj_dir = home.join(".claude/projects/-tmp-work");
     let sub_dir = proj_dir.join("sess-c1/subagents");
     fs::create_dir_all(&sub_dir).unwrap();
@@ -47,7 +52,14 @@ fn claude_parser_nests_subagent_applies_toggles_and_redacts_secrets() {
     )
     .unwrap();
 
-    let listed = list_agent_sessions("emp-1", &home, Some("sess-c1"), None, &[active_tok]);
+    let listed = list_agent_sessions(
+        "emp-1",
+        &home,
+        &runtimes,
+        Some("sess-c1"),
+        None,
+        &[active_tok],
+    );
     assert_eq!(listed.sessions.len(), 1);
     assert!(listed.sessions[0].is_live);
     assert_eq!(listed.sessions[0].format, TranscriptFormat::Claude);
@@ -59,6 +71,7 @@ fn claude_parser_nests_subagent_applies_toggles_and_redacts_secrets() {
     let full = load_agent_transcript(
         "emp-1",
         &home,
+        &runtimes,
         Some("sess-c1"),
         Some("sess-c1"),
         TranscriptQuery::default(),
@@ -114,6 +127,7 @@ fn claude_parser_nests_subagent_applies_toggles_and_redacts_secrets() {
     let toggled = load_agent_transcript(
         "emp-1",
         &home,
+        &runtimes,
         Some("sess-c1"),
         Some("sess-c1"),
         TranscriptQuery {
@@ -145,6 +159,7 @@ fn claude_parser_nests_subagent_applies_toggles_and_redacts_secrets() {
 #[test]
 fn codex_and_agy_parsers_extract_messages_files_usage_and_block_symlinks() {
     let home = temp_home("codex-agy");
+    let runtimes = RuntimeRegistry::production();
     let codex_dir = home.join(".codex/sessions/2026/11/22");
     fs::create_dir_all(&codex_dir).unwrap();
     let codex_log = [
@@ -185,7 +200,7 @@ fn codex_and_agy_parsers_extract_messages_files_usage_and_block_symlinks() {
     )
     .unwrap();
 
-    let listed = list_agent_sessions("emp-2", &home, None, None, &[]);
+    let listed = list_agent_sessions("emp-2", &home, &runtimes, None, None, &[]);
     assert!(listed
         .sessions
         .iter()
@@ -196,6 +211,7 @@ fn codex_and_agy_parsers_extract_messages_files_usage_and_block_symlinks() {
     let codex_tx = load_agent_transcript(
         "emp-2",
         &home,
+        &runtimes,
         Some("codex-sess-1"),
         None,
         TranscriptQuery::default(),
@@ -213,6 +229,7 @@ fn codex_and_agy_parsers_extract_messages_files_usage_and_block_symlinks() {
     let agy_tx = load_agent_transcript(
         "emp-2",
         &home,
+        &runtimes,
         Some("agy-conv-1"),
         None,
         TranscriptQuery::default(),
@@ -267,6 +284,13 @@ fn pass1_redaction_and_parser_edge_cases() {
         );
     }
 
+    let codex_rt = org_agent_runtime_codex::CodexRuntime::new();
+    let codex_parser = codex_rt.transcript_parser().unwrap();
+    let claude_rt = org_agent_runtime_claude::ClaudeRuntime::new();
+    let claude_parser = claude_rt.transcript_parser().unwrap();
+    let agy_rt = org_agent_runtime_agy::AgyRuntime::new();
+    let agy_parser = agy_rt.transcript_parser().unwrap();
+
     // Medium #2: Codex item.started ignored, cumulative total_token_usage maxed (not summed), unique raw-* IDs.
     let codex_edge = [
         r#"{"type":"item.started","item":{"type":"agent_message","text":"dup"}}"#,
@@ -277,12 +301,12 @@ fn pass1_redaction_and_parser_edge_cases() {
         r#"{"type":"response_item","payload":{"type":"unknown_b"}}"#,
     ]
     .join("\n");
-    let parsed_codex = super::codex::parse_codex_jsonl(&codex_edge);
+    let parsed_codex = codex_parser.parse(&codex_edge);
     assert_eq!(
         parsed_codex
             .entries
             .iter()
-            .filter(|e| e.kind == TranscriptEntryKind::AssistantMessage)
+            .filter(|e| e.kind == RtEntryKind::AssistantMessage)
             .count(),
         1
     );
@@ -291,7 +315,7 @@ fn pass1_redaction_and_parser_edge_cases() {
     let raw_ids: Vec<&str> = parsed_codex
         .entries
         .iter()
-        .filter(|e| e.kind == TranscriptEntryKind::Raw)
+        .filter(|e| e.kind == RtEntryKind::Raw)
         .map(|e| e.id.as_str())
         .collect();
     assert_eq!(raw_ids.len(), 2);
@@ -303,25 +327,28 @@ fn pass1_redaction_and_parser_edge_cases() {
         r#"{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50},"content":[{"type":"tool_use","id":"tu_1","name":"Agent","input":{}}]}}"#,
     ]
     .join("\n");
-    let mut parsed_claude = super::claude::parse_claude_jsonl(&claude_edge);
+    let mut parsed_claude = claude_parser.parse(&claude_edge);
     assert_eq!(parsed_claude.usage.input_tokens, 100);
     assert_eq!(parsed_claude.usage.output_tokens, 50);
-    let sub1 = super::claude::parse_claude_jsonl(
-        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"s1"}]}}"#,
-    );
-    let sub2 = super::claude::parse_claude_jsonl(
-        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"s2"}]}}"#,
-    );
-    super::claude::attach_claude_subagents(
+    let sub1 = claude_parser
+        .parse(r#"{"type":"assistant","message":{"content":[{"type":"text","text":"s1"}]}}"#);
+    let sub2 = claude_parser
+        .parse(r#"{"type":"assistant","message":{"content":[{"type":"text","text":"s2"}]}}"#);
+    claude_parser.attach_subagents(
         &mut parsed_claude,
         vec![
-            ("a1".into(), Some("first".into()), Some("tu_1".into()), sub1),
-            (
-                "a2".into(),
-                Some("second".into()),
-                Some("tu_1".into()),
-                sub2,
-            ),
+            LoadedSubagentTranscript {
+                agent_id: "a1".into(),
+                label: Some("first".into()),
+                parent_tool_use_id: Some("tu_1".into()),
+                parsed: sub1,
+            },
+            LoadedSubagentTranscript {
+                agent_id: "a2".into(),
+                label: Some("second".into()),
+                parent_tool_use_id: Some("tu_1".into()),
+                parsed: sub2,
+            },
         ],
     );
     let attached_ids: Vec<&str> = parsed_claude
@@ -340,42 +367,43 @@ fn pass1_redaction_and_parser_edge_cases() {
         r#"{"type":"TOOL_RESPONSE","tool_name":"invoke_subagent","tool_call_id":"call_self","result":{"conversationId":"parent-conv"}}"#,
     ]
     .join("\n");
-    let refs = super::agy::extract_agy_subagent_refs(&agy_edge, "parent-conv");
+    let refs = agy_parser.extract_subagent_refs(&agy_edge, "parent-conv");
     assert_eq!(refs.len(), 2);
-    let mut parsed_agy = super::agy::parse_agy_jsonl(&agy_edge);
+    let mut parsed_agy = agy_parser.parse(&agy_edge);
     let sub_list = refs
         .into_iter()
         .map(|r| {
-            let p = super::agy::parse_agy_jsonl(
+            let parsed = agy_parser.parse(
                 r#"{"type":"PLANNER_RESPONSE","content":"ok","usage":{"input_tokens":5,"output_tokens":2}}"#,
             );
-            (r, p)
+            LoadedSubagentTranscript {
+                agent_id: r.agent_id,
+                label: r.label,
+                parent_tool_use_id: r.parent_tool_use_id,
+                parsed,
+            }
         })
         .collect();
-    super::agy::attach_agy_subagents(&mut parsed_agy, sub_list);
+    agy_parser.attach_subagents(&mut parsed_agy, sub_list);
     assert_eq!(parsed_agy.usage.input_tokens, 10);
     let call_first = parsed_agy
         .entries
         .iter()
-        .find(|e| {
-            e.kind == TranscriptEntryKind::ToolCall
-                && e.tool_use_id.as_deref() == Some("call_first")
-        })
+        .find(|e| e.kind == RtEntryKind::ToolCall && e.tool_use_id.as_deref() == Some("call_first"))
         .unwrap();
     assert_eq!(call_first.subagent.as_ref().unwrap().agent_id, "sub-a");
     let call_second = parsed_agy
         .entries
         .iter()
         .find(|e| {
-            e.kind == TranscriptEntryKind::ToolCall
-                && e.tool_use_id.as_deref() == Some("call_second")
+            e.kind == RtEntryKind::ToolCall && e.tool_use_id.as_deref() == Some("call_second")
         })
         .unwrap();
     assert_eq!(call_second.subagent.as_ref().unwrap().agent_id, "sub-z");
     assert!(parsed_agy
         .entries
         .iter()
-        .filter(|e| e.kind == TranscriptEntryKind::ToolResult)
+        .filter(|e| e.kind == RtEntryKind::ToolResult)
         .all(|e| e.subagent.is_none()));
 
     // Pass 2 High #1: multi-byte UTF-8 straddling byte 80 after "-----BEGIN " must not panic.

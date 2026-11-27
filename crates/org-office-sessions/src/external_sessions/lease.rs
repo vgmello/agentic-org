@@ -12,10 +12,12 @@ use org_proto::{ApiError, ErrorCode};
 use serde_json::json;
 
 use crate::credentials::{format_rfc3339_ms, is_safe_id, now_ms, rfc3339_now};
+use crate::external::{
+    decode_pubkey, pubkey_fingerprint, refuse_builtin_agent, ExternalLeaseRecord,
+    EXTERNAL_LEASE_VERSION,
+};
 use crate::manager::SessionManager;
 use crate::provenance::{sender_in_ancestor_team_leads, sender_in_reports_to_chain};
-
-use super::{decode_pubkey, pubkey_fingerprint, ExternalLeaseRecord, EXTERNAL_LEASE_VERSION};
 
 /// Most history lines `member.external_sessions` answers.
 const MAX_HISTORY_LIMIT: u32 = 200;
@@ -184,7 +186,7 @@ impl SessionManager {
             .unwrap_or_else(|p| p.into_inner())
             .find_live(&params.code, now_ms())?;
         let employee = self.require_active_agent(&target.employee_id)?;
-        super::refuse_builtin_agent(&employee)?;
+        refuse_builtin_agent(&employee)?;
         self.authorize_external_operator(actor, &employee)?;
         let pending = self
             .external
@@ -295,7 +297,7 @@ impl SessionManager {
     ) -> Result<(Option<Option<ExternalLeaseRecord>>, bool), ApiError> {
         let _ = self.external_lease(emp_id);
         let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-        let live_turn = crate::lifecycle::managed_turn_live_in(&reg, &self.bindings, emp_id);
+        let live_turn = reg.has_active_managed_turn(&self.bindings, emp_id);
         if live_turn && !takeover {
             return Err(ApiError::new(
                 ErrorCode::Conflict,

@@ -9,9 +9,6 @@ publish.workspace = true
 base64.workspace = true
 libc.workspace = true
 org-agent-runtime = { path = "../org-agent-runtime" }
-org-agent-runtime-agy = { path = "../org-agent-runtime-agy" }
-org-agent-runtime-claude = { path = "../org-agent-runtime-claude" }
-org-agent-runtime-codex = { path = "../org-agent-runtime-codex" }
 org-command = { path = "../org-command" }
 org-office = { path = "../org-office" }
 org-pki = { path = "../org-pki" }
@@ -29,8 +26,12 @@ subtle = { version = "=2.6.1", default-features = false }
 zeroize = "=1.9.1"
 
 [dev-dependencies]
-# The live `agent-os` command table the tests render; production injects it from the office binary.
+# The live `agent-os` command table and concrete runtime adapters the unit tests exercise;
+# production injects them from the `agentic-org-office` composition root (`TASK-216`).
 org-agent-cli = { path = "../org-agent-cli" }
+org-agent-runtime-agy = { path = "../org-agent-runtime-agy" }
+org-agent-runtime-claude = { path = "../org-agent-runtime-claude" }
+org-agent-runtime-codex = { path = "../org-agent-runtime-codex" }
 org-office = { path = "../org-office", features = ["testkit"] }
 tempfile.workspace = true
 

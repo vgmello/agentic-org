@@ -6,14 +6,22 @@ use std::sync::Arc;
 
 use crate::failure::{emit, fail, fail_with};
 use crate::launch::{self, Launch};
-use crate::office_runtime::{admit, first_line, serve_office, socket_path};
+use crate::office_runtime::{
+    admit, first_line, serve_office_with_runtimes, socket_path, ServeOfficeRequest,
+};
 use crate::startup::Control;
 use crate::{federation, transfer};
 use org_office::{Office, OfficeError};
 use org_office_launch::{office_dir, FailCode, FirstLine, OfficeFile, ServerEvent};
+use org_office_sessions::RuntimeRegistry;
 use org_proto::OfficeRole;
 
-pub(crate) fn join_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
+pub(crate) fn join_and_serve(
+    mut control: Control,
+    home: &Path,
+    runtime: &Path,
+    runtimes: RuntimeRegistry,
+) -> i32 {
     let (message, from_host) = match first_line(&mut control, FirstLine::Join, None) {
         Ok(first) => first,
         Err(code) => return code,
@@ -33,15 +41,16 @@ pub(crate) fn join_and_serve(mut control: Control, home: &Path, runtime: &Path) 
     else {
         return 1;
     };
-    serve_office(
+    serve_office_with_runtimes(ServeOfficeRequest {
         control,
         transfer,
         from_host,
         runtime,
         office,
-        join.auth,
-        join.instance,
-    )
+        auth: join.auth,
+        instance: join.instance,
+        runtimes,
+    })
 }
 
 fn validate_join_launch(

@@ -473,13 +473,13 @@ pub(super) fn combine_agent_instructions(
 pub(super) fn assemble_launch_env(
     mut launch_env: Vec<(OsString, OsString)>,
     endpoint_env: Vec<(OsString, OsString)>,
-    runtime_name: &str,
+    uses_host_oauth: bool,
     allow_host_auth: bool,
     runtime_path: &Path,
     plan: &org_agent_runtime::LaunchPlan,
 ) -> (Vec<(OsString, OsString)>, Option<u64>, Option<String>) {
     let host_oauth = crate::host_auth::append_host_claude_oauth(
-        runtime_name,
+        uses_host_oauth,
         allow_host_auth,
         runtime_path,
         plan,

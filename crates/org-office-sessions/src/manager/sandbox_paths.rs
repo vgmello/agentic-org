@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use org_agent_runtime::{PathPattern, RuntimeId, SpecPath};
+use org_agent_runtime::{AgentRuntime, PathPattern, SpecPath};
 use org_office::organization_family::records::PermissionPreset;
 use org_proto::{ApiError, ErrorCode};
 
@@ -15,22 +15,22 @@ use super::environment::ensure_owner_only_dir;
 use super::office_masks::OfficeMasks;
 use super::rust_toolchain::canonicalize_with_tail;
 use super::sandbox_rules::{
-    append_agy_credential_denies, append_bare_cache_sandbox_rules, append_cargo_credential_denies,
-    append_privileged_socket_patterns, collect_agy_read_only_dirs, collect_existing_worktree_dirs,
-    collect_non_self_admin_names, collect_self_active_admins, push_exact_pattern,
-    push_glob_pattern,
+    append_bare_cache_sandbox_rules, append_cargo_credential_denies,
+    append_privileged_socket_patterns, append_runtime_credential_denies,
+    collect_agy_read_only_dirs, collect_existing_worktree_dirs, collect_non_self_admin_names,
+    collect_self_active_admins, push_exact_pattern, push_glob_pattern,
 };
 use super::SessionManager;
 
 impl SessionManager {
     pub(super) fn collect_session_read_only_dirs(
         &self,
-        runtime: RuntimeId,
+        adapter: &dyn AgentRuntime,
         home: &Path,
         workspace: &Path,
         sandbox_enabled: bool,
     ) -> Vec<SpecPath> {
-        if !sandbox_enabled || runtime.as_str() != "agy" {
+        if !sandbox_enabled || !adapter.host_profile().needs_explicit_sandbox_ro_dirs {
             return Vec::new();
         }
         let helper_dir = RuntimeRegistry::resolve_helper_dir(self.config.helper_dir.as_deref());
@@ -124,7 +124,7 @@ impl SessionManager {
         );
         self.append_sibling_and_socket_denies(&mut out, &office_local, office_id, self_employee_id);
         append_cargo_credential_denies(&mut out);
-        append_agy_credential_denies(&mut out);
+        append_runtime_credential_denies(&self.config.runtimes, &mut out);
         // Other agents' external (BYOA) keys and fast tokens (`TASK-137`).
         for root in &self.config.agent_os_state_roots {
             push_glob_pattern(&mut out, root);
