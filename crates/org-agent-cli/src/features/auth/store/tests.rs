@@ -142,6 +142,25 @@ fn symbolic_links_are_refused_for_files_and_for_the_state_folder() {
     std::fs::create_dir(&wide).unwrap();
     std::fs::set_permissions(&wide, std::fs::Permissions::from_mode(0o750)).unwrap();
     assert!(WorkspaceState::at(wide).read_binding().is_err());
+
+    // A 0755 state_root owned by the current uid is allowed when workspaces/ and leaf are 0700,
+    // while a symlinked workspaces/ parent or wide 0755 workspaces/ is refused even when the
+    // workspace leaf does not exist yet.
+    let perm_root = tmp.path().join("perm-root");
+    std::fs::create_dir(&perm_root).unwrap();
+    std::fs::set_permissions(&perm_root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let ok_state = WorkspaceState::for_root(&perm_root, &ws);
+    ok_state.preflight().unwrap();
+    ok_state.ensure().unwrap();
+    assert_eq!(mode(&perm_root.join("workspaces")), 0o700);
+    assert_eq!(mode(ok_state.dir()), 0o700);
+
+    let sym_root = tmp.path().join("sym-ws-root");
+    std::fs::create_dir(&sym_root).unwrap();
+    std::os::unix::fs::symlink(&real, sym_root.join("workspaces")).unwrap();
+    let sym_state = WorkspaceState::for_root(&sym_root, &ws);
+    assert!(sym_state.preflight().is_err());
+    assert!(sym_state.ensure().is_err());
 }
 
 #[test]

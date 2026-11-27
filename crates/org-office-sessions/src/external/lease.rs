@@ -21,6 +21,17 @@ use super::{decode_pubkey, pubkey_fingerprint, ExternalLeaseRecord, EXTERNAL_LEA
 const MAX_HISTORY_LIMIT: u32 = 200;
 const DEFAULT_HISTORY_LIMIT: u32 = 20;
 
+/// Inputs for [`SessionManager::commit_external_lease`].
+pub(super) struct LeaseCommit<'a> {
+    pub(super) actor: &'a str,
+    pub(super) employee: &'a Employee,
+    pub(super) pubkey_ed25519_b64: &'a str,
+    pub(super) workspace_label: &'a str,
+    pub(super) ttl: u64,
+    pub(super) takeover: bool,
+    pub(super) verb: &'static str,
+}
+
 fn storage(context: &str) -> ApiError {
     ApiError::new(
         ErrorCode::StorageError,
@@ -114,7 +125,11 @@ impl SessionManager {
     }
 
     /// Owner, or an active person who may hire, manages the agent, or leads its team chain.
-    fn authorize_external_operator(&self, actor: &str, target: &Employee) -> Result<(), ApiError> {
+    pub(super) fn authorize_external_operator(
+        &self,
+        actor: &str,
+        target: &Employee,
+    ) -> Result<(), ApiError> {
         self.authorize_owner_or_person_inner(actor, false)?;
         if actor == self.office.owner_member_id() {
             return Ok(());
@@ -169,7 +184,7 @@ impl SessionManager {
             .unwrap_or_else(|p| p.into_inner())
             .find_live(&params.code, now_ms())?;
         let employee = self.require_active_agent(&target.employee_id)?;
-        super::refuse_chief_of_staff(&employee)?;
+        super::refuse_builtin_agent(&employee)?;
         self.authorize_external_operator(actor, &employee)?;
         let pending = self
             .external
@@ -177,22 +192,50 @@ impl SessionManager {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .check_code(&params.code, &target, now_ms())?;
-        let emp_id = employee.id.as_str();
+        let view = self.commit_external_lease(LeaseCommit {
+            actor,
+            employee: &employee,
+            pubkey_ed25519_b64: &pending.pubkey_ed25519_b64,
+            workspace_label: &pending.workspace_label,
+            ttl,
+            takeover: params.takeover,
+            verb: "approve",
+        })?;
+        self.external
+            .pending
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .mark_approved(
+                &pending.request_id,
+                &view.session_id,
+                &view.expires_at,
+                now_ms(),
+            );
+        Ok(view)
+    }
+
+    /// Publishes, parks any managed run, persists, revokes older external tokens/nonces, and logs
+    /// the audit event for a newly authorized external lease. Caller must hold `lease_mutation`.
+    pub(super) fn commit_external_lease(
+        &self,
+        commit: LeaseCommit<'_>,
+    ) -> Result<ExternalSessionView, ApiError> {
+        let emp_id = commit.employee.id.as_str();
         let now = now_ms();
         let session_id = format!("ext-{}", self.office.next_uuid_v7());
         let record = ExternalLeaseRecord {
             version: EXTERNAL_LEASE_VERSION,
             session_id: session_id.clone(),
             employee_id: emp_id.to_owned(),
-            pubkey_ed25519_b64: pending.pubkey_ed25519_b64.clone(),
-            workspace_label: pending.workspace_label.clone(),
-            approved_by: actor.to_owned(),
+            pubkey_ed25519_b64: commit.pubkey_ed25519_b64.to_owned(),
+            workspace_label: commit.workspace_label.to_owned(),
+            approved_by: commit.actor.to_owned(),
             approved_at: format_rfc3339_ms(now),
-            expires_at: format_rfc3339_ms(now.saturating_add(ttl * 1000)),
+            expires_at: format_rfc3339_ms(now.saturating_add(commit.ttl * 1000)),
             revoked_at: None,
         };
         let (previous, took_over) =
-            self.publish_external_lease(emp_id, &record, params.takeover)?;
+            self.publish_external_lease(emp_id, &record, commit.takeover, commit.verb)?;
         if let Err(e) = self.park_managed_for_external(emp_id) {
             self.external.restore(emp_id, previous);
             return Err(e);
@@ -215,7 +258,7 @@ impl SessionManager {
             .filter(|old| old.is_active(now) && old.session_id != session_id)
             .map(|old| old.session_id);
         if let Some(old) = &superseded {
-            self.record_external_event(emp_id, "superseded", Some(old), Some(actor), None);
+            self.record_external_event(emp_id, "superseded", Some(old), Some(commit.actor), None);
         }
         let detail = format!(
             "{}{}",
@@ -230,15 +273,10 @@ impl SessionManager {
             emp_id,
             "approved",
             Some(&session_id),
-            Some(actor),
+            Some(commit.actor),
             Some(&detail),
         );
-        self.external
-            .pending
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .mark_approved(&pending.request_id, &session_id, &record.expires_at, now);
-        let mut view = self.external_view(&employee, &record);
+        let mut view = self.external_view(commit.employee, &record);
         view.superseded_session_id = superseded;
         view.took_over_managed = took_over;
         Ok(view)
@@ -253,6 +291,7 @@ impl SessionManager {
         emp_id: &str,
         record: &ExternalLeaseRecord,
         takeover: bool,
+        verb: &str,
     ) -> Result<(Option<Option<ExternalLeaseRecord>>, bool), ApiError> {
         let _ = self.external_lease(emp_id);
         let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
@@ -260,7 +299,9 @@ impl SessionManager {
         if live_turn && !takeover {
             return Err(ApiError::new(
                 ErrorCode::Conflict,
-                "this agent has a live managed turn; approve with --takeover to park it first",
+                format!(
+                    "this agent has a live managed turn; {verb} with --takeover to park it first"
+                ),
             ));
         }
         Ok((

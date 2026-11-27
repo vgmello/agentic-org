@@ -84,6 +84,7 @@
   {"method":"member.agent_set_status","policy":"serve"},
   {"method":"member.agent_update","policy":"serve"},
   {"method":"member.external_approve","policy":"serve"},
+  {"method":"member.external_bind","policy":"serve"},
   {"method":"member.external_revoke","policy":"serve"},
   {"method":"member.external_sessions","policy":"serve"},
   {"method":"member.move","policy":"serve"},

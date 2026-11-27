@@ -11,7 +11,10 @@ use ring::signature::{Ed25519KeyPair, KeyPair};
 
 use super::codes::{normalize_code, MAX_PENDING_PER_EMPLOYEE, MAX_PENDING_TOTAL};
 use super::nonces::{verify_signature, NonceEntry, MAX_NONCES_PER_SESSION};
-use super::{decode_pubkey, pubkey_fingerprint, ExternalLeaseRecord, NonceBook, PendingLogins};
+use super::{
+    decode_pubkey, pubkey_fingerprint, refuse_builtin_agent, validate_workspace_label,
+    ExternalLeaseRecord, NonceBook, PendingLogins,
+};
 
 const KEY: &str = "MCowBQYDK2VwAyEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
@@ -301,4 +304,45 @@ fn leases_are_active_only_unrevoked_and_before_expiry() {
     lease.revoked_at = None;
     lease.expires_at = "garbage".into();
     assert!(!lease.is_active(0), "an unreadable expiry is expired");
+}
+
+#[test]
+fn builtin_agents_are_refused_for_external_auth_and_labels_are_validated() {
+    use org_office::organization_family::records::BuiltinKey;
+    use org_office::{Office, TestOffice};
+
+    let office = Office::for_test(TestOffice::default());
+    let employees = office.list_employees().unwrap();
+    let tess = employees
+        .iter()
+        .find(|e| e.builtin_key == Some(BuiltinKey::ChiefOfStaff))
+        .expect("Chief of Staff");
+    let hr = employees
+        .iter()
+        .find(|e| e.builtin_key == Some(BuiltinKey::Hr))
+        .expect("HR agent");
+    let mut hired = hr.clone();
+    hired.builtin_key = None;
+
+    assert!(refuse_builtin_agent(&hired).is_ok());
+    let tess_err = refuse_builtin_agent(tess).unwrap_err();
+    assert_eq!(tess_err.code, ErrorCode::NotAuthorized);
+    assert!(tess_err.message.contains("only inside the office"));
+    let hr_err = refuse_builtin_agent(hr).unwrap_err();
+    assert_eq!(hr_err.code, ErrorCode::NotAuthorized);
+    assert!(hr_err.message.contains("only inside the office"));
+
+    assert_eq!(validate_workspace_label("  ~/repo  ").unwrap(), "~/repo");
+    assert_eq!(
+        validate_workspace_label("   ").unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        validate_workspace_label("bad\nlabel").unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        validate_workspace_label(&"a".repeat(200)).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
 }
