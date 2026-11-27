@@ -157,9 +157,10 @@
 /* Sticky offsets count from the stream's content edge; -16px (its top padding) pins the band to the visible top. */
 .chat-day { position: sticky; top: -16px; z-index: 2; display: flex; align-items: center; gap: 12px; margin: 0 -8px -6px; padding: 4px 8px; font-size: var(--fs-xs); font-weight: 600; line-height: 1.5; color: color-mix(in srgb, var(--gray-400) 72%, var(--gray-300)); }
 .chat-day::before, .chat-day::after { content: ""; flex: 1 1 auto; border-block-start: 1px solid var(--line2); }
-/* Day labels scroll with the messages (owner: no "Today" label, so nothing may stay pinned over today) */
-#main .chat .chat-day { position: relative; top: auto; }
-#main .chat .chat-day.is-today { gap: 0; }
+/* Older-day labels stay pinned while that day is read; Today has no label and its line scrolls in place. Once the
+   reader is in today's messages the older label is hidden (.is-past, chat-scroll.js), never pinned over today. */
+#main .chat .chat-day.is-today { position: relative; top: auto; gap: 0; }
+#main .chat .chat-day.is-past { visibility: hidden; }
 #main .chat .chat-day.is-today::after { display: none; }
 .chat-day.is-stuck { background: color-mix(in srgb, var(--card-surface, var(--gray-900)) 92%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: 0 1px 0 var(--line2); }
 .chat .msg { position: relative; margin-inline: -8px; padding: 4px 8px; border-radius: var(--radius-md); }

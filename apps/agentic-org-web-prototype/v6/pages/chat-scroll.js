@@ -73,7 +73,13 @@ function placeAt(s, pos) {
    through; in place it is the plain divider. */
 function markStuckDays(s) {
   const top = s.getBoundingClientRect().top;
-  for (const d of s.querySelectorAll(":scope > .chat-day")) d.classList.toggle("is-stuck", s.scrollTop > 0 && d.getBoundingClientRect().top - top < 1);
+  /* Today has no label (owner): once its unlabelled line reaches the top, the older day's pinned label goes away. */
+  const today = s.querySelector(":scope > .chat-day.is-today");
+  const inToday = Boolean(today) && today.getBoundingClientRect().top - top < 1;
+  for (const d of s.querySelectorAll(":scope > .chat-day:not(.is-today)")) {
+    d.classList.toggle("is-stuck", s.scrollTop > 0 && d.getBoundingClientRect().top - top < 1);
+    d.classList.toggle("is-past", inToday);
+  }
 }
 /* When the reading position cuts into a message, its author line stays visible: the header sticks under the day
    band (.is-cut) until the message scrolls away, or until the reader scrolls back to its start. */
