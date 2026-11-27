@@ -466,12 +466,12 @@ function dmRequests(who, chId) {
    summary and Details use the same words, in the same order. */
 function elsewhereWord(here, elsewhere, short) {
   if (!here.length) return `${plural(elsewhere.length, "request", "requests")} in Inbox`;
-  return short ? `${elsewhere.length} more` : `${elsewhere.length} more ${elsewhere.length === 1 ? "request" : "requests"}`;
+  return short ? `${elsewhere.length} more` : `${elsewhere.length} more in Inbox`;
 }
 function dmWaiting(who, chId, slot, short = false) {
   const { here, elsewhere } = dmRequests(who, chId), parts = [];
   const card = here.length && CH[chId].msgs.find((x) => x.needs === here[0]);
-  if (card) parts.push(`<a class="alink chat-here-link" href="#/chat/${esc(chId)}/${esc(card.id)}" aria-label="${esc(plural(here.length, "request", "requests"))} in this DM">${here.length} in this DM</a>`);
+  if (card) parts.push(`<a class="alink chat-here-link" href="#/chat/${esc(chId)}/${esc(card.id)}" aria-label="${esc(plural(here.length, "request", "requests"))} for you here">${ic("bell", "ic14")}${esc(plural(here.length, "request", "requests"))} here</a>`);
   if (elsewhere.length) parts.push(requestsMenu(elsewhere, who, slot, `${elsewhereWord(here, elsewhere, short)}${ic("chev-down", "ic14 chat-more-chev")}`));
   return parts.join(" · ");
 }
@@ -518,7 +518,7 @@ function dmSummary(who) {
   if (presence(who) !== "needs") return [word];
   const { here, elsewhere } = dmRequests(who, `dm-${who}`);
   if (!here.length && !elsewhere.length) return [word];
-  return [here.length ? `${here.length} in this DM` : "", elsewhere.length ? elsewhereWord(here, elsewhere, false) : ""];
+  return [here.length ? `${plural(here.length, "request", "requests")} here` : "", elsewhere.length ? elsewhereWord(here, elsewhere, false) : ""];
 }
 function summaryParts(ch) {
   if (ch.kind === "dm") return dmSummary(ch.with);
@@ -533,7 +533,12 @@ function detailsPanel(ch, chId) {
   return `<dl class="chat-details" id="chat-details" aria-label="Conversation details">${rows}</dl>`;
 }
 function headerLead(ch) {
-  if (ch.kind === "dm") return av(ch.with, 32);
+  /* An agent's avatar carries the sparkle badge, as Tess's does in the sidebar (owner); hover names the kind */
+  if (ch.kind === "dm") {
+    const agent = M[ch.with]?.kind === "agent";
+    const star = agent ? `<span class="chat-av-star" aria-hidden="true"><svg class="ic" viewBox="0 0 24 24"><path d="M12 2l2.1 6.4L20.5 10.5l-6.4 2.1L12 19l-2.1-6.4L3.5 10.5l6.4-2.1L12 2z" fill="currentColor" stroke="none"/></svg></span>` : "";
+    return `<span class="chat-head-av" title="${esc(kindWord(ch.with))}">${av(ch.with, 32)}${star}</span>`;
+  }
   return ch.kind === "a2a" ? `<span class="chat-pair" aria-hidden="true">${ch.pair.map((k) => av(k, 24)).join("")}</span>` : "";
 }
 function headerActions(id, title, meta = "") {
@@ -581,7 +586,7 @@ function memberStack(ch) {
 }
 /* A DM's kind and request status sit with the header actions too (owner), so the title is one line everywhere */
 function dmMeta(ch, id) {
-  const parts = contextParts(ch, id).filter(([k]) => k !== "Role" && k !== "Status").map(([, v]) => v).filter(Boolean);
+  const parts = contextParts(ch, id).filter(([k]) => k !== "Role" && k !== "Status" && k !== "Kind").map(([, v]) => v).filter(Boolean);
   const status = contextParts(ch, id).find(([k]) => k === "Status")?.[1] || "";
   return `<div class="chat-head-meta chat-head-dm">${parts.map((v) => `<span class="chat-kind-chip">${v}</span>`).join("")}${status}</div>`;
 }
@@ -598,7 +603,7 @@ function chatHeaderHtml(id, ch, title) {
     ${listButton(id)}
     <div class="ph-t chat-title">
       ${headerLead(ch)}
-      <div class="chat-heading">${backToAgent(ch)}${titleLine(title, description(ch))}
+      <div class="chat-heading">${backToAgent(ch)}${ch.kind === "dm" ? `<span class="chat-eyebrow">${esc(kindWord(ch.with))}</span>` : ""}${titleLine(title, description(ch))}
         ${context}
       </div>
       ${readAsTag(ch)}${requestsTag(ch, id)}
