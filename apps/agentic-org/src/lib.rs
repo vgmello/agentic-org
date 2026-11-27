@@ -416,24 +416,26 @@ fn hoist_switch(
     Ok(true)
 }
 
-/// Records a `--format` value: `table`/`tsv` are stripped into `hoisted.format`, while `org-command`
-/// formats (`json`, `yaml`, `compact`, or unknown) stay in `out` for table validation.
+/// Records a `--format` value: `table`/`tsv` are stripped into `hoisted.format` (rejecting
+/// conflicting repeated shell-only values), while `org-command` formats (`json`, `yaml`,
+/// `compact`, or unknown) stay in `out` for table validation.
 fn hoist_format_value(
     val: &str,
     arg: &str,
     out: &mut Vec<String>,
     hoisted: &mut HoistedFlags,
-) -> bool {
+) -> Result<bool, CliError> {
     match OutputFormat::parse(val) {
         Some(fmt @ (OutputFormat::Table | OutputFormat::Tsv)) => {
+            check_format_agreement(hoisted.format, Some(fmt))?;
             hoisted.format = Some(fmt);
-            true
+            Ok(true)
         }
         parsed => {
             hoisted.table_format = true;
             hoisted.table_format_kind = parsed;
             out.push(arg.to_owned());
-            false
+            Ok(false)
         }
     }
 }
@@ -445,17 +447,17 @@ fn hoist_split_format(
     arg: &str,
     out: &mut Vec<String>,
     hoisted: &mut HoistedFlags,
-) -> bool {
+) -> Result<bool, CliError> {
     let Some(next) = words.get(*idx) else {
         hoisted.table_format = true;
         out.push(arg.to_owned());
-        return false;
+        return Ok(false);
     };
-    if hoist_format_value(next, arg, out, hoisted) {
+    if hoist_format_value(next, arg, out, hoisted)? {
         *idx += 1;
-        return false;
+        return Ok(false);
     }
-    true
+    Ok(true)
 }
 
 /// Classifies one non-value word before `--`, returning `true` if the next word is its value.
@@ -470,10 +472,10 @@ fn hoist_single_word(
         return Ok(false);
     }
     if arg == "--format" {
-        return Ok(hoist_split_format(words, idx, arg, out, hoisted));
+        return hoist_split_format(words, idx, arg, out, hoisted);
     }
     if let Some(val) = arg.strip_prefix("--format=") {
-        let _ = hoist_format_value(val, arg, out, hoisted);
+        let _ = hoist_format_value(val, arg, out, hoisted)?;
         return Ok(false);
     }
     let awaiting = arg
@@ -628,16 +630,32 @@ fn scan_local_agent_flags(args: &[String]) -> HoistedFlags {
     found
 }
 
-fn prepare_modes(
-    mut top: TopCommand,
-    mut explicit: ExplicitOutput,
-    modes: &mut Modes,
-) -> Result<(TopCommand, ExplicitOutput, bool), CliError> {
-    if let TopCommand::Agent(pass) = &top {
+/// Whether `top` is a passthrough host command (`serve`, `setup`, `recovery`) whose
+/// arguments include `-h` or `--help` before `--`.
+fn is_passthrough_host_help(top: &TopCommand) -> bool {
+    let pass = match top {
+        TopCommand::Serve(p) | TopCommand::Setup(p) | TopCommand::Recovery(p) => p,
+        _ => return false,
+    };
+    pass.args
+        .iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
+}
+
+fn hoist_sign_in_words(args: &mut features::sign_in::SignInArgs) -> Result<HoistedFlags, CliError> {
+    if is_sign_in_local_agent(args.command()) {
+        return Ok(scan_local_agent_flags(&args.command()[1..]));
+    }
+    let (cleaned, hoisted) = hoist_office_words(args.command())?;
+    *args.command_mut() = cleaned;
+    Ok(hoisted)
+}
+
+fn hoist_command_flags(top: &mut TopCommand) -> Result<Option<HoistedFlags>, CliError> {
+    if let TopCommand::Agent(pass) = top {
         if is_local_agent_verb(&pass.args) {
-            let found = scan_local_agent_flags(&pass.args);
-            let passthrough = merge_hoisted(found, &mut explicit, modes)?;
-            return Ok((top, explicit, passthrough));
+            return Ok(Some(scan_local_agent_flags(&pass.args)));
         }
     }
     if let Some((resource, pass_args)) = top.office_resource_mut() {
@@ -646,34 +664,37 @@ fn prepare_modes(
         full.extend(pass_args.iter().cloned());
         let (cleaned, hoisted) = hoist_office_words(&full)?;
         *pass_args = cleaned.into_iter().skip(1).collect();
+        return Ok(Some(hoisted));
+    }
+    if let TopCommand::Org(args) = top {
+        if let Some(words) = args.office_words() {
+            let (_, hoisted) = hoist_office_words(&words)?;
+            return Ok(Some(hoisted));
+        }
+    }
+    if let TopCommand::SignIn(args) = top {
+        if !args.command().is_empty() {
+            return Ok(Some(hoist_sign_in_words(args)?));
+        }
+    }
+    Ok(None)
+}
+
+fn prepare_modes(
+    mut top: TopCommand,
+    mut explicit: ExplicitOutput,
+    modes: &mut Modes,
+) -> Result<(TopCommand, ExplicitOutput, bool), CliError> {
+    if let Some(hoisted) = hoist_command_flags(&mut top)? {
         let passthrough = merge_hoisted(hoisted, &mut explicit, modes)?;
         return Ok((top, explicit, passthrough));
     }
-    if let TopCommand::Org(args) = &top {
-        if let Some(words) = args.office_words() {
-            let (_, hoisted) = hoist_office_words(&words)?;
-            let passthrough = merge_hoisted(hoisted, &mut explicit, modes)?;
-            return Ok((top, explicit, passthrough));
-        }
-    }
-    if let TopCommand::SignIn(args) = &mut top {
-        if !args.command().is_empty() {
-            let hoisted = if is_sign_in_local_agent(args.command()) {
-                scan_local_agent_flags(&args.command()[1..])
-            } else {
-                let (cleaned, hoisted) = hoist_office_words(args.command())?;
-                *args.command_mut() = cleaned;
-                hoisted
-            };
-            let passthrough = merge_hoisted(hoisted, &mut explicit, modes)?;
-            return Ok((top, explicit, passthrough));
-        }
-    }
+    let passthrough = is_passthrough_host_help(&top);
     validate_output_conflict(&explicit)?;
-    if explicit.has_output_override() {
+    if passthrough || explicit.has_output_override() {
         modes.ignore_env_format = true;
     }
-    Ok((top, explicit, false))
+    Ok((top, explicit, passthrough))
 }
 
 /// Injects `--format yaml|compact` after the command path of an office command when `ctx` resolved

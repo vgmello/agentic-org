@@ -7,7 +7,7 @@
 //! - `-q`: the IDs of the answer, one per line;
 //! - a terminal: a borderless table for a list, an aligned card for a record, and a refusal
 //!   as a diagnostic on standard error;
-//! - a pipe: the table's `compact` form (headerless, tab-separated lines).
+//! - a pipe: headerless, tab-separated lines (`OutputFormat::Tsv` / `Shown::Tsv`).
 //!
 //! The exit code is the table's: 0, 1 (refused) or 2 (a command line it cannot read). A line
 //! this command cannot split (a selector given twice, a flag left without its value at the
@@ -499,8 +499,8 @@ mod tests {
 
     /// TASK-137 B1: the operator shorthand (`agent approve <code>`, `agent sessions @<handle>`,
     /// `agent revoke @<handle> [<session>]`) reaches the office whatever the run adds after
-    /// the command path (`--format json` on a terminal or with `--json`, `--format compact` in
-    /// a pipe), through both ways in. So does the exact line `agent-os exec` runs.
+    /// the command path (`--format json` for terminal, pipe/`OutputFormat::Tsv`, or `--json`),
+    /// through both ways in. So does the exact line `agent-os exec` runs.
     #[test]
     fn the_operator_shorthand_reaches_the_office_through_the_added_format() {
         let json = Modes {
@@ -591,7 +591,8 @@ mod tests {
     }
 
     /// B-02: a value that reads `-h` or `--help` is text, not a request for help: the answer
-    /// is shown as the run asked (`-q`, a table, compact), never the table's help as written.
+    /// is shown as the run asked (`-q`, a table, or `Shown::Tsv` in a pipe), never the table's
+    /// help as written.
     #[test]
     fn a_value_that_reads_help_is_sent_and_shown_as_asked() {
         let quiet = Modes {

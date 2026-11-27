@@ -1405,4 +1405,84 @@ fn task_212_agent_os_format_precedence_and_json_before_after_subcommand() {
     );
     let office_conflict = sandbox.run(&["--json", "task", "list", "--format", "yaml"]);
     assert_eq!(office_conflict.status.code(), Some(2));
+
+    // 12. Pass-3 P2-2: `setup|serve|recovery --help`/`-h` succeeds even when `AGENT_OS_FORMAT` is
+    //     invalid, while non-help invocations (and `-- --help`) still fail closed (exit 2).
+    for help_args in [
+        &["setup", "--help"][..],
+        &["setup", "-h"],
+        &["serve", "--help"],
+        &["serve", "-h"],
+        &["recovery", "--help"],
+        &["recovery", "-h"],
+        &["recovery", "status", "--help"],
+    ] {
+        let out = sandbox
+            .command(help_args)
+            .env("AGENT_OS_FORMAT", "xml")
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{help_args:?}: stderr={}",
+            text(&out.stderr)
+        );
+        assert!(
+            out.stderr.is_empty(),
+            "{help_args:?}: {}",
+            text(&out.stderr)
+        );
+        assert!(!out.stdout.is_empty(), "{help_args:?}: expected help text");
+    }
+    for non_help_args in [
+        &["setup", "--name", "lab"][..],
+        &["setup", "--name", "lab", "--", "--help"],
+        &["serve", "--name", "lab"],
+        &["recovery", "status"],
+    ] {
+        let out = sandbox
+            .command(non_help_args)
+            .env("AGENT_OS_FORMAT", "xml")
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{non_help_args:?}: stderr={}",
+            text(&out.stderr)
+        );
+        assert!(
+            text(&out.stderr).contains("AGENT_OS_FORMAT"),
+            "{non_help_args:?}: {}",
+            text(&out.stderr)
+        );
+    }
+
+    // 13. Pass-3 P2-3: conflicting repeated shell-only `--format` flags are refused (exit 2),
+    //     while idempotent repetition stays valid.
+    for conflict_args in [
+        &["task", "list", "--format", "table", "--format", "tsv"][..],
+        &["task", "list", "--format=tsv", "--format=table"],
+    ] {
+        let out = sandbox.run(conflict_args);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{conflict_args:?}: stderr={}",
+            text(&out.stderr)
+        );
+        assert!(
+            text(&out.stderr).contains("conflicting values"),
+            "{conflict_args:?}: {}",
+            text(&out.stderr)
+        );
+    }
+    let repeated_idem = sandbox.run(&["task", "list", "--format", "table", "--format", "table"]);
+    assert_eq!(
+        repeated_idem.status.code(),
+        Some(1),
+        "idempotent --format table --format table reaches host (never usage exit 2): {}",
+        text(&repeated_idem.stderr)
+    );
 }

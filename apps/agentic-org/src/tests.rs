@@ -309,6 +309,38 @@ fn office_flag_hoisting_handles_json_before_and_after_subcommand_and_preserves_v
         crate::hoist_office_words(&owned(&["task", "list", "--format=yaml"])).unwrap();
     assert_eq!(cleaned, owned(&["task", "list", "--format=yaml"]));
     assert!(hoisted.table_format);
+
+    // Repeated shell-only `--format` flags: idempotent is allowed, conflicting is refused.
+    let (cleaned, hoisted) = crate::hoist_office_words(&owned(&[
+        "task", "list", "--format", "table", "--format", "table",
+    ]))
+    .unwrap();
+    assert_eq!(cleaned, owned(&["task", "list"]));
+    assert_eq!(
+        hoisted.format,
+        Some(org_cli_shell::context::OutputFormat::Table)
+    );
+    let (cleaned, hoisted) =
+        crate::hoist_office_words(&owned(&["task", "list", "--format=tsv", "--format", "tsv"]))
+            .unwrap();
+    assert_eq!(cleaned, owned(&["task", "list"]));
+    assert_eq!(
+        hoisted.format,
+        Some(org_cli_shell::context::OutputFormat::Tsv)
+    );
+    for conflict in [
+        &["task", "list", "--format", "table", "--format", "tsv"][..],
+        &["task", "list", "--format=tsv", "--format=table"],
+        &["task", "list", "--format", "table", "--format=tsv"],
+    ] {
+        let err = crate::hoist_office_words(&owned(conflict))
+            .err()
+            .expect("conflicting repeated shell --format refused");
+        assert!(
+            err.to_string().contains("conflicting values"),
+            "{conflict:?}: {err}"
+        );
+    }
 }
 
 #[test]
