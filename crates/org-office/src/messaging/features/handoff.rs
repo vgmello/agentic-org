@@ -90,6 +90,7 @@ where
         accepted_at: Some(now_utc.to_owned()),
         reason: params.reason.clone(),
         answer: None,
+        attachments: Vec::new(),
     };
     let ans_path = records::participant_answer_path(&msg.conversation_id, caller, &msg.id);
     let change = put_or_create_file(

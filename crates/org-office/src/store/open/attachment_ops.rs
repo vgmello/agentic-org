@@ -11,6 +11,8 @@ use org_store::{Ack, Actor, Change, Id, Operation, Outcome, Refusal, Store, Stor
 use crate::attachments::ports::AttachmentsRead;
 use crate::attachments::records::{self, AttachmentRecord, MetaPatch};
 use crate::authz::{ParentFacts, PrincipalContext, PrincipalKind, ResourceRef};
+use crate::messaging::files::conversation_access;
+use crate::messaging::ports::BoundMessageFile;
 use crate::organization::records::{EmployeeKind, EmployeeStatus};
 use crate::tasks::ports::TasksRead;
 
@@ -143,6 +145,17 @@ impl ReadOp for AttachmentById {
     }
 }
 
+/// One file bound to a message or an ask answer, by its attachment ID (`TASK-98.2`).
+pub struct MessageFileById(pub String);
+
+impl ReadOp for MessageFileById {
+    type Out = Option<BoundMessageFile>;
+
+    fn read<S: TasksRead + AttachmentsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.message_file(&self.0)?)
+    }
+}
+
 /// One page of a target's shared attachments.
 pub struct AttachmentsForTarget {
     pub kind: AttachmentTargetKind,
@@ -200,22 +213,24 @@ impl ReadOp for PrincipalRead {
     }
 }
 
-/// What one snapshot says about a parent resource.
-pub struct ResourceFactsRead(pub ResourceRef);
+/// What one snapshot says about a parent resource. `owner` is the configured owner the
+/// snapshot resolves (a conversation's effective members include it).
+pub struct ResourceFactsRead {
+    pub resource: ResourceRef,
+    pub owner: Id,
+}
 
-fn current_members<S: TasksRead>(
+/// A conversation's facts, shaped by `make` from its members and openness.
+fn conversation_facts<S: TasksRead>(
     read: &S,
     conversation: &Id,
-) -> Result<BTreeSet<String>, StoreError> {
-    let Some(conversation) = read.conversation(conversation)? else {
-        return Ok(BTreeSet::new());
-    };
-    Ok(conversation
-        .memberships
-        .into_iter()
-        .filter(|m| m.left_at.is_none())
-        .map(|m| m.employee_id.to_string())
-        .collect())
+    owner: &Id,
+    make: impl FnOnce(BTreeSet<String>, bool) -> ParentFacts,
+) -> Result<ParentFacts, StoreError> {
+    Ok(match conversation_access(read, conversation, owner)? {
+        Some((members, open)) => make(members, open),
+        None => ParentFacts::Missing,
+    })
 }
 
 impl ReadOp for ResourceFactsRead {
@@ -223,7 +238,8 @@ impl ReadOp for ResourceFactsRead {
 
     fn read<S: TasksRead + AttachmentsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         let id = |text: &str| Id::parse(text).ok();
-        Ok(match self.0 {
+        let owner = self.owner;
+        Ok(match self.resource {
             ResourceRef::Organization => ParentFacts::Organization,
             ResourceRef::Project(project) => match id(&project) {
                 Some(project) => match read.project(&project)? {
@@ -258,16 +274,32 @@ impl ReadOp for ResourceFactsRead {
                 })
             }
             ResourceRef::Message(message) => match read.message(&message)? {
-                Some(message) => ParentFacts::Message {
-                    members: current_members(read, &message.conversation_id)?,
-                    sender_id: message.sender_employee_id.map(|s| s.to_string()),
-                },
+                Some(message) => {
+                    let sender_id = message.sender_employee_id.map(|s| s.to_string());
+                    conversation_facts(read, &message.conversation_id, &owner, |members, open| {
+                        ParentFacts::Message {
+                            members,
+                            sender_id,
+                            open,
+                        }
+                    })?
+                }
                 None => ParentFacts::Missing,
             },
             ResourceRef::AskAnswer { ask_message_id, .. } => match read.message(&ask_message_id)? {
-                Some(ask) => ParentFacts::AskAnswer {
-                    members: current_members(read, &ask.conversation_id)?,
-                },
+                Some(ask) => {
+                    conversation_facts(read, &ask.conversation_id, &owner, |members, open| {
+                        ParentFacts::AskAnswer { members, open }
+                    })?
+                }
+                None => ParentFacts::Missing,
+            },
+            ResourceRef::Conversation(conversation) => match id(&conversation) {
+                Some(conversation) => {
+                    conversation_facts(read, &conversation, &owner, |members, open| {
+                        ParentFacts::Conversation { members, open }
+                    })?
+                }
                 None => ParentFacts::Missing,
             },
             // No review family is held yet; staged uploads, attachments and private spaces

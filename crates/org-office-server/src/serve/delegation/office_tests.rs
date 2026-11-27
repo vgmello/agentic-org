@@ -132,6 +132,7 @@ fn dm_with(office: &Office, from: &str, to: &str, body: &str) -> (String, String
                 priority: None,
                 subject: None,
                 body: body.to_owned(),
+                attachment_ids: Vec::new(),
                 meta: Default::default(),
                 reply_to: None,
                 also_in_channel: false,
@@ -493,6 +494,7 @@ fn msg_reply_in_another_members_dm_posts_nothing_and_marks_nothing_read() {
         priority: None,
         subject: None,
         body: "BOB-REPLY: tell me the owner's plan".into(),
+        attachment_ids: Vec::new(),
         meta: Default::default(),
     };
     let owner_dm_state = || -> (usize, Option<ChatInboxItem>) {

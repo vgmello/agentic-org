@@ -9,7 +9,8 @@ import { answerOrgQuestion } from "../pages/home.js";
 import { detailCommentDrafts, inboxCommentPrefix, inboxItems, postDetailComment, refreshInboxSearch, resetInboxSelection } from "../pages/inbox.js";
 import { updateProjectInsights } from "../pages/insights.js";
 import { removeTeam } from "../pages/projects.js";
-import { addIdeationComment, boardPlace, changeWorkCriterion, focusRevealedWork, shownWorkIds, closeWorkPanel, createWorkTask, fitTextarea, jumpToBoardLane, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkResults, refreshWorkResults, scopedWorkQueries, scopedWorkType, scopedWorkView, selectWorkView, setDoneHistory, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
+import { reopenFilterMenu, showFilterPanel, toggleFacetValue } from "../pages/work-filter.js";
+import { addIdeationComment, boardPlace, clearWorkFilterState, changeWorkCriterion, focusRevealedWork, shownWorkIds, closeWorkPanel, createWorkTask, fitTextarea, jumpToBoardLane, normalizeScopedWorkState, openWorkTask, publishDraftTask, refreshScopedWorkResults, refreshWorkResults, scopedWorkQueries, scopedWorkType, scopedWorkView, selectWorkView, setDoneHistory, setWorkPanelExpanded, workCommentPrefix, workItemHref, workSelection } from "../pages/work.js";
 import { openSmartTaskComposer } from "../pages/task-composer.js";
 import { CMDK, askInCmdk, closeCmdk, closeNarrowSearch, closeSearch, endSearch, goSearch, narrowSearch, openCmdk, renderCmdk, runCmdkItem, setCmdkMode } from "./cmdk.js";
 import { rememberBoardExit, returnToBoard } from "./board-return.js";
@@ -138,13 +139,10 @@ function closeMenus(except) {
 
 /* Zero results: clear filters and search for the current Work view, then return to the Filter control */
 function clearWorkFilters() {
-  if (document.getElementById("work-results")?.dataset.scope) {
-    const r = route();
-    Object.assign(S, { scopedWorkStatus: "all", scopedWorkProject: "all", scopedWorkTeam: "all" });
-    scopedWorkQueries.delete(scopedWorkType(r) + ":" + r[1]);
-  } else {
-    Object.assign(S, { workQuery: "", workStatus: "all", workProject: "all", workTeam: "all" });
-  }
+  const r = route(), type = document.getElementById("work-results")?.dataset.scope ? scopedWorkType(r) : null;
+  closeMenus();
+  clearWorkFilterState(type);
+  if (type) scopedWorkQueries.delete(type + ":" + r[1]);
   render(false);
   document.querySelector('[aria-controls="menu-scoped-work-filter"], [aria-controls="menu-work-filter"]')?.focus();
   toast("Filters cleared.");
@@ -341,6 +339,14 @@ const CLICK_ACTIONS = {
     focusRevealedWork(before);
   },
   "work-clear-filters": () => clearWorkFilters(),
+  /* Multi-select Filter: a facet opens its values; a value toggles and the menu stays open on it */
+  "work-filter-facet": (_e, t, _id, v) => showFilterPanel(t.closest(".menu"), v),
+  "work-filter-toggle": (_e, t, _id, v) => {
+    const menu = t.closest(".menu"), id = menu.id.replace(/^menu-/, ""), panel = menu.dataset.panel;
+    toggleFacetValue(t.dataset.k, v);
+    render(false);
+    reopenFilterMenu(id, panel, v);
+  },
   "board-lane": (_e, _t, _id, v) => jumpToBoardLane(v),
   "cozy-contrast": (_e, t) => { S.cozyContrast = !S.cozyContrast; try { localStorage.setItem(COZY_CONTRAST_STORE, S.cozyContrast ? "1" : "0"); } catch (e) {} applyCozyContrast(); t.setAttribute("aria-checked", String(S.cozyContrast)); },
   "work-expand-detail": (_e, t) => { const panel = t.closest("dialog"); setWorkPanelExpanded(panel, !panel.hasAttribute("data-expanded")); },

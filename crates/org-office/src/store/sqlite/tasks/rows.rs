@@ -1,15 +1,13 @@
-//! Row decoders for tasks and their children, and hydration of a task's labels, files,
-//! repositories and details.
+//! Row decoders for tasks and their children.
 
 use org_proto::tasks::{TaskPriority, TaskStatus, WorkType};
-use org_store::EngineError;
-use rusqlite::{Connection, Row};
+use rusqlite::Row;
 
-use super::super::organization::{all, id, meta, number, one, optional_id, text};
-use super::{bad_col, opt_u64, DETAIL_COLS};
+use super::super::organization::{id, meta, number, optional_id};
+use super::{bad_col, opt_u64};
 use crate::tasks::records::{
     ChecklistStepRecord, OfficeTaskCounterRecord, TaskCommentRecord, TaskDetailsRecord,
-    TaskEventRecord, TaskLinkRecord, TaskMeta, TaskRecord, TaskRepositoryRecord, TaskWatcherRecord,
+    TaskEventRecord, TaskLinkRecord, TaskMeta, TaskRecord, TaskWatcherRecord,
 };
 
 pub(super) fn task_row(row: &Row<'_>) -> rusqlite::Result<TaskRecord> {
@@ -52,7 +50,7 @@ pub(super) fn task_row(row: &Row<'_>) -> rusqlite::Result<TaskRecord> {
     })
 }
 
-fn details_row(row: &Row<'_>) -> rusqlite::Result<TaskDetailsRecord> {
+pub(super) fn details_row(row: &Row<'_>) -> rusqlite::Result<TaskDetailsRecord> {
     let sev_int: i64 = row.get(5)?;
     Ok(TaskDetailsRecord {
         definition_of_done: row.get(0)?,
@@ -74,55 +72,6 @@ fn details_row(row: &Row<'_>) -> rusqlite::Result<TaskDetailsRecord> {
         suggested_triager_id: optional_id(row, 16)?,
         suggested_verifier_id: optional_id(row, 17)?,
     })
-}
-
-pub(super) fn hydrate_task(
-    db: &Connection,
-    scope: &str,
-    mut task: TaskRecord,
-) -> Result<TaskRecord, EngineError> {
-    task.labels = all(
-        db,
-        "SELECT label FROM task_labels WHERE organization_id = ?1 AND task_id = ?2 ORDER BY label",
-        vec![text(scope), text(task.id.as_str())],
-        |r| r.get::<_, String>(0),
-    )?;
-    let files: Vec<(String, String)> = all(
-        db,
-        "SELECT role, path FROM task_files WHERE organization_id = ?1 AND task_id = ?2 ORDER BY path",
-        vec![text(scope), text(task.id.as_str())],
-        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
-    )?;
-    for (role, path) in files {
-        match role.as_str() {
-            "reference" => task.reference_files.push(path),
-            "modified" => task.modified_files.push(path),
-            _ => {}
-        }
-    }
-    task.repositories = all(
-        db,
-        "SELECT repository_id, branch, integrated_commit FROM task_repositories \
-         WHERE organization_id = ?1 AND task_id = ?2 ORDER BY repository_id",
-        vec![text(scope), text(task.id.as_str())],
-        |r| {
-            Ok(TaskRepositoryRecord {
-                repository_id: id(r, 0)?,
-                branch: r.get(1)?,
-                integrated_commit: r.get(2)?,
-            })
-        },
-    )?;
-    let det_sql = format!(
-        "SELECT {DETAIL_COLS} FROM task_details WHERE organization_id = ?1 AND task_id = ?2"
-    );
-    task.details = one(
-        db,
-        &det_sql,
-        vec![text(scope), text(task.id.as_str())],
-        details_row,
-    )?;
-    Ok(task)
 }
 
 pub(super) fn counter_row(row: &Row<'_>) -> rusqlite::Result<OfficeTaskCounterRecord> {

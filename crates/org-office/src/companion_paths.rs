@@ -40,8 +40,14 @@ const DURABLE_COMPANIONS: [(&str, CompanionKind); 3] = [
 /// every agent session.
 pub const ATTACHMENT_STAGING_DIR_NAME: &str = "attachment-staging";
 
+/// The folder below `durable/local/offices/<office-id>/` that holds a satellite's shared
+/// attachments not yet acknowledged by HQ (`TASK-98.6`): each one's record and bytes, kept
+/// durably (and carried by backups) until HQ verifies and acks them, never journaled, masked
+/// from every agent session.
+pub const BLOB_OUTBOX_DIR_NAME: &str = "blob-outbox";
+
 /// Companion stores below `durable/local/offices/<office-id>/`.
-const OFFICE_LOCAL_COMPANIONS: [(&str, CompanionKind); 18] = [
+const OFFICE_LOCAL_COMPANIONS: [(&str, CompanionKind); 19] = [
     ("connections", CompanionKind::Folder),
     ("auth", CompanionKind::Folder),
     ("subscription-usage", CompanionKind::Folder),
@@ -60,6 +66,7 @@ const OFFICE_LOCAL_COMPANIONS: [(&str, CompanionKind); 18] = [
     ("security/git-ssh-key", CompanionKind::File),
     ("security/git-known-hosts", CompanionKind::File),
     (ATTACHMENT_STAGING_DIR_NAME, CompanionKind::Folder),
+    (BLOB_OUTBOX_DIR_NAME, CompanionKind::Folder),
 ];
 
 /// Every companion store of office `office_id`, in a fixed order.

@@ -7,8 +7,12 @@
 //! - **A staged upload is its uploader's alone.** Anyone else, whoever they are, gets
 //!   `NotFound`: the policy never confirms that an upload exists.
 //! - **An attached file inherits its parent's read rule** (task, task comment, message, ask
-//!   answer, project, organization). A message or an ask is readable only by the members of
-//!   its conversation.
+//!   answer, project, organization). A message, an ask or an ask answer is readable as its
+//!   conversation is (`chat.messages`): by its current members, by any employee in a channel,
+//!   and by the organization's owner, who supervises every conversation (`TASK-98.2`).
+//! - **A file goes into a conversation only with a new message, ask or answer of a member**
+//!   (or the owner): [`ResourceRef::Conversation`] is the target a staged upload is bound to
+//!   before that record exists, decided on the very snapshot the record commits on.
 //! - **Phase 1: any active employee may publish organization-wide files** (`doc-103` §1.B,
 //!   §1.C, §4.D; `TASK-98.4`, `TASK-98.7`). Phase 2 (`TASK-176`) narrows that to the owner and
 //!   admins.
@@ -84,6 +88,8 @@ pub enum ResourceRef {
         ask_message_id: String,
         answerer_id: String,
     },
+    /// A conversation a new message, ask or answer carrying files is posted into.
+    Conversation(String),
     ReviewFinding(String),
     ReviewFindingReply(String),
     Project(String),
@@ -107,10 +113,18 @@ pub enum ParentFacts {
         /// The conversation's current members.
         members: BTreeSet<String>,
         sender_id: Option<String>,
+        /// A channel: every employee reads it.
+        open: bool,
     },
     AskAnswer {
         /// The ask's conversation's current members.
         members: BTreeSet<String>,
+        open: bool,
+    },
+    Conversation {
+        /// The conversation's current members: who may post into it.
+        members: BTreeSet<String>,
+        open: bool,
     },
     Project {
         /// The owning team and every contributing team.
@@ -193,8 +207,10 @@ impl<'a, F: ResourceFacts + ?Sized> AuthorizationPolicy<'a, F> {
             }
             parent => match self.facts.facts(parent)? {
                 ParentFacts::Missing => Err(Denied::NotFound),
-                ParentFacts::Message { members, .. } | ParentFacts::AskAnswer { members } => {
-                    only(members.contains(&caller.employee_id))
+                ParentFacts::Message { members, open, .. }
+                | ParentFacts::AskAnswer { members, open }
+                | ParentFacts::Conversation { members, open } => {
+                    only(open || caller.is_owner || members.contains(&caller.employee_id))
                 }
                 ParentFacts::Task
                 | ParentFacts::TaskComment { .. }
@@ -288,6 +304,15 @@ impl<'a, F: ResourceFacts + ?Sized> AuthorizationPolicy<'a, F> {
                 ResourceRef::AskAnswer { answerer_id, .. } => author_only(caller, answerer_id),
                 _ => Err(Denied::NotFound),
             },
+            ParentFacts::Conversation { members, .. } => {
+                if caller.is_owner || members.contains(&caller.employee_id) {
+                    Ok(())
+                } else {
+                    Err(Denied::NotAuthorized(
+                        "only the conversation's members may post files in it",
+                    ))
+                }
+            }
         }
     }
 }

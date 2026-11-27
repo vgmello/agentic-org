@@ -191,7 +191,7 @@ function memberRows(ids, opts = {}) {
     if (!opts.noTeam) facts.push(`<span>${m.teams.map((t) => esc(TEAMS[t].name)).join(", ")}</span>`);
     if (m.mgr) facts.push(`<span>Reports to ${esc(M[m.mgr].name)}</span>`);
     if (!opts.noTeam && !m.teams.length) facts.splice(1, 1);
-    return `<li class="linked">${av(id, 32, "word")}<div class="grow"><p class="rt"><a class="stretch" href="#/members/${id}">${esc(m.name)}</a><span class="sec">${esc(m.role)}</span></p>
+    return `<li class="linked">${av(id, 32, "word")}<div class="grow"><p class="rt"><a class="stretch" href="#/members/${id}" data-person="${esc(id)}">${esc(m.name)}</a><span class="sec">${esc(m.role)}</span></p>
       <div class="meta">${facts.join(SEP)}</div>${line ? `<p class="rowline">${line}</p>` : ""}</div>
       ${presPill(id)}${ic("chev-right", "ic20 chev")}</li>`;
   }).join("")}</ul>`;

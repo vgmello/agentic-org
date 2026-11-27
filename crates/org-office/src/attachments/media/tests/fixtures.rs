@@ -31,7 +31,7 @@ pub(crate) fn png(width: u32, height: u32) -> Vec<u8> {
     out
 }
 
-fn chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+pub(crate) fn chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
     let mut crc = flate2::Crc::new();
     crc.update(kind);
     crc.update(data);

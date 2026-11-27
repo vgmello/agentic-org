@@ -38,6 +38,7 @@ fn query() -> Query<'static> {
         team: None,
         after: None,
         limit: 100,
+        has: Default::default(),
     }
 }
 
@@ -86,6 +87,8 @@ fn open_items() -> InboxListParams {
         team: None,
         cursor: None,
         limit: None,
+        has_file: None,
+        has_image: None,
     }
 }
 

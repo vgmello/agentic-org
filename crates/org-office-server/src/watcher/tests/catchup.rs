@@ -71,6 +71,7 @@ fn reply_in(fx: &WatcherFixture, member: &str, root: &str, body: &str) -> String
         reply_to: Some(root.into()),
         also_in_channel: false,
         reason: None,
+        attachment_ids: Vec::new(),
     };
     call::<ChatSend>(fx, member, &params).unwrap().id
 }

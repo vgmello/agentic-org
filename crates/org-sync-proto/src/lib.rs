@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 mod authority;
+mod blob;
 mod digest;
 pub mod frame;
 mod values;
@@ -10,6 +11,10 @@ mod work_ack;
 mod work_digest;
 
 pub use authority::authority_record_preimage_v1;
+pub use blob::{
+    blob_chunk_frames, blob_digest, is_blob_digest, BlobAssembler, BlobTransferError,
+    BLOB_CHUNK_MAX_BYTES, BLOB_TRANSFER_MAX_BYTES,
+};
 pub use digest::event_digest_v1;
 pub use frame::{
     decode_sync_frame, encode_sync_frame, read_sync_frame, write_sync_frame, EnrollTerminalStatus,

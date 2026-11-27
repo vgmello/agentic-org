@@ -89,6 +89,7 @@ fn send(id: String, to: &str, reply_to: Option<String>) -> MsgSendParams {
         body: "mailbox hint state probe".into(),
         meta: Default::default(),
         reply_to,
+        attachment_ids: Vec::new(),
     }
 }
 impl Fixture {

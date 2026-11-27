@@ -207,7 +207,8 @@ impl Disposition {
 }
 
 /// The durable layout's policy for `path` (every tree under `<durable>/` is carried; these
-/// are the exceptions). Applies to folders and files alike. Each name is compared ASCII
+/// are the exceptions). A satellite's `blob-outbox/` (`TASK-98.6`) is carried on purpose: it
+/// holds the only copy of shared files HQ has not acknowledged yet. Applies to folders and files alike. Each name is compared ASCII
 /// case-insensitively: on a case-insensitive file system (macOS's default APFS)
 /// `private/User-Space.db-WAL` or `.../Enroll-Tmp` is the very file or folder the policy
 /// names, so it must get the same answer ([`Manifest`](crate::manifest::Manifest) then
