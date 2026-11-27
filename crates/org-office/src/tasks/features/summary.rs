@@ -12,7 +12,7 @@ use crate::tasks::ports::TasksRead;
 use crate::tasks::records::FinalSummaryRecord;
 use crate::time::format_rfc3339_ms;
 
-use super::attachments::stale_revision_refusal;
+use super::conflict::stale_revision_refusal;
 use super::{
     parse_uuid_v7, refuse, require_active_employee, require_local_task_write_authority,
     require_task, rewrite_task, TaskWriteAuthority,

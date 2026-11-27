@@ -41,6 +41,8 @@ struct TaskCommitReply {
     task_id: String,
     #[serde(default)]
     newly_assigned_agent: Option<String>,
+    #[serde(default)]
+    mutated_step_ids: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -165,7 +167,14 @@ fn finish_checklist<E: OfficeEngine>(
                     .iter()
                     .map(step_to_wire)
                     .collect();
-                Ok(Ok((TasksChecklistResult { task, checklist }, replayed)))
+                Ok(Ok((
+                    TasksChecklistResult {
+                        task,
+                        checklist,
+                        mutated_step_ids: committed.mutated_step_ids,
+                    },
+                    replayed,
+                )))
             })?;
             Ok(out)
         }
@@ -210,6 +219,7 @@ impl StoreOp for TaskCreateOp {
                 &TaskCommitReply {
                     task_id: created.task_id.as_str().to_owned(),
                     newly_assigned_agent: created.assigned_agent.map(|a| a.as_str().to_owned()),
+                    mutated_step_ids: Vec::new(),
                 },
             ))
         })? {
@@ -259,6 +269,7 @@ impl StoreOp for TaskUpdateOp {
                 &TaskCommitReply {
                     task_id: id.as_str().to_owned(),
                     newly_assigned_agent: None,
+                    mutated_step_ids: Vec::new(),
                 },
             ))
         })? {
@@ -297,6 +308,7 @@ impl StoreOp for TaskTransitionOp {
                 &TaskCommitReply {
                     task_id: id.as_str().to_owned(),
                     newly_assigned_agent: None,
+                    mutated_step_ids: Vec::new(),
                 },
             ))
         })? {
@@ -335,6 +347,7 @@ impl StoreOp for TaskAssignOp {
                 &TaskCommitReply {
                     task_id: id.as_str().to_owned(),
                     newly_assigned_agent: agent.map(|a| a.as_str().to_owned()),
+                    mutated_step_ids: Vec::new(),
                 },
             ))
         })? {
@@ -512,6 +525,7 @@ macro_rules! simple_task_write_op {
                         &TaskCommitReply {
                             task_id: id.as_str().to_owned(),
                             newly_assigned_agent: None,
+                            mutated_step_ids: Vec::new(),
                         },
                     ))
                 })? {
@@ -568,12 +582,13 @@ macro_rules! checklist_write_op {
                     authority: self.authority,
                 };
                 let (reply, replayed) = match submit_task(store, op, move |uow| {
-                    let (change, id) = cmd.decide(uow)?;
+                    let (change, id, mutated_step_ids) = cmd.decide(uow)?;
                     Ok(with_reply(
                         change,
                         &TaskCommitReply {
                             task_id: id.as_str().to_owned(),
                             newly_assigned_agent: None,
+                            mutated_step_ids,
                         },
                     ))
                 })? {
@@ -632,12 +647,16 @@ impl ReadOp for TaskListRead {
 
 pub struct TaskInspectRead {
     pub task: String,
+    pub fields: Option<Vec<String>>,
 }
 
 impl ReadOp for TaskInspectRead {
     type Out = Result<TaskInspectResult, ApiError>;
     fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
-        Ok(features::inspect_task(snapshot, &self.task).map_err(|r| decode_refusal(&r)))
+        Ok(
+            features::inspect_task_with_fields(snapshot, &self.task, self.fields.as_deref())
+                .map_err(|r| decode_refusal(&r)),
+        )
     }
 }
 

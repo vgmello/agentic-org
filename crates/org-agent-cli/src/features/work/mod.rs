@@ -1,6 +1,6 @@
-//! The work slice: `task` (14 verbs), `checklist` (5) and `task-note` (6, shorthand
-//! `task note`) (`TASK-49` `CLI-15`, `TASK-77` B4b), each command's row, guidance and handler in
-//! its file; the task schema the files share is in [`schema`].
+//! The work slice: `task` (14 verbs), `checklist` (6) and `task-note` (6, shorthand
+//! `task note`) (`TASK-49` `CLI-15`, `TASK-77` B4b, `TASK-90`), each command's row, guidance and
+//! handler in its file; the task schema the files share is in [`schema`].
 //!
 //! Each write declares the class the office answers it in (`doc-79`, `ADR-0014`): a create
 //! inside the office's reserved number block, a comment, a watch or unwatch and a checklist
@@ -8,6 +8,7 @@
 //! dependency) or the checklist's steps (add, edit, remove, move) is `durable`.
 
 mod checklist;
+mod checklist_schema;
 mod schema;
 mod task_note;
 mod task_read;
@@ -27,18 +28,18 @@ pub(crate) const DOMAIN: Domain = Domain {
     commands: &[
         task_write::COMMANDS,
         task_read::COMMANDS,
-        checklist::COMMANDS,
+        checklist_schema::COMMANDS,
         task_note::COMMANDS,
     ],
     resources: &[
-        ("checklist", "adding, checking, editing, removing, or reordering steps on a task's checklist."),
+        ("checklist", "listing, adding, checking, editing, removing, or moving steps on a task's checklist."),
         ("task", "creating, filtering, inspecting, updating, transitioning, assigning, commenting on, or linking task dependencies."),
         ("task-note", "recording private working notes on a task or publishing a copy as a shared comment (alias: `task note`)."),
     ],
     cues: &[
         task_write::CUES,
         task_read::CUES,
-        checklist::CUES,
+        checklist_schema::CUES,
         task_note::CUES,
     ],
     dispatch,
@@ -103,9 +104,18 @@ fn task_to_row(t: &TaskView) -> Value {
     m.insert("id".into(), json!(t.id));
     m.insert("key".into(), json!(t.key));
     m.insert("type".into(), json!(t.task_type));
+    if let Some(v) = t.work_type {
+        m.insert("work_type".into(), json!(v));
+    }
     m.insert("title".into(), json!(t.title));
     m.insert("status".into(), json!(t.status));
     m.insert("priority".into(), json!(t.priority));
+    if let Some(v) = t.effort {
+        m.insert("effort".into(), json!(v));
+    }
+    if let Some(ref v) = t.severity {
+        m.insert("severity".into(), json!(v));
+    }
     m.insert("team_id".into(), json!(t.team_id));
     if let Some(ref v) = t.assigned_team_id {
         m.insert("assigned_team_id".into(), json!(v));

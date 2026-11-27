@@ -119,6 +119,7 @@ pub mod web;
 
 mod call;
 mod calls;
+mod conflict;
 mod error;
 mod events;
 mod name;
@@ -136,7 +137,10 @@ pub use calls::{
     OrganizationList, Subscribe, SubscribeParams,
 };
 pub use directory::ManagedHome;
-pub use error::{ApiError, CallError, ConflictDetail, ErrorCode, ErrorHint};
+pub use error::{
+    ApiError, CallError, ConflictDetail, ConflictEvent, ConflictSummary, ErrorCode, ErrorHint,
+    CONFLICT_MAX_EVENTS, CONFLICT_MAX_EVENTS_BYTES,
+};
 pub use events::{EventKind, OfficeStatusChanged, OfficeStatusChangedData, OrganizationCreated};
 pub use name::{NameError, OrganizationName};
 pub use operation::{OperationGet, OperationGetParams, OperationKind, OperationOutcome};

@@ -178,6 +178,7 @@ fn world(engine: EngineChoice) -> World {
             section: None,
             text: "Verify narwhal latency".into(),
             required: Some(true),
+            steps: vec![],
         },
     ));
     ok(office.process_write(

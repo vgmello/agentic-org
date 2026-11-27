@@ -112,7 +112,8 @@ pub(crate) fn parse(
             .option("fields")
             .map(|text| shape::field_paths(command, text))
             .transpose()?;
-        let request = build(command, &scanned, sources)?;
+        let roots = field_roots(fields.as_deref());
+        let request = build(command, &scanned, sources, roots)?;
         Ok(Parsed::Call(Box::new(Invocation {
             request,
             format,
@@ -456,10 +457,25 @@ fn too_long(source: &str, limit: usize) -> Problem {
     }
 }
 
+/// Deduplicated top-level field roots extracted from parsed `--fields` paths (`TASK-90`).
+fn field_roots(paths: Option<&[FieldPath]>) -> Option<Vec<String>> {
+    let paths = paths?;
+    let mut roots = Vec::with_capacity(paths.len());
+    for path in paths {
+        if let Some(root) = path.first() {
+            if !roots.contains(root) {
+                roots.push(root.clone());
+            }
+        }
+    }
+    Some(roots)
+}
+
 fn build(
     command: &'static Command,
     scanned: &Scanned,
     sources: &mut dyn Sources,
+    fields: Option<Vec<String>>,
 ) -> Result<Request, Problem> {
     let mut input = Map::new();
     for (field, written) in &scanned.fields {
@@ -586,5 +602,6 @@ fn build(
         idempotency_key,
         if_match,
         durable: scanned.options.contains_key("durable"),
+        fields,
     })
 }

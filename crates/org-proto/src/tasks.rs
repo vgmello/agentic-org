@@ -10,12 +10,12 @@ mod dod;
 mod records;
 
 pub use calls::{
-    TasksAddDependency, TasksAddDependencyParams, TasksAssign, TasksAssignParams,
-    TasksChecklistAdd, TasksChecklistAddParams, TasksChecklistCheck, TasksChecklistCheckParams,
-    TasksChecklistEdit, TasksChecklistEditParams, TasksChecklistMove, TasksChecklistMoveParams,
-    TasksChecklistRemove, TasksChecklistRemoveParams, TasksChecklistResult, TasksComment,
-    TasksCommentParams, TasksCommentResult, TasksComments, TasksCommentsParams,
-    TasksCommentsResult, TasksCreate, TasksCreateParams, TasksDependencies,
+    ChecklistAddItem, TaskInspectSelection, TasksAddDependency, TasksAddDependencyParams,
+    TasksAssign, TasksAssignParams, TasksChecklistAdd, TasksChecklistAddParams,
+    TasksChecklistCheck, TasksChecklistCheckParams, TasksChecklistEdit, TasksChecklistEditParams,
+    TasksChecklistMove, TasksChecklistMoveParams, TasksChecklistRemove, TasksChecklistRemoveParams,
+    TasksChecklistResult, TasksComment, TasksCommentParams, TasksCommentResult, TasksComments,
+    TasksCommentsParams, TasksCommentsResult, TasksCreate, TasksCreateParams, TasksDependencies,
     TasksDependenciesParams, TasksFinalSummary, TasksFinalSummaryParams, TasksHistory,
     TasksHistoryParams, TasksHistoryResult, TasksInspect, TasksInspectParams, TasksLabels,
     TasksLabelsParams, TasksLabelsResult, TasksList, TasksListParams, TasksListResult,

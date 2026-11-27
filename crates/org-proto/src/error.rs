@@ -138,16 +138,88 @@ impl ErrorHint {
     }
 }
 
-/// Structured optimistic-concurrency detail returned with [`ErrorCode::Conflict`] when a task
-/// update's `expected_revision` is stale (`TASK-98.4`).
+/// Maximum number of intervening events carried inline in [`ConflictDetail::events_since`]
+/// (`TASK-90`).
+pub const CONFLICT_MAX_EVENTS: usize = 20;
+
+/// Maximum serialized UTF-8 JSON byte budget for [`ConflictDetail::events_since`] (`TASK-90`,
+/// 8 KiB).
+pub const CONFLICT_MAX_EVENTS_BYTES: usize = 8 * 1024;
+
+/// Compact summary of one intervening event in [`ConflictDetail::events_since`] (`TASK-90`).
+/// Never carries full `body_markdown`, comment bodies, or private task notes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictEvent {
+    pub revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurred_at: Option<String>,
+    pub actor_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_id: Option<String>,
+    /// Compact structured delta (event `type`, changed fields/values, step info, etc.).
+    pub change: serde_json::Value,
+}
+
+/// Compact current state snapshot carried on [`ConflictDetail::current_summary`] (`TASK-90`).
+/// Never inlines `body_markdown`, comment bodies, or private task notes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictSummary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    pub title: String,
+    pub status: String,
+    pub priority: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_team_id: Option<String>,
+    pub checklist_total: u64,
+    pub checklist_done: u64,
+    #[serde(default)]
+    pub ac_total: u64,
+    #[serde(default)]
+    pub ac_done: u64,
+    #[serde(default)]
+    pub dod_total: u64,
+    #[serde(default)]
+    pub dod_done: u64,
+    #[serde(default)]
+    pub work_steps_total: u64,
+    #[serde(default)]
+    pub work_steps_done: u64,
+    #[serde(default)]
+    pub comment_count: u64,
+    #[serde(default)]
+    pub watcher_count: u64,
+}
+
+/// Structured optimistic-concurrency detail returned with [`ErrorCode::Conflict`] when an
+/// `expected_revision` / `--if-match` is stale (`TASK-98.4`, `TASK-90`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConflictDetail {
     pub expected_revision: u64,
     pub current_revision: u64,
     /// Sorted section names modified after `expected_revision` (e.g. `"title"`, `"attachments"`,
-    /// `"comments"`).
+    /// `"checklist"`, `"comments"`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub changed_sections: Vec<String>,
+    /// Bounded intervening events (`revision > expected_revision`), strictly capped at
+    /// `<= CONFLICT_MAX_EVENTS` and `<= CONFLICT_MAX_EVENTS_BYTES` serialized JSON.
+    #[serde(default)]
+    pub events_since: Vec<ConflictEvent>,
+    /// True when one or more intervening events were omitted to stay within the cap.
+    #[serde(default)]
+    pub events_truncated: bool,
+    /// Count of intervening events omitted from `events_since`.
+    #[serde(default)]
+    pub omitted_events: u64,
+    /// True when the caller should re-inspect the record before retrying (e.g., events were
+    /// truncated, body/comments changed, or `expected_revision > current_revision`).
+    #[serde(default)]
+    pub reread_recommended: bool,
+    /// Compact current-state summary (never inlines `body_markdown`, comments, or private notes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_summary: Option<ConflictSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -378,6 +450,34 @@ mod tests {
                 expected_revision: 1,
                 current_revision: 3,
                 changed_sections: vec!["attachments".into(), "title".into()],
+                events_since: vec![ConflictEvent {
+                    revision: 2,
+                    occurred_at: Some("2026-11-27T00:00:00.000Z".into()),
+                    actor_kind: "employee".into(),
+                    actor_id: Some("0193a5c0-0000-7000-8000-000000000020".into()),
+                    change: serde_json::json!({"type": "task_updated", "fields": ["title"]}),
+                }],
+                events_truncated: false,
+                omitted_events: 0,
+                reread_recommended: false,
+                current_summary: Some(ConflictSummary {
+                    key: Some("T-A1".into()),
+                    title: "Updated title".into(),
+                    status: "in_progress".into(),
+                    priority: "high".into(),
+                    assignee_id: None,
+                    assigned_team_id: None,
+                    checklist_total: 2,
+                    checklist_done: 1,
+                    ac_total: 1,
+                    ac_done: 1,
+                    dod_total: 1,
+                    dod_done: 0,
+                    work_steps_total: 0,
+                    work_steps_done: 0,
+                    comment_count: 0,
+                    watcher_count: 1,
+                }),
             },
         );
         let wire = serde_json::to_value(&err).unwrap();
@@ -388,6 +488,32 @@ mod tests {
             wire["conflict"]["changed_sections"],
             serde_json::json!(["attachments", "title"])
         );
+        assert_eq!(
+            wire["conflict"]["events_since"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(wire["conflict"]["events_truncated"], false);
+        assert_eq!(wire["conflict"]["omitted_events"], 0);
+        assert_eq!(wire["conflict"]["reread_recommended"], false);
+        assert_eq!(wire["conflict"]["current_summary"]["key"], "T-A1");
         assert_eq!(serde_json::from_value::<ApiError>(wire).unwrap(), err);
+
+        // Minimal legacy ConflictDetail JSON still decodes cleanly with defaults.
+        let minimal = serde_json::json!({
+            "code": "conflict",
+            "message": "stale",
+            "conflict": {
+                "expected_revision": 1,
+                "current_revision": 2,
+                "changed_sections": ["title"]
+            }
+        });
+        let decoded: ApiError = serde_json::from_value(minimal).unwrap();
+        let detail = decoded.conflict_detail().expect("decoded detail");
+        assert_eq!(detail.events_since, vec![]);
+        assert!(!detail.events_truncated);
+        assert_eq!(detail.omitted_events, 0);
+        assert!(!detail.reread_recommended);
+        assert_eq!(detail.current_summary, None);
     }
 }

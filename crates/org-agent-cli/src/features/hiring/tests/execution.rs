@@ -52,6 +52,7 @@ fn agent_execution_get_and_set_dispatch_expected_rpc_payloads() {
         idempotency_key: None,
         if_match: None,
         durable: false,
+        fields: None,
     };
     let ans = dispatch(&mut get_tx, &get_req).unwrap().unwrap();
     assert_eq!(
@@ -88,6 +89,7 @@ fn agent_execution_get_and_set_dispatch_expected_rpc_payloads() {
         idempotency_key: Some("0193a5c0-0000-7000-8000-000000000099".into()),
         if_match: Some(2),
         durable: false,
+        fields: None,
     };
     let _ = dispatch(&mut set_tx, &set_req).unwrap().unwrap();
     assert_eq!(

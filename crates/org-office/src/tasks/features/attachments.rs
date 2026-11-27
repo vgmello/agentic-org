@@ -1,14 +1,12 @@
-//! Task and comment attachment preparation, optimistic-concurrency conflict detail, and
-//! direct task-attachment binding (`TASK-98.4`, ADR-0037).
-
-use std::collections::BTreeSet;
+//! Task and comment attachment preparation and direct task-attachment binding
+//! (`TASK-98.4`, ADR-0037).
 
 use org_proto::attachments::{
     ArtifactStatus, AttachmentTargetKind, AttachmentView, TASK_ATTACHMENTS_MAX,
 };
-use org_proto::{ApiError, ConflictDetail, ErrorCode};
+use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, Refusal, UnitOfWork};
-use serde_json::{json, Value};
+use serde_json::json;
 
 use crate::attachments::blobs::ContentHash;
 use crate::attachments::ports::AttachmentsRead;
@@ -19,7 +17,6 @@ use crate::tasks::ops::{
     task_location, TaskWriteAuthority, Writer,
 };
 use crate::tasks::ports::TasksRead;
-use crate::tasks::records::TaskRecord;
 use crate::time::format_rfc3339_ms;
 
 use super::{refuse, require_active_employee, require_task, storage_refusal};
@@ -101,81 +98,6 @@ impl PreparedTaskFiles {
             });
         }
         Ok(records)
-    }
-}
-
-/// Builds a structured `Conflict` refusal carrying `expected_revision`, `current_revision`, and
-/// the sorted list of sections changed in task history after `expected_revision` (`TASK-98.4`).
-pub(crate) fn stale_revision_refusal<R: TasksRead>(
-    view: &R,
-    task: &TaskRecord,
-    expected_revision: u64,
-) -> Refusal {
-    let mut sections = BTreeSet::new();
-    if let Ok(events) = view.task_events(&task.id) {
-        for event in events.iter().filter(|ev| ev.revision > expected_revision) {
-            if let Ok(change) = serde_json::from_str::<Value>(&event.change_json) {
-                collect_changed_sections(&change, &mut sections);
-            }
-        }
-    }
-    let detail = ConflictDetail {
-        expected_revision,
-        current_revision: task.meta.revision,
-        changed_sections: sections.into_iter().collect(),
-    };
-    let payload = ApiError::conflict(
-        format!(
-            "stale expected_revision {expected_revision}: task is at revision {}",
-            task.meta.revision
-        ),
-        detail,
-    );
-    Refusal::rejected(serde_json::to_vec(&payload).expect("ApiError serializes"))
-}
-
-fn collect_changed_sections(change: &Value, sections: &mut BTreeSet<String>) {
-    let Some(kind) = change.get("type").and_then(Value::as_str) else {
-        return;
-    };
-    match kind {
-        "task_updated" => {
-            if let Some(fields) = change.get("fields").and_then(Value::as_array) {
-                for field in fields.iter().filter_map(Value::as_str) {
-                    let mapped = match field {
-                        "body_markdown" => "body",
-                        other => other,
-                    };
-                    sections.insert(mapped.to_owned());
-                }
-            } else {
-                sections.insert("details".to_owned());
-            }
-        }
-        "status_changed" => {
-            sections.insert("status".to_owned());
-        }
-        "assignment_changed" => {
-            sections.insert("assignment".to_owned());
-        }
-        "final_summary_set" | "final_summary_updated" => {
-            sections.insert("final_summary".to_owned());
-        }
-        "comment_added" => {
-            sections.insert("comments".to_owned());
-        }
-        "watcher_added" | "watcher_removed" => {
-            sections.insert("watchers".to_owned());
-        }
-        "dependency_added" | "dependency_removed" => {
-            sections.insert("dependencies".to_owned());
-        }
-        k if k.starts_with("checklist_") => {
-            sections.insert("checklist".to_owned());
-        }
-        other => {
-            sections.insert(other.to_owned());
-        }
     }
 }
 

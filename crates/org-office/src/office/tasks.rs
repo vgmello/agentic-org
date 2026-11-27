@@ -352,10 +352,20 @@ impl Office {
         &self,
         task: &str,
     ) -> Result<Result<TaskInspectResult, ApiError>, OfficeError> {
+        self.task_inspect_with_fields(task, None)
+    }
+
+    /// Inspects one task with optional server-side `--fields` pruning (`TASK-90`).
+    pub fn task_inspect_with_fields(
+        &self,
+        task: &str,
+        fields: Option<Vec<String>>,
+    ) -> Result<Result<TaskInspectResult, ApiError>, OfficeError> {
         let (res, _) = self
             .store
             .read(TaskInspectRead {
                 task: task.to_owned(),
+                fields,
             })
             .map_err(storage)?;
         Ok(res)

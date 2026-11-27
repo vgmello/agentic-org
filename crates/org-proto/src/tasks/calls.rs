@@ -162,6 +162,90 @@ pub struct TasksInspect;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TasksInspectParams {
     pub task: String,
+    /// Optional top-level field/section allowlist for server-side pruning (`TASK-90`).
+    /// When `None`, every section is fetched and returned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Vec<String>>,
+}
+
+impl TasksInspectParams {
+    pub fn new(task: impl Into<String>) -> Self {
+        Self {
+            task: task.into(),
+            fields: None,
+        }
+    }
+}
+
+/// Which optional sections `tasks.inspect` should fetch and include on the wire (`TASK-90`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskInspectSelection {
+    pub body: bool,
+    pub checklist: bool,
+    pub comments: bool,
+    pub attachments: bool,
+    pub watchers: bool,
+    pub depends_on: bool,
+    pub dependents: bool,
+    pub history: bool,
+}
+
+impl TaskInspectSelection {
+    pub const ALL: Self = Self {
+        body: true,
+        checklist: true,
+        comments: true,
+        attachments: true,
+        watchers: true,
+        depends_on: true,
+        dependents: true,
+        history: true,
+    };
+
+    pub const NONE: Self = Self {
+        body: false,
+        checklist: false,
+        comments: false,
+        attachments: false,
+        watchers: false,
+        depends_on: false,
+        dependents: false,
+        history: false,
+    };
+
+    pub fn from_fields(fields: Option<&[String]>) -> Self {
+        let Some(fields) = fields else {
+            return Self::ALL;
+        };
+        let mut sel = Self::NONE;
+        for raw in fields {
+            sel.apply_field(raw.trim());
+        }
+        sel
+    }
+
+    fn apply_field(&mut self, trimmed: &str) {
+        if matches!(trimmed, "body" | "body_markdown" | "task.body_markdown") {
+            self.body = true;
+            return;
+        }
+        let root = trimmed.split('.').next().unwrap_or(trimmed);
+        match root {
+            "body" | "body_markdown" => self.body = true,
+            "checklist" => self.checklist = true,
+            "comments" => self.comments = true,
+            "attachments" => self.attachments = true,
+            "watchers" => self.watchers = true,
+            "dependencies" => {
+                self.depends_on = true;
+                self.dependents = true;
+            }
+            "depends_on_tasks" => self.depends_on = true,
+            "dependent_tasks" => self.dependents = true,
+            "history" => self.history = true,
+            _ => {}
+        }
+    }
 }
 
 impl Call for TasksInspect {
@@ -183,6 +267,10 @@ pub struct TasksUpdateParams {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_markdown: Option<String>,
+    /// Markdown fragment to append to the task body (mutually exclusive with `body_markdown`,
+    /// `TASK-90`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub append_body: Option<String>,
     #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
     pub task_type: Option<String>,
     #[serde(default, skip_serializing_if = "PatchField::is_unchanged")]
@@ -469,15 +557,9 @@ impl Call for TasksLabels {
     type Result = TasksLabelsResult;
 }
 
-/// `tasks.checklist.add`: append a step to the end of one section of a task's checklist
-/// (`work` when absent). `required` defaults to `true` for `acceptance` and `dod` and to
-/// `false` for `work` (`TASK-88`).
-pub struct TasksChecklistAdd;
-
+/// One checklist step entry for batch `tasks.checklist.add` (`TASK-90`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TasksChecklistAddParams {
-    pub command_id: String,
-    pub task: String,
+pub struct ChecklistAddItem {
     pub step_id: String,
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -486,10 +568,36 @@ pub struct TasksChecklistAddParams {
     pub section: Option<ChecklistSection>,
 }
 
+/// `tasks.checklist.add`: append one or more steps to a task's checklist (`work` when absent).
+/// `required` defaults to `true` for `acceptance` and `dod` and to `false` for `work`
+/// (`TASK-88`, `TASK-90`).
+pub struct TasksChecklistAdd;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TasksChecklistAddParams {
+    pub command_id: String,
+    pub task: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub step_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<ChecklistSection>,
+    /// Optional batch of steps to add atomically in one revision (`TASK-90`).
+    /// Mutually exclusive with single-step `step_id`/`text`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<ChecklistAddItem>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TasksChecklistResult {
     pub task: TaskView,
     pub checklist: Vec<ChecklistStepWire>,
+    /// Canonical UUIDv7 IDs of the step(s) created or mutated by this call (`TASK-90`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mutated_step_ids: Vec<String>,
 }
 
 impl Call for TasksChecklistAdd {
@@ -498,15 +606,29 @@ impl Call for TasksChecklistAdd {
     type Result = TasksChecklistResult;
 }
 
-/// `tasks.checklist.check`: mark a checklist step done or undone.
+/// `tasks.checklist.check`: mark one or more checklist steps done or undone, addressed by
+/// UUIDv7 `step_id` or by 1-based `(section, indices)` with mandatory `expected_revision`
+/// (`TASK-90`).
 pub struct TasksChecklistCheck;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TasksChecklistCheckParams {
     pub command_id: String,
     pub task: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub step_id: String,
     pub done: bool,
+    /// Section for 1-based ordinal addressing (`TASK-90`, paired with `indices` and
+    /// `expected_revision`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<ChecklistSection>,
+    /// 1-based ordinal index(es) within `section` (requires `expected_revision`, `TASK-90`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub indices: Vec<u64>,
+    /// Optimistic-concurrency guard; mandatory when addressing by `(section, indices)` and
+    /// enforced whenever supplied (`TASK-90`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
 }
 
 impl Call for TasksChecklistCheck {
@@ -515,18 +637,30 @@ impl Call for TasksChecklistCheck {
     type Result = TasksChecklistResult;
 }
 
-/// `tasks.checklist.edit`: update a checklist step's text and/or required flag.
+/// `tasks.checklist.edit`: update a checklist step's text and/or required flag, addressed by
+/// UUIDv7 `step_id` or by 1-based `(section, index)` with mandatory `expected_revision`
+/// (`TASK-90`).
 pub struct TasksChecklistEdit;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TasksChecklistEditParams {
     pub command_id: String,
     pub task: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub step_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required: Option<bool>,
+    /// Section for 1-based ordinal addressing (`TASK-90`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<ChecklistSection>,
+    /// 1-based ordinal index within `section` (requires `expected_revision`, `TASK-90`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<u64>,
+    /// Optimistic-concurrency guard; mandatory when addressing by `(section, index)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
 }
 
 impl Call for TasksChecklistEdit {
@@ -535,14 +669,25 @@ impl Call for TasksChecklistEdit {
     type Result = TasksChecklistResult;
 }
 
-/// `tasks.checklist.remove`: remove a checklist step from a task.
+/// `tasks.checklist.remove`: remove a checklist step from a task, addressed by UUIDv7 `step_id`
+/// or by 1-based `(section, index)` with mandatory `expected_revision` (`TASK-90`).
 pub struct TasksChecklistRemove;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TasksChecklistRemoveParams {
     pub command_id: String,
     pub task: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub step_id: String,
+    /// Section for 1-based ordinal addressing (`TASK-90`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<ChecklistSection>,
+    /// 1-based ordinal index within `section` (requires `expected_revision`, `TASK-90`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<u64>,
+    /// Optimistic-concurrency guard; mandatory when addressing by `(section, index)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
 }
 
 impl Call for TasksChecklistRemove {
@@ -551,18 +696,31 @@ impl Call for TasksChecklistRemove {
     type Result = TasksChecklistResult;
 }
 
-/// `tasks.checklist.move`: move a checklist step to a zero-based `position` within `section`
-/// (its own section when absent; `TASK-88`). Positions stay contiguous in every section.
+/// `tasks.checklist.move`: move a checklist step to a zero-based `position` within destination
+/// `section` (its own section when absent; `TASK-88`). Addressed by UUIDv7 `step_id` or by
+/// 1-based `(from_section, index)` with mandatory `expected_revision` (`TASK-90`).
 pub struct TasksChecklistMove;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TasksChecklistMoveParams {
     pub command_id: String,
     pub task: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub step_id: String,
     pub position: u64,
+    /// Destination checklist section (stays in its current section when absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section: Option<ChecklistSection>,
+    /// Source section for 1-based ordinal addressing (`TASK-90`, paired with `index` and
+    /// `expected_revision`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_section: Option<ChecklistSection>,
+    /// 1-based ordinal index within `from_section` (requires `expected_revision`, `TASK-90`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<u64>,
+    /// Optimistic-concurrency guard; mandatory when addressing by `(from_section, index)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
 }
 
 impl Call for TasksChecklistMove {

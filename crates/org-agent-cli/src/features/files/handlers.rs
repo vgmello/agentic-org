@@ -189,6 +189,7 @@ fn resolve_task_id<T: OfficeTransport + ?Sized>(
         TasksInspect::METHOD,
         json!(TasksInspectParams {
             task: trimmed.to_owned(),
+            fields: None,
         }),
     )?;
     let res: TaskInspectResult =

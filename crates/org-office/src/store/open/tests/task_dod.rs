@@ -196,6 +196,7 @@ impl Org {
             .store
             .read(TaskInspectRead {
                 task: task.to_owned(),
+                fields: None,
             })
             .unwrap();
         out.expect("inspected")
@@ -265,6 +266,7 @@ impl Org {
                     text: text.to_owned(),
                     required,
                     section,
+                    steps: vec![],
                 },
                 authority: TaskWriteAuthority::Unrestricted,
             })
@@ -281,6 +283,9 @@ impl Org {
                     command_id: uuid(),
                     task: task.to_owned(),
                     step_id: step.to_owned(),
+                    section: None,
+                    indices: vec![],
+                    expected_revision: None,
                     done: true,
                 },
                 authority: TaskWriteAuthority::Unrestricted,
@@ -297,6 +302,9 @@ impl Org {
                     command_id: uuid(),
                     task: task.to_owned(),
                     step_id: step.to_owned(),
+                    from_section: None,
+                    index: None,
+                    expected_revision: None,
                     position,
                     section,
                 },
@@ -462,6 +470,9 @@ fn sections(s: &Org, task: &str) {
                 command_id: uuid(),
                 task: task.to_owned(),
                 step_id: ac2,
+                section: None,
+                index: None,
+                expected_revision: None,
             },
             authority: TaskWriteAuthority::Unrestricted,
         })
