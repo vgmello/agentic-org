@@ -70,6 +70,8 @@ mod warm;
 
 pub(crate) use environment::task_process_context;
 #[cfg(test)]
+pub(crate) use environment::SessionEnvInput;
+#[cfg(test)]
 pub(crate) use failover::{failover_route_opts, requeue_contended_failover, run_failover_relaunch};
 pub use hibernation::{
     OfficeRssSnapshot, OsMemorySampler, ProcessMemorySampler, ResourceLimitsConfig, SessionRssEntry,
@@ -82,7 +84,9 @@ pub(crate) use lifecycle_ops::{take_clearable_live_handle, ClearableHandle};
 pub(crate) use operator_home::clean_operator_rules;
 pub(crate) use reap::{reap_live_handle, ReapMode};
 #[cfg(test)]
-pub(crate) use rust_toolchain::host_rust_dir_env_from;
+pub(crate) use rust_toolchain::{
+    append_rust_toolchain_env, host_rust_dir_env_from, RustToolchainEnvInput,
+};
 #[cfg(test)]
 pub(crate) use sandbox_runner::{
     enforce_bwrap_sibling_isolation_for_test as enforce_bwrap_sibling_isolation,

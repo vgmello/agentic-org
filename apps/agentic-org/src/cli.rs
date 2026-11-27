@@ -7,7 +7,7 @@ use org_cli_shell::context::{ColorMode, Modes};
 
 use crate::args::{FormatArg, PassArgs};
 use crate::features::{admin, backup, completion, context, diagnostics, office, org, project};
-use crate::features::{provider, release, service, sign_in, status};
+use crate::features::{provider, release, repo, service, sign_in, status};
 
 const ABOUT: &str = "Agentic Org\n\
 Use when: operating a computer's Agentic Org host, organizations, offices, or signed-in \
@@ -210,8 +210,8 @@ pub(crate) enum TopCommand {
     /// Use when: reviewing or changing who belongs to the organization.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Member(PassArgs),
-    /// Manage repositories, fetch origin branches and push task branches (repo register|list|attach|status|fetch|push)
-    /// Use when: registering/attaching Git repos, checking office cache status, fetching newly pushed origin branches, or pushing branches.
+    /// Manage repositories, scoped vault credentials, fetch origin branches and push task branches (repo register|list|attach|status|fetch|push|set-credential|credential-status|revoke-credential)
+    /// Use when: registering/attaching Git repos, storing per-repo office vault HTTPS tokens, checking office cache status, fetching newly pushed origin branches, or pushing branches.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Repo(PassArgs),
     /// List or prepare isolated task worktrees (worktree list|prepare)
@@ -336,6 +336,11 @@ impl TopCommand {
             Self::Provider(args) => args.reads_a_secret(),
             Self::Backup(args) => args.reads_a_secret(),
             Self::Restore(args) => args.reads_a_secret(),
+            Self::Repo(pass) => repo::reads_a_secret(&pass.args),
+            Self::SignIn(args) => {
+                args.command().first().map(String::as_str) == Some("repo")
+                    && repo::reads_a_secret(&args.command()[1..])
+            }
             _ => false,
         }
     }

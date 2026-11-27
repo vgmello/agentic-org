@@ -202,14 +202,18 @@ pub(super) fn git_rpc(request: &Request, shared: &Shared, binding: &Binding) -> 
             ApiError::new(ErrorCode::NotBound, "connection is not bound"),
         ));
     };
-    if (request.is::<org_proto::git::RepoRegister>() || request.is::<org_proto::git::RepoAttach>())
+    if (request.is::<org_proto::git::RepoRegister>()
+        || request.is::<org_proto::git::RepoAttach>()
+        || request.is::<org_proto::git::RepoCredentialSet>()
+        || request.is::<org_proto::git::RepoCredentialStatus>()
+        || request.is::<org_proto::git::RepoCredentialRevoke>())
         && !binding.via_grant()
     {
         return Some(Response::error(
             request.id,
             ApiError::new(
                 ErrorCode::NotAuthorized,
-                "repository registration and project attachment require a verified owner grant",
+                "repository registration, attachment, and credential management require a verified owner grant",
             ),
         ));
     }

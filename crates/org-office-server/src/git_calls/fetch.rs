@@ -21,7 +21,10 @@ use org_proto::{ApiError, ErrorCode};
 
 use super::cache::{fetch_recording_state, FetchOutcome};
 use super::credentials::resolve_remote_spec;
-use super::redaction::{map_git_error, map_office_error, scrub_git_log_text};
+use super::redaction::{
+    is_https_auth_failure, map_git_error, map_office_error, map_remote_git_error,
+    scrub_git_log_text,
+};
 use super::GitService;
 
 /// Least time between the end of one origin fetch of a repository and the start of the next.
@@ -133,14 +136,28 @@ impl GitService {
         let outcome = self
             .locks
             .with_lock(&bare_path, || {
-                Ok(fetch_recording_state(self, &repo, &bare_path, || {
-                    refresh_cache(&runner, &bare_path, &remote, false)
-                }))
+                Ok(fetch_recording_state(
+                    self,
+                    &repo,
+                    &bare_path,
+                    Some(&remote),
+                    || refresh_cache(&runner, &bare_path, &remote, false),
+                ))
             })
             .map_err(map_git_error)??;
+        let repo_ref = repo.key.as_deref().unwrap_or(repo.id.as_str());
         let refresh = match outcome {
             FetchOutcome::Fetched(refresh) => refresh,
             FetchOutcome::OfflineKept(detail) => {
+                if remote.protocol == org_git::AllowedProtocol::Https
+                    && is_https_auth_failure(&detail)
+                {
+                    return Err(map_remote_git_error(
+                        GitError::RemoteUnavailable(detail),
+                        &remote,
+                        repo_ref,
+                    ));
+                }
                 eprintln!(
                     "agentic-org-office: repo.fetch kept the cache of {}: {}",
                     repo.id,
@@ -148,7 +165,16 @@ impl GitService {
                 );
                 return Err(ApiError::new(ErrorCode::Unavailable, OFFLINE_KEPT));
             }
-            FetchOutcome::Failed(GitError::RemoteUnavailable(_)) => {
+            FetchOutcome::Failed(GitError::RemoteUnavailable(detail)) => {
+                if remote.protocol == org_git::AllowedProtocol::Https
+                    && is_https_auth_failure(&detail)
+                {
+                    return Err(map_remote_git_error(
+                        GitError::RemoteUnavailable(detail),
+                        &remote,
+                        repo_ref,
+                    ));
+                }
                 return Err(ApiError::new(ErrorCode::Unavailable, OFFLINE_UNPREPARED));
             }
             FetchOutcome::Failed(err) => return Err(map_git_error(err)),

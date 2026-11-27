@@ -3,6 +3,7 @@
 //! and office Git push (`TASK-51`, `TASK-173`, `C7`, `doc-35`, `FC-103`, `FC-139`, `FC-140`).
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 use crate::Call;
 
@@ -246,6 +247,70 @@ pub struct GitPushResult {
     pub commit: String,
 }
 
+/// Non-secret status view of an office's scoped Git credential for one repository (`TASK-135`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoCredentialView {
+    pub office_id: String,
+    pub repository_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_key: Option<String>,
+    pub configured: bool,
+    /// Credential source (`"vault"`, `"host_helper"`, `"host_ssh"`, or `None`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Canonical repository URL scope the credential is bound to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_url: Option<String>,
+    /// Non-secret HTTP username (e.g. `"x-access-token"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+/// `repo.credential_set` params: owner stores an encrypted per-repository scoped HTTPS token in
+/// this office's local credential vault (outside `durable/`, `runtime/`, and every agent home).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoCredentialSetParams {
+    /// Repository UUIDv7 or key.
+    pub repository: String,
+    /// Optional HTTP username (defaults to `"x-access-token"` when omitted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// Scoped repository HTTPS personal access token or fine-grained token. Zeroized on drop.
+    pub token: String,
+}
+
+impl Drop for RepoCredentialSetParams {
+    fn drop(&mut self) {
+        self.token.zeroize();
+    }
+}
+
+impl std::fmt::Debug for RepoCredentialSetParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RepoCredentialSetParams")
+            .field("repository", &self.repository)
+            .field("username", &self.username)
+            .field("token", &"<redacted>")
+            .finish()
+    }
+}
+
+/// `repo.credential_status` params: inspect non-secret repository credential configuration on this office.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoCredentialStatusParams {
+    /// Repository UUIDv7 or key.
+    pub repository: String,
+}
+
+/// `repo.credential_revoke` params: remove a per-repository scoped HTTPS token from this office's vault.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoCredentialRevokeParams {
+    /// Repository UUIDv7 or key.
+    pub repository: String,
+}
+
 pub struct RepoRegister;
 impl Call for RepoRegister {
     const METHOD: &'static str = "repo.register";
@@ -300,4 +365,25 @@ impl Call for GitPush {
     const METHOD: &'static str = "git.push";
     type Params = GitPushParams;
     type Result = GitPushResult;
+}
+
+pub struct RepoCredentialSet;
+impl Call for RepoCredentialSet {
+    const METHOD: &'static str = "repo.credential_set";
+    type Params = RepoCredentialSetParams;
+    type Result = RepoCredentialView;
+}
+
+pub struct RepoCredentialStatus;
+impl Call for RepoCredentialStatus {
+    const METHOD: &'static str = "repo.credential_status";
+    type Params = RepoCredentialStatusParams;
+    type Result = RepoCredentialView;
+}
+
+pub struct RepoCredentialRevoke;
+impl Call for RepoCredentialRevoke {
+    const METHOD: &'static str = "repo.credential_revoke";
+    type Params = RepoCredentialRevokeParams;
+    type Result = RepoCredentialView;
 }

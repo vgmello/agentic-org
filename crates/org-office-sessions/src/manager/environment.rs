@@ -17,7 +17,7 @@ use crate::instructions::{
 use crate::preset::PresetConfig;
 use crate::runtime_registry::RuntimeRegistry;
 
-use super::rust_toolchain::append_rust_toolchain_env;
+use super::rust_toolchain::{append_rust_toolchain_env, RustToolchainEnvInput};
 use super::SessionManager;
 
 /// Bytes the organization's processes and standards may take in one prompt (`doc-34` §3.2).
@@ -41,19 +41,22 @@ impl SessionManager {
         Ok((PermissionPreset::effective_for(builtin_key, stored), true))
     }
 
-    pub(super) fn prepare_run_dirs(
+    pub(super) fn agent_base_dir(&self, employee_id: &str) -> PathBuf {
+        self.office
+            .durable_root()
+            .join("local")
+            .join("offices")
+            .join(&self.office.info().office_id)
+            .join("agents")
+            .join(employee_id)
+    }
+
+    pub(crate) fn prepare_run_dirs(
         &self,
         employee_id: &str,
     ) -> Result<(PathBuf, PathBuf), ApiError> {
         let office_id = &self.office.info().office_id;
-        let base = self
-            .office
-            .durable_root()
-            .join("local")
-            .join("offices")
-            .join(office_id)
-            .join("agents")
-            .join(employee_id);
+        let base = self.agent_base_dir(employee_id);
         let runtime_dir = base.join("runtime");
         let tmpdir = crate::host_auth::resolve_agent_tmpdir(
             &self.config.office_socket,
@@ -62,7 +65,7 @@ impl SessionManager {
             employee_id,
         );
         let attachments_dir = crate::turn_attachments::attachments_root(&runtime_dir);
-        for dir in [&runtime_dir, &attachments_dir, &tmpdir] {
+        for dir in [&base, &runtime_dir, &attachments_dir, &tmpdir] {
             ensure_owner_only_dir(dir)?;
         }
         Ok((runtime_dir, tmpdir))
@@ -236,7 +239,7 @@ impl SessionManager {
 
     /// The variables a session starts from: its home, `TMPDIR`, locale and terminal, and the
     /// host's read-only Rust toolchain (none for an operator session, `TASK-80.1`).
-    pub(super) fn captured_env(&self, input: &SessionEnvInput<'_>) -> Vec<(OsString, OsString)> {
+    pub(crate) fn captured_env(&self, input: &SessionEnvInput<'_>) -> Vec<(OsString, OsString)> {
         let mut captured = vec![
             (
                 OsString::from("HOME"),
@@ -249,12 +252,12 @@ impl SessionManager {
             (OsString::from("LANG"), OsString::from("en_US.UTF-8")),
             (OsString::from("TERM"), OsString::from("dumb")),
         ];
-        // Preserve host read-only Rust caches (`registry`, `git`, `.rustup`) inside the agent's
-        // isolated home via safe symlinks (never linking host `credentials*` or `config*`) so
-        // `rustc`/`cargo` work offline with a writable `<agent_home>/.cargo/.package-cache` even
-        // when runtimes scrub `CARGO_HOME` (`TASK-126`, `TASK-159`). Host `~/.cargo/credentials*`
+        // Preserve host read-only Rust toolchain (`RUSTUP_HOME`) and split read-only Cargo caches
+        // (`registry/{index,cache}`, `git/db`) inside each agent's isolated `CARGO_HOME` while
+        // giving each agent its own writable `registry/src`, `git/checkouts`, `.package-cache*`,
+        // and `CARGO_TARGET_DIR` (`TASK-126`, `TASK-159`, `TASK-135`). Host `~/.cargo/credentials*`
         // remain explicitly denied in policy. When sandboxed, set `CARGO_NET_OFFLINE=true` so
-        // Cargo never hits closed egress (`TASK-143`).
+        // Cargo never triggers closed-egress network approvals (`TASK-143`, `TASK-135`).
         let rust_forbidden = vec![
             input.home.to_path_buf(),
             input.workspace.to_path_buf(),
@@ -266,12 +269,15 @@ impl SessionManager {
         if !input.operator {
             append_rust_toolchain_env(
                 &mut captured,
-                Some(input.home),
-                std::env::var_os("RUSTUP_HOME"),
-                std::env::var_os("CARGO_HOME"),
-                std::env::var_os("HOME"),
-                &rust_forbidden,
-                input.sandbox_enabled,
+                RustToolchainEnvInput {
+                    agent_home: Some(input.home),
+                    agent_base: input.agent_base,
+                    rustup_explicit: std::env::var_os("RUSTUP_HOME"),
+                    cargo_explicit: std::env::var_os("CARGO_HOME"),
+                    host_home: std::env::var_os("HOME"),
+                    forbidden: &rust_forbidden,
+                    sandbox_enabled: input.sandbox_enabled,
+                },
             );
         }
         captured
@@ -402,19 +408,22 @@ pub(super) fn write_owner_only_binding_file(path: &Path, token: &str) -> Result<
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not write session binding"))
 }
 
-pub(super) struct SessionEnvInput<'a> {
-    pub(super) home: &'a Path,
-    pub(super) workspace: &'a Path,
-    pub(super) tmpdir: &'a Path,
-    pub(super) employee_id: &'a str,
-    pub(super) employee_name: &'a str,
-    pub(super) employee_handle: &'a str,
-    pub(super) session_id: &'a str,
-    pub(super) token: &'a str,
-    pub(super) binding_file: &'a Path,
-    pub(super) sandbox_enabled: bool,
+pub(crate) struct SessionEnvInput<'a> {
+    pub(crate) home: &'a Path,
+    /// Agent private root (`<durable>/local/offices/<office_id>/agents/<employee_id>`), owning
+    /// isolated `cache/cargo-target` beside `home/` (`TASK-135`).
+    pub(crate) agent_base: Option<&'a Path>,
+    pub(crate) workspace: &'a Path,
+    pub(crate) tmpdir: &'a Path,
+    pub(crate) employee_id: &'a str,
+    pub(crate) employee_name: &'a str,
+    pub(crate) employee_handle: &'a str,
+    pub(crate) session_id: &'a str,
+    pub(crate) token: &'a str,
+    pub(crate) binding_file: &'a Path,
+    pub(crate) sandbox_enabled: bool,
     /// An operator session (`OperatorSandboxed`): no Rust toolchain environment.
-    pub(super) operator: bool,
+    pub(crate) operator: bool,
 }
 
 pub(super) fn office_env_names() -> Vec<EnvName> {
@@ -433,6 +442,7 @@ pub(super) fn office_env_names() -> Vec<EnvName> {
         "GIT_COMMITTER_EMAIL",
         "RUSTUP_HOME",
         "CARGO_HOME",
+        "CARGO_TARGET_DIR",
         "CARGO_NET_OFFLINE",
         "CARGO_BUILD_JOBS",
         "RAYON_NUM_THREADS",

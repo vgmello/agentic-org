@@ -325,9 +325,18 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org who`
   List people and agents with live presence and `@handles` over an approved office channel.
   **Use when:** checking active handles and online presence across HQ and satellite offices.
-- `agentic-org repo register|list|attach|status|fetch|push`
-  Register and manage organization/project Git repositories, refresh an office's cache of the origin, and push task branches over an approved office channel.
-  **Use when:** registering a Git repo, attaching it to a project's integration branch, checking office bare-cache status, fetching newly pushed origin branches (`repo fetch --repo <id-or-key>`), or pushing a task branch.
+- `agentic-org repo register|list|attach|status|fetch|push|set-credential|credential-status|revoke-credential`
+  Register and manage organization/project Git repositories, store encrypted per-repository HTTPS tokens in an office vault, refresh an office's cache of the origin, and push task branches over an approved office channel.
+  **Use when:** registering a Git repo, attaching it to a project's integration branch, checking office bare-cache status, fetching newly pushed origin branches (`repo fetch --repo <id-or-key>`), pushing a task branch, or managing scoped per-repo vault credentials.
+- `agentic-org repo set-credential --repo <id-or-key> [--username <user>] [--token-file <path> | --token-stdin] [--office <office_id>] [--json]`
+  Store an encrypted per-repository HTTPS token inside the target office's credential vault (`<office>/git-credentials/repos/<repository_id>/credential.v1.json`, `0700`/`0600`, denied in every agent sandbox) so worker offices never depend on personal host `gh` or `~/.git-credentials`. Tokens are read from `--token-file` (regular file only), `--token-stdin`, or an echo-off terminal prompt — never CLI flags.
+  **Use when:** authorizing an HQ or satellite office to clone, fetch, or push a private HTTPS repository with a scoped fine-grained token.
+- `agentic-org repo credential-status --repo <id-or-key> [--office <office_id>] [--json]`
+  Show whether an office holds an encrypted per-repository HTTPS token (or host helper) for a repository, its canonical scope URL, and audit metadata without exposing secrets.
+  **Use when:** verifying whether an HQ or satellite office has a scoped HTTPS token configured for a repository.
+- `agentic-org repo revoke-credential --repo <id-or-key> [--office <office_id>] [--json]`
+  Delete an office's stored per-repository HTTPS token from its credential vault.
+  **Use when:** rotating or revoking a scoped repository HTTPS token on an office.
 - `agentic-org worktree list|prepare`
   List or prepare isolated task Git worktrees over an approved office channel.
   **Use when:** preparing a clean per-task Git worktree before editing code or inspecting active worktrees.

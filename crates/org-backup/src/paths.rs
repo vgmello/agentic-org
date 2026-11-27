@@ -188,8 +188,8 @@ pub(crate) enum Disposition {
     /// socket) is left out, never followed and never archived.
     AgentHome,
     /// Disposable: an enrollment's scratch folder, the unattached uploads waiting in
-    /// `attachment-staging/`, an agent's runtime or temporary folder, and the host toolchain
-    /// caches the office links into an agent's home again on its next
+    /// `attachment-staging/`, an agent's runtime, cache (`cargo-target`) or temporary folder, and
+    /// the host toolchain caches the office links into an agent's home again on its next
     /// session (`.cargo/registry`, `.cargo/git`, a legacy `.rustup`).
     Skip,
     /// A WAL-mode private database: carried as a consistent copy.
@@ -218,7 +218,7 @@ pub(crate) fn disposition(path: &RelPath) -> Disposition {
     let parts: Vec<&str> = folded.iter().map(String::as_str).collect();
     match parts.as_slice() {
         ["local", "offices", _, "enroll-tmp" | "attachment-staging", ..]
-        | ["local", "offices", _, "agents", _, "runtime" | "tmp", ..]
+        | ["local", "offices", _, "agents", _, "runtime" | "tmp" | "cache", ..]
         | ["local", "offices", _, "agents", _, "home", ".cargo", "registry" | "git", ..]
         | ["local", "offices", _, "agents", _, "home", ".rustup", ..] => Disposition::Skip,
         ["local", "offices", _, "agents", _, "home", _, ..] => Disposition::AgentHome,

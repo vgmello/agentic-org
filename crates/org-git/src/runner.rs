@@ -4,6 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use zeroize::Zeroizing;
+
 use crate::bounded::{capture, BoundedOutput, CaptureError, OutputLimits};
 use crate::GitError;
 
@@ -47,6 +50,15 @@ pub enum GitCredential {
         helper_program: PathBuf,
         scope_url: String,
     },
+    /// Ephemeral, office-vault-unwrapped HTTPS token strictly scoped to `scope_url`
+    /// (`TASK-135`, `doc-35`). Held in zeroizing memory and injected solely via
+    /// `GIT_CONFIG_COUNT` (`http.<scope_url>.extraHeader`) — never in argv, never persisted to
+    /// disk, bare-cache `config`, or agent worktrees.
+    HttpsToken {
+        username: String,
+        token: Zeroizing<String>,
+        scope_url: String,
+    },
 }
 
 impl std::fmt::Debug for GitCredential {
@@ -55,6 +67,7 @@ impl std::fmt::Debug for GitCredential {
             Self::None => write!(f, "GitCredential::None"),
             Self::Ssh { .. } => write!(f, "GitCredential::Ssh(<redacted>)"),
             Self::HttpsHelper { .. } => write!(f, "GitCredential::HttpsHelper(<redacted>)"),
+            Self::HttpsToken { .. } => write!(f, "GitCredential::HttpsToken(<redacted>)"),
         }
     }
 }
@@ -303,10 +316,91 @@ fn apply_credential(
                 .arg(format!("credential.{scope_url}.helper=!{quoted}"));
             Ok(())
         }
+        (
+            AllowedProtocol::Https,
+            GitCredential::HttpsToken {
+                username,
+                token,
+                scope_url,
+            },
+        ) => apply_https_token(cmd, username, token, scope_url),
         _ => Err(GitError::SecurityViolation(
             "credential kind does not match allowed Git transport protocol".into(),
         )),
     }
+}
+
+const MAX_HTTPS_USERNAME_BYTES: usize = 128;
+const MAX_HTTPS_TOKEN_BYTES: usize = 4096;
+
+fn validate_https_token_parts(
+    username: &str,
+    token: &str,
+    scope_url: &str,
+) -> Result<(), GitError> {
+    if username.is_empty()
+        || username.len() > MAX_HTTPS_USERNAME_BYTES
+        || username
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || c == ':')
+    {
+        return Err(GitError::InvalidInput(
+            "HTTPS token username must be non-empty without whitespace, control chars, or `:`"
+                .into(),
+        ));
+    }
+    if token.is_empty()
+        || token.len() > MAX_HTTPS_TOKEN_BYTES
+        || token.chars().any(char::is_control)
+    {
+        return Err(GitError::InvalidInput(
+            "HTTPS token must be non-empty, bounded, and contain no control characters".into(),
+        ));
+    }
+    if validate_remote_url(scope_url)? != AllowedProtocol::Https
+        || scope_url.contains(['?', '#', '=', '*', '\'', '"', ';', '\\'])
+    {
+        return Err(GitError::SecurityViolation(
+            "HTTPS token scope_url must be a valid canonical https:// URL".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn apply_https_token(
+    cmd: &mut Command,
+    username: &str,
+    token: &Zeroizing<String>,
+    scope_url: &str,
+) -> Result<(), GitError> {
+    validate_https_token_parts(username, token.as_str(), scope_url)?;
+    let user_pass = Zeroizing::new(format!("{username}:{}", token.as_str()));
+    let encoded = Zeroizing::new(BASE64.encode(user_pass.as_bytes()));
+    let header = Zeroizing::new(format!("Authorization: Basic {}", encoded.as_str()));
+    let trimmed_scope = scope_url.trim().trim_end_matches('/');
+    // Inject strictly through `GIT_CONFIG_COUNT` env vars (Git >= 2.31; MIN_GIT_VERSION is 2.35.2),
+    // never via CLI `-c` argv (`ps` exposure) and never persisted to `.git/config`.
+    if trimmed_scope.ends_with(".git") {
+        cmd.env("GIT_CONFIG_COUNT", "1");
+        cmd.env(
+            "GIT_CONFIG_KEY_0",
+            format!("http.{trimmed_scope}.extraHeader"),
+        );
+        cmd.env("GIT_CONFIG_VALUE_0", header.as_str());
+    } else {
+        cmd.env("GIT_CONFIG_COUNT", "2");
+        cmd.env(
+            "GIT_CONFIG_KEY_0",
+            format!("http.{trimmed_scope}.extraHeader"),
+        );
+        cmd.env("GIT_CONFIG_VALUE_0", header.as_str());
+        cmd.env(
+            "GIT_CONFIG_KEY_1",
+            format!("http.{trimmed_scope}.git.extraHeader"),
+        );
+        cmd.env("GIT_CONFIG_VALUE_1", header.as_str());
+    }
+    Ok(())
 }
 
 fn shell_quote(path: &Path) -> Result<String, GitError> {

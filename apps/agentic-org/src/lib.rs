@@ -383,6 +383,13 @@ fn is_sign_in_local_agent(command: &[String]) -> bool {
     command.first().map(String::as_str) == Some("agent") && is_local_agent_verb(&command[1..])
 }
 
+/// Whether `sign-in -- <command...>` targets one of the operator-local `repo` credential verbs
+/// (`repo set-credential|credential-status|revoke-credential`).
+fn is_sign_in_local_repo(command: &[String]) -> bool {
+    command.first().map(String::as_str) == Some("repo")
+        && features::repo::is_local_verb(&command[1..])
+}
+
 #[derive(Default)]
 struct HoistedFlags {
     json: bool,
@@ -598,9 +605,16 @@ fn is_local_agent_value_flag(arg: &str) -> bool {
     )
 }
 
-/// Scans `args` of a local clap verb (`agent bind|renew|sessions`) for explicit output/help flags
-/// without modifying `args`, so `-q`, `--json`, or `--format` cleanly overrides `AGENT_OS_FORMAT`.
-fn scan_local_agent_flags(args: &[String]) -> HoistedFlags {
+fn is_local_repo_value_flag(arg: &str) -> bool {
+    matches!(
+        arg,
+        "--repo" | "--username" | "--token-file" | "--name" | "--instance" | "--office" | "--color"
+    )
+}
+
+/// Scans `args` of a local clap verb for explicit output/help flags without modifying `args`,
+/// so `-q`, `--json`, or `--format` cleanly overrides `AGENT_OS_FORMAT`.
+fn scan_local_flags(args: &[String], is_value_flag: fn(&str) -> bool) -> HoistedFlags {
     let mut found = HoistedFlags::default();
     let mut idx = 1;
     while let Some(arg) = args.get(idx) {
@@ -623,7 +637,7 @@ fn scan_local_agent_flags(args: &[String]) -> HoistedFlags {
                 }
                 None => found.table_format = true,
             },
-            other if is_local_agent_value_flag(other) => idx += 1,
+            other if is_value_flag(other) => idx += 1,
             _ => {}
         }
     }
@@ -645,7 +659,16 @@ fn is_passthrough_host_help(top: &TopCommand) -> bool {
 
 fn hoist_sign_in_words(args: &mut features::sign_in::SignInArgs) -> Result<HoistedFlags, CliError> {
     if is_sign_in_local_agent(args.command()) {
-        return Ok(scan_local_agent_flags(&args.command()[1..]));
+        return Ok(scan_local_flags(
+            &args.command()[1..],
+            is_local_agent_value_flag,
+        ));
+    }
+    if is_sign_in_local_repo(args.command()) {
+        return Ok(scan_local_flags(
+            &args.command()[1..],
+            is_local_repo_value_flag,
+        ));
     }
     let (cleaned, hoisted) = hoist_office_words(args.command())?;
     *args.command_mut() = cleaned;
@@ -655,7 +678,15 @@ fn hoist_sign_in_words(args: &mut features::sign_in::SignInArgs) -> Result<Hoist
 fn hoist_command_flags(top: &mut TopCommand) -> Result<Option<HoistedFlags>, CliError> {
     if let TopCommand::Agent(pass) = top {
         if is_local_agent_verb(&pass.args) {
-            return Ok(Some(scan_local_agent_flags(&pass.args)));
+            return Ok(Some(scan_local_flags(
+                &pass.args,
+                is_local_agent_value_flag,
+            )));
+        }
+    }
+    if let TopCommand::Repo(pass) = top {
+        if features::repo::is_local_verb(&pass.args) {
+            return Ok(Some(scan_local_flags(&pass.args, is_local_repo_value_flag)));
         }
     }
     if let Some((resource, pass_args)) = top.office_resource_mut() {
@@ -737,6 +768,11 @@ fn dispatch(
             return outcome;
         }
     }
+    if let TopCommand::Repo(pass) = &top {
+        if let Some(outcome) = repo::try_run(&pass.args, ctx) {
+            return outcome;
+        }
+    }
     if let Some((resource, words)) = top.office_resource() {
         let words: Vec<String> = std::iter::once(resource.to_owned())
             .chain(words.iter().cloned())
@@ -749,6 +785,14 @@ fn dispatch(
         TopCommand::Setup(pass) => setup::run(&pass.args, ctx),
         TopCommand::SignIn(mut args) => {
             if let Some(outcome) = agent::try_run_after_sign_in(
+                args.instance_name(),
+                args.office_id(),
+                args.command(),
+                ctx,
+            ) {
+                return outcome;
+            }
+            if let Some(outcome) = repo::try_run_after_sign_in(
                 args.instance_name(),
                 args.office_id(),
                 args.command(),

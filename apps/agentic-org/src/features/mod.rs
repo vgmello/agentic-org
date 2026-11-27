@@ -14,6 +14,7 @@ pub(crate) mod project;
 pub(crate) mod provider;
 pub(crate) mod recovery;
 pub(crate) mod release;
+pub(crate) mod repo;
 pub(crate) mod serve;
 pub(crate) mod service;
 pub(crate) mod setup;
