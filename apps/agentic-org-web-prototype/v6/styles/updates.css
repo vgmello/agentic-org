@@ -1,0 +1,102 @@
+/* Updates (TASK-250). Tokens only. Rows reuse the processes rows (.plan-row.proc-row), the toolbar reuses the Work
+   toolbar and its separators, the panel reuses .side-panel.proc-panel. Every rule is scoped by at least two classes or
+   an id so the result doesn't depend on stylesheet order. */
+
+.upd-page .settings-body .upd-note.desc { padding-top: 4px; }
+.upd-page .upd-results { display: grid; gap: 12px; padding-bottom: 32px; }
+.upd-page .upd-results > .plan-rows { margin-inline: var(--gutter); }
+.upd-page code.upd-cmd, .upd-dialog code.upd-cmd, .proc-panel code.upd-cmd {
+  font-family: var(--font-mono); font-size: var(--fs-xs); padding: 1px 6px; border-radius: 4px; background: var(--hover); color: var(--white); overflow-wrap: anywhere;
+}
+.upd-toolbar .proc-toolbar-end .upd-n {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 1.25rem; height: 1.25rem; margin-inline-start: 6px; padding: 0 5px;
+  border-radius: 99px; background: color-mix(in srgb, currentColor 22%, transparent); font-size: var(--fs-xs); font-weight: 600;
+}
+
+/* This instance, and the organization-level note */
+.upd-results .upd-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 12px; margin: 12px var(--gutter) 0; }
+.upd-summary .upd-this { display: grid; align-content: start; gap: 4px; padding: 12px 16px; border-radius: var(--radius-lg); box-shadow: inset 0 0 0 1px var(--line2); min-width: 0; }
+.upd-summary .upd-this h2 { margin: 0; color: var(--gray-400); font-size: var(--fs-xs); font-weight: 600; }
+.upd-summary .upd-big { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0; color: var(--white); font-size: var(--fs-lg); font-weight: 600; }
+.upd-summary .upd-big .proc-badge { font-size: var(--fs-xs); }
+.upd-summary .upd-held.callout { margin: 0; }
+.upd-summary .upd-held > .ic { color: var(--tone-accent-ink); }
+.upd-summary .upd-held p { margin: 0; line-height: 1.5; }
+.upd-page .upd-sub, .upd-dialog .upd-sub { margin: 4px 0 0; color: var(--gray-400); font-size: var(--fs-sm); line-height: 1.5; }
+.upd-page .upd-foot { margin: 4px var(--gutter) 0; color: var(--gray-400); font-size: var(--fs-xs); line-height: 1.6; }
+
+/* Office rows */
+.plan-rows > li.upd-row .meta > span:first-child { color: var(--white); font-weight: 500; }
+.upd-row .upd-line { display: flex; align-items: flex-start; gap: 6px; margin: 2px 0 0; color: var(--gray-300); font-size: var(--fs-sm); line-height: 1.45; max-width: 52rem; }
+.upd-row .upd-line > .ic { flex: none; margin-top: 3px; color: var(--gray-400); }
+.upd-row .upd-line.is-bad, .upd-row .upd-line.is-bad > .ic { color: var(--tone-bad-ink); }
+.upd-row[data-state="queued"] .upd-line > .ic { color: var(--tone-warn-ink); }
+.upd-row .upd-live:empty { display: none; }
+.upd-row .upd-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 4px; }
+.upd-progress .progress { flex: 1 1 10rem; max-width: 20rem; }
+.upd-progress .progress > span { transition: width .3s ease; }
+.upd-progress .upd-step-now { color: var(--tone-accent-ink); font-size: var(--fs-xs); font-weight: 600; font-variant-numeric: tabular-nums; }
+.upd-row .upd-row-actions { position: relative; z-index: 2; }
+.upd-row[data-state="updating"] .proc-badges .ic, .upd-callout[data-state="updating"] > .ic, .upd-steps > li[data-st="now"] > .ic { animation: upd-spin 1.2s linear infinite; }
+@keyframes upd-spin { to { rotate: 360deg; } }
+
+/* History and releases */
+.upd-hist .rt .proc-title, .upd-row .meta > span:first-child { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.plan-rows > li.upd-hist .upd-sub { margin: 0; font-size: var(--fs-xs); }
+
+/* The confirm dialog: the effect, one line each */
+.sheet.dialog.upd-dialog { width: min(36rem, calc(100% - 32px)); }
+.upd-dialog .upd-effects { display: grid; gap: 10px; margin: 16px 0 0; padding: 0; list-style: none; }
+.upd-effects > li { display: flex; align-items: flex-start; gap: 10px; color: var(--gray-300); font-size: var(--fs-sm); line-height: 1.5; }
+.upd-effects > li > .ic { flex: none; margin-top: 3px; color: var(--gray-400); }
+.upd-effects > li b { color: var(--white); font-weight: 600; }
+.upd-dialog .upd-cli { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 6px 8px; margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--line); color: var(--gray-400); font-size: var(--fs-sm); }
+.upd-dialog .upd-cli > .ic { flex: none; margin-top: 2px; }
+.upd-dialog .upd-cli > span { min-width: 0; }
+
+/* The office panel: state, steps, log */
+.proc-panel .upd-panel-state { display: grid; gap: 12px; }
+.proc-panel .upd-panel-state .proc-badges { justify-content: flex-start; max-width: none; }
+.upd-panel-state .upd-callout.callout { margin: 0; }
+.upd-callout[data-state="failed"] > .ic { color: var(--tone-bad-ink); }
+.upd-callout[data-state="queued"] > .ic { color: var(--tone-warn-ink); }
+.upd-callout[data-state="current"] > .ic { color: var(--tone-ok-ink); }
+.upd-callout[data-state="updating"] > .ic, .upd-callout[data-state="available"] > .ic { color: var(--tone-accent-ink); }
+.upd-panel-state .upd-callout p { margin: 0; line-height: 1.5; }
+.upd-panel-state .upd-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 0; padding: 0; list-style: none; }
+.upd-steps > li { display: flex; align-items: center; gap: 6px; min-height: 2.25rem; padding: 4px 10px; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--line2); color: var(--gray-400); font-size: var(--fs-sm); }
+.upd-steps > li > .ic { flex: none; }
+.upd-steps > li[data-st="done"] { color: var(--tone-ok-ink); box-shadow: inset 0 0 0 1px var(--tone-ok-ring); background: var(--tone-ok-soft); }
+.upd-steps > li[data-st="now"] { color: var(--tone-accent-ink); box-shadow: inset 0 0 0 1px var(--tone-accent-ring); background: var(--tone-accent-soft); font-weight: 600; }
+.upd-steps > li[data-st="failed"] { color: var(--tone-bad-ink); box-shadow: inset 0 0 0 1px var(--tone-bad-ring); background: var(--tone-bad-soft); font-weight: 600; }
+.proc-panel-body .upd-log { display: grid; gap: 0; margin: 0; padding: 8px 0; list-style: none; border-radius: var(--radius-md); background: var(--hover); font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.6; overflow-x: auto; }
+.upd-log > li { display: grid; grid-template-columns: 4.5rem 3rem minmax(0, 1fr); gap: 8px; padding: 2px 12px; color: var(--gray-300); }
+.upd-log > li > time, .upd-log > li > .upd-lv { color: var(--gray-400); }
+.upd-log > li > span:last-child { overflow-wrap: anywhere; }
+.upd-log > li[data-lv="warn"], .upd-log > li[data-lv="warn"] > .upd-lv { color: var(--tone-warn-ink); }
+.upd-log > li[data-lv="error"], .upd-log > li[data-lv="error"] > .upd-lv { color: var(--tone-bad-ink); background: var(--tone-bad-soft); }
+
+@media (max-width: 959px) {
+  .upd-results .upd-summary { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 639px) {
+  .upd-page .upd-results > .plan-rows { margin-inline: 0; }
+  .plan-rows > li.upd-row > .upd-row-actions { order: 3; flex-wrap: wrap; margin-inline-start: 40px; }
+  .upd-panel-state .upd-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .upd-log > li { grid-template-columns: 4.5rem minmax(0, 1fr); }
+  .upd-log > li > .upd-lv { display: none; }
+  .upd-toolbar .queue-controls .btn, .upd-toolbar .proc-toolbar-end .btn { min-height: 2.75rem; }
+}
+@media (max-width: 639px), (pointer: coarse) {
+  .upd-row .upd-row-actions .btn, .proc-panel .upd-panel-state .btn, .proc-panel .proc-panel-body .proc-panel-actions .btn, .upd-toolbar .btn { min-height: 2.75rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .upd-row[data-state="updating"] .proc-badges .ic, .upd-callout[data-state="updating"] > .ic, .upd-steps > li[data-st="now"] > .ic { animation: none; }
+  .upd-progress .progress > span { transition: none; }
+}
+@media (forced-colors: active) {
+  .upd-steps > li, .upd-summary .upd-this { border: 1px solid CanvasText; }
+}
+
+/* Facts in the office panel line up at the top of each cell */
+.proc-panel #upd-panel-facts .proc-facts > div { align-content: start; }
