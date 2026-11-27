@@ -16,19 +16,21 @@ use org_proto::tasks::TaskStatus;
 use org_proto::{ApiError, ErrorCode};
 use org_store::{EngineError, Id};
 
+use crate::delivery::ports::DeliveryRead;
 use crate::messaging::readable_conversations;
 use crate::messaging::records::ConversationRecord;
 use crate::organization::records::{Employee, EmployeeKind, EmployeeStatus};
 use crate::private_notes::normalize_tag;
+use crate::project_docs::access::may_see;
 use crate::search::plan::{Filters, SearchPlan};
 use crate::search::ports::{MessageScope, SearchRead};
 use crate::search::rank::{excerpt, merge, Scored, SearchCursor, SourcePage};
 use crate::search::text::query_terms;
 use crate::tasks::ports::TasksRead;
 
-/// The statuses a `status` filter may name: a task's, a member's, a team's or project's, and
-/// a process's.
-const STATUSES: [&str; 7] = [
+/// The statuses a `status` filter may name: a task's, a member's, a team's, project's,
+/// process's, document's, or feature's.
+const STATUSES: [&str; 10] = [
     "active",
     "paused",
     "inactive",
@@ -36,6 +38,9 @@ const STATUSES: [&str; 7] = [
     "draft",
     "current",
     "deprecated",
+    "planned",
+    "live",
+    "retired",
 ];
 
 /// The one refusal of a caller who may not search: unknown, inactive, paused or offboarded.
@@ -175,6 +180,7 @@ pub fn validate(params: SearchQueryParams) -> Result<SearchRequest, ApiError> {
             .transpose()?,
         limit: limit as usize,
         count_only: params.count_only,
+        visible_projects: None,
     };
     Ok(SearchRequest {
         plan,
@@ -279,19 +285,68 @@ fn message_scope(readable: &[ConversationRecord], filters: &Filters) -> MessageS
     }
 }
 
+fn resolve_visible_projects<S: DeliveryRead>(
+    read: &S,
+    caller_is_person: bool,
+    caller_emp: &Employee,
+) -> Result<Option<BTreeSet<String>>, EngineError> {
+    if caller_is_person {
+        return Ok(None);
+    }
+    let mut allowed = BTreeSet::new();
+    for p in read.projects()? {
+        if may_see(read, caller_emp, &p)? {
+            allowed.insert(p.id.to_string());
+        }
+    }
+    Ok(Some(allowed))
+}
+
+fn apply_project_filter<S: DeliveryRead>(
+    read: &S,
+    plan: &mut SearchPlan,
+    project: Option<String>,
+) -> Result<Result<(), ApiError>, EngineError> {
+    let Some(project) = project else {
+        return Ok(Ok(()));
+    };
+    let Some(found) = read.resolve_project(&project)? else {
+        return Ok(Err(not_found("project not found")));
+    };
+    let pid = found.id.to_string();
+    let only_project_scoped = !plan.types.is_empty()
+        && plan
+            .types
+            .iter()
+            .all(|t| matches!(t, SearchEntityType::Document | SearchEntityType::Feature));
+    if only_project_scoped
+        && plan
+            .visible_projects
+            .as_ref()
+            .is_some_and(|allowed| !allowed.contains(&pid))
+    {
+        return Ok(Err(not_found("project not found")));
+    }
+    plan.filters.project_id = Some(pid);
+    Ok(Ok(()))
+}
+
 /// Resolves `request`'s references in `read` for `caller` and asks `read`'s shared and message
 /// sources. A reference that names nothing the caller may see is `NotFound`, the same whether
 /// it does not exist or is hidden.
-pub fn read_sources<S: TasksRead + SearchRead>(
+pub fn read_sources<S: DeliveryRead + SearchRead>(
     read: &S,
     request: SearchRequest,
     owner: &Id,
     caller: &Id,
     now_utc: &str,
 ) -> Result<Result<Resolved, ApiError>, EngineError> {
-    let Some(caller_is_person) = searcher(read.employee(caller)?.as_ref()) else {
+    let employee = read.employee(caller)?;
+    let Some(caller_is_person) = searcher(employee.as_ref()) else {
         return Ok(Err(not_authorized()));
     };
+    let caller_emp = employee.expect("searcher accepted Some");
+    let visible_projects = resolve_visible_projects(read, caller_is_person, &caller_emp)?;
     let SearchRequest {
         mut plan,
         project,
@@ -299,11 +354,9 @@ pub fn read_sources<S: TasksRead + SearchRead>(
         assignee,
         fields,
     } = request;
-    if let Some(project) = project {
-        let Some(found) = read.resolve_project(&project)? else {
-            return Ok(Err(not_found("project not found")));
-        };
-        plan.filters.project_id = Some(found.id.to_string());
+    plan.visible_projects = visible_projects;
+    if let Err(err) = apply_project_filter(read, &mut plan, project)? {
+        return Ok(Err(err));
     }
     if let Some(assignee) = assignee {
         let Some(found) = find_member(read, &assignee)? else {

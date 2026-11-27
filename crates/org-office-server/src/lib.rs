@@ -22,6 +22,7 @@ mod bounded;
 mod chat_calls;
 mod chief_of_staff_port;
 mod cost_calls;
+mod delivery_calls;
 mod directory;
 mod doc_calls;
 mod failure;

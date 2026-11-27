@@ -192,6 +192,7 @@ macro_rules! sqlite_tasks_read {
                     db,
                     "SELECT source_id, id, kind, target_kind, target_id FROM links \
                      WHERE organization_id = ?1 AND source_kind = 'task' AND source_id = ?2 \
+                       AND kind = 'depends_on' \
                      ORDER BY kind, target_id",
                     vec![text(scope), text(task_id.as_str())],
                     link_row,
@@ -216,11 +217,43 @@ macro_rules! sqlite_tasks_read {
                 fetch(
                     db,
                     "SELECT source_id, id, kind, target_kind, target_id FROM links \
-                     WHERE organization_id = ?1 AND source_kind = 'task' \
+                     WHERE organization_id = ?1 AND source_kind = 'task' AND kind = 'depends_on' \
                      ORDER BY source_id, kind, target_id",
                     vec![text(scope)],
                     link_row,
                 )
+            }
+
+            fn feature_in_project(
+                &self,
+                project_id: &Id,
+                feature_id: &Id,
+            ) -> Result<bool, EngineError> {
+                let (db, scope) = self.view()?;
+                let found: Option<i64> = fetch_one(
+                    db,
+                    "SELECT 1 FROM features \
+                     WHERE organization_id = ?1 AND project_id = ?2 AND id = ?3",
+                    vec![text(scope), text(project_id.as_str()), text(feature_id.as_str())],
+                    |r| r.get(0),
+                )?;
+                Ok(found.is_some())
+            }
+
+            fn milestone_in_project(
+                &self,
+                project_id: &Id,
+                milestone_id: &Id,
+            ) -> Result<bool, EngineError> {
+                let (db, scope) = self.view()?;
+                let found: Option<i64> = fetch_one(
+                    db,
+                    "SELECT 1 FROM milestones \
+                     WHERE organization_id = ?1 AND project_id = ?2 AND id = ?3",
+                    vec![text(scope), text(project_id.as_str()), text(milestone_id.as_str())],
+                    |r| r.get(0),
+                )?;
+                Ok(found.is_some())
             }
 
             fn task_events(&self, task_id: &Id) -> Result<Vec<TaskEventRecord>, EngineError> {

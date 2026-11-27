@@ -5,28 +5,36 @@
 
 use org_office::{Office, OfficeError};
 use org_proto::docs::{
-    DocsCreate, DocsIndex, DocsInspect, DocsList, DocsMove, DocsPutMedia, DocsUpdate,
+    DocsCreate, DocsDelete, DocsIndex, DocsInspect, DocsList, DocsMove, DocsPutMedia, DocsUpdate,
 };
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
-/// Whether `request` is one of the `docs.*` calls.
+/// Whether `request` is one of the `docs.*` or delivery calls.
 pub(crate) fn is_doc_method(request: &Request) -> bool {
+    is_doc_tree_method(request) || crate::delivery_calls::is_delivery_method(request)
+}
+
+fn is_doc_tree_method(request: &Request) -> bool {
     request.is::<DocsIndex>()
         || request.is::<DocsList>()
         || request.is::<DocsInspect>()
         || request.is::<DocsCreate>()
         || request.is::<DocsUpdate>()
         || request.is::<DocsMove>()
+        || request.is::<DocsDelete>()
         || request.is::<DocsPutMedia>()
 }
 
-/// Answers one `docs.*` call for `member` against `office`; `None` for any other method.
+/// Answers one `docs.*` or delivery call for `member` against `office`; `None` for any other method.
 pub(crate) fn dispatch_doc_rpc(
     office: &Office,
     member: Option<&str>,
     request: &Request,
 ) -> Option<Response> {
-    if !is_doc_method(request) {
+    if let Some(resp) = crate::delivery_calls::dispatch_delivery_rpc(office, member, request) {
+        return Some(resp);
+    }
+    if !is_doc_tree_method(request) {
         return None;
     }
     let Some(caller) = member else {
@@ -47,6 +55,8 @@ pub(crate) fn dispatch_doc_rpc(
         serve::<DocsUpdate>(request, |p| office.docs_update(caller, p))
     } else if request.is::<DocsMove>() {
         serve::<DocsMove>(request, |p| office.docs_move(caller, p))
+    } else if request.is::<DocsDelete>() {
+        serve::<DocsDelete>(request, |p| office.docs_delete(caller, p))
     } else {
         serve::<DocsPutMedia>(request, |p| office.docs_put_media(caller, p))
     })

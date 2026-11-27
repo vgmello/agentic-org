@@ -1,14 +1,16 @@
 //! `docs.update` and `docs.move`: change a document at its `expected_revision`, or move it to
 //! another path; either way the regenerated index lands in the same entry.
 
-use org_proto::docs::{DocsMoveParams, DocsUpdateParams, DocsWriteResult};
+use org_proto::docs::{
+    DocsDeleteParams, DocsDeleteResult, DocsMoveParams, DocsUpdateParams, DocsWriteResult,
+};
 use org_store::{Change, Timestamp};
 
 use super::change::TreeEdit;
 use super::{fields, reply, wire};
 use crate::organization::records::{time_text, By};
 use crate::project_docs::access::{authorize, Authorized, Denied, DocsAccess};
-use crate::project_docs::paths::DocPath;
+use crate::project_docs::paths::{self, DocPath};
 use crate::project_docs::ports::ProjectDocsRead;
 use crate::project_docs::records::{DocStatus, ProjectDoc};
 
@@ -124,4 +126,27 @@ pub fn decide_move<R: ProjectDocsRead>(
     doc.path = target;
     touch(&mut doc, &cleared, now);
     write(view, doc)
+}
+
+/// Decides `docs.delete`: removes a document at `expected_revision` and regenerates `index.yaml`.
+pub fn decide_delete<R: ProjectDocsRead>(
+    view: &R,
+    caller: &str,
+    params: &DocsDeleteParams,
+) -> Result<Change, Denied> {
+    let cleared = authorize(view, caller, &params.project, DocsAccess::Write)?;
+    let doc = current(
+        view,
+        &cleared,
+        &params.document_id,
+        params.expected_revision,
+    )?;
+    let mut edit = TreeEdit::load(view, &doc.project_id)?;
+    let answer = DocsDeleteResult {
+        deleted_id: doc.id.to_string(),
+        deleted_path: doc.path.as_str().to_owned(),
+        index_path: paths::index_path(&doc.project_id).as_str().to_owned(),
+    };
+    edit.remove_doc(&doc)?;
+    edit.finish(reply(&answer))
 }

@@ -6,23 +6,28 @@
 //! file paths, then labels, tags and headings, then the body (with a decision's why and
 //! alternatives), then comments and checklist steps.
 
+use std::collections::BTreeMap;
+
+use org_docs::delivery::records::FeatureRecord;
+use org_docs::delivery::rules::feature_qualified_slug;
 use org_proto::private_notes::PrivateNoteKind;
 use org_proto::search::SearchEntityType;
 use org_store::{EngineError, Id};
 
+use crate::delivery::ports::DeliveryRead;
 use crate::messaging::records::MessageRecord;
 use crate::organization::records::{Employee, Role, Team};
 use crate::private_notes::{derive_title, PrivateNoteRecord};
 use crate::processes::records::StructureDocument;
+use crate::project_docs::records::ProjectDoc;
 use crate::projects::records::Project;
-use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{ChecklistStepRecord, TaskCommentRecord, TaskRecord};
 
 use super::records::{DocMeta, SearchDoc};
 
 /// What a document holds, as a number: bump it on any change to a builder below, so an index
 /// built the old way is recognized and rebuilt.
-pub const FORMAT: u32 = 1;
+pub const FORMAT: u32 = 2;
 
 /// The non-empty parts, one per line.
 fn joined<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
@@ -304,9 +309,80 @@ pub fn private_note(note: &PrivateNoteRecord) -> Option<SearchDoc> {
     Some(doc(kind, note.id.clone(), meta, fields))
 }
 
+/// A project documentation tree document: its path, title, kind/section/headings, and summary/body.
+pub fn project_doc(document: &ProjectDoc) -> SearchDoc {
+    let section = document.path.section();
+    let meta = DocMeta {
+        reference: Some(document.path.as_str().to_owned()),
+        title: Some(document.title.clone()),
+        status: Some(document.status.as_str().to_owned()),
+        project_id: Some(document.project_id.to_string()),
+        updated_at: document
+            .meta
+            .updated_at
+            .clone()
+            .or_else(|| document.meta.created_at.clone())
+            .unwrap_or_default(),
+        ..DocMeta::default()
+    };
+    let tags = joined(
+        [document.kind.as_str(), section.as_str()]
+            .into_iter()
+            .chain(headings(&document.body_markdown)),
+    );
+    let body = joined([text(&document.summary), document.body_markdown.as_str()]);
+    let fields = [
+        document.path.as_str().to_owned(),
+        document.title.clone(),
+        tags,
+        body,
+        String::new(),
+    ];
+    doc(
+        SearchEntityType::Document,
+        document.id.to_string(),
+        meta,
+        fields,
+    )
+}
+
+/// A canonical project feature: its key and canonical slug, title, local slug/headings, and body.
+pub fn feature(record: &FeatureRecord, project_slug: &str) -> SearchDoc {
+    let key = record.key();
+    let slug = feature_qualified_slug(project_slug, &record.local_slug);
+    let meta = DocMeta {
+        reference: Some(key.clone()),
+        title: Some(record.title.clone()),
+        status: Some(record.status.as_str().to_owned()),
+        project_id: Some(record.project_id.clone()),
+        updated_at: record
+            .meta
+            .updated_at
+            .clone()
+            .or_else(|| record.meta.created_at.clone())
+            .unwrap_or_default(),
+        ..DocMeta::default()
+    };
+    let work = record.work_type.map_or("", |w| w.as_str());
+    let tags = joined(
+        [record.local_slug.as_str(), work]
+            .into_iter()
+            .chain(headings(&record.body_markdown)),
+    );
+    let body = joined([record.body_markdown.as_str(), text(&record.retired_reason)]);
+    let fields = [
+        joined([key.as_str(), slug.as_str()]),
+        record.title.clone(),
+        tags,
+        body,
+        String::new(),
+    ];
+    doc(SearchEntityType::Feature, record.id.clone(), meta, fields)
+}
+
 /// The shared document of entity `id` of type `kind` as `read` holds it; `None` when the
 /// entity is gone or `kind` is not a shared type.
-pub fn shared_doc<R: TasksRead>(
+pub fn shared_doc<R: DeliveryRead>(
     read: &R,
     kind: SearchEntityType,
     id: &str,
@@ -324,6 +400,18 @@ pub fn shared_doc<R: TasksRead>(
             None => None,
         },
         SearchEntityType::Project => read.project(&id)?.as_ref().map(project),
+        SearchEntityType::Document => read.project_doc(&id)?.as_ref().map(project_doc),
+        SearchEntityType::Feature => match read.feature(&id)? {
+            Some(record) => {
+                let slug = Id::parse(&record.project_id)
+                    .ok()
+                    .and_then(|pid| read.project(&pid).ok().flatten())
+                    .map(|p| p.slug)
+                    .unwrap_or_default();
+                Some(feature(&record, &slug))
+            }
+            None => None,
+        },
         SearchEntityType::Member => read.employee(&id)?.as_ref().map(member),
         SearchEntityType::Team => read.team(&id)?.as_ref().map(team),
         SearchEntityType::Role => read.role(&id)?.as_ref().map(role),
@@ -333,14 +421,33 @@ pub fn shared_doc<R: TasksRead>(
 }
 
 /// Every shared document `read` holds.
-pub fn shared_docs<R: TasksRead>(read: &R) -> Result<Vec<SearchDoc>, EngineError> {
+pub fn shared_docs<R: DeliveryRead>(read: &R) -> Result<Vec<SearchDoc>, EngineError> {
     let mut docs = Vec::new();
     for record in read.tasks()? {
         let comments = read.task_comments(&record.id)?;
         let steps = read.checklist_steps(&record.id)?;
         docs.push(task(&record, &comments, &steps));
     }
-    docs.extend(read.projects()?.iter().map(project));
+    let projects = read.projects()?;
+    let project_slugs: BTreeMap<String, String> = projects
+        .iter()
+        .map(|p| (p.id.to_string(), p.slug.clone()))
+        .collect();
+    docs.extend(projects.iter().map(project));
+    for pid in read.projects_with_docs()? {
+        for entry in read.project_doc_entries(&pid)? {
+            if let Some(full) = read.project_doc(&entry.id)? {
+                docs.push(project_doc(&full));
+            }
+        }
+    }
+    for feat in read.all_features()? {
+        let slug = project_slugs
+            .get(&feat.project_id)
+            .map(String::as_str)
+            .unwrap_or("");
+        docs.push(feature(&feat, slug));
+    }
     docs.extend(read.employees()?.iter().map(member));
     docs.extend(read.teams()?.iter().map(team));
     docs.extend(read.roles()?.iter().map(role));

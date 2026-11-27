@@ -10,6 +10,7 @@ fn methods_are_the_docs_family_and_unknown_enums_decode() {
     assert_eq!(DocsCreate::METHOD, "docs.create");
     assert_eq!(DocsUpdate::METHOD, "docs.update");
     assert_eq!(DocsMove::METHOD, "docs.move");
+    assert_eq!(DocsDelete::METHOD, "docs.delete");
     assert_eq!(DocsPutMedia::METHOD, "docs.put_media");
     let status: DocStatusWire = serde_json::from_str("\"archived\"").unwrap();
     assert_eq!(status, DocStatusWire::Unknown);
@@ -70,6 +71,7 @@ fn every_request_refuses_a_field_it_does_not_know() {
     refuses::<DocsCreateParams>(r#"{"command_id":"c","kind":"guide","title":"T"}"#);
     refuses::<DocsUpdateParams>(r#"{"command_id":"c","expected_revision":1}"#);
     refuses::<DocsMoveParams>(r#"{"command_id":"c","expected_revision":1,"new_path":"a.md"}"#);
+    refuses::<DocsDeleteParams>(r#"{"command_id":"c","expected_revision":1}"#);
     refuses::<DocsPutMediaParams>(
         r#"{"command_id":"c","file_name":"a.png","media_type":"image/png","type":"image","title":"A","content_base64":""}"#,
     );

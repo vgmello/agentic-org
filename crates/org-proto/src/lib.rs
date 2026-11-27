@@ -92,6 +92,7 @@ pub mod attachments;
 pub mod budgets;
 pub mod chat;
 pub mod costs;
+pub mod delivery;
 pub mod directory;
 pub mod docs;
 pub mod external_auth;

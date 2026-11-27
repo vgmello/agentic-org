@@ -232,6 +232,12 @@ pub struct TasksUpdateParams {
     pub remove_modified_files: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<TaskDetailsWire>,
+    /// Canonical project feature this task implements (`TASK-55`, same project as the task).
+    #[serde(default, skip_serializing_if = "PatchField::is_unchanged")]
+    pub feature_id: PatchField<String>,
+    /// Release milestone this task belongs to (`TASK-55`, same project as the task).
+    #[serde(default, skip_serializing_if = "PatchField::is_unchanged")]
+    pub milestone_id: PatchField<String>,
     /// Staged upload IDs or readable attachment IDs to bind to the task (`TASK-98.4`, max 20 total).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub add_attachments: Vec<String>,

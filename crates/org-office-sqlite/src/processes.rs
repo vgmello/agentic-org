@@ -11,7 +11,8 @@ use org_office::processes::{
 
 use super::{
     organization::{
-        all, id, meta, meta_values, one, optional_id, optional_id_value, put, run, text, View, META,
+        all, id, meta, meta_values, one, optional_id, optional_id_value, put, put_record_ref, run,
+        text, View, META,
     },
     SqliteSnapshot, SqliteTx,
 };
@@ -99,11 +100,17 @@ impl ProcessesWrite for SqliteTx {
         ];
         meta_values(&record.meta, &mut values)?;
         let columns = format!("organization_id, {COLS}, schema_version, {META}");
-        put(db, "structure_documents", &columns, 2, values)
+        put(db, "structure_documents", &columns, 2, values)?;
+        put_record_ref(db, scope, "development_process", &record.id)
     }
 
     fn remove_structure_document(&mut self, doc_id: &Id) -> Result<(), EngineError> {
         let (db, scope) = self.view()?;
+        run(
+            db,
+            "DELETE FROM record_refs WHERE organization_id = ?1 AND kind = 'development_process' AND id = ?2",
+            vec![text(scope), text(doc_id.as_str())],
+        )?;
         run(
             db,
             "DELETE FROM structure_documents WHERE organization_id = ?1 AND id = ?2",

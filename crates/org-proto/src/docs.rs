@@ -307,6 +307,35 @@ impl Call for DocsMove {
     type Result = DocsWriteResult;
 }
 
+/// `docs.delete`: removes a document at `expected_revision` and regenerates `docs/index.yaml`.
+pub struct DocsDelete;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocsDeleteParams {
+    pub command_id: String,
+    /// Set from the route by the web gateway.
+    #[serde(default)]
+    pub project: String,
+    /// Set from the route by the web gateway.
+    #[serde(default)]
+    pub document_id: String,
+    pub expected_revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocsDeleteResult {
+    pub deleted_id: String,
+    pub deleted_path: String,
+    pub index_path: String,
+}
+
+impl Call for DocsDelete {
+    const METHOD: &'static str = "docs.delete";
+    type Params = DocsDeleteParams;
+    type Result = DocsDeleteResult;
+}
+
 /// `docs.put_media`: stores or replaces one image asset at `docs/media/<file_name>`.
 pub struct DocsPutMedia;
 

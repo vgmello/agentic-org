@@ -9,15 +9,18 @@
 //! - `POST   .../projects/{project}/docs` (`docs.create`)
 //! - `PATCH  .../projects/{project}/docs/{doc_id}` (`docs.update`)
 //! - `POST   .../projects/{project}/docs/{doc_id}/move` (`docs.move`)
+//! - `POST   .../projects/{project}/docs/{doc_id}/delete` (`docs.delete`)
+//! - `POST   .../projects/{project}/docs/media` (`docs.put_media`)
 //!
 //! The project and document in the path always win over any in the body.
 
 use hyper::{http::request::Parts, Method, StatusCode};
 use org_proto::docs::{
-    DocStatusWire, DocsCreate, DocsCreateParams, DocsIndex, DocsIndexParams, DocsInspect,
-    DocsInspectParams, DocsList, DocsListParams, DocsMove, DocsMoveParams, DocsUpdate,
-    DocsUpdateParams, DOC_KIND_MAX_BYTES, DOC_LIST_MAX_LIMIT, DOC_PATH_MAX_BYTES,
-    DOC_REF_MAX_BYTES, DOC_SECTION_MAX_BYTES,
+    DocStatusWire, DocsCreate, DocsCreateParams, DocsDelete, DocsDeleteParams, DocsIndex,
+    DocsIndexParams, DocsInspect, DocsInspectParams, DocsList, DocsListParams, DocsMove,
+    DocsMoveParams, DocsPutMedia, DocsPutMediaParams, DocsUpdate, DocsUpdateParams,
+    DOC_KIND_MAX_BYTES, DOC_LIST_MAX_LIMIT, DOC_PATH_MAX_BYTES, DOC_REF_MAX_BYTES,
+    DOC_SECTION_MAX_BYTES,
 };
 use org_proto::web::{ReadResponse, WebError, WebErrorCode};
 use serde_json::Value;
@@ -35,6 +38,8 @@ pub enum DocRoute {
     Create(CallerAuth, String, String),
     Update(CallerAuth, String, String, String),
     Move(CallerAuth, String, String, String),
+    Delete(CallerAuth, String, String, String),
+    PutMedia(CallerAuth, String, String),
 }
 
 pub enum DocCall {
@@ -44,16 +49,18 @@ pub enum DocCall {
     Create(CallerAuth, String, DocsCreateParams),
     Update(CallerAuth, String, DocsUpdateParams),
     Move(CallerAuth, String, DocsMoveParams),
+    Delete(CallerAuth, String, DocsDeleteParams),
+    PutMedia(CallerAuth, String, DocsPutMediaParams),
 }
 
-fn valid_org_id(id: &str) -> Result<(), ApiReply> {
+pub(super) fn valid_org_id(id: &str) -> Result<(), ApiReply> {
     org_office_launch::is_storage_id(id)
         .then_some(())
         .ok_or_else(invalid)
 }
 
 /// A project reference in a path: its UUIDv7, `P-<number>` or slug.
-fn valid_project(project: &str) -> Result<String, ApiReply> {
+pub(super) fn valid_project(project: &str) -> Result<String, ApiReply> {
     let ok = !project.is_empty()
         && project.len() <= 128
         && project
@@ -62,13 +69,13 @@ fn valid_project(project: &str) -> Result<String, ApiReply> {
     ok.then(|| project.to_owned()).ok_or_else(invalid)
 }
 
-fn valid_doc_id(doc: &str) -> Result<String, ApiReply> {
+pub(super) fn valid_doc_id(doc: &str) -> Result<String, ApiReply> {
     org_proto::is_uuid_v7(doc)
         .then(|| doc.to_owned())
         .ok_or_else(invalid)
 }
 
-fn decode_query_value(raw: &str) -> Result<String, ApiReply> {
+pub(super) fn decode_query_value(raw: &str) -> Result<String, ApiReply> {
     let bytes = raw.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -111,7 +118,7 @@ fn parse_limit(raw: &str) -> Result<u32, ApiReply> {
 }
 
 /// A write's `command_id`: a canonical lowercase UUIDv7, checked before the office is asked.
-fn valid_command_id(command_id: &str) -> Result<(), ApiReply> {
+pub(super) fn valid_command_id(command_id: &str) -> Result<(), ApiReply> {
     org_proto::is_uuid_v7(command_id)
         .then_some(())
         .ok_or_else(invalid)
@@ -185,6 +192,9 @@ pub(super) fn try_route(
         ["index"] if get && !query => {
             route(&|pair, org, project| Ok(DocRoute::Index(pair, org, project)))
         }
+        ["media"] if body && *method == Method::POST => {
+            route(&|pair, org, project| Ok(DocRoute::PutMedia(pair, org, project)))
+        }
         [doc] if get && !query => route(&|pair, org, project| {
             Ok(DocRoute::Inspect(pair, org, project, valid_doc_id(doc)?))
         }),
@@ -194,12 +204,15 @@ pub(super) fn try_route(
         [doc, "move"] if body && *method == Method::POST => {
             route(&|pair, org, project| Ok(DocRoute::Move(pair, org, project, valid_doc_id(doc)?)))
         }
-        [] | ["index"] | [_] | [_, "move"] => Err(invalid()),
+        [doc, "delete"] if body && *method == Method::POST => route(&|pair, org, project| {
+            Ok(DocRoute::Delete(pair, org, project, valid_doc_id(doc)?))
+        }),
+        [] | ["index"] | ["media"] | [_] | [_, "move" | "delete"] => Err(invalid()),
         _ => Err(super::not_found()),
     })
 }
 
-fn decode_body<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, ApiReply> {
+pub(super) fn decode_body<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, ApiReply> {
     serde_json::from_slice(bytes).map_err(|_| invalid())
 }
 
@@ -242,6 +255,18 @@ fn to_call(route: DocRoute, bytes: &[u8]) -> Result<DocCall, ApiReply> {
             (params.project, params.document_id) = (project, document_id);
             DocCall::Move(pair, org, params)
         }
+        DocRoute::Delete(pair, org, project, document_id) => {
+            let mut params: DocsDeleteParams = decode_body(bytes)?;
+            valid_command_id(&params.command_id)?;
+            (params.project, params.document_id) = (project, document_id);
+            DocCall::Delete(pair, org, params)
+        }
+        DocRoute::PutMedia(pair, org, project) => {
+            let mut params: DocsPutMediaParams = decode_body(bytes)?;
+            valid_command_id(&params.command_id)?;
+            params.project = project;
+            DocCall::PutMedia(pair, org, params)
+        }
     })
 }
 
@@ -270,7 +295,7 @@ pub(super) fn map_office_failure(error: OfficeFailure) -> ApiReply {
     }
 }
 
-async fn run_office<C: org_proto::Call>(
+pub(super) async fn run_office<C: org_proto::Call>(
     api: &SessionApi,
     pair: CallerAuth,
     org_id: &str,
@@ -326,6 +351,12 @@ pub(super) async fn execute(api: &SessionApi, call: DocCall) -> ApiReply {
         }
         DocCall::Move(pair, org, params) => {
             run_office::<DocsMove>(api, pair, &org, &params, false).await
+        }
+        DocCall::Delete(pair, org, params) => {
+            run_office::<DocsDelete>(api, pair, &org, &params, false).await
+        }
+        DocCall::PutMedia(pair, org, params) => {
+            run_office::<DocsPutMedia>(api, pair, &org, &params, false).await
         }
     }
 }

@@ -416,6 +416,9 @@ Contract rules every command follows:
 - `agent-os process list|inspect|create|update`
   Effective organization, team, and project processes and standards.
   **Use when:** checking mandatory or overridable rules for your scope (`process list`), reading full guidance or `--why` inheritance chains (`process inspect`), or authoring/updating a process or standard.
+- `agent-os doc index|ls|show|new|edit|move|delete|put`
+  Project documentation tree (`projects/<id>/docs/`), deterministic `index.yaml` regeneration, and image/diagram asset uploads under `docs/media/`.
+  **Use when:** browsing a project's documentation index (`doc index` / `doc ls`), reading Markdown bodies (`doc show`), authoring or reorganizing project docs (`doc new|edit|move|delete`), or uploading images/diagrams (`doc put`).
 - `agent-os skill list|read`
   Built-in on-demand `agent-os` product skills: `agent-os-basics`, `tasks-create`, `tasks-execute`, `tasks-finalize`, `messaging-and-asks`, `channels`, `code-and-worktrees`, `hiring-and-directory`, `processes-and-standards`, `budgets`, `errors-and-recovery` and `batch-and-attach` (bodies in `crates/org-process/skills/`, each checked flag by flag against the live command table).
   **Use when:** discovering (`skill list`) or loading (`skill read --name <key>`) built-in operational guides on demand.

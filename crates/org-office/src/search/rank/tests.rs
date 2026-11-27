@@ -28,6 +28,7 @@ fn plan(q: &str, limit: usize) -> SearchPlan {
         after: None,
         limit,
         count_only: false,
+        visible_projects: None,
     }
 }
 

@@ -13,6 +13,7 @@ testkit = ["org-office/testkit", "org-store/testkit"]
 [dependencies]
 org-accounting = { path = "../org-accounting" }
 org-budgets = { path = "../org-budgets" }
+org-docs = { path = "../org-docs" }
 org-office = { path = "../org-office" }
 org-platform = { path = "../org-platform" }
 org-process = { path = "../org-process" }

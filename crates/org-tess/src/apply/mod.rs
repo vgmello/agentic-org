@@ -11,6 +11,7 @@
 //! - Transitions to `SuggestionStatus::Applied` atomically (single-use; replay returns `Conflict`).
 
 mod translate_checklist;
+mod translate_docs;
 mod translate_msg;
 mod translate_org;
 mod translate_work;
@@ -339,6 +340,7 @@ pub(crate) fn prepare_apply_rpc(
         .or_else(|| {
             translate_checklist::try_prepare(next_id, resource, verb, input, expected_revision)
         })
+        .or_else(|| translate_docs::try_prepare(next_id, resource, verb, input, expected_revision))
         .or_else(|| translate_msg::try_prepare(next_id, resource, verb, input))
 }
 
@@ -370,6 +372,34 @@ fn execute_command_as_human(
         exec,
         subcalls: 0,
     };
+    let mut prepared = prepared;
+    if matches!(prepared.method, "docs.update" | "docs.move" | "docs.delete") {
+        if let Some(obj) = prepared.params.as_object_mut() {
+            let doc_ref = obj
+                .get("document_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let project = obj
+                .get("project")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            if !doc_ref.is_empty() && !org_proto::is_uuid_v7(&doc_ref) {
+                let inspected = ctx.call(
+                    "docs.inspect",
+                    serde_json::json!({ "project": project, "document": doc_ref }),
+                )?;
+                let resolved = inspected
+                    .get("document")
+                    .and_then(|d| d.get("id"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| unreadable("docs.inspect"))?
+                    .to_owned();
+                obj.insert("document_id".into(), Value::String(resolved));
+            }
+        }
+    }
     let raw = ctx.call(prepared.method, prepared.params)?;
     shape_output(prepared.method, prepared.shape, raw)
 }

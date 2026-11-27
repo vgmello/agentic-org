@@ -247,6 +247,8 @@ fn prep_task_update(
         remove_modified_files: opt_str_list(input, "remove_modified_files").unwrap_or_default(),
         add_attachments: opt_str_list(input, "add_attachment").unwrap_or_default(),
         remove_attachments: opt_str_list(input, "remove_attachment").unwrap_or_default(),
+        feature_id: PatchField::Unchanged,
+        milestone_id: PatchField::Unchanged,
         details: None,
     };
     Ok(PreparedRpc {

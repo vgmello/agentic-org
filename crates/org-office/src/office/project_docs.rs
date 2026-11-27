@@ -6,17 +6,17 @@
 //! `unavailable` before anything is decided, so it never forks the tree it replicates.
 
 use org_proto::docs::{
-    DocsCreateParams, DocsIndexParams, DocsIndexResult, DocsInspectParams, DocsInspectResult,
-    DocsListParams, DocsListResult, DocsMoveParams, DocsPutMediaParams, DocsPutMediaResult,
-    DocsUpdateParams, DocsWriteResult,
+    DocsCreateParams, DocsDeleteParams, DocsDeleteResult, DocsIndexParams, DocsIndexResult,
+    DocsInspectParams, DocsInspectResult, DocsListParams, DocsListResult, DocsMoveParams,
+    DocsPutMediaParams, DocsPutMediaResult, DocsUpdateParams, DocsWriteResult,
 };
 use org_proto::{ApiError, ErrorCode};
 
 use crate::error::OfficeError;
 use crate::model::OfficeRole;
 use crate::store::open::project_doc_ops::{
-    DocsCreateOp, DocsIndexRead, DocsInspectRead, DocsListRead, DocsMoveOp, DocsPutMediaOp,
-    DocsUpdateOp,
+    DocsCreateOp, DocsDeleteOp, DocsIndexRead, DocsInspectRead, DocsListRead, DocsMoveOp,
+    DocsPutMediaOp, DocsUpdateOp,
 };
 
 use super::{storage, Office};
@@ -101,6 +101,19 @@ impl Office {
         }
         self.store
             .run(DocsMoveOp {
+                caller: caller.to_owned(),
+                params,
+            })
+            .map_err(storage)
+    }
+
+    /// `docs.delete`.
+    pub fn docs_delete(&self, caller: &str, params: DocsDeleteParams) -> Answer<DocsDeleteResult> {
+        if let Some(refusal) = self.docs_write_refusal() {
+            return Ok(Err(refusal));
+        }
+        self.store
+            .run(DocsDeleteOp {
                 caller: caller.to_owned(),
                 params,
             })

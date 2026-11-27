@@ -1,84 +1,39 @@
-//! The office-maintained `docs/index.yaml` of one project: rendered from the project's documents
-//! and media, deterministically (entries in path order, keys in byte order, canonical JSON
-//! values), so the same tree always gives the same bytes. Every write of the tree puts the
-//! rendered index in the same journal entry as the files it changes
-//! (`features::change`), and a rebuild checks the stored index against a fresh rendering
-//! (`projector`). Nobody else writes it.
+//! The office-maintained `docs/index.yaml` of one project, delegated to
+//! `org_docs::project_tree::render_project_index`.
 
-use std::collections::BTreeMap;
-
-use serde_json::{json, Value};
-
-use super::records::{DocEntry, DocMedia};
-use crate::organization::records::yaml::{self, Fields};
+pub use org_docs::project_tree::INDEX_MAX_BYTES;
+use org_docs::project_tree::{render_project_index, IndexDocRow, IndexMediaRow};
 use org_store::Id;
 
-const HEADER: &str =
-    "# Maintained by the office: regenerated on every documentation change. Do not edit.\n";
-const INDEX_SCHEMA_VERSION: u64 = 1;
-/// Largest `index.yaml` (256 KiB, `doc-86`): it replicates to satellites as one file, inside
-/// both one `org-sync` org-journal payload and one frame.
-pub const INDEX_MAX_BYTES: usize = 256 * 1024;
-
-fn doc_entry(doc: &DocEntry) -> Value {
-    json!({
-        "id": doc.id.as_str(),
-        "path": doc.path.as_str(),
-        "section": doc.path.section().as_str(),
-        "kind": doc.kind,
-        "title": doc.title,
-        "status": doc.status.as_str(),
-        "summary": doc.summary,
-        "owner_employee_id": doc.owner_employee_id.as_ref().map(Id::as_str),
-        "revision": doc.meta.revision,
-    })
-}
-
-fn media_entry(media: &DocMedia) -> Value {
-    json!({
-        "id": media.id.as_str(),
-        "path": media.file.rel_path(),
-        "type": media.kind.as_str(),
-        "media_type": media.media_type,
-        "bytes": media.bytes,
-        "sha256": media.sha256,
-        "title": media.title,
-        "revision": media.meta.revision,
-    })
-}
+use super::records::{DocEntry, DocMedia};
 
 /// The index file of `project` for exactly these documents and media, in any order.
 pub fn render(project: &Id, docs: &[DocEntry], media: &[DocMedia]) -> Vec<u8> {
-    let mut by_path: Vec<&DocEntry> = docs.iter().collect();
-    by_path.sort_by(|a, b| a.path.cmp(&b.path));
-    let mut media_by_path: Vec<&DocMedia> = media.iter().collect();
-    media_by_path.sort_by(|a, b| a.file.cmp(&b.file));
-    let mut sections: BTreeMap<&str, u64> = BTreeMap::new();
-    for doc in &by_path {
-        let section = doc.path.as_str().rsplit_once('/').map_or("", |(s, _)| s);
-        *sections.entry(section).or_default() += 1;
-    }
-    let mut fields = Fields::new();
-    fields.insert("schema_version".into(), json!(INDEX_SCHEMA_VERSION));
-    fields.insert("project_id".into(), json!(project.as_str()));
-    fields.insert(
-        "sections".into(),
-        Value::Array(
-            sections
-                .into_iter()
-                .map(|(path, count)| json!({"path": path, "document_count": count}))
-                .collect(),
-        ),
-    );
-    fields.insert(
-        "documents".into(),
-        Value::Array(by_path.into_iter().map(doc_entry).collect()),
-    );
-    fields.insert(
-        "media".into(),
-        Value::Array(media_by_path.into_iter().map(media_entry).collect()),
-    );
-    let mut out = HEADER.as_bytes().to_vec();
-    out.extend(yaml::encode(&fields));
-    out
+    let doc_rows: Vec<IndexDocRow<'_>> = docs
+        .iter()
+        .map(|d| IndexDocRow {
+            id: d.id.as_str(),
+            path: &d.path,
+            kind: &d.kind,
+            title: &d.title,
+            status: d.status,
+            summary: d.summary.as_deref(),
+            owner_employee_id: d.owner_employee_id.as_ref().map(Id::as_str),
+            revision: d.meta.revision,
+        })
+        .collect();
+    let media_rows: Vec<IndexMediaRow<'_>> = media
+        .iter()
+        .map(|m| IndexMediaRow {
+            id: m.id.as_str(),
+            file: &m.file,
+            kind: m.kind,
+            media_type: &m.media_type,
+            bytes: m.bytes,
+            sha256: &m.sha256,
+            title: &m.title,
+            revision: m.meta.revision,
+        })
+        .collect();
+    render_project_index(project.as_str(), &doc_rows, &media_rows)
 }

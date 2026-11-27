@@ -21,6 +21,9 @@ pub mod backup;
 pub use org_budgets as budgets;
 /// The stores an office keeps beside its journal, which agents' sandboxes mask.
 pub mod companion_paths;
+/// Project delivery & knowledge-graph family (`TASK-55`, `L7`/`L11`): features, Why links,
+/// releases, milestones, deployments, changelogs, feature flags, and flag snapshots.
+pub mod delivery;
 pub mod git;
 pub mod hq_creation;
 mod organization;

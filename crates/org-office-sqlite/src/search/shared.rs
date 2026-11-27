@@ -20,11 +20,11 @@ use org_office::search::rank::{Scored, SourcePage};
 use org_office::search::records::{DocMeta, SearchDoc, FIELD_WEIGHTS};
 
 use super::super::{failed, SqliteTx};
-use super::{fields, fts5, text, Clause};
+use super::{fields, fts5, text, Clause, Ranked};
 
 /// Each projected table a shared document reads: the table, the document's type, and the
 /// column naming its entity.
-const SOURCES: [(&str, SearchEntityType, &str); 11] = [
+const SOURCES: [(&str, SearchEntityType, &str); 13] = [
     ("tasks", SearchEntityType::Task, "id"),
     ("task_labels", SearchEntityType::Task, "task_id"),
     ("task_files", SearchEntityType::Task, "task_id"),
@@ -32,6 +32,8 @@ const SOURCES: [(&str, SearchEntityType, &str); 11] = [
     ("comments", SearchEntityType::Task, "target_id"),
     ("checklist_steps", SearchEntityType::Task, "target_id"),
     ("projects", SearchEntityType::Project, "id"),
+    ("documents", SearchEntityType::Document, "id"),
+    ("features", SearchEntityType::Feature, "id"),
     ("employees", SearchEntityType::Member, "id"),
     ("teams", SearchEntityType::Team, "id"),
     ("roles", SearchEntityType::Role, "id"),
@@ -256,8 +258,55 @@ fn filters(organization: &str, plan: &SearchPlan) -> Clause {
     keep
 }
 
-/// The shared page `plan` asks for, ranked by FTS5's weighted `bm25()` (negated: higher is
-/// better) with the same tie-breakers as every engine.
+const RANKED_COLUMNS: &str = "d.entity_type, d.entity_id, d.reference, d.title, d.status, \
+     d.project_id, d.assignee_id, d.author_id, d.updated_at";
+
+fn ranked_doc(row: &Row<'_>) -> rusqlite::Result<SearchDoc> {
+    let kind: String = row.get(5)?;
+    let entity_type = SearchEntityType::parse(&kind).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            5,
+            rusqlite::types::Type::Text,
+            "an unknown search entity type".into(),
+        )
+    })?;
+    Ok(SearchDoc {
+        entity_type,
+        entity_id: row.get(6)?,
+        meta: DocMeta {
+            reference: row.get(7)?,
+            title: row.get(8)?,
+            status: row.get(9)?,
+            project_id: row.get(10)?,
+            assignee_id: row.get(11)?,
+            author_id: row.get(12)?,
+            updated_at: row.get(13)?,
+            ..DocMeta::default()
+        },
+        fields: fields(row)?,
+    })
+}
+
+fn visibility_clause(
+    organization: &str,
+    allowed_projects: &std::collections::BTreeSet<String>,
+) -> Clause {
+    let mut clause = Clause::new("d.organization_id = ?", [text(organization)]);
+    if allowed_projects.is_empty() {
+        clause.and("d.entity_type NOT IN ('document', 'feature')", []);
+    } else {
+        let marks = vec!["?"; allowed_projects.len()].join(", ");
+        clause.and(
+            &format!("(d.entity_type NOT IN ('document', 'feature') OR d.project_id IN ({marks}))"),
+            allowed_projects.iter().map(|p| text(p)),
+        );
+    }
+    clause
+}
+
+/// The shared page `plan` asks for. Persons see all shared docs and rank via FTS5 `bm25()`;
+/// agents have project-scoped visibility for `document` and `feature` rows and rank via
+/// [`Ranked`] strictly over visible documents so private projects never leak into totals or IDF.
 pub(super) fn search(
     db: &Connection,
     organization: &str,
@@ -265,6 +314,29 @@ pub(super) fn search(
 ) -> rusqlite::Result<SourcePage> {
     if !plan.wants_shared() || plan.terms.is_empty() || plan.filters.conversation_id.is_some() {
         return Ok(SourcePage::default());
+    }
+    if let Some(ref allowed_projects) = plan.visible_projects {
+        let visible = visibility_clause(organization, allowed_projects);
+        let mut keep = filters(organization, plan);
+        if allowed_projects.is_empty() {
+            keep.and("d.entity_type NOT IN ('document', 'feature')", []);
+        } else {
+            let marks = vec!["?"; allowed_projects.len()].join(", ");
+            keep.and(
+                &format!(
+                    "(d.entity_type NOT IN ('document', 'feature') OR d.project_id IN ({marks}))"
+                ),
+                allowed_projects.iter().map(|p| text(p)),
+            );
+        }
+        let ranked = Ranked {
+            db,
+            fts: "search_fts",
+            docs: "search_docs",
+            columns: RANKED_COLUMNS,
+            build: ranked_doc,
+        };
+        return ranked.page(plan, &visible, &keep);
     }
     let matched = fts5::match_all(&plan.terms);
     let keep = filters(organization, plan);

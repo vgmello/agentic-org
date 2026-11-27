@@ -1157,6 +1157,8 @@ fn private_notes_never_leak_into_conflict_detail_or_events_since() {
             add_modified_files: vec![],
             remove_modified_files: vec![],
             details: None,
+            feature_id: PatchField::Unchanged,
+            milestone_id: PatchField::Unchanged,
             add_attachments: vec![],
             remove_attachments: vec![],
         };

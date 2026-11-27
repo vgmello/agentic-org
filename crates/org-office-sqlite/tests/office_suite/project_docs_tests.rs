@@ -11,9 +11,9 @@ use std::sync::{
 
 use base64::Engine as _;
 use org_proto::docs::{
-    DocMediaKindWire, DocStatusWire, DocsCreateParams, DocsIndexParams, DocsIndexResult,
-    DocsInspectParams, DocsListParams, DocsMoveParams, DocsPutMediaParams, DocsUpdateParams,
-    DocsWriteResult,
+    DocMediaKindWire, DocStatusWire, DocsCreateParams, DocsDeleteParams, DocsIndexParams,
+    DocsIndexResult, DocsInspectParams, DocsListParams, DocsMoveParams, DocsPutMediaParams,
+    DocsUpdateParams, DocsWriteResult,
 };
 use org_proto::org::{MemberAddPersonParams, ProjectCreateParams, TeamCreateParams};
 use org_proto::{ApiError, ErrorCode};
@@ -833,10 +833,103 @@ fn every_write(fx: &Fx, caller: &str, project: &str, doc: &str) -> Vec<(&'static
             )),
         ),
         (
+            "delete",
+            err(o.docs_delete(
+                caller,
+                DocsDeleteParams {
+                    command_id: next_uuid(),
+                    project: p.clone(),
+                    document_id: doc.into(),
+                    expected_revision: 1,
+                },
+            )),
+        ),
+        (
             "put_media",
             err(o.docs_put_media(caller, media_params(project, "x.png", &png(2, 2)))),
         ),
     ]
+}
+
+#[test]
+fn delete_removes_document_regenerates_index_and_rebuilds_on_both_engines() {
+    for engine in engines() {
+        let fx = fixture(engine.clone());
+        let first = create(&fx, &fx.owning_agent, "Setup", Some("guides/setup.md")).document;
+        let second = create(&fx, &fx.owning_agent, "Overview", Some("overview.md")).document;
+        assert_eq!(index(&fx, &fx.owner).documents.len(), 2);
+
+        // Stale revision is refused with Conflict; outsider sees uniform NotFound.
+        let stale = err(fx.office.docs_delete(
+            &fx.owning_agent,
+            DocsDeleteParams {
+                command_id: next_uuid(),
+                project: fx.project.clone(),
+                document_id: first.id.clone(),
+                expected_revision: 99,
+            },
+        ));
+        assert_eq!(stale.code, ErrorCode::Conflict, "{engine:?}");
+        let hidden = err(fx.office.docs_delete(
+            &fx.outsider_agent,
+            DocsDeleteParams {
+                command_id: next_uuid(),
+                project: fx.project.clone(),
+                document_id: first.id.clone(),
+                expected_revision: 1,
+            },
+        ));
+        assert_eq!(
+            (hidden.code, hidden.message.as_str()),
+            (ErrorCode::NotFound, "project not found"),
+            "{engine:?}"
+        );
+
+        // Delete first doc + exact retry idempotency.
+        let delete_cmd = next_uuid();
+        let params = DocsDeleteParams {
+            command_id: delete_cmd.clone(),
+            project: fx.project.clone(),
+            document_id: first.id.clone(),
+            expected_revision: 1,
+        };
+        let deleted = ok(fx.office.docs_delete(&fx.owning_agent, params.clone()));
+        assert_eq!(deleted.deleted_id, first.id);
+        assert_eq!(deleted.deleted_path, "guides/setup.md");
+        let retry = ok(fx.office.docs_delete(&fx.owning_agent, params));
+        assert_eq!(retry, deleted, "{engine:?} retry idempotency");
+
+        // Index regenerated: guides section gone, overview.md remains in root section "".
+        let after_one = index(&fx, &fx.owner);
+        assert_eq!(after_one.documents.len(), 1);
+        assert_eq!(after_one.documents[0].path, "overview.md");
+        assert_eq!(after_one.sections.len(), 1);
+        assert_eq!(after_one.sections[0].path, "");
+        assert_eq!(after_one.sections[0].document_count, 1);
+        fx.office.sync_store().unwrap();
+        let yaml_text = std::fs::read_to_string(index_file(&fx)).unwrap();
+        assert!(!yaml_text.contains("guides/setup.md"));
+        assert!(yaml_text.contains("overview.md"));
+
+        // Delete last doc: index.yaml stays regenerated with empty documents & sections.
+        ok(fx.office.docs_delete(
+            &fx.owner,
+            DocsDeleteParams {
+                command_id: next_uuid(),
+                project: fx.project.clone(),
+                document_id: second.id.clone(),
+                expected_revision: 1,
+            },
+        ));
+        let empty = index(&fx, &fx.owner);
+        assert!(empty.documents.is_empty());
+        assert!(empty.sections.is_empty());
+
+        // Delete+Rebuild reproduces identical empty index on both engines.
+        let fx = reopen(fx).expect("rebuild after delete");
+        assert_eq!(index(&fx, &fx.owner), empty, "{engine:?}");
+        fx.office.close().unwrap();
+    }
 }
 
 #[test]

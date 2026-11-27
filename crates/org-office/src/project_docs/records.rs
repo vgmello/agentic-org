@@ -3,9 +3,10 @@
 //! YAML sidecar beside its bytes. A document's path is where its file is, never a field: a move
 //! changes the location only.
 
-use org_proto::docs::{
-    DOC_BODY_MAX_BYTES, DOC_KIND_MAX_BYTES, DOC_MEDIA_MAX_BYTES, DOC_SUMMARY_MAX_BYTES,
+pub use org_docs::project_tree::{
+    is_body, is_doc_kind, is_sha256_hex, is_summary, media_type_of, DocStatus, MediaKind,
 };
+use org_proto::docs::DOC_MEDIA_MAX_BYTES;
 use org_store::Id;
 use serde_json::{json, Value};
 
@@ -19,56 +20,6 @@ use crate::organization::records::{
 /// The largest media asset the tree keeps (the data contract's `documentation_media.bytes`):
 /// [`DOC_MEDIA_MAX_BYTES`], so every asset replicates to satellites as one `org-sync` payload.
 pub const MEDIA_RECORD_MAX_BYTES: u64 = DOC_MEDIA_MAX_BYTES as u64;
-
-/// Kinds the data contract reserves for documents outside the tree (a project brief, a
-/// release or deployment changelog).
-const RESERVED_KINDS: [&str; 2] = ["brief", "changelog"];
-
-/// Lifecycle state of a document (`documents.status`). `Deprecated` archives it.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum DocStatus {
-    Draft,
-    Current,
-    Deprecated,
-}
-
-impl DocStatus {
-    pub const ALL: [Self; 3] = [Self::Draft, Self::Current, Self::Deprecated];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Draft => "draft",
-            Self::Current => "current",
-            Self::Deprecated => "deprecated",
-        }
-    }
-
-    pub fn parse(text: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|s| s.as_str() == text)
-    }
-}
-
-/// What a media asset depicts (`documentation_media.type`).
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum MediaKind {
-    Image,
-    Diagram,
-}
-
-impl MediaKind {
-    pub const ALL: [Self; 2] = [Self::Image, Self::Diagram];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Image => "image",
-            Self::Diagram => "diagram",
-        }
-    }
-
-    pub fn parse(text: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|s| s.as_str() == text)
-    }
-}
 
 /// One document of a project's tree (`documents` with a `path`).
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -131,35 +82,6 @@ pub struct DocMedia {
     pub title: String,
     pub summary: String,
     pub meta: Meta,
-}
-
-/// A document kind: a lowercase slug of at most 64 bytes, not one the contract reserves.
-pub fn is_doc_kind(text: &str) -> bool {
-    let first_ok = text
-        .bytes()
-        .next()
-        .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
-    first_ok
-        && text.len() <= DOC_KIND_MAX_BYTES
-        && text
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        && !RESERVED_KINDS.contains(&text)
-}
-
-/// A summary: visible text without control characters (line breaks allowed), trimmed, at most
-/// 2 KiB.
-pub fn is_summary(text: &str) -> bool {
-    text.len() <= DOC_SUMMARY_MAX_BYTES
-        && text.trim() == text
-        && !text.chars().any(|c| {
-            (c.is_control() && c != '\n') || (c != '\n' && org_docs::is_invisible_or_break(c))
-        })
-}
-
-/// A Markdown body: at most 256 KiB, no NUL.
-pub fn is_body(text: &str) -> bool {
-    text.len() <= DOC_BODY_MAX_BYTES && !text.contains('\0')
 }
 
 fn read_id(reader: &mut Reader, key: &str) -> Result<Id, RecordError> {
@@ -272,23 +194,6 @@ pub fn encode_media(media: &DocMedia) -> Vec<u8> {
     fields.insert("title".into(), json!(media.title));
     fields.insert("summary".into(), json!(media.summary));
     yaml::encode(&fields)
-}
-
-fn is_sha256_hex(text: &str) -> bool {
-    text.len() == 64
-        && text
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
-/// The MIME type a media file's extension names.
-pub fn media_type_of(file: &MediaFile) -> &'static str {
-    match file.extension() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "webp" => "image/webp",
-        _ => "image/gif",
-    }
 }
 
 /// Reads the metadata sidecar of `file` in `project`.

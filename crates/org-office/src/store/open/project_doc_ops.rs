@@ -4,9 +4,9 @@
 //! params is `operation_reused`).
 
 use org_proto::docs::{
-    DocsCreateParams, DocsIndexParams, DocsIndexResult, DocsInspectParams, DocsInspectResult,
-    DocsListParams, DocsListResult, DocsMoveParams, DocsPutMediaParams, DocsPutMediaResult,
-    DocsUpdateParams, DocsWriteResult,
+    DocsCreateParams, DocsDeleteParams, DocsDeleteResult, DocsIndexParams, DocsIndexResult,
+    DocsInspectParams, DocsInspectResult, DocsListParams, DocsListResult, DocsMoveParams,
+    DocsPutMediaParams, DocsPutMediaResult, DocsUpdateParams, DocsWriteResult,
 };
 use org_proto::{ApiError, ErrorCode};
 use org_store::{
@@ -148,6 +148,31 @@ docs_write_op!(
     DocsMoveParams,
     |uow, caller, params| { update::decide_move(uow.view(), uow.now(), &caller, &params) }
 );
+
+/// `docs.delete`: removes a project document and regenerates `docs/index.yaml`.
+pub struct DocsDeleteOp {
+    pub caller: String,
+    pub params: DocsDeleteParams,
+}
+
+impl StoreOp for DocsDeleteOp {
+    type Out = Answer<DocsDeleteResult>;
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        let op = match operation(
+            "docs.delete",
+            &self.params.command_id,
+            &self.caller,
+            &self.params,
+        ) {
+            Ok(op) => op,
+            Err(error) => return Ok(Err(error)),
+        };
+        let Self { caller, params } = self;
+        submit(store, op, move |uow| {
+            update::decide_delete(uow.view(), &caller, &params).map_err(refusal)
+        })
+    }
+}
 
 /// `docs.put_media`: the caller is authorized on a snapshot before a byte of the asset is
 /// decoded, so an outsider or an inactive caller never reaches the image decoder; then the

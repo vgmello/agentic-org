@@ -28,7 +28,7 @@ fn params_refuse_unknown_keys_and_keep_their_wire_spelling() {
 
     for refused in [
         json!({"q": "x", "sql": "1=1"}),
-        json!({"q": "x", "types": ["document"]}),
+        json!({"q": "x", "types": ["unknown_type"]}),
         json!({"q": "x", "fields": ["body"]}),
         json!({"types": ["task"]}),
     ] {

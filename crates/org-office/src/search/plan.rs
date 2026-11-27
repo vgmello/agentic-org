@@ -105,9 +105,29 @@ pub struct SearchPlan {
     pub limit: usize,
     /// Count every match, answer no hit.
     pub count_only: bool,
+    /// Project IDs whose `Document` and `Feature` records this caller may see (`None` = person,
+    /// unrestricted; `Some(set)` = agent restricted to projects their teams belong to).
+    pub visible_projects: Option<BTreeSet<String>>,
 }
 
 impl SearchPlan {
+    /// Whether `doc` is within this caller's visibility scope for shared search.
+    pub fn is_visible_shared(&self, doc: &SearchDoc) -> bool {
+        if !matches!(
+            doc.entity_type,
+            SearchEntityType::Document | SearchEntityType::Feature
+        ) {
+            return true;
+        }
+        match &self.visible_projects {
+            None => true,
+            Some(allowed) => doc
+                .meta
+                .project_id
+                .as_ref()
+                .is_some_and(|pid| allowed.contains(pid)),
+        }
+    }
     /// How many hits a source answers: one more than a page, so the caller knows more follow.
     pub fn fetch(&self) -> usize {
         self.limit.saturating_add(1)
@@ -148,6 +168,7 @@ impl SearchPlan {
         let scoped = doc.entity_type == SearchEntityType::Message
             || (f.conversation_id.is_none() && same(&f.project_id, &m.project_id));
         self.wants(doc.entity_type)
+            && self.is_visible_shared(doc)
             && scoped
             && same(&f.status, &m.status)
             && same(&f.assignee_id, &m.assignee_id)

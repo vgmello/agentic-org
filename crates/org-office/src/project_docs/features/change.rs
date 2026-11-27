@@ -77,6 +77,16 @@ impl TreeEdit {
         Ok(())
     }
 
+    /// Removes a document from the tree and schedules file removal + `index.yaml` regeneration.
+    pub fn remove_doc(&mut self, doc: &ProjectDoc) -> Result<(), Denied> {
+        let Some(at) = self.docs.iter().position(|d| d.id == doc.id) else {
+            return Err(refused(ErrorCode::NotFound, "document not found"));
+        };
+        self.docs.remove(at);
+        self.take_change(|c| c.remove(paths::doc_path(&doc.project_id, &doc.path)));
+        Ok(())
+    }
+
     /// Writes `media` and its `bytes`, replacing the asset of the same file.
     pub fn put_media(&mut self, media: DocMedia, bytes: Vec<u8>) -> Result<(), Denied> {
         match self.media.iter().position(|m| m.file == media.file) {

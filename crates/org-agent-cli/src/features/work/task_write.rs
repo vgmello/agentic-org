@@ -247,6 +247,8 @@ pub(super) fn write_task_update<T: OfficeTransport + ?Sized>(
         remove_modified_files: opt_str_list(i, "remove_modified_files").unwrap_or_default(),
         add_attachments: resolved.ids.clone(),
         remove_attachments: opt_str_list(i, "remove_attachment").unwrap_or_default(),
+        feature_id: PatchField::Unchanged,
+        milestone_id: PatchField::Unchanged,
         details: None,
     };
     let raw = match transport.call_method(TasksUpdate::METHOD, json!(params)) {

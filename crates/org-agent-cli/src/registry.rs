@@ -13,7 +13,7 @@ use org_proto::ErrorCode;
 use serde_json::Value;
 
 use crate::features::{
-    auth, budget, files, git, hiring, messaging, office, organization, processes, projects,
+    auth, budget, docs, files, git, hiring, messaging, office, organization, processes, projects,
     providers, session, tess, work,
 };
 use crate::runtime::domain::Domain;
@@ -24,6 +24,7 @@ use crate::runtime::transport::{refuse_durable, OfficeTransport, TransportOffice
 const DOMAINS: &[Domain] = &[
     organization::DOMAIN,
     projects::DOMAIN,
+    docs::DOMAIN,
     hiring::DOMAIN,
     session::DOMAIN,
     messaging::DOMAIN,

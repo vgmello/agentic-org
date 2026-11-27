@@ -7,9 +7,9 @@ use base64::Engine as _;
 use image::codecs::png::PngEncoder;
 use image::{DynamicImage, Rgb, RgbImage};
 use org_proto::docs::{
-    DocMediaKindWire, DocStatusWire, DocsIndexParams, DocsInspectParams, DocsListParams,
-    DocsMoveParams, DocsPutMediaParams, DocsUpdateParams, DOC_MEDIA_MAX_BASE64_CHARS,
-    DOC_MEDIA_MAX_BYTES,
+    DocMediaKindWire, DocStatusWire, DocsDeleteParams, DocsIndexParams, DocsInspectParams,
+    DocsListParams, DocsMoveParams, DocsPutMediaParams, DocsUpdateParams,
+    DOC_MEDIA_MAX_BASE64_CHARS, DOC_MEDIA_MAX_BYTES,
 };
 use org_proto::ErrorCode;
 use org_store::{Ack, Change, Id, Refusal, Store, StoreError, Stream};
@@ -141,6 +141,18 @@ fn a_satellite_reads_its_replicated_tree_and_refuses_every_write_as_unavailable(
                     expected_revision: 1,
                     new_path: Some("elsewhere.md".into()),
                     ..Default::default()
+                },
+            )),
+        ),
+        (
+            "delete",
+            err(office.docs_delete(
+                &fx.owner,
+                DocsDeleteParams {
+                    command_id: next_uuid(),
+                    project: project(),
+                    document_id: doc.id.clone(),
+                    expected_revision: 1,
                 },
             )),
         ),

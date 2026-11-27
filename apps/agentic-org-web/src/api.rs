@@ -12,6 +12,7 @@ mod account_routes;
 mod attachment_routes;
 mod chat_routes;
 mod cost_routes;
+mod delivery_routes;
 mod doc_routes;
 mod external_auth_routes;
 mod git_routes;
@@ -189,6 +190,7 @@ pub enum Route {
     Git(git_routes::GitRoute),
     Process(process_routes::ProcessRoute),
     Docs(doc_routes::DocRoute),
+    Delivery(delivery_routes::DeliveryRoute),
     Search(search_routes::SearchRoute),
     Cost(cost_routes::CostRoute),
     Provider(provider_routes::ProviderRoute),
@@ -236,6 +238,7 @@ pub enum Call {
     Git(git_routes::GitCall),
     Process(process_routes::ProcessCall),
     Docs(doc_routes::DocCall),
+    Delivery(delivery_routes::DeliveryCall),
     Search(search_routes::SearchCall),
     Cost(cost_routes::CostCall),
     Provider(provider_routes::ProviderCall),

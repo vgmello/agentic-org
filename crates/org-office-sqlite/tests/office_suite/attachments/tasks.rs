@@ -66,6 +66,8 @@ fn empty_update(task: &str, expected_revision: u64) -> TasksUpdateParams {
         add_modified_files: vec![],
         remove_modified_files: vec![],
         details: None,
+        feature_id: PatchField::Unchanged,
+        milestone_id: PatchField::Unchanged,
         add_attachments: vec![],
         remove_attachments: vec![],
     }

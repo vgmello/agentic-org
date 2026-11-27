@@ -3,11 +3,12 @@
 
 use super::{
     account_routes, attachment_routes, bad_input, chat_routes, cost_routes, create_outcome,
-    doc_routes, external_auth_routes, failure, git_routes, hiring_routes, instance_routes,
-    instance_routes::CallerAuth, instance_view, invalid, mutation, not_found, note_routes,
-    office_routes, open_routes, org_routes, organization_view, process_routes, provider_routes,
-    result, search_routes, session_routes, task_routes, tess_routes, unavailable, view, Call,
-    CliApprovalDecideBody, Credentials, EmptyBody, RegisterBody, Route, SessionApi, SignInBody,
+    delivery_routes, doc_routes, external_auth_routes, failure, git_routes, hiring_routes,
+    instance_routes, instance_routes::CallerAuth, instance_view, invalid, mutation, not_found,
+    note_routes, office_routes, open_routes, org_routes, organization_view, process_routes,
+    provider_routes, result, search_routes, session_routes, task_routes, tess_routes, unavailable,
+    view, Call, CliApprovalDecideBody, Credentials, EmptyBody, RegisterBody, Route, SessionApi,
+    SignInBody,
 };
 use crate::body::{stream::StreamedBody, BusinessBody};
 use crate::host::Failure;
@@ -329,6 +330,7 @@ impl ApiBackend for SessionApi {
             Route::Git(route) => return git_routes::prepare(route, bytes),
             Route::Process(route) => return process_routes::prepare(route, bytes),
             Route::Docs(route) => return doc_routes::prepare(route, bytes),
+            Route::Delivery(route) => return delivery_routes::prepare(route, bytes),
             Route::Search(route) => return search_routes::prepare(route, bytes),
             Route::Cost(route) => return cost_routes::prepare(route, bytes),
             Route::Provider(route) => return provider_routes::prepare(route, bytes),
@@ -465,6 +467,12 @@ impl ApiBackend for SessionApi {
                 ),
                 streaming: false,
             },
+            Call::Delivery(call) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(delivery_routes::execute(&self, call).await)
+                }),
+                streaming: false,
+            },
             Call::Search(call) => AsyncDispatch::Async {
                 future: Box::pin(async move {
                     WebReply::Json(search_routes::execute(&self, call).await)
@@ -543,6 +551,7 @@ impl ApiBackend for SessionApi {
             | Call::Search(_)
             | Call::Process(_)
             | Call::Docs(_)
+            | Call::Delivery(_)
             | Call::Cost(_)
             | Call::Provider(_)
             | Call::OfficeFederation(_)

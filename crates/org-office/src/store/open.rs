@@ -12,6 +12,7 @@
 
 pub mod attachment_ops;
 mod companions;
+pub mod delivery_ops;
 pub mod dod_ops;
 pub mod git_ops;
 mod import_validation;
@@ -75,6 +76,7 @@ pub use operations::{
 pub use super::backend::Testing;
 pub use super::backend::{EngineChoice, StoreConfig, PROJECTION_FILE};
 use crate::attachments::ports::{AttachmentsEngine, AttachmentsRead};
+use crate::delivery::ports::{DeliveryEngine, DeliveryRead};
 use crate::project_docs::ports::{ProjectDocsEngine, ProjectDocsRead};
 use crate::reviews::ports::{ReviewsEngine, ReviewsRead};
 use crate::search::ports::{SearchEngine, SearchRead};
@@ -83,12 +85,17 @@ use crate::tasks::ports::{TasksEngine, TasksRead};
 /// An engine every family of the office runs on. It grows by one bound per family (and one
 /// for search, which reads them all).
 pub trait OfficeEngine:
-    TasksEngine + AttachmentsEngine + ProjectDocsEngine + ReviewsEngine + SearchEngine
+    TasksEngine + AttachmentsEngine + ProjectDocsEngine + DeliveryEngine + ReviewsEngine + SearchEngine
 {
 }
 
 impl<E> OfficeEngine for E where
-    E: TasksEngine + AttachmentsEngine + ProjectDocsEngine + ReviewsEngine + SearchEngine
+    E: TasksEngine
+        + AttachmentsEngine
+        + ProjectDocsEngine
+        + DeliveryEngine
+        + ReviewsEngine
+        + SearchEngine
 {
 }
 
@@ -101,7 +108,9 @@ pub trait StoreOp {
 /// One read of a consistent snapshot, whichever engine holds the projection.
 pub trait ReadOp {
     type Out;
-    fn read<S: TasksRead + AttachmentsRead + ProjectDocsRead + ReviewsRead + SearchRead>(
+    fn read<
+        S: TasksRead + AttachmentsRead + ProjectDocsRead + DeliveryRead + ReviewsRead + SearchRead,
+    >(
         self,
         snapshot: &S,
     ) -> Result<Self::Out, StoreError>;
