@@ -129,8 +129,8 @@ pub(super) fn merge_stop_preserve(current: Option<bool>, reason: &str) -> Option
         "warm_route_stale"
             | "oauth_token_expiring"
             | "pool_reroute"
-            | "bwrap_sibling_isolation_refresh"
-            | "bwrap_sibling_topology_changed"
+            | "sandbox_isolation_refresh"
+            | "sandbox_topology_changed"
     ))
 }
 

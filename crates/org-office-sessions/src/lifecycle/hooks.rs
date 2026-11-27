@@ -12,7 +12,7 @@ use org_office::Office;
 use crate::binding::RunBindingRegistry;
 use crate::credentials::{now_ms, rfc3339_now};
 use crate::employee_locks::EmployeeLockMap;
-use crate::manager::{set_waiting_messages_count, SessionManager};
+use crate::manager::{set_waiting_messages_count, SandboxPlan, SessionManager};
 use crate::pump::{
     FailoverHook, MidTurnDeliveredHook, MidTurnStageOutcome, OpenRequiredAsksHook,
     PermitAcquireHook, PermitReleaseHook, PermitReleasePendingHook, PermitRenewHook, PumpHooks,
@@ -39,7 +39,7 @@ impl SessionManager {
         employee_id: &str,
         route_digest: String,
         oauth_expires_at_ms: Option<u64>,
-        bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+        sandbox_plan: SandboxPlan,
         partitioned: bool,
     ) -> PumpHooks {
         let open_asks_check = Arc::clone(&self.open_required_asks);
@@ -114,14 +114,14 @@ impl SessionManager {
             }
         });
 
-        let is_bwrap_topology_stale: Option<crate::pump::BwrapTopologyStaleHook> =
-            bwrap_masked_siblings.map(|masked| {
-                let office = Arc::clone(&self.office);
-                let emp = employee_id.to_owned();
-                Arc::new(move || {
-                    crate::manager::has_unmasked_bwrap_sibling_in_office(&office, &emp, &masked)
-                }) as crate::pump::BwrapTopologyStaleHook
-            });
+        let is_sandbox_topology_stale: Option<crate::pump::SandboxTopologyStaleHook> = {
+            let runner = Arc::clone(&self.sandbox_runner);
+            let office = Arc::clone(&self.office);
+            let emp = employee_id.to_owned();
+            Some(Arc::new(move || {
+                runner.is_plan_stale(&office, &emp, &sandbox_plan)
+            }))
+        };
 
         PumpHooks {
             has_open_required_asks: Some(has_open),
@@ -136,7 +136,7 @@ impl SessionManager {
             on_failover: Some(on_failover),
             stage_mid_turn_wakes: (!partitioned).then_some(stage_mid_turn_wakes),
             on_mid_turn_delivered: (!partitioned).then_some(on_mid_turn_delivered),
-            is_bwrap_topology_stale,
+            is_sandbox_topology_stale,
         }
     }
 }

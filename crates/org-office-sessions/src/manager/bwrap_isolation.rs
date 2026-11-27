@@ -6,7 +6,7 @@
 //! choke-point; teardown itself goes through [`super::reap`].
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use org_office::Office;
 use org_proto::sessions::SessionState;
@@ -15,6 +15,9 @@ use org_proto::{ApiError, ErrorCode};
 use super::environment::ensure_owner_only_dir;
 use super::office_masks::OfficeMasks;
 use super::reap::{reap_live_handle, ReapMode};
+use super::sandbox_paths::{
+    collect_sibling_agent_ids_in_office, resolve_employee_team_chain_and_ids_in_office,
+};
 use super::sandbox_rules::collect_self_active_admins;
 use super::{LiveSessionHandle, SessionManager, StartSlotGuard};
 
@@ -22,22 +25,24 @@ use super::{LiveSessionHandle, SessionManager, StartSlotGuard};
 /// Claude `bwrap` sandbox so `bwrap` bind-mounts atomic directory masks without leaving unmasked
 /// holes or creating 0-byte `0444` files (`TASK-144`, `TASK-166`). Fails closed on any filesystem
 /// error (zero silent swallows). Never creates `<durable>/private` on satellites (`ARCH-02`).
-pub(crate) fn ensure_bwrap_deny_dirs(
-    mgr: &SessionManager,
+pub(super) fn ensure_bwrap_deny_dirs_with(
+    office: &Office,
+    office_socket: &Path,
+    agent_os_state_roots: &[PathBuf],
     employee_id: &str,
 ) -> Result<BTreeSet<String>, ApiError> {
-    let durable = mgr.office.durable_root();
-    let office_id = &mgr.office.info().office_id;
+    let durable = office.durable_root();
+    let office_id = &office.info().office_id;
     let office_local = durable.join("local").join("offices").join(office_id);
-    let runtime_root = mgr.office.runtime_root();
+    let runtime_root = office.runtime_root();
     let office_rt = runtime_root.join(office_id);
     // Every durable family (`private` HQ-only, `ARCH-02`), every companion store folder (a
     // one-file store such as `hq-owner.v1.json` is masked only where it exists) and the
     // restore backups beside the data roots (`TASK-203`).
-    for dir in OfficeMasks::of(&mgr.office).pre_created() {
+    for dir in OfficeMasks::of(office).pre_created() {
         ensure_owner_only_dir(dir)?;
     }
-    ensure_owner_only_dir(&mgr.office.folder().join("git-credentials"))?;
+    ensure_owner_only_dir(&office.folder().join("git-credentials"))?;
     ensure_owner_only_dir(&office_local.join("agents"))?;
     for dir in [
         office_rt.join("protected"),
@@ -49,11 +54,31 @@ pub(crate) fn ensure_bwrap_deny_dirs(
     }
     // `agent-os` external sign-in state (`TASK-137`): masked even before the first
     // `agent-os login` creates it, so a key written mid-session never appears unmasked.
-    for root in &mgr.config.agent_os_state_roots {
+    for root in agent_os_state_roots {
         ensure_owner_only_dir(root)?;
     }
     ensure_bwrap_repo_dirs(runtime_root, &office_rt, office_id, employee_id)?;
-    ensure_bwrap_sibling_dirs(mgr, &office_local, &office_rt, office_id, employee_id)
+    ensure_bwrap_sibling_dirs(
+        office,
+        office_socket,
+        &office_local,
+        &office_rt,
+        office_id,
+        employee_id,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn ensure_bwrap_deny_dirs(
+    mgr: &SessionManager,
+    employee_id: &str,
+) -> Result<BTreeSet<String>, ApiError> {
+    ensure_bwrap_deny_dirs_with(
+        &mgr.office,
+        &mgr.config.office_socket,
+        &mgr.config.agent_os_state_roots,
+        employee_id,
+    )
 }
 
 fn ensure_bwrap_repo_dirs(
@@ -80,19 +105,20 @@ fn ensure_bwrap_repo_dirs(
 }
 
 fn ensure_bwrap_sibling_dirs(
-    mgr: &SessionManager,
+    office: &Office,
+    office_socket: &Path,
     office_local: &Path,
     office_rt: &Path,
     office_id: &str,
     employee_id: &str,
 ) -> Result<BTreeSet<String>, ApiError> {
     let agents_root = office_local.join("agents");
-    let sibling_ids = mgr.collect_sibling_agent_ids(&agents_root, Some(employee_id));
+    let sibling_ids = collect_sibling_agent_ids_in_office(office, &agents_root, Some(employee_id));
     for other in &sibling_ids {
         ensure_owner_only_dir(&agents_root.join(other))?;
     }
     if let Some(runtime) =
-        crate::host_auth::office_runtime_dir(&mgr.config.office_socket).filter(|p| p.is_dir())
+        crate::host_auth::office_runtime_dir(office_socket).filter(|p| p.is_dir())
     {
         let short_root = runtime.join("t");
         ensure_owner_only_dir(&short_root)?;
@@ -104,17 +130,19 @@ fn ensure_bwrap_sibling_dirs(
             }
         }
     }
-    ensure_bwrap_team_dirs(mgr, office_rt, employee_id, &sibling_ids)?;
+    ensure_bwrap_team_dirs(office, office_rt, employee_id, &sibling_ids)?;
     Ok(sibling_ids)
 }
 
 fn ensure_bwrap_team_dirs(
-    mgr: &SessionManager,
+    office: &Office,
     office_rt: &Path,
     employee_id: &str,
     sibling_ids: &BTreeSet<String>,
 ) -> Result<(), ApiError> {
-    let Some((chain, all_team_ids)) = mgr.resolve_employee_team_chain_and_ids(employee_id) else {
+    let Some((chain, all_team_ids)) =
+        resolve_employee_team_chain_and_ids_in_office(office, employee_id)
+    else {
         return ensure_owner_only_dir(&office_rt.join("teams"));
     };
     let mut cursor = office_rt.to_path_buf();
@@ -181,32 +209,6 @@ pub(crate) fn has_unmasked_bwrap_sibling_in_office(
     false
 }
 
-/// Verifies right before spawning a Linux `bwrap` child that no new sibling appeared in the
-/// registry or on disk since `ensure_bwrap_deny_dirs` ran.
-pub(crate) fn verify_bwrap_masked_before_spawn(
-    mgr: &SessionManager,
-    emp_id: &str,
-    bwrap_masked_siblings: Option<&BTreeSet<String>>,
-) -> Result<(), ApiError> {
-    let Some(masked) = bwrap_masked_siblings else {
-        return Ok(());
-    };
-    let raced = {
-        let reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
-        reg.live
-            .keys()
-            .chain(reg.starting.iter())
-            .any(|other| other != emp_id && !masked.contains(other))
-    } || has_unmasked_bwrap_sibling_in_office(&mgr.office, emp_id, masked);
-    if raced {
-        return Err(ApiError::new(
-            ErrorCode::Conflict,
-            "a newly hired or starting sibling agent is not masked in this sandbox; retry launch",
-        ));
-    }
-    Ok(())
-}
-
 struct StaleBwrapBatch<'a> {
     handles: Vec<(String, LiveSessionHandle)>,
     guards: Vec<StartSlotGuard<'a>>,
@@ -234,7 +236,7 @@ fn collect_stale_bwrap_siblings<'a>(
         if other_id == starting_emp_id {
             continue;
         }
-        let Some(masked) = &handle.bwrap_masked_siblings else {
+        let Some(masked) = handle.sandbox_plan.masked_siblings() else {
             continue;
         };
         if masked.contains(starting_emp_id) {
@@ -284,7 +286,7 @@ fn reap_stale_bwrap_handle(
         mgr,
         &other_id,
         handle,
-        Some("bwrap_sibling_isolation_refresh"),
+        Some("sandbox_isolation_refresh"),
         ReapMode::FailClosedRestore {
             conflict_message: format!(
                 "could not verify teardown of stale sandboxed session `{other_id}` before starting `{starting_emp_id}`; resolve recovery on `{other_id}` first"

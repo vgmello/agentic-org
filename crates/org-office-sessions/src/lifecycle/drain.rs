@@ -12,7 +12,7 @@ use org_proto::sessions::SessionState;
 use crate::binding::RunBindingRegistry;
 use crate::credentials::{now_ms, rfc3339_now};
 use crate::employee_locks::EmployeeLockMap;
-use crate::manager::{set_waiting_messages_count, SessionManager, SessionRegistry};
+use crate::manager::{set_waiting_messages_count, SandboxRunner, SessionManager, SessionRegistry};
 use crate::pump::PumpCommand;
 use crate::recovery::SessionStore;
 use crate::wake::{WakeHoldReason, WakeQuotaRecord};
@@ -129,19 +129,12 @@ pub(super) fn try_send_wake_on_live_handle(
                 handle.route_digest.clone(),
                 handle.oauth_expires_at_ms,
                 Arc::clone(&handle.active_permit),
-                handle.bwrap_masked_siblings.clone(),
+                handle.sandbox_plan.clone(),
             )
         })
     };
-    let Some((
-        run_id,
-        tx,
-        conn_id,
-        route_digest,
-        oauth_expires_at_ms,
-        active_permit,
-        bwrap_masked_siblings,
-    )) = handle_info
+    let Some((run_id, tx, conn_id, route_digest, oauth_expires_at_ms, active_permit, sandbox_plan)) =
+        handle_info
     else {
         return Ok(false);
     };
@@ -149,10 +142,11 @@ pub(super) fn try_send_wake_on_live_handle(
         recycle_stale_warm_handle(employee_id, &run_id, "oauth_token_expiring", ctx);
         return Ok(false);
     }
-    if bwrap_masked_siblings.as_ref().is_some_and(|masked| {
-        crate::manager::has_unmasked_bwrap_sibling_in_office(&ctx.office, employee_id, masked)
-    }) {
-        recycle_stale_warm_handle(employee_id, &run_id, "bwrap_sibling_topology_changed", ctx);
+    if ctx
+        .sandbox_runner
+        .is_plan_stale(&ctx.office, employee_id, &sandbox_plan)
+    {
+        recycle_stale_warm_handle(employee_id, &run_id, "sandbox_topology_changed", ctx);
         return Ok(false);
     }
     if conn_id.is_none()
@@ -317,8 +311,8 @@ pub(super) fn acquire_live_handle_permit(
 /// Turn-end drain of queued wakes into the live warm session (`TASK-115`, `TASK-170`).
 ///
 /// Three phases so the employee lock is never held across the warm-permit acquisition (an HQ
-/// permit RPC on satellites, plus worktree and bare-repository digest walks) or the bwrap sibling
-/// topology scan: claim under the lock, send without it, then commit under the lock against a
+/// permit RPC on satellites, plus worktree and bare-repository digest walks) or the sandbox
+/// staleness check: claim under the lock, send without it, then commit under the lock against a
 /// fresh read of the queue so wakes enqueued meanwhile are never lost. The per-employee
 /// [`DispatchWakeGuard`] stays held throughout, so no other dispatcher or mid-turn stager can claim
 /// the same items in between. A wake withdrawn while the permit RPC runs may still reach the
@@ -555,6 +549,7 @@ pub(super) struct TurnEndDrainCtx {
     pub(super) waiting_messages: Arc<Mutex<HashMap<String, Arc<AtomicU32>>>>,
     pub(super) bindings: RunBindingRegistry,
     pub(super) office: Arc<Office>,
+    pub(super) sandbox_runner: Arc<dyn SandboxRunner>,
     pub(super) hq_permits: Option<Arc<dyn crate::router::HqPermitCoordinator>>,
     pub(super) acquire_warm_permit: WarmPermitAcquirer,
     pub(super) weak_mgr: Option<std::sync::Weak<SessionManager>>,
@@ -575,6 +570,7 @@ impl SessionManager {
             waiting_messages: Arc::clone(&self.waiting_messages),
             bindings: self.bindings.clone(),
             office: Arc::clone(&self.office),
+            sandbox_runner: Arc::clone(&self.sandbox_runner),
             hq_permits: self.config.hq_permits.clone(),
             acquire_warm_permit: Arc::new(crate::router::acquire_warm_permit_for_office),
             weak_mgr: self.weak_self(),

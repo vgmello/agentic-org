@@ -400,7 +400,9 @@ fn pass6_unrecovered_pre_pump_handle_is_persisted_but_never_registered_while_dra
                 workspace: None,
                 active_permit: handle.active_permit,
                 supports_mid_turn: false,
-                bwrap_masked_siblings: Some(std::collections::BTreeSet::new()),
+                sandbox_plan: crate::manager::SandboxPlan::linux_bwrap(
+                    std::collections::BTreeSet::new(),
+                ),
                 partition: None,
             },
         );

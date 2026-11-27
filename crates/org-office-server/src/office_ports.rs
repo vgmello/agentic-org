@@ -406,8 +406,7 @@ pub(crate) fn build_office_ports(
         project_inspect: reads.project_inspect,
         hiring: Some(hiring),
         sessions: Some(session_hooks.sessions),
-        run_binding_verify: Some(session_hooks.run_binding_verify),
-        run_binding_active: Some(session_hooks.run_binding_active),
+        run_binding_verifier: Some(session_hooks.run_binding_verifier),
         delegation: Some(delegation_gate),
         external_auth: Some(Arc::new(crate::session_proxy::ExternalAuth(Arc::clone(
             &session_manager,

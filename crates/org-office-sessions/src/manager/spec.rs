@@ -57,35 +57,6 @@ pub(crate) struct ModelChoice {
     pub(crate) effort: Option<Token>,
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "launch spec builder takes runtime, employee, model choice, workspace, read-only dirs, instructions, preset, and bwrap flag"
-)]
-pub(super) fn build_session_spec_for_launch(
-    runtime: RuntimeId,
-    employee: &Employee,
-    choice: ModelChoice,
-    workspace: SpecPath,
-    read_only_dirs: Vec<SpecPath>,
-    instructions: StandingInstructions,
-    preset_cfg: &PresetConfig,
-    linux_claude_bwrap: bool,
-) -> Result<SessionSpec, ApiError> {
-    let mut spec = build_session_spec(
-        runtime,
-        employee,
-        choice,
-        workspace,
-        read_only_dirs,
-        instructions,
-        preset_cfg,
-    )?;
-    if linux_claude_bwrap {
-        apply_linux_claude_bwrap_pruning(&mut spec);
-    }
-    Ok(spec)
-}
-
 pub(super) fn compute_launch_spec_hash(spec: &SessionSpec, route_digest_suffix: &str) -> String {
     if route_digest_suffix.is_empty() {
         spec.spec_hash()

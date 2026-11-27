@@ -18,7 +18,7 @@
 //! ([`SessionManager::denied_office_globs_for`]: Claude's `permissions.deny` and sandbox
 //! `denyRead`, Codex's profile, the approval bridge that confines Agy) and the folders a Linux
 //! `bwrap` sandbox pre-creates to mask atomically
-//! ([`super::bwrap_isolation::ensure_bwrap_deny_dirs`]).
+//! ([`super::LocalOsSandbox`] via [`super::bwrap_isolation::ensure_bwrap_deny_dirs_with`]).
 //!
 //! Every mask goes through one place ([`OfficeMasks::push_mask`]): a path is looked at without
 //! following it (`lstat`, after dropping a trailing `/` or `/.`), a link is masked as the link

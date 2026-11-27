@@ -141,9 +141,9 @@ impl FailoverRequest {
     }
 }
 pub(crate) type FailoverHook = Arc<dyn Fn(FailoverRequest) + Send + Sync>;
-/// Returns `true` when this Linux `bwrap` session's masked sibling set is stale because a new
-/// sibling employee appeared after launch (`TASK-166`).
-pub(crate) type BwrapTopologyStaleHook = Arc<dyn Fn() -> bool + Send + Sync>;
+/// Returns `true` when this session's confinement plan is stale and requires a cold recycle
+/// before serving another warm turn (`TASK-166`, `TASK-233`).
+pub(crate) type SandboxTopologyStaleHook = Arc<dyn Fn() -> bool + Send + Sync>;
 /// Returns `true` when durable suspension was recorded (non-empty required asks), `false` if
 /// all required asks were answered/withdrawn before suspension took effect (`High #3`).
 pub(crate) type SuspendedHook =
@@ -162,7 +162,7 @@ pub(crate) struct PumpHooks {
     pub on_failover: Option<FailoverHook>,
     pub stage_mid_turn_wakes: Option<StageMidTurnWakesHook>,
     pub on_mid_turn_delivered: Option<MidTurnDeliveredHook>,
-    pub is_bwrap_topology_stale: Option<BwrapTopologyStaleHook>,
+    pub is_sandbox_topology_stale: Option<SandboxTopologyStaleHook>,
 }
 
 pub(crate) struct SessionRuntimeState {

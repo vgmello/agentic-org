@@ -158,7 +158,7 @@ pub(super) fn ensure_permit_for_turn(
     if loop_state.turns_dispatched > 0
         && ctx
             .hooks
-            .is_bwrap_topology_stale
+            .is_sandbox_topology_stale
             .as_ref()
             .is_some_and(|check| check())
     {

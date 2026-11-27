@@ -1,5 +1,6 @@
 //! Request dispatch: `hello`, recorded answers, and routing by method family.
 
+use org_office_sessions::PeerIdentity;
 use org_proto::directory::{StatusSet, Who};
 use org_proto::msg::MsgBind;
 use org_proto::{ApiError, ErrorCode, Hello, OrgSnapshotCall, Request, Response};
@@ -40,12 +41,12 @@ pub(super) fn answer_and_record(
     request: &Request,
     shared: &Shared,
     binding: &mut Binding,
-    peer_pid: Option<libc::pid_t>,
+    peer: &PeerIdentity,
 ) -> Response {
     if binding.external_session().is_some() && !external_may_call(&request.method) {
         return external_refusal(request.id);
     }
-    let response = answer_with_peer(request, shared, binding, peer_pid);
+    let response = answer_with_peer(request, shared, binding, peer);
     if matches!(response.outcome, org_proto::Outcome::Result(_))
         && !request.is::<MsgBind>()
         && !binding.via_grant()
@@ -60,14 +61,14 @@ pub(super) fn answer_and_record(
 }
 
 pub(super) fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response {
-    answer_with_peer(request, shared, binding, None)
+    answer_with_peer(request, shared, binding, &PeerIdentity::none())
 }
 
 fn answer_with_peer(
     request: &Request,
     shared: &Shared,
     binding: &mut Binding,
-    peer_pid: Option<libc::pid_t>,
+    peer: &PeerIdentity,
 ) -> Response {
     // The Chief of Staff's `caller ∩ tess` gate, before any method runs, and on what the
     // method answers (`TASK-80.1`).
@@ -75,7 +76,7 @@ fn answer_with_peer(
         Ok(delegation) => delegation,
         Err(refused) => return refused,
     };
-    let response = answer_ungated(request, shared, binding, peer_pid, delegation.as_ref());
+    let response = answer_ungated(request, shared, binding, peer, delegation.as_ref());
     match delegation {
         Some(delegation) => {
             super::delegation::narrow(request, shared, binding, &delegation, response)
@@ -88,7 +89,7 @@ fn answer_ungated(
     request: &Request,
     shared: &Shared,
     binding: &mut Binding,
-    peer_pid: Option<libc::pid_t>,
+    peer: &PeerIdentity,
     delegation: Option<&super::delegation::Delegation>,
 ) -> Response {
     if let Some(response) = answer_operator(request, shared, binding) {
@@ -97,8 +98,7 @@ fn answer_ungated(
     if let Some(response) = answer_inbox_or_operation(request, shared, binding, delegation) {
         return response;
     }
-    if let Some(response) =
-        answer_directory_or_session(request, shared, binding, peer_pid, delegation)
+    if let Some(response) = answer_directory_or_session(request, shared, binding, peer, delegation)
     {
         return response;
     }
@@ -197,7 +197,7 @@ fn answer_directory_or_session(
     request: &Request,
     shared: &Shared,
     binding: &mut Binding,
-    peer_pid: Option<libc::pid_t>,
+    peer: &PeerIdentity,
     delegation: Option<&super::delegation::Delegation>,
 ) -> Option<Response> {
     if request.is::<OrgSnapshotCall>() {
@@ -213,7 +213,7 @@ fn answer_directory_or_session(
         return Some(status_set(request, shared, binding));
     }
     if request.is::<MsgBind>() {
-        return Some(bind_connection(request, shared, binding, peer_pid));
+        return Some(bind_connection(request, shared, binding, peer));
     }
     answer_message(request, shared, binding)
 }

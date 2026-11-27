@@ -17,6 +17,11 @@ use ring::rand::{SecureRandom, SystemRandom};
 use zeroize::Zeroizing;
 
 mod external;
+mod verifier;
+#[cfg(test)]
+mod verifier_tests;
+
+pub use verifier::{LocalPeerPidVerifier, PeerIdentity, RunBindingVerifier, VerifiedRunBinding};
 
 /// Constant-time equality of two secrets (tokens, code halves) through `subtle`, the audited
 /// constant-time primitive (`ring`'s slice comparison is deprecated and makes no side-channel

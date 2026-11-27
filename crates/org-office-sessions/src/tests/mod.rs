@@ -73,6 +73,7 @@ mod recovery;
 mod recovery_clear;
 mod redaction;
 mod sandbox;
+mod sandbox_runner;
 mod subagents_binding;
 mod subscription_usage;
 mod wake;
@@ -723,7 +724,7 @@ fn spawn_stub_bwrap_handle(
             workspace: None,
             active_permit: Arc::new(Mutex::new(None)),
             supports_mid_turn: false,
-            bwrap_masked_siblings: Some(masked),
+            sandbox_plan: crate::manager::SandboxPlan::linux_bwrap(masked),
             partition: None,
         },
         stopped,
