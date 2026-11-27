@@ -59,3 +59,52 @@ fn params_refuse_unknown_fields_and_unknown_enums_degrade() {
     let mode: SessionMode = serde_json::from_str("\"external\"").unwrap();
     assert_eq!(mode, SessionMode::External);
 }
+
+#[test]
+fn external_bind_params_reject_unknown_fields_and_result_round_trips() {
+    let bad = serde_json::json!({
+        "employee_id": "@ada",
+        "pubkey_ed25519_b64": "AAAA",
+        "workspace_label": "~/src/app",
+        "unexpected": true
+    });
+    assert!(serde_json::from_value::<MemberExternalBindParams>(bad).is_err());
+
+    let ok: MemberExternalBindParams = serde_json::from_value(serde_json::json!({
+        "employee_id": "@ada",
+        "pubkey_ed25519_b64": "AAAA",
+        "workspace_label": "~/src/app"
+    }))
+    .unwrap();
+    assert!(!ok.takeover);
+    assert_eq!(ok.ttl_secs, None);
+    assert_eq!(ok.command_id, None);
+
+    let result = MemberExternalBindResult {
+        office_id: "0193a5c0-0000-7000-8000-000000000001".into(),
+        office_socket: Some("/run/o/000000000001/s.sock".into()),
+        session: ExternalSessionView {
+            session_id: "ext-0193a5c0-0000-7000-8000-000000000070".into(),
+            employee_id: "0193a5c0-0000-7000-8000-000000000051".into(),
+            handle: Some("ada".into()),
+            workspace_label: "~/src/app".into(),
+            pubkey_fingerprint: "3f9c2a7d10b4e8f1".into(),
+            approved_by: "0193a5c0-0000-7000-8000-000000000002".into(),
+            approved_at: "2026-11-27T00:00:00.000Z".into(),
+            expires_at: "2026-11-28T00:00:00.000Z".into(),
+            revoked_at: None,
+            active: true,
+            superseded_session_id: None,
+            took_over_managed: false,
+        },
+    };
+    let wire = serde_json::to_value(&result).unwrap();
+    assert_eq!(wire["office_id"], "0193a5c0-0000-7000-8000-000000000001");
+    assert_eq!(wire["office_socket"], "/run/o/000000000001/s.sock");
+    assert_eq!(
+        wire["session_id"],
+        "ext-0193a5c0-0000-7000-8000-000000000070"
+    );
+    let back: MemberExternalBindResult = serde_json::from_value(wire).unwrap();
+    assert_eq!(back, result);
+}

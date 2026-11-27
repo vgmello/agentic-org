@@ -152,22 +152,36 @@ export const BOARD_COLUMN_WORD: Record<BoardStatusColumn, string> = {
 	...STATUS_WORD,
 	awaiting_verification: 'Awaiting verification'
 };
+export type DoneWindow = '7d' | '30d' | 'all';
+export const DONE_WINDOW_LABELS: Record<DoneWindow, string> = {
+	'7d': 'Last 7 days',
+	'30d': 'Last 30 days',
+	all: 'All done'
+};
 const WEEK_MS = 7 * 24 * 3600 * 1000;
+const MONTH_MS = 30 * 24 * 3600 * 1000;
+
+function filterDoneByWindow(
+	inColumn: TaskRow[],
+	opts: { allDone?: boolean; doneWindow?: DoneWindow; now: Date }
+): TaskRow[] {
+	const windowMode: DoneWindow = opts.doneWindow ?? (opts.allDone ? 'all' : '7d');
+	if (windowMode === 'all') return inColumn;
+	const maxAgeMs = windowMode === '30d' ? MONTH_MS : WEEK_MS;
+	return inColumn.filter((r) => opts.now.getTime() - new Date(r.statusAt).getTime() <= maxAgeMs);
+}
 
 /**
- * The board's columns (TSK-1): To do, In progress, Blocked and Done. Done keeps the last seven days unless all are
- * asked for; Cancelled is not a board column in the default 4-stage view and stays in the list's status view.
+ * The board's columns (TSK-1): To do, In progress, Blocked and Done. Done keeps the last seven days unless
+ * 30 days or all are asked for; Cancelled is not a board column in the default 4-stage view.
  */
 export function boardColumns(
 	rows: TaskRow[],
-	{ allDone, now }: { allDone: boolean; now: Date }
+	opts: { allDone?: boolean; doneWindow?: DoneWindow; now: Date }
 ): { column: BoardColumn; rows: TaskRow[]; hiddenDone: number }[] {
 	return BOARD_COLUMNS.map((column) => {
 		const inColumn = rows.filter((r) => r.status === column);
-		const shown =
-			column === 'done' && !allDone
-				? inColumn.filter((r) => now.getTime() - new Date(r.statusAt).getTime() <= WEEK_MS)
-				: inColumn;
+		const shown = column === 'done' ? filterDoneByWindow(inColumn, opts) : inColumn;
 		return {
 			column,
 			rows: [...shown].sort(byPriorityThenAge),
@@ -183,7 +197,7 @@ export function boardColumns(
 export function boardColumnsForMode(
 	rows: TaskRow[],
 	mode: BoardMode,
-	opts: { allDone: boolean; now: Date }
+	opts: { allDone?: boolean; doneWindow?: DoneWindow; now: Date }
 ): {
 	column: BoardStatusColumn;
 	rows: TaskRow[];
@@ -200,10 +214,7 @@ export function boardColumnsForMode(
 			if (r.awaitingVerification && isOpen(r.status)) return false;
 			return r.status === column;
 		});
-		const shown =
-			column === 'done' && !opts.allDone
-				? inColumn.filter((r) => opts.now.getTime() - new Date(r.statusAt).getTime() <= WEEK_MS)
-				: inColumn;
+		const shown = column === 'done' ? filterDoneByWindow(inColumn, opts) : inColumn;
 		const writableStatus: BoardColumn | null =
 			column === 'todo' || column === 'in_progress' || column === 'blocked' || column === 'done'
 				? column

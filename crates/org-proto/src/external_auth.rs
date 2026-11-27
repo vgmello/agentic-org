@@ -351,6 +351,43 @@ impl Call for MemberExternalApprove {
     type Result = ExternalSessionView;
 }
 
+pub struct MemberExternalBind;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemberExternalBindParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_id: Option<String>,
+    /// `@handle`, handle or employee ID of the active local agent.
+    pub employee_id: String,
+    /// The workspace's Ed25519 public key (32 bytes, standard base64).
+    pub pubkey_ed25519_b64: String,
+    /// A short human label for the workspace, e.g. `~/src/app`.
+    pub workspace_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<u64>,
+    /// Park a live managed turn first instead of refusing.
+    #[serde(default)]
+    pub takeover: bool,
+}
+
+/// Result of `member.external_bind`: the approved external lease and the office endpoint the
+/// bound workspace connects to. Never carries a private key or bearer token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberExternalBindResult {
+    pub office_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub office_socket: Option<String>,
+    #[serde(flatten)]
+    pub session: ExternalSessionView,
+}
+
+impl Call for MemberExternalBind {
+    const METHOD: &'static str = "member.external_bind";
+    type Params = MemberExternalBindParams;
+    type Result = MemberExternalBindResult;
+}
+
 /// One line of an agent's `external-history.jsonl`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExternalHistoryEntry {

@@ -32,6 +32,7 @@ pub use auto_channels::virtual_auto_channels;
 pub(crate) use auto_channels::{effective_auto_members, slugify_channel};
 pub use catchup::{channel_catchup_for_caller, snippet, ChannelCatchup};
 pub use channels::{decide_channel_create, decide_channel_membership};
+pub(crate) use conversations::all_conversations_including_auto;
 pub use conversations::{list_channels, list_conversations};
 pub use dm::decide_dm_open;
 pub use handoff::decide_accept_handoff;

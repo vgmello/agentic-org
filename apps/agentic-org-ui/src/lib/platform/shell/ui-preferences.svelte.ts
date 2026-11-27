@@ -75,8 +75,59 @@ export const STORAGE_KEYS = {
 	singleKey: 'agentic-org.ui.singleKey',
 	assemblyDividers: 'agentic-org.ui.assemblyDividers',
 	showTessPill: 'agentic-org.ui.showTessPill',
-	archiveAfterDays: 'agentic-org.ui.archiveAfterDays'
+	archiveAfterDays: 'agentic-org.ui.archiveAfterDays',
+	workspaceNav: 'agentic-org.ui.workspaceNav'
 } as const;
+
+export const WORKSPACE_NAV_IDS = ['work', 'chat', 'activity', 'projects', 'insights'] as const;
+export type WorkspaceNavId = (typeof WORKSPACE_NAV_IDS)[number];
+export const DEFAULT_PINNED_WORKSPACE_NAV: readonly WorkspaceNavId[] = [
+	'work',
+	'chat',
+	'activity',
+	'projects'
+];
+const VALID_WORKSPACE_NAV = new Set<string>(WORKSPACE_NAV_IDS);
+
+/** Pure parser/normalizer for persisted pinned Workspace nav items (always keeps >= 1 valid item). */
+export function normalizeWorkspaceNav(raw: unknown): WorkspaceNavId[] {
+	if (!Array.isArray(raw)) return [...DEFAULT_PINNED_WORKSPACE_NAV];
+	const out: WorkspaceNavId[] = [];
+	for (const entry of raw) {
+		if (typeof entry === 'string' && VALID_WORKSPACE_NAV.has(entry)) {
+			const id = entry as WorkspaceNavId;
+			if (!out.includes(id)) out.push(id);
+		}
+	}
+	return out.length > 0 ? out : [...DEFAULT_PINNED_WORKSPACE_NAV];
+}
+
+/** Pure reorder/pin transition for Workspace sidebar items (drag-and-drop & Alt+ArrowUp/Down). */
+export function moveWorkspaceNavItem(
+	current: readonly WorkspaceNavId[],
+	id: WorkspaceNavId,
+	beforeId: WorkspaceNavId | null,
+	zone: 'pinned' | 'more'
+): WorkspaceNavId[] {
+	const next = current.filter((item) => item !== id);
+	if (zone === 'more') {
+		return next.length > 0 ? next : [...current];
+	}
+	const insertAt = beforeId ? next.indexOf(beforeId) : -1;
+	if (insertAt >= 0) next.splice(insertAt, 0, id);
+	else next.push(id);
+	return next;
+}
+
+export function toggleWorkspaceNavPin(
+	current: readonly WorkspaceNavId[],
+	id: WorkspaceNavId
+): WorkspaceNavId[] {
+	if (current.includes(id)) {
+		return current.length > 1 ? current.filter((item) => item !== id) : [...current];
+	}
+	return [...current, id];
+}
 
 export const ARCHIVE_AFTER_DAYS_OPTIONS = [0, 3, 7, 10, 14, 30] as const;
 export type ArchiveAfterDays = (typeof ARCHIVE_AFTER_DAYS_OPTIONS)[number];
@@ -122,6 +173,7 @@ export interface UiPrefBootstrap {
 	assemblyDividers: boolean;
 	showTessPill: boolean;
 	archiveAfterDays: ArchiveAfterDays;
+	workspaceNav: WorkspaceNavId[];
 }
 
 /**
@@ -147,6 +199,7 @@ export function resolveInitialPreferences({
 	let storedAssemblyDividers: string | null = null;
 	let storedShowTessPill: string | null = null;
 	let storedArchiveDays: string | null = null;
+	let storedWorkspaceNav: string | null = null;
 	try {
 		storedThemeRaw = storage?.getItem(STORAGE_KEYS.theme) ?? null;
 		storedCozyContrast = storage?.getItem(STORAGE_KEYS.cozyHighContrast) ?? null;
@@ -156,6 +209,7 @@ export function resolveInitialPreferences({
 		storedAssemblyDividers = storage?.getItem(STORAGE_KEYS.assemblyDividers) ?? null;
 		storedShowTessPill = storage?.getItem(STORAGE_KEYS.showTessPill) ?? null;
 		storedArchiveDays = storage?.getItem(STORAGE_KEYS.archiveAfterDays) ?? null;
+		storedWorkspaceNav = storage?.getItem(STORAGE_KEYS.workspaceNav) ?? null;
 	} catch {
 		// Private browsing or blocked storage: fall back safely to defaults.
 	}
@@ -175,6 +229,15 @@ export function resolveInitialPreferences({
 		}
 	}
 
+	let workspaceNav: WorkspaceNavId[] = [...DEFAULT_PINNED_WORKSPACE_NAV];
+	if (storedWorkspaceNav) {
+		try {
+			workspaceNav = normalizeWorkspaceNav(JSON.parse(storedWorkspaceNav));
+		} catch {
+			workspaceNav = [...DEFAULT_PINNED_WORKSPACE_NAV];
+		}
+	}
+
 	return {
 		theme,
 		cozyHighContrast: storedCozyContrast === '1',
@@ -183,7 +246,9 @@ export function resolveInitialPreferences({
 		singleKeyShortcuts: storedSingleKey !== '0',
 		assemblyDividers: storedAssemblyDividers === '1',
 		showTessPill: storedShowTessPill === '1',
-		archiveAfterDays: storedArchiveDays !== null ? normalizeArchiveAfterDays(storedArchiveDays) : 10
+		archiveAfterDays:
+			storedArchiveDays !== null ? normalizeArchiveAfterDays(storedArchiveDays) : 10,
+		workspaceNav
 	};
 }
 
@@ -230,6 +295,7 @@ class UiPreferencesStore {
 	assemblyDividers = $state(false);
 	showTessPill = $state(false);
 	archiveAfterDays = $state<ArchiveAfterDays>(10);
+	workspaceNav = $state<WorkspaceNavId[]>([...DEFAULT_PINNED_WORKSPACE_NAV]);
 	#hydrated = false;
 
 	hydrate(search = typeof window !== 'undefined' ? window.location.search : ''): void {
@@ -243,6 +309,7 @@ class UiPreferencesStore {
 		this.assemblyDividers = resolved.assemblyDividers;
 		this.showTessPill = resolved.showTessPill;
 		this.archiveAfterDays = resolved.archiveAfterDays;
+		this.workspaceNav = resolved.workspaceNav;
 		this.#hydrated = true;
 
 		// Persist explicit URL overrides and auto-migrate persisted 'light' -> 'report'.
@@ -332,6 +399,20 @@ class UiPreferencesStore {
 			this.favoriteProjects = [...this.favoriteProjects, projectId];
 		}
 		this.#save(STORAGE_KEYS.favorites, JSON.stringify(this.favoriteProjects));
+	}
+
+	moveWorkspaceItem(
+		id: WorkspaceNavId,
+		beforeId: WorkspaceNavId | null,
+		zone: 'pinned' | 'more'
+	): void {
+		this.workspaceNav = moveWorkspaceNavItem(this.workspaceNav, id, beforeId, zone);
+		this.#save(STORAGE_KEYS.workspaceNav, JSON.stringify(this.workspaceNav));
+	}
+
+	toggleWorkspacePin(id: WorkspaceNavId): void {
+		this.workspaceNav = toggleWorkspaceNavPin(this.workspaceNav, id);
+		this.#save(STORAGE_KEYS.workspaceNav, JSON.stringify(this.workspaceNav));
 	}
 
 	syncDom(): void {

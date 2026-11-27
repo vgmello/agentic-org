@@ -5,6 +5,7 @@
 	import Folder from '@lucide/svelte/icons/folder';
 	import Users from '@lucide/svelte/icons/users';
 	import type { ExecutiveKpis, SignalTone } from '$lib/modules/home/model';
+	import HomeThroughputSparkline from './HomeThroughputSparkline.svelte';
 
 	interface Props {
 		kpis: ExecutiveKpis;
@@ -270,12 +271,10 @@
 					{kpis.openCount} open · {kpis.doneCount} done
 				</span>
 			</div>
-			<div class="bar-track bg-bar-track" aria-hidden="true">
-				<span
-					class="bar-ok"
-					style:width="{kpis.doneCount > 0 ? kpis.firstTryPassPct : kpis.completionPct}%"
-				></span>
-			</div>
+			<HomeThroughputSparkline
+				points={kpis.throughputPoints}
+				fallbackPct={kpis.doneCount > 0 ? kpis.firstTryPassPct : kpis.completionPct}
+			/>
 		</a>
 		<div class="pillar-sub grid grid-cols-2 gap-3 pt-2.5">
 			<a href={resolve('/work')} class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1">

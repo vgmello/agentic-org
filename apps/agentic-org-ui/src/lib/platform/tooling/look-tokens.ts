@@ -185,11 +185,15 @@ export const allowlist: Record<string, string> = {
 	'src/lib/styles/themes/graphite-light.css':
 		'Graphite Light matte neutral theme token definitions and monochrome light palette.',
 	'src/lib/styles/themes/cozy.css':
-		'Cozy Glass warm espresso frosted glass theme, studio room backdrop, and high-contrast tokens.',
+		'Cozy Glass warm espresso frosted glass theme tokens and typography.',
+	'src/lib/styles/themes/cozy-surfaces.css':
+		'Cozy Glass ambient studio room backdrop, frosted glass surface overrides, and reduced-transparency palette.',
 	'src/lib/styles/themes/report.css':
 		'Report (Modern 2D Executive Day) theme tokens and editorial layout.',
 	'src/lib/styles/themes/report-dark.css':
 		'Report Night (Modern 2D Executive Dark) theme tokens and palette.',
+	'src/lib/styles/themes/board-and-charts.css':
+		'Work board lane/card tokens and Insights chart palette across all 7 themes.',
 	'src/lib/platform/tooling/look-tokens.ts': 'This mapping table.',
 	'src/lib/platform/tooling/look-tokens.test.ts': 'The guard and its fixtures.'
 };

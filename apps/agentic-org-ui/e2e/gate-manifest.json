@@ -497,7 +497,7 @@
 				"src/lib/modules/copilot/**",
 				"src/lib/modules/organization/features/project-teams/{ProjectTeamDialog,ProjectTeams,RemoveProjectDialog}.svelte",
 				"src/lib/modules/work/components/SeverityIcon.svelte",
-				"src/lib/modules/work/features/{bugs/{BugSheet,BugsPanel,ReportBugDialog},requests/{NewRequestDialog,RequestSheet,RequestsPanel},tasks/{NewTaskDialog,TaskSheet,TasksBoard}}.svelte",
+				"src/lib/modules/work/features/{bugs/{BugSheet,BugsPanel,ReportBugDialog},requests/{NewRequestDialog,RequestSheet,RequestSheetStepForm,RequestsPanel},tasks/{NewTaskDialog,TaskSheet,TaskSheetChecklist,TasksBoard}}.svelte",
 				"e2e/org-chart-menu.ts"
 			]
 		},
@@ -511,7 +511,7 @@
 				"src/lib/modules/copilot/**",
 				"src/routes/(shell)/work/**",
 				"src/lib/modules/work/components/SeverityIcon.svelte",
-				"src/lib/modules/work/features/{bugs/{BugSheet,ReportBugDialog},requests/{NewRequestDialog,RequestSheet,RequestsPanel},tasks/{NewTaskDialog,TaskSheet}}.svelte"
+				"src/lib/modules/work/features/{bugs/{BugSheet,ReportBugDialog},requests/{NewRequestDialog,RequestSheet,RequestSheetStepForm,RequestsPanel},tasks/{NewTaskDialog,TaskSheet,TaskSheetChecklist}}.svelte"
 			]
 		},
 		"org-lifecycle": {
@@ -757,8 +757,8 @@
 			"src/routes/{agents,org-chart,offices,processes,sessions}/+page.ts",
 			"src/routes/(shell)/teams/(views)/+{layout.svelte,page.ts}",
 			"src/routes/(shell)/settings/+layout.svelte",
-			"src/lib/components/{MiniIcon,PageHeader,ScopedSearchInput,TabsNav,EmptyState,ErrorState,SkeletonRows,DescriptionList,Section,Avatar,StatTile,NotBuilt,Loaded,ConfirmDialog,CopyButton,WorkReadingPanel,Breadcrumbs,SectionHead,InlineSearchToggle,InlineSearchRow}.svelte",
-			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,LiveBanner,Logo,resource,classes,focus,pills}.*",
+			"src/lib/components/{MiniIcon,PageHeader,ScopedSearchInput,TabsNav,EmptyState,ErrorState,SkeletonRows,DescriptionList,Section,Avatar,StatTile,NotBuilt,Loaded,ConfirmDialog,CopyButton,WorkReadingPanel,WorkReadingHeaderActions,Breadcrumbs,SectionHead,InlineSearchToggle,InlineSearchRow}.svelte",
+			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,LiveBanner,Logo,resource,classes,focus,pills,work-reading-inert,chart-math}.*",
 			"static/**",
 			"vite.config.ts",
 			"svelte.config.js",

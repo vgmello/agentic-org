@@ -16,9 +16,9 @@ use crate::messaging::{
     records::{ConversationRecord, MessageRecord, RecipientStateRecord},
 };
 
-use super::auto_channels::effective_auto_members;
 use super::catchup::{delta_bounds, is_top_level, sent_by, snippet, ThreadStats};
 use super::conversations::{all_conversations_including_auto, find_channel};
+use crate::messaging::access::may_read;
 
 /// Resolves a conversation UUIDv7, `#channel` or channel name the caller may read.
 pub(super) fn resolve_conversation_ref(
@@ -46,10 +46,8 @@ fn require_read_access(
     caller: &Id,
     conv: ConversationRecord,
 ) -> Result<ConversationRecord, ApiError> {
-    let active = effective_auto_members(read, &conv, owner)
+    let allowed = may_read(read, owner, caller, &conv)
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to resolve members"))?;
-    let allowed =
-        conv.kind == ConversationKind::Channel || active.contains(caller) || caller == owner;
     if !allowed {
         return Err(ApiError::new(ErrorCode::NotFound, "conversation not found"));
     }

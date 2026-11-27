@@ -65,6 +65,7 @@ export interface ExecutiveKpis {
 	openBugs: number;
 	criticalBugs: number;
 	firstTryPassPct: number;
+	throughputPoints: number[];
 }
 
 export interface ProjectBentoCard {
