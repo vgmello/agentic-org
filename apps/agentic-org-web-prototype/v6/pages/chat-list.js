@@ -48,8 +48,41 @@ function groupHead(kind, label, q) {
   if (kind !== "channel" || q) return `<h2>${label}</h2>`;
   return `<div class="chat-group-head"><h2>${label}</h2><button class="btn ghost icon chat-group-add" type="button" data-act="chat-channel-new" aria-label="New channel" title="New channel">${ic("plus", "ic16")}</button></div>`;
 }
+/* A channel whose name extends another channel's name ("agentic-org-v1-tech" after "agentic-org-v1") nests under it,
+   one level only (owner): its parent is the shortest channel name it extends. The parent row keeps its link and gets
+   a fold toggle; children show the rest of their name. */
+const foldsClosed = new Set();
+function parentOf(k, rows) {
+  const name = CH[k].name;
+  const cands = rows.filter((x) => x !== k && name.startsWith(CH[x].name + "-"));
+  return cands.sort((a, b) => CH[a].name.length - CH[b].name.length)[0] || null;
+}
+function channelTree(rows) {
+  const parent = new Map(rows.map((k) => [k, parentOf(k, rows)]));
+  return rows.filter((k) => !parent.get(k)).map((k) => ({ k, kids: rows.filter((x) => parent.get(x) === k) }));
+}
+function foldToggle(k, n, open) {
+  return `<button class="btn ghost icon chat-fold" type="button" data-act="chat-fold" data-id="${esc(k)}" aria-expanded="${open}" aria-controls="chat-fold-${esc(k)}" aria-label="${open ? "Collapse" : "Expand"} ${n} channels under #${esc(CH[k].name)}">${ic("chev-right", "ic14")}</button>`;
+}
+function channelNode({ k, kids }, activeId) {
+  if (!kids.length) return chatLinkHtml(k, activeId, "", true);
+  const open = !foldsClosed.has(k) || kids.includes(activeId);
+  const row = chatLinkHtml(k, activeId, "", true).replace(/^<li/, `<li class="chat-has-kids"`).replace(/<\/li>$/, `${foldToggle(k, kids.length, open)}</li>`);
+  const pre = CH[k].name + "-";
+  const list = open ? `<li class="chat-kids-wrap"><ul class="chat-kids" id="chat-fold-${esc(k)}">${kids.map((x) => chatLinkHtml(x, activeId, "", true).replace(`>${esc(CH[x].name)}<`, `>${esc(CH[x].name.slice(pre.length))}<`)).join("")}</ul></li>` : "";
+  return row + list;
+}
 function groupHtml(kind, label, rows, activeId, q) {
-  return rows.length ? `${groupHead(kind, label, q)}<ul>${rows.map((k) => chatLinkHtml(k, activeId, q ? matchReason(CH[k], q) : "", !q)).join("")}</ul>` : "";
+  if (!rows.length) return "";
+  const html = kind === "channel" && !q ? channelTree(rows).map((n) => channelNode(n, activeId)).join("")
+    : rows.map((k) => chatLinkHtml(k, activeId, q ? matchReason(CH[k], q) : "", !q)).join("");
+  return `${groupHead(kind, label, q)}<ul>${html}</ul>`;
+}
+function toggleFold(root, id) {
+  if (foldsClosed.has(id)) foldsClosed.delete(id); else foldsClosed.add(id);
+  root.querySelector("#chat-nav").innerHTML = navInner(root.dataset.ch);
+  root.querySelector(`[data-act="chat-fold"][data-id="${CSS.escape(id)}"]`)?.focus();
+  return "handled";
 }
 function recipientButton(k, act = "chat-to") {
   return `<li><button class="chat-person" type="button" data-act="${act}" data-id="${esc(k)}">${av(k, 24)}<span class="chat-row-name">${esc(M[k].name)}</span><span class="chat-row-word">${esc(kindWord(k))}</span></button></li>`;
@@ -149,6 +182,7 @@ function openCreatedChannel(id) {
 }
 const queueListFocus = (target) => { list.focusAfter = target; };
 const LIST_CLICKS = {
+  "chat-fold": (root, id) => toggleFold(root, id),
   "chat-new": (root) => setPicker(root, true),
   "chat-channel-new": (_root, _id, t) => { openNewChannel(t, openCreatedChannel); return "handled"; },
   /* From a row (focus moves to the neighbouring row) or from the open DM's header menu (to the next conversation's

@@ -82,3 +82,14 @@
 #main .chat .chat-channel-intro > h2 { font-size: 1.125rem; }
 #main .chat .chat-channel-intro-desc { color: var(--gray-300); }
 #main .chat .chat-channel-intro > .actions { margin-block-start: 6px; }
+
+/* Channels nested under the channel they extend (one level) */
+#main .chat .chlist li.chat-has-kids { position: relative; }
+#main .chat .chlist li.chat-has-kids > a { padding-inline-end: 26px; }
+#main .chat .chlist li.chat-has-kids > a .chat-row-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#main .chat .chlist .chat-fold { position: absolute; inset-inline-end: 2px; inset-block-start: 50%; translate: 0 -50%; width: 22px; min-width: 22px; height: 22px; min-height: 22px; padding: 0; justify-content: center; color: var(--gray-400); }
+#main .chat .chlist .chat-fold .ic { transition: rotate .15s ease; }
+#main .chat .chlist .chat-fold[aria-expanded="true"] .ic { rotate: 90deg; }
+#main .chat .chlist .chat-kids-wrap { list-style: none; }
+#main .chat .chlist .chat-kids { margin: 0 0 2px 20px; padding-inline-start: 8px; border-inline-start: 1px solid var(--line2); }
+@media (prefers-reduced-motion: reduce) { #main .chat .chlist .chat-fold .ic { transition: none; } }

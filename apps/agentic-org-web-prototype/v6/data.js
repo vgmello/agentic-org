@@ -395,6 +395,10 @@ const CH = {
       { who: "tomas", time: "09:44", text: "Noted. Next up is Sage's 492e59e4." } ] },
     { id: "m3", who: "jules", time: "09:52", text: "The CSP gateway test for T-A124 can't reach the gateway without a local permission.", needs: "in5" },
     { id: "m4", who: "you", time: "10:01", text: "Looking at it now." } ] },
+  "agency-v1-tech": { name: "agentic-org-v1-tech", kind: "channel", topic: "Technical design for v1.0: codec, sync, CSP gates", proj: "agency-v1", unread: 1,
+    members: ["you", "ada", "rowan", "kai", "jules", "tomas"], msgs: [
+    { id: "t1", who: "kai", time: "09:05", text: "Codec split 2a.3.2b is in review. The wire format stays versioned per the codec-versioning standard." },
+    { id: "t2", who: "jules", time: "09:30", text: "CSP gate suite needs a local permission to reach the gateway; I asked in #agentic-org-v1." } ] },
   "platform":  { name: "platform", kind: "channel", topic: "Office server, sync and core", proj: "office-federation", unread: 2,
     members: ["you", "ada", "rowan", "kai", "sage", "quinn"], msgs: [
     { id: "p1", who: "rowan", time: "09:10", text: "Ruling on the custody lock: the lease is safer, the per-office lock is faster. Owner decides; details in T-A118.", ref: "in2" },
