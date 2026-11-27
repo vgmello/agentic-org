@@ -86,7 +86,7 @@ agentic-org office list --name hq --json
 - **Local authless HTTP (default local HQ):** Omit `--login`; commands use `session.local` over `host.sock` automatically with no password or browser step. `session.local` fails closed immediately whenever authentication is enabled or HTTPS is active.
 - **Browser-approved sign-in (auth enabled / HTTPS / Linux):** Omit `--login`; commands print a one-time 10-minute approval link to `stderr` (keeping `--json` on `stdout` clean) and continue once approved in a signed-in browser.
 - **Explicit password sign-in (`--login <user>`):** Verifies the host binary on macOS and prompts for the password on the terminal. Refused on Linux/containers where peers are identified by UID alone.
-- **Fresh satellite bootstrap:** On a newly installed HTTPS satellite with zero administrator accounts, `office join`, `office remove-pending`, and `office re-enroll` use sessionless `local-bootstrap` automatically after verifying open `instance.status`.
+- **Fresh satellite bootstrap:** On a newly installed satellite with zero administrator accounts where `session.local` is unavailable (such as an opt-in HTTPS or foreground/published HTTP instance), `office join`, `office remove-pending`, and `office re-enroll` use sessionless `local-bootstrap` automatically after verifying open `instance.status`.
 
 ---
 
@@ -175,7 +175,7 @@ Any other key, a control character or an over-long value makes it invalid (exit 
   **Use when:** recovering administrator access, generating an initial registration link, or cancelling an unused registration link.
 - `agentic-org admin tls set --cert <file> --key <file> --login <login> [--name <instance>] [--yes]`
   Install or replace the instance's browser HTTPS certificate pair without restarting the host.
-  **Use when:** installing or rotating an HTTPS instance's PEM certificate chain and unencrypted private key.
+  **Use when:** installing or rotating a supplied PEM certificate chain and unencrypted private key on an HTTPS instance (instances start on plain HTTP by default; enable opt-in HTTPS in-app via `POST /api/v1/instance/tls` or via `"scheme": "https"` in setup config per ADR-0033).
 - `agentic-org recovery status|release [--name <instance>] [--org <name> | --org-id <id>] [--login <login>] [--redeliver] [--package <file>]`
   The protected organization recovery client; recovery codes are read from the controlling terminal only.
   **Use when:** checking or releasing an organization's recovery package as its administrator.
