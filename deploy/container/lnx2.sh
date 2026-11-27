@@ -235,8 +235,10 @@ echo "serving $(since "$started") s after docker run"
 # container attached to the same network reaches the plain-HTTP port directly, whatever -p
 # says. Whether a container on another network does depends on the engine: measured, Docker
 # Engine 29.1.3 on Linux isolates the networks, and Docker Desktop 29.9.3 lets a published
-# container port be reached from every network. So the trust boundary until HTTPS (X7) is
-# every container of the Docker host (README.md); this reports which case this engine is.
+# container port be reached from every network. While running default plain HTTP (until
+# opt-in HTTPS is enabled in-app via `POST /api/v1/instance/tls` or `"scheme": "https"` in
+# `setup.json`, ADR-0033 / TASK-62), the trust boundary is every container of the Docker
+# host (README.md); this reports which case this engine is.
 address=$(docker inspect -f "{{(index .NetworkSettings.Networks \"$network\").IPAddress}}" "$tag-a")
 [ -n "$address" ] || fail "the container has no address on $network"
 reach() {

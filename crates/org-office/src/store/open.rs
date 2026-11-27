@@ -109,6 +109,10 @@ pub struct Testing {
     /// DDL after this build's: the schema of another build.
     #[cfg(test)]
     pub(crate) extra_ddl: Option<&'static str>,
+    /// Override for [`StoreConfig::flush_interval`]: crash-point tests set an hour so the
+    /// 50 ms background timer cannot fire mid-commit under load and race with writer crashes.
+    #[cfg(test)]
+    pub(crate) flush_interval: Option<Duration>,
 }
 
 /// Everything an office's store is opened from.

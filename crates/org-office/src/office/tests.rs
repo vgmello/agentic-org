@@ -75,6 +75,11 @@ impl Site {
         let mut options = testkit::options(engine);
         options.testing = Testing {
             faults: Some(Arc::clone(&self.faults)),
+            // Flushes come from durable requests, back-pressure, syncing and closing only
+            // (matching `store::open::tests::Place::config` and `org-store`'s own tests):
+            // the 50 ms background timer must not fire mid-commit under load and race with
+            // injected writer crash points such as `AfterAppend` or `AfterCommit`.
+            flush_interval: Some(std::time::Duration::from_secs(3_600)),
             ..Testing::default()
         };
         options
@@ -399,6 +404,10 @@ fn a_creation_retried_after_a_crash_point_keeps_its_ca_and_its_one_entry() {
                 prior.map_or_else(|| testkit::record(testkit::CA_SEED), Ok)
             });
             assert!(failed.is_err(), "{context}");
+            assert!(
+                site.faults.fired(),
+                "{context}: armed crash point never fired"
+            );
             drop(failed);
             site.faults.revive();
             // H1: nobody was told the office exists.

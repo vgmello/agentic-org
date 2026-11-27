@@ -365,16 +365,27 @@ fn an_admission_that_could_not_be_built_is_asked_for_again() {
     // No server starts, whichever step notices: the host keeps serving and reports it.
     assert!(supervisor.discard(OFFICE).is_err());
     assert_eq!(recorded_starts(dir.path()), 0);
-    fs::copy(recording_worker(), &program).unwrap();
-    fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+    // Stage and rename atomically so the background `office-images` thread from
+    // `Supervisor::new` never reads a half-written or pre-chmod binary under load
+    // and permanently caches a truncated `memfd` admission.
+    let staged = dir.path().join(".worker.staged");
+    fs::copy(recording_worker(), &staged).unwrap();
+    fs::set_permissions(&staged, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::rename(&staged, &program).unwrap();
     let built = images.admission().expect("the program is there now");
     if let Some(before) = before {
         assert!(Arc::ptr_eq(&before, &built), "an admission was built twice");
     }
     assert!(Arc::ptr_eq(&built, &images.admission().unwrap()));
     // The next start runs it (and fails later: the worker speaks no launch protocol).
-    assert!(supervisor.discard(OFFICE).is_err());
+    let err = supervisor.discard(OFFICE).unwrap_err();
+    assert_eq!(
+        err.kind(),
+        io::ErrorKind::UnexpectedEof,
+        "expected recording_worker to run and exit without speaking rendezvous: {err:?}"
+    );
     assert_eq!(recorded_starts(dir.path()), 1);
+    supervisor.shutdown();
 }
 
 /// A check that may start no server at all is a refusal, in the check's words, not an
