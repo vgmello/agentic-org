@@ -16,7 +16,6 @@
 	import { toast } from 'svelte-sonner';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
-	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import InteriorSearchBar from '$lib/platform/shell/InteriorSearchBar.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
@@ -43,17 +42,14 @@
 	import PresenceBadge from '../../components/PresenceBadge.svelte';
 	import { headerPresence, kindWord, reportedText, rowPresence } from '../../present';
 	import type { MemberProfile } from '../../types';
-	import AssignTaskDialog from '../assign-task/AssignTaskDialog.svelte';
-	import RunNowDialog from '../run-now/RunNowDialog.svelte';
 	import { runNowNotice } from '../run-now/outcome';
 	import { setProfileContext, type ProfileAction } from './context.svelte';
 	import { fact, factsList, factsWrap } from '../../components/facts';
 	import { FIRST_POLL_MS, LatestRead, awaitingOffice, nextPollDelay } from './pending';
-	import IdentityDialog from './IdentityDialog.svelte';
 	import AgentAnalysisOverlay from './AgentAnalysisOverlay.svelte';
 	import AgentOrbRail from './AgentOrbRail.svelte';
 	import { offboardPreview } from './identity';
-	import MoveHomeTeamDialog from './MoveHomeTeamDialog.svelte';
+	import ProfileActionDialogs from './ProfileActionDialogs.svelte';
 	import ProfileSkeleton from './ProfileSkeleton.svelte';
 	import SectionMenu from './SectionMenu.svelte';
 	import { tabStrip, tabStripFade } from './tab-strip';
@@ -312,22 +308,6 @@
 		toast.success(`Removed ${p.name}. The record and handle stay.`);
 		reloadOnClose = true;
 	}
-
-	const open = (action: ProfileAction) => ({
-		get value() {
-			return dialog === action;
-		},
-		set value(next: boolean) {
-			dialog = next ? action : dialog === action ? undefined : dialog;
-		}
-	});
-	const runOpen = open('run');
-	const assignOpen = open('assign');
-	const pauseOpen = open('pause');
-	const offboardOpen = open('offboard');
-	const removeOpen = open('remove');
-	const editOpen = open('edit');
-	const moveOpen = open('move');
 
 	setProfileContext({
 		get organizationId() {
@@ -602,102 +582,24 @@
 				{@render tabContent()}
 			{/if}
 
-			{#if p.kind === 'agent'}
-				{#key opening}<RunNowDialog
-						bind:open={runOpen.value}
-						{organizationId}
-						profile={p}
-						onCloseAutoFocus={restore}
-						onrefused={() => void changed()}
-						onstarted={runRequested}
-					/>{/key}
-			{/if}
-			<AssignTaskDialog
-				bind:open={assignOpen.value}
+			<ProfileActionDialogs
+				bind:dialog
+				{opening}
 				{organizationId}
+				{organizationName}
 				profile={p}
-				onCloseAutoFocus={restore}
-				onassigned={(task) => {
-					toast.success(`Assigned ${task.ref} to ${p.name}.`);
-					void changed();
-				}}
+				{record}
+				{snapshot}
+				{session}
+				shownLines={shown.lines}
+				onRunRequested={runRequested}
+				onChanged={changed}
+				onPause={pause}
+				onOffboard={offboard}
+				onRemove={remove}
+				onRestore={restore}
+				onRestoreAfterChange={restoreAfterChange}
 			/>
-			{#if record}
-				<ConfirmDialog
-					bind:open={pauseOpen.value}
-					title="Pause {p.name}?"
-					description="HQ will record the request. {p.name} stays in {p.homeTeam?.name ??
-						'its home team'}; new admissions stop when the authoritative control is applied."
-					confirmLabel="Pause"
-					busyLabel="Pausing…"
-					onconfirm={pause}
-					onCloseAutoFocus={restoreAfterChange}
-				/>
-				<ConfirmDialog
-					bind:open={offboardOpen.value}
-					title="Offboard {p.name}?"
-					description="{p.name} becomes a former member. This is what changes:"
-					confirmLabel="Offboard"
-					busyLabel="Offboarding…"
-					destructive
-					onconfirm={offboard}
-					onCloseAutoFocus={restoreAfterChange}
-				>
-					{#snippet body()}
-						<ul role="list" class="flex list-disc flex-col gap-1 pl-5">
-							{#each shown.lines as line, i (i)}<li>
-									{line}
-								</li>{/each}
-						</ul>
-					{/snippet}
-				</ConfirmDialog>
-				<ConfirmDialog
-					bind:open={removeOpen.value}
-					title="Remove {p.name}?"
-					description="{p.name} becomes a former member. This is what changes:"
-					confirmLabel="Remove person"
-					busyLabel="Removing…"
-					destructive
-					onconfirm={remove}
-					onCloseAutoFocus={restoreAfterChange}
-				>
-					{#snippet body()}
-						<ul role="list" class="list-disc space-y-1 pl-5">
-							{#each shown.lines as line, i (i)}<li>
-									{line}
-								</li>{/each}
-						</ul>
-					{/snippet}
-				</ConfirmDialog>
-				{#key opening}
-					<IdentityDialog
-						bind:open={editOpen.value}
-						member={record}
-						{snapshot}
-						{session}
-						organization={organizationName}
-						onCloseAutoFocus={restore}
-						ondone={(r) => {
-							if (!r.stale) toast.success(`Saved ${r.name}.`);
-							void changed();
-						}}
-					/>
-					{#if p.homeTeam}
-						<MoveHomeTeamDialog
-							bind:open={moveOpen.value}
-							{organizationId}
-							member={{ id: p.id, name: p.name }}
-							fromTeamId={p.homeTeam.id}
-							{snapshot}
-							onCloseAutoFocus={restore}
-							ondone={(r) => {
-								if ('name' in r) toast.success(`Moved ${r.name} to ${r.to}.`);
-								void changed();
-							}}
-						/>
-					{/if}
-				{/key}
-			{/if}
 		{/snippet}
 	</Loaded>
 {/if}

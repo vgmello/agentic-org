@@ -17,23 +17,12 @@
 	import NotBuilt from '$lib/components/NotBuilt.svelte';
 	import SkeletonRows from '$lib/components/SkeletonRows.svelte';
 	import StatTile from '$lib/components/StatTile.svelte';
-	import { gutters, mobileButton } from '$lib/components/classes';
+	import { gutters } from '$lib/components/classes';
 	import { Resource } from '$lib/components/resource.svelte';
-	import { Button } from '$lib/components/ui/button';
-	import { newId } from '$lib/modules/organization/commands';
-	import { toAppError } from '$lib/proto';
 	import { costsApi } from '../../api';
 	import { formatDayTime } from '../../dates';
 	import { formatCost, formatCount, formatTokens } from '../../money';
-	import { OUTCOME_UNKNOWN } from '../../outcome';
-	import {
-		API_EQUIVALENT_NOTE,
-		budgetState,
-		costValue,
-		incompleteText,
-		unknownCostReason,
-		zoneSourceText
-	} from '../../present';
+	import { API_EQUIVALENT_NOTE, costValue, incompleteText, unknownCostReason } from '../../present';
 	import { scoped } from '../../scoped';
 	import type {
 		BudgetPeriodState,
@@ -42,10 +31,10 @@
 		MemberTaskSpendRow,
 		UsageTotals
 	} from '../../types';
-	import BudgetBar from '../agent-budgets/BudgetBar.svelte';
 	import CostsError from '../states/CostsError.svelte';
 	import UsageRecordsSheet from '../usage-records/UsageRecordsSheet.svelte';
 	import AgentBudgetDialog from './AgentBudgetDialog.svelte';
+	import MemberBudgetsSection from './MemberBudgetsSection.svelte';
 
 	let {
 		organizationId,
@@ -66,17 +55,6 @@
 	const scopedData = $derived(costRes.data);
 	const data = $derived(scopedData?.allowed ? scopedData.value : undefined);
 
-	let actionBusy = $state<string | undefined>();
-	let actionError = $state<string | undefined>();
-	let unknownAction = $state<
-		| {
-				periodKind: 'daily' | 'monthly';
-				action: 'clear' | 'allow_once' | 'keep_paused';
-				operationId: string;
-		  }
-		| undefined
-	>();
-	let checkingAction = $state(false);
 	let sheet = $state<ReturnType<typeof UsageRecordsSheet>>();
 	let budgetDialog = $state<ReturnType<typeof AgentBudgetDialog>>();
 	let opener: HTMLElement | null = null;
@@ -170,72 +148,13 @@
 		openRecords(`Usage records: ${row.taskRef}`, { kind: 'task', taskRef: row.taskRef }, from);
 	}
 
-	const actionsLocked = $derived(!!actionBusy || checkingAction || !!unknownAction);
-
 	function openBudgetDialog(
 		kind: 'daily' | 'monthly',
 		existing: BudgetPeriodState | undefined,
 		from: HTMLElement
 	) {
-		if (actionsLocked) return;
 		opener = from;
-		if (!unknownAction) actionError = undefined;
 		budgetDialog?.start(kind, existing);
-	}
-
-	async function runBudgetAction(
-		periodKind: 'daily' | 'monthly',
-		action: 'clear' | 'allow_once' | 'keep_paused'
-	) {
-		if (actionBusy || checkingAction || unknownAction) return;
-		const key = `${periodKind}:${action}`;
-		const op = newId();
-		actionBusy = key;
-		actionError = undefined;
-		try {
-			const res = await costsApi.agentBudgetAction(organizationId, memberId, {
-				periodKind,
-				action,
-				operationId: op
-			});
-			toast.success(res.message);
-			await costRes.reload();
-		} catch (e) {
-			const err = toAppError(e);
-			const raw = e as { code?: string };
-			if (err.code === OUTCOME_UNKNOWN || raw?.code === OUTCOME_UNKNOWN) {
-				unknownAction = { periodKind, action, operationId: op };
-				actionError =
-					'Change not confirmed. The connection dropped before HQ answered. Check status before trying again.';
-			} else {
-				actionError = err.message;
-			}
-		} finally {
-			actionBusy = undefined;
-		}
-	}
-
-	async function checkActionStatus() {
-		if (!unknownAction || checkingAction) return;
-		checkingAction = true;
-		try {
-			const status = await costsApi.agentBudgetOperation(organizationId, unknownAction.operationId);
-			if (status.state === 'applied') {
-				unknownAction = undefined;
-				actionError = undefined;
-				toast.success('Budget change was confirmed.');
-				await costRes.reload();
-			} else if (status.state === 'not_applied') {
-				unknownAction = undefined;
-				actionError = status.reason;
-			} else {
-				actionError = 'Still waiting for confirmation from HQ. Check status again shortly.';
-			}
-		} catch (e) {
-			actionError = toAppError(e).message;
-		} finally {
-			checkingAction = false;
-		}
 	}
 
 	async function onBudgetSaved(message: string) {
@@ -248,101 +167,9 @@
 		if (opener?.isConnected) opener.focus();
 	}
 
-	const isReached = (b: BudgetPeriodState) =>
-		b.hold === 'stop_pending' || b.hold === 'held' || b.spent >= b.limit;
-
 	const figureClass =
 		'inline-flex min-h-6 items-center rounded-sm font-semibold text-link tabular-nums hover:text-brand-text hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11';
 </script>
-
-{#snippet budgetCard(
-	kind: 'daily' | 'monthly',
-	budget: BudgetPeriodState | undefined,
-	bZone: string,
-	canManage: boolean
-)}
-	{@const stateWord = budget ? budgetState(budget) : undefined}
-	{@const reached = budget ? isReached(budget) : false}
-	<div
-		class="flex flex-col gap-3 rounded-lg border border-line-subtle bg-surface-raised/30 p-4"
-		data-member-budget={kind}
-	>
-		{#if budget}
-			<BudgetBar {budget} {kind} zone={bZone} />
-			{#if canManage}
-				<div class="flex flex-wrap items-center gap-2 pt-1">
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						class={mobileButton}
-						disabled={actionsLocked}
-						onclick={(e) => openBudgetDialog(kind, budget, e.currentTarget)}
-						>{reached ? 'Raise budget…' : 'Change budget…'}</Button
-					>
-					{#if reached && !budget.extended}
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							class={mobileButton}
-							disabled={actionsLocked}
-							onclick={() => runBudgetAction(kind, 'allow_once')}
-							>{actionBusy === `${kind}:allow_once` ? 'Working…' : 'Allow 20% more once'}</Button
-						>
-					{/if}
-					{#if reached && budget.hold === 'stop_pending'}
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							class={mobileButton}
-							disabled={actionsLocked}
-							onclick={() => runBudgetAction(kind, 'keep_paused')}
-							>{actionBusy === `${kind}:keep_paused`
-								? 'Working…'
-								: 'Keep paused until reset'}</Button
-						>
-					{/if}
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						class={mobileButton}
-						disabled={actionsLocked}
-						onclick={() => runBudgetAction(kind, 'clear')}
-						>{actionBusy === `${kind}:clear` ? 'Working…' : 'Clear budget'}</Button
-					>
-				</div>
-			{/if}
-			{#if stateWord?.tone === 'owner'}
-				<p class="text-xs/5 text-fg-muted">
-					Raising, extending, or clearing releases only this budget's hold once satisfied.
-				</p>
-			{/if}
-		{:else}
-			<div class="flex flex-wrap items-center justify-between gap-2">
-				<div>
-					<p class="text-sm/6 font-semibold text-fg">
-						{kind === 'daily' ? 'Daily budget' : 'Monthly budget'}
-					</p>
-					<p class="text-xs/5 text-fg-muted">No budget set</p>
-				</div>
-				{#if canManage}
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						class={mobileButton}
-						disabled={actionsLocked}
-						onclick={(e) => openBudgetDialog(kind, undefined, e.currentTarget)}
-						>Set {kind} budget…</Button
-					>
-				{/if}
-			</div>
-		{/if}
-	</div>
-{/snippet}
 
 {#if costRes.state === 'unavailable'}
 	<NotBuilt title="Cost" place="Cost · {agentName}" area="Teams" />
@@ -485,112 +312,14 @@
 		</section>
 
 		{#if data.budgets}
-			<section
-				aria-labelledby="member-budgets-heading"
-				class="border-t border-line-subtle py-6 {gutters}"
-				data-testid="member-budgets-section"
-			>
-				<div class="flex flex-wrap items-start justify-between gap-4">
-					<div>
-						<h3 id="member-budgets-heading" class="text-base/7 font-semibold text-fg">Budgets</h3>
-						<p class="mt-1 max-w-3xl text-sm/6 text-fg-muted">
-							{#if data.budgets.zone.name}
-								Daily and monthly limits run in {data.budgets.zone.name}, {zoneSourceText(
-									data.budgets.zone.source
-								)}, so "today" here can differ from your viewer zone.
-							{:else}
-								Daily and monthly limits for {agentName}.
-							{/if}
-						</p>
-					</div>
-				</div>
-
-				{#if data.budgets.resetNote}
-					<p
-						class="mt-3 rounded-md border border-line bg-surface-raised px-3 py-2 text-xs/5 text-fg-secondary"
-						data-testid="budget-reset-note"
-					>
-						{data.budgets.resetNote}
-					</p>
-				{/if}
-
-				{#if actionError || unknownAction}
-					<div
-						class="mt-3 flex flex-wrap items-center gap-3 rounded-md bg-danger-emphasis/10 px-3 py-2 text-xs/5 text-danger-text ring-1 ring-danger-emphasis/20"
-						role="alert"
-						data-testid="budget-action-outcome"
-					>
-						<p class="min-w-0 flex-1">
-							{actionError ||
-								'Change not confirmed. The connection dropped before HQ answered. Check status before trying again.'}
-						</p>
-						{#if unknownAction}
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								class={mobileButton}
-								disabled={checkingAction}
-								onclick={checkActionStatus}>{checkingAction ? 'Checking…' : 'Check status'}</Button
-							>
-						{/if}
-					</div>
-				{/if}
-
-				{#if !data.budgets.zone.name}
-					<p class="mt-4 text-sm/6 text-fg-secondary" data-testid="budget-zone-unknown">
-						Agent budgets can't run yet: {zoneSourceText(data.budgets.zone.source)} isn't known, and budget
-						days and months are never counted in UTC by default.
-					</p>
-				{:else if !data.budgets.daily && !data.budgets.monthly}
-					<div
-						class="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-lg border border-line-subtle bg-surface-raised/30 p-4"
-						data-testid="member-no-budget"
-					>
-						<div>
-							<p class="text-sm/6 font-semibold text-fg">No budget set</p>
-							<p class="text-xs/5 text-fg-muted">
-								Set an optional daily or monthly limit in US dollars or total tokens.
-							</p>
-						</div>
-						{#if data.budgets.canManage}
-							<div class="flex flex-wrap gap-2">
-								<Button
-									type="button"
-									variant="outline"
-									size="sm"
-									class={mobileButton}
-									onclick={(e) => openBudgetDialog('daily', undefined, e.currentTarget)}
-									>Set budget…</Button
-								>
-								<Button
-									type="button"
-									variant="outline"
-									size="sm"
-									class={mobileButton}
-									onclick={(e) => openBudgetDialog('monthly', undefined, e.currentTarget)}
-									>Set monthly budget…</Button
-								>
-							</div>
-						{/if}
-					</div>
-				{:else}
-					<div class="mt-4 grid grid-cols-1 gap-4 min-[1024px]:grid-cols-2">
-						{@render budgetCard(
-							'daily',
-							data.budgets.daily,
-							data.budgets.zone.name,
-							data.budgets.canManage
-						)}
-						{@render budgetCard(
-							'monthly',
-							data.budgets.monthly,
-							data.budgets.zone.name,
-							data.budgets.canManage
-						)}
-					</div>
-				{/if}
-			</section>
+			<MemberBudgetsSection
+				{organizationId}
+				{memberId}
+				{agentName}
+				budgets={data.budgets}
+				onOpenDialog={openBudgetDialog}
+				onReload={() => costRes.reload()}
+			/>
 		{/if}
 
 		{#if data.byProject.length > 0}
