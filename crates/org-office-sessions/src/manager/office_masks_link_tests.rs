@@ -32,6 +32,16 @@ fn assert_masked_as_link(denied: &[String], link: &Path) {
     );
 }
 
+/// `link` is omitted from deny patterns (so sandboxes that dereference leaf symlinks never
+/// wipe the session's own roots).
+fn assert_omitted(denied: &[String], link: &Path) {
+    let raw = link.display().to_string();
+    assert!(
+        !denied.contains(&raw) && !denied.iter().any(|d| d.starts_with(&format!("{raw}/"))),
+        "{raw} should be omitted: {denied:?}"
+    );
+}
+
 #[test]
 fn a_linked_neighbour_or_folder_is_masked_as_the_link_never_through_nor_as_its_target() {
     let host = Host::new();
@@ -43,48 +53,74 @@ fn a_linked_neighbour_or_folder_is_masked_as_the_link_never_through_nor_as_its_t
     let worktree = host.mk(&format!("{ORG_A}/runtime/{HQ}/teams/t1/agents/me/wt"));
     let outside = host.mk("outside");
     let secret = host.file("outside/secret");
-    // Neighbours that are links: to the office's own organization, into its own home, to a
-    // folder outside, nowhere, and `/`.
-    let neighbours = [
+    let org_b = host.mk(ORG_B);
+    // Links targeting outside own_roots (or dangling outside) stay masked as the link itself.
+    let masked_links = [
+        link(host.data.join("to-outside"), &outside),
+        link(host.data.join("to-org-b"), &org_b),
+        link(host.data.join("dangling"), &host.data.join("gone")),
+        link(durable.join("journal"), &outside),
+    ];
+    // Links overlapping own_roots (live or dangling into own_home, or `/`) are omitted so
+    // Claude bwrap/Seatbelt and Codex Seatbelt never dereference them and wipe own roots.
+    let overlapping_links = [
         link(host.data.join("to-own-org"), &org),
         link(host.data.join("to-own-home"), &home),
-        link(host.data.join("to-outside"), &outside),
-        link(host.data.join("dangling"), &host.data.join("gone")),
+        link(host.data.join("to-own-durable"), &durable),
+        link(host.data.join("to-own-runtime"), &runtime),
+        link(host.data.join("dangling-home"), &home.join("future")),
         link(host.data.join("to-root"), Path::new("/")),
-    ];
-    // Durable families that are links: into the session's own home, outside, `/`, its org.
-    let families = [
         link(durable.join("state"), &home),
-        link(durable.join("journal"), &outside),
         link(durable.join("blobs"), Path::new("/")),
         link(durable.join("recovery"), &org),
+        link(org.join("hq-owner.v1.json"), &home),
     ];
     // Folders that hold the office's own roots: never masked, never made.
     let holders = [host.data.clone(), org.clone(), durable.clone()];
-    let mut given = neighbours.to_vec();
+    let mut given = vec![
+        masked_links[0].clone(),
+        masked_links[1].clone(),
+        masked_links[2].clone(),
+        overlapping_links[0].clone(),
+        overlapping_links[1].clone(),
+        overlapping_links[2].clone(),
+        overlapping_links[3].clone(),
+        overlapping_links[4].clone(),
+        overlapping_links[5].clone(),
+    ];
     // `lstat("link/")` and `lstat("link/.")` follow the link: both are looked at as `link`.
-    given.push(PathBuf::from(format!("{}/", neighbours[0].display())));
-    given.push(PathBuf::from(format!("{}/.", neighbours[1].display())));
+    given.push(PathBuf::from(format!("{}/", masked_links[0].display())));
+    given.push(PathBuf::from(format!(
+        "{}/.",
+        overlapping_links[0].display()
+    )));
     let masks = OfficeMasks {
-        folders: families
-            .iter()
-            .chain(&holders)
-            .map(|path| MaskedFolder {
-                path: path.clone(),
-                pre_create: true,
-            })
-            .collect(),
-        files: vec![link(org.join("hq-owner.v1.json"), &home)],
+        folders: [
+            &masked_links[3],
+            &overlapping_links[6],
+            &overlapping_links[7],
+            &overlapping_links[8],
+        ]
+        .into_iter()
+        .chain(&holders)
+        .map(|path| MaskedFolder {
+            path: path.clone(),
+            pre_create: true,
+        })
+        .collect(),
+        files: vec![overlapping_links[9].clone()],
         neighbours: given,
         sweeps: Vec::new(),
         own_roots: own_root_forms([&durable, &runtime]),
     };
 
     let denied = denies(&masks);
-    for link in neighbours.iter().chain(&families) {
+    for link in &masked_links {
         assert_masked_as_link(&denied, link);
     }
-    assert_masked_as_link(&denied, &org.join("hq-owner.v1.json"));
+    for link in &overlapping_links {
+        assert_omitted(&denied, link);
+    }
     // Nothing a link points to is masked: the office's own trees, the folder outside, `/`.
     for path in [
         &org, &durable, &runtime, &home, &worktree, &outside, &secret,
@@ -229,10 +265,11 @@ fn prune_nonexistent_bwrap_denies_keeps_links_as_links_and_never_reaches_the_off
         assert!(kept.contains(&raw), "{raw} missing: {kept:?}");
         assert!(!kept.contains(&format!("{raw}/**")), "{kept:?}");
     }
-    // A link stays the link itself, dangling or not, never what it points to.
-    for link in &links {
-        assert_masked_as_link(&kept, link);
-    }
+    // Links overlapping own_roots (to own org, or state -> own home) are omitted so bwrap
+    // never dereferences them; dangling outside links stay masked as the link itself.
+    assert_omitted(&kept, &links[0]);
+    assert_omitted(&kept, &links[2]);
+    assert_masked_as_link(&kept, &links[1]);
     // Absent: `bwrap` can't mask nothing, so the HQ's roots are dropped here and kept in the
     // unpruned list the approval bridge checks.
     for root in ["durable", "runtime"] {

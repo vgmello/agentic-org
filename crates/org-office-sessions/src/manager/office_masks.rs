@@ -193,11 +193,35 @@ impl OfficeMasks {
             .any(|root| root.starts_with(&path) || root.starts_with(&beside))
     }
 
+    /// Whether `link`'s resolved target overlaps any of the office's own roots (`root` is a
+    /// prefix of `target` or `target` is a prefix of `root`).
+    ///
+    /// Live Claude Code (`bwrap` and macOS Seatbelt) and Codex (`Seatbelt`/`bwrap`) dereference
+    /// leaf symlinks in deny lists via `realpath`/`canonicalize`, so emitting a bare symlink
+    /// pointing to `/`, `<data-root>`, `<own_org>`, `<own_durable>`, `<own_runtime>`, or
+    /// `<own_home>` breaks the agent's own session. Omitting such a link is safe: every
+    /// sensitive tree inside `own_roots` is already masked directly at its canonical path,
+    /// which `bwrap`, Seatbelt, and `resolve_path_for_deny` enforce regardless of traversal.
+    fn link_overlaps_own_root(&self, link: &Path) -> bool {
+        let target = match std::fs::canonicalize(link) {
+            Ok(real) => Some(real),
+            Err(_) => resolve_dangling_target(link),
+        };
+        let Some(target) = target else {
+            return false;
+        };
+        self.own_roots
+            .iter()
+            .any(|root| root.starts_with(&target) || target.starts_with(root))
+    }
+
     /// The one place a mask is made. `path` is looked at without following it (after dropping
-    /// a trailing `/` or `/.`, as `lstat("link/")` follows the link): a link is masked as the
-    /// link itself ([`push_symlink_pattern`]), never through and never as what it points to,
-    /// which could be any folder a session needs, its own home included. Anything else is
-    /// masked in its `shape`. A path holding the office's own roots is never masked.
+    /// a trailing `/` or `/.`, as `lstat("link/")` follows the link): a link whose target
+    /// overlaps the office's own roots is omitted (so sandboxes that dereference deny entries
+    /// never wipe the session's own home or worktree); any other link is masked as the link
+    /// itself ([`push_symlink_pattern`]), never through and never as what it points to.
+    /// Anything else is masked in its `shape`. A path holding the office's own roots is never
+    /// masked.
     fn push_mask(&self, out: &mut Vec<PathPattern>, path: &Path, shape: Shape) {
         let path = normalized(path);
         if self.holds_own_root(&path) {
@@ -205,6 +229,9 @@ impl OfficeMasks {
         }
         let is_link =
             std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink());
+        if is_link && self.link_overlaps_own_root(&path) {
+            return;
+        }
         match shape {
             Shape::Below if !is_link => {
                 push_raw_pattern(out, &format!("{}/**", resolved_beside(&path).display()))
@@ -441,6 +468,52 @@ fn resolved_beside(path: &Path) -> PathBuf {
 /// never follows a link it ends in.
 fn normalized(path: &Path) -> PathBuf {
     path.components().collect()
+}
+
+/// Collapses `.` and `..` lexically without touching the filesystem.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                } else if !matches!(out.components().next_back(), Some(Component::RootDir)) {
+                    out.push(comp);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Resolves a dangling symlink chain (bounded, cycle-safe) against existing ancestors so a
+/// dangling link targeting `<own_home>/future` is detected before it becomes live, while a
+/// symlink loop returns `None` and remains masked as a link.
+fn resolve_dangling_target(link: &Path) -> Option<PathBuf> {
+    let mut cur = link.to_path_buf();
+    let mut seen = Vec::with_capacity(8);
+    for _ in 0..8 {
+        let Ok(target) = std::fs::read_link(&cur) else {
+            return (cur != link).then(|| canonicalize_with_tail(&cur));
+        };
+        seen.push(cur.clone());
+        let next = if target.is_absolute() {
+            target
+        } else {
+            let base = cur
+                .parent()
+                .map_or_else(PathBuf::new, canonicalize_with_tail);
+            base.join(target)
+        };
+        cur = lexical_normalize(&next);
+        if seen.contains(&cur) {
+            return None;
+        }
+    }
+    None
 }
 
 #[cfg(test)]

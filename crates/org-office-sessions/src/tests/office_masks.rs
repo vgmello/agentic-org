@@ -186,9 +186,13 @@ fn unexpected_entries_beside_agents_are_masked_and_a_one_file_store_is_masked_ex
     std::fs::write(&stray, b"{}").unwrap();
     let owner_file = office_local.join("hq-owner.v1.json");
     std::fs::write(&owner_file, b"{}").unwrap();
-    // A link is masked as the link itself, never as what it points to.
-    let link = office_local.join("link-to-root");
-    std::os::unix::fs::symlink("/", &link).unwrap();
+    // A link pointing to `/` (which overlaps own_roots) is omitted so sandboxes that dereference
+    // deny entries never wipe the session; a link pointing outside stays masked as the link.
+    let link_root = office_local.join("link-to-root");
+    std::os::unix::fs::symlink("/", &link_root).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let link_outside = office_local.join("link-to-outside");
+    std::os::unix::fs::symlink(outside.path(), &link_outside).unwrap();
 
     let denied = denies(&mgr, &me);
     for needle in [
@@ -196,10 +200,18 @@ fn unexpected_entries_beside_agents_are_masked_and_a_one_file_store_is_masked_ex
         mystery.display().to_string(),
         stray.display().to_string(),
         owner_file.display().to_string(),
-        link.display().to_string(),
+        link_outside.display().to_string(),
     ] {
         assert!(denied.contains(&needle), "{needle} missing: {denied:?}");
     }
+    assert!(
+        !denied.contains(&link_root.display().to_string()),
+        "link-to-root must be omitted: {denied:?}"
+    );
+    assert!(
+        !denied.contains(&format!("{}/**", link_outside.display())),
+        "{denied:?}"
+    );
     assert!(!denied.iter().any(|d| d == "/**" || d == "/"), "{denied:?}");
     let own = office_local.join("agents").join(&me);
     assert!(

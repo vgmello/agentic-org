@@ -27,6 +27,17 @@ impl Host {
         Self { _dir: dir, data }
     }
 
+    /// Short `/tmp` path so Unix domain sockets stay below macOS `SUN_LEN` (104 bytes).
+    fn new_short() -> Self {
+        let dir = tempfile::Builder::new()
+            .prefix("om")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let data = dir.path().canonicalize().unwrap().join("d");
+        std::fs::create_dir_all(&data).unwrap();
+        Self { _dir: dir, data }
+    }
+
     /// Makes `rel` (and its parents) below the data root.
     pub(super) fn mk(&self, rel: &str) -> PathBuf {
         let path = self.data.join(rel);
@@ -324,7 +335,7 @@ fn a_shared_data_root_has_only_its_organization_folders_masked() {
 
 #[test]
 fn links_and_special_files_named_like_an_organization_are_masked_as_themselves() {
-    let host = Host::new();
+    let host = Host::new_short();
     let org = host.mk(ORG_A);
     let (durable, runtime) = (org.join("durable"), org.join("runtime"));
     let own_home = host.mk(&format!(
@@ -346,7 +357,14 @@ fn links_and_special_files_named_like_an_organization_are_masked_as_themselves()
     let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
 
     let (denied, _) = neighbour_masks(&durable, &runtime, ORG_A, HQ);
-    for link in [&to_own, &dangling, &loop_a, &loop_b] {
+    // A link targeting the office's own organization is omitted so sandboxes that dereference
+    // deny entries never wipe own roots; dangling outside links and loops stay masked as links.
+    let to_own_raw = to_own.display().to_string();
+    assert!(
+        !denied.contains(&to_own_raw) && !denied.contains(&format!("{to_own_raw}/**")),
+        "link into own org must be omitted: {denied:?}"
+    );
+    for link in [&dangling, &loop_a, &loop_b] {
         let raw = link.display().to_string();
         assert!(denied.contains(&raw), "{raw} missing: {denied:?}");
         assert!(
