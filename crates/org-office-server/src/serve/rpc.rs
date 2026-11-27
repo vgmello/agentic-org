@@ -192,6 +192,29 @@ pub(super) fn search_rpc(
     ))
 }
 
+/// `copilot.features` and `copilot.draft` (`TASK-60` AC #3): strictly requires a verified human
+/// grant on a bound connection (`binding.via_grant()`).
+pub(super) fn copilot_rpc(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+) -> Option<Response> {
+    if !crate::copilot_calls::is_copilot_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(crate::copilot_calls::not_authorized(request.id));
+    };
+    if !binding.via_grant() {
+        return Some(crate::copilot_calls::not_authorized(request.id));
+    }
+    Some(dispatch_actor_port(
+        request,
+        member,
+        shared.ports.copilot.as_ref(),
+    ))
+}
+
 pub(super) fn git_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
     if !crate::git_calls::is_git_method(request) {
         return None;

@@ -54,34 +54,136 @@ fn token_run(text: &str) -> usize {
 }
 
 pub fn text_has_secret(text: &str) -> bool {
-    if text.contains("-----BEGIN") && text.contains("PRIVATE KEY") {
-        return true;
-    }
-    for (prefix, min) in TOKEN_PREFIXES {
-        for (at, _) in text.match_indices(prefix) {
+    has_private_key_marker(text)
+        || has_token_prefix(text)
+        || has_bearer_token(text)
+        || has_sensitive_header(text)
+        || has_url_userinfo(text)
+        || has_secret_assignment(text)
+        || has_jwt(text)
+        || longest_hex_run(text) >= HEX_RUN
+}
+
+fn has_private_key_marker(text: &str) -> bool {
+    text.contains("-----BEGIN") && text.contains("PRIVATE KEY")
+}
+
+fn has_token_prefix(text: &str) -> bool {
+    TOKEN_PREFIXES.iter().any(|(prefix, min)| {
+        text.match_indices(prefix).any(|(at, _)| {
             let starts_word = text[..at]
                 .chars()
                 .next_back()
                 .is_none_or(|c| !c.is_ascii_alphanumeric());
-            if starts_word && token_run(&text[at + prefix.len()..]) >= *min {
-                return true;
-            }
-        }
-    }
-    // A pasted "Authorization: Bearer <token>" header: a long run that holds a digit (plain
-    // words after "Bearer" are not a token).
-    for marker in ["Bearer ", "bearer "] {
-        for (at, _) in text.match_indices(marker) {
+            starts_word && token_run(&text[at + prefix.len()..]) >= *min
+        })
+    })
+}
+
+/// A pasted "Authorization: Bearer <token>" header: a long run that holds a digit (plain
+/// words after "Bearer" are not a token).
+fn has_bearer_token(text: &str) -> bool {
+    ["Bearer ", "bearer "].iter().any(|marker| {
+        text.match_indices(marker).any(|(at, _)| {
             let run: String = text[at + marker.len()..]
                 .chars()
                 .take_while(|c| is_token_char(*c))
                 .collect();
-            if run.chars().count() >= 20 && run.chars().any(|c| c.is_ascii_digit()) {
+            run.chars().count() >= 20 && run.chars().any(|c| c.is_ascii_digit())
+        })
+    })
+}
+
+/// Pasted sensitive HTTP headers (`Cookie:`, `Set-Cookie:`, `X-Org-Session-Proof:`, `X-Vault-Token:`).
+fn has_sensitive_header(text: &str) -> bool {
+    const HEADERS: &[&str] = &[
+        "cookie:",
+        "set-cookie:",
+        "x-org-session-proof:",
+        "x-vault-token:",
+        "x-api-key:",
+    ];
+    let lower = text.to_ascii_lowercase();
+    HEADERS.iter().any(|hdr| {
+        lower.match_indices(hdr).any(|(at, _)| {
+            let starts_boundary = at == 0
+                || !lower.as_bytes()[at - 1].is_ascii_alphanumeric()
+                    && lower.as_bytes()[at - 1] != b'-';
+            let after = lower[at + hdr.len()..].trim_start_matches([' ', '\t']);
+            let val_len = after
+                .bytes()
+                .take_while(|b| !matches!(b, b'\n' | b'\r'))
+                .count();
+            starts_boundary && val_len >= 6
+        })
+    })
+}
+
+/// Embedded credentials in a URL (`https://user:pass@host`).
+fn has_url_userinfo(text: &str) -> bool {
+    let mut rest = text;
+    while let Some(pos) = rest.find("://") {
+        let after = &rest[pos + 3..];
+        let authority_end = after
+            .find(['/', '?', '#', ' ', '\t', '\n', '\r', '"', '\''])
+            .unwrap_or(after.len());
+        let authority = &after[..authority_end];
+        if let Some((userinfo, host)) = authority.split_once('@') {
+            if !host.is_empty()
+                && userinfo
+                    .split_once(':')
+                    .is_some_and(|(_, pw)| !pw.is_empty())
+            {
                 return true;
             }
         }
+        rest = after;
     }
-    has_jwt(text) || longest_hex_run(text) >= HEX_RUN
+    false
+}
+
+/// Explicit `KEY=value` secret assignments (`API_KEY=...`, `VAULT_TOKEN=...`, `PASSWORD=...`).
+fn has_secret_assignment(text: &str) -> bool {
+    const KEYS: &[&str] = &[
+        "api_key",
+        "access_token",
+        "refresh_token",
+        "session_token",
+        "client_secret",
+        "vault_token",
+        "vault_credential",
+        "password",
+        "passphrase",
+        "private_key",
+        "agent_os_session_token",
+    ];
+    let bytes = text.as_bytes();
+    let mut pos = 0;
+    while let Some(rel) = text[pos..].find('=') {
+        let eq = pos + rel;
+        let key_start = eq
+            - bytes[..eq]
+                .iter()
+                .rev()
+                .take_while(|b| b.is_ascii_alphanumeric() || **b == b'_')
+                .count();
+        let key = text[key_start..eq].to_ascii_lowercase();
+        let after = &text[eq + 1..];
+        if !after.starts_with('=') && KEYS.iter().any(|k| key == *k || key.ends_with(k)) {
+            let trimmed = after.trim_start_matches(['"', '\'']);
+            let val_len = trimmed
+                .bytes()
+                .take_while(|b| {
+                    !b.is_ascii_whitespace() && !matches!(b, b'"' | b'\'' | b';' | b',')
+                })
+                .count();
+            if val_len >= 6 {
+                return true;
+            }
+        }
+        pos = eq + 1;
+    }
+    false
 }
 
 /// A JSON web token: `eyJ` (a base64 `{"`), then two more dot-separated parts.

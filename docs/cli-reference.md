@@ -160,9 +160,24 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org service status [--name <instance>]`
   Inspect whether the instance's registered OS service is running.
   **Use when:** checking host service health before running organization or office commands.
+- `agentic-org instance rebind [<name>] [--name <instance>] [--yes] [--dry-run] [--json]`
+  Verify and rebind a stopped instance's recorded directory identity (`device`/`inode`) in `instance.json` and `locator/instances.json` after copying or restoring its root onto a new inode. Refuses while `host.lock` or any `office.lock` is held, requires explicit confirmation (`--yes` when non-interactive), and fails closed if configuration matches neither the recorded nor actual filesystem identity.
+  **Use when:** host startup reports `RootUnavailable` after restoring or moving an instance root directory onto a new inode.
 - `agentic-org status [--name <instance>] [--office <office_id>]`
   Show the selected instance and office (and which tier chose them), the instance's service state and the saved context.
   **Use when:** checking which instance and office commands act on before running them.
+- `agentic-org logs [--instance <instance>] [--office <office_id>] [--lines <N>] [--json] [-q]`
+  Show bounded, symlink-safe, secret-redacted host and office stderr logs (`1..=2000` lines; every line scrubbed through `org-redact` plus PEM/token-URL/recovery-code passes).
+  **Use when:** inspecting recent operational host or office logs safely without exposing Bearer tokens, cookies, API keys, vault credentials, or PEM private keys.
+- `agentic-org doctor [--instance <instance>] [--office <office_id>] [--org-dir <path>] [--json] [-q]`
+  Run read-only host layout, owner-only permissions, `host-registry.created` consistency, socket, release-pin, AppArmor/userns, and durable organization-state integrity checks (never reading `private/` or `protected/`). Exits `0` when all checks pass and `1` if any check fails.
+  **Use when:** diagnosing host permissions, stale `host-registry.created` markers, sockets, AppArmor confinement, or durable organization-state integrity.
+- `agentic-org support [--instance <instance>] [--output <path>] [--lines <N>] [--json]`
+  Generate a deterministic, 100% secret-redacted JSON diagnostic bundle (`agentic-org-support-v1`) combining instance summary, `doctor`, and redacted `logs`; writes atomically with mode `0600` when `--output <path>` is supplied (refusing symlinks) and never reads `host-registry.db`, `private/`, `protected/`, or private keys.
+  **Use when:** collecting a shareable troubleshooting bundle without leaking credentials, keys, or private databases.
+- `agentic-org uninstall [--instance <instance>] [--yes] [--dry-run] [--json]`
+  Cleanly uninstall a stopped instance's runtime, sockets, logs, setup records, locator entry, saved CLI context, and host registry metadata — explicitly clearing `host-registry.created` so a fresh setup can initialize cleanly while leaving non-installed files untouched. Fails closed without `--yes` or while `registry.lock`, `host.lock`, any `office.lock`, or a registered service is active.
+  **Use when:** cleanly tearing down a stopped instance and clearing `host-registry.created` before a fresh setup.
 
 ### Sign-In, Context & Administration
 
@@ -283,6 +298,9 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 - `agentic-org provider models [--org <org_id>] [--office <office_id>] [--login <login>] [--name <instance>] [--json]`
   List model profiles available for hiring.
   **Use when:** finding a `model_profile_id` before hiring an agent with `agentic-org hr hire`.
+- `agentic-org release verify <bundle.tar.gz | bundle-dir> [--store <dir>] [--json]`
+  Verify a signed release bundle's Ed25519 signature, closed inventory, and SHA-256 payload hashes offline without mutating the release store or touching running services (refusing symlinks, path traversal, and untrusted keys).
+  **Use when:** verifying a prebuilt offline release archive or directory before installing or activating it.
 - `agentic-org release install <bundle.tar.gz | bundle-dir> [--store <dir>] [--no-restart] [--json]`
   Verify Ed25519 signature, closed inventory, and executable hashes, then atomically pin a signed release into this host's release store. Each instance's registered service that `setup` wrote then moves to the new release (its `launchd` `ProgramArguments` / `systemd` `ExecStart`; arguments and environment unchanged): a running service holds the store, so it is stopped for the install and started again on the new release (`--no-restart` leaves it stopped); a stopped service stays stopped (a stopped `launchd` agent loads again at the next login or with `agentic-org setup`); a failed install starts again what it stopped. A service definition changed by hand, or one running a program outside this store, is left untouched and the install prints the steps to upgrade it. `--json` adds `services` (`instance`, `outcome` `refreshed|unchanged|refused|skipped|failed`, `was_running`, `running`, `program`, `note`), and `services_warning` when the registered services could not be read (the install goes on without them; standard error stays empty or holds only an error's envelope); `--dry-run` lists what would happen to each service (`action`, `running`, and `restart`: whether it would be started again).
   **Use when:** installing or upgrading prebuilt signed binaries on macOS or Linux without compiling from source (see [Remote Satellite Office Setup](remote-office-setup.md)).

@@ -6,7 +6,9 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use org_cli_shell::context::{ColorMode, Modes};
 
 use crate::args::{FormatArg, PassArgs};
-use crate::features::{admin, backup, completion, context, diagnostics, office, org, project};
+use crate::features::{
+    admin, backup, completion, context, diagnostics, instance, office, org, project,
+};
 use crate::features::{provider, release, repo, service, sign_in, status};
 
 const ABOUT: &str = "Agentic Org\n\
@@ -142,6 +144,10 @@ pub(crate) enum TopCommand {
     /// Use when: managing the OS background service created by `agentic-org setup`.
     #[command(verbatim_doc_comment)]
     Service(service::ServiceArgs),
+    /// Inspect or repair an instance's root binding (`instance rebind`)
+    /// Use when: repairing an instance whose root directory moved to a new inode after a copy or restore.
+    #[command(verbatim_doc_comment)]
+    Instance(instance::InstanceArgs),
     /// Protected organization recovery: status and release of the recovery package
     /// Use when: checking or releasing an organization's recovery package as its administrator.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
@@ -318,6 +324,7 @@ impl TopCommand {
             Self::Context(args) => args.yes(),
             Self::Admin(args) => args.yes(),
             Self::Service(args) => args.yes(),
+            Self::Instance(args) => args.yes(),
             Self::Restore(args) => args.yes(),
             Self::Uninstall(args) => args.yes(),
             _ => false,

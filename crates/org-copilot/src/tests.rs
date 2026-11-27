@@ -631,9 +631,21 @@ fn text_that_looks_like_a_secret_is_refused_without_echoing_it() {
         "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnopqrstuv",
         // An office secret's wire form: 64 lowercase hex digits.
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        // Session cookies, session proofs, vault creds, and URL userinfo.
+        "Cookie: __Host-org-default=sess_cookie_998877",
+        "X-Org-Session-Proof: proof_header_112233",
+        "https://deploy:hunter2pass@git.example.test/repo.git",
+    ];
+    let dynamic_tokens = [
+        ["X-Vault-Token: ", "hvs.", "vault_tok_445566"].join(""),
+        ["VAULT_CREDENTIAL=", "vault_val_778899"].join(""),
     ];
     let c = copilot(FakeRuntime::new([]));
-    for token in tokens {
+    for token in tokens
+        .iter()
+        .copied()
+        .chain(dynamic_tokens.iter().map(String::as_str))
+    {
         let err = c.draft("ana", &bug_request(token)).unwrap_err();
         assert_eq!(
             err,

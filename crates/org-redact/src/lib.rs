@@ -86,6 +86,16 @@ const SENSITIVE_KEYS_NORMALIZED: &[&str] = &[
     "xauthtoken",
     "cookie",
     "setcookie",
+    "xorgsessionproof",
+    "sessioncookie",
+    "sessionproof",
+    "cookiedigest",
+    "proofdigest",
+    "vaulttoken",
+    "vaultcredential",
+    "vaultsecret",
+    "recoverycode",
+    "recoverycodes",
 ];
 
 /// Header names (normalized as above) whose whole value, to the end of the line, is secret even
@@ -95,6 +105,7 @@ const SENSITIVE_HEADERS_NORMALIZED: &[&str] = &[
     "proxyauthorization",
     "cookie",
     "setcookie",
+    "xorgsessionproof",
     "xapikey",
     "apikey",
     "xauthtoken",
@@ -164,8 +175,11 @@ pub fn is_sensitive_key(key: &str) -> bool {
         "secret",
         "apikey",
         "password",
+        "passphrase",
         "privatekey",
         "signature",
+        "credential",
+        "credentials",
     ]
     .iter()
     .any(|suffix| norm.ends_with(suffix))

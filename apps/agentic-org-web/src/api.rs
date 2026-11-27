@@ -11,6 +11,7 @@
 mod account_routes;
 mod attachment_routes;
 mod chat_routes;
+mod copilot_routes;
 mod cost_routes;
 mod doc_routes;
 mod external_auth_routes;
@@ -190,6 +191,7 @@ pub enum Route {
     Process(process_routes::ProcessRoute),
     Docs(doc_routes::DocRoute),
     Search(search_routes::SearchRoute),
+    Copilot(copilot_routes::CopilotRoute),
     Cost(cost_routes::CostRoute),
     Provider(provider_routes::ProviderRoute),
     OfficeFederation(office_routes::OfficeFederationRoute),
@@ -237,6 +239,7 @@ pub enum Call {
     Process(process_routes::ProcessCall),
     Docs(doc_routes::DocCall),
     Search(search_routes::SearchCall),
+    Copilot(copilot_routes::CopilotCall),
     Cost(cost_routes::CostCall),
     Provider(provider_routes::ProviderCall),
     OfficeFederation(office_routes::OfficeFederationCall),

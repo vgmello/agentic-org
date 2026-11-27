@@ -1438,6 +1438,7 @@ dependencies = [
  "org-platform",
  "org-platform-host",
  "org-proto",
+ "org-redact",
  "org-socket",
  "proc-macro2",
  "ring",

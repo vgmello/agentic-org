@@ -170,7 +170,6 @@ fn office_handles<'de, D: serde::Deserializer<'de>>(
 }
 
 impl Config {
-    #[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
     fn validate_rebind(&self, binding: &Binding, actual: Identity) -> Result<(), Error> {
         if self.binding.identity != binding.identity && self.binding.identity != actual {
             return Err(Error::RebindRecoveryRequired {
@@ -243,15 +242,25 @@ pub struct InstancePaths {
 }
 
 /// Confirmation is bound to these values. It must use OS presence or an interactive TTY.
-#[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
-pub(crate) struct RebindPreview {
+pub struct RebindPreview {
     binding: Binding,
     actual: Identity,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
 impl RebindPreview {
-    pub(crate) fn description(&self) -> String {
+    pub fn name(&self) -> &str {
+        self.binding.name.as_str()
+    }
+
+    pub fn instance_id(&self) -> &str {
+        &self.binding.id
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.binding.root
+    }
+
+    pub fn description(&self) -> String {
         format!(
             "Rebind instance {} ({}) at {:?}: {:?} -> {:?}",
             self.binding.name.as_str(),
@@ -263,7 +272,6 @@ impl RebindPreview {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
 struct RebindSnapshot {
     phase: Phase,
     config: ControlFile,
@@ -277,10 +285,10 @@ impl Registry {
         self.directory.lock_file_within(LOCK, LOCK_WAIT)
     }
 
-    /// Library use case only until agentic-org can expose the signed/interactive CLI.
-    /// Preflight and confirmation hold no locks. Revalidation takes registry, then root.
-    #[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
-    pub(crate) fn rebind(
+    /// Rebinds an instance's recorded directory identity after a copy or restore onto a new
+    /// filesystem inode. Preflight and confirmation hold no locks; revalidation takes registry,
+    /// then root.
+    pub fn rebind(
         &self,
         name: Option<&str>,
         confirm: impl FnOnce(&RebindPreview) -> Result<(), Error>,
@@ -288,7 +296,6 @@ impl Registry {
         self.rebind_after_config(name, confirm, || Ok(()))
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
     fn rebind_after_config(
         &self,
         name: Option<&str>,

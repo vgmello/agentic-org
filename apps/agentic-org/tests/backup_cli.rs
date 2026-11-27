@@ -382,3 +382,140 @@ fn machine_mode_never_asks_for_a_passphrase_and_keeps_standard_error_empty() {
         "{previous}"
     );
 }
+
+#[test]
+fn protected_restore_enforces_0700_0600_discards_protected_dbs_and_fails_closed_on_tampering() {
+    let at = Instance::new();
+    let archive = at.path("protected.backup");
+    let pass = at.pass.to_str().unwrap().to_owned();
+
+    // Locate the office's runtime folder (sibling of durable/) and seed stale protected DB files
+    // representing protected/messaging.db, protected/accounting.db, protected/budgets.db.
+    let office_id = at.folder.file_name().unwrap().to_str().unwrap().to_owned();
+    let runtime_root = at.durable.parent().unwrap().join("runtime");
+    let protected_dir = runtime_root.join(&office_id).join("protected");
+    fs::create_dir_all(&protected_dir).unwrap();
+    fs::set_permissions(&protected_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    for db in ["messaging.db", "accounting.db", "budgets.db"] {
+        let p = protected_dir.join(db);
+        fs::write(&p, b"STALE_PRE_RESTORE_PROJECTION").unwrap();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    // 1. Create encrypted backup (0600).
+    let made = json(&at.run(
+        &[
+            "backup",
+            &at.org_id,
+            "--out",
+            &archive,
+            "--encrypt",
+            "--passphrase-file",
+            &pass,
+            "--json",
+        ],
+        None,
+    ));
+    assert_eq!(made["encrypted"], true);
+    assert_eq!(mode(Path::new(&archive)), 0o600);
+
+    // 2. Tamper one byte of a copy of the archive -> restore MUST fail closed without changing
+    // live durable files or deleting existing protected projections!
+    let tampered = at.path("tampered.backup");
+    let mut raw = fs::read(&archive).unwrap();
+    let flip_at = raw.len() - 8;
+    raw[flip_at] ^= 0x55;
+    fs::write(&tampered, &raw).unwrap();
+    fs::set_permissions(&tampered, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let marker_file = at.durable.join("state/.live-sentinel");
+    fs::write(&marker_file, b"LIVE_BEFORE_TAMPERED_RESTORE").unwrap();
+    let bad_restore = at.run(
+        &[
+            "restore",
+            &tampered,
+            "--org",
+            &at.org_id,
+            "--passphrase-file",
+            &pass,
+            "--yes",
+            "--json",
+        ],
+        None,
+    );
+    assert!(
+        !bad_restore.status.success(),
+        "tampered archive must be refused"
+    );
+    assert_eq!(
+        fs::read(&marker_file).unwrap(),
+        b"LIVE_BEFORE_TAMPERED_RESTORE",
+        "failed tampered restore must not alter live durable state"
+    );
+    for db in ["messaging.db", "accounting.db", "budgets.db"] {
+        assert!(
+            protected_dir.join(db).is_file(),
+            "failed tampered restore must not discard live protected/{db}"
+        );
+    }
+
+    // 3. Valid restore atomically swaps durable root, preserves previous root under 0700
+    // restore-backups/before-<suffix>, enforces 0700/0600 permissions, and discards stale
+    // protected companion DBs so the office rebuilds them cleanly from the restored durable root.
+    let restored = json(&at.run(
+        &[
+            "restore",
+            &archive,
+            "--org",
+            &at.org_id,
+            "--passphrase-file",
+            &pass,
+            "--yes",
+            "--json",
+        ],
+        None,
+    ));
+    assert_eq!(restored["restored"], true);
+    let previous = PathBuf::from(restored["previous_durable_root"].as_str().unwrap());
+    assert!(
+        previous.join("state/.live-sentinel").is_file(),
+        "atomic swap must preserve the displaced live root"
+    );
+    assert!(
+        !at.durable.join("state/.live-sentinel").exists(),
+        "restored durable root must come strictly from the verified archive"
+    );
+    assert_eq!(mode(&at.durable), 0o700);
+    assert_eq!(mode(previous.parent().unwrap()), 0o700);
+    for db in ["messaging.db", "accounting.db", "budgets.db"] {
+        assert!(
+            !protected_dir.join(db).exists(),
+            "restore must discard stale protected/{db} for clean rebuild"
+        );
+    }
+
+    // Walk restored durable tree: every directory is 0700 and every regular file is 0600.
+    fn assert_owner_only_tree(dir: &Path) {
+        assert_eq!(mode(dir), 0o700, "dir {}", dir.display());
+        for entry in fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let meta = fs::symlink_metadata(&path).unwrap();
+            assert!(
+                !meta.file_type().is_symlink(),
+                "no symlinks in restored tree"
+            );
+            if meta.is_dir() {
+                assert_owner_only_tree(&path);
+            } else {
+                assert_eq!(
+                    meta.permissions().mode() & 0o777,
+                    0o600,
+                    "file {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    assert_owner_only_tree(&at.durable);
+}

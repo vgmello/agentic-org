@@ -44,6 +44,7 @@ pub enum AccountRoute {
     LinkRegisterAttach(IpAddr),
     LinkSetPassword(IpAddr),
     ChangePassword(CallerAuth),
+    PreferencesGet(CallerAuth),
     PreferencesSet(CallerAuth),
     AdminHandover(CallerAuth),
     OrgAccessList(CallerAuth, String),
@@ -58,6 +59,7 @@ pub enum AccountCall {
     LinkRegisterAttach(IpAddr, LinkToken, Credentials),
     LinkSetPassword(IpAddr, LinkToken, Password),
     ChangePassword(CallerAuth, Password, Password),
+    PreferencesGet(CallerAuth),
     PreferencesSet(CallerAuth, PreferencesBody),
     AdminHandover(CallerAuth, String, Password),
     OrgAccessList(CallerAuth, String),
@@ -166,6 +168,10 @@ pub(super) fn prepare(route: AccountRoute, bytes: &[u8]) -> Result<PreparedCall<
             } = serde_json::from_slice(bytes).map_err(|_| invalid())?;
             AccountCall::ChangePassword(caller, current_password, new_password)
         }
+        AccountRoute::PreferencesGet(caller) => {
+            empty()?;
+            AccountCall::PreferencesGet(caller)
+        }
         AccountRoute::PreferencesSet(caller) => {
             let body: PreferencesBody = serde_json::from_slice(bytes).map_err(|_| invalid())?;
             if body.time_zone.is_some() && body.clear_time_zone
@@ -175,6 +181,11 @@ pub(super) fn prepare(route: AccountRoute, bytes: &[u8]) -> Result<PreparedCall<
             }
             if let Some(ref tz) = body.time_zone {
                 if !org_proto::tz::validate_iana_timezone(tz) {
+                    return Err(invalid());
+                }
+            }
+            if let Some(ref org_id) = body.last_org_id {
+                if !org_office_launch::is_storage_id(org_id) {
                     return Err(invalid());
                 }
             }
@@ -259,6 +270,13 @@ pub(super) fn execute(api: &SessionApi, call: AccountCall) -> ApiReply {
             },
             result,
         ),
+        AccountCall::PreferencesGet(caller) => match api.validate(caller) {
+            Ok(session) => result(serde_json::json!({
+                "time_zone": session.account.time_zone,
+                "last_org_id": session.account.last_org_id,
+            })),
+            Err(error) => failure(error),
+        },
         AccountCall::PreferencesSet(caller, body) => exec_preferences_set(api, caller, body),
         AccountCall::AdminHandover(caller, to_account_id, password) => exec_validated(
             api,

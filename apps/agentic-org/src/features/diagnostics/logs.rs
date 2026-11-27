@@ -10,7 +10,7 @@ use org_cli_shell::terminal::sanitize;
 use serde::Serialize;
 
 use super::paths::{normalize_lstat_path, resolve_instance, validate_plain_path, InstancePaths};
-use super::redact::redact_lines;
+use super::redact::{redact_json, redact_lines, redact_text};
 use super::LogsArgs;
 use crate::error::CliError;
 use crate::selection;
@@ -94,11 +94,14 @@ pub(crate) fn collect_logs(
         truncated |= file_trunc;
         let (redacted, count) = redact_lines(&raw_lines);
         total_redactions += count;
-        sources.push(label.clone());
+        let label_red = redact_text(&label);
+        total_redactions += label_red.count;
+        let safe_label = label_red.text;
+        sources.push(safe_label.clone());
         for line in redacted {
             let bounded = bound_line_utf8(&line, MAX_LINE_BYTES);
             if multi {
-                all_lines.push(format!("[{label}] {bounded}"));
+                all_lines.push(format!("[{safe_label}] {bounded}"));
             } else {
                 all_lines.push(bounded);
             }
@@ -111,8 +114,10 @@ pub(crate) fn collect_logs(
         all_lines.drain(..drop_count);
     }
 
+    let instance_red = redact_text(&paths.name);
+    total_redactions += instance_red.count;
     Ok(LogReport {
-        instance: paths.name.clone(),
+        instance: instance_red.text,
         lines: all_lines,
         truncated,
         redacted_count: total_redactions,
@@ -289,20 +294,23 @@ fn bound_line_utf8(line: &str, budget: usize) -> String {
 
 fn render_logs(report: &LogReport, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     if ctx.modes().json {
-        return Ok(ctx.write_json(report)?);
+        let raw = serde_json::to_value(report)
+            .map_err(|e| CliError::failed("cli::encode", e.to_string()))?;
+        let (redacted, _) = redact_json(&raw);
+        return Ok(ctx.write_json(&redacted)?);
     }
     if report.lines.is_empty() {
         if !ctx.modes().quiet {
             ctx.note(&format!(
                 "No log lines found for instance `{}`.",
-                report.instance
+                sanitize(&redact_text(&report.instance).text)
             ));
         }
         return Ok(());
     }
     let mut out = String::new();
     for line in &report.lines {
-        out.push_str(&sanitize(line));
+        out.push_str(&sanitize(&redact_text(line).text));
         out.push('\n');
     }
     ctx.out(&out)?;

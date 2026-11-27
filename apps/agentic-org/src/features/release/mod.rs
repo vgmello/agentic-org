@@ -4,6 +4,7 @@
 
 mod install;
 mod status;
+mod verify;
 
 use std::path::{Path, PathBuf};
 
@@ -31,9 +32,13 @@ const STATUS_EXAMPLES: &str = "Examples:
   agentic-org release status -q
   agentic-org release status --json";
 
+const VERIFY_EXAMPLES: &str = "Examples:
+  agentic-org release verify ./agentic-org-1.2.0.tar.gz
+  agentic-org release verify ./release-dir --json";
+
 #[derive(Args, Debug)]
 #[command(
-    after_help = "Examples:\n  agentic-org release install ./agentic-org-1.2.0.tar.gz\n  agentic-org release status --json"
+    after_help = "Examples:\n  agentic-org release verify ./agentic-org-1.2.0.tar.gz\n  agentic-org release install ./agentic-org-1.2.0.tar.gz\n  agentic-org release status --json"
 )]
 pub(crate) struct ReleaseArgs {
     #[command(subcommand)]
@@ -42,6 +47,16 @@ pub(crate) struct ReleaseArgs {
 
 #[derive(Subcommand, Debug)]
 enum ReleaseCommand {
+    /// Verify the Ed25519 signature, closed inventory and binary hashes without modifying the release store
+    /// Use when: checking an offline release archive or directory before installing or activating it.
+    #[command(verbatim_doc_comment, after_help = VERIFY_EXAMPLES)]
+    Verify {
+        /// The release bundle: a `.tar.gz` archive or a release directory
+        #[arg(value_name = "BUNDLE")]
+        bundle: String,
+        #[command(flatten)]
+        store: StoreArgs,
+    },
     /// Verify the Ed25519 signature, closed inventory and binary hashes, atomically pin the release, and move registered services to it
     /// Use when: installing or upgrading a prebuilt signed Agentic Org release package without compiling from source.
     #[command(verbatim_doc_comment, after_help = INSTALL_EXAMPLES)]
@@ -73,6 +88,9 @@ struct StoreArgs {
 
 pub(crate) fn run(args: ReleaseArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     match args.command {
+        ReleaseCommand::Verify { bundle, store } => {
+            verify::run(&bundle, store.store.as_deref(), ctx)
+        }
         ReleaseCommand::Install {
             bundle,
             store,

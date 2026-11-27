@@ -398,7 +398,10 @@ pub fn classify_org_reply(
                 | WebErrorCode::TooLarge
                 | WebErrorCode::ChecklistIncomplete
                 | WebErrorCode::UnsupportedVersion
-                | WebErrorCode::RateLimited => OrgReplyClassification::Outcome {
+                | WebErrorCode::RateLimited
+                | WebErrorCode::CopilotUnavailable
+                | WebErrorCode::CopilotFailed
+                | WebErrorCode::CopilotBusy => OrgReplyClassification::Outcome {
                     outcome: MutationOutcome::Rejected {
                         operation_id,
                         error: WebError::new(

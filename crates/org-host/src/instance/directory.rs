@@ -54,7 +54,6 @@ pub(super) struct ControlFile {
 }
 
 impl ControlFile {
-    #[cfg_attr(not(test), expect(dead_code, reason = "rebind awaits its signed CLI"))]
     pub(super) fn same_version(&self, other: &Self) -> Result<bool, Error> {
         Ok(self.bytes == other.bytes && Identity::of(&self.file)? == Identity::of(&other.file)?)
     }

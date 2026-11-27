@@ -152,7 +152,15 @@ fn visit_state_entry(
             .syntax_errors
             .push(format!("{rel}: symlink is forbidden inside durable state"));
     } else if meta.is_dir() {
-        walk_state_tree_bounded(root, path, depth + 1, max_depth, max_entries, index);
+        // Never descend into private notes or protected companion databases when `--org-dir`
+        // points at a parent durable root.
+        let is_restricted = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| matches!(name, "private" | "protected"));
+        if !is_restricted {
+            walk_state_tree_bounded(root, path, depth + 1, max_depth, max_entries, index);
+        }
     } else if !meta.is_file() {
         index.syntax_errors.push(format!(
             "{rel}: non-regular file is forbidden inside durable state"

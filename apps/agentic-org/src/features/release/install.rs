@@ -286,7 +286,7 @@ impl Drop for StagingDirGuard {
 /// A fresh run folder under `<store>/staging`, removed when the guard drops. The staging
 /// folder is made or tightened owner-only (`0700`) and refused when it is a symbolic link or
 /// cannot be; the run folder is created `0700` in one step, never with a wider mode first.
-fn prepare_staging(store_dir: &Path) -> Result<StagingDirGuard, String> {
+pub(super) fn prepare_staging(store_dir: &Path) -> Result<StagingDirGuard, String> {
     let staging_root = store_dir.join("staging");
     org_platform::fs::create_owner_only_dir_all(&staging_root)
         .and_then(|()| org_platform::fs::set_owner_only_dir(&staging_root))

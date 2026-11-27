@@ -16,6 +16,7 @@ use super::doctor_host::{
 pub(crate) use super::doctor_types::{CheckStatus, DoctorCheck};
 use super::org_integrity_checks::check_org_state;
 use super::paths::{discover_offices, resolve_instance, DiscoveredOffice};
+use super::redact::{redact_json, redact_text};
 use super::DoctorArgs;
 use crate::error::CliError;
 use crate::selection;
@@ -61,7 +62,7 @@ pub(crate) fn collect_doctor(
     include_instance_checks: bool,
 ) -> Result<DoctorReport, CliError> {
     let mut checks = Vec::new();
-    let instance_label = instance_name.unwrap_or("default").to_owned();
+    let instance_label = redact_text(instance_name.unwrap_or("default")).text;
 
     if include_instance_checks {
         let paths = resolve_instance(instance_name)?;
@@ -120,14 +121,17 @@ fn check_discovered_offices(offices: &[DiscoveredOffice], checks: &mut Vec<Docto
 }
 
 fn render_doctor(report: &DoctorReport, ctx: &mut ExecutionContext) -> Result<(), CliError> {
+    let raw_json =
+        serde_json::to_value(report).map_err(|e| CliError::failed("cli::encode", e.to_string()))?;
+    let (json, _) = redact_json(&raw_json);
     if ctx.modes().json {
-        return Ok(ctx.write_json(report)?);
+        return Ok(ctx.write_json(&json)?);
     }
     if ctx.modes().quiet {
         let mut out = String::new();
         for check in &report.checks {
             if check.status == CheckStatus::Fail {
-                out.push_str(&sanitize(&check.id));
+                out.push_str(&sanitize(&redact_text(&check.id).text));
                 out.push('\n');
             }
         }
@@ -146,11 +150,13 @@ fn render_doctor(report: &DoctorReport, ctx: &mut ExecutionContext) -> Result<()
                 detail.push_str(" — fix: ");
                 detail.push_str(hint);
             }
+            let detail = redact_text(&detail).text;
+            let id = redact_text(&check.id).text;
             Row {
-                id: check.id.clone(),
+                id: id.clone(),
                 cells: vec![
                     Cell::status(check.status.as_str(), check.status.style()),
-                    Cell::id(&check.id),
+                    Cell::id(&id),
                     Cell::plain(detail),
                 ],
             }
@@ -160,8 +166,6 @@ fn render_doctor(report: &DoctorReport, ctx: &mut ExecutionContext) -> Result<()
         headers: vec!["STATUS".into(), "CHECK".into(), "DETAILS".into()],
         rows,
     };
-    let json =
-        serde_json::to_value(report).map_err(|e| CliError::failed("cli::encode", e.to_string()))?;
     let view = ListView {
         empty: "No diagnostic checks ran.",
         total: None,

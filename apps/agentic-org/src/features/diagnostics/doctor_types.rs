@@ -51,8 +51,8 @@ impl DoctorCheck {
         path: Option<String>,
     ) -> Self {
         Self {
-            id: id.into(),
-            category: category.into(),
+            id: redact_text(&id.into()).text,
+            category: redact_text(&category.into()).text,
             status: CheckStatus::Pass,
             message: redact_text(&message.into()).text,
             remediation: None,
@@ -68,8 +68,8 @@ impl DoctorCheck {
         path: Option<String>,
     ) -> Self {
         Self {
-            id: id.into(),
-            category: category.into(),
+            id: redact_text(&id.into()).text,
+            category: redact_text(&category.into()).text,
             status: CheckStatus::Warn,
             message: redact_text(&message.into()).text,
             remediation: remediation.map(|r| redact_text(&r).text),
@@ -85,8 +85,8 @@ impl DoctorCheck {
         path: Option<String>,
     ) -> Self {
         Self {
-            id: id.into(),
-            category: category.into(),
+            id: redact_text(&id.into()).text,
+            category: redact_text(&category.into()).text,
             status: CheckStatus::Fail,
             message: redact_text(&message.into()).text,
             remediation: remediation.map(|r| redact_text(&r).text),
