@@ -217,7 +217,7 @@
 <!-- Clickable scrim behind the sliding right-hand Work reading panel (Prototype Release 3c4e3541) -->
 <div class="work-panel-backdrop" aria-hidden="true" onclick={onclose}></div>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+<!-- slide-over reading drawer uses semantic aside with dialog role --> <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
 <aside
 	bind:this={panelEl}
 	class={['work-reading side-panel work-panel', isOpening && 'is-opening']}

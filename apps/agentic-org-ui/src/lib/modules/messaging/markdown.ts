@@ -16,7 +16,7 @@ export type Inline =
 export type Block = { t: 'p'; inline: Inline[] } | { t: 'quote'; inline: Inline[] } | { t: 'ul'; items: Inline[][] } | { t: 'code'; text: string };
 
 /** Control characters (but not newline or tab), zero-width and direction-changing characters, and the byte order mark. */
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- strips unsafe ASCII control characters from user markdown
 const UNSAFE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
 export const clean = (text: string): string => text.replace(/\r\n?/g, '\n').replace(UNSAFE, '');
 

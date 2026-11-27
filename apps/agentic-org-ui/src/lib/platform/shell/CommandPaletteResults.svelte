@@ -23,7 +23,6 @@
 	import UserPlus from '@lucide/svelte/icons/user-plus';
 	import Users from '@lucide/svelte/icons/users';
 	import type { CommandEntry, CommandIcon } from './command-palette-entries';
-	import './command-palette.css';
 
 	let {
 		entries,
@@ -153,3 +152,87 @@
 		{/each}
 	</ul>
 {/if}
+
+<style>
+	.exec-cmdk-grp {
+		padding: 9px 12px 4px;
+		font-size: 0.6875rem;
+		line-height: 1.714;
+		font-weight: 650;
+		letter-spacing: var(--exec-cmdk-grp-tracking, 0.08em);
+		text-transform: uppercase;
+		color: var(--exec-dim);
+	}
+	.exec-cmdk-grp.is-first {
+		padding-top: 4px;
+	}
+	.exec-cmdk-opt {
+		gap: 11px;
+		padding: 10px 12px;
+		border-radius: var(--exec-cmdk-opt-radius, 10px);
+		color: var(--exec-body);
+		font-size: 0.875rem;
+		line-height: 1.714;
+		letter-spacing: 0.008em;
+		cursor: pointer;
+		transition:
+			background-color 0.1s ease,
+			color 0.1s ease;
+	}
+	.exec-cmdk-opt-lbl {
+		font-weight: 500;
+		color: inherit;
+	}
+	.exec-cmdk-opt-sub {
+		font-size: 0.75rem;
+		line-height: 1.714;
+		color: var(--exec-dim);
+	}
+	.exec-cmdk-opt :global(.exec-cmdk-row-ico) {
+		width: 17px;
+		height: 17px;
+		color: var(--exec-muted);
+		transition: color 0.14s ease;
+	}
+	.exec-cmdk-opt-tag {
+		padding: 1px 7px;
+		border-radius: var(--exec-cmdk-tag-radius, 5px);
+		background: var(--exec-cmdk-tag-bg, var(--exec-well));
+		color: var(--exec-muted);
+		font-size: 0.6875rem;
+		line-height: 1.714;
+		font-weight: 500;
+	}
+	.exec-cmdk-opt:hover {
+		background: var(--exec-cmdk-opt-hover-bg, var(--exec-accent-soft));
+		color: var(--exec-ink);
+		box-shadow: var(
+			--exec-cmdk-opt-hover-shadow,
+			inset 0 0 0 1px var(--exec-cmdk-opt-ring, var(--exec-accent-ring))
+		);
+	}
+	.exec-cmdk-opt.is-active {
+		background: var(--exec-cmdk-opt-active-bg, var(--exec-accent-soft));
+		color: var(--exec-ink);
+		box-shadow: var(
+			--exec-cmdk-opt-active-shadow,
+			inset 0 0 0 1px var(--exec-cmdk-opt-ring, var(--exec-accent-ring))
+		);
+	}
+	.exec-cmdk-opt:hover :global(.exec-cmdk-row-ico),
+	.exec-cmdk-opt.is-active :global(.exec-cmdk-row-ico) {
+		color: var(--exec-cmdk-opt-active-ico, var(--tone-accent-ink));
+	}
+	@media (max-width: 720px), (pointer: coarse) {
+		.exec-cmdk-opt {
+			height: auto;
+			min-height: 44px;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.exec-cmdk-opt,
+		.exec-cmdk-opt :global(.exec-cmdk-row-ico) {
+			transition: none;
+		}
+	}
+</style>

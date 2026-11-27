@@ -231,7 +231,7 @@
 </div>
 
 <Tooltip.Provider delayDuration={150}>
-	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+	<!-- horizontally scrollable board region needs keyboard focus --> <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 	<div
 		class="work-board-scroll"
 		tabindex="0"
@@ -295,8 +295,8 @@
 						<ul role="list" aria-labelledby="{uid}-col-{col.column}" class="flex flex-col gap-2.5">
 							{#each col.rows as row (row.id)}
 								{@const priSig = prioritySignal(row.priority)}
-								<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-								<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+								<!-- horizontally scrollable board region needs keyboard focus --> <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+								<!-- card drag-and-drop paired with keyboard status menu --> <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 								<li
 									draggable={!stale && row.type === 'task' && row.status !== 'cancelled'}
 									tabindex="0"

@@ -171,3 +171,120 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.tess-body {
+		flex: 1 1 auto;
+		overflow-y: auto;
+		padding: 12px;
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+	.tess-thread {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+	.tess-turn {
+		display: grid;
+		gap: 6px;
+	}
+	.tess-q {
+		justify-self: end;
+		max-width: 86%;
+		padding: 7px 11px;
+		border-radius: 12px 12px 4px 12px;
+		background: var(--exec-tess-q-bg, var(--tone-accent-bg));
+		border: 1px solid var(--exec-tess-q-border, var(--tone-accent-ring));
+		color: var(--exec-ink, var(--fg));
+		font-size: 0.8125rem;
+		line-height: 1.45;
+	}
+	.tess-a {
+		padding: 10px 12px;
+		border-radius: 10px;
+		background: var(--exec-tess-card-bg, var(--exec-well, var(--surface-raised)));
+		border: 1px solid var(--exec-tess-card-border, var(--exec-border, var(--line)));
+		display: grid;
+		gap: 5px;
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: var(--exec-body, var(--fg-secondary));
+	}
+	.tess-a-hd {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		color: var(--tone-accent-ink, var(--link));
+		font-size: 0.75rem;
+		font-weight: 650;
+	}
+	.tess-a-mode {
+		margin-inline-start: auto;
+		font-size: 0.75rem;
+		font-weight: 500;
+		color: var(--exec-muted, var(--fg-muted));
+	}
+	.tess-a-body a {
+		color: var(--tone-accent-ink, var(--link));
+		text-decoration: underline;
+		text-underline-offset: 2px;
+		font-size: 0.75rem;
+		font-weight: 600;
+	}
+	.tess-turn-err {
+		margin-bottom: 6px;
+		padding: 7px 10px;
+		border-radius: var(--exec-sm-radius, 8px);
+		background: var(--tone-bad-bg);
+		color: var(--tone-bad-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-bad-ring);
+		font-size: 0.78rem;
+		line-height: 1.4;
+	}
+	.tess-ref-link {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--exec-accent-ink);
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+	.tess-chips {
+		display: flex;
+		flex-direction: column;
+		gap: 5px;
+		margin-top: auto;
+	}
+	.tess-chip {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 7px 10px;
+		border-radius: 9px;
+		border: 1px solid var(--exec-tess-card-border, var(--exec-border-hi, var(--line-strong)));
+		background: var(--exec-tess-card-bg, var(--exec-well, var(--surface-raised)));
+		color: var(--exec-body, var(--fg-secondary));
+		font-size: 0.8125rem;
+		text-align: left;
+		cursor: pointer;
+		transition:
+			border-color 0.14s ease,
+			color 0.14s ease,
+			background-color 0.14s ease;
+	}
+	.tess-chip:hover {
+		border-color: var(--tone-accent-ring);
+		background: var(--tone-accent-bg);
+		color: var(--exec-ink, var(--fg));
+	}
+	.tess-chip :global(.cmp-chip-ico) {
+		color: var(--tone-accent-ink, var(--link));
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.tess-chip {
+			transition: none;
+		}
+	}
+</style>

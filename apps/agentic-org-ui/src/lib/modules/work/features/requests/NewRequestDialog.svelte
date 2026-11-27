@@ -387,7 +387,7 @@
 							data-testid="at-matches"
 						>
 							{#each completions as m, i (m.id)}
-								<!-- svelte-ignore a11y_click_events_have_key_events -->
+								<!-- listbox option keyboard selection handled by controlling textarea --> <!-- svelte-ignore a11y_click_events_have_key_events -->
 								<li
 									id="at-opt-{i}"
 									role="option"

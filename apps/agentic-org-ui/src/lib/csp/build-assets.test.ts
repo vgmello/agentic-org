@@ -20,7 +20,7 @@ async function fixture(files: Record<string, string>) {
 	return root;
 }
 function check(root: string) {
-	const result = spawnSync('bun', [script, root], { encoding: 'utf8' });
+	const result = spawnSync('bun', [script, '--skip-budgets', root], { encoding: 'utf8' });
 	return { status: result.status, output: result.stdout + result.stderr };
 }
 

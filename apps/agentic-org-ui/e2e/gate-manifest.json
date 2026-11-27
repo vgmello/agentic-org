@@ -709,7 +709,11 @@
 			"scripts/format-baseline.json",
 			".prettierrc.json",
 			".prettierignore",
-			"large-files.allow"
+			"large-files.allow",
+			"bundle-budget.json",
+			"cross-module-features.allow",
+			"layer-exceptions.allow",
+			"suppressions.allow"
 		],
 		"noImpact": [
 			"../agent-os/**",
@@ -745,7 +749,6 @@
 			"src/lib/platform/organizations/{readers,selection}.ts",
 			"src/lib/platform/tooling/**",
 			"src/lib/platform/shell/**",
-			"src/lib/home/**",
 			"src/lib/styles/**",
 			"src/lib/modules/shell/**",
 			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,agent-setup,projects,workitems,docs,features,releases,insights,costs,budgets,access,updates,tess}/**",

@@ -248,7 +248,7 @@
 							class="-mt-2 flex w-full flex-wrap gap-x-2 pl-(--indent) text-xs/5 text-fg-muted min-[1024px]:contents min-[1024px]:text-sm/6"
 						>
 							<!-- The spaces must be mustaches: Svelte trims an element's leading whitespace. -->
-							<!-- eslint-disable svelte/no-useless-mustaches -->
+							<!-- eslint-disable svelte/no-useless-mustaches -- preserves leading space trimmed by Svelte compiler -->
 							<span class="min-[1024px]:text-fg-secondary [overflow-wrap:anywhere]"
 								>{team.lead ? team.lead.name : 'No lead'}<span class="sr-only">{' '}leads it</span
 								><span class="min-[1024px]:hidden">{' '}leads</span></span

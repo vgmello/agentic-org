@@ -7,16 +7,22 @@ import { isNonProductionModule } from './production-import-guard';
 const UI_ROOT = resolve(import.meta.dirname, '../../../..');
 const ALLOW_PATH = resolve(UI_ROOT, 'large-files.allow');
 const CAP = 700;
-const TARGET = 500;
+const NEW_FILE_CAP = 500;
 
-function countLines(filePath: string): number {
-	const buf = readFileSync(filePath);
+const CSS_IMPORT_RE =
+	/(?:^|[\n;])\s*import\s+['"][^'"]+\.css(?:[?#][^'"]*)?['"]|\bimport\(\s*['"][^'"]+\.css(?:[?#][^'"]*)?['"]\s*\)/;
+
+function countLinesFromBuffer(buf: Buffer): number {
 	if (buf.length === 0) return 0;
 	let newlines = 0;
 	for (let i = 0; i < buf.length; i++) {
 		if (buf[i] === 10) newlines++;
 	}
 	return buf[buf.length - 1] === 10 ? newlines : newlines + 1;
+}
+
+function countLines(filePath: string): number {
+	return countLinesFromBuffer(readFileSync(filePath));
 }
 
 function listTrackedProductionFiles(): string[] {
@@ -30,6 +36,63 @@ function listTrackedProductionFiles(): string[] {
 		.filter((rel) => !isNonProductionModule(`/${rel}`))
 		.filter((rel) => existsSync(resolve(UI_ROOT, rel)))
 		.sort();
+}
+
+function resolveBaseRef(): string | undefined {
+	const explicit = process.env.UI_FILE_SIZE_RATCHET_BASE?.trim();
+	if (explicit) return explicit;
+	try {
+		return execFileSync('git', ['merge-base', 'HEAD', 'origin/v1'], {
+			cwd: UI_ROOT,
+			encoding: 'utf8',
+			stdio: ['ignore', 'pipe', 'ignore']
+		}).trim();
+	} catch {
+		return undefined;
+	}
+}
+
+function readGitFile(ref: string, repoPath: string): Buffer | undefined {
+	try {
+		return execFileSync('git', ['show', `${ref}:${repoPath}`], {
+			cwd: UI_ROOT,
+			stdio: ['ignore', 'pipe', 'ignore']
+		});
+	} catch {
+		return undefined;
+	}
+}
+
+function gitRenamedPaths(baseRef: string): Map<string, string> {
+	const renamedNewToOld = new Map<string, string>();
+	try {
+		const raw = execFileSync(
+			'git',
+			['diff', '--find-renames=50%', '--name-status', '-z', baseRef, '--', 'apps/agentic-org-ui/src'],
+			{ cwd: UI_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+		);
+		const tokens = raw.split('\0');
+		for (let i = 0; i < tokens.length; i++) {
+			const status = tokens[i];
+			if (!status) continue;
+			if (status.startsWith('R')) {
+				const oldRepoPath = tokens[i + 1] ?? '';
+				const newRepoPath = tokens[i + 2] ?? '';
+				i += 2;
+				const prefix = 'apps/agentic-org-ui/';
+				if (oldRepoPath.startsWith(prefix) && newRepoPath.startsWith(prefix)) {
+					renamedNewToOld.set(newRepoPath.slice(prefix.length), oldRepoPath.slice(prefix.length));
+				}
+			} else if (status.startsWith('C')) {
+				i += 2;
+			} else {
+				i += 1;
+			}
+		}
+	} catch {
+		// Ignore when diff cannot run.
+	}
+	return renamedNewToOld;
 }
 
 function parseAllowlist(text: string): { entries: Map<string, number>; errors: string[] } {
@@ -68,12 +131,26 @@ function parseAllowlist(text: string): { entries: Map<string, number>; errors: s
 	return { entries, errors };
 }
 
-describe('UI file-size ratchet (TASK-225, CAP=700, TARGET=500)', () => {
-	it('keeps unlisted production files <= 700 lines and ensures listed files only shrink', () => {
+describe('UI file-size ratchet (CAP=700 legacy, NEW_FILE_CAP=500, no CSS extraction)', () => {
+	it('enforces exact allowlist counts, bans plain .css imports under lib, and caps unlisted files', () => {
 		const files = listTrackedProductionFiles();
 		const actualCounts = new Map<string, number>();
+		const cssImportErrors: string[] = [];
+
 		for (const rel of files) {
-			actualCounts.set(rel, countLines(resolve(UI_ROOT, rel)));
+			const abs = resolve(UI_ROOT, rel);
+			actualCounts.set(rel, countLines(abs));
+			if (
+				/^src\/lib\/(?:modules|components|platform)\//.test(rel) &&
+				/\.(?:svelte|ts|js)$/.test(rel)
+			) {
+				const source = readFileSync(abs, 'utf8');
+				if (CSS_IMPORT_RE.test(source)) {
+					cssImportErrors.push(
+						`${rel}: imports a plain .css file (keep component styles scoped in <style> blocks)`
+					);
+				}
+			}
 		}
 
 		if (process.env.UI_FILE_SIZE_RATCHET_PRINT === '1') {
@@ -86,11 +163,14 @@ describe('UI file-size ratchet (TASK-225, CAP=700, TARGET=500)', () => {
 		}
 
 		const { entries: allow, errors } = parseAllowlist(readFileSync(ALLOW_PATH, 'utf8'));
+		errors.push(...cssImportErrors);
 
 		for (const [rel, n] of actualCounts) {
 			const max = allow.get(rel);
 			if (max === undefined && n > CAP) {
-				errors.push(`${rel}: ${n} > ${CAP}; split toward <= ${TARGET} (never add to allowlist)`);
+				errors.push(
+					`${rel}: ${n} > ${CAP}; split into cohesive <= ${NEW_FILE_CAP}-line modules (never add to allowlist)`
+				);
 			} else if (max !== undefined && n !== max) {
 				const hint =
 					n > max
@@ -111,50 +191,58 @@ describe('UI file-size ratchet (TASK-225, CAP=700, TARGET=500)', () => {
 		expect(errors).toEqual([]);
 	});
 
-	it('never raises counts or adds unlisted paths relative to UI_FILE_SIZE_RATCHET_BASE', () => {
-		const baseRef = process.env.UI_FILE_SIZE_RATCHET_BASE?.trim();
+	it('enforces <= 500 LOC on new files, no growth on 501–700 legacy files, and rename-only allowlist additions vs base', () => {
+		const baseRef = resolveBaseRef();
 		if (!baseRef) return;
 
-		let baseText: string;
-		try {
-			baseText = execFileSync('git', ['show', `${baseRef}:apps/agentic-org-ui/large-files.allow`], {
-				cwd: UI_ROOT,
-				encoding: 'utf8'
-			});
-		} catch {
-			// Base predates introduction of apps/agentic-org-ui/large-files.allow.
-			return;
-		}
+		const baseAllowBuf = readGitFile(baseRef, 'apps/agentic-org-ui/large-files.allow');
+		if (!baseAllowBuf) return;
 
-		const base = parseAllowlist(baseText).entries;
-		const head = parseAllowlist(readFileSync(ALLOW_PATH, 'utf8')).entries;
+		const baseAllow = parseAllowlist(baseAllowBuf.toString('utf8')).entries;
+		const headAllow = parseAllowlist(readFileSync(ALLOW_PATH, 'utf8')).entries;
+		const renamedNewToOld = gitRenamedPaths(baseRef);
 		const errors: string[] = [];
 
-		const removedDesc = [...base.entries()]
-			.filter(([p]) => !head.has(p))
-			.sort(([, a], [, b]) => b - a);
-		const addedDesc = [...head.entries()]
-			.filter(([p]) => !base.has(p))
-			.sort(([, a], [, b]) => b - a);
-
-		for (const [p, count] of head) {
-			const prev = base.get(p);
-			if (prev !== undefined && count > prev) {
-				errors.push(`${p}: raised from ${prev} to ${count} (allowlist may only shrink)`);
+		for (const [p, count] of headAllow) {
+			const prev = baseAllow.get(p);
+			if (prev !== undefined) {
+				if (count > prev) {
+					errors.push(`${p}: raised from ${prev} to ${count} (allowlist may only shrink)`);
+				}
+				continue;
+			}
+			const renamedFrom = renamedNewToOld.get(p);
+			const prevRenamed = renamedFrom ? baseAllow.get(renamedFrom) : undefined;
+			if (!renamedFrom || prevRenamed === undefined || headAllow.has(renamedFrom)) {
+				errors.push(
+					`${p} (${count}): newly added to large-files.allow (only genuine git renames of removed entries are permitted)`
+				);
+			} else if (count > prevRenamed) {
+				errors.push(
+					`${p} (${count}): renamed from ${renamedFrom} (${prevRenamed}) may not grow`
+				);
 			}
 		}
 
-		if (addedDesc.length > removedDesc.length) {
-			errors.push(
-				`large-files.allow added ${addedDesc.length} path(s) vs ${removedDesc.length} removed: ${addedDesc.map(([p]) => p).join(', ')}`
-			);
-		}
-		for (let i = 0; i < Math.min(addedDesc.length, removedDesc.length); i++) {
-			const [newPath, newCount] = addedDesc[i];
-			const [oldPath, oldCount] = removedDesc[i];
-			if (newCount > oldCount) {
+		for (const rel of listTrackedProductionFiles()) {
+			if (headAllow.has(rel)) continue;
+			const actual = countLines(resolve(UI_ROOT, rel));
+			if (actual <= NEW_FILE_CAP) continue;
+			const prevBuf =
+				readGitFile(baseRef, `apps/agentic-org-ui/${rel}`) ??
+				(renamedNewToOld.has(rel)
+					? readGitFile(baseRef, `apps/agentic-org-ui/${renamedNewToOld.get(rel)}`)
+					: undefined);
+			if (!prevBuf) {
 				errors.push(
-					`${newPath} (${newCount}): exceeds paired removed entry ${oldPath} (${oldCount})`
+					`${rel}: new file is ${actual} lines > ${NEW_FILE_CAP} (split into cohesive <= ${NEW_FILE_CAP}-line files)`
+				);
+				continue;
+			}
+			const prevLines = countLinesFromBuffer(prevBuf);
+			if (actual > prevLines) {
+				errors.push(
+					`${rel}: legacy 501–700 file grew from ${prevLines} to ${actual} lines (files > ${NEW_FILE_CAP} may only shrink)`
 				);
 			}
 		}

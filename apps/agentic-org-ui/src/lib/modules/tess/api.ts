@@ -1,5 +1,5 @@
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { asNum, asRec, asStr as rawStr, type Rec } from '$lib/platform/http/decode';
-import { SESSION_PROOF_HEADER } from '$lib/platform/http/wire';
 import type {
 	TessActionProposal,
 	TessApi,
@@ -243,18 +243,16 @@ export interface TessSessionTransport {
 
 export interface HttpTessApiOptions {
 	session?: TessSessionTransport;
-	fetch?: typeof fetch;
-	getProof?: () => string | undefined;
 	maxEventBytes?: number;
 }
 
 const DEFAULT_MAX_SSE_BYTES = 1024 * 1024;
 
-function buildHeaders(proof: string | undefined, contentType?: string): Record<string, string> {
-	const headers: Record<string, string> = {};
-	if (contentType) headers['Content-Type'] = contentType;
-	if (proof) headers[SESSION_PROOF_HEADER] = proof;
-	return headers;
+function defaultSessionTransport(): TessSessionTransport {
+	return {
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal),
+		openSseStream: (path, signal) => appSession.controller().openSseStream(path, signal)
+	};
 }
 
 function canonicalStreamPath(orgId: string, turnId: string): string {
@@ -297,49 +295,15 @@ interface JsonReply {
 	body: unknown;
 }
 
-function createPostJson(options: HttpTessApiOptions) {
-	if (options.session) {
-		const session = options.session;
-		return async (path: string, body: unknown, signal?: AbortSignal): Promise<JsonReply> => {
-			const res = await session.submit(path, body, signal);
-			return { status: res.status, ok: res.status >= 200 && res.status < 300, body: res.body };
-		};
-	}
-	const send = options.fetch ?? ((...args: Parameters<typeof fetch>) => globalThis.fetch(...args));
-	const proofOf = options.getProof ?? (() => undefined);
+function createPostJson(session: TessSessionTransport) {
 	return async (path: string, body: unknown, signal?: AbortSignal): Promise<JsonReply> => {
-		const res = await send(path, {
-			method: 'POST',
-			mode: 'same-origin',
-			credentials: 'same-origin',
-			redirect: 'error',
-			cache: 'no-store',
-			headers: buildHeaders(proofOf(), 'application/json'),
-			body: JSON.stringify(body),
-			signal
-		});
-		const parsed: unknown = await res.json().catch(() => undefined);
-		return { status: res.status, ok: res.ok, body: parsed };
+		const res = await session.submit(path, body, signal);
+		return { status: res.status, ok: res.status >= 200 && res.status < 300, body: res.body };
 	};
 }
 
-function createOpenStream(options: HttpTessApiOptions) {
-	if (options.session) {
-		const session = options.session;
-		return (path: string, signal?: AbortSignal) => session.openSseStream(path, signal);
-	}
-	const send = options.fetch ?? ((...args: Parameters<typeof fetch>) => globalThis.fetch(...args));
-	const proofOf = options.getProof ?? (() => undefined);
-	return (path: string, signal?: AbortSignal) =>
-		send(path, {
-			method: 'GET',
-			mode: 'same-origin',
-			credentials: 'same-origin',
-			redirect: 'error',
-			cache: 'no-store',
-			headers: { ...buildHeaders(proofOf()), Accept: 'text/event-stream' },
-			signal
-		});
+function createOpenStream(session: TessSessionTransport) {
+	return (path: string, signal?: AbortSignal) => session.openSseStream(path, signal);
 }
 
 async function consumeSseBody(
@@ -381,8 +345,9 @@ async function consumeSseBody(
 }
 
 export function createHttpTessApi(options: HttpTessApiOptions = {}): TessApi {
-	const postJson = createPostJson(options);
-	const openStream = createOpenStream(options);
+	const session = options.session ?? defaultSessionTransport();
+	const postJson = createPostJson(session);
+	const openStream = createOpenStream(session);
 	const maxEventBytes = options.maxEventBytes ?? DEFAULT_MAX_SSE_BYTES;
 
 	return {

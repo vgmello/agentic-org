@@ -9,7 +9,7 @@
 	import Clipboard from '@lucide/svelte/icons/clipboard';
 	import Clock from '@lucide/svelte/icons/clock';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
-	import type { BriefLens, CatchUpRow, ExecutiveBrief } from '$lib/home/model';
+	import type { BriefLens, CatchUpRow, ExecutiveBrief } from '$lib/modules/home/model';
 
 	interface Props {
 		brief: ExecutiveBrief;

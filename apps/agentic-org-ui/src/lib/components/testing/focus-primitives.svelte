@@ -5,7 +5,7 @@
 	let activations = $state(0), selected = $state('Nothing selected');
 </script>
 <section aria-label="Focus contracts" class="fixed inset-2 z-40 overflow-auto rounded-md bg-surface-sunken p-4">
-	<button data-testid="focus-start">Start here</button>
+	<button type="button" data-testid="focus-start">Start here</button>
 	{#each variants as variant}
 		<div role="group" aria-label={variant} class="my-3 flex flex-wrap gap-3 p-1">
 			<Button {variant} onclick={() => activations++}>Activate</Button>

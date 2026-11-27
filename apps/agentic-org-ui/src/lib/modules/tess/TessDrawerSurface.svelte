@@ -9,11 +9,6 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import ArrowUp from '@lucide/svelte/icons/arrow-up';
-	import Maximize2 from '@lucide/svelte/icons/maximize-2';
-	import MessageSquare from '@lucide/svelte/icons/message-square';
-	import Minimize2 from '@lucide/svelte/icons/minimize-2';
-	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
-	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import Square from '@lucide/svelte/icons/square';
 	import WifiOff from '@lucide/svelte/icons/wifi-off';
 	import X from '@lucide/svelte/icons/x';
@@ -23,9 +18,9 @@
 	import { useNotifications } from '$lib/platform/shell/notifications.svelte';
 	import { useShellCommand } from '$lib/platform/shell/shell-command';
 	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
+	import TessDrawerHeader from './TessDrawerHeader.svelte';
 	import TessTranscript from './TessTranscript.svelte';
 	import type { TessPanelState } from './tess-panel.svelte';
-	import './tess-drawer.css';
 
 	let {
 		panel,
@@ -112,101 +107,18 @@
 	}
 </script>
 
-<header class="cmp-hd">
-	<div class="cmp-tess-who">
-		<span class="cmp-tess-mark" aria-hidden="true">
-			{#if offline}
-				<WifiOff class="size-3.5" />
-			{:else}
-				<Sparkles class="size-3.5" />
-			{/if}
-		</span>
-		<div class="cmp-tess-txt">
-			<strong>Tess</strong>
-			<span class={['cmp-tess-st', offline && 'is-offline']}>{statusLabel}</span>
-		</div>
-	</div>
-	<div class="cmp-hd-acts">
-		<button
-			type="button"
-			onclick={() => void openTessDmInChat()}
-			aria-label="Open DM with Tess in Chat"
-			title="Open DM with Tess in Chat"
-			class="cmp-chat-btn"
-		>
-			<MessageSquare class="size-3.5 shrink-0" aria-hidden="true" />
-			<span>Chat</span>
-		</button>
-		{#if panel.turns.length > 0}
-			<button
-				type="button"
-				onclick={() => void panel.resetSession(organizationId)}
-				title="Start a new Tess thread"
-				class="cmp-text-btn inline-flex items-center gap-1"
-			>
-				<RotateCcw class="size-3" aria-hidden="true" />
-				<span>New thread</span>
-			</button>
-		{/if}
-		<Tooltip.Provider delayDuration={150}>
-			<Tooltip.Root>
-				<Tooltip.Trigger>
-					{#snippet child({ props })}
-						<button
-							{...props}
-							type="button"
-							onclick={() => panel.toggleExpand()}
-							aria-label="{isExpanded ? 'Restore size' : 'Maximize'} · {expandShortcut}"
-							aria-keyshortcuts="Meta+Shift+E Control+Shift+E"
-							class="cmp-icon-btn cmp-expand-btn"
-						>
-							{#if isExpanded}
-								<Minimize2 class="size-3.5" aria-hidden="true" />
-							{:else}
-								<Maximize2 class="size-3.5" aria-hidden="true" />
-							{/if}
-						</button>
-					{/snippet}
-				</Tooltip.Trigger>
-				<Tooltip.Portal>
-					<Tooltip.Content
-						role="tooltip"
-						side="bottom"
-						sideOffset={6}
-						class="z-[110] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
-					>
-						{isExpanded ? 'Restore size' : 'Maximize'} · {expandShortcut}
-					</Tooltip.Content>
-				</Tooltip.Portal>
-			</Tooltip.Root>
-			<Tooltip.Root>
-				<Tooltip.Trigger>
-					{#snippet child({ props })}
-						<button
-							{...props}
-							type="button"
-							onclick={() => onClose(true)}
-							aria-label="{uiPrefs.showTessPill ? 'Minimize to bottom' : 'Close'} · Esc"
-							class="cmp-icon-btn"
-						>
-							<X class="size-3.5" aria-hidden="true" />
-						</button>
-					{/snippet}
-				</Tooltip.Trigger>
-				<Tooltip.Portal>
-					<Tooltip.Content
-						role="tooltip"
-						side="bottom"
-						sideOffset={6}
-						class="z-[110] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
-					>
-						{uiPrefs.showTessPill ? 'Minimize to bottom' : 'Close'} · Esc
-					</Tooltip.Content>
-				</Tooltip.Portal>
-			</Tooltip.Root>
-		</Tooltip.Provider>
-	</div>
-</header>
+<TessDrawerHeader
+	{offline}
+	{statusLabel}
+	hasTurns={panel.turns.length > 0}
+	{isExpanded}
+	{expandShortcut}
+	showTessPill={uiPrefs.showTessPill}
+	onOpenChat={() => void openTessDmInChat()}
+	onResetSession={() => void panel.resetSession(organizationId)}
+	onToggleExpand={() => panel.toggleExpand()}
+	onClose={() => onClose(true)}
+/>
 
 {#if ambientLabel}
 	<div class="cmp-ctx-row">
@@ -346,3 +258,149 @@
 		{/if}
 	</Tooltip.Provider>
 </form>
+
+<style>
+	.cmp-ctx-row {
+		padding: 6px 12px;
+		border-bottom: 1px solid var(--exec-border, var(--line));
+		flex: none;
+	}
+	.cmp-ctx-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		max-width: 100%;
+		padding: 2px 6px 2px 9px;
+		border-radius: 999px;
+		background: var(--exec-well, var(--surface-raised));
+		border: 1px solid var(--exec-border, var(--line));
+		color: var(--exec-muted, var(--fg-muted));
+		font-size: 0.75rem;
+	}
+	.cmp-ctx-lbl {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.cmp-ctx-lbl strong {
+		color: var(--exec-ink, var(--fg));
+		font-weight: 600;
+	}
+	.cmp-ctx-pill button {
+		display: inline-flex;
+		padding: 2px;
+		border-radius: 50%;
+		color: var(--exec-muted, var(--fg-muted));
+		flex: none;
+		cursor: pointer;
+	}
+	.cmp-ctx-pill button:hover {
+		color: var(--exec-ink, var(--fg));
+		background: var(--exec-btn-ghost-bg-hover, var(--surface-overlay));
+	}
+	.tess-busy-strip,
+	.tess-offline-note {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 7px 12px;
+		border-bottom: 1px solid var(--exec-border, var(--line));
+		font-size: 0.75rem;
+		font-weight: 550;
+		flex: none;
+	}
+	.tess-busy-strip {
+		background: var(--tone-accent-bg);
+		color: var(--tone-accent-ink);
+	}
+	.tess-busy-spin {
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		border: 2px solid var(--tone-accent-ring);
+		border-top-color: var(--tone-accent);
+		flex: none;
+		animation: tess-spin 0.85s linear infinite;
+	}
+	@keyframes tess-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	.tess-offline-note {
+		background: var(--tone-warn-bg);
+		color: var(--tone-warn-ink);
+	}
+	.tess-connect-link {
+		flex: none;
+		font-weight: 600;
+		color: var(--exec-accent-ink);
+		text-decoration: none;
+		white-space: nowrap;
+	}
+	.tess-connect-link:hover {
+		text-decoration: underline;
+	}
+	.tess-compose {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 9px 10px;
+		border-top: 1px solid var(--exec-border, var(--line));
+		flex: none;
+	}
+	.tess-compose input {
+		flex: 1 1 auto;
+		min-width: 0;
+		height: 36px;
+		padding: 0 11px;
+		border: 1px solid var(--exec-tess-card-border, var(--exec-border-hi, var(--line-strong)));
+		border-radius: 10px;
+		background: var(--exec-tess-card-bg, var(--exec-well, var(--surface-raised)));
+		color: var(--exec-ink, var(--fg));
+		font: inherit;
+		font-size: 0.875rem;
+		outline: none;
+	}
+	.tess-compose input::placeholder {
+		color: var(--exec-muted, var(--fg-muted));
+	}
+	.tess-compose input:focus {
+		border-color: var(--tone-accent, var(--focus));
+	}
+	.tess-send-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		border-radius: 10px;
+		flex: none;
+		background: var(--exec-cta-bg, var(--primary));
+		color: var(--exec-on-accent, var(--on-emphasis));
+		cursor: pointer;
+	}
+	.tess-send-btn:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+	.tess-send-btn.is-stop {
+		background: var(--tone-bad);
+		color: var(--exec-on-accent);
+	}
+	@media (max-width: 639px) {
+		.tess-compose input {
+			font-size: 1rem;
+			height: 44px;
+		}
+		.tess-send-btn {
+			width: 44px;
+			height: 44px;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.tess-busy-spin {
+			animation: none;
+		}
+	}
+</style>

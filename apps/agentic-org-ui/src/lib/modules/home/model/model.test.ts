@@ -12,7 +12,7 @@ import {
 	deriveProjectCards,
 	deriveTaskTimeBreakdown,
 	deriveUpcomingMilestones
-} from './model';
+} from './index';
 
 function makeItem(overrides: Partial<WorkItemSummary>): WorkItemSummary {
 	return {

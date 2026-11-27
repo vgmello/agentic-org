@@ -336,8 +336,62 @@
 			transform: scale(1.15);
 		}
 	}
+	@media (max-width: 639px) {
+		.tess-panel:not(.is-minimized) {
+			inset: auto 0 0 0;
+			width: 100vw;
+			max-width: 100vw;
+			height: auto;
+			max-height: 82dvh;
+			border-radius: 16px 16px 0 0;
+			border-bottom: 0;
+			transform: none;
+		}
+	}
+	.tess-panel-scrim {
+		position: fixed;
+		inset: 0;
+		z-index: 82;
+		background: var(--exec-scrim-bg, color-mix(in srgb, var(--surface-sunken) 72%, transparent));
+		animation: cmp-scrim-in 0.15s ease-out both;
+	}
+	.tess-panel.is-compact {
+		max-height: min(320px, calc(100dvh - 108px));
+	}
+	.tess-panel.is-expanded {
+		top: 50%;
+		left: 50%;
+		right: auto;
+		bottom: auto;
+		z-index: 86;
+		width: min(680px, calc(100vw - 48px));
+		height: min(74dvh, 660px);
+		max-height: calc(100dvh - 48px);
+		transform: translate(-50%, -50%);
+		transform-origin: center;
+		animation: cmp-expand 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+	}
+	@keyframes cmp-scrim-in {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+	@keyframes cmp-expand {
+		from {
+			opacity: 0;
+			transform: translate3d(-50%, -47%, 0) scale(0.95);
+		}
+		to {
+			opacity: 1;
+			transform: translate3d(-50%, -50%, 0) scale(1);
+		}
+	}
 	@media (prefers-reduced-motion: reduce) {
 		.tess-panel,
+		.tess-panel-scrim,
 		.tess-live-dot {
 			animation: none;
 		}

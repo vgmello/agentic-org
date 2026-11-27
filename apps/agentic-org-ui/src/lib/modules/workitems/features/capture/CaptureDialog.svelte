@@ -757,7 +757,7 @@
 			</div>
 		{/if}
 
-		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+		<!-- Cmd/Ctrl+Enter form shortcut handler --> <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 		<form class="flex flex-col gap-4" onsubmit={submit} onkeydown={handleFormKeydown} novalidate>
 			{#if allowTypeSwitch && !fixesTaskId}
 				<fieldset class="flex flex-col gap-1.5">

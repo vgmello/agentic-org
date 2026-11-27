@@ -27,7 +27,7 @@
 		greetingForHour,
 		type HomeDomainData,
 		type HomeInboxState
-	} from '$lib/home/model';
+	} from '$lib/modules/home/model';
 	import { pageTitle } from '$lib/nav';
 	import { owner } from '$lib/modules/organization/model';
 

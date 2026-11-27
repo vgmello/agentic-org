@@ -20,7 +20,7 @@ export const trimWhiteSpace = (s: string) => s.replace(EDGES, '');
 // refused by the office. That fails safe (the office answers invalid_name); the office is the authority.
 const INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\u2028\u2029]/u;
 const ALLOWED_INVISIBLE = new Set(['\u200c', '\u200d', '\ufe0e', '\ufe0f']);
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- rejects ASCII control characters in org/entity names
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 
 /** `empty` words the "nothing typed" case for what is being named (an organization by default). */

@@ -3,12 +3,11 @@
 	import { afterNavigate, goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import Search from '@lucide/svelte/icons/search';
 	import type { Connection, OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import type { InboxItem } from '$lib/modules/inbox/types';
 	import type { Conversation } from '$lib/modules/messaging/types';
+	import ExecutiveHomeSearchBar from './ExecutiveHomeSearchBar.svelte';
 	import NewMenu, { type NewMenuAction } from './NewMenu.svelte';
-	import NotificationsButton from './NotificationsButton.svelte';
 	import {
 		buildActionEntries,
 		buildAskTessEntries,
@@ -19,13 +18,17 @@
 		computeCommandEntries,
 		type CommandEntry
 	} from './command-palette-entries';
+	import {
+		exitHomeSearchFocus,
+		hasBlockingOverlay,
+		isChatHashShortcut
+	} from './command-palette-shortcuts';
 	import type { ShellAiAskOptions } from './shell-ai';
 	import { useShellData } from './shell-data.svelte';
 	import { isEditableTarget, singleKeyShortcutsOn } from './shortcuts';
 	import { uiPrefs } from './ui-preferences.svelte';
 	import type CommandPaletteModalType from './CommandPaletteModal.svelte';
 	import type CommandPaletteResultsType from './CommandPaletteResults.svelte';
-	import './executive-topbar.css';
 
 	let {
 		connection,
@@ -58,7 +61,6 @@
 		newMenu?.runAction('task');
 	}
 
-	const kbdClass = 'exec-cmdk-foot-kbd';
 	const shellData = useShellData();
 	const organizationId = $derived(shellData.organizationId);
 	const isHome = $derived(page.url.pathname === '/home');
@@ -79,11 +81,6 @@
 
 	onDestroy(() => {
 		destroyed = true;
-	});
-
-	$effect(() => {
-		void offices;
-		void ownerId;
 	});
 
 	async function ensureModalLoaded() {
@@ -160,6 +157,8 @@
 	);
 
 	const entries = $derived.by<CommandEntry[]>(() => {
+		void offices;
+		void ownerId;
 		if (!open && !inlineOpen) return [];
 		const baseList: CommandEntry[] = [
 			...buildActionEntries(triggerNewAction),
@@ -315,20 +314,6 @@
 		closeInline(false);
 	}
 
-	function hasBlockingOverlay(target: EventTarget | null): boolean {
-		const overlaySelector =
-			'[role="menu"], [role="dialog"]:not(.work-reading), [role="alertdialog"], [role="listbox"], aside[aria-label="Thread"], aside[aria-label="Members"], [data-chat-panel], [data-slot="sheet-content"]';
-		if (document.querySelector(overlaySelector)) return true;
-		return (
-			target instanceof HTMLElement &&
-			Boolean(
-				target.closest(
-					'[role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"], aside[aria-label], [data-chat-panel], [data-slot="sheet-content"]'
-				)
-			)
-		);
-	}
-
 	function toggleCommandPaletteFromShortcut() {
 		if (open) {
 			closeModal();
@@ -376,14 +361,8 @@
 		return false;
 	}
 
-	function isChatHashShortcut(event: KeyboardEvent): boolean {
-		if (!isChat || event.key !== '#' || event.metaKey) return false;
-		const altGr = Boolean(event.getModifierState?.('AltGraph'));
-		return altGr || (!event.ctrlKey && !event.altKey);
-	}
-
 	function handleSingleKeyShortcut(event: KeyboardEvent) {
-		if (isChatHashShortcut(event)) {
+		if (isChatHashShortcut(event, isChat)) {
 			event.preventDefault();
 			openModalWithQuery('#');
 			return;
@@ -465,25 +444,15 @@
 		}
 	}
 
-	function exitHomeSearch() {
-		const heading = document.querySelector<HTMLElement>('#shell-page-title, main h1, main h2');
-		if (heading) {
-			if (!heading.hasAttribute('tabindex')) heading.tabIndex = -1;
-			heading.focus({ preventScroll: true });
-		} else {
-			homeInputEl?.blur();
-		}
-	}
-
 	function handleInlineEscape(event: KeyboardEvent) {
 		event.preventDefault();
 		event.stopPropagation();
 		if (inlineOpen) {
 			closeInline(false);
-			if (query.length === 0) exitHomeSearch();
+			if (query.length === 0) exitHomeSearchFocus(homeInputEl);
 			return;
 		}
-		exitHomeSearch();
+		exitHomeSearchFocus(homeInputEl);
 	}
 
 	function handleInputKeydown(event: KeyboardEvent) {
@@ -512,81 +481,35 @@
 <svelte:window onkeydown={handleWindowKeydown} onpointerdown={handleWindowPointerDown} />
 
 {#if isHome}
-	<header class="exec-topbar exec-home-topbar relative z-30 shrink-0 overflow-visible px-4 sm:px-6">
-		<div
-			bind:this={homeShellEl}
-			class="exec-home-cmdk relative flex min-w-0 w-full max-w-[640px] flex-col"
-		>
-			<div class="exec-cmdk-bar flex w-full items-center">
-				<label
-					class="exec-cmdk-trigger exec-cmdk-home-field flex min-w-0 flex-1 items-center text-left"
-				>
-					<Search class="exec-cmdk-ico size-[18px] shrink-0" aria-hidden="true" />
-					<input
-						bind:this={homeInputEl}
-						bind:value={query}
-						type="search"
-						autocomplete="off"
-						placeholder="Search, run a command, or ask Tess…"
-						aria-label="Search, run a command, or ask Tess"
-						role="combobox"
-						aria-autocomplete="list"
-						aria-expanded={inlineListboxVisible}
-						aria-controls={inlineListboxVisible ? 'exec-cmdk-home-listbox' : undefined}
-						aria-activedescendant={inlineActiveOptionId}
-						onfocus={() => {
-							inlineOpen = true;
-							resetActive();
-							void ensureResultsLoaded();
-							void loadChatConversations(organizationId);
-						}}
-						oninput={(event) => {
-							inlineOpen = true;
-							resetActive();
-							void ensureResultsLoaded();
-							if (event.currentTarget.value.trimStart().startsWith('#')) {
-								handleHashQueryTyped();
-							}
-						}}
-						onkeydown={handleInputKeydown}
-						class="exec-cmdk-home-input min-w-0 flex-1 bg-transparent text-sm text-[var(--exec-ink)] outline-none"
-					/>
-					<kbd class="exec-cmdk-kbd hidden sm:inline-flex" aria-hidden="true">⌘K</kbd>
-				</label>
-			</div>
-
-			{#if inlineOpen}
-				<div class="exec-cmdk-home-results exec-cmdk-surface flex flex-col overflow-hidden">
-					<div class="min-h-0 flex-1 overflow-y-auto p-2.5">
-						{#if PaletteResults}
-							{@const ResultsComp = PaletteResults}
-							<ResultsComp
-								{entries}
-								{query}
-								{isChannelQuery}
-								listboxId="exec-cmdk-home-listbox"
-								optPrefix="exec-cmdk-home-opt"
-								preventBlur={true}
-								{safeActiveIdx}
-								onSelectIndex={setActiveIndex}
-								onRunEntry={runEntry}
-								onAskTess={handoffToTess}
-							/>
-						{/if}
-					</div>
-					<div class="exec-cmdk-foot" aria-hidden="true">
-						<span><kbd class={kbdClass}>↑</kbd><kbd class={kbdClass}>↓</kbd> Navigate</span>
-						<span><kbd class={kbdClass}>↵</kbd> Run / Ask</span>
-						<span><kbd class={kbdClass}>⌘/</kbd> Ask Tess</span>
-						<span><kbd class={kbdClass}>Esc</kbd> Close</span>
-					</div>
-				</div>
-			{/if}
-		</div>
-		<div class="exec-home-utils">
-			<NotificationsButton {offline} />
-		</div>
-	</header>
+	<ExecutiveHomeSearchBar
+		bind:query
+		bind:homeInputEl
+		bind:homeShellEl
+		{inlineOpen}
+		{inlineListboxVisible}
+		{inlineActiveOptionId}
+		{isChannelQuery}
+		{entries}
+		{safeActiveIdx}
+		{offline}
+		{PaletteResults}
+		onFocusSearch={() => {
+			inlineOpen = true;
+			resetActive();
+			void ensureResultsLoaded();
+			void loadChatConversations(organizationId);
+		}}
+		onInputSearch={(value) => {
+			inlineOpen = true;
+			resetActive();
+			void ensureResultsLoaded();
+			if (value.trimStart().startsWith('#')) handleHashQueryTyped();
+		}}
+		onInputKeydown={handleInputKeydown}
+		onSelectIndex={setActiveIndex}
+		onRunEntry={runEntry}
+		onAskTess={handoffToTess}
+	/>
 {/if}
 {#if connection}
 	<NewMenu bind:this={newMenu} {connection} headless />

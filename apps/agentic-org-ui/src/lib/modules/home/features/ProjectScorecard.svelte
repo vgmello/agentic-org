@@ -5,7 +5,7 @@
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Flag from '@lucide/svelte/icons/flag';
 	import XCircle from '@lucide/svelte/icons/x-circle';
-	import type { ProjectBentoCard } from '$lib/home/model';
+	import type { ProjectBentoCard } from '$lib/modules/home/model';
 
 	interface Props {
 		projects: readonly ProjectBentoCard[];
