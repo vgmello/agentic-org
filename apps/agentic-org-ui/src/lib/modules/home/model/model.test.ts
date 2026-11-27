@@ -875,37 +875,65 @@ describe('executive home view model', () => {
 		expect(answer.bullets.some((b) => b.href === '/settings/offices')).toBe(true);
 	});
 
-	it('orders KPI pillars as Projects -> Delivery -> Team -> Financials and computes real 7d delivery stats', () => {
+	it('orders KPI pillars as Projects -> Delivery -> Team -> Financials and enforces 5-sample median lead floor + signed 7d delta', () => {
 		expect(KPI_PILLAR_ORDER).toEqual(['projects', 'delivery', 'team', 'financials']);
 
 		const snap = sampleOrg('hq');
 		const nowMs = Date.parse('2026-11-27T12:00:00Z');
-		const items = [
+		const twoRecent = [
 			makeItem({
 				id: 'd1',
 				status: 'done',
 				created_at: '2026-11-26T08:00:00Z',
-				updated_at: '2026-11-26T10:00:00Z' // 2h cycle, within 7d
+				updated_at: '2026-11-26T10:00:00Z' // 2h, within 7d
 			}),
 			makeItem({
 				id: 'd2',
 				status: 'done',
 				created_at: '2026-11-25T06:00:00Z',
-				updated_at: '2026-11-25T12:00:00Z' // 6h cycle, within 7d
-			}),
+				updated_at: '2026-11-25T12:00:00Z' // 6h, within 7d
+			})
+		];
+
+		// < 5 samples returns null medianCycleHours (honest floor matching /insights), and prior=0 with closedLast7d>0 yields closedPrior7d=0 for signed +N delta
+		const smallSample = deriveKpiMetrics(snap, twoRecent, offices, 'you', undefined, nowMs);
+		expect(smallSample.closedLast7d).toBe(2);
+		expect(smallSample.closedPrior7d).toBe(0);
+		expect(smallSample.medianCycleHours).toBeNull();
+		expect(smallSample.throughputPoints.reduce((a, b) => a + b, 0)).toBe(2);
+
+		// >= 5 samples computes median lead accurately
+		const fiveRecent = [
+			...twoRecent,
 			makeItem({
 				id: 'd3',
+				status: 'done',
+				created_at: '2026-11-24T08:00:00Z',
+				updated_at: '2026-11-24T12:00:00Z' // 4h
+			}),
+			makeItem({
+				id: 'd4',
+				status: 'done',
+				created_at: '2026-11-23T08:00:00Z',
+				updated_at: '2026-11-23T16:00:00Z' // 8h
+			}),
+			makeItem({
+				id: 'd5',
+				status: 'done',
+				created_at: '2026-11-22T08:00:00Z',
+				updated_at: '2026-11-22T18:00:00Z' // 10h
+			}),
+			makeItem({
+				id: 'd6',
 				status: 'done',
 				created_at: '2026-11-16T08:00:00Z',
 				updated_at: '2026-11-16T12:00:00Z' // 11d ago -> prior 7d
 			})
 		];
-
-		const kpis = deriveKpiMetrics(snap, items, offices, 'you', undefined, nowMs);
-		expect(kpis.closedLast7d).toBe(2);
-		expect(kpis.closedPrior7d).toBe(1);
-		expect(kpis.medianCycleHours).toBe(4);
-		expect(kpis.throughputPoints.reduce((a, b) => a + b, 0)).toBe(2);
+		const fullSample = deriveKpiMetrics(snap, fiveRecent, offices, 'you', undefined, nowMs);
+		expect(fullSample.closedLast7d).toBe(5);
+		expect(fullSample.closedPrior7d).toBe(1);
+		expect(fullSample.medianCycleHours).toBe(6);
 
 		expect(formatCycleDuration(null)).toBe('—');
 		expect(formatCycleDuration(0.3)).toBe('18m');

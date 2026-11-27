@@ -1,7 +1,7 @@
-import { badgeInitials as initialsOf, isItemDone } from '$lib/format';
+import { isItemDone } from '$lib/format';
 import type { HomeProject } from '$lib/modules/home/types';
 import type { InboxItem } from '$lib/modules/inbox/types';
-import { isFormer, leadOf, nonOwners, teamsOfProject } from '$lib/modules/organization/model';
+import { leadOf, teamsOfProject } from '$lib/modules/organization/model';
 import type { ProjectRow } from '$lib/modules/projects/types';
 import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 import {
@@ -277,7 +277,6 @@ export function deriveProjectCards(
 	);
 	const homeById = new Map((domain?.homeProjects ?? []).map((p) => [p.id, p]));
 	const openInbox = (domain?.inboxItems ?? []).filter((i) => i.state === 'open');
-	const allMembers = nonOwners(snapshot).filter((m) => !isFormer(m));
 	const todayUtc = utcNoonMs(nowMs);
 
 	const projectIds = new Set<string>([
@@ -298,14 +297,6 @@ export function deriveProjectCards(
 		const projApprovals = projInbox.filter((i) => i.kind === 'approval' || i.kind === 'decision');
 
 		const teams = teamsOfProject(snapshot, projectId);
-		const teamIds = new Set(teams.map((t) => t.id));
-		if (row) {
-			teamIds.add(row.ownerTeam.id);
-			for (const c of row.contributors) teamIds.add(c.id);
-		}
-		const projMembers = allMembers.filter(
-			(m) => Boolean(m.home_team_id) && teamIds.has(m.home_team_id!)
-		);
 		const lead = homeProj?.lead ?? teams.map((t) => leadOf(snapshot, t)).find(Boolean);
 
 		const dueDt = homeProj?.due ? parseIsoDateUtc(homeProj.due) : null;
@@ -340,7 +331,6 @@ export function deriveProjectCards(
 			isOverdue
 		});
 		const pace = deriveProjectPace(health, signals.pct, isOverdue);
-		const shown = projMembers.slice(0, 4).map((m) => initialsOf(m.name));
 
 		cards.push({
 			id: projectId,
@@ -367,9 +357,7 @@ export function deriveProjectCards(
 			leadName:
 				lead?.name ??
 				row?.ownerTeam.name ??
-				(teams[0]?.name ? `${teams[0].name} team` : 'Unassigned'),
-			memberInitials: shown,
-			extraMembers: Math.max(0, (homeProj?.members ?? projMembers.length) - shown.length)
+				(teams[0]?.name ? `${teams[0].name} team` : 'Unassigned')
 		});
 	}
 

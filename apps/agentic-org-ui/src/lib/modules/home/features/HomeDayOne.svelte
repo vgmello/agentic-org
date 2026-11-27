@@ -12,13 +12,31 @@
 	interface Props {
 		isDayOne: boolean;
 		inboxState?: HomeInboxState;
+		nested?: boolean;
 		sessionHandledCount?: number;
 		lastReceipt?: { title: string; outcome: string; note?: string };
 	}
 
-	let { isDayOne, inboxState = 'ready', sessionHandledCount = 0, lastReceipt }: Props = $props();
+	let {
+		isDayOne,
+		inboxState = 'ready',
+		nested = false,
+		sessionHandledCount = 0,
+		lastReceipt
+	}: Props = $props();
 
 	const clearedInSession = $derived(!isDayOne && inboxState === 'ready' && sessionHandledCount > 0);
+	const headingText = $derived(
+		inboxState === 'loading'
+			? 'Checking Inbox…'
+			: inboxState === 'unavailable'
+				? 'Inbox decisions unavailable'
+				: clearedInSession
+					? 'Priority spotlight cleared'
+					: isDayOne
+						? 'Launch your organization'
+						: 'Nothing needs your decision'
+	);
 </script>
 
 <div class="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center">
@@ -39,19 +57,11 @@
 			<CheckCircle2 class="size-6" aria-hidden="true" />
 		{/if}
 	</span>
-	<h2 class="text-base font-semibold text-[var(--exec-ink)]">
-		{#if inboxState === 'loading'}
-			Checking Inbox…
-		{:else if inboxState === 'unavailable'}
-			Inbox decisions unavailable
-		{:else if clearedInSession}
-			Priority spotlight cleared
-		{:else if isDayOne}
-			Launch your organization
-		{:else}
-			Nothing needs your decision
-		{/if}
-	</h2>
+	{#if nested}
+		<h3 class="text-base font-semibold text-[var(--exec-ink)]">{headingText}</h3>
+	{:else}
+		<h2 class="text-base font-semibold text-[var(--exec-ink)]">{headingText}</h2>
+	{/if}
 	<p class="max-w-md text-sm text-[var(--exec-muted)]">
 		{#if inboxState === 'loading'}
 			Checking Inbox for pending decisions.
@@ -67,7 +77,12 @@
 		{/if}
 	</p>
 	{#if clearedInSession && lastReceipt}
-		<div class="cleared-receipt mt-1 flex flex-col items-center gap-1" role="status">
+		<div
+			class="cleared-receipt mt-1 flex flex-col items-center gap-1 focus:outline-none"
+			role="status"
+			tabindex="-1"
+			data-spotlight-receipt
+		>
 			<span class="handled-pill inline-flex items-center gap-1.5 text-xs font-semibold">
 				<CheckCircle2 class="size-3.5" aria-hidden="true" />
 				<span>{lastReceipt.outcome} — {lastReceipt.title}</span>

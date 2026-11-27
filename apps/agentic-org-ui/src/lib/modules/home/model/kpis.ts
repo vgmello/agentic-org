@@ -204,8 +204,10 @@ function itemCycleHours(item: WorkItemSummary): number | null {
 	return (doneTs - createdTs) / 3_600_000;
 }
 
+const MIN_CYCLE_SAMPLES = 5;
+
 function medianOf(values: readonly number[]): number | null {
-	if (values.length === 0) return null;
+	if (values.length < MIN_CYCLE_SAMPLES) return null;
 	const sorted = [...values].sort((a, b) => a - b);
 	const mid = Math.floor(sorted.length / 2);
 	return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
@@ -243,11 +245,13 @@ function deriveDeliveryWindowStats(
 		}
 	}
 
+	const cycleSample = recentCycles.length >= MIN_CYCLE_SAMPLES ? recentCycles : allCycles;
+
 	return {
 		throughputPoints: buckets,
 		closedLast7d,
-		closedPrior7d: closedPrior7d > 0 ? closedPrior7d : null,
-		medianCycleHours: medianOf(recentCycles.length > 0 ? recentCycles : allCycles)
+		closedPrior7d: closedLast7d > 0 || closedPrior7d > 0 ? closedPrior7d : null,
+		medianCycleHours: medianOf(cycleSample)
 	};
 }
 

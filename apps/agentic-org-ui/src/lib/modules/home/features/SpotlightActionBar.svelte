@@ -9,13 +9,9 @@
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import { isDenyAction } from '$lib/modules/inbox/spotlight';
 	import type { SpotlightDecision } from '$lib/modules/home/model';
+	import type { SpotlightReceipt } from './spotlight-controller.svelte';
 	import SpotlightDenyGuard from './SpotlightDenyGuard.svelte';
 	import SpotlightReplyBox from './SpotlightReplyBox.svelte';
-
-	export interface SpotlightReceipt {
-		outcome: string;
-		note?: string;
-	}
 
 	interface Props {
 		decision: SpotlightDecision;
@@ -28,6 +24,8 @@
 		replyText: string;
 		restoreDenyFocus: boolean;
 		onClearRestoreDenyFocus: () => void;
+		restoreReplyFocus?: boolean;
+		onClearRestoreReplyFocus?: () => void;
 		onPrimary: () => void;
 		onSecondary: () => void;
 		onArmDeny: () => void;
@@ -48,6 +46,8 @@
 		replyText = $bindable(''),
 		restoreDenyFocus,
 		onClearRestoreDenyFocus,
+		restoreReplyFocus = false,
+		onClearRestoreReplyFocus,
 		onPrimary,
 		onSecondary,
 		onArmDeny,
@@ -89,11 +89,23 @@
 			el.focus();
 		}
 	};
+
+	const focusReplyTriggerOnCancel: Attachment<HTMLButtonElement> = (el) => {
+		if (restoreReplyFocus) {
+			onClearRestoreReplyFocus?.();
+			el.focus();
+		}
+	};
 </script>
 
 <div class="spot-foot flex flex-wrap items-center justify-between gap-3 pt-3.5">
 	{#if receipt}
-		<div class="ask-receipt flex flex-1 flex-col items-start gap-1.5" role="status">
+		<div
+			class="ask-receipt flex flex-1 flex-col items-start gap-1.5 focus:outline-none"
+			role="status"
+			tabindex="-1"
+			data-spotlight-receipt
+		>
 			<span class="handled-win inline-flex items-center gap-1.5">
 				<CheckCircle2 class="size-3.5" aria-hidden="true" />
 				<span>{receipt.outcome}</span>
@@ -129,7 +141,13 @@
 	{:else}
 		<div class="flex flex-1 flex-wrap items-center gap-2">
 			{#if canReplyInline && !hasInlinePrimaryChoice}
-				<button type="button" disabled={busy} onclick={onOpenReply} class="exec-cta min-h-9">
+				<button
+					{@attach focusReplyTriggerOnCancel}
+					type="button"
+					disabled={busy}
+					onclick={onOpenReply}
+					class="exec-cta min-h-9"
+				>
 					<span class="exec-cta-fill" aria-hidden="true"></span>
 					<span class="exec-cta-sheen" aria-hidden="true"></span>
 					<span class="exec-cta-inner">
@@ -148,6 +166,7 @@
 				</button>
 				{#if canReplyInline}
 					<button
+						{@attach focusReplyTriggerOnCancel}
 						type="button"
 						disabled={busy}
 						onclick={onOpenReply}

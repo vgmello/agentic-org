@@ -18,7 +18,6 @@
 	import { layerOffices } from '$lib/modules/offices/layer';
 	import { useTessPanel } from '$lib/modules/tess/tess-panel.svelte';
 	import { useShellData } from '$lib/platform/workspace/shell-data-context';
-	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 	import {
 		deriveCatchUpDigest,
 		deriveDecisionSpotlight,
@@ -42,7 +41,6 @@
 	const ownerId = $derived(ownerMember?.id ?? 'owner');
 	const shellData = useShellData();
 	const tessPanel = useTessPanel();
-	const isReport = $derived(uiPrefs.theme === 'report' || uiPrefs.theme === 'report-dark');
 
 	const live = new HomeLiveState({
 		overview: (id, signal) => officesApi.overview(id, signal),
@@ -281,10 +279,7 @@
 		<HomeKpiStrip {kpis} />
 
 		<section
-			class={[
-				'home-stage has-heads grid grid-cols-1 xl:grid-cols-[minmax(0,1.42fr)_minmax(340px,1fr)]',
-				isReport && 'is-report'
-			]}
+			class="home-stage has-heads grid grid-cols-1 xl:grid-cols-[minmax(0,1.42fr)_minmax(340px,1fr)]"
 		>
 			<div class="stage-head stage-head-spot">
 				<SectionHead
@@ -417,11 +412,8 @@
 		}
 		.stage-head-brief {
 			order: 2;
-			margin-top: 0.75rem;
-		}
-		.home-stage.is-report .stage-head-brief {
-			margin-top: 0;
-			padding-top: 24px;
+			margin-top: var(--exec-stage-head-brief-mt-sm);
+			padding-top: var(--exec-stage-head-brief-pt-sm);
 			border-top: var(--exec-col-divider);
 		}
 		.stage-body-brief {
@@ -431,17 +423,13 @@
 	@media (min-width: 1280px) {
 		.home-stage.has-heads {
 			grid-template-rows: auto minmax(0, 1fr);
+			row-gap: var(--exec-stage-row-gap);
 		}
-		.home-stage.has-heads.is-report {
-			row-gap: 0;
+		.stage-head-spot {
+			padding: var(--exec-stage-head-spot-pad);
 		}
-		.home-stage.is-report .stage-head-spot {
-			padding-right: 36px;
-			padding-bottom: 14px;
-		}
-		.home-stage.is-report .stage-head-brief {
-			padding-left: 36px;
-			padding-bottom: 14px;
+		.stage-head-brief {
+			padding: var(--exec-stage-head-brief-pad);
 			border-left: var(--exec-col-divider);
 		}
 	}

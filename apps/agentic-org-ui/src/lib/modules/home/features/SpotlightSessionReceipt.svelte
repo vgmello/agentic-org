@@ -14,7 +14,12 @@
 	let { title, outcome, note, onDismiss }: Props = $props();
 </script>
 
-<div class="session-receipt flex items-start justify-between gap-2 px-3 py-2 text-xs" role="status">
+<div
+	class="session-receipt flex items-start justify-between gap-2 px-3 py-2 text-xs focus:outline-none"
+	role="status"
+	tabindex="-1"
+	data-spotlight-receipt
+>
 	<div class="flex min-w-0 flex-col gap-0.5">
 		<span class="inline-flex items-center gap-1.5 font-semibold text-[var(--exec-ok)]">
 			<CheckCircle2 class="size-3.5 shrink-0" aria-hidden="true" />

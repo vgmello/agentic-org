@@ -208,23 +208,19 @@
 	--exec-h1-em-ul-ok: transparent;
 	--exec-h1-em-ul-bad: transparent;
 
-	--exec-section-head-display: none;
 	--exec-section-title-size: 1.25rem;
 	--exec-section-title-weight: 600;
 	--exec-section-title-tracking: -0.01em;
 	--exec-section-sub-size: 0.9375rem;
-	--exec-capacity-title-size: 0.96875rem;
-	--exec-capacity-title-leading: 1.3;
-	--exec-capacity-title-weight: 600;
-	--exec-capacity-title-tracking: -0.01em;
-	--exec-capacity-sub-size: 0.78125rem;
 	--exec-spot-title-size: clamp(1.125rem, 1.6vw, 1.375rem);
 	--exec-spot-title-weight: 600;
-	--exec-brief-title-size: 0.96875rem;
-	--exec-brief-title-weight: 600;
-	--exec-brief-title-tracking: -0.01em;
 	--exec-section-gap: 1rem;
 	--exec-stage-gap: 1.25rem;
+	--exec-stage-row-gap: 0.75rem;
+	--exec-stage-head-spot-pad: 0px;
+	--exec-stage-head-brief-pad: 0px;
+	--exec-stage-head-brief-mt-sm: 0.75rem;
+	--exec-stage-head-brief-pt-sm: 0px;
 	--exec-section-border: 0px solid transparent;
 	--exec-kpi-pad-y: 0px;
 	--exec-section-pad-y: 0px;
@@ -292,12 +288,6 @@
 	--exec-proj-row-pt-md: 1.25rem;
 	--exec-proj-row-mt-md: 0px;
 
-	/* Home below-fold scroll cue tokens (flat POC band, no dark oval pill) */
-	--exec-scroll-hint-bg: var(--exec-bg);
-	--exec-scroll-hint-pill-bg: transparent;
-	--exec-scroll-hint-ink: var(--exec-muted);
-	--exec-scroll-hint-ink-hover: var(--exec-ink);
-
 	/* Command palette menu surface & lighter non-blurred overlay (poc/v6.html:364) */
 	--exec-cmdk-overlay: rgba(0, 0, 0, 0.26);
 	--exec-cmdk-menu-bg: var(--popover);
@@ -307,7 +297,6 @@
 
 	/* Release horizon / milestone strip tokens */
 	--exec-horizon-pad: 1rem 1.125rem;
-	--exec-horizon-title-ink: var(--exec-ink);
 	--exec-hor-item-bg: var(--exec-well);
 	--exec-hor-item-bg-hover: var(--exec-surface-hi);
 	--exec-hor-date-bg: var(--exec-bg);
@@ -331,19 +320,6 @@
 	background: var(--exec-cmdk-overlay);
 	-webkit-backdrop-filter: none;
 	backdrop-filter: none;
-}
-
-/* Ocean blends the Home scroll cue transparently over its ambient dot-grid radial canvas */
-html[data-ui-theme='ocean'] {
-	--exec-scroll-hint-bg: linear-gradient(
-		to top,
-		rgba(6, 11, 20, 0.72) 0%,
-		rgba(6, 11, 20, 0.28) 60%,
-		transparent 100%
-	);
-	--exec-scroll-hint-pill-bg: transparent;
-	--exec-scroll-hint-ink: #99a1af;
-	--exec-scroll-hint-ink-hover: #f8fafc;
 }
 
 /* Shared semantic status pills */

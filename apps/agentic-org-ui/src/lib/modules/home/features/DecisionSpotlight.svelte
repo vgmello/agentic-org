@@ -3,14 +3,13 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
-	import { toAppError, type OrgSnapshot } from '$lib/proto';
-	import { inboxApi } from '$lib/modules/inbox/api';
-	import { executeDecisionAction } from '$lib/modules/inbox/decisions';
+	import type { OrgSnapshot } from '$lib/proto';
 	import { isDenyAction } from '$lib/modules/inbox/spotlight';
 	import type { HomeInboxState, SpotlightDecision } from '$lib/modules/home/model';
 	import { useShellAi } from '$lib/platform/workspace/shell-ai';
 	import HomeDayOne from './HomeDayOne.svelte';
-	import SpotlightActionBar, { type SpotlightReceipt } from './SpotlightActionBar.svelte';
+	import { SpotlightController } from './spotlight-controller.svelte';
+	import SpotlightActionBar from './SpotlightActionBar.svelte';
 	import SpotlightContextPanel from './SpotlightContextPanel.svelte';
 	import SpotlightHeaderBar from './SpotlightHeaderBar.svelte';
 	import SpotlightRecommendation from './SpotlightRecommendation.svelte';
@@ -38,15 +37,22 @@
 	}: Props = $props();
 
 	const shellAi = useShellAi();
+	const controller = new SpotlightController({
+		getOrgId: () => organizationId,
+		navigate: (href) => goto(resolve(href as '/work')),
+		notifySuccess: (msg) => {
+			toast.success(msg);
+		},
+		notifyError: (msg) => {
+			toast.error(msg);
+		},
+		refresh: () => onRefresh()
+	});
+
 	let spotIdx = $derived.by(() => {
 		void organizationId;
 		return 0;
 	});
-	let destroyed = false;
-	let actionSeq = 0;
-	let busyAction = $state<{ orgId: string; decisionId: string; seq: number } | undefined>(
-		undefined
-	);
 	let decliningId = $derived.by<string | undefined>(() => {
 		void organizationId;
 		return undefined;
@@ -63,21 +69,8 @@
 		void organizationId;
 		return '';
 	});
-	let handledReceipts = $derived.by<Record<string, SpotlightReceipt>>(() => {
-		void organizationId;
-		return {};
-	});
-	let lastReceipt = $derived.by<{ title: string; outcome: string; note?: string } | undefined>(
-		() => {
-			void organizationId;
-			return undefined;
-		}
-	);
-	let sessionHandledCount = $derived.by(() => {
-		void organizationId;
-		return 0;
-	});
 	let restoreDenyFocus = $state(false);
+	let restoreReplyFocus = $state(false);
 	let openContextIds = $derived.by<Record<string, boolean>>(() => {
 		void organizationId;
 		return {};
@@ -87,7 +80,7 @@
 	let panelEl = $state<HTMLElement | null>(null);
 	let titleEl = $state<HTMLHeadingElement | null>(null);
 	onDestroy(() => {
-		destroyed = true;
+		controller.dispose();
 		clearTimeout(pulseTimer);
 	});
 
@@ -119,13 +112,14 @@
 
 	const safeIdx = $derived(spotlight.length > 0 ? Math.min(spotIdx, spotlight.length - 1) : 0);
 	const currentDecision = $derived(spotlight[safeIdx]);
-	const handledIds = $derived(new Set(Object.keys(handledReceipts)));
+	const handledIds = $derived(new Set(Object.keys(controller.handledReceipts)));
 	const currentReceipt = $derived(
-		currentDecision ? handledReceipts[currentDecision.id] : undefined
+		currentDecision ? controller.handledReceipts[currentDecision.id] : undefined
 	);
 	const currentCtxOpen = $derived(
 		currentDecision ? Boolean(openContextIds[currentDecision.id]) : false
 	);
+	const isCurrentBusy = $derived(controller.isBusyFor(currentDecision?.id));
 
 	function selectDecision(index: number) {
 		spotIdx = index;
@@ -150,6 +144,7 @@
 	}
 
 	function openReply(id: string) {
+		restoreReplyFocus = false;
 		decliningId = undefined;
 		declineReason = '';
 		replyingId = id;
@@ -157,6 +152,7 @@
 	}
 
 	function cancelReply() {
+		restoreReplyFocus = true;
 		replyingId = undefined;
 		replyText = '';
 	}
@@ -165,14 +161,12 @@
 		openContextIds = { ...openContextIds, [id]: !openContextIds[id] };
 	}
 
-	function recordHandled(decision: SpotlightDecision, outcome: string, note?: string) {
-		const trimmedNote = note?.trim() || undefined;
-		handledReceipts = {
-			...handledReceipts,
-			[decision.id]: { outcome, note: trimmedNote }
-		};
-		lastReceipt = { title: decision.title, outcome, note: trimmedNote };
-		sessionHandledCount += 1;
+	async function focusAfterHandle() {
+		await tick();
+		if (controller.destroyed) return;
+		const receiptEl = panelEl?.querySelector<HTMLElement>('[data-spotlight-receipt]');
+		const target = receiptEl ?? titleEl;
+		target?.focus({ preventScroll: true });
 	}
 
 	function askAboutDecision(decision: SpotlightDecision) {
@@ -192,66 +186,19 @@
 		});
 	}
 
-	const isCurrentBusy = $derived(
-		busyAction !== undefined &&
-			busyAction.orgId === organizationId &&
-			busyAction.decisionId === currentDecision?.id
-	);
-
-	function isOrgBusy(): boolean {
-		return busyAction !== undefined && busyAction.orgId === organizationId;
-	}
-
-	function outcomeLabelFor(decision: SpotlightDecision, kind: 'primary' | 'secondary'): string {
-		if (kind === 'secondary') {
-			return isDenyAction(decision.secondaryAction)
-				? 'Denied'
-				: (decision.secondaryAction?.label ?? 'Handled');
-		}
-		if (decision.primaryAction.kind === 'approve_inbox') return 'Approved';
-		if (decision.primaryAction.kind === 'choose_inbox') {
-			return `Chose: ${decision.primaryAction.label}`;
-		}
-		return decision.primaryAction.label;
-	}
-
-	async function runGuardedAction(
-		decisionId: string,
-		work: (targetOrgId: string, isActive: () => boolean) => Promise<void>
-	) {
-		if (isOrgBusy()) return;
-		const targetOrgId = organizationId;
-		const seq = ++actionSeq;
-		const isActive = () => !destroyed && organizationId === targetOrgId && seq === actionSeq;
-		busyAction = { orgId: targetOrgId, decisionId, seq };
-		try {
-			await work(targetOrgId, isActive);
-		} catch (e) {
-			if (isActive()) toast.error(toAppError(e).message);
-		} finally {
-			if (busyAction?.seq === seq) busyAction = undefined;
-		}
-	}
-
 	async function submitReply() {
 		const decision = currentDecision;
-		const inboxItem = decision?.inboxItem;
-		const text = replyText.trim();
-		if (!decision || !inboxItem || !text) return;
-		await runGuardedAction(decision.id, async (targetOrgId, isActive) => {
-			await inboxApi.act(targetOrgId, inboxItem.id, { type: 'reply', text });
-			if (!isActive()) return;
+		if (!decision) return;
+		const handled = await controller.submitReply(decision, replyText, () => {
 			replyingId = undefined;
 			replyText = '';
-			recordHandled(decision, 'Answered', text);
-			toast.success(`Sent answer to ${decision.actorName}.`);
-			await onRefresh();
 		});
+		if (handled) await focusAfterHandle();
 	}
 
 	async function runAction(kind: 'primary' | 'secondary') {
 		const decision = currentDecision;
-		if (!decision || isOrgBusy()) return;
+		if (!decision || controller.isOrgBusy()) return;
 		if (
 			kind === 'secondary' &&
 			isDenyAction(decision.secondaryAction) &&
@@ -260,27 +207,11 @@
 			armDeny(decision.id);
 			return;
 		}
-		const reasonSnapshot = declineReason.trim();
-		await runGuardedAction(decision.id, async (targetOrgId, isActive) => {
-			const res = await executeDecisionAction(
-				targetOrgId,
-				decision,
-				kind,
-				snapshot,
-				reasonSnapshot
-			);
-			if (!isActive()) return;
+		const handled = await controller.runAction(decision, kind, snapshot, declineReason, () => {
 			decliningId = undefined;
 			declineReason = '';
-			if (res.navigateTo) {
-				await goto(resolve(res.navigateTo as '/work'));
-				return;
-			}
-			const note = kind === 'secondary' ? reasonSnapshot : undefined;
-			recordHandled(decision, outcomeLabelFor(decision, kind), note);
-			if (res.message) toast.success(res.message);
-			await onRefresh();
 		});
+		if (handled) await focusAfterHandle();
 	}
 </script>
 
@@ -306,12 +237,12 @@
 			onSelect={selectDecision}
 		/>
 
-		{#if lastReceipt && !currentReceipt}
+		{#if controller.lastReceipt && !currentReceipt}
 			<SpotlightSessionReceipt
-				title={lastReceipt.title}
-				outcome={lastReceipt.outcome}
-				note={lastReceipt.note}
-				onDismiss={() => (lastReceipt = undefined)}
+				title={controller.lastReceipt.title}
+				outcome={controller.lastReceipt.outcome}
+				note={controller.lastReceipt.note}
+				onDismiss={() => controller.dismissLastReceipt()}
 			/>
 		{/if}
 
@@ -390,6 +321,8 @@
 			bind:replyText
 			{restoreDenyFocus}
 			onClearRestoreDenyFocus={() => (restoreDenyFocus = false)}
+			{restoreReplyFocus}
+			onClearRestoreReplyFocus={() => (restoreReplyFocus = false)}
 			onPrimary={() => void runAction('primary')}
 			onSecondary={() => void runAction('secondary')}
 			onArmDeny={() => armDeny(currentDecision.id)}
@@ -400,7 +333,13 @@
 		/>
 	{:else}
 		<div class="my-auto flex flex-col justify-center">
-			<HomeDayOne {isDayOne} {inboxState} {sessionHandledCount} {lastReceipt} />
+			<HomeDayOne
+				{isDayOne}
+				{inboxState}
+				nested={Boolean(ariaLabelledby)}
+				sessionHandledCount={controller.sessionHandledCount}
+				lastReceipt={controller.lastReceipt}
+			/>
 		</div>
 	{/if}
 </article>

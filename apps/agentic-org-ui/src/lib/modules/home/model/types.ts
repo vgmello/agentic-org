@@ -94,8 +94,6 @@ export interface ProjectBentoCard {
 	workHref: string;
 	leadId?: string;
 	leadName: string;
-	memberInitials: string[];
-	extraMembers: number;
 }
 
 export interface HomeMilestone {

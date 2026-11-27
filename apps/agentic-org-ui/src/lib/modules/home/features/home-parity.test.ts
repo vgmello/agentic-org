@@ -126,7 +126,7 @@ describe('Home Prototype Parity (TASK-262)', () => {
 
 		// Delivery bar sparkline + real sub-metrics linking to /insights
 		expect(body).toContain('data-testid="home-throughput-sparkline"');
-		expect(body).toContain('Median cycle');
+		expect(body).toContain('Median lead (approx.)');
 		expect(body).toContain('Closed · 7d');
 		expect(body).toContain('href="/insights"');
 
@@ -478,8 +478,9 @@ describe('Home Prototype Parity (TASK-262)', () => {
 		expect(emptySpark.body).not.toContain('home-throughput-sparkline');
 	});
 
-	it('renders HomeDayOne empty-org CTAs and cleared-in-session receipt state', () => {
+	it('renders HomeDayOne empty-org CTAs and cleared-in-session receipt state with h3 when nested', () => {
 		const dayOne = render(HomeDayOne, { props: { isDayOne: true } });
+		expect(dayOne.body).toContain('<h2');
 		expect(dayOne.body).toContain('Launch your organization');
 		expect(dayOne.body).toContain('Create first project');
 		expect(dayOne.body).toContain('Hire first agent');
@@ -487,10 +488,13 @@ describe('Home Prototype Parity (TASK-262)', () => {
 		const cleared = render(HomeDayOne, {
 			props: {
 				isDayOne: false,
+				nested: true,
 				sessionHandledCount: 2,
 				lastReceipt: { title: 'Confirm rollout', outcome: 'Answered', note: 'Proceed at 14:00 UTC' }
 			}
 		});
+		expect(cleared.body).toContain('<h3');
+		expect(cleared.body).not.toContain('<h2');
 		expect(cleared.body).toContain('Priority spotlight cleared');
 		expect(cleared.body).toContain('Answered — Confirm rollout');
 		expect(cleared.body).toContain('Proceed at 14:00 UTC');

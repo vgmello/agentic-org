@@ -49,10 +49,10 @@
 			{@const showLead = Boolean(proj.leadId || (proj.leadName && proj.leadName !== 'Unassigned'))}
 			<article class="proj-card flex flex-col gap-3.5">
 				<div class="flex items-start justify-between gap-2">
-					<div class="proj-id flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+					<div class="proj-id flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
 						<a
 							href={resolve(proj.workHref as '/projects')}
-							class="text-[15px] font-semibold whitespace-nowrap text-[var(--exec-ink)] hover:underline"
+							class="min-w-0 truncate text-[15px] font-semibold text-[var(--exec-ink)] hover:underline"
 						>
 							{proj.name}
 						</a>

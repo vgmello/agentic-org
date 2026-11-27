@@ -392,15 +392,25 @@ test('Home natural stage sizing: no scroll hint bar, natural scrolling, and mobi
 	expect(pillBox?.height ?? 0).toBeGreaterThanOrEqual(44);
 	await page.setViewportSize({ width: 1440, height: 700 });
 
-	// Interactive queue dots step directly through Spotlight decisions
+	// Interactive queue dots: hover + keyboard Tab focus show tooltip, Escape dismisses, click steps directly
 	const queueDots = page.getByRole('group', { name: 'Priority queue' }).getByRole('button');
 	const dotCount = await queueDots.count();
 	expect(dotCount).toBeGreaterThan(1);
 	await expect(queueDots.first()).toHaveAttribute('aria-current', 'true');
+	await queueDots.nth(1).hover();
+	await expect(page.locator('[data-tooltip-content]', { hasText: /Decision 2 of/ })).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(page.locator('[data-tooltip-content]', { hasText: /Decision 2 of/ })).toBeHidden();
+	await queueDots.first().focus();
+	await page.keyboard.press('Tab');
+	await expect(queueDots.nth(1)).toBeFocused();
+	await expect(page.locator('[data-tooltip-content]', { hasText: /Decision 2 of/ })).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(page.locator('[data-tooltip-content]', { hasText: /Decision 2 of/ })).toBeHidden();
 	await queueDots.nth(1).click();
 	await expect(queueDots.nth(1)).toHaveAttribute('aria-current', 'true');
 
-	// Navigating away while scrolled down and returning via popstate (Back) resets main.scrollTop to 0
+	// Navigating away while scrolled down and returning via popstate (Back) OR Home link resets main.scrollTop to 0
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Work' }).click();
 	await expect(page).toHaveURL(/\/work/);
 	await expect(page.getByRole('heading', { name: 'Work' })).toBeVisible();
@@ -416,7 +426,46 @@ test('Home natural stage sizing: no scroll hint bar, natural scrolling, and mobi
 	await expect(page).toHaveURL(/\/home/);
 	await expect(page.getByRole('heading', { name: 'Executive digest' })).toBeVisible();
 	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBe(0);
+
+	// Returning via Home nav link after scrolling also resets main.scrollTop to 0
+	await page.locator('main').evaluate((el) => {
+		el.scrollTop = 120;
+	});
+	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBeGreaterThan(16);
+	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).click();
+	await expect(page).toHaveURL(/\/inbox/);
+	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Home' }).click();
+	await expect(page).toHaveURL(/\/home$/);
+	await expect(page.getByRole('heading', { name: 'Executive digest' })).toBeVisible();
+	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBe(0);
 	await page.setViewportSize({ width: 1440, height: 700 });
+});
+
+test('Spotlight inline question reply restores focus to Answer trigger on Escape (never BODY)', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await enterMockedOrganization(page, 'Acme Executive');
+	await visit(page, '/home');
+
+	// Select the question decision in Spotlight via its interactive queue dot
+	const questionDot = page
+		.getByRole('group', { name: 'Priority queue' })
+		.getByRole('button', { name: /Should the basket be kept/ });
+	await expect(questionDot).toBeVisible();
+	await questionDot.click();
+
+	const answerBtn = page.locator('#hb-spotlight').getByRole('button', { name: 'Answer…' });
+	await expect(answerBtn).toBeVisible();
+	await answerBtn.click();
+
+	const replyBox = page.locator('#hb-spotlight textarea');
+	await expect(replyBox).toBeFocused();
+	await page.keyboard.press('Escape');
+	await expect(replyBox).toHaveCount(0);
+	await expect(answerBtn).toBeFocused();
+	const activeTag = await page.evaluate(() => document.activeElement?.tagName);
+	expect(activeTag).not.toBe('BODY');
 });
 
 test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.html data', async ({

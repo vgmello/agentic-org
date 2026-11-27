@@ -4,7 +4,6 @@
 	import Calendar from '@lucide/svelte/icons/calendar';
 	import SectionHead from '$lib/components/SectionHead.svelte';
 	import type { HomeMilestone } from '$lib/modules/home/model';
-	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	interface Props {
 		milestones: readonly HomeMilestone[];
@@ -13,8 +12,6 @@
 	}
 
 	let { milestones, spotlightIds, onSpotJump }: Props = $props();
-
-	const isReport = $derived(uiPrefs.theme === 'report' || uiPrefs.theme === 'report-dark');
 </script>
 
 <section class="horizon-sec flex flex-col gap-3" aria-labelledby="hb-hor-h">
@@ -36,7 +33,7 @@
 		{/snippet}
 	</SectionHead>
 
-	<div class={['horizon-panel flex flex-col gap-3', isReport && 'is-report']}>
+	<div class="horizon-panel flex flex-col gap-3">
 		{#if milestones.length === 0}
 			<p class="hor-empty text-xs text-[var(--exec-muted)]">
 				No target dates or upcoming deadlines scheduled in the next 14 days.
@@ -110,9 +107,6 @@
 		box-shadow: var(--exec-panel-shadow);
 		border-radius: var(--exec-panel-radius);
 		padding: var(--exec-horizon-pad);
-	}
-	.horizon-panel.is-report {
-		padding: 4px 0 0;
 	}
 	.hor-cal-btn {
 		color: var(--exec-accent-ink);

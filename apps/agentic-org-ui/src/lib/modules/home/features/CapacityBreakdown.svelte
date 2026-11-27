@@ -3,7 +3,6 @@
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import SectionHead from '$lib/components/SectionHead.svelte';
 	import type { TaskTimeBreakdown } from '$lib/modules/home/model';
-	import { uiPrefs } from '$lib/platform/workspace/ui-preferences.svelte';
 
 	interface Props {
 		taskTime: TaskTimeBreakdown;
@@ -12,7 +11,6 @@
 
 	let { taskTime, offlineOffices }: Props = $props();
 
-	const isReport = $derived(uiPrefs.theme === 'report' || uiPrefs.theme === 'report-dark');
 	const queuedHref = $derived(offlineOffices > 0 ? '/settings/offices' : '/work');
 	const headCount = $derived(
 		`${taskTime.totalOpen} open ${taskTime.totalOpen === 1 ? 'task' : 'tasks'}`
@@ -37,7 +35,7 @@
 		{/snippet}
 	</SectionHead>
 
-	<div class={['time-panel flex flex-col gap-3', isReport && 'is-report']}>
+	<div class="time-panel flex flex-col gap-3">
 		<div
 			class="time-bar bg-bar-track flex gap-1 overflow-hidden"
 			role="group"
@@ -186,9 +184,6 @@
 		box-shadow: var(--exec-panel-shadow);
 		border-radius: var(--exec-panel-radius);
 		padding: var(--exec-time-pad);
-	}
-	.time-panel.is-report {
-		padding: 8px 0 0;
 	}
 	.time-panel:hover {
 		background: var(--exec-panel-bg-hover);

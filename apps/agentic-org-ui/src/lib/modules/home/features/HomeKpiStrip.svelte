@@ -207,9 +207,9 @@
 			<a
 				href={resolve('/insights')}
 				class="sub-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
-				title="Median time from start to completion"
+				title="Median created → last update across ≥5 completed items"
 			>
-				<span class="sub-lbl truncate">Median cycle</span>
+				<span class="sub-lbl truncate">Median lead (approx.)</span>
 				<span class="truncate text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
 					{medianCycleLabel}
 				</span>
