@@ -2,6 +2,7 @@
 //! with optional `-- <command...>`, and the office resources (`task`, `msg`, `who`, ...) that
 //! run over the approved, grant-bound office channel.
 
+mod hr_bind;
 mod login;
 pub(crate) mod office_proxy;
 mod render;

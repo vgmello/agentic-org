@@ -15,8 +15,17 @@ use org_proto::{Call, ErrorCode};
 use serde_json::{json, Map, Value};
 
 use crate::runtime::domain::CommandCue;
+use crate::runtime::help::ExtraVerb;
 use crate::runtime::input::{committed_answer, opt_str, parse_ttl, reject_dry_run, require_str};
 use crate::runtime::transport::OfficeTransport;
+
+/// Operator-only `agent` verbs handled directly by `agentic-org` outside the `agent-os` table.
+pub(crate) const OPERATOR_VERBS: &[ExtraVerb] = &[ExtraVerb {
+    resource: "agent",
+    verb: "bind",
+    summary: "Bind a local workspace directly to an agent without an approval code",
+    use_when: "binding a local folder or Git repo to an agent in one operator step (`--member <id> --workspace <dir> [--takeover]`).",
+}];
 
 const ERRORS: &[ErrorCode] = &[
     ErrorCode::InvalidRequest,

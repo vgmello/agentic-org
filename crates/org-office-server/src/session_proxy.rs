@@ -283,6 +283,70 @@ impl serve::ExternalAuthPort for ExternalAuth {
         self.0.external_approve(actor, params)
     }
 
+    fn bind(
+        &self,
+        actor: &str,
+        employee_id: &str,
+        params: &ext::MemberExternalBindParams,
+    ) -> Result<ext::ExternalSessionView, org_proto::ApiError> {
+        if let Some(ttl) = params.ttl_secs {
+            if !(ext::MIN_LEASE_TTL_SECS..=ext::MAX_LEASE_TTL_SECS).contains(&ttl) {
+                return Err(org_proto::ApiError::new(
+                    org_proto::ErrorCode::InvalidRequest,
+                    format!(
+                        "--ttl must be between {}s and {}s",
+                        ext::MIN_LEASE_TTL_SECS,
+                        ext::MAX_LEASE_TTL_SECS
+                    ),
+                ));
+            }
+        }
+        // Check target existence and operator authority before opening any pending login so
+        // unauthorized callers and non-agent targets fail closed with zero side effects.
+        self.0.external_sessions(actor, employee_id, Some(1))?;
+        // Fail fast before opening a pending login when a managed turn is already live and
+        // `--takeover` was not requested; `external_approve` still enforces this atomically
+        // under `lease_mutation` + `registry` locks.
+        if !params.takeover {
+            let has_binding = self.0.bindings().has_active(employee_id);
+            let live_turn = self
+                .0
+                .inspect_session(actor, Some(employee_id))
+                .ok()
+                .is_some_and(|inspected| {
+                    matches!(
+                        inspected.session.state,
+                        org_proto::sessions::SessionState::Starting
+                            | org_proto::sessions::SessionState::Running
+                            | org_proto::sessions::SessionState::WaitingApproval
+                    )
+                });
+            if has_binding || live_turn {
+                return Err(org_proto::ApiError::new(
+                    org_proto::ErrorCode::Conflict,
+                    "this agent has a live managed turn; bind with --takeover to park it first",
+                ));
+            }
+        }
+        let pending = self.0.external_login_request(
+            employee_id,
+            &ext::AuthLoginRequestParams {
+                member: employee_id.to_owned(),
+                pubkey_ed25519_b64: params.pubkey_ed25519_b64.clone(),
+                workspace_label: params.workspace_label.clone(),
+            },
+        )?;
+        self.0.external_approve(
+            actor,
+            &ext::MemberExternalApproveParams {
+                command_id: params.command_id.clone(),
+                code: pending.approval_code,
+                ttl_secs: params.ttl_secs,
+                takeover: params.takeover,
+            },
+        )
+    }
+
     fn sessions(
         &self,
         actor: &str,

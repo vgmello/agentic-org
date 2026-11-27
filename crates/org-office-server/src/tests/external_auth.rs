@@ -651,3 +651,538 @@ fn bound_external_commands_do_no_disk_io_and_stay_within_the_hot_path_budget() {
 
 /// The collaboration call the hot-path test repeats.
 const HOT_PATH_METHOD: &str = "msg.inbox";
+
+/// An [`org_agent_cli::OfficeTransport`] backed directly by the real office server's
+/// grant-bound dispatch for `actor`.
+struct GrantTransport<'a> {
+    world: &'a World,
+    actor: String,
+    next_id: u64,
+}
+
+impl<'a> GrantTransport<'a> {
+    fn new(world: &'a World, actor: &str) -> Self {
+        Self {
+            world,
+            actor: actor.to_owned(),
+            next_id: 100,
+        }
+    }
+}
+
+impl org_agent_cli::OfficeTransport for GrantTransport<'_> {
+    fn call_method(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, org_agent_cli::Refusal> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let req = Request {
+            id,
+            method: method.to_owned(),
+            params,
+            principal: None,
+        };
+        let resp = self
+            .world
+            .node
+            .shared
+            .answer_for_test(&req, &self.actor, true);
+        match resp.outcome {
+            Outcome::Result(value) => Ok(value),
+            Outcome::Error(err) => Err(org_agent_cli::api_refusal(err)),
+        }
+    }
+}
+
+fn init_real_git_repo(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    let run = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?} failed");
+    };
+    run(&["init", "-q"]);
+    std::fs::write(dir.join("README.md"), "# Workspace\n").unwrap();
+    run(&["add", "README.md"]);
+    run(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-q",
+        "-m",
+        "initial commit",
+    ]);
+}
+
+fn assert_clean_git_tree(dir: &std::path::Path) {
+    let out = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git status failed");
+    assert!(
+        out.stdout.is_empty(),
+        "expected zero git working-tree diff, got: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+fn binding_from_workspace_state(state: &WorkspaceState) -> Binding {
+    let saved = state.read_binding().unwrap().expect("saved binding");
+    Binding {
+        socket: saved.socket.map(std::path::PathBuf::from),
+        office_id: Some(saved.office_id),
+        runtime_dir: saved.runtime_dir.map(std::path::PathBuf::from),
+        // Intentionally None: forces the real ADR-0036 Ed25519 challenge-exchange flow.
+        session_token: None,
+        agent_id: Some(saved.member_id),
+        external_state: Some(state.dir().to_path_buf()),
+    }
+}
+
+fn mode_of(path: &std::path::Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::symlink_metadata(path)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777
+}
+
+#[test]
+fn one_step_agent_bind_authenticates_agent_os_immediately_with_zero_git_diff() {
+    use org_agent_cli::external_auth::bind::{bind_workspace, WorkspaceBindRequest};
+
+    let w = world();
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    init_real_git_repo(&repo);
+    let state_root = tmp.path().join("state");
+
+    let mut transport = GrantTransport::new(&w, &w.owner);
+    let bound = bind_workspace(
+        &mut transport,
+        &WorkspaceBindRequest {
+            member: "@ada",
+            workspace_dir: &repo,
+            label: None,
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap();
+    assert_eq!(bound.office_id, w.office.info().office_id);
+    assert_eq!(bound.session.employee_id, w.ada);
+    assert_eq!(bound.session.handle.as_deref(), Some("ada"));
+    assert_eq!(bound.session.approved_by, w.owner);
+    assert!(bound.session.active);
+
+    // Credentials live strictly outside Git with 0700 / 0600 modes and ZERO git working-tree diff.
+    let canonical = repo.canonicalize().unwrap();
+    let state = WorkspaceState::for_root(&state_root, &canonical);
+    assert_eq!(mode_of(state.dir()), 0o700);
+    assert_eq!(mode_of(&state.dir().join("binding.v1.json")), 0o600);
+    assert_eq!(mode_of(&state.dir().join("key.ed25519.pkcs8")), 0o600);
+    assert!(state.read_token().unwrap().is_none());
+    assert_clean_git_tree(&repo);
+
+    // Subsequent `agent-os` commands authenticate immediately via Ed25519 challenge-exchange!
+    let ws_binding = binding_from_workspace_state(&state);
+    let (code, who) = agent_os(&w, ws_binding.clone(), &["who"]);
+    assert_eq!(code, 0, "immediate agent-os who failed: {who}");
+    let (code, tasks) = agent_os(&w, ws_binding, &["task", "list"]);
+    assert_eq!(code, 0, "immediate agent-os task list failed: {tasks}");
+
+    // The challenge-exchange wrote an owner-only cached fast token and bound as External.
+    let cached = state.read_token().unwrap().expect("cached fast token");
+    assert_eq!(cached.session_id, bound.session.session_id);
+    assert_eq!(mode_of(&state.dir().join("token.v1")), 0o600);
+    let conn = bound_client(&w, &w.ada, &cached.token);
+    let me = conn.call::<AuthWhoami>(&Empty {}).unwrap();
+    assert_eq!(me.mode, SessionMode::External);
+    assert_eq!(me.member_id, w.ada);
+    assert_eq!(
+        me.session_id.as_deref(),
+        Some(bound.session.session_id.as_str())
+    );
+    assert_clean_git_tree(&repo);
+}
+
+#[test]
+fn one_step_hr_hire_with_bind_workspace_hires_and_authenticates_immediately() {
+    use org_agent_cli::external_auth::bind::{bind_workspace, WorkspaceBindRequest};
+    use org_agent_cli::external_auth::store::find_workspace;
+    use org_agent_cli::TransportOffice;
+
+    let w = world();
+    let team_id = w.office.org_snapshot().unwrap().teams[0].id.clone();
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("grace-repo");
+    init_real_git_repo(&repo);
+    let nested = repo.join("src").join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    let state_root = tmp.path().join("state");
+
+    // Step 1 + 2 on the same operator grant transport: hire `@grace` and bind `<repo>`.
+    let mut transport = GrantTransport::new(&w, &w.owner);
+    let hire_args: Vec<String> = [
+        "hr",
+        "hire",
+        "--team",
+        &team_id,
+        "--name",
+        "Grace",
+        "--handle",
+        "grace",
+        "--reason",
+        "BYOA one-step hire and bind",
+        "--format",
+        "json",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    let hire_out = org_agent_cli::execute_with_office(
+        "agentic-org",
+        &hire_args,
+        &mut TransportOffice(&mut transport),
+    );
+    assert_eq!(hire_out.exit_code, 0, "{}", hire_out.stdout);
+    let hire_env: Value = serde_json::from_str(&hire_out.stdout).unwrap();
+    assert_eq!(hire_env["data"]["state"], "hired", "{hire_env}");
+    let grace_id = hire_env["data"]["employee_id"].as_str().unwrap().to_owned();
+
+    let bound = bind_workspace(
+        &mut transport,
+        &WorkspaceBindRequest {
+            member: &grace_id,
+            workspace_dir: &repo,
+            label: None,
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap();
+    assert_eq!(bound.session.employee_id, grace_id);
+    assert_eq!(bound.session.handle.as_deref(), Some("grace"));
+
+    // Walk-up discovery from a nested subdirectory resolves the repo binding immediately.
+    let (found_root, state) = find_workspace(&state_root, &nested).expect("walk-up binding");
+    assert_eq!(found_root, repo.canonicalize().unwrap());
+    let (code, who) = agent_os(&w, binding_from_workspace_state(&state), &["who"]);
+    assert_eq!(
+        code, 0,
+        "immediate agent-os auth for newly hired agent: {who}"
+    );
+    let cached = state.read_token().unwrap().expect("exchanged fast token");
+    let conn = bound_client(&w, &grace_id, &cached.token);
+    let me = conn.call::<AuthWhoami>(&Empty {}).unwrap();
+    assert_eq!(me.mode, SessionMode::External);
+    assert_eq!(me.member_id, grace_id);
+    assert_eq!(me.handle.as_deref(), Some("grace"));
+    assert_clean_git_tree(&repo);
+}
+
+#[test]
+fn one_step_bind_enforces_single_active_lease_supersession_and_managed_takeover() {
+    use org_agent_cli::external_auth::bind::{bind_workspace, WorkspaceBindRequest};
+
+    let w = world();
+    let tmp = tempfile::tempdir().unwrap();
+    let ws1 = tmp.path().join("ws1");
+    let ws2 = tmp.path().join("ws2");
+    let ws_ben = tmp.path().join("ws-ben");
+    for d in [&ws1, &ws2, &ws_ben] {
+        std::fs::create_dir(d).unwrap();
+    }
+    let state_root = tmp.path().join("state");
+    let mut transport = GrantTransport::new(&w, &w.owner);
+
+    // Bind Workspace 1 -> authenticates and opens a live bound connection.
+    let first = bind_workspace(
+        &mut transport,
+        &WorkspaceBindRequest {
+            member: "@ada",
+            workspace_dir: &ws1,
+            label: Some("ws1"),
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap();
+    let state1 = WorkspaceState::for_root(&state_root, &ws1.canonicalize().unwrap());
+    let (code, _) = agent_os(&w, binding_from_workspace_state(&state1), &["who"]);
+    assert_eq!(code, 0);
+    let ws1_token = state1.read_token().unwrap().unwrap().token.to_string();
+    let live1 = bound_client(&w, &w.ada, &ws1_token);
+
+    // Re-binding Workspace 2 supersedes Workspace 1 immediately.
+    let second = bind_workspace(
+        &mut transport,
+        &WorkspaceBindRequest {
+            member: "@ada",
+            workspace_dir: &ws2,
+            label: Some("ws2"),
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap();
+    assert_ne!(second.session.session_id, first.session.session_id);
+    assert_eq!(
+        second.session.superseded_session_id.as_deref(),
+        Some(first.session.session_id.as_str())
+    );
+    assert!(
+        live1.call_raw("who", json!({})).is_err(),
+        "superseded workspace connection must close immediately"
+    );
+    let (code, refused) = agent_os(&w, binding_from_workspace_state(&state1), &["who"]);
+    assert_ne!(code, 0, "superseded workspace must fail closed: {refused}");
+
+    let state2 = WorkspaceState::for_root(&state_root, &ws2.canonicalize().unwrap());
+    let (code, who2) = agent_os(&w, binding_from_workspace_state(&state2), &["who"]);
+    assert_eq!(
+        code, 0,
+        "replacement workspace must work immediately: {who2}"
+    );
+
+    // Active managed turn on `@ben` refuses bind without `--takeover` (repeated attempts never
+    // leak pending logins) and succeeds WITH `--takeover`.
+    let _managed = w
+        .node
+        .sessions
+        .bindings()
+        .issue(
+            &w.ben,
+            "run-ben-live",
+            "sess-ben-live",
+            std::process::id() as libc::pid_t,
+            None,
+        )
+        .unwrap();
+    let state_ben = WorkspaceState::for_root(&state_root, &ws_ben.canonicalize().unwrap());
+    for attempt in 0..4 {
+        let err = bind_workspace(
+            &mut transport,
+            &WorkspaceBindRequest {
+                member: "@ben",
+                workspace_dir: &ws_ben,
+                label: None,
+                ttl_secs: None,
+                takeover: false,
+                command_id: None,
+                state_root: Some(&state_root),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.code,
+            ErrorCode::Conflict,
+            "attempt {attempt} must fail with Conflict (no pending-login leak): {err:?}"
+        );
+        assert!(!state_ben.dir().exists());
+    }
+    let taken = bind_workspace(
+        &mut transport,
+        &WorkspaceBindRequest {
+            member: "@ben",
+            workspace_dir: &ws_ben,
+            label: None,
+            ttl_secs: None,
+            takeover: true,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap();
+    assert!(taken.session.took_over_managed);
+    assert!(!w.node.sessions.bindings().has_active(&w.ben));
+    let (code, who_ben) = agent_os(&w, binding_from_workspace_state(&state_ben), &["who"]);
+    assert_eq!(code, 0, "bound workspace after takeover failed: {who_ben}");
+}
+
+#[test]
+fn one_step_bind_refuses_unauthorized_callers_and_chief_of_staff_closed() {
+    use org_agent_cli::external_auth::bind::{bind_workspace, WorkspaceBindRequest};
+    use org_proto::external_auth::MemberExternalBind;
+    use org_proto::org::MemberAddPersonParams;
+
+    let w = world();
+    let team_id = w.office.org_snapshot().unwrap().teams[0].id.clone();
+    let alice_id = w.office.next_uuid_v7();
+    w.office
+        .submit_org(
+            &w.owner,
+            org_office::rules::OrgCommand::MemberAddPerson(MemberAddPersonParams {
+                command_id: w.office.next_uuid_v7(),
+                member_id: alice_id.clone(),
+                name: "Alice".into(),
+                handle: Some("alice".into()),
+                home_team_id: Some(team_id),
+                contact: None,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    // Newly added people start with `may_hire = true`; revoke it so Alice has no authority over Ada.
+    let alice_version = w
+        .office
+        .org_snapshot()
+        .unwrap()
+        .members
+        .into_iter()
+        .find(|m| m.id == alice_id)
+        .unwrap()
+        .version;
+    ok_value(grant_call::<org_proto::hiring::MemberSetMayHire>(
+        &w,
+        &org_proto::hiring::MemberSetMayHireParams {
+            command_id: w.office.next_uuid_v7(),
+            member_id: alice_id.clone(),
+            expected_version: alice_version,
+            may_hire: false,
+        },
+    ));
+
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    let state_root = tmp.path().join("state");
+    let state = WorkspaceState::for_root(&state_root, &ws.canonicalize().unwrap());
+
+    // 1. Unauthorized active person (not owner, may_hire=false, not manager/lead) fails closed.
+    let mut alice_transport = GrantTransport::new(&w, &alice_id);
+    for _ in 0..4 {
+        let err = bind_workspace(
+            &mut alice_transport,
+            &WorkspaceBindRequest {
+                member: "@ada",
+                workspace_dir: &ws,
+                label: None,
+                ttl_secs: None,
+                takeover: false,
+                command_id: None,
+                state_root: Some(&state_root),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotAuthorized, "{err:?}");
+        assert!(!state.dir().exists());
+    }
+
+    // 2. Managed agent bound on the office socket can never call `member.external_bind`.
+    let run = w
+        .node
+        .sessions
+        .bindings()
+        .issue(
+            &w.ben,
+            "run-ben",
+            "sess-ben",
+            std::process::id() as libc::pid_t,
+            None,
+        )
+        .unwrap();
+    let managed_conn = target(&w).connect().unwrap();
+    managed_conn
+        .call::<MsgBind>(&MsgBindParams::member_with_token(
+            w.ben.clone(),
+            run.expose_token().to_owned(),
+        ))
+        .unwrap();
+    let (_, pubkey) = client::generate_key().unwrap();
+    let refused = managed_conn
+        .call_raw(
+            MemberExternalBind::METHOD,
+            json!({
+                "employee_id": "@ada",
+                "pubkey_ed25519_b64": pubkey,
+                "workspace_label": "stolen"
+            }),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(&refused, org_client::ClientError::Api(e) if e.code == ErrorCode::NotAuthorized),
+        "managed agent must be refused: {refused:?}"
+    );
+    w.node.sessions.bindings().revoke(&w.ben, None);
+
+    // 3. External agent bound via fast token on the office socket can never call `member.external_bind`.
+    let (_, _, ada_token) = signed_in(&w, "@ada");
+    let ext_conn = bound_client(&w, &w.ada, &ada_token);
+    let refused = ext_conn
+        .call_raw(
+            MemberExternalBind::METHOD,
+            json!({
+                "employee_id": "@ben",
+                "pubkey_ed25519_b64": pubkey,
+                "workspace_label": "lateral"
+            }),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(&refused, org_client::ClientError::Api(e) if e.code == ErrorCode::NotAuthorized),
+        "external agent must be refused: {refused:?}"
+    );
+
+    // 4. Chief of Staff (if seeded in org snapshot) can never be bound externally even by owner.
+    if let Some(tess) = w
+        .office
+        .org_snapshot()
+        .unwrap()
+        .members
+        .iter()
+        .find(|m| m.handle.as_deref() == Some("tess"))
+    {
+        let mut owner_transport = GrantTransport::new(&w, &w.owner);
+        let err = bind_workspace(
+            &mut owner_transport,
+            &WorkspaceBindRequest {
+                member: &tess.id,
+                workspace_dir: &ws,
+                label: None,
+                ttl_secs: None,
+                takeover: false,
+                command_id: None,
+                state_root: Some(&state_root),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotAuthorized, "{err:?}");
+        assert!(!state.dir().exists());
+    }
+
+    // 5. None of the refused calls polluted pending logins: owner still binds `@ada` cleanly.
+    let mut owner_transport = GrantTransport::new(&w, &w.owner);
+    let ok = bind_workspace(
+        &mut owner_transport,
+        &WorkspaceBindRequest {
+            member: "@ada",
+            workspace_dir: &ws,
+            label: None,
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap();
+    assert_eq!(ok.session.employee_id, w.ada);
+}

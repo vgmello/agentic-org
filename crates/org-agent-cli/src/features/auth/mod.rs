@@ -10,6 +10,7 @@
 //!   folder up to its Git root ([`workspace_binding`]). A workspace token past its expiry, or one
 //!   the office no longer knows (an office restart), is refreshed by one challenge-response.
 
+pub mod bind;
 pub mod client;
 mod exec;
 mod login;

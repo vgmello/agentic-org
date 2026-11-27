@@ -46,6 +46,7 @@ const GUIDANCE: Guidance = Guidance {
     domains: DOMAINS,
     operator_resources: session::OPERATOR_RESOURCES,
     agent_verbs: session::AGENT_VERBS,
+    operator_verbs: hiring::OPERATOR_VERBS,
     agent_footer: auth::SIGN_IN_HELP,
 };
 

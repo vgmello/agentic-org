@@ -159,6 +159,7 @@ fn secrets_and_owner_reads_are_never_hers_even_for_the_owner() {
         "member.agent_execution_set",
         "member.set_may_hire",
         "member.external_approve",
+        "member.external_bind",
         "git.push",
     ] {
         assert_eq!(access(method), Access::Never, "{method}");

@@ -253,6 +253,11 @@ fn refuse_unsupported_modes(top: &TopCommand, ctx: &ExecutionContext) -> Result<
 fn dispatch(top: TopCommand, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     use features::*;
     refuse_unsupported_modes(&top, ctx)?;
+    if let TopCommand::Agent(pass) = &top {
+        if pass.args.first().map(String::as_str) == Some("bind") {
+            return agent::run(&pass.args[1..], ctx);
+        }
+    }
     if let Some((resource, words)) = top.office_resource() {
         let words = std::iter::once(resource.to_owned())
             .chain(words.iter().cloned())

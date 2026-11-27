@@ -193,6 +193,19 @@ impl WorkspaceState {
         self.verify()
     }
 
+    /// Checks that if the workspace state folder already exists, it is a real, owner-only
+    /// folder of this account (never a symbolic link), without creating any directory yet.
+    pub fn preflight(&self) -> Result<(), Refusal> {
+        let normalized: PathBuf = self.dir.components().collect();
+        match std::fs::symlink_metadata(&normalized) {
+            Ok(_) => self.verify(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(refusal(format!(
+                "cannot inspect the workspace state folder: {e}"
+            ))),
+        }
+    }
+
     fn verify(&self) -> Result<(), Refusal> {
         let uid = org_platform::fs::effective_uid()
             .map_err(|e| refusal(format!("cannot read this account's id: {e}")))?;
@@ -266,6 +279,15 @@ impl WorkspaceState {
     pub fn write_token(&self, token: &TokenFile) -> Result<(), Refusal> {
         let bytes = Zeroizing::new(serde_json::to_vec(token).map_err(|e| refusal(e.to_string()))?);
         self.write_file(TOKEN_FILE, &bytes)
+    }
+
+    /// Removes any cached fast token (`token.v1`), ignoring a missing file.
+    pub fn remove_token(&self) -> Result<(), Refusal> {
+        match std::fs::remove_file(self.dir.join(TOKEN_FILE)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(refusal(format!("cannot remove {TOKEN_FILE}: {e}"))),
+        }
     }
 
     /// Removes the binding, key and token (and the folder when it is then empty).

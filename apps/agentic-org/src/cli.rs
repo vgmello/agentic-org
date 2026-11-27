@@ -153,12 +153,12 @@ pub(crate) enum TopCommand {
     /// Use when: discovering or inspecting shared channels across offices.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Channel(PassArgs),
-    /// Hire and manage agents across HQ and satellite offices (hr hire|list|inspect)
-    /// Use when: hiring new agents onto HQ or a remote satellite office from the terminal.
+    /// Hire and manage agents across HQ and satellite offices (hr hire [--bind-workspace <dir>]|list|inspect)
+    /// Use when: hiring new agents onto HQ or a remote satellite office from the terminal (optionally binding a local workspace in one step).
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Hr(PassArgs),
-    /// Inspect or manage hired agents (agent inspect|update|pause|offboard|approve|revoke|...)
-    /// Use when: checking agent status, execution settings, lifecycle state, or external sign-ins.
+    /// Inspect or manage hired agents (agent inspect|update|pause|offboard|bind|approve|revoke|...)
+    /// Use when: checking agent status, execution settings, lifecycle state, or external workspace bindings/sign-ins.
     #[command(verbatim_doc_comment, disable_help_flag = true)]
     Agent(PassArgs),
     /// Manage organization teams (team list|inspect|create|update)

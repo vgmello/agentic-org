@@ -104,6 +104,7 @@ const NEVER: &[&str] = &[
     "git.push",
     "member.agent_execution_set",
     "member.external_approve",
+    "member.external_bind",
     "member.external_revoke",
     "member.external_sessions",
     "member.session_approval",

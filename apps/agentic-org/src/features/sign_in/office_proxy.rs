@@ -171,12 +171,22 @@ fn hoist(scanned: &Selectors, ctx: &mut ExecutionContext) -> Result<(), CliError
 /// Runs office command `words` (`<resource> <verb> ...`) for the selected office.
 pub(crate) fn run(words: Vec<String>, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     let scanned = prepare(&words, ctx)?;
+    let (bind_workspace, hire_args) = super::hr_bind::split_bind_workspace(&scanned.forwarded)?;
     let target = crate::selection::select(scanned.instance.as_deref(), scanned.office.as_deref())?;
-    let mut transport = TransportOffice(LazyGrantTransport::new(
-        target.explicit_instance(),
-        target.explicit_office(),
-    ));
-    execute(scanned.forwarded, ctx, &mut transport)
+    let mut transport =
+        LazyGrantTransport::new(target.explicit_instance(), target.explicit_office());
+    if let Some(workspace) = bind_workspace {
+        let shown = shown(&hire_args, ctx);
+        return super::hr_bind::execute_hire_and_bind(
+            hire_args,
+            &workspace,
+            shown,
+            ctx,
+            &mut transport,
+            None,
+        );
+    }
+    execute(scanned.forwarded, ctx, &mut TransportOffice(transport))
 }
 
 /// `agentic-org sign-in -- <command>`: signs in to the selected office and runs `forwarded`
@@ -191,6 +201,23 @@ pub(super) fn sign_in_and_execute(
     office: Option<&str>,
     ctx: &mut ExecutionContext,
 ) -> Result<(), CliError> {
+    let (bind_workspace, hire_args) = super::hr_bind::split_bind_workspace(&forwarded)?;
+    if let Some(workspace) = bind_workspace {
+        let shown = shown(&hire_args, ctx);
+        let mut transport = LazyGrantTransport::new(instance, office);
+        let result = super::hr_bind::execute_hire_and_bind(
+            hire_args,
+            &workspace,
+            shown,
+            ctx,
+            &mut transport,
+            None,
+        );
+        if let Some(error) = transport.failed.take() {
+            return Err(error.into());
+        }
+        return result;
+    }
     let mut transport = TransportOffice(LazyGrantTransport::new(instance, office));
     let answered = ask(forwarded, ctx, &mut transport);
     let grant = &mut transport.0;
