@@ -108,3 +108,58 @@ fn external_bind_params_reject_unknown_fields_and_result_round_trips() {
     let back: MemberExternalBindResult = serde_json::from_value(wire).unwrap();
     assert_eq!(back, result);
 }
+
+#[test]
+fn external_renew_and_pending_params_reject_unknown_fields_and_round_trip() {
+    assert!(
+        serde_json::from_value::<MemberExternalRenewParams>(serde_json::json!({
+            "employee_id": "@ada",
+            "extra": 1
+        }))
+        .is_err()
+    );
+    let renew: MemberExternalRenewParams = serde_json::from_value(serde_json::json!({
+        "employee_id": "@ada",
+        "ttl_secs": MAX_LEASE_TTL_SECS
+    }))
+    .unwrap();
+    assert_eq!(renew.employee_id, "@ada");
+    assert_eq!(renew.ttl_secs, Some(MAX_LEASE_TTL_SECS));
+
+    assert!(
+        serde_json::from_value::<MemberExternalPendingParams>(serde_json::json!({
+            "unknown": true
+        }))
+        .is_err()
+    );
+    let all_pending: MemberExternalPendingParams =
+        serde_json::from_value(serde_json::json!({})).unwrap();
+    assert_eq!(all_pending.employee_id, None);
+
+    let fam: WorkspaceFamiliarity = serde_json::from_str("\"future_variant\"").unwrap();
+    assert_eq!(fam, WorkspaceFamiliarity::Unknown);
+
+    let view = PendingExternalAuthView {
+        request_id: "req-1".into(),
+        handle: Some("@ada".into()),
+        employee_id: "emp-1".into(),
+        office_id: "off-1".into(),
+        office_name: "HQ".into(),
+        hostname: Some("macbook".into()),
+        workspace_path: Some("/Users/dev/repo".into()),
+        workspace_label: "~/repo".into(),
+        pubkey_fingerprint: "3f9c2a7d10b4e8f1".into(),
+        managed_turn_active: false,
+        requested_at: "2026-11-27T00:00:00.000Z".into(),
+        expires_at: "2026-11-27T00:10:00.000Z".into(),
+        code_prefix: "K7QF-••••".into(),
+        workspace_familiarity: WorkspaceFamiliarity::ReturningKnownKey,
+        last_approved_by: Some("owner-1".into()),
+        last_approved_at: Some("2026-11-26T10:00:00.000Z".into()),
+    };
+    let wire = serde_json::to_value(&view).unwrap();
+    assert_eq!(wire["workspace_familiarity"], "returning_known_key");
+    assert_eq!(wire["code_prefix"], "K7QF-••••");
+    let back: PendingExternalAuthView = serde_json::from_value(wire).unwrap();
+    assert_eq!(back, view);
+}

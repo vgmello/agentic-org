@@ -112,6 +112,8 @@ const NEVER: &[&str] = &[
     "member.agent_execution_set",
     "member.external_approve",
     "member.external_bind",
+    "member.external_pending",
+    "member.external_renew",
     "member.external_revoke",
     "member.external_sessions",
     "member.session_approval",

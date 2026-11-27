@@ -38,6 +38,10 @@ pub const MAX_APPROVAL_ATTEMPTS: u32 = 3;
 pub const CHALLENGE_TTL_SECS: u64 = 60;
 /// Longest workspace label (bytes) an agent may present.
 pub const MAX_WORKSPACE_LABEL_BYTES: usize = 128;
+/// Longest host name (bytes) an external workspace may report.
+pub const MAX_HOSTNAME_BYTES: usize = 255;
+/// Longest workspace path (bytes) an external workspace may report.
+pub const MAX_WORKSPACE_PATH_BYTES: usize = 1024;
 /// Length of an Ed25519 public key in bytes.
 pub const ED25519_PUBLIC_KEY_LEN: usize = 32;
 
@@ -120,6 +124,13 @@ pub struct AuthLoginRequestParams {
     pub pubkey_ed25519_b64: String,
     /// A short human label for the workspace (shown to the approver), e.g. `laptop:~/src/app`.
     pub workspace_label: String,
+    /// Optional host name of the machine initiating the sign-in (shown to approvers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    /// Optional canonical workspace path initiating the sign-in (shown to approvers and matched
+    /// against approval history for workspace familiarity).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -365,6 +376,10 @@ pub struct MemberExternalBindParams {
     /// A short human label for the workspace, e.g. `~/src/app`.
     pub workspace_label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_secs: Option<u64>,
     /// Park a live managed turn first instead of refusing.
     #[serde(default)]
@@ -399,6 +414,14 @@ pub struct ExternalHistoryEntry {
     pub actor_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pubkey_fingerprint: Option<String>,
 }
 
 pub struct MemberExternalSessions;
@@ -453,6 +476,96 @@ impl Call for MemberExternalRevoke {
     const METHOD: &'static str = "member.external_revoke";
     type Params = MemberExternalRevokeParams;
     type Result = MemberExternalRevokeResult;
+}
+
+pub struct MemberExternalRenew;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemberExternalRenewParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_id: Option<String>,
+    /// `@handle`, handle or employee ID of the active local agent.
+    pub employee_id: String,
+    /// Renew only this active lease; refused as `not_found` when another lease is active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// New lifetime from now in seconds (`MIN_LEASE_TTL_SECS..=MAX_LEASE_TTL_SECS`, default 7d).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<u64>,
+}
+
+impl Call for MemberExternalRenew {
+    const METHOD: &'static str = "member.external_renew";
+    type Params = MemberExternalRenewParams;
+    type Result = ExternalSessionView;
+}
+
+/// Whether this workspace (and its public key) has previously been approved for the target agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum WorkspaceFamiliarity {
+    /// No prior approved lease for this workspace appears in `external-history.jsonl`.
+    FirstTime,
+    /// This workspace was previously approved, but the pending request presents a different key.
+    ReturningNewKey,
+    /// This workspace was previously approved with the exact same Ed25519 key fingerprint.
+    ReturningKnownKey,
+    #[serde(other)]
+    Unknown,
+}
+
+/// One pending BYOA login request as seen by an authorized human operator.
+///
+/// `code_prefix` is strictly `XXXX-••••` — the secret half of the approval code NEVER leaves
+/// the office pending book.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingExternalAuthView {
+    pub request_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    pub employee_id: String,
+    pub office_id: String,
+    pub office_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
+    pub workspace_label: String,
+    pub pubkey_fingerprint: String,
+    pub managed_turn_active: bool,
+    pub requested_at: String,
+    pub expires_at: String,
+    /// Masked lookup half (`XXXX-••••`); NEVER contains the secret half.
+    pub code_prefix: String,
+    pub workspace_familiarity: WorkspaceFamiliarity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_approved_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_approved_at: Option<String>,
+}
+
+pub struct MemberExternalPending;
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemberExternalPendingParams {
+    /// Optional `@handle`, handle or employee ID to filter to one agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub employee_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberExternalPendingResult {
+    #[serde(default)]
+    pub pending: Vec<PendingExternalAuthView>,
+}
+
+impl Call for MemberExternalPending {
+    const METHOD: &'static str = "member.external_pending";
+    type Params = MemberExternalPendingParams;
+    type Result = MemberExternalPendingResult;
 }
 
 #[cfg(test)]

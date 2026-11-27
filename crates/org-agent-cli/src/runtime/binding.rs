@@ -116,7 +116,7 @@ fn read_binding_file_token(path: &str) -> Option<String> {
 
 /// Whether the process environment asks for an office binding: it names a session token or a
 /// binding file, even one that cannot be read. Such a caller is bound: a command that could run
-/// without the office fails closed instead (`session boot`).
+/// without the office fails closed instead (`session context`).
 pub fn env_requests_binding() -> bool {
     [SESSION_TOKEN_ENV, BINDING_FILE_ENV]
         .iter()

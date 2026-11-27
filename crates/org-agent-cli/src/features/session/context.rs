@@ -1,18 +1,19 @@
-//! `session boot` (shorthands `boot`, `instructions overview`): everything an agent needs before
-//! its first command, in one envelope (`doc-28`, `doc-96` AX).
+//! `session context` (shorthand `context`): everything an agent needs before its first command
+//! or after context compaction, in one envelope (`doc-28`, `doc-96` AX, `TASK-248`).
 //!
-//! - **Offline** (`--offline`, or a shell with no office binding): the standing rules
-//!   (`org-process`'s `core-rules.md`), the grouped catalogue of the live table and the index of
-//!   the built-in guides, from this build alone: no office is asked, and the envelope stays
-//!   within 6 KiB (its tests hold it there).
-//! - **Bound** (a session token or binding file is set and `--offline` is not given): the same,
-//!   with who the caller is and the must-follow (non-overridable) processes and standards that
-//!   apply, whole, within [`MANDATORY_LIMIT`]. A binding that does not work fails the command:
-//!   it never falls back to offline.
+//! - **Offline** (`--offline`, or a shell with no office binding): the standing rules, the grouped
+//!   catalogue of the live table and the index of the built-in guides, from this build alone: no
+//!   office is asked, and the envelope stays within 6 KiB (its tests hold it there).
+//! - **Bound** (`mode: managed` or `mode: external`, when a session token or workspace binding is
+//!   set and `--offline` is not given): the same, with mode-truthful standing rules (`CORE_RULES`
+//!   for managed sessions, `EXTERNAL_RULES` for external workspaces), who the caller is and the
+//!   must-follow (non-overridable) processes and standards that apply, whole, within
+//!   [`MANDATORY_LIMIT`]. A binding that does not work fails the command: it never falls back to
+//!   offline.
 
 use org_command::{Answer, Command, Example, Field, Kind, Refusal, Request, Type};
 use org_proto::directory::{DirectoryCard, WhoResult};
-use org_proto::external_auth::{AuthWhoami, AuthWhoamiResult};
+use org_proto::external_auth::{AuthWhoami, AuthWhoamiResult, SessionMode};
 use org_proto::org::MemberKind;
 use org_proto::processes::{
     DocumentKindWire, EffectiveProcessEntryWire, ProcessEffective, ProcessEffectiveParams,
@@ -27,7 +28,7 @@ use super::{READ_ERRORS, STRING_TYPE};
 use crate::runtime::input::opt_str;
 use crate::runtime::transport::OfficeTransport;
 
-const BOOT_INPUT: &[Field] = &[
+const CONTEXT_INPUT: &[Field] = &[
     Field::optional(
         "project",
         Type::String,
@@ -97,18 +98,22 @@ const MANDATORY_FIELDS: &[Field] = &[
 
 const MANDATORY_TYPE: Type = Type::Object(MANDATORY_FIELDS);
 
-const BOOT_OUTPUT: &[Field] = &[
+const CONTEXT_OUTPUT: &[Field] = &[
     Field::required(
         "mode",
-        Type::Enum(&["offline", "bound"]),
-        "offline: this build alone; bound: also asked the office",
+        Type::Enum(&["offline", "managed", "external"]),
+        "offline: this build alone; managed: office-started session; external: bound external workspace",
     ),
     Field::optional(
         "identity",
         Type::Object(IDENTITY_FIELDS),
         "Who you are (bound only)",
     ),
-    Field::required("rules", Type::String, "The standing rules of every agent"),
+    Field::required(
+        "rules",
+        Type::String,
+        "The standing rules for your session mode",
+    ),
     Field::required(
         "catalogue",
         Type::String,
@@ -137,28 +142,32 @@ const BOOT_OUTPUT: &[Field] = &[
     Field::required("next_action", Type::String, "What to do next"),
 ];
 
-/// The `session boot` row.
-pub(super) const SESSION_BOOT: Command = Command {
+/// The `session context` row.
+pub(super) const SESSION_CONTEXT: Command = Command {
     resource: "session",
-    verb: "boot",
+    verb: "context",
     summary: "Load rules, catalogue, skills and must-follow processes",
-    call: "session.boot",
+    call: "session.context",
     kind: Kind::Read,
-    input: BOOT_INPUT,
+    input: CONTEXT_INPUT,
     content_field: None,
-    output: BOOT_OUTPUT,
+    output: CONTEXT_OUTPUT,
     errors: READ_ERRORS,
     example: Example {
         input: r#"{"offline":true}"#,
-        output: r###"{"mode":"offline","rules":"# How you work here","catalogue":"## Commands","skills":[{"key":"agent-os-basics","description":"Command grammar."}],"next_action":"Run `agent-os boot` without --offline."}"###,
+        output: r###"{"mode":"offline","rules":"# How you work here","catalogue":"## Commands","skills":[{"key":"agent-os-basics","description":"Command grammar."}],"next_action":"Run `agent-os context` without --offline."}"###,
     },
 };
 
-/// The standing rules of every agent: the same file `org-process` builds into a managed
+/// The standing rules of every managed agent: the same file `org-process` builds into a managed
 /// session's standing instructions.
 pub const CORE_RULES: &str = include_str!("../../../../org-process/prompts/core-rules.md");
 
-/// The most bytes of must-follow text a bound boot carries. Documents are whole or left out,
+/// The standing rules of an external workspace agent (`mode: external`): omits managed-only wake
+/// and process-reaping rules.
+pub const EXTERNAL_RULES: &str = include_str!("../../../../org-process/prompts/external-rules.md");
+
+/// The most bytes of must-follow text a bound context carries. Documents are whole or left out,
 /// never cut: those that do not fit are named in `mandatory_omitted`.
 const MANDATORY_LIMIT: usize = 8 * 1024;
 
@@ -166,12 +175,12 @@ fn unreadable(method: &str) -> Refusal {
     Refusal::new(
         ErrorCode::Unavailable,
         format!("The office returned an unreadable `{method}` answer."),
-        "Retry `agent-os boot`; if it persists, the office and agent-os versions differ.",
+        "Retry `agent-os context`; if it persists, the office and agent-os versions differ.",
     )
 }
 
-/// Answers `session boot`; `catalogue` is the live table's launch catalogue.
-pub(super) fn read_session_boot<T: OfficeTransport + ?Sized>(
+/// Answers `session context`; `catalogue` is the live table's launch catalogue.
+pub(super) fn read_session_context<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     request: &Request,
     catalogue: &str,
@@ -184,7 +193,7 @@ pub(super) fn read_session_boot<T: OfficeTransport + ?Sized>(
     let project = opt_str(request, "project");
     let bound = transport.is_bound();
     if bound && !offline {
-        return bound_boot(transport, project, catalogue).map(Answer::completed);
+        return bound_context(transport, project, catalogue).map(Answer::completed);
     }
     if project.is_some() {
         let why = if offline {
@@ -195,48 +204,63 @@ pub(super) fn read_session_boot<T: OfficeTransport + ?Sized>(
         return Err(Refusal::new(
             ErrorCode::InvalidRequest,
             why,
-            "Drop --project, or run `agent-os boot --project <project>` in a bound session.",
+            "Drop --project, or run `agent-os context --project <project>` in a bound session.",
         ));
     }
     let next_action = if bound {
-        "Run `agent-os boot` without --offline for who you are and your organization's must-follow processes."
+        "Run `agent-os context` without --offline for who you are and your organization's must-follow processes."
     } else {
-        "This shell has no office binding: these are the built-in rules only. Sign in with `agent-os login --as @<handle>`, or work inside an office-started session, then run `agent-os boot`."
+        "This shell has no office binding: these are the built-in rules only. Sign in with `agent-os login --as @<handle>` (which returns your context automatically), or work inside an office-started session."
     };
-    let mut data = common("offline", catalogue);
+    let rules = rules_for_mode(transport.session_mode());
+    let mut data = common("offline", rules, catalogue);
     data.insert("next_action".into(), json!(next_action));
     Ok(Answer::completed(Value::Object(data)))
 }
 
-/// What every boot answers: its mode, the rules, the catalogue and the guides.
-fn common(mode: &str, catalogue: &str) -> Map<String, Value> {
+fn rules_for_mode(mode: Option<SessionMode>) -> &'static str {
+    match mode {
+        Some(SessionMode::External) => EXTERNAL_RULES,
+        _ => CORE_RULES,
+    }
+}
+
+fn mode_name(mode: SessionMode) -> &'static str {
+    match mode {
+        SessionMode::External => "external",
+        _ => "managed",
+    }
+}
+
+/// What every context answers: its mode, the mode-appropriate rules, the catalogue and the guides.
+fn common(mode: &str, rules: &str, catalogue: &str) -> Map<String, Value> {
     let skills: Vec<Value> = SKILL_INDEX
         .iter()
         .map(|(key, description)| json!({"key": key, "description": description}))
         .collect();
     let mut data = Map::new();
     data.insert("mode".into(), json!(mode));
-    data.insert("rules".into(), json!(CORE_RULES.trim_end()));
+    data.insert("rules".into(), json!(rules.trim_end()));
     data.insert("catalogue".into(), json!(catalogue.trim_end()));
     data.insert("skills".into(), Value::Array(skills));
     data
 }
 
-/// The bound boot briefing (`data` of `agent-os boot`) over `transport`, for every project scope:
-/// what `agent-os login` prints once a workspace is signed in (`TASK-137`).
+/// The bound context briefing (`data` of `agent-os context`, including `catalogue`) over
+/// `transport`: what `agent-os login` returns verbatim under `data.context` (`TASK-248`).
 pub(crate) fn bound_briefing<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     catalogue: &str,
 ) -> Result<Value, Refusal> {
-    bound_boot(transport, None, catalogue)
+    bound_context(transport, None, catalogue)
 }
 
-fn bound_boot<T: OfficeTransport + ?Sized>(
+fn bound_context<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     project: Option<&str>,
     catalogue: &str,
 ) -> Result<Value, Refusal> {
-    let card = caller_card(transport)?;
+    let (card, mode) = caller_card_and_mode(transport)?;
     let params = ProcessEffectiveParams {
         employee_id: None,
         r#for: project.map(|project_id| ProcessForWire::Project {
@@ -253,7 +277,7 @@ fn bound_boot<T: OfficeTransport + ?Sized>(
         .iter()
         .filter(|entry| entry.applies && entry.mandatory);
     let (mandatory, omitted) = pack_mandatory(must_follow);
-    let mut data = common("bound", catalogue);
+    let mut data = common(mode_name(mode), rules_for_mode(Some(mode)), catalogue);
     data.insert("identity".into(), identity(&card));
     data.insert("mandatory".into(), Value::Array(mandatory));
     data.insert("mandatory_truncated".into(), json!(!omitted.is_empty()));
@@ -273,40 +297,58 @@ fn bound_boot<T: OfficeTransport + ?Sized>(
     Ok(Value::Object(data))
 }
 
-/// The caller's directory card: by the employee the binding names, else the member the office
-/// bound the connection to (`auth.whoami`: an agent, or a person through a grant), else the
-/// employee whose session the connection runs (`member.session_inspect`, agents only).
-fn caller_card<T: OfficeTransport + ?Sized>(transport: &mut T) -> Result<DirectoryCard, Refusal> {
-    let member = match transport.caller_member_id() {
-        Some(member) => member,
-        None => bound_member(transport)?,
-    };
+/// The caller's directory card and session mode (`managed` or `external`).
+fn caller_card_and_mode<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+) -> Result<(DirectoryCard, SessionMode), Refusal> {
+    let (member, mode) = resolve_caller(transport)?;
     let raw = transport.call_method("who", json!({ "member": member }))?;
     let who: WhoResult = serde_json::from_value(raw).map_err(|_| unreadable("who"))?;
-    who.members.into_iter().next().ok_or_else(|| {
+    let card = who.members.into_iter().next().ok_or_else(|| {
         Refusal::new(
             ErrorCode::NotFound,
             format!("The office has no directory card for `{member}`."),
             "Check that your session is still active with `agent-os session inspect`.",
         )
-    })
+    })?;
+    Ok((card, mode))
 }
 
-fn bound_member<T: OfficeTransport + ?Sized>(transport: &mut T) -> Result<String, Refusal> {
+/// Resolves the caller's member ID and session mode. A workspace binding already knows both
+/// locally; otherwise `auth.whoami` tells both (falling back to `member.session_inspect` only on
+/// an older office that refuses `auth.whoami` with `Unsupported` or `NotBound`).
+fn resolve_caller<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+) -> Result<(String, SessionMode), Refusal> {
+    if let (Some(member), Some(mode)) = (transport.caller_member_id(), transport.session_mode()) {
+        return Ok((member, mode));
+    }
     match transport.call_method(AuthWhoami::METHOD, json!({})) {
-        Ok(raw) => serde_json::from_value::<AuthWhoamiResult>(raw)
-            .map(|who| who.member_id)
-            .map_err(|_| unreadable(AuthWhoami::METHOD)),
-        // An office without external agents, or a connection the office has not bound to a
-        // member (a session-token-only run): ask which session's employee this is.
+        Ok(raw) => {
+            let who: AuthWhoamiResult =
+                serde_json::from_value(raw).map_err(|_| unreadable(AuthWhoami::METHOD))?;
+            let member = transport.caller_member_id().unwrap_or(who.member_id);
+            Ok((member, who.mode))
+        }
         Err(refusal) if matches!(refusal.code, ErrorCode::Unsupported | ErrorCode::NotBound) => {
-            let raw = transport.call_method("member.session_inspect", json!({}))?;
-            let inspected: SessionInspectResult =
-                serde_json::from_value(raw).map_err(|_| unreadable("member.session_inspect"))?;
-            Ok(inspected.session.employee_id)
+            let member = match transport.caller_member_id() {
+                Some(member) => member,
+                None => session_inspect_member(transport)?,
+            };
+            let mode = transport.session_mode().unwrap_or(SessionMode::Managed);
+            Ok((member, mode))
         }
         Err(refusal) => Err(refusal),
     }
+}
+
+fn session_inspect_member<T: OfficeTransport + ?Sized>(
+    transport: &mut T,
+) -> Result<String, Refusal> {
+    let raw = transport.call_method("member.session_inspect", json!({}))?;
+    let inspected: SessionInspectResult =
+        serde_json::from_value(raw).map_err(|_| unreadable("member.session_inspect"))?;
+    Ok(inspected.session.employee_id)
 }
 
 fn identity(card: &DirectoryCard) -> Value {

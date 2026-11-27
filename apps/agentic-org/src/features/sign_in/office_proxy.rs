@@ -205,11 +205,17 @@ pub(super) fn sign_in_and_execute(
     office: Option<&str>,
     ctx: &mut ExecutionContext,
 ) -> Result<(), CliError> {
-    if resource_and_verb(&forwarded) == Some(("agent", "bind")) {
-        return Err(
-            CliError::usage("`agent bind` runs via `agentic-org agent bind`")
-                .with_help("Run `agentic-org agent bind --member <id> --workspace <dir>` (or `agentic-org sign-in -- agent bind ...`)."),
-        );
+    if matches!(
+        resource_and_verb(&forwarded),
+        Some(("agent", "bind" | "renew"))
+    ) {
+        let verb = forwarded.get(1).map_or("bind", String::as_str);
+        return Err(CliError::usage(format!(
+            "`agent {verb}` runs via `agentic-org agent {verb}`"
+        ))
+        .with_help(format!(
+            "Run `agentic-org agent {verb} --help` (or `agentic-org sign-in -- agent {verb} ...`)."
+        )));
     }
     let (bind_workspace, hire_args) = super::hr_bind::split_bind_workspace(&forwarded)?;
     if let Some(workspace) = bind_workspace {

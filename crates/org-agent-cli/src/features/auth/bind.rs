@@ -108,12 +108,12 @@ pub fn workspace_label(root: &Path, explicit: Option<&str>) -> Result<String, Re
     let trimmed = label.trim();
     if trimmed.is_empty()
         || trimmed.len() > MAX_WORKSPACE_LABEL_BYTES
-        || trimmed.chars().any(char::is_control)
+        || label.chars().any(client::is_disallowed_display_char)
     {
         return Err(Refusal::new(
             ErrorCode::InvalidRequest,
             format!(
-                "The workspace label must be 1 to {MAX_WORKSPACE_LABEL_BYTES} bytes without control characters."
+                "The workspace label must be 1 to {MAX_WORKSPACE_LABEL_BYTES} bytes without control, line-separator, or bidi characters."
             ),
             "Pass a short readable label to --label.",
         ));
@@ -222,19 +222,22 @@ impl PreparedWorkspaceBind {
         })
     }
 
-    /// Generates a fresh Ed25519 keypair, records an approved external lease via
-    /// `member.external_bind`, and writes the workspace credentials outside Git.
+    /// Reuses an existing valid Ed25519 workspace keypair (or generates a fresh one), records an
+    /// approved external lease via `member.external_bind`, and writes the workspace credentials
+    /// outside Git.
     pub fn execute<T: OfficeTransport + ?Sized>(
         self,
         transport: &mut T,
     ) -> Result<BoundWorkspace, Refusal> {
-        let (pkcs8, pubkey) = client::generate_key()?;
+        let (pkcs8, pubkey) = client::load_or_generate_key(&self.state)?;
         let command_id = self.command_id.or_else(try_new_uuid_v7);
         let params = MemberExternalBindParams {
             command_id,
             employee_id: self.member,
             pubkey_ed25519_b64: pubkey,
             workspace_label: self.label,
+            hostname: client::local_hostname(),
+            workspace_path: client::optional_workspace_path(&self.canonical_root),
             ttl_secs: self.ttl_secs,
             takeover: self.takeover,
         };

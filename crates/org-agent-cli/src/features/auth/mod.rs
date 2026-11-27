@@ -47,11 +47,9 @@ Workspace sign-in (bring your own agent):
 ";
 
 /// What `agent-os login` answers from the rest of `agent-os`, given by the composition root so
-/// this slice names no other: the launch catalogue, and the bound `agent-os boot` briefing.
+/// this slice names no other: the bound `agent-os context` briefing (with `catalogue` inside it).
 pub(crate) struct LoginHooks {
-    /// The live table's launch catalogue (`commands` of the answer).
-    pub(crate) catalogue: fn() -> String,
-    /// The bound boot briefing over a transport (`boot` of the answer).
+    /// The bound context briefing over a transport (`data.context` of the answer).
     pub(crate) briefing: fn(&mut dyn OfficeTransport) -> Result<Value, Refusal>,
 }
 
@@ -250,7 +248,7 @@ pub(crate) fn office_for(binding: Binding) -> BoundOffice {
 
 /// The office of this process ([`resolve_binding`]): bound when the environment names a session
 /// token or a binding file ([`env_requests_binding`]), or a signed-in workspace, even when its
-/// token cannot be read yet, so `boot` never drops to offline.
+/// token cannot be read yet, so `context` never drops to offline.
 pub(crate) fn env_office() -> BoundOffice {
     office_for(resolve_binding()).with_binding_requested(env_requests_binding())
 }

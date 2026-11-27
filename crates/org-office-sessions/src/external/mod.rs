@@ -21,6 +21,7 @@
 //! `leases` (a leaf, never held across I/O or another lock).
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Component, Path};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -28,7 +29,7 @@ use serde::{Deserialize, Serialize};
 mod codes;
 mod nonces;
 
-pub(crate) use codes::PendingLogins;
+pub(crate) use codes::{PendingInsert, PendingLogins, PendingSnapshot};
 pub(crate) use nonces::{verify_signature, NonceBook, NonceEntry};
 
 /// Current on-disk lease format.
@@ -44,6 +45,10 @@ pub struct ExternalLeaseRecord {
     pub employee_id: String,
     pub pubkey_ed25519_b64: String,
     pub workspace_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
     pub approved_by: String,
     pub approved_at: String,
     pub expires_at: String,
@@ -200,23 +205,160 @@ pub(crate) fn decode_pubkey(b64: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests;
 
-/// Validates and trims an external workspace label against the wire byte budget and control-char
+/// Rejects control characters, Unicode line/paragraph separators, and bidirectional
+/// overrides/isolates that can spoof terminal or web approval surfaces.
+fn is_disallowed_display_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{200E}'
+                | '\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
+fn is_clean_absolute_workspace_path(trimmed: &str) -> bool {
+    let path = Path::new(trimmed);
+    if !path.is_absolute() {
+        return false;
+    }
+    if !path
+        .components()
+        .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
+    {
+        return false;
+    }
+    if trimmed == "/" {
+        return true;
+    }
+    if trimmed.ends_with('/') {
+        return false;
+    }
+    let Some(rest) = trimmed.strip_prefix('/') else {
+        return false;
+    };
+    !rest
+        .split('/')
+        .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+}
+
+/// Validates and trims an external workspace label against the wire byte budget and display-char
 /// rules (single choke-point shared by `auth.login_request` and `member.external_bind`).
 pub(crate) fn validate_workspace_label(label: &str) -> Result<String, org_proto::ApiError> {
     use org_proto::external_auth::MAX_WORKSPACE_LABEL_BYTES;
     let trimmed = label.trim();
     if trimmed.is_empty()
         || trimmed.len() > MAX_WORKSPACE_LABEL_BYTES
-        || trimmed.chars().any(char::is_control)
+        || label.chars().any(is_disallowed_display_char)
     {
         return Err(org_proto::ApiError::new(
             org_proto::ErrorCode::InvalidRequest,
             format!(
-                "the workspace label must be 1 to {MAX_WORKSPACE_LABEL_BYTES} bytes without control characters"
+                "the workspace label must be 1 to {MAX_WORKSPACE_LABEL_BYTES} bytes without control, line-separator, or bidi characters"
             ),
         ));
     }
     Ok(trimmed.to_owned())
+}
+
+/// Validates and trims an optional host name against the wire byte budget and display-char rules.
+pub(crate) fn validate_optional_hostname(
+    hostname: Option<&str>,
+) -> Result<Option<String>, org_proto::ApiError> {
+    use org_proto::external_auth::MAX_HOSTNAME_BYTES;
+    let Some(raw) = hostname else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > MAX_HOSTNAME_BYTES
+        || raw.chars().any(is_disallowed_display_char)
+    {
+        return Err(org_proto::ApiError::new(
+            org_proto::ErrorCode::InvalidRequest,
+            format!(
+                "hostname must be 1 to {MAX_HOSTNAME_BYTES} bytes without control, line-separator, or bidi characters"
+            ),
+        ));
+    }
+    Ok(Some(trimmed.to_owned()))
+}
+
+/// Validates and trims an optional workspace path against the wire byte budget, clean absolute
+/// path rules, and display-char rules (no relative paths, `.`/`..`, trailing `/`, or spoofing
+/// characters).
+pub(crate) fn validate_optional_workspace_path(
+    workspace_path: Option<&str>,
+) -> Result<Option<String>, org_proto::ApiError> {
+    use org_proto::external_auth::MAX_WORKSPACE_PATH_BYTES;
+    let Some(raw) = workspace_path else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > MAX_WORKSPACE_PATH_BYTES
+        || raw.chars().any(is_disallowed_display_char)
+        || !is_clean_absolute_workspace_path(trimmed)
+    {
+        return Err(org_proto::ApiError::new(
+            org_proto::ErrorCode::InvalidRequest,
+            format!(
+                "workspace_path must be a clean absolute path of 1 to {MAX_WORKSPACE_PATH_BYTES} bytes without control, line-separator, or bidi characters"
+            ),
+        ));
+    }
+    Ok(Some(trimmed.to_owned()))
+}
+
+/// Server-computed workspace familiarity from an agent's `external-history.jsonl` approvals.
+pub(crate) fn compute_workspace_familiarity(
+    history: &[org_proto::external_auth::ExternalHistoryEntry],
+    hostname: Option<&str>,
+    workspace_path: Option<&str>,
+    workspace_label: &str,
+    pubkey_fingerprint: &str,
+) -> (
+    org_proto::external_auth::WorkspaceFamiliarity,
+    Option<String>,
+    Option<String>,
+) {
+    use org_proto::external_auth::WorkspaceFamiliarity;
+    let latest = history
+        .iter()
+        .rev()
+        .filter(|entry| entry.event == "approved")
+        .find(|entry| history_matches_workspace(entry, hostname, workspace_path, workspace_label));
+    let Some(latest) = latest else {
+        return (WorkspaceFamiliarity::FirstTime, None, None);
+    };
+    let familiarity = if latest.pubkey_fingerprint.as_deref() == Some(pubkey_fingerprint) {
+        WorkspaceFamiliarity::ReturningKnownKey
+    } else {
+        WorkspaceFamiliarity::ReturningNewKey
+    };
+    (
+        familiarity,
+        latest.actor_id.clone(),
+        Some(latest.at.clone()),
+    )
+}
+
+fn history_matches_workspace(
+    entry: &org_proto::external_auth::ExternalHistoryEntry,
+    hostname: Option<&str>,
+    workspace_path: Option<&str>,
+    workspace_label: &str,
+) -> bool {
+    if entry.hostname.as_deref() != hostname {
+        return false;
+    }
+    if entry.workspace_path.is_some() || workspace_path.is_some() {
+        return entry.workspace_path.as_deref() == workspace_path;
+    }
+    entry.workspace_label.as_deref() == Some(workspace_label)
 }
 
 /// Built-in office agents (Chief of Staff, HR) run only inside the office: an external workspace

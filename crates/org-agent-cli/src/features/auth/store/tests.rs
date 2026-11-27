@@ -168,8 +168,63 @@ fn oversized_state_files_are_refused() {
     let tmp = tempfile::tempdir().unwrap();
     let state = WorkspaceState::for_root(&tmp.path().join("s"), tmp.path());
     state.ensure().unwrap();
-    std::fs::write(state.dir().join("binding.v1.json"), vec![b' '; 64 * 1024]).unwrap();
-    assert!(state.read_binding().is_err());
+    org_platform::fs::write_owner_only_file(
+        &state.dir().join("binding.v1.json"),
+        &vec![b' '; 64 * 1024],
+    )
+    .unwrap();
+    let err = state.read_binding().unwrap_err();
+    assert!(err.message.contains("too large"), "{err:?}");
+}
+
+#[test]
+fn key_reuse_refuses_symlink_and_loose_mode_and_self_heals_corrupted_der() {
+    use crate::features::auth::client;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("state");
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    let state = WorkspaceState::for_root(&root, &ws.canonicalize().unwrap());
+    state.ensure().unwrap();
+
+    // 1. Symlinked key.ed25519.pkcs8 -> read_key and load_or_generate_key fail closed.
+    let (valid_pkcs8, valid_pub) = client::generate_key().unwrap();
+    let target = tmp.path().join("outside-key.pkcs8");
+    org_platform::fs::write_owner_only_file(&target, &valid_pkcs8).unwrap();
+    let key_path = state.dir().join("key.ed25519.pkcs8");
+    std::os::unix::fs::symlink(&target, &key_path).unwrap();
+    assert!(state.read_key().is_err());
+    assert!(client::load_or_generate_key(&state).is_err());
+    std::fs::remove_file(&key_path).unwrap();
+
+    // 2. Loose-mode (0o644 / 0o640) key.ed25519.pkcs8 -> refused fail-closed on opened fd.
+    state.write_key(&valid_pkcs8).unwrap();
+    for loose in [0o644, 0o640] {
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(loose)).unwrap();
+        let read_err = state.read_key().unwrap_err();
+        assert!(
+            read_err.message.contains("too permissive"),
+            "mode {loose:o}: {read_err:?}"
+        );
+        let load_err = client::load_or_generate_key(&state).unwrap_err();
+        assert!(
+            load_err.message.contains("too permissive"),
+            "mode {loose:o}: {load_err:?}"
+        );
+    }
+
+    // Restoring 0o600 reuses the existing valid keypair verbatim.
+    std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let (reused_pkcs8, reused_pub) = client::load_or_generate_key(&state).unwrap();
+    assert_eq!(reused_pub, valid_pub);
+    assert_eq!(reused_pkcs8.as_slice(), valid_pkcs8.as_slice());
+
+    // 3. Corrupted DER bytes at 0o600 -> self-heals by generating a fresh valid Ed25519 keypair.
+    state.write_key(b"corrupted-not-valid-pkcs8-der").unwrap();
+    let (healed_pkcs8, healed_pub) = client::load_or_generate_key(&state).unwrap();
+    assert_ne!(healed_pub, valid_pub);
+    assert_eq!(client::public_key_b64(&healed_pkcs8).unwrap(), healed_pub);
 }
 
 #[test]

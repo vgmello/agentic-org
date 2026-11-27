@@ -160,6 +160,8 @@ fn secrets_and_owner_reads_are_never_hers_even_for_the_owner() {
         "member.set_may_hire",
         "member.external_approve",
         "member.external_bind",
+        "member.external_pending",
+        "member.external_renew",
         "git.push",
         "search.query",
         "suggestion.apply",
@@ -334,7 +336,13 @@ fn the_gate_refuses_her_before_any_method_runs_and_leaves_everyone_else_alone() 
     *port.current.lock().unwrap() = acting_for(owner());
     assert!(!refused("tess", false));
     // A secret or human-only Tess method stays refused even for the owner.
-    for method in ["provider.credential_status", "suggestion.apply", "tess.ask"] {
+    for method in [
+        "provider.credential_status",
+        "suggestion.apply",
+        "tess.ask",
+        "member.external_renew",
+        "member.external_pending",
+    ] {
         let forbidden = Request {
             id: 8,
             method: method.into(),

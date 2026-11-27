@@ -11,10 +11,14 @@ use org_proto::external_auth::{
 };
 use org_proto::{ApiError, ErrorCode};
 
-use crate::external::{decode_pubkey, refuse_builtin_agent, validate_workspace_label};
+use crate::external::{
+    decode_pubkey, refuse_builtin_agent, validate_optional_hostname,
+    validate_optional_workspace_path, validate_workspace_label,
+};
 use crate::manager::SessionManager;
 
 mod lease;
+mod pending;
 mod signin;
 
 impl SessionManager {
@@ -53,6 +57,8 @@ impl SessionManager {
             ));
         }
         let label = validate_workspace_label(&params.workspace_label)?;
+        let hostname = validate_optional_hostname(params.hostname.as_deref())?;
+        let workspace_path = validate_optional_workspace_path(params.workspace_path.as_deref())?;
         self.authorize_owner_or_person_inner(actor, false)?;
         let _serial = self
             .external
@@ -68,6 +74,8 @@ impl SessionManager {
             employee: &employee,
             pubkey_ed25519_b64: params.pubkey_ed25519_b64.trim(),
             workspace_label: &label,
+            hostname: hostname.as_deref(),
+            workspace_path: workspace_path.as_deref(),
             ttl,
             takeover: params.takeover,
             verb: "bind",

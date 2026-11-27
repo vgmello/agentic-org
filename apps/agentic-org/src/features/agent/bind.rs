@@ -4,21 +4,21 @@
 //! strictly outside Git (`0700` dir, `0600` files) so subsequent `agent-os` commands in `<dir>`
 //! authenticate immediately without an approval code.
 
-use std::io;
 use std::path::{Path, PathBuf};
 
-use clap::error::ErrorKind;
 use clap::Parser;
 use clap_complete::engine::ArgValueCompleter;
 use org_agent_cli::external_auth::bind::{
     parse_lease_ttl, PreparedWorkspaceBind, WorkspaceBindRequest,
 };
 use org_agent_cli::OfficeTransport;
-use org_cli_shell::context::{ColorMode, ExecutionContext};
-use org_command::Refusal;
-use org_host::setup_flow::ApprovedOfficeChannel;
-use serde_json::{json, Value};
+use org_cli_shell::context::ExecutionContext;
+use serde_json::json;
 
+use super::common::{
+    merge_inner_modes, merge_selector, open_channel, parse_verb_args, refusal_to_cli,
+    validate_member, InnerModes,
+};
 use crate::args::InstanceArgs;
 use crate::completers;
 use crate::error::CliError;
@@ -96,128 +96,26 @@ const FIELDS: [Column; 10] = [
     column("took_over_managed", "took_over_managed", Show::Plain),
 ];
 
-struct ChannelTransport(ApprovedOfficeChannel);
-
-impl OfficeTransport for ChannelTransport {
-    fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
-        self.0
-            .call_method(method, params)
-            .map_err(org_agent_cli::api_refusal)
-    }
-}
-
-fn refusal_to_cli(refusal: Refusal) -> CliError {
-    CliError::Office {
-        code: format!("office::{}", org_command::code_name(refusal.code)),
-        message: refusal.message,
-        hint: (!refusal.hint.is_empty()).then_some(refusal.hint),
-        exit: 1,
-    }
-}
-
-fn merge_inner_modes(args: &BindArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
-    if !(args.json
-        || args.quiet
-        || args.dry_run
-        || args.no_input
-        || args.no_color
-        || args.color.is_some())
-    {
-        return Ok(());
-    }
-    let mut modes = ctx.modes().clone();
-    modes.json |= args.json;
-    modes.quiet |= args.quiet;
-    modes.dry_run |= args.dry_run;
-    modes.no_input |= args.no_input;
-    modes.no_color |= args.no_color;
-    if let Some(color) = &args.color {
-        modes.color = ColorMode::from_flag(color).ok_or_else(|| {
-            CliError::usage("--color is auto, always or never")
-                .with_help("agentic-org agent bind --help")
-        })?;
-    }
-    if modes.quiet && modes.json {
-        return Err(CliError::usage(
-            "--quiet and --json cannot be used together",
-        ));
-    }
-    *ctx = ExecutionContext::detect(modes);
-    Ok(())
-}
-
 fn parse_bind_args(
     raw_args: &[String],
     ctx: &mut ExecutionContext,
 ) -> Result<Option<BindArgs>, CliError> {
-    let argv = std::iter::once("agentic-org agent bind".to_owned()).chain(raw_args.iter().cloned());
-    match BindArgs::try_parse_from(argv) {
-        Ok(args) => {
-            merge_inner_modes(&args, ctx)?;
-            Ok(Some(args))
-        }
-        Err(error) if error.kind() == ErrorKind::DisplayHelp => {
-            let styled = error.render();
-            let text = if ctx.stdout_color() {
-                styled.ansi().to_string()
-            } else {
-                styled.to_string()
-            };
-            ctx.out(&text)?;
-            Ok(None)
-        }
-        Err(error) => {
-            if raw_args.iter().any(|arg| arg == "--json") && !ctx.modes().json {
-                let mut modes = ctx.modes().clone();
-                modes.json = true;
-                *ctx = ExecutionContext::detect(modes);
-            }
-            let rendered = error.render().to_string();
-            let mut lines = rendered.lines().filter(|line| !line.trim().is_empty());
-            let message = lines
-                .next()
-                .unwrap_or("the command line could not be read")
-                .trim_start_matches("error: ")
-                .to_owned();
-            let help = lines.collect::<Vec<_>>().join("\n");
-            let usage = CliError::usage(message);
-            Err(if help.is_empty() {
-                usage
-            } else {
-                usage.with_help(help)
-            })
-        }
-    }
-}
-
-fn validate_member(raw: &str) -> Result<&str, CliError> {
-    if raw.chars().any(char::is_control) {
-        return Err(
-            CliError::usage("Missing or invalid agent reference for --member.")
-                .with_help("Pass an agent @handle or employee UUIDv7 to --member."),
-        );
-    }
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(
-            CliError::usage("Missing or invalid agent reference for --member.")
-                .with_help("Pass an agent @handle or employee UUIDv7 to --member."),
-        );
-    }
-    Ok(trimmed)
-}
-
-fn merge_selector<'a>(
-    flag: &str,
-    outer: Option<&'a str>,
-    inner: Option<&'a str>,
-) -> Result<Option<&'a str>, CliError> {
-    match (outer, inner) {
-        (Some(a), Some(b)) if a != b => {
-            Err(CliError::usage(format!("{flag} is given more than once")))
-        }
-        (outer, inner) => Ok(inner.or(outer)),
-    }
+    let Some(args) = parse_verb_args::<BindArgs>("agentic-org agent bind", raw_args, ctx)? else {
+        return Ok(None);
+    };
+    merge_inner_modes(
+        &InnerModes {
+            json: args.json,
+            quiet: args.quiet,
+            dry_run: args.dry_run,
+            no_input: args.no_input,
+            no_color: args.no_color,
+            color: args.color.as_deref(),
+            help_cmd: "agentic-org agent bind --help",
+        },
+        ctx,
+    )?;
+    Ok(Some(args))
 }
 
 fn prepare_bind(
@@ -293,12 +191,7 @@ fn run_with_defaults(
         );
         return Ok(ctx.render_dry_run(&summary, &plan)?);
     }
-    let channel = org_host::setup_flow::open_for_command(
-        target.explicit_instance(),
-        target.explicit_office(),
-        &mut io::stderr(),
-    )?;
-    let mut transport = ChannelTransport(channel);
+    let mut transport = open_channel(target.explicit_instance(), target.explicit_office())?;
     execute_prepared(prepared, &mut transport, ctx)
 }
 

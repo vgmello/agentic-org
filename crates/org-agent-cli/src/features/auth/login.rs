@@ -22,15 +22,17 @@ use crate::runtime::transport::OfficeTransport;
 pub const LOGIN_HELP: &str = "Usage: agent-os login --as @<handle> [--office <office-id> | --socket <path>] [--wait <seconds>] [--workspace <dir>] [--label <text>]
 Use when: signing this workspace (a terminal, IDE or external agent harness) in as an organization agent you bring yourself.
 
-Generates a workspace Ed25519 key, prints an approval code for a person to approve
+Generates (or reuses) a workspace Ed25519 key, discovers the local office socket automatically
+unless --office or --socket is passed, prints an approval code for a person to approve
 (`agentic-org agent approve <code>` or the agent's page in the web app), waits for it (--wait,
 default 120 seconds; the code itself stays valid for 10 minutes), and saves the binding outside
 Git. Afterwards every agent-os command in this folder tree acts as the agent. Approving a new
-sign-in supersedes the agent's previous external session. The answer carries `boot`: who the agent
-is, the standing rules, the guides and the must-follow processes (`agent-os boot` reads them again).
+sign-in supersedes the agent's previous external session. The answer carries `context` (the same
+schema as `agent-os context`, including `catalogue`, standing rules, guides and must-follow
+processes).
 
 Example:
-  agent-os login --as @ada --office 0193a5c0-0000-7000-8000-000000000001
+  agent-os login --as @ada
 ";
 
 pub const WHOAMI_HELP: &str = "Usage: agent-os whoami
@@ -99,6 +101,8 @@ pub(super) fn request_login(
     member: &str,
     pubkey: &str,
     label: &str,
+    hostname: Option<String>,
+    workspace_path: Option<String>,
 ) -> Result<AuthLoginRequestResult, Refusal> {
     let request = call::<AuthLoginRequest>(
         &target.connect()?,
@@ -106,6 +110,8 @@ pub(super) fn request_login(
             member: member.to_owned(),
             pubkey_ed25519_b64: pubkey.to_owned(),
             workspace_label: label.to_owned(),
+            hostname,
+            workspace_path,
         },
     )?;
     if target
@@ -227,8 +233,15 @@ fn run_login(args: &[String], hooks: &LoginHooks) -> Result<Printed, LifecycleEr
     let label = flags
         .value("label")
         .map_or_else(|| label_for(&root), str::to_owned);
-    let (pkcs8, pubkey) = client::generate_key()?;
-    let request = request_login(&target, member, &pubkey, &label)?;
+    let (pkcs8, pubkey) = client::load_or_generate_key(&state)?;
+    let request = request_login(
+        &target,
+        member,
+        &pubkey,
+        &label,
+        client::local_hostname(),
+        client::optional_workspace_path(&root),
+    )?;
     eprintln!(
         "To approve this sign-in as @{}, a person runs:\n  {}\nor approves it on the agent's page in the Agentic Org web app ({}).\nWaiting for approval (the code expires at {})...",
         request.handle.as_deref().unwrap_or(&request.member_id),
@@ -246,8 +259,37 @@ fn run_login(args: &[String], hooks: &LoginHooks) -> Result<Printed, LifecycleEr
             session_id: &session_id,
         },
     )?;
+    let binding = save_login_state(
+        &state,
+        &root,
+        &target,
+        &request,
+        &session_id,
+        &pkcs8,
+        &token,
+    )?;
+    let bound = target.connect()?;
+    client::bind(&bound, &request.member_id, &token.token)?;
+    let who = call::<AuthWhoami>(&bound, &Empty {})?;
+    let mut data = serde_json::to_value(&who).unwrap_or(Value::Null);
+    if let Value::Object(map) = &mut data {
+        map.insert("workspace_root".into(), json!(binding.workspace_root));
+        map.insert("context".into(), context_briefing(&state, hooks));
+    }
+    Ok(success(&data))
+}
+
+fn save_login_state(
+    state: &WorkspaceState,
+    root: &Path,
+    target: &Target,
+    request: &AuthLoginRequestResult,
+    session_id: &str,
+    pkcs8: &[u8],
+    token: &org_proto::external_auth::AuthExchangeResult,
+) -> Result<WorkspaceBinding, Refusal> {
     state.ensure()?;
-    state.write_key(&pkcs8)?;
+    state.write_key(pkcs8)?;
     let binding = WorkspaceBinding {
         version: 1,
         workspace_root: root.display().to_string(),
@@ -256,46 +298,32 @@ fn run_login(args: &[String], hooks: &LoginHooks) -> Result<Printed, LifecycleEr
         runtime_dir: target.runtime_dir.as_ref().map(|p| p.display().to_string()),
         member_id: request.member_id.clone(),
         handle: request.handle.clone(),
-        session_id: session_id.clone(),
+        session_id: session_id.to_owned(),
         lease_expires_at: token.lease_expires_at.clone(),
     };
     state.write_binding(&binding)?;
     state.write_token(&TokenFile {
         version: 1,
-        session_id,
+        session_id: session_id.to_owned(),
         token: token.token.clone(),
         expires_at: token.expires_at.clone(),
     })?;
-    let bound = target.connect()?;
-    client::bind(&bound, &request.member_id, &token.token)?;
-    let who = call::<AuthWhoami>(&bound, &Empty {})?;
-    let mut data = serde_json::to_value(&who).unwrap_or(Value::Null);
-    if let Value::Object(map) = &mut data {
-        map.insert("workspace_root".into(), json!(binding.workspace_root));
-        map.insert("commands".into(), json!((hooks.catalogue)()));
-        map.insert("boot".into(), boot_briefing(&state, hooks));
-    }
-    Ok(success(&data))
+    Ok(binding)
 }
 
-/// The bound `agent-os boot` briefing of the workspace just signed in, read over its saved binding
-/// (without the catalogue, which `commands` carries). The sign-in stands when the office cannot
-/// answer it: then `next_action` says to read it with `agent-os boot`.
-fn boot_briefing(state: &WorkspaceState, hooks: &LoginHooks) -> Value {
+/// The bound `agent-os context` briefing (with `catalogue` inside it) of the workspace just signed
+/// in, read over its saved binding. The sign-in stands when the office cannot answer it: then
+/// `next_action` says to read it with `agent-os context`.
+fn context_briefing(state: &WorkspaceState, hooks: &LoginHooks) -> Value {
     let briefing = super::binding_of(state)
         .ok_or_else(super::not_signed_in)
         .and_then(|binding| (hooks.briefing)(&mut super::office_for(binding)));
     match briefing {
-        Ok(mut boot) => {
-            if let Value::Object(map) = &mut boot {
-                map.remove("catalogue");
-            }
-            boot
-        }
+        Ok(context) => context,
         Err(refusal) => json!({
             "mode": "unavailable",
             "next_action": format!(
-                "Signed in, but the boot briefing could not be read ({}): run `agent-os boot` in this workspace before your first command.",
+                "Signed in, but the context briefing could not be read ({}): run `agent-os context` in this workspace before your first command.",
                 refusal.message
             ),
         }),

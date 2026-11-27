@@ -301,6 +301,23 @@ impl serve::ExternalAuthPort for ExternalAuth {
         self.0.external_sessions(actor, employee_id, limit)
     }
 
+    fn pending(
+        &self,
+        actor: &str,
+        employee_id: Option<&str>,
+    ) -> Result<ext::MemberExternalPendingResult, org_proto::ApiError> {
+        self.0.external_pending(actor, employee_id)
+    }
+
+    fn renew(
+        &self,
+        actor: &str,
+        employee_id: &str,
+        params: &ext::MemberExternalRenewParams,
+    ) -> Result<ext::ExternalSessionView, org_proto::ApiError> {
+        self.0.external_renew(actor, employee_id, params)
+    }
+
     fn revoke(
         &self,
         actor: &str,

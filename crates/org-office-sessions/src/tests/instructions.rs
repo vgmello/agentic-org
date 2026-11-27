@@ -3,8 +3,8 @@
 
 use org_agent_runtime::{AgentIdentity, AgentName, PermissionPolicy, SandboxSpec, SessionKind};
 use org_process::{
-    find_builtin_skill, list_builtin_skills, CHIEF_OF_STAFF_GUIDANCE, CORE_RULES, HR_LEAD,
-    MANAGED_SESSION,
+    find_builtin_skill, list_builtin_skills, CHIEF_OF_STAFF_GUIDANCE, CORE_RULES, EXTERNAL_RULES,
+    HR_LEAD, MANAGED_SESSION,
 };
 use org_proto::org::{Member, OrgSnapshot, Position, Team};
 
@@ -149,11 +149,12 @@ fn the_chief_of_staff_gets_her_duties_in_part_five_after_the_shared_prefix() {
 }
 
 #[test]
-fn agent_os_boot_answers_the_same_rules_and_guide_index_as_the_office() {
-    // `agent-os boot --offline` answers from the binary alone; what it carries must be what a
-    // managed session receives: the same core rules, and every built-in guide's key and
-    // description in `skill list` order.
+fn agent_os_context_answers_the_same_rules_and_guide_index_as_the_office() {
+    // `agent-os context` carries the exact standing rules (`CORE_RULES` for managed,
+    // `EXTERNAL_RULES` for external) and every built-in guide's key and description in
+    // `skill list` order.
     assert_eq!(org_agent_cli::CORE_RULES, CORE_RULES);
+    assert_eq!(org_agent_cli::EXTERNAL_RULES, EXTERNAL_RULES);
     let served: Vec<(&str, &str)> = list_builtin_skills()
         .iter()
         .map(|skill| (skill.key, skill.description))

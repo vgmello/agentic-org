@@ -14,8 +14,9 @@ use zeroize::Zeroizing;
 
 use crate::credentials::{format_rfc3339_ms, is_safe_id, now_ms};
 use crate::external::{
-    decode_pubkey, refuse_builtin_agent, validate_workspace_label, verify_signature,
-    ExternalLeaseRecord, NonceEntry,
+    decode_pubkey, refuse_builtin_agent, validate_optional_hostname,
+    validate_optional_workspace_path, validate_workspace_label, verify_signature,
+    ExternalLeaseRecord, NonceEntry, PendingInsert,
 };
 use crate::manager::SessionManager;
 
@@ -41,6 +42,8 @@ impl SessionManager {
             ));
         }
         let label = validate_workspace_label(&params.workspace_label)?;
+        let hostname = validate_optional_hostname(params.hostname.as_deref())?;
+        let workspace_path = validate_optional_workspace_path(params.workspace_path.as_deref())?;
         let employee = self.require_active_agent(employee_id)?;
         refuse_builtin_agent(&employee)?;
         let emp_id = employee.id.as_str();
@@ -49,13 +52,15 @@ impl SessionManager {
             .pending
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .insert(
-                self.office.next_uuid_v7(),
-                emp_id,
-                params.pubkey_ed25519_b64.trim(),
-                &label,
-                now_ms(),
-            )?;
+            .insert(PendingInsert {
+                request_id: self.office.next_uuid_v7(),
+                employee_id: emp_id,
+                pubkey_ed25519_b64: params.pubkey_ed25519_b64.trim(),
+                workspace_label: &label,
+                hostname: hostname.as_deref(),
+                workspace_path: workspace_path.as_deref(),
+                now_ms: now_ms(),
+            })?;
         Ok(AuthLoginRequestResult {
             request_id: entry.request_id,
             member_id: emp_id.to_owned(),

@@ -13,20 +13,20 @@ const DURABLE_OPTION_HELP: &str = "Answer only after the drive has it";
 /// The four lines that open `agent-os --help` in a shell with no office binding.
 const QUICKSTART_UNBOUND: &str = "Agent quickstart: this shell has no office binding.
   Sign in first: agent-os login --as @<handle>
-  Rules, commands and guides without the office: agent-os boot --offline --format yaml
+  Rules, commands and guides without the office: agent-os context --offline --format yaml
   Office-started sessions are bound already and get their rules on turn 1.
 ";
 
 /// The four lines that open `agent-os --help` in a bound shell: an office-started session
 /// (`AGENT_OS_*`) or a workspace signed in with `agent-os login`.
 const QUICKSTART_BOUND: &str = "Agent quickstart: this shell is bound to its office (an office-started session or a signed-in workspace).
-  Rules, commands, guides and must-follow processes: agent-os boot --format yaml
-  Office-started sessions get them on turn 1 and `agent-os login` prints them: re-run only after context compaction.
+  Rules, commands, guides and must-follow processes: agent-os context --format yaml
+  Office-started sessions get them on turn 1 and `agent-os login` returns them in `data.context`: re-run only after context compaction.
   Then: agent-os whoami, agent-os <resource> --help, and agent-os skill list for guides.
 ";
 
 /// The quickstart `agent-os --help` opens with: how to get bound when `bound` is false, and
-/// when `agent-os boot` is worth running when it is true.
+/// when `agent-os context` is worth running when it is true.
 pub(crate) fn quickstart(bound: bool) -> &'static str {
     if bound {
         QUICKSTART_BOUND

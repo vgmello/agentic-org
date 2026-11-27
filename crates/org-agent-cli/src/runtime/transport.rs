@@ -31,7 +31,7 @@ pub trait OfficeTransport {
     }
 
     /// Whether this transport speaks for a caller the office bound, so a command that can run
-    /// without the office (`session boot`) must ask it and fail closed when it cannot. A
+    /// without the office (`session context`) must ask it and fail closed when it cannot. A
     /// grant-bound person channel always is; `agent-os` is when its environment names a session
     /// token or a binding file, whether or not that binding then works.
     fn is_bound(&self) -> bool {
@@ -40,6 +40,11 @@ pub trait OfficeTransport {
 
     /// The bound caller's employee ID, when the transport knows it without asking the office.
     fn caller_member_id(&self) -> Option<String> {
+        None
+    }
+
+    /// The session mode (`managed` or `external`) when known locally without asking the office.
+    fn session_mode(&self) -> Option<org_proto::external_auth::SessionMode> {
         None
     }
 
@@ -73,6 +78,10 @@ impl<T: OfficeTransport + ?Sized> OfficeTransport for &mut T {
 
     fn caller_member_id(&self) -> Option<String> {
         (**self).caller_member_id()
+    }
+
+    fn session_mode(&self) -> Option<org_proto::external_auth::SessionMode> {
+        (**self).session_mode()
     }
 
     fn take_waiting_messages(&mut self) -> Option<u32> {

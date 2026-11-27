@@ -139,7 +139,7 @@ managed employees use their injected binding.
 
 ## Session start: check for a handover
 
-If Agentic Org standing rules and the agent-os catalogue are not already in your system prompt, run `agent-os boot --format yaml` once before acting (skip on Turn 1 in managed sessions; re-run only after context compaction).
+If Agentic Org standing rules and the agent-os catalogue are not already in your system prompt, run `agent-os context --format yaml` once before acting (skip on Turn 1 in managed sessions and right after `agent-os login`; re-run only after context compaction).
 
 First read `backlog/docs/workstreams/doc-14 - Workstreams-Overview.md` and your stream's file
 (`doc-15` backend, `doc-16` linux or `doc-17` UI under parent repo `backlog/docs/workstreams/`): it is the shared record of where each stream stands and

@@ -1,20 +1,22 @@
-//! `session boot`: offline from this build alone and small, bound with identity and whole
-//! must-follow documents within 8 KiB, and never offline when a binding fails.
+//! `session context`: offline from this build alone and small, bound (`managed` or `external`)
+//! with mode-truthful standing rules, identity and whole must-follow documents within 8 KiB,
+//! never offline when a binding fails, and zero legacy `boot` / `instructions overview` shims.
 
+use org_proto::external_auth::SessionMode;
 use org_proto::processes::{
     DocumentKindWire, DocumentStatusWire, EffectiveProcessEntryWire, ProcessDocumentWire,
     ProcessEffectiveResult,
 };
+use org_proto::ErrorCode;
 use serde_json::{json, Value};
 
-use super::{CORE_RULES, MANDATORY_LIMIT, SKILL_INDEX};
+use super::{CORE_RULES, EXTERNAL_RULES, MANDATORY_LIMIT, SKILL_INDEX};
 use crate::runtime::transport::{OfficeTransport, Refusal, TransportOffice};
-use org_proto::ErrorCode;
 
-/// The most bytes an offline boot envelope may take, in any format.
+/// The most bytes an offline context envelope may take, in any format.
 const OFFLINE_LIMIT: usize = 6 * 1024;
 
-/// A transport that answers `who` and `process.effective`, or refuses every call.
+/// A transport that answers `auth.whoami`, `who` and `process.effective`, or refuses every call.
 struct Stub {
     bound: bool,
     calls: Vec<(String, Value)>,
@@ -22,6 +24,10 @@ struct Stub {
     refuse: bool,
     /// The employee the binding names; `None` for a grant-bound person's channel.
     caller: Option<&'static str>,
+    /// Local session mode hint (`Some(External)` for a workspace binding).
+    local_mode: Option<SessionMode>,
+    /// Mode `auth.whoami` answers with when called.
+    whoami_mode: SessionMode,
     /// How `auth.whoami` is refused; `None` answers it.
     whoami_refused: Option<ErrorCode>,
 }
@@ -37,6 +43,8 @@ impl Stub {
             documents: Vec::new(),
             refuse: false,
             caller: Some(AGENT),
+            local_mode: None,
+            whoami_mode: SessionMode::Managed,
             whoami_refused: None,
         }
     }
@@ -106,7 +114,13 @@ impl OfficeTransport for Stub {
         match method {
             "auth.whoami" => match self.whoami_refused {
                 Some(code) => Err(Refusal::new(code, "no auth.whoami here", "Retry.")),
-                None => Ok(json!({"member_id": PERSON, "office_id": "o", "mode": "managed"})),
+                None => {
+                    let mode = match self.whoami_mode {
+                        SessionMode::External => "external",
+                        _ => "managed",
+                    };
+                    Ok(json!({"member_id": PERSON, "office_id": "o", "mode": mode}))
+                }
             },
             "member.session_inspect" => Err(Refusal::new(
                 ErrorCode::NotFound,
@@ -138,7 +152,7 @@ impl OfficeTransport for Stub {
                 })
                 .expect("encodes"))
             }
-            other => panic!("boot called `{other}`"),
+            other => panic!("context called `{other}`"),
         }
     }
 
@@ -149,9 +163,13 @@ impl OfficeTransport for Stub {
     fn caller_member_id(&self) -> Option<String> {
         self.caller.map(str::to_owned)
     }
+
+    fn session_mode(&self) -> Option<SessionMode> {
+        self.local_mode
+    }
 }
 
-fn boot(stub: Stub, line: &[&str]) -> (crate::Output, Stub) {
+fn context(stub: Stub, line: &[&str]) -> (crate::Output, Stub) {
     let args: Vec<String> = line.iter().map(|word| (*word).to_owned()).collect();
     let mut office = TransportOffice(stub);
     let output = crate::execute_with_office("agent-os", &args, &mut office);
@@ -163,14 +181,13 @@ fn envelope(output: &crate::Output) -> Value {
 }
 
 #[test]
-fn an_unbound_boot_is_offline_asks_no_office_and_stays_small_in_every_format() {
+fn an_unbound_context_is_offline_asks_no_office_and_stays_small_in_every_format() {
     for line in [
-        &["boot"][..],
-        &["session", "boot"],
-        &["instructions", "overview"],
-        &["boot", "--offline"],
+        &["context"][..],
+        &["session", "context"],
+        &["context", "--offline"],
     ] {
-        let (output, stub) = boot(Stub::new(false), line);
+        let (output, stub) = context(Stub::new(false), line);
         assert_eq!(output.exit_code, 0, "{line:?}: {}", output.stdout);
         assert!(stub.calls.is_empty(), "{line:?} asked the office");
         assert!(
@@ -195,13 +212,15 @@ fn an_unbound_boot_is_offline_asks_no_office_and_stays_small_in_every_format() {
             Some(SKILL_INDEX.len())
         );
         assert!(data.get("identity").is_none() && data.get("mandatory").is_none());
-        assert!(data["next_action"]
-            .as_str()
-            .unwrap()
-            .contains("login --as @<handle>"));
+        let next = data["next_action"].as_str().unwrap();
+        assert!(next.contains("login --as @<handle>"), "{next}");
+        assert!(
+            next.contains("returns your context automatically"),
+            "{next}"
+        );
     }
     for format in ["yaml", "compact"] {
-        let (output, _) = boot(Stub::new(false), &["boot", "--format", format]);
+        let (output, _) = context(Stub::new(false), &["context", "--format", format]);
         assert_eq!(output.exit_code, 0);
         assert!(
             output.stdout.len() <= OFFLINE_LIMIT,
@@ -212,8 +231,27 @@ fn an_unbound_boot_is_offline_asks_no_office_and_stays_small_in_every_format() {
 }
 
 #[test]
-fn an_offline_boot_in_a_bound_shell_asks_nothing_and_points_to_the_bound_boot() {
-    let (output, stub) = boot(Stub::new(true), &["boot", "--offline"]);
+fn legacy_boot_and_instructions_overview_shorthands_are_completely_removed() {
+    for legacy in [
+        &["boot"][..],
+        &["session", "boot"],
+        &["instructions", "overview"],
+        &["boot", "--offline"],
+    ] {
+        let (output, stub) = context(Stub::new(false), legacy);
+        assert_eq!(
+            output.exit_code, 2,
+            "legacy {legacy:?} must fail with usage error: {}",
+            output.stdout
+        );
+        assert!(stub.calls.is_empty());
+        assert_eq!(envelope(&output)["ok"], false);
+    }
+}
+
+#[test]
+fn an_offline_context_in_a_bound_shell_asks_nothing_and_points_to_the_bound_context() {
+    let (output, stub) = context(Stub::new(true), &["context", "--offline"]);
     assert_eq!(output.exit_code, 0, "{}", output.stdout);
     assert!(stub.calls.is_empty());
     let data = &envelope(&output)["data"];
@@ -227,10 +265,10 @@ fn an_offline_boot_in_a_bound_shell_asks_nothing_and_points_to_the_bound_boot() 
 #[test]
 fn project_needs_the_office_and_is_never_dropped() {
     for (bound, line) in [
-        (true, &["boot", "--offline", "--project", "P-1"][..]),
-        (false, &["boot", "--project", "P-1"]),
+        (true, &["context", "--offline", "--project", "P-1"][..]),
+        (false, &["context", "--project", "P-1"]),
     ] {
-        let (output, stub) = boot(Stub::new(bound), line);
+        let (output, stub) = context(Stub::new(bound), line);
         assert_eq!(output.exit_code, 1, "{line:?}: {}", output.stdout);
         assert_eq!(envelope(&output)["error"]["code"], "invalid_request");
         assert!(stub.calls.is_empty());
@@ -238,13 +276,14 @@ fn project_needs_the_office_and_is_never_dropped() {
 }
 
 #[test]
-fn a_bound_boot_answers_identity_and_whole_must_follow_documents() {
+fn a_bound_managed_context_answers_managed_mode_core_rules_and_whole_must_follow_documents() {
     let mut stub = Stub::new(true);
     stub.documents = vec![(Some("sec"), 100, true), (Some("style"), 50, false)];
-    let (output, stub) = boot(stub, &["boot", "--project", "P-1"]);
+    let (output, stub) = context(stub, &["context", "--project", "P-1"]);
     assert_eq!(output.exit_code, 0, "{}", output.stdout);
     let data = &envelope(&output)["data"];
-    assert_eq!(data["mode"], "bound");
+    assert_eq!(data["mode"], "managed");
+    assert_eq!(data["rules"], CORE_RULES.trim_end());
     assert_eq!(data["identity"]["handle"], "ada");
     assert_eq!(data["identity"]["teams"][0]["name"], "Core");
     let mandatory = data["mandatory"].as_array().unwrap();
@@ -263,6 +302,32 @@ fn a_bound_boot_answers_identity_and_whole_must_follow_documents() {
 }
 
 #[test]
+fn a_bound_external_context_answers_external_mode_and_external_rules_without_managed_wake_copy() {
+    // 1. Local workspace binding knows external mode directly (skips extra auth.whoami call).
+    let mut stub = Stub::new(true);
+    stub.local_mode = Some(SessionMode::External);
+    let (output, stub) = context(stub, &["context"]);
+    assert_eq!(output.exit_code, 0, "{}", output.stdout);
+    let data = &envelope(&output)["data"];
+    assert_eq!(data["mode"], "external");
+    assert_eq!(data["rules"], EXTERNAL_RULES.trim_end());
+    let rules = data["rules"].as_str().unwrap();
+    assert!(!rules.contains("Nobody watches your terminal"));
+    assert!(!rules.contains("end your turn: the office wakes you"));
+    assert_eq!(stub.methods(), ["who", "process.effective"]);
+
+    // 2. `agent-os exec` env-token external session learns `external` from `auth.whoami`.
+    let mut stub = Stub::new(true);
+    stub.whoami_mode = SessionMode::External;
+    let (output, stub) = context(stub, &["context"]);
+    assert_eq!(output.exit_code, 0, "{}", output.stdout);
+    let data = &envelope(&output)["data"];
+    assert_eq!(data["mode"], "external");
+    assert_eq!(data["rules"], EXTERNAL_RULES.trim_end());
+    assert_eq!(stub.methods(), ["auth.whoami", "who", "process.effective"]);
+}
+
+#[test]
 fn must_follow_documents_over_8_kib_are_left_out_whole_and_named() {
     let mut stub = Stub::new(true);
     stub.documents = vec![
@@ -270,7 +335,7 @@ fn must_follow_documents_over_8_kib_are_left_out_whole_and_named() {
         (Some("second"), 4000, true),
         (None, 10, true),
     ];
-    let (output, _) = boot(stub, &["boot"]);
+    let (output, _) = context(stub, &["context"]);
     assert_eq!(output.exit_code, 0, "{}", output.stdout);
     let data = &envelope(&output)["data"];
     let mandatory = data["mandatory"].as_array().unwrap();
@@ -300,10 +365,10 @@ fn must_follow_documents_over_8_kib_are_left_out_whole_and_named() {
 }
 
 #[test]
-fn a_bound_boot_whose_office_refuses_fails_closed_and_never_goes_offline() {
+fn a_bound_context_whose_office_refuses_fails_closed_and_never_goes_offline() {
     let mut stub = Stub::new(true);
     stub.refuse = true;
-    let (output, _) = boot(stub, &["boot"]);
+    let (output, _) = context(stub, &["context"]);
     assert_eq!(output.exit_code, 1, "{}", output.stdout);
     let env = envelope(&output);
     assert_eq!(env["ok"], false);
@@ -315,7 +380,7 @@ fn a_binding_requested_by_the_environment_fails_closed_without_a_token() {
     use crate::runtime::binding::Binding;
     use crate::runtime::office::BoundOffice;
     let mut office = BoundOffice::new(Binding::default()).with_binding_requested(true);
-    let args = vec!["boot".to_owned()];
+    let args = vec!["context".to_owned()];
     let output = crate::execute_with_office("agent-os", &args, &mut TransportOffice(&mut office));
     assert_eq!(output.exit_code, 1, "{}", output.stdout);
     assert_eq!(envelope(&output)["error"]["code"], "not_authorized");
@@ -327,10 +392,10 @@ fn a_binding_requested_by_the_environment_fails_closed_without_a_token() {
 }
 
 #[test]
-fn a_person_on_a_grant_boots_as_the_member_the_office_bound_never_as_an_agent_session() {
+fn a_person_on_a_grant_reads_context_as_the_member_the_office_bound_never_as_an_agent_session() {
     let mut stub = Stub::new(true);
     stub.caller = None;
-    let (output, stub) = boot(stub, &["boot"]);
+    let (output, stub) = context(stub, &["context"]);
     assert_eq!(output.exit_code, 0, "{}", output.stdout);
     assert_eq!(envelope(&output)["data"]["identity"]["id"], PERSON);
     assert_eq!(
@@ -357,7 +422,7 @@ fn an_office_without_auth_whoami_falls_back_to_the_session_and_any_other_refusal
         let mut stub = Stub::new(true);
         stub.caller = None;
         stub.whoami_refused = Some(code);
-        let (output, stub) = boot(stub, &["boot"]);
+        let (output, stub) = context(stub, &["context"]);
         assert_eq!(output.exit_code, 1, "{code:?}: {}", output.stdout);
         assert_eq!(envelope(&output)["ok"], false);
         assert_eq!(stub.methods(), expected, "{code:?}");
@@ -365,7 +430,7 @@ fn an_office_without_auth_whoami_falls_back_to_the_session_and_any_other_refusal
 }
 
 #[test]
-fn a_signed_in_workspace_is_bound_and_its_boot_fails_closed_when_the_binding_is_gone() {
+fn a_signed_in_workspace_is_bound_and_its_context_fails_closed_when_the_binding_is_gone() {
     use crate::runtime::binding::Binding;
     use crate::runtime::office::BoundOffice;
     let dir = tempfile::tempdir().expect("tempdir");
@@ -378,7 +443,7 @@ fn a_signed_in_workspace_is_bound_and_its_boot_fails_closed_when_the_binding_is_
         office.is_bound(),
         "a workspace binding without a token yet is bound"
     );
-    let args = vec!["boot".to_owned()];
+    let args = vec!["context".to_owned()];
     let output = crate::execute_with_office("agent-os", &args, &mut TransportOffice(&mut office));
     assert_eq!(output.exit_code, 1, "{}", output.stdout);
     let env = envelope(&output);

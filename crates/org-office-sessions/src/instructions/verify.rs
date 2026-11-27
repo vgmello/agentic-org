@@ -523,7 +523,7 @@ fn check_line(line: &CitedLine, table: &CommandTable) -> Option<String> {
     if let Some(why) = &line.refused {
         return Some(why.clone());
     }
-    // The table's own shorthands (`who`, `task note`, `boot`), as `agent-os` reads them.
+    // The table's own shorthands (`who`, `task note`, `context`), as `agent-os` reads them.
     let args = table.expand(&line.args).into_owned();
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     match words.as_slice() {
