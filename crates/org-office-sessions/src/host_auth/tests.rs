@@ -134,9 +134,13 @@ fn allows_host_subscription_auth_enforces_mode_and_empty_vault() {
 
 #[test]
 fn host_config_dir_for_claude_is_always_none_and_cred_read_is_bounded() {
-    assert!(host_config_dir_for("claude", true).is_none());
-    assert!(host_config_dir_for("codex", false).is_none());
-    assert!(host_config_dir_for("agy", false).is_none());
+    use org_agent_runtime::AgentRuntime as _;
+    let claude = org_agent_runtime_claude::ClaudeRuntime::new();
+    let codex = org_agent_runtime_codex::CodexRuntime::new();
+    let agy = org_agent_runtime_agy::AgyRuntime::new();
+    assert!(host_config_dir_for(claude.host_profile().host_config_subdir, true).is_none());
+    assert!(host_config_dir_for(codex.host_profile().host_config_subdir, false).is_none());
+    assert!(host_config_dir_for(agy.host_profile().host_config_subdir, false).is_none());
 
     let dir = tempfile::tempdir().unwrap();
     let valid = dir.path().join("valid.json");

@@ -199,6 +199,10 @@ impl AgentRuntime for RecordingRuntime {
         "claude"
     }
 
+    fn aliases(&self) -> &'static [&'static str] {
+        &["anthropic", "claude-code"]
+    }
+
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,
@@ -2223,6 +2227,7 @@ fn task192_satellite_worktree_prepare_and_push_on_hq_task_preserves_persistent_s
                 reference_files: Vec::new(),
                 modified_files: Vec::new(),
                 depends_on: Vec::new(),
+                attachment_ids: Vec::new(),
                 details: None,
                 dod: None,
             },
@@ -2421,6 +2426,7 @@ fn assert_sat_owned_worktree_syncs_to_hq(
                 reference_files: Vec::new(),
                 modified_files: Vec::new(),
                 depends_on: Vec::new(),
+                attachment_ids: Vec::new(),
                 details: None,
                 dod: None,
             },
@@ -2502,6 +2508,7 @@ fn assert_sat_worktree_rejects_hq_durable_conflicts(
                 reference_files: Vec::new(),
                 modified_files: Vec::new(),
                 depends_on: Vec::new(),
+                attachment_ids: Vec::new(),
                 details: None,
                 dod: None,
             },

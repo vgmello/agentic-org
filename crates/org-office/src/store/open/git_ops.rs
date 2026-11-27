@@ -1,5 +1,5 @@
-//! Engine-independent `StoreOp` and `ReadOp` wrappers for Git repositories, project-repository
-//! links, and per-task repository branch recording (`TASK-51`, `C7`).
+//! Engine-independent `StoreOp` and `ReadOp` wrappers for Git repositories, task Git contexts,
+//! and per-task repository branch recording (`TASK-51`, `C7`, `TASK-218`).
 
 use std::collections::BTreeSet;
 
@@ -7,23 +7,22 @@ use org_proto::{ApiError, ErrorCode};
 use org_store::{Actor, Id, Operation, Outcome, Refusal, Sha256, Store, StoreError};
 use serde_json::json;
 
+use crate::error::{api_refusal, decode_api_refusal, parse_uuid_v7_refusal};
+use crate::organization::authority::require_active_employee;
 use crate::organization::ports::OrganizationRead;
 use crate::organization::records::{Employee, Repository};
-use crate::projects::features::{resolve_repository, AttachProjectRepository, RegisterRepository};
-use crate::projects::records::Project;
-use crate::tasks::features::{
-    decode_refusal, parse_uuid_v7, require_active_employee, require_task, rewrite_task,
-    storage_refusal,
+use crate::projects::records::{resolve_repository, Project};
+use crate::tasks::ops::{
+    require_local_task_write_authority, require_task, rewrite_task, storage_refusal,
+    TaskWriteAuthority,
 };
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{TaskRecord, TaskRepositoryRecord};
 use crate::time::format_rfc3339_ms;
 
-use super::operations::ProjectOp;
 use super::{OfficeEngine, ReadOp, StoreOp};
 
-pub type RegisterRepositoryOp = ProjectOp<RegisterRepository>;
-pub type AttachProjectRepositoryOp = ProjectOp<AttachProjectRepository>;
+const INACTIVE_TASK_ACTOR: &str = "only active employees may change tasks (ADR-0031)";
 
 /// Reads all registered repositories in `repositories.yaml` order.
 pub struct RepositoriesList;
@@ -76,13 +75,13 @@ impl ReadOp for TaskGitContextRead {
     type Out = Result<TaskGitContext, ApiError>;
 
     fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
-        let caller = match require_active_employee(read, &self.caller_id) {
+        let caller = match require_active_employee(read, &self.caller_id, INACTIVE_TASK_ACTOR) {
             Ok(emp) => emp,
-            Err(r) => return Ok(Err(decode_refusal(&r))),
+            Err(r) => return Ok(Err(decode_api_refusal(&r, "task operation refused"))),
         };
         let task = match require_task(read, &self.task_ref) {
             Ok(t) => t,
-            Err(r) => return Ok(Err(decode_refusal(&r))),
+            Err(r) => return Ok(Err(decode_api_refusal(&r, "task operation refused"))),
         };
         let project = match &task.project_id {
             Some(pid) => read.project(pid)?,
@@ -144,36 +143,8 @@ pub struct RecordTaskRepoBranchOp {
     pub repository_id: Id,
     pub branch: String,
     pub integrated_commit: Option<String>,
-    /// When `Some(office_id)`, atomically verifies inside the store `UnitOfWork` that the target
-    /// task's `office_code` belongs to `office_id` (eliminating TOCTOU on satellites, `TASK-192`).
-    pub enforce_satellite_office_id: Option<Id>,
-}
-
-fn rejected_api_error(code: ErrorCode, message: impl Into<String>) -> Refusal {
-    Refusal::rejected(serde_json::to_vec(&ApiError::new(code, message)).unwrap())
-}
-
-fn verify_satellite_branch_authority(
-    view: &impl OrganizationRead,
-    sat_office_id: &Id,
-    task: &TaskRecord,
-) -> Result<(), Refusal> {
-    let codes = view.office_codes().map_err(storage_refusal)?;
-    let owns_code = codes
-        .iter()
-        .any(|c| c.office_id == *sat_office_id && c.code == task.office_code);
-    if owns_code {
-        return Ok(());
-    }
-    Err(rejected_api_error(
-        ErrorCode::NotAuthorized,
-        format!(
-            "office {} cannot locally modify task {} owned by office code {}; submit edits to the owning office",
-            sat_office_id.as_str(),
-            task.key(),
-            task.office_code
-        ),
-    ))
+    /// Single-office task write authority verified atomically inside the `UnitOfWork` (`TASK-218`).
+    pub authority: TaskWriteAuthority,
 }
 
 fn upsert_task_repository_link(
@@ -188,7 +159,7 @@ fn upsert_task_repository_link(
         .find(|r| r.repository_id == *repository_id)
     {
         if existing.integrated_commit.is_some() && integrated_commit.is_none() {
-            return Err(rejected_api_error(
+            return Err(api_refusal(
                 ErrorCode::Conflict,
                 "task branch is already recorded as integrated",
             ));
@@ -213,9 +184,9 @@ impl StoreOp for RecordTaskRepoBranchOp {
     type Out = Result<Result<(), ApiError>, StoreError>;
 
     fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
-        let cmd_id = match parse_uuid_v7(&self.command_id, "command_id") {
+        let cmd_id = match parse_uuid_v7_refusal(&self.command_id, "command_id") {
             Ok(id) => id,
-            Err(r) => return Ok(Err(decode_refusal(&r))),
+            Err(r) => return Ok(Err(decode_api_refusal(&r, "task operation refused"))),
         };
         let actor_val = Id::parse(&self.actor)
             .map(Actor::Employee)
@@ -244,24 +215,22 @@ impl StoreOp for RecordTaskRepoBranchOp {
             repository_id,
             branch,
             integrated_commit,
-            enforce_satellite_office_id,
+            authority,
         } = self;
 
         let reply = match store.submit(Some(op), false, move |uow| {
-            let emp = require_active_employee(uow.view(), &actor)?;
+            let emp = require_active_employee(uow.view(), &actor, INACTIVE_TASK_ACTOR)?;
             let mut task = uow
                 .view()
                 .task(&task_id)
                 .map_err(storage_refusal)?
                 .ok_or_else(|| {
-                    rejected_api_error(ErrorCode::NotFound, format!("task `{task_id}` not found"))
+                    api_refusal(ErrorCode::NotFound, format!("task `{task_id}` not found"))
                 })?;
-            if let Some(ref sat_office_id) = enforce_satellite_office_id {
-                verify_satellite_branch_authority(uow.view(), sat_office_id, &task)?;
-            }
+            require_local_task_write_authority(uow.view(), &authority, &task)?;
             let repos = uow.view().repositories().map_err(storage_refusal)?;
             if !repos.iter().any(|r| r.id == repository_id) {
-                return Err(rejected_api_error(
+                return Err(api_refusal(
                     ErrorCode::NotFound,
                     format!("repository `{repository_id}` not found"),
                 ));
@@ -295,7 +264,10 @@ impl StoreOp for RecordTaskRepoBranchOp {
 
         match reply.outcome {
             Outcome::Completed => Ok(Ok(())),
-            Outcome::Rejected => Ok(Err(decode_refusal(&Refusal::Rejected(reply.bytes)))),
+            Outcome::Rejected => Ok(Err(decode_api_refusal(
+                &Refusal::Rejected(reply.bytes),
+                "task operation refused",
+            ))),
         }
     }
 }

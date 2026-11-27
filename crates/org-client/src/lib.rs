@@ -40,6 +40,7 @@ mod call;
 mod connect;
 mod error;
 mod helper;
+pub mod locator;
 mod paths;
 mod protocol;
 mod transport;

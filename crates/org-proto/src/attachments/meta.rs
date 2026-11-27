@@ -12,6 +12,10 @@ use crate::{ApiError, ErrorCode};
 
 /// Most files one message, ask or answer carries.
 pub const MESSAGE_ATTACHMENTS_MAX: usize = 10;
+/// Most files one task carries (`TASK-98.4`).
+pub const TASK_ATTACHMENTS_MAX: usize = 20;
+/// Most files one task comment carries (`TASK-98.4`).
+pub const TASK_COMMENT_ATTACHMENTS_MAX: usize = 10;
 
 /// One file bound to a message, an ask or an ask answer, as a member of its conversation sees
 /// it. Read the bytes with `attachment.read_chunk` and its `id`.
@@ -85,30 +89,46 @@ impl AttachmentFilter {
     }
 }
 
-/// Checks the `attachment_ids` of a message, ask or answer: at most
-/// [`MESSAGE_ATTACHMENTS_MAX`], each a canonical lowercase UUIDv7, none named twice.
-pub fn check_attachment_ids(ids: &[String]) -> Result<(), ApiError> {
-    if ids.len() > MESSAGE_ATTACHMENTS_MAX {
+/// Checks `ids` against `max`: each a canonical lowercase UUIDv7, none named twice.
+pub fn check_attachment_ids_limit(ids: &[String], max: usize, owner: &str) -> Result<(), ApiError> {
+    if ids.len() > max {
         return Err(ApiError::new(
             ErrorCode::TooLarge,
-            "a message, ask or answer carries at most 10 attachments",
+            format!("{owner} carries at most {max} attachments"),
         ));
     }
     for (index, id) in ids.iter().enumerate() {
         if !crate::is_uuid_v7(id) {
             return Err(ApiError::new(
                 ErrorCode::InvalidRequest,
-                "attachment_ids are canonical lowercase UUIDv7 upload IDs",
+                "attachment_ids are canonical lowercase UUIDv7 IDs",
             ));
         }
         if ids[..index].contains(id) {
             return Err(ApiError::new(
                 ErrorCode::InvalidRequest,
-                "attachment_ids names an upload twice",
+                "attachment_ids names an ID twice",
             ));
         }
     }
     Ok(())
+}
+
+/// Checks the `attachment_ids` of a message, ask or answer: at most
+/// [`MESSAGE_ATTACHMENTS_MAX`], each a canonical lowercase UUIDv7, none named twice.
+pub fn check_attachment_ids(ids: &[String]) -> Result<(), ApiError> {
+    check_attachment_ids_limit(ids, MESSAGE_ATTACHMENTS_MAX, "a message, ask or answer")
+}
+
+/// Checks the `attachment_ids` of a task (`TASK-98.4`): at most [`TASK_ATTACHMENTS_MAX`].
+pub fn check_task_attachment_ids(ids: &[String]) -> Result<(), ApiError> {
+    check_attachment_ids_limit(ids, TASK_ATTACHMENTS_MAX, "a task")
+}
+
+/// Checks the `attachment_ids` of a task comment (`TASK-98.4`): at most
+/// [`TASK_COMMENT_ATTACHMENTS_MAX`].
+pub fn check_task_comment_attachment_ids(ids: &[String]) -> Result<(), ApiError> {
+    check_attachment_ids_limit(ids, TASK_COMMENT_ATTACHMENTS_MAX, "a task comment")
 }
 
 /// Whether a message body with these files says something: text, files, or both.

@@ -11,9 +11,9 @@
 //! The SQLite registry implements it in `hostdb::links`; `memory` is a second
 //! implementation that proves the seam, and `contract_tests` runs against both.
 
-use std::fs::File;
-use std::io::{self, Read};
+use std::io;
 
+use ring::rand::{SecureRandom as _, SystemRandom};
 use sha2::{Digest as _, Sha256};
 use zeroize::{Zeroize as _, Zeroizing};
 
@@ -85,7 +85,9 @@ impl zeroize::ZeroizeOnDrop for Token {}
 impl Token {
     fn generate() -> io::Result<Self> {
         let mut bytes = [0u8; TOKEN_BYTES];
-        File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+        SystemRandom::new()
+            .fill(&mut bytes)
+            .map_err(|_| io::Error::other("system random unavailable"))?;
         Ok(Self(bytes))
     }
     /// Only exactly 32 bytes in canonical unpadded base64url parse. The length

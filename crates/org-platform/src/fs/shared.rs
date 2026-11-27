@@ -17,7 +17,7 @@ static TMP_RO_FILE_SEQ: AtomicU64 = AtomicU64::new(1);
 
 /// Strips trailing `/` and `/.` so POSIX `lstat(2)` inspects the final path component itself
 /// rather than dereferencing a symlinked directory (`TASK-167`, `TASK-168`).
-fn normalize_lstat_path(path: &Path) -> PathBuf {
+pub(super) fn normalize_lstat_path(path: &Path) -> PathBuf {
     path.components().collect()
 }
 
@@ -385,7 +385,7 @@ pub(super) fn verify_owner_only_file(
 }
 
 /// One plain path component (no `/`, `.`, `..`, or NUL) as a C string for an `*at` call.
-fn entry_name(name: &OsStr) -> io::Result<CString> {
+pub(super) fn entry_name(name: &OsStr) -> io::Result<CString> {
     let bytes = name.as_bytes();
     if bytes.is_empty() || bytes == b"." || bytes == b".." || bytes.contains(&b'/') {
         return Err(io::Error::new(
@@ -512,15 +512,16 @@ pub(super) fn open_or_create_owner_only_child(
     Ok(child)
 }
 
-enum EntryKind {
+pub(super) enum EntryKind {
     Missing,
+    Regular,
     Symlink,
     Directory,
     Other,
 }
 
 /// `fstatat(AT_SYMLINK_NOFOLLOW)` of one name inside `dir`.
-fn entry_kind_at(dir: &File, name: &CStr) -> io::Result<EntryKind> {
+pub(super) fn entry_kind_at(dir: &File, name: &CStr) -> io::Result<EntryKind> {
     let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
     // SAFETY: `stat` is writable storage for one `stat` structure, `name` is NUL-terminated and
     // outlives the call, and the flag keeps a final symbolic link from being followed.
@@ -543,7 +544,9 @@ fn entry_kind_at(dir: &File, name: &CStr) -> io::Result<EntryKind> {
     // SAFETY: `fstatat` returned success, so it initialized `stat`.
     let stat = unsafe { stat.assume_init() };
     let kind = stat.st_mode & libc::S_IFMT;
-    Ok(if kind == libc::S_IFLNK {
+    Ok(if kind == libc::S_IFREG {
+        EntryKind::Regular
+    } else if kind == libc::S_IFLNK {
         EntryKind::Symlink
     } else if kind == libc::S_IFDIR {
         EntryKind::Directory
@@ -579,7 +582,7 @@ fn read_link_at(dir: &File, name: &CStr) -> io::Result<Vec<u8>> {
 }
 
 /// `unlinkat` of one non-directory name inside `dir`.
-fn unlink_at(dir: &File, name: &CStr) -> io::Result<()> {
+pub(super) fn unlink_at(dir: &File, name: &CStr) -> io::Result<()> {
     // SAFETY: `dir` is an open directory descriptor and `name` is NUL-terminated and outlives
     // the call; flag `0` never removes a directory.
     if unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), 0) } != 0 {
@@ -602,7 +605,7 @@ pub(super) fn ensure_symlink_at(
     })?;
     match entry_kind_at(dir, &cname)? {
         EntryKind::Directory => return Ok(SymlinkOutcome::RealDirectory),
-        EntryKind::Other => {
+        EntryKind::Regular | EntryKind::Other => {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "the entry is neither a symbolic link nor a directory",
@@ -631,6 +634,8 @@ pub(super) fn remove_symlink_at(dir: &File, name: &OsStr) -> io::Result<bool> {
             unlink_at(dir, &cname)?;
             Ok(true)
         }
-        EntryKind::Missing | EntryKind::Directory | EntryKind::Other => Ok(false),
+        EntryKind::Missing | EntryKind::Regular | EntryKind::Directory | EntryKind::Other => {
+            Ok(false)
+        }
     }
 }

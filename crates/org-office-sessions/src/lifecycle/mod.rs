@@ -418,7 +418,7 @@ impl SessionManager {
     /// both block autonomous wakes, but only a managed turn can be taken over.
     pub(crate) fn has_active_managed_turn(&self, employee_id: &str) -> bool {
         let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
-        managed_turn_live_in(&reg, &self.bindings, employee_id)
+        reg.has_active_managed_turn(&self.bindings, employee_id)
     }
 
     fn live_pump_presence(&self, employee_id: &str) -> Option<MemberRuntime> {
@@ -443,25 +443,6 @@ impl SessionManager {
     }
 }
 
-/// [`SessionManager::has_active_managed_turn`] for a caller already holding `registry`.
-pub(crate) fn managed_turn_live_in(
-    reg: &crate::manager::SessionRegistry,
-    bindings: &crate::binding::RunBindingRegistry,
-    employee_id: &str,
-) -> bool {
-    if reg.starting.contains(employee_id) {
-        return true;
-    }
-    if let Some(handle) = reg.live.get(employee_id) {
-        let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-        return matches!(
-            state.state,
-            SessionState::Starting | SessionState::Running | SessionState::WaitingApproval
-        );
-    }
-    // Only treat an unmanaged socket binding (no SessionManager pump) as active (`High #1`).
-    bindings.has_active(employee_id)
-}
 /// Spawns a lightweight background wake-retry thread that sleeps in short 50ms slices so
 /// office shutdown is never blocked (`Low #15`, `WAKE-4`, `LIVE-3`).
 pub fn spawn_wake_retry_loop(

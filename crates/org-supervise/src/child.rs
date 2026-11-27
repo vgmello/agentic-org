@@ -8,6 +8,15 @@ use std::time::Instant;
 use org_platform::posix;
 use org_platform::process::{self, Watch};
 
+/// An owned leader or its process group, whose ID remains reserved until reaping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignalTarget {
+    /// Only the runtime leader, allowing it to stop detached tools itself.
+    Leader,
+    /// Its process group.
+    Group,
+}
+
 /// Identity to persist before the first protocol write. Start and boot IDs are opaque
 /// platform-native values; a numeric pid alone is never a restart/cleanup identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,7 +174,7 @@ impl OwnedChild {
 
     /// Send TERM only to our unreaped leader. Does not wait, reap, or consume pipes.
     pub fn terminate(&mut self) -> io::Result<()> {
-        self.signal_owned(libc::SIGTERM, crate::SignalTarget::Leader)
+        self.signal_owned(libc::SIGTERM, SignalTarget::Leader)
     }
 
     pub(crate) fn is_owned(&self) -> bool {
@@ -175,20 +184,20 @@ impl OwnedChild {
     pub(crate) fn signal_owned(
         &mut self,
         signal: libc::c_int,
-        target: crate::SignalTarget,
+        target: SignalTarget,
     ) -> io::Result<()> {
         let exited = self.try_exit()?.is_some();
-        if target == crate::SignalTarget::Leader && exited {
+        if target == SignalTarget::Leader && exited {
             return Ok(());
         }
-        if target == crate::SignalTarget::Group && !self.group {
+        if target == SignalTarget::Group && !self.group {
             return Err(io::Error::other("owned process group was not established"));
         }
         loop {
             // waitid verified our unreaped child; its pid/group cannot be reused.
             let result = match target {
-                crate::SignalTarget::Leader => posix::kill(self.pid, signal),
-                crate::SignalTarget::Group => posix::kill_group(self.pid, signal),
+                SignalTarget::Leader => posix::kill(self.pid, signal),
+                SignalTarget::Group => posix::kill_group(self.pid, signal),
             };
             let Err(error) = result else {
                 return Ok(());
@@ -198,7 +207,7 @@ impl OwnedChild {
                 return Ok(());
             }
             let pid = self.pid;
-            if target == crate::SignalTarget::Group
+            if target == SignalTarget::Group
                 && process::is_exited_group_denial(&error)
                 && tolerate_zombie_group_eperm(
                     || self.try_exit().map(|status| status.is_some()),
@@ -215,7 +224,7 @@ impl OwnedChild {
     }
 
     pub(crate) fn kill_owned_group(&mut self) -> io::Result<()> {
-        self.signal_owned(libc::SIGKILL, crate::SignalTarget::Group)
+        self.signal_owned(libc::SIGKILL, SignalTarget::Group)
     }
 
     pub(crate) fn reap_after_cleanup(&mut self) -> io::Result<ExitStatus> {

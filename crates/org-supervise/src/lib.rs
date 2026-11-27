@@ -32,13 +32,11 @@ pub mod runtime;
 mod spawn;
 mod stop;
 
-pub use child::{ChildIdentity, ChildStdin, OwnedChild, Spawned};
+pub use child::{ChildIdentity, ChildStdin, OwnedChild, SignalTarget, Spawned};
 pub use cleanup::{CleanupFailure, CleanupReport, SocketCleanup};
 pub use environment::{Environment, SearchPath};
 pub use spawn::{PendingChild, PreparedSpawn, RecordedSpawn, SessionMark, SpawnSpec};
-pub use stop::{
-    SignalTarget, StopAction, StopFailure, StopMode, StopPolicy, StopReport, StopSignal, StopStep,
-};
+pub use stop::{StopAction, StopFailure, StopMode, StopPolicy, StopReport, StopSignal, StopStep};
 
 use std::io;
 

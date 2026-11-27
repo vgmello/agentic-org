@@ -4,7 +4,7 @@
 use org_proto::{ApiError, ErrorCode};
 use org_store::{Outcome, Refusal, Reply, StoreError};
 
-use crate::messaging::features::decode_refusal;
+use crate::error::{api_refusal, decode_api_refusal};
 
 mod chat_ops;
 mod chat_reads;
@@ -37,9 +37,7 @@ pub use mailbox_state::{
 pub use org_feed::OrgChangesAfterRead;
 
 fn storage_refusal(msg: &str) -> Refusal {
-    Refusal::rejected(
-        serde_json::to_vec(&ApiError::new(ErrorCode::StorageError, msg)).expect("serializes"),
-    )
+    api_refusal(ErrorCode::StorageError, msg)
 }
 
 fn unwrap_reply<T>(
@@ -56,6 +54,9 @@ fn unwrap_reply<T>(
                 .ok_or_else(|| StoreError::invalid("missing committed result"))?;
             Ok(Ok(val))
         }
-        Outcome::Rejected => Ok(Err(decode_refusal(&Refusal::Rejected(reply.bytes)))),
+        Outcome::Rejected => Ok(Err(decode_api_refusal(
+            &Refusal::Rejected(reply.bytes),
+            "request refused",
+        ))),
     }
 }

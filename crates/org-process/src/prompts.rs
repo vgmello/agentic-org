@@ -8,6 +8,10 @@
 /// guides, where to write, background work and waiting.
 pub const CORE_RULES: &str = include_str!("../prompts/core-rules.md");
 
+/// Day-1 standing rules for external workspace sessions (`mode: external`): same authority,
+/// `agent-os` grammar, guides and write locations, without office-managed wake or reap rules.
+pub const EXTERNAL_RULES: &str = include_str!("../prompts/external-rules.md");
+
 /// How a managed session behaves: workspace, discovery, replies, asks, mid-turn messages and
 /// secrets.
 pub const MANAGED_SESSION: &str = include_str!("../prompts/managed-session.md");
@@ -43,6 +47,10 @@ pub const BUILTIN_PROMPTS: &[BuiltinPrompt] = &[
     BuiltinPrompt {
         file: "core-rules.md",
         body: CORE_RULES,
+    },
+    BuiltinPrompt {
+        file: "external-rules.md",
+        body: EXTERNAL_RULES,
     },
     BuiltinPrompt {
         file: "managed-session.md",

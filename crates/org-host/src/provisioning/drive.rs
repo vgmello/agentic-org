@@ -212,7 +212,7 @@ impl Provisioning {
         private(&durable)?;
         private(&runtime)?;
         private(folder)?;
-        self.db
+        self.accounts
             .establish_organization_owner(account, &r.prepared.organization_id, &r.owner_member)
             .map_err(storage)?;
         self.writers

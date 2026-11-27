@@ -1,79 +1,31 @@
 //! The `ApiBackend` implementation: routing, preparing, dispatching and executing every `/api/v1`
 //! call, and the live-event stream.
 
-use super::account_routes;
-use super::attachment_routes;
-use super::bad_input;
-use super::chat_routes;
-use super::cost_routes;
-use super::create_outcome;
-use super::doc_routes;
-use super::failure;
-use super::git_routes;
-use super::hiring_routes;
-use super::instance_routes;
-use super::instance_routes::CallerAuth;
-use super::instance_view;
-use super::invalid;
-use super::mutation;
-use super::not_found;
-use super::note_routes;
-use super::office_routes;
-use super::open_routes;
-use super::org_routes;
-use super::organization_view;
-use super::process_routes;
-use super::provider_routes;
-use super::result;
-use super::search_routes;
-use super::session_routes;
-use super::task_routes;
-use super::unavailable;
-use super::view;
-use super::Call;
-use super::CliApprovalDecideBody;
-use super::Credentials;
-use super::EmptyBody;
-use super::RegisterBody;
-use super::Route;
-use super::SessionApi;
-use super::SignInBody;
-use crate::body::stream::StreamedBody;
-use crate::body::BusinessBody;
+use super::{
+    account_routes, attachment_routes, bad_input, chat_routes, cost_routes, create_outcome,
+    doc_routes, external_auth_routes, failure, git_routes, hiring_routes, instance_routes,
+    instance_routes::CallerAuth, instance_view, invalid, mutation, not_found, note_routes,
+    office_routes, open_routes, org_routes, organization_view, process_routes, provider_routes,
+    result, search_routes, session_routes, task_routes, tess_routes, unavailable, view, Call,
+    CliApprovalDecideBody, Credentials, EmptyBody, RegisterBody, Route, SessionApi, SignInBody,
+};
+use crate::body::{stream::StreamedBody, BusinessBody};
 use crate::host::Failure;
 use crate::path::RequestPath;
-use crate::service::ApiBackend;
-use crate::service::ApiReply;
-use crate::service::AsyncDispatch;
-use crate::service::PreparedCall;
-use crate::service::WebReply;
+use crate::service::{ApiBackend, ApiReply, AsyncDispatch, PreparedCall, WebReply};
 use crate::sse;
-use hyper::http::request::Parts;
-use hyper::Method;
-use hyper::StatusCode;
-use org_host_control::browser::BrowserSessionEnd;
-use org_host_control::browser::BrowserSessionEndParams;
-use org_host_control::browser::InstanceView;
-use org_host_control::browser::LinkRegister;
-use org_host_control::browser::LinkRegisterParams;
-use org_host_control::browser::SessionSignIn;
-use org_host_control::browser::SessionSignInParams;
-use org_host_control::organization as host_org;
-use org_host_control::organization::BrowserAuth;
-use org_proto::web as gateway;
-use org_proto::web::organizations;
-use org_proto::web::organizations::CreatingOrganization;
-use org_proto::web::organizations::SelectedCreateRequest;
-use org_proto::web::organizations::SelectedOrganizationList;
-use org_proto::web::CreateState;
-use org_proto::web::MutationOutcome;
-use org_proto::web::OperationId;
-use org_proto::web::OperationKind;
-use org_proto::web::OperationLookup;
-use org_proto::web::Scope;
-use org_proto::web::StreamRequest;
-use org_proto::web::Version;
-use org_proto::web::WebErrorCode;
+use hyper::{http::request::Parts, Method, StatusCode};
+use org_host_control::browser::{
+    BrowserSessionEnd, BrowserSessionEndParams, InstanceView, LinkRegister, LinkRegisterParams,
+    SessionSignIn, SessionSignInParams,
+};
+use org_host_control::organization::{self as host_org, BrowserAuth};
+use org_proto::web::{
+    self as gateway,
+    organizations::{self, CreatingOrganization, SelectedCreateRequest, SelectedOrganizationList},
+    CreateState, MutationOutcome, OperationId, OperationKind, OperationLookup, Scope,
+    StreamRequest, Version, WebErrorCode,
+};
 use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -382,6 +334,8 @@ impl ApiBackend for SessionApi {
             Route::Provider(route) => return provider_routes::prepare(route, bytes),
             Route::OfficeFederation(route) => return office_routes::prepare(route, bytes),
             Route::Attachments(route) => return attachment_routes::prepare(route, bytes),
+            Route::Tess(route) => return tess_routes::prepare(route, bytes),
+            Route::ExternalAuth(route) => return external_auth_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
     }
@@ -539,6 +493,16 @@ impl ApiBackend for SessionApi {
                 future: Box::pin(attachment_routes::execute(self, call)),
                 streaming: false,
             },
+            Call::Tess(call) => AsyncDispatch::Async {
+                streaming: tess_routes::is_streaming(&call),
+                future: Box::pin(tess_routes::execute(self, call)),
+            },
+            Call::ExternalAuth(call) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(external_auth_routes::execute(&self, call).await)
+                }),
+                streaming: false,
+            },
             other => AsyncDispatch::Sync(other),
         }
     }
@@ -570,16 +534,32 @@ impl ApiBackend for SessionApi {
             }
             Call::Account(call) => account_routes::execute(self, call),
             Call::OpenOrg(call) => open_routes::execute(self, call),
-            Call::Hiring(_) => unreachable!("Call::Hiring is dispatched asynchronously"),
-            Call::Sessions(_) => unreachable!("Call::Sessions is dispatched asynchronously"),
-            Call::Chat(_) => unreachable!("Call::Chat is dispatched asynchronously"),
-            Call::Tasks(_) | Call::Notes(_) => unreachable!("dispatched asynchronously"),
-            Call::Git(_) | Call::Search(_) => unreachable!("dispatched asynchronously"),
-            Call::Process(_) | Call::Docs(_) => unreachable!("dispatched asynchronously"),
-            Call::Cost(_) => unreachable!("Call::Cost is dispatched asynchronously"),
-            Call::Provider(_) => unreachable!("Call::Provider is dispatched asynchronously"),
-            Call::OfficeFederation(_) | Call::Attachments(_) => {
-                unreachable!("office federation and attachment calls dispatch asynchronously")
+            Call::Hiring(_)
+            | Call::Sessions(_)
+            | Call::Chat(_)
+            | Call::Tasks(_)
+            | Call::Notes(_)
+            | Call::Git(_)
+            | Call::Search(_)
+            | Call::Process(_)
+            | Call::Docs(_)
+            | Call::Cost(_)
+            | Call::Provider(_)
+            | Call::OfficeFederation(_)
+            | Call::Attachments(_)
+            | Call::Tess(_)
+            | Call::ExternalAuth(_)
+            | Call::OrgSnapshot(_, _)
+            | Call::OrgProjects(_, _, _)
+            | Call::OrgProjectInspect(_, _, _)
+            | Call::OrgProjectCreate(_, _, _, _)
+            | Call::OrgOffices(_, _)
+            | Call::OfficeRestart(_, _, _, _)
+            | Call::OrgMutation(_, _, _)
+            | Call::OrgOperation(_, _, _)
+            | Call::EventsStream(_, _)
+            | Call::CliApprovalDecide(_, _, _) => {
+                unreachable!("office RPCs and SSE streams dispatch asynchronously")
             }
             Call::Session(pair) => match self
                 .validate(pair)
@@ -665,63 +645,7 @@ impl ApiBackend for SessionApi {
                     true,
                 )
             }
-            Call::OrgSnapshot(_, _)
-            | Call::OrgProjects(_, _, _)
-            | Call::OrgProjectInspect(_, _, _)
-            | Call::OrgProjectCreate(_, _, _, _)
-            | Call::OrgOffices(_, _)
-            | Call::OfficeRestart(_, _, _, _)
-            | Call::OrgMutation(_, _, _)
-            | Call::OrgOperation(_, _, _)
-            | Call::EventsStream(_, _)
-            | Call::CliApprovalDecide(_, _, _) => {
-                unreachable!("office RPCs and SSE streams dispatch asynchronously")
-            }
-            Call::Operation(pair, id) => {
-                let reply = self.validate(pair).and_then(|_| {
-                    self.host.request::<host_org::OperationLookup>(
-                        &host_org::OperationLookupParams {
-                            auth: self.auth(&pair),
-                            operation_id: id.as_str().to_owned(),
-                        },
-                    )
-                });
-                let outcome = match reply {
-                    Err(e @ (Failure::Denied | Failure::NotFound | Failure::Unavailable)) => {
-                        return failure(e)
-                    }
-                    // A refused lookup is the lookup's own error, never a stored refusal
-                    // of the create: `expired` is 410, anything else is unavailable. (The
-                    // host looks a known operation up at any age and answers `not_found`
-                    // for any other, so it sends no `expired` here today.)
-                    Err(Failure::Refused(error)) => {
-                        return if error.code == org_proto::ErrorCode::Expired {
-                            ApiReply::error(
-                                StatusCode::GONE,
-                                WebErrorCode::Expired,
-                                "This operation is too old to look up.",
-                            )
-                        } else {
-                            unavailable()
-                        };
-                    }
-                    stated => create_outcome(&id, stated),
-                };
-                let state = match &outcome {
-                    Ok(MutationOutcome::Accepted { .. }) => Some(CreateState::Reserved),
-                    Ok(MutationOutcome::Completed { .. }) => Some(CreateState::Linked),
-                    Ok(MutationOutcome::Rejected { .. }) => None,
-                    _ => return unavailable(),
-                };
-                match outcome {
-                    Ok(outcome) => result(OperationLookup::Outcome {
-                        kind: OperationKind::Host,
-                        state,
-                        outcome,
-                    }),
-                    Err(e) => failure(e),
-                }
-            }
+            Call::Operation(pair, id) => execute_operation(self, pair, id),
             Call::SignOut(pair) => {
                 // The host deletes the record and pushes `session.ended` before this
                 // reply; the event sink drops the cache entry on the reader thread.
@@ -773,5 +697,48 @@ impl ApiBackend for SessionApi {
                 })
             }
         }
+    }
+}
+
+fn execute_operation(api: &SessionApi, pair: CallerAuth, id: OperationId) -> ApiReply {
+    let reply = api.validate(pair).and_then(|_| {
+        api.host
+            .request::<host_org::OperationLookup>(&host_org::OperationLookupParams {
+                auth: api.auth(&pair),
+                operation_id: id.as_str().to_owned(),
+            })
+    });
+    let outcome = match reply {
+        Err(e @ (Failure::Denied | Failure::NotFound | Failure::Unavailable)) => return failure(e),
+        // A refused lookup is the lookup's own error, never a stored refusal
+        // of the create: `expired` is 410, anything else is unavailable. (The
+        // host looks a known operation up at any age and answers `not_found`
+        // for any other, so it sends no `expired` here today.)
+        Err(Failure::Refused(error)) => {
+            return if error.code == org_proto::ErrorCode::Expired {
+                ApiReply::error(
+                    StatusCode::GONE,
+                    WebErrorCode::Expired,
+                    "This operation is too old to look up.",
+                )
+            } else {
+                unavailable()
+            };
+        }
+        stated => create_outcome(&id, stated),
+    };
+    let state = match &outcome {
+        Ok(MutationOutcome::Accepted { .. }) => Some(CreateState::Reserved),
+        Ok(MutationOutcome::Completed { .. }) => Some(CreateState::Linked),
+        Ok(MutationOutcome::Rejected { .. }) => None,
+        _ => return unavailable(),
+    };
+    match outcome {
+        Ok(outcome) => result(OperationLookup::Outcome {
+            kind: OperationKind::Host,
+            state,
+            outcome,
+        }),
+        Err(e) => failure(e),
     }
 }

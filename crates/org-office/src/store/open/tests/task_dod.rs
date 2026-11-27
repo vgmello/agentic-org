@@ -31,6 +31,7 @@ use crate::store::open::{
     ProjectInspectByRef, SetOrganizationDefaultDodOp, SetProjectDefaultDodOp, UpdateTeamOp,
 };
 use crate::tasks::features::create::dod_step_id;
+use crate::tasks::ops::TaskWriteAuthority;
 
 use super::*;
 
@@ -183,7 +184,9 @@ impl Org {
                 depends_on: Vec::new(),
                 details: None,
                 dod: dod.map(|items| items.into_iter().map(str::to_owned).collect()),
+                attachment_ids: Vec::new(),
             },
+            prepared_files: Default::default(),
         });
         out.unwrap().map(|o| o.task)
     }
@@ -193,6 +196,7 @@ impl Org {
             .store
             .read(TaskInspectRead {
                 task: task.to_owned(),
+                fields: None,
             })
             .unwrap();
         out.expect("inspected")
@@ -262,7 +266,9 @@ impl Org {
                     text: text.to_owned(),
                     required,
                     section,
+                    steps: vec![],
                 },
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .expect("step added");
@@ -277,8 +283,12 @@ impl Org {
                     command_id: uuid(),
                     task: task.to_owned(),
                     step_id: step.to_owned(),
+                    section: None,
+                    indices: vec![],
+                    expected_revision: None,
                     done: true,
                 },
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .expect("step checked");
@@ -292,9 +302,13 @@ impl Org {
                     command_id: uuid(),
                     task: task.to_owned(),
                     step_id: step.to_owned(),
+                    from_section: None,
+                    index: None,
+                    expected_revision: None,
                     position,
                     section,
                 },
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .expect("step moved");
@@ -321,6 +335,7 @@ impl Org {
                     done_anyway_reason: change.reason.map(str::to_owned),
                     final_summary: change.summary.map(str::to_owned),
                 },
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .map(|o| o.task)
@@ -343,6 +358,7 @@ impl Org {
                     expected_revision: revision,
                     final_summary: text.to_owned(),
                 },
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .map(|o| o.task)
@@ -454,7 +470,11 @@ fn sections(s: &Org, task: &str) {
                 command_id: uuid(),
                 task: task.to_owned(),
                 step_id: ac2,
+                section: None,
+                index: None,
+                expected_revision: None,
             },
+            authority: TaskWriteAuthority::Unrestricted,
         })
         .unwrap()
         .expect("removed");
@@ -826,7 +846,10 @@ fn the_final_summary_is_attributed_and_only_a_close_or_its_own_call_sets_it() {
                     task: task.clone(),
                     comment_id: uuid(),
                     body_markdown: "Nice work".into(),
+                    attachment_ids: vec![],
                 },
+                prepared_files: Default::default(),
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .expect("commented");
@@ -837,6 +860,7 @@ fn the_final_summary_is_attributed_and_only_a_close_or_its_own_call_sets_it() {
                     command_id: uuid(),
                     task: task.clone(),
                 },
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .expect("watched");
@@ -854,6 +878,8 @@ fn the_final_summary_is_attributed_and_only_a_close_or_its_own_call_sets_it() {
             .run(TaskUpdateOp {
                 actor: s.carol.as_str().to_owned(),
                 params: update,
+                prepared_files: Default::default(),
+                authority: TaskWriteAuthority::Unrestricted,
             })
             .unwrap()
             .expect("updated");

@@ -8,7 +8,7 @@ use org_store::{Engine, EngineError, Id};
 use crate::organization::ports::{
     OrganizationRead, OrganizationWrite, TeamDependents, TeamHomedMove,
 };
-use crate::processes::ports::{KnownProjects, ProcessesRead};
+use crate::processes::ports::{KnownProjects, ProcessProjectInfo, ProcessesRead};
 use crate::processes::records::{encode_structure_document, structure_document_path};
 
 use super::records::{Project, ProjectAllocation, ProjectCounter};
@@ -66,6 +66,19 @@ pub trait ProjectsRead: OrganizationRead + ProcessesRead {
 impl<T: ProjectsRead + ?Sized> KnownProjects for T {
     fn project_ids(&self) -> Result<Vec<Id>, EngineError> {
         Ok(self.projects()?.into_iter().map(|p| p.id).collect())
+    }
+
+    fn resolve_process_project(
+        &self,
+        reference: &str,
+    ) -> Result<Option<ProcessProjectInfo>, EngineError> {
+        Ok(self
+            .resolve_project(reference)?
+            .map(|p| ProcessProjectInfo {
+                id: p.id,
+                owner_team_id: p.owner_team_id,
+                archived: p.archived,
+            }))
     }
 }
 

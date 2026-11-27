@@ -16,9 +16,13 @@ path = "tests/launch.rs"
 
 [dependencies]
 org-office-server = { path = "../../crates/org-office-server" }
-# Composition root wiring: the `agent-os` command table rendered into agents' standing
-# instructions is injected here so the session crate never links the CLI implementation.
+# Composition root wiring: the `agent-os` command table and concrete vendor runtime adapters
+# are injected here so `org-office-sessions` never links the CLI or vendor adapter crates.
 org-agent-cli = { path = "../../crates/org-agent-cli" }
+org-agent-runtime = { path = "../../crates/org-agent-runtime" }
+org-agent-runtime-agy = { path = "../../crates/org-agent-runtime-agy" }
+org-agent-runtime-claude = { path = "../../crates/org-agent-runtime-claude" }
+org-agent-runtime-codex = { path = "../../crates/org-agent-runtime-codex" }
 org-office-sessions = { path = "../../crates/org-office-sessions" }
 org-platform = { path = "../../crates/org-platform" }
 

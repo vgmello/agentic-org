@@ -24,8 +24,8 @@ pub(crate) use identity::{
     read_replicated_hq_owner, remove_replicated_hq_owner, write_replicated_hq_owner,
 };
 pub use identity::{SatelliteFederationConfig, SatelliteTlsIdentity};
-pub(crate) use placement::has_local_task_write_authority;
 pub use placement::resolve_employee_office;
+pub(crate) use placement::{has_local_task_write_authority, hq_removed_offices_if_multi_office};
 pub use relay::{
     PendingMessageJournalBatch, PendingMessageJournalEntry, RelayedAskAnswer, RelayedAskWithdrawal,
     RelayedMessageOutcome, RelayedRecipientWake,
@@ -56,3 +56,5 @@ pub fn is_immutable_state_path(path: &str) -> bool {
 
 #[cfg(test)]
 mod replicated_kind_tests;
+#[cfg(test)]
+mod snapshot_resync_tests;

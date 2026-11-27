@@ -423,7 +423,7 @@ fn task166_recycle_stale_warm_handle_fails_closed_and_updates_existing_active_tu
         &mgr,
         &hr_agent_id,
         "run-a",
-        "bwrap_sibling_topology_changed",
+        "sandbox_topology_changed",
     ));
     let bg_handles = std::mem::take(&mut mgr.registry.lock().unwrap().bg_workers);
     for h in bg_handles {
@@ -580,7 +580,9 @@ fn task166_unrecovered_pre_pump_abort_persists_and_blocks_sibling_isolation() {
             workspace: None,
             active_permit: handle.active_permit,
             supports_mid_turn: false,
-            bwrap_masked_siblings: Some(std::collections::BTreeSet::new()),
+            sandbox_plan: crate::manager::SandboxPlan::linux_bwrap(
+                std::collections::BTreeSet::new(),
+            ),
             partition: None,
         },
     );

@@ -8,12 +8,14 @@ use org_proto::{ApiError, ErrorCode};
 use org_store::{Id, Outcome, Reply, StoreError};
 
 use crate::organization::{
-    features::{OrgRejection, RejectCode, HIRE_DENIED, NOT_AUTHORIZED},
+    authority::HIRE_DENIED,
+    ops::{OrgRejection, NOT_AUTHORIZED},
     records::{
         self, AgentExecutionConfig, HireProposal, HireRequest, ModelProfile, PermissionPreset,
         ReasoningEffort, Role,
     },
 };
+use crate::structure::wire::rejection_code;
 
 pub(super) fn parse_id(raw: &str, field: &str) -> Result<Id, ApiError> {
     if !records::is_stable_id(raw) {
@@ -62,17 +64,7 @@ pub(super) fn decode_reply<T: serde::de::DeserializeOwned>(reply: Reply) -> Resu
         Outcome::Rejected => {
             let rej: OrgRejection = serde_json::from_slice(&reply.bytes)
                 .map_err(|_| ApiError::new(ErrorCode::StorageError, "unreadable rejection"))?;
-            let code = match rej.code {
-                RejectCode::NotFound => ErrorCode::NotFound,
-                RejectCode::InvalidRequest => ErrorCode::InvalidRequest,
-                RejectCode::InvalidName => ErrorCode::InvalidName,
-                RejectCode::OwnerProtected => ErrorCode::OwnerProtected,
-                RejectCode::Cycle => ErrorCode::Cycle,
-                RejectCode::NotEmpty => ErrorCode::NotEmpty,
-                RejectCode::Conflict => ErrorCode::Conflict,
-                RejectCode::AlreadyExists => ErrorCode::AlreadyExists,
-            };
-            Err(ApiError::new(code, rej.message))
+            Err(ApiError::new(rejection_code(rej.code), rej.message))
         }
     }
 }

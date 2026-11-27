@@ -205,6 +205,7 @@ impl Fixture {
                     reference_files: vec![],
                     modified_files: vec![],
                     depends_on: vec![],
+                    attachment_ids: vec![],
                     details: None,
                     dod: None,
                 },

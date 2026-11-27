@@ -187,6 +187,17 @@ macro_rules! memory_tasks_read {
                 })
             }
 
+            fn task_comment_by_id(
+                &self,
+                comment_id: &Id,
+            ) -> Result<Option<TaskCommentRecord>, EngineError> {
+                read(self.table(), |t| {
+                    t.comments
+                        .values()
+                        .find_map(|by_id| by_id.get(comment_id).cloned())
+                })
+            }
+
             fn task_watchers(&self, task_id: &Id) -> Result<Vec<TaskWatcherRecord>, EngineError> {
                 read(self.table(), |t| {
                     t.watchers.get(task_id).cloned().unwrap_or_default()

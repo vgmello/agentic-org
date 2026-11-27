@@ -7,6 +7,7 @@
 //!
 //! Projected into `structure_documents` on SQLite and [`testkit::ProcessesTables`] on Memory.
 
+pub mod features;
 pub mod ports;
 pub mod projector;
 pub mod records;

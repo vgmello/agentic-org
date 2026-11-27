@@ -90,6 +90,7 @@ pub(super) fn create_task(office: &Office, actor: &str, team_id: &str, title: &s
                 reference_files: Vec::new(),
                 modified_files: Vec::new(),
                 depends_on: Vec::new(),
+                attachment_ids: Vec::new(),
                 details: None,
                 dod: None,
             },

@@ -167,6 +167,7 @@ fn validate_state_dir_accepts_org_with_tasks_and_processes_and_rejects_private_f
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
         )
         .unwrap()
@@ -180,6 +181,7 @@ fn validate_state_dir_accepts_org_with_tasks_and_processes_and_rejects_private_f
                 task: created.key.clone(),
                 comment_id: "01900000-0000-7000-8000-000000009004".into(),
                 body_markdown: "First comment".into(),
+                attachment_ids: vec![],
             },
         )
         .unwrap()

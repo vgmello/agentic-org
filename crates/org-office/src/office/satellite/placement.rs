@@ -1,9 +1,11 @@
 //! Employee placement across offices and the local task write authority it implies.
 
-use crate::office::{storage, Office};
-use crate::{error::OfficeError, model::OfficeRole};
+use std::collections::BTreeSet;
 
-use super::work_ingest::ReadOfficeCodesOp;
+use crate::office::{storage, Office};
+use crate::organization::records::OfficeRole as RecordOfficeRole;
+use crate::tasks::ops::has_local_task_write_authority_in_view;
+use crate::{error::OfficeError, model::OfficeRole};
 
 pub(super) struct PlacementContext {
     pub(super) hq_office_id: String,
@@ -89,28 +91,84 @@ pub fn resolve_employee_office(office: &Office, employee_id: &str) -> Result<Str
         .unwrap_or(ctx.hq_office_id))
 }
 
+struct CheckLocalTaskAuthorityRead {
+    office_id: org_store::Id,
+    role: RecordOfficeRole,
+    removed_offices: BTreeSet<String>,
+    task_office_code: String,
+}
+
+impl crate::store::open::ReadOp for CheckLocalTaskAuthorityRead {
+    type Out = bool;
+
+    fn read<S: crate::tasks::ports::TasksRead>(
+        self,
+        snapshot: &S,
+    ) -> Result<bool, org_store::StoreError> {
+        has_local_task_write_authority_in_view(
+            snapshot,
+            &self.office_id,
+            self.role,
+            &self.removed_offices,
+            &self.task_office_code,
+        )
+        .map_err(org_store::StoreError::Engine)
+    }
+}
+
+struct HasMultipleOfficesRead;
+
+impl crate::store::open::ReadOp for HasMultipleOfficesRead {
+    type Out = bool;
+
+    fn read<S: crate::tasks::ports::TasksRead>(
+        self,
+        snapshot: &S,
+    ) -> Result<bool, org_store::StoreError> {
+        snapshot
+            .offices()
+            .map(|offices| offices.len() > 1)
+            .map_err(org_store::StoreError::Engine)
+    }
+}
+
+/// Loads permanently removed satellite IDs on HQ only when more than one office is registered,
+/// avoiding federation lock contention and `revocations.v1.json` disk I/O on single-office HQ
+/// task writes (`TASK-218` P2-3).
+pub(crate) fn hq_removed_offices_if_multi_office(
+    office: &Office,
+    role: RecordOfficeRole,
+) -> Result<BTreeSet<String>, OfficeError> {
+    if role != RecordOfficeRole::Hq {
+        return Ok(BTreeSet::new());
+    }
+    let (multi_office, _) = office.store.read(HasMultipleOfficesRead).map_err(storage)?;
+    if !multi_office {
+        return Ok(BTreeSet::new());
+    }
+    crate::office::invitations::removed_satellite_offices(office)
+}
+
 /// Returns whether `office` has local write authority for a task numbered with `task_office_code`
-/// (`TASK-52` P3-#9 / P4-#6 / P5-#7): satellites may only modify their own assigned codes, while HQ
-/// may modify its own codes AND retired/orphaned codes (such as R1/D25 recovered tasks from a lost
-/// HQ), refusing only tasks owned by an active satellite's current code.
+/// (`TASK-52` P3-#9 / P4-#6 / P5-#7): evaluated in one consistent snapshot read via
+/// [`has_local_task_write_authority_in_view`].
 pub(crate) fn has_local_task_write_authority(
     office: &Office,
     task_office_code: &str,
 ) -> Result<bool, OfficeError> {
-    let (codes, _) = office.store.read(ReadOfficeCodesOp).map_err(storage)?;
-    if office.info.role == OfficeRole::Satellite {
-        return Ok(codes
-            .iter()
-            .any(|c| c.office_id.as_str() == office.info.office_id && c.code == task_office_code));
-    }
-    let enrolled = office.enrolled_office_ids()?;
-    let removed = crate::office::invitations::removed_satellite_offices(office)?;
-    let owned_by_active_satellite = codes.iter().any(|c| {
-        c.code == task_office_code
-            && c.retired_at.is_none()
-            && c.office_id.as_str() != office.info.office_id
-            && enrolled.iter().any(|id| id == c.office_id.as_str())
-            && !removed.contains(c.office_id.as_str())
-    });
-    Ok(!owned_by_active_satellite)
+    let role = match office.info.role {
+        OfficeRole::Hq => RecordOfficeRole::Hq,
+        OfficeRole::Satellite => RecordOfficeRole::Satellite,
+    };
+    let removed_offices = hq_removed_offices_if_multi_office(office, role)?;
+    let (allowed, _) = office
+        .store
+        .read(CheckLocalTaskAuthorityRead {
+            office_id: office.identity.office_id.clone(),
+            role,
+            removed_offices,
+            task_office_code: task_office_code.to_owned(),
+        })
+        .map_err(storage)?;
+    Ok(allowed)
 }

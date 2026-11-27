@@ -14,13 +14,17 @@
 //! Any other file (a project's, the organization's, a private one) is the policy's to decide.
 //! A call whose parameters do not decode is refused, and so is one the office cannot check.
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
 use org_proto::attachments::{
-    AttachmentAttach, AttachmentInspect, AttachmentList, AttachmentReadChunk, AttachmentTargetKind,
-    AttachmentUpdateMeta, AttachmentView,
+    AttachmentAttach, AttachmentInspect, AttachmentList, AttachmentReadChunk, AttachmentRender,
+    AttachmentRenderParams, AttachmentTargetKind, AttachmentUpdateMeta, AttachmentView,
+    RenderSourceKind, ATTACHMENT_CHUNK_MAX_BASE64_CHARS,
 };
-use org_proto::{Call, Request, Response};
+use org_proto::{ApiError, Call, ErrorCode, Outcome, Request, Response};
 
 use super::{denied, params, rewrite, View};
+use crate::serve::delegation::{ChiefOfStaffPort, Delegation, DELEGATION_DENIED};
 
 /// Refuses a call on a file of a message, ask or answer the caller does not see.
 pub(super) fn admit(request: &Request, view: &View<'_>) -> Result<(), Response> {
@@ -46,6 +50,10 @@ pub(super) fn admit(request: &Request, view: &View<'_>) -> Result<(), Response> 
         AttachmentList::METHOD => {
             let p = decoded::<AttachmentList>(request)?;
             of_message(view, p.target_kind, p.target_id.as_deref())
+        }
+        AttachmentRender::METHOD => {
+            let p = decoded::<AttachmentRender>(request)?;
+            admit_render(view, &p)
         }
         _ => Ok(()),
     }
@@ -82,9 +90,61 @@ fn of_a_message(kind: AttachmentTargetKind) -> bool {
     )
 }
 
+/// Single choke-point enforcing `caller ∩ tess` for one attachment ID under Chief-of-Staff
+/// delegation (used both pre-dispatch in [`admit`] and post-assembly inside `attachment.render`).
+pub(crate) fn check_delegated_attachment(
+    port: &dyn ChiefOfStaffPort,
+    member: &str,
+    delegation: &Delegation,
+    attachment_id: &str,
+) -> Result<(), ApiError> {
+    let view = View::new(0, port, member, delegation.caller_id.as_deref());
+    file(&view, attachment_id).map_err(|resp| match resp.outcome {
+        Outcome::Error(err) => err,
+        Outcome::Result(_) => ApiError::new(ErrorCode::NotAuthorized, DELEGATION_DENIED),
+    })
+}
+
+fn admit_render(view: &View<'_>, p: &AttachmentRenderParams) -> Result<(), Response> {
+    let kind = match p.source_kind {
+        RenderSourceKind::Markdown => org_doc_render::SourceKind::Markdown,
+        RenderSourceKind::Html => org_doc_render::SourceKind::Html,
+    };
+    for att_id in org_doc_render::extract_attachment_refs(kind, &p.source, p.css.as_deref()) {
+        file(view, &att_id)?;
+    }
+    admit_render_chunk_refs(view, kind, p)?;
+    of_message(view, p.target_kind, p.target_id.as_deref())
+}
+
+fn admit_render_chunk_refs(
+    view: &View<'_>,
+    kind: org_doc_render::SourceKind,
+    p: &AttachmentRenderParams,
+) -> Result<(), Response> {
+    let src_chunk = decode_utf8_chunk(p.source_chunk_base64.as_deref());
+    let css_chunk = decode_utf8_chunk(p.css_chunk_base64.as_deref());
+    if src_chunk.is_some() || css_chunk.is_some() {
+        let src = src_chunk.as_deref().unwrap_or("");
+        for att_id in org_doc_render::extract_attachment_refs(kind, src, css_chunk.as_deref()) {
+            file(view, &att_id)?;
+        }
+    }
+    Ok(())
+}
+
+fn decode_utf8_chunk(raw: Option<&str>) -> Option<String> {
+    let text = raw?;
+    if text.len() > ATTACHMENT_CHUNK_MAX_BASE64_CHARS {
+        return None;
+    }
+    let bytes = STANDARD.decode(text.as_bytes()).ok()?;
+    String::from_utf8(bytes).ok()
+}
+
 /// The file `attachment_id`: one of a message, ask or answer only in a conversation the caller
 /// sees; any other (or an unknown one) is the method's to decide.
-fn file(view: &View<'_>, attachment_id: &str) -> Result<(), Response> {
+pub(super) fn file(view: &View<'_>, attachment_id: &str) -> Result<(), Response> {
     match view.port.attachment_conversation(attachment_id) {
         Ok(Some(conversation)) => view.conversation(&conversation),
         Ok(None) => Ok(()),

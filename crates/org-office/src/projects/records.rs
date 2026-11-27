@@ -351,6 +351,25 @@ pub(crate) fn time_text(at: org_store::Timestamp) -> String {
     records::time_text(at)
 }
 
+/// Resolves a repository by UUIDv7 ID or canonical key.
+pub fn resolve_repository<'a>(
+    repos: &'a [records::Repository],
+    reference: &str,
+) -> Option<&'a records::Repository> {
+    let trimmed = reference.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if is_stable_id(trimmed) {
+        if let Some(found) = repos.iter().find(|r| r.id.as_str() == trimmed) {
+            return Some(found);
+        }
+    }
+    repos
+        .iter()
+        .find(|r| r.key.as_deref().is_some_and(|k| k == trimmed))
+}
+
 #[cfg(test)]
 #[path = "records_tests.rs"]
 mod tests;

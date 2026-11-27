@@ -18,6 +18,7 @@ use crate::control_listener::Connection;
 use crate::hostdb::{
     accounts::Account,
     lockout::{Outcome, Socket},
+    LoginLockoutStore,
 };
 
 use super::{
@@ -43,13 +44,12 @@ impl Authentication {
         } else {
             Socket::Local
         };
-        if self
-            .db
+        let lockouts: &dyn LoginLockoutStore = &*self.db;
+        if lockouts
             .login_lockout(socket, key.as_str(), now)
             .map_err(storage)?
             .is_locked()
-            || self
-                .db
+            || lockouts
                 .login_lockout(socket, "", now)
                 .map_err(storage)?
                 .is_locked()
@@ -92,13 +92,12 @@ impl Authentication {
         } else {
             Outcome::Failure
         };
-        let state = self
-            .db
+        let state = lockouts
             .record_login(socket, key.as_str(), now, outcome)
             .map_err(storage)?;
         // Empty key is the socket-wide budget; normalized login can never be empty.
         if !allowed || state.is_locked() {
-            self.db
+            lockouts
                 .record_login(socket, "", now, Outcome::Failure)
                 .map_err(storage)?;
             return Err(denied());

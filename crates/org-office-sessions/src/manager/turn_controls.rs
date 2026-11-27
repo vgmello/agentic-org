@@ -42,6 +42,55 @@ impl SessionManager {
         Ok(view)
     }
 
+    /// Interrupts `employee_id`'s running turn ONLY when the live handle is currently bound to
+    /// `partition`, checked atomically under `self.registry` (zero cross-caller TOCTOU for Ask
+    /// Tess `tess.turn_cancel`). Returns `Ok(true)` if an interrupt was sent, `Ok(false)` when no
+    /// live session for `partition` is active.
+    pub fn interrupt_partition_session(
+        &self,
+        employee_id: &str,
+        partition: &PartitionKey,
+    ) -> Result<bool, ApiError> {
+        self.require_agent(employee_id)?;
+        let reg = self.lock_registry();
+        let Some(handle) = reg.live.get(employee_id) else {
+            return Ok(false);
+        };
+        if handle.partition.as_ref() != Some(partition) {
+            return Ok(false);
+        }
+        let target = match self.live_turn_target(&reg, employee_id, "interrupt", Some(partition)) {
+            Ok(target) => target,
+            Err(err) if err.code == ErrorCode::Conflict => return Ok(false),
+            Err(err) => return Err(err),
+        };
+        if target.tx.send(PumpCommand::InterruptTurn).is_err() {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    /// Whether `employee_id` currently has a live or starting session bound to `partition` that
+    /// has not reached a terminal stopped/locked state. Used by Ask Tess event polling to detect
+    /// crashed or externally stopped sessions without stranding SSE streams.
+    pub fn is_partition_session_active(&self, employee_id: &str, partition: &PartitionKey) -> bool {
+        let reg = self.lock_registry();
+        if let Some(handle) = reg.live.get(employee_id) {
+            if handle.partition.as_ref() != Some(partition) {
+                return false;
+            }
+            let st = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+            return !matches!(
+                st.state,
+                SessionState::Stopped
+                    | SessionState::Suspended
+                    | SessionState::StallLocked
+                    | SessionState::RecoveryRequired
+            );
+        }
+        reg.starting.contains(employee_id)
+    }
+
     /// Steers `employee_id`'s running turn with `text` from `caller_id` (the owner or an active
     /// person; on the Chief of Staff, the owner, and only into the caller's own partition):
     /// delivered natively where the runtime steers, otherwise the turn is interrupted and the
@@ -75,6 +124,8 @@ impl SessionManager {
         if !queue_steer(&handle.state, &handle.tx, request) {
             return Err(session_ended());
         }
+        self.hibernation
+            .note_activity(employee_id, std::time::Instant::now());
         let view = handle
             .state
             .lock()

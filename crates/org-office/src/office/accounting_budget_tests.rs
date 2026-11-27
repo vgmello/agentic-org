@@ -202,6 +202,7 @@ fn seed_task(office: &Office, actor: &str, team_id: &str, project_id: &str, titl
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
         )
         .unwrap()
@@ -1307,6 +1308,7 @@ fn run_pass1_security_and_retrigger_suite(fx: &CostBudgetFixture) {
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
         )
         .unwrap()

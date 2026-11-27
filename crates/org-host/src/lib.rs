@@ -107,6 +107,7 @@ pub use config::{
 #[cfg(all(feature = "test-support", debug_assertions))]
 pub use host::start_instance_for_test;
 pub use host::Host;
+pub use ports::HostPorts;
 
 #[cfg(all(feature = "test-support", debug_assertions))]
 pub mod test_support;

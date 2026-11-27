@@ -111,6 +111,7 @@ pub(super) fn seed_fixture(engine: EngineChoice) -> PrivateNoteFixture {
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
         )
         .unwrap()
@@ -1092,5 +1093,80 @@ fn the_chief_of_staff_never_reads_another_agents_private_notes() {
             .unwrap()
             .unwrap_err();
         assert_eq!(got.code, ErrorCode::NotFound, "{engine:?}");
+    }
+}
+
+#[test]
+fn private_notes_never_leak_into_conflict_detail_or_events_since() {
+    use org_proto::tasks::{PatchField, TasksUpdateParams};
+
+    for engine in [EngineChoice::Memory, EngineChoice::Sqlite] {
+        let f = seed_fixture(engine);
+        let initial_rev = f
+            .office
+            .task_inspect(&f.task_key)
+            .unwrap()
+            .unwrap()
+            .task
+            .revision;
+        let secret = "ULTRA_SECRET_PRIVATE_NOTE_TOKEN_90";
+        f.office
+            .task_note_add(
+                &f.agent_a,
+                TasksNotesAddParams {
+                    command_id: next_uuid(),
+                    task: f.task_key.clone(),
+                    note_id: next_uuid(),
+                    body_markdown: format!("Agent A private working note: {secret}"),
+                }
+                .into(),
+            )
+            .unwrap()
+            .unwrap();
+
+        let make_update = |expected_revision: u64, title: &str| TasksUpdateParams {
+            command_id: next_uuid(),
+            task: f.task_key.clone(),
+            expected_revision,
+            title: Some(title.into()),
+            body_markdown: None,
+            append_body: None,
+            task_type: None,
+            work_type: PatchField::Unchanged,
+            priority: None,
+            effort: PatchField::Unchanged,
+            severity: PatchField::Unchanged,
+            rank_order: PatchField::Unchanged,
+            labels: None,
+            add_labels: vec![],
+            remove_labels: vec![],
+            reference_files: None,
+            add_reference_files: vec![],
+            remove_reference_files: vec![],
+            modified_files: None,
+            add_modified_files: vec![],
+            remove_modified_files: vec![],
+            details: None,
+            add_attachments: vec![],
+            remove_attachments: vec![],
+        };
+        f.office
+            .task_update(&f.owner, make_update(initial_rev, "Public title update"))
+            .unwrap()
+            .unwrap();
+
+        let err = f
+            .office
+            .task_update(&f.agent_b, make_update(initial_rev, "Stale update"))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::Conflict, "{engine:?}");
+        let detail = err.conflict_detail().expect("conflict detail");
+        let serialized = serde_json::to_string(&err).unwrap();
+        assert!(
+            !serialized.contains(secret),
+            "{engine:?}: private note leaked into conflict payload: {serialized}"
+        );
+        assert_eq!(detail.events_since.len(), 1, "{engine:?}");
     }
 }

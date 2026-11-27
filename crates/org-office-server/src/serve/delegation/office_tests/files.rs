@@ -468,3 +468,367 @@ fn legacy_tess_upload_without_acting_for_fails_closed_even_during_wake() {
         );
     }
 }
+
+#[test]
+fn task_and_comment_attachments_enforce_caller_intersect_tess() {
+    let w = world();
+    let acting = acting_as(&w);
+    let for_owner = w.acting_for(&w.owner);
+    let for_bob = w.acting_for(&w.bob);
+
+    // Bob sent Tess a DM file: acting for the owner, Tess must never re-attach it onto a task or
+    // comment (`caller ∩ tess` anti-exfiltration).
+    let (_bob_msg, bob_file) = send_file(&w.office, &w.bob, &w.tess, "bob-dm.txt", b"BOB-PRIVATE");
+    let task_id = next_id();
+    let team_id = w.office.org_snapshot().unwrap().teams[0].id.clone();
+    for (method, params) in [
+        (
+            "tasks.create",
+            json!({
+                "command_id": next_id(),
+                "task_id": task_id,
+                "team_id": team_id,
+                "title": "Leak attempt",
+                "attachment_ids": [bob_file],
+            }),
+        ),
+        (
+            "tasks.update",
+            json!({
+                "command_id": next_id(),
+                "task": task_id,
+                "expected_revision": 1,
+                "add_attachments": [bob_file],
+            }),
+        ),
+        (
+            "tasks.comment",
+            json!({
+                "command_id": next_id(),
+                "task": task_id,
+                "comment_id": next_id(),
+                "body_markdown": "see attached",
+                "attachment_ids": [bob_file],
+            }),
+        ),
+    ] {
+        assert!(
+            refused(&w.admit(method, params, &for_owner)),
+            "{method} must refuse re-attaching Bob's DM file for the owner"
+        );
+    }
+
+    // Owner staged an upload through Tess: acting for Bob or a wake, Tess must never attach it
+    // to any task or comment; plain task calls without attachments still pass for Bob.
+    *acting.lock().unwrap() = Some(w.owner.clone());
+    let owner_upload = staged(&w.office, &w.tess, "owner.txt", b"OWNER-DOC");
+    for delegation in [&for_bob, &Delegation::default()] {
+        for (method, params) in [
+            (
+                "tasks.create",
+                json!({
+                    "command_id": next_id(),
+                    "task_id": next_id(),
+                    "team_id": team_id,
+                    "title": "Wrong caller",
+                    "attachment_ids": [owner_upload],
+                }),
+            ),
+            (
+                "tasks.update",
+                json!({
+                    "command_id": next_id(),
+                    "task": task_id,
+                    "expected_revision": 1,
+                    "add_attachments": [owner_upload],
+                }),
+            ),
+            (
+                "tasks.comment",
+                json!({
+                    "command_id": next_id(),
+                    "task": task_id,
+                    "comment_id": next_id(),
+                    "body_markdown": "hi",
+                    "attachment_ids": [owner_upload],
+                }),
+            ),
+        ] {
+            assert!(
+                refused(&w.admit(method, params, delegation)),
+                "{method} must refuse owner upload for {:?}",
+                delegation.caller_id
+            );
+        }
+    }
+    let plain_create = json!({
+        "command_id": next_id(),
+        "task_id": next_id(),
+        "team_id": team_id,
+        "title": "No files",
+    });
+    assert!(w.admit("tasks.create", plain_create, &for_bob).is_ok());
+}
+
+fn tiny_png() -> Vec<u8> {
+    const PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYPgPAAEDAQAIicLsAAAAAElFTkSuQmCC";
+    STANDARD.decode(PNG_B64).unwrap()
+}
+
+fn send_png(office: &Office, actor: &str, to: &str, name: &str) -> String {
+    let bytes = tiny_png();
+    let begun = office
+        .attachment_upload_begin(
+            actor,
+            AttachmentUploadBeginParams {
+                filename: name.into(),
+                mime_type: "image/png".into(),
+                byte_count: bytes.len() as u64,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let upload_id = begun.upload.upload_id;
+    office
+        .attachment_upload_chunk(
+            actor,
+            AttachmentUploadChunkParams {
+                upload_id: upload_id.clone(),
+                offset: 0,
+                data_base64: STANDARD.encode(&bytes),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .attachment_upload_commit(
+            actor,
+            AttachmentUploadRef {
+                upload_id: upload_id.clone(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let sent = office
+        .chat_send(actor, send_params(to, vec![upload_id]))
+        .unwrap()
+        .unwrap();
+    sent.message.attachments[0].id.clone()
+}
+
+fn call_delegated_render(
+    w: &World,
+    runtime: &crate::attachment_calls::RenderRuntime,
+    delegation: &Delegation,
+    params: &org_proto::attachments::AttachmentRenderParams,
+) -> org_proto::Response {
+    use org_proto::attachments::AttachmentRender;
+    let request = w.request::<AttachmentRender>(params);
+    if let Err(refused) = super::scope::admit(&request, &w.gate, &w.tess, delegation) {
+        return refused;
+    }
+    let check = |att_id: &str| {
+        crate::serve::delegation::check_delegated_attachment(&w.gate, &w.tess, delegation, att_id)
+    };
+    let render_del = crate::attachment_calls::RenderDelegation {
+        caller_id: delegation.caller_id.as_deref(),
+        check_attachment: &check,
+    };
+    crate::attachment_calls::dispatch_attachment_rpc_with(
+        &w.office,
+        runtime,
+        Some(&w.tess),
+        Some(render_del),
+        &request,
+    )
+    .expect("attachment.render dispatched")
+}
+
+#[test]
+fn delegated_attachment_render_enforces_caller_intersect_tess_inline_and_chunked() {
+    use org_proto::attachments::{AttachmentRenderParams, RenderFormat, RenderSourceKind};
+
+    let w = world();
+    let for_owner = w.acting_for(&w.owner);
+    let runtime = crate::attachment_calls::RenderRuntime::production();
+
+    let bob_png = send_png(&w.office, &w.bob, &w.tess, "bob-dm.png");
+    let owner_png = send_png(&w.office, &w.owner, &w.tess, "owner-dm.png");
+
+    // 1. Inline reference to Bob's DM image is refused fail-closed when acting for the owner.
+    let inline_leak = call_delegated_render(
+        &w,
+        &runtime,
+        &for_owner,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Html,
+            source: format!(r#"<h1>Leak</h1><img src="attachment:{bob_png}">"#),
+            return_bytes: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(error_code(&inline_leak), Some(ErrorCode::NotAuthorized));
+
+    // 2. Chunked input splitting `attachment:<bob_png>` across two base64 chunks is ALSO refused
+    //    fail-closed after assembly before reading Bob's DM attachment bytes!
+    let full_html = format!(r#"<h1>Split Leak</h1><img src="attachment:{bob_png}">"#);
+    let split_at = full_html.find(&bob_png).unwrap() + 12;
+    let chunk1 = call_delegated_render(
+        &w,
+        &runtime,
+        &for_owner,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Html,
+            source_chunk_base64: Some(STANDARD.encode(&full_html.as_bytes()[..split_at])),
+            input_eof: Some(false),
+            return_bytes: true,
+            ..Default::default()
+        },
+    );
+    let stage_id = result(&chunk1)["render_id"].as_str().unwrap().to_owned();
+    let chunk2 = call_delegated_render(
+        &w,
+        &runtime,
+        &for_owner,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Html,
+            render_id: Some(stage_id),
+            source_chunk_base64: Some(STANDARD.encode(&full_html.as_bytes()[split_at..])),
+            input_eof: Some(true),
+            return_bytes: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(error_code(&chunk2), Some(ErrorCode::NotAuthorized));
+
+    // 3. Attachment accessible to BOTH owner and Tess succeeds (inline and chunked).
+    let ok_inline = call_delegated_render(
+        &w,
+        &runtime,
+        &for_owner,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Html,
+            source: format!(r#"<h1>Allowed</h1><img src="attachment:{owner_png}">"#),
+            return_bytes: true,
+            ..Default::default()
+        },
+    );
+    assert!(result(&ok_inline)["page_count"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn delegated_render_staged_inputs_and_buffered_outputs_are_isolated_per_caller() {
+    use org_doc_render::{DocumentRenderer, RenderError, RenderRequest, RenderedPdf};
+    use org_proto::attachments::{
+        AttachmentRenderParams, RenderFormat, RenderSourceKind, ATTACHMENT_CHUNK_MAX_BYTES,
+    };
+
+    struct BigPdfRenderer;
+    impl DocumentRenderer for BigPdfRenderer {
+        fn render_markdown_to_pdf(&self, _: &RenderRequest) -> Result<RenderedPdf, RenderError> {
+            let mut bytes = b"%PDF-1.7\n1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n3 0 obj<< /Type /Page /Parent 2 0 R >>endobj\n%".to_vec();
+            bytes.resize(700_000, b'B');
+            bytes.extend_from_slice(
+                b"\nxref\n0 1\n0000000000 65535 f \ntrailer<<>>\nstartxref\n10\n%%EOF\n",
+            );
+            Ok(RenderedPdf {
+                byte_count: bytes.len() as u64,
+                page_count: 1,
+                bytes,
+            })
+        }
+        fn render_html_to_pdf(&self, req: &RenderRequest) -> Result<RenderedPdf, RenderError> {
+            self.render_markdown_to_pdf(req)
+        }
+    }
+
+    let w = world();
+    let for_owner = w.acting_for(&w.owner);
+    let for_bob = w.acting_for(&w.bob);
+    let wake = Delegation::default();
+    let runtime = crate::attachment_calls::RenderRuntime::with_renderer(Arc::new(BigPdfRenderer));
+
+    // 1. Staged input opened while acting for Owner cannot be continued for Bob or a wake.
+    let stage = call_delegated_render(
+        &w,
+        &runtime,
+        &for_owner,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Markdown,
+            source_chunk_base64: Some(STANDARD.encode(b"# Owner draft\n")),
+            input_eof: Some(false),
+            return_bytes: true,
+            ..Default::default()
+        },
+    );
+    let stage_id = result(&stage)["render_id"].as_str().unwrap().to_owned();
+    for other in [&for_bob, &wake] {
+        let hijack = call_delegated_render(
+            &w,
+            &runtime,
+            other,
+            &AttachmentRenderParams {
+                format: RenderFormat::Pdf,
+                source_kind: RenderSourceKind::Markdown,
+                render_id: Some(stage_id.clone()),
+                source_chunk_base64: Some(STANDARD.encode(b"stolen\n")),
+                input_eof: Some(true),
+                return_bytes: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(error_code(&hijack), Some(ErrorCode::NotFound));
+    }
+
+    // 2. Buffered PDF output created while acting for Owner cannot be read for Bob or a wake.
+    let first = call_delegated_render(
+        &w,
+        &runtime,
+        &for_owner,
+        &AttachmentRenderParams {
+            format: RenderFormat::Pdf,
+            source_kind: RenderSourceKind::Markdown,
+            render_id: Some(stage_id),
+            source_chunk_base64: Some(STANDARD.encode(b"finished\n")),
+            input_eof: Some(true),
+            return_bytes: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(result(&first)["eof"], false);
+    let out_id = result(&first)["render_id"].as_str().unwrap().to_owned();
+
+    for other in [&for_bob, &wake] {
+        let stolen = call_delegated_render(
+            &w,
+            &runtime,
+            other,
+            &AttachmentRenderParams {
+                return_bytes: true,
+                render_id: Some(out_id.clone()),
+                chunk_offset: Some(u64::from(ATTACHMENT_CHUNK_MAX_BYTES)),
+                ..Default::default()
+            },
+        );
+        assert_eq!(error_code(&stolen), Some(ErrorCode::NotFound));
+    }
+
+    // 3. Owner's own delegated turn still finishes reading the buffered output cleanly.
+    let rest = call_delegated_render(
+        &w,
+        &runtime,
+        &for_owner,
+        &AttachmentRenderParams {
+            return_bytes: true,
+            render_id: Some(out_id),
+            chunk_offset: Some(u64::from(ATTACHMENT_CHUNK_MAX_BYTES)),
+            ..Default::default()
+        },
+    );
+    assert_eq!(result(&rest)["eof"], true);
+}

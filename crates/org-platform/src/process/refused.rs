@@ -41,6 +41,10 @@ pub(super) fn parent_pid(_pid: libc::pid_t) -> io::Result<Option<libc::pid_t>> {
     refused()
 }
 
+pub(super) fn process_tree_rss_bytes(_root_pid: u32) -> Option<u64> {
+    None
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn hardened() -> io::Result<bool> {
     refused()
@@ -260,6 +264,7 @@ mod tests {
         assert_refused(super::harden_self());
         assert_refused(super::disable_core_dumps());
         assert_refused(super::parent_pid(1));
+        assert_eq!(super::process_tree_rss_bytes(1), None);
         assert_refused(super::hardened());
         assert_refused(super::open_paths());
     }

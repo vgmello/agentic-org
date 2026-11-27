@@ -12,11 +12,13 @@ mod plan;
 mod probe;
 mod protocol;
 mod session;
+mod transcript;
 
+use org_agent_runtime::transcript::TranscriptParser;
 use org_agent_runtime::{
     AgentRuntime, Capabilities, CostBasis, ImageInputMode, LaunchContext, LaunchPlan,
-    MidTurnDelivery, PlanError, Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun, RuntimeId,
-    Session, SessionSpec, UsageScope, VersionRange,
+    MidTurnDelivery, OperatorRulesLayout, PlanError, Probe, ProbeContext, ProbeOutput, ProbeResult,
+    ProbeRun, RuntimeHostProfile, RuntimeId, Session, SessionSpec, UsageScope, VersionRange,
 };
 
 pub use crate::plan::{OPERATOR_RULES_DIR, OPERATOR_RULES_FILE_NAME};
@@ -107,6 +109,45 @@ impl AgentRuntime for CodexRuntime {
     fn parse_probe(&self, probe: Probe, out: &ProbeOutput) -> ProbeResult {
         probe::parse_probe(probe, out)
     }
+
+    fn aliases(&self) -> &'static [&'static str] {
+        &["openai", "codex-cli", "gpt"]
+    }
+
+    fn host_profile(&self) -> RuntimeHostProfile {
+        RuntimeHostProfile {
+            host_config_subdir: Some(".codex"),
+            config_credential_files: &["auth.json"],
+            host_credential_files: &[],
+            uses_host_oauth_token_injection: false,
+            uses_mount_mask_sandbox: false,
+            needs_explicit_sandbox_ro_dirs: false,
+        }
+    }
+
+    fn operator_rules_layout(&self) -> Option<OperatorRulesLayout> {
+        Some(OperatorRulesLayout {
+            ancestor_dirs: &[".codex"],
+            rules_dir: OPERATOR_RULES_DIR,
+            office_rules_file: OPERATOR_RULES_FILE_NAME,
+        })
+    }
+
+    fn endpoint_env_var(&self) -> Option<&'static str> {
+        Some("OPENAI_BASE_URL")
+    }
+
+    fn auth_env_var(&self, subscription_cli: bool, _secret: &str) -> Option<&'static str> {
+        Some(if subscription_cli {
+            "CODEX_ACCESS_TOKEN"
+        } else {
+            "OPENAI_API_KEY"
+        })
+    }
+
+    fn transcript_parser(&self) -> Option<&dyn TranscriptParser> {
+        Some(&transcript::CODEX_TRANSCRIPT_PARSER)
+    }
 }
 
 #[cfg(test)]
@@ -126,5 +167,13 @@ mod tests {
         ] {
             assert!(!runtime.reply_signals_auth_expired(reply), "{reply:?}");
         }
+    }
+
+    #[test]
+    fn host_profile_declares_codex_auth_json_credential_file() {
+        let profile = CodexRuntime::new().host_profile();
+        assert_eq!(profile.host_config_subdir, Some(".codex"));
+        assert_eq!(profile.config_credential_files, &["auth.json"]);
+        assert!(profile.host_credential_files.is_empty());
     }
 }

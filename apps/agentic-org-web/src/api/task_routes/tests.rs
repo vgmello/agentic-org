@@ -116,3 +116,60 @@ fn final_summary_and_default_dod_payloads_decode_strictly() {
     // The new action name is reserved, so it never reads as a task reference.
     assert!(is_reserved_task_action("final-summary"));
 }
+
+#[test]
+fn stale_revision_conflict_surfaces_structured_conflict_on_http_409() {
+    use org_proto::{ApiError, ConflictDetail, ConflictEvent, ConflictSummary};
+
+    let detail = ConflictDetail {
+        expected_revision: 4,
+        current_revision: 6,
+        changed_sections: vec!["title".into(), "checklist".into()],
+        events_since: vec![ConflictEvent {
+            revision: 5,
+            occurred_at: Some("2026-11-27T10:00:00.000Z".into()),
+            actor_kind: "employee".into(),
+            actor_id: Some("0193a5c0-0000-7000-8000-000000000001".into()),
+            change: serde_json::json!({"type": "task_updated", "fields": ["title"]}),
+        }],
+        events_truncated: false,
+        omitted_events: 0,
+        reread_recommended: false,
+        current_summary: Some(ConflictSummary {
+            key: Some("T-A1".into()),
+            title: "Current title".into(),
+            status: "in_progress".into(),
+            priority: "high".into(),
+            assignee_id: None,
+            assigned_team_id: None,
+            checklist_total: 2,
+            checklist_done: 1,
+            ac_total: 1,
+            ac_done: 1,
+            dod_total: 1,
+            dod_done: 0,
+            work_steps_total: 0,
+            work_steps_done: 0,
+            comment_count: 0,
+            watcher_count: 1,
+        }),
+    };
+    let reply = map_office_failure(OfficeFailure::Refused(ApiError::conflict(
+        "revision conflict: expected 4, current is 6",
+        detail,
+    )));
+    assert_eq!(status_of(&reply), StatusCode::CONFLICT);
+    let body: Value = serde_json::from_slice(reply.body_bytes()).unwrap();
+    assert_eq!(body["error"]["code"], "conflict");
+    assert_eq!(body["error"]["conflict"]["expected_revision"], 4);
+    assert_eq!(body["error"]["conflict"]["current_revision"], 6);
+    assert_eq!(body["error"]["conflict"]["changed_sections"][0], "title");
+    assert_eq!(body["error"]["conflict"]["events_since"][0]["revision"], 5);
+    assert_eq!(body["error"]["conflict"]["events_truncated"], false);
+    assert_eq!(body["error"]["conflict"]["omitted_events"], 0);
+    assert_eq!(body["error"]["conflict"]["reread_recommended"], false);
+    assert_eq!(
+        body["error"]["conflict"]["current_summary"]["title"],
+        "Current title"
+    );
+}

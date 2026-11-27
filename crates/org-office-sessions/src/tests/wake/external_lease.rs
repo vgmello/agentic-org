@@ -8,7 +8,8 @@ use crate::ExternalLeaseRecord;
 use base64::Engine as _;
 use org_proto::external_auth::{
     challenge_message, AuthLoginRequestParams, ChallengePurpose, ExternalLoginState,
-    MemberExternalApproveParams, SessionMode, SignedChallengeParams,
+    MemberExternalApproveParams, MemberExternalRenewParams, SessionMode, SignedChallengeParams,
+    WorkspaceFamiliarity, MAX_LEASE_TTL_SECS,
 };
 use org_proto::ErrorCode;
 use ring::rand::SystemRandom;
@@ -53,6 +54,8 @@ fn login(mgr: &SessionManager, agent: &str, ws: &Workspace) -> (String, String) 
                 member: agent.into(),
                 pubkey_ed25519_b64: ws.pubkey_b64(),
                 workspace_label: "laptop:~/src/app".into(),
+                hostname: Some("dev-laptop".into()),
+                workspace_path: Some("/home/ada/src/app".into()),
             },
         )
         .unwrap();
@@ -446,6 +449,8 @@ fn login_requests_validate_key_label_and_agent() {
         member: fx.agent_a.clone(),
         pubkey_ed25519_b64: ws.pubkey_b64(),
         workspace_label: "laptop".into(),
+        hostname: None,
+        workspace_path: None,
     };
     let mut bad_key = base.clone();
     bad_key.pubkey_ed25519_b64 = "AAAA".into();
@@ -740,4 +745,240 @@ fn external_commands_are_recorded_in_ram_and_never_appended_to_the_history() {
         .map(|e| e.event)
         .collect();
     assert_eq!(events, ["approved", "token_issued"], "{events:?}");
+}
+
+#[test]
+fn external_renew_extends_active_lease_audits_and_refuses_revoked_expired_or_unauthorized() {
+    let fx = WakeFixture::new(LOOP_ECHO_SCRIPT);
+    let mgr = fx.make_manager(12, Duration::from_secs(3600), Duration::from_secs(2));
+    let ws = Workspace::new();
+    let other = bystander(&fx);
+
+    // No active lease yet -> refused fail-closed.
+    assert_eq!(
+        mgr.external_renew(
+            &fx.owner_id,
+            &fx.agent_a,
+            &MemberExternalRenewParams {
+                employee_id: fx.agent_a.clone(),
+                ttl_secs: Some(3600),
+                session_id: None,
+                command_id: None,
+            },
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::NotFound
+    );
+
+    let (_, code) = login(&mgr, &fx.agent_a, &ws);
+    let initial = mgr
+        .external_approve(
+            &fx.owner_id,
+            &MemberExternalApproveParams {
+                command_id: None,
+                code,
+                ttl_secs: Some(3600),
+                takeover: false,
+            },
+        )
+        .unwrap();
+
+    // Bystander cannot renew.
+    assert_eq!(
+        mgr.external_renew(
+            &other,
+            &fx.agent_a,
+            &MemberExternalRenewParams {
+                employee_id: fx.agent_a.clone(),
+                ttl_secs: Some(MAX_LEASE_TTL_SECS),
+                session_id: None,
+                command_id: None,
+            },
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::NotAuthorized
+    );
+
+    // Invalid TTL (> 7d or < 5m) and mismatched session_id are refused.
+    for bad_ttl in [60, MAX_LEASE_TTL_SECS + 1] {
+        assert_eq!(
+            mgr.external_renew(
+                &fx.owner_id,
+                &fx.agent_a,
+                &MemberExternalRenewParams {
+                    employee_id: fx.agent_a.clone(),
+                    ttl_secs: Some(bad_ttl),
+                    session_id: None,
+                    command_id: None,
+                },
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidRequest
+        );
+    }
+    assert_eq!(
+        mgr.external_renew(
+            &fx.owner_id,
+            &fx.agent_a,
+            &MemberExternalRenewParams {
+                employee_id: fx.agent_a.clone(),
+                ttl_secs: None,
+                session_id: Some("ext-wrong".into()),
+                command_id: None,
+            },
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::NotFound
+    );
+
+    // Owner renews with default TTL (7d): updates expires_at on disk + RAM and logs `renewed`.
+    let renewed = mgr
+        .external_renew(
+            &fx.owner_id,
+            &fx.agent_a,
+            &MemberExternalRenewParams {
+                employee_id: fx.agent_a.clone(),
+                ttl_secs: None,
+                session_id: Some(initial.session_id.clone()),
+                command_id: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(renewed.session_id, initial.session_id);
+    assert!(renewed.expires_at > initial.expires_at);
+    let on_disk = mgr
+        .store()
+        .read_external_lease(&fx.agent_a)
+        .unwrap()
+        .unwrap();
+    assert_eq!(on_disk.expires_at, renewed.expires_at);
+    let history = mgr
+        .external_sessions(&fx.owner_id, &fx.agent_a, Some(20))
+        .unwrap()
+        .history;
+    let last = history.last().unwrap();
+    assert_eq!(last.event, "renewed");
+    assert_eq!(last.actor_id.as_deref(), Some(fx.owner_id.as_str()));
+
+    // Expired lease on disk (after restart / reload) is refused fail-closed.
+    let mut expired_record = on_disk.clone();
+    expired_record.expires_at = "2020-01-01T00:00:00.000Z".into();
+    mgr.store().write_external_lease(&expired_record).unwrap();
+    let restarted = fx.make_manager(12, Duration::from_secs(3600), Duration::from_secs(2));
+    assert_eq!(
+        restarted
+            .external_renew(
+                &fx.owner_id,
+                &fx.agent_a,
+                &MemberExternalRenewParams {
+                    employee_id: fx.agent_a.clone(),
+                    ttl_secs: Some(3600),
+                    session_id: None,
+                    command_id: None,
+                },
+            )
+            .unwrap_err()
+            .code,
+        ErrorCode::Conflict
+    );
+
+    // Restore then revoke -> refused fail-closed.
+    mgr.store().write_external_lease(&on_disk).unwrap();
+    mgr.external_revoke(&fx.owner_id, &fx.agent_a, None)
+        .unwrap();
+    assert_eq!(
+        mgr.external_renew(
+            &fx.owner_id,
+            &fx.agent_a,
+            &MemberExternalRenewParams {
+                employee_id: fx.agent_a.clone(),
+                ttl_secs: Some(3600),
+                session_id: None,
+                command_id: None,
+            },
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::Conflict
+    );
+}
+
+#[test]
+fn external_pending_reports_masked_code_familiarity_and_scopes_by_authority() {
+    let fx = WakeFixture::new(LOOP_ECHO_SCRIPT);
+    let mgr = fx.make_manager(12, Duration::from_secs(3600), Duration::from_secs(2));
+    let ws_same = Workspace::new();
+    let ws_new = Workspace::new();
+    let other = bystander(&fx);
+
+    // 1. First-time login request for agent_a.
+    let (req1, code1) = login(&mgr, &fx.agent_a, &ws_same);
+    let pending = mgr.external_pending(&fx.owner_id, None).unwrap();
+    assert_eq!(pending.pending.len(), 1);
+    let first = &pending.pending[0];
+    assert_eq!(first.request_id, req1);
+    assert_eq!(first.code_prefix, format!("{}-••••", &code1[..4]));
+    assert!(!first.code_prefix.contains(&code1[5..]));
+    assert_eq!(first.workspace_familiarity, WorkspaceFamiliarity::FirstTime);
+    assert!(first.last_approved_by.is_none());
+    assert!(first.last_approved_at.is_none());
+    assert_eq!(first.hostname.as_deref(), Some("dev-laptop"));
+    assert_eq!(first.workspace_path.as_deref(), Some("/home/ada/src/app"));
+
+    // Bystander sees empty office-wide list and is refused on explicit filter.
+    assert!(mgr
+        .external_pending(&other, None)
+        .unwrap()
+        .pending
+        .is_empty());
+    assert_eq!(
+        mgr.external_pending(&other, Some(&fx.agent_a))
+            .unwrap_err()
+            .code,
+        ErrorCode::NotAuthorized
+    );
+
+    // 2. Approve first request so history records the workspace + key fingerprint.
+    approve(&mgr, &fx.owner_id, &code1, false).unwrap();
+
+    // 3. Re-login with SAME key -> returning_known_key; with NEW key -> returning_new_key.
+    let (req_known, _) = login(&mgr, &fx.agent_a, &ws_same);
+    let (req_new, _) = login(&mgr, &fx.agent_a, &ws_new);
+    let listed = mgr
+        .external_pending(&fx.owner_id, Some(&fx.agent_a))
+        .unwrap();
+    assert_eq!(listed.pending.len(), 2);
+    let known = listed
+        .pending
+        .iter()
+        .find(|p| p.request_id == req_known)
+        .unwrap();
+    assert_eq!(
+        known.workspace_familiarity,
+        WorkspaceFamiliarity::ReturningKnownKey
+    );
+    assert_eq!(
+        known.last_approved_by.as_deref(),
+        Some(fx.owner_id.as_str())
+    );
+    assert!(known.last_approved_at.is_some());
+
+    let rotated = listed
+        .pending
+        .iter()
+        .find(|p| p.request_id == req_new)
+        .unwrap();
+    assert_eq!(
+        rotated.workspace_familiarity,
+        WorkspaceFamiliarity::ReturningNewKey
+    );
+    assert_eq!(
+        rotated.last_approved_by.as_deref(),
+        Some(fx.owner_id.as_str())
+    );
+    assert!(rotated.last_approved_at.is_some());
 }

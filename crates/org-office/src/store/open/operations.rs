@@ -14,7 +14,10 @@ use crate::{
         records,
     },
     projects::{
-        features::{AddProjectTeam, CreateProject, ProjectFeature, RemoveProjectTeam},
+        features::{
+            AddProjectTeam, AttachProjectRepository, CreateProject, ProjectFeature,
+            RegisterRepository, RemoveProjectTeam,
+        },
         records::Project as ProjectRecord,
     },
     structure::snapshot,
@@ -288,6 +291,10 @@ pub type CreateProjectOp = ProjectOp<CreateProject>;
 pub type AddProjectTeamOp = ProjectOp<AddProjectTeam>;
 /// Removes a contributing team from a project.
 pub type RemoveProjectTeamOp = ProjectOp<RemoveProjectTeam>;
+/// Registers a shared remote or local repository in `state/repositories.yaml`.
+pub type RegisterRepositoryOp = ProjectOp<RegisterRepository>;
+/// Attaches a registered repository to a project with a verified `integration_branch`.
+pub type AttachProjectRepositoryOp = ProjectOp<AttachProjectRepository>;
 
 /// Lists projects from a consistent snapshot.
 pub struct ProjectsList {
@@ -596,7 +603,7 @@ impl ReadOp for CheckHrMessageAccess {
             return Ok(false);
         };
         let owner = crate::organization::owner::effective_owner_id(read, &self.owner)?;
-        crate::organization::features::authority::may_address_hr(read, &owner, sender)
+        crate::organization::authority::may_address_hr(read, &owner, sender)
     }
 }
 

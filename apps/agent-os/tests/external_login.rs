@@ -1,6 +1,6 @@
 //! Real-binary `agent-os login`, `whoami` and `logout` against a scripted office that checks
 //! every Ed25519 signature (`TASK-137`): owner-only workspace state outside Git, walk-up
-//! resolution, environment precedence, the boot briefing of a sign-in and logout cleanup.
+//! resolution, environment precedence, the context briefing of a sign-in and logout cleanup.
 
 use std::io::BufReader;
 use std::os::unix::fs::PermissionsExt;
@@ -31,6 +31,7 @@ const SESSION: &str = "ext-0193a5c0-0000-7000-8000-000000000070";
 #[derive(Default)]
 struct Office {
     pubkey: Option<Vec<u8>>,
+    pubkeys: Vec<Vec<u8>>,
     polls: u32,
     nonce: u32,
     tokens: Vec<String>,
@@ -67,11 +68,11 @@ fn answer(req: &Request, office: &mut Office) -> Response {
     } else if req.is::<AuthLoginRequest>() {
         let p = req.params::<AuthLoginRequest>().unwrap();
         assert_eq!(p.member, "@ada");
-        office.pubkey = Some(
-            base64::engine::general_purpose::STANDARD
-                .decode(&p.pubkey_ed25519_b64)
-                .unwrap(),
-        );
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&p.pubkey_ed25519_b64)
+            .unwrap();
+        office.pubkeys.push(decoded.clone());
+        office.pubkey = Some(decoded);
         Response::ok::<AuthLoginRequest>(
             id,
             &AuthLoginRequestResult {
@@ -198,7 +199,7 @@ fn answer(req: &Request, office: &mut Office) -> Response {
         )
         .unwrap()
     } else if req.is::<Who>() {
-        // The boot briefing `login` answers once the workspace is bound.
+        // The context briefing `login` answers once the workspace is bound.
         let who: WhoResult = serde_json::from_value(serde_json::json!({"members": [{
             "id": ADA, "name": "Ada", "handle": "ada", "kind": "agent", "teams": [],
             "presence": "online"
@@ -305,24 +306,25 @@ fn login_whoami_and_logout_keep_owner_only_state_outside_git() {
     assert_eq!(env["data"]["mode"], "external");
     assert_eq!(env["data"]["session_id"], SESSION);
     assert_eq!(env["data"]["workspace_root"], repo.display().to_string());
-    // The grouped catalogue: one `resource: verbs` line per resource.
-    assert!(env["data"]["commands"]
+    assert!(
+        env["data"].get("boot").is_none() && env["data"].get("commands").is_none(),
+        "legacy data.boot and split data.commands must be removed: {env}"
+    );
+    // The sign-in answers the exact `agent-os context` schema under `data.context`, with
+    // `catalogue` inside it and external-mode rules.
+    let login_ctx = &env["data"]["context"];
+    assert_eq!(login_ctx["mode"], "external", "{env}");
+    assert_eq!(login_ctx["identity"]["id"], ADA, "{env}");
+    assert_eq!(
+        login_ctx["rules"],
+        org_agent_cli::EXTERNAL_RULES.trim_end(),
+        "{env}"
+    );
+    assert!(login_ctx["catalogue"]
         .as_str()
         .unwrap()
         .lines()
         .any(|line| line.starts_with("msg: ") && line.contains("send")));
-    // The sign-in answers the bound boot briefing over the binding it saved.
-    let boot = &env["data"]["boot"];
-    assert_eq!(boot["mode"], "bound", "{env}");
-    assert_eq!(boot["identity"]["id"], ADA, "{env}");
-    assert!(
-        boot["rules"].as_str().is_some_and(|r| !r.is_empty()),
-        "{env}"
-    );
-    assert!(
-        boot.get("catalogue").is_none(),
-        "`commands` carries it: {env}"
-    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("agentic-org agent approve ABCD-EFGH"),
@@ -351,8 +353,8 @@ fn login_whoami_and_logout_keep_owner_only_state_outside_git() {
     assert_eq!(env["data"]["mode"], "external");
     assert_eq!(office.lock().unwrap().bound_with.last(), Some(&token));
 
-    // The signed-in workspace is a bound shell: `--help` opens with the bound quickstart, and
-    // `boot` reads the office over the workspace binding instead of answering offline.
+    // The signed-in workspace is a bound shell: `--help` opens with the bound quickstart,
+    // `context` matches `login`'s `data.context` schema verbatim, and legacy `boot` is gone.
     let help = |cwd: &Path| {
         let out = agent_os(cwd, &state, &root).arg("--help").output().unwrap();
         assert_eq!(out.status.code(), Some(0));
@@ -364,11 +366,18 @@ fn login_whoami_and_logout_keep_owner_only_state_outside_git() {
         help(&sub)
     );
     assert!(help(&root).starts_with("Agent quickstart: this shell has no office binding"));
-    let out = agent_os(&sub, &state, &root).arg("boot").output().unwrap();
-    let env = envelope(&out);
-    assert_eq!(out.status.code(), Some(0), "{env}");
-    assert_eq!(env["data"]["mode"], "bound", "{env}");
-    assert_eq!(env["data"]["identity"]["id"], ADA, "{env}");
+    let out = agent_os(&sub, &state, &root)
+        .arg("context")
+        .output()
+        .unwrap();
+    let ctx_env = envelope(&out);
+    assert_eq!(out.status.code(), Some(0), "{ctx_env}");
+    assert_eq!(
+        ctx_env["data"], *login_ctx,
+        "login data.context must match `agent-os context`"
+    );
+    let legacy = agent_os(&sub, &state, &root).arg("boot").output().unwrap();
+    assert_eq!(legacy.status.code(), Some(2), "legacy `boot` must fail");
 
     // Environment bindings always win over the workspace.
     let out = agent_os(&sub, &state, &root)
@@ -670,5 +679,88 @@ fn a_challenge_for_another_office_is_never_signed() {
         office.lock().unwrap().exchanges,
         exchanges,
         "nothing was signed or sent"
+    );
+}
+
+#[test]
+fn bare_login_auto_discovers_office_from_locator_instances_and_reuses_workspace_keypair() {
+    let tmp = tempfile::Builder::new().prefix("aosd").tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let dev_base = root.join("base");
+    let inst_root = root.join("inst");
+    let rt = root.join("rt");
+    let sock_dir = rt.join("o").join(&OFFICE[OFFICE.len() - 12..]);
+    std::fs::create_dir_all(&sock_dir).unwrap();
+    let sock = sock_dir.join("s.sock");
+    let office = Arc::new(Mutex::new(Office::default()));
+    serve(UnixListener::bind(&sock).unwrap(), Arc::clone(&office));
+
+    let meta_dir = inst_root.join("office-state").join("offices").join(OFFICE);
+    std::fs::create_dir_all(&meta_dir).unwrap();
+    std::fs::write(
+        meta_dir.join("office.json"),
+        serde_json::json!({
+            "v": 2,
+            "office_id": OFFICE,
+            "office_name": "HQ",
+            "role": "hq",
+            "org_id": "0193a5c0-0000-7000-8000-000000009001",
+            "org_name": "Acme",
+            "created_at": "2026-11-27T00:00:00.000Z"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let locator_dir = dev_base.join("locator");
+    std::fs::create_dir_all(&locator_dir).unwrap();
+    std::fs::write(
+        locator_dir.join("instances.json"),
+        serde_json::json!({
+            "version": 1,
+            "user_temp": root.display().to_string(),
+            "entries": [{
+                "phase": "ready",
+                "binding": {
+                    "name": "default",
+                    "id": "0193a5c0-0000-7000-8000-000000001001",
+                    "root": inst_root.display().to_string(),
+                    "identity": { "device": 1, "inode": 1 },
+                    "temp_handle": "rt",
+                    "temp_folder": rt.display().to_string(),
+                }
+            }]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let repo = root.join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let state = root.join("state");
+
+    // 1. Bare `agent-os login --as @ada` with NO `--socket` and NO `--office`.
+    let out = agent_os(&repo, &state, &root)
+        .env("ORG_DEV_ACCOUNT_BASE", &dev_base)
+        .args(["login", "--as", "@ada", "--wait", "30"])
+        .output()
+        .unwrap();
+    let env = envelope(&out);
+    assert_eq!(out.status.code(), Some(0), "{env}");
+    assert_eq!(env["data"]["office_id"], OFFICE);
+    assert_eq!(env["data"]["context"]["mode"], "external");
+
+    // 2. Re-login with `--office <UUID>` (NO `--socket`) in the same workspace reuses keypair.
+    let out2 = agent_os(&repo, &state, &root)
+        .env("ORG_DEV_ACCOUNT_BASE", &dev_base)
+        .args(["login", "--as", "@ada", "--office", OFFICE, "--wait", "30"])
+        .output()
+        .unwrap();
+    let env2 = envelope(&out2);
+    assert_eq!(out2.status.code(), Some(0), "{env2}");
+    let keys = office.lock().unwrap().pubkeys.clone();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(
+        keys[0], keys[1],
+        "re-authenticating the same workspace must reuse key.ed25519.pkcs8"
     );
 }

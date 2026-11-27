@@ -1,7 +1,7 @@
 //! The durable shapes of a structured ask (`ADR-0020`, `TASK-46`): the card a `request` message
 //! carries in `metadata["card"]`, and the answer or withdrawal envelope a participant's
-//! `answers/<ask-id>.json` file holds. The ask decisions (`super::asks`) and the message reads
-//! and sends (`super::features`) both read them; neither owns them.
+//! `answers/<ask-id>.json` file holds. The ask decisions (`super::features::asks`) and the
+//! message reads and sends (`super::features`) both read them; neither owns them.
 
 use org_proto::ask::{AskAnswerRecord, AskOption, AskQuestion, AskWithdrawalRecord};
 use org_proto::msg::KIND_REQUEST;

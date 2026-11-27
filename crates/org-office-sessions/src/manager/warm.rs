@@ -76,8 +76,8 @@ pub(super) struct WarmHandleTurn<'a> {
 /// Results of a warm handle's disk and SQLite freshness checks, run with no lock held.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct WarmFreshness {
-    /// A sibling appeared that this Linux `bwrap` session does not mask.
-    pub(super) bwrap_topology_stale: bool,
+    /// The session's confinement plan is stale and requires a fresh launch.
+    pub(super) sandbox_topology_stale: bool,
     /// The handle has no pool connection but the agent now has an execution config.
     pub(super) route_stale: bool,
 }
@@ -237,7 +237,10 @@ fn send_turn_fenced<'a>(
         return FencedSend::Draining(slot_guard);
     }
     if crate::pump::queue_turn_with_attachments(state, tx, turn) {
+        mgr.hibernation
+            .note_activity(emp_id, std::time::Instant::now());
         slot_guard.release_locked(&mut reg);
+        drop(reg);
         return FencedSend::Delivered;
     }
     let old = reg.live.remove(emp_id);
@@ -403,8 +406,8 @@ pub(super) fn warm_handle_stop_reason(
     if state != SessionState::Idle {
         return None;
     }
-    if freshness.bwrap_topology_stale {
-        return Some("bwrap_sibling_topology_changed");
+    if freshness.sandbox_topology_stale {
+        return Some("sandbox_topology_changed");
     }
     if crate::host_auth::is_oauth_expiring(handle.oauth_expires_at_ms, crate::credentials::now_ms())
     {

@@ -1,36 +1,14 @@
-//! The office's own trees every agent sandbox masks (`TASK-203`): each durable family, each
-//! office-local companion store ([`org_office::companion_paths`], the attachment staging area
-//! and blob outbox included, `TASK-98.1`, `TASK-98.6`), the restore backups beside
-//! the two data roots ([`RESTORE_BACKUPS_DIR_NAME`]), and anything else found beside the
-//! office's `agents/` folder or beside the data roots (a legacy `durable.before-restore-*`, a
-//! store added later), so none of them is readable through `$HOME/..`.
-//!
-//! And the neighbours an office has on a host instance that serves several (`TASK-204`):
-//! every other office's local folder under the same durable root (`local/offices/<id>/`) and
-//! every office folder in the office home (`<office-home>/offices/`), whole; and, when the data
-//! roots sit where the host puts them ([`Placement`]), every other organization's folder in the
-//! data root and every other office of the organization: its HQ's data roots for a co-hosted
-//! satellite, every co-hosted satellite (`<org>/offices/`, made before launch so a Linux `bwrap`
-//! mask hides the ones that join later) for the HQ. Another office's runtime folder in the same
-//! runtime root is masked with the runtime denies (`SessionManager::append_runtime_office_denies`).
-//!
-//! One list feeds both the deny globs every runtime gets
-//! ([`SessionManager::denied_office_globs_for`]: Claude's `permissions.deny` and sandbox
-//! `denyRead`, Codex's profile, the approval bridge that confines Agy) and the folders a Linux
-//! `bwrap` sandbox pre-creates to mask atomically
-//! ([`super::bwrap_isolation::ensure_bwrap_deny_dirs`]).
-//!
-//! Every mask goes through one place ([`OfficeMasks::push_mask`]): a path is looked at without
-//! following it (`lstat`, after dropping a trailing `/` or `/.`), a link is masked as the link
-//! itself and never through or as what it points to, and nothing that holds the office's own
-//! data roots, as given or as resolved (`/var` and `/private/var` on macOS), is ever masked.
-//!
-//! What a running session can't see: the masks are computed at launch, so an organization or a
-//! co-hosted satellite office created afterwards in a folder that isn't masked whole is masked
-//! only from that session's next launch. The approval bridge keeps the launch-time globs too.
-//!
-//! [`SessionManager::denied_office_globs_for`]: super::SessionManager::denied_office_globs_for
+//! Office durable and co-hosted neighbour sandbox masks (`TASK-203`, `TASK-204`, `TASK-245`,
+//! `TASK-246`): durable families, companion stores (`org_office::companion_paths`), restore
+//! backups, unexpected entries beside `agents/` or the data roots, co-hosted sibling orgs and
+//! satellites (`Placement`), and `<office-home>` / `<data-root>/office-state/host-registry.*`
+//! (keeping `<office-home>/run/` reachable for sockets). Every mask goes through
+//! [`OfficeMasks::push_mask`] (`lstat`, never following leaf symlinks, never masking own roots).
+//! Warm sessions re-check [`OfficeMasks::topology_digest`] on reuse (`TASK-245`) and recycle idle
+//! handles with `"sandbox_topology_changed"` (failing closed while busy).
 
+use std::collections::HashSet;
+use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
 use org_agent_runtime::PathPattern;
@@ -39,11 +17,12 @@ use org_office::companion_paths::{
     office_local_entries, CompanionKind, AGENTS_DIR_NAME, OFFICE_LOCAL_DIR,
 };
 use org_office::{Office, OfficeRole};
+use ring::digest::{Context, SHA256};
 
 use super::rust_toolchain::canonicalize_with_tail;
 use super::sandbox_rules::push_raw_pattern;
 
-/// The durable families every session masks whole.
+/// Durable families masked whole; `private` is HQ-only (`ARCH-02`).
 const DURABLE_FAMILIES: [&str; 10] = [
     "state",
     "journal",
@@ -56,21 +35,24 @@ const DURABLE_FAMILIES: [&str; 10] = [
     "blobs",
     "checkpoints",
 ];
-
-/// The one durable family a satellite never holds and never gets made (`ARCH-02`).
 const HQ_ONLY_FAMILY: &str = "private";
-
-/// The names of the two data roots in the folder that holds both.
 const DATA_ROOT_NAMES: [&str; 2] = ["durable", "runtime"];
-
-/// The folder that holds one folder per office: below an organization's folder, its co-hosted
-/// satellites' data roots (`<data-root>/<org-id>/offices/<office-id>/`, `org-host`'s
-/// `satellite_data_roots`); below the office home, every office folder
-/// (`org_office_launch::OFFICES_DIR_NAME`).
 const OFFICES_DIR_NAME: &str = "offices";
-
-/// The length of a UUID in text form.
 const UUID_LEN: usize = 36;
+const OFFICE_STATE_DIR_NAME: &str = "office-state";
+const HOST_REGISTRY_PREFIX: &str = "host-registry.";
+/// Host-registry DB, SQLite sidecars/temps, and sentinel masked under `<office-home>` (`TASK-246`).
+const HOST_REGISTRY_FILES: [&str; 9] = [
+    "host-registry.db",
+    "host-registry.db-wal",
+    "host-registry.db-shm",
+    "host-registry.db-journal",
+    "host-registry.db.tmp",
+    "host-registry.db.tmp-wal",
+    "host-registry.db.tmp-shm",
+    "host-registry.db.tmp-journal",
+    "host-registry.created",
+];
 
 /// A folder a sandbox masks whole.
 pub(super) struct MaskedFolder {
@@ -136,13 +118,16 @@ impl OfficeMasks {
         let mut neighbours: Vec<PathBuf> = office_folders(office.folder(), &info.office_id)
             .into_iter()
             .collect();
+        if let Some(home) = office_home(office.folder(), &info.office_id) {
+            push_host_registry_masks(&home, &mut files, &mut sweeps);
+        }
         if let Some(placement) = Placement::locate(
             durable,
             office.runtime_root(),
             &info.org_id,
             &info.office_id,
         ) {
-            placement.add_masks(&mut folders, &mut neighbours, &mut sweeps);
+            placement.add_masks(&mut folders, &mut files, &mut neighbours, &mut sweeps);
         }
         Self {
             folders,
@@ -180,11 +165,108 @@ impl OfficeMasks {
             .map(|folder| folder.path.as_path())
     }
 
-    /// Whether masking `path` would mask the office's own data roots (a layout this module
-    /// doesn't expect): such a path is never masked, so a session never loses its own home.
-    /// `path` is compared as given and with its parent resolved, never following `path` itself
-    /// (a link is masked as the link), against each root as given and as resolved, so a root
-    /// reached through a linked parent (`/var` and `/private/var` on macOS) is found either way.
+    /// SHA-256 digest of dynamic swept neighbours (`TASK-245`) plus, when
+    /// `track_absent_static_masks` is true (Linux `bwrap`), presence bits for static masks.
+    /// Returns `None` on unexpected I/O errors so callers fail closed.
+    pub(super) fn topology_digest(&self, track_absent_static_masks: bool) -> Option<String> {
+        let static_paths = self.static_mask_paths();
+        let mut ctx = Context::new(&SHA256);
+        for sweep in &self.sweeps {
+            hash_path(&mut ctx, b"sweep:", &sweep.dir);
+            self.hash_sweep_entries(&mut ctx, sweep, &static_paths)?;
+        }
+        if track_absent_static_masks {
+            self.hash_static_presence(&mut ctx);
+        }
+        let mut out = String::with_capacity(64);
+        for byte in ctx.finish().as_ref() {
+            use std::fmt::Write as _;
+            let _ = write!(&mut out, "{byte:02x}");
+        }
+        Some(out)
+    }
+
+    fn hash_sweep_entries(
+        &self,
+        ctx: &mut Context,
+        sweep: &Sweep,
+        static_paths: &HashSet<PathBuf>,
+    ) -> Option<()> {
+        let entries = match std::fs::read_dir(&sweep.dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == ErrorKind::NotFound => return Some(()),
+            Err(_) => return None,
+        };
+        let mut sorted: Vec<_> = entries.collect::<Result<_, _>>().ok()?;
+        sorted.sort_by_key(std::fs::DirEntry::file_name);
+        let mut patterns = Vec::new();
+        for entry in sorted {
+            if !sweep.keep.masks(entry.file_name().to_str()) {
+                continue;
+            }
+            let entry_path = normalized(&entry.path());
+            if static_paths.contains(&entry_path) {
+                continue;
+            }
+            let shape = match entry.file_type().is_ok_and(|k| k.is_dir()) {
+                true => Shape::Whole,
+                false => Shape::Exact,
+            };
+            patterns.clear();
+            self.push_mask(&mut patterns, &entry_path, shape);
+            for pat in &patterns {
+                ctx.update(b"pat:");
+                ctx.update(pat.as_str().as_bytes());
+                ctx.update(b"\0");
+            }
+        }
+        Some(())
+    }
+
+    fn static_mask_paths(&self) -> HashSet<PathBuf> {
+        let mut set = HashSet::new();
+        let all = self
+            .folders
+            .iter()
+            .map(|f| f.path.as_path())
+            .chain(self.files.iter().map(PathBuf::as_path))
+            .chain(self.neighbours.iter().map(PathBuf::as_path));
+        for path in all {
+            let norm = normalized(path);
+            set.insert(resolved_beside(&norm));
+            set.insert(norm);
+        }
+        set
+    }
+
+    fn hash_static_presence(&self, ctx: &mut Context) {
+        let entries = self
+            .folders
+            .iter()
+            .filter(|f| !f.pre_create)
+            .map(|f| (b"folder:".as_slice(), f.path.as_path()))
+            .chain(
+                self.files
+                    .iter()
+                    .map(|p| (b"file:".as_slice(), p.as_path())),
+            )
+            .chain(
+                self.neighbours
+                    .iter()
+                    .map(|p| (b"neighbour:".as_slice(), p.as_path())),
+            );
+        for (tag, path) in entries {
+            let norm = normalized(path);
+            hash_path(ctx, tag, &norm);
+            ctx.update(if std::fs::symlink_metadata(&norm).is_ok() {
+                b"1\0"
+            } else {
+                b"0\0"
+            });
+        }
+    }
+
+    /// True if masking `path` (as given or parent-resolved) would cover the office's own roots.
     fn holds_own_root(&self, path: &Path) -> bool {
         let path = normalized(path);
         let beside = resolved_beside(&path);
@@ -193,35 +275,20 @@ impl OfficeMasks {
             .any(|root| root.starts_with(&path) || root.starts_with(&beside))
     }
 
-    /// Whether `link`'s resolved target overlaps any of the office's own roots (`root` is a
-    /// prefix of `target` or `target` is a prefix of `root`).
-    ///
-    /// Live Claude Code (`bwrap` and macOS Seatbelt) and Codex (`Seatbelt`/`bwrap`) dereference
-    /// leaf symlinks in deny lists via `realpath`/`canonicalize`, so emitting a bare symlink
-    /// pointing to `/`, `<data-root>`, `<own_org>`, `<own_durable>`, `<own_runtime>`, or
-    /// `<own_home>` breaks the agent's own session. Omitting such a link is safe: every
-    /// sensitive tree inside `own_roots` is already masked directly at its canonical path,
-    /// which `bwrap`, Seatbelt, and `resolve_path_for_deny` enforce regardless of traversal.
+    /// True if `link`'s resolved target overlaps any own root (omitted so `bwrap`/Seatbelt
+    /// leaf-symlink dereference never wipes own roots; canonical sensitive paths stay masked).
     fn link_overlaps_own_root(&self, link: &Path) -> bool {
-        let target = match std::fs::canonicalize(link) {
-            Ok(real) => Some(real),
-            Err(_) => resolve_dangling_target(link),
-        };
-        let Some(target) = target else {
-            return false;
-        };
-        self.own_roots
-            .iter()
-            .any(|root| root.starts_with(&target) || target.starts_with(root))
+        let target = std::fs::canonicalize(link)
+            .ok()
+            .or_else(|| resolve_dangling_target(link));
+        target.is_some_and(|t| {
+            self.own_roots
+                .iter()
+                .any(|root| root.starts_with(&t) || t.starts_with(root))
+        })
     }
 
-    /// The one place a mask is made. `path` is looked at without following it (after dropping
-    /// a trailing `/` or `/.`, as `lstat("link/")` follows the link): a link whose target
-    /// overlaps the office's own roots is omitted (so sandboxes that dereference deny entries
-    /// never wipe the session's own home or worktree); any other link is masked as the link
-    /// itself ([`push_symlink_pattern`]), never through and never as what it points to.
-    /// Anything else is masked in its `shape`. A path holding the office's own roots is never
-    /// masked.
+    /// Single choke-point for emitting a mask without following leaf symlinks (`lstat`).
     fn push_mask(&self, out: &mut Vec<PathPattern>, path: &Path, shape: Shape) {
         let path = normalized(path);
         if self.holds_own_root(&path) {
@@ -241,8 +308,7 @@ impl OfficeMasks {
         }
     }
 
-    /// Masks every entry of `sweep.dir` the sweep doesn't keep, in name order (a stable spec
-    /// hash): a folder whole, anything else (a file, a socket, a link) exactly.
+    /// Masks unkept entries of `sweep.dir` in sorted name order (folders whole, else exact).
     fn push_swept_entries(&self, out: &mut Vec<PathPattern>, sweep: &Sweep) {
         let Ok(entries) = std::fs::read_dir(&sweep.dir) else {
             return;
@@ -253,8 +319,6 @@ impl OfficeMasks {
             if !sweep.keep.masks(entry.file_name().to_str()) {
                 continue;
             }
-            // Seen without following it; `push_mask` looks again, so an entry swapped for a
-            // link since is masked as the link.
             let shape = if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
                 Shape::Whole
             } else {
@@ -265,20 +329,14 @@ impl OfficeMasks {
     }
 }
 
-/// How a path that isn't a link is masked.
 #[derive(Clone, Copy)]
 enum Shape {
-    /// Everything below it (a durable family, a companion store folder).
     Below,
-    /// It and everything below it (a neighbour, a swept folder).
     Whole,
-    /// It alone (a one-file store, a swept file).
     Exact,
 }
 
-/// Each of the office's own data roots as given and as resolved through every link, its own
-/// last component included (what the session really uses), or, when it doesn't exist yet,
-/// through its nearest existing ancestor.
+/// Own data roots as given and resolved through links (or nearest existing ancestor).
 fn own_root_forms(roots: [&Path; 2]) -> Vec<PathBuf> {
     let mut forms = Vec::with_capacity(4);
     for root in roots {
@@ -293,7 +351,6 @@ fn own_root_forms(roots: [&Path; 2]) -> Vec<PathBuf> {
     forms
 }
 
-/// A folder whose entries are masked, all but some.
 struct Sweep {
     dir: PathBuf,
     keep: Keep,
@@ -308,15 +365,10 @@ impl Sweep {
     }
 }
 
-/// Which entries of a swept folder stay unmasked.
 enum Keep {
-    /// The entries with these names; every other entry is masked, one whose name isn't UTF-8
-    /// included.
     Named(Vec<String>),
-    /// Every entry but another organization's folder: one named by a UUID (any case, with or
-    /// without a suffix such as a leftover's) other than `own`. The data root also holds the
-    /// host's own folders (`office-state`, which holds the office sockets), which stay.
     AllButOtherOrganizations { own: String },
+    OnlyHostRegistry,
 }
 
 impl Keep {
@@ -326,31 +378,22 @@ impl Keep {
             Self::AllButOtherOrganizations { own } => {
                 name.is_some_and(|name| name != own && names_an_organization(name))
             }
+            Self::OnlyHostRegistry => name.is_some_and(names_host_registry_file),
         }
     }
 }
 
-/// Where an office's data roots sit among the organizations and offices co-hosted on one host
-/// instance (`TASK-204`), as `org-host` lays them out: `<data-root>/<org-id>/{durable,runtime}`
-/// for the organization's HQ, `<data-root>/<org-id>/offices/<office-id>/{durable,runtime}` for
-/// a satellite. Derived from the roots and the office's own ids alone, so roots laid out any
-/// other way (a test's bare temporary folder, a development root) have no neighbours here and
-/// nothing beside them is swept.
+/// Host co-hosted data-root placement (`TASK-204`): HQ at `<data-root>/<org-id>/{durable,runtime}`
+/// or satellite at `<data-root>/<org-id>/offices/<office-id>/{durable,runtime}`.
 #[derive(Debug, PartialEq, Eq)]
 struct Placement {
-    /// The folder that holds every organization's folder on this host instance.
     data_root: PathBuf,
-    /// `<data-root>/<org-id>`.
     org_root: PathBuf,
     org_id: String,
-    /// The office's id when it is a co-hosted satellite (data roots in
-    /// `<org-root>/offices/<office-id>/`); `None` for the office at the organization's folder.
     satellite: Option<String>,
 }
 
 impl Placement {
-    /// The satellite layout is checked first, so roots that read as both (an office id equal
-    /// to its organization's) are a satellite's, the narrower of the two.
     fn locate(durable: &Path, runtime: &Path, org_id: &str, office_id: &str) -> Option<Self> {
         if !org_proto::is_uuid_v7(org_id) || !org_proto::is_uuid_v7(office_id) {
             return None;
@@ -380,16 +423,15 @@ impl Placement {
         })
     }
 
-    /// Every other organization's folder, whole; for a satellite its HQ's data roots (masked
-    /// even before they exist) and every other entry of the organization's folder and of its
-    /// `offices/`; for the HQ every co-hosted satellite, made before a Linux `bwrap` launch so
-    /// a satellite that joins later is masked too.
     fn add_masks(
         self,
         folders: &mut Vec<MaskedFolder>,
+        files: &mut Vec<PathBuf>,
         neighbours: &mut Vec<PathBuf>,
         sweeps: &mut Vec<Sweep>,
     ) {
+        let office_state = self.data_root.join(OFFICE_STATE_DIR_NAME);
+        push_host_registry_masks(&office_state, files, sweeps);
         sweeps.push(Sweep {
             dir: self.data_root,
             keep: Keep::AllButOtherOrganizations { own: self.org_id },
@@ -409,13 +451,51 @@ impl Placement {
     }
 }
 
-/// `<office-home>/offices/` when `folder` is the host's `<office-home>/offices/<office-id>`:
-/// every office's folder on this host (its `git-credentials/` included), none of which a
-/// session needs, its own being masked whole too.
+/// `<office-home>/offices/` when `folder` is `<office-home>/offices/<office-id>`.
 fn office_folders(folder: &Path, office_id: &str) -> Option<PathBuf> {
     let offices = folder.parent()?;
     (is_named(folder, office_id) && is_named(offices, OFFICES_DIR_NAME))
         .then(|| offices.to_path_buf())
+}
+
+fn office_home(folder: &Path, office_id: &str) -> Option<PathBuf> {
+    office_folders(folder, office_id)?
+        .parent()
+        .map(Path::to_path_buf)
+}
+
+fn push_host_registry_masks(office_home: &Path, files: &mut Vec<PathBuf>, sweeps: &mut Vec<Sweep>) {
+    let norm = normalized(office_home);
+    let resolved = canonicalize_with_tail(&norm);
+    if sweeps.iter().any(|s| {
+        matches!(s.keep, Keep::OnlyHostRegistry)
+            && (normalized(&s.dir) == norm
+                || canonicalize_with_tail(&normalized(&s.dir)) == resolved)
+    }) {
+        return;
+    }
+    for name in HOST_REGISTRY_FILES {
+        let candidate = office_home.join(name);
+        if !files.contains(&candidate) {
+            files.push(candidate);
+        }
+    }
+    sweeps.push(Sweep {
+        dir: office_home.to_path_buf(),
+        keep: Keep::OnlyHostRegistry,
+    });
+}
+
+fn names_host_registry_file(name: &str) -> bool {
+    name.len() > HOST_REGISTRY_PREFIX.len()
+        && name.as_bytes()[..HOST_REGISTRY_PREFIX.len()]
+            .eq_ignore_ascii_case(HOST_REGISTRY_PREFIX.as_bytes())
+}
+
+fn hash_path(ctx: &mut Context, tag: &[u8], path: &Path) {
+    ctx.update(tag);
+    ctx.update(normalized(path).to_string_lossy().as_bytes());
+    ctx.update(b"\0");
 }
 
 /// Whether `path`'s last component is `name`.

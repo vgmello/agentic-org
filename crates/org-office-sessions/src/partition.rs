@@ -216,6 +216,14 @@ impl PartitionLedger {
         let map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         map.get(&(employee_id.to_owned(), key.clone())).cloned()
     }
+
+    /// Clears `employee_id`'s stored conversation state for `key` (used by `tess.session_reset`
+    /// so the caller's next turn starts a fresh runtime thread instead of resuming the prior
+    /// `runtime_session_id`). Never touches any other caller's partition or `tess:wake`.
+    pub fn clear_partition(&self, employee_id: &str, key: &PartitionKey) -> bool {
+        let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        map.remove(&(employee_id.to_owned(), key.clone())).is_some()
+    }
 }
 
 /// One run's partition, as its pump sees it: the run records the conversation it holds the

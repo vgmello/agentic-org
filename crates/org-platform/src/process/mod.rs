@@ -122,6 +122,15 @@ pub fn parent_pid(pid: libc::pid_t) -> io::Result<Option<libc::pid_t>> {
     native::parent_pid(pid)
 }
 
+/// Total resident memory (RSS) in bytes for `root_pid` and its live descendant processes, or
+/// `None` when `root_pid` is invalid, no longer exists, or the target has no adapter (fail closed).
+pub fn process_tree_rss_bytes(root_pid: u32) -> Option<u64> {
+    if root_pid == 0 {
+        return None;
+    }
+    native::process_tree_rss_bytes(root_pid)
+}
+
 /// Whether `pid` is `ancestor` or a live descendant of `ancestor` by walking parent PIDs
 /// through the kernel (`proc_pidinfo` on macOS, `/proc/<pid>/stat` on Linux).
 /// Probes `pid` first so dead PIDs return `Ok(false)` and targets without an adapter fail closed.

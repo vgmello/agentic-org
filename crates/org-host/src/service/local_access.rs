@@ -129,8 +129,8 @@ fn execute_tls_enable(
 
     // Refuse HTTP -> HTTPS upgrade while authless mode is active: restarting onto HTTPS
     // disables local_authless and would lock the browser out with zero password accounts.
-    let (db, secrets) = authentication.provisioning_storage();
-    if db
+    if authentication
+        .accounts_store()
         .local_authless_account()
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not read auth mode"))?
         .is_some()
@@ -165,7 +165,9 @@ fn execute_tls_enable(
             (checked, crate::web_tls::Source::Supplied)
         }
     };
-    let fp = crate::web_tls::WebTls::install_for_upgrade(&*db, &*secrets, &checked, source)
+    let tls_store = authentication.web_tls_store();
+    let secrets = authentication.custody();
+    let fp = crate::web_tls::WebTls::install_for_upgrade(&*tls_store, &*secrets, &checked, source)
         .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not store TLS certificate"))?;
     instance
         .upgrade_browser_to_https(&https_listen)

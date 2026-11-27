@@ -287,6 +287,8 @@ fn she_never_signs_in_from_an_external_workspace() {
                 member: f.tess.clone(),
                 pubkey_ed25519_b64: "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=".into(),
                 workspace_label: "laptop".into(),
+                hostname: None,
+                workspace_path: None,
             },
         )
         .unwrap_err();
@@ -326,13 +328,15 @@ fn she_never_signs_in_from_an_external_workspace() {
         .pending
         .lock()
         .unwrap()
-        .insert(
-            new_uuid_v7(),
-            &f.tess,
-            "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
-            "laptop",
-            crate::credentials::now_ms(),
-        )
+        .insert(crate::external::PendingInsert {
+            request_id: new_uuid_v7(),
+            employee_id: &f.tess,
+            pubkey_ed25519_b64: "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+            workspace_label: "laptop",
+            hostname: None,
+            workspace_path: None,
+            now_ms: crate::credentials::now_ms(),
+        })
         .unwrap();
     let approve = f
         .manager

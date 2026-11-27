@@ -6,12 +6,18 @@
 //! opening office's own `local/offices/<office-id>/task-counter.yaml`: a rebuild walks only
 //! that office's local folder, so the counter is rebuilt for the opening office alone.
 
+use std::collections::BTreeSet;
+
+use org_proto::attachments::{
+    AttachmentTargetKind, TASK_ATTACHMENTS_MAX, TASK_COMMENT_ATTACHMENTS_MAX,
+};
 use org_store::{DurablePath, Engine, Id, ProjectionError, Projector};
 
 use super::{
     ports::TasksWrite,
     records::{self, Kind, Location, TaskDir},
 };
+use crate::attachments::records::AttachmentRecord;
 
 mod validate;
 
@@ -135,6 +141,49 @@ fn removes_rows<Tx: TasksWrite>(tx: &Tx, dir: &TaskDir) -> Result<bool, Projecti
     Ok(current.is_none_or(|location| location == dir.location))
 }
 
+/// Synchronizes the `attachments` table rows for `(kind, Some(target_id))` from the canonical
+/// file's embedded attachment metadata (`TASK-98.4`). Refuses an attachment ID already bound to
+/// another target so handcrafted duplicates can never silently overwrite rows.
+fn sync_target_attachments<Tx: TasksWrite>(
+    tx: &mut Tx,
+    path: &DurablePath,
+    kind: AttachmentTargetKind,
+    target_id: &Id,
+    max: usize,
+    next: &[AttachmentRecord],
+) -> Result<(), ProjectionError> {
+    let existing = tx.attachments_for_target(kind, Some(target_id), None, max.saturating_add(1))?;
+    let next_ids: BTreeSet<&Id> = next.iter().map(|r| &r.id).collect();
+    for old in &existing {
+        if !next_ids.contains(&old.id) {
+            tx.remove_attachment(&old.id)?;
+        }
+    }
+    for record in next {
+        if let Some(found) = tx.attachment(&record.id)? {
+            agree(
+                path,
+                found.target_kind == record.target_kind && found.target_id == record.target_id,
+                "an attachment ID already bound elsewhere",
+            )?;
+        }
+        tx.put_attachment(record)?;
+    }
+    Ok(())
+}
+
+fn clear_target_attachments<Tx: TasksWrite>(
+    tx: &mut Tx,
+    kind: AttachmentTargetKind,
+    target_id: &Id,
+    max: usize,
+) -> Result<(), ProjectionError> {
+    for old in tx.attachments_for_target(kind, Some(target_id), None, max.saturating_add(1))? {
+        tx.remove_attachment(&old.id)?;
+    }
+    Ok(())
+}
+
 fn apply_task_file<Tx: TasksWrite>(
     tx: &mut Tx,
     path: &DurablePath,
@@ -158,14 +207,53 @@ fn apply_task_file<Tx: TasksWrite>(
             agree(path, placed, "the task's project or owning team")?;
             tx.put_task(&doc.task)?;
             tx.put_task_links(tid, &doc.links)?;
+            sync_target_attachments(
+                tx,
+                path,
+                AttachmentTargetKind::Task,
+                tid,
+                TASK_ATTACHMENTS_MAX,
+                &doc.attachments,
+            )?;
         }
-        (Kind::Task(_), None) => tx.remove_task(tid)?,
+        (Kind::Task(_), None) => {
+            clear_target_attachments(tx, AttachmentTargetKind::Task, tid, TASK_ATTACHMENTS_MAX)?;
+            for comment in tx.task_comments(tid)? {
+                clear_target_attachments(
+                    tx,
+                    AttachmentTargetKind::TaskComment,
+                    &comment.id,
+                    TASK_COMMENT_ATTACHMENTS_MAX,
+                )?;
+            }
+            tx.remove_task(tid)?;
+        }
         (Kind::Comment(_, comment), Some(raw)) => {
-            let rec = records::decode_comment(raw).map_err(|e| refuse(path, e.to_string()))?;
-            agree(path, rec.task_id == *tid && rec.id == comment, "comment_id")?;
-            tx.put_task_comment(&rec)?;
+            let doc = records::decode_comment(raw).map_err(|e| refuse(path, e.to_string()))?;
+            agree(
+                path,
+                doc.comment.task_id == *tid && doc.comment.id == comment,
+                "comment_id",
+            )?;
+            tx.put_task_comment(&doc.comment)?;
+            sync_target_attachments(
+                tx,
+                path,
+                AttachmentTargetKind::TaskComment,
+                &comment,
+                TASK_COMMENT_ATTACHMENTS_MAX,
+                &doc.attachments,
+            )?;
         }
-        (Kind::Comment(_, comment), None) => tx.remove_task_comment(tid, &comment)?,
+        (Kind::Comment(_, comment), None) => {
+            clear_target_attachments(
+                tx,
+                AttachmentTargetKind::TaskComment,
+                &comment,
+                TASK_COMMENT_ATTACHMENTS_MAX,
+            )?;
+            tx.remove_task_comment(tid, &comment)?;
+        }
         (Kind::Checklist(_), Some(raw)) => {
             let steps = records::decode_checklist(raw).map_err(|e| refuse(path, e.to_string()))?;
             tx.put_checklist_steps(tid, &steps)?;

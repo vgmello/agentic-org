@@ -717,6 +717,7 @@ fn projectless_task_resolves_accountable_team_and_archived_team_refuses_writes()
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
         )
         .unwrap()
@@ -1155,6 +1156,7 @@ fn standing_and_task_must_follow_text_share_one_instruction_budget() {
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
         )
         .unwrap()
@@ -1250,6 +1252,7 @@ fn a_live_task_whose_project_cannot_be_loaded_refuses_the_turn() {
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
         )
         .unwrap()

@@ -10,7 +10,7 @@
 //! person's private files never get such a file; they live in HQ's `private/user-space.db`.
 
 use org_proto::attachments::{
-    ArtifactStatus, AttachmentScope, AttachmentTargetKind, AttachmentView,
+    ArtifactStatus, AttachmentMeta, AttachmentScope, AttachmentTargetKind, AttachmentView,
     ATTACHMENT_DESCRIPTION_MAX_CHARS, ATTACHMENT_FILENAME_MAX_BYTES, ATTACHMENT_TITLE_MAX_CHARS,
 };
 use org_store::{DurablePath, Id};
@@ -110,6 +110,24 @@ impl AttachmentRecord {
             content_sha256: self.content_sha256.to_string(),
         }
     }
+
+    /// Lightweight metadata embedded in task, comment, message and ask responses.
+    pub fn to_meta(&self) -> AttachmentMeta {
+        AttachmentMeta {
+            id: self.id.to_string(),
+            filename: self.filename.clone(),
+            title: self.title.clone(),
+            description: self.description.clone(),
+            artifact_status: self.artifact_status,
+            mime_type: self.mime_type.clone(),
+            byte_count: self.byte_count,
+            width: self.width,
+            height: self.height,
+            page_count: self.page_count,
+            uploaded_by_employee_id: self.uploaded_by_employee_id.to_string(),
+            created_at: self.created_at.clone(),
+        }
+    }
 }
 
 /// Which file of the family a durable path is.
@@ -172,7 +190,7 @@ pub fn is_description(text: &str) -> bool {
         && !text.chars().any(|c| c.is_control() && c != '\n')
 }
 
-fn is_filename(text: &str) -> bool {
+pub fn is_filename(text: &str) -> bool {
     !text.is_empty()
         && text.trim() == text
         && text.len() <= ATTACHMENT_FILENAME_MAX_BYTES

@@ -10,6 +10,7 @@ use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
 use crate::messaging::{
+    auto_channels::effective_auto_members,
     files::{check_message_files, Binding, MessageFiles, MESSAGE_SCOPE},
     mentions::{extract_mentions, MentionScan},
     ports::{MessagingRead, MessagingWrite},
@@ -21,13 +22,12 @@ use crate::messaging::{
 use crate::organization::ports::OrganizationRead;
 use crate::organization::records::Employee;
 
-use super::auto_channels::effective_auto_members;
 use super::messages::to_wire_header;
 use super::recipients::{
     append_send_recipient_states, build_mention_candidates, collect_recipient_reasons,
     resolve_send_target,
 };
-use super::{check_hr_access, is_active_employee, refusal};
+use super::{check_hr_access, is_addressable_employee, refusal};
 
 /// Output of committing a `chat.send` message on `org-store`, including the exact headers
 /// to emit as `message.received` live events (header-only!) and the recipient employee IDs
@@ -440,7 +440,7 @@ where
         .map_err(|_| refusal(ErrorCode::StorageError, "failed to read employees"))?;
     let sender = employees
         .iter()
-        .find(|e| e.id == *caller && is_active_employee(e))
+        .find(|e| e.id == *caller && is_addressable_employee(e))
         .ok_or_else(|| refusal(ErrorCode::NotBound, "sender is not an active employee"))?;
 
     if let Some(replayed) = check_chat_send_replay(

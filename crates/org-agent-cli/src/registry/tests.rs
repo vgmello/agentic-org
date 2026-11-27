@@ -206,11 +206,10 @@ fn words(line: &str) -> Vec<String> {
 fn each_shorthand_becomes_its_command_and_keeps_the_rest_of_the_line() {
     for (line, expected) in [
         ("who --team Core", "directory list --team Core"),
-        ("boot --format yaml", "session boot --format yaml"),
-        ("instructions overview --offline", "session boot --offline"),
+        ("context --format yaml", "session context --format yaml"),
         ("task note add --task T-A1", "task-note add --task T-A1"),
         ("who --help", "directory list --help"),
-        ("boot --schema", "session boot --schema"),
+        ("context --schema", "session context --schema"),
     ] {
         assert_eq!(
             normalize_args(&words(line)).as_ref(),
@@ -224,10 +223,12 @@ fn each_shorthand_becomes_its_command_and_keeps_the_rest_of_the_line() {
 fn anything_else_is_left_as_it_is() {
     for line in [
         "task list",
-        "session boot",
+        "session context",
+        "boot",
+        "instructions overview",
         "instructions",
         "task notes",
-        "msg send --to who --body boot",
+        "msg send --to who --body context",
         "",
     ] {
         let args = words(line);
@@ -463,8 +464,8 @@ fn the_table_has_every_row_of_every_slice_once_and_dispatch_owns_each() {
     );
     assert_eq!(
         live.rows().len(),
-        119,
-        "the agent-os catalogue has 119 commands"
+        126,
+        "the agent-os catalogue has 126 commands"
     );
     // Every row reaches its slice's dispatch, which sends the office its call: none falls
     // through to `not wired`.
@@ -488,6 +489,7 @@ fn the_table_has_every_row_of_every_slice_once_and_dispatch_owns_each() {
             idempotency_key: Some("k".into()),
             if_match: Some(1),
             durable: false,
+            fields: None,
         };
         if let Err(refusal) = execute(&mut Answering, &request) {
             assert!(
@@ -522,6 +524,7 @@ fn a_hint_from_a_call_outside_the_command_is_never_reported_with_it() {
         idempotency_key: None,
         if_match: None,
         durable: false,
+        fields: None,
     };
     let mut office = TransportOffice(Hinting(Some(99)));
     let answer = office.call(&request).unwrap();

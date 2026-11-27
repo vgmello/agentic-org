@@ -17,7 +17,11 @@ use sha2::{Digest, Sha256};
 use crate::accounts::identity::AccountId;
 use crate::control_listener::Connection;
 use crate::host_secrets::HostSecrets;
-use crate::hostdb::{accounts::Account, journal::Verifier, HostDb, HostStore};
+use crate::hostdb::{
+    accounts::Account, journal::Verifier, HostAccountsStore, HostDb, HostStore,
+    OperationJournalStore, ProvisioningStore, RecoveryStore, WebTlsStore,
+};
+use crate::links::OneTimeLinks;
 
 mod grants;
 mod sign_in;
@@ -187,7 +191,7 @@ pub(super) fn wall_ms() -> Result<u64, ApiError> {
 /// Expired operation journal rows, with their account-create verifiers, go before any request
 /// is admitted. Maintenance only: lookup already refuses expired rows and every journaled write
 /// prunes again, so a failure is logged and the start goes on.
-fn prune_expired_journal(db: &dyn HostStore) {
+fn prune_expired_journal(db: &dyn OperationJournalStore) {
     let pruned = wall_ms()
         .ok()
         .and_then(|wall| i64::try_from(wall).ok())
@@ -248,8 +252,30 @@ fn random_handle() -> Result<SessionHandle, ApiError> {
     .map_err(|_| unavailable())
 }
 impl Authentication {
+    #[cfg(test)]
     pub(crate) fn provisioning_storage(&self) -> (Arc<dyn HostStore>, Arc<dyn HostSecrets>) {
         (Arc::clone(&self.db), Arc::clone(&self._custody))
+    }
+    pub(crate) fn custody(&self) -> Arc<dyn HostSecrets> {
+        Arc::clone(&self._custody)
+    }
+    pub(crate) fn accounts_store(&self) -> Arc<dyn HostAccountsStore> {
+        Arc::clone(&self.db) as Arc<dyn HostAccountsStore>
+    }
+    pub(crate) fn journal_store(&self) -> Arc<dyn OperationJournalStore> {
+        Arc::clone(&self.db) as Arc<dyn OperationJournalStore>
+    }
+    pub(crate) fn provisioning_store(&self) -> Arc<dyn ProvisioningStore> {
+        Arc::clone(&self.db) as Arc<dyn ProvisioningStore>
+    }
+    pub(crate) fn recovery_store(&self) -> Arc<dyn RecoveryStore> {
+        Arc::clone(&self.db) as Arc<dyn RecoveryStore>
+    }
+    pub(crate) fn web_tls_store(&self) -> Arc<dyn WebTlsStore> {
+        Arc::clone(&self.db) as Arc<dyn WebTlsStore>
+    }
+    pub(crate) fn links_store(&self) -> Arc<dyn OneTimeLinks + Send + Sync> {
+        Arc::clone(&self.db) as Arc<dyn OneTimeLinks + Send + Sync>
     }
     #[cfg(test)]
     pub(crate) fn sqlite_for_test(&self) -> Arc<HostDb> {
@@ -386,12 +412,7 @@ impl Authentication {
         instance: &str,
         root: &std::path::Path,
     ) -> std::io::Result<Arc<crate::writer::Writers>> {
-        crate::writer::Writers::open(
-            Arc::clone(&self._custody),
-            Arc::clone(&self.db),
-            instance,
-            root,
-        )
+        crate::writer::Writers::open(self.custody(), self.accounts_store(), instance, root)
     }
     pub(super) fn disconnect(&self, connection: &Connection) {
         let alive = connection.liveness();

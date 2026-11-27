@@ -108,6 +108,42 @@ fn snapshot_unavailable_api_error() -> org_proto::ApiError {
     )
 }
 
+fn build_attachments_port(
+    office: &Arc<Office>,
+    delegation_gate: &Arc<crate::chief_of_staff_port::ChiefOfStaffGate>,
+    attach_wake: Arc<dyn Fn() + Send + Sync>,
+) -> serve::AttachmentsFn {
+    let o = Arc::clone(office);
+    let del_port = Arc::clone(delegation_gate);
+    Box::new(move |member, delegation, request| {
+        if snapshot_pending(&o) {
+            return Some(org_proto::Response::error(
+                request.id,
+                snapshot_unavailable_api_error(),
+            ));
+        }
+        let check = |att_id: &str| match (member, delegation) {
+            (Some(m), Some(del)) => {
+                serve::delegation::check_delegated_attachment(del_port.as_ref(), m, del, att_id)
+            }
+            _ => Ok(()),
+        };
+        let render_del = delegation.map(|del| attachment_calls::RenderDelegation {
+            caller_id: del.caller_id.as_deref(),
+            check_attachment: &check,
+        });
+        let response =
+            attachment_calls::dispatch_attachment_rpc_delegated(&o, member, render_del, request);
+        if response
+            .as_ref()
+            .is_some_and(|r| attachment_calls::bound_a_file(request, r))
+        {
+            attach_wake();
+        }
+        response
+    })
+}
+
 fn gate_rpc_port<F>(office: &Arc<Office>, inner: F) -> serve::HiringFn
 where
     F: Fn(Option<&str>, &org_proto::Request) -> Option<org_proto::Response> + Send + Sync + 'static,
@@ -301,6 +337,41 @@ fn build_read_ports(
 }
 
 /// Composes the office RPC ports passed to `serve::Shared`.
+fn build_tess_port(
+    office: &Arc<Office>,
+    session_manager: &Arc<org_office_sessions::SessionManager>,
+    delegation_gate: &Arc<crate::chief_of_staff_port::ChiefOfStaffGate>,
+) -> serve::TessFn {
+    let draft_gate = Arc::clone(delegation_gate);
+    let tess_sessions = Arc::downgrade(session_manager);
+    let tess_svc = Arc::new(
+        tess_calls::TessService::new(
+            Arc::clone(office),
+            Arc::new(move |member| {
+                tess_sessions
+                    .upgrade()
+                    .and_then(|sessions| sessions.bindings().acting_for_caller_id(member))
+            }),
+        )
+        .with_draft_caller(Arc::new(move |request_id| {
+            use crate::serve::ChiefOfStaffPort;
+            draft_gate.draft_caller(request_id)
+        }))
+        .with_session_manager(Arc::clone(office), Arc::clone(session_manager)),
+    );
+    tess_calls::follow_tess_stream(&tess_svc, office, session_manager.stream_hub());
+    let o = Arc::clone(office);
+    Box::new(move |member, via_grant, stopping, apply_exec, request| {
+        if snapshot_pending(&o) {
+            return Some(org_proto::Response::error(
+                request.id,
+                snapshot_unavailable_api_error(),
+            ));
+        }
+        tess_svc.dispatch_with_context(member, via_grant, stopping, apply_exec, request)
+    })
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "composes the office's domain ports, federation handle, and sync wakeups"
@@ -356,22 +427,7 @@ pub(crate) fn build_office_ports(
         Arc::clone(&office),
         Arc::clone(&session_manager),
     ));
-    let draft_gate = Arc::clone(&delegation_gate);
-    let tess_sessions = Arc::downgrade(&session_manager);
-    let tess_svc = Arc::new(
-        tess_calls::TessService::new(
-            Arc::clone(&office),
-            Arc::new(move |member| {
-                tess_sessions
-                    .upgrade()
-                    .and_then(|sessions| sessions.bindings().acting_for_caller_id(member))
-            }),
-        )
-        .with_draft_caller(Arc::new(move |request_id| {
-            use crate::serve::ChiefOfStaffPort;
-            draft_gate.draft_caller(request_id)
-        })),
-    );
+    let tess = build_tess_port(&office, &session_manager, &delegation_gate);
     serve::OfficePorts {
         operation_get: {
             let office = Arc::clone(&office);
@@ -386,9 +442,8 @@ pub(crate) fn build_office_ports(
         project_inspect: reads.project_inspect,
         hiring: Some(hiring),
         sessions: Some(session_hooks.sessions),
-        run_binding_verify: Some(session_hooks.run_binding_verify),
-        run_binding_active: Some(session_hooks.run_binding_active),
-        delegation: Some(delegation_gate),
+        run_binding_verifier: Some(session_hooks.run_binding_verifier),
+        delegation: Some(Arc::clone(&delegation_gate) as Arc<dyn serve::ChiefOfStaffPort>),
         external_auth: Some(Arc::new(crate::session_proxy::ExternalAuth(Arc::clone(
             &session_manager,
         )))),
@@ -417,20 +472,11 @@ pub(crate) fn build_office_ports(
         tasks: Some(Box::new(move |member, request| {
             task_svc.dispatch(member, request)
         })),
-        attachments: {
-            let o = Arc::clone(&office);
-            Some(gate_rpc_port(&office, move |member, request| {
-                let response = attachment_calls::dispatch_attachment_rpc(&o, member, request);
-                // A new file binds: a satellite's shipper (and every HQ session) goes now.
-                if response
-                    .as_ref()
-                    .is_some_and(|r| attachment_calls::bound_a_file(request, r))
-                {
-                    attach_wake();
-                }
-                response
-            }))
-        },
+        attachments: Some(build_attachments_port(
+            &office,
+            &delegation_gate,
+            attach_wake,
+        )),
         git: Some(gate_rpc_port(&office, move |member, request| {
             git_svc.dispatch(member, request)
         })),
@@ -486,9 +532,7 @@ pub(crate) fn build_office_ports(
                 )
             }))
         },
-        tess: Some(gate_rpc_port(&office, move |member, request| {
-            tess_svc.dispatch(member, request)
-        })),
+        tess: Some(tess),
         directory: messaging.directory,
         submit,
     }

@@ -20,6 +20,7 @@ zeroize = "=1.9.1"
 org-socket = { path = "../org-socket" }
 org-proto = { path = "../org-proto" }
 org-office = { path = "../org-office" }
+org-doc-render = { path = "../org-doc-render" }
 org-git = { path = "../org-git" }
 org-copilot = { path = "../org-copilot" }
 # The writer custody contract the office's store calls, implemented over the host channel.
@@ -33,6 +34,7 @@ org-platform = { path = "../org-platform" }
 org-agent-cli = { path = "../org-agent-cli" }
 org-tess = { path = "../org-tess" }
 libc.workspace = true
+ring = "=0.17.14"
 serde.workspace = true
 serde_json.workspace = true
 hmac.workspace = true

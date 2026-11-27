@@ -118,7 +118,7 @@ impl BoundOffice {
             return Err(Refusal::new(
                 ErrorCode::NotAuthorized,
                 "AGENT_OS_SESSION_TOKEN or AGENT_OS_BINDING_FILE is set, but no session token could be read from it.",
-                "Check that AGENT_OS_BINDING_FILE names this session's owner-only binding file (a regular file, not a symlink, at most 4 KiB), or start the session again; `agent-os boot --offline` works without the office.",
+                "Check that AGENT_OS_BINDING_FILE names this session's owner-only binding file (a regular file, not a symlink, at most 4 KiB), or start the session again; `agent-os context --offline` works without the office.",
             ));
         }
         if self.binding.session_token.is_none() {
@@ -210,6 +210,13 @@ impl OfficeTransport for BoundOffice {
         self.bound_member
             .clone()
             .or_else(|| self.binding.agent_id.clone())
+    }
+
+    fn session_mode(&self) -> Option<org_proto::external_auth::SessionMode> {
+        self.binding
+            .external_state
+            .is_some()
+            .then_some(org_proto::external_auth::SessionMode::External)
     }
 
     fn take_waiting_messages(&mut self) -> Option<u32> {

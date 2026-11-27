@@ -8,7 +8,7 @@
 //! migrated (nothing has shipped).
 use crate::{
     host_secrets::{HostSecrets, Name, Value},
-    hostdb::HostStore,
+    hostdb::HostAccountsStore,
     sync::lock,
 };
 use org_office_launch::writer::{
@@ -94,7 +94,7 @@ pub(crate) struct Binding<'a> {
 }
 pub(crate) struct Writers {
     custody: Arc<dyn HostSecrets>,
-    db: Arc<dyn HostStore>,
+    db: Arc<dyn HostAccountsStore>,
     root: Root,
     instance: String,
     active: Mutex<BTreeSet<String>>,
@@ -260,7 +260,7 @@ fn empty_reservation_root(path: &Path) -> io::Result<()> {
 impl Writers {
     pub(crate) fn open(
         custody: Arc<dyn HostSecrets>,
-        db: Arc<dyn HostStore>,
+        db: Arc<dyn HostAccountsStore>,
         instance: &str,
         root: &Path,
     ) -> io::Result<Arc<Self>> {

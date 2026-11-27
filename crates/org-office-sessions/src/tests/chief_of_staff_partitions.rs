@@ -235,7 +235,7 @@ fn stub_handle(
         workspace: None,
         active_permit: Arc::new(Mutex::new(None)),
         supports_mid_turn: true,
-        bwrap_masked_siblings: None,
+        sandbox_plan: crate::manager::SandboxPlan::host_native(),
         partition,
     };
     (handle, rx)
@@ -448,13 +448,21 @@ fn an_autonomous_turn_resumes_only_her_wake_partitions_conversation() {
 fn a_wake_never_drains_into_or_joins_a_members_live_turn() {
     let f = Fixture::new();
     // Her runs get no mid-turn delivery at all; other agents' do.
-    let hers = f
-        .manager
-        .build_pump_hooks(&f.tess, String::new(), None, None, true);
+    let hers = f.manager.build_pump_hooks(
+        &f.tess,
+        String::new(),
+        None,
+        crate::manager::SandboxPlan::host_native(),
+        true,
+    );
     assert!(hers.stage_mid_turn_wakes.is_none() && hers.on_mid_turn_delivered.is_none());
-    let others = f
-        .manager
-        .build_pump_hooks(&f.tess, String::new(), None, None, false);
+    let others = f.manager.build_pump_hooks(
+        &f.tess,
+        String::new(),
+        None,
+        crate::manager::SandboxPlan::host_native(),
+        false,
+    );
     assert!(others.stage_mid_turn_wakes.is_some());
 
     // The owner's turn is running: Bea's DM waits, and nothing reaches the owner's process.
@@ -505,9 +513,13 @@ fn her_turn_end_starts_a_queued_dm_in_its_senders_partition_never_in_the_owners_
     f.manager.store.write_pending_wakes(&queue).unwrap();
     f.manager.partitions.begin_turn(&f.tess, &f.owner_key());
 
-    let hooks = f
-        .manager
-        .build_pump_hooks(&f.tess, String::new(), None, None, true);
+    let hooks = f.manager.build_pump_hooks(
+        &f.tess,
+        String::new(),
+        None,
+        crate::manager::SandboxPlan::host_native(),
+        true,
+    );
     (hooks.on_turn_ended.expect("the hook"))(&f.tess);
 
     // The dispatch switches partitions: the owner's idle process is stopped, never sent to.

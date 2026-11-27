@@ -1,12 +1,11 @@
-//! Session spec, launch context, initial runtime state, approval writable roots, and Linux Claude
-//! `bwrap` deny pruning (`TASK-144`).
+//! Session spec, launch context, initial runtime state, and approval writable roots.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use org_agent_runtime::{
-    AgentIdentity, AgentName, LaunchContext, PathPattern, RuntimeId, SandboxSpec, SessionId,
-    SessionKind, SessionSpec, SpecPath, Token,
+    AgentIdentity, AgentName, LaunchContext, RuntimeId, SessionId, SessionKind, SessionSpec,
+    SpecPath, Token,
 };
 use org_office::organization_family::records::{Employee, PermissionPreset};
 use org_proto::sessions::SessionState;
@@ -22,65 +21,12 @@ use super::environment::{office_env_names, sanitize_agent_name};
 use super::rust_toolchain::canonicalize_with_tail;
 use super::PreparedSessionLaunch;
 
-pub(super) fn is_linux_claude_bwrap(sandbox_enabled: bool, runtime_id: &str) -> bool {
-    sandbox_enabled
-        && runtime_id == "claude"
-        && !org_platform::confinement::unix_socket_path_filter_supported()
-}
-
-pub(super) fn apply_linux_claude_bwrap_pruning(spec: &mut SessionSpec) {
-    // Keep `preset_cfg.policy.deny` 100% complete in `SessionManager` (enforced by
-    // `decide_escalation_with_roots` over `--permission-mode manual` on every tool call),
-    // while pruning absent concrete paths from Linux Claude's `spec.sandbox` and
-    // `spec.policy.deny` so Claude 2.1.x `@anthropic-ai/sandbox-runtime` (`bwrap`), which
-    // merges `permissions.deny` into `bwrap` mounts, never materializes permanent 0-byte
-    // `0444` files on the host (`TASK-144`).
-    if prune_nonexistent_bwrap_denies(&mut spec.sandbox, &mut spec.policy) {
-        // Pin approval-bridge mediation explicitly whenever any policy deny rule is pruned:
-        // never rely on `capabilities().enforces_deny_rules` or surviving deny count to clear
-        // `permissions.allow` or downgrade `AcceptEdits -> Ask`.
-        spec.policy.allow.clear();
-        if spec.permission_mode == org_agent_runtime::PermissionMode::AcceptEdits {
-            spec.permission_mode = org_agent_runtime::PermissionMode::Ask;
-        }
-    }
-}
-
 /// The model and reasoning effort a session runs with, as runtime tokens from the admitted
 /// route (`TASK-181`). `None` keeps the runtime's default for that setting.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ModelChoice {
     pub(crate) model: Option<Token>,
     pub(crate) effort: Option<Token>,
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "launch spec builder takes runtime, employee, model choice, workspace, read-only dirs, instructions, preset, and bwrap flag"
-)]
-pub(super) fn build_session_spec_for_launch(
-    runtime: RuntimeId,
-    employee: &Employee,
-    choice: ModelChoice,
-    workspace: SpecPath,
-    read_only_dirs: Vec<SpecPath>,
-    instructions: StandingInstructions,
-    preset_cfg: &PresetConfig,
-    linux_claude_bwrap: bool,
-) -> Result<SessionSpec, ApiError> {
-    let mut spec = build_session_spec(
-        runtime,
-        employee,
-        choice,
-        workspace,
-        read_only_dirs,
-        instructions,
-        preset_cfg,
-    )?;
-    if linux_claude_bwrap {
-        apply_linux_claude_bwrap_pruning(&mut spec);
-    }
-    Ok(spec)
 }
 
 pub(super) fn compute_launch_spec_hash(spec: &SessionSpec, route_digest_suffix: &str) -> String {
@@ -97,7 +43,7 @@ pub(super) fn build_launch_context(
     tmpdir: &Path,
     session_id: &str,
     resume_runtime_session_id: Option<&str>,
-    runtime_name: &str,
+    host_config_subdir: Option<&str>,
     allow_host_auth: bool,
 ) -> Result<LaunchContext, ApiError> {
     let resume = resume_runtime_session_id.and_then(|raw| SessionId::try_from(raw).ok());
@@ -116,7 +62,7 @@ pub(super) fn build_launch_context(
         office_env_names: office_env_names(),
         new_session_id,
         resume,
-        config_dir: crate::host_auth::host_config_dir_for(runtime_name, allow_host_auth),
+        config_dir: crate::host_auth::host_config_dir_for(host_config_subdir, allow_host_auth),
     })
 }
 
@@ -154,91 +100,6 @@ pub(crate) fn build_session_spec(
         tools: preset_cfg.allowed_tools.clone(),
         operator_shell_prefixes: preset_cfg.operator_shell_prefixes.clone(),
     })
-}
-
-/// `raw` without its trailing directory glob: any run of `/**` (a malformed `dir/**/**`
-/// included, `TASK-190`), or else one `/*`.
-fn strip_dir_glob_suffix(raw: &str) -> &str {
-    let mut stripped = raw;
-    while let Some(shorter) = stripped.strip_suffix("/**") {
-        stripped = shorter;
-    }
-    if stripped.len() == raw.len() {
-        return raw.strip_suffix("/*").unwrap_or(raw);
-    }
-    stripped
-}
-
-pub(super) fn pattern_exists_for_bwrap(pat: &PathPattern) -> bool {
-    let raw = pat.as_str();
-    let stripped = strip_dir_glob_suffix(raw);
-    let prefix = if stripped.is_empty() { "/" } else { stripped };
-    if prefix.contains('*') || prefix.contains('?') || prefix.contains('[') {
-        return true;
-    }
-    std::fs::symlink_metadata(prefix).is_ok()
-}
-
-/// Normalizes a concrete existing directory glob (`<dir>/**` or `<dir>/*` with no internal
-/// wildcards) into `<dir>` for Linux Claude `bwrap` so `@anthropic-ai/sandbox-runtime` mounts
-/// `--tmpfs <dir>` atomically at the directory boundary instead of traversing inside `<dir>` and
-/// following symlinks (such as a sibling agent's `.cargo/registry` or `.rustup`, `TASK-163`).
-pub(super) fn normalize_bwrap_concrete_dir_pattern(pat: &PathPattern) -> (PathPattern, bool) {
-    let raw = pat.as_str();
-    let stripped = strip_dir_glob_suffix(raw);
-    if stripped.len() == raw.len()
-        || stripped.is_empty()
-        || stripped.contains('*')
-        || stripped.contains('?')
-        || stripped.contains('[')
-    {
-        return (pat.clone(), false);
-    }
-    if std::fs::symlink_metadata(stripped).is_ok_and(|m| m.file_type().is_dir()) {
-        if let Ok(normalized) = PathPattern::try_from(stripped) {
-            return (normalized, true);
-        }
-    }
-    (pat.clone(), false)
-}
-
-/// Drops non-existent concrete paths from Linux Claude `bwrap` `sandbox.deny_read`,
-/// `sandbox.deny_write`, and `policy.deny` `RuleScope::Path` entries (`TASK-144`), and normalizes
-/// concrete existing directory globs (`dir/**` -> `dir`) on `deny_read`, `deny_write` and
-/// `policy.deny` so `@anthropic-ai/sandbox-runtime` never traverses symlinks inside denied
-/// sibling agent homes (`TASK-163`, `TASK-190`). Returns `true` if any `policy.deny` rule was pruned or normalized. Callers must
-/// leave `preset_cfg.policy.deny` untouched so `SessionManager`'s approval bridge
-/// (`decide_escalation_with_roots`) retains 100% coverage of absent/future and glob paths.
-pub(crate) fn prune_nonexistent_bwrap_denies(
-    sandbox: &mut SandboxSpec,
-    policy: &mut org_agent_runtime::PermissionPolicy,
-) -> bool {
-    sandbox.deny_read.retain(pattern_exists_for_bwrap);
-    for pat in &mut sandbox.deny_read {
-        let (norm, _) = normalize_bwrap_concrete_dir_pattern(pat);
-        *pat = norm;
-    }
-    sandbox.deny_write.retain(pattern_exists_for_bwrap);
-    for pat in &mut sandbox.deny_write {
-        let (norm, _) = normalize_bwrap_concrete_dir_pattern(pat);
-        *pat = norm;
-    }
-    let before = policy.deny.len();
-    policy.deny.retain(|rule| match &rule.scope {
-        org_agent_runtime::RuleScope::Path(pat) => pattern_exists_for_bwrap(pat),
-        _ => true,
-    });
-    let mut modified = policy.deny.len() < before;
-    for rule in &mut policy.deny {
-        if let org_agent_runtime::RuleScope::Path(pat) = &mut rule.scope {
-            let (norm, changed) = normalize_bwrap_concrete_dir_pattern(pat);
-            if changed {
-                *pat = norm;
-                modified = true;
-            }
-        }
-    }
-    modified
 }
 
 pub(super) fn canonical_or_spec(path: &Path) -> Result<SpecPath, ApiError> {

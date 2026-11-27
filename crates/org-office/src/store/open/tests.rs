@@ -28,6 +28,7 @@ mod crashes;
 mod local;
 mod messaging;
 mod messaging_catchup;
+mod task_ax;
 mod task_dod;
 mod task_numbering;
 mod task_replicas;

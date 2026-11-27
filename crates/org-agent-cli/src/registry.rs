@@ -14,8 +14,8 @@ use org_proto::ErrorCode;
 use serde_json::Value;
 
 use crate::features::{
-    auth, budget, git, hiring, messaging, office, organization, processes, projects, providers,
-    session, tess, work,
+    auth, budget, files, git, hiring, messaging, office, organization, processes, projects,
+    providers, session, tess, work,
 };
 use crate::runtime::domain::Domain;
 use crate::runtime::help::{self, Guidance};
@@ -29,6 +29,7 @@ const DOMAINS: &[Domain] = &[
     session::DOMAIN,
     messaging::DOMAIN,
     work::DOMAIN,
+    files::DOMAIN,
     git::DOMAIN,
     processes::DOMAIN,
     budget::DOMAIN,
@@ -128,8 +129,7 @@ const POLICY_OVERRIDES: &[PolicyOverride] = &[
 /// reads any line, so a shorthand is the same command for a call, its `--help` and `--schema`,
 /// every line of `session attach`, and the drift guard of the built-in text.
 const ALIASES: &[Alias] = &[
-    session::BOOT_ALIAS,
-    session::INSTRUCTIONS_ALIAS,
+    session::CONTEXT_ALIAS,
     work::TASK_NOTE_ALIAS,
     organization::WHO_ALIAS,
 ];
@@ -145,10 +145,7 @@ const GUIDANCE: Guidance = Guidance {
 };
 
 /// What `agent-os login` answers from the rest of the crate.
-const LOGIN_HOOKS: auth::LoginHooks = auth::LoginHooks {
-    catalogue,
-    briefing,
-};
+const LOGIN_HOOKS: auth::LoginHooks = auth::LoginHooks { briefing };
 
 /// Every slice's rows: the one list both tables below are built from.
 fn rows() -> Vec<&'static [Command]> {
@@ -187,14 +184,9 @@ pub fn catalogue_table() -> CommandTable {
     runtime_table().clone()
 }
 
-/// The live table's launch catalogue.
-fn catalogue() -> String {
-    runtime_table().catalogue()
-}
-
-/// The bound `agent-os boot` briefing, for `agent-os login`.
+/// The bound `agent-os context` briefing (with `catalogue` inside it), for `agent-os login`.
 fn briefing(transport: &mut dyn OfficeTransport) -> Result<Value, Refusal> {
-    session::bound_briefing(transport, &catalogue())
+    session::bound_briefing(transport, &runtime_table().catalogue())
 }
 
 /// `args` with a leading shorthand replaced by the command it stands for; anything else as it is.
@@ -202,9 +194,11 @@ pub(crate) fn normalize_args(args: &[String]) -> Cow<'_, [String]> {
     runtime_table().expand(args)
 }
 
-/// `agent approve <code>` and the other operator verbs with their bare words read as named flags.
+/// `agent approve <code>` and the other operator verbs with their bare words read as named flags,
+/// plus `file render --format pdf` mapped onto `--to pdf` without colliding with `--format json|yaml|compact`.
 pub(crate) fn rewrite_positional(args: &[String]) -> Option<Vec<String>> {
-    hiring::rewrite_positional(runtime_table(), args)
+    let table = runtime_table();
+    hiring::rewrite_positional(table, args).or_else(|| files::rewrite_render_args(table, args))
 }
 
 /// `org-command`'s plain-text help of `args`, enriched with every slice's `Use when:` guidance.

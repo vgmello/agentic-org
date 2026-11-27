@@ -14,8 +14,11 @@ use org_office::{EngineChoice, Office, TestOffice};
 use org_proto::external_auth::{
     AuthExchange, AuthLoginPoll, AuthLoginPollParams, AuthLoginRequest, AuthLoginRequestParams,
     AuthLoginRequestResult, AuthWhoami, ChallengePurpose, ExternalLoginState, ExternalSessionView,
-    MemberExternalApprove, MemberExternalApproveParams, MemberExternalRevoke,
-    MemberExternalRevokeParams, MemberExternalSessions, MemberExternalSessionsParams, SessionMode,
+    MemberExternalApprove, MemberExternalApproveParams, MemberExternalPending,
+    MemberExternalPendingParams, MemberExternalPendingResult, MemberExternalRenew,
+    MemberExternalRenewParams, MemberExternalRevoke, MemberExternalRevokeParams,
+    MemberExternalSessions, MemberExternalSessionsParams, SessionMode, WorkspaceFamiliarity,
+    MAX_LEASE_TTL_SECS,
 };
 use org_proto::hiring::{AgentOffboard, AgentOffboardParams};
 use org_proto::msg::{MsgBind, MsgBindParams};
@@ -88,6 +91,8 @@ fn login(w: &World, member: &str) -> (Zeroizing<Vec<u8>>, AuthLoginRequestResult
             member: member.into(),
             pubkey_ed25519_b64: pubkey,
             workspace_label: "laptop:~/src/app".into(),
+            hostname: None,
+            workspace_path: None,
         },
     )
     .unwrap();
@@ -524,6 +529,8 @@ fn fresh_connections_cannot_flood_the_sign_in_calls() {
                 member: "@ben".into(),
                 pubkey_ed25519_b64: pubkey,
                 workspace_label: "flood".into(),
+                hostname: None,
+                workspace_path: None,
             },
         ));
     }
@@ -1453,6 +1460,8 @@ fn one_step_bind_succeeds_for_non_owner_operators_warm_idle_sessions_and_full_pe
             member: "@ada".into(),
             pubkey_ed25519_b64: extra_pubkey,
             workspace_label: "fourth-pending".into(),
+            hostname: None,
+            workspace_path: None,
         },
     )
     .unwrap_err();
@@ -1541,4 +1550,234 @@ fn one_step_bind_succeeds_for_non_owner_operators_warm_idle_sessions_and_full_pe
         code, 0,
         "workspace bound over warm idle session must authenticate immediately: {who_warm}"
     );
+}
+
+#[test]
+fn external_renew_and_pending_enforce_human_only_auth_masking_and_familiarity() {
+    let w = world();
+    let tess = w
+        .office
+        .chief_of_staff()
+        .unwrap()
+        .unwrap()
+        .id
+        .as_str()
+        .to_owned();
+
+    // 1. First-time login request from Ada's workstation.
+    let (pkcs8_1, pubkey_1) = client::generate_key().unwrap();
+    let req1 = client::call::<AuthLoginRequest>(
+        &target(&w).connect().unwrap(),
+        &AuthLoginRequestParams {
+            member: "@ada".into(),
+            pubkey_ed25519_b64: pubkey_1.clone(),
+            workspace_label: "~/repo".into(),
+            hostname: Some("dev-mac".into()),
+            workspace_path: Some("/Users/ada/repo".into()),
+        },
+    )
+    .unwrap();
+
+    // 2. Owner sees masked code_prefix (`XXXX-••••`, never secret half) and `first_time`.
+    let pending: MemberExternalPendingResult =
+        serde_json::from_value(ok_value(grant_call::<MemberExternalPending>(
+            &w,
+            &MemberExternalPendingParams { employee_id: None },
+        )))
+        .unwrap();
+    assert_eq!(pending.pending.len(), 1);
+    let p1 = &pending.pending[0];
+    assert_eq!(p1.request_id, req1.request_id);
+    assert_eq!(p1.handle.as_deref(), Some("@ada"));
+    assert_eq!(p1.employee_id, w.ada);
+    assert_eq!(p1.code_prefix, format!("{}-••••", &req1.approval_code[..4]));
+    assert!(!p1.code_prefix.contains(&req1.approval_code[5..]));
+    assert_eq!(p1.hostname.as_deref(), Some("dev-mac"));
+    assert_eq!(p1.workspace_path.as_deref(), Some("/Users/ada/repo"));
+    assert_eq!(p1.workspace_familiarity, WorkspaceFamiliarity::FirstTime);
+    assert!(p1.last_approved_by.is_none() && p1.last_approved_at.is_none());
+
+    // 3. Approve with 1h TTL, exchange fast token, then verify STRICT human-only gate (ADR-0036):
+    // managed agent, external BYOA agent, and Chief of Staff (Tess) MUST ALL fail closed!
+    let view1: ExternalSessionView =
+        serde_json::from_value(ok_value(grant_call::<MemberExternalApprove>(
+            &w,
+            &MemberExternalApproveParams {
+                command_id: None,
+                code: req1.approval_code.clone(),
+                ttl_secs: Some(3_600),
+                takeover: false,
+            },
+        )))
+        .unwrap();
+    let ext_token = client::exchange(
+        &target(&w).connect().unwrap(),
+        &signer(&w, &pkcs8_1, &w.ada, &view1.session_id),
+    )
+    .unwrap();
+
+    let renew_req = Request::new::<MemberExternalRenew>(
+        10,
+        &MemberExternalRenewParams {
+            employee_id: "@ada".into(),
+            ttl_secs: Some(MAX_LEASE_TTL_SECS),
+            session_id: None,
+            command_id: None,
+        },
+    )
+    .unwrap();
+    let pending_req = Request::new::<MemberExternalPending>(
+        11,
+        &MemberExternalPendingParams { employee_id: None },
+    )
+    .unwrap();
+
+    // Non-grant agent callers (managed agent, Tess) refused fail-closed.
+    for agent_id in [&w.ada, &w.ben, &tess] {
+        assert_eq!(
+            error_code(&w.node.shared.answer_for_test(&renew_req, agent_id, false)),
+            ErrorCode::NotAuthorized,
+            "agent {agent_id} must be refused member.external_renew"
+        );
+        assert_eq!(
+            error_code(&w.node.shared.answer_for_test(&pending_req, agent_id, false)),
+            ErrorCode::NotAuthorized,
+            "agent {agent_id} must be refused member.external_pending"
+        );
+    }
+
+    // External BYOA agent over real socket refused fail-closed.
+    let ext_conn = target(&w).connect().unwrap();
+    client::bind(&ext_conn, &w.ada, &ext_token.token).unwrap();
+    assert_eq!(
+        client::call::<MemberExternalRenew>(
+            &ext_conn,
+            &MemberExternalRenewParams {
+                employee_id: "@ada".into(),
+                ttl_secs: Some(MAX_LEASE_TTL_SECS),
+                session_id: None,
+                command_id: None,
+            },
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::NotAuthorized
+    );
+    assert_eq!(
+        client::call::<MemberExternalPending>(
+            &ext_conn,
+            &MemberExternalPendingParams { employee_id: None },
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::NotAuthorized
+    );
+
+    // 4. Owner renews active lease via grant -> expires_at extended + `renewed` audit entry.
+    let renewed: ExternalSessionView =
+        serde_json::from_value(ok_value(grant_call::<MemberExternalRenew>(
+            &w,
+            &MemberExternalRenewParams {
+                employee_id: "@ada".into(),
+                ttl_secs: Some(MAX_LEASE_TTL_SECS),
+                session_id: Some(view1.session_id.clone()),
+                command_id: None,
+            },
+        )))
+        .unwrap();
+    assert_eq!(renewed.session_id, view1.session_id);
+    assert!(renewed.expires_at > view1.expires_at);
+    let sessions = ok_value(grant_call::<MemberExternalSessions>(
+        &w,
+        &MemberExternalSessionsParams {
+            employee_id: "@ada".into(),
+            limit: Some(20),
+        },
+    ));
+    let events: Vec<&str> = sessions["history"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["event"].as_str())
+        .collect();
+    assert!(events.contains(&"renewed"), "{events:?}");
+
+    // Revoking causes subsequent renew to fail closed.
+    ok_value(grant_call::<MemberExternalRevoke>(
+        &w,
+        &MemberExternalRevokeParams {
+            command_id: None,
+            employee_id: "@ada".into(),
+            session_id: None,
+        },
+    ));
+    assert_eq!(
+        error_code(&grant_call::<MemberExternalRenew>(
+            &w,
+            &MemberExternalRenewParams {
+                employee_id: "@ada".into(),
+                ttl_secs: Some(3_600),
+                session_id: None,
+                command_id: None,
+            },
+        )),
+        ErrorCode::Conflict
+    );
+
+    // 5. Re-login with SAME key (`returning_known_key`) and NEW key (`returning_new_key`).
+    let req_known = client::call::<AuthLoginRequest>(
+        &target(&w).connect().unwrap(),
+        &AuthLoginRequestParams {
+            member: "@ada".into(),
+            pubkey_ed25519_b64: pubkey_1,
+            workspace_label: "~/repo".into(),
+            hostname: Some("dev-mac".into()),
+            workspace_path: Some("/Users/ada/repo".into()),
+        },
+    )
+    .unwrap();
+    let (_, pubkey_2) = client::generate_key().unwrap();
+    let req_new = client::call::<AuthLoginRequest>(
+        &target(&w).connect().unwrap(),
+        &AuthLoginRequestParams {
+            member: "@ada".into(),
+            pubkey_ed25519_b64: pubkey_2,
+            workspace_label: "~/repo".into(),
+            hostname: Some("dev-mac".into()),
+            workspace_path: Some("/Users/ada/repo".into()),
+        },
+    )
+    .unwrap();
+    let filtered: MemberExternalPendingResult =
+        serde_json::from_value(ok_value(grant_call::<MemberExternalPending>(
+            &w,
+            &MemberExternalPendingParams {
+                employee_id: Some("@ada".into()),
+            },
+        )))
+        .unwrap();
+    assert_eq!(filtered.pending.len(), 2);
+    let known = filtered
+        .pending
+        .iter()
+        .find(|p| p.request_id == req_known.request_id)
+        .unwrap();
+    assert_eq!(
+        known.workspace_familiarity,
+        WorkspaceFamiliarity::ReturningKnownKey
+    );
+    assert_eq!(known.last_approved_by.as_deref(), Some(w.owner.as_str()));
+    assert!(known.last_approved_at.is_some());
+
+    let rotated = filtered
+        .pending
+        .iter()
+        .find(|p| p.request_id == req_new.request_id)
+        .unwrap();
+    assert_eq!(
+        rotated.workspace_familiarity,
+        WorkspaceFamiliarity::ReturningNewKey
+    );
+    assert_eq!(rotated.last_approved_by.as_deref(), Some(w.owner.as_str()));
+    assert!(rotated.last_approved_at.is_some());
 }

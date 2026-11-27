@@ -14,7 +14,7 @@ use org_agent_runtime::{
 use self::definitions::{build_agents_json, build_mcp_json};
 use self::effort::claude_effort;
 use self::sandbox::{
-    build_sandbox_json, is_concrete_path, normalize_bwrap_pattern, split_trailing_globstar,
+    build_sandbox_json, is_concrete_path, normalize_mount_mask_pattern, split_trailing_globstar,
 };
 
 const SETTINGS_FILE: &str = "claude-settings.json";
@@ -416,27 +416,27 @@ fn rule_base_and_glob(base: &str) -> (Option<String>, String) {
 }
 
 /// Write denies for Claude's edit tools. Trailing `/**` is stripped before one is appended, so
-/// `dir/**/**` is never emitted (`TASK-190`). On Linux `bwrap` the path first goes through
-/// [`normalize_bwrap_pattern`] (as every other deny surface does), so a concrete `dir/**` or
-/// `dir/*` gets only its exact `dir` rule: Claude 2.1.x merges these rules into `bwrap`'s write
-/// masks, and a concrete directory glob makes `@anthropic-ai/sandbox-runtime` walk `dir` and
-/// follow symlinks into sibling homes (`TASK-163`); the bare `dir` rule covers everything
-/// beneath it.
+/// `dir/**/**` is never emitted (`TASK-190`). When mount-mask normalization is active, the path
+/// first goes through [`normalize_mount_mask_pattern`] (as every other deny surface does), so a
+/// concrete `dir/**` or `dir/*` gets only its exact `dir` rule: Claude 2.1.x merges these rules
+/// into write masks, and a concrete directory glob makes `@anthropic-ai/sandbox-runtime` walk
+/// `dir` and follow symlinks into sibling homes (`TASK-163`); the bare `dir` rule covers
+/// everything beneath it.
 fn push_file_write_denies(
     deny_rules: &mut Vec<Value>,
     raw_path: &str,
     include_exact: bool,
-    is_linux_bwrap: bool,
+    uses_mount_mask: bool,
 ) {
-    let normalized = is_linux_bwrap.then(|| normalize_bwrap_pattern(raw_path));
+    let normalized = uses_mount_mask.then(|| normalize_mount_mask_pattern(raw_path));
     let (base, _) = split_trailing_globstar(normalized.as_deref().unwrap_or(raw_path));
     let (exact, glob) = rule_base_and_glob(base);
-    let bwrap_concrete = is_linux_bwrap && is_concrete_path(base);
+    let mask_concrete = uses_mount_mask && is_concrete_path(base);
     for tool in ["Edit", "Write", "MultiEdit", "NotebookEdit"] {
-        if let Some(exact) = exact.as_ref().filter(|_| include_exact || bwrap_concrete) {
+        if let Some(exact) = exact.as_ref().filter(|_| include_exact || mask_concrete) {
             deny_rules.push(Value::String(format!("{tool}({exact})")));
         }
-        if !bwrap_concrete {
+        if !mask_concrete {
             deny_rules.push(Value::String(format!("{tool}({glob})")));
         }
     }
@@ -470,36 +470,36 @@ fn build_settings_json(
     // Permissions: deny always written before allow; allow rules are dropped whenever
     // `keeps_allow_rules` is false (deny wins over allow). `disableBypassPermissionsMode`
     // is pinned to `"disable"` per agent-sessions.md (B1).
-    let is_linux_bwrap = !org_platform::confinement::unix_socket_path_filter_supported();
+    let uses_mount_mask = !org_platform::confinement::unix_socket_path_filter_supported();
     let mut deny_rules = Vec::new();
     for rule in &spec.policy.deny {
-        let formatted = format_rule(rule, RuleKind::Deny, is_linux_bwrap)
+        let formatted = format_rule(rule, RuleKind::Deny, uses_mount_mask)
             .ok_or(PlanError::Unsupported("deny rule scope"))?;
         deny_rules.extend(formatted.into_iter().map(Value::String));
     }
     // Mirror sandbox read/write denies onto Claude's file tools using `//` absolute path
     // grammar so Read/Edit/Write/MultiEdit/NotebookEdit cannot bypass the Bash sandbox (B2).
-    // On Linux `bwrap`, omit trailing `/**` on concrete read- and write-deny directories
-    // (`TASK-163`, `TASK-190`) so `@anthropic-ai/sandbox-runtime` (which merges
-    // `permissions.deny` into `bwrap` mounts) masks each directory atomically without
+    // When mount-mask normalization is active, omit trailing `/**` on concrete read- and
+    // write-deny directories (`TASK-163`, `TASK-190`) so `@anthropic-ai/sandbox-runtime` (which
+    // merges `permissions.deny` into OS sandbox mounts) masks each directory atomically without
     // traversing symlinks inside sibling homes.
     for path in &spec.sandbox.deny_read {
-        if is_linux_bwrap {
-            let normalized = normalize_bwrap_pattern(path.as_str());
+        if uses_mount_mask {
+            let normalized = normalize_mount_mask_pattern(path.as_str());
             push_file_read_denies(&mut deny_rules, &normalized, false);
         } else {
             push_file_read_denies(&mut deny_rules, path.as_str(), true);
         }
     }
     for path in &spec.sandbox.deny_write {
-        push_file_write_denies(&mut deny_rules, path.as_str(), true, is_linux_bwrap);
+        push_file_write_denies(&mut deny_rules, path.as_str(), true, uses_mount_mask);
     }
     for dir in &spec.read_only_dirs {
-        push_file_write_denies(&mut deny_rules, dir.as_str(), true, is_linux_bwrap);
+        push_file_write_denies(&mut deny_rules, dir.as_str(), true, uses_mount_mask);
     }
     // Protect vendor config dir from tool writes and its credential file from tool reads (S2).
     if let Some(cfg_dir) = &ctx.config_dir {
-        push_file_write_denies(&mut deny_rules, cfg_dir.as_str(), true, is_linux_bwrap);
+        push_file_write_denies(&mut deny_rules, cfg_dir.as_str(), true, uses_mount_mask);
         let cred_file = format!(
             "{}/.credentials.json",
             cfg_dir.as_str().trim_end_matches('/')
@@ -511,7 +511,7 @@ fn build_settings_json(
     if spec.keeps_allow_rules(caps) {
         for rule in &spec.policy.allow {
             // Grants we cannot express exactly are dropped (never widened).
-            if let Some(formatted) = format_rule(rule, RuleKind::Allow, is_linux_bwrap) {
+            if let Some(formatted) = format_rule(rule, RuleKind::Allow, uses_mount_mask) {
                 allow_rules.extend(formatted.into_iter().map(Value::String));
             }
         }
@@ -553,18 +553,18 @@ const SHELL_TOOL: &str = "Bash";
 /// use of every tool), a path rule for a tool outside [`PATH_RULE_TOOLS`], a command prefix
 /// for a tool other than [`SHELL_TOOL`], and an MCP-server rule for a tool that isn't that
 /// server's (`mcp__<server>__<tool>`) have no exact Claude form and give `None`.
-fn format_rule(rule: &Rule, kind: RuleKind, is_linux_bwrap: bool) -> Option<Vec<String>> {
+fn format_rule(rule: &Rule, kind: RuleKind, uses_mount_mask: bool) -> Option<Vec<String>> {
     let tool = rule.tool.as_str();
     if ToolCapability::is_capability_token(tool) {
         let cap = ToolCapability::parse_rule_token(tool)?;
-        return format_capability_rule(cap, &rule.scope, kind, is_linux_bwrap);
+        return format_capability_rule(cap, &rule.scope, kind, uses_mount_mask);
     }
     let any_tool = tool == "*";
     match &rule.scope {
         RuleScope::Any if any_tool => None,
         RuleScope::Any => Some(vec![tool.to_owned()]),
         RuleScope::Path(pattern) => {
-            let path = policy_rule_path(pattern.as_str(), kind, is_linux_bwrap);
+            let path = policy_rule_path(pattern.as_str(), kind, uses_mount_mask);
             let tools: &[&str] = if any_tool {
                 PATH_RULE_TOOLS
             } else if PATH_RULE_TOOLS.contains(&tool) {
@@ -602,14 +602,14 @@ fn format_capability_rule(
     cap: ToolCapability,
     scope: &RuleScope,
     kind: RuleKind,
-    is_linux_bwrap: bool,
+    uses_mount_mask: bool,
 ) -> Option<Vec<String>> {
     match scope {
         RuleScope::Any => {
             capability_tools(cap, kind).map(|tools| tools.iter().map(|&t| t.to_owned()).collect())
         }
         RuleScope::Path(pattern) => {
-            let path = policy_rule_path(pattern.as_str(), kind, is_linux_bwrap);
+            let path = policy_rule_path(pattern.as_str(), kind, uses_mount_mask);
             let tools: &[&str] = match cap {
                 ToolCapability::Read => CAP_READ_TOOLS,
                 ToolCapability::Edit => match kind {
@@ -629,11 +629,12 @@ fn format_capability_rule(
 }
 
 /// Claude rule path for a policy path pattern. A run of trailing `/**` collapses to one on
-/// every platform; on Linux `bwrap` a concrete deny directory loses it, like the sandbox
-/// mirrors (`TASK-190`). Any other pattern, and the root, is passed through unchanged.
-fn policy_rule_path(pattern: &str, kind: RuleKind, is_linux_bwrap: bool) -> String {
-    if kind == RuleKind::Deny && is_linux_bwrap {
-        return claude_rule_path(&normalize_bwrap_pattern(pattern));
+/// every platform; when mount-mask normalization is active a concrete deny directory loses it,
+/// like the sandbox mirrors (`TASK-190`). Any other pattern, and the root, is passed through
+/// unchanged.
+fn policy_rule_path(pattern: &str, kind: RuleKind, uses_mount_mask: bool) -> String {
+    if kind == RuleKind::Deny && uses_mount_mask {
+        return claude_rule_path(&normalize_mount_mask_pattern(pattern));
     }
     match split_trailing_globstar(pattern) {
         (base, true) if !base.is_empty() => format!("{}/**", claude_rule_path(base)),

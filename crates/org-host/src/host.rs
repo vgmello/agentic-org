@@ -13,6 +13,7 @@ use crate::control_listener::{self, BindError, Listener};
 use crate::error::HostError;
 use crate::home::{HostLock, Layout};
 use crate::offices::Offices;
+use crate::ports::HostPorts;
 use crate::service::Service;
 use crate::startup::{
     instance_error, maybe_init_local_authless, startup_app_policy, startup_authentication,
@@ -70,7 +71,25 @@ impl Host {
     /// first and refuses every valid `host.sock` request. Registered
     /// entry points serve only hello and count-only status, with hello required first.
     pub fn start(config: Config) -> Result<Self, HostError> {
-        Self::start_inner(config, None)
+        Self::start_with_ports(config, HostPorts::default())
+    }
+
+    /// Starts an unregistered host with caller-supplied key custody.
+    ///
+    /// Unregistered hosts have no instance registry; passing `ports.store` or `ports.secrets`
+    /// fails closed here — use [`Host::start_registered_with_ports`] to boot a registered
+    /// instance with injected persistence or secret custody ports.
+    pub fn start_with_ports(config: Config, ports: HostPorts) -> Result<Self, HostError> {
+        if ports.store.is_some() || ports.secrets.is_some() {
+            return Err(HostError::Io {
+                context: "starting unregistered host with injected ports",
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "injected HostStore or HostSecrets require Host::start_registered_with_ports",
+                ),
+            });
+        }
+        Self::start_with(config, None, None, None, ports)
     }
 
     /// Private composition entry for the matching debug test-support adapter.
@@ -86,6 +105,7 @@ impl Host {
         Self::start_inner(config, Some(instance))
     }
 
+    #[cfg(all(feature = "test-support", debug_assertions))]
     fn start_inner(
         config: Config,
         instance: Option<instance::registry::Instance>,
@@ -93,12 +113,13 @@ impl Host {
         Self::start_prepared(config, instance, None)
     }
 
+    #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
     pub(super) fn start_prepared(
         config: Config,
         instance: Option<instance::registry::Instance>,
         prepared: Option<(HostLock, Arc<dyn host_secrets::HostSecrets>)>,
     ) -> Result<Self, HostError> {
-        Self::start_with(config, instance, prepared, None)
+        Self::start_with(config, instance, prepared, None, HostPorts::default())
     }
 
     /// The composition. `release_directory` is the credential directory a registered start
@@ -110,10 +131,18 @@ impl Host {
         instance: Option<instance::registry::Instance>,
         prepared: Option<(HostLock, Arc<dyn host_secrets::HostSecrets>)>,
         release_directory: Option<ReleaseRoot>,
+        ports: HostPorts,
     ) -> Result<Self, HostError> {
+        let HostPorts {
+            store: injected_store,
+            secrets: injected_secrets,
+            keys: injected_keys,
+        } = ports;
         harden()?;
         if instance.is_some() {
-            config.admit_runtime_with(release_directory.is_some())?;
+            let has_injected_custody =
+                injected_keys.is_some() && (injected_secrets.is_some() || prepared.is_some());
+            config.admit_runtime_with(release_directory.is_some() || has_injected_custody)?;
         }
         let layout = match &instance {
             Some(instance) => {
@@ -133,10 +162,17 @@ impl Host {
         let dev_key_dir = config.dev_key_dir.as_deref();
         #[cfg(not(debug_assertions))]
         let dev_key_dir = None;
-        let keys = startup_keys(&config, &instance, dev_key_dir, release_directory.as_ref())?;
+        let keys = startup_keys(
+            &config,
+            &instance,
+            dev_key_dir,
+            release_directory.as_ref(),
+            injected_keys,
+        )?;
         layout.check_socket_paths()?;
         layout.prepare()?;
-        let (held, mut custody) = prepared.unzip();
+        let (held, prepared_custody) = prepared.unzip();
+        let mut custody = injected_secrets.or(prepared_custody);
         let lock = match held {
             Some(lock) => lock,
             None => HostLock::acquire(&layout)?,
@@ -152,6 +188,7 @@ impl Host {
             &layout,
             &instance,
             &mut custody,
+            injected_store,
             dev_key_dir,
             release_directory.as_ref(),
         )?;
@@ -257,24 +294,8 @@ impl Host {
             .with_browser_origin(browser_origin)
             .with_web_state(Arc::clone(&gateway_state)),
         );
-        let tls_renewal = match web_tls {
-            Some(tls) => {
-                let announcing = Arc::downgrade(&service);
-                Some(
-                    web_tls::Renewal::start(
-                        tls,
-                        web_tls::RENEW_EVERY,
-                        Box::new(move || {
-                            if let Some(service) = announcing.upgrade() {
-                                service.announce_tls_renewal();
-                            }
-                        }),
-                    )
-                    .map_err(io("starting the TLS certificate's renewal"))?,
-                )
-            }
-            None => None,
-        };
+        let tls_renewal = start_tls_renewal(web_tls, &service)
+            .map_err(io("starting the TLS certificate's renewal"))?;
         let listener = startup_listener(bound, &service, &offices, config.max_connections)?;
         // A create that reserved its identity before the host last stopped continues now,
         // with no client asking; later ones start from the browser's request. This follows
@@ -288,31 +309,7 @@ impl Host {
             .browser_listener
             .take()
             .and_then(|listener| listener.take());
-        let web = web_config.and_then(|mut web_config| {
-            let retrying = Arc::downgrade(&service);
-            web_config.on_renewal_kept = Some(Arc::new(move |_| {
-                if let Some(service) = retrying.upgrade() {
-                    service.schedule_tls_renewal_retry();
-                }
-            }));
-            match web::Supervisor::start(
-                web_config,
-                held,
-                service.clone(),
-                Arc::clone(&gateway_state),
-                service.web_eligibility(),
-            ) {
-                Ok(web) => Some(web),
-                Err(error) => {
-                    *sync::lock(&gateway_state) = org_host_control::WebState::Failed;
-                    host_log::log(&format!(
-                        "browser service not started: {}",
-                        host_log::untrusted(&error.to_string())
-                    ));
-                    None
-                }
-            }
-        });
+        let web = start_web_supervisor(web_config, held, &service, &gateway_state);
         Ok(Self {
             _runtime_release: config.runtime_release,
             layout,
@@ -429,5 +426,57 @@ impl Host {
 impl Drop for Host {
     fn drop(&mut self) {
         self.stop(std::time::Instant::now());
+    }
+}
+
+fn start_tls_renewal(
+    web_tls: Option<Arc<web_tls::WebTls>>,
+    service: &Arc<Service>,
+) -> std::io::Result<Option<web_tls::Renewal>> {
+    let Some(tls) = web_tls else {
+        return Ok(None);
+    };
+    let announcing = Arc::downgrade(service);
+    let renewal = web_tls::Renewal::start(
+        tls,
+        web_tls::RENEW_EVERY,
+        Box::new(move || {
+            if let Some(service) = announcing.upgrade() {
+                service.announce_tls_renewal();
+            }
+        }),
+    )?;
+    Ok(Some(renewal))
+}
+
+fn start_web_supervisor(
+    web_config: Option<web::Configuration>,
+    held: Option<std::net::TcpListener>,
+    service: &Arc<Service>,
+    gateway_state: &Arc<std::sync::Mutex<org_host_control::WebState>>,
+) -> Option<web::Supervisor> {
+    let mut web_config = web_config?;
+    let retrying = Arc::downgrade(service);
+    web_config.on_renewal_kept = Some(Arc::new(move |_| {
+        if let Some(service) = retrying.upgrade() {
+            service.schedule_tls_renewal_retry();
+        }
+    }));
+    match web::Supervisor::start(
+        web_config,
+        held,
+        Arc::clone(service) as Arc<dyn control_listener::Handler>,
+        Arc::clone(gateway_state),
+        service.web_eligibility(),
+    ) {
+        Ok(web) => Some(web),
+        Err(error) => {
+            *sync::lock(gateway_state) = org_host_control::WebState::Failed;
+            host_log::log(&format!(
+                "browser service not started: {}",
+                host_log::untrusted(&error.to_string())
+            ));
+            None
+        }
     }
 }

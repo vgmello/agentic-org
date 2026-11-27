@@ -1,12 +1,15 @@
-//! Who may read a conversation's messages: the one rule every read of messages applies
-//! (`chat.messages`, channel summaries, search), and the narrow capability another domain
-//! (search, `TASK-91`) asks of messaging instead of reaching into its features.
+//! Who may read a conversation's messages or post files into it: the one rule every read of
+//! messages applies (`chat.messages`, channel summaries, search, attachments), and the narrow
+//! non-`features` capability other domains ask of messaging.
+
+use std::collections::BTreeSet;
 
 use org_proto::chat::ConversationKind;
 use org_store::{EngineError, Id};
 
-use super::features::{
-    all_conversations_including_auto, effective_auto_members, is_active_employee,
+pub(crate) use super::auto_channels::resolve_employee;
+use super::auto_channels::{
+    all_conversations_including_auto, effective_auto_members, is_addressable_employee,
 };
 use super::ports::MessagingRead;
 use super::records::ConversationRecord;
@@ -16,7 +19,7 @@ use super::records::ConversationRecord;
 /// one rule every read of messages applies (`chat.messages`, channel summaries, search).
 ///
 /// Only a channel has an auto scope (`messaging-schema.sql`), so a DM's effective members are
-/// its current members who are active employees: the caller's own membership and record
+/// its current members who are addressable employees: the caller's own membership and record
 /// decide, read once.
 pub(crate) fn may_read(
     read: &impl MessagingRead,
@@ -37,7 +40,7 @@ pub(crate) fn may_read(
     Ok(member
         && read
             .employee(caller)?
-            .is_some_and(|e| is_active_employee(&e)))
+            .is_some_and(|e| is_addressable_employee(&e)))
 }
 
 /// Every conversation (the virtual auto channels included) whose messages `caller` may read,
@@ -55,4 +58,22 @@ pub fn readable_conversations(
         }
     }
     Ok(readable)
+}
+
+/// Who may read a conversation's files and post into it, as the policy needs it: its effective
+/// members, and whether it is a channel (which every employee reads). `None` when it is not
+/// held here.
+pub fn conversation_access(
+    read: &impl MessagingRead,
+    conversation_id: &Id,
+    owner: &Id,
+) -> Result<Option<(BTreeSet<String>, bool)>, EngineError> {
+    let Some(conversation) = read.conversation(conversation_id)? else {
+        return Ok(None);
+    };
+    let members = effective_auto_members(read, &conversation, owner)?;
+    Ok(Some((
+        members.iter().map(Id::to_string).collect(),
+        conversation.kind == ConversationKind::Channel,
+    )))
 }

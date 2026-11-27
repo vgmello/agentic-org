@@ -160,8 +160,15 @@ fn secrets_and_owner_reads_are_never_hers_even_for_the_owner() {
         "member.set_may_hire",
         "member.external_approve",
         "member.external_bind",
+        "member.external_pending",
+        "member.external_renew",
         "git.push",
         "search.query",
+        "suggestion.apply",
+        "tess.ask",
+        "tess.turn_events",
+        "tess.turn_cancel",
+        "tess.session_reset",
     ] {
         assert_eq!(access(method), Access::Never, "{method}");
         assert!(!allowed(access(method), &acting_for(owner())), "{method}");
@@ -328,18 +335,29 @@ fn the_gate_refuses_her_before_any_method_runs_and_leaves_everyone_else_alone() 
     // answers by its own rules: here no cost port is wired at all).
     *port.current.lock().unwrap() = acting_for(owner());
     assert!(!refused("tess", false));
-    // A secret method stays refused even for the owner.
-    let secret = Request {
-        id: 8,
-        method: "provider.credential_status".into(),
-        principal: None,
-        params: serde_json::json!({}),
-    };
-    let response = shared.answer_for_test(&secret, "tess", false);
-    assert!(matches!(
-        response.outcome,
-        org_proto::Outcome::Error(ref e) if e.message == DELEGATION_DENIED
-    ));
+    // A secret or human-only Tess method stays refused even for the owner.
+    for method in [
+        "provider.credential_status",
+        "suggestion.apply",
+        "tess.ask",
+        "member.external_renew",
+        "member.external_pending",
+    ] {
+        let forbidden = Request {
+            id: 8,
+            method: method.into(),
+            principal: None,
+            params: serde_json::json!({}),
+        };
+        let response = shared.answer_for_test(&forbidden, "tess", false);
+        assert!(
+            matches!(
+                response.outcome,
+                org_proto::Outcome::Error(ref e) if e.message == DELEGATION_DENIED
+            ),
+            "{method}"
+        );
+    }
     // The office cannot read who she is: every bound member is refused, never let through.
     port.broken.store(true, Ordering::SeqCst);
     for member in ["tess", "ada"] {
@@ -1107,5 +1125,54 @@ fn p1_1_and_p2_8_dm_open_and_non_direct_dm_replies_return_policy_violation_and_t
                 }
             }
         }
+    }
+}
+
+#[test]
+fn tess_wake_enforces_mutation_policy_and_blocks_unconfirmed_writes() {
+    use crate::serve::tests::{launch_key, ports, test_info};
+    use crate::serve::SnapshotFailure;
+
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let dir = tempfile::TempDir::new().unwrap();
+    let port = Arc::new(FakePort::new("tess", Delegation::default()));
+    let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+    ports.delegation = Some(Arc::clone(&port) as Arc<dyn ChiefOfStaffPort>);
+    let shared = Shared::new(
+        &test_info(),
+        &dir.path().join("d.sock"),
+        ports,
+        launch_key(),
+    );
+
+    for (method, params) in [
+        ("tasks.create", json!({"title": "Injected"})),
+        ("tasks.update", json!({"task": "T-A1", "title": "Hijacked"})),
+        ("chat.send", json!({"to": "#general", "body": "Injected"})),
+        ("chat.channel_create", json!({"name": "evil"})),
+        (
+            "msg.reply",
+            json!({"id": "1", "to_id": "m-1", "body": "no"}),
+        ),
+        ("chat.answer", json!({"ask_id": "m-1", "answers": []})),
+        (
+            "chat.react",
+            json!({"message_id": "m-1", "reaction": "seen"}),
+        ),
+    ] {
+        let req = Request {
+            id: 99,
+            method: method.into(),
+            principal: None,
+            params,
+        };
+        let resp = shared.answer_for_test(&req, "tess", false);
+        assert!(
+            matches!(
+                resp.outcome,
+                Outcome::Error(ref e) if e.code == ErrorCode::PolicyViolation
+            ),
+            "tess:wake `{method}` must fail closed with PolicyViolation, got {resp:?}"
+        );
     }
 }

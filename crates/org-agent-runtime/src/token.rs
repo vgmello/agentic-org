@@ -8,7 +8,54 @@ use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::path::is_unsafe_char;
+/// Characters no path, pattern or command prefix may hold:
+/// - controls (general category Cc: NUL, line breaks, tabs, escapes, DEL, C1);
+/// - the line and paragraph separators U+2028 and U+2029 (some JSON-lines readers split on
+///   them);
+/// - every **format character** (general category Cf, as of Unicode 17.0): invisible
+///   characters that change how text displays or compares, so a value could look like a
+///   different one (e.g. in Needs you). They are the bidirectional controls (U+061C,
+///   U+200E-U+200F, U+202A-U+202E, U+2066-U+2069), the zero-width and joiner characters
+///   (U+200B-U+200D, U+2060, U+FEFF), the soft hyphen (U+00AD), the invisible operators and
+///   other format marks (U+2061-U+2064, U+206A-U+206F, U+180E, U+FFF9-U+FFFB), the
+///   Arabic, Syriac and Kaithi number marks (U+0600-U+0605, U+06DD, U+070F, U+0890-U+0891,
+///   U+08E2, U+110BD, U+110CD), the Egyptian hieroglyph and shorthand format controls
+///   (U+13430-U+1343F, U+1BCA0-U+1BCA3), the musical symbol format controls
+///   (U+1D173-U+1D17A), and the tag characters (U+E0001, U+E0020-U+E007F).
+///
+/// The table is written out (no Unicode dependency): 170 code points in 21 ranges, as of
+/// Unicode 17.0. A newer Unicode's new Cf characters get added here.
+pub(crate) fn is_unsafe_char(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') || is_format_char(c)
+}
+
+/// Unicode general category Cf (format), as of Unicode 17.0.
+fn is_format_char(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{0600}'..='\u{0605}'
+            | '\u{061C}'
+            | '\u{06DD}'
+            | '\u{070F}'
+            | '\u{0890}'..='\u{0891}'
+            | '\u{08E2}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{110BD}'
+            | '\u{110CD}'
+            | '\u{13430}'..='\u{1343F}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0001}'
+            | '\u{E0020}'..='\u{E007F}'
+    )
+}
 
 /// Why a value can't be one of this crate's validated names, tokens or patterns.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,10 +291,125 @@ validated_string! {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use crate::path::tests::UNSAFE;
     use serde_json::Value;
+
+    /// The characters every path, pattern and command prefix refuses, beyond NUL.
+    pub(crate) const UNSAFE: &[char] = &[
+        '\n',
+        '\r',
+        '\t',
+        '\u{1b}',
+        '\u{7f}',
+        '\u{85}',
+        '\u{2028}',
+        '\u{2029}',
+        '\u{202A}',
+        '\u{202B}',
+        '\u{202C}',
+        '\u{202D}',
+        '\u{202E}',
+        '\u{2066}',
+        '\u{2067}',
+        '\u{2068}',
+        '\u{2069}',
+        '\u{00AD}',
+        '\u{0600}',
+        '\u{061C}',
+        '\u{200B}',
+        '\u{200C}',
+        '\u{200D}',
+        '\u{200E}',
+        '\u{200F}',
+        '\u{2060}',
+        '\u{2064}',
+        '\u{206F}',
+        '\u{FEFF}',
+        '\u{FFF9}',
+        '\u{110BD}',
+        '\u{13430}',
+        '\u{1343F}',
+        '\u{1D173}',
+        '\u{E0001}',
+        '\u{E0041}',
+        '\u{E007F}',
+    ];
+
+    /// Every range of the Cf table: (first, last).
+    const FORMAT_RANGES: &[(u32, u32)] = &[
+        (0x00AD, 0x00AD),
+        (0x0600, 0x0605),
+        (0x061C, 0x061C),
+        (0x06DD, 0x06DD),
+        (0x070F, 0x070F),
+        (0x0890, 0x0891),
+        (0x08E2, 0x08E2),
+        (0x180E, 0x180E),
+        (0x200B, 0x200F),
+        (0x202A, 0x202E),
+        (0x2060, 0x2064),
+        (0x2066, 0x206F),
+        (0xFEFF, 0xFEFF),
+        (0xFFF9, 0xFFFB),
+        (0x110BD, 0x110BD),
+        (0x110CD, 0x110CD),
+        (0x13430, 0x1343F),
+        (0x1BCA0, 0x1BCA3),
+        (0x1D173, 0x1D17A),
+        (0xE0001, 0xE0001),
+        (0xE0020, 0xE007F),
+    ];
+
+    #[test]
+    fn the_format_table_is_exactly_cf() {
+        // Every code point, once: 170 format characters, no more.
+        let count = (0..=0x10FFFF)
+            .filter_map(char::from_u32)
+            .filter(|&c| is_format_char(c))
+            .count();
+        assert_eq!(count, 170);
+        // Each range's ends are in, and the code points just outside are out (no two ranges
+        // touch: U+2065, between two of them, is unassigned).
+        let is_in = |cp: u32| char::from_u32(cp).is_some_and(is_format_char);
+        for &(first, last) in FORMAT_RANGES {
+            assert!(is_in(first) && is_in(last), "{first:04X}-{last:04X}");
+            assert!(!is_in(first - 1), "{:04X}", first - 1);
+            assert!(!is_in(last + 1), "{:04X}", last + 1);
+        }
+        assert_eq!(
+            FORMAT_RANGES.iter().map(|(a, b)| b - a + 1).sum::<u32>(),
+            170
+        );
+    }
+
+    #[test]
+    fn neighbours_of_the_refused_ranges_are_fine() {
+        // Just outside each range (letters, marks, unassigned or private use), so the table's
+        // edges are exactly where they should be.
+        for c in [
+            '\u{00AC}',
+            '\u{00AE}',
+            '\u{0606}',
+            '\u{061B}',
+            '\u{061D}',
+            '\u{200A}',
+            '\u{2010}',
+            '\u{2027}',
+            '\u{202F}',
+            '\u{205F}',
+            '\u{2065}',
+            '\u{2070}',
+            '\u{FEFE}',
+            '\u{FFFC}',
+            '\u{E0000}',
+            '\u{E0080}',
+            'é',
+            '\u{1F600}',
+        ] {
+            assert!(!is_unsafe_char(c), "{:04X}", c as u32);
+        }
+    }
 
     /// Checks `T` accepts every `ok` and refuses every `bad`, directly and when decoded.
     fn check<T>(ok: &[&str], bad: &[String])

@@ -109,7 +109,7 @@ fn test_pump_ctx(
             on_failover: None,
             stage_mid_turn_wakes: None,
             on_mid_turn_delivered: None,
-            is_bwrap_topology_stale: None,
+            is_sandbox_topology_stale: None,
         },
         stop_epoch: 0,
         partition: None,

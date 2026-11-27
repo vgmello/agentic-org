@@ -167,6 +167,7 @@ mod runtime;
 mod session;
 mod spec;
 mod token;
+pub mod transcript;
 mod usage;
 
 #[cfg(feature = "testkit")]
@@ -191,7 +192,7 @@ pub use probe::{
     DiscoveredModel, ModelEntitlement, Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun,
     ProbeSession, ProbeStep, Unavailable,
 };
-pub use runtime::{AgentRuntime, PlanError};
+pub use runtime::{AgentRuntime, OperatorRulesLayout, PlanError, RuntimeHostProfile};
 pub use session::{Control, ControlError, Decision, Output, Session, TurnImage, TurnImageSource};
 pub use spec::{
     AgentIdentity, LaunchContext, McpServer, PermissionMode, PermissionPolicy, Rule, RuleScope,

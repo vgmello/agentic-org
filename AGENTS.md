@@ -70,7 +70,7 @@ Build order is in `backlog/docs/doc-5 - v1-Implementation-Plan.md`; `backlog/doc
 2. **Branches and integration:** follow `backlog/docs/processes/doc-20 - Process-Branch-Review-and-Integration.md`.
    - Start feature branches from `origin/v1`. Use separate worktrees for concurrent writers; otherwise work in the current checkout.
    - Keep one active implementation branch per lead; preserve blocked checkpoints and advance independent work.
-   - Review locally, merge `origin/v1` into your branch, notify other lead sessions, `git merge --no-ff` into `v1` and push. `v1` integrates **all v1 features** (owner, 2026-11-18; `v1-integration` retired); no PR or outside reviewer required.
+   - Review locally, merge `origin/v1` into your branch, notify other lead sessions, `git merge --no-ff` into `v1` and push. `v1` integrates **all v1 features** (owner, 2026-11-18); no PR or outside reviewer required.
    - Never push to `main` without explicit release instruction; never delete unmerged work. Clean up merged worktrees and local/remote branches per `doc-20` §5.
 3. **Checks and local review:** keep original author context, fix confirmed findings, validate original intent, and obtain a separate fresh final local review for the exact commit before merging.
    - Rust changes: run the formatter, production and all-target Clippy gates, and workspace tests in [Development tooling](DEVELOPMENT.md#required-local-checks).
@@ -139,7 +139,7 @@ managed employees use their injected binding.
 
 ## Session start: check for a handover
 
-If Agentic Org standing rules and the agent-os catalogue are not already in your system prompt, run `agent-os boot --format yaml` once before acting (skip on Turn 1 in managed sessions; re-run only after context compaction).
+If Agentic Org standing rules and the agent-os catalogue are not already in your system prompt, run `agent-os context --format yaml` once before acting (skip on Turn 1 in managed sessions and right after `agent-os login`; re-run only after context compaction).
 
 First read `backlog/docs/workstreams/doc-14 - Workstreams-Overview.md` and your stream's file
 (`doc-15` backend, `doc-16` linux or `doc-17` UI under parent repo `backlog/docs/workstreams/`): it is the shared record of where each stream stands and

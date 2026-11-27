@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::organization::records::{By, Meta};
 
+pub mod attachments;
 pub mod children;
 pub mod history;
 pub mod paths;
@@ -30,7 +31,7 @@ pub mod task_md;
 
 pub use children::{
     decode_checklist, decode_comment, decode_counter, decode_operations, encode_checklist,
-    encode_comment, encode_counter, encode_operations,
+    encode_comment, encode_counter, encode_operations, CommentDoc,
 };
 pub use history::{created_change, encode_event, verify_event, EventInput, MAX_EVENT_BYTES};
 pub use paths::{

@@ -873,8 +873,7 @@ pub(super) fn ports(snapshot: SnapshotFn) -> OfficePorts {
         project_inspect: Box::new(|_| Err("none".to_owned())),
         hiring: None,
         sessions: None,
-        run_binding_verify: None,
-        run_binding_active: None,
+        run_binding_verifier: None,
         delegation: None,
         external_auth: None,
         record_agent_command: None,
@@ -1402,8 +1401,7 @@ fn serving(
             project_inspect: Box::new(|_| Err("none".to_owned())),
             hiring: None,
             sessions: None,
-            run_binding_verify: None,
-            run_binding_active: None,
+            run_binding_verifier: None,
             delegation: None,
             external_auth: None,
             record_agent_command: None,
@@ -1890,8 +1888,7 @@ fn following_with(
                 project_inspect: Box::new(|_| Err("none".to_owned())),
                 hiring: None,
                 sessions: None,
-                run_binding_verify: None,
-                run_binding_active: None,
+                run_binding_verifier: None,
                 delegation: None,
                 external_auth: None,
                 record_agent_command: None,
@@ -2396,8 +2393,7 @@ fn asking(
             project_inspect: Box::new(|_| Err("none".to_owned())),
             hiring: None,
             sessions: None,
-            run_binding_verify: None,
-            run_binding_active: None,
+            run_binding_verifier: None,
             delegation: None,
             external_auth: None,
             record_agent_command: None,
@@ -3933,4 +3929,219 @@ fn her_run_for_a_deactivated_member_gets_no_whoami_wait_or_subscription() {
     stop.store(true, Ordering::SeqCst);
     drop(stream);
     server.join().unwrap();
+}
+
+struct CustomMockVerifier {
+    managed_binding: org_office_sessions::ActiveRunBinding,
+    mismatched_managed_binding: org_office_sessions::ActiveRunBinding,
+    external_flagged_managed_binding: org_office_sessions::ActiveRunBinding,
+    active: AtomicBool,
+    external_active: AtomicBool,
+    expected_managed_token: String,
+    expected_external_token: String,
+    mismatched_external_token: String,
+    mismatched_managed_token: String,
+    external_flagged_managed_token: String,
+}
+
+impl org_office_sessions::RunBindingVerifier for CustomMockVerifier {
+    fn verify(
+        &self,
+        employee_id: &str,
+        presented_token: Option<&str>,
+        peer: &org_office_sessions::PeerIdentity,
+    ) -> Result<org_office_sessions::ActiveRunBinding, org_office_sessions::BindingRejection> {
+        assert_eq!(peer, &org_office_sessions::PeerIdentity::none());
+        if employee_id != self.managed_binding.employee_id {
+            return Err(org_office_sessions::BindingRejection::MemberMismatch);
+        }
+        match presented_token {
+            None | Some("") => Err(org_office_sessions::BindingRejection::MissingToken),
+            Some(tok) if tok == self.expected_managed_token => Ok(self.managed_binding.clone()),
+            _ => Err(org_office_sessions::BindingRejection::UnknownToken),
+        }
+    }
+
+    fn verify_binding(
+        &self,
+        employee_id: &str,
+        presented_token: Option<&str>,
+        peer: &org_office_sessions::PeerIdentity,
+    ) -> Result<org_office_sessions::VerifiedRunBinding, org_office_sessions::BindingRejection>
+    {
+        use org_office_sessions::VerifiedRunBinding;
+        match presented_token {
+            Some(tok) if tok == self.expected_external_token => Ok(VerifiedRunBinding::External {
+                employee_id: employee_id.to_owned(),
+                session_id: "ext-sess-custom".into(),
+            }),
+            Some(tok) if tok == self.mismatched_external_token => {
+                Ok(VerifiedRunBinding::External {
+                    employee_id: "wrong-member-id".into(),
+                    session_id: "ext-sess-wrong".into(),
+                })
+            }
+            Some(tok) if tok == self.mismatched_managed_token => Ok(VerifiedRunBinding::Managed(
+                self.mismatched_managed_binding.clone(),
+            )),
+            Some(tok) if tok == self.external_flagged_managed_token => Ok(
+                VerifiedRunBinding::Managed(self.external_flagged_managed_binding.clone()),
+            ),
+            _ => self
+                .verify(employee_id, presented_token, peer)
+                .map(VerifiedRunBinding::Managed),
+        }
+    }
+
+    fn has_active(&self, employee_id: &str) -> bool {
+        employee_id == self.managed_binding.employee_id && self.active.load(Ordering::SeqCst)
+    }
+
+    fn has_active_external(&self, employee_id: &str, session_id: &str) -> bool {
+        employee_id == self.managed_binding.employee_id
+            && session_id == "ext-sess-custom"
+            && self.external_active.load(Ordering::SeqCst)
+    }
+}
+
+fn custom_verifier_fixture() -> (Arc<CustomMockVerifier>, Shared) {
+    use org_office_sessions::{RunBindingRegistry, RunBindingVerifier};
+
+    let reg = RunBindingRegistry::new();
+    let issued = reg
+        .issue(ADA_ID, "run-custom", "sess-custom", 0, None)
+        .unwrap();
+    let mismatched = reg
+        .issue("wrong-member-id", "run-wrong", "sess-wrong", 0, None)
+        .unwrap();
+    let external_flagged = reg
+        .issue_external(ADA_ID, "ext-misclassified", u64::MAX)
+        .unwrap();
+    assert!(external_flagged.is_external());
+
+    let verifier = Arc::new(CustomMockVerifier {
+        expected_managed_token: issued.expose_token().to_owned(),
+        expected_external_token: "ext-tok-ok".into(),
+        mismatched_external_token: "ext-tok-mismatch".into(),
+        mismatched_managed_token: "managed-tok-mismatch".into(),
+        external_flagged_managed_token: "managed-tok-external".into(),
+        managed_binding: issued,
+        mismatched_managed_binding: mismatched,
+        external_flagged_managed_binding: external_flagged,
+        active: AtomicBool::new(true),
+        external_active: AtomicBool::new(true),
+    });
+    let mut office_ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+    office_ports.run_binding_verifier = Some(Arc::clone(&verifier) as Arc<dyn RunBindingVerifier>);
+    let shared = Shared::new(
+        &test_info(),
+        Path::new("/unused"),
+        office_ports,
+        launch_key(),
+    );
+    (verifier, shared)
+}
+
+fn bind_ada_request(id: u64, token: Option<&str>) -> Request {
+    Request::new::<MsgBind>(
+        id,
+        &MsgBindParams {
+            member: Some("ada".into()),
+            session_token: token.map(str::to_owned),
+            retired_token: None,
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn custom_run_binding_verifier_binds_and_revokes_without_peer_pid() {
+    use org_office_sessions::PeerIdentity;
+
+    let (verifier, shared) = custom_verifier_fixture();
+    let control = Control::default();
+    let mut binding = Binding::Anonymous;
+
+    // 1. Wrong token is refused and leaves connection anonymous.
+    let refused = super::dispatch::answer_and_record(
+        &bind_ada_request(1, Some("wrong-token")),
+        &shared,
+        &mut binding,
+        &PeerIdentity::none(),
+    );
+    assert_eq!(code_of(refused.outcome), ErrorCode::NotAuthorized);
+    assert_eq!(binding, Binding::Anonymous);
+
+    // 2. Valid managed token binds cleanly even with PeerIdentity::none() (no kernel PID).
+    let ok = super::dispatch::answer_and_record(
+        &bind_ada_request(2, Some(&verifier.expected_managed_token)),
+        &shared,
+        &mut binding,
+        &PeerIdentity::none(),
+    );
+    assert!(
+        matches!(ok.outcome, org_proto::Outcome::Result(_)),
+        "{ok:?}"
+    );
+    assert_eq!(binding.member(), Some(ADA_ID));
+    assert!(matches!(
+        super::binding::lookup_live_binding(&shared, &binding, &control),
+        Some(super::binding::Lookup::Bindable(_))
+    ));
+
+    // 3. Once custom verifier reports managed inactive, lookup_live_binding immediately revokes.
+    verifier.active.store(false, Ordering::SeqCst);
+    assert!(matches!(
+        super::binding::lookup_live_binding(&shared, &binding, &control),
+        Some(super::binding::Lookup::Not)
+    ));
+
+    // 4. Custom verifier returning External binds as Verifier-backed Binding::External, stays live
+    //    via `has_active_external` (even with `external_auth == None`), and revokes when inactive.
+    let ext_ok = super::dispatch::answer_and_record(
+        &bind_ada_request(3, Some("ext-tok-ok")),
+        &shared,
+        &mut binding,
+        &PeerIdentity::none(),
+    );
+    assert!(
+        matches!(ext_ok.outcome, org_proto::Outcome::Result(_)),
+        "{ext_ok:?}"
+    );
+    assert_eq!(binding.external_session(), Some("ext-sess-custom"));
+    assert!(matches!(
+        super::binding::lookup_live_binding(&shared, &binding, &control),
+        Some(super::binding::Lookup::Bindable(_))
+    ));
+    verifier.external_active.store(false, Ordering::SeqCst);
+    assert!(matches!(
+        super::binding::lookup_live_binding(&shared, &binding, &control),
+        Some(super::binding::Lookup::Not)
+    ));
+}
+
+#[test]
+fn custom_run_binding_verifier_rejects_mismatched_or_external_managed_binding() {
+    use org_office_sessions::PeerIdentity;
+
+    let (_verifier, shared) = custom_verifier_fixture();
+    for (id, token) in [
+        (1, "managed-tok-mismatch"),
+        (2, "managed-tok-external"),
+        (3, "ext-tok-mismatch"),
+    ] {
+        let mut binding = Binding::Anonymous;
+        let response = super::dispatch::answer_and_record(
+            &bind_ada_request(id, Some(token)),
+            &shared,
+            &mut binding,
+            &PeerIdentity::none(),
+        );
+        assert_eq!(
+            code_of(response.outcome),
+            ErrorCode::NotAuthorized,
+            "token `{token}` must fail closed"
+        );
+        assert_eq!(binding, Binding::Anonymous);
+    }
 }

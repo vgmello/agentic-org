@@ -128,6 +128,10 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     );
     parts.excluded_prefixes = companion_store_exclusions(&here.office_id);
     parts.flush_interval = config.flush_interval;
+    #[cfg(test)]
+    if let Some(flush_interval) = config.testing.flush_interval {
+        parts.flush_interval = flush_interval;
+    }
     parts.opening = config.opening.clone();
     #[cfg(any(test, feature = "testkit"))]
     if let Some(faults) = &config.testing.faults {

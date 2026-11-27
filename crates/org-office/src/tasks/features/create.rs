@@ -25,6 +25,7 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
+use org_proto::attachments::{check_task_attachment_ids, AttachmentTargetKind};
 use org_proto::tasks::{
     normalize_dod_items, ChecklistSection, TaskPriority, TaskStatus, TasksCreateParams,
     TASK_MAX_DEPENDENCIES,
@@ -33,6 +34,7 @@ use org_proto::ErrorCode;
 use org_store::{Ack, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
 use crate::organization::records::EmployeeKind;
+use crate::tasks::ops::{child_bytes, derive_link_id, derived_id, task_location, too_deep, Writer};
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{
     self, normalize_file_paths, normalize_labels, ChecklistStepRecord, OfficeTaskCounterRecord,
@@ -40,8 +42,7 @@ use crate::tasks::records::{
 };
 use crate::time::format_rfc3339_ms;
 
-use super::core::{derive_link_id, derived_id};
-use super::write::{child_bytes, task_location, too_deep, Writer};
+use super::attachments::PreparedTaskFiles;
 use super::{
     parse_details, parse_uuid_v7, refuse, require_active_employee, require_office_code,
     require_task, storage_refusal, validate_active_employee, validate_active_team, validate_body,
@@ -128,6 +129,8 @@ pub struct CreateTask {
     /// The store's task numbering: whether numbers up to the counter's reservation may have
     /// been issued by a run that did not stop cleanly, and how far a reservation is flushed.
     pub numbering: Arc<TaskNumbering>,
+    /// Validated, blob-promoted files to bind onto the new task (`TASK-98.4`).
+    pub prepared_files: PreparedTaskFiles,
 }
 
 /// What a decided create leaves: its change, the task, the agent it newly assigns, and the
@@ -269,6 +272,7 @@ impl CreateTask {
             super::validate_i64_u64(rank_order, "rank_order")?;
         }
         let at = format_rfc3339_ms(uow.now().0);
+        let attachments = self.initial_attachments(&task_id, &at)?;
         let task = TaskRecord {
             id: task_id.clone(),
             office_code: office_code.clone(),
@@ -301,22 +305,17 @@ impl CreateTask {
 
         let location = task_location(uow.view(), &task)?;
         let writer = Writer::new(uow.view(), &actor.id, &at, &self.params.command_id)?;
-        let known_facts = records::task_md::task_fields(&task, &links);
-        let mut created = records::created_change(known_facts, &task.body_markdown);
-        let mut change = Change::new(ack).put(
-            records::counter_path(&here.office_id),
-            records::encode_counter(&here.office_id, &counter),
-        );
-        if !dod.is_empty() {
-            let path = records::checklist_path(&location, &task_id).map_err(too_deep)?;
-            change = change.put(path, child_bytes(records::encode_checklist(&dod))?);
-            let copied: Vec<serde_json::Value> = dod
-                .iter()
-                .map(|s| serde_json::json!({ "step_id": s.id.as_str(), "text": s.text }))
-                .collect();
-            created["dod"] = serde_json::Value::Array(copied);
-        }
-        let change = writer.task_and_event(change, &location, &task, &links, created)?;
+        let change = assemble_create_change(
+            ack,
+            here,
+            &counter,
+            &location,
+            &task,
+            &links,
+            &attachments,
+            &dod,
+            &writer,
+        )?;
         Ok(CreatedTask {
             change,
             task_id,
@@ -324,6 +323,58 @@ impl CreateTask {
             counter,
         })
     }
+
+    fn initial_attachments(
+        &self,
+        task_id: &Id,
+        at: &str,
+    ) -> Result<Vec<crate::attachments::records::AttachmentRecord>, Refusal> {
+        if let Err(err) = check_task_attachment_ids(&self.params.attachment_ids) {
+            return Err(refuse(err.code, err.message));
+        }
+        if self.params.attachment_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.prepared_files.to_records(
+            AttachmentTargetKind::Task,
+            task_id,
+            &self.params.command_id,
+            at,
+        )
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "internal task-create change assembly helper"
+)]
+fn assemble_create_change(
+    ack: Ack,
+    here: &OfficeIdentity,
+    counter: &OfficeTaskCounterRecord,
+    location: &records::Location,
+    task: &TaskRecord,
+    links: &[TaskLinkRecord],
+    attachments: &[crate::attachments::records::AttachmentRecord],
+    dod: &[ChecklistStepRecord],
+    writer: &Writer,
+) -> Result<Change, Refusal> {
+    let known_facts = records::task_md::task_fields(task, links, attachments);
+    let mut created = records::created_change(known_facts, &task.body_markdown);
+    let mut change = Change::new(ack).put(
+        records::counter_path(&here.office_id),
+        records::encode_counter(&here.office_id, counter),
+    );
+    if !dod.is_empty() {
+        let path = records::checklist_path(location, &task.id).map_err(too_deep)?;
+        change = change.put(path, child_bytes(records::encode_checklist(dod))?);
+        let copied: Vec<serde_json::Value> = dod
+            .iter()
+            .map(|s| serde_json::json!({ "step_id": s.id.as_str(), "text": s.text }))
+            .collect();
+        created["dod"] = serde_json::Value::Array(copied);
+    }
+    writer.task_and_event(change, location, task, links, attachments, created)
 }
 
 /// The ID of the `index`-th item of a task's definition of done copied at create.

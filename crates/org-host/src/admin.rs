@@ -23,8 +23,8 @@ use org_proto::{ApiError, ErrorCode};
 
 use crate::app_auth::AppPolicy;
 use crate::control_listener::Connection;
-use crate::hostdb::HostStore;
-use crate::links::{Issued, LinkKind, Subject};
+use crate::hostdb::HostAccountsStore;
+use crate::links::{Issued, LinkKind, OneTimeLinks, Subject};
 use crate::peer::Received;
 
 /// The single subject every registration link is for: the instance's administrator. Setup's
@@ -64,7 +64,8 @@ impl Presence for NativePresence {
 }
 
 pub(crate) struct Admin {
-    db: Arc<dyn HostStore>,
+    accounts: Arc<dyn HostAccountsStore>,
+    links: Arc<dyn OneTimeLinks + Send + Sync>,
     setup_operation: String,
     origin: ListenOrigin,
     policy: AppPolicy,
@@ -126,14 +127,16 @@ fn wall() -> Result<i64, ApiError> {
 
 impl Admin {
     pub(crate) fn new(
-        db: Arc<dyn HostStore>,
+        accounts: Arc<dyn HostAccountsStore>,
+        links: Arc<dyn OneTimeLinks + Send + Sync>,
         setup_operation: &str,
         origin: ListenOrigin,
         policy: AppPolicy,
         presence: Arc<dyn Presence>,
     ) -> Self {
         Self {
-            db,
+            accounts,
+            links,
             setup_operation: setup_operation.to_owned(),
             origin,
             policy,
@@ -251,11 +254,11 @@ impl Admin {
                 "the setup operation does not match this instance",
             ));
         }
-        if self.db.has_administrator().map_err(unavailable)? {
+        if self.accounts.has_administrator().map_err(unavailable)? {
             return Ok(AdminLinkResult::AdministratorPresent);
         }
         match self
-            .db
+            .links
             .issue_first(LinkKind::Registration, &subject()?, now_ms)
             .map_err(unavailable)?
         {
@@ -286,7 +289,7 @@ impl Admin {
                 )
             })?;
         let _resetting = Resetting(&self.resetting);
-        let has_admin = self.db.has_administrator().map_err(unavailable)?;
+        let has_admin = self.accounts.has_administrator().map_err(unavailable)?;
         let reason = if has_admin {
             ConfirmReason::ResetAdminPassword
         } else {
@@ -297,7 +300,7 @@ impl Admin {
         // dialog and one registered meanwhile, refuse rather than switching to password reset.
         if !has_admin {
             return match self
-                .db
+                .accounts
                 .issue_unless_administrator(LinkKind::Registration, &subject()?, wall()?)
                 .map_err(unavailable)?
             {
@@ -306,7 +309,7 @@ impl Admin {
             };
         }
         match self
-            .db
+            .accounts
             .issue_admin_password_reset_link(wall()?)
             .map_err(unavailable)?
         {

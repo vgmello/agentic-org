@@ -303,7 +303,18 @@ fn run_exec(args: &[String]) -> Result<Printed, LifecycleError> {
         )
     })?;
     let (pkcs8, pubkey) = client::generate_key()?;
-    let request = request_login(&plan.target, plan.member, &pubkey, &label_for(plan.program))?;
+    let cwd_path = std::env::current_dir()
+        .ok()
+        .and_then(|d| d.canonicalize().ok())
+        .and_then(|d| client::optional_workspace_path(&d));
+    let request = request_login(
+        &plan.target,
+        plan.member,
+        &pubkey,
+        &label_for(plan.program),
+        client::local_hostname(),
+        cwd_path,
+    )?;
     approve_with_operator(
         &request.approval_code,
         &request.office_id,

@@ -188,3 +188,41 @@ fn file_fields_are_optional_on_the_wire_and_omitted_when_empty() {
     assert!(meta.is_image());
     assert_eq!(meta.artifact_status, ArtifactStatus::Final);
 }
+
+#[test]
+fn render_params_and_result_redact_payloads_and_round_trip() {
+    let params = AttachmentRenderParams {
+        format: RenderFormat::Pdf,
+        source_kind: RenderSourceKind::Html,
+        source: "<h1>SECRET_HTML</h1>".into(),
+        css: Some("body { /* SECRET_CSS */ }".into()),
+        return_bytes: true,
+        ..Default::default()
+    };
+    let dbg = format!("{params:?}");
+    assert!(!dbg.contains("SECRET_HTML"), "{dbg}");
+    assert!(!dbg.contains("SECRET_CSS"), "{dbg}");
+    let wire = serde_json::to_value(&params).unwrap();
+    let decoded: AttachmentRenderParams = serde_json::from_value(wire).unwrap();
+    assert_eq!(decoded, params);
+
+    let res = AttachmentRenderResult {
+        pdf_base64: Some("U0VDUkVUX1BERg==".into()),
+        page_count: 2,
+        byte_count: 1024,
+        ..Default::default()
+    };
+    assert!(!format!("{res:?}").contains("U0VDUkVUX1BERg=="));
+    assert_eq!(RenderFormat::parse("pdf"), Some(RenderFormat::Pdf));
+    assert_eq!(RenderFormat::parse("docx"), None);
+    assert_eq!(
+        RenderSourceKind::parse("markdown"),
+        Some(RenderSourceKind::Markdown)
+    );
+    assert_eq!(
+        RenderSourceKind::parse("html"),
+        Some(RenderSourceKind::Html)
+    );
+    assert_eq!(RenderSourceKind::parse("svg"), None);
+    assert!(ATTACHMENT_METHODS.contains(&AttachmentRender::METHOD));
+}

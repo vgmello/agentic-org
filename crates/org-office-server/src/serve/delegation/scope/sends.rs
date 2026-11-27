@@ -21,18 +21,27 @@
 use org_proto::ask::{ChatAnswer, ChatAsk};
 use org_proto::chat::{ChatSend, ConversationKind};
 use org_proto::msg::{MsgAsk, MsgReply, MsgSend};
+use org_proto::tasks::{TasksComment, TasksCreate, TasksUpdate};
 use org_proto::{Call, Request, Response};
 
+use super::files::file as visible_file;
 use super::{denied, params, require, Delegation, View};
 
-/// Refuses a send, ask, reply or answer that goes where the caller is not, or carries staged
-/// files for anyone but the owner.
+/// Refuses a send, ask, reply, answer, or task/comment mutation carrying attachments when it goes
+/// where the caller is not, binds files for anyone but the live owner, or re-attaches a message
+/// file the caller does not see (`TASK-240`, `TASK-98.4`).
 pub(super) fn admit(
     request: &Request,
     view: &View<'_>,
     delegation: &Delegation,
 ) -> Result<(), Response> {
-    let files = |ids: &[String]| owner_files(view.id, delegation, ids);
+    let files = |ids: &[String]| -> Result<(), Response> {
+        owner_files(view.id, delegation, ids)?;
+        for id in ids {
+            visible_file(view, id)?;
+        }
+        Ok(())
+    };
     match request.method.as_str() {
         ChatSend::METHOD => {
             let p = decoded::<ChatSend>(request)?;
@@ -58,6 +67,9 @@ pub(super) fn admit(
         // Where a reply or an answer goes is its parent's conversation ([`super::admit`]).
         MsgReply::METHOD => files(&decoded::<MsgReply>(request)?.attachment_ids),
         ChatAnswer::METHOD => files(&decoded::<ChatAnswer>(request)?.attachment_ids),
+        TasksCreate::METHOD => files(&decoded::<TasksCreate>(request)?.attachment_ids),
+        TasksUpdate::METHOD => files(&decoded::<TasksUpdate>(request)?.add_attachments),
+        TasksComment::METHOD => files(&decoded::<TasksComment>(request)?.attachment_ids),
         _ => Ok(()),
     }
 }

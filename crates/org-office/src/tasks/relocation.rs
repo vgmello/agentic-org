@@ -13,6 +13,9 @@
 
 use std::collections::BTreeMap;
 
+use org_proto::attachments::{
+    AttachmentTargetKind, TASK_ATTACHMENTS_MAX, TASK_COMMENT_ATTACHMENTS_MAX,
+};
 use org_store::{DurablePath, EngineError, Id};
 
 use super::{
@@ -63,7 +66,14 @@ pub(crate) fn task_folder_moves<T: TasksRead + ?Sized>(
         let (target, bytes) = match kind {
             Kind::Task(_) => {
                 let links = view.task_links_from(id)?;
-                let bytes = records::encode_task_md(task, &links).map_err(encoding)?;
+                let attachments = view.attachments_for_target(
+                    AttachmentTargetKind::Task,
+                    Some(id),
+                    None,
+                    TASK_ATTACHMENTS_MAX,
+                )?;
+                let bytes =
+                    records::encode_task_md(task, &links, &attachments).map_err(encoding)?;
                 (records::task_md_path(to, id), bytes)
             }
             Kind::Comment(_, comment) => {
@@ -71,7 +81,13 @@ pub(crate) fn task_folder_moves<T: TasksRead + ?Sized>(
                 let Some(record) = comments.iter().find(|c| c.id == comment) else {
                     return Err(EngineError::new(format!("{path} has no comment record")));
                 };
-                let bytes = records::encode_comment(record).map_err(encoding)?;
+                let attachments = view.attachments_for_target(
+                    AttachmentTargetKind::TaskComment,
+                    Some(&comment),
+                    None,
+                    TASK_COMMENT_ATTACHMENTS_MAX,
+                )?;
+                let bytes = records::encode_comment(record, &attachments).map_err(encoding)?;
                 (records::comment_path(to, id, &comment), bytes)
             }
             Kind::Checklist(_) => {

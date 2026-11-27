@@ -21,17 +21,16 @@
 //! `leases` (a leaf, never held across I/O or another lock).
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Component, Path};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
 mod codes;
-mod lease;
 mod nonces;
-mod signin;
 
-pub(crate) use codes::PendingLogins;
-pub(crate) use nonces::NonceBook;
+pub(crate) use codes::{PendingInsert, PendingLogins, PendingSnapshot};
+pub(crate) use nonces::{verify_signature, NonceBook, NonceEntry};
 
 /// Current on-disk lease format.
 pub const EXTERNAL_LEASE_VERSION: u32 = 1;
@@ -46,6 +45,10 @@ pub struct ExternalLeaseRecord {
     pub employee_id: String,
     pub pubkey_ed25519_b64: String,
     pub workspace_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
     pub approved_by: String,
     pub approved_at: String,
     pub expires_at: String,
@@ -75,7 +78,7 @@ pub(crate) struct ExternalAuthState {
     leases: Mutex<HashMap<String, Option<ExternalLeaseRecord>>>,
     /// Serializes approvals, revocations, logouts and the final check-and-issue of a token
     /// exchange (rare actions). Taken before `registry` and `leases`.
-    lease_mutation: Mutex<()>,
+    pub(crate) lease_mutation: Mutex<()>,
     /// Agents whose lease RAM holds revoked but whose file still says active (a failed durable
     /// write): the next revocation call or approval writes it.
     unpersisted: Mutex<HashSet<String>>,
@@ -103,7 +106,7 @@ impl ExternalAuthState {
     }
 
     /// Fills the cache from a disk read unless an approval or revocation got there first.
-    fn fill(&self, employee_id: &str, loaded: Option<ExternalLeaseRecord>) {
+    pub(crate) fn fill(&self, employee_id: &str, loaded: Option<ExternalLeaseRecord>) {
         self.leases
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -112,7 +115,7 @@ impl ExternalAuthState {
     }
 
     /// Replaces the cached lease, answering the previous cache entry.
-    fn replace(
+    pub(crate) fn replace(
         &self,
         employee_id: &str,
         lease: Option<ExternalLeaseRecord>,
@@ -124,7 +127,7 @@ impl ExternalAuthState {
     }
 
     /// Records that `employee_id`'s revocation is in RAM but not yet on disk.
-    fn mark_unpersisted(&self, employee_id: &str) {
+    pub(crate) fn mark_unpersisted(&self, employee_id: &str) {
         self.unpersisted
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -132,7 +135,7 @@ impl ExternalAuthState {
     }
 
     /// Whether `employee_id`'s lease file still owes a revocation RAM already made.
-    fn owes_disk(&self, employee_id: &str) -> bool {
+    pub(crate) fn owes_disk(&self, employee_id: &str) -> bool {
         self.unpersisted
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -140,7 +143,7 @@ impl ExternalAuthState {
     }
 
     /// `employee_id`'s lease file now says what RAM says.
-    fn settle_persisted(&self, employee_id: &str) {
+    pub(crate) fn settle_persisted(&self, employee_id: &str) {
         self.unpersisted
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -148,7 +151,7 @@ impl ExternalAuthState {
     }
 
     /// Restores a cache entry after a failed durable write.
-    fn restore(&self, employee_id: &str, previous: Option<Option<ExternalLeaseRecord>>) {
+    pub(crate) fn restore(&self, employee_id: &str, previous: Option<Option<ExternalLeaseRecord>>) {
         let mut leases = self.leases.lock().unwrap_or_else(|p| p.into_inner());
         match previous {
             Some(lease) => {
@@ -202,23 +205,160 @@ pub(crate) fn decode_pubkey(b64: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests;
 
-/// Validates and trims an external workspace label against the wire byte budget and control-char
+/// Rejects control characters, Unicode line/paragraph separators, and bidirectional
+/// overrides/isolates that can spoof terminal or web approval surfaces.
+fn is_disallowed_display_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{200E}'
+                | '\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
+fn is_clean_absolute_workspace_path(trimmed: &str) -> bool {
+    let path = Path::new(trimmed);
+    if !path.is_absolute() {
+        return false;
+    }
+    if !path
+        .components()
+        .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
+    {
+        return false;
+    }
+    if trimmed == "/" {
+        return true;
+    }
+    if trimmed.ends_with('/') {
+        return false;
+    }
+    let Some(rest) = trimmed.strip_prefix('/') else {
+        return false;
+    };
+    !rest
+        .split('/')
+        .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+}
+
+/// Validates and trims an external workspace label against the wire byte budget and display-char
 /// rules (single choke-point shared by `auth.login_request` and `member.external_bind`).
 pub(crate) fn validate_workspace_label(label: &str) -> Result<String, org_proto::ApiError> {
     use org_proto::external_auth::MAX_WORKSPACE_LABEL_BYTES;
     let trimmed = label.trim();
     if trimmed.is_empty()
         || trimmed.len() > MAX_WORKSPACE_LABEL_BYTES
-        || trimmed.chars().any(char::is_control)
+        || label.chars().any(is_disallowed_display_char)
     {
         return Err(org_proto::ApiError::new(
             org_proto::ErrorCode::InvalidRequest,
             format!(
-                "the workspace label must be 1 to {MAX_WORKSPACE_LABEL_BYTES} bytes without control characters"
+                "the workspace label must be 1 to {MAX_WORKSPACE_LABEL_BYTES} bytes without control, line-separator, or bidi characters"
             ),
         ));
     }
     Ok(trimmed.to_owned())
+}
+
+/// Validates and trims an optional host name against the wire byte budget and display-char rules.
+pub(crate) fn validate_optional_hostname(
+    hostname: Option<&str>,
+) -> Result<Option<String>, org_proto::ApiError> {
+    use org_proto::external_auth::MAX_HOSTNAME_BYTES;
+    let Some(raw) = hostname else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > MAX_HOSTNAME_BYTES
+        || raw.chars().any(is_disallowed_display_char)
+    {
+        return Err(org_proto::ApiError::new(
+            org_proto::ErrorCode::InvalidRequest,
+            format!(
+                "hostname must be 1 to {MAX_HOSTNAME_BYTES} bytes without control, line-separator, or bidi characters"
+            ),
+        ));
+    }
+    Ok(Some(trimmed.to_owned()))
+}
+
+/// Validates and trims an optional workspace path against the wire byte budget, clean absolute
+/// path rules, and display-char rules (no relative paths, `.`/`..`, trailing `/`, or spoofing
+/// characters).
+pub(crate) fn validate_optional_workspace_path(
+    workspace_path: Option<&str>,
+) -> Result<Option<String>, org_proto::ApiError> {
+    use org_proto::external_auth::MAX_WORKSPACE_PATH_BYTES;
+    let Some(raw) = workspace_path else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > MAX_WORKSPACE_PATH_BYTES
+        || raw.chars().any(is_disallowed_display_char)
+        || !is_clean_absolute_workspace_path(trimmed)
+    {
+        return Err(org_proto::ApiError::new(
+            org_proto::ErrorCode::InvalidRequest,
+            format!(
+                "workspace_path must be a clean absolute path of 1 to {MAX_WORKSPACE_PATH_BYTES} bytes without control, line-separator, or bidi characters"
+            ),
+        ));
+    }
+    Ok(Some(trimmed.to_owned()))
+}
+
+/// Server-computed workspace familiarity from an agent's `external-history.jsonl` approvals.
+pub(crate) fn compute_workspace_familiarity(
+    history: &[org_proto::external_auth::ExternalHistoryEntry],
+    hostname: Option<&str>,
+    workspace_path: Option<&str>,
+    workspace_label: &str,
+    pubkey_fingerprint: &str,
+) -> (
+    org_proto::external_auth::WorkspaceFamiliarity,
+    Option<String>,
+    Option<String>,
+) {
+    use org_proto::external_auth::WorkspaceFamiliarity;
+    let latest = history
+        .iter()
+        .rev()
+        .filter(|entry| entry.event == "approved")
+        .find(|entry| history_matches_workspace(entry, hostname, workspace_path, workspace_label));
+    let Some(latest) = latest else {
+        return (WorkspaceFamiliarity::FirstTime, None, None);
+    };
+    let familiarity = if latest.pubkey_fingerprint.as_deref() == Some(pubkey_fingerprint) {
+        WorkspaceFamiliarity::ReturningKnownKey
+    } else {
+        WorkspaceFamiliarity::ReturningNewKey
+    };
+    (
+        familiarity,
+        latest.actor_id.clone(),
+        Some(latest.at.clone()),
+    )
+}
+
+fn history_matches_workspace(
+    entry: &org_proto::external_auth::ExternalHistoryEntry,
+    hostname: Option<&str>,
+    workspace_path: Option<&str>,
+    workspace_label: &str,
+) -> bool {
+    if entry.hostname.as_deref() != hostname {
+        return false;
+    }
+    if entry.workspace_path.is_some() || workspace_path.is_some() {
+        return entry.workspace_path.as_deref() == workspace_path;
+    }
+    entry.workspace_label.as_deref() == Some(workspace_label)
 }
 
 /// Built-in office agents (Chief of Staff, HR) run only inside the office: an external workspace
@@ -239,70 +379,4 @@ pub(crate) fn refuse_builtin_agent(
         org_proto::ErrorCode::NotAuthorized,
         message,
     ))
-}
-
-impl crate::manager::SessionManager {
-    /// [`refuse_builtin_agent`] by employee ID; an unreadable record is refused too.
-    pub(crate) fn refuse_builtin_agent_id(
-        &self,
-        employee_id: &str,
-    ) -> Result<(), org_proto::ApiError> {
-        match self.office.load_employee(employee_id) {
-            Ok(Some(employee)) => refuse_builtin_agent(&employee),
-            Ok(None) => Ok(()),
-            Err(_) => Err(org_proto::ApiError::new(
-                org_proto::ErrorCode::StorageError,
-                "could not read the agent's record",
-            )),
-        }
-    }
-
-    /// `member.external_bind`: atomically authorizes and installs an external workspace lease for
-    /// `employee_id` in one operator call (`TASK-211`), bypassing `PendingLogins` entirely so
-    /// unauthenticated pending-login traffic can never DoS binding or leak approval codes.
-    pub fn external_bind(
-        &self,
-        actor: &str,
-        employee_id: &str,
-        params: &org_proto::external_auth::MemberExternalBindParams,
-    ) -> Result<org_proto::external_auth::ExternalSessionView, org_proto::ApiError> {
-        use org_proto::external_auth::{
-            DEFAULT_LEASE_TTL_SECS, MAX_LEASE_TTL_SECS, MIN_LEASE_TTL_SECS,
-        };
-        use org_proto::{ApiError, ErrorCode};
-
-        let ttl = params.ttl_secs.unwrap_or(DEFAULT_LEASE_TTL_SECS);
-        if !(MIN_LEASE_TTL_SECS..=MAX_LEASE_TTL_SECS).contains(&ttl) {
-            return Err(ApiError::new(
-                ErrorCode::InvalidRequest,
-                format!("--ttl must be between {MIN_LEASE_TTL_SECS}s and {MAX_LEASE_TTL_SECS}s"),
-            ));
-        }
-        if decode_pubkey(&params.pubkey_ed25519_b64).is_none() {
-            return Err(ApiError::new(
-                ErrorCode::InvalidRequest,
-                "pubkey_ed25519_b64 must be a base64 Ed25519 public key (32 bytes)",
-            ));
-        }
-        let label = validate_workspace_label(&params.workspace_label)?;
-        self.authorize_owner_or_person_inner(actor, false)?;
-        let _serial = self
-            .external
-            .lease_mutation
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        let employee = self.require_agent(employee_id)?;
-        refuse_builtin_agent(&employee)?;
-        self.authorize_external_operator(actor, &employee)?;
-        let employee = self.require_active_agent(employee_id)?;
-        self.commit_external_lease(lease::LeaseCommit {
-            actor,
-            employee: &employee,
-            pubkey_ed25519_b64: params.pubkey_ed25519_b64.trim(),
-            workspace_label: &label,
-            ttl,
-            takeover: params.takeover,
-            verb: "bind",
-        })
-    }
 }

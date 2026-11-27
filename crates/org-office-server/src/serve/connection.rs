@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::follow;
+use org_office_sessions::PeerIdentity;
 use org_proto::msg::{MsgBind, MsgWait};
 use org_proto::{frame, ApiError, ErrorCode, Hello, Request, Response};
 
@@ -102,7 +103,7 @@ pub(super) fn serve_connection_as(
     poll: impl FnMut(std::os::fd::RawFd, Duration) -> std::io::Result<bool>,
     initial: Binding,
 ) {
-    let peer_pid = org_socket::peer_pid(&stream).ok();
+    let peer = PeerIdentity::from_raw_pid(org_socket::peer_pid(&stream).ok());
     let Ok(out) = stream.try_clone() else {
         return;
     };
@@ -267,7 +268,7 @@ pub(super) fn serve_connection_as(
                     Err(refusal) => Response::error(request.id, refusal),
                 }
             } else {
-                answer_and_record(&request, shared, &mut binding, peer_pid)
+                answer_and_record(&request, shared, &mut binding, &peer)
             };
             // The watcher finds this connection by the member it now acts as. Registered before
             // the answer goes out, so a client that has its bind's answer is already watched.

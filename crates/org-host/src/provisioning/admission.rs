@@ -18,7 +18,7 @@ use super::{
 
 impl Provisioning {
     pub(super) fn verify_owner(&self, r: &Reservation) -> Result<(), ApiError> {
-        self.db
+        self.accounts
             .verify_selected_owner(&r.prepared.organization_id, &r.account, &r.owner_member)
             .map_err(storage)
     }
@@ -145,7 +145,7 @@ impl Provisioning {
     pub(super) fn administrator(&self, account: &str) -> Result<Option<Account>, ApiError> {
         let id = crate::accounts::identity::AccountId::parse(account).map_err(storage)?;
         Ok(self
-            .db
+            .accounts
             .account_authority(&id)
             .map_err(storage)?
             .filter(|a| a.admin() && a.revoked_at_ms().is_none()))

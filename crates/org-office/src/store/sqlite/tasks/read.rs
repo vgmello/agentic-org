@@ -159,6 +159,21 @@ macro_rules! sqlite_tasks_read {
                 )
             }
 
+            fn task_comment_by_id(
+                &self,
+                comment_id: &Id,
+            ) -> Result<Option<TaskCommentRecord>, EngineError> {
+                let (db, scope) = self.view()?;
+                fetch_one(
+                    db,
+                    "SELECT target_id, id, position, author_id, created_at, body_markdown \
+                     FROM comments \
+                     WHERE organization_id = ?1 AND target_kind = 'task' AND id = ?2",
+                    vec![text(scope), text(comment_id.as_str())],
+                    comment_row,
+                )
+            }
+
             fn task_watchers(&self, task_id: &Id) -> Result<Vec<TaskWatcherRecord>, EngineError> {
                 let (db, scope) = self.view()?;
                 fetch(

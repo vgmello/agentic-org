@@ -10,12 +10,10 @@ use org_store::{Actor, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 use serde::{Deserialize, Serialize};
 
 use crate::organization::{
-    features::{
-        invalid, reply,
-        shared::{admit, id_in_use, reject, sibling_named, team_file},
-        stable, Op, RejectCode,
-    },
     names::name_key,
+    ops::{
+        admit, id_in_use, invalid, reject, reply, sibling_named, stable, team_file, Op, RejectCode,
+    },
     records::{self as org_records, Meta, Team, TeamAllocation, TeamStatus},
 };
 use crate::projects::{

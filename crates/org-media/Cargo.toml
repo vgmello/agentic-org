@@ -1,0 +1,24 @@
+[package]
+name = "org-media"
+description = "Canonical attachment media allowlist, magic-byte sniffer, and optional image/document sanitizer."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# Image EXIF/GPS stripping & re-encoding, model derivatives, and structural PDF/OOXML/text validation.
+sanitize = ["dep:flate2", "dep:image", "dep:serde", "dep:serde_json"]
+# In-memory test fixtures for attachment and project-docs suites across workspace crates.
+testkit = ["sanitize"]
+
+[dependencies]
+flate2 = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+org-proto = { path = "../org-proto" }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[lints]
+workspace = true

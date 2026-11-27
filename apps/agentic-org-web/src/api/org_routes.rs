@@ -110,6 +110,10 @@ fn try_route_organization_subroutes(
         .or_else(|| super::note_routes::try_route(api, request, org, tail, post, query))
         .or_else(|| super::task_routes::try_route(api, request, org, tail, get, post, query))
         .or_else(|| super::attachment_routes::try_route(api, request, org, tail, get, post, query))
+        .or_else(|| super::tess_routes::try_route(api, request, org, tail, get, post, query))
+        .or_else(|| {
+            super::external_auth_routes::try_route(api, request, org, tail, get, post, query)
+        })
 }
 
 pub(super) fn route_organization(

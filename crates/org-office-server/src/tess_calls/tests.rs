@@ -1,3 +1,5 @@
+mod ask_apply_tests;
+
 use std::sync::{Arc, Mutex};
 
 use org_office::rules::OrgCommand;
@@ -109,6 +111,7 @@ fn harness() -> Harness {
                 depends_on: Vec::new(),
                 details: None,
                 dod: None,
+                attachment_ids: Vec::new(),
             },
         )
         .unwrap()

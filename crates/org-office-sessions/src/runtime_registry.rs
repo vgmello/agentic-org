@@ -1,16 +1,32 @@
-//! Runtime adapter registry: production adapters for `claude` (`ClaudeRuntime`), `codex`
-//! (`CodexRuntime`), and `agy` (`AgyRuntime`), failing closed on any unknown runtime ID
-//! (`AGENTS.md` Rule 1, `TASK-42`, `TASK-83`).
+//! Vendor-agnostic runtime adapter registry (`AGENTS.md` Rule 1, `TASK-42`, `TASK-83`,
+//! `TASK-216`).
+//!
+//! Concrete vendor adapters (`ClaudeRuntime`, `CodexRuntime`, `AgyRuntime`) are injected by the
+//! composition root (`apps/agentic-org-office`) via [`RuntimeRegistry::with_adapters`] or
+//! [`install_default_runtimes`]. Any unregistered or unknown runtime ID fails closed.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use org_agent_runtime::AgentRuntime;
-use org_agent_runtime_agy::AgyRuntime;
-use org_agent_runtime_claude::ClaudeRuntime;
-use org_agent_runtime_codex::CodexRuntime;
+
+/// Factory callback building the process's default [`RuntimeRegistry`], installed once by the
+/// composition root (`apps/agentic-org-office`).
+pub type RuntimeFactory = fn() -> RuntimeRegistry;
+
+static DEFAULT_RUNTIMES: OnceLock<RuntimeFactory> = OnceLock::new();
+
+#[cfg(not(test))]
+static EMPTY_REGISTRY_WARNED: std::sync::Once = std::sync::Once::new();
+
+/// Installs the process-wide default [`RuntimeRegistry`] factory. Called once at startup by
+/// `apps/agentic-org-office` before any [`RuntimeRegistry::production`] call. Subsequent calls
+/// are ignored and return `false`.
+pub fn install_default_runtimes(factory: RuntimeFactory) -> bool {
+    DEFAULT_RUNTIMES.set(factory).is_ok()
+}
 
 /// Errors resolving a runtime adapter or its executable path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,11 +55,14 @@ impl fmt::Display for RuntimeRegistryError {
 
 impl std::error::Error for RuntimeRegistryError {}
 
-/// Registry of available [`AgentRuntime`] adapters and optional explicit executable overrides.
+/// Registry of available [`AgentRuntime`] adapters, their aliases, and optional explicit
+/// executable overrides.
 #[derive(Clone)]
 pub struct RuntimeRegistry {
     adapters: BTreeMap<String, Arc<dyn AgentRuntime>>,
+    aliases: BTreeMap<String, String>,
     binary_overrides: BTreeMap<String, PathBuf>,
+    default_id: Option<String>,
 }
 
 impl Default for RuntimeRegistry {
@@ -53,34 +72,106 @@ impl Default for RuntimeRegistry {
 }
 
 impl RuntimeRegistry {
-    /// Production registry wiring all three native adapters (`claude`, `codex`, `agy`) behind
-    /// the consumer-owned [`AgentRuntime`] contract. Any unknown runtime ID fails closed.
-    pub fn production() -> Self {
-        let mut adapters: BTreeMap<String, Arc<dyn AgentRuntime>> = BTreeMap::new();
-        adapters.insert("claude".to_owned(), Arc::new(ClaudeRuntime::new()));
-        adapters.insert("codex".to_owned(), Arc::new(CodexRuntime::new()));
-        adapters.insert("agy".to_owned(), Arc::new(AgyRuntime::new()));
+    /// Empty registry containing no runtime adapters; every lookup fails closed until adapters
+    /// are registered with [`Self::register`].
+    pub fn empty() -> Self {
         Self {
-            adapters,
+            adapters: BTreeMap::new(),
+            aliases: BTreeMap::new(),
             binary_overrides: BTreeMap::new(),
+            default_id: None,
         }
     }
 
-    /// Registers or replaces an adapter and optional explicit binary path (used by tests and extensions).
+    /// Builds a registry from an ordered sequence of adapters. The first adapter becomes the
+    /// default adapter returned by [`Self::default_adapter`].
+    pub fn with_adapters(adapters: impl IntoIterator<Item = Arc<dyn AgentRuntime>>) -> Self {
+        let mut reg = Self::empty();
+        for adapter in adapters {
+            reg.register(adapter, None);
+        }
+        reg
+    }
+
+    /// Returns the production registry installed by the composition root via
+    /// [`install_default_runtimes`].
+    ///
+    /// If no factory was installed, fails closed with [`Self::empty`] (logging once to stderr)
+    /// so `org-office-sessions` never hardcodes vendor adapter crates in production.
+    pub fn production() -> Self {
+        if let Some(factory) = DEFAULT_RUNTIMES.get() {
+            return factory();
+        }
+        #[cfg(test)]
+        {
+            Self::with_adapters([
+                Arc::new(org_agent_runtime_claude::ClaudeRuntime::new()) as Arc<dyn AgentRuntime>,
+                Arc::new(org_agent_runtime_codex::CodexRuntime::new()) as Arc<dyn AgentRuntime>,
+                Arc::new(org_agent_runtime_agy::AgyRuntime::new()) as Arc<dyn AgentRuntime>,
+            ])
+        }
+        #[cfg(not(test))]
+        {
+            EMPTY_REGISTRY_WARNED.call_once(|| {
+                eprintln!(
+                    "org-office-sessions: no default runtimes installed via install_default_runtimes; returning empty fail-closed registry"
+                );
+            });
+            Self::empty()
+        }
+    }
+
+    /// Registers or replaces an adapter and optional explicit binary path.
+    ///
+    /// Also indexes the adapter's canonical ID and every alias returned by
+    /// [`AgentRuntime::aliases`] (ASCII case-insensitively). The first registered adapter
+    /// becomes the default adapter for [`Self::default_adapter`].
     pub fn register(&mut self, adapter: Arc<dyn AgentRuntime>, binary_override: Option<PathBuf>) {
         let key = adapter.id().as_str().to_owned();
+        let canonical_lower = key.to_ascii_lowercase();
+        self.aliases.insert(canonical_lower, key.clone());
+        for alias in adapter.aliases() {
+            let trimmed = alias.trim();
+            if !trimmed.is_empty() {
+                self.aliases
+                    .insert(trimmed.to_ascii_lowercase(), key.clone());
+            }
+        }
+        if self.default_id.is_none() {
+            self.default_id = Some(key.clone());
+        }
         if let Some(path) = binary_override {
             self.binary_overrides.insert(key.clone(), path);
         }
         self.adapters.insert(key, adapter);
     }
 
-    /// Resolves `runtime_id` (normalizing provider names like `"anthropic"` -> `"claude"`,
-    /// `"openai"`/`"gpt"` -> `"codex"`, `"google"`/`"antigravity"` -> `"agy"`).
+    /// Iterates over all registered adapters in deterministic canonical ID order.
+    pub fn adapters(&self) -> impl Iterator<Item = &Arc<dyn AgentRuntime>> {
+        self.adapters.values()
+    }
+
+    /// Returns the default adapter (the first adapter registered), or `None` when empty.
+    pub fn default_adapter(&self) -> Option<Arc<dyn AgentRuntime>> {
+        self.default_id
+            .as_deref()
+            .and_then(|id| self.adapters.get(id))
+            .or_else(|| self.adapters.values().next())
+            .cloned()
+    }
+
+    /// Resolves `runtime_id` against canonical adapter IDs and adapter-declared aliases (ASCII
+    /// case-insensitively). Fails closed with [`RuntimeRegistryError::UnknownRuntime`] if
+    /// unregistered.
     pub fn resolve(&self, runtime_id: &str) -> Result<Arc<dyn AgentRuntime>, RuntimeRegistryError> {
-        let key = normalize_runtime_key(runtime_id);
-        self.adapters
-            .get(key)
+        let trimmed = runtime_id.trim();
+        if let Some(adapter) = self.adapters.get(trimmed) {
+            return Ok(Arc::clone(adapter));
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        self.aliases
+            .get(&lower)
+            .and_then(|canonical| self.adapters.get(canonical))
             .cloned()
             .ok_or_else(|| RuntimeRegistryError::UnknownRuntime(runtime_id.to_owned()))
     }
@@ -89,7 +180,7 @@ impl RuntimeRegistry {
     ///
     /// Checks explicit overrides first, then `search_path` (or `PATH`), and when `search_path`
     /// is not overridden also probes standard user-local and Homebrew binary directories so
-    /// background services (`systemd --user`, `launchd`) locate `claude`, `codex`, and `agy`.
+    /// background services (`systemd --user`, `launchd`) locate registered runtime CLIs.
     pub fn resolve_binary(
         &self,
         adapter: &dyn AgentRuntime,
@@ -217,19 +308,65 @@ fn resolve_helper_dir_from(
         .unwrap_or_else(|| PathBuf::from("/usr/bin"))
 }
 
-fn normalize_runtime_key(raw: &str) -> &str {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "anthropic" | "claude" | "claude-code" => "claude",
-        "openai" | "codex" | "codex-cli" | "gpt" => "codex",
-        "google" | "agy" | "antigravity" | "antigravity-cli" | "gemini" => "agy",
-        _ => raw.trim(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn empty_registry_fails_closed_and_adapter_aliases_resolve_case_insensitively() {
+        let empty = RuntimeRegistry::empty();
+        assert!(empty.default_adapter().is_none());
+        assert!(matches!(
+            empty.resolve("claude"),
+            Err(RuntimeRegistryError::UnknownRuntime(_))
+        ));
+
+        let reg = RuntimeRegistry::production();
+        assert_eq!(reg.default_adapter().unwrap().id().as_str(), "claude");
+        assert_eq!(reg.resolve("ANTHROPIC").unwrap().id().as_str(), "claude");
+        assert_eq!(reg.resolve("claude-code").unwrap().id().as_str(), "claude");
+        assert_eq!(reg.resolve("openai").unwrap().id().as_str(), "codex");
+        assert_eq!(reg.resolve("gpt").unwrap().id().as_str(), "codex");
+        assert_eq!(reg.resolve("google").unwrap().id().as_str(), "agy");
+        assert_eq!(reg.resolve("antigravity").unwrap().id().as_str(), "agy");
+        assert!(matches!(
+            reg.resolve("unknown-vendor"),
+            Err(RuntimeRegistryError::UnknownRuntime(_))
+        ));
+
+        let claude = reg.resolve("claude").unwrap();
+        assert!(claude.host_profile().uses_host_oauth_token_injection);
+        assert!(claude.host_profile().uses_mount_mask_sandbox);
+        assert!(claude.host_profile().host_config_subdir.is_none());
+        assert_eq!(claude.endpoint_env_var(), Some("ANTHROPIC_BASE_URL"));
+        assert_eq!(
+            claude.auth_env_var(false, "sk-ant-api-1"),
+            Some("ANTHROPIC_API_KEY")
+        );
+        assert_eq!(
+            claude.auth_env_var(false, "sk-ant-oat01-1"),
+            Some("CLAUDE_CODE_OAUTH_TOKEN")
+        );
+        assert_eq!(claude.transcript_parser().unwrap().format_id(), "claude");
+
+        let codex = reg.resolve("codex").unwrap();
+        assert_eq!(codex.host_profile().host_config_subdir, Some(".codex"));
+        assert!(codex.operator_rules_layout().is_some());
+        assert_eq!(codex.endpoint_env_var(), Some("OPENAI_BASE_URL"));
+        assert_eq!(codex.auth_env_var(true, "tok"), Some("CODEX_ACCESS_TOKEN"));
+        assert_eq!(codex.auth_env_var(false, "sk-1"), Some("OPENAI_API_KEY"));
+        assert_eq!(codex.transcript_parser().unwrap().format_id(), "codex");
+
+        let agy = reg.resolve("agy").unwrap();
+        assert_eq!(agy.host_profile().host_config_subdir, Some(".gemini"));
+        assert!(agy.host_profile().needs_explicit_sandbox_ro_dirs);
+        assert!(!agy.host_profile().config_credential_files.is_empty());
+        assert_eq!(agy.endpoint_env_var(), Some("GOOGLE_GEMINI_BASE_URL"));
+        assert_eq!(agy.auth_env_var(true, "tok"), Some("AGY_AUTH_TOKEN"));
+        assert_eq!(agy.auth_env_var(false, "AIza"), Some("GEMINI_API_KEY"));
+        assert_eq!(agy.transcript_parser().unwrap().format_id(), "agy");
+    }
 
     #[test]
     fn resolve_helper_dir_falls_back_to_argv0_when_current_exe_is_memfd() {

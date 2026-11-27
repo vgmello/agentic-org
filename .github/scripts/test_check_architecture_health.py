@@ -577,6 +577,91 @@ class TestInfraCouplingDetection(unittest.TestCase):
             res = health.run_health_check(root)
             self.assertTrue(any("Lower its entry" in e for e in res.errors))
 
+    def test_tightened_sandbox_detector_catches_bwrap_and_seatbelt_identifiers_outside_adapters(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _create_workspace(
+                root,
+                [
+                    "crates/org-office-sessions",
+                    "crates/org-agent-runtime-claude",
+                    "apps/agentic-org-web",
+                ],
+                {
+                    "crates/org-office-sessions": (
+                        '[package]\nname = "org-office-sessions"\nversion = "0.0.0"\n',
+                        {
+                            # Designated sandbox adapter: bwrap/Seatbelt identifiers allowed.
+                            "src/manager/sandbox_runner/bwrap_isolation.rs": (
+                                "pub fn ensure_bwrap_deny_dirs() {}\n"
+                                "pub struct SeatbeltProfile;\n"
+                            ),
+                            # Non-adapter file: concrete bwrap/Seatbelt identifiers MUST be caught,
+                            # including mixed-case identifiers that miss case-sensitive triggers.
+                            "src/manager/leaked.rs": (
+                                "pub fn bwrap_foo() {}\n"
+                                "pub struct BwrapIsolation;\n"
+                                "pub struct BWrapRunner;\n"
+                                "pub fn my_bWrap_fn() {}\n"
+                                "pub const BWRAP_BIN: &str = \"x\";\n"
+                                "pub struct SeatbeltProfile;\n"
+                                "pub struct SeatBeltProfile;\n"
+                                "pub fn use_seatBelt() {}\n"
+                                "pub fn seatbelt_rules() {}\n"
+                            ),
+                            # Comments and prose strings mentioning bwrap/seatbelt stay clean.
+                            "src/manager/clean.rs": (
+                                "// bwrap_foo SeatbeltProfile BWRAP_BIN\n"
+                                'pub const DOC: &str = "mentions bwrap and seatbelt prose";\n'
+                                "#[cfg(test)]\nmod tests {\n"
+                                "    fn bwrap_test_only() {}\n"
+                                "    struct SeatbeltMock;\n"
+                                "}\n"
+                            ),
+                        },
+                    ),
+                    "crates/org-agent-runtime-claude": (
+                        '[package]\nname = "org-agent-runtime-claude"\nversion = "0.0.0"\n',
+                        {
+                            "src/plan/sandbox.rs": "pub fn normalize_bwrap_pattern() {}\n",
+                            "src/plan.rs": "pub fn format_bwrap_rule() {}\n",
+                        },
+                    ),
+                    "apps/agentic-org-web": (
+                        '[package]\nname = "agentic-org-web"\nversion = "0.0.0"\n',
+                        {
+                            # Designated web Unix socket adapter: exact file match allowed.
+                            "src/transport/local_unix.rs": (
+                                "use tokio::net::UnixStream;\n"
+                                "pub fn dial(_: UnixStream) {}\n"
+                            ),
+                            # Prefix lookalike file MUST NOT be exempted by exact file entry.
+                            "src/transport/local_unix.rs.extra.rs": (
+                                "use tokio::net::UnixStream;\n"
+                                "pub fn leak(_: UnixStream) {}\n"
+                            ),
+                        },
+                    ),
+                },
+            )
+            res = health.run_health_check(root)
+            self.assertEqual(
+                res.report.coupling_counts[health.SECTION_SANDBOX],
+                {
+                    "crates/org-office-sessions/src/manager/leaked.rs": 9,
+                    "crates/org-agent-runtime-claude/src/plan.rs": 1,
+                },
+            )
+            self.assertEqual(
+                res.report.coupling_counts[health.SECTION_UNIX_SOCKET],
+                {"apps/agentic-org-web/src/transport/local_unix.rs.extra.rs": 2},
+            )
+            self.assertTrue(
+                any("coupling.sandbox" in e and "leaked.rs" in e for e in res.errors)
+            )
+
 
 class TestDeadCodeOnTraitGuard(unittest.TestCase):
     def test_dead_code_on_trait_fails_unlisted_passes_listed_and_ignores_non_traits(self) -> None:
@@ -850,6 +935,53 @@ class TestCargoDagAndLayer0(unittest.TestCase):
                 any("Layer-0" in e and "`org-store`" in e and "`org-office`" in e for e in res.errors),
                 f"expected renamed workspace build-dep violation on org-store, got: {res.errors}",
             )
+
+    def test_layer0_includes_sync_proto_host_control_and_office_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _create_workspace(
+                root,
+                [
+                    "crates/org-proto",
+                    "crates/org-sync-proto",
+                    "crates/org-host-control",
+                    "crates/org-office-launch",
+                    "crates/org-host",
+                ],
+                {
+                    "crates/org-proto": (
+                        '[package]\nname = "org-proto"\nversion = "0.0.0"\n',
+                        {"src/lib.rs": ""},
+                    ),
+                    "crates/org-sync-proto": (
+                        '[package]\nname = "org-sync-proto"\nversion = "0.0.0"\n'
+                        '[dependencies]\norg-host = { path = "../org-host" }\n',
+                        {"src/lib.rs": ""},
+                    ),
+                    "crates/org-host-control": (
+                        '[package]\nname = "org-host-control"\nversion = "0.0.0"\n'
+                        '[dependencies]\norg-proto = { path = "../org-proto" }\n'
+                        'org-host = { path = "../org-host" }\n',
+                        {"src/lib.rs": ""},
+                    ),
+                    "crates/org-office-launch": (
+                        '[package]\nname = "org-office-launch"\nversion = "0.0.0"\n'
+                        '[dependencies]\norg-proto = { path = "../org-proto" }\n'
+                        'org-host = { path = "../org-host" }\n',
+                        {"src/lib.rs": ""},
+                    ),
+                    "crates/org-host": (
+                        '[package]\nname = "org-host"\nversion = "0.0.0"\n',
+                        {"src/lib.rs": ""},
+                    ),
+                },
+            )
+            res = health.run_health_check(root)
+            for crate in ("org-sync-proto", "org-host-control", "org-office-launch"):
+                self.assertTrue(
+                    any("Layer-0" in e and f"`{crate}`" in e and "`org-host`" in e for e in res.errors),
+                    f"expected Layer-0 violation for {crate}, got: {res.errors}",
+                )
 
 
 class TestTomlFallbackAndCli(unittest.TestCase):

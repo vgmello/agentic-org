@@ -16,7 +16,7 @@ pub(crate) struct ReapedHandle {
 
 pub(crate) enum ReapMode {
     /// Normal start/stop/recycle/sibling-reap: restore unrecovered handle into `reg.live`
-    /// (preserving `bwrap_masked_siblings` with `thread: None`) and return `Err(Conflict)`.
+    /// (preserving `sandbox_plan` with `thread: None`) and return `Err(Conflict)`.
     FailClosedRestore { conflict_message: String },
     /// Daemon `stop_all` / `shutdown` drain: persist durable `recovery_required = true` and mark
     /// permit `release_pending`, but do not re-insert into `reg.live` so shutdown converges.
@@ -36,6 +36,7 @@ pub(crate) fn reap_live_handle(
     mode: ReapMode,
 ) -> Result<ReapedHandle, ApiError> {
     mgr.bindings.revoke(employee_id, None);
+    mgr.hibernation.clear_live_tracking(employee_id);
     if let Some(reason) = stop_reason {
         let _ = handle.tx.send(PumpCommand::Stop {
             reason: reason.to_owned(),
@@ -94,7 +95,7 @@ pub(crate) fn reap_live_handle(
         match mode {
             ReapMode::FailClosedRestore { conflict_message } => {
                 // Teardown was NOT verified: restore the unrecovered handle into `reg.live`
-                // (preserving `bwrap_masked_siblings`, with `thread: None`) before `StartSlotGuard`
+                // (preserving `sandbox_plan`, with `thread: None`) before `StartSlotGuard`
                 // drops so subsequent retries continue to fail closed until manual recovery clears it.
                 mgr.registry
                     .lock()

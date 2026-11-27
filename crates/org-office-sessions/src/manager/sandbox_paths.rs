@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use org_agent_runtime::{PathPattern, RuntimeId, SpecPath};
+use org_agent_runtime::{AgentRuntime, PathPattern, SpecPath};
 use org_office::organization_family::records::PermissionPreset;
 use org_proto::{ApiError, ErrorCode};
 
@@ -15,22 +15,22 @@ use super::environment::ensure_owner_only_dir;
 use super::office_masks::OfficeMasks;
 use super::rust_toolchain::canonicalize_with_tail;
 use super::sandbox_rules::{
-    append_agy_credential_denies, append_bare_cache_sandbox_rules, append_cargo_credential_denies,
-    append_privileged_socket_patterns, collect_agy_read_only_dirs, collect_existing_worktree_dirs,
-    collect_non_self_admin_names, collect_self_active_admins, push_exact_pattern,
-    push_glob_pattern,
+    append_bare_cache_sandbox_rules, append_cargo_credential_denies,
+    append_privileged_socket_patterns, append_runtime_credential_denies,
+    collect_agy_read_only_dirs, collect_existing_worktree_dirs, collect_non_self_admin_names,
+    collect_self_active_admins, push_exact_pattern, push_glob_pattern,
 };
 use super::SessionManager;
 
 impl SessionManager {
     pub(super) fn collect_session_read_only_dirs(
         &self,
-        runtime: RuntimeId,
+        adapter: &dyn AgentRuntime,
         home: &Path,
         workspace: &Path,
         sandbox_enabled: bool,
     ) -> Vec<SpecPath> {
-        if !sandbox_enabled || runtime.as_str() != "agy" {
+        if !sandbox_enabled || !adapter.host_profile().needs_explicit_sandbox_ro_dirs {
             return Vec::new();
         }
         let helper_dir = RuntimeRegistry::resolve_helper_dir(self.config.helper_dir.as_deref());
@@ -124,7 +124,7 @@ impl SessionManager {
         );
         self.append_sibling_and_socket_denies(&mut out, &office_local, office_id, self_employee_id);
         append_cargo_credential_denies(&mut out);
-        append_agy_credential_denies(&mut out);
+        append_runtime_credential_denies(&self.config.runtimes, &mut out);
         // Other agents' external (BYOA) keys and fast tokens (`TASK-137`).
         for root in &self.config.agent_os_state_roots {
             push_glob_pattern(&mut out, root);
@@ -287,31 +287,7 @@ impl SessionManager {
         &self,
         employee_id: &str,
     ) -> Option<(Vec<String>, Vec<String>)> {
-        let emp = self.office.load_employee(employee_id).ok()??;
-        let snapshot = self.office.org_snapshot().ok()?;
-        let parent_by_id: HashMap<&str, Option<&str>> = snapshot
-            .teams
-            .iter()
-            .map(|t| (t.id.as_str(), t.owner_team_id.as_deref()))
-            .collect();
-        if !parent_by_id.contains_key(emp.home_team_id.as_str()) {
-            return None;
-        }
-        let mut chain = Vec::new();
-        let mut cur = Some(emp.home_team_id.as_str());
-        let mut visited = HashSet::new();
-        while let Some(tid) = cur {
-            if !visited.insert(tid) {
-                // Fail closed on team hierarchy cycle.
-                return None;
-            }
-            let &parent = parent_by_id.get(tid)?;
-            chain.push(tid.to_owned());
-            cur = parent;
-        }
-        chain.reverse();
-        let all_team_ids = snapshot.teams.into_iter().map(|t| t.id).collect();
-        Some((chain, all_team_ids))
+        resolve_employee_team_chain_and_ids_in_office(&self.office, employee_id)
     }
 
     pub(crate) fn resolve_employee_team_chain(&self, employee_id: &str) -> Vec<String> {
@@ -475,24 +451,63 @@ impl SessionManager {
         agents_root: &Path,
         self_employee_id: Option<&str>,
     ) -> std::collections::BTreeSet<String> {
-        let mut ids = std::collections::BTreeSet::new();
-        if let Ok(entries) = std::fs::read_dir(agents_root) {
-            for entry in entries.flatten() {
-                if let Some(name) = entry.file_name().to_str() {
-                    ids.insert(name.to_owned());
-                }
-            }
-        }
-        if let Ok(employees) = self.office.list_employees() {
-            for emp in employees {
-                ids.insert(emp.id.as_str().to_owned());
-            }
-        }
-        if let Some(me) = self_employee_id {
-            ids.remove(me);
-        }
-        ids
+        collect_sibling_agent_ids_in_office(&self.office, agents_root, self_employee_id)
     }
+}
+
+pub(super) fn resolve_employee_team_chain_and_ids_in_office(
+    office: &org_office::Office,
+    employee_id: &str,
+) -> Option<(Vec<String>, Vec<String>)> {
+    let emp = office.load_employee(employee_id).ok()??;
+    let snapshot = office.org_snapshot().ok()?;
+    let parent_by_id: HashMap<&str, Option<&str>> = snapshot
+        .teams
+        .iter()
+        .map(|t| (t.id.as_str(), t.owner_team_id.as_deref()))
+        .collect();
+    if !parent_by_id.contains_key(emp.home_team_id.as_str()) {
+        return None;
+    }
+    let mut chain = Vec::new();
+    let mut cur = Some(emp.home_team_id.as_str());
+    let mut visited = HashSet::new();
+    while let Some(tid) = cur {
+        if !visited.insert(tid) {
+            // Fail closed on team hierarchy cycle.
+            return None;
+        }
+        let &parent = parent_by_id.get(tid)?;
+        chain.push(tid.to_owned());
+        cur = parent;
+    }
+    chain.reverse();
+    let all_team_ids = snapshot.teams.into_iter().map(|t| t.id).collect();
+    Some((chain, all_team_ids))
+}
+
+pub(super) fn collect_sibling_agent_ids_in_office(
+    office: &org_office::Office,
+    agents_root: &Path,
+    self_employee_id: Option<&str>,
+) -> std::collections::BTreeSet<String> {
+    let mut ids = std::collections::BTreeSet::new();
+    if let Ok(entries) = std::fs::read_dir(agents_root) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                ids.insert(name.to_owned());
+            }
+        }
+    }
+    if let Ok(employees) = office.list_employees() {
+        for emp in employees {
+            ids.insert(emp.id.as_str().to_owned());
+        }
+    }
+    if let Some(me) = self_employee_id {
+        ids.remove(me);
+    }
+    ids
 }
 
 impl SessionManager {

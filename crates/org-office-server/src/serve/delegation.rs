@@ -45,6 +45,8 @@ use super::shared::Shared;
 
 mod scope;
 
+pub(crate) use scope::check_delegated_attachment;
+
 /// The refusal's text: it names the rule, never the caller.
 pub(super) const DELEGATION_DENIED: &str =
     "the Chief of Staff can't do this for the member she is acting for";
@@ -110,6 +112,8 @@ const NEVER: &[&str] = &[
     "member.agent_execution_set",
     "member.external_approve",
     "member.external_bind",
+    "member.external_pending",
+    "member.external_renew",
     "member.external_revoke",
     "member.external_sessions",
     "member.session_approval",
@@ -120,6 +124,7 @@ const NEVER: &[&str] = &[
     "office.remove",
     "office.restart",
     "search.query",
+    "suggestion.apply",
     "suggestion.dismiss",
 ];
 const NEVER_PREFIXES: &[&str] = &[
@@ -128,6 +133,7 @@ const NEVER_PREFIXES: &[&str] = &[
     "office.invitation.",
     "provider.",
     "tasks.notes.",
+    "tess.",
 ];
 /// Read-only provider pool/quota queries permitted when acting for the live owner, checked before
 /// `NEVER_PREFIXES` (`provider.`) so credentials, enrollment, and mutations stay `Access::Never`.
@@ -321,32 +327,48 @@ pub(super) fn gate(
     if !allowed(access(&request.method), &delegation) {
         return Err(denied(request.id));
     }
-    scope::admit(request, port, member, &delegation)?;
+    enforce_method_mutation_policy(request)?;
     if let Some(caller_id) = delegation.caller_id.as_deref() {
-        enforce_mutation_policy(request, port, member, caller_id)?;
+        enforce_autosafe_target_policy(request, port, member, caller_id)?;
+    } else if is_caller_dm_only_reply(&request.method) {
+        return Err(policy_violation(request.id, &request.method));
     }
+    scope::admit(request, port, member, &delegation)?;
     Ok(Some(delegation))
 }
 
+fn enforce_method_mutation_policy(request: &Request) -> Result<(), Response> {
+    match mutation_policy_for_rpc(&request.method) {
+        MutationPolicy::ReadOnly | MutationPolicy::AutoSafe => Ok(()),
+        MutationPolicy::ConfirmRequired => Err(policy_violation(request.id, &request.method)),
+        MutationPolicy::ForbiddenForAgent => Err(denied(request.id)),
+    }
+}
+
+fn enforce_autosafe_target_policy(
+    request: &Request,
+    port: &dyn ChiefOfStaffPort,
+    tess_id: &str,
+    caller_id: &str,
+) -> Result<(), Response> {
+    if mutation_policy_for_rpc(&request.method) == MutationPolicy::AutoSafe
+        && is_caller_dm_only_reply(&request.method)
+        && !targets_caller_direct_dm(request, port, tess_id, caller_id)?
+    {
+        return Err(policy_violation(request.id, &request.method));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn enforce_mutation_policy(
     request: &Request,
     port: &dyn ChiefOfStaffPort,
     tess_id: &str,
     caller_id: &str,
 ) -> Result<(), Response> {
-    match mutation_policy_for_rpc(&request.method) {
-        MutationPolicy::ReadOnly => Ok(()),
-        MutationPolicy::AutoSafe => {
-            if is_caller_dm_only_reply(&request.method)
-                && !targets_caller_direct_dm(request, port, tess_id, caller_id)?
-            {
-                return Err(policy_violation(request.id, &request.method));
-            }
-            Ok(())
-        }
-        MutationPolicy::ConfirmRequired => Err(policy_violation(request.id, &request.method)),
-        MutationPolicy::ForbiddenForAgent => Err(denied(request.id)),
-    }
+    enforce_method_mutation_policy(request)?;
+    enforce_autosafe_target_policy(request, port, tess_id, caller_id)
 }
 
 fn is_caller_dm_only_reply(method: &str) -> bool {

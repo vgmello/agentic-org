@@ -1,13 +1,16 @@
 //! Office-socket calls of external sign-in (`auth.*`) and the workspace key (`TASK-137`).
 
-use std::path::PathBuf;
+use std::io::Read as _;
+use std::path::{Component, Path, PathBuf};
 
 use base64::Engine as _;
+use org_client::locator::{self, DiscoveredOffice, ResolveOfficeError};
 use org_client::Client;
 use org_command::Refusal;
 use org_proto::external_auth::{
     challenge_message, AuthChallenge, AuthChallengeParams, AuthChallengeResult, AuthExchange,
-    AuthExchangeResult, ChallengePurpose, SignedChallengeParams,
+    AuthExchangeResult, ChallengePurpose, SignedChallengeParams, MAX_HOSTNAME_BYTES,
+    MAX_WORKSPACE_PATH_BYTES,
 };
 use org_proto::location::{OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
 use org_proto::msg::{MsgBind, MsgBindParams};
@@ -16,7 +19,8 @@ use ring::rand::SystemRandom;
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use zeroize::Zeroizing;
 
-use crate::runtime::binding::{map_client_error, RUNTIME_DIR_ENV, SOCKET_ENV};
+use super::store::WorkspaceState;
+use crate::runtime::binding::{map_client_error, OFFICE_ENV, RUNTIME_DIR_ENV, SOCKET_ENV};
 
 /// Which office socket to talk to.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -33,8 +37,9 @@ fn env_path(name: &str) -> Option<PathBuf> {
 }
 
 impl Target {
-    /// `--socket`, else `--office` (with `AGENT_OS_RUNTIME_DIR`, `ORG_OFFICE_RUNTIME_DIR`,
-    /// `ORG_OFFICE_HOME/run` or this account's office home), else `AGENT_OS_SOCKET`.
+    /// `--socket`, else `--office` (explicit runtime dir env or `locator/instances.json`), else
+    /// `AGENT_OS_SOCKET` / `AGENT_OS_OFFICE`, else auto-discovery of the active local office from
+    /// `locator/instances.json` + saved CLI context fallback.
     pub fn resolve(socket: Option<PathBuf>, office: Option<String>) -> Result<Self, Refusal> {
         if let Some(socket) = socket {
             return Ok(Self {
@@ -43,16 +48,8 @@ impl Target {
                 runtime_dir: None,
             });
         }
-        if let Some(office_id) = office {
-            let runtime_dir = env_path(RUNTIME_DIR_ENV)
-                .or_else(|| env_path(OFFICE_RUNTIME_DIR_ENV))
-                .or_else(|| env_path(OFFICE_HOME_ENV).map(|home| home.join("run")))
-                .or_else(|| org_client::default_office_home().map(|home| home.join("run")));
-            return Ok(Self {
-                socket: None,
-                office_id: Some(office_id),
-                runtime_dir,
-            });
+        if let Some(office_selector) = office {
+            return Self::resolve_named_office(office_selector);
         }
         if let Some(socket) = env_path(SOCKET_ENV) {
             return Ok(Self {
@@ -61,11 +58,67 @@ impl Target {
                 runtime_dir: None,
             });
         }
-        Err(Refusal::new(
-            ErrorCode::InvalidRequest,
-            "No office to sign in to.",
-            "Pass --socket <path> or --office <office-id>.",
-        ))
+        if let Some(env_office) = std::env::var(OFFICE_ENV)
+            .ok()
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty())
+        {
+            return Self::resolve_named_office(env_office);
+        }
+        match locator::resolve_local_office(None) {
+            Ok(found) => Ok(Self::from_discovered(found, None)),
+            Err(ResolveOfficeError::Ambiguous { candidates, .. }) => Err(ambiguous_refusal(None, &candidates)),
+            Err(ResolveOfficeError::NotFound { .. }) => Err(Refusal::new(
+                ErrorCode::NotFound,
+                "No active local office was found.",
+                "Start your office (`agentic-org service start`) or pass --office <office-id> / --socket <path>.",
+            )),
+        }
+    }
+
+    fn resolve_named_office(selector: String) -> Result<Self, Refusal> {
+        let explicit_rt = env_path(RUNTIME_DIR_ENV).or_else(|| env_path(OFFICE_RUNTIME_DIR_ENV));
+        if let Some(runtime_dir) = explicit_rt.filter(|_| org_proto::is_uuid_v7(&selector)) {
+            return Ok(Self {
+                socket: None,
+                office_id: Some(selector),
+                runtime_dir: Some(runtime_dir),
+            });
+        }
+        match locator::resolve_local_office(Some(&selector)) {
+            Ok(found) => Ok(Self::from_discovered(found, Some(selector))),
+            Err(ResolveOfficeError::Ambiguous { candidates, .. }) => {
+                Err(ambiguous_refusal(Some(&selector), &candidates))
+            }
+            Err(ResolveOfficeError::NotFound { .. }) => {
+                if org_proto::is_uuid_v7(&selector) {
+                    let runtime_dir = env_path(OFFICE_HOME_ENV)
+                        .map(|home| home.join("run"))
+                        .or_else(|| org_client::default_office_home().map(|home| home.join("run")));
+                    return Ok(Self {
+                        socket: None,
+                        office_id: Some(selector),
+                        runtime_dir,
+                    });
+                }
+                Err(Refusal::new(
+                    ErrorCode::NotFound,
+                    format!("No active local office matched `{selector}`."),
+                    "Check `agentic-org office list` and pass --office <office-id> or --socket <path>.",
+                ))
+            }
+        }
+    }
+
+    fn from_discovered(found: DiscoveredOffice, selector: Option<String>) -> Self {
+        let office_id = found
+            .office_id
+            .or_else(|| selector.filter(|s| org_proto::is_uuid_v7(s)));
+        Self {
+            socket: Some(found.socket),
+            office_id,
+            runtime_dir: Some(found.runtime_dir),
+        }
     }
 
     /// A fresh connection to the office socket.
@@ -110,6 +163,125 @@ pub fn generate_key() -> Result<(Zeroizing<Vec<u8>>, String), Refusal> {
     let pkcs8 = Zeroizing::new(pkcs8.as_ref().to_vec());
     let public = public_key_b64(&pkcs8)?;
     Ok((pkcs8, public))
+}
+
+/// Reuses this workspace's existing Ed25519 keypair (`key.ed25519.pkcs8`) when present and valid,
+/// or generates a new one otherwise (`TASK-248`). Preflights the state tree first so a symlinked
+/// or group-writable state directory fails closed before any RPC.
+pub fn load_or_generate_key(
+    state: &WorkspaceState,
+) -> Result<(Zeroizing<Vec<u8>>, String), Refusal> {
+    state.preflight()?;
+    if let Some(existing) = std::fs::symlink_metadata(state.dir())
+        .is_ok()
+        .then(|| state.read_key())
+        .transpose()?
+        .flatten()
+    {
+        if let Ok(pubkey) = public_key_b64(&existing) {
+            return Ok((existing, pubkey));
+        }
+    }
+    generate_key()
+}
+
+/// Rejects control characters, Unicode line/paragraph separators, and bidirectional
+/// overrides/isolates that can spoof terminal or web approval surfaces.
+pub(crate) fn is_disallowed_display_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{200E}'
+                | '\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
+/// Formats `path` for the optional `workspace_path` wire field, omitting it (`None`) when it is
+/// non-UTF-8, exceeds `MAX_WORKSPACE_PATH_BYTES`, contains control/line-separator/bidi
+/// characters, or is not a clean absolute path.
+pub(crate) fn optional_workspace_path(path: &Path) -> Option<String> {
+    let text = path.to_str()?;
+    if text.is_empty()
+        || text.len() > MAX_WORKSPACE_PATH_BYTES
+        || text.chars().any(is_disallowed_display_char)
+        || !path.is_absolute()
+        || !path
+            .components()
+            .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
+    {
+        return None;
+    }
+    if text != "/" {
+        if text.ends_with('/') {
+            return None;
+        }
+        let rest = text.strip_prefix('/')?;
+        if rest
+            .split('/')
+            .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+        {
+            return None;
+        }
+    }
+    Some(text.to_owned())
+}
+
+/// Best-effort local host name (safe, zero `unsafe`, zero platform `#[cfg]`), sanitized to the
+/// wire budget (`MAX_HOSTNAME_BYTES`).
+pub fn local_hostname() -> Option<String> {
+    for var in ["HOSTNAME", "HOST"] {
+        if let Some(name) = std::env::var(var).ok().and_then(|v| sanitize_hostname(&v)) {
+            return Some(name);
+        }
+    }
+    if let Some(name) = read_hostname_file(Path::new("/etc/hostname")) {
+        return Some(name);
+    }
+    std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .and_then(|text| sanitize_hostname(&text))
+}
+
+fn read_hostname_file(path: &Path) -> Option<String> {
+    let file = org_platform::fs::open_nofollow_ro(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut text = String::new();
+    file.take(MAX_HOSTNAME_BYTES as u64 + 16)
+        .read_to_string(&mut text)
+        .ok()?;
+    sanitize_hostname(&text)
+}
+
+pub(crate) fn sanitize_hostname(raw: &str) -> Option<String> {
+    let trimmed = raw.trim_matches([' ', '\r', '\n']);
+    if trimmed.is_empty()
+        || trimmed.len() > MAX_HOSTNAME_BYTES
+        || trimmed.chars().any(is_disallowed_display_char)
+    {
+        return None;
+    }
+    Some(trimmed.to_owned())
+}
+
+fn ambiguous_refusal(selector: Option<&str>, candidates: &[DiscoveredOffice]) -> Refusal {
+    let err = ResolveOfficeError::Ambiguous {
+        selector: selector.map(str::to_owned),
+        candidates: candidates.to_vec(),
+    };
+    Refusal::new(
+        ErrorCode::InvalidRequest,
+        err.to_string(),
+        "Pass --office <office-id> (or --socket <path>) to choose one office.",
+    )
 }
 
 fn key_pair(pkcs8: &[u8]) -> Result<Ed25519KeyPair, Refusal> {

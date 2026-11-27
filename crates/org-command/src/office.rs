@@ -4,7 +4,7 @@
 
 use std::io;
 
-use org_proto::ErrorCode;
+use org_proto::{ConflictDetail, ErrorCode};
 use serde_json::{Map, Value};
 
 use crate::row::{Ack, Command};
@@ -25,6 +25,10 @@ pub struct Request {
     pub idempotency_key: Option<String>,
     pub if_match: Option<u64>,
     pub durable: bool,
+    /// Deduplicated top-level field roots requested via `--fields`, in request order, so command
+    /// handlers can forward server-side pruning hints (e.g. `tasks.inspect`, `TASK-90`).
+    /// `None` when `--fields` was not supplied.
+    pub fields: Option<Vec<String>>,
 }
 
 /// How a command that was not refused ended (`meta.status`).
@@ -129,6 +133,8 @@ pub struct RefusalDetails {
     pub field: Option<String>,
     /// With `field`: the rule it failed (`error.rule`), such as `format` or `too_long`.
     pub rule: Option<String>,
+    /// With `conflict`: structured optimistic-concurrency delta (`error.conflict`, `TASK-90`).
+    pub conflict: Option<ConflictDetail>,
 }
 
 impl Refusal {
@@ -141,6 +147,19 @@ impl Refusal {
             operation_id: None,
             details: None,
         }
+    }
+
+    /// Attaches structured optimistic-concurrency conflict detail to this refusal (`TASK-90`).
+    pub fn with_conflict(mut self, detail: ConflictDetail) -> Self {
+        self.details
+            .get_or_insert_with(|| Box::new(RefusalDetails::default()))
+            .conflict = Some(detail);
+        self
+    }
+
+    /// Returns the structured optimistic-concurrency conflict detail, when present.
+    pub fn conflict(&self) -> Option<&ConflictDetail> {
+        self.details.as_deref().and_then(|d| d.conflict.as_ref())
     }
 }
 

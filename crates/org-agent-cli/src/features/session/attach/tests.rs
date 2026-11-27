@@ -242,11 +242,7 @@ fn attach_sources_never_read_standard_input() {
 fn shorthands_mean_the_same_command_in_attach() {
     for (line, words) in [
         (r#"{"command":"who"}"#, vec!["directory", "list"]),
-        (r#"{"command":"boot"}"#, vec!["session", "boot"]),
-        (
-            r#"{"command":"instructions overview"}"#,
-            vec!["session", "boot"],
-        ),
+        (r#"{"command":"context"}"#, vec!["session", "context"]),
         (r#"{"command":"task note list"}"#, vec!["task-note", "list"]),
     ] {
         let args = parse_line_args(crate::registry::runtime_table(), line).unwrap();
@@ -414,9 +410,9 @@ fn true_is_a_bare_flag_for_yes_or_no_flags_only() {
         assert_eq!(office.0.calls[0].1["unassigned"], true, "{line}");
     }
     // ...and through a shorthand.
-    let args =
-        parse_line_args(table, r#"{"command":"boot","options":{"offline":true}}"#).expect("parsed");
-    assert_eq!(args, ["session", "boot", "--offline"]);
+    let args = parse_line_args(table, r#"{"command":"context","options":{"offline":true}}"#)
+        .expect("parsed");
+    assert_eq!(args, ["session", "context", "--offline"]);
     // A line naming no command is refused by the table, with its own hint, and sends nothing.
     let mut office = recording();
     let envelopes = attach_lines(

@@ -7,10 +7,11 @@
 
 mod calls;
 mod dod;
+mod inspect_fields;
 mod records;
 
 pub use calls::{
-    TasksAddDependency, TasksAddDependencyParams, TasksAssign, TasksAssignParams,
+    ChecklistAddItem, TasksAddDependency, TasksAddDependencyParams, TasksAssign, TasksAssignParams,
     TasksChecklistAdd, TasksChecklistAddParams, TasksChecklistCheck, TasksChecklistCheckParams,
     TasksChecklistEdit, TasksChecklistEditParams, TasksChecklistMove, TasksChecklistMoveParams,
     TasksChecklistRemove, TasksChecklistRemoveParams, TasksChecklistResult, TasksComment,
@@ -28,6 +29,7 @@ pub use dod::{
     OrganizationDefaultDodResult, OrganizationDefaultDodSet, OrganizationDefaultDodSetParams,
     ProjectDefaultDodSet, ProjectDefaultDodSetParams,
 };
+pub use inspect_fields::TaskInspectSelection;
 pub use records::{
     ChecklistStepWire, PatchField, TaskCommentWire, TaskDependenciesResult, TaskDependencyEdge,
     TaskDetailsWire, TaskDoneAnywayWire, TaskEventWire, TaskFinalSummaryWire, TaskInspectResult,

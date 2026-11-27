@@ -124,7 +124,11 @@ impl Provisioning {
         employee_id: &str,
     ) -> Result<OrganizationView, ApiError> {
         use crate::hostdb::recovery::State;
-        let recovery = match self.db.recovery_state(&r.operation_id).map_err(storage)? {
+        let recovery = match self
+            .recovery
+            .recovery_state(&r.operation_id)
+            .map_err(storage)?
+        {
             None | Some(State::Pending) => RecoveryState::Pending,
             Some(State::Delivered | State::AckPending) => RecoveryState::Delivered,
             Some(State::Acknowledged) => RecoveryState::Acknowledged,

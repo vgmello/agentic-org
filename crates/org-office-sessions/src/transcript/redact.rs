@@ -30,6 +30,7 @@ pub fn redact_transcript(result: &mut SessionTranscriptResult, active_secrets: &
 }
 
 fn redact_entry(entry: &mut TranscriptEntry, active_secrets: &[&str]) {
+    entry.id = redact_text(&entry.id, active_secrets);
     redact_opt_str(&mut entry.timestamp, active_secrets);
     redact_opt_str(&mut entry.role, active_secrets);
     redact_opt_str(&mut entry.text, active_secrets);
@@ -57,6 +58,7 @@ fn redact_opt_str(slot: &mut Option<String>, active_secrets: &[&str]) {
 }
 
 fn redact_subagent(sub: &mut SubagentTranscriptView, active_secrets: &[&str]) {
+    sub.agent_id = redact_text(&sub.agent_id, active_secrets);
     redact_opt_str(&mut sub.label, active_secrets);
     redact_opt_str(&mut sub.parent_tool_use_id, active_secrets);
     redact_opt_str(&mut sub.usage.model, active_secrets);

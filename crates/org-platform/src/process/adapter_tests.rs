@@ -623,3 +623,63 @@ fn is_descendant_of_walks_live_parent_chain_and_refuses_unrelated_or_invalid_pid
     );
     assert_eq!(ppid, Some(self_pid));
 }
+
+#[test]
+fn process_tree_rss_bytes_samples_self_and_child_and_rejects_absent_pids() {
+    let self_rss = super::process_tree_rss_bytes(std::process::id())
+        .expect("current process must report non-zero RSS");
+    assert!(self_rss > 0, "expected positive RSS, got {self_rss}");
+    assert_eq!(super::process_tree_rss_bytes(0), None);
+    assert_eq!(super::process_tree_rss_bytes(u32::MAX), None);
+
+    let mut short_lived = std::process::Command::new("/bin/sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .expect("spawn short-lived process");
+    let gone_pid = short_lived.id();
+    let _ = short_lived.wait();
+    assert_eq!(
+        super::process_tree_rss_bytes(gone_pid),
+        None,
+        "reaped PID {gone_pid} must return None"
+    );
+
+    let tmp = tempfile::tempdir().expect("tempdir for child pid sync");
+    let child_pid_file = tmp.path().join("child.pid");
+    let mut tree = std::process::Command::new("/bin/sh")
+        .args([
+            "-c",
+            "sleep 30 & echo $! > \"$1\"; wait",
+            "--",
+            child_pid_file.to_str().expect("utf8 path"),
+        ])
+        .spawn()
+        .expect("spawn process tree");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let child_pid: Option<u32> = loop {
+        if let Ok(raw) = std::fs::read_to_string(&child_pid_file) {
+            if let Ok(pid) = raw.trim().parse::<u32>() {
+                break Some(pid);
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    };
+    let child_pid = child_pid.expect("subshell child pid file written");
+    let child_rss = super::process_tree_rss_bytes(child_pid);
+    let tree_rss = super::process_tree_rss_bytes(tree.id());
+    // Clean up both descendant `sleep` and shell so no orphan process leaks.
+    let _ = std::process::Command::new("/bin/kill")
+        .args(["-9", &child_pid.to_string()])
+        .status();
+    let _ = tree.kill();
+    let _ = tree.wait();
+    let tree_bytes = tree_rss.expect("live child tree must report positive RSS");
+    let child_bytes = child_rss.expect("live descendant must report positive RSS");
+    assert!(
+        tree_bytes > child_bytes,
+        "tree RSS ({tree_bytes}) must exceed descendant-only RSS ({child_bytes})"
+    );
+}

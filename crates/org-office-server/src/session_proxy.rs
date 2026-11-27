@@ -9,8 +9,7 @@ use org_proto::external_auth as ext;
 
 pub(crate) struct SessionHooks {
     pub(crate) sessions: serve::SessionsFn,
-    pub(crate) run_binding_verify: serve::RunBindingVerifyFn,
-    pub(crate) run_binding_active: serve::RunBindingActiveFn,
+    pub(crate) run_binding_verifier: Arc<dyn org_office_sessions::RunBindingVerifier>,
     pub(crate) record_agent_command: serve::RecordCommandFn,
     pub(crate) on_agent_stop: serve::AgentLifecycleHookFn,
 }
@@ -210,19 +209,9 @@ pub(crate) fn build_session_hooks(
                 sessions.dispatch_rpc(member, request)
             })
         },
-        run_binding_verify: {
-            let sessions = Arc::clone(session_manager);
-            Box::new(move |member_id, token, peer_pid| {
-                sessions
-                    .bindings()
-                    .verify_peer(member_id, token, peer_pid)
-                    .is_ok()
-            })
-        },
-        run_binding_active: {
-            let sessions = Arc::clone(session_manager);
-            Box::new(move |member_id| sessions.bindings().has_active(member_id))
-        },
+        run_binding_verifier: Arc::new(org_office_sessions::LocalPeerPidVerifier::new(
+            session_manager.bindings().clone(),
+        )),
         record_agent_command: {
             let sessions = Arc::clone(session_manager);
             Box::new(move |member_id, method| sessions.record_accepted_command(member_id, method))
@@ -310,6 +299,23 @@ impl serve::ExternalAuthPort for ExternalAuth {
         limit: Option<u32>,
     ) -> Result<ext::MemberExternalSessionsResult, org_proto::ApiError> {
         self.0.external_sessions(actor, employee_id, limit)
+    }
+
+    fn pending(
+        &self,
+        actor: &str,
+        employee_id: Option<&str>,
+    ) -> Result<ext::MemberExternalPendingResult, org_proto::ApiError> {
+        self.0.external_pending(actor, employee_id)
+    }
+
+    fn renew(
+        &self,
+        actor: &str,
+        employee_id: &str,
+        params: &ext::MemberExternalRenewParams,
+    ) -> Result<ext::ExternalSessionView, org_proto::ApiError> {
+        self.0.external_renew(actor, employee_id, params)
     }
 
     fn revoke(

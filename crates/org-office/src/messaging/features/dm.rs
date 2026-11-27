@@ -7,15 +7,15 @@ use org_proto::ErrorCode;
 use org_store::{Ack, Change, CoreRead, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 
 use crate::messaging::{
+    auto_channels::virtual_auto_channels,
     ports::{MessagingRead, MessagingWrite},
     records::{self, ConversationMembership, ConversationRecord, SCHEMA_VERSION},
 };
 use crate::organization::ports::OrganizationRead;
 use crate::organization::records::Employee;
 
-use super::auto_channels::virtual_auto_channels;
 use super::conversations::summarize_conversation;
-use super::{check_hr_access, is_active_employee, refusal, resolve_employee};
+use super::{check_hr_access, is_addressable_employee, refusal, resolve_employee};
 
 const MAX_GROUP_DM_MEMBERS: usize = 8;
 
@@ -31,7 +31,7 @@ fn resolve_dm_members(
     for target in participants {
         let emp =
             resolve_employee(employees, owner, target).map_err(|e| refusal(e.code, e.message))?;
-        if !is_active_employee(emp) {
+        if !is_addressable_employee(emp) {
             return Err(refusal(
                 ErrorCode::UnknownRecipient,
                 "participant is not active",

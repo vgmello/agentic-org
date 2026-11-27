@@ -40,8 +40,7 @@ pub use dod_ops::{
     OrganizationDefaultDodRead, SetOrganizationDefaultDodOp, SetProjectDefaultDodOp,
 };
 pub use git_ops::{
-    AttachProjectRepositoryOp, RecordTaskRepoBranchOp, RegisterRepositoryOp, RepositoriesList,
-    RepositoryResolve, TaskGitContext, TaskGitContextRead,
+    RecordTaskRepoBranchOp, RepositoriesList, RepositoryResolve, TaskGitContext, TaskGitContextRead,
 };
 pub(crate) use import_validation::validate_imported_files;
 pub use messaging_ops::{
@@ -57,14 +56,14 @@ pub use messaging_ops::{
 pub use office_store::{open_store, OfficeStore};
 pub use operations::{
     AddPersonOp, AddProjectTeamOp, AgentExecutionById, ApplyReplicatedFilesOp, ArchiveTeamOp,
-    CheckHrMessageAccess, CheckOp, CreateOrganizationOp, CreateProjectOp, CreateTeamOp,
-    DeactivatePersonOp, DirectoryGeneration, DirectorySnapshot, EmployeeById, EmployeesList,
-    HireInspectById, HiresList, ImportOrganizationOp, ModelProfileById, ModelProfilesList,
-    MovePersonOp, MoveTeamOp, OfficeIdsList, OfficeStanding, OfficesCount, OfficesList,
-    ProjectCheckOp, ProjectInspectByRef, ProjectsList, ProviderConnectionById,
-    ProviderConnectionsList, ReceiptById, RegisterSatelliteOfficeOp, RemoveProjectTeamOp, RoleById,
-    RoleInspectByRef, RolesList, Standing, StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp,
-    WatchingModelRead,
+    AttachProjectRepositoryOp, CheckHrMessageAccess, CheckOp, CreateOrganizationOp,
+    CreateProjectOp, CreateTeamOp, DeactivatePersonOp, DirectoryGeneration, DirectorySnapshot,
+    EmployeeById, EmployeesList, HireInspectById, HiresList, ImportOrganizationOp,
+    ModelProfileById, ModelProfilesList, MovePersonOp, MoveTeamOp, OfficeIdsList, OfficeStanding,
+    OfficesCount, OfficesList, ProjectCheckOp, ProjectInspectByRef, ProjectsList,
+    ProviderConnectionById, ProviderConnectionsList, ReceiptById, RegisterRepositoryOp,
+    RegisterSatelliteOfficeOp, RemoveProjectTeamOp, RoleById, RoleInspectByRef, RolesList,
+    Standing, StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp, WatchingModelRead,
 };
 
 use crate::attachments::ports::{AttachmentsEngine, AttachmentsRead};
@@ -109,6 +108,10 @@ pub struct Testing {
     /// DDL after this build's: the schema of another build.
     #[cfg(test)]
     pub(crate) extra_ddl: Option<&'static str>,
+    /// Override for [`StoreConfig::flush_interval`]: crash-point tests set an hour so the
+    /// 50 ms background timer cannot fire mid-commit under load and race with writer crashes.
+    #[cfg(test)]
+    pub(crate) flush_interval: Option<Duration>,
 }
 
 /// Everything an office's store is opened from.

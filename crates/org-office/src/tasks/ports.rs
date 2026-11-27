@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use org_store::{Engine, EngineError, Id};
 
+use crate::attachments::ports::{AttachmentsRead, AttachmentsWrite};
 use crate::messaging::ports::{MessagingRead, MessagingWrite};
 use crate::processes::ports::{ProcessesRead, ProcessesWrite};
 
@@ -14,7 +15,7 @@ use super::records::{
 };
 
 /// Read-only queries over the tasks projection (Memory and SQLite, `ENG-1`).
-pub trait TasksRead: MessagingRead + ProcessesRead {
+pub trait TasksRead: MessagingRead + ProcessesRead + AttachmentsRead {
     fn task(&self, id: &Id) -> Result<Option<TaskRecord>, EngineError>;
     fn task_by_key(
         &self,
@@ -36,6 +37,9 @@ pub trait TasksRead: MessagingRead + ProcessesRead {
     fn office_task_counters(&self) -> Result<Vec<OfficeTaskCounterRecord>, EngineError>;
     fn checklist_steps(&self, task_id: &Id) -> Result<Vec<ChecklistStepRecord>, EngineError>;
     fn task_comments(&self, task_id: &Id) -> Result<Vec<TaskCommentRecord>, EngineError>;
+    /// Resolves one task comment by its UUIDv7 ID (`TASK-98.4`).
+    fn task_comment_by_id(&self, comment_id: &Id)
+        -> Result<Option<TaskCommentRecord>, EngineError>;
     fn task_watchers(&self, task_id: &Id) -> Result<Vec<TaskWatcherRecord>, EngineError>;
     /// Outgoing typed links authored on `task_id` (including `kind = "depends_on"`).
     fn task_links_from(&self, task_id: &Id) -> Result<Vec<TaskLinkRecord>, EngineError>;
@@ -75,7 +79,7 @@ pub trait TasksRead: MessagingRead + ProcessesRead {
 }
 
 /// Write operations on the tasks projection inside a transaction.
-pub trait TasksWrite: TasksRead + MessagingWrite + ProcessesWrite {
+pub trait TasksWrite: TasksRead + MessagingWrite + ProcessesWrite + AttachmentsWrite {
     fn put_task(&mut self, record: &TaskRecord) -> Result<(), EngineError>;
     fn remove_task(&mut self, id: &Id) -> Result<(), EngineError>;
     fn put_office_task_counter(

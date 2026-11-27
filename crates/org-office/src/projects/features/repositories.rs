@@ -6,11 +6,7 @@ use org_store::{Actor, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 use serde::Serialize;
 
 use crate::organization::{
-    features::{
-        changed,
-        shared::{admit, id_in_use, reject, touched},
-        stable, Op, RejectCode,
-    },
+    ops::{admit, changed, id_in_use, reject, stable, touched, Op, RejectCode},
     ports::OrganizationRead,
     records::{
         self as org_records, encode_repositories, is_branch, is_line, is_remote_url,
@@ -21,6 +17,8 @@ use crate::projects::{
     ports::ProjectsRead,
     records::{encode_project, project_path, ProjectRepositoryLink},
 };
+
+pub use crate::projects::records::resolve_repository;
 
 use super::ProjectFeature;
 
@@ -261,20 +259,4 @@ impl ProjectFeature for AttachProjectRepository {
             .put(project_path(&project.id), encode_project(&project))
             .reply(reply))
     }
-}
-
-/// Resolves a repository by UUIDv7 ID or canonical key.
-pub fn resolve_repository<'a>(repos: &'a [Repository], reference: &str) -> Option<&'a Repository> {
-    let trimmed = reference.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if org_records::is_stable_id(trimmed) {
-        if let Some(found) = repos.iter().find(|r| r.id.as_str() == trimmed) {
-            return Some(found);
-        }
-    }
-    repos
-        .iter()
-        .find(|r| r.key.as_deref().is_some_and(|k| k == trimmed))
 }

@@ -12,6 +12,7 @@ use crate::pump::{run_pump, PumpCommand, PumpContext, SessionRuntimeState};
 
 use super::reap::{reap_live_handle, ReapMode};
 use super::registry_guards::STOPPED_WHILE_STARTING;
+use super::sandbox_runner::{SandboxPlan, SandboxVerifyContext};
 use super::spec::build_initial_runtime_state;
 use super::{
     is_admissions_closed, LiveSessionHandle, PreparedSessionLaunch, SessionManager, StartSlotGuard,
@@ -78,7 +79,7 @@ impl SessionManager {
                 workspace: handoff.workspace_arg,
                 active_permit: handoff.active_permit,
                 supports_mid_turn: handoff.supports_mid_turn,
-                bwrap_masked_siblings: handoff.bwrap_masked_siblings,
+                sandbox_plan: handoff.sandbox_plan,
                 partition: handoff.partition,
             },
         )?;
@@ -97,7 +98,7 @@ impl SessionManager {
             runtime,
             supports_mid_turn,
             model_supports_vision,
-            bwrap_masked_siblings,
+            sandbox_plan,
             connection_id,
             route_digest,
             oauth_expires_at_ms,
@@ -123,7 +124,7 @@ impl SessionManager {
             &emp_id,
             route_digest.clone(),
             oauth_expires_at_ms,
-            bwrap_masked_siblings.clone(),
+            sandbox_plan.clone(),
             partition.is_some(),
         );
         let pump_ctx = PumpContext {
@@ -173,7 +174,7 @@ impl SessionManager {
             workspace: workspace_arg.clone(),
             active_permit: Arc::clone(&active_permit),
             supports_mid_turn,
-            bwrap_masked_siblings: bwrap_masked_siblings.clone(),
+            sandbox_plan: sandbox_plan.clone(),
             partition: partition.clone(),
         };
         let handoff = LaunchInstallHandoff {
@@ -185,7 +186,7 @@ impl SessionManager {
             workspace_arg,
             active_permit,
             supports_mid_turn,
-            bwrap_masked_siblings,
+            sandbox_plan,
             partition,
             objective,
             attachment_ids,
@@ -205,7 +206,7 @@ struct LaunchInstallHandoff {
     workspace_arg: Option<String>,
     active_permit: Arc<Mutex<Option<(String, u64)>>>,
     supports_mid_turn: bool,
-    bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+    sandbox_plan: SandboxPlan,
     partition: Option<crate::partition::PartitionKey>,
     objective: String,
     attachment_ids: Vec<String>,
@@ -222,7 +223,7 @@ pub(crate) struct PrePumpHandleMeta {
     pub(crate) workspace: Option<String>,
     pub(crate) active_permit: Arc<Mutex<Option<(String, u64)>>>,
     pub(crate) supports_mid_turn: bool,
-    pub(crate) bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+    pub(crate) sandbox_plan: SandboxPlan,
     pub(crate) partition: Option<crate::partition::PartitionKey>,
 }
 
@@ -241,14 +242,20 @@ pub(super) fn ensure_pre_pump_isolation(
     pump_ctx: PumpContext,
     meta: PrePumpHandleMeta,
 ) -> Result<VerifiedPrePump, ApiError> {
-    let bwrap_pre_raced = super::bwrap_isolation::verify_bwrap_masked_before_spawn(
-        mgr,
-        emp_id,
-        meta.bwrap_masked_siblings.as_ref(),
-    )
-    .is_err();
+    let active_employees = mgr.active_or_starting_employee_ids();
+    let verify_err = mgr
+        .sandbox_runner
+        .verify_before_spawn(
+            &SandboxVerifyContext {
+                office: &mgr.office,
+                employee_id: emp_id,
+                active_employees: &active_employees,
+            },
+            &meta.sandbox_plan,
+        )
+        .err();
     let shutting_down = is_admissions_closed(mgr);
-    if !shutting_down && !bwrap_pre_raced {
+    if !shutting_down && verify_err.is_none() {
         return Ok(VerifiedPrePump {
             spawned,
             session,
@@ -273,16 +280,12 @@ pub(super) fn ensure_pre_pump_isolation(
             ),
         ));
     }
-    Err(if bwrap_pre_raced {
-        ApiError::new(
-            ErrorCode::Conflict,
-            "a newly started sibling agent was not masked in this sandbox; retry launch",
-        )
-    } else {
-        ApiError::new(
+    Err(match (shutting_down, verify_err) {
+        (false, Some(err)) => err,
+        _ => ApiError::new(
             ErrorCode::Unavailable,
             "office session manager is shutting down",
-        )
+        ),
     })
 }
 
@@ -328,7 +331,7 @@ pub(crate) fn install_unrecovered_pre_pump_handle(
         workspace: meta.workspace,
         active_permit: meta.active_permit,
         supports_mid_turn: meta.supports_mid_turn,
-        bwrap_masked_siblings: meta.bwrap_masked_siblings,
+        sandbox_plan: meta.sandbox_plan,
         partition: meta.partition,
     };
     reg.live.insert(emp_id.to_owned(), handle);
@@ -457,7 +460,7 @@ fn record_aborted_view(mgr: &SessionManager, emp_id: &str, view: SessionView) {
         .insert(emp_id.to_owned(), view);
 }
 
-/// Registers a started handle, or tears it down when admissions closed, a `bwrap` sibling
+/// Registers a started handle, or tears it down when admissions closed, a sandboxed sibling
 /// raced in unmasked, or an explicit stop (pause, offboard, owner stop) was accepted or
 /// refused since the start slot was reserved (`stop_epoch` moved, `TASK-190`). The epoch check,
 /// the insert and the slot release are one `registry` critical section, so a stop either sees
@@ -469,27 +472,28 @@ pub(super) fn register_live_session_or_abort(
     slot: StartSlotGuard<'_>,
     mut handle: LiveSessionHandle,
 ) -> Result<(), ApiError> {
-    let disk_unmasked = handle.bwrap_masked_siblings.as_ref().is_some_and(|masked| {
-        super::bwrap_isolation::has_unmasked_bwrap_sibling_in_office(&mgr.office, &emp_id, masked)
-    });
+    let plan_stale_on_disk =
+        mgr.sandbox_runner
+            .is_plan_stale(&mgr.office, &emp_id, &handle.sandbox_plan);
     let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
-    let bwrap_raced_unmasked = disk_unmasked
-        || handle.bwrap_masked_siblings.as_ref().is_some_and(|masked| {
+    let sandbox_raced_unmasked = plan_stale_on_disk
+        || handle.sandbox_plan.has_unmasked_sibling(
+            &emp_id,
             reg.live
                 .keys()
                 .chain(reg.starting.iter())
-                .any(|other| other != &emp_id && !masked.contains(other))
-        });
+                .map(String::as_str),
+        );
     let stopped_mid_start = reg.stop_epoch(&emp_id) != start_stop_epoch;
-    if reg.draining || reg.shutting_down || bwrap_raced_unmasked || stopped_mid_start {
+    if reg.draining || reg.shutting_down || sandbox_raced_unmasked || stopped_mid_start {
         let shutting_down = reg.draining || reg.shutting_down;
         drop(reg);
-        if (bwrap_raced_unmasked || stopped_mid_start) && !shutting_down {
+        if (sandbox_raced_unmasked || stopped_mid_start) && !shutting_down {
             let (reason, refusal) = if stopped_mid_start {
                 ("explicit_stop_during_start", STOPPED_WHILE_STARTING)
             } else {
                 (
-                    "bwrap_sibling_race_abort",
+                    "sandbox_sibling_race_abort",
                     "a newly started sibling agent was not masked in this sandbox; retry launch",
                 )
             };

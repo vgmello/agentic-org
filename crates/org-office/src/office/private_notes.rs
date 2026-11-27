@@ -439,6 +439,7 @@ impl Office {
                 task: task_id,
                 comment_id: shared_comment_id,
                 body_markdown: body,
+                attachment_ids: vec![],
             },
         )?;
         let finish_now = self.monotonic_private_now();

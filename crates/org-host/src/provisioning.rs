@@ -6,7 +6,9 @@ use crate::hostdb::pending_recovery::{unavailable, Pending};
 use crate::{
     broadcast::Broadcast,
     host_secrets::HostSecrets,
-    hostdb::{provisioning::Reservation, HostStore},
+    hostdb::{
+        provisioning::Reservation, HostAccountsStore, HostStore, ProvisioningStore, RecoveryStore,
+    },
     keys::OfficeSecretsKeys,
     offices::Offices,
     writer::Writers,
@@ -28,8 +30,27 @@ use requests::already_exists;
 #[cfg(test)]
 type RevokeHook = Box<dyn FnOnce(&crate::accounts::identity::AccountId) + Send>;
 
+/// Focused storage ports required by [`Provisioning`].
+pub(crate) struct ProvisioningStores {
+    pub(crate) provisioning: Arc<dyn ProvisioningStore>,
+    pub(crate) accounts: Arc<dyn HostAccountsStore>,
+    pub(crate) recovery: Arc<dyn RecoveryStore>,
+}
+
+impl From<Arc<dyn HostStore>> for ProvisioningStores {
+    fn from(store: Arc<dyn HostStore>) -> Self {
+        Self {
+            provisioning: Arc::clone(&store) as Arc<dyn ProvisioningStore>,
+            accounts: Arc::clone(&store) as Arc<dyn HostAccountsStore>,
+            recovery: store,
+        }
+    }
+}
+
 pub(crate) struct Provisioning {
-    db: Arc<dyn HostStore>,
+    db: Arc<dyn ProvisioningStore>,
+    accounts: Arc<dyn HostAccountsStore>,
+    recovery: Arc<dyn RecoveryStore>,
     custody: Arc<dyn HostSecrets>,
     keys: Arc<dyn OfficeSecretsKeys>,
     writers: Arc<Writers>,
@@ -122,15 +143,22 @@ impl Provisioning {
     /// The organizations' data roots come from `writers` (its instance root), never from a
     /// caller.
     pub(crate) fn new(
-        db: Arc<dyn HostStore>,
+        stores: impl Into<ProvisioningStores>,
         custody: Arc<dyn HostSecrets>,
         keys: Arc<dyn OfficeSecretsKeys>,
         writers: Arc<Writers>,
         instance: &str,
         office_home: &Path,
     ) -> Self {
+        let ProvisioningStores {
+            provisioning: db,
+            accounts,
+            recovery,
+        } = stores.into();
         Self {
             db,
+            accounts,
+            recovery,
             custody,
             keys,
             writers,
@@ -247,13 +275,13 @@ impl Provisioning {
     #[cfg(test)]
     pub(crate) fn account_for_test(&self, login: &str) -> Account {
         let credentials = self
-            .db
+            .accounts
             .account_credentials(&crate::accounts::identity::LoginKey::new(login).unwrap())
             .unwrap()
             .expect("the account exists");
         let id = crate::accounts::identity::AccountId::parse(credentials.account().account_id())
             .unwrap();
-        self.db.account_authority(&id).unwrap().unwrap()
+        self.accounts.account_authority(&id).unwrap().unwrap()
     }
     #[cfg(test)]
     pub(crate) fn driving_now(&self) -> usize {

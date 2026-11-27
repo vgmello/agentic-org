@@ -13,7 +13,7 @@ use org_office::{Office, TestOffice};
 
 use super::rust_toolchain::canonicalize_with_tail;
 use super::sandbox_rules::agent_os_state_roots_from;
-use super::spec::prune_nonexistent_bwrap_denies;
+use super::sandbox_runner::prune_nonexistent_bwrap_denies;
 use super::{ensure_bwrap_deny_dirs, SessionManager, SessionManagerConfig};
 
 fn env_of(pairs: &[(&str, &Path)]) -> impl Fn(&str) -> Option<OsString> {

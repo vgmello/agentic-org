@@ -59,6 +59,7 @@ mod chief_of_staff;
 mod chief_of_staff_partitions;
 mod effort;
 mod enrollment;
+mod hibernation;
 mod instructions;
 mod instructions_fencing;
 mod instructions_guard;
@@ -73,6 +74,7 @@ mod recovery;
 mod recovery_clear;
 mod redaction;
 mod sandbox;
+mod sandbox_runner;
 mod subagents_binding;
 mod subscription_usage;
 mod wake;
@@ -603,6 +605,7 @@ fn seed_project_task_wake_fixture(
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
         )
         .unwrap()
@@ -722,7 +725,7 @@ fn spawn_stub_bwrap_handle(
             workspace: None,
             active_permit: Arc::new(Mutex::new(None)),
             supports_mid_turn: false,
-            bwrap_masked_siblings: Some(masked),
+            sandbox_plan: crate::manager::SandboxPlan::linux_bwrap(masked),
             partition: None,
         },
         stopped,

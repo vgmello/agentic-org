@@ -44,12 +44,12 @@ mod agent_os_sandbox_tests;
 #[cfg(test)]
 mod agy_socket_mount_tests;
 mod auth_guards;
-mod bwrap_isolation;
 mod chief_of_staff;
 mod environment;
 mod failover;
 #[cfg(test)]
 mod helper_tests;
+mod hibernation;
 mod install;
 mod launch;
 mod lifecycle_ops;
@@ -61,20 +61,21 @@ mod rpc;
 mod rust_toolchain;
 mod sandbox_paths;
 mod sandbox_rules;
+mod sandbox_runner;
 mod sessions_api;
 mod spec;
 mod turn_controls;
 mod views;
 mod warm;
 
-pub(crate) use bwrap_isolation::has_unmasked_bwrap_sibling_in_office;
-#[cfg(test)]
-pub(crate) use bwrap_isolation::{enforce_bwrap_sibling_isolation, ensure_bwrap_deny_dirs};
 pub(crate) use environment::task_process_context;
 #[cfg(test)]
 pub(crate) use failover::{
     failover_route_opts, is_host_claude_subscription_refresh_eligible, requeue_contended_failover,
     run_failover_relaunch,
+};
+pub use hibernation::{
+    OfficeRssSnapshot, OsMemorySampler, ProcessMemorySampler, ResourceLimitsConfig, SessionRssEntry,
 };
 #[cfg(test)]
 pub(crate) use install::{install_unrecovered_pre_pump_handle, PrePumpHandleMeta};
@@ -85,6 +86,15 @@ pub(crate) use operator_home::clean_operator_rules;
 pub(crate) use reap::{reap_live_handle, ReapMode};
 #[cfg(test)]
 pub(crate) use rust_toolchain::host_rust_dir_env_from;
+#[cfg(test)]
+pub(crate) use sandbox_runner::{
+    enforce_bwrap_sibling_isolation_for_test as enforce_bwrap_sibling_isolation,
+    ensure_bwrap_deny_dirs,
+};
+pub use sandbox_runner::{
+    LocalOsSandbox, SandboxConfinementMode, SandboxPlan, SandboxPrepareContext, SandboxRunner,
+    SandboxVerifyContext,
+};
 #[cfg(test)]
 pub(crate) use sessions_api::autonomous_resume;
 #[cfg(test)]
@@ -122,6 +132,8 @@ pub struct SessionManagerConfig {
     /// [`crate::turn_attachments::LocalOfficeAttachmentResolver`]; satellites wire a
     /// federation-backed resolver in `org-office-server`.
     pub attachment_resolver: Option<Arc<dyn crate::turn_attachments::TurnAttachmentResolver>>,
+    /// Per-office idle hibernation TTL, resident RSS ceiling, and child build concurrency (`TASK-133`).
+    pub resource_limits: ResourceLimitsConfig,
 }
 
 impl SessionManagerConfig {
@@ -149,6 +161,7 @@ impl SessionManagerConfig {
                 )
             },
             attachment_resolver: None,
+            resource_limits: ResourceLimitsConfig::from_env(),
         }
     }
 }
@@ -163,9 +176,8 @@ pub(crate) struct LiveSessionHandle {
     pub workspace: Option<String>,
     pub active_permit: Arc<Mutex<Option<(String, u64)>>>,
     pub supports_mid_turn: bool,
-    /// Set of sibling employee IDs whose directories were pre-created and masked when this
-    /// session launched under Linux Claude `bwrap` (`TASK-166`). `None` for non-bwrap sessions.
-    pub bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+    /// Opaque confinement plan produced by [`SandboxRunner::prepare_launch`] (`TASK-233`).
+    pub sandbox_plan: SandboxPlan,
     /// The Chief of Staff partition this process serves, and so the caller its run acts for
     /// (`TASK-80.1`); `None` for every other agent.
     pub partition: Option<crate::partition::PartitionKey>,
@@ -197,6 +209,29 @@ impl SessionRegistry {
     pub(crate) fn record_explicit_stop(&mut self, employee_id: &str) {
         let epoch = self.stop_epochs.entry(employee_id.to_owned()).or_insert(0);
         *epoch = epoch.saturating_add(1);
+    }
+
+    /// Whether `employee_id` has a live *managed* turn (starting, running or awaiting approval,
+    /// or an unmanaged socket binding) while the caller already holds `registry`.
+    pub(crate) fn has_active_managed_turn(
+        &self,
+        bindings: &RunBindingRegistry,
+        employee_id: &str,
+    ) -> bool {
+        if self.starting.contains(employee_id) {
+            return true;
+        }
+        if let Some(handle) = self.live.get(employee_id) {
+            let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+            return matches!(
+                state.state,
+                org_proto::sessions::SessionState::Starting
+                    | org_proto::sessions::SessionState::Running
+                    | org_proto::sessions::SessionState::WaitingApproval
+            );
+        }
+        // Only treat an unmanaged socket binding (no SessionManager pump) as active (`High #1`).
+        bindings.has_active(employee_id)
     }
 }
 
@@ -292,7 +327,7 @@ struct PlannedSessionLaunch {
     runtime: Arc<dyn org_agent_runtime::AgentRuntime>,
     supports_mid_turn: bool,
     model_supports_vision: bool,
-    bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+    sandbox_plan: SandboxPlan,
     connection_id: Option<String>,
     route_digest: String,
     oauth_expires_at_ms: Option<u64>,
@@ -326,7 +361,7 @@ struct PreparedSessionLaunch {
     runtime: Arc<dyn org_agent_runtime::AgentRuntime>,
     supports_mid_turn: bool,
     model_supports_vision: bool,
-    bwrap_masked_siblings: Option<std::collections::BTreeSet<String>>,
+    sandbox_plan: SandboxPlan,
     connection_id: Option<String>,
     route_digest: String,
     oauth_expires_at_ms: Option<u64>,
@@ -409,6 +444,7 @@ pub type WatchNoticeProvider = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 pub struct SessionManager {
     pub(crate) office: Arc<Office>,
     pub(crate) config: SessionManagerConfig,
+    pub(crate) sandbox_runner: Arc<dyn SandboxRunner>,
     pub(crate) attachment_resolver: Arc<dyn crate::turn_attachments::TurnAttachmentResolver>,
     pub(crate) store: SessionStore,
     pub(crate) bindings: RunBindingRegistry,
@@ -427,6 +463,7 @@ pub struct SessionManager {
     pub(crate) dispatching_wakes: Arc<Mutex<HashSet<String>>>,
     pub(crate) waiting_messages: Arc<Mutex<HashMap<String, Arc<AtomicU32>>>>,
     pub(crate) mid_turn_rates: Arc<Mutex<HashMap<String, MidTurnRateTracker>>>,
+    pub(crate) hibernation: hibernation::HibernationState,
     watch_notice_provider: Mutex<Option<WatchNoticeProvider>>,
     startup_recovery: Mutex<RecoveryReport>,
     command_cache: Mutex<HashMap<(String, String, String), CachedRpcResponse>>,
@@ -435,6 +472,14 @@ pub struct SessionManager {
 
 impl SessionManager {
     pub fn new(office: Arc<Office>, config: SessionManagerConfig) -> Self {
+        Self::with_sandbox_runner(office, config, Arc::new(LocalOsSandbox))
+    }
+
+    pub fn with_sandbox_runner(
+        office: Arc<Office>,
+        config: SessionManagerConfig,
+        sandbox_runner: Arc<dyn SandboxRunner>,
+    ) -> Self {
         let info = office.info();
         let store = SessionStore::new(office.durable_root(), &info.office_id);
         let key = office.secrets_key().map(|k| *k.expose_bytes());
@@ -464,6 +509,7 @@ impl SessionManager {
         Self {
             office,
             config,
+            sandbox_runner,
             attachment_resolver,
             store,
             bindings: RunBindingRegistry::new(),
@@ -479,6 +525,7 @@ impl SessionManager {
             dispatching_wakes: Arc::new(Mutex::new(HashSet::new())),
             waiting_messages: Arc::new(Mutex::new(HashMap::new())),
             mid_turn_rates: Arc::new(Mutex::new(HashMap::new())),
+            hibernation: hibernation::HibernationState::default(),
             watch_notice_provider: Mutex::new(None),
             startup_recovery: Mutex::new(RecoveryReport::default()),
             command_cache: Mutex::new(HashMap::new()),
@@ -490,6 +537,7 @@ impl SessionManager {
     /// waiting agents (`LIVE-2`) and relaunch on the next pool connection (`doc-88` §7).
     pub fn attach_self(this: &Arc<Self>) {
         *this.self_ref.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::downgrade(this));
+        Self::maybe_start_resource_sweeper(this);
     }
 
     pub(crate) fn weak_self(&self) -> Option<std::sync::Weak<Self>> {
@@ -507,6 +555,11 @@ impl SessionManager {
 
     pub fn bindings(&self) -> &RunBindingRegistry {
         &self.bindings
+    }
+
+    /// Registered runtime adapters configured on this session manager.
+    pub fn runtimes(&self) -> &RuntimeRegistry {
+        &self.config.runtimes
     }
 
     /// Returns the lock-free per-employee `AtomicU32` counter tracking pending wakes/messages
@@ -735,18 +788,4 @@ pub(crate) fn set_waiting_messages_count(
 fn next_entropy_hex(bytes_len: usize) -> Result<String, ApiError> {
     random_hex(bytes_len)
         .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))
-}
-
-fn next_uuid_v4() -> Result<String, ApiError> {
-    use ring::rand::{SecureRandom, SystemRandom};
-    let mut b = [0_u8; 16];
-    SystemRandom::new()
-        .fill(&mut b)
-        .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))?;
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    Ok(format!(
-        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
-    ))
 }

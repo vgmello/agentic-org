@@ -1061,6 +1061,9 @@ impl AgentRuntime for WatchScriptedRuntime {
     fn binary_name(&self) -> &'static str {
         "watch-scripted"
     }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["anthropic", "claude-code"]
+    }
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             mid_turn_delivery: org_agent_runtime::MidTurnDelivery::None,

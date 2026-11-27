@@ -88,7 +88,7 @@ fn answer(
             if !matches!(listen, ListenMode::HttpLoopback | ListenMode::HttpPublished) {
                 return Err(denied());
             }
-            let (db, _) = authentication.provisioning_storage();
+            let db = authentication.accounts_store();
             let id = db
                 .local_authless_account()
                 .map_err(|_| unavailable())?

@@ -18,10 +18,10 @@ use super::super::{
     SqliteSnapshot, SqliteTx,
 };
 
-use super::files::{answer_files, message_file};
+use super::files::{answer_files, attach_attachments, message_file};
 use super::rows::{
-    attach_attachments, attach_conversation_children, conversation_row, foreign_col, message_row,
-    recipient_state_row, MSG_SELECT, STATE_SELECT,
+    attach_conversation_children, conversation_row, foreign_col, message_row, recipient_state_row,
+    MSG_SELECT, STATE_SELECT,
 };
 use super::MsgView;
 

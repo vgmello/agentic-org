@@ -93,6 +93,7 @@ fn adec_fixture(engine: EngineChoice) -> Adec {
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
         )
         .unwrap()
@@ -657,6 +658,7 @@ fn assert_ancestor_lead_touches_nothing(a: &Adec) {
                 depends_on: vec![],
                 details: None,
                 dod: None,
+                attachment_ids: vec![],
             },
         )
         .unwrap()

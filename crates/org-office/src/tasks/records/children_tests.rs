@@ -34,17 +34,23 @@ fn a_comment_is_front_matter_and_its_markdown() {
         created_at: "2026-11-26T00:00:00.000Z".into(),
         body_markdown: "A **comment**\n---\nwith a fence-like line".into(),
     };
-    let bytes = encode_comment(&comment).unwrap();
+    let bytes = encode_comment(&comment, &[]).unwrap();
     let text = String::from_utf8(bytes.clone()).unwrap();
     for key in [
         "schema_version: 1",
         "task_id: ",
         "author_id: ",
         "created_at: ",
+        "attachments: []",
     ] {
         assert!(text.contains(key), "{key}");
     }
-    assert_eq!(decode_comment(&bytes).unwrap(), comment);
+    let decoded = decode_comment(&bytes).unwrap();
+    assert_eq!(decoded.comment, comment);
+    assert!(decoded.attachments.is_empty());
+    // Pre-TASK-98.4 comments without an `attachments` key still decode cleanly.
+    let legacy = text.replace("attachments: []\n", "");
+    assert_eq!(decode_comment(legacy.as_bytes()).unwrap().comment, comment);
     let bad = text.replace("schema_version: 1", "schema_version: 1\nedited: true");
     assert!(decode_comment(bad.as_bytes()).is_err());
 }

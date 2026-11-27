@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use org_proto::chat::{ChatMessagesParams, ConversationKind, SNIPPET_MAX_CHARS};
+use org_proto::chat::{ChatMessagesParams, SNIPPET_MAX_CHARS};
 use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
 
@@ -12,8 +12,6 @@ use crate::messaging::{
     ports::MessagingRead,
     records::{ConversationReadMarkerRecord, ConversationRecord, MessageRecord},
 };
-
-use super::messages::resolve_conversation_ref;
 
 /// How many of `msgs` (in canonical order) the caller's read marker covers: `msgs[boundary..]`
 /// are after it. A marker naming a message no longer here falls back to its `read_at` (and a
@@ -186,47 +184,6 @@ impl ChannelCatchup {
             .map(|m| m.id.clone())
             .or_else(|| self.last_read_message_id.clone())
     }
-}
-
-/// The caller's new messages in a channel, oldest first, at most `limit` (clamped to
-/// `1..=MAX_SUMMARIZE_WINDOW`), with the same visibility as `chat.messages`.
-pub fn channel_catchup_for_caller(
-    read: &impl MessagingRead,
-    owner: &Id,
-    caller: &Id,
-    channel_ref: &str,
-    limit: usize,
-    now_utc: &str,
-) -> Result<ChannelCatchup, ApiError> {
-    let conv = resolve_conversation_ref(read, owner, caller, channel_ref, now_utc)?;
-    if conv.kind != ConversationKind::Channel {
-        return Err(ApiError::new(
-            ErrorCode::InvalidRequest,
-            "channel summarize only operates on channels",
-        ));
-    }
-    let msgs = read
-        .messages_in_conversation(&conv.id)
-        .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to read channel messages"))?;
-    let marker = read
-        .read_marker(&conv.id, caller)
-        .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to read the read marker"))?;
-    let boundary = watermark_boundary(&msgs, marker.as_ref());
-    let cap = limit.clamp(1, org_proto::chat::MAX_SUMMARIZE_WINDOW as usize);
-    let mut new_total = 0u64;
-    let mut window = Vec::new();
-    for msg in new_messages(&msgs, boundary, caller) {
-        new_total += 1;
-        if window.len() < cap {
-            window.push(msg.clone());
-        }
-    }
-    Ok(ChannelCatchup {
-        conversation: conv,
-        messages: window,
-        new_total,
-        last_read_message_id: marker.and_then(|m| m.last_read_message_id),
-    })
 }
 
 #[cfg(test)]

@@ -18,7 +18,7 @@ use std::io::{self, BufRead, Write};
 
 use org_command::{Office, Output};
 
-pub use features::session::{CORE_RULES, SESSION_ATTACH_HELP, SKILL_INDEX};
+pub use features::session::{CORE_RULES, EXTERNAL_RULES, SESSION_ATTACH_HELP, SKILL_INDEX};
 pub use org_command::{validate_input, Command, IfMatch, MutationPolicy};
 pub use registry::{catalogue_table, runtime_table, table};
 pub use runtime::binding::{api_refusal, Binding};
@@ -38,7 +38,7 @@ use runtime::help::quickstart;
 
 /// Runs the shared `org-command` table against any supplied [`Office`] implementation
 /// (either a bound agent socket or a grant-bound person host channel). A shorthand (`who`,
-/// `task note`, `boot`, `instructions overview`) is read as its command.
+/// `task note`, `context`) is read as its command.
 pub fn execute_with_office(program: &str, args: &[String], office: &mut dyn Office) -> Output {
     if matches!(args, [flag] if flag == "--version" || flag == "-V") {
         return Output {

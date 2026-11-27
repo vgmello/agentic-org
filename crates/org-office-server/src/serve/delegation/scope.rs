@@ -31,6 +31,8 @@
 mod files;
 mod sends;
 
+pub(crate) use files::check_delegated_attachment;
+
 use std::cell::OnceCell;
 
 use org_proto::ask::{ChatAnswer, MsgWithdraw};

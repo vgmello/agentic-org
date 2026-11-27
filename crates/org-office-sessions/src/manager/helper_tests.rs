@@ -17,8 +17,14 @@ use super::environment::{
     agent_git_identity, combine_agent_instructions, office_env_names, write_owner_only_binding_file,
 };
 use super::rust_toolchain::{append_rust_toolchain_env, link_host_rust_caches};
-use super::sandbox_rules::{append_agy_credential_denies, collect_agy_read_only_dirs};
-use super::spec::{apply_linux_claude_bwrap_pruning, pattern_exists_for_bwrap};
+use super::sandbox_rules::{
+    append_runtime_credential_denies, append_runtime_credential_denies_for_home,
+    collect_agy_read_only_dirs,
+};
+use super::sandbox_runner::{
+    apply_linux_claude_bwrap_pruning_for_test as apply_linux_claude_bwrap_pruning,
+    pattern_exists_for_bwrap,
+};
 use super::BindingGuard;
 use std::os::unix::fs::PermissionsExt as _;
 
@@ -447,7 +453,10 @@ fn pattern_exists_for_bwrap_preserves_root_glob_and_agy_credential_denies_match_
         &PathPattern::try_from("/*").unwrap()
     ));
     let mut agy_denies = Vec::new();
-    append_agy_credential_denies(&mut agy_denies);
+    append_runtime_credential_denies(
+        &crate::runtime_registry::RuntimeRegistry::production(),
+        &mut agy_denies,
+    );
     if std::env::var_os("HOME").is_some() {
         for rel in org_agent_runtime_agy::AGY_CONFIG_CREDENTIAL_FILES {
             assert!(
@@ -936,4 +945,293 @@ fn an_operator_session_starts_with_no_rust_toolchain() {
         !home.path().join(".cargo").exists(),
         "no cache links in her home"
     );
+}
+
+struct CredentialDenyFixture {
+    _dir: tempfile::TempDir,
+    fake_home: PathBuf,
+    workspace: PathBuf,
+    rt_dir: PathBuf,
+    tmp_dir: PathBuf,
+    expected_strs: Vec<String>,
+    preset_cfg: crate::preset::PresetConfig,
+}
+
+impl CredentialDenyFixture {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let fake_home = root.join("host-home");
+        let workspace = root.join("workspace");
+        let rt_dir = root.join("runtime");
+        let tmp_dir = root.join("tmp");
+        for d in [
+            fake_home.join(".claude"),
+            fake_home.join(".codex"),
+            fake_home.join(".gemini/antigravity-cli"),
+            workspace.clone(),
+            rt_dir.clone(),
+            tmp_dir.clone(),
+        ] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let expected_creds = vec![
+            fake_home.join(".claude/.credentials.json"),
+            fake_home.join(".codex/auth.json"),
+            fake_home.join(".gemini/antigravity-cli/antigravity-oauth-token"),
+            fake_home.join(".gemini/oauth_creds.json"),
+            fake_home.join(".gemini/google_accounts.json"),
+        ];
+        for cred in &expected_creds {
+            std::fs::write(cred, b"secret-token").unwrap();
+        }
+        let expected_strs: Vec<String> = expected_creds
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        let runtimes = crate::runtime_registry::RuntimeRegistry::production();
+        let mut cred_denies = Vec::new();
+        append_runtime_credential_denies_for_home(&runtimes, &fake_home, &mut cred_denies);
+        for expected in &expected_strs {
+            assert!(
+                cred_denies.iter().any(|p| p.as_str() == expected),
+                "append_runtime_credential_denies_for_home missing `{expected}`: {cred_denies:?}"
+            );
+        }
+        let ws_spec = SpecPath::try_from(workspace.to_str().unwrap()).unwrap();
+        let preset_cfg = build_session_policy(
+            PermissionPreset::AutonomousSandboxed,
+            true,
+            &ws_spec,
+            None,
+            &cred_denies,
+            1,
+        )
+        .unwrap();
+        Self {
+            _dir: dir,
+            fake_home,
+            workspace,
+            rt_dir,
+            tmp_dir,
+            expected_strs,
+            preset_cfg,
+        }
+    }
+
+    fn sp(path: &Path) -> SpecPath {
+        SpecPath::try_from(path.to_str().unwrap()).unwrap()
+    }
+
+    fn make_spec(&self, runtime_id: &str) -> SessionSpec {
+        SessionSpec {
+            runtime: RuntimeId::try_from(runtime_id).unwrap(),
+            kind: SessionKind::Home {},
+            agent: AgentIdentity {
+                name: AgentName::try_from("eng").unwrap(),
+                description: "Engineer".to_owned(),
+                prompt: "Engineer".to_owned(),
+            },
+            model: None,
+            effort: None,
+            workspace: Self::sp(&self.workspace),
+            read_only_dirs: Vec::new(),
+            instructions: String::new(),
+            repository_instructions: String::new(),
+            permission_mode: self.preset_cfg.permission_mode,
+            policy: self.preset_cfg.policy.clone(),
+            sandbox: self.preset_cfg.sandbox.clone(),
+            mcp_servers: Default::default(),
+            tools: self.preset_cfg.allowed_tools.clone(),
+            operator_shell_prefixes: Vec::new(),
+        }
+    }
+
+    fn launch_ctx(
+        &self,
+        bin: &str,
+        new_session_id: Option<SessionId>,
+        config_dir: Option<SpecPath>,
+    ) -> LaunchContext {
+        LaunchContext {
+            runtime_path: PathBuf::from(bin),
+            runtime_version: None,
+            runtime_dir: Self::sp(&self.rt_dir),
+            tmpdir: Self::sp(&self.tmp_dir),
+            office_env_names: office_env_names(),
+            new_session_id,
+            resume: None,
+            config_dir,
+        }
+    }
+}
+
+#[test]
+fn claude_sandbox_deny_read_blocks_cross_runtime_host_credentials() {
+    use org_agent_runtime::AgentRuntime as _;
+
+    let fx = CredentialDenyFixture::new();
+    // Claude keeps `host_config_subdir: None` so host `~/.claude` plugins are never mounted.
+    assert!(org_agent_runtime_claude::ClaudeRuntime::new()
+        .host_profile()
+        .host_config_subdir
+        .is_none());
+
+    let mut claude_spec = fx.make_spec("claude");
+    apply_linux_claude_bwrap_pruning(&mut claude_spec);
+    let sid = SessionId::try_from("11111111-1111-4111-8111-111111111111").unwrap();
+    let claude_ctx = fx.launch_ctx("/usr/local/bin/claude", Some(sid), None);
+    let (claude_plan, _) = org_agent_runtime_claude::ClaudeRuntime::new()
+        .plan_session(&claude_spec, &claude_ctx)
+        .unwrap();
+    let settings: serde_json::Value = serde_json::from_slice(
+        &claude_plan
+            .files
+            .iter()
+            .find(|f| f.rel_path.as_str() == "claude-settings.json")
+            .unwrap()
+            .contents,
+    )
+    .unwrap();
+    let claude_deny_read: Vec<&str> = settings["sandbox"]["filesystem"]["denyRead"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    for expected in &fx.expected_strs {
+        assert!(
+            claude_deny_read.contains(&expected.as_str()),
+            "Claude sandbox denyRead missing `{expected}`: {claude_deny_read:?}"
+        );
+    }
+}
+
+#[test]
+fn codex_sandbox_blocks_cross_runtime_host_credentials_with_and_without_host_auth() {
+    use org_agent_runtime::AgentRuntime as _;
+
+    let fx = CredentialDenyFixture::new();
+    let codex_spec = fx.make_spec("codex");
+    for codex_cfg in [
+        None,
+        Some(CredentialDenyFixture::sp(&fx.fake_home.join(".codex"))),
+    ] {
+        let codex_ctx = fx.launch_ctx("/usr/local/bin/codex", None, codex_cfg);
+        let (codex_plan, _) = org_agent_runtime_codex::CodexRuntime::new()
+            .plan_session(&codex_spec, &codex_ctx)
+            .unwrap();
+        let fs_override = codex_plan
+            .args
+            .iter()
+            .find(|arg| arg.starts_with("permissions.office.filesystem="))
+            .expect("Codex permissions.office.filesystem override");
+        for expected in &fx.expected_strs {
+            let entry = format!(
+                "{}={}",
+                serde_json::to_string(expected).unwrap(),
+                "\"none\""
+            );
+            assert!(
+                fs_override.contains(&entry),
+                "Codex sandbox missing `{entry}` in `{fs_override}`"
+            );
+        }
+    }
+}
+
+#[test]
+fn agy_sandbox_and_policy_block_cross_runtime_host_credentials() {
+    use crate::preset::{decide_escalation_with_roots, EscalationDisposition};
+    use org_agent_runtime::{
+        AgentRuntime as _, ApprovalId, ApprovalKind, ApprovalRequest, Escalation, ToolCapability,
+    };
+
+    let fx = CredentialDenyFixture::new();
+    let agy_spec = fx.make_spec("agy");
+    for expected in &fx.expected_strs {
+        assert!(
+            agy_spec
+                .sandbox
+                .deny_read
+                .iter()
+                .any(|p| p.as_str() == expected),
+            "Agy spec.sandbox.deny_read missing `{expected}`"
+        );
+        let mut req = ApprovalRequest::new(
+            ApprovalId::new("req-cred"),
+            ApprovalKind::Other,
+            Escalation::None,
+            "read_file",
+            serde_json::json!({ "Path": expected }),
+        );
+        req.capability = Some(ToolCapability::Read);
+        assert!(
+            matches!(
+                decide_escalation_with_roots(
+                    &req,
+                    &agy_spec.policy,
+                    fx.preset_cfg.preset,
+                    None,
+                    Some(&agy_spec.sandbox.writable_roots),
+                ),
+                EscalationDisposition::AutoDeny { .. }
+            ),
+            "Agy policy must auto-deny reading host credential `{expected}`"
+        );
+    }
+    for agy_cfg in [
+        None,
+        Some(CredentialDenyFixture::sp(&fx.fake_home.join(".gemini"))),
+    ] {
+        let agy_ctx = fx.launch_ctx("/usr/local/bin/agy", None, agy_cfg);
+        assert!(org_agent_runtime_agy::AgyRuntime::new()
+            .plan_session(&agy_spec, &agy_ctx)
+            .is_ok());
+    }
+}
+
+#[test]
+fn session_manager_build_employee_preset_propagates_host_credential_denies() {
+    let Some(real_home) = std::env::var_os("HOME") else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let ws_spec = CredentialDenyFixture::sp(dir.path());
+    let office = std::sync::Arc::new(org_office::Office::for_test(
+        org_office::TestOffice::default(),
+    ));
+    let sock = tempfile::tempdir().unwrap();
+    let mgr = super::SessionManager::new(
+        std::sync::Arc::clone(&office),
+        super::SessionManagerConfig::production(sock.path().join("office.sock")),
+    );
+    let me = office.list_employees().unwrap()[0].id.as_str().to_owned();
+    let emp_cfg = mgr
+        .build_employee_preset_cfg(
+            &me,
+            PermissionPreset::AutonomousSandboxed,
+            true,
+            &ws_spec,
+            false,
+        )
+        .unwrap();
+    let real_home = PathBuf::from(real_home);
+    for rel in [
+        ".claude/.credentials.json",
+        ".codex/auth.json",
+        ".gemini/antigravity-cli/antigravity-oauth-token",
+        ".gemini/oauth_creds.json",
+        ".gemini/google_accounts.json",
+    ] {
+        let expected = real_home.join(rel).display().to_string();
+        assert!(
+            emp_cfg
+                .sandbox
+                .deny_read
+                .iter()
+                .any(|p| p.as_str() == expected),
+            "SessionManager sandbox deny_read missing `{expected}`"
+        );
+    }
 }

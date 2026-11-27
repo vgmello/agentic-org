@@ -124,13 +124,6 @@ pub type HiringFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Sen
 /// Dispatches C3 agent session, grant, and provider CLI enrollment RPCs.
 pub type SessionsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
-/// Verifies a managed agent's per-run `AGENT_OS_SESSION_TOKEN` and peer PID ancestry (`CLI-12`, `SUB-3`).
-pub type RunBindingVerifyFn =
-    Box<dyn Fn(&str, Option<&str>, Option<libc::pid_t>) -> bool + Send + Sync>;
-
-/// Checks whether a bound managed agent still has an active run binding on this office.
-pub type RunBindingActiveFn = Box<dyn Fn(&str) -> bool + Send + Sync>;
-
 /// Records an accepted `agent-os` command for a bound managed run (`ADR-0030` decision 8).
 pub type RecordCommandFn = Box<dyn Fn(&str, &str) + Send + Sync>;
 
@@ -156,8 +149,11 @@ pub type ChatFn = Box<
 /// Dispatches B4/B5/B4b unified `tasks.*` RPCs (`TASK-49`, `TASK-77`).
 pub type TasksFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
-/// Dispatches the nine chunked `attachment.*` RPCs (`TASK-98.1`).
-pub type AttachmentsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+/// Dispatches the ten chunked `attachment.*` RPCs (`TASK-98.1`, `TASK-98.7`), carrying any active
+/// Chief-of-Staff delegation context into `attachment.render` for caller-scoped buffers and
+/// post-assembly `caller ∩ tess` attachment checks.
+pub type AttachmentsFn =
+    Box<dyn Fn(Option<&str>, Option<&Delegation>, &Request) -> Option<Response> + Send + Sync>;
 
 /// Dispatches C7 repository, worktree, and Git push RPCs (`TASK-51`).
 pub type GitFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
@@ -177,8 +173,18 @@ pub type CostsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send
 /// Dispatches L4 provider connection pools, bindings, model discovery, readiness, and quota RPCs (`TASK-54`).
 pub type ProvidersFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
-/// Dispatches Chief of Staff (Tess) `suggestion.*` and `ui.present` RPCs (`TASK-80.4`).
-pub type TessFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+/// Dispatches Chief of Staff (Tess) `suggestion.*`, `ui.present`, and `tess.*` RPCs (`TASK-80.4`).
+pub type TessFn = Box<
+    dyn Fn(
+            Option<&str>,
+            bool,
+            &std::sync::atomic::AtomicBool,
+            Option<&org_tess::ApplyExecFn<'_>>,
+            &Request,
+        ) -> Option<Response>
+        + Send
+        + Sync,
+>;
 
 /// What the connections ask of the office.
 pub struct OfficePorts {
@@ -187,8 +193,8 @@ pub struct OfficePorts {
     pub project_inspect: ProjectInspectFn,
     pub hiring: Option<HiringFn>,
     pub sessions: Option<SessionsFn>,
-    pub run_binding_verify: Option<RunBindingVerifyFn>,
-    pub run_binding_active: Option<RunBindingActiveFn>,
+    /// Verifies managed agent run bindings and checks active liveness (`CLI-12`, `SUB-3`, `TASK-233`).
+    pub run_binding_verifier: Option<Arc<dyn org_office_sessions::RunBindingVerifier>>,
     /// The Chief of Staff's delegation, intersected with her own authority on every call she
     /// makes and on what it answers (`TASK-80.1`). `None`: no member is gated.
     pub delegation: Option<Arc<dyn ChiefOfStaffPort>>,

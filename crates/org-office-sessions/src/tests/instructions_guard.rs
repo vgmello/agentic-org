@@ -52,12 +52,22 @@ fn the_four_audited_inaccuracies_fail_the_guard() {
         "`agent-os msg ask --to @<handle> --prompt <text> --question-type choice --option <id>=<label> --default-value <id>`",
         "`agent-os member set-hiring --member <id> --allow --if-match <rev>`",
         "`agent-os process create --kind standard --title <t> --non-overridable --input-file <path>`",
-        "`agent-os boot --format yaml`",
-        "`agent-os instructions overview --offline`",
+        "`agent-os context --format yaml`",
+        "`agent-os session context --offline`",
         "`agent-os team create --name <name> --dry-run`",
     ] {
         assert!(problems(good).is_empty(), "{good}: {:#?}", problems(good));
     }
+    // Legacy `boot` and `instructions overview` shorthands are removed cleanly (zero shims).
+    assert_fails("`agent-os boot --format yaml`", "`boot` is not a resource");
+    assert_fails(
+        "`agent-os instructions overview --offline`",
+        "`instructions` is not a resource",
+    );
+    assert_fails(
+        "`agent-os session boot --offline`",
+        "`session boot` is not a command",
+    );
 }
 
 #[test]
@@ -262,14 +272,14 @@ fn attach_lines_are_held_to_the_rules_session_attach_applies_first() {
     }
     // A value that looks like a flag stays that option's value, as attach passes it inline.
     assert_fails(
-        "```text\n{\"command\":\"boot\",\"options\":{\"offline\":\"--format=yaml\"}}\n```",
+        "```text\n{\"command\":\"context\",\"options\":{\"offline\":\"--format=yaml\"}}\n```",
         "yes-or-no",
     );
     // Scalars and booleans become flags as attach makes them; a JSON example without
     // `command` is not an attach line.
     for good in [
         "```text\n{\"command\":\"task list\",\"options\":{\"status\":\"todo\",\"exclude_status\":\"done\",\"format\":\"json\",\"limit\":null}}\n```",
-        "```text\n{\"command\":\"boot\",\"options\":{\"offline\":true}}\n```",
+        "```text\n{\"command\":\"context\",\"options\":{\"offline\":true}}\n```",
         "```text\n{\"questions\":[{\"id\":\"q1\"}]}\n```",
     ] {
         assert!(problems(good).is_empty(), "{good}: {:#?}", problems(good));

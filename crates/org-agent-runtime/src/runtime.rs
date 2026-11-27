@@ -2,10 +2,55 @@
 
 use std::fmt;
 
+use crate::transcript::TranscriptParser;
 use crate::{
     Capabilities, LaunchContext, LaunchPlan, Probe, ProbeContext, ProbeOutput, ProbeResult,
     ProbeRun, RuntimeId, Session, SessionSpec,
 };
+
+/// Host-home configuration, credential denial, and sandbox profile declared by a runtime adapter.
+///
+/// Allows host-side orchestration (`org-office-sessions`) to adapt credential denies, host config
+/// mounts, OAuth refresh eligibility, and sandbox staging without branching on vendor runtime IDs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RuntimeHostProfile {
+    /// Subdirectory under the host user's `$HOME` holding this runtime's CLI subscription config
+    /// (e.g. `Some(".codex")`, `Some(".gemini")`), or `None` when the host config directory must
+    /// never be mounted into isolated sessions (e.g. Claude, so host plugins never load).
+    pub host_config_subdir: Option<&'static str>,
+    /// Credential file paths relative to `host_config_subdir` under `$HOME` that must always be
+    /// read-denied to sandboxed agents (`S2`).
+    pub config_credential_files: &'static [&'static str],
+    /// Credential file paths relative to the host user's `$HOME` (e.g.
+    /// `".claude/.credentials.json"`) that must always be read-denied to sandboxed agents (`S2`)
+    /// even when `host_config_subdir` is `None`.
+    pub host_credential_files: &'static [&'static str],
+    /// Whether this runtime requires host-local OAuth token injection and reactive refresh for
+    /// `subscription_cli` routes (e.g. Claude Code `CLAUDE_CODE_OAUTH_TOKEN`).
+    pub uses_host_oauth_token_injection: bool,
+    /// Whether this runtime uses mount-mask sandboxing (such as Linux `bwrap`) when OS
+    /// Unix-socket path filtering is unavailable, requiring absent-path deny pruning and sibling
+    /// directory masks.
+    pub uses_mount_mask_sandbox: bool,
+    /// Whether this runtime's sandbox requires explicit read-only directory mounts (e.g.
+    /// `--add-dir`) for `agent-os`, the office socket folder, and host Rust toolchain caches.
+    pub needs_explicit_sandbox_ro_dirs: bool,
+}
+
+/// Workspace-relative operator execpolicy folder managed by a runtime adapter (`TASK-80.1`).
+///
+/// Before launching a built-in operator session, the office verifies each path in `ancestor_dirs`
+/// and `rules_dir` is a real directory (unlinking any symlink or file) and removes every entry
+/// inside `rules_dir` other than the regular file `office_rules_file`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperatorRulesLayout {
+    /// Workspace-relative parent folders checked in order before descending into `rules_dir`.
+    pub ancestor_dirs: &'static [&'static str],
+    /// Workspace-relative folder holding operator execpolicy rule files.
+    pub rules_dir: &'static str,
+    /// Regular filename preserved inside `rules_dir` (rewritten by the launch plan).
+    pub office_rules_file: &'static str,
+}
 
 /// One runtime's adapter: a **stateless** factory. It never spawns and never does I/O.
 ///
@@ -75,6 +120,39 @@ pub trait AgentRuntime: Send + Sync {
     fn reply_signals_auth_expired(&self, reply: &str) -> bool {
         let _ = reply;
         false
+    }
+
+    /// Alternate provider/driver aliases that resolve to this runtime, matched ASCII
+    /// case-insensitively (e.g. `["anthropic", "claude-code"]` for `claude`).
+    fn aliases(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Host-home configuration, credential denial, and sandbox profile for this runtime.
+    fn host_profile(&self) -> RuntimeHostProfile {
+        RuntimeHostProfile::default()
+    }
+
+    /// Workspace-relative operator execpolicy folder that the office cleans before operator
+    /// launches, if this runtime loads project-level operator rules from the workspace.
+    fn operator_rules_layout(&self) -> Option<OperatorRulesLayout> {
+        None
+    }
+
+    /// Non-secret base-URL environment variable name for a custom connection endpoint, if any.
+    fn endpoint_env_var(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Allowlisted auth environment variable name for an enrolled credential secret.
+    fn auth_env_var(&self, subscription_cli: bool, secret: &str) -> Option<&'static str> {
+        let _ = (subscription_cli, secret);
+        None
+    }
+
+    /// Sans-I/O conversation transcript parser and layout descriptor for this runtime, if any.
+    fn transcript_parser(&self) -> Option<&dyn TranscriptParser> {
+        None
     }
 }
 

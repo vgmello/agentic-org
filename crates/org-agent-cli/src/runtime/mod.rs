@@ -5,6 +5,8 @@
 pub(crate) mod binding;
 pub(crate) mod card;
 pub(crate) mod domain;
+pub(crate) mod file_guard;
+pub(crate) mod file_transfer;
 pub(crate) mod help;
 pub(crate) mod input;
 pub(crate) mod keys;

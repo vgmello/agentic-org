@@ -85,3 +85,70 @@ fn binding_file_refuses_dangling_links_directories_trailing_slashes_and_blank_fi
         Some(MAX_BINDING_FILE_BYTES as usize)
     );
 }
+
+#[test]
+fn conflict_api_error_populates_retry_with_and_error_conflict() {
+    use org_proto::{ApiError, ConflictDetail, ConflictEvent, ConflictSummary};
+
+    let detail = ConflictDetail {
+        expected_revision: 2,
+        current_revision: 4,
+        changed_sections: vec!["title".into(), "checklist".into()],
+        events_since: vec![ConflictEvent {
+            revision: 3,
+            occurred_at: Some("2026-11-27T10:00:00.000Z".into()),
+            actor_kind: "employee".into(),
+            actor_id: None,
+            change: serde_json::json!({"type": "task_updated", "fields": ["title"]}),
+        }],
+        events_truncated: false,
+        omitted_events: 0,
+        reread_recommended: false,
+        current_summary: Some(ConflictSummary {
+            key: Some("T-A1".into()),
+            title: "Latest".into(),
+            status: "todo".into(),
+            priority: "normal".into(),
+            assignee_id: None,
+            assigned_team_id: None,
+            checklist_total: 1,
+            checklist_done: 0,
+            ac_total: 1,
+            ac_done: 0,
+            dod_total: 0,
+            dod_done: 0,
+            work_steps_total: 0,
+            work_steps_done: 0,
+            comment_count: 0,
+            watcher_count: 0,
+        }),
+    };
+    let refusal = map_client_error(ClientError::Api(ApiError::conflict(
+        "revision conflict: expected 2, current is 4",
+        detail.clone(),
+    )));
+    assert_eq!(refusal.code, ErrorCode::Conflict);
+    assert_eq!(
+        refusal
+            .retry_with
+            .as_ref()
+            .and_then(|m| m.get("if-match"))
+            .and_then(|v| v.as_u64()),
+        Some(4)
+    );
+    assert_eq!(refusal.conflict(), Some(&detail));
+    assert!(refusal.hint.contains("--if-match 4"), "{}", refusal.hint);
+    assert!(!refusal.hint.contains("re-inspect"), "{}", refusal.hint);
+
+    let mut reread = detail;
+    reread.reread_recommended = true;
+    let reread_refusal = map_client_error(ClientError::Api(ApiError::conflict(
+        "revision conflict: expected 2, current is 4",
+        reread,
+    )));
+    assert!(
+        reread_refusal.hint.contains("re-inspect"),
+        "{}",
+        reread_refusal.hint
+    );
+}

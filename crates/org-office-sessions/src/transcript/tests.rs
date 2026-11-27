@@ -1,7 +1,11 @@
 use std::fs;
 use std::os::unix::fs::symlink;
 
+use org_agent_runtime::transcript::{LoadedSubagentTranscript, TranscriptEntryKind as RtEntryKind};
+use org_agent_runtime::AgentRuntime as _;
 use org_proto::sessions::{FileEventKind, TranscriptEntryKind, TranscriptFormat};
+
+use crate::runtime_registry::RuntimeRegistry;
 
 use super::{list_agent_sessions, load_agent_transcript, TranscriptQuery};
 
@@ -18,6 +22,7 @@ fn temp_home(label: &str) -> std::path::PathBuf {
 #[test]
 fn claude_parser_nests_subagent_applies_toggles_and_redacts_secrets() {
     let home = temp_home("claude");
+    let runtimes = RuntimeRegistry::production();
     let proj_dir = home.join(".claude/projects/-tmp-work");
     let sub_dir = proj_dir.join("sess-c1/subagents");
     fs::create_dir_all(&sub_dir).unwrap();
@@ -47,7 +52,14 @@ fn claude_parser_nests_subagent_applies_toggles_and_redacts_secrets() {
     )
     .unwrap();
 
-    let listed = list_agent_sessions("emp-1", &home, Some("sess-c1"), None, &[active_tok]);
+    let listed = list_agent_sessions(
+        "emp-1",
+        &home,
+        &runtimes,
+        Some("sess-c1"),
+        None,
+        &[active_tok],
+    );
     assert_eq!(listed.sessions.len(), 1);
     assert!(listed.sessions[0].is_live);
     assert_eq!(listed.sessions[0].format, TranscriptFormat::Claude);
@@ -59,6 +71,7 @@ fn claude_parser_nests_subagent_applies_toggles_and_redacts_secrets() {
     let full = load_agent_transcript(
         "emp-1",
         &home,
+        &runtimes,
         Some("sess-c1"),
         Some("sess-c1"),
         TranscriptQuery::default(),
@@ -114,6 +127,7 @@ fn claude_parser_nests_subagent_applies_toggles_and_redacts_secrets() {
     let toggled = load_agent_transcript(
         "emp-1",
         &home,
+        &runtimes,
         Some("sess-c1"),
         Some("sess-c1"),
         TranscriptQuery {
@@ -145,6 +159,7 @@ fn claude_parser_nests_subagent_applies_toggles_and_redacts_secrets() {
 #[test]
 fn codex_and_agy_parsers_extract_messages_files_usage_and_block_symlinks() {
     let home = temp_home("codex-agy");
+    let runtimes = RuntimeRegistry::production();
     let codex_dir = home.join(".codex/sessions/2026/11/22");
     fs::create_dir_all(&codex_dir).unwrap();
     let codex_log = [
@@ -185,7 +200,7 @@ fn codex_and_agy_parsers_extract_messages_files_usage_and_block_symlinks() {
     )
     .unwrap();
 
-    let listed = list_agent_sessions("emp-2", &home, None, None, &[]);
+    let listed = list_agent_sessions("emp-2", &home, &runtimes, None, None, &[]);
     assert!(listed
         .sessions
         .iter()
@@ -196,6 +211,7 @@ fn codex_and_agy_parsers_extract_messages_files_usage_and_block_symlinks() {
     let codex_tx = load_agent_transcript(
         "emp-2",
         &home,
+        &runtimes,
         Some("codex-sess-1"),
         None,
         TranscriptQuery::default(),
@@ -213,6 +229,7 @@ fn codex_and_agy_parsers_extract_messages_files_usage_and_block_symlinks() {
     let agy_tx = load_agent_transcript(
         "emp-2",
         &home,
+        &runtimes,
         Some("agy-conv-1"),
         None,
         TranscriptQuery::default(),
@@ -267,6 +284,13 @@ fn pass1_redaction_and_parser_edge_cases() {
         );
     }
 
+    let codex_rt = org_agent_runtime_codex::CodexRuntime::new();
+    let codex_parser = codex_rt.transcript_parser().unwrap();
+    let claude_rt = org_agent_runtime_claude::ClaudeRuntime::new();
+    let claude_parser = claude_rt.transcript_parser().unwrap();
+    let agy_rt = org_agent_runtime_agy::AgyRuntime::new();
+    let agy_parser = agy_rt.transcript_parser().unwrap();
+
     // Medium #2: Codex item.started ignored, cumulative total_token_usage maxed (not summed), unique raw-* IDs.
     let codex_edge = [
         r#"{"type":"item.started","item":{"type":"agent_message","text":"dup"}}"#,
@@ -277,12 +301,12 @@ fn pass1_redaction_and_parser_edge_cases() {
         r#"{"type":"response_item","payload":{"type":"unknown_b"}}"#,
     ]
     .join("\n");
-    let parsed_codex = super::codex::parse_codex_jsonl(&codex_edge);
+    let parsed_codex = codex_parser.parse(&codex_edge);
     assert_eq!(
         parsed_codex
             .entries
             .iter()
-            .filter(|e| e.kind == TranscriptEntryKind::AssistantMessage)
+            .filter(|e| e.kind == RtEntryKind::AssistantMessage)
             .count(),
         1
     );
@@ -291,7 +315,7 @@ fn pass1_redaction_and_parser_edge_cases() {
     let raw_ids: Vec<&str> = parsed_codex
         .entries
         .iter()
-        .filter(|e| e.kind == TranscriptEntryKind::Raw)
+        .filter(|e| e.kind == RtEntryKind::Raw)
         .map(|e| e.id.as_str())
         .collect();
     assert_eq!(raw_ids.len(), 2);
@@ -303,25 +327,28 @@ fn pass1_redaction_and_parser_edge_cases() {
         r#"{"type":"assistant","message":{"id":"msg_1","model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50},"content":[{"type":"tool_use","id":"tu_1","name":"Agent","input":{}}]}}"#,
     ]
     .join("\n");
-    let mut parsed_claude = super::claude::parse_claude_jsonl(&claude_edge);
+    let mut parsed_claude = claude_parser.parse(&claude_edge);
     assert_eq!(parsed_claude.usage.input_tokens, 100);
     assert_eq!(parsed_claude.usage.output_tokens, 50);
-    let sub1 = super::claude::parse_claude_jsonl(
-        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"s1"}]}}"#,
-    );
-    let sub2 = super::claude::parse_claude_jsonl(
-        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"s2"}]}}"#,
-    );
-    super::claude::attach_claude_subagents(
+    let sub1 = claude_parser
+        .parse(r#"{"type":"assistant","message":{"content":[{"type":"text","text":"s1"}]}}"#);
+    let sub2 = claude_parser
+        .parse(r#"{"type":"assistant","message":{"content":[{"type":"text","text":"s2"}]}}"#);
+    claude_parser.attach_subagents(
         &mut parsed_claude,
         vec![
-            ("a1".into(), Some("first".into()), Some("tu_1".into()), sub1),
-            (
-                "a2".into(),
-                Some("second".into()),
-                Some("tu_1".into()),
-                sub2,
-            ),
+            LoadedSubagentTranscript {
+                agent_id: "a1".into(),
+                label: Some("first".into()),
+                parent_tool_use_id: Some("tu_1".into()),
+                parsed: sub1,
+            },
+            LoadedSubagentTranscript {
+                agent_id: "a2".into(),
+                label: Some("second".into()),
+                parent_tool_use_id: Some("tu_1".into()),
+                parsed: sub2,
+            },
         ],
     );
     let attached_ids: Vec<&str> = parsed_claude
@@ -340,42 +367,43 @@ fn pass1_redaction_and_parser_edge_cases() {
         r#"{"type":"TOOL_RESPONSE","tool_name":"invoke_subagent","tool_call_id":"call_self","result":{"conversationId":"parent-conv"}}"#,
     ]
     .join("\n");
-    let refs = super::agy::extract_agy_subagent_refs(&agy_edge, "parent-conv");
+    let refs = agy_parser.extract_subagent_refs(&agy_edge, "parent-conv");
     assert_eq!(refs.len(), 2);
-    let mut parsed_agy = super::agy::parse_agy_jsonl(&agy_edge);
+    let mut parsed_agy = agy_parser.parse(&agy_edge);
     let sub_list = refs
         .into_iter()
         .map(|r| {
-            let p = super::agy::parse_agy_jsonl(
+            let parsed = agy_parser.parse(
                 r#"{"type":"PLANNER_RESPONSE","content":"ok","usage":{"input_tokens":5,"output_tokens":2}}"#,
             );
-            (r, p)
+            LoadedSubagentTranscript {
+                agent_id: r.agent_id,
+                label: r.label,
+                parent_tool_use_id: r.parent_tool_use_id,
+                parsed,
+            }
         })
         .collect();
-    super::agy::attach_agy_subagents(&mut parsed_agy, sub_list);
+    agy_parser.attach_subagents(&mut parsed_agy, sub_list);
     assert_eq!(parsed_agy.usage.input_tokens, 10);
     let call_first = parsed_agy
         .entries
         .iter()
-        .find(|e| {
-            e.kind == TranscriptEntryKind::ToolCall
-                && e.tool_use_id.as_deref() == Some("call_first")
-        })
+        .find(|e| e.kind == RtEntryKind::ToolCall && e.tool_use_id.as_deref() == Some("call_first"))
         .unwrap();
     assert_eq!(call_first.subagent.as_ref().unwrap().agent_id, "sub-a");
     let call_second = parsed_agy
         .entries
         .iter()
         .find(|e| {
-            e.kind == TranscriptEntryKind::ToolCall
-                && e.tool_use_id.as_deref() == Some("call_second")
+            e.kind == RtEntryKind::ToolCall && e.tool_use_id.as_deref() == Some("call_second")
         })
         .unwrap();
     assert_eq!(call_second.subagent.as_ref().unwrap().agent_id, "sub-z");
     assert!(parsed_agy
         .entries
         .iter()
-        .filter(|e| e.kind == TranscriptEntryKind::ToolResult)
+        .filter(|e| e.kind == RtEntryKind::ToolResult)
         .all(|e| e.subagent.is_none()));
 
     // Pass 2 High #1: multi-byte UTF-8 straddling byte 80 after "-----BEGIN " must not panic.
@@ -395,4 +423,382 @@ fn pass1_redaction_and_parser_edge_cases() {
         !escaped_redacted.contains("secret_val_888"),
         "escaped quote leaked secret: {escaped_redacted}"
     );
+}
+
+#[test]
+fn symlinked_intermediate_parent_directory_is_rejected_fail_closed() {
+    let home = temp_home("parent-symlink-toctou");
+    let canon_home = home.canonicalize().unwrap();
+    let runtimes = RuntimeRegistry::production();
+
+    // Outside directory holding a sensitive transcript-shaped file.
+    let outside = temp_home("parent-symlink-outside");
+    let outside_file = outside.join("sess-escape.jsonl");
+    fs::write(
+        &outside_file,
+        r#"{"type":"user","message":{"role":"user","content":"OUTSIDE_SECRET_PAYLOAD"}}"#,
+    )
+    .unwrap();
+
+    // Symlinked intermediate parent directory under `.claude/projects/<dir>` -> outside.
+    let projects = canon_home.join(".claude/projects");
+    fs::create_dir_all(&projects).unwrap();
+    let linked_proj = projects.join("proj-link");
+    symlink(&outside, &linked_proj).unwrap();
+
+    // Direct open through the symlinked parent dir MUST fail closed via `open_regular_beneath`.
+    let through_outside_link = linked_proj.join("sess-escape.jsonl");
+    assert!(
+        super::discover::open_safe_regular_file(&through_outside_link, &canon_home).is_err(),
+        "open_safe_regular_file must reject symlinked parent directory escaping home"
+    );
+
+    // Even a symlinked intermediate parent pointing to ANOTHER directory INSIDE `canon_home`
+    // MUST fail closed because `open_regular_beneath` walks every component with `O_NOFOLLOW`.
+    let real_inside = canon_home.join("real-dir");
+    fs::create_dir_all(&real_inside).unwrap();
+    fs::write(
+        real_inside.join("sess-inside.jsonl"),
+        r#"{"type":"user","message":{"role":"user","content":"inside"}}"#,
+    )
+    .unwrap();
+    let inside_link = projects.join("proj-inside-link");
+    symlink(&real_inside, &inside_link).unwrap();
+    assert!(
+        super::discover::open_safe_regular_file(
+            &inside_link.join("sess-inside.jsonl"),
+            &canon_home
+        )
+        .is_err(),
+        "open_safe_regular_file must reject symlinked intermediate directory even inside home"
+    );
+
+    // Agy symlinked intermediate `.system_generated` directory -> outside dir.
+    let agy_conv = canon_home.join(".gemini/antigravity-cli/brain/agy-link-conv");
+    fs::create_dir_all(&agy_conv).unwrap();
+    let outside_logs = outside.join("logs");
+    fs::create_dir_all(&outside_logs).unwrap();
+    fs::write(
+        outside_logs.join("transcript.jsonl"),
+        r#"{"type":"USER_INPUT","content":"OUTSIDE_AGY_SECRET"}"#,
+    )
+    .unwrap();
+    symlink(&outside, agy_conv.join(".system_generated")).unwrap();
+    assert!(
+        super::discover::open_safe_regular_file(
+            &agy_conv.join(".system_generated/logs/transcript.jsonl"),
+            &canon_home,
+        )
+        .is_err(),
+        "open_safe_regular_file must reject symlinked Agy .system_generated directory"
+    );
+
+    // End-to-end session discovery and loading MUST ignore all symlinked parent directories.
+    let listed = list_agent_sessions("emp-sym", &home, &runtimes, None, None, &[]);
+    assert!(
+        listed.sessions.is_empty(),
+        "symlinked parent dirs must yield zero discovered sessions: {:?}",
+        listed.sessions
+    );
+    let loaded = load_agent_transcript(
+        "emp-sym",
+        &home,
+        &runtimes,
+        Some("sess-escape"),
+        None,
+        TranscriptQuery::default(),
+        &[],
+    )
+    .unwrap();
+    assert!(loaded.is_none());
+
+    let _ = fs::remove_dir_all(&outside);
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
+fn subagent_count_unsafe_ids_and_per_subagent_entries_are_capped() {
+    let home = temp_home("subagent-caps");
+    let runtimes = RuntimeRegistry::production();
+    let proj_dir = home.join(".claude/projects/-tmp-work");
+    let sub_dir = proj_dir.join("sess-cap/subagents");
+    fs::create_dir_all(&sub_dir).unwrap();
+
+    fs::write(
+        proj_dir.join("sess-cap.jsonl"),
+        r#"{"type":"user","message":{"role":"user","content":"Run many subagents"}}"#,
+    )
+    .unwrap();
+
+    // Write 40 valid subagents (> MAX_SUBAGENTS_PER_TRANSCRIPT = 32), with the first subagent
+    // containing 400 assistant entries (> MAX_SUBAGENT_ENTRIES = 256).
+    let oversized_sub: String = (0..400)
+        .map(|i| {
+            format!(
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"entry-{i}"}}]}}}}"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(sub_dir.join("agent-sub-000.jsonl"), oversized_sub).unwrap();
+    for idx in 1..40 {
+        fs::write(
+            sub_dir.join(format!("agent-sub-{idx:03}.jsonl")),
+            format!(
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"ok-{idx}"}}]}}}}"#
+            ),
+        )
+        .unwrap();
+    }
+
+    // Plant unsafe `agent_id` filenames that MUST be rejected by `is_safe_session_id`.
+    for bad in [
+        "agent-..escape.jsonl",
+        "agent-..jsonl",
+        "agent-.jsonl",
+        "agent-bad name!.jsonl",
+    ] {
+        fs::write(
+            sub_dir.join(bad),
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"should never load"}]}}"#,
+        )
+        .unwrap();
+    }
+
+    let listed = list_agent_sessions("emp-cap", &home, &runtimes, None, None, &[]);
+    assert_eq!(listed.sessions.len(), 1);
+    assert_eq!(
+        listed.sessions[0].subagent_count as usize,
+        super::MAX_SUBAGENTS_PER_TRANSCRIPT
+    );
+
+    let loaded = load_agent_transcript(
+        "emp-cap",
+        &home,
+        &runtimes,
+        Some("sess-cap"),
+        None,
+        TranscriptQuery::default(),
+        &[],
+    )
+    .unwrap()
+    .expect("transcript loaded");
+    assert!(
+        loaded.truncated,
+        "capped subagents/entries must mark truncated"
+    );
+
+    let subagents: Vec<_> = loaded
+        .entries
+        .iter()
+        .filter_map(|e| e.subagent.as_ref())
+        .collect();
+    assert_eq!(subagents.len(), super::MAX_SUBAGENTS_PER_TRANSCRIPT);
+    for sub in &subagents {
+        assert!(
+            super::is_safe_session_id(&sub.agent_id),
+            "unsafe agent_id leaked: {}",
+            sub.agent_id
+        );
+        assert!(
+            sub.entries.len() <= super::MAX_SUBAGENT_ENTRIES,
+            "subagent {} exceeded MAX_SUBAGENT_ENTRIES: {}",
+            sub.agent_id,
+            sub.entries.len()
+        );
+        assert_eq!(sub.entry_count as usize, sub.entries.len());
+    }
+    let first_sub = subagents
+        .iter()
+        .find(|s| s.agent_id == "sub-000")
+        .expect("sub-000 loaded");
+    assert_eq!(first_sub.entries.len(), super::MAX_SUBAGENT_ENTRIES);
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
+fn agy_sibling_subagents_are_capped_and_mark_truncated() {
+    let home = temp_home("agy-subagent-caps");
+    let runtimes = RuntimeRegistry::production();
+    let agy_brain = home.join(".gemini/antigravity-cli/brain");
+    let agy_main = agy_brain.join("agy-cap-main/.system_generated/logs");
+    fs::create_dir_all(&agy_main).unwrap();
+    let mut agy_lines = vec![
+        r#"{"type":"USER_INPUT","content":"Fan out"}"#.to_owned(),
+        r#"{"type":"TOOL_RESPONSE","tool_call_id":"bad_0","result":{"conversationId":"../escape"},"spec":{"role":"Bad"}}"#.to_owned(),
+    ];
+    for idx in 0..40 {
+        agy_lines.push(format!(
+            r#"{{"type":"TOOL_RESPONSE","tool_call_id":"call_{idx}","result":{{"conversationId":"agy-child-{idx:03}"}},"spec":{{"role":"Child {idx}"}}}}"#
+        ));
+        let child_dir = agy_brain.join(format!("agy-child-{idx:03}/.system_generated/logs"));
+        fs::create_dir_all(&child_dir).unwrap();
+        fs::write(
+            child_dir.join("transcript.jsonl"),
+            r#"{"type":"PLANNER_RESPONSE","content":"done"}"#,
+        )
+        .unwrap();
+    }
+    fs::write(agy_main.join("transcript.jsonl"), agy_lines.join("\n")).unwrap();
+    let agy_loaded = load_agent_transcript(
+        "emp-cap",
+        &home,
+        &runtimes,
+        Some("agy-cap-main"),
+        None,
+        TranscriptQuery::default(),
+        &[],
+    )
+    .unwrap()
+    .expect("agy transcript loaded");
+    let agy_subs = agy_loaded
+        .entries
+        .iter()
+        .filter(|e| e.subagent.is_some())
+        .count();
+    assert_eq!(agy_subs, super::MAX_SUBAGENTS_PER_TRANSCRIPT);
+    assert!(
+        agy_loaded.truncated,
+        "Agy sessions exceeding MAX_SUBAGENTS_PER_TRANSCRIPT must mark truncated"
+    );
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
+fn cumulative_transcript_byte_budget_stops_loading_subagents_at_16_mib() {
+    let home = temp_home("subagent-byte-budget");
+    let runtimes = RuntimeRegistry::production();
+    let proj_dir = home.join(".claude/projects/-tmp-work");
+    let sub_dir = proj_dir.join("sess-big/subagents");
+    fs::create_dir_all(&sub_dir).unwrap();
+
+    fs::write(
+        proj_dir.join("sess-big.jsonl"),
+        r#"{"type":"user","message":{"role":"user","content":"Big subagents"}}"#,
+    )
+    .unwrap();
+
+    // Build a ~4.5 MiB subagent file using ~4 KiB JSONL lines so parsing stays fast (~ms).
+    let filler = "a".repeat(4000);
+    let one_line = format!(
+        r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"{filler}"}}]}}}}"#
+    );
+    let mut big_payload = String::with_capacity(4_600_000);
+    while big_payload.len() < 4_500_000 {
+        big_payload.push_str(&one_line);
+        big_payload.push('\n');
+    }
+    // 5 x 4.5 MiB = 22.5 MiB > MAX_TOTAL_TRANSCRIPT_BYTES (16 MiB).
+    // Subagents 0..=2 consume ~13.5 MiB, subagent 3 consumes the remaining ~2.5 MiB (truncated),
+    // and subagent 4 MUST NOT be loaded at all.
+    for idx in 0..5 {
+        fs::write(sub_dir.join(format!("agent-big-{idx}.jsonl")), &big_payload).unwrap();
+    }
+
+    let loaded = load_agent_transcript(
+        "emp-big",
+        &home,
+        &runtimes,
+        Some("sess-big"),
+        None,
+        TranscriptQuery::default(),
+        &[],
+    )
+    .unwrap()
+    .expect("transcript loaded");
+    assert!(
+        loaded.truncated,
+        "exhausted cumulative byte budget must mark truncated"
+    );
+    let loaded_ids: Vec<&str> = loaded
+        .entries
+        .iter()
+        .filter_map(|e| e.subagent.as_ref().map(|s| s.agent_id.as_str()))
+        .collect();
+    assert!(
+        loaded_ids.len() < 5,
+        "cumulative 16 MiB budget must stop loading further subagents: {loaded_ids:?}"
+    );
+    assert!(
+        !loaded_ids.contains(&"big-4"),
+        "subagent past 16 MiB budget must not be loaded: {loaded_ids:?}"
+    );
+
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
+fn secrets_in_subagent_agent_id_and_entry_id_are_redacted() {
+    let home = temp_home("redact-ids");
+    let runtimes = RuntimeRegistry::production();
+    let proj_dir = home.join(".claude/projects/-tmp-work");
+    let sub_dir = proj_dir.join("sess-id-secret/subagents");
+    fs::create_dir_all(&sub_dir).unwrap();
+
+    let active_secret = "tok_active_id_secret_123456789";
+    let vendor_secret = "sk-ant-oat01-SECRETID1234567890";
+    fs::write(
+        proj_dir.join("sess-id-secret.jsonl"),
+        r#"{"type":"user","message":{"role":"user","content":"Check ids"}}"#,
+    )
+    .unwrap();
+    // Both filenames pass `is_safe_session_id` and flow into `sub.agent_id` AND `entry.id`.
+    fs::write(
+        sub_dir.join(format!("agent-{vendor_secret}.jsonl")),
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"sub-1"}]}}"#,
+    )
+    .unwrap();
+    fs::write(
+        sub_dir.join(format!("agent-{active_secret}.jsonl")),
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"sub-2"}]}}"#,
+    )
+    .unwrap();
+
+    let loaded = load_agent_transcript(
+        "emp-redact",
+        &home,
+        &runtimes,
+        Some("sess-id-secret"),
+        None,
+        TranscriptQuery::default(),
+        &[active_secret],
+    )
+    .unwrap()
+    .expect("transcript loaded");
+
+    let serialized = serde_json::to_string(&loaded).unwrap();
+    assert!(
+        !serialized.contains(vendor_secret),
+        "vendor secret leaked via sub.agent_id / entry.id: {serialized}"
+    );
+    assert!(
+        !serialized.contains(active_secret),
+        "active secret leaked via sub.agent_id / entry.id: {serialized}"
+    );
+    for entry in &loaded.entries {
+        assert!(
+            !entry.id.contains(vendor_secret),
+            "entry.id leaked vendor secret"
+        );
+        assert!(
+            !entry.id.contains(active_secret),
+            "entry.id leaked active secret"
+        );
+        if let Some(sub) = &entry.subagent {
+            assert!(
+                sub.agent_id.contains("[REDACTED]"),
+                "sub.agent_id should be redacted: {}",
+                sub.agent_id
+            );
+            assert!(
+                entry.id.contains("[REDACTED]"),
+                "subagent entry.id should be redacted: {}",
+                entry.id
+            );
+        }
+    }
+
+    let _ = fs::remove_dir_all(&home);
 }
