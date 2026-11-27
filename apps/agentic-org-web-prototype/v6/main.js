@@ -6,6 +6,9 @@ import "./shell/actions.js";
 import "./shell/sidebar.js";
 import "./pages/person-panel.js";
 import "./pages/project-plan-actions.js";
+import "./pages/processes-actions.js";
+import "./pages/docs-actions.js";
+import { mountDevProcesses } from "./pages/dev-processes.js";
 
 applyNavCollapsed();
 if (!location.hash) {
@@ -13,3 +16,4 @@ if (!location.hash) {
 }
 loadWorkTasks();
 render(true);
+mountDevProcesses();

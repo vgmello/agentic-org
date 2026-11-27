@@ -7,6 +7,7 @@ import { notFound } from "./settings.js";
 import { scopedWorkToolbar, scopedWorkWorkspace } from "./work.js";
 import { pageFeature, pageFeatures } from "./project-plan-features.js";
 import { pageRelease, pageReleases } from "./project-plan-releases.js";
+import { docCrumbs, docsCount, pageDocs } from "./docs.js";
 import { featureRef, getFeature, getRelease, projectFeatures, projectReleases, releaseRef } from "../plan-data.js";
 import { render } from "../shell/router.js";
 import { S } from "../state.js";
@@ -57,13 +58,14 @@ function pageProject(id, tab, sub) {
     ["team", "Team", projMembers(id).length],
     ["features", "Features", projectFeatures(id).filter((f) => f.status !== "retired").length || null],
     ["releases", "Releases", projectReleases(id).length || null],
+    ["docs", "Docs", docsCount(id) || null],
   ];
   const more = moreMenu("pmore", "More actions for " + pr.name, menuItem("health", id, "flag", "Set health…", ` data-id="${id}"`) + menuItem("proto", "Edit " + pr.name, "pencil", "Edit"), "ghost");
-  const trail = planCrumbs(id, tab, sub);
+  const trail = tab === "docs" ? docCrumbs(id, sub) : planCrumbs(id, tab, sub);
   return crumbs([["#/projects", "Projects"], [trail.length ? "#/projects/" + id : null, pr.name], ...trail]) + `<div class="section-header project-header">
     ${hdr(pr.name, leadOf(id) ? esc(leadTxt(id)) : "", "", projPill(id))}
     ${sectionTabs(linkTabs("#/projects/" + id, tabs, tab === "overview" ? "" : tab), more)}
-  </div>` + (tab === "activity" || tab === "releases" ? "" : projectReleaseSummary(id)) + projectBody(id, tab, sub);
+  </div>` + (tab === "activity" || tab === "releases" || tab === "docs" ? "" : projectReleaseSummary(id)) + projectBody(id, tab, sub);
 }
 function projectBody(id, tab, sub) {
   const pr = P[id], ws = W.filter((w) => w.proj === id);
@@ -84,6 +86,7 @@ function projectBody(id, tab, sub) {
   if (tab === "insights") return projectInsights(id);
   if (tab === "features") return sub ? pageFeature(id, sub) : pageFeatures(id);
   if (tab === "releases") return sub ? pageRelease(id, sub) : pageReleases(id);
+  if (tab === "docs") return pageDocs(id, sub);
   if (tab === "conversations") return `<div class="section">${conversationPreview(pr.channel)}</div>`;
   return notFound();
 }

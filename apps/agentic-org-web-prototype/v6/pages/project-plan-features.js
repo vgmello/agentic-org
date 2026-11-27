@@ -4,9 +4,10 @@ import {
   FEATURE_STATUSES, featureProgress, featureRef, featureTasks, getFeature, isFinished, projectFeatures, releaseName, releaseRef, releasesWithFeature,
 } from "../plan-data.js";
 import { S } from "../state.js";
+import { featureDefinitionHtml, featureHistoryHtml, featureSupportHtml } from "./feature-docs.js";
 import { av, empty, esc, ic, plural, searchRow, searchToggle, sectionHead, SEP } from "../ui.js";
 import {
-  featureHref, featurePill, featureWords, iconButton, planBar, planBody, planButton, planFact, planHead, planMenu, planTaskRow, releaseHref,
+  featureHref, featurePill, featureWords, iconButton, planBar, planButton, planFact, planHead, planMenu, planTaskRow, releaseHref,
 } from "./project-plan-ui.js";
 
 Object.assign(S, { planFeatureView: "active", planFeatureQuery: "", planLiveOpen: false });
@@ -120,8 +121,10 @@ function pageFeature(pid, fid) {
     ${retiredNote}
     <div class="plan-summary">${planBar(p.done, p.total, "Feature task progress", featureWords(p) + cancelled)}</div>
     ${featureFacts(f)}
-    <section class="plan-sec" aria-labelledby="plan-def-h">${sectionHead({ id: "plan-def-h", title: "Definition" })}${planBody(f.body_markdown, "No definition written yet. Edit the feature to describe what it does, its rules and its limits.")}</section>
+    ${featureDefinitionHtml(f)}
     ${featureTaskList(f)}
+    ${featureSupportHtml(f)}
+    ${featureHistoryHtml(f)}
   </article>`;
 }
 
