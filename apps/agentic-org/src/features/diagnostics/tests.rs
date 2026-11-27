@@ -8,7 +8,7 @@ use org_office::{EngineChoice, Office, TestOffice};
 use org_platform::service::{Registration, ServiceError, ServiceManager, ServiceStatus, Unit};
 use serde_json::json;
 
-use super::doctor::{CheckStatus, DoctorCheck};
+use super::doctor::{check_linux_apparmor_userns_at, CheckStatus, DoctorCheck};
 use super::doctor_host::{
     check_permissions, check_release_pin_at, check_sockets, validate_marker_content,
 };
@@ -1097,4 +1097,279 @@ fn uninstall_guard_and_service_and_office_locks_fail_closed() {
         status_result: Ok(ServiceStatus::NotRegistered),
     };
     assert!(!unregister_service_with("t", id, &absent).unwrap());
+}
+
+const VALID_SCOPED_BWRAP_PROFILE: &str = "\
+abi <abi/4.0>,\n\
+include <tunables/global>\n\
+\n\
+profile agentic-org-bwrap /{usr/,}bin/bwrap flags=(unconfined) {\n\
+  userns,\n\
+\n\
+  include if exists <local/agentic-org-bwrap>\n\
+}\n";
+
+const UBUNTU_RESTRICT_PROFILE: &str = "\
+abi <abi/5.0>,\n\
+include <tunables/global>\n\
+\n\
+profile bwrap /usr/bin/bwrap flags=(attach_disconnected,mediate_deleted) {\n\
+  allow userns,\n\
+  allow pix /** -> &bwrap//&unpriv_bwrap,\n\
+}\n\
+profile unpriv_bwrap flags=(attach_disconnected,mediate_deleted) {\n\
+  audit deny capability,\n\
+}\n";
+
+fn assert_never_advises_global_sysctl_disable(check: &DoctorCheck) {
+    let combined = format!(
+        "{}\n{}",
+        check.message,
+        check.remediation.as_deref().unwrap_or("")
+    );
+    let lower = combined.to_ascii_lowercase();
+    assert!(
+        !lower.contains("= 0")
+            && !lower.contains("=0")
+            && !lower.contains("relax kernel.apparmor_restrict_unprivileged_userns"),
+        "doctor output must never advise disabling apparmor_restrict_unprivileged_userns globally: {combined}"
+    );
+}
+
+#[test]
+fn doctor_apparmor_userns_handles_missing_zero_unreadable_and_scoped_profile_states() {
+    let dir = tempfile::tempdir().unwrap();
+    let empty_aa = dir.path().join("aa-empty");
+    fs::create_dir_all(&empty_aa).unwrap();
+
+    // 1. Missing sysctl (e.g., macOS or non-AppArmor Linux) returns None.
+    let missing = dir.path().join("missing-sysctl");
+    assert!(check_linux_apparmor_userns_at(&missing, &empty_aa, None).is_none());
+
+    // 2. sysctl=0 returns Pass.
+    let sysctl_zero = dir.path().join("sysctl-0");
+    fs::write(&sysctl_zero, "0\n").unwrap();
+    let pass_zero = check_linux_apparmor_userns_at(&sysctl_zero, &empty_aa, None).unwrap();
+    assert_eq!(pass_zero.status, CheckStatus::Pass, "{pass_zero:?}");
+    assert!(pass_zero
+        .message
+        .contains("unprivileged user namespaces permitted"));
+
+    // 3. sysctl=1 without any scoped profile returns Warn and NEVER suggests disabling sysctl globally.
+    let sysctl_one = dir.path().join("sysctl-1");
+    fs::write(&sysctl_one, "1\n").unwrap();
+    let warn_missing = check_linux_apparmor_userns_at(&sysctl_one, &empty_aa, None).unwrap();
+    assert_eq!(warn_missing.status, CheckStatus::Warn, "{warn_missing:?}");
+    let hint = warn_missing.remediation.as_deref().unwrap();
+    assert!(hint.contains("/etc/apparmor.d/agentic-org-bwrap"), "{hint}");
+    assert!(
+        hint.contains("scripts/install.sh --install-bwrap-apparmor"),
+        "{hint}"
+    );
+    assert_never_advises_global_sysctl_disable(&warn_missing);
+
+    // 4. sysctl=1 with valid scoped agentic-org-bwrap profile returns Pass (with None or unreadable profiles status).
+    let scoped_aa = dir.path().join("aa-scoped");
+    fs::create_dir_all(&scoped_aa).unwrap();
+    let scoped_profile = scoped_aa.join("agentic-org-bwrap");
+    fs::write(&scoped_profile, VALID_SCOPED_BWRAP_PROFILE).unwrap();
+    let pass_present = check_linux_apparmor_userns_at(&sysctl_one, &scoped_aa, None).unwrap();
+    assert_eq!(pass_present.status, CheckStatus::Pass, "{pass_present:?}");
+    assert!(
+        pass_present
+            .message
+            .contains("scoped bwrap AppArmor profile present at"),
+        "{}",
+        pass_present.message
+    );
+    assert!(
+        pass_present
+            .message
+            .contains("(apparmor_restrict_unprivileged_userns=1)"),
+        "{}",
+        pass_present.message
+    );
+
+    // Unreadable /sys/kernel/security/apparmor/profiles (0000 -> PermissionDenied) falls back cleanly to Pass.
+    let unreadable_profiles = dir.path().join("profiles-denied");
+    fs::write(&unreadable_profiles, "agentic-org-bwrap (unconfined)\n").unwrap();
+    fs::set_permissions(&unreadable_profiles, fs::Permissions::from_mode(0o000)).unwrap();
+    let pass_perm_denied =
+        check_linux_apparmor_userns_at(&sysctl_one, &scoped_aa, Some(&unreadable_profiles))
+            .unwrap();
+    fs::set_permissions(&unreadable_profiles, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        pass_perm_denied.status,
+        CheckStatus::Pass,
+        "{pass_perm_denied:?}"
+    );
+    assert!(pass_perm_denied
+        .message
+        .contains("scoped bwrap AppArmor profile present at"));
+
+    // Readable profiles status confirming agentic-org-bwrap (unconfined) is loaded returns Pass.
+    let loaded_profiles = dir.path().join("profiles-loaded");
+    fs::write(
+        &loaded_profiles,
+        "unprivileged_userns (enforce)\nagentic-org-bwrap (unconfined)\n",
+    )
+    .unwrap();
+    let pass_loaded =
+        check_linux_apparmor_userns_at(&sysctl_one, &scoped_aa, Some(&loaded_profiles)).unwrap();
+    assert_eq!(pass_loaded.status, CheckStatus::Pass, "{pass_loaded:?}");
+    assert!(pass_loaded.message.contains("loaded (unconfined)"));
+
+    // Readable profiles status WITHOUT agentic-org-bwrap warns that the on-disk profile is not loaded.
+    let unloaded_profiles = dir.path().join("profiles-unloaded");
+    fs::write(&unloaded_profiles, "unprivileged_userns (enforce)\n").unwrap();
+    let warn_unloaded =
+        check_linux_apparmor_userns_at(&sysctl_one, &scoped_aa, Some(&unloaded_profiles)).unwrap();
+    assert_eq!(warn_unloaded.status, CheckStatus::Warn, "{warn_unloaded:?}");
+    assert!(warn_unloaded.message.contains("not loaded"));
+    assert_never_advises_global_sysctl_disable(&warn_unloaded);
+
+    // 5. sysctl=1 with disabled profile symlink returns Warn.
+    let disabled_aa = dir.path().join("aa-disabled");
+    fs::create_dir_all(disabled_aa.join("disable")).unwrap();
+    let disabled_profile = disabled_aa.join("agentic-org-bwrap");
+    fs::write(&disabled_profile, VALID_SCOPED_BWRAP_PROFILE).unwrap();
+    symlink(
+        &disabled_profile,
+        disabled_aa.join("disable/agentic-org-bwrap"),
+    )
+    .unwrap();
+    let warn_disabled = check_linux_apparmor_userns_at(&sysctl_one, &disabled_aa, None).unwrap();
+    assert_eq!(warn_disabled.status, CheckStatus::Warn, "{warn_disabled:?}");
+    assert!(warn_disabled.message.contains("disabled"));
+    assert_never_advises_global_sysctl_disable(&warn_disabled);
+
+    // 6. sysctl=1 with bwrap-userns-restrict only returns Warn (never falsely claims loaded).
+    let restrict_aa = dir.path().join("aa-restrict-only");
+    fs::create_dir_all(&restrict_aa).unwrap();
+    fs::write(
+        restrict_aa.join("bwrap-userns-restrict"),
+        UBUNTU_RESTRICT_PROFILE,
+    )
+    .unwrap();
+    let restrict_loaded = dir.path().join("profiles-restrict-loaded");
+    fs::write(
+        &restrict_loaded,
+        "unprivileged_userns (enforce)\nbwrap (enforce)\nunpriv_bwrap (enforce)\n",
+    )
+    .unwrap();
+    let warn_restrict =
+        check_linux_apparmor_userns_at(&sysctl_one, &restrict_aa, Some(&restrict_loaded)).unwrap();
+    assert_eq!(warn_restrict.status, CheckStatus::Warn, "{warn_restrict:?}");
+    assert!(warn_restrict.message.contains("bwrap-userns-restrict"));
+    assert_never_advises_global_sysctl_disable(&warn_restrict);
+
+    // Scoped agentic-org-bwrap alongside an active (non-disabled) bwrap-userns-restrict warns until disabled.
+    fs::write(
+        restrict_aa.join("agentic-org-bwrap"),
+        VALID_SCOPED_BWRAP_PROFILE,
+    )
+    .unwrap();
+    let warn_conflict = check_linux_apparmor_userns_at(&sysctl_one, &restrict_aa, None).unwrap();
+    assert_eq!(warn_conflict.status, CheckStatus::Warn, "{warn_conflict:?}");
+    assert!(warn_conflict.message.contains("conflicting"));
+    assert_never_advises_global_sysctl_disable(&warn_conflict);
+
+    // Disabling bwrap-userns-restrict via disable/ symlink makes the scoped profile Pass cleanly.
+    fs::create_dir_all(restrict_aa.join("disable")).unwrap();
+    symlink(
+        restrict_aa.join("bwrap-userns-restrict"),
+        restrict_aa.join("disable/bwrap-userns-restrict"),
+    )
+    .unwrap();
+    let pass_after_disable =
+        check_linux_apparmor_userns_at(&sysctl_one, &restrict_aa, Some(&loaded_profiles)).unwrap();
+    assert_eq!(
+        pass_after_disable.status,
+        CheckStatus::Pass,
+        "{pass_after_disable:?}"
+    );
+    // Even if disabled on disk, if unpriv_bwrap is still loaded in kernel profiles, warn!
+    let mixed_loaded = dir.path().join("profiles-mixed");
+    fs::write(
+        &mixed_loaded,
+        "agentic-org-bwrap (unconfined)\nunpriv_bwrap (enforce)\n",
+    )
+    .unwrap();
+    let warn_stale_kernel =
+        check_linux_apparmor_userns_at(&sysctl_one, &restrict_aa, Some(&mixed_loaded)).unwrap();
+    assert_eq!(
+        warn_stale_kernel.status,
+        CheckStatus::Warn,
+        "{warn_stale_kernel:?}"
+    );
+    assert!(warn_stale_kernel.message.contains("unpriv_bwrap"));
+
+    // 7. Legacy Ubuntu 24.04 unconfined `bwrap` profile passes; capability-stripping `bwrap` fails.
+    let legacy_aa = dir.path().join("aa-legacy");
+    fs::create_dir_all(&legacy_aa).unwrap();
+    fs::write(
+        legacy_aa.join("bwrap"),
+        "abi <abi/4.0>,\ninclude <tunables/global>\nprofile bwrap /usr/bin/bwrap flags=(unconfined) {\n  userns,\n}\n",
+    )
+    .unwrap();
+    let legacy_loaded = dir.path().join("profiles-legacy-loaded");
+    fs::write(&legacy_loaded, "bwrap (unconfined)\n").unwrap();
+    let pass_legacy =
+        check_linux_apparmor_userns_at(&sysctl_one, &legacy_aa, Some(&legacy_loaded)).unwrap();
+    assert_eq!(pass_legacy.status, CheckStatus::Pass, "{pass_legacy:?}");
+
+    let legacy_restrict_aa = dir.path().join("aa-legacy-restrict");
+    fs::create_dir_all(&legacy_restrict_aa).unwrap();
+    fs::write(legacy_restrict_aa.join("bwrap"), UBUNTU_RESTRICT_PROFILE).unwrap();
+    let warn_legacy_restrict =
+        check_linux_apparmor_userns_at(&sysctl_one, &legacy_restrict_aa, None).unwrap();
+    assert_eq!(
+        warn_legacy_restrict.status,
+        CheckStatus::Warn,
+        "{warn_legacy_restrict:?}"
+    );
+
+    // 8. Adversarial profile & sysctl checks: symlink, `deny userns`, FIFO, and unexpected value warn cleanly.
+    let bad_aa = dir.path().join("aa-bad");
+    fs::create_dir_all(&bad_aa).unwrap();
+    symlink(&scoped_profile, bad_aa.join("agentic-org-bwrap")).unwrap();
+    let warn_sym = check_linux_apparmor_userns_at(&sysctl_one, &bad_aa, None).unwrap();
+    assert_eq!(warn_sym.status, CheckStatus::Warn, "{warn_sym:?}");
+
+    fs::remove_file(bad_aa.join("agentic-org-bwrap")).unwrap();
+    fs::write(
+        bad_aa.join("agentic-org-bwrap"),
+        "abi <abi/4.0>,\nprofile agentic-org-bwrap /{usr/,}bin/bwrap {\n  deny userns,\n}\n",
+    )
+    .unwrap();
+    let warn_deny = check_linux_apparmor_userns_at(&sysctl_one, &bad_aa, None).unwrap();
+    assert_eq!(warn_deny.status, CheckStatus::Warn, "{warn_deny:?}");
+
+    let fifo_sysctl = dir.path().join("sysctl.fifo");
+    let c_fifo = std::ffi::CString::new(fifo_sysctl.as_os_str().as_encoded_bytes()).unwrap();
+    org_platform::posix::make_fifo(&c_fifo, 0o600).unwrap();
+    let warn_fifo = check_linux_apparmor_userns_at(&fifo_sysctl, &empty_aa, None).unwrap();
+    assert_eq!(warn_fifo.status, CheckStatus::Warn, "{warn_fifo:?}");
+
+    let weird_sysctl = dir.path().join("sysctl-weird");
+    fs::write(&weird_sysctl, "2\n").unwrap();
+    let warn_weird = check_linux_apparmor_userns_at(&weird_sysctl, &empty_aa, None).unwrap();
+    assert_eq!(warn_weird.status, CheckStatus::Warn, "{warn_weird:?}");
+    assert_never_advises_global_sysctl_disable(&warn_weird);
+
+    // 9. Unreadable sysctl returns Warn.
+    let unreadable_sysctl = dir.path().join("sysctl-unreadable");
+    fs::write(&unreadable_sysctl, "1\n").unwrap();
+    fs::set_permissions(&unreadable_sysctl, fs::Permissions::from_mode(0o000)).unwrap();
+    let warn_unreadable =
+        check_linux_apparmor_userns_at(&unreadable_sysctl, &empty_aa, None).unwrap();
+    fs::set_permissions(&unreadable_sysctl, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        warn_unreadable.status,
+        CheckStatus::Warn,
+        "{warn_unreadable:?}"
+    );
+    assert!(warn_unreadable
+        .message
+        .contains("could not read AppArmor userns sysctl"));
 }

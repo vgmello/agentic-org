@@ -41,16 +41,30 @@ Remote Satellite 2 (main-eu — 100.64.0.22, Ubuntu x86_64, no build toolchain)
   ```bash
   sudo apt-get update && sudo apt-get install -y bubblewrap socat
   ```
-- **Required on Ubuntu 24.04 / 26.04 (AppArmor `bwrap-userns-restrict` compatibility):** Ubuntu's default `bwrap-userns-restrict` profile strips capabilities from child processes inside `bwrap`, which blocks Claude Code's `apply-seccomp` helper (`nested userns is capability-restricted`). Enable nested userns for `bwrap` once per Linux host:
-  ```bash
-  echo "kernel.apparmor_restrict_unprivileged_userns = 0" | sudo tee /etc/sysctl.d/99-agentic-org-bwrap.conf
-  sudo sysctl -p /etc/sysctl.d/99-agentic-org-bwrap.conf
-  if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
-    sudo mkdir -p /etc/apparmor.d/disable
-    sudo ln -sf /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/bwrap-userns-restrict
-    sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict || true
-  fi
-  ```
+- **Required on Ubuntu 24.04 / 26.04 (scoped AppArmor profile for `bwrap`):** Ubuntu 24.04+ restricts unprivileged user namespaces host-wide (`kernel.apparmor_restrict_unprivileged_userns = 1`), and Ubuntu's stock `bwrap-userns-restrict` profile strips capabilities inside child processes (`unpriv_bwrap`), blocking Claude Code's `apply-seccomp` helper (`nested userns is capability-restricted`).
+  - **Never disable `kernel.apparmor_restrict_unprivileged_userns` globally.** Keeping the sysctl enabled protects every other unprivileged process on the host from kernel user-namespace attack surface.
+  - Instead, install the minimal scoped AppArmor profile restricted exclusively to `/{usr/,}bin/bwrap` (`/etc/apparmor.d/agentic-org-bwrap`, canonical template in [`packaging/apparmor/agentic-org-bwrap`](../packaging/apparmor/agentic-org-bwrap)):
+    ```bash
+    # Recommended: installs /etc/apparmor.d/agentic-org-bwrap (0644), disables
+    # Ubuntu's conflicting bwrap-userns-restrict profile if present, and loads
+    # the scoped profile via apparmor_parser -r:
+    sudo bash scripts/install.sh --install-bwrap-apparmor
+
+    # Verify with agentic-org doctor:
+    agentic-org doctor
+    ```
+  - To inspect or install the profile manually (for example via configuration management), run `bash scripts/install.sh --print-bwrap-apparmor` or install the canonical file directly:
+    ```bash
+    bash scripts/install.sh --print-bwrap-apparmor \
+      | sudo tee /etc/apparmor.d/agentic-org-bwrap >/dev/null
+    sudo chmod 0644 /etc/apparmor.d/agentic-org-bwrap
+    if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
+      sudo mkdir -p /etc/apparmor.d/disable
+      sudo ln -sf /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/bwrap-userns-restrict
+      sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict || true
+    fi
+    sudo apparmor_parser -r /etc/apparmor.d/agentic-org-bwrap
+    ```
 - **Not required on remote hosts:** any build toolchain or compiler.
 
 ---
@@ -174,6 +188,7 @@ What `install.sh` does automatically:
 - Runs `agentic-org release install` to verify the Ed25519 manifest signature, closed inventory, and executable digests, pinning the release atomically into `~/.local/share/agentic-org/release-store`.
 - Moves each instance's registered `systemd --user` / `launchd` service to the new release: a running service is stopped for the install and started again on the new release (`--no-restart` leaves it stopped), a stopped one stays stopped, and a unit edited by hand is left untouched with the steps to upgrade it.
 - Symlinks `agentic-org` and `agent-os` into `~/.local/bin`.
+- On Linux hosts where `kernel.apparmor_restrict_unprivileged_userns = 1` and `bwrap` is present without an active scoped profile, installs `/etc/apparmor.d/agentic-org-bwrap` automatically when run as root or prints the scoped `sudo` command when run unprivileged (without failing the release install or relaxing the sysctl globally).
 
 ### Initialize the remote host's `systemd --user` service
 ```bash
@@ -369,6 +384,7 @@ Upgrading from a release whose installed `agentic-org` predates this (its `relea
 - **`release verification: Busy` on `agentic-org release status` or `release install`:** A running `agentic-org serve` holds `store.lock` exclusively. `release install` stops the services `setup` registered by itself; one it left running (a unit edited by hand, named in the error) is stopped with `agentic-org service stop --yes` before installing again.
 - **`service conflict: ... is not a definition this adapter wrote`:** The unit was edited by hand, so `setup` and `release install` never overwrite it. Undo the edit (or remove the unit after `agentic-org service stop --yes`) and run `agentic-org setup` to register the current release again.
 - **Claude Code exits before `initialize` on Linux (`bubblewrap is required for subprocess env scrubbing`):** Install `sudo apt-get install -y bubblewrap socat` on the Linux satellite so Claude Code can enforce `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` and OS-level sandboxing (plus `socat` for proxying `AGENT_OS_SOCKET` into the sandbox).
+- **`agentic-org doctor` warns on `platform.apparmor_userns` or Claude Code reports `nested userns is capability-restricted` on Ubuntu 24.04+:** Install the minimal scoped `bwrap` AppArmor profile with `sudo bash scripts/install.sh --install-bwrap-apparmor` (writes `/etc/apparmor.d/agentic-org-bwrap` and disables conflicting `bwrap-userns-restrict` while keeping `kernel.apparmor_restrict_unprivileged_userns` enabled host-wide).
 - **macOS `cannot write ~/Library/LaunchAgents/...: Permission denied`:** Fix ownership (`sudo chown "$USER":staff ~/Library/LaunchAgents`) or run HQ in foreground mode via `agentic-org serve --setup <config.json>`.
 - **Satellite cannot reach HQ port `7443`:** Verify HQ is listening (`lsof -iTCP:7443 -sTCP:LISTEN`) and reachable over Tailscale (`nc -vz 100.64.0.10 7443`). Remember HQ starts its mTLS listener after the first organization is created.
 

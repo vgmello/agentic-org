@@ -21,18 +21,24 @@ Usage:
   # Install an unsigned local archive (explicit opt-in only):
   install.sh --archive <path.tar.gz> --allow-unsigned [--bin-dir ~/.local/bin]
 
+  # Install or print the minimal scoped AppArmor profile for bwrap (Ubuntu 24.04+):
+  sudo bash scripts/install.sh --install-bwrap-apparmor
+  bash scripts/install.sh --print-bwrap-apparmor
+
 Options:
-  --archive <path>       Local .tar.gz release archive to install
-  --sha256 <file|hex>    Expected archive SHA-256 (file or 64-char hex digest)
-  --pubkey <path>        Trusted publisher Ed25519 public key PEM or trust-registry JSON
-  --version <tag>        Release tag to download (defaults to latest GitHub Release)
-  --repo <owner/repo>    GitHub repository (default: vgmello/agentic-org)
-  --base-url <url>       Custom base URL for archive downloads (requires --version)
-  --bin-dir <dir>        Directory for CLI symlinks (default: ~/.local/bin)
-  --store <dir>          Explicit release store directory
-  --allow-unsigned       Allow installing an unsigned local archive
-  --no-restart           Do not start again the services the upgrade stopped
-  -h, --help             Show this help
+  --archive <path>           Local .tar.gz release archive to install
+  --sha256 <file|hex>        Expected archive SHA-256 (file or 64-char hex digest)
+  --pubkey <path>            Trusted publisher Ed25519 public key PEM or trust-registry JSON
+  --version <tag>            Release tag to download (defaults to latest GitHub Release)
+  --repo <owner/repo>        GitHub repository (default: vgmello/agentic-org)
+  --base-url <url>           Custom base URL for archive downloads (requires --version)
+  --bin-dir <dir>            Directory for CLI symlinks (default: ~/.local/bin)
+  --store <dir>              Explicit release store directory
+  --allow-unsigned           Allow installing an unsigned local archive
+  --no-restart               Do not start again the services the upgrade stopped
+  --install-bwrap-apparmor   Install minimal scoped AppArmor profile for bwrap (Linux)
+  --print-bwrap-apparmor     Print the canonical minimal scoped AppArmor profile and exit
+  -h, --help                 Show this help
 
 Upgrades move each instance's registered service (launchd/systemd) that setup wrote to the
 new release: a running service is stopped for the install and started again on the new
@@ -65,6 +71,20 @@ BIN_DIR="${HOME}/.local/bin"
 STORE_DIR=""
 ALLOW_UNSIGNED=0
 NO_RESTART=0
+INSTALL_BWRAP_APPARMOR=0
+PRINT_BWRAP_APPARMOR=0
+TMP_DIR=""
+TMP_APPARMOR_PROFILE=""
+
+cleanup_temp_paths() {
+  if [[ -n "${TMP_APPARMOR_PROFILE:-}" ]]; then
+    rm -f "$TMP_APPARMOR_PROFILE"
+  fi
+  if [[ -n "${TMP_DIR:-}" ]]; then
+    rm -rf "$TMP_DIR"
+  fi
+}
+trap cleanup_temp_paths EXIT
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -78,6 +98,8 @@ while [[ $# -gt 0 ]]; do
     --store) require_arg "$@"; STORE_DIR="$2"; shift 2 ;;
     --allow-unsigned) ALLOW_UNSIGNED=1; shift ;;
     --no-restart) NO_RESTART=1; shift ;;
+    --install-bwrap-apparmor) INSTALL_BWRAP_APPARMOR=1; shift ;;
+    --print-bwrap-apparmor) PRINT_BWRAP_APPARMOR=1; shift ;;
     -h|--help)
       usage
       exit 0
@@ -85,6 +107,336 @@ while [[ $# -gt 0 ]]; do
     *) echo "install.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+# Emit the canonical minimal scoped AppArmor 4.0+ profile for bubblewrap (`bwrap`).
+# Keep byte-for-byte identical with `packaging/apparmor/agentic-org-bwrap`.
+print_bwrap_apparmor_profile() {
+  cat <<'EOF'
+# Minimal scoped AppArmor 4.0+ profile for bubblewrap (`bwrap`) used by
+# Agentic Org managed agent sandboxes on Ubuntu 24.04+ / 26.04+ hosts.
+#
+# Keep `kernel.apparmor_restrict_unprivileged_userns` enabled (1) host-wide
+# rather than disabling it globally. This profile grants `userns` exclusively
+# to `/{usr/,}bin/bwrap` so all other unprivileged processes stay restricted.
+#
+# Install:
+#   sudo bash scripts/install.sh --install-bwrap-apparmor
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile agentic-org-bwrap /{usr/,}bin/bwrap flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides.
+  include if exists <local/agentic-org-bwrap>
+}
+EOF
+}
+
+resolve_apparmor_parser() {
+  if command -v apparmor_parser >/dev/null 2>&1; then
+    command -v apparmor_parser
+    return 0
+  fi
+  local candidate
+  for candidate in /usr/sbin/apparmor_parser /sbin/apparmor_parser; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+apparmor_profile_is_disabled() {
+  local dir="$1"
+  local name="$2"
+  [[ -e "${dir}/disable/${name}" || -L "${dir}/disable/${name}" ]]
+}
+
+apparmor_restrict_profile_is_active() {
+  local dir="$1"
+  [[ -f "${dir}/bwrap-userns-restrict" && ! -L "${dir}/bwrap-userns-restrict" ]] \
+    && ! apparmor_profile_is_disabled "$dir" "bwrap-userns-restrict"
+}
+
+apparmor_profile_grants_scoped_bwrap() {
+  local profile_file="$1"
+  local require_unconfined="${2:-0}"
+  [[ -f "$profile_file" && ! -L "$profile_file" && -r "$profile_file" ]] || return 1
+  require_cmd awk
+  LC_ALL=C awk -v req_unconf="$require_unconfined" '
+    {
+      line = $0
+      sub(/#.*$/, "", line)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line == "") next
+
+      if (line !~ /^include[[:space:]]/ && index(line, "bwrap") > 0) {
+        if (line ~ /^profile[[:space:]]/ || substr(line, 1, 1) == "/") {
+          has_target = 1
+          if (index(line, "unconfined") > 0) {
+            has_unconfined = 1
+          }
+        }
+      }
+
+      if (index(line, "unpriv_bwrap") > 0) {
+        restricts_caps = 1
+      }
+
+      n = split(line, toks, /[[:space:]]+/)
+      line_deny = 0
+      line_userns = 0
+      line_cap = 0
+      for (i = 1; i <= n; i++) {
+        tok = toks[i]
+        gsub(/[,;]+$/, "", tok)
+        if (tok == "deny") line_deny = 1
+        if (tok == "userns") line_userns = 1
+        if (tok == "capability") line_cap = 1
+      }
+      if (line_userns) {
+        if (line_deny) denies_userns = 1
+        else has_userns = 1
+      }
+      if (line_deny && line_cap) {
+        restricts_caps = 1
+      }
+    }
+    END {
+      if (!has_target || !has_userns || denies_userns || restricts_caps) exit 1
+      if (req_unconf == 1 && !has_unconfined) exit 1
+      exit 0
+    }
+  ' "$profile_file"
+}
+
+has_active_scoped_bwrap_apparmor_profile() {
+  local dir="$1"
+  if apparmor_restrict_profile_is_active "$dir"; then
+    return 1
+  fi
+  if ! apparmor_profile_is_disabled "$dir" "agentic-org-bwrap" \
+     && apparmor_profile_grants_scoped_bwrap "${dir}/agentic-org-bwrap" 0; then
+    return 0
+  fi
+  if ! apparmor_profile_is_disabled "$dir" "bwrap" \
+     && apparmor_profile_grants_scoped_bwrap "${dir}/bwrap" 1; then
+    return 0
+  fi
+  return 1
+}
+
+can_install_apparmor_dir() {
+  local dir="$1"
+  if [[ "${AGENTIC_ORG_SIMULATE_UNPRIVILEGED:-0}" == "1" ]]; then
+    return 1
+  fi
+  if [[ -n "${AGENTIC_ORG_APPARMOR_DIR:-}" ]]; then
+    [[ -d "$dir" && ! -L "$dir" && -w "$dir" ]]
+  else
+    [[ "$(id -u)" -eq 0 && -d "$dir" && ! -L "$dir" && -w "$dir" ]]
+  fi
+}
+
+detect_bwrap_binary() {
+  if [[ -n "${AGENTIC_ORG_BWRAP_BIN:-}" ]]; then
+    [[ "${AGENTIC_ORG_BWRAP_BIN}" != "none" && -x "${AGENTIC_ORG_BWRAP_BIN}" ]]
+    return
+  fi
+  [[ -x /usr/bin/bwrap || -x /bin/bwrap ]] || command -v bwrap >/dev/null 2>&1
+}
+
+read_userns_sysctl_restricted() {
+  local sysctl_path="${AGENTIC_ORG_USERNS_SYSCTL:-/proc/sys/kernel/apparmor_restrict_unprivileged_userns}"
+  [[ -f "$sysctl_path" && ! -L "$sysctl_path" && -r "$sysctl_path" ]] || return 1
+  local val
+  val="$(tr -d '[:space:]' < "$sysctl_path" 2>/dev/null || true)"
+  [[ "$val" == "1" ]]
+}
+
+print_bwrap_apparmor_manual_steps() {
+  local dir="$1"
+  local target="${dir}/agentic-org-bwrap"
+  echo "NOTE: AppArmor restricts unprivileged user namespaces (apparmor_restrict_unprivileged_userns=1)" >&2
+  echo "and no active scoped bwrap AppArmor profile was detected under ${dir}." >&2
+  echo "Keep kernel.apparmor_restrict_unprivileged_userns enabled (never disable it globally)." >&2
+  echo "Install the minimal scoped profile for bwrap only (requires sudo):" >&2
+  echo "" >&2
+  echo "  # Option 1: install directly via install.sh" >&2
+  echo "  sudo bash scripts/install.sh --install-bwrap-apparmor" >&2
+  echo "" >&2
+  echo "  # Option 2: inspect and install using --print-bwrap-apparmor" >&2
+  echo "  bash scripts/install.sh --print-bwrap-apparmor | sudo tee ${target} >/dev/null" >&2
+  echo "  sudo chmod 0644 ${target}" >&2
+  if apparmor_restrict_profile_is_active "$dir"; then
+    echo "  sudo mkdir -p ${dir}/disable" >&2
+    echo "  sudo ln -sf ${dir}/bwrap-userns-restrict ${dir}/disable/bwrap-userns-restrict" >&2
+    echo "  sudo apparmor_parser -R ${dir}/bwrap-userns-restrict || true" >&2
+  fi
+  echo "  sudo apparmor_parser -r ${target}" >&2
+}
+
+install_bwrap_apparmor_profile() {
+  local strict="${1:-1}"
+  local apparmor_dir="${AGENTIC_ORG_APPARMOR_DIR:-/etc/apparmor.d}"
+
+  if [[ "$PLATFORM" != "linux" ]]; then
+    if [[ "$strict" -eq 1 ]]; then
+      echo "install.sh: --install-bwrap-apparmor is only supported on Linux (detected: $UNAME_S)" >&2
+      exit 1
+    fi
+    return 0
+  fi
+
+  case "/${apparmor_dir}/" in
+    *"/../"*|*"/./"*)
+      echo "install.sh: refusing unsafe AppArmor directory path: $apparmor_dir" >&2
+      exit 1
+      ;;
+  esac
+  if [[ -L "$apparmor_dir" ]]; then
+    echo "install.sh: refusing symlinked AppArmor directory: $apparmor_dir" >&2
+    exit 1
+  fi
+  if [[ ! -d "$apparmor_dir" ]]; then
+    if [[ "$strict" -eq 1 ]]; then
+      echo "install.sh: AppArmor profile directory not found: $apparmor_dir" >&2
+      exit 1
+    fi
+    print_bwrap_apparmor_manual_steps "$apparmor_dir"
+    return 0
+  fi
+
+  local profile_path="${apparmor_dir}/agentic-org-bwrap"
+  if [[ -L "$profile_path" ]]; then
+    echo "install.sh: refusing to overwrite symlinked AppArmor profile: $profile_path" >&2
+    exit 1
+  fi
+
+  if ! can_install_apparmor_dir "$apparmor_dir"; then
+    print_bwrap_apparmor_manual_steps "$apparmor_dir"
+    if [[ "$strict" -eq 1 ]]; then
+      echo "install.sh: insufficient privileges to write ${profile_path}; re-run with sudo." >&2
+      exit 1
+    fi
+    return 0
+  fi
+
+  local disable_dir="${apparmor_dir}/disable"
+  if [[ -L "$disable_dir" ]]; then
+    echo "install.sh: refusing symlinked AppArmor disable directory: $disable_dir" >&2
+    exit 1
+  fi
+
+  local parser=""
+  if [[ "${AGENTIC_ORG_SKIP_APPARMOR_PARSER:-0}" != "1" ]]; then
+    parser="$(resolve_apparmor_parser || true)"
+  fi
+
+  # Re-enable agentic-org-bwrap if a previous disable entry exists.
+  local own_disable="${disable_dir}/agentic-org-bwrap"
+  if [[ -L "$own_disable" || -f "$own_disable" ]]; then
+    rm -f "$own_disable"
+  fi
+
+  # Disable Ubuntu's capability-stripping bwrap-userns-restrict profile if active,
+  # while keeping kernel.apparmor_restrict_unprivileged_userns enabled host-wide.
+  local restrict_path="${apparmor_dir}/bwrap-userns-restrict"
+  local restrict_disable="${disable_dir}/bwrap-userns-restrict"
+  if apparmor_restrict_profile_is_active "$apparmor_dir"; then
+    mkdir -p "$disable_dir"
+    chmod 0755 "$disable_dir"
+    ln -s "$restrict_path" "$restrict_disable"
+    if [[ -n "$parser" ]]; then
+      "$parser" -R "$restrict_path" >/dev/null 2>&1 || true
+    fi
+    echo "Disabled conflicting capability-stripping profile: ${restrict_path}" >&2
+  fi
+
+  TMP_APPARMOR_PROFILE="$(mktemp "${apparmor_dir}/.agentic-org-bwrap.XXXXXX")"
+  if ! print_bwrap_apparmor_profile > "$TMP_APPARMOR_PROFILE" || ! chmod 0644 "$TMP_APPARMOR_PROFILE"; then
+    rm -f "$TMP_APPARMOR_PROFILE"
+    TMP_APPARMOR_PROFILE=""
+    echo "install.sh: failed to stage scoped AppArmor profile in ${apparmor_dir}" >&2
+    exit 1
+  fi
+
+  local changed=1
+  if [[ -f "$profile_path" && ! -L "$profile_path" ]] && cmp -s "$TMP_APPARMOR_PROFILE" "$profile_path"; then
+    rm -f "$TMP_APPARMOR_PROFILE"
+    TMP_APPARMOR_PROFILE=""
+    chmod 0644 "$profile_path"
+    changed=0
+  else
+    if ! mv -f "$TMP_APPARMOR_PROFILE" "$profile_path"; then
+      rm -f "$TMP_APPARMOR_PROFILE"
+      TMP_APPARMOR_PROFILE=""
+      echo "install.sh: failed to install scoped AppArmor profile at ${profile_path}" >&2
+      exit 1
+    fi
+    TMP_APPARMOR_PROFILE=""
+  fi
+
+  if [[ "${AGENTIC_ORG_SKIP_APPARMOR_PARSER:-0}" != "1" ]]; then
+    if [[ -n "$parser" ]]; then
+      "$parser" -r "$profile_path"
+    else
+      echo "install.sh: wrote ${profile_path}, but apparmor_parser was not found; reload AppArmor to apply." >&2
+    fi
+  fi
+
+  if [[ "$changed" -eq 1 ]]; then
+    echo "Installed scoped bwrap AppArmor profile: ${profile_path}" >&2
+  else
+    echo "Scoped bwrap AppArmor profile already up to date: ${profile_path}" >&2
+  fi
+}
+
+maybe_handle_linux_bwrap_apparmor() {
+  if [[ "$INSTALL_BWRAP_APPARMOR" -eq 1 ]]; then
+    install_bwrap_apparmor_profile 1
+    return 0
+  fi
+  [[ "$PLATFORM" == "linux" ]] || return 0
+  read_userns_sysctl_restricted || return 0
+  detect_bwrap_binary || return 0
+  local apparmor_dir="${AGENTIC_ORG_APPARMOR_DIR:-/etc/apparmor.d}"
+  if has_active_scoped_bwrap_apparmor_profile "$apparmor_dir"; then
+    return 0
+  fi
+  install_bwrap_apparmor_profile 0
+}
+
+if [[ "$PRINT_BWRAP_APPARMOR" -eq 1 && "$INSTALL_BWRAP_APPARMOR" -eq 1 ]]; then
+  echo "install.sh: --print-bwrap-apparmor cannot be combined with --install-bwrap-apparmor" >&2
+  exit 2
+fi
+
+if [[ "$PRINT_BWRAP_APPARMOR" -eq 1 ]]; then
+  print_bwrap_apparmor_profile
+  exit 0
+fi
+
+UNAME_S="$(uname -s)"
+case "$UNAME_S" in
+  Linux) PLATFORM="linux" ;;
+  Darwin) PLATFORM="macos" ;;
+  *) echo "install.sh: unsupported OS: $UNAME_S" >&2; exit 1 ;;
+esac
+
+if [[ "$INSTALL_BWRAP_APPARMOR" -eq 1 \
+   && -z "$ARCHIVE" \
+   && -z "$SHA256_INPUT" \
+   && -z "$PUBKEY_FILE" \
+   && -z "$VERSION" \
+   && -z "$BASE_URL" \
+   && "$ALLOW_UNSIGNED" -eq 0 ]]; then
+  install_bwrap_apparmor_profile 1
+  exit 0
+fi
 
 require_cmd tar
 require_cmd awk
@@ -164,13 +516,7 @@ resolve_latest_version() {
   printf '%s' "$tag"
 }
 
-UNAME_S="$(uname -s)"
 UNAME_M="$(uname -m)"
-case "$UNAME_S" in
-  Linux) PLATFORM="linux" ;;
-  Darwin) PLATFORM="macos" ;;
-  *) echo "install.sh: unsupported OS: $UNAME_S" >&2; exit 1 ;;
-esac
 case "$UNAME_M" in
   x86_64|amd64) ARCH="x86_64" ;;
   aarch64|arm64) ARCH="aarch64" ;;
@@ -190,7 +536,6 @@ RAW_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agentic-org-install.XXXXXX")"
 chmod 0700 "$RAW_TMP_DIR"
 # Resolve macOS /tmp -> /private/tmp and /var -> /private/var symlinks canonically.
 TMP_DIR="$(cd "$RAW_TMP_DIR" && pwd -P)"
-trap 'rm -rf "$TMP_DIR"' EXIT
 
 compute_sha256() {
   local file="$1"
@@ -887,3 +1232,5 @@ case ":${PATH}:" in
     echo "NOTE: Add ${BIN_DIR} to your PATH (e.g., export PATH=\"${BIN_DIR}:\$PATH\")." >&2
     ;;
 esac
+
+maybe_handle_linux_bwrap_apparmor
