@@ -53,11 +53,12 @@ test(
 		await expect(page.getByTestId('work-board')).toBeVisible();
 		await expect(page.getByTestId('board-column')).toHaveCount(4);
 
-		// Saved filter All shows every task across projects, including 7-day Done window + Show all done.
+		// Saved filter All shows every task across projects, including Done history popover (7d / 30d / All done).
 		await selectSavedFilter(page, 'all');
 		const toggleDone = page.getByTestId('toggle-all-done');
-		await expect(toggleDone).toContainText('Show all done (1)');
+		await expect(toggleDone).toContainText('Last 7 days');
 		await toggleDone.click();
+		await page.getByRole('menuitem', { name: 'All done' }).click();
 		await expect(page.locator('[data-testid=work-card][data-ref=T-A29]')).toBeVisible();
 
 		// Move a card via ⋯ Move to menu and verify live announcement (TSK-2).
@@ -606,4 +607,47 @@ test('PRIVATE NOTES (TASK-67 / ADR-0031): per-agent grouped pane, visibility cop
 	await expect(page.getByTestId('private-notes-list')).toBeVisible();
 	await noSidewaysScroll(page);
 	await shot(page, 'work-private-notes-320-200pct');
+});
+
+test('WORK-board Wave 4A regressions: older-Done search keeps Done lane + live announce, clamped title opens tooltip on focus', async ({
+	page
+}) => {
+	await open(page);
+	await page
+		.getByRole('tablist', { name: 'Work', exact: true })
+		.getByRole('tab', { name: /^Tasks/ })
+		.click();
+	await selectSavedFilter(page, 'all');
+	await expect(page.getByTestId('work-board')).toBeVisible();
+
+	// Searching an older (>7d) Done task keeps Done lane + Done history popover visible (never 0 lanes).
+	const searchInput = page.getByRole('searchbox', { name: /Search/i }).first();
+	await searchInput.fill('T-A29');
+	const toggleDone = page.getByTestId('toggle-all-done');
+	await expect(toggleDone).toBeVisible();
+	await expect(page.getByTestId('board-search-live')).toContainText('1 lane');
+
+	// Switching Done history to All done reveals T-A29 and keeps search live announcements working.
+	await toggleDone.click();
+	await page.getByRole('menuitem', { name: 'All done' }).click();
+	await expect(page.locator('[data-testid=work-card][data-ref=T-A29]')).toBeVisible();
+	await expect(page.getByTestId('board-search-live')).toContainText(
+		'1 matching items across 1 lane'
+	);
+
+	// Unclamped card title does not open a tooltip on keyboard focus; clamped title opens tooltip on focus and closes on Escape.
+	await searchInput.fill('');
+	const firstTitle = page.locator('.work-bcard a.bcard-title').first();
+	await expect(firstTitle).toBeVisible();
+	await firstTitle.focus();
+	await expect(page.getByRole('tooltip')).toHaveCount(0);
+	await firstTitle.blur();
+
+	await firstTitle.evaluate((el) => {
+		el.style.maxHeight = '10px';
+	});
+	await firstTitle.focus();
+	await expect(page.getByRole('tooltip')).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(page.getByRole('tooltip')).toBeHidden();
 });

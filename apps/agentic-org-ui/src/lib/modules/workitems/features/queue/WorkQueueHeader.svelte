@@ -397,6 +397,18 @@
 		}
 	}
 
+	@media (max-width: 720px), (pointer: coarse) {
+		.queue-tab,
+		.work-primary-tab {
+			min-height: 44px;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.queue-tab,
+		.work-primary-tab {
+			transition: none;
+		}
+	}
 	@media (forced-colors: active) {
 		.work-primary-tab {
 			border-block-end-color: Canvas;

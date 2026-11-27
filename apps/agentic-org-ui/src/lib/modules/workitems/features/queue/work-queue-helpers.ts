@@ -208,3 +208,42 @@ export function attachWorkSearchShortcuts(deps: WorkShortcutDeps): () => void {
 		window.removeEventListener('keydown', onEscapeKey);
 	};
 }
+
+export const EMPTY_SAVED_COUNTS = {
+	all: 0,
+	owned_by_my_team: 0,
+	assigned_to_my_team: 0,
+	assigned_to_me: 0,
+	reported_by_me: 0,
+	blocked: 0
+} as const;
+
+export function groupOptionsForTab(tab: TaskType, isOrgScope: boolean): GroupBy[] {
+	if (tab === 'bug') {
+		return isOrgScope
+			? ['assigned_team', 'severity', 'priority', 'status', 'project', 'team', 'assignee', 'none']
+			: ['assigned_team', 'severity', 'priority', 'status', 'team', 'assignee', 'none'];
+	}
+	if (tab === 'request') {
+		return isOrgScope
+			? ['status', 'assigned_team', 'project', 'team', 'assignee', 'none']
+			: ['status', 'assigned_team', 'team', 'assignee', 'none'];
+	}
+	return isOrgScope
+		? ['none', 'status', 'priority', 'project', 'assigned_team', 'team', 'assignee']
+		: ['none', 'status', 'priority', 'assigned_team', 'team', 'assignee'];
+}
+
+/** Keeps Done tasks available for the board's own Done history popover (`7d`/`30d`/`all`). */
+export function resolveBoardBaseRows(opts: {
+	allRows: TaskRow[];
+	fallbackBase: TaskRow[];
+	archivedIds: ReadonlySet<string>;
+	showArchived: boolean;
+	scopeMine: boolean;
+	mineFilter: (rows: TaskRow[]) => TaskRow[];
+}): TaskRow[] {
+	if (opts.showArchived || opts.archivedIds.size === 0) return opts.fallbackBase;
+	const scoped = opts.scopeMine ? opts.mineFilter(opts.allRows) : opts.allRows;
+	return scoped.filter((r) => r.status === 'done' || !opts.archivedIds.has(r.id));
+}

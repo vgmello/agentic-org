@@ -758,7 +758,7 @@
 			"src/routes/(shell)/teams/(views)/+{layout.svelte,page.ts}",
 			"src/routes/(shell)/settings/+layout.svelte",
 			"src/lib/components/{MiniIcon,PageHeader,ScopedSearchInput,TabsNav,EmptyState,ErrorState,SkeletonRows,DescriptionList,Section,Avatar,StatTile,NotBuilt,Loaded,ConfirmDialog,CopyButton,WorkReadingPanel,WorkReadingHeaderActions,Breadcrumbs,SectionHead,InlineSearchToggle,InlineSearchRow}.svelte",
-			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,LiveBanner,Logo,resource,classes,focus,pills,work-reading-inert}.*",
+			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,LiveBanner,Logo,resource,classes,focus,pills,work-reading-inert,chart-math}.*",
 			"static/**",
 			"vite.config.ts",
 			"svelte.config.js",

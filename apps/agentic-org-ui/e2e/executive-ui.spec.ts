@@ -143,7 +143,10 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 		.click();
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'graphite');
 	await expect(page.locator('.cozy-room')).toBeHidden();
-	await expect(page.locator('.exec-cta').first()).toHaveCSS('background-color', 'rgb(83, 83, 83)');
+	await expect(page.locator('.exec-cta').first()).toHaveCSS(
+		'background-color',
+		'rgb(236, 236, 238)'
+	);
 	await expect(page.locator('.exec-cta').first()).toHaveCSS('border-radius', '5px');
 	if (captureDir) {
 		await page.screenshot({ path: `${captureDir}/prod-home-graphite.png` });
@@ -155,10 +158,6 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 		.click();
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'cozy');
 	await expect(page.locator('.cozy-room')).toBeVisible();
-	const askRadius = await page
-		.getByRole('button', { name: 'Ask', exact: true })
-		.evaluate((el) => getComputedStyle(el).borderRadius);
-	expect(askRadius).toBe('9999px');
 	if (captureDir) {
 		await page.screenshot({ path: `${captureDir}/prod-home-cozy.png` });
 	}
@@ -197,14 +196,14 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 		.click();
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'ocean');
 
-	// Command bar Ask opens persistent right-hand Tess Chief of Staff Side Panel
-	await page.getByRole('button', { name: 'Ask', exact: true }).click();
+	// Sidebar Tess contact opens persistent right-hand Tess Chief of Staff Side Panel
+	await page.getByRole('button', { name: /Tess — Chief of staff/ }).click();
 	const tessPanel = page.getByTestId('tess-panel');
 	await expect(tessPanel).toBeVisible();
 	await tessPanel.getByRole('button', { name: 'Budget, offices & active agents' }).click();
 	await expect(tessPanel).toContainText('agents active');
 	await expect(tessPanel).toContainText('Offline quick summary · Local data only');
-	await tessPanel.getByRole('button', { name: 'Close Tess panel' }).click();
+	await tessPanel.getByRole('button', { name: /Close/ }).click();
 	await expect(tessPanel).toBeHidden();
 
 	// Inbox renders split master-detail approval & triage workspace from inboxApi
@@ -392,10 +391,8 @@ test('Home scroll cue: keyboard-reachable before below-fold content, moves focus
 		.getByRole('group', { name: 'Theme' })
 		.getByRole('button', { name: 'Graphite' })
 		.boundingBox();
-	const askBox = await page.getByRole('button', { name: 'Ask', exact: true }).boundingBox();
 	const hintBox = await hint.boundingBox();
 	expect(pillBox?.height ?? 0).toBeGreaterThanOrEqual(44);
-	expect(askBox?.height ?? 0).toBeGreaterThanOrEqual(44);
 	expect(hintBox?.height ?? 0).toBeGreaterThanOrEqual(44);
 	await page.setViewportSize({ width: 1440, height: 700 });
 	await expect(hint).toBeVisible();
@@ -404,9 +401,9 @@ test('Home scroll cue: keyboard-reachable before below-fold content, moves focus
 		await page.screenshot({ path: `${captureDir}/poc-home-scroll-cue-graphite.png` });
 	}
 
-	// Keyboard Tab from the last control in command bar (Ask button) reaches Home scroll cue before below-fold content
-	const askButton = page.getByRole('button', { name: 'Ask', exact: true });
-	await askButton.focus();
+	// Keyboard Tab from the last control in header (Notifications button) reaches Home scroll cue before below-fold content
+	const notifButton = page.getByRole('button', { name: /^Notifications/ });
+	await notifButton.focus();
 	await page.keyboard.press('Tab');
 	await expect(hint).toBeFocused();
 
@@ -499,7 +496,7 @@ test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.
 	await expect(tessPanel).toBeVisible();
 	await expect(tessPanel).toContainText("Approve publishing Kai's sync update to v1.0");
 	await expect(tessPanel).toContainText('Ada recommends: approve.');
-	await tessPanel.getByRole('button', { name: 'Close Tess panel' }).click();
+	await tessPanel.getByRole('button', { name: /Close/ }).click();
 	await expect(tessPanel).toBeHidden();
 
 	// Home overview does not show a "New task" CTA; deep-linking /work?new=1 opens the task dialog and strips ?new=1
@@ -583,7 +580,7 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 	// Graphite Inbox matte surfaces, top-lit sidebar lighting & queue sheen (13abb1f1..2c58edcd)
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'graphite');
 	await expect(page.locator('html')).toHaveAttribute('data-interior-page');
-	await expect(page.locator('aside.exec-sidebar')).toHaveCSS('background-color', 'rgb(19, 21, 22)');
+	await expect(page.locator('aside.exec-sidebar')).toHaveCSS('background-color', 'rgb(20, 21, 22)');
 	const sidebarLightBg = await page
 		.locator('aside.exec-sidebar')
 		.evaluate((el) => getComputedStyle(el, '::before').backgroundImage);
@@ -591,13 +588,14 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 	await expect(page.locator('.triage-queue')).toHaveCSS('background-color', 'rgb(27, 28, 29)');
 	await expect(page.locator('.exec-nav-label').first()).toHaveCSS('color', 'rgb(133, 136, 142)');
 
-	// 3 primary categories only (All, Approvals, Decisions) + More trigger keeps "More" label
+	// 4 primary categories (All, Approvals, Decisions, Notifications) + More trigger keeps "More" label
 	const catGroup = page.getByRole('group', { name: 'Inbox categories' });
 	const primaryButtons = catGroup.locator(':scope > button.queue-tab');
-	await expect(primaryButtons).toHaveCount(3);
+	await expect(primaryButtons).toHaveCount(4);
 	await expect(primaryButtons.nth(0)).toContainText('All');
 	await expect(primaryButtons.nth(1)).toContainText('Approvals');
 	await expect(primaryButtons.nth(2)).toContainText('Decisions');
+	await expect(primaryButtons.nth(3)).toContainText('Notifications');
 
 	const moreTrigger = catGroup.getByRole('button', { name: 'More' });
 	await moreTrigger.click();
@@ -715,7 +713,7 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 	await page.locator('[data-triage-row="in1"]').click();
 
 	// Comment validity reset, per-item unsent draft preservation, live status announcement, and reload persistence
-	const commentBox = page.getByLabel('Comment on this request');
+	const commentBox = page.getByLabel('Add a device-only note on this request');
 	const sendCommentBtn = page.getByRole('button', { name: 'Send comment' });
 	const otherRow = page.locator('[data-triage-row]:not([data-triage-row="in1"])').first();
 
@@ -748,7 +746,9 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 
 	await commentBox.fill('Verified release notes and rollback plan.');
 	await sendCommentBtn.click();
-	await expect(page.locator('#triage-comment-status')).toHaveText('Comment posted (1 total).');
+	await expect(page.locator('#triage-comment-status')).toHaveText(
+		'Saved locally on this device (1 total; not sent to office).'
+	);
 	await expect(page.locator('.triage-comment-list')).toContainText(
 		'Verified release notes and rollback plan.'
 	);
@@ -773,7 +773,7 @@ test('Phase 2 Inbox parity: 3 primary tabs, More/Filter/Display menus, Graphite 
 		await page.keyboard.press('ControlOrMeta+k');
 		const dialog = page.locator('.exec-cmdk-dialog');
 		await expect(dialog).toBeVisible();
-		await expect(dialog).toHaveCSS('border-top-color', 'rgb(131, 147, 171)');
+		await expect(dialog).toHaveCSS('border-top-color', 'rgba(255, 255, 255, 0.16)');
 		const contrast = await dialog.evaluate((el) => {
 			const parseRgb = (s: string) =>
 				(s.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number) as [number, number, number];
@@ -820,7 +820,7 @@ test('Phase 3 Work parity: unified WorkQueueView header, live search & / shortcu
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'graphite');
 	await expect(page.locator('html')).toHaveAttribute('data-interior-page');
 	await expect(page.locator('main')).toHaveCSS('background-color', 'rgb(24, 25, 26)');
-	await expect(page.locator('aside.exec-sidebar')).toHaveCSS('background-color', 'rgb(19, 21, 22)');
+	await expect(page.locator('aside.exec-sidebar')).toHaveCSS('background-color', 'rgb(20, 21, 22)');
 	await expect(page.locator('header.work-header.queue-header')).toBeVisible();
 	await expect(page.locator('#shell-page-title')).toContainText('Work');
 
@@ -1370,12 +1370,13 @@ test('Phase 7 (5da47e1d + 53728c05): Assembly Display row dividers persistence, 
 	);
 
 	await visit(page, '/inbox?theme=cozy&mock=poc');
-	const inboxSearch = page.getByLabel('Search inbox');
+	const inboxSearch = page.getByRole('searchbox', { name: 'Search inbox' });
 	await page.locator('#shell-page-title').focus();
 	await page.keyboard.press('/');
 	await expect(inboxSearch).toBeFocused();
 	await inboxSearch.fill('Custody');
 	await inboxSearch.press('Escape');
-	await expect(inboxSearch).toHaveValue('Custody');
+	await expect(inboxSearch).toHaveValue('');
+	await inboxSearch.press('Escape');
 	await expect(page.locator('#shell-page-title')).toBeFocused();
 });
