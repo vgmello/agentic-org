@@ -189,3 +189,25 @@ export async function runTessIntakeBackground(input: {
 		toast.error(msg);
 	}
 }
+
+export function formatCaptureHeading(
+	type: TaskType,
+	fixesTaskId: string | undefined,
+	organizationName: string | undefined
+): string {
+	const org = organizationName ? ` · ${organizationName}` : '';
+	if (fixesTaskId) return `Create fix task${org}`;
+	if (type === 'bug') return `Report a bug${org}`;
+	if (type === 'request') return `New request${org}`;
+	return `New task${org}`;
+}
+
+export function formatCaptureSubmitLabel(
+	type: TaskType,
+	busy: boolean,
+	hasAssignee: boolean
+): string {
+	if (type === 'bug') return busy ? 'Reporting…' : 'Report bug';
+	if (type === 'request') return busy ? 'Saving…' : hasAssignee ? 'Send request' : 'Save request';
+	return busy ? 'Creating…' : 'Create task';
+}

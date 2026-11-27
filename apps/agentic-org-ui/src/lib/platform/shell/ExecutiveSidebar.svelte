@@ -2,15 +2,12 @@
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { Tooltip } from 'bits-ui';
-	import Activity from '@lucide/svelte/icons/activity';
 	import Bot from '@lucide/svelte/icons/bot';
 	import Building2 from '@lucide/svelte/icons/building-2';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
-	import ClipboardList from '@lucide/svelte/icons/clipboard-list';
 	import Folder from '@lucide/svelte/icons/folder';
 	import House from '@lucide/svelte/icons/house';
 	import Inbox from '@lucide/svelte/icons/inbox';
-	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import Network from '@lucide/svelte/icons/network';
 	import PanelLeft from '@lucide/svelte/icons/panel-left';
 	import Search from '@lucide/svelte/icons/search';
@@ -20,6 +17,7 @@
 	import Workflow from '@lucide/svelte/icons/workflow';
 	import type { Connection, ProjectSummary } from '$lib/proto';
 	import ExecutiveSidebarFooter from './ExecutiveSidebarFooter.svelte';
+	import ExecutiveSidebarWorkspaceNav from './ExecutiveSidebarWorkspaceNav.svelte';
 	import OrganizationSwitcher from './OrganizationSwitcher.svelte';
 	import { useNotifications } from './notifications.svelte';
 	import { singleKeyShortcutsOn } from './shortcuts';
@@ -306,46 +304,7 @@
 				</ul>
 			</div>
 
-			<div class={collapsed ? 'w-full' : undefined}>
-				{#if !collapsed}
-					<div class="exec-nav-label px-2.5 pb-1.5">Workspace</div>
-				{/if}
-				<ul class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}>
-					{#each [{ href: '/work', label: 'Work', Icon: ClipboardList }, { href: '/chat', label: 'Chat', Icon: MessageSquare }, { href: '/activity', label: 'Activity', Icon: Activity }, { href: '/projects', label: 'Projects', Icon: Folder }] as const as item (item.href)}
-						{@const NavIcon = item.Icon}
-						<li>
-							<Tooltip.Root disabled={!collapsed}>
-								<Tooltip.Trigger>
-									{#snippet child({ props })}
-										<a
-											{...props}
-											href={resolve(item.href)}
-											onclick={(e) => onNavigate?.(e, item.href)}
-											aria-current={isActive(item.href) ? 'page' : undefined}
-											class={[
-												'exec-nav-item',
-												collapsed && 'is-rail',
-												isActive(item.href) && 'is-active'
-											]}
-										>
-											<NavIcon class="size-[18px] shrink-0" aria-hidden="true" />
-											<span class={collapsed ? 'sr-only' : 'truncate'}>{item.label}</span>
-										</a>
-									{/snippet}
-								</Tooltip.Trigger>
-								<Tooltip.Portal>
-									<Tooltip.Content
-										side="right"
-										sideOffset={6}
-										class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-										>{item.label}</Tooltip.Content
-									>
-								</Tooltip.Portal>
-							</Tooltip.Root>
-						</li>
-					{/each}
-				</ul>
-			</div>
+			<ExecutiveSidebarWorkspaceNav {collapsed} {isActive} {onNavigate} />
 
 			{#if !collapsed && favoriteList.length > 0}
 				<div>

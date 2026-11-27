@@ -192,6 +192,8 @@ export const allowlist: Record<string, string> = {
 		'Report (Modern 2D Executive Day) theme tokens and editorial layout.',
 	'src/lib/styles/themes/report-dark.css':
 		'Report Night (Modern 2D Executive Dark) theme tokens and palette.',
+	'src/lib/styles/themes/board-and-charts.css':
+		'Work board lane/card tokens and Insights chart palette across all 7 themes.',
 	'src/lib/platform/tooling/look-tokens.ts': 'This mapping table.',
 	'src/lib/platform/tooling/look-tokens.test.ts': 'The guard and its fixtures.'
 };
