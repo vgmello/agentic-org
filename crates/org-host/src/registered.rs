@@ -208,18 +208,17 @@ impl Host {
             Some(instance),
             Some((lock, custody)),
             release_directory,
+            crate::ports::HostPorts::default(),
         )?;
-        let db = match &host.service.authentication {
-            Some(authentication) => authentication.provisioning_storage().0,
-            None => {
-                return Err(refused(
-                    "opening the host registry",
-                    "the registered host has no registry",
-                ))
-            }
-        };
+        let authentication = host.service.authentication.as_ref().ok_or_else(|| {
+            refused(
+                "opening the host registry",
+                "the registered host has no registry",
+            )
+        })?;
         let admin = Admin::new(
-            db,
+            authentication.accounts_store(),
+            authentication.links_store(),
             &record.setup_operation,
             browser.origin().clone(),
             policy,

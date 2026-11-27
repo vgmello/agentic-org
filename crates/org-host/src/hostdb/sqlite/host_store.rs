@@ -1,4 +1,6 @@
-//! [`HostStore`] implementation for the local SQLite host registry ([`HostDb`]).
+//! Focused host-registry domain port implementations for the local SQLite host registry
+//! ([`HostDb`]). Together with `AccountStore`, `OneTimeLinks`, and `BrowserSessions`, these
+//! satisfy the composite [`crate::hostdb::HostStore`] via its blanket implementation.
 
 use std::collections::BTreeSet;
 
@@ -12,12 +14,14 @@ use crate::accounts::store::{NewAccount, StoreError as AccountStoreError};
 use crate::accounts::verifier::Verifier;
 use crate::host_secrets::HostSecrets;
 use crate::hostdb::{
-    accounts, journal, lockout, multi_person, provisioning, recovery, web_tls, Error, HostStore,
+    accounts, journal, lockout, multi_person, provisioning, recovery, web_tls, Error,
+    HostAccountsStore, LoginLockoutStore, OperationJournalStore, ProvisioningStore, RecoveryStore,
+    WebTlsStore,
 };
 use crate::links::{Issued, LinkKind, Subject, Token};
 use crate::sessions::Ended;
 
-impl HostStore for HostDb {
+impl HostAccountsStore for HostDb {
     fn verify_instance(&self, instance: &str) -> Result<(), Error> {
         HostDb::verify_instance(self, instance)
     }
@@ -178,6 +182,9 @@ impl HostStore for HostDb {
     ) -> Result<Option<Issued>, crate::links::Error> {
         HostDb::issue_unless_administrator(self, kind, subject, now_ms)
     }
+}
+
+impl OperationJournalStore for HostDb {
     fn journal_lookup(
         &self,
         op: &journal::Attempt<'_>,
@@ -196,6 +203,9 @@ impl HostStore for HostDb {
     fn journal_prune_expired(&self, wall_ms: i64) -> Result<journal::PruneOutcome, Error> {
         HostDb::prune_expired(self, wall_ms)
     }
+}
+
+impl LoginLockoutStore for HostDb {
     fn login_lockout(
         &self,
         socket: lockout::Socket,
@@ -226,6 +236,9 @@ impl HostStore for HostDb {
     fn prune_login_lockouts(&self, wall_ms: u64) -> Result<usize, Error> {
         HostDb::prune_login_lockouts(self, wall_ms)
     }
+}
+
+impl ProvisioningStore for HostDb {
     fn provisioning_taken(
         &self,
         name: &str,
@@ -287,6 +300,9 @@ impl HostStore for HostDb {
     fn provision_linked(&self, r: &provisioning::Reservation) -> Result<(), Error> {
         HostDb::provision_linked(self, r)
     }
+}
+
+impl RecoveryStore for HostDb {
     fn recovery_state(&self, operation: &str) -> Result<Option<recovery::State>, Error> {
         HostDb::recovery_state(self, operation)
     }
@@ -326,6 +342,9 @@ impl HostStore for HostDb {
     fn recovery_reconcile(&self, custody: &dyn HostSecrets) -> Result<(), Error> {
         HostDb::recovery_reconcile(self, custody)
     }
+}
+
+impl WebTlsStore for HostDb {
     fn web_tls_pair(&self) -> Result<Option<web_tls::StoredPair>, Error> {
         HostDb::web_tls_pair(self)
     }

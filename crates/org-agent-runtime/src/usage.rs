@@ -2,8 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::event::redact_opt;
-
 /// Token usage, and its cost where the runtime estimates one.
 ///
 /// Adapters normalize their runtime's reporting into it. Claude, for instance, reports usage
@@ -74,7 +72,9 @@ impl Usage {
     }
 
     pub(crate) fn redact(&mut self, f: &mut dyn FnMut(&mut String)) {
-        redact_opt(&mut self.model, f);
+        if let Some(model) = &mut self.model {
+            f(model);
+        }
     }
 }
 
@@ -148,7 +148,9 @@ impl RateLimit {
             Window::Other { id, mins: _ } => f(id),
             Window::FiveHour | Window::SevenDay | Window::Unknown => {}
         }
-        redact_opt(resets_at, f);
+        if let Some(resets_at) = resets_at {
+            f(resets_at);
+        }
     }
 }
 

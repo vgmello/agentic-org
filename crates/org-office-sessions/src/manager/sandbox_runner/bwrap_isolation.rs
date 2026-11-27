@@ -1,9 +1,9 @@
 //! Linux Claude `bwrap` directory pre-creation and cross-agent sibling isolation (`TASK-144`,
 //! `TASK-163`, `TASK-166`).
 //!
-//! Kept in its own focused module so all `bwrap` deny-dir setup, team-tree pre-creation,
-//! stale-handle teardown, and pre-spawn sibling verification flow through one single
-//! choke-point; teardown itself goes through [`super::reap`].
+//! Kept inside the `sandbox_runner` local confinement adapter so all `bwrap` deny-dir setup,
+//! team-tree pre-creation, stale-handle teardown, and pre-spawn sibling verification flow through
+//! one single choke-point; teardown itself goes through [`super::super::reap`].
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -12,14 +12,14 @@ use org_office::Office;
 use org_proto::sessions::SessionState;
 use org_proto::{ApiError, ErrorCode};
 
-use super::environment::ensure_owner_only_dir;
-use super::office_masks::OfficeMasks;
-use super::reap::{reap_live_handle, ReapMode};
-use super::sandbox_paths::{
+use super::super::environment::ensure_owner_only_dir;
+use super::super::office_masks::OfficeMasks;
+use super::super::reap::{reap_live_handle, ReapMode};
+use super::super::sandbox_paths::{
     collect_sibling_agent_ids_in_office, resolve_employee_team_chain_and_ids_in_office,
 };
-use super::sandbox_rules::collect_self_active_admins;
-use super::{LiveSessionHandle, SessionManager, StartSlotGuard};
+use super::super::sandbox_rules::collect_self_active_admins;
+use super::super::{LiveSessionHandle, SessionManager, StartSlotGuard};
 
 /// Pre-creates fixed `0700` sensitive office and sibling directories before launching a Linux
 /// Claude `bwrap` sandbox so `bwrap` bind-mounts atomic directory masks without leaving unmasked
@@ -169,7 +169,7 @@ fn ensure_bwrap_team_dirs(
 
 /// Returns `true` when any enrolled employee or on-disk agent directory other than
 /// `self_employee_id` is absent from `masked`.
-pub(crate) fn has_unmasked_bwrap_sibling_in_office(
+pub(super) fn has_unmasked_bwrap_sibling_in_office(
     office: &Office,
     self_employee_id: &str,
     masked: &BTreeSet<String>,

@@ -32,11 +32,16 @@ in pure Python 3 stdlib (zero third-party dependencies, < 2s full-repo execution
         and `crates/org-host/src/hostdb/sqlite/`.
      b) `coupling.unix_socket`: `UnixStream` / `UnixListener` / `UnixDatagram` /
         `std::os::unix::net` / `tokio::net::Unix*` outside `crates/org-platform/`,
-        `crates/org-platform-host/`, `crates/org-socket/`, and `crates/org-client/`.
+        `crates/org-platform-host/`, `crates/org-socket/`, `crates/org-client/`, and
+        `apps/agentic-org-web/src/transport/local_unix.rs`.
      c) `coupling.sandbox`: `bwrap` / `sandbox-exec` process invocation string literals
-        or Seatbelt/sandbox FFI/type references (`sandbox_init`,
-        `sandbox_init_with_parameters`, `sandbox_check`, `sandbox_exec`, `Seatbelt`)
-        outside `crates/org-platform/` and `crates/org-platform-host/`.
+        or concrete sandbox/bwrap/Seatbelt FFI, type, function, or module identifiers
+        (`sandbox_init`, `sandbox_init_with_parameters`, `sandbox_check`, `sandbox_exec`,
+        or any identifier containing `bwrap` or `seatbelt` case-insensitively) outside
+        designated local OS/runtime sandbox adapters (`crates/org-platform/`,
+        `crates/org-platform-host/`, `crates/org-office-sessions/src/manager/sandbox_runner/`,
+        `crates/org-agent-runtime-claude/src/plan/sandbox.rs`, and
+        `crates/org-agent-runtime-claude/src/plan.rs`).
      d) `coupling.dead_code_trait`: `#[allow(...dead_code...)]` / `#[expect(...dead_code...)]`
         (including via `#[cfg_attr(..., allow|expect(...dead_code...))]`) directly
         preceding any `trait` definition across all crates.
@@ -52,7 +57,8 @@ in pure Python 3 stdlib (zero third-party dependencies, < 2s full-repo execution
    - Verifies 0 cyclic dependencies across all workspace crates (reporting the exact
      cycle path on failure).
    - Verifies Layer-0 foundation crates (`org-proto`, `org-platform`, `org-pki`,
-     `org-store`, `org-agent-runtime`, `org-command`, plus zero-dep leaf `org-docs`
+     `org-store`, `org-agent-runtime`, `org-command`, `org-sync-proto`,
+     `org-host-control`, `org-office-launch`, plus zero-dep leaf `org-docs`
      used by `org-command` for bounded YAML parsing) have zero `[dependencies]` or
      `[build-dependencies]` edges to any higher-layer application/server/host/office/CLI crate.
 
@@ -120,10 +126,14 @@ UNIX_SOCKET_ADAPTER_PREFIXES = (
     "crates/org-platform-host/",
     "crates/org-socket/",
     "crates/org-client/",
+    "apps/agentic-org-web/src/transport/local_unix.rs",
 )
 SANDBOX_ADAPTER_PREFIXES = (
     "crates/org-platform/",
     "crates/org-platform-host/",
+    "crates/org-office-sessions/src/manager/sandbox_runner/",
+    "crates/org-agent-runtime-claude/src/plan/sandbox.rs",
+    "crates/org-agent-runtime-claude/src/plan.rs",
 )
 
 # Layer-0 foundation crates (dynamically intersected with actual workspace members).
@@ -138,6 +148,9 @@ LAYER_0_FOUNDATION_CRATES = frozenset(
         "org-store",
         "org-agent-runtime",
         "org-command",
+        "org-sync-proto",
+        "org-host-control",
+        "org-office-launch",
     }
 )
 LAYER_0_LEAF_CRATES = frozenset({"org-docs"})
@@ -176,8 +189,12 @@ FAST_PATH_TRIGGERS = (
     "Unix",
     "unix::net",
     "bwrap",
+    "Bwrap",
+    "BWRAP",
     "sandbox",
+    "seatbelt",
     "Seatbelt",
+    "SEATBELT",
     "dead_code",
 )
 
@@ -238,7 +255,10 @@ _UNIX_SOCKET_RE = re.compile(
     r")\b"
 )
 _SANDBOX_CODE_RE = re.compile(
-    r"\b(?:sandbox_init|sandbox_init_with_parameters|sandbox_check|sandbox_exec|Seatbelt)\b"
+    r"\b(?:"
+    r"sandbox_init|sandbox_init_with_parameters|sandbox_check|sandbox_exec"
+    r"|(?i:[A-Za-z0-9_]*(?:bwrap|seatbelt)[A-Za-z0-9_]*)"
+    r")\b"
 )
 # Matches unquoted string literals invoking bwrap or sandbox-exec as a binary/command,
 # without false-positiving on English prose or diagnostic reason strings.
@@ -1019,7 +1039,8 @@ def _count_sandbox(
     if rel_posix.startswith(SANDBOX_ADAPTER_PREFIXES):
         return 0
     code_hits = 0
-    if "sandbox" in prod_code or "Seatbelt" in prod_code:
+    lower_prod = prod_code.lower()
+    if "sandbox" in prod_code or "bwrap" in lower_prod or "seatbelt" in lower_prod:
         code_hits = len(_SANDBOX_CODE_RE.findall(prod_code))
     return code_hits + _count_sandbox_strings(text, string_spans, ranges)
 

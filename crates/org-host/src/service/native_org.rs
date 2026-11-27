@@ -313,7 +313,7 @@ mod tests {
         let (db_for_prov, custody_for_prov) = auth.provisioning_storage();
         let writers = Writers::open(
             Arc::clone(&custody_for_prov),
-            Arc::clone(&db_for_prov),
+            auth.accounts_store(),
             &instance,
             &state_root,
         )
@@ -338,7 +338,7 @@ mod tests {
             )
             .unwrap();
             let web_tls = crate::web_tls::WebTls::start(
-                Arc::clone(&db_for_prov),
+                Arc::clone(&db_for_prov) as Arc<dyn crate::hostdb::WebTlsStore>,
                 Arc::clone(&custody_for_prov),
                 listen.origin().clone(),
                 None,

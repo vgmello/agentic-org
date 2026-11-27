@@ -44,7 +44,9 @@ use org_host::ports::sessions::{
     StoreError as SessionStoreError, SESSION_LIMIT,
 };
 use org_host::ports::{
-    AccountStore, BrowserSessions, HostSecrets, HostStore, OfficeSecretsKeys, OneTimeLinks,
+    AccountStore, BrowserSessions, HostAccountsStore, HostPorts, HostSecrets, HostStore,
+    LoginLockoutStore, OfficeSecretsKeys, OneTimeLinks, OperationJournalStore, ProvisioningStore,
+    RecoveryStore, WebTlsStore,
 };
 use serde_json::json;
 
@@ -632,7 +634,7 @@ impl BrowserSessions for ExternalHostStore {
     }
 }
 
-impl HostStore for ExternalHostStore {
+impl HostAccountsStore for ExternalHostStore {
     fn verify_instance(&self, instance: &str) -> Result<(), HostStoreError> {
         if self.instance_id == instance {
             Ok(())
@@ -1294,7 +1296,9 @@ impl HostStore for ExternalHostStore {
             Ok(true)
         })
     }
+}
 
+impl OperationJournalStore for ExternalHostStore {
     fn journal_lookup(
         &self,
         op: &JournalAttempt<'_>,
@@ -1384,7 +1388,9 @@ impl HostStore for ExternalHostStore {
             more_remaining: true,
         })
     }
+}
 
+impl LoginLockoutStore for ExternalHostStore {
     fn login_lockout(
         &self,
         socket: Socket,
@@ -1449,7 +1455,9 @@ impl HostStore for ExternalHostStore {
         });
         Ok(before - state.lockouts.len())
     }
+}
 
+impl ProvisioningStore for ExternalHostStore {
     fn provisioning_taken(&self, name: &str, slug: &str) -> Result<Option<Taken>, HostStoreError> {
         let state = self.state.lock().unwrap();
         for r in state.reservations.values() {
@@ -1611,7 +1619,9 @@ impl HostStore for ExternalHostStore {
             .find(|r| r.prepared.organization_id == organization_id)
             .cloned())
     }
+}
 
+impl RecoveryStore for ExternalHostStore {
     fn recovery_source(&self, organization_id: &str) -> Result<Reservation, HostStoreError> {
         self.provisioning_linked_to(organization_id)?
             .ok_or(HostStoreError::Empty)
@@ -1782,7 +1792,9 @@ impl HostStore for ExternalHostStore {
             hq_loss_recovery_supported: false,
         })
     }
+}
 
+impl WebTlsStore for ExternalHostStore {
     fn web_tls_pair(&self) -> Result<Option<StoredPair>, HostStoreError> {
         Ok(self.state.lock().unwrap().tls_pair.clone())
     }
@@ -2323,4 +2335,12 @@ fn external_host_store_local_authless_lifecycle() {
     );
     assert_eq!(store.local_authless_account(), Ok(None));
     assert_eq!(store.auth_enabled(), Ok(true));
+
+    // External implementations assemble into `HostPorts` directly via the blanket `HostStore` impl.
+    let ports = HostPorts {
+        store: Some(store),
+        secrets: Some(Arc::new(ExternalHostSecrets::default())),
+        keys: Some(Arc::new(ExternalOfficeKeys::default())),
+    };
+    assert!(ports.store.is_some() && ports.secrets.is_some() && ports.keys.is_some());
 }

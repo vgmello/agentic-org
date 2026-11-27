@@ -1,9 +1,12 @@
-//! Consumer-owned public port contracts for `org-host` (ADR-0018, `TASK-231`).
+//! Consumer-owned public port contracts for `org-host` (ADR-0018, `TASK-231`, `TASK-256`).
 //!
 //! All live host subsystems depend on these engine-neutral traits rather than on SQLite or
 //! platform-specific credential stores:
 //! - [`HostStore`] — composite host-registry persistence contract (supertrait of
-//!   [`AccountStore`], [`OneTimeLinks`], and [`BrowserSessions`]),
+//!   [`AccountStore`], [`OneTimeLinks`], [`BrowserSessions`], [`HostAccountsStore`],
+//!   [`OperationJournalStore`], [`LoginLockoutStore`], [`ProvisioningStore`],
+//!   [`RecoveryStore`], and [`WebTlsStore`]),
+//! - [`HostPorts`] — optional injected ports accepted by [`crate::Host::start_with_ports`],
 //! - [`AccountStore`] — browser administrator registration, credential lookup, and sign-in
 //!   throttling,
 //! - [`BrowserSessions`] — digest-only browser session persistence and idle expiry,
@@ -14,18 +17,46 @@
 //! Each domain submodule re-exports every public record, input, error, and shared rule type
 //! required to implement and drive the corresponding trait from an external crate.
 
+use std::fmt;
+use std::sync::Arc;
+
 pub use crate::accounts::store::AccountStore;
 pub use crate::host_secrets::HostSecrets;
-pub use crate::hostdb::HostStore;
+pub use crate::hostdb::{
+    HostAccountsStore, HostStore, LoginLockoutStore, OperationJournalStore, ProvisioningStore,
+    RecoveryStore, WebTlsStore,
+};
 pub use crate::keys::OfficeSecretsKeys;
 pub use crate::links::OneTimeLinks;
 pub use crate::sessions::BrowserSessions;
 
-/// Public types and shared rules for [`HostStore`].
+/// Optional caller-injected persistence and custody ports for [`crate::Host::start_with_ports`].
+///
+/// Any field left `None` falls back to the default local adapter (`HostDb`, local host secrets
+/// custody, or local per-office secrets key store).
+#[derive(Default)]
+pub struct HostPorts {
+    pub store: Option<Arc<dyn HostStore>>,
+    pub secrets: Option<Arc<dyn HostSecrets>>,
+    pub keys: Option<Arc<dyn OfficeSecretsKeys>>,
+}
+
+impl fmt::Debug for HostPorts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HostPorts")
+            .field("store", &self.store.is_some())
+            .field("secrets", &self.secrets.is_some())
+            .field("keys", &self.keys.is_some())
+            .finish()
+    }
+}
+
+/// Public types and shared rules for [`HostStore`] and its focused domain sub-traits.
 pub mod host_store {
     pub use crate::hostdb::{
         accounts, journal, lockout, multi_person, provisioning, recovery, web_tls, Error,
-        HostStore, StoreFault,
+        HostAccountsStore, HostStore, LoginLockoutStore, OperationJournalStore, ProvisioningStore,
+        RecoveryStore, StoreFault, WebTlsStore,
     };
     pub use org_host_control::browser_accounts::OrgAccessEntry;
     pub use org_host_control::journal::Journaled;

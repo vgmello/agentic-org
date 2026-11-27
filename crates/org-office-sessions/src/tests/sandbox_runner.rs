@@ -297,14 +297,14 @@ fn local_os_sandbox_selects_modes_and_verifies_siblings() {
     let office_socket = sock_dir.join("office.sock");
     let me = office.owner_member_id().to_owned();
     let sandbox = LocalOsSandbox;
-    let make_ctx = |sandbox_enabled, uses_linux_bwrap_sandbox| SandboxPrepareContext {
+    let make_ctx = |sandbox_enabled, uses_mount_mask_sandbox| SandboxPrepareContext {
         office: &office,
         office_socket: &office_socket,
         agent_os_state_roots: &[],
         employee_id: &me,
         sandbox_enabled,
         host_profile: org_agent_runtime::RuntimeHostProfile {
-            uses_linux_bwrap_sandbox,
+            uses_mount_mask_sandbox,
             ..org_agent_runtime::RuntimeHostProfile::default()
         },
     };

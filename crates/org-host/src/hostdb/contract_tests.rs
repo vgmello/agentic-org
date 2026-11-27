@@ -18,7 +18,9 @@ use super::memory::MemoryHostStore;
 use super::provisioning::{Reservation, Taken};
 use super::recovery::State as RecoveryState;
 use super::web_tls::{Source, StoredPair, TlsLookup, TlsStored};
-use super::{Error, HostDb, HostDbInit, HostStore};
+use super::{
+    Error, HostAccountsStore, HostDb, HostDbInit, HostStore, OperationJournalStore, WebTlsStore,
+};
 use crate::accounts::identity::{AccountId, LoginKey};
 use crate::host_secrets::{HostSecrets, Name, Value};
 use crate::links::{LinkKind, Refused, Subject};
@@ -1369,7 +1371,8 @@ fn live_host_subsystems_run_end_to_end_on_memory_host_store() {
     let auth = Authentication::with_store(Arc::clone(&store), Arc::clone(&secrets), INSTANCE)
         .expect("Authentication wired over MemoryHostStore");
     let admin = Admin::new(
-        Arc::clone(&store),
+        Arc::clone(&store) as Arc<dyn crate::hostdb::HostAccountsStore>,
+        Arc::clone(&store) as Arc<dyn crate::links::OneTimeLinks + Send + Sync>,
         OP_ID,
         ListenOrigin::parse("http://127.0.0.1:7420").unwrap(),
         AppPolicy::new(crate::HOST_SIGNING_ID, None).unwrap(),
@@ -1498,7 +1501,7 @@ fn live_host_subsystems_run_end_to_end_on_memory_host_store() {
 
     // 3. WebTls, Writers, and Provisioning compose cleanly over MemoryHostStore + MemorySecrets.
     let tls = WebTls::start(
-        Arc::clone(&store),
+        Arc::clone(&store) as Arc<dyn WebTlsStore>,
         Arc::clone(&secrets),
         ListenOrigin::parse("https://127.0.0.1:8443").unwrap(),
         None,
@@ -1515,7 +1518,7 @@ fn live_host_subsystems_run_end_to_end_on_memory_host_store() {
     std::fs::create_dir_all(office_home.join(org_office_launch::OFFICES_DIR_NAME)).unwrap();
     let writers = Writers::open(
         Arc::clone(&secrets),
-        Arc::clone(&store),
+        Arc::clone(&store) as Arc<dyn HostAccountsStore>,
         INSTANCE,
         &state_root,
     )

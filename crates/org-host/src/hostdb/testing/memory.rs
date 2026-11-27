@@ -35,7 +35,10 @@ use crate::hostdb::multi_person::{
 use crate::hostdb::provisioning::{Reservation, Taken};
 use crate::hostdb::recovery::{Ledger, State as RecoveryState};
 use crate::hostdb::web_tls::{StoredPair, TlsLookup, TlsStored};
-use crate::hostdb::{Error, HostStore, StoreFault};
+use crate::hostdb::{
+    Error, HostAccountsStore, LoginLockoutStore, OperationJournalStore, ProvisioningStore,
+    RecoveryStore, StoreFault, WebTlsStore,
+};
 use crate::links::{
     issue_with, redeem_rule, Error as LinkError, Issued, LinkDigest, LinkKind, NewLink,
     OneTimeLinks, Pending as PendingLink, Refused, StoreFault as LinkStoreFault, Subject, Token,
@@ -705,7 +708,7 @@ impl AccountStore for MemoryHostStore {
     }
 
     fn credentials(&self, key: &LoginKey) -> Result<Option<AccountCredentials>, AccountStoreError> {
-        let creds = HostStore::account_credentials(self, key)
+        let creds = HostAccountsStore::account_credentials(self, key)
             .map_err(|_| AccountStoreError::Unavailable)?;
         Ok(creds.map(|c| AccountCredentials {
             account_id: c.account.account_id,
@@ -717,12 +720,12 @@ impl AccountStore for MemoryHostStore {
     }
 
     fn administrator_exists(&self) -> Result<bool, AccountStoreError> {
-        HostStore::has_administrator(self).map_err(|_| AccountStoreError::Unavailable)
+        HostAccountsStore::has_administrator(self).map_err(|_| AccountStoreError::Unavailable)
     }
 
     fn throttle(&self, key: &ThrottleKey<'_>, now_ms: i64) -> Result<Throttle, AccountStoreError> {
         let wall = u64::try_from(now_ms).map_err(|_| AccountStoreError::Unavailable)?;
-        let state = HostStore::login_lockout(self, Socket::Control, key.as_str(), wall)
+        let state = LoginLockoutStore::login_lockout(self, Socket::Control, key.as_str(), wall)
             .map_err(|_| AccountStoreError::Unavailable)?;
         Ok(Throttle {
             locked: state.is_locked(),
@@ -746,7 +749,7 @@ impl AccountStore for MemoryHostStore {
             AccountAttempt::Success => Outcome::Success,
             AccountAttempt::Reset => Outcome::Reset,
         };
-        let state = HostStore::record_login_capped(
+        let state = LoginLockoutStore::record_login_capped(
             self,
             Socket::Control,
             key.as_str(),
@@ -914,7 +917,7 @@ impl BrowserSessions for MemoryHostStore {
     }
 }
 
-impl HostStore for MemoryHostStore {
+impl HostAccountsStore for MemoryHostStore {
     fn verify_instance(&self, instance: &str) -> Result<(), Error> {
         if self.instance_id == instance {
             Ok(())
@@ -1685,6 +1688,27 @@ impl HostStore for MemoryHostStore {
         Ok(AdminHandoverOutcome::Transferred)
     }
 
+    fn issue_unless_administrator(
+        &self,
+        kind: LinkKind,
+        subject: &Subject,
+        now_ms: i64,
+    ) -> Result<Option<Issued>, LinkError> {
+        issue_with(&self.instance_id, kind, subject, now_ms, |link| {
+            let mut s = self
+                .inner
+                .lock()
+                .map_err(|_| LinkError::Store(LinkStoreFault::Poisoned))?;
+            if s.any_live_admin() {
+                return Ok(false);
+            }
+            s.replace_link(&link)?;
+            Ok(true)
+        })
+    }
+}
+
+impl OperationJournalStore for MemoryHostStore {
     fn journal_lookup(&self, op: &Attempt<'_>, wall_ms: i64) -> Result<Lookup, Error> {
         let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
         let now = s.now(wall_ms)?;
@@ -1757,26 +1781,9 @@ impl HostStore for MemoryHostStore {
     fn journal_prune_expired(&self, wall_ms: i64) -> Result<PruneOutcome, Error> {
         self.journal_prune_expired_capped(wall_ms, MAX_PRUNE_BATCHES)
     }
+}
 
-    fn issue_unless_administrator(
-        &self,
-        kind: LinkKind,
-        subject: &Subject,
-        now_ms: i64,
-    ) -> Result<Option<Issued>, LinkError> {
-        issue_with(&self.instance_id, kind, subject, now_ms, |link| {
-            let mut s = self
-                .inner
-                .lock()
-                .map_err(|_| LinkError::Store(LinkStoreFault::Poisoned))?;
-            if s.any_live_admin() {
-                return Ok(false);
-            }
-            s.replace_link(&link)?;
-            Ok(true)
-        })
-    }
-
+impl LoginLockoutStore for MemoryHostStore {
     fn login_lockout(
         &self,
         socket: Socket,
@@ -1876,7 +1883,9 @@ impl HostStore for MemoryHostStore {
         s.advance_clock(now);
         Ok(removed)
     }
+}
 
+impl ProvisioningStore for MemoryHostStore {
     fn provisioning_taken(&self, name: &str, slug: &str) -> Result<Option<Taken>, Error> {
         let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
         s.taken(name, slug)
@@ -2041,7 +2050,9 @@ impl HostStore for MemoryHostStore {
         prior.linked = true;
         Ok(())
     }
+}
 
+impl RecoveryStore for MemoryHostStore {
     fn recovery_state(&self, operation: &str) -> Result<Option<RecoveryState>, Error> {
         let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
         Ok(s.recovery.get(operation).map(|l| l.state))
@@ -2297,7 +2308,9 @@ impl HostStore for MemoryHostStore {
         }
         Ok(())
     }
+}
 
+impl WebTlsStore for MemoryHostStore {
     fn web_tls_pair(&self) -> Result<Option<StoredPair>, Error> {
         let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
         Ok(s.web_tls_pair.clone())

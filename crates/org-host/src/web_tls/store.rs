@@ -17,7 +17,7 @@ use crate::host_log::log;
 use crate::host_secrets::{HostSecrets, Name, Value};
 use crate::hostdb::journal::Attempt;
 use crate::hostdb::web_tls::{StoredPair, TlsLookup, TlsStored};
-use crate::hostdb::HostStore;
+use crate::hostdb::WebTlsStore;
 
 /// Why the host does not start: its stored pair cannot be served, and it is not one the host
 /// may make again. The text names the cause and what to do; never key material.
@@ -46,7 +46,7 @@ pub(crate) enum Unservable {
 
 /// The listener's pair. Made at the start of an `https` instance ([`WebTls::start`]).
 pub(crate) struct WebTls {
-    db: Arc<dyn HostStore>,
+    db: Arc<dyn WebTlsStore>,
     secrets: Arc<dyn HostSecrets>,
     origin: ListenOrigin,
     /// Held by whatever installs a pair: the start, `tls.set` and the renewal.
@@ -92,7 +92,7 @@ impl WebTls {
     ///
     /// Every start logs the pair's source and fingerprint, and keys no row names are deleted.
     pub(crate) fn start(
-        db: Arc<dyn HostStore>,
+        db: Arc<dyn WebTlsStore>,
         secrets: Arc<dyn HostSecrets>,
         origin: ListenOrigin,
         supplied: Option<(&Path, &Path)>,
@@ -214,7 +214,7 @@ impl WebTls {
     /// (ADR-0033 / TASK-62). Writes the private key to host secrets first, then stores the
     /// certificate row in `HostDb::web_tls`, cleaning up an orphan key on DB failure.
     pub(crate) fn install_for_upgrade(
-        db: &dyn HostStore,
+        db: &dyn WebTlsStore,
         secrets: &dyn HostSecrets,
         checked: &Checked,
         source: Source,

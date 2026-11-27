@@ -1,9 +1,13 @@
 //! Thin [`SandboxRunner`] & [`SandboxPlan`] confinement seam and [`LocalOsSandbox`] adapter
-//! (`TASK-233`).
+//! (`TASK-233`, `TASK-256`).
 //!
-//! Isolates host-OS confinement planning (such as Linux `bwrap` directory pre-creation, absent-path
-//! deny pruning, and post-launch sibling isolation) from session launch, installation, turn-end
-//! wake draining, and the session I/O pump.
+//! Isolates all host-OS confinement planning (such as Linux `bwrap` directory pre-creation,
+//! absent-path deny pruning, and post-launch sibling isolation) inside one designated adapter
+//! module, keeping session launch, spec building, installation, wake draining, and the session
+//! I/O pump free of concrete OS sandbox primitives.
+
+mod bwrap_isolation;
+mod bwrap_pruning;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -12,12 +16,24 @@ use org_agent_runtime::{RuntimeHostProfile, SessionSpec};
 use org_office::Office;
 use org_proto::{ApiError, ErrorCode};
 
-use super::bwrap_isolation::{
+use bwrap_isolation::{
     enforce_bwrap_sibling_isolation, ensure_bwrap_deny_dirs_with,
     has_unmasked_bwrap_sibling_in_office,
 };
-use super::spec::{apply_linux_claude_bwrap_pruning, is_linux_bwrap_sandbox};
+use bwrap_pruning::{apply_linux_claude_bwrap_pruning, is_linux_bwrap_sandbox};
+
 use super::SessionManager;
+
+#[cfg(test)]
+pub(crate) use bwrap_isolation::{
+    enforce_bwrap_sibling_isolation as enforce_bwrap_sibling_isolation_for_test,
+    ensure_bwrap_deny_dirs,
+};
+#[cfg(test)]
+pub(crate) use bwrap_pruning::{
+    apply_linux_claude_bwrap_pruning as apply_linux_claude_bwrap_pruning_for_test,
+    pattern_exists_for_bwrap, prune_nonexistent_bwrap_denies,
+};
 
 /// Confinement mode selected by a [`SandboxRunner`] for a session launch.
 #[non_exhaustive]

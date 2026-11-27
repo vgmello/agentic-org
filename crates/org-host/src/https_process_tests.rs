@@ -112,17 +112,12 @@ fn start(base: &Path, address: SocketAddr, first: bool) -> (Host, PathBuf, Vec<S
     // As the registered start installs it: the administrator calls' admission (this test's
     // executable is the development `agentic-org` peer of `fixture_config`).
     let policy = crate::startup::startup_app_policy(&fixture_config(base), true).unwrap();
-    let db = host
-        .service
-        .authentication
-        .as_ref()
-        .expect("a registry")
-        .provisioning_storage()
-        .0;
+    let auth = host.service.authentication.as_ref().expect("a registry");
     assert!(host
         .service
         .install_admin(Arc::new(crate::admin::Admin::new(
-            db,
+            auth.accounts_store(),
+            auth.links_store(),
             &crate::ids::uuid_v7().unwrap(),
             listen.origin().clone(),
             policy,

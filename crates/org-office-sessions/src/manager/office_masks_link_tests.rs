@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use org_agent_runtime::{PathPattern, PermissionPolicy, SandboxSpec};
 
-use super::super::spec::prune_nonexistent_bwrap_denies;
+use super::super::sandbox_runner::prune_nonexistent_bwrap_denies;
 use super::tests::{
     assert_masked_whole, assert_reachable, denies, placed_masks, Host, HQ, ORG_A, ORG_B, SAT_1,
     SAT_2,

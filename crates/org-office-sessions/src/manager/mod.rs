@@ -44,7 +44,6 @@ mod agent_os_sandbox_tests;
 #[cfg(test)]
 mod agy_socket_mount_tests;
 mod auth_guards;
-mod bwrap_isolation;
 mod chief_of_staff;
 mod environment;
 mod failover;
@@ -68,8 +67,6 @@ mod turn_controls;
 mod views;
 mod warm;
 
-#[cfg(test)]
-pub(crate) use bwrap_isolation::{enforce_bwrap_sibling_isolation, ensure_bwrap_deny_dirs};
 pub(crate) use environment::task_process_context;
 #[cfg(test)]
 pub(crate) use failover::{
@@ -85,6 +82,11 @@ pub(crate) use operator_home::clean_operator_rules;
 pub(crate) use reap::{reap_live_handle, ReapMode};
 #[cfg(test)]
 pub(crate) use rust_toolchain::host_rust_dir_env_from;
+#[cfg(test)]
+pub(crate) use sandbox_runner::{
+    enforce_bwrap_sibling_isolation_for_test as enforce_bwrap_sibling_isolation,
+    ensure_bwrap_deny_dirs,
+};
 pub use sandbox_runner::{
     LocalOsSandbox, SandboxConfinementMode, SandboxPlan, SandboxPrepareContext, SandboxRunner,
     SandboxVerifyContext,

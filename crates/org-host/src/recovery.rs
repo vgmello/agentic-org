@@ -8,7 +8,7 @@ use crate::{
     host_secrets::HostSecrets,
     hostdb::{
         recovery::{Ledger, State},
-        HostStore,
+        RecoveryStore,
     },
     offices::Offices,
     peer::Received,
@@ -26,7 +26,7 @@ use std::sync::{
 
 pub(crate) struct Recovery {
     auth: Arc<Authentication>,
-    db: Arc<dyn HostStore>,
+    db: Arc<dyn RecoveryStore>,
     custody: Arc<dyn HostSecrets>,
     offices: Arc<Offices>,
     broadcast: Arc<Broadcast>,
@@ -81,7 +81,8 @@ impl Recovery {
         instance: &str,
         policy: AppPolicy,
     ) -> Self {
-        let (db, custody) = auth.provisioning_storage();
+        let db = auth.recovery_store();
+        let custody = auth.custody();
         Self {
             auth,
             db,

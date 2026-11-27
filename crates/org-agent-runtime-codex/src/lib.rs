@@ -119,7 +119,7 @@ impl AgentRuntime for CodexRuntime {
             host_config_subdir: Some(".codex"),
             config_credential_files: &[],
             uses_host_oauth_token_injection: false,
-            uses_linux_bwrap_sandbox: false,
+            uses_mount_mask_sandbox: false,
             needs_explicit_sandbox_ro_dirs: false,
         }
     }

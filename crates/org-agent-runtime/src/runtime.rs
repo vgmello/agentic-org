@@ -24,9 +24,10 @@ pub struct RuntimeHostProfile {
     /// Whether this runtime requires host-local OAuth token injection and reactive refresh for
     /// `subscription_cli` routes (e.g. Claude Code `CLAUDE_CODE_OAUTH_TOKEN`).
     pub uses_host_oauth_token_injection: bool,
-    /// Whether this runtime uses Linux bubblewrap (`bwrap`) sandboxing when OS Unix-socket path
-    /// filtering is unavailable, requiring absent-path deny pruning and sibling directory masks.
-    pub uses_linux_bwrap_sandbox: bool,
+    /// Whether this runtime uses mount-mask sandboxing (such as Linux `bwrap`) when OS
+    /// Unix-socket path filtering is unavailable, requiring absent-path deny pruning and sibling
+    /// directory masks.
+    pub uses_mount_mask_sandbox: bool,
     /// Whether this runtime's sandbox requires explicit read-only directory mounts (e.g.
     /// `--add-dir`) for `agent-os`, the office socket folder, and host Rust toolchain caches.
     pub needs_explicit_sandbox_ro_dirs: bool,

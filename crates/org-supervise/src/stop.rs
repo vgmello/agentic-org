@@ -4,7 +4,7 @@ use std::io;
 use std::process::ExitStatus;
 use std::time::{Duration, Instant};
 
-use crate::{invalid, ChildStdin, OwnedChild};
+use crate::{invalid, ChildStdin, OwnedChild, SignalTarget};
 
 const TERM_GRACE: Duration = Duration::from_secs(5);
 const KILL_EXIT_GRACE: Duration = Duration::from_secs(5);
@@ -25,15 +25,6 @@ impl StopSignal {
             Self::Terminate => libc::SIGTERM,
         }
     }
-}
-
-/// An owned leader or its process group, whose ID remains reserved until reaping.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SignalTarget {
-    /// Only the runtime leader, allowing it to stop detached tools itself.
-    Leader,
-    /// Its process group.
-    Group,
 }
 
 /// A graceful stop instruction and the grace that follows it.
