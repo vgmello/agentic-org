@@ -3,8 +3,12 @@ use std::sync::{Arc, Mutex};
 use org_office::rules::OrgCommand;
 use org_office::{Office, TestOffice};
 use org_proto::budgets::{BudgetPeriodKind, BudgetScopeKind, BudgetSetParams, BudgetUnit};
-use org_proto::chat::{ChatChannelCreateParams, DmOpenParams};
-use org_proto::org::MemberAddPersonParams;
+use org_proto::chat::{ChatChannelCreateParams, ChatSendParams, DmOpenParams};
+use org_proto::hiring::{
+    HireProposalWire, HrHire, HrHireDraft, HrHireDraftParams, HrHireParams, MemberSetMayHire,
+    MemberSetMayHireParams,
+};
+use org_proto::org::{MemberAddPersonParams, TeamCreateParams, TeamSetLeadParams};
 use org_proto::tasks::TasksCreateParams;
 use org_proto::tess::{
     SuggestionCreate, SuggestionCreateParams, SuggestionCreateResult, SuggestionDismiss,
@@ -13,7 +17,7 @@ use org_proto::tess::{
     SuggestionWithdraw, SuggestionWithdrawParams, UiEntityKind, UiEntityLinkInput, UiFollowUp,
     UiMetric, UiNavigation, UiPresent, UiPresentParams, UiPresentResult,
 };
-use org_proto::{Call, ErrorCode, Outcome, Request};
+use org_proto::{ApiError, Call, ErrorCode, Outcome, Request};
 use serde_json::{json, Map, Value};
 
 use super::TessService;
@@ -193,6 +197,10 @@ impl Harness {
     }
 
     fn call<C: Call>(&self, member: &str, params: &C::Params) -> Result<C::Result, ErrorCode> {
+        self.call_err::<C>(member, params).map_err(|err| err.code)
+    }
+
+    fn call_err<C: Call>(&self, member: &str, params: &C::Params) -> Result<C::Result, ApiError> {
         let req = Request::new::<C>(1, params).unwrap();
         let resp = self
             .svc
@@ -200,7 +208,7 @@ impl Harness {
             .expect("tess_calls handles method");
         match resp.outcome {
             Outcome::Result(val) => Ok(serde_json::from_value(val).unwrap()),
-            Outcome::Error(err) => Err(err.code),
+            Outcome::Error(err) => Err(err),
         }
     }
 }
@@ -717,6 +725,949 @@ fn ui_present_verifies_entities_and_fails_closed_on_unknown_unauthorized_or_exce
             .unwrap_err(),
             ErrorCode::InvalidRequest,
             "route `{bad_route}` must fail closed"
+        );
+    }
+}
+
+fn dispatch_hiring<C: Call>(office: &Office, actor: &str, params: &C::Params) -> C::Result {
+    let req = Request::new::<C>(1, params).unwrap();
+    let resp = office
+        .dispatch_hiring_rpc(Some(actor), &req)
+        .expect("hiring handles call");
+    match resp.outcome {
+        Outcome::Result(val) => serde_json::from_value(val).unwrap(),
+        Outcome::Error(err) => panic!("hiring `{}` failed: {err:?}", C::METHOD),
+    }
+}
+
+fn send_dm_msg(office: &Office, from: &str, to: &str, body: &str) -> String {
+    office
+        .chat_send(
+            from,
+            ChatSendParams {
+                id: next_id(),
+                to: to.to_owned(),
+                kind: "msg".into(),
+                priority: None,
+                subject: None,
+                body: body.to_owned(),
+                attachment_ids: Vec::new(),
+                meta: Default::default(),
+                reply_to: None,
+                also_in_channel: false,
+                reason: None,
+            },
+        )
+        .unwrap()
+        .unwrap()
+        .message
+        .id
+}
+
+#[test]
+fn p1_2_p2_5_p2_7_preflight_blocks_hire_bypass_owner_drift_cross_dm_builtins_and_resolves_team_lead(
+) {
+    let h = harness();
+
+    // Create a disjoint sibling team (`team_b`), make Bob lead of `h.team_id` only.
+    let team_b = next_id();
+    h.office
+        .submit_org(
+            &h.owner,
+            OrgCommand::TeamCreate(TeamCreateParams {
+                command_id: next_id(),
+                team_id: team_b.clone(),
+                name: "Beta".into(),
+                owner_team_id: None,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    let team_a_ver = h
+        .office
+        .org_snapshot()
+        .unwrap()
+        .teams
+        .iter()
+        .find(|t| t.id == h.team_id)
+        .unwrap()
+        .version;
+    h.office
+        .submit_org(
+            &h.owner,
+            OrgCommand::TeamSetLead(TeamSetLeadParams {
+                command_id: next_id(),
+                team_id: h.team_id.clone(),
+                expected_version: team_a_ver,
+                lead_member_id: Some(h.bob.clone()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    let bob_ver = h
+        .office
+        .load_employee(&h.bob)
+        .unwrap()
+        .unwrap()
+        .meta
+        .revision;
+    dispatch_hiring::<MemberSetMayHire>(
+        &h.office,
+        &h.owner,
+        &MemberSetMayHireParams {
+            command_id: next_id(),
+            member_id: h.bob.clone(),
+            expected_version: bob_ver,
+            may_hire: true,
+        },
+    );
+    assert!(h.office.caller_may_hire_into(&h.bob, &h.team_id).unwrap());
+    assert!(!h.office.caller_may_hire_into(&h.bob, &team_b).unwrap());
+
+    // Draft three hire requests: Owner on team_b, Owner on team_a, Bob on team_a.
+    let proposal = |name: &str, handle: &str| HireProposalWire {
+        name: name.into(),
+        handle: handle.into(),
+        title: None,
+        focus: None,
+        role_text: None,
+        title_in_team: None,
+        reports_to_employee_id: None,
+        office_id: None,
+        model_profile_id: None,
+        model_id: None,
+        permission_preset: None,
+        effort: None,
+        tools_config: Vec::new(),
+        system_prompt_markdown: None,
+        body: None,
+    };
+    let req_b = next_id();
+    dispatch_hiring::<HrHireDraft>(
+        &h.office,
+        &h.owner,
+        &HrHireDraftParams {
+            command_id: next_id(),
+            request_id: req_b.clone(),
+            home_team_id: team_b.clone(),
+            role_id: None,
+            proposal: proposal("BetaBot", "betabot"),
+            reason: "beta capacity".into(),
+        },
+    );
+    let req_a_owner = next_id();
+    dispatch_hiring::<HrHireDraft>(
+        &h.office,
+        &h.owner,
+        &HrHireDraftParams {
+            command_id: next_id(),
+            request_id: req_a_owner.clone(),
+            home_team_id: h.team_id.clone(),
+            role_id: None,
+            proposal: proposal("OwnerBot", "ownerbot"),
+            reason: "owner draft".into(),
+        },
+    );
+    let req_a_bob = next_id();
+    dispatch_hiring::<HrHireDraft>(
+        &h.office,
+        &h.bob,
+        &HrHireDraftParams {
+            command_id: next_id(),
+            request_id: req_a_bob.clone(),
+            home_team_id: h.team_id.clone(),
+            role_id: None,
+            proposal: proposal("BobBot", "bobbot"),
+            reason: "bob draft".into(),
+        },
+    );
+
+    // P1-2 + P2-5: Bob trying `hr hire` with `--id <teamB>` + `--team <teamA>` MUST NOT bypass
+    // existing-hire scope check, and MUST return the exact same uniform NotFound as a nonexistent
+    // hire request or another caller's draft on team_a (zero cross-team existence oracle!).
+    h.set_acting(Some(&h.bob));
+    let nonexistent_req = next_id();
+    let err_bypass = h
+        .call_err::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "hr hire".into(),
+                input: map(json!({"id": req_b, "team": h.team_id})),
+                summary: "Confirm cross-team hire".into(),
+                rationale: None,
+                expected_revision: Some(1),
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err();
+    let err_other_owner = h
+        .call_err::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "hr hire".into(),
+                input: map(json!({"id": req_a_owner})),
+                summary: "Confirm owner draft".into(),
+                rationale: None,
+                expected_revision: Some(1),
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err();
+    let err_missing = h
+        .call_err::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "hr hire".into(),
+                input: map(json!({"id": nonexistent_req})),
+                summary: "Confirm missing draft".into(),
+                rationale: None,
+                expected_revision: Some(1),
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(err_bypass.code, ErrorCode::NotFound);
+    assert_eq!(err_other_owner.code, ErrorCode::NotFound);
+    assert_eq!(err_missing.code, ErrorCode::NotFound);
+    assert_eq!(err_bypass.message, err_missing.message);
+    assert_eq!(err_other_owner.message, err_missing.message);
+    assert_eq!(
+        err_bypass.message,
+        "hire request not found or not visible to caller"
+    );
+
+    // Same uniform NotFound in `ui.present` (P2-5)!
+    let ui_cross = h
+        .call_err::<UiPresent>(
+            &h.tess,
+            &UiPresentParams {
+                entity_links: vec![UiEntityLinkInput {
+                    kind: UiEntityKind::HireRequest,
+                    id: req_b.clone(),
+                    label: None,
+                }],
+                ..UiPresentParams::default()
+            },
+        )
+        .unwrap_err();
+    let ui_missing = h
+        .call_err::<UiPresent>(
+            &h.tess,
+            &UiPresentParams {
+                entity_links: vec![UiEntityLinkInput {
+                    kind: UiEntityKind::HireRequest,
+                    id: nonexistent_req,
+                    label: None,
+                }],
+                ..UiPresentParams::default()
+            },
+        )
+        .unwrap_err();
+    assert_eq!(ui_cross.code, ErrorCode::NotFound);
+    assert_eq!(ui_missing.code, ErrorCode::NotFound);
+    assert_eq!(ui_cross.message, ui_missing.message);
+
+    // Invalid flag combos and revision verification on Bob's own draft.
+    assert_eq!(
+        h.call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "hr hire".into(),
+                input: map(json!({"id": req_a_bob, "draft": true})),
+                summary: "Invalid combo".into(),
+                rationale: None,
+                expected_revision: Some(1),
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        h.call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "hr hire".into(),
+                input: map(json!({"withdraw": true, "team": h.team_id})),
+                summary: "Withdraw without id".into(),
+                rationale: None,
+                expected_revision: None,
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        h.call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "hr hire".into(),
+                input: map(json!({"id": req_a_bob})),
+                summary: "Missing revision".into(),
+                rationale: None,
+                expected_revision: None,
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        h.call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "hr hire".into(),
+                input: map(json!({"id": req_a_bob})),
+                summary: "Stale revision".into(),
+                rationale: None,
+                expected_revision: Some(99),
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::Conflict
+    );
+    let confirm_ok = h
+        .call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "hr hire".into(),
+                input: map(json!({"id": req_a_bob})),
+                summary: "Confirm Bob draft".into(),
+                rationale: None,
+                expected_revision: Some(1),
+                ttl_seconds: None,
+                dry_run: true,
+            },
+        )
+        .unwrap();
+    assert_eq!(confirm_ok.suggestion.call, "hr.hire.confirm");
+
+    // Nonexistent team rejected EVEN for Owner.
+    h.set_acting(Some(&h.owner));
+    assert_eq!(
+        h.call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "hr hire".into(),
+                input: map(json!({
+                    "team": next_id(),
+                    "name": "Ghost",
+                    "handle": "ghost",
+                    "reason": "test"
+                })),
+                summary: "Hire into missing team".into(),
+                rationale: None,
+                expected_revision: None,
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::NotFound
+    );
+
+    // CallerOwner parity (derived directly from `serve::delegation::access`): Bob cannot propose
+    // `repo fetch` or `worktree prepare`.
+    h.set_acting(Some(&h.bob));
+    assert_eq!(
+        h.call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "repo fetch".into(),
+                input: map(json!({"repo": "api"})),
+                summary: "Fetch repo".into(),
+                rationale: None,
+                expected_revision: None,
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::NotAuthorized
+    );
+    assert_eq!(
+        h.call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "worktree prepare".into(),
+                input: map(json!({"task": h.task_key, "repo": "api"})),
+                summary: "Prepare worktree".into(),
+                rationale: None,
+                expected_revision: None,
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::NotAuthorized
+    );
+
+    // Messaging target preflight: Bob CANNOT propose `msg send` to Owner / Owner's DM or
+    // `msg accept` / `msg done` / `msg defer` / `msg unsnooze` / `msg withdraw` on Owner's message.
+    let owner_dm_id = h
+        .office
+        .dm_open(
+            &h.owner,
+            DmOpenParams {
+                participants: vec![h.tess.clone()],
+                name: None,
+                conversation_id: None,
+            },
+        )
+        .unwrap()
+        .unwrap()
+        .conversation
+        .id;
+    let owner_msg_id = send_dm_msg(&h.office, &h.owner, &h.tess, "Owner secret plan");
+    let bob_msg_id = send_dm_msg(&h.office, &h.bob, &h.tess, "Bob note");
+
+    for bad_to in ["owner", h.owner.as_str(), owner_dm_id.as_str()] {
+        assert_eq!(
+            h.call::<SuggestionCreate>(
+                &h.tess,
+                &SuggestionCreateParams {
+                    command: "msg send".into(),
+                    input: map(json!({"to": bad_to, "body": "snooping"})),
+                    summary: "Send to owner".into(),
+                    rationale: None,
+                    expected_revision: None,
+                    ttl_seconds: None,
+                    dry_run: false,
+                },
+            )
+            .unwrap_err(),
+            ErrorCode::NotAuthorized,
+            "Bob must not pass preflight for msg send to `{bad_to}`"
+        );
+    }
+    assert_eq!(
+        h.call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "msg accept".into(),
+                input: map(json!({"id": owner_msg_id})),
+                summary: "Accept owner message".into(),
+                rationale: None,
+                expected_revision: None,
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::NotFound
+    );
+    assert_eq!(
+        h.call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "channel mark-read".into(),
+                input: map(json!({"channel": owner_dm_id})),
+                summary: "Mark owner DM read".into(),
+                rationale: None,
+                expected_revision: None,
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::NotAuthorized
+    );
+    // Bob CAN pass preflight for his own DM, visible channel, and his own message.
+    assert!(h
+        .call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "msg send".into(),
+                input: map(json!({"to": "#ops-room", "body": "Status update"})),
+                summary: "Post in ops-room".into(),
+                rationale: None,
+                expected_revision: None,
+                ttl_seconds: None,
+                dry_run: true,
+            },
+        )
+        .is_ok());
+    assert!(h
+        .call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "msg done".into(),
+                input: map(json!({"id": bob_msg_id})),
+                summary: "Mark bob msg done".into(),
+                rationale: None,
+                expected_revision: None,
+                ttl_seconds: None,
+                dry_run: true,
+            },
+        )
+        .is_ok());
+
+    // Built-in agent offboard & person target & revision parity.
+    h.set_acting(Some(&h.owner));
+    let hr_id = h
+        .office
+        .list_employees()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.builtin_key == Some(org_office::organization_family::records::BuiltinKey::Hr))
+        .expect("built-in HR")
+        .id
+        .to_string();
+    for builtin in [h.tess.as_str(), "tess", hr_id.as_str(), "hr"] {
+        assert_eq!(
+            h.call::<SuggestionCreate>(
+                &h.tess,
+                &SuggestionCreateParams {
+                    command: "agent offboard".into(),
+                    input: map(json!({"member": builtin})),
+                    summary: "Offboard built-in".into(),
+                    rationale: None,
+                    expected_revision: Some(1),
+                    ttl_seconds: None,
+                    dry_run: false,
+                },
+            )
+            .unwrap_err(),
+            ErrorCode::NotAuthorized,
+            "built-in `{builtin}` must never pass agent offboard preflight"
+        );
+    }
+    for person in [h.owner.as_str(), h.bob.as_str(), "owner", "bob"] {
+        assert_eq!(
+            h.call::<SuggestionCreate>(
+                &h.tess,
+                &SuggestionCreateParams {
+                    command: "agent offboard".into(),
+                    input: map(json!({"member": person})),
+                    summary: "Offboard person".into(),
+                    rationale: None,
+                    expected_revision: Some(1),
+                    ttl_seconds: None,
+                    dry_run: false,
+                },
+            )
+            .unwrap_err(),
+            ErrorCode::InvalidRequest,
+            "person `{person}` must be rejected on agent offboard"
+        );
+    }
+
+    // Hire a regular non-builtin agent and verify revision check on `agent offboard` & `team set-limit`.
+    let ada_id = next_id();
+    dispatch_hiring::<HrHire>(
+        &h.office,
+        &h.owner,
+        &HrHireParams {
+            command_id: next_id(),
+            request_id: next_id(),
+            employee_id: ada_id.clone(),
+            home_team_id: h.team_id.clone(),
+            role_id: None,
+            proposal: proposal("Ada", "ada"),
+            reason: "regular agent".into(),
+        },
+    );
+    let ada_rev = h
+        .office
+        .load_employee(&ada_id)
+        .unwrap()
+        .unwrap()
+        .meta
+        .revision;
+    assert_eq!(
+        h.call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "agent offboard".into(),
+                input: map(json!({"member": ada_id})),
+                summary: "Offboard Ada wrong rev".into(),
+                rationale: None,
+                expected_revision: Some(ada_rev + 5),
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::Conflict
+    );
+    assert!(h
+        .call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "agent offboard".into(),
+                input: map(json!({"member": ada_id})),
+                summary: "Offboard Ada".into(),
+                rationale: None,
+                expected_revision: Some(ada_rev),
+                ttl_seconds: None,
+                dry_run: true,
+            },
+        )
+        .is_ok());
+
+    let latest_team_ver = h
+        .office
+        .org_snapshot()
+        .unwrap()
+        .teams
+        .iter()
+        .find(|t| t.id == h.team_id)
+        .unwrap()
+        .version;
+    assert_eq!(
+        h.call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "team set-limit".into(),
+                input: map(json!({"team": h.team_id, "max_members": 15})),
+                summary: "Team limit wrong rev".into(),
+                rationale: None,
+                expected_revision: Some(latest_team_ver + 7),
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::Conflict
+    );
+
+    // P2-7: `team update --lead-member-id` persists resolved wire call `team.set_lead`.
+    let set_lead = h
+        .call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "team update".into(),
+                input: map(json!({"team": h.team_id, "lead_member_id": h.owner})),
+                summary: "Set team lead".into(),
+                rationale: None,
+                expected_revision: Some(latest_team_ver),
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap();
+    assert_eq!(set_lead.suggestion.command, "team update");
+    assert_eq!(set_lead.suggestion.call, "team.set_lead");
+}
+
+#[test]
+fn p1_3_ui_present_rejects_entity_route_mismatch_deep_unverified_routes_and_unsafe_route_chars() {
+    let h = harness();
+
+    // Entity/route mismatch fails closed with InvalidRequest.
+    assert_eq!(
+        h.call::<UiPresent>(
+            &h.tess,
+            &UiPresentParams {
+                navigation: vec![UiNavigation {
+                    label: "Spoofed route".into(),
+                    route: format!("/chat/dm/{}", h.bob_dm_id),
+                    entity_kind: Some(UiEntityKind::Channel),
+                    entity_id: Some(h.channel_id.clone()),
+                }],
+                ..UiPresentParams::default()
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::InvalidRequest
+    );
+
+    // Unverified deep routes and unsafe query/fragment/percent/whitespace routes fail closed.
+    for bad_route in [
+        "/chat/dm/foo",
+        "/budgets/0193a5c0-0000-7000-8000-000000000001",
+        "/hr/hires/0193a5c0-0000-7000-8000-000000000001",
+        "/tasks/FAKE",
+        "/tasks?next=//evil",
+        "/tasks#javascript:alert(1)",
+        "/%2e%2e/x",
+        "/tasks foo",
+    ] {
+        assert_eq!(
+            h.call::<UiPresent>(
+                &h.tess,
+                &UiPresentParams {
+                    navigation: vec![UiNavigation {
+                        label: "Bad nav".into(),
+                        route: bad_route.into(),
+                        entity_kind: None,
+                        entity_id: None,
+                    }],
+                    ..UiPresentParams::default()
+                },
+            )
+            .unwrap_err(),
+            ErrorCode::InvalidRequest,
+            "route `{bad_route}` must fail closed"
+        );
+    }
+
+    // Explicit static top-level route AND matching verified entity route both succeed.
+    let ok = h
+        .call::<UiPresent>(
+            &h.tess,
+            &UiPresentParams {
+                navigation: vec![
+                    UiNavigation {
+                        label: "All tasks".into(),
+                        route: "/tasks".into(),
+                        entity_kind: None,
+                        entity_id: None,
+                    },
+                    UiNavigation {
+                        label: "Target task".into(),
+                        route: format!("/tasks/{}", h.task_key),
+                        entity_kind: Some(UiEntityKind::Task),
+                        entity_id: Some(h.task_key.clone()),
+                    },
+                ],
+                ..UiPresentParams::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(ok.ui_block.navigation.len(), 2);
+    assert_eq!(ok.ui_block.navigation[0].route, "/tasks");
+    assert_eq!(
+        ok.ui_block.navigation[1].route,
+        format!("/tasks/{}", h.task_key)
+    );
+}
+
+#[test]
+fn p1_4_p2_6_suggestion_store_enforces_size_control_chars_list_cap_and_caller_isolation() {
+    let h = harness();
+
+    // P1-4: > 16 KiB input fails closed BEFORE preflight with ErrorCode::TooLarge.
+    let huge = "x".repeat(17 * 1024);
+    assert_eq!(
+        h.call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "task create".into(),
+                input: map(json!({"title": "Big", "body": huge})),
+                summary: "Oversized proposal".into(),
+                rationale: None,
+                expected_revision: None,
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::TooLarge
+    );
+
+    // P2-6: Control chars rejected in summary, rationale (except `\n`), withdraw reason, dismiss reason.
+    for bad_summary in [
+        "Bad\0summary",
+        "Bad\x1b[31mANSI",
+        "Bad\rsummary",
+        "Bad\nsummary",
+    ] {
+        assert_eq!(
+            h.call::<SuggestionCreate>(
+                &h.tess,
+                &SuggestionCreateParams {
+                    command: "task create".into(),
+                    input: map(json!({"title": "Ok"})),
+                    summary: bad_summary.into(),
+                    rationale: None,
+                    expected_revision: None,
+                    ttl_seconds: None,
+                    dry_run: false,
+                },
+            )
+            .unwrap_err(),
+            ErrorCode::InvalidRequest,
+            "summary `{bad_summary:?}` must be rejected"
+        );
+    }
+    for bad_rationale in ["Line\0null", "Line\x1besc", "Line\rcr"] {
+        assert_eq!(
+            h.call::<SuggestionCreate>(
+                &h.tess,
+                &SuggestionCreateParams {
+                    command: "task create".into(),
+                    input: map(json!({"title": "Ok"})),
+                    summary: "Valid summary".into(),
+                    rationale: Some(bad_rationale.into()),
+                    expected_revision: None,
+                    ttl_seconds: None,
+                    dry_run: false,
+                },
+            )
+            .unwrap_err(),
+            ErrorCode::InvalidRequest
+        );
+    }
+
+    // Multi-line rationale with `\n` is allowed; Owner's pending proposal created cleanly.
+    let owner_prop = h
+        .call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "task create".into(),
+                input: map(json!({"title": "Owner critical task"})),
+                summary: "Owner critical proposal".into(),
+                rationale: Some("Line 1\nLine 2".into()),
+                expected_revision: None,
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap()
+        .suggestion;
+
+    // Control characters in withdraw/dismiss `reason` fail closed.
+    assert_eq!(
+        h.call::<SuggestionWithdraw>(
+            &h.tess,
+            &SuggestionWithdrawParams {
+                suggestion_id: owner_prop.id.clone(),
+                reason: Some("Bad\x1breason".into()),
+                dry_run: true,
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        h.call::<SuggestionDismiss>(
+            &h.owner,
+            &SuggestionDismissParams {
+                suggestion_id: owner_prop.id.clone(),
+                reason: Some("Bad\rreason".into()),
+            },
+        )
+        .unwrap_err(),
+        ErrorCode::InvalidRequest
+    );
+
+    // P1-4: Bob spamming 75 proposals (past per-caller cap 64) NEVER evicts Owner's pending
+    // proposal, and `suggestion.list` is clamped to at most 50 entries.
+    h.set_acting(Some(&h.bob));
+    for i in 0..75 {
+        h.call::<SuggestionCreate>(
+            &h.tess,
+            &SuggestionCreateParams {
+                command: "task create".into(),
+                input: map(json!({"title": format!("Bob spam {i}")})),
+                summary: format!("Bob spam {i}"),
+                rationale: None,
+                expected_revision: None,
+                ttl_seconds: None,
+                dry_run: false,
+            },
+        )
+        .unwrap();
+    }
+    let bob_listed = h
+        .call::<SuggestionList>(
+            &h.bob,
+            &SuggestionListParams {
+                status: None,
+                limit: Some(500),
+            },
+        )
+        .unwrap();
+    assert_eq!(bob_listed.suggestions.len(), 50);
+
+    // Owner's pending proposal is completely intact!
+    h.set_acting(Some(&h.owner));
+    let still_there = h
+        .call::<SuggestionInspect>(
+            &h.owner,
+            &SuggestionInspectParams {
+                suggestion_id: owner_prop.id.clone(),
+            },
+        )
+        .unwrap();
+    assert_eq!(still_there.suggestion.id, owner_prop.id);
+    assert_eq!(still_there.suggestion.status, SuggestionStatus::Pending);
+
+    // Global cap (512): when 8 callers each hold 64 pending proposals, a 9th caller gets
+    // RateLimited and NO existing caller's pending proposal is evicted.
+    let h_cap = harness();
+    let mut callers = vec![h_cap.owner.clone(), h_cap.bob.clone()];
+    for i in 0..7 {
+        let member = next_id();
+        h_cap
+            .office
+            .submit_org(
+                &h_cap.owner,
+                OrgCommand::MemberAddPerson(MemberAddPersonParams {
+                    command_id: next_id(),
+                    member_id: member.clone(),
+                    name: format!("Caller {i}"),
+                    handle: Some(format!("caller{i}")),
+                    home_team_id: Some(h_cap.team_id.clone()),
+                    contact: None,
+                }),
+            )
+            .unwrap()
+            .unwrap();
+        callers.push(member);
+    }
+    let mut first_ids = Vec::new();
+    for caller in &callers[0..8] {
+        h_cap.set_acting(Some(caller));
+        for j in 0..64 {
+            let created = h_cap
+                .call::<SuggestionCreate>(
+                    &h_cap.tess,
+                    &SuggestionCreateParams {
+                        command: "task create".into(),
+                        input: map(json!({"title": format!("t-{j}")})),
+                        summary: format!("Proposal {j}"),
+                        rationale: None,
+                        expected_revision: None,
+                        ttl_seconds: None,
+                        dry_run: false,
+                    },
+                )
+                .unwrap();
+            if j == 0 {
+                first_ids.push((caller.clone(), created.suggestion.id));
+            }
+        }
+    }
+    h_cap.set_acting(Some(&callers[8]));
+    assert_eq!(
+        h_cap
+            .call::<SuggestionCreate>(
+                &h_cap.tess,
+                &SuggestionCreateParams {
+                    command: "task create".into(),
+                    input: map(json!({"title": "overflow"})),
+                    summary: "Overflow proposal".into(),
+                    rationale: None,
+                    expected_revision: None,
+                    ttl_seconds: None,
+                    dry_run: false,
+                },
+            )
+            .unwrap_err(),
+        ErrorCode::RateLimited
+    );
+    for (caller, first_id) in first_ids {
+        assert!(
+            h_cap
+                .call::<SuggestionInspect>(
+                    &caller,
+                    &SuggestionInspectParams {
+                        suggestion_id: first_id,
+                    },
+                )
+                .is_ok(),
+            "caller `{caller}` pending proposal must not be evicted"
         );
     }
 }

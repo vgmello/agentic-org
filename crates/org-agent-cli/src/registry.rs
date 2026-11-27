@@ -44,7 +44,8 @@ const DOMAINS: &[Domain] = &[
 /// caller (`TASK-80.4`): `AutoSafe` actions run directly; `ConfirmRequired` mutations require a
 /// preflighted `agent-os suggestion create` proposal; `ForbiddenForAgent` calls are always denied.
 const POLICY_OVERRIDES: &[PolicyOverride] = &[
-    // AutoSafe: proposal & UI presentation helpers, caller reply, status line, private task notes.
+    // AutoSafe: proposal & UI presentation helpers, caller 1:1 DM reply (enforced server-side),
+    // status line, private task notes.
     PolicyOverride {
         resource: "suggestion",
         verb: "create",

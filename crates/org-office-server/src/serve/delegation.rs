@@ -33,7 +33,9 @@
 //! cannot read what the gate needs, every bound member is refused (fail closed).
 
 use org_agent_cli::MutationPolicy;
-use org_proto::chat::ConversationSummary;
+use org_proto::ask::ChatAnswer;
+use org_proto::chat::{ChatReact, ConversationKind, ConversationSummary};
+use org_proto::msg::MsgReply;
 use org_proto::{ApiError, ErrorCode, Request, Response};
 
 use super::auth::Binding;
@@ -87,7 +89,7 @@ pub struct Delegation {
 
 /// What a method needs of the member the Chief of Staff acts for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Access {
+pub(crate) enum Access {
     Open,
     CallerHires,
     CallerOwner,
@@ -197,7 +199,6 @@ const NON_CLI_READ_ONLY: &[&str] = &[
     "chat.messages",
     "chat.watching_model_get",
     "cost.export_csv",
-    "dm.open",
     "docs.index",
     "docs.inspect",
     "docs.list",
@@ -211,13 +212,15 @@ const NON_CLI_READ_ONLY: &[&str] = &[
     "operation.get",
     "process.view",
     "subscribe",
+    "tasks.comments",
 ];
 
 /// Non-CLI low-risk caller-reply / reaction wire calls outside `CommandTable::rows()`.
+/// Restricted by [`enforce_mutation_policy`] to Tess's 1:1 DM with the active caller.
 const NON_CLI_AUTO_SAFE: &[&str] = &["chat.answer", "chat.react"];
 
 /// The class of `method`. A method named nowhere needs the owner.
-pub(super) fn access(method: &str) -> Access {
+pub(crate) fn access(method: &str) -> Access {
     let starts = |prefixes: &[&str]| prefixes.iter().any(|p| method.starts_with(p));
     if NEVER.contains(&method) {
         Access::Never
@@ -315,18 +318,93 @@ pub(super) fn gate(
         return Err(denied(request.id));
     }
     scope::admit(request, port, member, &delegation)?;
-    if delegation.caller_id.is_some() {
-        enforce_mutation_policy(request)?;
+    if let Some(caller_id) = delegation.caller_id.as_deref() {
+        enforce_mutation_policy(request, port, member, caller_id)?;
     }
     Ok(Some(delegation))
 }
 
-fn enforce_mutation_policy(request: &Request) -> Result<(), Response> {
+fn enforce_mutation_policy(
+    request: &Request,
+    port: &dyn ChiefOfStaffPort,
+    tess_id: &str,
+    caller_id: &str,
+) -> Result<(), Response> {
     match mutation_policy_for_rpc(&request.method) {
-        MutationPolicy::ReadOnly | MutationPolicy::AutoSafe => Ok(()),
+        MutationPolicy::ReadOnly => Ok(()),
+        MutationPolicy::AutoSafe => {
+            if is_caller_dm_only_reply(&request.method)
+                && !targets_caller_direct_dm(request, port, tess_id, caller_id)?
+            {
+                return Err(policy_violation(request.id, &request.method));
+            }
+            Ok(())
+        }
         MutationPolicy::ConfirmRequired => Err(policy_violation(request.id, &request.method)),
         MutationPolicy::ForbiddenForAgent => Err(denied(request.id)),
     }
+}
+
+fn is_caller_dm_only_reply(method: &str) -> bool {
+    matches!(method, "msg.reply" | "chat.answer" | "chat.react")
+}
+
+/// Verifies that a `msg.reply`, `chat.answer`, or `chat.react` targets a message inside Tess's
+/// 1:1 DM with `caller_id` (exact active participants `{tess_id, caller_id}`, never a channel or
+/// multi-person group DM). Fails closed on malformed parameters, unknown messages, or port errors.
+fn targets_caller_direct_dm(
+    request: &Request,
+    port: &dyn ChiefOfStaffPort,
+    tess_id: &str,
+    caller_id: &str,
+) -> Result<bool, Response> {
+    let Some(message_id) = target_message_id(request) else {
+        return Ok(false);
+    };
+    let Some(conversation_id) = port
+        .message_conversation(&message_id)
+        .map_err(|err| Response::error(request.id, err))?
+    else {
+        return Ok(false);
+    };
+    let conversations = port
+        .visible_conversations(caller_id)
+        .map_err(|err| Response::error(request.id, err))?;
+    Ok(conversations
+        .iter()
+        .find(|c| c.id == conversation_id)
+        .is_some_and(|c| is_exact_one_to_one_dm(c, tess_id, caller_id)))
+}
+
+fn target_message_id(request: &Request) -> Option<String> {
+    match request.method.as_str() {
+        "msg.reply" => request.params::<MsgReply>().ok().map(|p| p.to_id),
+        "chat.answer" => request.params::<ChatAnswer>().ok().map(|p| p.ask_id),
+        "chat.react" => request.params::<ChatReact>().ok().map(|p| p.message_id),
+        _ => None,
+    }
+}
+
+fn is_exact_one_to_one_dm(
+    conversation: &ConversationSummary,
+    tess_id: &str,
+    caller_id: &str,
+) -> bool {
+    if conversation.kind != ConversationKind::Dm || tess_id == caller_id {
+        return false;
+    }
+    let mut has_tess = false;
+    let mut has_caller = false;
+    for member in conversation.members.iter().filter(|m| m.left_at.is_none()) {
+        if member.employee_id == tess_id {
+            has_tess = true;
+        } else if member.employee_id == caller_id {
+            has_caller = true;
+        } else {
+            return false;
+        }
+    }
+    has_tess && has_caller
 }
 
 fn policy_violation(id: u64, method: &str) -> Response {

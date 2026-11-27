@@ -851,7 +851,13 @@ fn mutation_policy_blocks_direct_confirm_required_writes_with_suggestion_hint_an
 
     let _spawn = crate::transfer::tests::without_process_spawn();
     let dir = tempfile::TempDir::new().unwrap();
-    let port = Arc::new(FakePort::new(TESS, the_owner()));
+    let mut fake = FakePort::new(TESS, the_owner());
+    fake.visible = vec![(
+        "owner".into(),
+        vec![conversation("dm-owner-tess", "dm", &["owner", TESS])],
+    )];
+    fake.messages = vec![("m0".into(), "dm-owner-tess".into())];
+    let port = Arc::new(fake);
     let mut p = ports(Box::new(|| Err(SnapshotFailure::Storage)));
     p.delegation = Some(Arc::clone(&port) as Arc<dyn ChiefOfStaffPort>);
     let shared = Shared::new(&test_info(), &dir.path().join("m.sock"), p, launch_key());
@@ -973,4 +979,131 @@ fn mutation_policy_blocks_direct_confirm_required_writes_with_suggestion_hint_an
         delegated_owner_read_actor(&other_sessions, Some(&owner_del)),
         Some("owner")
     );
+}
+
+#[test]
+fn p1_1_and_p2_8_dm_open_and_non_direct_dm_replies_return_policy_violation_and_task_comments_are_read_only(
+) {
+    use crate::serve::tests::{launch_key, ports, test_info};
+    use crate::serve::SnapshotFailure;
+
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let dir = tempfile::TempDir::new().unwrap();
+    let mut fake = FakePort::new(TESS, the_owner());
+    let dm_owner = conversation("dm-owner-tess", "dm", &["owner", TESS]);
+    let shared_chan = conversation("chan-shared", "channel", &["owner", MEMBER_B, TESS]);
+    let two_person_chan = conversation("chan-two", "channel", &["owner", TESS]);
+    let group_dm = conversation("gdm-team", "group_dm", &["owner", MEMBER_B, TESS]);
+    let malformed_three_dm = conversation("dm-three", "dm", &["owner", MEMBER_B, TESS]);
+    fake.visible = vec![(
+        "owner".into(),
+        vec![
+            dm_owner,
+            shared_chan,
+            two_person_chan,
+            group_dm,
+            malformed_three_dm,
+        ],
+    )];
+    fake.messages = vec![
+        ("m-dm-owner".into(), "dm-owner-tess".into()),
+        ("m-chan".into(), "chan-shared".into()),
+        ("m-chan-two".into(), "chan-two".into()),
+        ("m-gdm".into(), "gdm-team".into()),
+        ("m-dm-three".into(), "dm-three".into()),
+    ];
+    let port = Arc::new(fake);
+    let mut p = ports(Box::new(|| Err(SnapshotFailure::Storage)));
+    p.delegation = Some(Arc::clone(&port) as Arc<dyn ChiefOfStaffPort>);
+    let shared = Shared::new(&test_info(), &dir.path().join("p11.sock"), p, launch_key());
+
+    // P2-8: `tasks.comments` is ReadOnly so Tess can inspect task comment threads directly.
+    assert_eq!(
+        mutation_policy_for_rpc("tasks.comments"),
+        MutationPolicy::ReadOnly
+    );
+    let comments_resp = shared.answer_for_test(
+        &call("tasks.comments", json!({"task": "T-A1"})),
+        TESS,
+        false,
+    );
+    assert!(
+        !matches!(
+            comments_resp.outcome,
+            Outcome::Error(ref e) if e.code == ErrorCode::PolicyViolation
+        ),
+        "tasks.comments must be ReadOnly: {comments_resp:?}"
+    );
+
+    // P1-1(a): `dm.open` is ConfirmRequired (NOT ReadOnly) and returns PolicyViolation when Tess
+    // acts for a caller — even if the caller is named among participants.
+    assert_eq!(
+        mutation_policy_for_rpc("dm.open"),
+        MutationPolicy::ConfirmRequired
+    );
+    for participants in [json!(["owner"]), json!(["owner", MEMBER_B])] {
+        let req = call("dm.open", json!({"participants": participants}));
+        let resp = shared.answer_for_test(&req, TESS, false);
+        match resp.outcome {
+            Outcome::Error(err) => {
+                assert_eq!(err.code, ErrorCode::PolicyViolation, "{err:?}");
+                assert!(err
+                    .hint()
+                    .unwrap_or("")
+                    .contains("agent-os suggestion create"));
+            }
+            Outcome::Result(v) => panic!("dm.open should fail closed, got {v}"),
+        }
+    }
+
+    // P1-1(b): `msg.reply`, `chat.answer`, and `chat.react` pass PolicyViolation check ONLY when
+    // targeting Tess's 1:1 DM with the active caller.
+    let reply_calls = |msg_id: &str| {
+        [
+            (
+                "msg.reply",
+                json!({"id": "r1", "to_id": msg_id, "body": "reply"}),
+            ),
+            ("chat.answer", json!({"ask_id": msg_id, "answers": []})),
+            (
+                "chat.react",
+                json!({"message_id": msg_id, "reaction": "seen"}),
+            ),
+        ]
+    };
+    for (method, params) in reply_calls("m-dm-owner") {
+        let resp = shared.answer_for_test(&call(method, params), TESS, false);
+        assert!(
+            !matches!(
+                resp.outcome,
+                Outcome::Error(ref e)
+                    if e.code == ErrorCode::PolicyViolation || e.code == ErrorCode::NotAuthorized
+            ),
+            "`{method}` in Tess's 1:1 DM with caller must pass gate: {resp:?}"
+        );
+    }
+
+    // Shared channel, 2-person channel, group DM, 3-member DM, and unknown message ALL return
+    // PolicyViolation with the `agent-os suggestion create` hint!
+    for bad_msg in ["m-chan", "m-chan-two", "m-gdm", "m-dm-three", "m-unknown"] {
+        for (method, params) in reply_calls(bad_msg) {
+            let resp = shared.answer_for_test(&call(method, params), TESS, false);
+            match resp.outcome {
+                Outcome::Error(err) => {
+                    assert_eq!(
+                        err.code,
+                        ErrorCode::PolicyViolation,
+                        "`{method}` targeting `{bad_msg}` must return PolicyViolation, got {err:?}"
+                    );
+                    assert!(err
+                        .hint()
+                        .unwrap_or("")
+                        .contains("agent-os suggestion create"));
+                }
+                Outcome::Result(v) => {
+                    panic!("`{method}` targeting `{bad_msg}` should be blocked, got {v}")
+                }
+            }
+        }
+    }
 }

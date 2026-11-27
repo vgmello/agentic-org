@@ -1,13 +1,23 @@
 //! Server-side target command resolution and live preflight validation for Chief of Staff
 //! `suggestion.create` proposals (`TASK-80.4`).
 
+mod hiring;
+mod messaging;
+
 use org_agent_cli::{Command, MutationPolicy};
+use org_office::organization_family::records::EmployeeKind;
 use org_office::rules::OrgCommand;
 use org_office::CallerAuthority;
 use org_proto::{ApiError, ErrorCode, Request};
 use serde_json::{json, Map, Value};
 
+use self::hiring::preflight_hire;
+use self::messaging::{is_messaging_target_call, preflight_messaging};
 use super::TessService;
+use crate::serve::delegation::Access;
+
+/// Uniform refusal text for missing or cross-team hire requests (prevents existence oracles).
+pub(super) const HIRE_NOT_VISIBLE: &str = "hire request not found or not visible to caller";
 
 /// V1 allowlisted target RPC methods that Tess may propose for human confirmation.
 const ALLOWED_SUGGESTION_CALLS: &[&str] = &[
@@ -75,37 +85,27 @@ const ALLOWED_SUGGESTION_CALLS: &[&str] = &[
     "worktree.prepare",
 ];
 
-/// Owner-only mutations that a non-owner caller cannot have proposed on their behalf.
-const OWNER_ONLY_CALLS: &[&str] = &[
-    "member.add_agent",
-    "member.add_person",
-    "member.agent_move",
-    "member.agent_offboard",
-    "member.agent_set_status",
-    "member.agent_update",
-    "member.move",
-    "member.offboard",
-    "member.remove",
-    "member.set_agent_status",
-    "member.set_reports_to",
-    "member.update_agent",
-    "member.update_person",
-    "process.write",
-    "project.add_team",
-    "project.create",
-    "project.remove_team",
-    "repo.attach",
-    "repo.register",
-    "role.create",
-    "role.update",
-    "team.create",
-    "team.delete",
-    "team.move",
-    "team.rename",
-    "team.set_lead",
-    "team.set_max_members",
-    "team.set_title",
-];
+/// Caller identity and live authority evaluated during `suggestion.create` preflight.
+pub(super) struct PreflightContext<'a> {
+    pub(super) tess_id: &'a str,
+    pub(super) caller_id: &'a str,
+    pub(super) authority: &'a CallerAuthority,
+}
+
+/// Verified preflight result, carrying the resolved wire RPC method persisted on `SuggestionView`.
+pub(super) struct PreflightOutcome {
+    pub(super) call: String,
+    pub(super) note: Option<String>,
+}
+
+impl PreflightOutcome {
+    pub(super) fn ok(call: &str, note: impl Into<String>) -> Self {
+        Self {
+            call: call.to_owned(),
+            note: Some(note.into()),
+        }
+    }
+}
 
 pub(super) fn resolve_target_command(raw: &str) -> Result<&'static Command, ApiError> {
     let words: Vec<String> = raw.split_whitespace().map(str::to_owned).collect();
@@ -158,26 +158,26 @@ pub(super) fn resolve_target_command(raw: &str) -> Result<&'static Command, ApiE
 
 pub(super) fn preflight_target(
     svc: &TessService,
-    caller_id: &str,
-    authority: &CallerAuthority,
+    ctx: &PreflightContext<'_>,
     call: &str,
     input: &Map<String, Value>,
     expected_revision: Option<u64>,
-) -> Result<Option<String>, ApiError> {
-    if OWNER_ONLY_CALLS.contains(&call) && !authority.is_owner {
-        return Err(ApiError::new(
-            ErrorCode::NotAuthorized,
-            format!("caller is not authorized to perform `{call}`"),
-        ));
-    }
+) -> Result<PreflightOutcome, ApiError> {
+    enforce_delegation_access(ctx.authority, call)?;
     if call.starts_with("hr.hire") {
-        return preflight_hire(svc, caller_id, authority, call, input);
+        return preflight_hire(svc, ctx, call, input, expected_revision);
     }
     if call.starts_with("tasks.") {
         return preflight_task(svc, call, input, expected_revision);
     }
-    if let Some(note) = preflight_org_command(svc, caller_id, call, input, expected_revision)? {
-        return Ok(Some(note));
+    if is_messaging_target_call(call) {
+        return preflight_messaging(svc, ctx, call, input);
+    }
+    if let Some(outcome) =
+        preflight_org_command(svc, ctx.caller_id, call, input, expected_revision)?
+    {
+        enforce_delegation_access(ctx.authority, &outcome.call)?;
+        return Ok(outcome);
     }
     if matches!(
         call,
@@ -186,19 +186,39 @@ pub(super) fn preflight_target(
             | "member.agent_set_status"
             | "member.agent_offboard"
     ) {
-        return preflight_agent_target(svc, input);
+        return preflight_agent_target(svc, call, input, expected_revision);
     }
     if call == "team.set_max_members" {
-        return preflight_team_target(svc, input);
+        return preflight_team_target(svc, call, input, expected_revision);
     }
-    Ok(Some("schema and authority verified".into()))
+    Ok(PreflightOutcome::ok(call, "schema and authority verified"))
+}
+
+fn enforce_delegation_access(authority: &CallerAuthority, call: &str) -> Result<(), ApiError> {
+    match crate::serve::delegation::access(call) {
+        Access::Never => Err(ApiError::new(
+            ErrorCode::NotAuthorized,
+            format!("`{call}` is not allowed through Chief of Staff delegation"),
+        )),
+        Access::CallerOwner if !authority.is_owner => Err(ApiError::new(
+            ErrorCode::NotAuthorized,
+            format!("caller is not authorized to perform `{call}`"),
+        )),
+        Access::CallerHires if !(authority.is_owner || authority.may_hire) => Err(ApiError::new(
+            ErrorCode::NotAuthorized,
+            "caller does not have hiring authority",
+        )),
+        Access::Open | Access::CallerOwner | Access::CallerHires => Ok(()),
+    }
 }
 
 fn preflight_agent_target(
     svc: &TessService,
+    call: &str,
     input: &Map<String, Value>,
-) -> Result<Option<String>, ApiError> {
-    let member_id = input
+    expected_revision: Option<u64>,
+) -> Result<PreflightOutcome, ApiError> {
+    let member_ref = input
         .get("member")
         .or_else(|| input.get("member_id"))
         .and_then(Value::as_str)
@@ -209,23 +229,72 @@ fn preflight_agent_target(
         crate::logged("tess_calls.org_snapshot", &err);
         ApiError::new(ErrorCode::Unavailable, "unable to inspect organization")
     })?;
-    let exists = snap
+    let resolved_id = snap
         .members
         .iter()
-        .any(|m| m.id == member_id || m.handle.as_deref() == Some(member_id));
-    if !exists {
+        .find(|m| {
+            m.id == member_ref
+                || m.handle.as_deref() == Some(member_ref)
+                || (member_ref.eq_ignore_ascii_case("owner") && m.owner)
+        })
+        .map(|m| m.id.as_str())
+        .unwrap_or(member_ref);
+    let employee = svc
+        .office()
+        .load_employee(resolved_id)
+        .map_err(|err| {
+            crate::logged("tess_calls.load_employee", &err);
+            ApiError::new(ErrorCode::Unavailable, "unable to inspect target employee")
+        })?
+        .ok_or_else(|| {
+            ApiError::new(
+                ErrorCode::NotFound,
+                format!("target member `{member_ref}` not found"),
+            )
+        })?;
+    if employee.kind != EmployeeKind::Agent {
         return Err(ApiError::new(
-            ErrorCode::NotFound,
-            format!("target member `{member_id}` not found"),
+            ErrorCode::InvalidRequest,
+            "target member is not an agent",
         ));
     }
-    Ok(Some("agent target verified".into()))
+    if call == "member.agent_offboard" && employee.builtin_key.is_some() {
+        return Err(ApiError::new(
+            ErrorCode::NotAuthorized,
+            "built-in agents cannot be offboarded",
+        ));
+    }
+    if let Some(expected) = expected_revision {
+        if employee.meta.revision != expected {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                format!(
+                    "target agent `{}` is at revision {}, not expected revision {expected}",
+                    employee.id.as_str(),
+                    employee.meta.revision
+                ),
+            ));
+        }
+    }
+    if call == "member.agent_move" {
+        if let Some(to_team) = input.get("to_team_id").and_then(Value::as_str) {
+            if !snap.teams.iter().any(|t| t.id == to_team) {
+                return Err(ApiError::new(
+                    ErrorCode::NotFound,
+                    format!("destination team `{to_team}` not found"),
+                ));
+            }
+        }
+    }
+    Ok(PreflightOutcome::ok(call, "agent target verified"))
 }
 
 fn preflight_team_target(
     svc: &TessService,
+    call: &str,
     input: &Map<String, Value>,
-) -> Result<Option<String>, ApiError> {
+    expected_revision: Option<u64>,
+) -> Result<PreflightOutcome, ApiError> {
     let team_id = input
         .get("team")
         .or_else(|| input.get("team_id"))
@@ -235,103 +304,32 @@ fn preflight_team_target(
         crate::logged("tess_calls.org_snapshot", &err);
         ApiError::new(ErrorCode::Unavailable, "unable to inspect organization")
     })?;
-    if !snap.teams.iter().any(|t| t.id == team_id) {
-        return Err(ApiError::new(
+    let team = snap.teams.iter().find(|t| t.id == team_id).ok_or_else(|| {
+        ApiError::new(
             ErrorCode::NotFound,
             format!("target team `{team_id}` not found"),
-        ));
-    }
-    Ok(Some("team target verified".into()))
-}
-
-fn preflight_hire(
-    svc: &TessService,
-    caller_id: &str,
-    authority: &CallerAuthority,
-    call: &str,
-    input: &Map<String, Value>,
-) -> Result<Option<String>, ApiError> {
-    if !(authority.is_owner || authority.may_hire) {
-        return Err(ApiError::new(
-            ErrorCode::NotAuthorized,
-            "caller does not have hiring authority",
-        ));
-    }
-    match call {
-        "hr.hire" | "hr.hire.draft" => {
-            if let Some(req_id) = input
-                .get("id")
-                .or_else(|| input.get("request"))
-                .or_else(|| input.get("request_id"))
-                .and_then(Value::as_str)
-            {
-                if input.get("team").is_none() && input.get("home_team_id").is_none() {
-                    return preflight_existing_hire(svc, caller_id, authority, req_id);
-                }
-            }
-            let team = input
-                .get("team")
-                .or_else(|| input.get("home_team_id"))
-                .and_then(Value::as_str)
-                .ok_or_else(|| ApiError::new(ErrorCode::InvalidRequest, "missing target team"))?;
-            check_caller_hire_team(svc, caller_id, authority, team)?;
-            Ok(Some("hiring scope verified".into()))
+        )
+    })?;
+    if let Some(expected) = expected_revision {
+        if team.version != expected {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                format!(
+                    "target team `{team_id}` is at revision {}, not expected revision {expected}",
+                    team.version
+                ),
+            ));
         }
-        "hr.hire.confirm" | "hr.hire.withdraw" => {
-            let req_id = input
-                .get("request")
-                .or_else(|| input.get("request_id"))
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    ApiError::new(ErrorCode::InvalidRequest, "missing hire request ID")
-                })?;
-            preflight_existing_hire(svc, caller_id, authority, req_id)
+    }
+    if let Some(cap) = input.get("max_members").and_then(Value::as_u64) {
+        if !(1..=100).contains(&cap) {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "`max_members` must be between 1 and 100",
+            ));
         }
-        _ => Ok(Some("hiring authority verified".into())),
     }
-}
-
-fn preflight_existing_hire(
-    svc: &TessService,
-    caller_id: &str,
-    authority: &CallerAuthority,
-    req_id: &str,
-) -> Result<Option<String>, ApiError> {
-    let scope = svc
-        .office()
-        .delegated_hire_scope(req_id)
-        .map_err(|err| {
-            crate::logged("tess_calls.hire_scope", &err);
-            ApiError::new(ErrorCode::Unavailable, "unable to inspect hire request")
-        })?
-        .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "hire request not found"))?;
-    check_caller_hire_team(svc, caller_id, authority, &scope.home_team_id)?;
-    Ok(Some("hire request verified".into()))
-}
-
-fn check_caller_hire_team(
-    svc: &TessService,
-    caller_id: &str,
-    authority: &CallerAuthority,
-    team_id: &str,
-) -> Result<(), ApiError> {
-    if authority.is_owner {
-        return Ok(());
-    }
-    let ok = svc
-        .office()
-        .caller_may_hire_into(caller_id, team_id)
-        .map_err(|err| {
-            crate::logged("tess_calls.may_hire_into", &err);
-            ApiError::new(ErrorCode::Unavailable, "unable to check hiring scope")
-        })?;
-    if !ok {
-        return Err(ApiError::new(
-            ErrorCode::NotAuthorized,
-            "caller may not hire into the requested team",
-        ));
-    }
-    Ok(())
+    Ok(PreflightOutcome::ok(call, "team target verified"))
 }
 
 fn preflight_task(
@@ -339,7 +337,7 @@ fn preflight_task(
     call: &str,
     input: &Map<String, Value>,
     expected_revision: Option<u64>,
-) -> Result<Option<String>, ApiError> {
+) -> Result<PreflightOutcome, ApiError> {
     if call == "tasks.create" {
         if let Some(project) = input.get("project").and_then(Value::as_str) {
             svc.office().inspect_project(project).map_err(|err| {
@@ -359,10 +357,10 @@ fn preflight_task(
                 ));
             }
         }
-        return Ok(Some("task creation target verified".into()));
+        return Ok(PreflightOutcome::ok(call, "task creation target verified"));
     }
     let Some(task_ref) = input.get("task").and_then(Value::as_str) else {
-        return Ok(Some("schema verified".into()));
+        return Ok(PreflightOutcome::ok(call, "schema verified"));
     };
     let inspected = svc.office().task_inspect(task_ref).map_err(|err| {
         crate::logged("tess_calls.task_inspect", &err);
@@ -379,10 +377,13 @@ fn preflight_task(
             ));
         }
     }
-    Ok(Some(format!(
-        "verified task `{}` at revision {}",
-        inspected.task.key, inspected.task.revision
-    )))
+    Ok(PreflightOutcome::ok(
+        call,
+        format!(
+            "verified task `{}` at revision {}",
+            inspected.task.key, inspected.task.revision
+        ),
+    ))
 }
 
 fn preflight_org_command(
@@ -391,7 +392,7 @@ fn preflight_org_command(
     call: &str,
     input: &Map<String, Value>,
     expected_revision: Option<u64>,
-) -> Result<Option<String>, ApiError> {
+) -> Result<Option<PreflightOutcome>, ApiError> {
     let (wire_method, params) = translate_org_params(svc, call, input, expected_revision)?;
     let synthetic = Request {
         id: 0,
@@ -413,7 +414,10 @@ fn preflight_org_command(
                 "unable to run organization preflight check",
             )
         })??;
-    Ok(Some("organization dry-run preflight passed".into()))
+    Ok(Some(PreflightOutcome::ok(
+        wire_method,
+        "organization dry-run preflight passed",
+    )))
 }
 
 fn translate_org_params<'a>(

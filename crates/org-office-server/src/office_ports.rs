@@ -352,15 +352,26 @@ pub(crate) fn build_office_ports(
         Arc::clone(&office),
         Arc::clone(&live),
     ));
-    let tess_sessions = Arc::downgrade(&session_manager);
-    let tess_svc = Arc::new(tess_calls::TessService::new(
+    let delegation_gate = Arc::new(crate::chief_of_staff_port::ChiefOfStaffGate::new(
         Arc::clone(&office),
-        Arc::new(move |member| {
-            tess_sessions
-                .upgrade()
-                .and_then(|sessions| sessions.bindings().acting_for_caller_id(member))
-        }),
+        Arc::clone(&session_manager),
     ));
+    let draft_gate = Arc::clone(&delegation_gate);
+    let tess_sessions = Arc::downgrade(&session_manager);
+    let tess_svc = Arc::new(
+        tess_calls::TessService::new(
+            Arc::clone(&office),
+            Arc::new(move |member| {
+                tess_sessions
+                    .upgrade()
+                    .and_then(|sessions| sessions.bindings().acting_for_caller_id(member))
+            }),
+        )
+        .with_draft_caller(Arc::new(move |request_id| {
+            use crate::serve::ChiefOfStaffPort;
+            draft_gate.draft_caller(request_id)
+        })),
+    );
     serve::OfficePorts {
         operation_get: {
             let office = Arc::clone(&office);
@@ -377,10 +388,7 @@ pub(crate) fn build_office_ports(
         sessions: Some(session_hooks.sessions),
         run_binding_verify: Some(session_hooks.run_binding_verify),
         run_binding_active: Some(session_hooks.run_binding_active),
-        delegation: Some(Arc::new(crate::chief_of_staff_port::ChiefOfStaffGate::new(
-            Arc::clone(&office),
-            Arc::clone(&session_manager),
-        ))),
+        delegation: Some(delegation_gate),
         external_auth: Some(Arc::new(crate::session_proxy::ExternalAuth(Arc::clone(
             &session_manager,
         )))),

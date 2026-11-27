@@ -96,8 +96,21 @@ pub(super) fn costs_rpc(
     ))
 }
 
+fn is_tess_method(request: &Request) -> bool {
+    use org_proto::tess::{
+        SuggestionCreate, SuggestionDismiss, SuggestionInspect, SuggestionList, SuggestionWithdraw,
+        UiPresent,
+    };
+    request.is::<SuggestionCreate>()
+        || request.is::<SuggestionList>()
+        || request.is::<SuggestionInspect>()
+        || request.is::<SuggestionWithdraw>()
+        || request.is::<SuggestionDismiss>()
+        || request.is::<UiPresent>()
+}
+
 pub(super) fn tess_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
-    if !crate::tess_calls::is_tess_method(request) {
+    if !is_tess_method(request) {
         return None;
     }
     let Some(member) = binding.member() else {

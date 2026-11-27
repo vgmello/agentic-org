@@ -25,8 +25,11 @@ use self::suggestions::SuggestionStore;
 /// Looks up the active human caller a bound Chief of Staff run acts for (`None` for wakes/others).
 pub(crate) type ActingForFn = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
+/// Looks up the human caller on whose behalf Tess drafted a hire request in RAM (`None` if unknown).
+pub(crate) type DraftCallerFn = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
 /// Whether `request` belongs to the Chief of Staff `suggestion.*` or `ui.present` RPC family.
-pub(crate) fn is_tess_method(request: &Request) -> bool {
+fn is_tess_method(request: &Request) -> bool {
     request.is::<SuggestionCreate>()
         || request.is::<SuggestionList>()
         || request.is::<SuggestionInspect>()
@@ -58,6 +61,7 @@ pub(super) enum CallerContext {
 pub(crate) struct TessService {
     office: Arc<Office>,
     acting_for: ActingForFn,
+    draft_caller: DraftCallerFn,
     suggestions: Mutex<SuggestionStore>,
     id_seq: AtomicU64,
 }
@@ -67,9 +71,19 @@ impl TessService {
         Self {
             office,
             acting_for,
+            draft_caller: Arc::new(|_| None),
             suggestions: Mutex::new(SuggestionStore::default()),
             id_seq: AtomicU64::new(1),
         }
+    }
+
+    pub(crate) fn with_draft_caller(mut self, draft_caller: DraftCallerFn) -> Self {
+        self.draft_caller = draft_caller;
+        self
+    }
+
+    pub(super) fn draft_caller(&self, request_id: &str) -> Option<String> {
+        (self.draft_caller)(request_id)
     }
 
     pub(crate) fn dispatch(&self, member: Option<&str>, request: &Request) -> Option<Response> {

@@ -13,7 +13,27 @@ use org_proto::tess::{
 };
 use org_proto::{ApiError, ErrorCode, Outcome, Request};
 
+use super::preflight::HIRE_NOT_VISIBLE;
 use super::{CallerContext, TessService};
+
+/// Explicit static allowlist of top-level in-app views permitted without a verified entity target.
+const STATIC_TOP_LEVEL_ROUTES: &[&str] = &[
+    "/",
+    "/home",
+    "/inbox",
+    "/work",
+    "/tasks",
+    "/projects",
+    "/chat",
+    "/activity",
+    "/org",
+    "/teams",
+    "/offices",
+    "/budgets",
+    "/settings",
+    "/processes",
+    "/hr",
+];
 
 pub(super) fn handle_present(
     svc: &TessService,
@@ -95,6 +115,12 @@ fn check_bounds(params: &UiPresentParams) -> Result<(), ApiError> {
 }
 
 fn clean_text(field: &str, raw: &str) -> Result<String, ApiError> {
+    if raw.chars().any(char::is_control) {
+        return Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            format!("`{field}` must not contain control characters"),
+        ));
+    }
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(ApiError::new(
@@ -108,12 +134,6 @@ fn clean_text(field: &str, raw: &str) -> Result<String, ApiError> {
             format!("`{field}` exceeds {MAX_UI_TEXT_BYTES} bytes"),
         ));
     }
-    if trimmed.chars().any(char::is_control) {
-        return Err(ApiError::new(
-            ErrorCode::InvalidRequest,
-            format!("`{field}` must not contain control characters"),
-        ));
-    }
     Ok(trimmed.to_owned())
 }
 
@@ -124,6 +144,10 @@ fn clean_route(raw: &str) -> Result<String, ApiError> {
         || route.contains("..")
         || route.contains("://")
         || route.contains('\\')
+        || route.contains('?')
+        || route.contains('#')
+        || route.contains('%')
+        || route.chars().any(char::is_whitespace)
     {
         return Err(ApiError::new(
             ErrorCode::InvalidRequest,
@@ -164,7 +188,7 @@ fn validate_navigation(
     for item in raw {
         let label = clean_text("navigation.label", &item.label)?;
         let route = clean_route(&item.route)?;
-        let (entity_kind, entity_id) = match (item.entity_kind, item.entity_id) {
+        let (verified_route, entity_kind, entity_id) = match (item.entity_kind, item.entity_id) {
             (Some(kind), Some(id)) => {
                 let verified = verify_entity(
                     svc,
@@ -176,9 +200,28 @@ fn validate_navigation(
                         label: Some(label.clone()),
                     },
                 )?;
-                (Some(verified.kind), Some(verified.id))
+                if route != verified.route {
+                    return Err(ApiError::new(
+                        ErrorCode::InvalidRequest,
+                        format!(
+                            "navigation `route` `{route}` does not match verified entity route `{}`",
+                            verified.route
+                        ),
+                    ));
+                }
+                (verified.route, Some(verified.kind), Some(verified.id))
             }
-            (None, None) => (None, None),
+            (None, None) => {
+                if !STATIC_TOP_LEVEL_ROUTES.contains(&route.as_str()) {
+                    return Err(ApiError::new(
+                        ErrorCode::InvalidRequest,
+                        format!(
+                            "unverified navigation route `{route}` requires a verified `entity_kind` and `entity_id`"
+                        ),
+                    ));
+                }
+                (route, None, None)
+            }
             _ => {
                 return Err(ApiError::new(
                     ErrorCode::InvalidRequest,
@@ -188,7 +231,7 @@ fn validate_navigation(
         };
         out.push(UiNavigation {
             label,
-            route,
+            route: verified_route,
             entity_kind,
             entity_id,
         });
@@ -531,12 +574,7 @@ fn verify_hire(
             crate::logged("tess_calls.ui_hire", &err);
             ApiError::new(ErrorCode::Unavailable, "unable to verify hire request")
         })?
-        .ok_or_else(|| {
-            ApiError::new(
-                ErrorCode::NotFound,
-                format!("hire request `{raw_id}` not found"),
-            )
-        })?;
+        .ok_or_else(|| ApiError::new(ErrorCode::NotFound, HIRE_NOT_VISIBLE))?;
     if !authority.is_owner {
         let allowed = svc
             .office()
@@ -546,10 +584,7 @@ fn verify_hire(
                 ApiError::new(ErrorCode::Unavailable, "unable to verify hiring scope")
             })?;
         if !allowed {
-            return Err(ApiError::new(
-                ErrorCode::NotAuthorized,
-                "caller may not view hire requests outside their teams",
-            ));
+            return Err(ApiError::new(ErrorCode::NotFound, HIRE_NOT_VISIBLE));
         }
     }
     Ok(UiEntityLink {

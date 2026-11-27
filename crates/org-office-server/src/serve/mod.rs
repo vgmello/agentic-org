@@ -14,7 +14,7 @@ mod auth;
 mod auth_limits;
 mod binding;
 mod connection;
-mod delegation;
+pub(crate) mod delegation;
 mod dispatch;
 mod external;
 mod held;
