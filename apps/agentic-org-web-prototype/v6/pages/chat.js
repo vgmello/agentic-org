@@ -15,7 +15,7 @@ import { listIsOverlay, watchListMode } from "./chat-layout.js";
 import { bindPanelResize, panelWidthStyle } from "./chat-panel-width.js";
 import { closeAssist, mentionsIn, onAssistKeydown, parseCommand, recheckAssist, updateAssist } from "./chat-compose-assist.js";
 import {
-  DEFAULT_CHAT, chatTitle, dmSources, inboxItem, openAsks, openDirectMessage, resolveChatId, sentAt, sourceHref, sourceLabel, splitTime,
+  DEFAULT_CHAT, chatTitle, dmSources, inboxItem, listedConversations, openAsks, openDirectMessage, resolveChatId, sentAt, sourceHref, sourceLabel, splitTime,
 } from "./chat-model.js";
 import "./chat-attach-seed.js";
 import { THREAD_SUM_CLICKS, markRoot, rootOpen, setRootOpen, threadSummaryHtml } from "./chat-thread-sum.js";
@@ -420,8 +420,20 @@ function sendThreadReply(form) {
 function confirmThreadSent(id, root, reply, copy) {
   reply.pending = false;
   const i = root.thread.indexOf(reply), el = document.querySelector(`aside.thread .msgs > [data-mid="${CSS.escape(root.id + "-r" + i)}"]`);
-  if (el) el.outerHTML = threadReplyHtml(id, root, i);
+  if (el) swapKeepingFocus(el, threadReplyHtml(id, root, i));
   if (copy) confirmSent(id, copy);
+}
+/* Redraws a reply once its send confirms; a reply the reader was taken to (and focused) keeps its focus and mark. */
+function swapKeepingFocus(el, html) {
+  const focused = document.activeElement === el, label = el.getAttribute("aria-label"), linked = el.classList.contains("is-linked");
+  el.insertAdjacentHTML("afterend", html);
+  const next = el.nextElementSibling;
+  el.remove();
+  if (linked) next.classList.add("is-linked");
+  if (!focused) return;
+  Object.assign(next, { tabIndex: -1 });
+  if (label) next.setAttribute("aria-label", label);
+  next.focus({ preventScroll: true });
 }
 
 /* ---------------------------------------------------------------- header */
@@ -517,8 +529,9 @@ function headerActions(id, title) {
 /* Asks waiting in other conversations, each counted once; unread elsewhere shows as a dot. */
 function listButton(id) {
   const here = new Set(CH[id] ? openAsks(CH[id]) : []);
-  const elsewhere = new Set(Object.keys(CH).filter((k) => k !== id).flatMap((k) => openAsks(CH[k])).filter((x) => !here.has(x))).size;
-  const unread = Object.keys(CH).some((k) => k !== id && CH[k].unread);
+  const others = listedConversations().filter((k) => k !== id);
+  const elsewhere = new Set(others.flatMap((k) => openAsks(CH[k])).filter((x) => !here.has(x))).size;
+  const unread = others.some((k) => CH[k].unread);
   /* The name always begins with the visible word, whatever the width hides; the badge and dot are described in it. */
   const name = ["Conversations", elsewhere ? plural(elsewhere, "request", "requests") + " waiting on you in other conversations" : "", unread ? "unread messages" : ""].filter(Boolean).join(", ");
   const badge = elsewhere ? `<span aria-hidden="true">${needsCount(elsewhere)}</span>` : "";
@@ -533,12 +546,18 @@ function requestsTag(ch, chId) {
   const parts = dmWaiting(ch.with, chId, "tag", true);
   return parts ? `<span class="chat-req-tag">${ic("bell", "ic14")}<span>${parts}</span></span>` : "";
 }
+/* An agents' conversation is reached from an agent's page; its header leads back there. */
+function backToAgent(ch) {
+  if (ch.kind !== "a2a") return "";
+  const who = ch.pair.includes(S.chatA2AFrom) ? S.chatA2AFrom : ch.pair[0];
+  return `<a class="chat-back" href="#/members/${esc(who)}">${ic("chev-left", "ic16")}Back to ${esc(M[who].name)}</a>`;
+}
 function chatHeaderHtml(id, ch, title) {
   return `<header class="ph chhead">
     ${listButton(id)}
     <div class="ph-t chat-title">
       ${headerLead(ch)}
-      <div class="chat-heading"><h1 id="ch-title" tabindex="-1">${esc(title)}</h1>
+      <div class="chat-heading">${backToAgent(ch)}<h1 id="ch-title" tabindex="-1">${esc(title)}</h1>
         <p class="chat-context"><span class="chat-ctx-full">${headerContext(ch, id)}</span><span class="chat-ctx-summary">${headerSummary(ch)}</span></p>
       </div>
       ${readAsTag(ch)}${requestsTag(ch, id)}

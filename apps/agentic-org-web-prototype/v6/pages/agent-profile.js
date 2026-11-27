@@ -896,6 +896,8 @@ function agentConversationRow(aid, k) {
 }
 function agentConversationsHtml(aid) {
   const keys = agentConversations(aid);
+  /* The agent whose page lists them: an opened agents' conversation offers "Back to <agent>". */
+  S.chatA2AFrom = aid;
   const body = keys.length
     ? `<ul class="c-a2a-list">${keys.map((k) => agentConversationRow(aid, k)).join("")}</ul>`
     : `<p class="muted c-a2a-empty">No conversations with other agents yet.</p>`;
