@@ -10,8 +10,9 @@
 //!
 //! Organization content stays in office databases: the catalog is the folders under `<home>/offices/` that hold
 //! a valid `office.json` (`catalog`). It talks to its servers only through
-//! `org-office-launch`, and never depends on `org-office`. The private `hostdb` stores the
-//! host's registry in plain SQLite; organization databases remain in office servers.
+//! `org-office-launch`, and never depends on `org-office`. Host persistence stays behind
+//! storage-agnostic traits in `ports::host_store` (with SQLite implemented in `org-host-sqlite`);
+//! organization databases remain in office servers.
 //!
 //! It holds every office's secrets key (`keys`): it creates each one, keeps it in its key store
 //! (in release builds the system's protected store: the Data Protection keychain on macOS, the

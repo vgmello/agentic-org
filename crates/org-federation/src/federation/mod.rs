@@ -1,10 +1,10 @@
 //! Multi-office Org-CA mTLS federation listener (HQ) and full-duplex sync/relay client
 //! (satellite) (`TASK-52` / `S1`, `doc-67`, `X-05`, `FC-020`, `FC-024`, `FC-145`).
 //!
-//! Module graph: `federation -> {federation_stream, snapshot_transfer} -> federation_link`.
+//! Module graph: `federation -> {stream, snapshot_transfer} -> link`.
 //! The link primitives this module shares with the persistent stream and snapshot transfer
 //! (the satellite session, the HQ peer writer, org-event application, relay callbacks, IDs
-//! and deadlines) live in the leaf `federation_link` and are re-exported here; the stream
+//! and deadlines) live in the leaf `link` and are re-exported here; the stream
 //! reaches this module's inbound drain only through the hook `federation_runtime` injects.
 
 mod blob_sync;
@@ -26,9 +26,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::feed_wake::FeedWake;
 
 pub use self::blob_sync::{
-    blob_cache_max_bytes, ship_blob_outbox, spawn_satellite_blob_shipper, HqBlobRemote,
-    OutboxFlush, BLOB_CACHE_MAX_BYTES_ENV,
+    blob_cache_max_bytes, spawn_satellite_blob_shipper, HqBlobRemote, BLOB_CACHE_MAX_BYTES_ENV,
 };
+#[cfg(any(test, feature = "testkit"))]
+pub use self::blob_sync::{ship_blob_outbox, OutboxFlush};
 pub use self::enrollment::{enroll_satellite_with_hq, EnrolledCertificateBundle};
 pub use self::hq_server::HqFederationServer;
 pub use self::permits::SatelliteHqPermitCoordinator;

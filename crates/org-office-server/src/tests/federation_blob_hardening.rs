@@ -33,8 +33,9 @@ use org_sync_proto::SyncFrame;
 
 use super::a2a_messaging::wait_until;
 use super::federation_blobs::{exchange, files_under, inspect, publish, read_rpc, Net};
-use crate::federation::{ship_blob_outbox, SatelliteSyncSession};
+use crate::federation::SatelliteSyncSession;
 use crate::federation_stream::SatSyncWake;
+use org_federation::testkit::{flush_blob_outbox, read_blob_reply, ship_blob_outbox};
 
 /// The record satellite `sat` would ship for an organization-wide file of `owner`'s.
 fn org_record(sat: &Office, owner: &str, filename: &str, bytes: &[u8]) -> AttachmentRecord {
@@ -354,14 +355,14 @@ fn the_shipper_stops_within_a_read_slice_and_ships_nothing_once_stopped() {
     });
     // HQ never answers a request it was never sent: without the stop this waits 60 s.
     let started = Instant::now();
-    assert!(session.read_blob_reply("never-sent", Some(&*stop)).is_err());
+    assert!(read_blob_reply(&mut session, "never-sent", Some(&*stop)).is_err());
     let waited = started.elapsed();
     stopper.join().unwrap();
     assert!(waited < Duration::from_secs(3), "{waited:?}");
 
     // Stopped before it begins, a pass ships nothing and keeps every file.
     publish(&sat, &net.owner, "kept.txt", "text/plain", b"still waiting");
-    assert!(session.flush_blob_outbox(1 << 30, Some(&*stop)).is_err());
+    assert!(flush_blob_outbox(&mut session, 1 << 30, Some(&*stop)).is_err());
     assert_eq!(sat.attachment_outbox_len().unwrap(), 1);
     assert!(ship_blob_outbox(&sat, Some(&*stop), 1 << 30).is_err());
     assert_eq!(sat.attachment_outbox_len().unwrap(), 1);

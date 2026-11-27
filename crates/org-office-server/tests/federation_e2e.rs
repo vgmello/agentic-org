@@ -15,12 +15,12 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use org_federation::{
+    enroll_satellite_with_hq, HqFederationServer, RelayedWake, SatelliteSyncSession,
+};
 use org_office::{
     CreateInvitationParams, Custody, DataRoots, Key, NewOffice, Office, OfficeRole,
     SatelliteProvisionSpec, SatelliteReEnrollSpec, TestOffice,
-};
-use org_office_server::federation::{
-    enroll_satellite_with_hq, HqFederationServer, RelayedWake, SatelliteSyncSession,
 };
 use org_pki::{invitation::InvitationToken, SigningKey, Zeroizing};
 use org_store::{testkit::FakeCustody, Id, OfficeIdentity, WriterAuthority};
