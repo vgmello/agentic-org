@@ -1,4 +1,6 @@
 /** Shared inbox item contract used across shell data context and domain modules. */
+import type { PendingExternalAuthView, WorkspaceFamiliarity } from './external-auth';
+
 export type InboxKind = 'approval' | 'question' | 'decision' | 'problem';
 
 export const KIND_WORD: Record<InboxKind, string> = {
@@ -16,6 +18,11 @@ export interface InboxPerson {
 	name: string;
 	kind: 'agent' | 'person';
 }
+
+export type InboxWorkspaceFamiliarity = WorkspaceFamiliarity;
+
+/** Pending BYOA external-agent sign-in metadata attached to Inbox approval items (`TASK-249`). */
+export type InboxExternalAuthMeta = PendingExternalAuthView;
 
 export interface InboxItem {
 	id: string;
@@ -51,4 +58,6 @@ export interface InboxItem {
 	/** Optional snooze note recorded when deferring the item (`TASK-81`). */
 	snooze_note?: string;
 	handled?: { outcome: string; at: string; by?: string };
+	/** Present when this inbox item represents a pending BYOA external-agent sign-in request (`TASK-249`). */
+	external_auth?: InboxExternalAuthMeta;
 }

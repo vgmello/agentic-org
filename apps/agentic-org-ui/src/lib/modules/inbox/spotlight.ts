@@ -1,5 +1,9 @@
 import { badgeInitials, relativeAge } from '$lib/format';
 import { memberById } from '$lib/modules/organization/model';
+import {
+	familiarityInfo,
+	type PendingExternalAuthView
+} from '$lib/platform/workspace/external-auth';
 import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 import type { InboxItem } from './types';
 import {
@@ -97,6 +101,13 @@ function resolveInboxActions(item: InboxItem): {
 	primaryAction: SpotlightPrimaryAction;
 	secondaryAction?: SpotlightSecondaryAction;
 } {
+	if (item.external_auth) {
+		return {
+			primaryAction: { kind: 'open_inbox', label: 'Review in Inbox' },
+			secondaryAction: item.open ? { kind: 'open_work', label: item.open.label } : undefined
+		};
+	}
+
 	const hasApprove = item.actions.includes('approve');
 	const hasDeny = item.actions.includes('deny');
 	const hasChoose = item.actions.includes('choose') && (item.choices?.length ?? 0) > 0;
@@ -121,7 +132,74 @@ function resolveInboxActions(item: InboxItem): {
 	return { primaryAction, secondaryAction };
 }
 
+function externalAuthSignals(ea: PendingExternalAuthView): {
+	recTone: SpotlightDecision['recTone'];
+	recRiskLabel: string;
+	risk: SpotlightCell;
+	proof: SpotlightCell;
+} {
+	const proof: SpotlightCell = {
+		label: 'Code required',
+		sub: `Lookup ${ea.code_prefix}`,
+		tone: 'warn',
+		icon: 'clock'
+	};
+	if (ea.workspace_familiarity === 'returning_new_key') {
+		return {
+			recTone: 'bad',
+			recRiskLabel: 'Use caution',
+			risk: {
+				label: 'High risk',
+				sub: ea.managed_turn_active
+					? 'New key · active managed turn'
+					: 'Returning workspace with new key',
+				tone: 'bad',
+				icon: 'shield-alert'
+			},
+			proof
+		};
+	}
+	if (ea.managed_turn_active) {
+		return {
+			recTone: 'warn',
+			recRiskLabel: 'Takeover required',
+			risk: {
+				label: 'Takeover risk',
+				sub: 'Active managed turn will be parked',
+				tone: 'warn',
+				icon: 'shield-alert'
+			},
+			proof
+		};
+	}
+	if (ea.workspace_familiarity === 'returning_known_key') {
+		return {
+			recTone: 'neutral',
+			recRiskLabel: 'Verify code',
+			risk: {
+				label: 'Verify code',
+				sub: familiarityInfo(ea.workspace_familiarity).label,
+				tone: 'muted',
+				icon: 'shield-check'
+			},
+			proof
+		};
+	}
+	return {
+		recTone: 'warn',
+		recRiskLabel: 'Investigate',
+		risk: {
+			label: 'Moderate risk',
+			sub: familiarityInfo(ea.workspace_familiarity).label,
+			tone: 'warn',
+			icon: 'shield-alert'
+		},
+		proof
+	};
+}
+
 function recToneForInbox(item: InboxItem): SpotlightDecision['recTone'] {
+	if (item.external_auth) return externalAuthSignals(item.external_auth).recTone;
 	if (item.kind === 'problem') return 'bad';
 	if (item.kind === 'decision' || item.kind === 'question') return 'warn';
 	return item.recommendation ? 'ok' : 'neutral';
@@ -140,8 +218,10 @@ function inboxToSpotlight(
 	const { primaryAction, secondaryAction } = resolveInboxActions(item);
 	const { resolvedMember, actorName, projectLabel, teamLabel, projectName } =
 		resolveInboxEntityNames(item, snapshot);
+	const eaSignals = item.external_auth ? externalAuthSignals(item.external_auth) : undefined;
 	const risk: SpotlightCell =
-		item.kind === 'problem' || item.kind === 'decision'
+		eaSignals?.risk ??
+		(item.kind === 'problem' || item.kind === 'decision'
 			? {
 					label: 'Moderate risk',
 					sub: item.expires_at ? 'Time-sensitive gate' : 'Needs owner ruling',
@@ -153,7 +233,7 @@ function inboxToSpotlight(
 					sub: 'Reversible gate',
 					tone: 'ok',
 					icon: 'shield-check'
-				};
+				});
 
 	const impact: SpotlightCell = {
 		label: urgent || item.kind === 'approval' ? 'High impact' : 'Medium impact',
@@ -162,9 +242,11 @@ function inboxToSpotlight(
 		icon: urgent || item.kind === 'approval' ? 'bolt' : 'scale'
 	};
 
-	const proof: SpotlightCell = item.recommendation
-		? { label: 'Reviewed', sub: item.source, tone: 'ok', icon: 'check-circle' }
-		: { label: 'Ready to review', sub: item.source, tone: 'muted', icon: 'clock' };
+	const proof: SpotlightCell =
+		eaSignals?.proof ??
+		(item.recommendation
+			? { label: 'Reviewed', sub: item.source, tone: 'ok', icon: 'check-circle' }
+			: { label: 'Ready to review', sub: item.source, tone: 'muted', icon: 'clock' });
 
 	const auditChecks: string[] = [];
 	if (item.source) auditChecks.push(`Source: ${item.source}`);
@@ -173,12 +255,18 @@ function inboxToSpotlight(
 	if (item.open?.label) auditChecks.push(item.open.label);
 	if (deadlineLabel) auditChecks.push(deadlineLabel);
 
-	const recTone = recToneForInbox(item);
+	const recTone = eaSignals?.recTone ?? recToneForInbox(item);
+	const recRiskLabel = eaSignals?.recRiskLabel ?? recRiskLabelFor(recTone);
 	const isChiefOfStaff =
 		item.who.id === 'tess' ||
 		resolvedMember?.agent?.role === 'chief_of_staff' ||
 		item.source.toLowerCase().includes('tess') ||
 		item.source.toLowerCase().includes('chief of staff');
+	const detailHref = item.external_auth
+		? `/inbox?item=${encodeURIComponent(item.id)}`
+		: item.open?.path && !/^\/work\/[^/?#]+/.test(item.open.path)
+			? item.open.path
+			: `/inbox?item=${encodeURIComponent(item.id)}`;
 
 	return {
 		id: item.id,
@@ -198,7 +286,7 @@ function inboxToSpotlight(
 		title: item.title,
 		recommendation: item.recommendation ?? item.why,
 		recTone,
-		recRiskLabel: recRiskLabelFor(recTone),
+		recRiskLabel,
 		backgroundContext: item.why,
 		auditChecks,
 		risk,
@@ -206,10 +294,7 @@ function inboxToSpotlight(
 		proof,
 		primaryAction,
 		secondaryAction,
-		detailHref:
-			item.open?.path && !/^\/work\/[^/?#]+/.test(item.open.path)
-				? item.open.path
-				: `/inbox?item=${encodeURIComponent(item.id)}`,
+		detailHref,
 		ageLabel: relativeAge(item.created_at, nowMs)
 	};
 }

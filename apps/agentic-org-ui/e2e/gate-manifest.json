@@ -469,6 +469,7 @@
 				"focus-primitives-default-font.ts",
 				"shot.spec.ts",
 				"member-profile.spec.ts",
+				"external-auth.spec.ts",
 				"roles.spec.ts",
 				"access.spec.ts",
 				"agent-setup.spec.ts",
