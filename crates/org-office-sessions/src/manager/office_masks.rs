@@ -20,13 +20,18 @@
 //! `bwrap` sandbox pre-creates to mask atomically
 //! ([`super::bwrap_isolation::ensure_bwrap_deny_dirs`]).
 //!
+//! Every mask goes through one place ([`OfficeMasks::push_mask`]): a path is looked at without
+//! following it (`lstat`, after dropping a trailing `/` or `/.`), a link is masked as the link
+//! itself and never through or as what it points to, and nothing that holds the office's own
+//! data roots, as given or as resolved (`/var` and `/private/var` on macOS), is ever masked.
+//!
 //! What a running session can't see: the masks are computed at launch, so an organization or a
 //! co-hosted satellite office created afterwards in a folder that isn't masked whole is masked
 //! only from that session's next launch. The approval bridge keeps the launch-time globs too.
 //!
 //! [`SessionManager::denied_office_globs_for`]: super::SessionManager::denied_office_globs_for
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use org_agent_runtime::PathPattern;
 use org_office::backup::RESTORE_BACKUPS_DIR_NAME;
@@ -35,7 +40,8 @@ use org_office::companion_paths::{
 };
 use org_office::{Office, OfficeRole};
 
-use super::sandbox_rules::{push_exact_pattern, push_glob_pattern, push_raw_pattern};
+use super::rust_toolchain::canonicalize_with_tail;
+use super::sandbox_rules::push_raw_pattern;
 
 /// The durable families every session masks whole.
 const DURABLE_FAMILIES: [&str; 10] = [
@@ -83,8 +89,9 @@ pub(super) struct OfficeMasks {
     neighbours: Vec<PathBuf>,
     /// Folders whose entries are masked, each but the ones kept.
     sweeps: Vec<Sweep>,
-    /// The office's own data roots: nothing that holds one is ever masked.
-    own_roots: [PathBuf; 2],
+    /// The office's own data roots, as given and as resolved ([`own_root_forms`]): nothing
+    /// that holds one is ever masked.
+    own_roots: Vec<PathBuf>,
 }
 
 impl OfficeMasks {
@@ -142,7 +149,7 @@ impl OfficeMasks {
             files,
             neighbours,
             sweeps,
-            own_roots: [durable.to_path_buf(), office.runtime_root().to_path_buf()],
+            own_roots: own_root_forms([durable, office.runtime_root()]),
         }
     }
 
@@ -151,38 +158,64 @@ impl OfficeMasks {
     /// roots, another office's or organization's).
     pub(super) fn push_denies(&self, out: &mut Vec<PathPattern>) {
         for folder in &self.folders {
-            push_glob_pattern(out, &folder.path);
+            self.push_mask(out, &folder.path, Shape::Below);
         }
         for file in &self.files {
-            push_exact_pattern(out, file);
+            self.push_mask(out, file, Shape::Exact);
         }
         for neighbour in &self.neighbours {
-            if !self.holds_own_root(neighbour) {
-                push_whole_folder(out, neighbour);
-            }
+            self.push_mask(out, neighbour, Shape::Whole);
         }
         for sweep in &self.sweeps {
             self.push_swept_entries(out, sweep);
         }
     }
 
-    /// The folders a Linux `bwrap` sandbox makes before launch.
+    /// The folders a Linux `bwrap` sandbox makes before launch: never one holding the office's
+    /// own roots, which is never masked.
     pub(super) fn pre_created(&self) -> impl Iterator<Item = &Path> {
         self.folders
             .iter()
-            .filter(|folder| folder.pre_create)
+            .filter(|folder| folder.pre_create && !self.holds_own_root(&folder.path))
             .map(|folder| folder.path.as_path())
     }
 
     /// Whether masking `path` would mask the office's own data roots (a layout this module
     /// doesn't expect): such a path is never masked, so a session never loses its own home.
+    /// `path` is compared as given and with its parent resolved, never following `path` itself
+    /// (a link is masked as the link), against each root as given and as resolved, so a root
+    /// reached through a linked parent (`/var` and `/private/var` on macOS) is found either way.
     fn holds_own_root(&self, path: &Path) -> bool {
-        self.own_roots.iter().any(|root| root.starts_with(path))
+        let path = normalized(path);
+        let beside = resolved_beside(&path);
+        self.own_roots
+            .iter()
+            .any(|root| root.starts_with(&path) || root.starts_with(&beside))
+    }
+
+    /// The one place a mask is made. `path` is looked at without following it (after dropping
+    /// a trailing `/` or `/.`, as `lstat("link/")` follows the link): a link is masked as the
+    /// link itself ([`push_symlink_pattern`]), never through and never as what it points to,
+    /// which could be any folder a session needs, its own home included. Anything else is
+    /// masked in its `shape`. A path holding the office's own roots is never masked.
+    fn push_mask(&self, out: &mut Vec<PathPattern>, path: &Path, shape: Shape) {
+        let path = normalized(path);
+        if self.holds_own_root(&path) {
+            return;
+        }
+        let is_link =
+            std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink());
+        match shape {
+            Shape::Below if !is_link => {
+                push_raw_pattern(out, &format!("{}/**", resolved_beside(&path).display()))
+            }
+            Shape::Whole if !is_link => push_whole_folder(out, &path),
+            _ => push_symlink_pattern(out, &path),
+        }
     }
 
     /// Masks every entry of `sweep.dir` the sweep doesn't keep, in name order (a stable spec
-    /// hash): a folder whole, a file exactly, and a link as the link itself (never what it
-    /// points to, which could be any folder a session needs).
+    /// hash): a folder whole, anything else (a file, a socket, a link) exactly.
     fn push_swept_entries(&self, out: &mut Vec<PathPattern>, sweep: &Sweep) {
         let Ok(entries) = std::fs::read_dir(&sweep.dir) else {
             return;
@@ -193,17 +226,44 @@ impl OfficeMasks {
             if !sweep.keep.masks(entry.file_name().to_str()) {
                 continue;
             }
-            let path = entry.path();
-            if self.holds_own_root(&path) {
-                continue;
-            }
-            match entry.file_type() {
-                Ok(kind) if kind.is_symlink() => push_raw_pattern(out, &path.display().to_string()),
-                Ok(kind) if kind.is_dir() => push_whole_folder(out, &path),
-                _ => push_exact_pattern(out, &path),
+            // Seen without following it; `push_mask` looks again, so an entry swapped for a
+            // link since is masked as the link.
+            let shape = if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                Shape::Whole
+            } else {
+                Shape::Exact
+            };
+            self.push_mask(out, &entry.path(), shape);
+        }
+    }
+}
+
+/// How a path that isn't a link is masked.
+#[derive(Clone, Copy)]
+enum Shape {
+    /// Everything below it (a durable family, a companion store folder).
+    Below,
+    /// It and everything below it (a neighbour, a swept folder).
+    Whole,
+    /// It alone (a one-file store, a swept file).
+    Exact,
+}
+
+/// Each of the office's own data roots as given and as resolved through every link, its own
+/// last component included (what the session really uses), or, when it doesn't exist yet,
+/// through its nearest existing ancestor.
+fn own_root_forms(roots: [&Path; 2]) -> Vec<PathBuf> {
+    let mut forms = Vec::with_capacity(4);
+    for root in roots {
+        let root = normalized(root);
+        let resolved = canonicalize_with_tail(&root);
+        for form in [root, resolved] {
+            if !forms.contains(&form) {
+                forms.push(form);
             }
         }
     }
+    forms
 }
 
 /// A folder whose entries are masked, all but some.
@@ -262,6 +322,8 @@ struct Placement {
 }
 
 impl Placement {
+    /// The satellite layout is checked first, so roots that read as both (an office id equal
+    /// to its organization's) are a satellite's, the narrower of the two.
     fn locate(durable: &Path, runtime: &Path, org_id: &str, office_id: &str) -> Option<Self> {
         if !org_proto::is_uuid_v7(org_id) || !org_proto::is_uuid_v7(office_id) {
             return None;
@@ -273,27 +335,21 @@ impl Placement {
         {
             return None;
         }
-        if is_named(base, org_id) {
-            return Some(Self {
-                data_root: base.parent()?.to_path_buf(),
-                org_root: base.to_path_buf(),
-                org_id: org_id.to_owned(),
-                satellite: None,
-            });
-        }
-        let offices = base.parent()?;
-        let org_root = offices.parent()?;
-        if !is_named(base, office_id)
-            || !is_named(offices, OFFICES_DIR_NAME)
-            || !is_named(org_root, org_id)
-        {
-            return None;
-        }
+        let satellite_org_root = base
+            .parent()
+            .filter(|offices| is_named(base, office_id) && is_named(offices, OFFICES_DIR_NAME))
+            .and_then(Path::parent)
+            .filter(|org_root| is_named(org_root, org_id));
+        let (org_root, satellite) = match satellite_org_root {
+            Some(org_root) => (org_root, Some(office_id.to_owned())),
+            None if is_named(base, org_id) => (base, None),
+            None => return None,
+        };
         Some(Self {
             data_root: org_root.parent()?.to_path_buf(),
             org_root: org_root.to_path_buf(),
             org_id: org_id.to_owned(),
-            satellite: Some(office_id.to_owned()),
+            satellite,
         })
     }
 
@@ -354,13 +410,43 @@ fn names_an_organization(name: &str) -> bool {
             })
 }
 
-/// Masks `path` and everything below it, by its path as given and as resolved.
+/// Masks `path` (not a link) and everything below it, by its path as given and with its
+/// parent resolved ([`resolved_beside`]).
 fn push_whole_folder(out: &mut Vec<PathPattern>, path: &Path) {
-    push_exact_pattern(out, path);
-    push_glob_pattern(out, path);
+    let beside = resolved_beside(path);
+    push_raw_pattern(out, &path.display().to_string());
+    push_raw_pattern(out, &beside.display().to_string());
+    push_raw_pattern(out, &format!("{}/**", beside.display()));
     push_raw_pattern(out, &format!("{}/**", path.display()));
+}
+
+/// Masks `path` itself, exactly: as given and with its parent resolved ([`resolved_beside`]).
+/// A link is masked as the link, never through (`link/**`) and never as what it points to.
+fn push_symlink_pattern(out: &mut Vec<PathPattern>, path: &Path) {
+    push_raw_pattern(out, &path.display().to_string());
+    push_raw_pattern(out, &resolved_beside(path).display().to_string());
+}
+
+/// `path` with its parent resolved through links and its last component kept as it is, so a
+/// link `path` ends in is never followed (`/var/x/link` is `/private/var/x/link` on macOS).
+/// A path that doesn't end in a name (`/`, `x/..`) has nothing to keep and is resolved whole.
+fn resolved_beside(path: &Path) -> PathBuf {
+    match (path.parent(), path.components().next_back()) {
+        (Some(parent), Some(Component::Normal(name))) => canonicalize_with_tail(parent).join(name),
+        _ => canonicalize_with_tail(path),
+    }
+}
+
+/// `path` without a trailing `/` or `/.` (or a `.` inside), so looking at it with `lstat`
+/// never follows a link it ends in.
+fn normalized(path: &Path) -> PathBuf {
+    path.components().collect()
 }
 
 #[cfg(test)]
 #[path = "office_masks_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "office_masks_link_tests.rs"]
+mod link_tests;

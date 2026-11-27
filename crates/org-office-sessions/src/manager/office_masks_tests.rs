@@ -1,25 +1,26 @@
 //! Co-hosted neighbours (`TASK-204`), on folders laid out as `org-host` lays them out, without an
 //! office: where an office's roots sit ([`Placement::locate`]), which neighbours it masks, and
-//! that nothing else beside the roots is ever swept.
+//! that nothing else beside the roots is ever swept. Links and linked prefixes are in
+//! `office_masks_link_tests.rs`, which shares this file's host and assertions.
 
 use std::path::{Path, PathBuf};
 
 use super::*;
 
-const ORG_A: &str = "0195a000-0000-7000-8000-00000000a001";
-const ORG_B: &str = "0195a000-0000-7000-8000-00000000b001";
-const HQ: &str = "0195a000-0000-7000-8000-00000000a0a0";
-const SAT_1: &str = "0195a000-0000-7000-8000-00000000a0a1";
-const SAT_2: &str = "0195a000-0000-7000-8000-00000000a0a2";
+pub(super) const ORG_A: &str = "0195a000-0000-7000-8000-00000000a001";
+pub(super) const ORG_B: &str = "0195a000-0000-7000-8000-00000000b001";
+pub(super) const HQ: &str = "0195a000-0000-7000-8000-00000000a0a0";
+pub(super) const SAT_1: &str = "0195a000-0000-7000-8000-00000000a0a1";
+pub(super) const SAT_2: &str = "0195a000-0000-7000-8000-00000000a0a2";
 
 /// A host instance's data root in a temporary folder.
-struct Host {
+pub(super) struct Host {
     _dir: tempfile::TempDir,
-    data: PathBuf,
+    pub(super) data: PathBuf,
 }
 
 impl Host {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().canonicalize().unwrap().join("data");
         std::fs::create_dir_all(&data).unwrap();
@@ -27,13 +28,13 @@ impl Host {
     }
 
     /// Makes `rel` (and its parents) below the data root.
-    fn mk(&self, rel: &str) -> PathBuf {
+    pub(super) fn mk(&self, rel: &str) -> PathBuf {
         let path = self.data.join(rel);
         std::fs::create_dir_all(&path).unwrap();
         path
     }
 
-    fn file(&self, rel: &str) -> PathBuf {
+    pub(super) fn file(&self, rel: &str) -> PathBuf {
         let path = self.data.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, b"secret").unwrap();
@@ -53,43 +54,48 @@ impl Host {
     }
 }
 
-/// What a sandbox masks of `durable`'s neighbours, as deny patterns, and what it pre-creates.
+/// What a sandbox masks of `durable`'s neighbours, on roots where the host puts them.
+pub(super) fn placed_masks(durable: &Path, runtime: &Path, org: &str, office: &str) -> OfficeMasks {
+    let placement = Placement::locate(durable, runtime, org, office).expect("a host layout");
+    let (mut folders, mut neighbours, mut sweeps) = (Vec::new(), Vec::new(), Vec::new());
+    placement.add_masks(&mut folders, &mut neighbours, &mut sweeps);
+    OfficeMasks {
+        folders,
+        files: Vec::new(),
+        neighbours,
+        sweeps,
+        own_roots: own_root_forms([durable, runtime]),
+    }
+}
+
+/// [`placed_masks`] as deny patterns, and what it pre-creates.
 fn neighbour_masks(
     durable: &Path,
     runtime: &Path,
     org: &str,
     office: &str,
 ) -> (Vec<String>, Vec<PathBuf>) {
-    let placement = Placement::locate(durable, runtime, org, office).expect("a host layout");
-    let (mut folders, mut neighbours, mut sweeps) = (Vec::new(), Vec::new(), Vec::new());
-    placement.add_masks(&mut folders, &mut neighbours, &mut sweeps);
-    let masks = OfficeMasks {
-        folders,
-        files: Vec::new(),
-        neighbours,
-        sweeps,
-        own_roots: [durable.to_path_buf(), runtime.to_path_buf()],
-    };
+    let masks = placed_masks(durable, runtime, org, office);
     (
         denies(&masks),
         masks.pre_created().map(Path::to_path_buf).collect(),
     )
 }
 
-fn denies(masks: &OfficeMasks) -> Vec<String> {
+pub(super) fn denies(masks: &OfficeMasks) -> Vec<String> {
     let mut out = Vec::new();
     masks.push_denies(&mut out);
     out.iter().map(|p| p.as_str().to_owned()).collect()
 }
 
-fn assert_masked_whole(denied: &[String], path: &Path) {
+pub(super) fn assert_masked_whole(denied: &[String], path: &Path) {
     for needle in [path.display().to_string(), format!("{}/**", path.display())] {
         assert!(denied.contains(&needle), "{needle} missing: {denied:?}");
     }
 }
 
 /// No deny pattern is `path` or a folder holding it.
-fn assert_reachable(denied: &[String], path: &Path) {
+pub(super) fn assert_reachable(denied: &[String], path: &Path) {
     for pattern in denied {
         let base = pattern.strip_suffix("/**").unwrap_or(pattern);
         assert!(
@@ -264,6 +270,21 @@ fn roots_laid_out_any_other_way_have_no_neighbours() {
 }
 
 #[test]
+fn roots_that_read_as_both_layouts_are_a_satellites() {
+    // An office id equal to its organization's: the satellite layout, checked first, wins.
+    let sat = PathBuf::from(format!("/data/{ORG_A}/offices/{ORG_A}"));
+    assert_eq!(
+        Placement::locate(&sat.join("durable"), &sat.join("runtime"), ORG_A, ORG_A),
+        Some(Placement {
+            data_root: PathBuf::from("/data"),
+            org_root: PathBuf::from(format!("/data/{ORG_A}")),
+            org_id: ORG_A.to_owned(),
+            satellite: Some(ORG_A.to_owned()),
+        })
+    );
+}
+
+#[test]
 fn a_shared_data_root_has_only_its_organization_folders_masked() {
     // A data root that is also a shared folder (`/tmp`): its other entries are never masked.
     let host = Host::new();
@@ -353,7 +374,7 @@ fn a_neighbour_or_swept_entry_holding_the_offices_own_roots_is_never_masked() {
         neighbours: vec![host.data.clone(), org.clone(), durable.clone()],
         // A sweep that keeps nothing reaches the organization's own folder.
         sweeps: vec![Sweep::all_but(&host.data, std::iter::empty())],
-        own_roots: [durable.clone(), runtime.clone()],
+        own_roots: own_root_forms([&durable, &runtime]),
     };
     let denied = denies(&masks);
     assert_masked_whole(&denied, &host.data.join(ORG_B));
