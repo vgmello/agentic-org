@@ -5,6 +5,7 @@
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Flag from '@lucide/svelte/icons/flag';
 	import XCircle from '@lucide/svelte/icons/x-circle';
+	import SectionHead from '$lib/components/SectionHead.svelte';
 	import type { ProjectBentoCard } from '$lib/modules/home/model';
 
 	interface Props {
@@ -15,27 +16,29 @@
 	}
 
 	let { projects, attentionCount, spotlightIds, onSpotJump }: Props = $props();
+
+	const headCount = $derived(
+		`${projects.length} active${attentionCount > 0 ? ` · ${attentionCount} need attention` : ''}`
+	);
 </script>
 
 <section class="scorecard-sec flex flex-col gap-3.5" aria-labelledby="exec-projects-heading">
-	<div class="flex flex-wrap items-baseline justify-between gap-3">
-		<div class="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-			<h2 id="exec-projects-heading" class="scorecard-title">
-				<span class="exec-lbl-std">Projects</span>
-				<span class="exec-lbl-rep">Project Delivery Scorecard</span>
-			</h2>
-			<span class="scorecard-sub">
-				{projects.length} active{attentionCount > 0 ? ` · ${attentionCount} need attention` : ''}
-			</span>
-		</div>
-		<a
-			href={resolve('/projects')}
-			class="inline-flex items-center gap-0.5 text-xs font-semibold text-[var(--exec-accent-ink)]"
-		>
-			<span>All projects</span>
-			<ChevronRight class="size-3.5" aria-hidden="true" />
-		</a>
-	</div>
+	<SectionHead
+		id="exec-projects-heading"
+		title="Projects"
+		reportTitle="Project delivery scorecard"
+		count={headCount}
+	>
+		{#snippet action()}
+			<a
+				href={resolve('/projects')}
+				class="inline-flex items-center gap-0.5 text-xs font-semibold text-[var(--exec-accent-ink)] hover:underline"
+			>
+				<span>All projects</span>
+				<ChevronRight class="size-3.5" aria-hidden="true" />
+			</a>
+		{/snippet}
+	</SectionHead>
 
 	<div class="scorecard-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
 		{#each projects.slice(0, 6) as proj (proj.id)}
@@ -43,20 +46,40 @@
 				proj.spotDecisionId && spotlightIds?.has(proj.spotDecisionId) && onSpotJump
 			)}
 			{@const showRelTag = Boolean(proj.key && !proj.name.includes(proj.key))}
+			{@const showLead = Boolean(proj.leadId || (proj.leadName && proj.leadName !== 'Unassigned'))}
 			<article class="proj-card flex flex-col gap-3.5">
-				<div class="flex items-center justify-between gap-2">
-					<div class="flex min-w-0 items-baseline gap-2">
+				<div class="flex items-start justify-between gap-2">
+					<div class="proj-id flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
 						<a
 							href={resolve(proj.workHref as '/projects')}
-							class="truncate text-[15px] font-semibold text-[var(--exec-ink)] hover:underline"
+							class="text-[15px] font-semibold whitespace-nowrap text-[var(--exec-ink)] hover:underline"
 						>
 							{proj.name}
 						</a>
 						{#if showRelTag}
 							<span class="key-tag shrink-0 font-mono text-xs">{proj.key}</span>
 						{/if}
+						{#if showLead}
+							<span class="proj-leadline text-xs whitespace-nowrap text-[var(--exec-muted)]">
+								Lead
+								{#if proj.leadId}
+									<a
+										href={resolve(
+											`/members/${encodeURIComponent(proj.leadId)}` as '/teams/members'
+										)}
+										class="proj-lead-link font-medium text-[var(--exec-body)] hover:text-[var(--exec-ink)] hover:underline"
+									>
+										{proj.leadName}
+									</a>
+								{:else}
+									<span class="font-medium text-[var(--exec-body)]">{proj.leadName}</span>
+								{/if}
+							</span>
+						{/if}
 					</div>
-					<span class={['health-pill inline-flex items-center gap-1', proj.statusPillClass]}>
+					<span
+						class={['health-pill inline-flex shrink-0 items-center gap-1', proj.statusPillClass]}
+					>
 						{#if proj.healthTone === 'bad'}
 							<XCircle class="size-3" aria-hidden="true" />
 						{:else if proj.healthTone === 'warn'}
@@ -143,30 +166,6 @@
 						{/if}
 					</div>
 				{/if}
-
-				<div
-					class="proj-foot mt-auto flex items-center justify-between gap-2 pt-3 text-xs text-[var(--exec-muted)]"
-				>
-					<div class="flex items-center">
-						{#each proj.memberInitials as init, idx (`${proj.id}-${idx}-${init}`)}
-							<span
-								class="avatar-stack inline-flex size-6 items-center justify-center rounded-full text-[9px] font-bold text-[var(--exec-ink)]"
-							>
-								{init}
-							</span>
-						{/each}
-						{#if proj.extraMembers > 0}
-							<span class="ml-1.5 text-xs">+{proj.extraMembers}</span>
-						{/if}
-					</div>
-					<a
-						href={resolve(proj.workHref as '/projects')}
-						class="inline-flex items-center gap-0.5 hover:text-[var(--exec-ink)] hover:underline"
-					>
-						<span>Lead {proj.leadName}</span>
-						<ChevronRight class="size-3" aria-hidden="true" />
-					</a>
-				</div>
 			</article>
 		{/each}
 	</div>
@@ -176,17 +175,6 @@
 	.scorecard-sec {
 		padding: var(--exec-section-pad-y);
 		border-bottom: var(--exec-section-border);
-	}
-	.scorecard-title {
-		font-size: var(--exec-section-title-size);
-		line-height: 1.25;
-		font-weight: var(--exec-section-title-weight);
-		letter-spacing: var(--exec-section-title-tracking);
-		color: var(--exec-ink);
-	}
-	.scorecard-sub {
-		font-size: var(--exec-section-sub-size);
-		color: var(--exec-muted);
 	}
 	.scorecard-grid {
 		gap: var(--exec-section-gap);
@@ -333,15 +321,10 @@
 			min-height: 44px;
 		}
 	}
-	.proj-foot {
-		border-top: 1px solid var(--exec-border);
-	}
-	.avatar-stack {
-		background: var(--exec-avatar-bg);
-		margin-left: -6px;
-		box-shadow: 0 0 0 2px var(--exec-avatar-ring);
-	}
-	.avatar-stack:first-child {
-		margin-left: 0;
+	@media (prefers-reduced-motion: reduce) {
+		.proj-card,
+		.unblock-btn {
+			transition: none;
+		}
 	}
 </style>

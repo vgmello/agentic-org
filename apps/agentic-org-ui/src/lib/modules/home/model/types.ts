@@ -66,6 +66,9 @@ export interface ExecutiveKpis {
 	criticalBugs: number;
 	firstTryPassPct: number;
 	throughputPoints: number[];
+	closedLast7d: number;
+	closedPrior7d: number | null;
+	medianCycleHours: number | null;
 }
 
 export interface ProjectBentoCard {
@@ -89,6 +92,7 @@ export interface ProjectBentoCard {
 	actionHref: string;
 	spotDecisionId?: string;
 	workHref: string;
+	leadId?: string;
 	leadName: string;
 	memberInitials: string[];
 	extraMembers: number;
@@ -176,6 +180,13 @@ export function formatCompactUsd(microUsd: number | null): string {
 	const rem = cents % 100;
 	if (rem === 0) return `${sign}$${INT_FORMAT.format(whole)}`;
 	return `${sign}$${INT_FORMAT.format(whole)}.${String(rem).padStart(2, '0')}`;
+}
+
+export function formatCycleDuration(hours: number | null): string {
+	if (hours === null || !Number.isFinite(hours) || hours < 0) return '—';
+	if (hours < 1) return `${Math.max(1, Math.round(hours * 60))}m`;
+	if (hours < 48) return `${Math.round(hours)}h`;
+	return `${(hours / 24).toFixed(1).replace(/\.0$/, '')}d`;
 }
 
 export function greetingForHour(hour: number): string {

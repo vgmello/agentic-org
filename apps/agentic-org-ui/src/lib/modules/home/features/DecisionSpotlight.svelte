@@ -1,29 +1,21 @@
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
-	import type { Attachment } from 'svelte/attachments';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
-	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
-	import Ban from '@lucide/svelte/icons/ban';
-	import Check from '@lucide/svelte/icons/check';
-	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
-	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
-	import ChevronRight from '@lucide/svelte/icons/chevron-right';
-	import Clock from '@lucide/svelte/icons/clock';
-	import Info from '@lucide/svelte/icons/info';
-	import ShieldAlert from '@lucide/svelte/icons/shield-alert';
-	import { ModalTooltip } from '$lib/components/ui/tooltip';
 	import { toAppError, type OrgSnapshot } from '$lib/proto';
+	import { inboxApi } from '$lib/modules/inbox/api';
 	import { executeDecisionAction } from '$lib/modules/inbox/decisions';
 	import { isDenyAction } from '$lib/modules/inbox/spotlight';
 	import type { HomeInboxState, SpotlightDecision } from '$lib/modules/home/model';
 	import { useShellAi } from '$lib/platform/workspace/shell-ai';
 	import HomeDayOne from './HomeDayOne.svelte';
+	import SpotlightActionBar, { type SpotlightReceipt } from './SpotlightActionBar.svelte';
 	import SpotlightContextPanel from './SpotlightContextPanel.svelte';
-	import SpotlightDenyGuard from './SpotlightDenyGuard.svelte';
+	import SpotlightHeaderBar from './SpotlightHeaderBar.svelte';
+	import SpotlightRecommendation from './SpotlightRecommendation.svelte';
 	import SpotlightRiskStrip from './SpotlightRiskStrip.svelte';
-	import SpotlightUpNextBar from './SpotlightUpNextBar.svelte';
+	import SpotlightSessionReceipt from './SpotlightSessionReceipt.svelte';
 
 	interface Props {
 		spotlight: readonly SpotlightDecision[];
@@ -31,6 +23,7 @@
 		snapshot: OrgSnapshot;
 		isDayOne: boolean;
 		inboxState?: HomeInboxState;
+		ariaLabelledby?: string;
 		onRefresh: () => Promise<void>;
 	}
 
@@ -40,8 +33,10 @@
 		snapshot,
 		isDayOne,
 		inboxState = 'ready',
+		ariaLabelledby,
 		onRefresh
 	}: Props = $props();
+
 	const shellAi = useShellAi();
 	let spotIdx = $derived.by(() => {
 		void organizationId;
@@ -56,7 +51,29 @@
 		void organizationId;
 		return '';
 	});
-	let restoreDenyFocus = false;
+	let replyingId = $derived.by<string | undefined>(() => {
+		void organizationId;
+		return undefined;
+	});
+	let replyText = $derived.by(() => {
+		void organizationId;
+		return '';
+	});
+	let handledReceipts = $derived.by<Record<string, SpotlightReceipt>>(() => {
+		void organizationId;
+		return {};
+	});
+	let lastReceipt = $derived.by<{ title: string; outcome: string; note?: string } | undefined>(
+		() => {
+			void organizationId;
+			return undefined;
+		}
+	);
+	let sessionHandledCount = $derived.by(() => {
+		void organizationId;
+		return 0;
+	});
+	let restoreDenyFocus = $state(false);
 	let openContextIds = $derived.by<Record<string, boolean>>(() => {
 		void organizationId;
 		return {};
@@ -73,6 +90,8 @@
 		spotIdx = idx;
 		decliningId = undefined;
 		declineReason = '';
+		replyingId = undefined;
+		replyText = '';
 		pulsing = true;
 		clearTimeout(pulseTimer);
 		pulseTimer = setTimeout(() => {
@@ -91,18 +110,11 @@
 		return true;
 	}
 
-	const focusDenyTriggerOnCancel: Attachment<HTMLButtonElement> = (el) => {
-		if (restoreDenyFocus) {
-			restoreDenyFocus = false;
-			el.focus();
-		}
-	};
-
 	const safeIdx = $derived(spotlight.length > 0 ? Math.min(spotIdx, spotlight.length - 1) : 0);
-	const visibleDots = $derived(spotlight.slice(0, 6));
 	const currentDecision = $derived(spotlight[safeIdx]);
-	const nextDecision = $derived(
-		spotlight.length > 1 ? spotlight[(safeIdx + 1) % spotlight.length] : undefined
+	const handledIds = $derived(new Set(Object.keys(handledReceipts)));
+	const currentReceipt = $derived(
+		currentDecision ? handledReceipts[currentDecision.id] : undefined
 	);
 	const currentCtxOpen = $derived(
 		currentDecision ? Boolean(openContextIds[currentDecision.id]) : false
@@ -112,12 +124,16 @@
 		spotIdx = index;
 		decliningId = undefined;
 		declineReason = '';
+		replyingId = undefined;
+		replyText = '';
 	}
 
 	function armDeny(id: string) {
 		restoreDenyFocus = false;
 		decliningId = id;
 		declineReason = '';
+		replyingId = undefined;
+		replyText = '';
 	}
 
 	function cancelDeny() {
@@ -126,8 +142,30 @@
 		declineReason = '';
 	}
 
+	function openReply(id: string) {
+		decliningId = undefined;
+		declineReason = '';
+		replyingId = id;
+		replyText = '';
+	}
+
+	function cancelReply() {
+		replyingId = undefined;
+		replyText = '';
+	}
+
 	function toggleContext(id: string) {
 		openContextIds = { ...openContextIds, [id]: !openContextIds[id] };
+	}
+
+	function recordHandled(decision: SpotlightDecision, outcome: string, note?: string) {
+		const trimmedNote = note?.trim() || undefined;
+		handledReceipts = {
+			...handledReceipts,
+			[decision.id]: { outcome, note: trimmedNote }
+		};
+		lastReceipt = { title: decision.title, outcome, note: trimmedNote };
+		sessionHandledCount += 1;
 	}
 
 	function askAboutDecision(decision: SpotlightDecision) {
@@ -147,6 +185,27 @@
 		});
 	}
 
+	async function submitReply() {
+		const decision = currentDecision;
+		const inboxItem = decision?.inboxItem;
+		if (!decision || !inboxItem || busyId) return;
+		const text = replyText.trim();
+		if (!text) return;
+		busyId = decision.id;
+		try {
+			await inboxApi.act(organizationId, inboxItem.id, { type: 'reply', text });
+			replyingId = undefined;
+			replyText = '';
+			recordHandled(decision, 'Answered', text);
+			toast.success(`Sent answer to ${decision.actorName}.`);
+			await onRefresh();
+		} catch (e) {
+			toast.error(toAppError(e).message);
+		} finally {
+			busyId = undefined;
+		}
+	}
+
 	async function runAction(kind: 'primary' | 'secondary') {
 		if (!currentDecision || busyId) return;
 		if (
@@ -157,14 +216,16 @@
 			armDeny(currentDecision.id);
 			return;
 		}
-		busyId = currentDecision.id;
+		const decision = currentDecision;
+		const reasonSnapshot = declineReason.trim();
+		busyId = decision.id;
 		try {
 			const res = await executeDecisionAction(
 				organizationId,
-				currentDecision,
+				decision,
 				kind,
 				snapshot,
-				declineReason
+				reasonSnapshot
 			);
 			decliningId = undefined;
 			declineReason = '';
@@ -172,6 +233,17 @@
 				await goto(resolve(res.navigateTo as '/work'));
 				return;
 			}
+			const outcome =
+				kind === 'secondary'
+					? isDenyAction(decision.secondaryAction)
+						? 'Denied'
+						: (decision.secondaryAction?.label ?? 'Handled')
+					: decision.primaryAction.kind === 'approve_inbox'
+						? 'Approved'
+						: decision.primaryAction.kind === 'choose_inbox'
+							? `Chose: ${decision.primaryAction.label}`
+							: decision.primaryAction.label;
+			recordHandled(decision, outcome, kind === 'secondary' ? reasonSnapshot : undefined);
 			if (res.message) toast.success(res.message);
 			await onRefresh();
 		} catch (e) {
@@ -187,63 +259,33 @@
 	id="hb-spotlight"
 	class={[
 		'spot-panel relative flex flex-col gap-4 overflow-hidden',
-		currentDecision?.urgent && 'is-urgent',
+		currentDecision?.urgent && !currentReceipt && 'is-urgent',
+		(Boolean(currentReceipt) || !currentDecision) && 'is-done',
+		isDayOne && 'is-empty-hero',
 		pulsing && 'is-pulse'
 	]}
-	aria-label="Decision Spotlight"
+	aria-labelledby={ariaLabelledby}
+	aria-label={ariaLabelledby ? undefined : isDayOne ? 'Get started' : 'Decision spotlight'}
 >
-	<div class="section-head items-baseline justify-between gap-3">
-		<h2 class="text-lg font-bold tracking-tight text-[var(--exec-ink)]">
-			Decision &amp; Approval Queue
-		</h2>
-	</div>
-
 	{#if currentDecision}
-		<div class="flex flex-wrap items-center justify-between gap-2">
-			<span
-				class={[
-					'spot-badge inline-flex items-center gap-1.5',
-					currentDecision.urgent && 'is-urgent'
-				]}
-			>
-				<Clock class="size-3.5" aria-hidden="true" />
-				<span>{currentDecision.badgeText}</span>
-			</span>
-			<div class="flex flex-wrap items-center gap-2.5">
-				<div class="queue-dots flex items-center gap-1.5" aria-hidden="true">
-					{#each visibleDots as d, i (d.id)}
-						<span class={['queue-dot', i === safeIdx && 'is-cur', d.urgent && 'is-urgent']}></span>
-					{/each}
-				</div>
-				<span class="text-xs font-semibold text-[var(--exec-muted)] tabular-nums">
-					Priority {safeIdx + 1} of {spotlight.length}
-				</span>
-				<div class="flex items-center gap-1">
-					<ModalTooltip label="Previous decision"
-						><button
-							type="button"
-							disabled={spotlight.length <= 1}
-							onclick={() => selectDecision((safeIdx - 1 + spotlight.length) % spotlight.length)}
-							aria-label="Previous decision"
-							class="stepper-arrow flex size-9 items-center justify-center rounded-full"
-							><ChevronLeft class="size-4" aria-hidden="true" /></button
-						></ModalTooltip
-					>
-					<ModalTooltip label="Next decision"
-						><button
-							type="button"
-							disabled={spotlight.length <= 1}
-							onclick={() => selectDecision((safeIdx + 1) % spotlight.length)}
-							aria-label="Next decision"
-							class="stepper-arrow flex size-9 items-center justify-center rounded-full"
-							><ChevronRight class="size-4" aria-hidden="true" /></button
-						></ModalTooltip
-					>
-				</div>
-			</div>
-		</div>
+		<SpotlightHeaderBar
+			{currentDecision}
+			{spotlight}
+			{safeIdx}
+			{handledIds}
+			onSelect={selectDecision}
+		/>
 
-		<div class="flex flex-1 flex-col gap-3.5">
+		{#if lastReceipt && !currentReceipt}
+			<SpotlightSessionReceipt
+				title={lastReceipt.title}
+				outcome={lastReceipt.outcome}
+				note={lastReceipt.note}
+				onDismiss={() => (lastReceipt = undefined)}
+			/>
+		{/if}
+
+		<div class="spot-main flex flex-col gap-3.5">
 			<div class="flex flex-wrap items-center gap-2 text-xs text-[var(--exec-muted)]">
 				<span
 					class="avatar-chip inline-flex size-6 items-center justify-center rounded-full text-[10px] font-bold text-[var(--exec-ink)]"
@@ -285,35 +327,17 @@
 				{currentDecision.title}
 			</h3>
 
-			<div
-				class={[
-					'rec-callout flex items-start gap-2.5 px-3.5 py-2.5 text-sm',
-					`tone-${currentDecision.recTone}`
-				]}
-				data-tone={currentDecision.recTone}
-			>
-				{#if currentDecision.recTone === 'ok'}
-					<CheckCircle2 class="rec-ico mt-0.5 size-4 shrink-0" aria-hidden="true" />
-				{:else if currentDecision.recTone === 'warn'}
-					<AlertTriangle class="rec-ico mt-0.5 size-4 shrink-0" aria-hidden="true" />
-				{:else if currentDecision.recTone === 'bad'}
-					<ShieldAlert class="rec-ico mt-0.5 size-4 shrink-0" aria-hidden="true" />
-				{:else}
-					<Info class="rec-ico mt-0.5 size-4 shrink-0" aria-hidden="true" />
-				{/if}
-				<div class="min-w-0 flex-1">
-					{#if currentDecision.recRiskLabel}
-						<p class="rec-lbl mb-0.5 text-xs font-semibold tracking-wider uppercase">
-							Recommendation · {currentDecision.recRiskLabel}
-						</p>
-					{/if}
-					<p class="line-clamp-3 leading-relaxed">{currentDecision.recommendation}</p>
-				</div>
-			</div>
+			{#if !currentReceipt}
+				<SpotlightRecommendation
+					tone={currentDecision.recTone}
+					riskLabel={currentDecision.recRiskLabel}
+					recommendation={currentDecision.recommendation}
+				/>
 
-			<SpotlightRiskStrip
-				cells={[currentDecision.risk, currentDecision.impact, currentDecision.proof]}
-			/>
+				<SpotlightRiskStrip
+					cells={[currentDecision.risk, currentDecision.impact, currentDecision.proof]}
+				/>
+			{/if}
 
 			<SpotlightContextPanel
 				decisionId={currentDecision.id}
@@ -325,92 +349,35 @@
 			/>
 		</div>
 
-		<!-- Action Bar directly above UP NEXT -->
-		<div class="spot-foot flex flex-wrap items-center justify-between gap-3 pt-3.5">
-			<div class="flex flex-1 flex-wrap items-center gap-2">
-				<button
-					type="button"
-					disabled={busyId === currentDecision.id}
-					onclick={() => void runAction('primary')}
-					class="exec-cta min-h-9"
-				>
-					<span class="exec-cta-fill" aria-hidden="true"></span>
-					<span class="exec-cta-sheen" aria-hidden="true"></span>
-					<span class="exec-cta-inner">
-						<Check class="size-4" aria-hidden="true" />
-						<span>{currentDecision.primaryAction.label}</span>
-					</span>
-				</button>
-				{#if isDenyAction(currentDecision.secondaryAction)}
-					{#if decliningId !== currentDecision.id}
-						<span class="action-sep" aria-hidden="true"></span>
-						<button
-							{@attach focusDenyTriggerOnCancel}
-							type="button"
-							disabled={busyId === currentDecision.id}
-							onclick={() => armDeny(currentDecision.id)}
-							class="deny-btn inline-flex min-h-9 items-center gap-1.5 px-3 text-xs font-semibold"
-						>
-							<Ban class="size-3.5" aria-hidden="true" />
-							<span>{currentDecision.secondaryAction.label}</span>
-						</button>
-					{/if}
-				{:else if currentDecision.secondaryAction}
-					<button
-						type="button"
-						disabled={busyId === currentDecision.id}
-						onclick={() => void runAction('secondary')}
-						class="outline-btn inline-flex min-h-9 items-center gap-1.5 px-3 text-xs font-semibold"
-					>
-						<span>{currentDecision.secondaryAction.label}</span>
-					</button>
-				{/if}
-			</div>
-			<div class="flex items-center gap-2">
-				<a
-					href={resolve(currentDecision.detailHref as '/work')}
-					class="skip-btn inline-flex min-h-9 items-center gap-0.5 rounded-lg px-2 text-xs font-medium"
-				>
-					<span>Details</span>
-					<ChevronRight class="size-3.5" aria-hidden="true" />
-				</a>
-				<a
-					href={resolve('/inbox')}
-					class="skip-btn inline-flex min-h-9 items-center gap-0.5 rounded-lg px-2 text-xs font-medium"
-				>
-					<span>All {spotlight.length} in Inbox</span>
-					<ChevronRight class="size-3.5" aria-hidden="true" />
-				</a>
-			</div>
-
-			{#if decliningId === currentDecision.id}
-				<SpotlightDenyGuard
-					decisionId={currentDecision.id}
-					actorName={currentDecision.actorName}
-					busy={busyId === currentDecision.id}
-					bind:declineReason
-					onConfirm={() => void runAction('secondary')}
-					onCancel={cancelDeny}
-				/>
-			{/if}
-		</div>
-
-		{#if nextDecision}
-			<SpotlightUpNextBar
-				decision={nextDecision}
-				onSelect={() => selectDecision((safeIdx + 1) % spotlight.length)}
-			/>
-		{/if}
+		<SpotlightActionBar
+			decision={currentDecision}
+			totalCount={spotlight.length}
+			busy={busyId === currentDecision.id}
+			receipt={currentReceipt}
+			declining={decliningId === currentDecision.id}
+			bind:declineReason
+			replying={replyingId === currentDecision.id}
+			bind:replyText
+			{restoreDenyFocus}
+			onClearRestoreDenyFocus={() => (restoreDenyFocus = false)}
+			onPrimary={() => void runAction('primary')}
+			onSecondary={() => void runAction('secondary')}
+			onArmDeny={() => armDeny(currentDecision.id)}
+			onCancelDeny={cancelDeny}
+			onOpenReply={() => openReply(currentDecision.id)}
+			onSubmitReply={() => void submitReply()}
+			onCancelReply={cancelReply}
+		/>
 	{:else}
 		<div class="my-auto flex flex-col justify-center">
-			<HomeDayOne {isDayOne} {inboxState} />
+			<HomeDayOne {isDayOne} {inboxState} {sessionHandledCount} {lastReceipt} />
 		</div>
 	{/if}
 </article>
 
 <style>
 	.spot-panel {
-		min-height: 320px;
+		min-height: 280px;
 		background: var(--exec-panel-bg);
 		-webkit-backdrop-filter: var(--exec-panel-blur);
 		backdrop-filter: var(--exec-panel-blur);
@@ -418,6 +385,9 @@
 		border-radius: var(--exec-panel-radius);
 		padding: var(--exec-spot-pad-sm);
 		transition: box-shadow 0.28s ease;
+	}
+	.spot-panel.is-empty-hero {
+		min-height: 248px;
 	}
 	.spot-panel:hover {
 		background: var(--exec-panel-bg-hover);
@@ -435,7 +405,6 @@
 	}
 	@media (min-width: 1280px) {
 		.spot-panel {
-			min-height: var(--exec-stage-min-h);
 			padding: var(--exec-spot-pad-xl);
 		}
 	}
@@ -452,8 +421,8 @@
 	.spot-panel.is-urgent::before {
 		background: linear-gradient(90deg, var(--tone-warn) 0%, transparent 60%);
 	}
-	.section-head {
-		display: var(--exec-section-head-display);
+	.spot-panel.is-done::before {
+		background: linear-gradient(90deg, var(--tone-ok) 0%, transparent 60%);
 	}
 	.spot-title {
 		font-size: var(--exec-spot-title-size);
@@ -463,154 +432,17 @@
 		color: var(--exec-ink);
 		max-width: 48ch;
 	}
-	.spot-badge {
-		padding: 4px 11px;
-		border-radius: 999px;
-		font-size: 0.75rem;
-		font-weight: 600;
-		background: var(--exec-sky-bg);
-		color: var(--exec-sky);
-		box-shadow: inset 0 0 0 1px var(--exec-sky-ring);
-	}
-	.spot-badge.is-urgent {
-		background: var(--exec-warn-bg);
-		color: var(--exec-warn);
-		box-shadow: inset 0 0 0 1px var(--exec-warn-ring);
-	}
-	.queue-dot {
-		display: inline-block;
-		width: 8px;
-		height: 8px;
-		border-radius: 999px;
-		background: var(--field-border);
-		transition:
-			width 0.2s ease,
-			background-color 0.16s ease;
-	}
-	.queue-dot.is-urgent {
-		background: var(--tone-warn-ink);
-	}
-	.queue-dot.is-cur {
-		width: 22px;
-		background: var(--tone-accent-ink);
-	}
-	.queue-dot.is-cur.is-urgent {
-		background: var(--tone-warn-ink);
-	}
-	.stepper-arrow {
-		background: var(--exec-well);
-		box-shadow: inset 0 0 0 1px var(--exec-border);
-		color: var(--exec-body);
-	}
-	.stepper-arrow:disabled {
-		opacity: 0.35;
-	}
 	.avatar-chip {
 		background: var(--exec-avatar-bg);
 		box-shadow: inset 0 0 0 1px var(--exec-border);
 	}
-	.rec-callout {
-		--rec-ink: var(--exec-accent-ink);
-		--rec-bar: var(--tone-accent);
-		--rec-bg: var(--exec-accent-soft);
-		--rec-ring: var(--exec-accent-ring);
-		border-radius: var(--exec-inset-radius);
-		background: var(--rec-bg);
-		box-shadow:
-			inset 0 0 0 1px var(--rec-ring),
-			inset 3px 0 0 var(--rec-bar);
-		color: var(--exec-body);
-	}
-	.rec-callout.tone-ok {
-		--rec-ink: var(--exec-ok);
-		--rec-bar: var(--tone-ok);
-		--rec-bg: var(--exec-ok-bg);
-		--rec-ring: var(--exec-ok-ring);
-	}
-	.rec-callout.tone-warn {
-		--rec-ink: var(--exec-warn);
-		--rec-bar: var(--tone-warn);
-		--rec-bg: var(--exec-warn-bg);
-		--rec-ring: var(--exec-warn-ring);
-	}
-	.rec-callout.tone-bad {
-		--rec-ink: var(--exec-bad);
-		--rec-bar: var(--tone-bad);
-		--rec-bg: var(--exec-bad-bg);
-		--rec-ring: var(--exec-bad-ring);
-	}
-	.rec-callout :global(.rec-ico),
-	.rec-lbl {
-		color: var(--rec-ink);
-	}
-	.spot-foot {
-		border-top: 1px solid var(--exec-border);
-	}
-	.action-sep {
-		width: 1px;
-		height: 20px;
-		background: var(--exec-border-hi);
-		margin: 0 2px;
-		flex: none;
-	}
-	.outline-btn {
-		border-radius: var(--exec-ctrl-radius);
-		background: var(--exec-btn-outline-bg);
-		color: var(--exec-btn-outline-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-btn-outline-ring);
-		transition:
-			background-color 0.14s ease,
-			color 0.14s ease,
-			box-shadow 0.14s ease;
-	}
-	.outline-btn:hover {
-		background: var(--exec-btn-outline-bg-hover);
-		color: var(--exec-btn-outline-ink-hover);
-		box-shadow: inset 0 0 0 1px var(--exec-btn-outline-ring-hover);
-	}
-	.deny-btn {
-		border-radius: var(--exec-ctrl-radius);
-		background: var(--exec-deny-bg);
-		color: var(--exec-deny-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-deny-ring);
-		transition:
-			background-color 0.14s ease,
-			color 0.14s ease,
-			box-shadow 0.14s ease;
-	}
-	.deny-btn:hover {
-		background: var(--exec-deny-bg-hover);
-		color: var(--exec-deny-ink-hover);
-		box-shadow: inset 0 0 0 1px var(--exec-deny-ring-hover);
-	}
-	.skip-btn {
-		color: var(--exec-muted);
-		transition:
-			background-color 0.14s ease,
-			color 0.14s ease;
-	}
-	.skip-btn:hover {
-		background: var(--exec-btn-ghost-bg-hover);
-		color: var(--exec-ink);
-	}
 	@media (max-width: 720px), (pointer: coarse) {
-		.deny-btn,
-		.outline-btn,
-		.skip-btn,
 		.spot-meta-link {
-			min-height: 44px;
-		}
-		.stepper-arrow {
-			min-width: 44px;
 			min-height: 44px;
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.spot-panel,
-		.queue-dot,
-		.outline-btn,
-		.deny-btn,
-		.skip-btn {
+		.spot-panel {
 			transition: none;
 		}
 	}

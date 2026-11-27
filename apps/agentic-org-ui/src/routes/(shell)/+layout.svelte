@@ -4,7 +4,6 @@
 	import MobileNavigation from '$lib/platform/shell/MobileNavigation.svelte';
 	import ShortcutsDialog from '$lib/platform/shell/ShortcutsDialog.svelte';
 	import { provideNotifications } from '$lib/platform/workspace/notifications.svelte';
-	import HomeScrollHint from '$lib/modules/home/features/HomeScrollHint.svelte';
 	import TessPanel from '$lib/modules/tess/TessPanel.svelte';
 	import { createHttpTessApi } from '$lib/modules/tess/api';
 	import { provideTessPanel, TessPanelState } from '$lib/modules/tess/tess-panel.svelte';
@@ -413,9 +412,6 @@
 		/>
 		<div class="relative flex min-h-0 flex-1 flex-row overflow-hidden">
 			<div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
-				{#if isHome}
-					<HomeScrollHint scrollContainer={mainEl} />
-				{/if}
 				<main
 					bind:this={mainEl}
 					tabindex="-1"

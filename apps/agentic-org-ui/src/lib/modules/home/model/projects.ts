@@ -363,6 +363,7 @@ export function deriveProjectCards(
 			actionHref: blocker.actionHref,
 			spotDecisionId: blocker.spotDecisionId,
 			workHref,
+			leadId: lead?.id,
 			leadName:
 				lead?.name ??
 				row?.ownerTeam.name ??

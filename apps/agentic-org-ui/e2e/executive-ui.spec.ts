@@ -14,18 +14,19 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	await expect(page.locator('html')).toHaveAttribute('data-ui-mode', 'executive');
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'ocean');
 
-	// Home loads live domain KPIs, Project Scorecard, and 3-lens Executive Brief
+	// Home loads live domain KPIs (Projects -> Delivery -> Team -> Financials), Project Scorecard, and 3-lens Executive digest
 	await visit(page, '/home');
 	await expect(page.locator('html')).not.toHaveAttribute('data-interior-page');
 	await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
 	await expect(page.getByRole('region', { name: /Executive overview/ })).toBeVisible();
-	await expect(page.locator('#hb-pil-fin')).toHaveText('Financials');
-	await expect(page.locator('#hb-pil-team')).toHaveText('Team');
+	await expect(page.locator('#hb-pil-projects')).toHaveText('Projects');
 	await expect(page.locator('#hb-pil-proj')).toHaveText('Delivery');
-	await expect(page.getByRole('heading', { name: 'Executive Brief' })).toBeVisible();
+	await expect(page.locator('#hb-pil-team')).toHaveText('Team');
+	await expect(page.locator('#hb-pil-fin')).toHaveText('Financials');
+	await expect(page.getByRole('heading', { name: 'Executive digest' })).toBeVisible();
 
-	// 3-lens Executive Brief switching (Today / 7-Day / Board) + Copy brief -> Copied
-	await page.getByRole('tab', { name: '7-Day', exact: true }).click();
+	// 3-lens Executive digest switching (Today / 7-day / Board) + Copy brief -> Copied
+	await page.getByRole('tab', { name: '7-day', exact: true }).click();
 	await expect(page.getByText('Velocity & Delivery')).toBeVisible();
 	await page.getByRole('tab', { name: 'Board', exact: true }).click();
 	await expect(page.getByText('Executive Summary')).toBeVisible();
@@ -36,9 +37,9 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	await copyBtn.click();
 	await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
 
-	// Executive Brief Show full brief / Show less disclosure at stacked viewport (<1280px)
+	// Executive digest Show more / Show less disclosure at stacked viewport (<1280px)
 	await page.setViewportSize({ width: 1024, height: 900 });
-	const expandBtn = page.getByRole('button', { name: 'Show full brief' });
+	const expandBtn = page.getByRole('button', { name: 'Show more' });
 	await expect(expandBtn).toBeVisible();
 	await expect(expandBtn).toHaveAttribute('aria-expanded', 'false');
 	await expandBtn.click();
@@ -46,7 +47,7 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	await expect(collapseBtn).toBeVisible();
 	await expect(collapseBtn).toHaveAttribute('aria-expanded', 'true');
 	await collapseBtn.click();
-	await expect(page.getByRole('button', { name: 'Show full brief' })).toHaveAttribute(
+	await expect(page.getByRole('button', { name: 'Show more' })).toHaveAttribute(
 		'aria-expanded',
 		'false'
 	);
@@ -354,7 +355,7 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 			.getByRole('link', { name: 'Home' })
 			.click();
 		await expect(page).toHaveURL(/\/home$/);
-		await expect(page.getByRole('heading', { name: 'Executive Brief' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Executive digest' })).toBeVisible();
 		await page.screenshot({ path: `${captureDir}/prod-home-cozy-hc.png` });
 		await page
 			.getByRole('navigation', { name: 'Main' })
@@ -371,59 +372,38 @@ test('Executive UI v6 (always-on): 6 themes, Home KPIs, 3-lens Executive Brief, 
 	await expect(page.locator('html')).not.toHaveAttribute('data-cozy-contrast', 'high');
 });
 
-test('Home scroll cue: keyboard-reachable before below-fold content, moves focus on activation, and resets on return to /home', async ({
+test('Home natural stage sizing: no scroll hint bar, natural scrolling, and mobile target sizing', async ({
 	page
 }) => {
 	await page.setViewportSize({ width: 1440, height: 700 });
 	await visit(page, '/home?theme=graphite&mock=poc');
 
 	await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'graphite');
-	await expect(page.getByRole('heading', { name: 'Executive Brief' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Executive digest' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Needs your attention' })).toBeVisible();
+	await expect(page.getByTestId('home-scroll-hint')).toHaveCount(0);
 
-	const hint = page.getByTestId('home-scroll-hint');
-	await expect(hint).toBeVisible();
-	await expect(hint).toContainText('Scroll for more');
-
-	// Verify 640-720px fine-pointer targets meet 44px minimum (sidebar theme pill, Ask pill, Home cue)
+	// Verify 640-720px fine-pointer targets meet 44px minimum (sidebar theme pill)
 	await page.setViewportSize({ width: 680, height: 700 });
-	await expect(hint).toBeVisible();
 	const pillBox = await page
 		.getByRole('group', { name: 'Theme' })
 		.getByRole('button', { name: 'Graphite' })
 		.boundingBox();
-	const hintBox = await hint.boundingBox();
 	expect(pillBox?.height ?? 0).toBeGreaterThanOrEqual(44);
-	expect(hintBox?.height ?? 0).toBeGreaterThanOrEqual(44);
 	await page.setViewportSize({ width: 1440, height: 700 });
-	await expect(hint).toBeVisible();
 
-	if (captureDir) {
-		await page.screenshot({ path: `${captureDir}/poc-home-scroll-cue-graphite.png` });
-	}
+	// Interactive queue dots step directly through Spotlight decisions
+	const queueDots = page.getByRole('group', { name: 'Priority queue' }).getByRole('button');
+	const dotCount = await queueDots.count();
+	expect(dotCount).toBeGreaterThan(1);
+	await expect(queueDots.first()).toHaveAttribute('aria-current', 'true');
+	await queueDots.nth(1).click();
+	await expect(queueDots.nth(1)).toHaveAttribute('aria-current', 'true');
 
-	// Keyboard Tab from the last control in header (Notifications button) reaches Home scroll cue before below-fold content
-	const notifButton = page.getByRole('button', { name: /^Notifications/ });
-	await notifButton.focus();
-	await page.keyboard.press('Tab');
-	await expect(hint).toBeFocused();
-
-	// Activating via Enter scrolls scorecard into view, moves focus off body, and hides cue
-	await page.keyboard.press('Enter');
-	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBeGreaterThan(16);
-	await expect(hint).toBeHidden();
-	await expect(page.locator('#exec-projects-heading')).toBeInViewport();
-	const activeId = await page.evaluate(() => ({
-		tag: document.activeElement?.tagName,
-		id: document.activeElement?.id
-	}));
-	expect(activeId.tag).not.toBe('BODY');
-	expect(activeId.id).toBe('exec-projects-heading');
-
-	// Navigating away while scrolled down and returning via popstate (Back) OR link resets main.scrollTop to 0 and shows cue again
+	// Navigating away while scrolled down and returning via popstate (Back) resets main.scrollTop to 0
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Work' }).click();
 	await expect(page).toHaveURL(/\/work/);
 	await expect(page.getByRole('heading', { name: 'Work' })).toBeVisible();
-	// Use a shorter viewport and wait for Work content to overflow <main> so popstate Back genuinely resets a non-zero offset
 	await page.setViewportSize({ width: 1440, height: 480 });
 	await expect
 		.poll(() => page.locator('main').evaluate((el) => el.scrollHeight - el.clientHeight))
@@ -434,22 +414,9 @@ test('Home scroll cue: keyboard-reachable before below-fold content, moves focus
 	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBeGreaterThan(16);
 	await page.goBack();
 	await expect(page).toHaveURL(/\/home/);
-	await expect(page.getByRole('heading', { name: 'Executive Brief' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Executive digest' })).toBeVisible();
 	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBe(0);
-	await expect(hint).toBeVisible();
 	await page.setViewportSize({ width: 1440, height: 700 });
-
-	await hint.click();
-	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBeGreaterThan(16);
-	await expect(hint).toBeHidden();
-	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /Inbox/ }).click();
-	await expect(page).toHaveURL(/\/inbox/);
-	await expect(page.getByRole('heading', { level: 1, name: 'Inbox' })).toBeVisible();
-	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Home' }).click();
-	await expect(page).toHaveURL(/\/home$/);
-	await expect(page.getByRole('heading', { name: 'Executive Brief' })).toBeVisible();
-	await expect.poll(() => page.locator('main').evaluate((el) => el.scrollTop)).toBe(0);
-	await expect(hint).toBeVisible();
 });
 
 test('POC-mirror dataset (?mock=poc): auto-seeds Agentic Org and mirrors poc/v6.html data', async ({

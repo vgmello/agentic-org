@@ -195,29 +195,65 @@ function countOpenAndCriticalBugs(
 	};
 }
 
-function deriveThroughputPoints(
+export const KPI_PILLAR_ORDER = ['projects', 'delivery', 'team', 'financials'] as const;
+
+function itemCycleHours(item: WorkItemSummary): number | null {
+	const doneTs = Date.parse(item.updated_at ?? item.created_at ?? '');
+	const createdTs = Date.parse(item.created_at ?? '');
+	if (!Number.isFinite(doneTs) || !Number.isFinite(createdTs) || doneTs <= createdTs) return null;
+	return (doneTs - createdTs) / 3_600_000;
+}
+
+function medianOf(values: readonly number[]): number | null {
+	if (values.length === 0) return null;
+	const sorted = [...values].sort((a, b) => a - b);
+	const mid = Math.floor(sorted.length / 2);
+	return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function deriveDeliveryWindowStats(
 	doneItems: readonly WorkItemSummary[],
 	doneCount: number,
 	nowMs: number
-): number[] {
+): {
+	throughputPoints: number[];
+	closedLast7d: number;
+	closedPrior7d: number | null;
+	medianCycleHours: number | null;
+} {
 	const DAYS = 7;
 	const DAY_MS = 24 * 3600 * 1000;
 	const buckets = Array.from({ length: DAYS }, () => 0);
-	let placed = 0;
+	let closedLast7d = 0;
+	let closedPrior7d = 0;
+	const recentCycles: number[] = [];
+	const allCycles: number[] = [];
+
 	for (const item of doneItems) {
-		const ts = Date.parse(item.updated_at ?? item.created_at ?? '');
-		if (!Number.isFinite(ts)) continue;
-		const daysAgo = Math.floor((nowMs - ts) / DAY_MS);
+		const cycleH = itemCycleHours(item);
+		if (cycleH !== null) allCycles.push(cycleH);
+		const doneTs = Date.parse(item.updated_at ?? item.created_at ?? '');
+		if (!Number.isFinite(doneTs)) continue;
+		const daysAgo = Math.floor((nowMs - doneTs) / DAY_MS);
 		if (daysAgo >= 0 && daysAgo < DAYS) {
 			buckets[DAYS - 1 - daysAgo] += 1;
-			placed += 1;
+			closedLast7d += 1;
+			if (cycleH !== null) recentCycles.push(cycleH);
+		} else if (daysAgo >= DAYS && daysAgo < DAYS * 2) {
+			closedPrior7d += 1;
 		}
 	}
-	if (placed === 0 && doneCount > 0) {
-		// Fall back to monotonic cumulative progress endpoint when only aggregate counts exist.
+
+	if (closedLast7d === 0 && doneCount > 0) {
 		buckets[DAYS - 1] = doneCount;
 	}
-	return buckets;
+
+	return {
+		throughputPoints: buckets,
+		closedLast7d,
+		closedPrior7d: closedPrior7d > 0 ? closedPrior7d : null,
+		medianCycleHours: medianOf(recentCycles.length > 0 ? recentCycles : allCycles)
+	};
 }
 
 export function deriveKpiMetrics(
@@ -295,6 +331,7 @@ export function deriveKpiMetrics(
 		financials.available && financials.budgetMicroUsd !== null
 			? Math.max(0, Math.min(100, 100 - financials.usagePct))
 			: null;
+	const deliveryStats = deriveDeliveryWindowStats(doneItems, doneCount, nowMs);
 
 	return {
 		financials,
@@ -320,7 +357,7 @@ export function deriveKpiMetrics(
 		openBugs,
 		criticalBugs,
 		firstTryPassPct,
-		throughputPoints: deriveThroughputPoints(doneItems, doneCount, nowMs)
+		...deliveryStats
 	};
 }
 

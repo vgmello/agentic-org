@@ -1,12 +1,15 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
+	import { resolve } from '$app/paths';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
+	import SectionHead from '$lib/components/SectionHead.svelte';
+	import BriefLensTabs from '$lib/modules/home/features/BriefLensTabs.svelte';
 	import CapacityBreakdown from '$lib/modules/home/features/CapacityBreakdown.svelte';
 	import DecisionSpotlight from '$lib/modules/home/features/DecisionSpotlight.svelte';
 	import ExecutiveBriefCard from '$lib/modules/home/features/ExecutiveBriefCard.svelte';
 	import { HomeLiveState } from '$lib/modules/home/features/home-live.svelte';
-	import { fitBelowFold } from '$lib/modules/home/features/home-fold';
 	import HomeKpiStrip from '$lib/modules/home/features/HomeKpiStrip.svelte';
 	import HomeMilestones from '$lib/modules/home/features/HomeMilestones.svelte';
 	import HomeSkeleton from '$lib/modules/home/features/HomeSkeleton.svelte';
@@ -25,6 +28,7 @@
 		deriveTaskTimeBreakdown,
 		deriveUpcomingMilestones,
 		greetingForHour,
+		type BriefLens,
 		type HomeDomainData,
 		type HomeInboxState
 	} from '$lib/modules/home/model';
@@ -38,6 +42,7 @@
 	const ownerId = $derived(ownerMember?.id ?? 'owner');
 	const shellData = useShellData();
 	const tessPanel = useTessPanel();
+	const isReport = $derived(uiPrefs.theme === 'report' || uiPrefs.theme === 'report-dark');
 
 	const live = new HomeLiveState({
 		overview: (id, signal) => officesApi.overview(id, signal),
@@ -45,6 +50,7 @@
 	});
 
 	let spotlightRef = $state<{ jumpToDecision: (id: string) => boolean } | null>(null);
+	let briefLens = $state<BriefLens>('today');
 
 	$effect(() => {
 		const id = organizationId;
@@ -160,6 +166,12 @@
 			domain
 		)
 	);
+	const activeBriefLens = $derived(brief.lenses[briefLens]);
+	const cosName = $derived(brief.chiefOfStaff?.name ?? 'Tess');
+	const spotHeadCount = $derived(spotlight.length > 0 ? `${spotlight.length} pending` : '');
+	const briefHeadCount = $derived(
+		briefLens === 'board' ? `from ${cosName}` : `from ${cosName} · ${activeBriefLens.updatedLabel}`
+	);
 	const taskTime = $derived(
 		deriveTaskTimeBreakdown(workItems, ownerId, kpis.offlineOffices, domain)
 	);
@@ -185,10 +197,7 @@
 
 <svelte:head><title>{pageTitle('Home')}</title></svelte:head>
 
-<div
-	{@attach fitBelowFold(uiPrefs.theme)}
-	class="home-page mx-auto flex w-full flex-col px-6 pt-3 pb-12 sm:px-8"
->
+<div class="home-page mx-auto flex w-full flex-col px-6 pt-3 pb-12 sm:px-8">
 	<!-- Zone 1: Executive Greeting Header -->
 	<section class="home-hero flex flex-wrap justify-between gap-4">
 		<div class="home-brief flex min-w-0 flex-col gap-1">
@@ -223,26 +232,37 @@
 	</section>
 
 	{#if liveLoadError}
-		<section class="exec-card flex flex-col items-center gap-3 px-6 py-12 text-center" role="alert">
+		<section
+			class="exec-card mx-auto flex w-full max-w-2xl flex-col items-center gap-3 px-6 py-12 text-center"
+			role="alert"
+		>
 			<span class="err-ring flex size-12 items-center justify-center rounded-full">
 				<AlertTriangle class="size-6" aria-hidden="true" />
 			</span>
 			<h2 class="text-base font-semibold text-[var(--exec-ink)]">Couldn't reach live work data</h2>
 			<p class="max-w-md text-sm text-[var(--exec-muted)]">{liveLoadError}</p>
-			<button type="button" onclick={() => void refreshLive()} class="exec-cta mt-2">
-				<span class="exec-cta-fill" aria-hidden="true"></span>
-				<span class="exec-cta-inner">
-					<RefreshCw class="size-4" aria-hidden="true" />
-					<span>Try again</span>
-				</span>
-			</button>
+			<div class="mt-2 flex flex-wrap items-center justify-center gap-2.5">
+				<button type="button" onclick={() => void refreshLive()} class="exec-cta">
+					<span class="exec-cta-fill" aria-hidden="true"></span>
+					<span class="exec-cta-inner">
+						<RefreshCw class="size-4" aria-hidden="true" />
+						<span>Try again</span>
+					</span>
+				</button>
+				<a
+					href={resolve('/settings/offices')}
+					class="ghost-link inline-flex min-h-9 items-center gap-0.5 rounded-lg px-3 text-xs font-semibold"
+				>
+					<span>Check offices</span>
+					<ChevronRight class="size-3.5" aria-hidden="true" />
+				</a>
+			</div>
 		</section>
 	{:else if loading}
 		<HomeSkeleton />
-	{:else}
-		<HomeKpiStrip {kpis} />
-
-		<section class="home-stage grid grid-cols-1 xl:grid-cols-[minmax(0,1.42fr)_minmax(340px,1fr)]">
+	{:else if isDayOne}
+		<!-- Empty-org Day-One spotlight hero sits ABOVE the 4 pillars -->
+		<section class="home-stage is-single grid grid-cols-1">
 			<DecisionSpotlight
 				bind:this={spotlightRef}
 				{spotlight}
@@ -252,7 +272,61 @@
 				{inboxState}
 				onRefresh={refreshLive}
 			/>
-			<ExecutiveBriefCard {brief} {catchUp} />
+		</section>
+
+		<HomeKpiStrip {kpis} />
+	{:else}
+		<HomeKpiStrip {kpis} />
+
+		<section
+			class={[
+				'home-stage has-heads grid grid-cols-1 xl:grid-cols-[minmax(0,1.42fr)_minmax(340px,1fr)]',
+				isReport && 'is-report'
+			]}
+		>
+			<div class="stage-head stage-head-spot">
+				<SectionHead
+					id="hb-spot-h"
+					title="Needs your attention"
+					reportTitle="Decision & approval queue"
+					count={spotHeadCount}
+				>
+					{#snippet action()}
+						<a
+							href={resolve('/inbox')}
+							class="inline-flex items-center gap-0.5 text-xs font-semibold text-[var(--exec-accent-ink)] hover:underline"
+						>
+							<span>Open inbox</span>
+							<ChevronRight class="size-3.5" aria-hidden="true" />
+						</a>
+					{/snippet}
+				</SectionHead>
+			</div>
+
+			<div class="stage-head stage-head-brief">
+				<SectionHead id="hb-brief-h" title="Executive digest" count={briefHeadCount}>
+					{#snippet action()}
+						<BriefLensTabs bind:lens={briefLens} />
+					{/snippet}
+				</SectionHead>
+			</div>
+
+			<div class="stage-body stage-body-spot flex flex-col">
+				<DecisionSpotlight
+					bind:this={spotlightRef}
+					{spotlight}
+					{organizationId}
+					{snapshot}
+					{isDayOne}
+					{inboxState}
+					ariaLabelledby="hb-spot-h"
+					onRefresh={refreshLive}
+				/>
+			</div>
+
+			<div class="stage-body stage-body-brief flex flex-col">
+				<ExecutiveBriefCard {brief} {catchUp} lens={briefLens} ariaLabelledby="hb-brief-h" />
+			</div>
 		</section>
 
 		{#if projectCards.length > 0 || milestones.length > 0 || taskTime.totalOpen > 0}
@@ -321,13 +395,72 @@
 		text-decoration-color: var(--exec-h1-em-ul-bad);
 	}
 	.home-stage {
-		gap: var(--exec-stage-gap);
+		column-gap: var(--exec-stage-gap);
+		row-gap: 0.75rem;
 		padding: var(--exec-section-pad-y);
 		border-bottom: var(--exec-section-border);
+	}
+	.home-stage.has-heads {
+		grid-template-rows: auto;
+	}
+	.stage-body > :global(*) {
+		flex: 1;
+	}
+	@media (max-width: 1279px) {
+		.stage-head-spot {
+			order: 0;
+		}
+		.stage-body-spot {
+			order: 1;
+		}
+		.stage-head-brief {
+			order: 2;
+			margin-top: 0.75rem;
+		}
+		.stage-body-brief {
+			order: 3;
+		}
+	}
+	@media (min-width: 1280px) {
+		.home-stage.has-heads {
+			grid-template-rows: auto minmax(0, 1fr);
+		}
+		.home-stage.has-heads.is-report {
+			row-gap: 0;
+		}
+		.home-stage.is-report .stage-head-spot {
+			padding-right: 36px;
+			padding-bottom: 14px;
+		}
+		.home-stage.is-report .stage-head-brief {
+			padding-left: 36px;
+			padding-bottom: 14px;
+			border-left: var(--exec-col-divider);
+		}
 	}
 	.err-ring {
 		background: var(--exec-bad-bg);
 		box-shadow: inset 0 0 0 1px var(--exec-bad-ring);
 		color: var(--exec-bad);
+	}
+	.ghost-link {
+		color: var(--exec-muted);
+		transition:
+			background-color 0.14s ease,
+			color 0.14s ease;
+	}
+	.ghost-link:hover {
+		background: var(--exec-btn-ghost-bg-hover);
+		color: var(--exec-ink);
+	}
+	@media (max-width: 720px), (pointer: coarse) {
+		.ghost-link {
+			min-height: 44px;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.ghost-link {
+			transition: none;
+		}
 	}
 </style>

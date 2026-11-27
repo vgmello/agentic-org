@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, tick } from 'svelte';
+	import { onDestroy } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
@@ -8,40 +8,38 @@
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Clipboard from '@lucide/svelte/icons/clipboard';
 	import Clock from '@lucide/svelte/icons/clock';
+	import FileCheck from '@lucide/svelte/icons/file-check';
+	import List from '@lucide/svelte/icons/list';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import type { BriefLens, CatchUpRow, ExecutiveBrief } from '$lib/modules/home/model';
 
 	interface Props {
 		brief: ExecutiveBrief;
 		catchUp: readonly CatchUpRow[];
+		lens?: BriefLens;
+		ariaLabelledby?: string;
 	}
 
-	let { brief, catchUp }: Props = $props();
+	let { brief, catchUp, lens = 'today', ariaLabelledby }: Props = $props();
 
-	const BRIEF_LENSES: readonly { id: BriefLens; label: string }[] = [
-		{ id: 'today', label: 'Today' },
-		{ id: 'week', label: '7-Day' },
-		{ id: 'board', label: 'Board' }
-	];
-
-	let briefLens = $state<BriefLens>('today');
 	let briefMode = $state<'highlights' | 'full'>('highlights');
 	let briefExpanded = $state(false);
-	let briefCopied = $state(false);
+	let copiedLens = $state<BriefLens | null>(null);
 	let briefCopyTimer: ReturnType<typeof setTimeout> | undefined;
+
+	const briefCopied = $derived(copiedLens === lens);
+	const activeBrief = $derived(brief.lenses[lens]);
+	const sigHref = $derived(
+		brief.chiefOfStaff ? `/members/${encodeURIComponent(brief.chiefOfStaff.id)}` : '/activity'
+	);
+	const sigName = $derived(brief.chiefOfStaff?.name ?? 'Tess');
+	const sigRole = $derived(brief.chiefOfStaff?.role ?? 'Chief of Staff');
 
 	function firstSentence(text: string): string {
 		const trimmed = text.trim();
 		const match = trimmed.match(/^.+?[.!?](?:\s|$)/);
 		return match ? match[0].trim() : trimmed;
 	}
-
-	const activeBrief = $derived(brief.lenses[briefLens]);
-	const sigHref = $derived(
-		brief.chiefOfStaff ? `/members/${encodeURIComponent(brief.chiefOfStaff.id)}` : '/activity'
-	);
-	const sigName = $derived(brief.chiefOfStaff?.name ?? 'Tess');
-	const sigRole = $derived(brief.chiefOfStaff?.role ?? 'Chief of Staff');
 
 	/** Emphasize the opening factual lead phrase of a brief paragraph without raw HTML injection. */
 	function splitLead(text: string): { lead: string; rest: string } | null {
@@ -61,97 +59,59 @@
 		clearTimeout(briefCopyTimer);
 	});
 
-	function selectLens(lens: BriefLens) {
-		briefLens = lens;
-		briefCopied = false;
-	}
-
-	function handleBriefTabKeydown(event: KeyboardEvent, index: number) {
-		const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
-		if (!step && event.key !== 'Home' && event.key !== 'End') return;
-		event.preventDefault();
-		const nextIdx =
-			event.key === 'Home'
-				? 0
-				: event.key === 'End'
-					? BRIEF_LENSES.length - 1
-					: (index + step + BRIEF_LENSES.length) % BRIEF_LENSES.length;
-		const nextLens = BRIEF_LENSES[nextIdx].id;
-		selectLens(nextLens);
-		void tick().then(() => document.getElementById(`exec-brief-tab-${nextLens}`)?.focus());
-	}
-
 	function copyBrief() {
 		if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
 			void navigator.clipboard.writeText(activeBrief.copyText).catch(() => undefined);
 		}
-		briefCopied = true;
+		copiedLens = lens;
 		clearTimeout(briefCopyTimer);
 		briefCopyTimer = setTimeout(() => {
-			briefCopied = false;
+			copiedLens = null;
 		}, 2400);
 		toast.success(`${activeBrief.label} executive brief copied to clipboard.`);
 	}
 </script>
 
-<aside class="brief-panel flex flex-col gap-3.5" aria-label="Executive Brief">
-	<div class="flex flex-wrap items-center justify-between gap-2">
-		<h2 class="brief-title inline-flex items-center gap-2 text-[var(--exec-ink)]">
-			<Sparkles class="brief-title-ico size-4 text-[var(--exec-accent-ink)]" aria-hidden="true" />
-			<span>Executive Brief</span>
-		</h2>
-		<div
-			class="brief-lenses inline-flex items-center gap-0.5 p-0.5"
-			role="tablist"
-			aria-label="Brief timeframe"
-		>
-			{#each BRIEF_LENSES as option, idx (option.id)}
-				<button
-					type="button"
-					role="tab"
-					id="exec-brief-tab-{option.id}"
-					aria-selected={briefLens === option.id}
-					aria-controls="exec-brief-scroll"
-					tabindex={briefLens === option.id ? 0 : -1}
-					onclick={() => selectLens(option.id)}
-					onkeydown={(e) => handleBriefTabKeydown(e, idx)}
-					class={[
-						'lens-tab inline-flex min-h-9 items-center px-2.5 py-1 text-xs font-semibold',
-						briefLens === option.id && 'is-on'
-					]}
-				>
-					{option.label}
-				</button>
-			{/each}
-		</div>
-	</div>
-
+<aside
+	class="brief-panel flex flex-col gap-3.5"
+	aria-labelledby={ariaLabelledby}
+	aria-label={ariaLabelledby ? undefined : 'Executive digest'}
+>
 	<div class={['brief-memo flex min-h-0 flex-1 flex-col gap-3', briefExpanded && 'is-expanded']}>
 		<div
 			id="exec-brief-scroll"
 			role="tabpanel"
-			aria-labelledby="exec-brief-tab-{briefLens}"
+			aria-labelledby="exec-brief-tab-{lens}"
 			class="brief-scroll flex min-h-0 flex-1 flex-col"
 			tabindex="0"
 		>
 			{#if briefMode === 'highlights'}
 				{#if activeBrief.sections[0]}
 					{@const leadSec = activeBrief.sections[0]}
-					<p class="brief-lead text-[0.9375rem] leading-[1.55] text-[var(--exec-ink)]">
+					<p class="brief-lead text-[0.9375rem] leading-[1.58] text-[var(--exec-body)]">
 						{firstSentence(leadSec.body)}
 					</p>
 				{/if}
-				<ul class="brief-bullets flex flex-col gap-2" role="list">
+				<ul class="dg-list flex flex-col" role="list">
 					{#each activeBrief.sections as sec (sec.id)}
-						<li class="brief-bullet-item flex items-start gap-2.5 text-[0.875rem] leading-[1.5]">
-							<span
-								class={['brief-bullet-dot mt-2 size-1.5 shrink-0 rounded-full', `tone-${sec.tone}`]}
-								aria-hidden="true"
-							></span>
-							<span class="min-w-0 flex-1 text-[var(--exec-body)]">
-								<strong class="font-semibold text-[var(--exec-ink)]">{sec.kicker}:</strong>
-								{firstSentence(sec.body)}
+						<li class={['dg-item grid items-start gap-3', `tone-${sec.tone}`]}>
+							<span class="dg-ic mt-0.5 inline-flex shrink-0" aria-hidden="true">
+								{#if sec.tone === 'ok'}
+									<CheckCircle2 class="size-4" />
+								{:else if sec.tone === 'warn'}
+									<AlertTriangle class="size-4" />
+								{:else}
+									<Sparkles class="size-4" />
+								{/if}
 							</span>
+							<div class="flex min-w-0 flex-col gap-0.5">
+								<span class="dg-title text-sm font-semibold text-[var(--exec-ink)]">
+									{sec.kicker}
+								</span>
+								<span class="dg-detail text-xs leading-relaxed text-[var(--exec-muted)]">
+									{firstSentence(sec.body)}
+								</span>
+							</div>
 						</li>
 					{/each}
 				</ul>
@@ -172,7 +132,7 @@
 				{/each}
 			{/if}
 
-			{#if briefLens === 'today' && catchUp.length > 0}
+			{#if lens === 'today' && catchUp.length > 0}
 				<div class="brief-entry is-catchup flex flex-col gap-1.5">
 					<span class="brief-kicker tone-accent">Recent Catch-up</span>
 					<div class="flex flex-col gap-1.5">
@@ -212,7 +172,7 @@
 			aria-controls="exec-brief-scroll"
 			class="brief-expand min-h-9 items-center gap-1.5 self-start px-3 text-xs font-semibold"
 		>
-			<span>{briefExpanded ? 'Show less' : 'Show full brief'}</span>
+			<span>{briefExpanded ? 'Show less' : 'Show more'}</span>
 			<ChevronDown
 				class={['size-3.5 transition-transform', briefExpanded && 'rotate-180']}
 				aria-hidden="true"
@@ -247,29 +207,26 @@
 						aria-pressed={briefMode === 'highlights'}
 						onclick={() => (briefMode = 'highlights')}
 						class={[
-							'brief-mode-btn px-2 py-1 text-xs font-semibold',
+							'brief-mode-btn inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold',
 							briefMode === 'highlights' && 'is-on'
 						]}
 					>
-						Highlights
+						<List class="size-3.5" aria-hidden="true" />
+						<span>Highlights</span>
 					</button>
 					<button
 						type="button"
 						aria-pressed={briefMode === 'full'}
 						onclick={() => (briefMode = 'full')}
 						class={[
-							'brief-mode-btn px-2 py-1 text-xs font-semibold',
+							'brief-mode-btn inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold',
 							briefMode === 'full' && 'is-on'
 						]}
 					>
-						Full brief
+						<FileCheck class="size-3.5" aria-hidden="true" />
+						<span>Full brief</span>
 					</button>
 				</div>
-				{#if briefLens !== 'board'}
-					<span class="font-mono text-xs text-[var(--exec-dim)]">
-						{activeBrief.updatedLabel}
-					</span>
-				{/if}
 				<button
 					type="button"
 					onclick={copyBrief}
@@ -294,7 +251,6 @@
 
 <style>
 	.brief-panel {
-		min-height: 360px;
 		background: var(--exec-panel-bg);
 		-webkit-backdrop-filter: var(--exec-panel-blur);
 		backdrop-filter: var(--exec-panel-blur);
@@ -312,36 +268,10 @@
 			padding: var(--exec-brief-pad);
 			border-top: 0;
 			border-left: var(--exec-col-divider);
-			height: 0;
-			min-height: max(100%, var(--exec-stage-min-h));
-			overflow: hidden;
+			height: auto;
+			min-height: 0;
+			overflow: visible;
 		}
-	}
-	.brief-title {
-		font-size: var(--exec-brief-title-size);
-		line-height: 1.25;
-		font-weight: var(--exec-brief-title-weight);
-		letter-spacing: var(--exec-brief-title-tracking);
-	}
-	.brief-lenses {
-		border-radius: var(--exec-lenses-radius);
-		background: var(--exec-well);
-		box-shadow: var(--exec-lenses-shadow);
-	}
-	.lens-tab {
-		border-radius: var(--exec-sm-radius);
-		color: var(--exec-muted);
-		transition:
-			background-color 0.14s ease,
-			color 0.14s ease;
-	}
-	.lens-tab:hover {
-		color: var(--exec-ink);
-	}
-	.lens-tab.is-on {
-		background: var(--exec-lens-on-bg);
-		color: var(--exec-lens-on-ink);
-		box-shadow: var(--exec-lens-on-shadow);
 	}
 	.brief-memo {
 		background: var(--exec-memo-bg);
@@ -351,10 +281,34 @@
 	}
 	.brief-scroll {
 		gap: var(--exec-memo-gap);
-		overflow-y: auto;
-		padding-right: 4px;
-		scrollbar-width: thin;
-		scrollbar-color: var(--exec-border-hi) transparent;
+	}
+	.brief-lead {
+		font-weight: 500;
+	}
+	.dg-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.dg-item {
+		grid-template-columns: 18px minmax(0, 1fr);
+		padding: 11px 0;
+		border-top: 1px solid var(--exec-border);
+	}
+	.dg-item:last-child {
+		padding-bottom: 2px;
+	}
+	.dg-ic {
+		color: var(--exec-muted);
+	}
+	.dg-item.tone-ok .dg-ic {
+		color: var(--exec-ok);
+	}
+	.dg-item.tone-warn .dg-ic {
+		color: var(--exec-warn);
+	}
+	.dg-item.tone-accent .dg-ic {
+		color: var(--exec-accent-ink);
 	}
 	.brief-entry {
 		padding-block: var(--exec-memo-item-py);
@@ -378,18 +332,6 @@
 	}
 	.brief-kicker.tone-warn {
 		color: var(--exec-warn);
-	}
-	.brief-lead {
-		font-weight: 500;
-	}
-	.brief-bullet-dot {
-		background: var(--exec-accent-ink);
-	}
-	.brief-bullet-dot.tone-ok {
-		background: var(--exec-ok);
-	}
-	.brief-bullet-dot.tone-warn {
-		background: var(--exec-warn);
 	}
 	.brief-mode-seg {
 		border-radius: var(--exec-lenses-radius);
@@ -459,7 +401,6 @@
 			position: relative;
 			overflow: hidden;
 			max-height: 215px;
-			padding-right: 0;
 		}
 		.brief-scroll::after {
 			content: '';
@@ -483,14 +424,12 @@
 		}
 	}
 	@media (max-width: 720px), (pointer: coarse) {
-		.lens-tab,
 		.brief-expand,
 		.brief-copy {
 			min-height: 44px;
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.lens-tab,
 		.brief-copy {
 			transition: none;
 		}
