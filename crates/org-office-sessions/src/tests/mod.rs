@@ -52,6 +52,7 @@ use crate::subagents::{
     BackgroundRegistry,
 };
 
+mod acp_isolation;
 mod approval;
 mod approval_bridge;
 mod bwrap;
@@ -260,6 +261,10 @@ impl AgentRuntime for ScriptedRuntime {
 
     fn binary_name(&self) -> &'static str {
         "scripted-agent"
+    }
+
+    fn aliases(&self) -> &'static [&'static str] {
+        &["anthropic", "claude-code"]
     }
 
     fn capabilities(&self) -> Capabilities {

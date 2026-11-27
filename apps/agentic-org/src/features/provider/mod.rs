@@ -4,6 +4,7 @@
 mod bind;
 mod bindings;
 mod create;
+mod detect;
 mod list;
 mod models;
 mod refresh;
@@ -14,6 +15,7 @@ use org_cli_shell::context::ExecutionContext;
 use crate::error::CliError;
 
 const EXAMPLES: &str = "Examples:
+  agentic-org provider detect
   agentic-org provider create \"Claude team\" --key claude-team --provider anthropic --runtime claude
   agentic-org provider list
   agentic-org provider bind <connection-id> --auth-ref keychain:claude
@@ -29,9 +31,13 @@ pub(crate) struct ProviderArgs {
 #[derive(Subcommand, Debug)]
 enum ProviderCommand {
     /// Create an organization-wide AI provider connection (on HQ)
-    /// Use when: configuring a Claude, Codex or Agy connection for the organization.
+    /// Use when: configuring a Claude, Codex, Agy, Gemini, Kimi, or Pi connection for the organization.
     #[command(visible_alias = "new", verbatim_doc_comment, after_help = create::EXAMPLES)]
     Create(create::CreateArgs),
+    /// Auto-detect supported local CLI runtimes installed on this host
+    /// Use when: checking which agent CLIs (claude, codex, agy, gemini, kimi, pi) are installed before onboarding or binding providers.
+    #[command(verbatim_doc_comment, after_help = detect::EXAMPLES)]
+    Detect(detect::DetectArgs),
     /// List the organization's provider connections
     /// Use when: finding a connection ID before binding or refreshing it.
     #[command(visible_alias = "ls", verbatim_doc_comment, after_help = list::EXAMPLES)]
@@ -58,6 +64,7 @@ impl ProviderArgs {
     pub(crate) fn reads_a_secret(&self) -> bool {
         let login = match &self.command {
             ProviderCommand::Create(args) => &args.login,
+            ProviderCommand::Detect(_) => return false,
             ProviderCommand::List(args) => &args.login,
             ProviderCommand::Bind(args) => &args.login,
             ProviderCommand::Refresh(args) => &args.login,
@@ -71,6 +78,7 @@ impl ProviderArgs {
 pub(crate) fn run(args: ProviderArgs, ctx: &mut ExecutionContext) -> Result<(), CliError> {
     match args.command {
         ProviderCommand::Create(args) => create::run(args, ctx),
+        ProviderCommand::Detect(args) => detect::run(args, ctx),
         ProviderCommand::List(args) => list::run(args, ctx),
         ProviderCommand::Bind(args) => bind::run(args, ctx),
         ProviderCommand::Refresh(args) => refresh::run(args, ctx),

@@ -118,6 +118,9 @@ impl AgentRuntime for RecordingClaudeRuntime {
     fn id(&self) -> RuntimeId {
         RuntimeId::try_from("claude").unwrap()
     }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["anthropic", "claude-code"]
+    }
     fn binary_name(&self) -> &'static str {
         "recording-claude"
     }

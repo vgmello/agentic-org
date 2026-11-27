@@ -220,6 +220,9 @@ impl AgentRuntime for ControlsRuntime {
     fn binary_name(&self) -> &'static str {
         "turn-controls-scripted"
     }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["anthropic", "claude-code"]
+    }
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             mid_turn_delivery: match self.mode {

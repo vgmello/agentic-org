@@ -7,6 +7,7 @@
 mod doctor;
 mod doctor_apparmor;
 mod doctor_host;
+mod doctor_runtimes;
 mod doctor_types;
 mod logs;
 mod org_integrity;

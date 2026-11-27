@@ -78,6 +78,11 @@ pub use provider_command::{
     provider_refresh, ProviderBindInput, ProviderCreateInput, ProviderCreated,
     ProviderRefreshInput, HELP as PROVIDER_HELP,
 };
+pub mod runtime_discovery;
+pub use runtime_discovery::{
+    detect_host_runtimes, format_detected_runtimes_summary, resolve_host_runtime_binary,
+    RuntimeDiscoveryError,
+};
 pub(crate) mod sign_in_command;
 pub use sign_in_command::{
     context_use, open_for_command, sign_in_only, ApprovedOfficeChannel, SignedIn, CONTEXT_HELP,

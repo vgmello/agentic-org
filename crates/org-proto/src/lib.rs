@@ -111,6 +111,7 @@ pub mod resume;
 pub mod retired;
 pub mod reviews;
 pub mod rfc3339;
+pub mod runtimes;
 pub mod search;
 pub mod sessions;
 pub mod tasks;

@@ -1,10 +1,10 @@
 //! Vendor-agnostic runtime adapter registry (`AGENTS.md` Rule 1, `TASK-42`, `TASK-83`,
 //! `TASK-216`, `TASK-255`).
 //!
-//! Concrete vendor adapters (`ClaudeRuntime`, `CodexRuntime`, `AgyRuntime`) are explicitly
-//! injected by the composition root (`apps/agentic-org-office`) via
-//! [`RuntimeRegistry::with_adapters`]. Zero process-global state is held; any unregistered or
-//! unknown runtime ID fails closed.
+//! Concrete vendor adapters (`ClaudeRuntime`, `CodexRuntime`, `AgyRuntime`, `GeminiRuntime`,
+//! `KimiRuntime`, `PiRuntime`) are explicitly injected by the composition root
+//! (`apps/agentic-org-office`) via [`RuntimeRegistry::with_adapters`]. Zero process-global state
+//! is held; any unregistered or unknown runtime ID fails closed.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -79,33 +79,50 @@ impl RuntimeRegistry {
         Self::with_adapters([
             Arc::new(org_agent_runtime_claude::ClaudeRuntime::new()) as Arc<dyn AgentRuntime>,
             Arc::new(org_agent_runtime_codex::CodexRuntime::new()) as Arc<dyn AgentRuntime>,
-            Arc::new(org_agent_runtime_agy::AgyRuntime::new()) as Arc<dyn AgentRuntime>,
+            Arc::new(org_agent_runtime_acp::AgyRuntime::new()) as Arc<dyn AgentRuntime>,
+            Arc::new(org_agent_runtime_acp::GeminiRuntime::new()) as Arc<dyn AgentRuntime>,
+            Arc::new(org_agent_runtime_acp::KimiRuntime::new()) as Arc<dyn AgentRuntime>,
+            Arc::new(org_agent_runtime_acp::PiRuntime::new()) as Arc<dyn AgentRuntime>,
         ])
     }
 
     /// Registers or replaces an adapter and optional explicit binary path.
     ///
     /// Also indexes the adapter's canonical ID and every alias returned by
-    /// [`AgentRuntime::aliases`] (ASCII case-insensitively). The first registered adapter
-    /// becomes the default adapter for [`Self::default_adapter`].
+    /// [`AgentRuntime::aliases`] (ASCII case-insensitively), pruning any stale aliases previously
+    /// owned by this canonical ID. Canonical IDs are never clobbered by another adapter's alias.
+    /// The first registered adapter becomes the default adapter for [`Self::default_adapter`].
     pub fn register(&mut self, adapter: Arc<dyn AgentRuntime>, binary_override: Option<PathBuf>) {
         let key = adapter.id().as_str().to_owned();
         let canonical_lower = key.to_ascii_lowercase();
+        let adapter_aliases = adapter.aliases();
+        self.aliases.retain(|_, canonical| canonical != &key);
+        self.adapters.insert(key.clone(), adapter);
         self.aliases.insert(canonical_lower, key.clone());
-        for alias in adapter.aliases() {
+        for alias in adapter_aliases {
             let trimmed = alias.trim();
             if !trimmed.is_empty() {
-                self.aliases
-                    .insert(trimmed.to_ascii_lowercase(), key.clone());
+                let alias_lower = trimmed.to_ascii_lowercase();
+                let collides_with_canonical = self
+                    .adapters
+                    .keys()
+                    .any(|existing| existing.eq_ignore_ascii_case(&alias_lower));
+                if !collides_with_canonical {
+                    self.aliases.insert(alias_lower, key.clone());
+                }
             }
         }
         if self.default_id.is_none() {
             self.default_id = Some(key.clone());
         }
-        if let Some(path) = binary_override {
-            self.binary_overrides.insert(key.clone(), path);
+        match binary_override {
+            Some(path) => {
+                self.binary_overrides.insert(key, path);
+            }
+            None => {
+                self.binary_overrides.remove(&key);
+            }
         }
-        self.adapters.insert(key, adapter);
     }
 
     /// Iterates over all registered adapters in deterministic canonical ID order.
@@ -122,12 +139,19 @@ impl RuntimeRegistry {
             .cloned()
     }
 
-    /// Resolves `runtime_id` against canonical adapter IDs and adapter-declared aliases (ASCII
-    /// case-insensitively). Fails closed with [`RuntimeRegistryError::UnknownRuntime`] if
-    /// unregistered.
+    /// Resolves `runtime_id` against canonical adapter IDs (ASCII case-insensitively) before
+    /// consulting adapter-declared aliases. Fails closed with
+    /// [`RuntimeRegistryError::UnknownRuntime`] if unregistered.
     pub fn resolve(&self, runtime_id: &str) -> Result<Arc<dyn AgentRuntime>, RuntimeRegistryError> {
         let trimmed = runtime_id.trim();
         if let Some(adapter) = self.adapters.get(trimmed) {
+            return Ok(Arc::clone(adapter));
+        }
+        if let Some((_, adapter)) = self
+            .adapters
+            .iter()
+            .find(|(canonical, _)| canonical.eq_ignore_ascii_case(trimmed))
+        {
             return Ok(Arc::clone(adapter));
         }
         let lower = trimmed.to_ascii_lowercase();
@@ -140,29 +164,42 @@ impl RuntimeRegistry {
 
     /// Resolves the canonical absolute path to the runtime binary.
     ///
-    /// Checks explicit overrides first, then `search_path` (or `PATH`), and when `search_path`
-    /// is not overridden also probes standard user-local and Homebrew binary directories so
-    /// background services (`systemd --user`, `launchd`) locate registered runtime CLIs.
+    /// Checks explicit overrides first (failing closed without PATH fallback when an override is
+    /// registered), then `search_path` (or `PATH`), and when `search_path` is not overridden also
+    /// probes standard user-local and Homebrew binary directories so background services
+    /// (`systemd --user`, `launchd`) locate registered runtime CLIs.
     pub fn resolve_binary(
         &self,
         adapter: &dyn AgentRuntime,
         search_path: Option<&str>,
     ) -> Result<PathBuf, RuntimeRegistryError> {
+        let env_path = std::env::var_os("PATH");
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        self.resolve_binary_from(adapter, search_path, env_path.as_deref(), home.as_deref())
+    }
+
+    /// Pure testable variant of [`Self::resolve_binary`] using explicit `PATH` and `HOME` inputs
+    /// without reading ambient process environment variables.
+    pub(crate) fn resolve_binary_from(
+        &self,
+        adapter: &dyn AgentRuntime,
+        search_path: Option<&str>,
+        env_path: Option<&std::ffi::OsStr>,
+        home: Option<&Path>,
+    ) -> Result<PathBuf, RuntimeRegistryError> {
         let runtime_id = adapter.id();
         let key = runtime_id.as_str();
         if let Some(explicit) = self.binary_overrides.get(key) {
-            return explicit
-                .canonicalize()
-                .map_err(|_| RuntimeRegistryError::BinaryNotFound(explicit.display().to_string()));
+            if !explicit.is_absolute() {
+                return Err(RuntimeRegistryError::BinaryNotFound(
+                    explicit.display().to_string(),
+                ));
+            }
+            return org_platform::fs::resolve_safe_executable_file(explicit).ok_or_else(|| {
+                RuntimeRegistryError::BinaryNotFound(explicit.display().to_string())
+            });
         }
-        let binary = adapter.binary_name();
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        resolve_binary_in_dirs(
-            binary,
-            search_path,
-            std::env::var_os("PATH").as_deref(),
-            home.as_deref(),
-        )
+        resolve_binary_in_dirs(adapter.binary_name(), search_path, env_path, home)
     }
 
     /// Resolves the pinned helper directory containing `agent-os`.
@@ -188,7 +225,7 @@ impl RuntimeRegistry {
 
 fn fallback_user_bin_dirs(home: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Some(home) = home {
+    if let Some(home) = home.filter(|h| h.is_absolute()) {
         dirs.push(home.join(".local/bin"));
         dirs.push(home.join(".bun/bin"));
         dirs.push(home.join(".cargo/bin"));
@@ -200,13 +237,10 @@ fn fallback_user_bin_dirs(home: Option<&Path>) -> Vec<PathBuf> {
 }
 
 fn find_binary_in_dirs(dirs: impl IntoIterator<Item = PathBuf>, binary: &str) -> Option<PathBuf> {
-    dirs.into_iter()
-        .map(|dir| dir.join(binary))
-        .filter(|candidate| candidate.is_file())
-        .find_map(|candidate| candidate.canonicalize().ok())
+    org_platform::fs::find_safe_executable_in_dirs(dirs, binary)
 }
 
-fn resolve_binary_in_dirs(
+pub(crate) fn resolve_binary_in_dirs(
     binary: &str,
     explicit_search_path: Option<&str>,
     env_path: Option<&std::ffi::OsStr>,
@@ -292,6 +326,12 @@ mod tests {
         assert_eq!(reg.resolve("gpt").unwrap().id().as_str(), "codex");
         assert_eq!(reg.resolve("google").unwrap().id().as_str(), "agy");
         assert_eq!(reg.resolve("antigravity").unwrap().id().as_str(), "agy");
+        assert_eq!(reg.resolve("gemini").unwrap().id().as_str(), "gemini");
+        assert_eq!(reg.resolve("gemini-cli").unwrap().id().as_str(), "gemini");
+        assert_eq!(reg.resolve("kimi").unwrap().id().as_str(), "kimi");
+        assert_eq!(reg.resolve("moonshot").unwrap().id().as_str(), "kimi");
+        assert_eq!(reg.resolve("pi").unwrap().id().as_str(), "pi");
+        assert_eq!(reg.resolve("pi-acp").unwrap().id().as_str(), "pi");
         assert!(matches!(
             reg.resolve("unknown-vendor"),
             Err(RuntimeRegistryError::UnknownRuntime(_))
@@ -328,6 +368,36 @@ mod tests {
         assert_eq!(agy.auth_env_var(true, "tok"), Some("AGY_AUTH_TOKEN"));
         assert_eq!(agy.auth_env_var(false, "AIza"), Some("GEMINI_API_KEY"));
         assert_eq!(agy.transcript_parser().unwrap().format_id(), "agy");
+
+        let gemini = reg.resolve("gemini").unwrap();
+        assert!(gemini.host_profile().host_config_subdir.is_none());
+        assert!(gemini.host_profile().uses_host_oauth_token_injection);
+        assert!(gemini.host_profile().config_credential_files.is_empty());
+        assert!(!gemini.host_profile().host_credential_files.is_empty());
+        assert_eq!(gemini.endpoint_env_var(), Some("GOOGLE_GEMINI_BASE_URL"));
+        assert_eq!(gemini.auth_env_var(true, "tok"), Some("GEMINI_OAUTH_TOKEN"));
+        assert_eq!(gemini.auth_env_var(false, "AIza"), Some("GEMINI_API_KEY"));
+        assert_eq!(gemini.transcript_parser().unwrap().format_id(), "gemini");
+
+        let kimi = reg.resolve("kimi").unwrap();
+        assert!(kimi.host_profile().host_config_subdir.is_none());
+        assert!(kimi.host_profile().uses_host_oauth_token_injection);
+        assert!(kimi.host_profile().config_credential_files.is_empty());
+        assert!(!kimi.host_profile().host_credential_files.is_empty());
+        assert_eq!(kimi.endpoint_env_var(), Some("KIMI_BASE_URL"));
+        assert_eq!(kimi.auth_env_var(true, "tok"), Some("KIMI_OAUTH_TOKEN"));
+        assert_eq!(kimi.auth_env_var(false, "sk-kimi"), Some("KIMI_API_KEY"));
+        assert_eq!(kimi.transcript_parser().unwrap().format_id(), "kimi");
+
+        let pi = reg.resolve("pi").unwrap();
+        assert!(pi.host_profile().host_config_subdir.is_none());
+        assert!(pi.host_profile().uses_host_oauth_token_injection);
+        assert!(pi.host_profile().config_credential_files.is_empty());
+        assert!(!pi.host_profile().host_credential_files.is_empty());
+        assert_eq!(pi.endpoint_env_var(), Some("PI_BASE_URL"));
+        assert_eq!(pi.auth_env_var(true, "tok"), Some("PI_OAUTH_TOKEN"));
+        assert_eq!(pi.auth_env_var(false, "sk-pi"), Some("PI_API_KEY"));
+        assert_eq!(pi.transcript_parser().unwrap().format_id(), "pi");
     }
 
     #[test]
@@ -352,12 +422,15 @@ mod tests {
 
     #[test]
     fn resolve_binary_discovers_user_local_bin_when_systemd_path_is_minimal() {
+        use std::os::unix::fs::PermissionsExt as _;
+
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         let local_bin = home.join(".local/bin");
         fs::create_dir_all(&local_bin).unwrap();
         let claude = local_bin.join("claude");
         fs::write(&claude, b"#!/bin/sh\n").unwrap();
+        fs::set_permissions(&claude, fs::Permissions::from_mode(0o755)).unwrap();
 
         let empty_bin = dir.path().join("empty");
         fs::create_dir_all(&empty_bin).unwrap();
@@ -377,5 +450,233 @@ mod tests {
             strict,
             Err(RuntimeRegistryError::BinaryNotFound(_))
         ));
+    }
+
+    struct StubAdapter {
+        id: &'static str,
+        binary: &'static str,
+        aliases: &'static [&'static str],
+    }
+
+    impl AgentRuntime for StubAdapter {
+        fn id(&self) -> org_agent_runtime::RuntimeId {
+            org_agent_runtime::RuntimeId::try_from(self.id).unwrap()
+        }
+        fn binary_name(&self) -> &'static str {
+            self.binary
+        }
+        fn aliases(&self) -> &'static [&'static str] {
+            self.aliases
+        }
+        fn capabilities(&self) -> org_agent_runtime::Capabilities {
+            org_agent_runtime_acp::GeminiRuntime::new().capabilities()
+        }
+        fn plan_session(
+            &self,
+            _: &org_agent_runtime::SessionSpec,
+            _: &org_agent_runtime::LaunchContext,
+        ) -> Result<
+            (
+                org_agent_runtime::LaunchPlan,
+                Box<dyn org_agent_runtime::Session>,
+            ),
+            org_agent_runtime::PlanError,
+        > {
+            Err(org_agent_runtime::PlanError::Unsupported("stub"))
+        }
+        fn plan_take_over(
+            &self,
+            _: &org_agent_runtime::SessionSpec,
+            _: &org_agent_runtime::LaunchContext,
+            _: u16,
+            _: u16,
+        ) -> Result<org_agent_runtime::LaunchPlan, org_agent_runtime::PlanError> {
+            Err(org_agent_runtime::PlanError::Unsupported("stub"))
+        }
+        fn plan_probe(
+            &self,
+            _: org_agent_runtime::Probe,
+            _: &org_agent_runtime::ProbeContext,
+        ) -> Option<org_agent_runtime::ProbeRun> {
+            None
+        }
+        fn parse_probe(
+            &self,
+            _: org_agent_runtime::Probe,
+            _: &org_agent_runtime::ProbeOutput,
+        ) -> org_agent_runtime::ProbeResult {
+            org_agent_runtime::ProbeResult::Unavailable {
+                reason: org_agent_runtime::Unavailable::NotInstalled,
+            }
+        }
+    }
+
+    #[test]
+    fn canonical_ids_win_over_aliases_in_both_orders_and_reregister_prunes_stale_aliases() {
+        let alpha = || -> Arc<dyn AgentRuntime> {
+            Arc::new(StubAdapter {
+                id: "alpha",
+                binary: "alpha-bin",
+                aliases: &["beta", "alpha-old"],
+            })
+        };
+        let beta = || -> Arc<dyn AgentRuntime> {
+            Arc::new(StubAdapter {
+                id: "beta",
+                binary: "beta-bin",
+                aliases: &["alpha", "beta-alias"],
+            })
+        };
+
+        // Order 1: alpha (with alias "beta") registered before beta.
+        let mut r1 = RuntimeRegistry::empty();
+        r1.register(alpha(), None);
+        r1.register(beta(), None);
+        assert_eq!(r1.resolve("alpha").unwrap().id().as_str(), "alpha");
+        assert_eq!(r1.resolve("ALPHA").unwrap().id().as_str(), "alpha");
+        assert_eq!(r1.resolve("beta").unwrap().id().as_str(), "beta");
+        assert_eq!(r1.resolve("BETA").unwrap().id().as_str(), "beta");
+        assert_eq!(r1.resolve("beta-alias").unwrap().id().as_str(), "beta");
+
+        // Order 2: beta registered before alpha (with alias "beta").
+        let mut r2 = RuntimeRegistry::empty();
+        r2.register(beta(), None);
+        r2.register(alpha(), None);
+        assert_eq!(r2.resolve("alpha").unwrap().id().as_str(), "alpha");
+        assert_eq!(r2.resolve("ALPHA").unwrap().id().as_str(), "alpha");
+        assert_eq!(r2.resolve("beta").unwrap().id().as_str(), "beta");
+        assert_eq!(r2.resolve("BETA").unwrap().id().as_str(), "beta");
+
+        // Re-registering alpha with new aliases prunes stale `alpha-old`.
+        assert_eq!(r1.resolve("alpha-old").unwrap().id().as_str(), "alpha");
+        r1.register(
+            Arc::new(StubAdapter {
+                id: "alpha",
+                binary: "alpha-bin",
+                aliases: &["alpha-new"],
+            }),
+            None,
+        );
+        assert!(matches!(
+            r1.resolve("alpha-old"),
+            Err(RuntimeRegistryError::UnknownRuntime(_))
+        ));
+        assert_eq!(r1.resolve("alpha-new").unwrap().id().as_str(), "alpha");
+    }
+
+    #[test]
+    fn resolve_binary_and_overrides_fail_closed_on_non_exec_dir_broken_symlink_setuid_and_bad_names(
+    ) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let bin_dir = root.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let non_exec = bin_dir.join("non-exec");
+        fs::write(&non_exec, b"#!/bin/sh\n").unwrap();
+        fs::set_permissions(&non_exec, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let subdir = bin_dir.join("a-dir");
+        fs::create_dir(&subdir).unwrap();
+
+        let broken = bin_dir.join("broken-link");
+        org_platform::fs::create_symlink(&bin_dir.join("missing"), &broken).unwrap();
+
+        let suid = bin_dir.join("suid-bin");
+        fs::write(&suid, b"#!/bin/sh\n").unwrap();
+        fs::set_permissions(&suid, fs::Permissions::from_mode(0o4755)).unwrap();
+
+        let valid = bin_dir.join("valid-bin");
+        fs::write(&valid, b"#!/bin/sh\n").unwrap();
+        fs::set_permissions(&valid, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let adapter = Arc::new(StubAdapter {
+            id: "alpha",
+            binary: "valid-bin",
+            aliases: &[],
+        });
+
+        // Invalid overrides MUST fail closed even when a valid executable exists on search_path.
+        let mut bad_overrides = vec![
+            non_exec.clone(),
+            subdir.clone(),
+            broken.clone(),
+            PathBuf::from("./valid-bin"),
+            bin_dir.join("does-not-exist"),
+        ];
+        if (fs::metadata(&suid).unwrap().permissions().mode() & 0o4000) != 0 {
+            bad_overrides.push(suid.clone());
+        }
+        for bad in bad_overrides {
+            let mut reg = RuntimeRegistry::empty();
+            reg.register(
+                Arc::clone(&adapter) as Arc<dyn AgentRuntime>,
+                Some(bad.clone()),
+            );
+            assert!(
+                reg.resolve_binary_from(
+                    adapter.as_ref(),
+                    Some(bin_dir.to_str().unwrap()),
+                    None,
+                    None
+                )
+                .is_err(),
+                "invalid override `{}` must fail closed",
+                bad.display()
+            );
+        }
+
+        // Valid explicit override succeeds even with empty search_path.
+        let mut ok_reg = RuntimeRegistry::empty();
+        ok_reg.register(
+            Arc::clone(&adapter) as Arc<dyn AgentRuntime>,
+            Some(valid.clone()),
+        );
+        assert_eq!(
+            ok_reg
+                .resolve_binary_from(adapter.as_ref(), Some(""), None, None)
+                .unwrap(),
+            valid
+        );
+
+        // PATH discovery skips empty/relative segments and rejects bad binary names and 0644 files.
+        assert!(
+            resolve_binary_in_dirs("non-exec", Some(bin_dir.to_str().unwrap()), None, None)
+                .is_err()
+        );
+        assert!(
+            resolve_binary_in_dirs("a-dir", Some(bin_dir.to_str().unwrap()), None, None).is_err()
+        );
+        assert!(
+            resolve_binary_in_dirs("broken-link", Some(bin_dir.to_str().unwrap()), None, None)
+                .is_err()
+        );
+        assert!(resolve_binary_in_dirs("valid-bin", Some(":.:./bin"), None, None).is_err());
+        assert_eq!(
+            resolve_binary_in_dirs(
+                "valid-bin",
+                Some(&format!(":{}", bin_dir.display())),
+                None,
+                None
+            )
+            .unwrap(),
+            valid
+        );
+        for bad_name in [
+            "",
+            ".",
+            "..",
+            "../valid-bin",
+            "sub/valid-bin",
+            r"sub\valid-bin",
+        ] {
+            assert!(
+                resolve_binary_in_dirs(bad_name, Some(bin_dir.to_str().unwrap()), None, None)
+                    .is_err(),
+                "bad binary name `{bad_name}` must fail closed"
+            );
+        }
     }
 }

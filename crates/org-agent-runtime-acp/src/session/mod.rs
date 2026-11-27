@@ -1,5 +1,4 @@
-//! The Antigravity ACP session: [`AgySession`], its state, and the helpers every part of the
-//! protocol shares. The protocol's phases live in the submodules.
+//! Generic sans-I/O JSON-RPC 2.0 ACP session state machine shared across all vendor profiles.
 
 mod control;
 mod driver;
@@ -16,7 +15,8 @@ use org_agent_runtime::{
     Activity, ApprovalId, CostBasis, Output, SessionEvent, SessionId, Usage, UsageScope,
 };
 
-use crate::plan::AgySessionConfig;
+use crate::plan::AcpSessionConfig;
+use crate::profile::SystemPromptDelivery;
 use crate::protocol::AcpUsage;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -50,9 +50,9 @@ struct PromptSlot {
     acked: bool,
 }
 
-/// Pure sans-I/O ACP JSON-RPC 2.0 protocol state machine for `agy acp --stdio`.
-pub(crate) struct AgySession {
-    cfg: AgySessionConfig,
+/// Pure sans-I/O ACP JSON-RPC 2.0 protocol state machine parameterized by [`crate::AcpProfile`].
+pub(crate) struct AcpSession {
+    cfg: AcpSessionConfig,
     phase: Phase,
     turn_open: bool,
     next_id: u64,
@@ -65,8 +65,11 @@ pub(crate) struct AgySession {
     runtime_version: Option<String>,
     reported_mode: Option<String>,
     active_model: Option<String>,
+    /// System prompt awaiting delivery on the first `session/prompt` turn for vendors using
+    /// [`SystemPromptDelivery::FirstTurnPromptBlock`].
+    pending_first_turn_prompt: Option<String>,
     /// Ordered chain of live `session/prompt` slots for the open turn (`[0]` is oldest,
-    /// `last()` is newest owning prompt). Replacing split maps prevents chained-steer corruption.
+    /// `last()` is newest owning prompt).
     prompt_chain: Vec<PromptSlot>,
     pending_approvals: BTreeMap<ApprovalId, PendingApproval>,
     turn_text_buf: String,
@@ -78,8 +81,14 @@ pub(crate) struct AgySession {
     streamed_usage: Option<AcpUsage>,
 }
 
-impl AgySession {
-    pub(crate) fn new(cfg: AgySessionConfig) -> Self {
+impl AcpSession {
+    pub(crate) fn new(cfg: AcpSessionConfig) -> Self {
+        let pending_first_turn_prompt =
+            if cfg.profile.system_prompt == SystemPromptDelivery::FirstTurnPromptBlock {
+                cfg.system_prompt_append.clone()
+            } else {
+                None
+            };
         Self {
             cfg,
             phase: Phase::OpeningInit,
@@ -94,6 +103,7 @@ impl AgySession {
             runtime_version: None,
             reported_mode: None,
             active_model: None,
+            pending_first_turn_prompt,
             prompt_chain: Vec::new(),
             pending_approvals: BTreeMap::new(),
             turn_text_buf: String::new(),
@@ -101,6 +111,10 @@ impl AgySession {
             saw_confirmed_usage: false,
             streamed_usage: None,
         }
+    }
+
+    fn display_name(&self) -> &'static str {
+        self.cfg.profile.display_name
     }
 
     fn alloc_id(&mut self) -> u64 {

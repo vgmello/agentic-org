@@ -180,12 +180,12 @@ impl AgentRuntime for FakeApprovalRuntime {
         RuntimeId::try_from("claude").unwrap()
     }
 
-    fn binary_name(&self) -> &'static str {
-        "claude"
+    fn aliases(&self) -> &'static [&'static str] {
+        &["anthropic", "claude-code"]
     }
 
-    fn aliases(&self) -> &'static [&'static str] {
-        &["anthropic"]
+    fn binary_name(&self) -> &'static str {
+        "claude"
     }
 
     fn capabilities(&self) -> Capabilities {

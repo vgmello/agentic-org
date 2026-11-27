@@ -1,19 +1,19 @@
-//! The opening handshake: `initialize`, `session/new` or `session/load`, then the mode and
-//! model, checked against what the spec asked for.
+//! The opening handshake: `initialize`, `session/new` or resume/load, then mode and model.
 
 use serde_json::Value;
 
 use org_agent_runtime::{Output, SessionEvent, SessionId, StartFailure};
 
+use crate::profile::SystemPromptDelivery;
 use crate::protocol::{
     encode_session_open, encode_set_mode, encode_set_model, extract_rpc_error_message,
     is_auth_rpc_error, is_banned_mode, rpc_error, rpc_result,
 };
 
-use super::{AgySession, Phase};
+use super::{AcpSession, Phase};
 
 pub(super) fn fail_opening_mode_mismatch(
-    s: &mut AgySession,
+    s: &mut AcpSession,
     reported: &str,
     close_stdin: bool,
 ) -> Vec<Output> {
@@ -31,7 +31,7 @@ pub(super) fn fail_opening_mode_mismatch(
     out
 }
 
-fn continue_opening_model_or_ready(s: &mut AgySession) -> Vec<Output> {
+fn continue_opening_model_or_ready(s: &mut AcpSession) -> Vec<Output> {
     if let Some(requested) = s.cfg.model.clone() {
         if s.active_model.as_deref() != Some(requested.as_str()) {
             if let Some(sid) = s.session_id.clone() {
@@ -45,7 +45,7 @@ fn continue_opening_model_or_ready(s: &mut AgySession) -> Vec<Output> {
     finish_opening_ready(s)
 }
 
-fn finish_opening_ready(s: &mut AgySession) -> Vec<Output> {
+fn finish_opening_ready(s: &mut AcpSession) -> Vec<Output> {
     s.handshake_deadline = None;
     s.phase = Phase::Idle;
     let mut out = Vec::new();
@@ -64,7 +64,7 @@ fn finish_opening_ready(s: &mut AgySession) -> Vec<Output> {
 }
 
 pub(super) fn fail_opening(
-    s: &mut AgySession,
+    s: &mut AcpSession,
     detail: String,
     err_val: Option<&Value>,
 ) -> Vec<Output> {
@@ -81,7 +81,7 @@ pub(super) fn fail_opening(
     vec![Output::Event(SessionEvent::StartFailed { reason })]
 }
 
-pub(super) fn handle_init_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
+pub(super) fn handle_init_response(s: &mut AcpSession, val: &Value) -> Vec<Output> {
     s.init_req_id = None;
     if s.phase != Phase::OpeningInit {
         return Vec::new();
@@ -118,17 +118,24 @@ pub(super) fn handle_init_response(s: &mut AgySession, val: &Value) -> Vec<Outpu
     let open_id = s.alloc_id();
     s.session_req_id = Some(open_id);
     s.phase = Phase::OpeningSession;
+    let antigravity_prompt =
+        if s.cfg.profile.system_prompt == SystemPromptDelivery::MetaAntigravityAppend {
+            s.cfg.system_prompt_append.as_deref()
+        } else {
+            None
+        };
     vec![encode_session_open(
         open_id,
         &s.cfg.cwd,
         &s.cfg.mcp_servers,
-        s.cfg.system_prompt_append.as_deref(),
+        antigravity_prompt,
         s.cfg.resume_session_id.as_ref().map(SessionId::as_str),
+        s.cfg.profile.resume_method,
     )]
 }
 
 fn validate_session_open_mode<'a>(
-    s: &mut AgySession,
+    s: &mut AcpSession,
     result: &'a Value,
 ) -> Result<&'a str, Vec<Output>> {
     let Some(mode) = result
@@ -144,7 +151,7 @@ fn validate_session_open_mode<'a>(
     Ok(mode)
 }
 
-pub(super) fn handle_session_open_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
+pub(super) fn handle_session_open_response(s: &mut AcpSession, val: &Value) -> Vec<Output> {
     s.session_req_id = None;
     if s.phase != Phase::OpeningSession {
         return Vec::new();
@@ -194,11 +201,10 @@ pub(super) fn handle_session_open_response(s: &mut AgySession, val: &Value) -> V
             }
         },
     };
-    let current_model = result
+    s.active_model = result
         .pointer("/models/currentModelId")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    s.active_model = current_model;
     s.session_id = Some(sid.clone());
     s.reported_mode = Some(mode.to_owned());
 
@@ -215,7 +221,7 @@ pub(super) fn handle_session_open_response(s: &mut AgySession, val: &Value) -> V
     continue_opening_model_or_ready(s)
 }
 
-pub(super) fn handle_set_mode_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
+pub(super) fn handle_set_mode_response(s: &mut AcpSession, val: &Value) -> Vec<Output> {
     s.mode_req_id = None;
     if s.phase != Phase::OpeningMode {
         return Vec::new();
@@ -235,7 +241,7 @@ pub(super) fn handle_set_mode_response(s: &mut AgySession, val: &Value) -> Vec<O
     continue_opening_model_or_ready(s)
 }
 
-pub(super) fn handle_set_model_response(s: &mut AgySession, val: &Value) -> Vec<Output> {
+pub(super) fn handle_set_model_response(s: &mut AcpSession, val: &Value) -> Vec<Output> {
     s.model_req_id = None;
     if s.phase != Phase::OpeningModel {
         return Vec::new();

@@ -265,15 +265,18 @@ Any other key, a control character or an over-long value makes it invalid (exit 
 
 ### Providers, Releases, Messaging & Agents
 
-- `agentic-org provider create <name> --key <key> --provider <type> --runtime <claude|codex|agy> [--auth-mode <subscription_cli|api_key|cloud_iam>] [--subscription-id <id>] [--max-turns <n>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
+- `agentic-org provider create <name> --key <key> --provider <type> --runtime <claude|codex|agy|gemini|kimi|pi> [--auth-mode <subscription_cli|api_key|cloud_iam>] [--subscription-id <id>] [--max-turns <n>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   Create an org-wide provider connection and auto-generated model profile on HQ.
-  **Use when:** enabling Claude, Codex, or Agy for agents across an organization.
+  **Use when:** enabling Claude, Codex, Agy, Gemini, Kimi, or Pi for agents across an organization.
+- `agentic-org provider detect [--installed] [--runtime <claude|codex|agy|gemini|kimi|pi>] [--json]`
+  Auto-detect supported local CLI runtimes (`claude`, `codex`, `agy`, `gemini`, `kimi`, `pi`) installed on this host.
+  **Use when:** checking which agent CLIs are installed on this machine before onboarding or binding providers.
 - `agentic-org provider list [--include-archived] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   List org-wide provider connections.
   **Use when:** finding a provider `connection_id` before binding it on an HQ or satellite office.
 - `agentic-org provider bind <connection_id> --auth-ref <ref> [--binary <path>] [--account-ref <ref>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   Bind a provider connection to the local HQ or satellite office.
-  **Use when:** configuring a headless Linux satellite or HQ office to run local `claude`, `codex`, or `agy` turns.
+  **Use when:** configuring a headless Linux satellite or HQ office to run local `claude`, `codex`, `agy`, `gemini`, `kimi`, or `pi` turns.
 - `agentic-org provider refresh <connection_id> --driver-version <ver> --model <id[:driver_id]> [--account-ref <ref>] [--ttl <secs>] [--office <office_id>] [--org <org_id>] [--login <login>] [--name <instance>] [--json]`
   Record a fresh local readiness and discovered-model observation for a bound provider connection.
   **Use when:** marking a headless office's local runtime binding ready for agent session routing (accepts comma-separated `--model` entries).

@@ -1,5 +1,4 @@
-//! Requests and notifications from the runtime: permission requests, cancellations and
-//! `session/update` streaming.
+//! Requests and notifications from ACP runtimes: permissions, cancellations, and `session/update`.
 
 use serde_json::Value;
 
@@ -12,9 +11,9 @@ use crate::protocol::{
 };
 
 use super::handshake::fail_opening_mode_mismatch;
-use super::{is_opening, AgySession, PendingApproval, Phase};
+use super::{is_opening, AcpSession, PendingApproval, Phase};
 
-pub(super) fn handle_server_request(s: &mut AgySession, val: &Value) -> Vec<Output> {
+pub(super) fn handle_server_request(s: &mut AcpSession, val: &Value) -> Vec<Output> {
     let method = val.get("method").and_then(Value::as_str).unwrap_or("");
     let raw_id = val.get("id").cloned().unwrap_or(Value::Null);
     if method != "session/request_permission" {
@@ -53,7 +52,7 @@ pub(super) fn handle_server_request(s: &mut AgySession, val: &Value) -> Vec<Outp
     ]
 }
 
-pub(super) fn handle_notification(s: &mut AgySession, val: &Value) -> Vec<Output> {
+pub(super) fn handle_notification(s: &mut AcpSession, val: &Value) -> Vec<Output> {
     let method = val.get("method").and_then(Value::as_str).unwrap_or("");
     let params = val.get("params").unwrap_or(&Value::Null);
     match method {
@@ -65,7 +64,7 @@ pub(super) fn handle_notification(s: &mut AgySession, val: &Value) -> Vec<Output
     }
 }
 
-fn handle_cancel_request(s: &mut AgySession, params: &Value) -> Vec<Output> {
+fn handle_cancel_request(s: &mut AcpSession, params: &Value) -> Vec<Output> {
     let Some(key) = params.get("id").and_then(rpc_id_key) else {
         return Vec::new();
     };
@@ -73,7 +72,7 @@ fn handle_cancel_request(s: &mut AgySession, params: &Value) -> Vec<Output> {
     remove_cancelled_approval(s, &id)
 }
 
-fn remove_cancelled_approval(s: &mut AgySession, id: &ApprovalId) -> Vec<Output> {
+fn remove_cancelled_approval(s: &mut AcpSession, id: &ApprovalId) -> Vec<Output> {
     if s.pending_approvals.remove(id).is_none() {
         return Vec::new();
     }
@@ -90,7 +89,7 @@ fn remove_cancelled_approval(s: &mut AgySession, id: &ApprovalId) -> Vec<Output>
     out
 }
 
-fn handle_session_update(s: &mut AgySession, params: &Value) -> Vec<Output> {
+fn handle_session_update(s: &mut AcpSession, params: &Value) -> Vec<Output> {
     let Some(update) = params.get("update").and_then(Value::as_object) else {
         return Vec::new();
     };
@@ -123,7 +122,7 @@ fn handle_session_update(s: &mut AgySession, params: &Value) -> Vec<Output> {
 }
 
 fn handle_current_mode_update(
-    s: &mut AgySession,
+    s: &mut AcpSession,
     update: &serde_json::Map<String, Value>,
 ) -> Vec<Output> {
     if matches!(s.phase, Phase::Failed | Phase::Ended) {
@@ -159,7 +158,8 @@ fn handle_current_mode_update(
         out.push(Output::Event(SessionEvent::Notice {
             kind: NoticeKind::Warning,
             text: format!(
-                "Agy ACP switched to disallowed permission mode `{mode}`; stopping session"
+                "{} ACP switched to disallowed permission mode `{mode}`; stopping session",
+                s.display_name()
             ),
         }));
         if let Some(sid) = s.session_id.as_ref() {
@@ -171,7 +171,7 @@ fn handle_current_mode_update(
 }
 
 fn handle_message_chunk(
-    s: &mut AgySession,
+    s: &mut AcpSession,
     update: &serde_json::Map<String, Value>,
 ) -> Vec<Output> {
     let Some(text) = update
@@ -223,7 +223,7 @@ fn handle_tool_call_update_start(update: &serde_json::Map<String, Value>) -> Vec
 }
 
 fn handle_tool_call_update_status(
-    s: &mut AgySession,
+    s: &mut AcpSession,
     update: &serde_json::Map<String, Value>,
 ) -> Vec<Output> {
     let status = update.get("status").and_then(Value::as_str).unwrap_or("");
@@ -254,7 +254,7 @@ fn handle_tool_call_update_status(
     out
 }
 
-fn handle_usage_update(s: &mut AgySession, update: &serde_json::Map<String, Value>) -> Vec<Output> {
+fn handle_usage_update(s: &mut AcpSession, update: &serde_json::Map<String, Value>) -> Vec<Output> {
     if !s.turn_open {
         return Vec::new();
     }

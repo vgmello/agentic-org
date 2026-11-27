@@ -19,6 +19,12 @@ fn production_registry_wires_claude_codex_and_agy_and_refuses_unknown() {
         ("agy", "agy"),
         ("antigravity", "agy"),
         ("google", "agy"),
+        ("gemini", "gemini"),
+        ("gemini-cli", "gemini"),
+        ("kimi", "kimi"),
+        ("moonshot", "kimi"),
+        ("pi", "pi"),
+        ("pi-acp", "pi"),
     ] {
         let adapter = reg.resolve(alias).expect("adapter resolves");
         assert_eq!(adapter.id().as_str(), expected_id);
@@ -67,7 +73,13 @@ fn production_registry_wires_claude_codex_and_agy_and_refuses_unknown() {
         let (plan, _) = adapter
             .plan_session(&spec, &ctx)
             .expect("built adapter plans session");
-        assert!(!plan.args.is_empty());
+        assert_eq!(plan.stdio, org_agent_runtime::Stdio::Piped);
+        if expected_id != "pi" {
+            assert!(
+                !plan.args.is_empty(),
+                "{expected_id} should pass ACP/CLI args"
+            );
+        }
     }
     assert!(matches!(
         reg.resolve("nonexistent-runtime"),

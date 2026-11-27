@@ -1,4 +1,4 @@
-//! [`Session`] for [`AgySession`]: the pump's entry points, routing each frame in.
+//! [`Session`] implementation for [`AcpSession`]: entry points routing each JSON-RPC frame in.
 
 use std::time::Instant;
 
@@ -16,9 +16,9 @@ use super::control::{control_answer, control_deliver_mid_turn, control_send};
 use super::handshake::fail_opening;
 use super::responses::{finish_turn, handle_rpc_response};
 use super::updates::{handle_notification, handle_server_request};
-use super::{is_opening, AgySession, Phase, HANDSHAKE_TIMEOUT};
+use super::{is_opening, AcpSession, Phase, HANDSHAKE_TIMEOUT};
 
-fn handle_frame(s: &mut AgySession, val: Value) -> Vec<Output> {
+fn handle_frame(s: &mut AcpSession, val: Value) -> Vec<Output> {
     let has_method = val.get("method").and_then(Value::as_str).is_some();
     let has_id = val.get("id").is_some_and(|v| !v.is_null());
     match (has_method, has_id) {
@@ -31,7 +31,7 @@ fn handle_frame(s: &mut AgySession, val: Value) -> Vec<Output> {
     }
 }
 
-impl Session for AgySession {
+impl Session for AcpSession {
     fn start(&mut self, now: Instant) -> Vec<Output> {
         if self.phase != Phase::OpeningInit || self.init_req_id.is_some() {
             return Vec::new();
@@ -48,7 +48,10 @@ impl Session for AgySession {
         }
         let Ok(text) = std::str::from_utf8(line) else {
             return vec![Output::Event(SessionEvent::ProtocolError {
-                detail: "Agy ACP stdout line was not valid UTF-8".to_owned(),
+                detail: format!(
+                    "{} ACP stdout line was not valid UTF-8",
+                    self.display_name()
+                ),
             })];
         };
         if text.trim().is_empty() {
@@ -57,7 +60,7 @@ impl Session for AgySession {
         match serde_json::from_str::<Value>(text) {
             Ok(val) => handle_frame(self, val),
             Err(err) => vec![Output::Event(SessionEvent::ProtocolError {
-                detail: format!("invalid JSON line from Agy ACP: {err}"),
+                detail: format!("invalid JSON line from {} ACP: {err}", self.display_name()),
             })],
         }
     }
@@ -67,7 +70,13 @@ impl Session for AgySession {
             return Vec::new();
         }
         let text = String::from_utf8_lossy(line);
-        parse_stderr_line(&text).into_iter().collect()
+        parse_stderr_line(
+            self.display_name(),
+            self.cfg.profile.stderr_error_prefix,
+            &text,
+        )
+        .into_iter()
+        .collect()
     }
 
     fn on_truncated(&mut self, len: usize, _now: Instant) -> Vec<Output> {
@@ -81,18 +90,20 @@ impl Session for AgySession {
         if self.phase == Phase::Ended {
             return Vec::new();
         }
+        let name = self.display_name();
         self.handshake_deadline = None;
         let mut out = self.cancel_pending_approvals();
         if is_opening(self.phase) {
             out.extend(fail_opening(
                 self,
-                "Agy ACP stdout closed before session ready".to_owned(),
+                format!("{name} ACP stdout closed before session ready"),
                 None,
             ));
             return out;
         }
         if self.phase == Phase::Busy || self.phase == Phase::Closing {
-            out.extend(self.fail_pending_mid_turn_deliveries("Agy ACP stdout closed during turn"));
+            let reason = format!("{name} ACP stdout closed during turn");
+            out.extend(self.fail_pending_mid_turn_deliveries(&reason));
             if let Some(text) = self.flush_assistant_text() {
                 out.push(text);
             }
@@ -102,9 +113,7 @@ impl Session for AgySession {
             let outcome = if self.phase == Phase::Closing {
                 TurnOutcome::Interrupted
             } else {
-                TurnOutcome::Failed {
-                    reason: "Agy ACP stdout closed during turn".to_owned(),
-                }
+                TurnOutcome::Failed { reason }
             };
             finish_turn(self, outcome, Vec::new(), &mut out);
         }
@@ -115,12 +124,13 @@ impl Session for AgySession {
         if self.phase == Phase::Ended {
             return Vec::new();
         }
+        let name = self.display_name();
         let prev = self.phase;
         self.phase = Phase::Ended;
         self.handshake_deadline = None;
         let mut out = self.cancel_pending_approvals();
         if is_opening(prev) {
-            let detail = format!("Agy ACP exited before ready ({exit:?})");
+            let detail = format!("{name} ACP exited before ready ({exit:?})");
             let reason = if prev == Phase::OpeningSession && self.cfg.resume_session_id.is_some() {
                 StartFailure::ResumeFailed { detail }
             } else {
@@ -128,7 +138,8 @@ impl Session for AgySession {
             };
             out.push(Output::Event(SessionEvent::StartFailed { reason }));
         } else if prev == Phase::Busy || prev == Phase::Closing {
-            out.extend(self.fail_pending_mid_turn_deliveries("Agy ACP exited during turn"));
+            let reason = format!("{name} ACP exited during turn");
+            out.extend(self.fail_pending_mid_turn_deliveries(&reason));
             if let Some(text) = self.flush_assistant_text() {
                 out.push(text);
             }
@@ -140,9 +151,7 @@ impl Session for AgySession {
                 let outcome = if prev == Phase::Closing {
                     TurnOutcome::Interrupted
                 } else {
-                    TurnOutcome::Failed {
-                        reason: "Agy ACP exited during turn".to_owned(),
-                    }
+                    TurnOutcome::Failed { reason }
                 };
                 out.push(Output::Event(SessionEvent::TurnEnded {
                     outcome,

@@ -73,8 +73,20 @@ impl Fixture {
             Some(PathBuf::from("/nonexistent/codex")),
         );
         runtimes.register(
-            Arc::new(org_agent_runtime_agy::AgyRuntime::new()),
+            Arc::new(org_agent_runtime_acp::AgyRuntime::new()),
             Some(PathBuf::from("/nonexistent/agy")),
+        );
+        runtimes.register(
+            Arc::new(org_agent_runtime_acp::GeminiRuntime::new()),
+            Some(PathBuf::from("/nonexistent/gemini")),
+        );
+        runtimes.register(
+            Arc::new(org_agent_runtime_acp::KimiRuntime::new()),
+            Some(PathBuf::from("/nonexistent/kimi")),
+        );
+        runtimes.register(
+            Arc::new(org_agent_runtime_acp::PiRuntime::new()),
+            Some(PathBuf::from("/nonexistent/pi-acp")),
         );
         cfg.runtimes = runtimes;
         let manager = Arc::new(SessionManager::new(Arc::clone(&office), cfg));

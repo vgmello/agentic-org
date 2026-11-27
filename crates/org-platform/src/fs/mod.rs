@@ -393,3 +393,46 @@ pub fn paths_case_insensitive_by_default() -> bool {
 pub fn has_macos_private_root_aliases() -> bool {
     native::has_macos_private_root_aliases()
 }
+
+/// Whether `path` resolves (following symbolic links) to an existing regular file with at least
+/// one executable bit set (`mode & 0o111 != 0`) and neither setuid nor setgid (`mode & 0o6000 == 0`).
+///
+/// Fails closed (`false`) on missing paths, dangling/looping symlinks, directories, FIFOs,
+/// devices, non-executable files, setuid/setgid binaries, or unsupported targets.
+pub fn is_safe_executable_file(path: &Path) -> bool {
+    native::is_safe_executable_file(path)
+}
+
+/// Resolves `path` to its canonical path if and only if [`is_safe_executable_file`] accepts it.
+pub fn resolve_safe_executable_file(path: &Path) -> Option<PathBuf> {
+    native::resolve_safe_executable_file(path)
+}
+
+/// Searches absolute directories in `dirs` for a single plain executable name `binary`, returning
+/// the canonical path of the first candidate that passes [`is_safe_executable_file`].
+///
+/// Rejects empty, multi-segment, traversal (`.`, `..`), slash, backslash, or NUL-bearing `binary`
+/// names and skips empty or non-absolute directories so the current working directory is never
+/// probed.
+pub fn find_safe_executable_in_dirs(
+    dirs: impl IntoIterator<Item = PathBuf>,
+    binary: &str,
+) -> Option<PathBuf> {
+    if !is_single_normal_binary_name(binary) {
+        return None;
+    }
+    dirs.into_iter()
+        .filter(|dir| !dir.as_os_str().is_empty() && dir.is_absolute())
+        .find_map(|dir| resolve_safe_executable_file(&dir.join(binary)))
+}
+
+fn is_single_normal_binary_name(binary: &str) -> bool {
+    if binary.is_empty() || binary.contains('/') || binary.contains('\\') || binary.contains('\0') {
+        return false;
+    }
+    let mut components = Path::new(binary).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    )
+}
