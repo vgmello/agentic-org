@@ -1,7 +1,16 @@
-import type { Member, OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
+import { badgeInitials as initialsOf, isItemDone, relativeAge } from '$lib/format';
+import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
 import type { ActivityRow } from '$lib/modules/activity/types';
 import type { AgentBudgets, OrganizationCost } from '$lib/modules/costs/types';
 import type { HomeProject } from '$lib/modules/home/types';
+import {
+	deriveDecisionSpotlight,
+	isDenyAction,
+	type SpotlightCell,
+	type SpotlightDecision,
+	type SpotlightPrimaryAction,
+	type SpotlightSecondaryAction
+} from '$lib/modules/inbox/spotlight';
 import type { InboxItem } from '$lib/modules/inbox/types';
 import type { MemberRow } from '$lib/modules/members/types';
 import type { ProjectRow } from '$lib/modules/projects/types';
@@ -15,6 +24,18 @@ import {
 	teamsOfProject
 } from '$lib/modules/organization/model';
 import { needsYou } from '$lib/modules/work/saved';
+
+export {
+	deriveDecisionSpotlight,
+	initialsOf,
+	isDenyAction,
+	isItemDone,
+	relativeAge,
+	type SpotlightCell,
+	type SpotlightDecision,
+	type SpotlightPrimaryAction,
+	type SpotlightSecondaryAction
+};
 
 export type SignalTone = 'ok' | 'warn' | 'bad' | 'sky' | 'muted';
 export type BriefLens = 'today' | 'week' | 'board';
@@ -45,60 +66,6 @@ export interface FinancialKpi {
 	costPerTaskLabel: string;
 	budgetedAgentsCount: number;
 	recordsCount: number;
-}
-
-export interface SpotlightCell {
-	label: string;
-	sub: string;
-	tone: SignalTone;
-	icon: 'shield-check' | 'shield-alert' | 'bolt' | 'check-circle' | 'clock' | 'scale';
-}
-
-export type SpotlightPrimaryAction =
-	| { kind: 'approve_inbox'; label: string }
-	| { kind: 'choose_inbox'; label: string; choiceId: string }
-	| { kind: 'dismiss_inbox'; label: string }
-	| { kind: 'open_inbox'; label: string }
-	| { kind: 'approve_request'; label: string }
-	| { kind: 'verify_bug'; label: string }
-	| { kind: 'triage_bug'; label: string }
-	| { kind: 'unblock_task'; label: string };
-
-export type SpotlightSecondaryAction =
-	| { kind: 'deny_inbox'; label: string }
-	| { kind: 'choose_inbox'; label: string; choiceId: string }
-	| { kind: 'decline_request'; label: string }
-	| { kind: 'open_work'; label: string };
-
-export interface SpotlightDecision {
-	id: string;
-	sourceKind: 'inbox' | 'work';
-	category: 'approval' | 'decision' | 'problem' | 'question' | 'request' | 'bug' | 'task';
-	item?: WorkItemSummary;
-	inboxItem?: InboxItem;
-	kindLabel: string;
-	urgent: boolean;
-	badgeText: string;
-	expiresShort?: string;
-	actorId?: string;
-	actorName: string;
-	actorInitials: string;
-	isChiefOfStaff?: boolean;
-	projectName: string;
-	projectId?: string;
-	title: string;
-	recommendation: string;
-	recTone: 'ok' | 'warn' | 'bad' | 'neutral';
-	recRiskLabel?: string;
-	backgroundContext: string;
-	auditChecks: string[];
-	risk: SpotlightCell;
-	impact: SpotlightCell;
-	proof: SpotlightCell;
-	primaryAction: SpotlightPrimaryAction;
-	secondaryAction?: SpotlightSecondaryAction;
-	detailHref: string;
-	ageLabel: string;
 }
 
 export interface ExecutiveKpis {
@@ -242,29 +209,10 @@ export function formatCompactUsd(microUsd: number | null): string {
 	return `${sign}$${INT_FORMAT.format(whole)}.${String(rem).padStart(2, '0')}`;
 }
 
-export function initialsOf(name: string): string {
-	const parts = name.trim().split(/\s+/).filter(Boolean);
-	if (parts.length === 0) return '?';
-	if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-	return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
 export function greetingForHour(hour: number): string {
 	if (hour < 12) return 'Good morning.';
 	if (hour < 18) return 'Good afternoon.';
 	return 'Good evening.';
-}
-
-export function relativeAge(iso: string, nowMs: number): string {
-	const ts = Date.parse(iso);
-	if (Number.isNaN(ts)) return 'recently';
-	const diffMin = Math.max(0, Math.round((nowMs - ts) / 60_000));
-	if (diffMin < 2) return 'Just now';
-	if (diffMin < 60) return `${diffMin}m ago`;
-	const diffH = Math.round(diffMin / 60);
-	if (diffH < 24) return `${diffH}h ago`;
-	const diffD = Math.round(diffH / 24);
-	return `${diffD}d ago`;
 }
 
 function formatDueShort(isoDate: string): string {
@@ -291,23 +239,8 @@ export function isItemOpen(item: WorkItemSummary): boolean {
 	return false;
 }
 
-export function isItemDone(item: WorkItemSummary): boolean {
-	if (item.deleted) return false;
-	return (
-		(item.kind === 'task' && item.status === 'done') ||
-		(item.kind === 'bug' && item.status === 'closed') ||
-		(item.kind === 'request' && item.status === 'approved')
-	);
-}
-
 export function isOfficeOnline(office: OfficeInfo): boolean {
 	return office.status === 'active' || office.status === undefined;
-}
-
-export function isDenyAction(
-	action: SpotlightSecondaryAction | undefined
-): action is { kind: 'deny_inbox' | 'decline_request'; label: string } {
-	return action?.kind === 'deny_inbox' || action?.kind === 'decline_request';
 }
 
 export function deriveFinancialKpi(
@@ -404,447 +337,6 @@ export function deriveFinancialKpi(
 		budgetedAgentsCount,
 		recordsCount: orgCost?.totals.records ?? 0
 	};
-}
-
-function inboxPrimaryLabel(item: InboxItem): string {
-	if (item.actions.includes('choose') && item.choices?.[0]) return item.choices[0].label;
-	if (item.actions.includes('approve')) return item.approve_label?.trim() || 'Approve';
-	if (item.actions.includes('dismiss')) return 'Dismiss';
-	return item.open?.label ?? 'Open in Inbox';
-}
-
-function isAskReplyCutoffSource(source: string | undefined): boolean {
-	return source === 'Chat ask' || source === 'Chat approval';
-}
-
-function formatExpiryBadge(iso: string, nowMs: number, source?: string): string {
-	const diffMs = Date.parse(iso) - nowMs;
-	if (Number.isNaN(diffMs)) return 'Time-sensitive';
-	const replyCutoff = isAskReplyCutoffSource(source);
-	if (diffMs <= 0) return replyCutoff ? 'Past reply cutoff' : 'Expired';
-	const diffMin = Math.max(1, Math.ceil(diffMs / 60_000));
-	if (diffMin < 60) return replyCutoff ? `Reply cutoff in ${diffMin}m` : `Expires in ${diffMin}m`;
-	const diffH = Math.round(diffMin / 60);
-	if (diffH < 24) return replyCutoff ? `Reply cutoff in ${diffH}h` : `Expires in ${diffH}h`;
-	return replyCutoff ? 'Reply cutoff tomorrow' : 'Expires tomorrow';
-}
-
-const RAW_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function looksLikeRawId(name: string | undefined, id: string | undefined): boolean {
-	const trimmed = name?.trim() ?? '';
-	if (!trimmed) return true;
-	if (id && trimmed === id) return true;
-	return RAW_UUID_RE.test(trimmed);
-}
-
-function resolveDisplayLabel(
-	rawName: string | undefined,
-	rawId: string | undefined,
-	resolvedName: string | undefined
-): string | undefined {
-	if (!rawName && !resolvedName) return undefined;
-	return resolvedName && looksLikeRawId(rawName, rawId) ? resolvedName : rawName;
-}
-
-function resolveInboxEntityNames(item: InboxItem, snapshot: OrgSnapshot) {
-	const resolvedMember = memberById(snapshot, item.who.id);
-	const actorName =
-		resolveDisplayLabel(item.who.name, item.who.id, resolvedMember?.name) ?? item.who.name;
-	const resolvedProject = item.project?.id
-		? (snapshot.projects ?? []).find((p) => p.id === item.project!.id)
-		: undefined;
-	const resolvedTeam = item.team?.id
-		? (snapshot.teams ?? []).find((t) => t.id === item.team!.id)
-		: undefined;
-	const projectLabel = item.project
-		? resolveDisplayLabel(item.project.name, item.project.id, resolvedProject?.name)
-		: undefined;
-	const teamLabel = item.team
-		? resolveDisplayLabel(item.team.name, item.team.id, resolvedTeam?.name)
-		: undefined;
-	return {
-		resolvedMember,
-		actorName,
-		projectLabel,
-		teamLabel,
-		projectName: projectLabel ?? teamLabel ?? 'Organization'
-	};
-}
-
-function resolveInboxActions(item: InboxItem): {
-	primaryAction: SpotlightPrimaryAction;
-	secondaryAction?: SpotlightSecondaryAction;
-} {
-	const hasApprove = item.actions.includes('approve');
-	const hasDeny = item.actions.includes('deny');
-	const hasChoose = item.actions.includes('choose') && (item.choices?.length ?? 0) > 0;
-	const hasDismiss = item.actions.includes('dismiss');
-
-	const primaryAction: SpotlightPrimaryAction = hasApprove
-		? { kind: 'approve_inbox', label: inboxPrimaryLabel(item) }
-		: hasChoose
-			? { kind: 'choose_inbox', label: item.choices![0].label, choiceId: item.choices![0].id }
-			: hasDismiss
-				? { kind: 'dismiss_inbox', label: 'Dismiss' }
-				: { kind: 'open_inbox', label: item.open?.label ?? 'Open in Inbox' };
-
-	const secondaryAction: SpotlightSecondaryAction | undefined = hasDeny
-		? { kind: 'deny_inbox', label: 'Deny' }
-		: hasChoose && item.choices && item.choices.length > 1
-			? { kind: 'choose_inbox', label: item.choices[1].label, choiceId: item.choices[1].id }
-			: item.open
-				? { kind: 'open_work', label: item.open.label }
-				: undefined;
-
-	return { primaryAction, secondaryAction };
-}
-
-function inboxToSpotlight(
-	item: InboxItem,
-	snapshot: OrgSnapshot,
-	nowMs: number
-): SpotlightDecision {
-	const urgent = Boolean(item.expires_at) || item.kind === 'problem';
-	const deadlineLabel = item.expires_at
-		? formatExpiryBadge(item.expires_at, nowMs, item.source)
-		: undefined;
-	const badgeText = deadlineLabel ?? (item.source || 'Decision');
-	const { primaryAction, secondaryAction } = resolveInboxActions(item);
-	const { resolvedMember, actorName, projectLabel, teamLabel, projectName } =
-		resolveInboxEntityNames(item, snapshot);
-	const risk: SpotlightCell =
-		item.kind === 'problem' || item.kind === 'decision'
-			? {
-					label: 'Moderate risk',
-					sub: item.expires_at ? 'Time-sensitive gate' : 'Needs owner ruling',
-					tone: 'warn',
-					icon: 'shield-alert'
-				}
-			: {
-					label: 'Low risk',
-					sub: 'Reversible gate',
-					tone: 'ok',
-					icon: 'shield-check'
-				};
-
-	const impact: SpotlightCell = {
-		label: urgent || item.kind === 'approval' ? 'High impact' : 'Medium impact',
-		sub: `Unblocks ${projectName}`,
-		tone: 'sky',
-		icon: urgent || item.kind === 'approval' ? 'bolt' : 'scale'
-	};
-
-	const proof: SpotlightCell = item.recommendation
-		? {
-				label: 'Reviewed',
-				sub: item.source,
-				tone: 'ok',
-				icon: 'check-circle'
-			}
-		: {
-				label: 'Ready to review',
-				sub: item.source,
-				tone: 'muted',
-				icon: 'clock'
-			};
-
-	const auditChecks: string[] = [];
-	if (item.source) auditChecks.push(`Source: ${item.source}`);
-	if (projectLabel) auditChecks.push(`Project: ${projectLabel}`);
-	if (teamLabel) auditChecks.push(`Team: ${teamLabel}`);
-	if (item.open?.label) auditChecks.push(item.open.label);
-	if (deadlineLabel) auditChecks.push(deadlineLabel);
-
-	const recTone: SpotlightDecision['recTone'] =
-		item.kind === 'problem'
-			? 'bad'
-			: item.kind === 'decision' || item.kind === 'question'
-				? 'warn'
-				: item.recommendation
-					? 'ok'
-					: 'neutral';
-	const recRiskLabel =
-		recTone === 'ok'
-			? 'Low risk'
-			: recTone === 'warn'
-				? 'Investigate'
-				: recTone === 'bad'
-					? 'Use caution'
-					: undefined;
-	const isChiefOfStaff =
-		item.who.id === 'tess' ||
-		resolvedMember?.agent?.role === 'chief_of_staff' ||
-		item.source.toLowerCase().includes('tess') ||
-		item.source.toLowerCase().includes('chief of staff');
-
-	return {
-		id: item.id,
-		sourceKind: 'inbox',
-		category: item.kind,
-		inboxItem: item,
-		kindLabel: item.source,
-		urgent,
-		badgeText,
-		expiresShort: deadlineLabel,
-		actorId: item.who.id,
-		actorName,
-		actorInitials: initialsOf(actorName),
-		isChiefOfStaff,
-		projectName,
-		projectId: item.project?.id,
-		title: item.title,
-		recommendation: item.recommendation ?? item.why,
-		recTone,
-		recRiskLabel,
-		backgroundContext: item.why,
-		auditChecks,
-		risk,
-		impact,
-		proof,
-		primaryAction,
-		secondaryAction,
-		detailHref:
-			item.open?.path && !/^\/work\/[^/?#]+/.test(item.open.path)
-				? item.open.path
-				: `/inbox?item=${encodeURIComponent(item.id)}`,
-		ageLabel: relativeAge(item.created_at, nowMs)
-	};
-}
-
-export function deriveDecisionSpotlight(
-	items: readonly WorkItemSummary[],
-	snapshot: OrgSnapshot,
-	ownerId: string,
-	nowMs = Date.now(),
-	inboxItems?: readonly InboxItem[]
-): SpotlightDecision[] {
-	const openInbox = (inboxItems ?? []).filter((i) => i.state === 'open');
-	const inboxScore = (item: InboxItem): number => {
-		let s = 0;
-		if (item.expires_at) s += 100;
-		if (item.kind === 'approval') s += 60;
-		else if (item.kind === 'decision') s += 50;
-		else if (item.kind === 'problem') s += 35;
-		else if (item.kind === 'question') s += 20;
-		if (item.actions.includes('approve') || item.actions.includes('choose')) s += 15;
-		return s;
-	};
-	const inboxSpot = [...openInbox]
-		.sort(
-			(a, b) => inboxScore(b) - inboxScore(a) || Date.parse(b.created_at) - Date.parse(a.created_at)
-		)
-		.map((item) => inboxToSpotlight(item, snapshot, nowMs));
-
-	// Track referenced work refs/titles from inbox so we don't show duplicates.
-	const seenRefs = new Set<string>();
-	const seenTitles = new Set<string>();
-	for (const it of openInbox) {
-		seenTitles.add(it.title.trim().toLowerCase());
-		const match = it.open?.path.match(/\/work\/([^/?#]+)/);
-		if (match) seenRefs.add(decodeURIComponent(match[1]).toUpperCase());
-		const titleRef = it.title.match(/\b([A-Z]+-\d+)\b/);
-		if (titleRef) seenRefs.add(titleRef[1].toUpperCase());
-	}
-
-	const projects = new Map((snapshot.projects ?? []).map((p) => [p.id, p]));
-	const candidates = items.filter((item) => {
-		if (item.deleted) return false;
-		if (seenRefs.has(item.short_id.toUpperCase())) return false;
-		if (seenTitles.has(item.title.trim().toLowerCase())) return false;
-		if (item.kind === 'request' && item.status === 'scoped') return true;
-		if (item.kind === 'bug' && (item.status === 'new' || item.status === 'fixed')) return true;
-		if (item.kind === 'task' && item.status === 'blocked' && item.assignee_id === ownerId)
-			return true;
-		return false;
-	});
-
-	const score = (item: WorkItemSummary): number => {
-		let s = 0;
-		if (item.priority === 'urgent' || item.severity === 'critical') s += 100;
-		else if (item.priority === 'high' || item.severity === 'major') s += 50;
-		if (item.kind === 'request' && item.status === 'scoped') s += 40;
-		if (item.kind === 'bug' && item.status === 'fixed') s += 30;
-		if (item.kind === 'task' && item.status === 'blocked') s += 25;
-		return s;
-	};
-
-	const workSpot = [...candidates]
-		.sort((a, b) => score(b) - score(a) || Date.parse(b.updated_at) - Date.parse(a.updated_at))
-		.map((item): SpotlightDecision => {
-			const actor: Member | undefined =
-				memberById(snapshot, item.assignee_id) ?? memberById(snapshot, item.created_by);
-			const actorName = actor?.name ?? 'Team member';
-			const project = item.project_id ? projects.get(item.project_id) : undefined;
-			const projectName = project?.name ?? 'Organization';
-			const urgent =
-				item.priority === 'urgent' ||
-				item.severity === 'critical' ||
-				(item.kind === 'task' && item.status === 'blocked');
-
-			const isRequest = item.kind === 'request';
-			const isFixedBug = item.kind === 'bug' && item.status === 'fixed';
-			const isNewBug = item.kind === 'bug' && item.status === 'new';
-
-			const kindLabel = isRequest
-				? 'Request sign-off'
-				: isFixedBug
-					? 'Bug verification'
-					: isNewBug
-						? 'Bug triage'
-						: 'Blocked task';
-
-			const badgeText = urgent
-				? item.severity === 'critical'
-					? 'Critical · needs attention'
-					: 'Priority decision'
-				: kindLabel;
-
-			const recommendation = isRequest
-				? `${actorName} scoped this request. Approving turns it into active work for the team.`
-				: isFixedBug
-					? `${actorName} marked this fix complete. Verify whether it resolves the bug; close it separately on the bug page.`
-					: isNewBug
-						? `New ${item.severity ?? 'reported'} bug waiting for triage and owner confirmation.`
-						: item.blocked_reason
-							? `Blocked: ${item.blocked_reason}`
-							: `${actorName} is waiting on your input to unblock this task.`;
-
-			const risk: SpotlightCell =
-				item.severity === 'critical' || item.priority === 'urgent'
-					? {
-							label: 'Moderate risk',
-							sub: 'Time-sensitive item',
-							tone: 'warn',
-							icon: 'shield-alert'
-						}
-					: {
-							label: 'Low risk',
-							sub: 'Reversible decision',
-							tone: 'ok',
-							icon: 'shield-check'
-						};
-
-			const impact: SpotlightCell =
-				urgent || isRequest
-					? {
-							label: 'High impact',
-							sub: `Unblocks ${projectName}`,
-							tone: 'sky',
-							icon: 'bolt'
-						}
-					: {
-							label: 'Medium impact',
-							sub: `Keeps ${projectName} moving`,
-							tone: 'sky',
-							icon: 'scale'
-						};
-
-			const checklistDone = item.checklist.total > 0;
-			const proof: SpotlightCell = checklistDone
-				? {
-						label:
-							item.checklist.required_left === 0
-								? 'Checks passed'
-								: `${item.checklist.done}/${item.checklist.total} steps`,
-						sub:
-							item.checklist.required_left === 0
-								? `${item.checklist.done} of ${item.checklist.total} complete`
-								: `${item.checklist.required_left} required left`,
-						tone: item.checklist.required_left === 0 ? 'ok' : 'warn',
-						icon: 'check-circle'
-					}
-				: {
-						label: isFixedBug ? 'Fix ready' : 'Ready to review',
-						sub: item.short_id,
-						tone: isFixedBug ? 'ok' : 'muted',
-						icon: 'clock'
-					};
-
-			const primaryAction: SpotlightPrimaryAction = isRequest
-				? { kind: 'approve_request', label: 'Approve request' }
-				: isFixedBug
-					? { kind: 'verify_bug', label: 'Verify fix' }
-					: isNewBug
-						? { kind: 'triage_bug', label: 'Triage bug' }
-						: { kind: 'unblock_task', label: 'Resume task' };
-
-			const secondaryAction: SpotlightSecondaryAction = isRequest
-				? { kind: 'decline_request', label: 'Deny' }
-				: { kind: 'open_work', label: 'Inspect' };
-
-			const backgroundContext = isRequest
-				? `${item.short_id} in ${projectName} is scoped and ready for approval. Approving converts the scoped outcome into executable work items assigned to the team; denying returns it with your note.`
-				: isFixedBug
-					? `${item.short_id} (${item.severity ?? 'reported'} severity) in ${projectName} was marked fixed by ${actorName}. Verifying records your check and clears pending verification; close the bug on its page once confirmed.`
-					: isNewBug
-						? `${item.short_id} was reported in ${projectName}${item.severity ? ` with ${item.severity} severity` : ''}. Triaging routes it to the responsible area and sets priority for an agent or owner.`
-						: `${item.short_id} in ${projectName} is currently blocked${item.blocked_reason ? ` (${item.blocked_reason})` : ''}. Resuming moves it back to in-progress so ${actorName} can continue.`;
-
-			const auditChecks: string[] = [];
-			if (item.checklist.total > 0) {
-				auditChecks.push(
-					`${item.checklist.done}/${item.checklist.total} checklist steps completed`
-				);
-			}
-			auditChecks.push(`Ref ${item.short_id}`);
-			if (item.priority) auditChecks.push(`Priority: ${item.priority}`);
-			if (item.severity) auditChecks.push(`Severity: ${item.severity}`);
-
-			const detailHref = isRequest
-				? `/work?request=${encodeURIComponent(item.id)}`
-				: item.project_id
-					? `/projects/${encodeURIComponent(item.project_id)}/work`
-					: '/work';
-
-			const workRecTone: SpotlightDecision['recTone'] =
-				item.severity === 'critical'
-					? 'bad'
-					: urgent || isNewBug
-						? 'warn'
-						: isFixedBug || isRequest
-							? 'ok'
-							: 'neutral';
-			const workRecRiskLabel =
-				workRecTone === 'ok'
-					? 'Low risk'
-					: workRecTone === 'warn'
-						? 'Investigate'
-						: workRecTone === 'bad'
-							? 'Use caution'
-							: undefined;
-
-			return {
-				id: item.id,
-				sourceKind: 'work',
-				category: item.kind === 'unknown' ? 'task' : item.kind,
-				item,
-				kindLabel,
-				urgent,
-				badgeText,
-				actorId: actor?.id,
-				actorName,
-				actorInitials: initialsOf(actorName),
-				isChiefOfStaff: actor?.agent?.role === 'chief_of_staff',
-				projectName,
-				projectId: item.project_id,
-				title: item.title,
-				recommendation,
-				recTone: workRecTone,
-				recRiskLabel: workRecRiskLabel,
-				backgroundContext,
-				auditChecks,
-				risk,
-				impact,
-				proof,
-				primaryAction,
-				secondaryAction,
-				detailHref,
-				ageLabel: relativeAge(item.updated_at, nowMs)
-			};
-		});
-
-	return [...inboxSpot, ...workSpot];
 }
 
 export function deriveProjectCards(

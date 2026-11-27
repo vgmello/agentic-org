@@ -4,8 +4,9 @@
 // organization-unique slug HQ registered, `ownerTeam` is the required `owner_team_id`, `developmentProcess` the
 // optional `development_process_id`. Task counts use the five task statuses (work-items-ux): never `in_review`.
 import type { ActivityEntry, ConversationRow, MemberRef, TeamRef } from '$lib/modules/members';
+import type { StaleCopy } from '$lib/proto';
 
-export type { ActivityEntry, ConversationRow, TeamRef };
+export type { ActivityEntry, ConversationRow, StaleCopy, TeamRef };
 
 /** The project's tasks of every type by status (`todo`, `in_progress`, `blocked`, `done`, `cancelled`). */
 export interface TaskCounts {
@@ -58,12 +59,6 @@ export interface ProjectRow {
 	tasks: TaskCounts;
 	bugs: BugCounts;
 	developmentProcess: DevelopmentProcessRef | null;
-}
-
-/** The last copy, shown read-only while HQ can't be reached (PRJ-4). */
-export interface StaleCopy {
-	/** RFC 3339. */
-	copiedAt: string;
 }
 
 export interface ProjectsOverview {

@@ -670,7 +670,7 @@
 		},
 		{
 			"from": "e2e/fakes/modules/{chat,chat-sample,messaging}.ts",
-			"to": "src/lib/modules/messaging/{api,engine,model,types}.ts",
+			"to": "src/lib/modules/messaging/{api,engine,model,types,testing/chat-engine}.ts",
 			"why": "The dev-mock fakes stand in for the chat and messaging modules' api.ts by name under dev:mock and compose the in-memory chat engine and sample fixture; fakes are never part of a production build."
 		},
 		{

@@ -5,6 +5,7 @@ import {
 	type GatewayReply
 } from '$lib/platform/http/gateway-errors';
 import { readJsonObject, readResponse } from '$lib/platform/http/wire';
+import { asNum, asRec, asStr, type Rec } from '$lib/platform/http/decode';
 import { readOrganizationsList } from '$lib/platform/organizations/readers';
 import type { AppError, OrgSnapshot } from '$lib/proto';
 import type { HttpCostsReadApi } from './http-api';
@@ -40,13 +41,6 @@ import type {
 	UsageTotals
 } from './types';
 
-type Rec = Record<string, unknown>;
-
-const asRec = (v: unknown): Rec | undefined =>
-	v && typeof v === 'object' && !Array.isArray(v) ? (v as Rec) : undefined;
-const asStr = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
-const asNum = (v: unknown): number | undefined =>
-	typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 const asNullableNum = (v: unknown): number | null =>
 	typeof v === 'number' && Number.isFinite(v) ? v : null;
 

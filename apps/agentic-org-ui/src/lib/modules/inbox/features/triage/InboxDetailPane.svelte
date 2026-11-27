@@ -18,7 +18,7 @@
 	import Send from '@lucide/svelte/icons/send';
 	import ShieldAlert from '@lucide/svelte/icons/shield-alert';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import { isDenyAction } from '$lib/home/model';
+	import { isDenyAction } from '../../spotlight';
 	import { computeSnoozePresets, formatSnoozeReturn, snoozeExceedsExpiry } from './snooze-presets';
 	import { appendInboxDeviceComment, readInboxDeviceComments } from '../../device-comments';
 	import {
