@@ -351,7 +351,7 @@
   --page-subtitle-divider: color-mix(in srgb, var(--gray-400) 45%, var(--line2));
   --toolbar-group-gap: 16px;
   /* Lifted toward the muted text so the 1px separator reads on every theme (owner: "I can almost not see it") */
-  --toolbar-divider-color: color-mix(in srgb, var(--gray-400) 70%, var(--line2));
+  --toolbar-divider-color: color-mix(in srgb, var(--gray-400) 45%, var(--line2));
   --toolbar-seg-bg: rgb(6 13 25 / .44);
   --toolbar-seg-border: var(--line2);
   --toolbar-seg-active-bg: var(--ocean-selected, rgb(255 255 255 / .12));
@@ -3012,9 +3012,9 @@ html[data-theme^="graphite"]:has(.triage-workspace) {
 #main .activity-body[data-panel-open] { grid-template-columns: minmax(0, 1fr) clamp(17rem, 27%, 24rem); }
 #main .queue-controls > .activity-tools { grid-area: auto; flex-direction: row; gap: 2px; padding: 0; border: 0; background: none; }
 /* Same "|" group separators as the Work toolbar (owner): tabs | Filter · Display | panel toggles */
-#main :is(.activity-toolbar, .project-subbar) .queue-controls { position: relative; align-items: center; }
-#main .activity-toolbar > .primary-tab-row + .queue-controls { margin-inline-start: var(--toolbar-group-gap); }
-#main .activity-toolbar > .primary-tab-row + .queue-controls::before,
+#main :is(.activity-toolbar, .project-subbar, .triage-toolbar) .queue-controls { position: relative; align-items: center; }
+#main :is(.activity-toolbar, .triage-toolbar) > .primary-tab-row + .queue-controls { margin-inline-start: var(--toolbar-group-gap); }
+#main :is(.activity-toolbar, .triage-toolbar) > .primary-tab-row + .queue-controls::before,
 #main :is(.activity-toolbar, .project-subbar) .queue-controls > .activity-tools::before {
   content: ""; position: absolute; inset-inline-start: calc(var(--toolbar-group-gap) / -2); inset-block-start: 50%;
   translate: -50% -50%; width: 1px; height: 18px; background: var(--toolbar-divider-color); pointer-events: none;
