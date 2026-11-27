@@ -3,6 +3,7 @@ Claude Code and Codex start at the repository root (see the root `AGENTS.md`, "T
 ## UI Rules
 
 - **Mandatory Svelte Architecture & Quality Rules:** Before creating, editing, or reviewing any file under `apps/agentic-org-ui/`, read and follow [`.agents/rules/svelte-architecture-and-quality.md`](../../.agents/rules/svelte-architecture-and-quality.md), load the repo's vendored `svelte-core-bestpractices` and `svelte-code-writer` skills (in `../../.agents/skills/` — do not edit vendored copies), run `svelte-autofixer` on new/modified `.svelte` files, and run `bun run gate` before every commit.
+- **Periodic 6-Dimension Independent Audit Cadence:** `bun run gate` automatically checks `audit-checkpoint.json` (`bun run audit:cadence`) and flags `ACTION REQUIRED` every **10 UI commits**, **14 days with UI changes**, or **1,500 changed UI lines** (and before closing any UI milestone). When triggered, run a fresh internal `code-reviewer` pass followed by `bun run audit:ui` (Opus 5.5 `xhigh` 6-dimension audit, bar `>= 9.0/10` across all 6 dimensions), fix any High/Medium finding, and update `audit-checkpoint.json` (see `.agents/rules/svelte-architecture-and-quality.md` §9).
 
 You are able to use the Svelte MCP server, where you have access to comprehensive Svelte 5 and SvelteKit documentation. Here's how to use the available tools effectively:
 

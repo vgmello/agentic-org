@@ -110,9 +110,30 @@ Before every UI commit, run the single mechanical gate from `apps/agentic-org-ui
 bun run gate
 ```
 
-(`bun run format:check && bun run check && bun run lint && bun run test && bun run build` — runs Prettier baseline check, `svelte-check`, hardened `eslint --max-warnings=0`, all Vitest suites including `file-size-ratchet`, `module-graph`, `suppressions-ratchet`, `bundle-budget`, `gate-self-test`, `look-tokens`, and `ui-gate`, plus production `vite build` + fail-closed `check-build-assets`.)
+(`bun run format:check && bun run check && bun run lint && bun run test && bun run build && bun run audit:cadence` — runs Prettier baseline check, `svelte-check`, hardened `eslint --max-warnings=0`, all Vitest suites including `file-size-ratchet`, `module-graph`, `suppressions-ratchet`, `bundle-budget`, `gate-self-test`, `look-tokens`, and `ui-gate`, production `vite build` + fail-closed `check-build-assets`, plus the periodic audit cadence counter.)
 
 **Human-only verification (cannot be automated by `bun run gate`):**
 1. Inspect live Playwright screenshots across themes (including reduced motion) for any visible UI change.
 2. Spot-check keyboard navigation, focus restoration, and Escape dismissal on any new overlay/drawer/dialog.
 3. Confirm no scope shortcuts or silent fallbacks were introduced, then run a fresh local `code-reviewer` pass before merging to `v1`.
+
+---
+
+## 9. Periodic 6-Dimension Independent Audit Cadence
+
+Official team process: `backlog/docs/processes/doc-105 - Process-Periodic-UI-6-Dimension-Audit.md` (parent `agentic-org-project`).
+
+Mechanical gates prevent structural regressions immediately, but subtle drift (tooltip CSS loss, `$effect` form resets, incomplete `AbortSignal` chains, dead code) accumulates across iterations. Run a full independent 6-dimension audit (bar: **`>= 9.0/10` across all 6 dimensions, 0 open High/Medium findings**) whenever **any** trigger fires (tracked automatically by `apps/agentic-org-ui/audit-checkpoint.json` and reported on every `bun run gate`):
+
+| Trigger | Threshold | Enforced / Surfaced by |
+| --- | --- | --- |
+| UI iteration count | Every **`10` non-merge commits** touching `apps/agentic-org-ui/src/**` since `lastPassSha` | `bun run audit:cadence` (inside `bun run gate`) |
+| Elapsed time with UI churn | **`14` calendar days** with `>= 1` UI commit since `lastPassDate` | `bun run audit:cadence` (inside `bun run gate`) |
+| Large UI change volume | **`1,500` changed lines** (insertions + deletions) in `apps/agentic-org-ui/src/**` since `lastPassSha` | `bun run audit:cadence` (inside `bun run gate`) |
+| Major architectural event | Before closing a UI milestone, or after adding a new module, shell layout, or auth/CSP change | Lead agent / reviewer checklist |
+
+**Required cadence procedure when `bun run audit:cadence` reports `ACTION REQUIRED` (or a milestone closes):**
+1. Run `bun run gate` and a **fresh internal `code-reviewer` pass** first to catch obvious issues cheaply.
+2. Run **`bun run audit:ui`** (invokes `claude -p --model claude-opus-5-5 --effort xhigh --permission-mode plan` against `lastPassSha..HEAD` with the strict 6-dimension rubric; writes the report to `/tmp/agentic-org-ui-audit-<sha>.md`).
+3. Fix every High/Medium finding and any dimension `< 9.0/10`, re-run `bun run gate` + fresh internal review + `bun run audit:ui` until verdict is **`PASS`**.
+4. Update `apps/agentic-org-ui/audit-checkpoint.json` with the verified `PASS` commit SHA, date, and 6-dimension scores in the next commit.
