@@ -12,9 +12,9 @@ use image::codecs::webp::WebPEncoder;
 use image::{DynamicImage, ImageBuffer, Luma, LumaA, Rgb, Rgba};
 use org_proto::ErrorCode;
 
-use super::super::image::MAX_DIMENSION;
-use super::super::{check_clean, validate, MediaType};
-use super::fixtures::{chunk, gif, jpeg_with_exif, png, png_with_text, webp, GPS_MARKER};
+use crate::image::MAX_DIMENSION;
+use crate::testkit::{chunk, gif, jpeg_with_exif, png, png_with_text, webp, GPS_MARKER};
+use crate::{check_clean, validate, MediaType};
 
 /// A PNG of `chunks` (each already framed) after its signature.
 fn assembled(chunks: &[&[u8]]) -> Vec<u8> {

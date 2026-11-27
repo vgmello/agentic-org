@@ -1203,6 +1203,7 @@ dependencies = [
  "base64",
  "org-client",
  "org-command",
+ "org-media",
  "org-platform",
  "org-proto",
  "ring",
@@ -1392,13 +1393,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-media"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "image",
+ "org-proto",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "org-office"
 version = "0.0.0"
 dependencies = [
  "base64",
- "flate2",
  "image",
  "org-docs",
+ "org-media",
  "org-office-launch",
  "org-pki",
  "org-platform",

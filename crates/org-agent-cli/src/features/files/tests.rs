@@ -858,6 +858,11 @@ fn linked_git_worktrees_and_case_insensitive_prefix_stripping_work_cleanly() {
         format!("{}\n", wt_b.join(".git").display()),
     )
     .unwrap();
+    fs::write(
+        wt_b.join(".git"),
+        format!("gitdir: {}\n", main_git.join("worktrees/wt-b").display()),
+    )
+    .unwrap();
     // Poisoned worktree pointing at `/tmp/.git` must still be rejected by forbidden-root screening.
     fs::write(main_git.join("worktrees/poison/gitdir"), "/tmp/.git\n").unwrap();
 

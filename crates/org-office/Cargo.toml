@@ -8,7 +8,7 @@ publish.workspace = true
 
 [features]
 # `testkit`: the memory ports of the families on the office store and their conformance suites.
-testkit = ["org-store/testkit", "dep:tempfile"]
+testkit = ["org-store/testkit", "dep:image", "dep:tempfile"]
 
 [[example]]
 name = "store_latency"
@@ -16,9 +16,10 @@ required-features = ["testkit"]
 
 [dependencies]
 base64.workspace = true
-flate2.workspace = true
-image.workspace = true
+# Only `attachments::testkit::sample_png`: test fixture PNG encoding.
+image = { workspace = true, optional = true }
 org-docs = { path = "../org-docs" }
+org-media = { path = "../org-media", features = ["sanitize"] }
 org-pki = { path = "../org-pki" }
 org-process = { path = "../org-process" }
 org-store = { path = "../org-store" }
@@ -35,6 +36,8 @@ serde_json.workspace = true
 tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
+image.workspace = true
+org-media = { path = "../org-media", features = ["sanitize", "testkit"] }
 # The flush steps the platform counted, for the publication evidence tests.
 org-platform = { path = "../org-platform", features = ["test-support"] }
 org-store = { path = "../org-store", features = ["testkit"] }
