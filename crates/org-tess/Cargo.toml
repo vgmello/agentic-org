@@ -11,5 +11,8 @@ org-office = { path = "../org-office" }
 org-proto = { path = "../org-proto" }
 serde_json.workspace = true
 
+[dev-dependencies]
+org-office = { path = "../org-office", features = ["testkit"] }
+
 [lints]
 workspace = true

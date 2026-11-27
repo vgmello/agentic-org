@@ -729,7 +729,7 @@ fn suggestion_apply_executes_once_with_dual_attribution_and_rejects_replay() {
     assert_eq!(applied.attribution.proposed_by_member_id, h.tess);
     assert_eq!(
         applied.receipt.entity_href.as_deref(),
-        Some(format!("/tasks/{}", h.task_key).as_str())
+        Some(format!("/work/{}", h.task_key).as_str())
     );
     assert_eq!(
         h.office

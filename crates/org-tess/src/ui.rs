@@ -17,22 +17,32 @@ use super::preflight::HIRE_NOT_VISIBLE;
 use super::{unavailable, CallerContext, TessService};
 
 /// Explicit static allowlist of top-level in-app views permitted without a verified entity target.
-const STATIC_TOP_LEVEL_ROUTES: &[&str] = &[
+pub(crate) const STATIC_TOP_LEVEL_ROUTES: &[&str] = &[
     "/",
     "/home",
     "/inbox",
     "/work",
-    "/tasks",
     "/projects",
     "/chat",
     "/activity",
-    "/org",
+    "/insights",
+    "/search",
+    "/preferences",
     "/teams",
-    "/offices",
-    "/budgets",
+    "/teams/members",
+    "/teams/org-chart",
+    "/teams/hire",
+    "/teams/hires",
     "/settings",
-    "/processes",
-    "/hr",
+    "/settings/offices",
+    "/settings/agents",
+    "/settings/roles",
+    "/settings/processes",
+    "/settings/processes/development",
+    "/settings/access",
+    "/settings/security",
+    "/settings/costs",
+    "/settings/updates",
 ];
 
 pub(super) fn handle_present(
@@ -132,18 +142,27 @@ fn clean_text(field: &str, raw: &str) -> Result<String, ApiError> {
     Ok(trimmed.to_owned())
 }
 
-fn clean_route(raw: &str) -> Result<String, ApiError> {
+fn is_valid_channel_query_route(route: &str) -> bool {
+    let Some(channel_id) = route.strip_prefix("/chat?c=") else {
+        return false;
+    };
+    !channel_id.is_empty() && !channel_id.contains(['?', '&', '=', '/'])
+}
+
+pub(crate) fn clean_route(raw: &str, allow_channel_query: bool) -> Result<String, ApiError> {
     let route = clean_text("route", raw)?;
-    if !route.starts_with('/')
+    let has_disallowed_query =
+        route.contains('?') && !(allow_channel_query && is_valid_channel_query_route(&route));
+    let unsafe_shape = !route.starts_with('/')
         || route.contains("//")
         || route.contains("..")
         || route.contains("://")
         || route.contains('\\')
-        || route.contains('?')
+        || has_disallowed_query
         || route.contains('#')
         || route.contains('%')
-        || route.chars().any(char::is_whitespace)
-    {
+        || route.chars().any(char::is_whitespace);
+    if unsafe_shape {
         return Err(ApiError::new(
             ErrorCode::InvalidRequest,
             "navigation `route` must be a safe relative in-app path starting with `/`",
@@ -173,65 +192,73 @@ fn validate_metrics(raw: Vec<UiMetric>) -> Result<Vec<UiMetric>, ApiError> {
     Ok(out)
 }
 
+fn validate_navigation_item(
+    svc: &TessService,
+    caller_id: &str,
+    authority: &CallerAuthority,
+    item: UiNavigation,
+) -> Result<UiNavigation, ApiError> {
+    let label = clean_text("navigation.label", &item.label)?;
+    let (verified_route, entity_kind, entity_id) = match (item.entity_kind, item.entity_id) {
+        (Some(kind), Some(id)) => {
+            let route = clean_route(&item.route, kind == UiEntityKind::Channel)?;
+            let verified = verify_entity(
+                svc,
+                caller_id,
+                authority,
+                &UiEntityLinkInput {
+                    kind,
+                    id,
+                    label: Some(label.clone()),
+                },
+            )?;
+            if route != verified.route {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    format!(
+                        "navigation `route` `{route}` does not match verified entity route `{}`",
+                        verified.route
+                    ),
+                ));
+            }
+            (verified.route, Some(verified.kind), Some(verified.id))
+        }
+        (None, None) => {
+            let route = clean_route(&item.route, false)?;
+            if !STATIC_TOP_LEVEL_ROUTES.contains(&route.as_str()) {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    format!(
+                        "unverified navigation route `{route}` requires a verified `entity_kind` and `entity_id`"
+                    ),
+                ));
+            }
+            (route, None, None)
+        }
+        _ => {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "navigation `entity_kind` and `entity_id` must be provided together",
+            ));
+        }
+    };
+    Ok(UiNavigation {
+        label,
+        route: verified_route,
+        entity_kind,
+        entity_id,
+    })
+}
+
 fn validate_navigation(
     svc: &TessService,
     caller_id: &str,
     authority: &CallerAuthority,
     raw: Vec<UiNavigation>,
 ) -> Result<Vec<UiNavigation>, ApiError> {
-    let mut out = Vec::with_capacity(raw.len());
-    for item in raw {
-        let label = clean_text("navigation.label", &item.label)?;
-        let route = clean_route(&item.route)?;
-        let (verified_route, entity_kind, entity_id) = match (item.entity_kind, item.entity_id) {
-            (Some(kind), Some(id)) => {
-                let verified = verify_entity(
-                    svc,
-                    caller_id,
-                    authority,
-                    &UiEntityLinkInput {
-                        kind,
-                        id,
-                        label: Some(label.clone()),
-                    },
-                )?;
-                if route != verified.route {
-                    return Err(ApiError::new(
-                        ErrorCode::InvalidRequest,
-                        format!(
-                            "navigation `route` `{route}` does not match verified entity route `{}`",
-                            verified.route
-                        ),
-                    ));
-                }
-                (verified.route, Some(verified.kind), Some(verified.id))
-            }
-            (None, None) => {
-                if !STATIC_TOP_LEVEL_ROUTES.contains(&route.as_str()) {
-                    return Err(ApiError::new(
-                        ErrorCode::InvalidRequest,
-                        format!(
-                            "unverified navigation route `{route}` requires a verified `entity_kind` and `entity_id`"
-                        ),
-                    ));
-                }
-                (route, None, None)
-            }
-            _ => {
-                return Err(ApiError::new(
-                    ErrorCode::InvalidRequest,
-                    "navigation `entity_kind` and `entity_id` must be provided together",
-                ));
-            }
-        };
-        out.push(UiNavigation {
-            label,
-            route: verified_route,
-            entity_kind,
-            entity_id,
-        });
-    }
-    Ok(out)
+    raw.into_iter()
+        .map(|item| validate_navigation_item(svc, caller_id, authority, item))
+        .collect()
 }
 
 fn validate_follow_ups(raw: Vec<UiFollowUp>) -> Result<Vec<UiFollowUp>, ApiError> {
@@ -287,7 +314,7 @@ fn verify_task(
     Ok(UiEntityLink {
         kind: UiEntityKind::Task,
         id: inspected.task.id,
-        route: format!("/tasks/{}", inspected.task.key),
+        route: format!("/work/{}", inspected.task.key),
         key: Some(inspected.task.key),
         label: custom_label.unwrap_or(inspected.task.title),
     })
@@ -304,8 +331,8 @@ fn verify_project(
         .map_err(|e| unavailable("tess_calls.ui_project", &e, "unable to verify project"))??;
     Ok(UiEntityLink {
         kind: UiEntityKind::Project,
+        route: format!("/projects/{}", project.id),
         id: project.id,
-        route: format!("/projects/{}", project.key),
         key: Some(project.key),
         label: custom_label.unwrap_or(project.name),
     })
@@ -327,7 +354,7 @@ fn verify_team(
         .ok_or_else(|| ApiError::new(ErrorCode::NotFound, format!("team `{raw_id}` not found")))?;
     Ok(UiEntityLink {
         kind: UiEntityKind::Team,
-        route: format!("/org/teams/{}", team.id),
+        route: format!("/teams/{}", team.id),
         id: team.id,
         key: None,
         label: custom_label.unwrap_or(team.name),
@@ -359,7 +386,7 @@ fn verify_member(
         })?;
     Ok(UiEntityLink {
         kind: UiEntityKind::Member,
-        route: format!("/org/members/{}", member.id),
+        route: format!("/members/{}", member.id),
         id: member.id,
         key: member.handle,
         label: custom_label.unwrap_or(member.name),
@@ -398,7 +425,7 @@ fn verify_role(
         .ok_or_else(|| ApiError::new(ErrorCode::NotFound, format!("role `{raw_id}` not found")))?;
     Ok(UiEntityLink {
         kind: UiEntityKind::Role,
-        route: format!("/org/roles/{}", role.id),
+        route: format!("/settings/roles/{}", role.id),
         id: role.id,
         key: role.key,
         label: custom_label.unwrap_or(role.name),
@@ -433,7 +460,7 @@ fn verify_process(
     })??;
     Ok(UiEntityLink {
         kind: UiEntityKind::Process,
-        route: format!("/processes/{}", shown.document.id),
+        route: format!("/settings/processes/documents/{}", shown.document.id),
         id: shown.document.id,
         key: shown.document.key,
         label: custom_label.unwrap_or(shown.document.title),
@@ -476,7 +503,7 @@ fn verify_channel(
     let name = channel.name.clone().unwrap_or_else(|| channel.id.clone());
     Ok(UiEntityLink {
         kind: UiEntityKind::Channel,
-        route: format!("/chat/channels/{}", channel.id),
+        route: format!("/chat?c={}", channel.id),
         id: channel.id,
         key: channel.name.map(|n| format!("#{n}")),
         label: custom_label.unwrap_or(name),
@@ -500,7 +527,7 @@ fn verify_office(
         })?;
     Ok(UiEntityLink {
         kind: UiEntityKind::Office,
-        route: format!("/offices/{}", office.id),
+        route: "/settings/offices".to_owned(),
         id: office.id.to_string(),
         key: Some(office.slug),
         label: custom_label.unwrap_or(office.name),
@@ -536,7 +563,7 @@ fn verify_budget(
     );
     Ok(UiEntityLink {
         kind: UiEntityKind::Budget,
-        route: format!("/budgets/{}", budget.id),
+        route: "/settings/costs".to_owned(),
         id: budget.id,
         key: None,
         label: custom_label.unwrap_or(default_label),
@@ -578,7 +605,7 @@ fn verify_hire(
     }
     Ok(UiEntityLink {
         kind: UiEntityKind::HireRequest,
-        route: format!("/hr/hires/{raw_id}"),
+        route: "/teams/hires".to_owned(),
         id: raw_id.to_owned(),
         key: None,
         label: custom_label.unwrap_or_else(|| format!("Hire request {raw_id}")),

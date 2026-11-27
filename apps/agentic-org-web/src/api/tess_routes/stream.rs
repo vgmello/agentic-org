@@ -38,10 +38,25 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const CLOSE_CHECK_INTERVAL: Duration = Duration::from_millis(200);
 const RETRY_BACKOFF: Duration = Duration::from_millis(250);
 
-enum TurnStreamMsg {
+pub(super) enum TurnStreamMsg {
     Batch(TessTurnEventsResult),
     SessionEnded,
     Closed,
+}
+
+pub(super) struct TurnStreamSetup {
+    pub events: crate::event_hub::EventSubscription,
+    pub offices: Arc<dyn OfficeTransport>,
+    pub session_id: String,
+    pub auth: BrowserAuth,
+    pub office_id: String,
+    pub turn_id: String,
+    pub initial: TessTurnEventsResult,
+}
+
+enum BatchOutcome {
+    Continue { emitted: bool },
+    Stop,
 }
 
 pub(super) async fn execute_turn_stream(
@@ -93,25 +108,32 @@ pub(super) async fn execute_turn_stream(
     };
 
     WebReply::Stream(open_turn_sse(
-        events,
-        Arc::clone(&api.offices),
-        session.session_id,
+        TurnStreamSetup {
+            events,
+            offices: Arc::clone(&api.offices),
+            session_id: session.session_id,
+            auth,
+            office_id,
+            turn_id,
+            initial,
+        },
+        HEARTBEAT_INTERVAL,
+    ))
+}
+
+pub(super) fn open_turn_sse(
+    setup: TurnStreamSetup,
+    heartbeat_interval: Duration,
+) -> Response<WebBody> {
+    let TurnStreamSetup {
+        mut events,
+        offices,
+        session_id,
         auth,
         office_id,
         turn_id,
         initial,
-    ))
-}
-
-fn open_turn_sse(
-    mut events: crate::event_hub::EventSubscription,
-    offices: Arc<dyn OfficeTransport>,
-    session_id: String,
-    auth: BrowserAuth,
-    office_id: String,
-    turn_id: String,
-    initial: TessTurnEventsResult,
-) -> Response<WebBody> {
+    } = setup;
     let (body_tx, body_rx) = mpsc::channel::<Bytes>(STREAM_QUEUE);
     let (msg_tx, msg_rx) = mpsc::channel::<TurnStreamMsg>(STREAM_QUEUE);
 
@@ -131,7 +153,7 @@ fn open_turn_sse(
     drop(msg_tx);
 
     tokio::spawn(async move {
-        write_sse_loop(body_tx, msg_rx, initial).await;
+        write_sse_loop(body_tx, msg_rx, initial, heartbeat_interval).await;
     });
 
     sse_response(body_rx)
@@ -216,50 +238,79 @@ async fn poll_turn_loop(
     }
 }
 
-async fn write_sse_loop(
+pub(super) async fn write_sse_loop(
     body_tx: mpsc::Sender<Bytes>,
     mut msg_rx: mpsc::Receiver<TurnStreamMsg>,
     initial: TessTurnEventsResult,
+    heartbeat_interval: Duration,
 ) {
-    if !emit_batch(&body_tx, initial.lagged, initial.head_seq, initial.events).await || initial.done
-    {
+    let heartbeat = heartbeat_interval.max(Duration::from_millis(1));
+    if !handle_sse_batch(&body_tx, initial, &mut tokio::time::Instant::now()).await {
         return;
     }
     let mut last_heartbeat = tokio::time::Instant::now();
     loop {
-        if body_tx.is_closed() {
+        if body_tx.is_closed()
+            || !maybe_send_keepalive(&body_tx, &mut last_heartbeat, heartbeat).await
+        {
             break;
         }
-        match tokio::time::timeout(CLOSE_CHECK_INTERVAL, msg_rx.recv()).await {
-            Err(_) => {
-                if last_heartbeat.elapsed() >= HEARTBEAT_INTERVAL {
-                    last_heartbeat = tokio::time::Instant::now();
-                    if body_tx
-                        .send(Bytes::from_static(b": keepalive\n\n"))
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            }
-            Ok(Some(TurnStreamMsg::Batch(batch))) => {
-                last_heartbeat = tokio::time::Instant::now();
-                let keep_going =
-                    emit_batch(&body_tx, batch.lagged, batch.head_seq, batch.events).await;
-                if !keep_going || batch.done {
-                    break;
-                }
-            }
-            Ok(Some(TurnStreamMsg::SessionEnded)) => {
-                let _ = body_tx
-                    .send(Bytes::from_static(
-                        b"event: session.ended\ndata: {\"reason\":\"session_ended\"}\n\n",
-                    ))
-                    .await;
+        let remaining = heartbeat.saturating_sub(last_heartbeat.elapsed());
+        let wait = CLOSE_CHECK_INTERVAL.min(remaining);
+        if let Ok(msg) = tokio::time::timeout(wait, msg_rx.recv()).await {
+            if !handle_sse_msg(&body_tx, msg, &mut last_heartbeat).await {
                 break;
             }
-            Ok(Some(TurnStreamMsg::Closed)) | Ok(None) => break,
+        }
+    }
+}
+
+async fn handle_sse_msg(
+    body_tx: &mpsc::Sender<Bytes>,
+    msg: Option<TurnStreamMsg>,
+    last_heartbeat: &mut tokio::time::Instant,
+) -> bool {
+    match msg {
+        Some(TurnStreamMsg::Batch(batch)) => handle_sse_batch(body_tx, batch, last_heartbeat).await,
+        Some(TurnStreamMsg::SessionEnded) => {
+            let _ = body_tx
+                .send(Bytes::from_static(
+                    b"event: session.ended\ndata: {\"reason\":\"session_ended\"}\n\n",
+                ))
+                .await;
+            false
+        }
+        Some(TurnStreamMsg::Closed) | None => false,
+    }
+}
+
+async fn maybe_send_keepalive(
+    body_tx: &mpsc::Sender<Bytes>,
+    last_heartbeat: &mut tokio::time::Instant,
+    heartbeat_interval: Duration,
+) -> bool {
+    if last_heartbeat.elapsed() < heartbeat_interval {
+        return true;
+    }
+    *last_heartbeat = tokio::time::Instant::now();
+    body_tx
+        .send(Bytes::from_static(b": keepalive\n\n"))
+        .await
+        .is_ok()
+}
+
+async fn handle_sse_batch(
+    body_tx: &mpsc::Sender<Bytes>,
+    batch: TessTurnEventsResult,
+    last_heartbeat: &mut tokio::time::Instant,
+) -> bool {
+    match emit_batch(body_tx, batch.lagged, batch.head_seq, batch.events).await {
+        BatchOutcome::Stop => false,
+        BatchOutcome::Continue { emitted } => {
+            if emitted {
+                *last_heartbeat = tokio::time::Instant::now();
+            }
+            !batch.done
         }
     }
 }
@@ -269,27 +320,30 @@ async fn emit_batch(
     lagged: bool,
     head_seq: u64,
     events: Vec<TessTurnEvent>,
-) -> bool {
+) -> BatchOutcome {
+    let mut emitted = false;
     if lagged {
         let frame = Bytes::from(format!(
             "event: resync\ndata: {{\"reason\":\"lagged\",\"head_seq\":{head_seq}}}\n\n"
         ));
         if body_tx.send(frame).await.is_err() {
-            return false;
+            return BatchOutcome::Stop;
         }
+        emitted = true;
     }
     for ev in events {
         let terminal = ev.event.is_terminal();
         if let Some(frame) = format_turn_sse(&ev) {
             if body_tx.send(frame).await.is_err() {
-                return false;
+                return BatchOutcome::Stop;
             }
+            emitted = true;
         }
         if terminal {
-            return false;
+            return BatchOutcome::Stop;
         }
     }
-    true
+    BatchOutcome::Continue { emitted }
 }
 
 fn format_turn_sse(ev: &TessTurnEvent) -> Option<Bytes> {
