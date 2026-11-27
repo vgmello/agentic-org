@@ -1,19 +1,18 @@
 <script lang="ts">
 	import { onDestroy, tick, type Snippet } from 'svelte';
-	import { resolve } from '$app/paths';
-	import { Tooltip } from 'bits-ui';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
-	import Check from '@lucide/svelte/icons/check';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
-	import Copy from '@lucide/svelte/icons/copy';
-	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import FileCheck2 from '@lucide/svelte/icons/file-check-2';
-	import Maximize2 from '@lucide/svelte/icons/maximize-2';
-	import Minimize2 from '@lucide/svelte/icons/minimize-2';
 	import PauseCircle from '@lucide/svelte/icons/pause-circle';
-	import X from '@lucide/svelte/icons/x';
 	import { toast } from 'svelte-sonner';
+	import WorkReadingHeaderActions from './WorkReadingHeaderActions.svelte';
 	import type { WorkStatusRingTone } from './pills';
+	import {
+		collectInertSiblings,
+		focusableInside,
+		isExternalModalTarget,
+		trapPanelTabKey
+	} from './work-reading-inert';
 
 	let {
 		itemId,
@@ -73,37 +72,7 @@
 		const sidebar = document.querySelector<HTMLElement>('aside.exec-sidebar');
 		const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : undefined;
 		if (sidebar && ro) ro.observe(sidebar);
-		// Make every background sibling tree up to document.body inert while this modal reading dialog is open
-		// so focus and pointer cannot escape to shell chrome, team/project tabs, or list rows behind the dialog,
-		// while preserving nested Bits UI portals/dialogs and Sonner's stable polite live-region container
-		// (even when 0 toasts are currently mounted) so later save/close toasts remain announced to screen readers.
-		const inertTargets: HTMLElement[] = [];
-		const isSonnerLiveRegion = (el: HTMLElement) =>
-			el.tagName === 'SECTION' &&
-			el.getAttribute('aria-live') === 'polite' &&
-			el.getAttribute('aria-relevant') === 'additions text';
-		const shouldSkipSibling = (el: HTMLElement) =>
-			el.classList.contains('work-panel-backdrop') ||
-			el.hasAttribute('data-bits-portal') ||
-			el.hasAttribute('data-sonner-toaster') ||
-			isSonnerLiveRegion(el) ||
-			Boolean(el.querySelector('[data-sonner-toaster]')) ||
-			el.getAttribute('role') === 'dialog' ||
-			el.getAttribute('role') === 'alertdialog';
-		let cur: HTMLElement | null = panelEl;
-		while (cur && cur !== document.body && cur.parentElement) {
-			for (const sibling of cur.parentElement.children) {
-				if (
-					sibling instanceof HTMLElement &&
-					sibling !== cur &&
-					!inertTargets.includes(sibling) &&
-					!shouldSkipSibling(sibling)
-				) {
-					inertTargets.push(sibling);
-				}
-			}
-			cur = cur.parentElement;
-		}
+		const inertTargets = collectInertSiblings(panelEl);
 		const prevInert = inertTargets.map((el) => el.inert);
 		for (const el of inertTargets) el.inert = true;
 		// Stop Sonner's document-level Alt+T hotkey at document.body (bubble phase) WITHOUT preventDefault(),
@@ -116,14 +85,7 @@
 		const guardModalFocus = (event: FocusEvent) => {
 			const target = event.target;
 			if (!(target instanceof Node) || !panelEl || panelEl.contains(target)) return;
-			if (
-				target instanceof Element &&
-				target.closest(
-					'[role="dialog"]:not(.work-reading), [role="alertdialog"], [role="menu"], [data-bits-portal]'
-				)
-			) {
-				return;
-			}
+			if (isExternalModalTarget(target)) return;
 			const fallback = focusableInside(panelEl)[0] ?? backBtnEl ?? panelEl;
 			fallback?.focus({ preventScroll: true });
 		};
@@ -146,38 +108,8 @@
 		}
 	});
 
-	function focusableInside(container: HTMLElement): HTMLElement[] {
-		const selector =
-			'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-		return [...container.querySelectorAll<HTMLElement>(selector)].filter(
-			(el) => el.offsetParent !== null && !el.closest('[inert]')
-		);
-	}
-
 	function handlePanelKeydown(event: KeyboardEvent) {
-		if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey || !panelEl) return;
-		// Yield when a nested modal dialog/menu is open above the panel.
-		if (
-			document.querySelector(
-				'[role="dialog"]:not(.work-reading), [role="alertdialog"], [role="menu"]'
-			)
-		) {
-			return;
-		}
-		const items = focusableInside(panelEl);
-		if (items.length === 0) return;
-		const first = items[0];
-		const last = items[items.length - 1];
-		const active = document.activeElement;
-		if (event.shiftKey) {
-			if (active === first || !panelEl.contains(active)) {
-				event.preventDefault();
-				last.focus();
-			}
-		} else if (active === last || !panelEl.contains(active)) {
-			event.preventDefault();
-			first.focus();
-		}
+		trapPanelTabKey(event, panelEl);
 	}
 
 	$effect(() => {
@@ -278,118 +210,16 @@
 			</p>
 		</div>
 
-		<Tooltip.Provider delayDuration={150} ignoreNonKeyboardFocus>
-			<div class="work-detail-actions">
-				{#if fullPageHref}
-					<Tooltip.Root ignoreNonKeyboardFocus>
-						<Tooltip.Trigger>
-							{#snippet child({ props })}
-								<a
-									{...props}
-									href={resolve(fullPageHref as '/')}
-									class="work-detail-btn"
-									aria-label="Open full page for {refLabel}"
-								>
-									<ExternalLink class="size-4" aria-hidden="true" />
-								</a>
-							{/snippet}
-						</Tooltip.Trigger>
-						<Tooltip.Portal>
-							<Tooltip.Content
-								side="bottom"
-								sideOffset={6}
-								escapeKeydownBehavior="defer-otherwise-close"
-								class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-								>Open full page</Tooltip.Content
-							>
-						</Tooltip.Portal>
-					</Tooltip.Root>
-				{/if}
-				<Tooltip.Root ignoreNonKeyboardFocus>
-					<Tooltip.Trigger>
-						{#snippet child({ props })}
-							<button
-								{...props}
-								type="button"
-								class="work-detail-btn"
-								aria-label={copied ? `Copied ${refLabel}` : `Copy ${refLabel}`}
-								onclick={copyRef}
-							>
-								{#if copied}
-									<Check class="size-4" aria-hidden="true" />
-								{:else}
-									<Copy class="size-4" aria-hidden="true" />
-								{/if}
-							</button>
-						{/snippet}
-					</Tooltip.Trigger>
-					<Tooltip.Portal>
-						<Tooltip.Content
-							side="bottom"
-							sideOffset={6}
-							escapeKeydownBehavior="defer-otherwise-close"
-							class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-							>{copied ? 'Copied' : `Copy ${refLabel}`}</Tooltip.Content
-						>
-					</Tooltip.Portal>
-				</Tooltip.Root>
-				{#if canExpand}
-					<Tooltip.Root ignoreNonKeyboardFocus>
-						<Tooltip.Trigger>
-							{#snippet child({ props })}
-								<button
-									{...props}
-									type="button"
-									class="work-detail-btn work-panel-expand"
-									aria-label={expanded ? 'Restore panel width' : 'Expand panel to full width'}
-									aria-pressed={expanded}
-									onclick={() => (expanded = !expanded)}
-								>
-									{#if expanded}
-										<Minimize2 class="size-4" aria-hidden="true" />
-									{:else}
-										<Maximize2 class="size-4" aria-hidden="true" />
-									{/if}
-								</button>
-							{/snippet}
-						</Tooltip.Trigger>
-						<Tooltip.Portal>
-							<Tooltip.Content
-								side="bottom"
-								sideOffset={6}
-								escapeKeydownBehavior="defer-otherwise-close"
-								class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-								>{expanded ? 'Restore panel width' : 'Expand panel'}</Tooltip.Content
-							>
-						</Tooltip.Portal>
-					</Tooltip.Root>
-				{/if}
-				<Tooltip.Root ignoreNonKeyboardFocus>
-					<Tooltip.Trigger>
-						{#snippet child({ props })}
-							<button
-								{...props}
-								type="button"
-								class="work-detail-btn"
-								aria-label="Close work details"
-								onclick={onclose}
-							>
-								<X class="size-4" aria-hidden="true" />
-							</button>
-						{/snippet}
-					</Tooltip.Trigger>
-					<Tooltip.Portal>
-						<Tooltip.Content
-							side="bottom"
-							sideOffset={6}
-							escapeKeydownBehavior="defer-otherwise-close"
-							class="z-50 rounded-md bg-surface-overlay px-2.5 py-1 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-							>Close</Tooltip.Content
-						>
-					</Tooltip.Portal>
-				</Tooltip.Root>
-			</div>
-		</Tooltip.Provider>
+		<WorkReadingHeaderActions
+			{refLabel}
+			{fullPageHref}
+			{copied}
+			{canExpand}
+			{expanded}
+			onCopyRef={copyRef}
+			onToggleExpand={() => (expanded = !expanded)}
+			onClose={onclose}
+		/>
 	</header>
 
 	<article class="work-document">
@@ -438,11 +268,6 @@
 	}
 	.side-panel.work-panel[data-expanded] {
 		width: var(--work-page-width);
-	}
-	@media (max-width: 780px) {
-		.work-panel-expand {
-			display: none;
-		}
 	}
 	.side-panel-header {
 		position: sticky;
@@ -513,38 +338,12 @@
 		color: var(--exec-muted);
 		font-weight: 500;
 	}
-	.work-detail-actions {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		flex-shrink: 0;
-		margin-inline-start: auto;
-	}
 	@container work-reading (max-width: 22rem) {
 		.work-detail-id {
 			order: 1;
 			flex-basis: 100%;
 		}
 	}
-	.work-detail-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-width: 36px;
-		min-height: 36px;
-		border-radius: var(--exec-ctrl-radius);
-		background: transparent;
-		color: var(--exec-body);
-		cursor: pointer;
-		transition:
-			background-color 120ms ease-out,
-			color 120ms ease-out;
-	}
-	.work-detail-btn:hover {
-		background: var(--exec-btn-ghost-bg-hover);
-		color: var(--exec-ink);
-	}
-	.work-detail-btn:focus-visible,
 	.work-back-btn:focus-visible {
 		outline: 2px solid var(--focus);
 		outline-offset: 2px;
@@ -654,10 +453,6 @@
 		transform: translateX(50%);
 	}
 	@media (max-width: 720px), (pointer: coarse) {
-		.work-detail-btn {
-			min-width: 44px;
-			min-height: 44px;
-		}
 		.work-back-btn {
 			min-height: 44px;
 		}
@@ -679,7 +474,6 @@
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.work-detail-btn,
 		.work-back-btn,
 		.side-panel.work-panel {
 			transition: none;
@@ -689,7 +483,6 @@
 		.side-panel.work-panel {
 			border-inline-start: 2px solid CanvasText;
 		}
-		.work-detail-btn,
 		.work-back-btn {
 			border: 1px solid ButtonText;
 		}

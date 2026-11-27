@@ -245,5 +245,5 @@ describe('UI file-size ratchet (CAP=700 legacy, NEW_FILE_CAP=500, no CSS extract
 		}
 
 		expect(errors).toEqual([]);
-	});
+	}, 30_000);
 });

@@ -1,17 +1,9 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { Tooltip } from 'bits-ui';
-	import { resolve } from '$app/paths';
 	import { SvelteSet } from 'svelte/reactivity';
-	import ChevronRight from '@lucide/svelte/icons/chevron-right';
-	import ExternalLink from '@lucide/svelte/icons/external-link';
-	import Home from '@lucide/svelte/icons/home';
 	import Maximize2 from '@lucide/svelte/icons/maximize-2';
-	import Minus from '@lucide/svelte/icons/minus';
-	import Plus from '@lucide/svelte/icons/plus';
 	import Search from '@lucide/svelte/icons/search';
 	import Users from '@lucide/svelte/icons/users';
-	import X from '@lucide/svelte/icons/x';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import type { OrgSnapshot } from '$lib/proto';
 	import {
@@ -24,6 +16,8 @@
 	} from '../../canvas-layout';
 	import type { ChartEmployee } from '../../types';
 	import type { NodeAction } from './ChartNode.svelte';
+	import OrgChartInspector from './OrgChartInspector.svelte';
+	import OrgChartZoomDock from './OrgChartZoomDock.svelte';
 
 	let {
 		employees,
@@ -366,240 +360,29 @@
 				</div>
 			{/if}
 
-			<Tooltip.Provider delayDuration={150}>
-				<div class="org-zoom-dock" role="group" aria-label="Canvas zoom controls">
-					<Tooltip.Root>
-						<Tooltip.Trigger>
-							{#snippet child({ props })}
-								<button
-									{...props}
-									type="button"
-									onclick={() => {
-										zoom = 1;
-										fitView();
-									}}
-									aria-label="Reset view"
-									class="org-zoom-btn"
-								>
-									<Home class="size-3.5" aria-hidden="true" />
-								</button>
-							{/snippet}
-						</Tooltip.Trigger>
-						<Tooltip.Portal>
-							<Tooltip.Content
-								role="tooltip"
-								side="top"
-								sideOffset={6}
-								class="z-[100] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
-							>
-								Reset view
-							</Tooltip.Content>
-						</Tooltip.Portal>
-					</Tooltip.Root>
-					<Tooltip.Root>
-						<Tooltip.Trigger>
-							{#snippet child({ props })}
-								<button
-									{...props}
-									type="button"
-									onclick={() => (zoom = clampZoom(zoom - 0.15))}
-									aria-label="Zoom out"
-									class="org-zoom-btn"
-								>
-									<Minus class="size-3.5" aria-hidden="true" />
-								</button>
-							{/snippet}
-						</Tooltip.Trigger>
-						<Tooltip.Portal>
-							<Tooltip.Content
-								role="tooltip"
-								side="top"
-								sideOffset={6}
-								class="z-[100] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
-							>
-								Zoom out
-							</Tooltip.Content>
-						</Tooltip.Portal>
-					</Tooltip.Root>
-					<span class="org-zoom-pct tabular-nums">{Math.round(zoom * 100)}%</span>
-					<Tooltip.Root>
-						<Tooltip.Trigger>
-							{#snippet child({ props })}
-								<button
-									{...props}
-									type="button"
-									onclick={() => (zoom = clampZoom(zoom + 0.15))}
-									aria-label="Zoom in"
-									class="org-zoom-btn"
-								>
-									<Plus class="size-3.5" aria-hidden="true" />
-								</button>
-							{/snippet}
-						</Tooltip.Trigger>
-						<Tooltip.Portal>
-							<Tooltip.Content
-								role="tooltip"
-								side="top"
-								sideOffset={6}
-								class="z-[100] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
-							>
-								Zoom in
-							</Tooltip.Content>
-						</Tooltip.Portal>
-					</Tooltip.Root>
-					<Tooltip.Root>
-						<Tooltip.Trigger>
-							{#snippet child({ props })}
-								<button
-									{...props}
-									type="button"
-									onclick={fitView}
-									aria-label="Fit chart"
-									class="org-zoom-btn"
-								>
-									<Maximize2 class="size-3.5" aria-hidden="true" />
-								</button>
-							{/snippet}
-						</Tooltip.Trigger>
-						<Tooltip.Portal>
-							<Tooltip.Content
-								role="tooltip"
-								side="top"
-								sideOffset={6}
-								class="z-[100] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
-							>
-								Fit chart
-							</Tooltip.Content>
-						</Tooltip.Portal>
-					</Tooltip.Root>
-				</div>
-			</Tooltip.Provider>
+			<OrgChartZoomDock
+				{zoom}
+				onReset={() => {
+					zoom = 1;
+					fitView();
+				}}
+				onZoomOut={() => (zoom = clampZoom(zoom - 0.15))}
+				onZoomIn={() => (zoom = clampZoom(zoom + 0.15))}
+				onFit={fitView}
+			/>
 		</div>
 
 		{#if inspectorOpen && selectedData}
-			<aside class="org-inspector" aria-label="Selected node details">
-				<div class="org-insp-head">
-					<div class="flex min-w-0 items-center gap-2.5">
-						<Avatar name={selectedData.avatarName} size="md" />
-						<div class="min-w-0">
-							<h3 class="truncate text-sm font-semibold text-[var(--exec-ink)]">
-								{selectedData.title}
-							</h3>
-							<p class="truncate text-xs text-[var(--exec-muted)]">{selectedData.subtitle}</p>
-						</div>
-					</div>
-					<Tooltip.Provider delayDuration={150}>
-						<Tooltip.Root>
-							<Tooltip.Trigger>
-								{#snippet child({ props })}
-									<button
-										{...props}
-										type="button"
-										onclick={() => (inspectorOpen = false)}
-										aria-label="Close inspector"
-										class="org-zoom-btn"
-									>
-										<X class="size-4" aria-hidden="true" />
-									</button>
-								{/snippet}
-							</Tooltip.Trigger>
-							<Tooltip.Portal>
-								<Tooltip.Content
-									role="tooltip"
-									side="left"
-									sideOffset={6}
-									class="z-[100] rounded-md bg-tooltip px-2.5 py-1.5 text-xs text-on-emphasis"
-								>
-									Close inspector
-								</Tooltip.Content>
-							</Tooltip.Portal>
-						</Tooltip.Root>
-					</Tooltip.Provider>
-				</div>
-
-				<div class="org-insp-body">
-					<div class="org-insp-row">
-						<span class="org-insp-k"
-							>{selectedData.kind === 'team' ? 'Composition' : 'Home team'}</span
-						>
-						<span class="org-insp-v">{selectedData.meta}</span>
-					</div>
-
-					{#if parentItem}
-						<div class="org-insp-row">
-							<span class="org-insp-k">
-								{selectedData.kind === 'team' ? 'Parent team' : 'Reports to'}
-							</span>
-							<button type="button" onclick={() => jumpTo(parentItem.id)} class="org-insp-chip">
-								<span>{parentItem.title}</span>
-								<ChevronRight class="size-3" aria-hidden="true" />
-							</button>
-						</div>
-					{/if}
-
-					{#if directChildren.length > 0}
-						<div class="org-insp-section">
-							<span class="org-insp-k">
-								{selectedData.kind === 'team' ? 'Sub-teams' : 'Direct reports'} ({directChildren.length})
-							</span>
-							<div class="org-insp-chips">
-								{#each directChildren as child (child.id)}
-									<button type="button" onclick={() => jumpTo(child.id)} class="org-insp-chip">
-										<span>{child.title}</span>
-									</button>
-								{/each}
-							</div>
-						</div>
-					{/if}
-
-					{#if selectedData.kind === 'team' && teamMembers.length > 0}
-						<div class="org-insp-section">
-							<span class="org-insp-k">Members ({teamMembers.length})</span>
-							<ul class="org-insp-members" role="list">
-								{#each teamMembers.slice(0, 8) as m (m.id)}
-									<li>
-										<a
-											href={resolve(`/members/${encodeURIComponent(m.id)}` as '/')}
-											class="org-insp-member-link"
-										>
-											<Avatar name={m.name} size="sm" />
-											<span class="min-w-0 flex-1 truncate">{m.name}</span>
-											<span class="text-[11px] text-[var(--exec-muted)]">
-												{m.kind === 'agent' ? 'Agent' : 'Person'}
-											</span>
-										</a>
-									</li>
-								{/each}
-							</ul>
-						</div>
-					{/if}
-				</div>
-
-				<div class="org-insp-actions">
-					<a href={resolve(selectedData.href as '/teams')} class="org-insp-primary">
-						<span>Open {selectedData.kind === 'team' ? 'team' : 'profile'}</span>
-						<ExternalLink class="size-3.5" aria-hidden="true" />
-					</a>
-					{#if selectedData.employee && onaction}
-						<button
-							type="button"
-							onclick={() => onaction('manager', selectedData.employee!)}
-							class="org-bar-btn w-full justify-center"
-						>
-							Change manager…
-						</button>
-						{#if canMove && selectedData.employee.homeTeam}
-							<button
-								type="button"
-								onclick={() => onaction('move', selectedData.employee!)}
-								class="org-bar-btn w-full justify-center"
-							>
-								Move home team…
-							</button>
-						{/if}
-					{/if}
-				</div>
-			</aside>
+			<OrgChartInspector
+				{selectedData}
+				{parentItem}
+				{directChildren}
+				{teamMembers}
+				{canMove}
+				onClose={() => (inspectorOpen = false)}
+				onJumpTo={jumpTo}
+				onAction={onaction}
+			/>
 		{/if}
 	</div>
 </div>
@@ -849,42 +632,6 @@
 		background: var(--exec-accent-soft);
 		color: var(--exec-accent-ink);
 	}
-	.org-zoom-dock {
-		position: absolute;
-		left: 50%;
-		bottom: 14px;
-		transform: translateX(-50%);
-		display: inline-flex;
-		align-items: center;
-		gap: 2px;
-		padding: 4px;
-		border-radius: 999px;
-		background: var(--exec-surface);
-		box-shadow:
-			inset 0 0 0 1px var(--exec-border-hi),
-			var(--tooltip-shadow);
-	}
-	.org-zoom-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border-radius: 999px;
-		color: var(--exec-body);
-		cursor: pointer;
-	}
-	.org-zoom-btn:hover {
-		background: var(--exec-accent-soft);
-		color: var(--exec-ink);
-	}
-	.org-zoom-pct {
-		min-width: 44px;
-		text-align: center;
-		font-size: 0.72rem;
-		font-weight: 600;
-		color: var(--exec-muted);
-	}
 	.org-empty {
 		display: flex;
 		flex-direction: column;
@@ -894,112 +641,5 @@
 		height: 100%;
 		color: var(--exec-muted);
 		font-size: 0.875rem;
-	}
-	.org-inspector {
-		width: 300px;
-		border-inline-start: 1px solid var(--exec-border);
-		background: var(--exec-surface);
-		display: flex;
-		flex-direction: column;
-		overflow-y: auto;
-	}
-	@media (max-width: 900px) {
-		.org-inspector {
-			width: 100%;
-			border-inline-start: 0;
-			border-top: 1px solid var(--exec-border);
-		}
-	}
-	.org-insp-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 8px;
-		padding: 14px 16px;
-		border-bottom: 1px solid var(--exec-border);
-	}
-	.org-insp-body {
-		padding: 14px 16px;
-		display: flex;
-		flex-direction: column;
-		gap: 14px;
-		flex: 1 1 auto;
-	}
-	.org-insp-row,
-	.org-insp-section {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-	.org-insp-k {
-		font-size: 0.7rem;
-		font-weight: 650;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		color: var(--exec-dim);
-	}
-	.org-insp-v {
-		font-size: 0.8125rem;
-		color: var(--exec-body);
-	}
-	.org-insp-chips {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 6px;
-	}
-	.org-insp-chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		padding: 3px 9px;
-		border-radius: 999px;
-		background: var(--exec-well);
-		color: var(--exec-ink);
-		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
-		font-size: 0.75rem;
-		font-weight: 500;
-		cursor: pointer;
-	}
-	.org-insp-chip:hover {
-		background: var(--exec-accent-soft);
-		color: var(--exec-accent-ink);
-	}
-	.org-insp-members {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-	.org-insp-member-link {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 5px 6px;
-		border-radius: 6px;
-		font-size: 0.8125rem;
-		color: var(--exec-body);
-	}
-	.org-insp-member-link:hover {
-		background: var(--exec-well);
-		color: var(--exec-ink);
-	}
-	.org-insp-actions {
-		padding: 12px 16px 16px;
-		border-top: 1px solid var(--exec-border);
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-	}
-	.org-insp-primary {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 6px;
-		min-height: 34px;
-		padding: 0 12px;
-		border-radius: var(--exec-ctrl-radius, 8px);
-		background: var(--exec-cta-bg);
-		color: var(--exec-on-accent);
-		font-size: 0.8125rem;
-		font-weight: 600;
 	}
 </style>
