@@ -1,5 +1,7 @@
 //! Permission presets, default-on sandbox, and escalation policy (`ADR-0032` §3, `ENROLL-7`, `FC-189`).
 
+#![forbid(unsafe_code)]
+
 use std::fmt;
 
 use org_agent_runtime::{
@@ -13,6 +15,8 @@ mod paths;
 mod policy;
 mod shell;
 mod targets;
+#[cfg(test)]
+mod tests;
 
 use paths::{all_targets_within_writable_roots, build_deny_strings};
 use policy::{evaluate_allow_policy, matches_any_deny, request_in_allowed_tools};

@@ -2,13 +2,13 @@
 //! error that reaches a log or a caller passes through here.
 //!
 //! Secret/token/PEM/URL-userinfo/header/env-assignment redaction delegates to the workspace
-//! canonical choke-point [`org_office_sessions::redact::redact_text`], followed by Git-specific
+//! canonical Layer-0 choke-point [`org_redact::redact_text`], followed by Git-specific
 //! `GIT_SSH_COMMAND=` / `GIT_ASKPASS=` line scrubbing, control-character normalization, and
 //! UTF-8-safe truncation. Callers receive fixed reasons only.
 
 use org_git::GitError;
-use org_office_sessions::redact::{redact_text, REDACTED};
 use org_proto::{ApiError, ErrorCode};
+use org_redact::{redact_text, REDACTED};
 
 const MAX_GIT_LOG_BYTES: usize = 512;
 const TRUNCATED_SUFFIX: &str = "...[truncated]";
@@ -32,7 +32,7 @@ pub(super) fn sanitized_git_reason(err: &GitError) -> String {
 }
 
 /// Scrubs Git-specific environment variable dumps (`GIT_SSH_COMMAND=...`, `GIT_ASKPASS=...`)
-/// that are not classified as generic secret keys by `org_office_sessions::redact`.
+/// that are not classified as generic secret keys by `org_redact`.
 fn scrub_git_env_lines(input: &str) -> String {
     const KEYS: &[&str] = &["git_ssh_command=", "git_askpass="];
     let bytes = input.as_bytes();

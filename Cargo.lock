@@ -1482,6 +1482,7 @@ dependencies = [
  "org-pki",
  "org-platform",
  "org-proto",
+ "org-redact",
  "org-socket",
  "org-store",
  "org-sync",
@@ -1516,6 +1517,10 @@ dependencies = [
  "org-platform",
  "org-process",
  "org-proto",
+ "org-redact",
+ "org-session-instructions",
+ "org-session-presets",
+ "org-subscription-usage",
  "org-supervise",
  "org-turn-attachments",
  "ring",
@@ -1586,6 +1591,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-redact"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "org-release"
 version = "0.0.0"
 dependencies = [
@@ -1608,6 +1620,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-session-instructions"
+version = "0.0.0"
+dependencies = [
+ "org-command",
+ "org-command-catalogue",
+ "org-process",
+ "org-proto",
+ "org-redact",
+ "serde_json",
+]
+
+[[package]]
+name = "org-session-presets"
+version = "0.0.0"
+dependencies = [
+ "org-agent-runtime",
+ "org-office",
+ "org-platform",
+ "org-proto",
+ "serde_json",
+]
+
+[[package]]
 name = "org-socket"
 version = "0.0.0"
 dependencies = [
@@ -1625,6 +1660,18 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "org-subscription-usage"
+version = "0.0.0"
+dependencies = [
+ "org-office",
+ "org-proto",
+ "org-redact",
+ "serde",
+ "serde_json",
+ "zeroize",
 ]
 
 [[package]]
@@ -1670,11 +1717,12 @@ version = "0.0.0"
 dependencies = [
  "base64",
  "org-agent-runtime",
- "org-office",
  "org-platform",
  "org-proto",
+ "org-redact",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

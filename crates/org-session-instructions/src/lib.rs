@@ -11,11 +11,15 @@
 //! - [`verify_command_references`] dry-parses every `agent-os` command line cited in text
 //!   against the live command table: the drift guard of all built-in text.
 
+#![forbid(unsafe_code)]
+
 use org_command::CommandTable;
 
 mod assemble;
 mod identity;
 mod objective;
+#[cfg(test)]
+mod tests;
 mod verify;
 
 pub use assemble::{assemble_standing_instructions, InstructionInput, StandingInstructions};
@@ -24,7 +28,7 @@ pub use objective::{compose_turn_objective, TurnSender, TurnTrigger, MAX_TURN_BO
 pub use org_process::{
     BUILTIN_INSTRUCTIONS_MAX_BYTES, CHIEF_OF_STAFF_GUIDANCE, CORE_RULES, HR_LEAD, MANAGED_SESSION,
 };
-pub use verify::{cited_command_lines, verify_command_references};
+pub use verify::{cited_command_lines, verify_command_references, CitedLine};
 
 /// Produces the live `agent-os` command table rendered into standing instructions (`INSTR-5`).
 pub type CommandCatalogue = fn() -> CommandTable;
@@ -36,7 +40,7 @@ pub fn installed_command_catalogue() -> Option<CommandCatalogue> {
 
 /// The live command table from `catalogue`, or an empty one. A caller that explicitly passes
 /// `None` is reported once on stderr, so agents' missing command list is visible.
-pub(crate) fn command_table_or_empty(catalogue: Option<CommandCatalogue>) -> CommandTable {
+pub fn command_table_or_empty(catalogue: Option<CommandCatalogue>) -> CommandTable {
     static REPORTED_MISSING: std::sync::atomic::AtomicBool =
         std::sync::atomic::AtomicBool::new(false);
     if let Some(catalogue) = catalogue {
@@ -44,7 +48,7 @@ pub(crate) fn command_table_or_empty(catalogue: Option<CommandCatalogue>) -> Com
     }
     if !REPORTED_MISSING.swap(true, std::sync::atomic::Ordering::Relaxed) {
         eprintln!(
-            "org-office-sessions: warning: no agent-os command catalogue installed; standing instructions list no commands"
+            "org-session-instructions: warning: no agent-os command catalogue installed; standing instructions list no commands"
         );
     }
     CommandTable::unchecked(&[])

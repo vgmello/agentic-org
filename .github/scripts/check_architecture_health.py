@@ -56,10 +56,11 @@ in pure Python 3 stdlib (zero third-party dependencies, < 2s full-repo execution
    - Verifies 0 cyclic dependencies across all workspace crates (reporting the exact
      cycle path on failure).
    - Verifies Layer-0 foundation crates (`org-proto`, `org-platform`, `org-pki`,
-     `org-store`, `org-agent-runtime`, `org-command`, `org-sync-proto`,
-     `org-host-control`, `org-office-launch`, plus zero-dep leaf `org-docs`
-     used by `org-command` for bounded YAML parsing) have zero `[dependencies]` or
-     `[build-dependencies]` edges to any higher-layer application/server/host/office/CLI crate.
+     `org-redact`, `org-store`, `org-agent-runtime`, `org-command`,
+     `org-command-catalogue`, `org-sync-proto`, `org-host-control`,
+     `org-office-launch`, plus zero-dep leaf `org-docs` used by `org-command`
+     for bounded YAML parsing) have zero `[dependencies]` or `[build-dependencies]`
+     edges to any higher-layer application/server/host/office/CLI crate.
 
 4. Shrink-Only Base Diff (`--base <commit-sha>`):
    - Compares `.github/architecture-boundaries.allow` at `<base>` with the working tree.
@@ -143,6 +144,7 @@ LAYER_0_FOUNDATION_CRATES = frozenset(
         "org-proto",
         "org-platform",
         "org-pki",
+        "org-redact",
         "org-store",
         "org-agent-runtime",
         "org-command",

@@ -6,7 +6,7 @@ use org_office::accounting::canonical_provider_namespace;
 use org_office::organization_family::records::ProviderConnection;
 use org_proto::{ApiError, ErrorCode};
 
-use crate::redact::redact_text;
+use org_redact::redact_text;
 
 use super::parse::parse_provider_payload;
 use super::{

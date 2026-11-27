@@ -1,33 +1,43 @@
-//! Authenticated provider subscription model usage collection (`TASK-79`).
+//! Authenticated provider subscription model usage collection (`TASK-79`, `TASK-255`).
 //!
-//! Keeps all provider/user usage-API credentials private to office storage via [`CredentialVault`]
-//! (outside shared organization Git), binds credentials to explicit HTTPS destination origins,
-//! isolates `curl` (`--disable`, `--noproxy '*'`, `--globoff`, cleared env, pinned `--resolve`),
-//! enforces a single shared deadline inside the 5s office bridge limit, fences concurrent writes
-//! by monotonic attempt generation, and delegates external collection behind consumer-owned ports
-//! ([`SubscriptionUsageCollector`] and [`SubscriptionUsageTransport`]).
+//! Keeps all provider/user usage-API credentials private to office storage behind the
+//! consumer-owned [`UsageCredentialLookup`] port (outside shared organization Git), binds
+//! credentials to explicit HTTPS destination origins, isolates `curl` (`--disable`, `--noproxy '*'`,
+//! `--globoff`, cleared env, pinned `--resolve`), enforces a single shared deadline inside the 5s
+//! office bridge limit, fences concurrent writes by monotonic attempt generation, and delegates
+//! external collection behind consumer-owned ports ([`SubscriptionUsageCollector`] and
+//! [`SubscriptionUsageTransport`]).
+
+#![forbid(unsafe_code)]
 
 use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use org_office::accounting::canonical_provider_namespace;
-use org_proto::costs::{SubscriptionModelUsageView, SubscriptionUsageAuthSource};
+use org_proto::costs::{
+    SubscriptionModelUsageView, SubscriptionUsageAuthSource, SubscriptionUsageCredentialView,
+};
+use org_proto::sessions::ProviderCredentialView;
+use org_redact::redact_text;
 use zeroize::Zeroizing;
 
-use crate::redact::redact_text;
+mod endpoint;
+mod oauth;
+mod parse;
+mod rollup;
+#[cfg(test)]
+mod tests;
+mod transport;
+
 use endpoint::{
     classify_http_and_parse, default_provider_origin, is_valid_bearer_token,
     resolve_provider_endpoint, transport_error_msg,
 };
-
-mod endpoint;
-mod parse;
-mod rollup;
-mod transport;
+use oauth::parse_usage_oauth_credential;
 
 pub use endpoint::{validate_usage_endpoint_url, ValidatedEndpoint};
-pub(crate) use rollup::{
+pub use rollup::{
     collect_subscription_usage, list_subscription_usage, revoke_subscription_usage_credential,
     set_subscription_usage_credential,
 };
@@ -43,6 +53,84 @@ const TOTAL_COLLECTION_BUDGET: Duration = Duration::from_millis(3_000);
 const MAX_DNS_TIMEOUT: Duration = Duration::from_millis(1_000);
 const DEFAULT_ANTHROPIC_USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const DEFAULT_OPENAI_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+
+/// Unwrapped credential secret and optional expiry returned by [`UsageCredentialLookup`].
+pub struct UnwrappedUsageCredential {
+    pub secret: Zeroizing<Vec<u8>>,
+    pub expires_at: Option<String>,
+}
+
+/// Errors raised by a [`UsageCredentialLookup`] implementation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UsageCredentialError {
+    MissingSecretsKey,
+    InvalidInput(String),
+    NotAuthorized(String),
+    Conflict(String),
+    NotFound(String),
+    Expired(String),
+    Crypto(String),
+    Io(String),
+}
+
+impl fmt::Display for UsageCredentialError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingSecretsKey => {
+                f.write_str("office secrets key unavailable; cannot unwrap provider credentials")
+            }
+            Self::InvalidInput(msg)
+            | Self::NotAuthorized(msg)
+            | Self::Conflict(msg)
+            | Self::NotFound(msg)
+            | Self::Expired(msg)
+            | Self::Crypto(msg)
+            | Self::Io(msg) => f.write_str(msg),
+        }
+    }
+}
+
+impl std::error::Error for UsageCredentialError {}
+
+/// Consumer-owned credential custody port used by subscription usage orchestration
+/// (`AGENTS.md` Rule 1, `TASK-255`).
+pub trait UsageCredentialLookup: Send + Sync {
+    fn usage_status(
+        &self,
+        connection_id: &str,
+    ) -> Result<SubscriptionUsageCredentialView, UsageCredentialError>;
+
+    fn enrolled_status(
+        &self,
+        connection_id: &str,
+    ) -> Result<ProviderCredentialView, UsageCredentialError>;
+
+    fn store_wrapped_usage(
+        &self,
+        connection_id: &str,
+        provider: &str,
+        bound_origin: &str,
+        secret: &[u8],
+        expires_at: Option<String>,
+        account_hint: Option<String>,
+    ) -> Result<SubscriptionUsageCredentialView, UsageCredentialError>;
+
+    fn revoke_usage(
+        &self,
+        connection_id: &str,
+    ) -> Result<SubscriptionUsageCredentialView, UsageCredentialError>;
+
+    fn load_unwrapped_usage(
+        &self,
+        connection_id: &str,
+        expected_origin: &str,
+    ) -> Result<Option<UnwrappedUsageCredential>, UsageCredentialError>;
+
+    fn load_unwrapped_enrolled(
+        &self,
+        connection_id: &str,
+    ) -> Result<Option<UnwrappedUsageCredential>, UsageCredentialError>;
+}
 
 /// Raw HTTP JSON response returned by a [`SubscriptionUsageTransport`].
 #[derive(Clone, PartialEq, Eq)]
@@ -144,9 +232,7 @@ fn extract_usage_bearer_token(
     let candidate = if auth_source == SubscriptionUsageAuthSource::EnrolledSubscriptionCredential
         || raw.iter().copied().find(|b| !b.is_ascii_whitespace()) == Some(b'{')
     {
-        crate::host_auth::parse_vault_oauth_credential(raw)
-            .ok()?
-            .access_token
+        parse_usage_oauth_credential(raw)?.access_token
     } else {
         Zeroizing::new(std::str::from_utf8(raw).ok()?.trim().to_owned())
     };

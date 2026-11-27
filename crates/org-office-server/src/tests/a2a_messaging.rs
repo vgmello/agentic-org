@@ -324,15 +324,14 @@ fn build_test_session_manager(
     fs::write(&script_path, ECHO_RUNTIME_SCRIPT).unwrap();
     fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
     let recorded = Arc::new(RecordedTurns::default());
-    let mut reg = RuntimeRegistry::production();
+    let mut reg = RuntimeRegistry::empty();
     reg.register(
         Arc::new(RecordingRuntime {
             recorded: Arc::clone(&recorded),
         }),
         Some(script_path),
     );
-    let mut cfg = SessionManagerConfig::production(socket.to_path_buf());
-    cfg.runtimes = reg;
+    let cfg = SessionManagerConfig::with_runtimes(socket.to_path_buf(), reg);
     let sessions = Arc::new(SessionManager::new(Arc::clone(office), cfg));
     SessionManager::attach_self(&sessions);
     (bin_dir, recorded, sessions)
@@ -363,6 +362,7 @@ impl LiveOfficeNode {
         let channel_watcher = Arc::new(crate::watcher::ChannelWatcher::production(
             Arc::clone(&office),
             Some(Arc::clone(&sessions)),
+            sessions.runtimes().clone(),
         ));
         let sat_wake = Arc::new(SatSyncWake::default());
         let hq_fed_slot: crate::federation_runtime::HqFederationSlot = Arc::default();

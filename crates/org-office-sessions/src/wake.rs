@@ -7,8 +7,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::credentials::rfc3339_now;
 
-pub use org_turn_attachments::sanitize::sanitize_untrusted_body;
-pub(crate) use org_turn_attachments::sanitize::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
+pub use crate::redact::sanitize::sanitize_untrusted_body;
+pub(crate) use crate::redact::sanitize::{
+    sanitize_untrusted_meta, MAX_META_FIELD_BYTES, UNTRUSTED_MESSAGE_CLOSE as UNTRUSTED_CLOSE,
+    UNTRUSTED_MESSAGE_OPEN as UNTRUSTED_OPEN,
+};
 
 pub const DEFAULT_HOURLY_WAKE_LIMIT: usize = 12;
 pub const DEFAULT_WAKE_WINDOW: Duration = Duration::from_secs(3600);
@@ -22,8 +25,6 @@ pub const DEFAULT_MID_TURN_HOURLY_AGENT_CAP: usize = 30;
 pub const MAX_WAKE_ITEM_BODY_BYTES: usize = 2_048;
 pub const MAX_MID_TURN_BATCH_BYTES: usize = 8_000;
 
-pub(crate) const UNTRUSTED_OPEN: &str = "<<<UNTRUSTED_MESSAGE";
-pub(crate) const UNTRUSTED_CLOSE: &str = "<<<END_UNTRUSTED_MESSAGE>>>";
 const MID_TURN_HEADER: &str = "=== OFFICE MID-TURN NOTICE (untrusted message data) ===";
 const MID_TURN_FOOTER: &str = "=== END OFFICE MID-TURN NOTICE ===";
 

@@ -1,0 +1,16 @@
+[package]
+name = "org-redact"
+description = "Layer-0 secret redaction and untrusted-data prompt-injection sanitization."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+testkit = []
+
+[dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

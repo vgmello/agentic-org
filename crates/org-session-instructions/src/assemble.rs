@@ -5,10 +5,10 @@
 //! delta go in the turn input ([`super::compose_turn_objective`]).
 
 use org_command::CommandTable;
+use org_redact::sanitize::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
 
 use super::identity::Placement;
 use super::{builtin_instructions, CHIEF_OF_STAFF_GUIDANCE, HR_LEAD, SAME_USER_ISOLATION_NOTICE};
-use crate::wake::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
 
 /// Inputs for assembling an agent's standing prompt.
 #[derive(Debug, Clone)]
@@ -41,10 +41,10 @@ pub struct InstructionInput<'a> {
 /// The heading that opens Part 7, the project repository's instruction files (`doc-27` §1).
 const REPOSITORY_INSTRUCTIONS_HEADING: &str = "## Project repository instructions";
 
-/// An agent's standing prompt as a [`org_agent_runtime::SessionSpec`] holds it: the office's
-/// parts and the project repository's part apart, so the runtime places the agent's identity
-/// prompt between them by structure (`SessionSpec::standing_prompt`) and no text in the
-/// organization's parts can move that boundary.
+/// An agent's standing prompt as `SessionSpec` holds it: the office's parts and the project
+/// repository's part apart, so the runtime places the agent's identity prompt between them by
+/// structure (`SessionSpec::standing_prompt`) and no text in the organization's parts can move
+/// that boundary.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StandingInstructions {
     /// Parts 1-6 (`SessionSpec::instructions`).

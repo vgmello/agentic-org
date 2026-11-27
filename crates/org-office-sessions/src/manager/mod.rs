@@ -116,17 +116,17 @@ pub struct SessionManagerConfig {
     pub enrollment_driver: Arc<dyn EnrollmentDriver>,
     pub subscription_usage_collector: Arc<dyn SubscriptionUsageCollector>,
     pub hq_permits: Option<Arc<dyn crate::router::HqPermitCoordinator>>,
-    /// The live `agent-os` command table builder for standing instructions; `production` takes
-    /// the one the composition root installed ([`crate::instructions::install_command_catalogue`]).
+    /// The live `agent-os` command table builder for standing instructions; `with_runtimes` takes
+    /// the static catalogue ([`crate::instructions::installed_command_catalogue`]).
     /// Without one, the instructions' command catalogue section lists no commands.
     pub command_catalogue: Option<crate::instructions::CommandCatalogue>,
     /// The account's `agent-os` external sign-in state folders (workspace keys, fast tokens):
     /// every managed sandbox denies them and a Linux `bwrap` launch masks them (`TASK-137`).
-    /// `production` resolves them from `HOME` ([`sandbox_rules::agent_os_state_roots_from`]);
+    /// `with_runtimes` resolves them from `HOME` ([`sandbox_rules::agent_os_state_roots_from`]);
     /// this crate's unit tests start with none, so no test writes under the real account.
     pub agent_os_state_roots: Vec<PathBuf>,
     /// Optional consumer-owned attachment payload resolver (`TASK-98.3`). When `None`, defaults to
-    /// [`crate::turn_attachments::LocalOfficeAttachmentResolver`]; satellites wire a
+    /// [`crate::LocalOfficeAttachmentResolver`]; satellites wire a
     /// federation-backed resolver in `org-office-server`.
     pub attachment_resolver: Option<Arc<dyn crate::turn_attachments::TurnAttachmentResolver>>,
     /// Per-office idle hibernation TTL, resident RSS ceiling, and child build concurrency (`TASK-133`).
@@ -134,7 +134,8 @@ pub struct SessionManagerConfig {
 }
 
 impl SessionManagerConfig {
-    pub fn production(office_socket: PathBuf) -> Self {
+    /// Builds a production configuration with explicitly injected runtime adapters (`TASK-255`).
+    pub fn with_runtimes(office_socket: PathBuf, runtimes: RuntimeRegistry) -> Self {
         Self {
             office_socket,
             helper_dir: None,
@@ -144,7 +145,7 @@ impl SessionManagerConfig {
             wake_window: DEFAULT_WAKE_WINDOW,
             suspend_grace: DEFAULT_SUSPEND_GRACE,
             mid_turn_limits: MidTurnLimits::default(),
-            runtimes: RuntimeRegistry::production(),
+            runtimes,
             enrollment_driver: Arc::new(CliEnrollmentDriver),
             subscription_usage_collector: Arc::new(ProviderSubscriptionUsageCollector::production()),
             hq_permits: None,
@@ -160,6 +161,11 @@ impl SessionManagerConfig {
             attachment_resolver: None,
             resource_limits: ResourceLimitsConfig::from_env(),
         }
+    }
+
+    #[cfg(test)]
+    pub fn production(office_socket: PathBuf) -> Self {
+        Self::with_runtimes(office_socket, RuntimeRegistry::production())
     }
 }
 
@@ -500,9 +506,11 @@ impl SessionManager {
             config.enrollment_timeout,
         );
         let attachment_resolver = config.attachment_resolver.clone().unwrap_or_else(|| {
-            Arc::new(crate::turn_attachments::LocalOfficeAttachmentResolver::new(
-                Arc::clone(&office),
-            ))
+            Arc::new(
+                crate::turn_attachments_adapter::LocalOfficeAttachmentResolver::new(Arc::clone(
+                    &office,
+                )),
+            )
         });
         Self {
             office,

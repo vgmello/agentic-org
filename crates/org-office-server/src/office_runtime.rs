@@ -254,7 +254,7 @@ pub(crate) fn serve_office(
         office,
         auth,
         instance,
-        runtimes: org_office_sessions::RuntimeRegistry::production(),
+        runtimes: org_office_sessions::RuntimeRegistry::empty(),
     })
 }
 
@@ -469,6 +469,7 @@ fn start_channel_watcher(
     let channel_watcher = Arc::new(watcher::ChannelWatcher::production(
         office,
         Some(Arc::clone(session_manager)),
+        session_manager.runtimes().clone(),
     ));
     let notices_watcher = Arc::downgrade(&channel_watcher);
     session_manager.set_watch_notice_provider(Arc::new(move |emp_id| {
@@ -496,24 +497,27 @@ impl org_office_sessions::TurnAttachmentResolver for SatelliteAttachmentResolver
     fn resolve_for_turn(
         &self,
         employee_id: &str,
-        delivery_scope: &org_office::attachments::DeliveryScope,
+        delivery_scope: &org_office_sessions::TurnDeliveryScope,
         attachment_id: &str,
         remaining_staging_budget: u64,
     ) -> Result<
-        Result<org_office::attachments::DeliveryAttachmentPayload, org_proto::ApiError>,
-        org_office::OfficeError,
+        Result<org_office_sessions::TurnDeliveryAttachment, org_proto::ApiError>,
+        org_office_sessions::TurnAttachmentResolveError,
     > {
         let remote = federation::HqBlobRemote::new(Arc::clone(&self.office));
         let pull = org_office::attachments::remote::BlobPull {
             remote: &remote,
             cache_max_bytes: federation::blob_cache_max_bytes(),
         };
-        self.office.attachment_read_for_delivery_with(
-            employee_id,
-            attachment_id,
-            delivery_scope,
-            remaining_staging_budget,
-            Some(pull),
+        let office_scope = org_office_sessions::to_office_delivery_scope(delivery_scope);
+        org_office_sessions::map_office_delivery_result(
+            self.office.attachment_read_for_delivery_with(
+                employee_id,
+                attachment_id,
+                &office_scope,
+                remaining_staging_budget,
+                Some(pull),
+            ),
         )
     }
 }
@@ -526,7 +530,7 @@ pub(crate) fn start_session_manager(
     start_session_manager_with_runtimes(
         office,
         socket,
-        org_office_sessions::RuntimeRegistry::production(),
+        org_office_sessions::RuntimeRegistry::empty(),
     )
 }
 
@@ -535,8 +539,8 @@ pub(crate) fn start_session_manager_with_runtimes(
     socket: &Path,
     runtimes: org_office_sessions::RuntimeRegistry,
 ) -> Arc<org_office_sessions::SessionManager> {
-    let mut cfg = org_office_sessions::SessionManagerConfig::production(socket.to_path_buf());
-    cfg.runtimes = runtimes;
+    let mut cfg =
+        org_office_sessions::SessionManagerConfig::with_runtimes(socket.to_path_buf(), runtimes);
     if office.info().role == org_office::OfficeRole::Satellite {
         cfg.hq_permits = Some(Arc::new(federation::SatelliteHqPermitCoordinator::new(
             Arc::clone(&office),

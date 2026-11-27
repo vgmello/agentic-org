@@ -4,13 +4,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use org_agent_runtime::{Control, ControlError, ImageInputMode, MidTurnDelivery, Output};
-use org_office::attachments::DeliveryScope;
 use org_proto::sessions::SessionState;
 
 use crate::credentials::{now_ms, rfc3339_now};
 use crate::turn_attachments::{
     prepare_turn_attachments, purge_turn_dir, PrepareTurnAttachmentsRequest, PreparedTurnInput,
-    MAX_ATTACHMENTS_PER_TURN, MAX_DOC_STAGING_BYTES_PER_TURN,
+    TurnDeliveryScope, MAX_ATTACHMENTS_PER_TURN, MAX_DOC_STAGING_BYTES_PER_TURN,
 };
 
 use super::commands::{build_stale_failover_request, release_active_permit, take_pending_turns};
@@ -18,11 +17,11 @@ use super::events::apply_outputs;
 use super::queue::{merge_queued_turns, QueuedTurn};
 use super::{persist_turn_update, MidTurnStageOutcome, PumpContext, PumpLoopState};
 
-fn delivery_scope(ctx: &PumpContext) -> DeliveryScope {
+fn delivery_scope(ctx: &PumpContext) -> TurnDeliveryScope {
     ctx.partition
         .as_ref()
         .map(|p| p.key().delivery_scope())
-        .unwrap_or(DeliveryScope::None)
+        .unwrap_or(TurnDeliveryScope::None)
 }
 
 fn stage_entropy_hex() -> String {

@@ -8,7 +8,7 @@ use org_office::accounting::{
     SUBSCRIPTION_USAGE_FRESHNESS_MS,
 };
 use org_office::organization_family::records::{ProviderAuthMode, ProviderConnection};
-use org_office::Office;
+use org_office::{format_rfc3339_ms, Office};
 use org_proto::costs::{
     CostSubscriptionUsageCollectParams, CostSubscriptionUsageCollectResult,
     CostSubscriptionUsageCredentialRevokeParams, CostSubscriptionUsageCredentialRevokeResult,
@@ -18,31 +18,28 @@ use org_proto::costs::{
 };
 use org_proto::{ApiError, ErrorCode};
 
-use crate::credentials::{CredentialVault, EnrollmentVaultError, UnwrappedCredential};
-
 use super::endpoint::{
     is_valid_bearer_token, resolve_expected_origin, transport_error_msg,
     validate_usage_endpoint_url,
 };
+use super::oauth::parse_usage_oauth_credential;
 use super::transport::{attempt_schedule_map, record_scheduling_attempt};
 use super::{
     SubscriptionUsageCollectOutcome, SubscriptionUsageCollectRequest, SubscriptionUsageCollector,
-    MAX_ACCOUNT_HINT_BYTES, MAX_COLLECT_RESPONSE_BYTES, MAX_CONCURRENT_COLLECTORS,
-    TOTAL_COLLECTION_BUDGET,
+    UnwrappedUsageCredential, UsageCredentialError, UsageCredentialLookup, MAX_ACCOUNT_HINT_BYTES,
+    MAX_COLLECT_RESPONSE_BYTES, MAX_CONCURRENT_COLLECTORS, TOTAL_COLLECTION_BUDGET,
 };
 
-use crate::credentials::format_rfc3339_ms;
-
 // ---------------------------------------------------------------------------
-// Office + CredentialVault orchestration (called by SessionManager)
+// Office + UsageCredentialLookup orchestration (called by SessionManager)
 // ---------------------------------------------------------------------------
 
 pub(crate) fn credential_presence_for(
-    vault: &CredentialVault,
+    vault: &dyn UsageCredentialLookup,
     connection_id: &str,
 ) -> SubscriptionCredentialPresence {
     let usage = vault.usage_status(connection_id).ok();
-    let enrolled = vault.status(connection_id).ok();
+    let enrolled = vault.enrolled_status(connection_id).ok();
     let has_usage_credential = usage.as_ref().is_some_and(|u| u.configured);
     let has_enrolled_credential = enrolled.as_ref().is_some_and(|e| e.enrolled);
     let account_hint = usage
@@ -55,9 +52,9 @@ pub(crate) fn credential_presence_for(
     }
 }
 
-pub(crate) fn list_subscription_usage(
+pub fn list_subscription_usage(
     office: &Office,
-    vault: &CredentialVault,
+    vault: &dyn UsageCredentialLookup,
     actor: &str,
     params: CostSubscriptionUsageListParams,
 ) -> Result<CostSubscriptionUsageListResult, ApiError> {
@@ -68,9 +65,9 @@ pub(crate) fn list_subscription_usage(
         .map_err(|e| ApiError::new(ErrorCode::StorageError, e.to_string()))?
 }
 
-pub(crate) fn set_subscription_usage_credential(
+pub fn set_subscription_usage_credential(
     office: &Office,
-    vault: &CredentialVault,
+    vault: &dyn UsageCredentialLookup,
     actor: &str,
     params: CostSubscriptionUsageCredentialSetParams,
 ) -> Result<CostSubscriptionUsageCredentialSetResult, ApiError> {
@@ -124,9 +121,9 @@ pub(crate) fn set_subscription_usage_credential(
     Ok(CostSubscriptionUsageCredentialSetResult { credential })
 }
 
-pub(crate) fn revoke_subscription_usage_credential(
+pub fn revoke_subscription_usage_credential(
     office: &Office,
-    vault: &CredentialVault,
+    vault: &dyn UsageCredentialLookup,
     actor: &str,
     params: CostSubscriptionUsageCredentialRevokeParams,
 ) -> Result<CostSubscriptionUsageCredentialRevokeResult, ApiError> {
@@ -141,7 +138,7 @@ pub(crate) fn revoke_subscription_usage_credential(
 #[derive(Clone, Copy)]
 pub(super) struct CollectCtx<'a> {
     pub(super) office: &'a Office,
-    pub(super) vault: &'a CredentialVault,
+    pub(super) vault: &'a dyn UsageCredentialLookup,
     pub(super) collector: &'a dyn SubscriptionUsageCollector,
     pub(super) time_zone: &'a str,
     pub(super) collected_at: &'a str,
@@ -149,9 +146,9 @@ pub(super) struct CollectCtx<'a> {
     pub(super) deadline: Instant,
 }
 
-pub(crate) fn collect_subscription_usage(
+pub fn collect_subscription_usage(
     office: &Office,
-    vault: &CredentialVault,
+    vault: &dyn UsageCredentialLookup,
     collector: &dyn SubscriptionUsageCollector,
     actor: &str,
     params: CostSubscriptionUsageCollectParams,
@@ -428,15 +425,15 @@ pub(super) fn persist_outcome_with_fallback(
 }
 
 pub(super) fn load_active_credential(
-    vault: &CredentialVault,
+    vault: &dyn UsageCredentialLookup,
     connection_id: &str,
     expected_origin: &str,
     now_ms: u64,
 ) -> Result<
-    (SubscriptionUsageAuthSource, UnwrappedCredential),
+    (SubscriptionUsageAuthSource, UnwrappedUsageCredential),
     (SubscriptionUsageAuthSource, SubscriptionUsageCollectOutcome),
 > {
-    match vault.load_unwrapped_usage_with_meta(connection_id, expected_origin) {
+    match vault.load_unwrapped_usage(connection_id, expected_origin) {
         Ok(Some(cred)) => {
             if is_expired(cred.expires_at.as_deref(), now_ms) {
                 return Err((
@@ -451,7 +448,7 @@ pub(super) fn load_active_credential(
             return Ok((SubscriptionUsageAuthSource::DedicatedUsageCredential, cred));
         }
         Ok(None) => {}
-        Err(EnrollmentVaultError::Conflict(_)) => {
+        Err(UsageCredentialError::Conflict(_)) => {
             return Err((
                 SubscriptionUsageAuthSource::DedicatedUsageCredential,
                 SubscriptionUsageCollectOutcome::AuthRequired {
@@ -467,7 +464,7 @@ pub(super) fn load_active_credential(
             ));
         }
     }
-    match vault.load_unwrapped_with_meta(connection_id) {
+    match vault.load_unwrapped_enrolled(connection_id) {
         Ok(Some(mut cred)) => {
             let expired_err = || {
                 (
@@ -482,7 +479,7 @@ pub(super) fn load_active_credential(
             if is_expired(cred.expires_at.as_deref(), now_ms) {
                 return Err(expired_err());
             }
-            let Ok(oauth) = crate::host_auth::parse_vault_oauth_credential(&cred.secret) else {
+            let Some(oauth) = parse_usage_oauth_credential(&cred.secret) else {
                 return Err((
                     SubscriptionUsageAuthSource::EnrolledSubscriptionCredential,
                     SubscriptionUsageCollectOutcome::AuthRequired {
@@ -525,9 +522,9 @@ pub(super) fn is_expired(expires_at: Option<&str>, now_ms: u64) -> bool {
     org_proto::parse_rfc3339_ms(raw).is_none_or(|exp| now_ms >= exp)
 }
 
-pub(super) fn vault_err_to_outcome(err: EnrollmentVaultError) -> SubscriptionUsageCollectOutcome {
+pub(super) fn vault_err_to_outcome(err: UsageCredentialError) -> SubscriptionUsageCollectOutcome {
     match err {
-        EnrollmentVaultError::MissingSecretsKey => SubscriptionUsageCollectOutcome::AuthRequired {
+        UsageCredentialError::MissingSecretsKey => SubscriptionUsageCollectOutcome::AuthRequired {
             issue_code: "SECRETS_KEY_UNAVAILABLE".into(),
             message: "Office secrets key is unavailable; cannot unwrap provider credentials."
                 .into(),
@@ -671,18 +668,18 @@ pub(super) fn resolve_collection_targets(
         .collect())
 }
 
-pub(super) fn map_vault_error(err: EnrollmentVaultError) -> ApiError {
+pub(super) fn map_vault_error(err: UsageCredentialError) -> ApiError {
     match err {
-        EnrollmentVaultError::MissingSecretsKey => ApiError::new(
+        UsageCredentialError::MissingSecretsKey => ApiError::new(
             ErrorCode::StorageError,
             "office secrets key unavailable; cannot wrap usage credentials",
         ),
-        EnrollmentVaultError::InvalidInput(msg) => ApiError::new(ErrorCode::InvalidRequest, msg),
-        EnrollmentVaultError::NotAuthorized(msg) => ApiError::new(ErrorCode::NotAuthorized, msg),
-        EnrollmentVaultError::Conflict(msg) => ApiError::new(ErrorCode::Conflict, msg),
-        EnrollmentVaultError::NotFound(msg) => ApiError::new(ErrorCode::NotFound, msg),
-        EnrollmentVaultError::Expired(msg) => ApiError::new(ErrorCode::Expired, msg),
-        EnrollmentVaultError::Crypto(msg) | EnrollmentVaultError::Io(msg) => {
+        UsageCredentialError::InvalidInput(msg) => ApiError::new(ErrorCode::InvalidRequest, msg),
+        UsageCredentialError::NotAuthorized(msg) => ApiError::new(ErrorCode::NotAuthorized, msg),
+        UsageCredentialError::Conflict(msg) => ApiError::new(ErrorCode::Conflict, msg),
+        UsageCredentialError::NotFound(msg) => ApiError::new(ErrorCode::NotFound, msg),
+        UsageCredentialError::Expired(msg) => ApiError::new(ErrorCode::Expired, msg),
+        UsageCredentialError::Crypto(msg) | UsageCredentialError::Io(msg) => {
             ApiError::new(ErrorCode::StorageError, msg)
         }
     }

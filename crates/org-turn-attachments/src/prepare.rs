@@ -7,14 +7,13 @@ use std::path::Path;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use org_agent_runtime::{ImageInputMode, SpecPath, TurnImage};
-use org_office::attachments::media::ModelDerivative;
-use org_office::attachments::records::AttachmentRecord;
-use org_office::attachments::{DeliveryAttachmentPayload, DeliveryScope};
-
-use crate::sanitize::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
+use org_redact::sanitize::{sanitize_untrusted_meta, MAX_META_FIELD_BYTES};
 
 use super::staging::{extension_for_mime, stage_turn_file, tighten_turn_dir};
-use super::{TurnAttachmentResolver, MAX_IMAGE_DERIVATIVE_BYTES, MAX_INLINE_IMAGES_PER_TURN};
+use super::{
+    TurnAttachmentMeta, TurnAttachmentResolver, TurnDeliveryAttachment, TurnDeliveryScope,
+    TurnImageDerivative, MAX_IMAGE_DERIVATIVE_BYTES, MAX_INLINE_IMAGES_PER_TURN,
+};
 
 /// Opening boundary tag for the untrusted attachments manifest.
 pub const UNTRUSTED_ATTACHMENTS_OPEN: &str = "<<<UNTRUSTED_ATTACHMENTS>>>";
@@ -28,7 +27,7 @@ const MAX_ATTACHMENT_DESCRIPTION_BYTES: usize = 256;
 /// Input parameters for resolving and staging attachments for one turn or mid-turn delivery.
 pub struct PrepareTurnAttachmentsRequest<'a> {
     pub employee_id: &'a str,
-    pub delivery_scope: &'a DeliveryScope,
+    pub delivery_scope: &'a TurnDeliveryScope,
     pub turn_id: &'a str,
     pub base_text: String,
     pub attachment_ids: &'a [String],
@@ -103,7 +102,7 @@ pub fn prepare_turn_attachments(req: PrepareTurnAttachmentsRequest<'_>) -> Prepa
             att_id,
             remaining_staging_budget,
         ) {
-            Ok(Ok(DeliveryAttachmentPayload::Image { record, derivative })) => {
+            Ok(Ok(TurnDeliveryAttachment::Image { record, derivative })) => {
                 handle_image_attachment(
                     &req,
                     &record,
@@ -114,7 +113,7 @@ pub fn prepare_turn_attachments(req: PrepareTurnAttachmentsRequest<'_>) -> Prepa
                     &mut staged_any,
                 );
             }
-            Ok(Ok(DeliveryAttachmentPayload::Document { record, bytes })) => {
+            Ok(Ok(TurnDeliveryAttachment::Document { record, bytes })) => {
                 handle_document_attachment(
                     &req,
                     &record,
@@ -163,8 +162,8 @@ pub fn prepare_turn_attachments(req: PrepareTurnAttachmentsRequest<'_>) -> Prepa
 
 fn handle_image_attachment(
     req: &PrepareTurnAttachmentsRequest<'_>,
-    record: &AttachmentRecord,
-    derivative: &ModelDerivative,
+    record: &TurnAttachmentMeta,
+    derivative: &TurnImageDerivative,
     remaining_staging_budget: &mut u64,
     protocol_images: &mut Vec<TurnImage>,
     manifest_lines: &mut Vec<String>,
@@ -182,7 +181,7 @@ fn handle_image_attachment(
     }
 
     let att_id = record.id.as_str();
-    let ext = extension_for_mime(derivative.media.mime());
+    let ext = extension_for_mime(&derivative.mime_type);
     let img_len = derivative.bytes.len() as u64;
     let (staged_path, budget_exhausted) = if img_len <= *remaining_staging_budget {
         match stage_turn_file(
@@ -255,7 +254,7 @@ fn staged_only_outcome(
 
 fn resolve_image_delivery(
     req: &PrepareTurnAttachmentsRequest<'_>,
-    derivative: &ModelDerivative,
+    derivative: &TurnImageDerivative,
     staged_path: Option<&Path>,
     budget_exhausted: bool,
     protocol_images: &mut Vec<TurnImage>,
@@ -267,7 +266,7 @@ fn resolve_image_delivery(
         ImageInputMode::InlineBase64 => {
             let b64 = STANDARD.encode(&derivative.bytes);
             protocol_images.push(TurnImage::inline_base64(
-                derivative.media.mime().to_owned(),
+                derivative.mime_type.clone(),
                 b64,
                 derivative.bytes.len(),
             ));
@@ -281,10 +280,7 @@ fn resolve_image_delivery(
                 .and_then(Path::to_str)
                 .and_then(|s| SpecPath::try_from(s).ok());
             if let Some(path) = spec_path {
-                protocol_images.push(TurnImage::local_path(
-                    derivative.media.mime().to_owned(),
-                    path,
-                ));
+                protocol_images.push(TurnImage::local_path(derivative.mime_type.clone(), path));
                 ("local_image", None)
             } else {
                 staged_only_outcome(
@@ -306,7 +302,7 @@ fn resolve_image_delivery(
 
 fn handle_document_attachment(
     req: &PrepareTurnAttachmentsRequest<'_>,
-    record: &AttachmentRecord,
+    record: &TurnAttachmentMeta,
     bytes: Option<&[u8]>,
     remaining_staging_budget: &mut u64,
     manifest_lines: &mut Vec<String>,
@@ -359,8 +355,8 @@ fn format_staged_path(staged_path: Option<&Path>) -> String {
 }
 
 fn format_image_entry(
-    record: &AttachmentRecord,
-    derivative: &ModelDerivative,
+    record: &TurnAttachmentMeta,
+    derivative: &TurnImageDerivative,
     staged_path: Option<&Path>,
     delivery: &str,
     notice: Option<&str>,
@@ -385,7 +381,7 @@ fn format_image_entry(
 }
 
 fn format_document_entry(
-    record: &AttachmentRecord,
+    record: &TurnAttachmentMeta,
     staged_path: Option<&Path>,
     notice: Option<&str>,
 ) -> String {

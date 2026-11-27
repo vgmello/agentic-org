@@ -27,10 +27,9 @@ use org_agent_runtime::{
     SessionEvent, SessionId, SessionSpec, SignalTarget, Stdio, StopPlan, StopSignal, StopStep,
     TurnImage, TurnImageSource, TurnOutcome, Unavailable, UsageScope, VersionRange, Window,
 };
-use org_office::attachments::media::{MediaType, ModelDerivative};
 use org_office::attachments::records::AttachmentRecord;
 use org_office::attachments::{DeliveryAttachmentPayload, DeliveryScope};
-use org_office::{Office, OfficeError, TestOffice};
+use org_office::{Office, TestOffice};
 use org_proto::attachments::{
     AttachmentUploadBeginParams, AttachmentUploadChunkParams, AttachmentUploadRef,
 };
@@ -52,10 +51,12 @@ use crate::runtime_registry::RuntimeRegistry;
 use crate::turn_attachments::{
     attachments_root, prepare_turn_attachments, purge_all_stale_turn_dirs,
     purge_office_stale_attachments, purge_turn_dir, stage_turn_file, tighten_turn_dir,
-    PrepareTurnAttachmentsRequest, TurnAttachmentResolver, MAX_ATTACHMENTS_PER_TURN,
+    PrepareTurnAttachmentsRequest, TurnAttachmentResolveError, TurnAttachmentResolver,
+    TurnDeliveryAttachment, TurnDeliveryScope, TurnImageDerivative, MAX_ATTACHMENTS_PER_TURN,
     MAX_DOC_STAGING_BYTES_PER_TURN, MAX_IMAGE_DERIVATIVE_BYTES, UNTRUSTED_ATTACHMENTS_CLOSE,
     UNTRUSTED_ATTACHMENTS_OPEN,
 };
+use crate::turn_attachments_adapter::from_office_attachment_record;
 use crate::wake::{MidTurnLimits, PendingWakeItem, WakeKind, WakeOutcome};
 
 /// Valid 2x2 RGB PNG (75 bytes) accepted by `Office` image decoder & `model_derivative`.
@@ -1197,10 +1198,10 @@ impl TurnAttachmentResolver for SyntheticDocResolver {
     fn resolve_for_turn(
         &self,
         _employee_id: &str,
-        _delivery_scope: &DeliveryScope,
+        _delivery_scope: &TurnDeliveryScope,
         attachment_id: &str,
         remaining_staging_budget: u64,
-    ) -> Result<Result<DeliveryAttachmentPayload, ApiError>, OfficeError> {
+    ) -> Result<Result<TurnDeliveryAttachment, ApiError>, TurnAttachmentResolveError> {
         let Some((rec, size)) = self.docs.get(attachment_id) else {
             return Ok(Err(ApiError::new(ErrorCode::NotFound, "missing")));
         };
@@ -1209,8 +1210,8 @@ impl TurnAttachmentResolver for SyntheticDocResolver {
         } else {
             None
         };
-        Ok(Ok(DeliveryAttachmentPayload::Document {
-            record: rec.clone(),
+        Ok(Ok(TurnDeliveryAttachment::Document {
+            record: from_office_attachment_record(rec.clone()),
             bytes,
         }))
     }
@@ -1610,14 +1611,14 @@ impl TurnAttachmentResolver for AdversarialResolver {
     fn resolve_for_turn(
         &self,
         _employee_id: &str,
-        _delivery_scope: &DeliveryScope,
+        _delivery_scope: &TurnDeliveryScope,
         _attachment_id: &str,
         _remaining_staging_budget: u64,
-    ) -> Result<Result<DeliveryAttachmentPayload, ApiError>, OfficeError> {
-        Ok(Ok(DeliveryAttachmentPayload::Image {
-            record: self.rec.clone(),
-            derivative: ModelDerivative {
-                media: MediaType::Png,
+    ) -> Result<Result<TurnDeliveryAttachment, ApiError>, TurnAttachmentResolveError> {
+        Ok(Ok(TurnDeliveryAttachment::Image {
+            record: from_office_attachment_record(self.rec.clone()),
+            derivative: TurnImageDerivative {
+                mime_type: "image/png".into(),
                 bytes: TINY_PNG.to_vec(),
                 width: 2,
                 height: 2,
@@ -1650,7 +1651,7 @@ fn untrusted_data_prompt_injection_fencing_neutralizes_adversarial_metadata() {
     let resolver = AdversarialResolver { rec };
     let prepared = prepare_turn_attachments(PrepareTurnAttachmentsRequest {
         employee_id: "emp-1",
-        delivery_scope: &DeliveryScope::None,
+        delivery_scope: &TurnDeliveryScope::None,
         turn_id: "turn-sec-1",
         base_text: "Handle incoming message".into(),
         attachment_ids: std::slice::from_ref(&att_id),
@@ -2167,10 +2168,10 @@ fn attachment_cap_32_oversized_derivative_and_shared_50_mib_mid_turn_budget() {
         fn resolve_for_turn(
             &self,
             _employee_id: &str,
-            _delivery_scope: &DeliveryScope,
+            _delivery_scope: &TurnDeliveryScope,
             attachment_id: &str,
             _remaining_staging_budget: u64,
-        ) -> Result<Result<DeliveryAttachmentPayload, ApiError>, OfficeError> {
+        ) -> Result<Result<TurnDeliveryAttachment, ApiError>, TurnAttachmentResolveError> {
             self.calls.fetch_add(1, Ordering::Relaxed);
             let mut rec = self.rec.clone();
             rec.filename = format!("{attachment_id}.png");
@@ -2179,10 +2180,10 @@ fn attachment_cap_32_oversized_derivative_and_shared_50_mib_mid_turn_budget() {
             } else {
                 TINY_PNG.to_vec()
             };
-            Ok(Ok(DeliveryAttachmentPayload::Image {
-                record: rec,
-                derivative: ModelDerivative {
-                    media: MediaType::Png,
+            Ok(Ok(TurnDeliveryAttachment::Image {
+                record: from_office_attachment_record(rec),
+                derivative: TurnImageDerivative {
+                    mime_type: "image/png".into(),
                     bytes,
                     width: 2,
                     height: 2,
@@ -2214,7 +2215,7 @@ fn attachment_cap_32_oversized_derivative_and_shared_50_mib_mid_turn_budget() {
     };
     let cap_prepared = prepare_turn_attachments(PrepareTurnAttachmentsRequest {
         employee_id: "emp-cap",
-        delivery_scope: &DeliveryScope::None,
+        delivery_scope: &TurnDeliveryScope::None,
         turn_id: "turn-cap-32",
         base_text: "36 attachments".into(),
         attachment_ids: &ids,
@@ -2254,7 +2255,7 @@ fn attachment_cap_32_oversized_derivative_and_shared_50_mib_mid_turn_budget() {
     ] {
         let ov = prepare_turn_attachments(PrepareTurnAttachmentsRequest {
             employee_id: "emp-ov",
-            delivery_scope: &DeliveryScope::None,
+            delivery_scope: &TurnDeliveryScope::None,
             turn_id: tid,
             base_text: "oversized".into(),
             attachment_ids: &["att-ov".into()],

@@ -48,13 +48,13 @@ impl PartitionKey {
         self.0.strip_prefix(TESS_DM_PREFIX)
     }
 
-    pub fn delivery_scope(&self) -> org_office::attachments::DeliveryScope {
+    pub fn delivery_scope(&self) -> crate::turn_attachments::TurnDeliveryScope {
         if let Some(caller_id) = self.caller_id() {
-            org_office::attachments::DeliveryScope::ActingForPerson(caller_id.to_owned())
+            crate::turn_attachments::TurnDeliveryScope::ActingForPerson(caller_id.to_owned())
         } else if let Some(sender_id) = self.dm_sender_id() {
-            org_office::attachments::DeliveryScope::DirectSender(sender_id.to_owned())
+            crate::turn_attachments::TurnDeliveryScope::DirectSender(sender_id.to_owned())
         } else {
-            org_office::attachments::DeliveryScope::None
+            crate::turn_attachments::TurnDeliveryScope::None
         }
     }
 }

@@ -23,12 +23,12 @@ impl crate::turn_attachments::TurnAttachmentResolver for NoopAttachmentResolver 
     fn resolve_for_turn(
         &self,
         _employee_id: &str,
-        _delivery_scope: &org_office::attachments::DeliveryScope,
+        _delivery_scope: &crate::turn_attachments::TurnDeliveryScope,
         _attachment_id: &str,
         _remaining_staging_budget: u64,
     ) -> Result<
-        Result<org_office::attachments::DeliveryAttachmentPayload, org_proto::ApiError>,
-        org_office::OfficeError,
+        Result<crate::turn_attachments::TurnDeliveryAttachment, org_proto::ApiError>,
+        crate::turn_attachments::TurnAttachmentResolveError,
     > {
         Ok(Err(org_proto::ApiError::new(
             org_proto::ErrorCode::NotFound,

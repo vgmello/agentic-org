@@ -85,6 +85,7 @@ impl LiveOfficeFixture {
         let channel_watcher = Arc::new(crate::watcher::ChannelWatcher::production(
             Arc::clone(&office),
             Some(Arc::clone(&sessions)),
+            sessions.runtimes().clone(),
         ));
         let sat_wake = Arc::new(SatSyncWake::default());
         let hq_fed_slot: HqFederationSlot = Arc::default();

@@ -5,23 +5,24 @@ use super::*;
 
 #[test]
 fn endpoint_env_mapping_and_failover_classification_rules() {
+    let runtimes = RuntimeRegistry::production();
     assert_eq!(
-        endpoint_env_for("claude", "https://proxy.example.com/v1").unwrap(),
+        endpoint_env_for(&runtimes, "claude", "https://proxy.example.com/v1").unwrap(),
         ("ANTHROPIC_BASE_URL", "https://proxy.example.com/v1".into())
     );
     assert_eq!(
-        endpoint_env_for("codex", "https://openai.example.com/v1").unwrap(),
+        endpoint_env_for(&runtimes, "codex", "https://openai.example.com/v1").unwrap(),
         ("OPENAI_BASE_URL", "https://openai.example.com/v1".into())
     );
     assert_eq!(
-        endpoint_env_for("agy", "https://gemini.example.com/v1").unwrap(),
+        endpoint_env_for(&runtimes, "agy", "https://gemini.example.com/v1").unwrap(),
         (
             "GOOGLE_GEMINI_BASE_URL",
             "https://gemini.example.com/v1".into()
         )
     );
-    assert!(endpoint_env_for("claude", "http://169.254.169.254/latest").is_err());
-    assert!(endpoint_env_for("claude", "ftp://bad.example.com").is_err());
+    assert!(endpoint_env_for(&runtimes, "claude", "http://169.254.169.254/latest").is_err());
+    assert!(endpoint_env_for(&runtimes, "claude", "ftp://bad.example.com").is_err());
 
     assert_eq!(classify_failover_error(&[], true), Some("rate_limited"));
     assert_eq!(

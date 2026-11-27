@@ -1,22 +1,22 @@
-//! End-to-end multimodal image and allowlisted document turn delivery (`TASK-98.3`).
+//! End-to-end multimodal image and allowlisted document turn delivery (`TASK-98.3`, `TASK-255`).
 //!
-//! Cohesive domain crate: owns turn-scoped `0400` attachment staging, dual-delivery normalization,
-//! per-turn budgets, and untrusted-data sanitization/fencing (`INSTR-5`), introducing zero
-//! intra-crate dependency cycles (`vsa_structure`).
+//! Cohesive domain crate decoupled from `org-office`: owns turn-scoped `0400` attachment staging,
+//! dual-delivery normalization, per-turn budgets, and consumer-owned attachment delivery DTOs,
+//! introducing zero intra-crate dependency cycles (`vsa_structure`).
 
 #![forbid(unsafe_code)]
 
 mod prepare;
-pub mod sanitize;
 mod staging;
+#[cfg(test)]
+mod tests;
 
-use std::sync::Arc;
+use std::fmt;
 
-use org_office::attachments::{DeliveryAttachmentPayload, DeliveryScope};
-use org_office::{Office, OfficeError};
 use org_proto::ApiError;
 use serde::{Deserialize, Serialize};
 
+pub use org_redact::sanitize;
 pub use prepare::{
     prepare_turn_attachments, PrepareTurnAttachmentsRequest, PreparedTurnInput,
     UNTRUSTED_ATTACHMENTS_CLOSE, UNTRUSTED_ATTACHMENTS_OPEN,
@@ -51,49 +51,131 @@ impl TurnAttachmentRef {
     }
 }
 
+/// Chief of Staff turn partition scope passed to [`TurnAttachmentResolver::resolve_for_turn`]
+/// (`TASK-80.1`, `TASK-240`, `TASK-98.3`).
+///
+/// Ordinary agents ignore this field (standard authorization applies). For the built-in Chief of
+/// Staff:
+/// - [`Self::None`] (`tess:wake`): channels only; refuses any DM/GroupDm message or answer file.
+/// - [`Self::ActingForPerson`] (`tess:ask:<caller_id>`): enforces caller visibility and
+///   conversation membership.
+/// - [`Self::DirectSender`] (`tess:dm:<sender_id>`): enforces direct sender participation.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum TurnDeliveryScope {
+    #[default]
+    None,
+    ActingForPerson(String),
+    DirectSender(String),
+}
+
+/// Attachment metadata needed to stage files and render the untrusted attachments manifest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TurnAttachmentMeta {
+    pub id: String,
+    pub filename: String,
+    pub title: String,
+    pub mime_type: String,
+    pub byte_count: u64,
+    pub description: Option<String>,
+    pub page_count: Option<u32>,
+}
+
+/// Bounded model image derivative ready for inline or staged-path turn delivery.
+///
+/// `Debug` never prints raw image bytes.
+#[derive(Clone, PartialEq, Eq)]
+pub struct TurnImageDerivative {
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl fmt::Debug for TurnImageDerivative {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TurnImageDerivative")
+            .field("mime_type", &self.mime_type)
+            .field("bytes_len", &self.bytes.len())
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .finish()
+    }
+}
+
+/// Policy-authorized attachment payload ready for model turn delivery (`TASK-98.3`).
+///
+/// `Debug` never prints raw image or document bytes.
+#[derive(Clone)]
+pub enum TurnDeliveryAttachment {
+    /// Allowlisted image with its bounded model derivative (`<= 1568px`, `<= 1 MiB`).
+    Image {
+        record: TurnAttachmentMeta,
+        derivative: TurnImageDerivative,
+    },
+    /// Allowlisted document (`PDF`, `DOCX`, `XLSX`, `MD`, `TXT`, `CSV`, `JSON` <= 25 MiB).
+    /// `bytes` is `None` when staging this document would exceed the caller's remaining per-turn
+    /// eager staging budget.
+    Document {
+        record: TurnAttachmentMeta,
+        bytes: Option<Vec<u8>>,
+    },
+}
+
+impl fmt::Debug for TurnDeliveryAttachment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Image { record, derivative } => f
+                .debug_struct("TurnDeliveryAttachment::Image")
+                .field("id", &record.id)
+                .field("mime_type", &derivative.mime_type)
+                .field("derivative_bytes", &derivative.bytes.len())
+                .finish(),
+            Self::Document { record, bytes } => f
+                .debug_struct("TurnDeliveryAttachment::Document")
+                .field("id", &record.id)
+                .field("mime_type", &record.mime_type)
+                .field("staged_bytes", &bytes.as_ref().map(Vec::len))
+                .finish(),
+        }
+    }
+}
+
+/// Infrastructure/storage error raised by a [`TurnAttachmentResolver`] implementation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnAttachmentResolveError(String);
+
+impl TurnAttachmentResolveError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+
+    pub fn message(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for TurnAttachmentResolveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TurnAttachmentResolveError {}
+
 /// Consumer-owned port resolving policy-authorized attachment payloads for a managed turn
 /// (`TASK-98.3`, `AGENTS.md` Rule 1).
 ///
-/// HQ uses [`LocalOfficeAttachmentResolver`]; satellites wire a federation-backed implementation
-/// in `org-office-server` that pulls missing shared blobs from HQ via `BlobPull` after the
-/// office's `AuthorizationPolicy` approves the read.
+/// HQ uses `org_office_sessions::LocalOfficeAttachmentResolver`; satellites wire a
+/// federation-backed implementation in `org-office-server` that pulls missing shared blobs from
+/// HQ via `BlobPull` after the office's `AuthorizationPolicy` approves the read.
 pub trait TurnAttachmentResolver: Send + Sync {
     fn resolve_for_turn(
         &self,
         employee_id: &str,
-        delivery_scope: &DeliveryScope,
+        delivery_scope: &TurnDeliveryScope,
         attachment_id: &str,
         remaining_staging_budget: u64,
-    ) -> Result<Result<DeliveryAttachmentPayload, ApiError>, OfficeError>;
-}
-
-/// Default local-office implementation of [`TurnAttachmentResolver`].
-pub struct LocalOfficeAttachmentResolver {
-    office: Arc<Office>,
-}
-
-impl LocalOfficeAttachmentResolver {
-    pub fn new(office: Arc<Office>) -> Self {
-        Self { office }
-    }
-}
-
-impl TurnAttachmentResolver for LocalOfficeAttachmentResolver {
-    fn resolve_for_turn(
-        &self,
-        employee_id: &str,
-        delivery_scope: &DeliveryScope,
-        attachment_id: &str,
-        remaining_staging_budget: u64,
-    ) -> Result<Result<DeliveryAttachmentPayload, ApiError>, OfficeError> {
-        self.office.attachment_read_for_delivery_with(
-            employee_id,
-            attachment_id,
-            delivery_scope,
-            remaining_staging_budget,
-            None,
-        )
-    }
+    ) -> Result<Result<TurnDeliveryAttachment, ApiError>, TurnAttachmentResolveError>;
 }
 
 /// Determines from discovered `capabilities_json` whether a model supports vision/image inputs.

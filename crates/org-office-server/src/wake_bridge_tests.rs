@@ -218,7 +218,10 @@ fn waking_dm_ask_and_ask_answer_thread_lightweight_attachment_ids_without_base64
         .expect("HR agent");
     let hr_id = hr.id.to_string();
 
-    let cfg = SessionManagerConfig::production(tmp.path().join("office.sock"));
+    let cfg = SessionManagerConfig::with_runtimes(
+        tmp.path().join("office.sock"),
+        org_office_sessions::RuntimeRegistry::empty(),
+    );
     let sessions = SessionManager::new(Arc::clone(&office), cfg);
     // Hold launches so wakes stay in `pending-wakes.v1.json` for inspection.
     sessions.set_budget_hold(Some("inspect".into()));

@@ -73,7 +73,10 @@ fn world() -> World {
     let bob = add_person(&office, "Bob", "bob");
     let sessions = Arc::new(org_office_sessions::SessionManager::new(
         Arc::clone(&office),
-        org_office_sessions::SessionManagerConfig::production(tmp.path().join("office.sock")),
+        org_office_sessions::SessionManagerConfig::with_runtimes(
+            tmp.path().join("office.sock"),
+            org_office_sessions::RuntimeRegistry::empty(),
+        ),
     ));
     let gate = ChiefOfStaffGate::new(Arc::clone(&office), Arc::clone(&sessions));
     let (owner_dm, owner_message) = dm_with(&office, &owner, &tess, "the owner's private plan");

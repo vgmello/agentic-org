@@ -122,13 +122,11 @@ fn parse_args(args: &[String]) -> Result<Mode, &'static str> {
     }
 }
 
-/// Runs the server using the process's installed default runtime registry and returns its exit code.
+/// Runs the server with an empty (fail-closed) runtime registry and returns its exit code.
+/// Production composition roots (`apps/agentic-org-office`) MUST call [`run_with_runtimes`] with
+/// explicitly constructed runtime adapters.
 pub fn run(args: &[String], control: ControlPipe) -> i32 {
-    run_with_runtimes(
-        args,
-        control,
-        org_office_sessions::RuntimeRegistry::production(),
-    )
+    run_with_runtimes(args, control, org_office_sessions::RuntimeRegistry::empty())
 }
 
 /// Runs the server with an explicit composition-root [`org_office_sessions::RuntimeRegistry`] and

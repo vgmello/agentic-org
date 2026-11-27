@@ -1,0 +1,17 @@
+[package]
+name = "org-session-presets"
+description = "Permission presets, default-on sandbox rules, and approval escalation policy."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+org-agent-runtime = { path = "../org-agent-runtime" }
+org-office = { path = "../org-office" }
+org-platform = { path = "../org-platform" }
+org-proto = { path = "../org-proto" }
+serde_json.workspace = true
+
+[lints]
+workspace = true
