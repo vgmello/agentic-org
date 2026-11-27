@@ -8,11 +8,17 @@ export {
 	type SpotlightSecondaryAction
 } from '$lib/modules/inbox/spotlight';
 export { deriveCatchUpDigest, deriveExecutiveBrief } from './brief';
-export { deriveFinancialKpi, deriveKpiMetrics, deriveTaskTimeBreakdown } from './kpis';
+export {
+	KPI_PILLAR_ORDER,
+	deriveFinancialKpi,
+	deriveKpiMetrics,
+	deriveTaskTimeBreakdown
+} from './kpis';
 export { deriveProjectCards, deriveUpcomingMilestones } from './projects';
 export { answerExecutiveQuestion, type DecisionAiContext } from './qa';
 export {
 	formatCompactUsd,
+	formatCycleDuration,
 	formatDueShort,
 	greetingForHour,
 	isItemOpen,

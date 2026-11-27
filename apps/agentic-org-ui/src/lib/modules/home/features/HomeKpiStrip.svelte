@@ -4,7 +4,12 @@
 	import DollarSign from '@lucide/svelte/icons/dollar-sign';
 	import Folder from '@lucide/svelte/icons/folder';
 	import Users from '@lucide/svelte/icons/users';
-	import type { ExecutiveKpis, SignalTone } from '$lib/modules/home/model';
+	import {
+		formatCycleDuration,
+		type ExecutiveKpis,
+		type SignalTone
+	} from '$lib/modules/home/model';
+	import HomeKpiCard from './HomeKpiCard.svelte';
 	import HomeThroughputSparkline from './HomeThroughputSparkline.svelte';
 
 	interface Props {
@@ -12,45 +17,6 @@
 	}
 
 	let { kpis }: Props = $props();
-
-	function pillToneClass(tone: SignalTone): string {
-		if (tone === 'bad') return 'is-bad';
-		if (tone === 'warn') return 'is-warn';
-		if (tone === 'muted') return 'is-muted';
-		return 'is-ok';
-	}
-
-	const finPillHref = $derived(
-		kpis.financials.cappedAgent
-			? `/members/${encodeURIComponent(kpis.financials.cappedAgent.memberId)}`
-			: '/settings/costs'
-	);
-
-	const deliveryPillTone = $derived<SignalTone>(
-		kpis.projectsTotal === 0
-			? 'muted'
-			: kpis.projectsAttention === 0
-				? 'ok'
-				: kpis.offTrackProjects > 0 && kpis.atRiskProjects === 0
-					? 'bad'
-					: 'warn'
-	);
-
-	const deliveryPillLabel = $derived(
-		kpis.projectsTotal === 0
-			? 'No deliveries yet'
-			: kpis.projectsAttention === 0
-				? 'All on track'
-				: kpis.offTrackProjects > 0 && kpis.atRiskProjects === 0
-					? `${kpis.offTrackProjects} ${kpis.offTrackProjects === 1 ? 'project' : 'projects'} off track`
-					: `${kpis.projectsAttention} need attention`
-	);
-
-	const teamSubLabel = $derived(
-		kpis.totalAgents === 0
-			? 'Team capacity'
-			: `${kpis.leadsCount} ${kpis.leadsCount === 1 ? 'lead' : 'leads'} · ${kpis.specialistsCount} ${kpis.specialistsCount === 1 ? 'specialist' : 'specialists'}`
-	);
 
 	const onTrackProjects = $derived(
 		Math.max(0, kpis.projectsTotal - kpis.atRiskProjects - kpis.offTrackProjects)
@@ -64,34 +30,326 @@
 	const projectsBarBad = $derived(
 		kpis.projectsTotal > 0 ? Math.max(0, 100 - projectsBarOk - projectsBarWarn) : 0
 	);
+	const projectsPillTone = $derived<SignalTone>(
+		kpis.projectsTotal === 0
+			? 'muted'
+			: kpis.projectsAttention === 0
+				? 'ok'
+				: kpis.offTrackProjects > 0 && kpis.atRiskProjects === 0
+					? 'bad'
+					: 'warn'
+	);
+	const projectsPillLabel = $derived(
+		kpis.projectsTotal === 0
+			? 'No projects yet'
+			: kpis.projectsAttention === 0
+				? 'All on track'
+				: kpis.offTrackProjects > 0 && kpis.atRiskProjects === 0
+					? `${kpis.offTrackProjects} ${kpis.offTrackProjects === 1 ? 'project' : 'projects'} off track`
+					: `${kpis.projectsAttention} need attention`
+	);
+
+	const hasDeliveries = $derived(kpis.doneCount > 0 || kpis.openCount > 0);
+	const deliveryHeadlinePct = $derived(
+		kpis.doneCount > 0 ? kpis.firstTryPassPct : kpis.completionPct
+	);
+	const deliveryPillTone = $derived<SignalTone>(
+		!hasDeliveries ? 'muted' : kpis.firstTryPassPct >= 80 ? 'ok' : 'warn'
+	);
+	const deliveryPillLabel = $derived(
+		!hasDeliveries
+			? 'No deliveries yet'
+			: kpis.doneCount > 0
+				? `${kpis.firstTryPassPct}% clean`
+				: `${kpis.openCount} active`
+	);
+	const medianCycleLabel = $derived(formatCycleDuration(kpis.medianCycleHours));
+	const closedDelta = $derived(
+		kpis.closedPrior7d !== null ? kpis.closedLast7d - kpis.closedPrior7d : null
+	);
+
+	const teamSubLabel = $derived(
+		kpis.totalAgents === 0
+			? 'Team capacity'
+			: `${kpis.totalAgents} ${kpis.totalAgents === 1 ? 'agent' : 'agents'}`
+	);
+
+	const finPillHref = $derived(
+		kpis.financials.cappedAgent
+			? `/members/${encodeURIComponent(kpis.financials.cappedAgent.memberId)}`
+			: '/settings/costs'
+	);
 </script>
 
 <section
 	class="kpi-strip grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4"
-	aria-label="Executive overview: Financials, Team, Delivery, and Projects"
+	aria-label="Executive overview: Projects, Delivery, Team, and Financials"
 >
-	<!-- Pillar 1: Financials / Monthly Spend & Budget -->
-	<article class="kpi-pillar flex flex-col gap-3" aria-labelledby="hb-pil-fin">
-		<div class="flex items-center justify-between gap-2">
+	<!-- Pillar 1: Projects -->
+	<HomeKpiCard
+		id="hb-pil-projects"
+		title="Projects"
+		titleHref="/projects"
+		pillLabel={projectsPillLabel}
+		pillHref="/projects"
+		pillTone={projectsPillTone}
+		heroHref="/projects"
+		heroTitle="{kpis.projectsTotal} active projects: {onTrackProjects} on track, {kpis.atRiskProjects} at risk, {kpis.offTrackProjects} off track"
+		subGridClass="grid-cols-[1.35fr_0.9fr] gap-2.5"
+		index={0}
+	>
+		{#snippet icon()}
+			<Folder class="size-3.5 text-[var(--exec-accent-ink)]" aria-hidden="true" />
+		{/snippet}
+		{#snippet hero()}
+			<div class="flex items-baseline justify-between gap-2">
+				<div class="flex items-baseline gap-1.5">
+					<span class="pillar-num">
+						{kpis.projectsTotal > 0 ? `${onTrackProjects}/${kpis.projectsTotal}` : '0'}
+					</span>
+					<span class="text-[0.8125rem] font-medium text-[var(--exec-muted)]">
+						{kpis.projectsTotal > 0 ? 'on track' : 'projects'}
+					</span>
+				</div>
+				<span
+					class={[
+						'text-xs font-semibold tabular-nums',
+						kpis.projectsTotal > 0 ? 'text-[var(--exec-dim)]' : 'text-[var(--exec-accent-ink)]'
+					]}
+				>
+					{kpis.projectsTotal > 0 ? `${kpis.projectsTotal} active` : 'Create first'}
+				</span>
+			</div>
+			<div class="bar-track bg-bar-track" aria-hidden="true">
+				{#if projectsBarOk > 0}
+					<span class="bar-ok" style:width="{projectsBarOk}%"></span>
+				{/if}
+				{#if projectsBarWarn > 0}
+					<span class="bar-warn" style:width="{projectsBarWarn}%"></span>
+				{/if}
+				{#if projectsBarBad > 0}
+					<span class="bar-bad" style:width="{projectsBarBad}%"></span>
+				{/if}
+			</div>
+		{/snippet}
+		{#snippet sub()}
 			<a
-				id="hb-pil-fin"
-				href={resolve('/settings/costs')}
-				class="pillar-name inline-flex items-center gap-1.5"
+				href={resolve('/projects')}
+				class="sub-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
+				title="Portfolio health: {onTrackProjects} on track, {kpis.atRiskProjects} at risk, {kpis.offTrackProjects} off track"
 			>
-				<DollarSign class="size-3.5 text-[var(--exec-warn)]" aria-hidden="true" />
-				<span>Financials</span>
+				<span class="sub-lbl truncate">Health</span>
+				<span class="truncate text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
+					{#if kpis.projectsTotal === 0}
+						—
+					{:else}
+						<span class="text-[var(--exec-ok)]">{onTrackProjects} ok</span>
+						<span class="ml-1 text-xs font-medium text-[var(--exec-warn)]">
+							· {kpis.atRiskProjects} risk
+						</span>
+						<span class="ml-1 text-xs font-medium text-[var(--exec-bad)]">
+							· {kpis.offTrackProjects} off
+						</span>
+					{/if}
+				</span>
 			</a>
 			<a
-				href={resolve(finPillHref as '/settings/costs')}
-				class={['status-pill', pillToneClass(kpis.financials.pillTone)]}
+				href={resolve('/work')}
+				class="sub-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
+				title="Tasks currently blocked across active projects"
 			>
-				{kpis.financials.pillLabel}
+				<span class="sub-lbl truncate">Blocked</span>
+				<span class="truncate text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
+					{#if kpis.projectsTotal === 0 && kpis.blockedCount === 0}
+						—
+					{:else if kpis.blockedCount > 0}
+						{kpis.blockedCount}
+						<span class="ml-1 text-xs font-semibold text-[var(--exec-warn)]">blocked</span>
+					{:else}
+						0
+						<span class="ml-1 text-xs font-semibold text-[var(--exec-ok)]">clear</span>
+					{/if}
+				</span>
 			</a>
-		</div>
-		<a
-			href={resolve('/settings/costs')}
-			class="pillar-link -m-1 flex flex-col gap-2 rounded-lg p-1"
-		>
+		{/snippet}
+	</HomeKpiCard>
+
+	<!-- Pillar 2: Delivery -->
+	<HomeKpiCard
+		id="hb-pil-proj"
+		title="Delivery"
+		titleHref="/insights"
+		pillLabel={deliveryPillLabel}
+		pillHref="/insights"
+		pillTone={deliveryPillTone}
+		heroHref="/insights"
+		heroTitle="Share of completed items approved on the first try"
+		index={1}
+	>
+		{#snippet icon()}
+			<CheckCircle2 class="size-3.5 text-[var(--exec-ok)]" aria-hidden="true" />
+		{/snippet}
+		{#snippet hero()}
+			<div class="flex items-end justify-between gap-2">
+				<div class="flex items-baseline gap-1.5">
+					<span class="pillar-num">{hasDeliveries ? `${deliveryHeadlinePct}%` : '—'}</span>
+					<span class="text-[0.8125rem] font-medium text-[var(--exec-muted)]">
+						{kpis.doneCount > 0 ? 'first try' : 'complete'}
+					</span>
+				</div>
+				<HomeThroughputSparkline points={kpis.throughputPoints} />
+			</div>
+			<div class="bar-track bg-bar-track" aria-hidden="true">
+				<span class="bar-ok" style:width="{hasDeliveries ? deliveryHeadlinePct : 0}%"></span>
+			</div>
+		{/snippet}
+		{#snippet sub()}
+			<a
+				href={resolve('/insights')}
+				class="sub-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
+				title="Median created → last update across ≥5 completed items"
+			>
+				<span class="sub-lbl truncate">Median lead (approx.)</span>
+				<span class="truncate text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
+					{medianCycleLabel}
+				</span>
+			</a>
+			<a
+				href={resolve('/insights')}
+				class="sub-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
+				title="Items completed in the last 7 days"
+			>
+				<span class="sub-lbl truncate">Closed · 7d</span>
+				<span class="truncate text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
+					{#if !hasDeliveries}
+						—
+					{:else if kpis.closedLast7d > 0}
+						{kpis.closedLast7d}
+						{#if closedDelta !== null}
+							<span
+								class={[
+									'ml-1 text-xs font-semibold',
+									closedDelta >= 0 ? 'text-[var(--exec-ok)]' : 'text-[var(--exec-warn)]'
+								]}
+							>
+								{closedDelta > 0
+									? `+${closedDelta}`
+									: closedDelta < 0
+										? `−${Math.abs(closedDelta)}`
+										: '±0'}
+							</span>
+						{/if}
+					{:else}
+						{kpis.doneCount}
+						<span class="ml-1 text-xs font-medium text-[var(--exec-muted)]">total</span>
+					{/if}
+				</span>
+			</a>
+		{/snippet}
+	</HomeKpiCard>
+
+	<!-- Pillar 3: Team -->
+	<HomeKpiCard
+		id="hb-pil-team"
+		title="Team"
+		titleHref="/teams/members"
+		pillLabel={kpis.officePillLabel}
+		pillHref="/settings/offices"
+		pillTone={kpis.officePillTone}
+		pillTitle={kpis.offlineOffices > 0
+			? `Offline: ${kpis.offlineOfficeNames.join(', ')}`
+			: 'All connected offices are online'}
+		heroHref="/teams/members"
+		heroTitle="Share of work running autonomously without needing your input"
+		subGridClass="grid-cols-[1.35fr_0.9fr] gap-2.5"
+		index={2}
+	>
+		{#snippet icon()}
+			<Users class="size-3.5 text-[var(--exec-accent-ink)]" aria-hidden="true" />
+		{/snippet}
+		{#snippet hero()}
+			<div class="flex items-baseline justify-between gap-2">
+				<div class="flex items-baseline gap-1.5">
+					<span class="pillar-num">{kpis.totalAgents > 0 ? `${kpis.autonomyPct}%` : '—'}</span>
+					<span class="text-[0.8125rem] font-medium text-[var(--exec-muted)]">autonomous</span>
+				</div>
+				<span class="text-xs font-semibold text-[var(--exec-dim)] tabular-nums">
+					{#if kpis.totalAgents > 0}
+						{100 - kpis.autonomyPct}% you
+					{:else}
+						No activity
+					{/if}
+				</span>
+			</div>
+			<div class="bar-track bg-bar-track" aria-hidden="true">
+				<span class="bar-accent" style:width="{kpis.totalAgents > 0 ? kpis.autonomyPct : 0}%"
+				></span>
+				{#if kpis.totalAgents > 0 && kpis.autonomyPct < 100}
+					<span class="bar-warn" style:width="{100 - kpis.autonomyPct}%"></span>
+				{/if}
+			</div>
+		{/snippet}
+		{#snippet sub()}
+			<a
+				href={resolve('/teams/members')}
+				class="sub-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
+				title={kpis.totalAgents > 0
+					? `${kpis.totalAgents} agents (${kpis.leadsCount} leads, ${kpis.specialistsCount} specialists): ${kpis.activeAgents} active, ${kpis.pausedAgents} idle, ${kpis.unplacedAgents} off`
+					: 'Team capacity'}
+			>
+				<span class="sub-lbl truncate">{teamSubLabel}</span>
+				<span class="truncate text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
+					{#if kpis.totalAgents === 0}
+						0 agents
+						<span class="ml-1 text-xs font-medium text-[var(--exec-muted)]">
+							· {kpis.peopleCount}
+							{kpis.peopleCount === 1 ? 'person' : 'people'}
+						</span>
+					{:else}
+						{kpis.activeAgents} active
+						{#if kpis.pausedAgents > 0}
+							<span class="ml-1 text-xs text-[var(--exec-warn)]">· {kpis.pausedAgents} idle</span>
+						{/if}
+						{#if kpis.unplacedAgents > 0}
+							<span class="ml-1 text-xs text-[var(--exec-bad)]">· {kpis.unplacedAgents} off</span>
+						{/if}
+					{/if}
+				</span>
+			</a>
+			<a
+				href={resolve('/settings/offices')}
+				class="sub-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
+				title={kpis.offlineOffices > 0
+					? `${kpis.onlineOffices} online · ${kpis.offlineOffices} offline (${kpis.offlineOfficeNames.join(', ')})`
+					: `${kpis.onlineOffices} online`}
+			>
+				<span class="sub-lbl truncate">Offices</span>
+				<span class="flex items-baseline gap-1.5 truncate text-sm font-semibold tabular-nums">
+					<span class="text-[var(--exec-ok)]">{kpis.onlineOffices} on</span>
+					{#if kpis.offlineOffices > 0}
+						<span class="text-[var(--exec-dim)]" aria-hidden="true">·</span>
+						<span class="text-[var(--exec-bad)]">{kpis.offlineOffices} off</span>
+					{/if}
+				</span>
+			</a>
+		{/snippet}
+	</HomeKpiCard>
+
+	<!-- Pillar 4: Financials (100% real costsApi + agentBudgets data) -->
+	<HomeKpiCard
+		id="hb-pil-fin"
+		title="Financials"
+		titleHref="/settings/costs"
+		pillLabel={kpis.financials.pillLabel}
+		pillHref={finPillHref}
+		pillTone={kpis.financials.pillTone}
+		heroHref="/settings/costs"
+		index={3}
+	>
+		{#snippet icon()}
+			<DollarSign class="size-3.5 text-[var(--exec-warn)]" aria-hidden="true" />
+		{/snippet}
+		{#snippet hero()}
 			<div class="flex items-baseline justify-between gap-2">
 				<div class="flex items-baseline gap-1.5">
 					<span class="pillar-num">{kpis.financials.spentLabel}</span>
@@ -108,25 +366,25 @@
 			<div class="bar-track bg-bar-track" aria-hidden="true">
 				<span class="bar-spend" style:width="{kpis.financials.usagePct}%"></span>
 			</div>
-		</a>
-		<div class="pillar-sub grid grid-cols-2 gap-3 pt-2.5">
+		{/snippet}
+		{#snippet sub()}
 			<a
-				href={resolve('/activity')}
-				class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
+				href={resolve('/insights')}
+				class="sub-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
 				title="Average AI spend per completed task"
 			>
-				<span class="sub-lbl">Cost per task</span>
-				<span class="text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
+				<span class="sub-lbl truncate">Cost / task</span>
+				<span class="truncate text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
 					{kpis.financials.costPerTaskLabel}
 				</span>
 			</a>
 			<a
 				href={resolve('/settings/costs')}
-				class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
+				class="sub-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
 				title="Remaining share of monthly organization budget"
 			>
-				<span class="sub-lbl">Budget remaining</span>
-				<span class="text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
+				<span class="sub-lbl truncate">Budget remaining</span>
+				<span class="truncate text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
 					{#if kpis.budgetRemainingPct !== null}
 						{kpis.budgetRemainingPct}%
 						<span class="ml-1 text-xs font-semibold text-[var(--exec-ok)]">left</span>
@@ -137,252 +395,8 @@
 					{/if}
 				</span>
 			</a>
-		</div>
-	</article>
-
-	<!-- Pillar 2: Team & Offices -->
-	<article class="kpi-pillar flex flex-col gap-3" aria-labelledby="hb-pil-team">
-		<div class="flex items-center justify-between gap-2">
-			<a
-				id="hb-pil-team"
-				href={resolve('/teams/members')}
-				class="pillar-name inline-flex items-center gap-1.5"
-			>
-				<Users class="size-3.5 text-[var(--exec-accent-ink)]" aria-hidden="true" />
-				<span>Team</span>
-			</a>
-			<a
-				href={resolve('/settings/offices')}
-				class={['status-pill', pillToneClass(kpis.officePillTone)]}
-				title={kpis.offlineOffices > 0
-					? `Offline: ${kpis.offlineOfficeNames.join(', ')}`
-					: 'All connected offices are online'}
-			>
-				{kpis.officePillLabel}
-			</a>
-		</div>
-		<a
-			href={resolve('/teams/members')}
-			class="pillar-link -m-1 flex flex-col gap-2 rounded-lg p-1"
-			title="Share of work running autonomously without needing your input"
-		>
-			<div class="flex items-baseline justify-between gap-2">
-				<div class="flex items-baseline gap-1.5">
-					<span class="pillar-num">{kpis.totalAgents > 0 ? `${kpis.autonomyPct}%` : '—'}</span>
-					<span class="text-[0.8125rem] font-medium text-[var(--exec-muted)]">autonomous</span>
-				</div>
-				<span class="text-xs font-semibold text-[var(--exec-dim)] tabular-nums">
-					{#if kpis.totalAgents > 0}
-						{100 - kpis.autonomyPct}% needed you
-					{:else}
-						No activity yet
-					{/if}
-				</span>
-			</div>
-			<div class="bar-track bg-bar-track" aria-hidden="true">
-				<span class="bar-accent" style:width="{kpis.totalAgents > 0 ? kpis.autonomyPct : 0}%"
-				></span>
-				{#if kpis.totalAgents > 0 && kpis.autonomyPct < 100}
-					<span class="bar-warn" style:width="{100 - kpis.autonomyPct}%"></span>
-				{/if}
-			</div>
-		</a>
-		<div class="pillar-sub grid grid-cols-[1.24fr_1fr] gap-2.5 pt-2.5">
-			<a
-				href={resolve('/teams/members')}
-				class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
-			>
-				<span class="sub-lbl truncate">{teamSubLabel}</span>
-				<span class="truncate text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
-					{#if kpis.totalAgents === 0}
-						0 agents
-						<span class="ml-1 text-xs font-medium text-[var(--exec-muted)]">
-							· {kpis.peopleCount}
-							{kpis.peopleCount === 1 ? 'person' : 'people'}
-						</span>
-					{:else}
-						{kpis.activeAgents} active
-						{#if kpis.pausedAgents > 0}
-							<span class="ml-1 text-xs text-[var(--exec-warn)]">
-								· {kpis.pausedAgents} idle
-							</span>
-						{/if}
-						{#if kpis.unplacedAgents > 0}
-							<span class="ml-1 text-xs text-[var(--exec-bad)]">
-								· {kpis.unplacedAgents} off
-							</span>
-						{/if}
-					{/if}
-				</span>
-			</a>
-			<a
-				href={resolve('/settings/offices')}
-				class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1"
-				title={kpis.offlineOffices > 0
-					? `${kpis.onlineOffices} online · ${kpis.offlineOffices} offline (${kpis.offlineOfficeNames.join(', ')})`
-					: `${kpis.onlineOffices} online`}
-			>
-				<span class="sub-lbl truncate">Offices</span>
-				<span class="flex items-baseline gap-1.5 truncate text-sm font-semibold tabular-nums">
-					<span class="text-[var(--exec-ok)]">{kpis.onlineOffices} online</span>
-					{#if kpis.offlineOffices > 0}
-						<span class="text-[var(--exec-dim)]" aria-hidden="true">·</span>
-						<span class="text-[var(--exec-bad)]">{kpis.offlineOffices} offline</span>
-					{/if}
-				</span>
-			</a>
-		</div>
-	</article>
-
-	<!-- Pillar 3: Delivery -->
-	<article class="kpi-pillar flex flex-col gap-3" aria-labelledby="hb-pil-proj">
-		<div class="flex items-center justify-between gap-2">
-			<a
-				id="hb-pil-proj"
-				href={resolve('/work')}
-				class="pillar-name inline-flex items-center gap-1.5"
-			>
-				<CheckCircle2 class="size-3.5 text-[var(--exec-ok)]" aria-hidden="true" />
-				<span>Delivery</span>
-			</a>
-			<a href={resolve('/projects')} class={['status-pill', pillToneClass(deliveryPillTone)]}>
-				{deliveryPillLabel}
-			</a>
-		</div>
-		<a
-			href={resolve('/work')}
-			class="pillar-link -m-1 flex flex-col gap-2 rounded-lg p-1"
-			title="Percentage of completed tasks approved on the first try without revisions"
-		>
-			<div class="flex items-baseline justify-between gap-2">
-				<div class="flex items-baseline gap-1.5">
-					<span class="pillar-num">
-						{kpis.doneCount > 0
-							? `${kpis.firstTryPassPct}%`
-							: kpis.openCount > 0
-								? `${kpis.completionPct}%`
-								: '—'}
-					</span>
-					<span class="text-[0.8125rem] font-medium text-[var(--exec-muted)]">
-						{kpis.doneCount > 0 ? 'approved first try' : 'complete'}
-					</span>
-				</div>
-				<span class="text-xs font-semibold text-[var(--exec-ok)] tabular-nums">
-					{kpis.openCount} open · {kpis.doneCount} done
-				</span>
-			</div>
-			<HomeThroughputSparkline
-				points={kpis.throughputPoints}
-				fallbackPct={kpis.doneCount > 0 ? kpis.firstTryPassPct : kpis.completionPct}
-			/>
-		</a>
-		<div class="pillar-sub grid grid-cols-2 gap-3 pt-2.5">
-			<a href={resolve('/work')} class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1">
-				<span class="sub-lbl">Delivered</span>
-				<span class="text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
-					{kpis.doneCount}
-					{kpis.doneCount === 1 ? 'task' : 'tasks'}
-					<span class="ml-1 text-xs font-semibold text-[var(--exec-ok)]">
-						{kpis.completionPct}%
-					</span>
-				</span>
-			</a>
-			<a href={resolve('/inbox')} class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1">
-				<span class="sub-lbl">Blocked</span>
-				<span class="text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
-					{kpis.blockedCount}
-					<span
-						class={[
-							'ml-1 text-xs font-semibold',
-							kpis.blockedCount > 0 ? 'text-[var(--exec-bad)]' : 'text-[var(--exec-ok)]'
-						]}
-					>
-						{kpis.blockedCount > 0 ? 'blocked' : 'clear'}
-					</span>
-				</span>
-			</a>
-		</div>
-	</article>
-
-	<!-- Pillar 4: Projects Portfolio -->
-	<article class="kpi-pillar flex flex-col gap-3" aria-labelledby="hb-pil-portfolio">
-		<div class="flex items-center justify-between gap-2">
-			<a
-				id="hb-pil-portfolio"
-				href={resolve('/projects')}
-				class="pillar-name inline-flex items-center gap-1.5"
-			>
-				<Folder class="size-3.5 text-[var(--exec-accent-ink)]" aria-hidden="true" />
-				<span>Projects</span>
-			</a>
-			<a href={resolve('/projects')} class={['status-pill', pillToneClass(deliveryPillTone)]}>
-				{kpis.projectsTotal === 0
-					? 'None active'
-					: kpis.projectsAttention === 0
-						? 'Healthy'
-						: `${kpis.projectsAttention} at risk`}
-			</a>
-		</div>
-		<a
-			href={resolve('/projects')}
-			class="pillar-link -m-1 flex flex-col gap-2 rounded-lg p-1"
-			title="Active projects by delivery health"
-		>
-			<div class="flex items-baseline justify-between gap-2">
-				<div class="flex items-baseline gap-1.5">
-					<span class="pillar-num">
-						{kpis.projectsTotal > 0 ? `${onTrackProjects}/${kpis.projectsTotal}` : '—'}
-					</span>
-					<span class="text-[0.8125rem] font-medium text-[var(--exec-muted)]">on track</span>
-				</div>
-				{#if kpis.projectsTotal > 0}
-					<span class="text-xs font-semibold text-[var(--exec-dim)] tabular-nums">
-						{projectsBarOk}%
-					</span>
-				{/if}
-			</div>
-			<div class="bar-track bg-bar-track" aria-hidden="true">
-				{#if projectsBarOk > 0}
-					<span class="bar-ok" style:width="{projectsBarOk}%"></span>
-				{/if}
-				{#if projectsBarWarn > 0}
-					<span class="bar-warn" style:width="{projectsBarWarn}%"></span>
-				{/if}
-				{#if projectsBarBad > 0}
-					<span class="bar-bad" style:width="{projectsBarBad}%"></span>
-				{/if}
-			</div>
-		</a>
-		<div class="pillar-sub grid grid-cols-2 gap-3 pt-2.5">
-			<a href={resolve('/projects')} class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1">
-				<span class="sub-lbl">Health</span>
-				<span class="truncate text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
-					{#if kpis.projectsTotal === 0}
-						No projects
-					{:else if kpis.atRiskProjects === 0 && kpis.offTrackProjects === 0}
-						{onTrackProjects} on track
-					{:else}
-						{kpis.atRiskProjects} risk{#if kpis.offTrackProjects > 0}
-							<span class="text-[var(--exec-bad)]"> · {kpis.offTrackProjects} off</span>
-						{/if}
-					{/if}
-				</span>
-			</a>
-			<a href={resolve('/work')} class="pillar-link -m-1 flex flex-col gap-0.5 rounded-md p-1">
-				<span class="sub-lbl">Open bugs</span>
-				<span class="text-sm font-semibold text-[var(--exec-ink)] tabular-nums">
-					{kpis.openBugs}
-					{#if kpis.criticalBugs > 0}
-						<span class="ml-1 text-xs font-semibold text-[var(--exec-bad)]">
-							· {kpis.criticalBugs} crit
-						</span>
-					{:else}
-						<span class="ml-1 text-xs font-medium text-[var(--exec-muted)]">open</span>
-					{/if}
-				</span>
-			</a>
-		</div>
-	</article>
+		{/snippet}
+	</HomeKpiCard>
 </section>
 
 <style>
@@ -391,79 +405,7 @@
 		padding: var(--exec-kpi-pad-y);
 		border-bottom: var(--exec-section-border);
 	}
-	.kpi-pillar {
-		background: var(--exec-panel-bg);
-		-webkit-backdrop-filter: var(--exec-panel-blur);
-		backdrop-filter: var(--exec-panel-blur);
-		box-shadow: var(--exec-panel-shadow);
-		border-radius: var(--exec-panel-radius);
-		padding: var(--exec-pillar-pad-sm);
-		transition:
-			background-color 0.16s ease,
-			box-shadow 0.16s ease;
-	}
-	.kpi-pillar:hover {
-		background: var(--exec-panel-bg-hover);
-		box-shadow: var(--exec-panel-shadow-hover);
-	}
-	.kpi-pillar + .kpi-pillar {
-		border-top: var(--exec-col-divider);
-	}
-	@media (min-width: 1024px) {
-		.kpi-pillar {
-			padding: var(--exec-pillar-pad);
-		}
-		.kpi-pillar:first-child {
-			padding-left: var(--exec-pillar-edge-pad);
-		}
-		.kpi-pillar:last-child {
-			padding-right: var(--exec-pillar-edge-pad);
-		}
-		.kpi-pillar + .kpi-pillar {
-			border-top: 0;
-			border-left: var(--exec-col-divider);
-		}
-	}
-	.pillar-name {
-		font-size: 0.7rem;
-		line-height: 1rem;
-		font-weight: 650;
-		letter-spacing: 0.11em;
-		text-transform: uppercase;
-		color: var(--exec-pillar-name-ink);
-		transition: color 0.14s ease;
-	}
-	.pillar-name:hover {
-		color: var(--exec-ink);
-	}
-	.status-pill {
-		padding: 2px 8px;
-		border-radius: var(--exec-pill-radius);
-		font-size: 0.7rem;
-		font-weight: 600;
-		white-space: nowrap;
-	}
-	.status-pill.is-ok {
-		background: var(--exec-ok-bg);
-		color: var(--exec-ok);
-		box-shadow: var(--exec-pill-ring-ok);
-	}
-	.status-pill.is-warn {
-		background: var(--exec-warn-bg);
-		color: var(--exec-warn);
-		box-shadow: var(--exec-pill-ring-warn);
-	}
-	.status-pill.is-bad {
-		background: var(--exec-bad-bg);
-		color: var(--exec-bad);
-		box-shadow: var(--exec-pill-ring-bad);
-	}
-	.status-pill.is-muted {
-		background: var(--exec-well);
-		color: var(--exec-muted);
-		box-shadow: var(--exec-pill-ring-muted);
-	}
-	.pillar-link:hover {
+	.sub-link:hover {
 		background: var(--exec-accent-soft);
 	}
 	.pillar-num {
@@ -507,8 +449,5 @@
 	}
 	.bar-bad {
 		background: var(--tone-bad-bar);
-	}
-	.pillar-sub {
-		border-top: 1px solid var(--exec-border);
 	}
 </style>
