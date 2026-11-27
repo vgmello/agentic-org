@@ -2426,3 +2426,173 @@ fn foreground_setup_persists_federation_config_and_prints_summary() {
         Some(fed)
     );
 }
+
+#[test]
+fn registered_with_origin_tracks_opt_in_https_upgrade_and_ignores_tamper_or_downgrade() {
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
+    let base = temp.path().canonicalize().unwrap().join("b");
+    for dir in [base.clone(), base.join("t")] {
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let paths = Paths::at(&base, base.join("t"), None).unwrap();
+    let http_listen: ListenConfig = serde_json::from_value(serde_json::json!({
+        "address": "127.0.0.1",
+        "port": 7420,
+        "scheme": "http_loopback",
+        "origin": "http://127.0.0.1:7420",
+        "hsts": "off"
+    }))
+    .unwrap();
+    let instance_root = base.join("instance");
+    let id = {
+        let registry = Registry::open(&paths.locator, &paths.user_temp).unwrap();
+        let instance = registry.reserve(None, &instance_root).unwrap();
+        instance.set_browser(&http_listen).unwrap();
+        instance.id().to_owned()
+    };
+    let journal = Journal::open(&paths.base, None).unwrap();
+    let record = journal
+        .freeze(
+            Input {
+                version: 1,
+                service: Service::Registered,
+                root: instance_root.clone(),
+                credentials: None,
+                listen: http_listen.clone(),
+                federation: None,
+            },
+            true,
+            release_pin().unwrap(),
+        )
+        .unwrap();
+    journal
+        .write(&Record {
+            instance_id: Some(id.clone()),
+            ..record
+        })
+        .unwrap();
+    drop(journal);
+
+    let (_rec, resolved_id, _sock, resolved_origin) =
+        super::wire::registered_with_origin(&paths, None).unwrap();
+    assert_eq!(resolved_id, id);
+    assert_eq!(resolved_origin.as_str(), "http://127.0.0.1:7420");
+
+    // Upgrade instance.json to HTTPS on the exact same address/port/host (ADR-0033).
+    let https_listen: ListenConfig = serde_json::from_value(serde_json::json!({
+        "address": "127.0.0.1",
+        "port": 7420,
+        "scheme": "https",
+        "origin": "https://127.0.0.1:7420",
+        "hsts": "off"
+    }))
+    .unwrap();
+    {
+        let registry = Registry::open(&paths.locator, &paths.user_temp).unwrap();
+        let instance = registry.reserve(None, &instance_root).unwrap();
+        instance.upgrade_browser_to_https(&https_listen).unwrap();
+    }
+
+    // CLI origin resolution (`admin tls set` / `admin reset`) now sees the upgraded https:// origin.
+    let (_rec, resolved_id, _sock, resolved_origin) =
+        super::wire::registered_with_origin(&paths, None).unwrap();
+    assert_eq!(resolved_id, id);
+    assert_eq!(resolved_origin.as_str(), "https://127.0.0.1:7420");
+
+    // HSTS change on the same HTTPS listener keeps the upgraded https:// origin.
+    let hsts_on: ListenConfig = serde_json::from_value(serde_json::json!({
+        "address": "127.0.0.1",
+        "port": 7420,
+        "scheme": "https",
+        "origin": "https://127.0.0.1:7420",
+        "hsts": "on"
+    }))
+    .unwrap();
+    {
+        let registry = Registry::open(&paths.locator, &paths.user_temp).unwrap();
+        let instance = registry.reserve(None, &instance_root).unwrap();
+        instance.upgrade_browser_to_https(&hsts_on).unwrap();
+    }
+    let (_rec, resolved_id, _sock, resolved_origin) =
+        super::wire::registered_with_origin(&paths, None).unwrap();
+    assert_eq!(resolved_id, id);
+    assert_eq!(resolved_origin.as_str(), "https://127.0.0.1:7420");
+
+    // Changing port is refused by upgrade_browser_to_https, and direct tampering on disk is
+    // rejected by browser_matches_setup so registered_with_origin never adopts the tampered port.
+    let wrong_port: ListenConfig = serde_json::from_value(serde_json::json!({
+        "address": "127.0.0.1",
+        "port": 7499,
+        "scheme": "https",
+        "origin": "https://127.0.0.1:7499",
+        "hsts": "off"
+    }))
+    .unwrap();
+    {
+        let registry = Registry::open(&paths.locator, &paths.user_temp).unwrap();
+        let instance = registry.reserve(None, &instance_root).unwrap();
+        assert!(
+            instance.upgrade_browser_to_https(&wrong_port).is_err(),
+            "upgrade_browser_to_https refuses port change"
+        );
+    }
+    let cfg_path = instance_root.join("instance.json");
+    let tampered = std::fs::read_to_string(&cfg_path)
+        .unwrap()
+        .replace("7420", "7499");
+    std::fs::write(&cfg_path, tampered).unwrap();
+    let (_rec, _id, _sock, resolved_origin) =
+        super::wire::registered_with_origin(&paths, None).unwrap();
+    assert_eq!(
+        resolved_origin.as_str(),
+        "http://127.0.0.1:7420",
+        "tampered instance.json must not override the setup record origin"
+    );
+
+    // An HTTPS setup record never downgrades to a plain HTTP instance.json.
+    let https_base = temp.path().canonicalize().unwrap().join("b-https");
+    for dir in [https_base.clone(), https_base.join("t")] {
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let https_paths = Paths::at(&https_base, https_base.join("t"), None).unwrap();
+    let https_root = https_base.join("instance");
+    let https_id = {
+        let registry = Registry::open(&https_paths.locator, &https_paths.user_temp).unwrap();
+        let instance = registry.reserve(None, &https_root).unwrap();
+        instance.set_browser(&http_listen).unwrap();
+        instance.id().to_owned()
+    };
+    let https_journal = Journal::open(&https_paths.base, None).unwrap();
+    let https_record = https_journal
+        .freeze(
+            Input {
+                version: 1,
+                service: Service::Registered,
+                root: https_root,
+                credentials: None,
+                listen: https_listen,
+                federation: None,
+            },
+            true,
+            release_pin().unwrap(),
+        )
+        .unwrap();
+    https_journal
+        .write(&Record {
+            instance_id: Some(https_id.clone()),
+            ..https_record
+        })
+        .unwrap();
+    drop(https_journal);
+    let (_rec, resolved_id, _sock, resolved_origin) =
+        super::wire::registered_with_origin(&https_paths, None).unwrap();
+    assert_eq!(resolved_id, https_id);
+    assert_eq!(
+        resolved_origin.as_str(),
+        "https://127.0.0.1:7420",
+        "HTTPS setup record must never downgrade to plain HTTP"
+    );
+}

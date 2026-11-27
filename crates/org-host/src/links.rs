@@ -25,7 +25,7 @@ pub(crate) mod memory;
 /// How long a registration link stays redeemable.
 pub const REGISTRATION_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 const DOMAIN: &[u8] = b"agentic-org/link/v1";
-const TOKEN_BYTES: usize = 32;
+pub(crate) const TOKEN_BYTES: usize = 32;
 /// Unpadded base64url length of `TOKEN_BYTES`.
 const TOKEN_TEXT_LEN: usize = 43;
 const SUBJECT_MAX: usize = 128;
@@ -75,7 +75,7 @@ impl Subject {
 
 /// The link secret. It is returned once, to the caller that issued it, and is
 /// never stored or logged. Its bytes are zeroed when it is dropped.
-pub struct Token([u8; TOKEN_BYTES]);
+pub struct Token(pub(crate) [u8; TOKEN_BYTES]);
 impl Drop for Token {
     fn drop(&mut self) {
         self.0.zeroize();
@@ -83,7 +83,7 @@ impl Drop for Token {
 }
 impl zeroize::ZeroizeOnDrop for Token {}
 impl Token {
-    fn generate() -> io::Result<Self> {
+    pub(crate) fn generate() -> io::Result<Self> {
         let mut bytes = [0u8; TOKEN_BYTES];
         SystemRandom::new()
             .fill(&mut bytes)
@@ -125,7 +125,7 @@ impl LinkDigest {
         Self(digest(instance_id, kind.as_str(), &token.0))
     }
 }
-fn digest(instance_id: &str, kind: &str, token: &[u8; TOKEN_BYTES]) -> [u8; 32] {
+pub(crate) fn digest(instance_id: &str, kind: &str, token: &[u8; TOKEN_BYTES]) -> [u8; 32] {
     let mut hash = Sha256::new();
     for field in [DOMAIN, instance_id.as_bytes(), kind.as_bytes()] {
         // Fields are bounded far below 4 GiB: the domain and kind are constants
@@ -354,7 +354,8 @@ pub fn redeem_rule(state: &str, expires_at_ms: i64, now_ms: i64) -> Result<(), R
     }
 }
 
-const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+pub(crate) const ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 fn base64url_encode(bytes: &[u8]) -> Zeroizing<String> {
     // Exact capacity, so the buffer never reallocates and leaves no unzeroed copy.
@@ -372,7 +373,7 @@ fn base64url_encode(bytes: &[u8]) -> Zeroizing<String> {
 }
 /// Strict unpadded base64url: a partial final group must leave its unused low
 /// bits zero (canonical form), so each byte string has exactly one spelling.
-fn base64url_decode(text: &str) -> Option<Zeroizing<Vec<u8>>> {
+pub(crate) fn base64url_decode(text: &str) -> Option<Zeroizing<Vec<u8>>> {
     if text.len() % 4 == 1 {
         return None;
     }

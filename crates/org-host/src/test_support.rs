@@ -1,22 +1,30 @@
-//! Temporary in-process lifecycle fixtures. Delete when 2b.3 can seed through sessions.
+//! Test fixtures and shared engine-independent storage conformance runners.
+#[cfg(all(feature = "test-support", debug_assertions))]
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     mpsc, Arc, Mutex,
 };
+#[cfg(all(feature = "test-support", debug_assertions))]
 use std::time::Duration;
 
+#[cfg(all(feature = "test-support", debug_assertions))]
 use org_proto::{
     ApiError, Call, Empty, Event, ListOfficesResult, ListOrganizationsResult, OfficeList,
     OrganizationList, Request, Response, ServerMessage, Subscribe,
 };
+#[cfg(all(feature = "test-support", debug_assertions))]
 use serde_json::Value;
 
+#[cfg(all(feature = "test-support", debug_assertions))]
 use crate::{broadcast::Subscriber, sync::lock, Host};
 
+pub mod conformance;
+#[cfg(all(feature = "test-support", debug_assertions))]
 pub mod process;
 
 /// Native lifecycle operations and observation for this crate's integration tests only.
 /// No listener or socket exposes these operations.
+#[cfg(all(feature = "test-support", debug_assertions))]
 pub struct Fixture {
     offices: Arc<crate::offices::Offices>,
     broadcast: Arc<crate::broadcast::Broadcast>,
@@ -24,6 +32,7 @@ pub struct Fixture {
     rx: Mutex<mpsc::Receiver<ServerMessage>>,
     seq: AtomicU64,
 }
+#[cfg(all(feature = "test-support", debug_assertions))]
 impl Fixture {
     pub fn new(host: &Host) -> Arc<Self> {
         let (tx, rx) = mpsc::channel();
@@ -81,6 +90,7 @@ impl Fixture {
         self.offices.restart_office(id)
     }
 }
+#[cfg(all(feature = "test-support", debug_assertions))]
 impl Subscriber for Fixture {
     fn send_event(&self, name: &str, data: Value) {
         let event = Event {

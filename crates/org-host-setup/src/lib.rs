@@ -2,7 +2,7 @@
 //! service manager and disk-encryption probe injected by the caller.
 //!
 //! 1. Platform gate: a release build without a pinned runtime release refuses (SRV-1); the
-//!    caller's [`crate::human::paths`] refuses systems without instance locations.
+//!    caller's [`org_host::human::paths`] refuses systems without instance locations.
 //! 2. Lock and freeze the setup record (`setup.lock`). The address is chosen before anything
 //!    is written: port 7420 for `default`, the first free port from 7421 for a named instance;
 //!    an occupied requested port is an actionable error and nothing is saved (SRV-4).
@@ -216,7 +216,7 @@ mod store_directories;
 ///
 /// A foreground setup from a file that reserved the instance in this run returns the
 /// instance's browser listener, bound since setup checked the address: the process that
-/// serves the instance next ([`crate::Config::browser_listener`]) serves on it, so the port
+/// serves the instance next ([`org_host::Config::browser_listener`]) serves on it, so the port
 /// stays this instance's from the check on. Every other run returns none.
 pub fn run(
     platform: &Platform,

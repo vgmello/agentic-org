@@ -101,7 +101,7 @@ pub use host::start_instance_for_test_with_ports;
 pub use host::Host;
 pub use ports::{HostPorts, HostStoreOpener};
 
-#[cfg(all(feature = "test-support", debug_assertions))]
+#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 pub mod test_support;
 
 pub use crate::app_auth::APP_BUNDLE_ID;

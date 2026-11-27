@@ -324,7 +324,8 @@ fn a_key_added_through_the_key_store_view_is_loaded_through_a_second_handle() {
 
 /// LNX-4: host secrets are readable only by the service account, and none is in the data
 /// root. A registered instance's root is scanned after the host's views stored an office
-/// key, the host's own secrets and the host registry.
+/// key, the host's own secrets and a non-secret registry fixture file in `office-state`
+/// (SQLite `HostDb` registry creation is verified in `org-host-sqlite`).
 #[test]
 fn host_secrets_are_owner_only_and_none_is_in_the_data_root() {
     if !release_directory_system() {
@@ -411,7 +412,8 @@ fn host_secrets_are_owner_only_and_none_is_in_the_data_root() {
 
     // None is in the data root: no file there is named like a key or a host secret, and
     // no file there holds a key's bytes (as stored, or as hex in either case) or a
-    // secret's value. The registry the host created there is one of the files read.
+    // secret's value. The non-secret registry fixture file in `office-state` is one of the
+    // files read.
     let in_data_root = files(world.instance.root());
     assert!(
         in_data_root
