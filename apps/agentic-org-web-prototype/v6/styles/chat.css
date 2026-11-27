@@ -60,6 +60,9 @@
 
 /* "and N more" in a DM's context line: the agent's other requests in a top-layer list. */
 .chat .chat-more-btn { padding: 0; font: inherit; background: none; cursor: pointer; }
+.chat .chat-more-btn .chat-more-chev { margin-inline-start: 2px; vertical-align: -2px; }
+/* With Details open, the request summary shows once: in Details, not also under the title. */
+#main .chat.details-open > .chhead :is(.chat-context, .chat-req-tag) { display: none; }
 .menu.chat-pop-menu { position: fixed; inset: auto; margin: 0; border: 0; overflow-y: auto; color: inherit; min-width: 0; width: max-content; max-width: min(22rem, calc(100vw - 16px)); white-space: normal; font-size: var(--fs-sm); }
 .chat-pop-menu a { display: grid; gap: 2px; padding: 8px 12px; color: var(--white); text-decoration: none; }
 .chat-pop-menu a:hover, .chat-pop-menu a:focus-visible { background: var(--hover); outline-offset: -2px; }
@@ -100,9 +103,25 @@
 /* Between agents: its heading carries the agent filter; the last day's conversations, then Show all. */
 .chat .chlist .chat-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 0 0 8px; }
 .chat .chlist .chat-sec-head h2 { padding: 0; }
+/* Between agents: the heading carries the picked agents and the row count; under it, the date scope (a segmented
+   control) sits beside the agent filter. */
+.chat .chlist #chat-a2a-head { flex-wrap: wrap; row-gap: 4px; }
+.chat .chlist .chat-a2a-n { margin-inline-end: 4px; }
+.chat .chlist .chat-a2a-whorow { display: flex; flex-basis: 100%; min-width: 0; }
+.chat .chlist .chat-a2a-who { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; min-height: 24px; padding-inline: 10px 0; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; color: var(--tone-accent-ink); background: color-mix(in srgb, var(--tone-accent) 14%, transparent); box-shadow: inset 0 0 0 1px var(--tone-accent); overflow-wrap: anywhere; }
+.chat .chlist .chat-a2a-n { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding-inline: 6px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 700; font-variant-numeric: tabular-nums; color: var(--gray-300); background: var(--hover); }
+.chat .chlist .chat-a2a-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; padding: 6px 0 4px 8px; }
+.chat .chlist .chat-a2a-bar .chat-a2a-filter-btn { flex: none; }
+/* With agents picked (named in the heading), the filter button carries the accent. */
+.chat .chlist .chat-a2a-filter-btn.is-on { color: var(--tone-accent-ink); box-shadow: inset 0 0 0 1px var(--tone-accent); }
+.chat .chlist .chat-a2a-filter-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.chat-seg { display: inline-flex; padding: 2px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--white) 4%, transparent); box-shadow: inset 0 0 0 1px var(--line2); }
+.chat-seg-btn { min-height: 24px; padding: 0 7px; border: 0; border-radius: calc(var(--radius-md) - 2px); font: inherit; font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; color: var(--gray-400); background: none; cursor: pointer; }
+.chat-seg-btn:hover { color: var(--white); }
+.chat-seg-btn[aria-pressed="true"] { font-weight: 600; color: var(--white); background: var(--gray-800); box-shadow: 0 1px 2px rgb(0 0 0 / .2), inset 0 0 0 1px var(--line2); }
+.chat-seg-btn:focus-visible { outline: 2px solid var(--tone-accent); outline-offset: 1px; }
 .chat .chlist .chat-a2a-filter-btn { min-height: 28px; padding-inline: 6px; gap: 4px; font-size: var(--fs-xs); color: var(--gray-400); }
 .chat .chlist .chat-a2a-filter-btn[aria-expanded="true"], .chat .chlist .chat-a2a-filter-btn:hover { color: var(--white); background: var(--hover); }
-.chat-a2a-count { display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding-inline: 4px; border-radius: 999px; font-weight: 700; color: var(--tone-accent-ink); box-shadow: inset 0 0 0 1px currentColor; }
 /* The window the rows cover ("Last 24 hours"), under the heading. */
 .chat .chlist .chat-a2a-window { padding: 0 8px 2px; font-size: var(--fs-xs); color: var(--gray-400); }
 .chat .chlist .chat-a2a-older + ul { margin-block-end: 6px; }
@@ -124,12 +143,6 @@
 .chat-a2a-none { padding: 4px 8px; font-size: var(--fs-xs); color: var(--gray-400); }
 .chat .chlist .chat-a2a-clear { justify-self: start; }
 /* The picked agents stay named under the heading while the picker is closed, with their Clear. */
-.chat .chlist .chat-a2a-active { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 2px 0 2px 8px; font-size: var(--fs-xs); font-weight: 600; color: var(--tone-accent-ink); }
-.chat .chlist .chat-a2a-active > span { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
-.chat .chlist .chat-a2a-active .ic14 { flex: none; }
-.chat .chlist .chat-a2a-active .chat-a2a-clear { min-height: 28px; padding-inline: 8px; font-size: var(--fs-xs); }
-.chat .chlist .chat-a2a-all { justify-content: flex-start; width: 100%; margin-block-start: 2px; font-size: var(--fs-sm); color: var(--gray-400); }
-.chat .chlist .chat-a2a-all:hover { color: var(--white); }
 .chat-at { display: inline-grid; place-items: center; flex: none; font-size: var(--fs-sm); font-weight: 700; line-height: 1; color: var(--gray-400); }
 /* Find a conversation and New message sit at the top of the list (and of the narrow drawer) and stay there: only the
    conversations below them scroll. */
@@ -359,12 +372,12 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
 }
 #main .chat.list-overlay.list-open > .chat-scrim { display: block; position: fixed; inset: 0; z-index: 80; background: rgb(0 0 0 / .5); }
 /* Drawer rows and controls meet the shared touch target. */
-#main .chat.list-overlay.list-open > .chlist :is(a, .chat-person, .chat-new, .chat-a2a-filter-btn, .chat-a2a-all, .chat-a2a-options [role="option"]), #main .chat.list-overlay.list-open > .chlist .field { min-height: max(var(--control-height), 44px); }
+#main .chat.list-overlay.list-open > .chlist :is(a, .chat-person, .chat-new, .chat-a2a-filter-btn, .chat-seg-btn, .chat-a2a-options [role="option"]), #main .chat.list-overlay.list-open > .chlist .field { min-height: max(var(--control-height), 44px); }
 #main .chat.list-overlay.list-open > .chlist .chat-a2a-rm { width: 40px; height: 40px; }
 #main .chat.list-overlay > .chmain { grid-row: 2; grid-column: 1; }
-/* Touch: the agent filter, Show all and the cross-post choice are 44 px targets wherever the list is. */
+/* Touch: the agent filter, the date scope and the cross-post choice are 44 px targets wherever the list is. */
 @media (pointer: coarse) {
-  .chat .chlist :is(.chat-a2a-filter-btn, .chat-a2a-all, .chat-a2a-options [role="option"]) { min-height: 44px; }
+  .chat .chlist :is(.chat-a2a-filter-btn, .chat-seg-btn, .chat-a2a-options [role="option"]) { min-height: 44px; }
   .chat .chlist .chat-a2a-combo .field { min-height: 44px; }
   .chat .chlist .chat-a2a-rm { width: 40px; height: 40px; }
 }
@@ -405,8 +418,15 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
   #main .chat > .chhead > .chat-list-btn { padding-inline: 8px; }
   .chat-list-label, .chat .chat-long { display: none; }
   .chat-needs .actions .hb-act-sep { display: none; }
-  /* A slightly tighter card on phones, so an ask's title, context and responses share the first view. */
-  .chat .chat-needs { gap: 4px; padding-block: 10px; }
+  /* A tighter card on phones, so an ask's title, scope, risk and both responses share the first view: the card
+     reclaims the avatar gutter (32 px avatar + 12 px gap) and spans the message's full width, and the composer's
+     keyboard hint steps aside (as on touch) to give the stream that line. */
+  .chat .chat-needs { gap: 4px; padding: 10px 12px; }
+  .chat .msg > .body > .chat-needs { margin-inline-start: -44px; }
+  .chat .chat-needs-head { gap: 4px 6px; }
+  .chat .chat-needs-head .pill { padding: 2px 6px; }
+  .chat .chat-needs .actions { margin-block-start: 2px; }
+  .chat .chat-compose .chat-compose-hint:not(.chat-ask-dest, .is-error, .is-confirm) { display: none; }
   .chat .chat-title .av, .chat .chat-pair { display: none; }
   .chat .chat-heading h1 { font-size: 1.125rem; }
   .chat .chat-title .chat-req-tag { display: inline-flex; align-items: center; gap: 6px; flex: none; margin-inline-start: auto; font-size: var(--fs-sm); white-space: nowrap; color: var(--tone-warn-ink); }
@@ -460,10 +480,13 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
   /* A 24 px hit area centred on the edge; the line and grip drawn inside it stay slim. */
   .chat-panel-resize { position: absolute; z-index: 2; top: 0; bottom: 0; left: -12px; width: 24px; cursor: col-resize; touch-action: none; }
   .chat-panel-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 11px; width: 2px; background: transparent; transition: background-color .12s ease; }
-  /* A subtle grip, always visible, says the edge can be dragged; the edge lights up on hover, focus and drag. */
-  .chat-panel-resize::before { content: ""; position: absolute; z-index: 1; top: 50%; left: 9px; width: 6px; height: 32px; margin-block-start: -16px; border-radius: 999px; background: color-mix(in srgb, var(--gray-400) 55%, transparent); box-shadow: 0 0 0 2px var(--gray-900); transition: background-color .12s ease; }
+  /* A dotted splitter grip (two columns of three dots on a small tab), always visible, says the edge can be dragged;
+     the edge lights up on hover, focus and drag, and "Resize thread" shows beside the grip. */
+  .chat-panel-resize::before { content: ""; position: absolute; z-index: 1; top: 50%; left: 5px; width: 14px; height: 28px; margin-block-start: -14px; border-radius: var(--radius-md); background: radial-gradient(circle, var(--gray-300) 1.25px, transparent 1.75px) 2px 3px / 5px 7px var(--gray-800); box-shadow: inset 0 0 0 1px var(--line2), 0 0 0 2px var(--gray-900); transition: background-color .12s ease, box-shadow .12s ease; }
   .chat-panel-resize:hover::after, .chat-panel-resize:focus-visible::after, .chat.is-resizing .chat-panel-resize::after { background: var(--tone-accent); }
-  .chat-panel-resize:hover::before, .chat-panel-resize:focus-visible::before, .chat.is-resizing .chat-panel-resize::before { background: var(--tone-accent); }
+  .chat-panel-resize:hover::before, .chat-panel-resize:focus-visible::before, .chat.is-resizing .chat-panel-resize::before { background-color: var(--gray-700, var(--gray-800)); box-shadow: inset 0 0 0 1px var(--tone-accent), 0 0 0 2px var(--gray-900); }
+  .chat-panel-resize-tip { position: absolute; z-index: 3; top: 50%; right: calc(100% - 2px); transform: translateY(-50%); padding: 4px 8px; border-radius: var(--radius-md); white-space: nowrap; font-size: var(--fs-xs); font-weight: 600; color: var(--white); background: var(--gray-800); box-shadow: inset 0 0 0 1px var(--line2), 0 4px 12px rgb(0 0 0 / .24); opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+  .chat-panel-resize:is(:hover, :focus) .chat-panel-resize-tip, .chat.is-resizing .chat-panel-resize-tip { opacity: 1; transition: none; }
   .chat-panel-resize:focus-visible { outline: none; }
   .chat.is-resizing { cursor: col-resize; user-select: none; }
 }
@@ -491,3 +514,18 @@ body:has(.chat .chat-compose) .toasts { bottom: 112px; }
 .chat .chat-compose.is-confirming .chat-compose-row > .btn[type="submit"] { color: var(--gray-400); background: transparent; box-shadow: inset 0 0 0 1px var(--line2); }
 .chat .chat-compose.is-confirming .chat-compose-row > .btn[type="submit"]:hover { color: var(--white); background: var(--hover); }
 .chat-ask-line .ic14 { color: var(--tone-accent-ink); }
+
+/* ---------------------------------------------------------------- New message: choosing a recipient
+   The conversation behind the picker steps back (inert, dimmed) and a centred prompt names what happens next. */
+#main .chat.is-picking > .chmain { position: relative; }
+#main .chat.is-picking > .chmain > :not(.chat-picking) { opacity: .28; pointer-events: none; }
+.chat-picking { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; background: color-mix(in srgb, var(--card-surface, var(--gray-900)) 55%, transparent); }
+.chat-picking-ic { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 999px; color: var(--tone-accent-ink); background: var(--hover); box-shadow: inset 0 0 0 1px var(--line2); }
+.chat-picking-t { font-size: var(--fs-lg, 1.125rem); font-weight: 600; color: var(--white); }
+.chat-picking-p { max-width: 36ch; font-size: var(--fs-sm); line-height: 1.5; color: var(--gray-300); }
+.chat-picking-p b { color: var(--white); }
+
+/* The message field's edge reads as a boundary (at least 3:1 against the composer's surface) in every theme:
+   --gray-500 measures 3.0–4.8:1 across the 7 themes, where the line tokens measured 1.2–1.5:1 in Report and Report
+   Dark. Focus keeps each theme's own focus treatment. */
+#main .chat :is(#compose, #thread-compose):not(:focus) { box-shadow: inset 0 0 0 1px var(--gray-500); }

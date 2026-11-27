@@ -14,7 +14,8 @@ function imageTile(m, img, i, all) {
   const pos = all.length > 1 ? `, ${i + 1} of ${all.length}` : "";
   const label = `Open image ${altOf(img)}${pos}${extra ? `, and ${extra} more` : ""}`;
   return `<button class="chat-att-img" type="button" data-act="chat-att-view" data-id="${esc(m.id)}" data-i="${i}" aria-label="${esc(label)}">
-    <img src="${esc(img.url)}" alt="${esc(altOf(img))}" loading="lazy" decoding="async">${extra ? `<span class="chat-att-more" aria-hidden="true">+${extra}</span>` : ""}</button>`;
+    <span class="chat-att-frame"><img src="${esc(img.url)}" alt="${esc(altOf(img))}" loading="lazy" decoding="async"><span class="chat-att-zoom" aria-hidden="true">${ic("maximize", "ic14")}</span>${extra ? `<span class="chat-att-more" aria-hidden="true">+${extra}</span>` : ""}</span>
+    <span class="chat-att-cap" aria-hidden="true">${ic("image", "ic14")}<span class="chat-att-cap-name">${esc(img.name)}</span></span></button>`;
 }
 function imageGrid(m, images) {
   if (!images.length) return "";
