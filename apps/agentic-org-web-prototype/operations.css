@@ -567,7 +567,10 @@ html[data-theme^="graphite"] {
   --stc-border: var(--line2);
   --stc-shadow: 0 16px 40px rgb(0 0 0 / .44);
   --stc-radius: 7px;
+  /* Graphite's canvas is near-black, so the shared navy scrim read far darker here */
+  --stc-backdrop: rgb(0 0 0 / .38);
 }
+html[data-theme="graphite-light"] { --stc-backdrop: rgb(9 9 11 / .24); }
 html[data-theme="report"] {
   --stc-surface: #FFFFFF;
   --stc-well: #F4F6F9;
