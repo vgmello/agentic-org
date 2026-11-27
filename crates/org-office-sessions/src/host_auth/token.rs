@@ -5,11 +5,13 @@
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use org_subscription_usage::{parse_oauth_envelope, validate_oauth_secret_token};
+use serde::Serialize;
 use zeroize::Zeroizing;
 
 /// Upper bound on a vault-stored OAuth credential payload before parsing.
-pub(crate) const MAX_VAULT_OAUTH_CRED_BYTES: usize = 64 * 1024;
+#[cfg(test)]
+pub(crate) use org_subscription_usage::MAX_VAULT_OAUTH_CRED_BYTES;
 /// Proactive refresh lead time before a vault OAuth access token expires (5 minutes).
 pub(crate) const OAUTH_REFRESH_LEAD_MS: u64 = 5 * 60 * 1000;
 
@@ -139,27 +141,11 @@ impl VaultAuthError {
 pub(crate) fn parse_vault_oauth_credential(
     raw: &[u8],
 ) -> Result<VaultOAuthCredential, VaultAuthError> {
-    if raw.len() > MAX_VAULT_OAUTH_CRED_BYTES {
-        return Err(VaultAuthError::MalformedCredential(
-            "vault credential exceeds maximum size",
-        ));
-    }
-    let text = std::str::from_utf8(raw)
-        .map_err(|_| VaultAuthError::MalformedCredential("vault credential is not valid UTF-8"))?;
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Err(VaultAuthError::MalformedCredential(
-            "vault credential is empty",
-        ));
-    }
-    if trimmed.starts_with('{') {
-        return parse_vault_oauth_json(trimmed);
-    }
-    validate_secret_token(trimmed)?;
+    let parsed = parse_oauth_envelope(raw).map_err(VaultAuthError::MalformedCredential)?;
     Ok(VaultOAuthCredential {
-        access_token: Zeroizing::new(trimmed.to_owned()),
-        refresh_token: None,
-        expires_at_ms: None,
+        access_token: parsed.access_token,
+        refresh_token: parsed.refresh_token,
+        expires_at_ms: parsed.expires_at_ms,
     })
 }
 
@@ -182,75 +168,6 @@ pub(crate) fn collect_vault_redaction_secrets(raw: &[u8], out: &mut Vec<Zeroizin
     }
 }
 
-struct ZeroizingStr(Zeroizing<String>);
-
-impl<'de> Deserialize<'de> for ZeroizingStr {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer).map(|s| Self(Zeroizing::new(s)))
-    }
-}
-
-#[derive(Deserialize)]
-struct RawOAuthFields {
-    #[serde(default, alias = "accessToken")]
-    access_token: Option<ZeroizingStr>,
-    #[serde(default, alias = "refreshToken")]
-    refresh_token: Option<ZeroizingStr>,
-    #[serde(default, alias = "expiresAt")]
-    expires_at_ms: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct RawOAuthEnvelope {
-    #[serde(default, rename = "claudeAiOauth")]
-    claude_ai_oauth: Option<RawOAuthFields>,
-    #[serde(default, alias = "accessToken")]
-    access_token: Option<ZeroizingStr>,
-    #[serde(default, alias = "refreshToken")]
-    refresh_token: Option<ZeroizingStr>,
-    #[serde(default, alias = "expiresAt")]
-    expires_at_ms: Option<u64>,
-}
-
-fn parse_vault_oauth_json(trimmed: &str) -> Result<VaultOAuthCredential, VaultAuthError> {
-    let env: RawOAuthEnvelope = serde_json::from_str(trimmed)
-        .map_err(|_| VaultAuthError::MalformedCredential("malformed JSON OAuth envelope"))?;
-    let fields = env.claude_ai_oauth.unwrap_or(RawOAuthFields {
-        access_token: env.access_token,
-        refresh_token: env.refresh_token,
-        expires_at_ms: env.expires_at_ms,
-    });
-    let ZeroizingStr(access_token) =
-        fields
-            .access_token
-            .ok_or(VaultAuthError::MalformedCredential(
-                "OAuth envelope is missing access_token",
-            ))?;
-    validate_secret_token(access_token.as_str())?;
-    let refresh_token = match fields.refresh_token {
-        Some(ZeroizingStr(rt)) if !rt.is_empty() => {
-            validate_secret_token(rt.as_str())?;
-            Some(rt)
-        }
-        _ => None,
-    };
-    Ok(VaultOAuthCredential {
-        access_token,
-        refresh_token,
-        expires_at_ms: fields.expires_at_ms,
-    })
-}
-
 fn validate_secret_token(token: &str) -> Result<(), VaultAuthError> {
-    if token.is_empty() || token != token.trim() {
-        return Err(VaultAuthError::MalformedCredential(
-            "OAuth token must be non-empty and trimmed",
-        ));
-    }
-    if token.bytes().any(|b| b.is_ascii_control()) {
-        return Err(VaultAuthError::MalformedCredential(
-            "OAuth token has disallowed control chars",
-        ));
-    }
-    Ok(())
+    validate_oauth_secret_token(token).map_err(VaultAuthError::MalformedCredential)
 }

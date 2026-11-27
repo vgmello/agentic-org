@@ -73,14 +73,14 @@ impl SatelliteSyncSession {
         self.tls.sock.as_raw_fd()
     }
 
-    pub fn write_frame(&mut self, frame: &SyncFrame) -> Result<(), String> {
+    pub(crate) fn write_frame(&mut self, frame: &SyncFrame) -> Result<(), String> {
         write_sync_frame(&mut self.tls, frame).map_err(|e| format!("federation write failed: {e}"))
     }
 
     /// Reads the next correlated reply frame while buffering any unsolicited HQ-pushed relays,
     /// `OrgEvent`s, or `SessionRpcRequest`s so queued pushes never disrupt snapshot/work/message/
     /// permit RPCs (`TASK-52` H-14, `TASK-140`, `TASK-143` AC #3).
-    pub fn read_correlated_frame(
+    pub(crate) fn read_correlated_frame(
         &mut self,
         timeout: Duration,
         expected_receipt_msg_id: Option<&str>,

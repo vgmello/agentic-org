@@ -133,7 +133,7 @@ pub struct SessionManagerConfig {
     /// this crate's unit tests start with none, so no test writes under the real account.
     pub agent_os_state_roots: Vec<PathBuf>,
     /// Optional consumer-owned attachment payload resolver (`TASK-98.3`). When `None`, defaults to
-    /// [`crate::LocalOfficeAttachmentResolver`]; satellites wire a
+    /// [`crate::turn_attachments_adapter::LocalOfficeAttachmentResolver`]; satellites wire a
     /// federation-backed resolver in `org-office-server`.
     pub attachment_resolver: Option<Arc<dyn crate::turn_attachments::TurnAttachmentResolver>>,
     /// Per-office idle hibernation TTL, resident RSS ceiling, and child build concurrency (`TASK-133`).

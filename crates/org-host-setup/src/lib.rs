@@ -78,10 +78,10 @@ pub use provider_command::{
     provider_refresh, ProviderBindInput, ProviderCreateInput, ProviderCreated,
     ProviderRefreshInput, HELP as PROVIDER_HELP,
 };
-pub mod sign_in_command;
+pub(crate) mod sign_in_command;
 pub use sign_in_command::{
-    context_clear, context_show, context_use, open_for_command, sign_in_only,
-    ApprovedOfficeChannel, ContextCleared, SignedIn, CONTEXT_HELP, SIGN_IN_HELP,
+    context_use, open_for_command, sign_in_only, ApprovedOfficeChannel, SignedIn, CONTEXT_HELP,
+    SIGN_IN_HELP,
 };
 pub(crate) mod tls_command;
 pub use tls_command::{admin_tls_set, TlsPairReplaced, HELP as ADMIN_TLS_SET_HELP};

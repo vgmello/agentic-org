@@ -1,14 +1,18 @@
 //! Strict parser for enrolled subscription OAuth envelopes (`TASK-79`, `TASK-132`).
 //!
-//! Leaf module with zero sibling imports.
+//! Leaf module with zero sibling imports. Shared by `org-subscription-usage` and
+//! `org-office-sessions` (`host_auth::token`) as the single canonical OAuth envelope parser.
 
 use serde::Deserialize;
 use zeroize::Zeroizing;
 
-const MAX_VAULT_OAUTH_CRED_BYTES: usize = 64 * 1024;
+/// Upper bound on a vault-stored OAuth credential payload before parsing.
+pub const MAX_VAULT_OAUTH_CRED_BYTES: usize = 64 * 1024;
 
-pub(crate) struct ParsedUsageOAuth {
+/// Parsed, validated OAuth credential envelope with zeroized secrets.
+pub struct ParsedOAuthEnvelope {
     pub access_token: Zeroizing<String>,
+    pub refresh_token: Option<Zeroizing<String>>,
     pub expires_at_ms: Option<u64>,
 }
 
@@ -42,47 +46,61 @@ struct RawOAuthEnvelope {
     expires_at_ms: Option<u64>,
 }
 
-fn is_valid_secret_token(token: &str) -> bool {
-    !token.is_empty() && token == token.trim() && !token.bytes().any(|b| b.is_ascii_control())
+/// Validates that a secret token is non-empty, trimmed, and free of ASCII control characters.
+pub fn validate_oauth_secret_token(token: &str) -> Result<(), &'static str> {
+    if token.is_empty() || token != token.trim() {
+        return Err("OAuth token must be non-empty and trimmed");
+    }
+    if token.bytes().any(|b| b.is_ascii_control()) {
+        return Err("OAuth token has disallowed control chars");
+    }
+    Ok(())
+}
+
+fn parse_oauth_json(trimmed: &str) -> Result<ParsedOAuthEnvelope, &'static str> {
+    let env: RawOAuthEnvelope =
+        serde_json::from_str(trimmed).map_err(|_| "malformed JSON OAuth envelope")?;
+    let fields = env.claude_ai_oauth.unwrap_or(RawOAuthFields {
+        access_token: env.access_token,
+        refresh_token: env.refresh_token,
+        expires_at_ms: env.expires_at_ms,
+    });
+    let ZeroizingStr(access_token) = fields
+        .access_token
+        .ok_or("OAuth envelope is missing access_token")?;
+    validate_oauth_secret_token(access_token.as_str())?;
+    let refresh_token = match fields.refresh_token {
+        Some(ZeroizingStr(rt)) if !rt.is_empty() => {
+            validate_oauth_secret_token(rt.as_str())?;
+            Some(rt)
+        }
+        _ => None,
+    };
+    Ok(ParsedOAuthEnvelope {
+        access_token,
+        refresh_token,
+        expires_at_ms: fields.expires_at_ms,
+    })
 }
 
 /// Parses an enrolled `subscription_cli` credential payload (raw token or JSON OAuth envelope)
-/// into its zeroized bearer `access_token` and optional `expires_at_ms`.
-pub(crate) fn parse_usage_oauth_credential(raw: &[u8]) -> Option<ParsedUsageOAuth> {
+/// into its zeroized bearer `access_token`, optional `refresh_token`, and optional `expires_at_ms`.
+pub fn parse_oauth_envelope(raw: &[u8]) -> Result<ParsedOAuthEnvelope, &'static str> {
     if raw.len() > MAX_VAULT_OAUTH_CRED_BYTES {
-        return None;
+        return Err("vault credential exceeds maximum size");
     }
-    let text = std::str::from_utf8(raw).ok()?;
+    let text = std::str::from_utf8(raw).map_err(|_| "vault credential is not valid UTF-8")?;
     let trimmed = text.trim();
     if trimmed.is_empty() {
-        return None;
+        return Err("vault credential is empty");
     }
     if trimmed.starts_with('{') {
-        let env: RawOAuthEnvelope = serde_json::from_str(trimmed).ok()?;
-        let fields = env.claude_ai_oauth.unwrap_or(RawOAuthFields {
-            access_token: env.access_token,
-            refresh_token: env.refresh_token,
-            expires_at_ms: env.expires_at_ms,
-        });
-        let ZeroizingStr(access_token) = fields.access_token?;
-        if !is_valid_secret_token(access_token.as_str()) {
-            return None;
-        }
-        if let Some(ZeroizingStr(rt)) = fields.refresh_token {
-            if !rt.is_empty() && !is_valid_secret_token(rt.as_str()) {
-                return None;
-            }
-        }
-        return Some(ParsedUsageOAuth {
-            access_token,
-            expires_at_ms: fields.expires_at_ms,
-        });
+        return parse_oauth_json(trimmed);
     }
-    if !is_valid_secret_token(trimmed) {
-        return None;
-    }
-    Some(ParsedUsageOAuth {
+    validate_oauth_secret_token(trimmed)?;
+    Ok(ParsedOAuthEnvelope {
         access_token: Zeroizing::new(trimmed.to_owned()),
+        refresh_token: None,
         expires_at_ms: None,
     })
 }

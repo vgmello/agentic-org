@@ -25,8 +25,7 @@
 		class?: string;
 	} = $props();
 
-	const isReport = $derived(uiPrefs.theme === 'report' || uiPrefs.theme === 'report-dark');
-	const displayTitle = $derived(isReport && reportTitle ? reportTitle : title);
+	const displayTitle = $derived(uiPrefs.isReport && reportTitle ? reportTitle : title);
 	const displayCount = $derived(count === '' || count === undefined ? '' : String(count));
 	const trailing = $derived(action ?? right);
 </script>

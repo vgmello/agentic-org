@@ -37,11 +37,8 @@ tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
 image.workspace = true
-org-media = { path = "../org-media", features = ["sanitize", "testkit"] }
 # Only `examples/store_latency.rs` (benchmarking the SQLite projection via `org-office`'s public seam).
 org-office-sqlite = { path = "../org-office-sqlite" }
-# The flush steps the platform counted, for the publication evidence tests.
-org-platform = { path = "../org-platform", features = ["test-support"] }
 org-reviews = { path = "../org-reviews", features = ["testkit"] }
 org-store = { path = "../org-store", features = ["testkit"] }
 serde_json.workspace = true

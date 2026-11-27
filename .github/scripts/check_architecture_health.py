@@ -87,6 +87,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+_SCRIPT_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from architecture_hygiene_checks import check_workspace_hygiene
+
 tomllib: Any
 try:
     import tomllib as _stdlib_tomllib
@@ -1702,6 +1708,17 @@ def run_health_check(
     dag_errors, layer0_checked = check_cargo_dag_and_layer0(
         members, workspace_dep_renames=workspace_dep_renames
     )
+    hygiene_errors = check_workspace_hygiene(
+        repo_root,
+        members,
+        workspace_dep_renames,
+        iter_rs=_iter_crate_rs_files,
+        is_test_path=is_test_source_path,
+        mask_fn=mask_comments_and_strings,
+        cfg_test_fn=find_cfg_test_ranges,
+        prev_attr_fn=_prev_outer_attr_span,
+        skip_balanced_fn=_skip_balanced,
+    )
 
     if not resolved_allowlist.is_file():
         raise ValueError(f"missing allowlist file: {resolved_allowlist}")
@@ -1710,7 +1727,7 @@ def run_health_check(
     )
 
     live_errors, warnings = compare_live_report(report, allowlist, allowlist_label=allowlist_label)
-    errors = [*dag_errors, *live_errors]
+    errors = [*dag_errors, *hygiene_errors, *live_errors]
 
     if base_commit is not None:
         base_text = read_allowlist_at_base(repo_root, base_commit, allowlist_rel=allowlist_label)
@@ -1798,6 +1815,7 @@ def _emit_health_result(result: HealthResult, elapsed: float, base: str | None) 
         f"Architecture health OK: {len(result.workspace_crates)} crates, "
         f"{result.report.files_scanned} production .rs files, "
         f"0 DAG cycles, {len(result.layer0_checked)} Layer-0 crates clean, "
+        f"0 unused deps, 0 orphan .rs files, "
         f"coupling({coupling_summary}){base_note} [{elapsed:.2f}s]."
     )
     return 0

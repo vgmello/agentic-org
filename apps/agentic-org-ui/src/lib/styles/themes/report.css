@@ -266,10 +266,6 @@ html[data-ui-theme='report'] {
 	--exec-cmdk-foot-kbd-bg: #ffffff;
 	--exec-cmdk-foot-kbd-ring: #e2e7ef;
 	--exec-cmdk-foot-kbd-ink: #0b101b;
-	--exec-scroll-hint-bg: #ffffff;
-	--exec-scroll-hint-pill-bg: transparent;
-	--exec-scroll-hint-ink: #475569;
-	--exec-scroll-hint-ink-hover: #0b101b;
 
 	/* Unread rail dot */
 	--exec-nav-dot: var(--tone-warn);
@@ -346,27 +342,23 @@ html[data-ui-theme^='report'] {
 	--exec-h1-tracking: -0.038em;
 	--exec-h1-em-decoration: underline;
 
-	--exec-section-head-display: flex;
 	--exec-section-title-size: 1.25rem;
 	--exec-section-title-weight: 700;
 	--exec-section-title-tracking: -0.028em;
 	--exec-section-sub-size: 0.8125rem;
-	--exec-capacity-title-size: 1.25rem;
-	--exec-capacity-title-leading: 1.25;
-	--exec-capacity-title-weight: 700;
-	--exec-capacity-title-tracking: -0.028em;
-	--exec-capacity-sub-size: 0.75rem;
 	--exec-spot-title-size: 1.125rem;
 	--exec-spot-title-weight: 650;
-	--exec-brief-title-size: 1.25rem;
-	--exec-brief-title-weight: 700;
-	--exec-brief-title-tracking: -0.028em;
 	--exec-section-gap: 0px;
 	--exec-stage-gap: 0px;
+	--exec-stage-row-gap: 0px;
+	--exec-stage-head-spot-pad: 0 36px 14px 0;
+	--exec-stage-head-brief-pad: 0 0 14px 36px;
+	--exec-stage-head-brief-mt-sm: 0px;
+	--exec-stage-head-brief-pt-sm: 24px;
 	--exec-section-border: 1px solid var(--report-rule);
 	--exec-kpi-pad-y: 22px 0 26px;
 	--exec-section-pad-y: 32px 0 34px;
-	--exec-time-pad: 32px 0 8px;
+	--exec-time-pad: 8px 0 0;
 	--exec-col-divider: 1px solid var(--report-rule-subtle);
 
 	--exec-panel-bg: transparent;
@@ -400,7 +392,7 @@ html[data-ui-theme^='report'] {
 	--exec-spot-pad-md: 0 0 24px;
 	--exec-spot-pad-xl: 0 36px 0 0;
 	--exec-brief-pad: 0 0 0 36px;
-	--exec-brief-pad-sm: 24px 0 0;
+	--exec-brief-pad-sm: 0px;
 	--exec-memo-radius: 0 4px 4px 0;
 	--exec-memo-pad: 1rem 1.125rem;
 	--exec-memo-gap: 0.875rem;
@@ -422,7 +414,7 @@ html[data-ui-theme^='report'] {
 	--exec-proj-row-mt-md: 16px;
 
 	/* Release horizon / milestones in Report Day & Night */
-	--exec-horizon-pad: 22px 0;
+	--exec-horizon-pad: 4px 0 0;
 	--exec-hor-item-bg: var(--exec-well);
 	--exec-hor-item-bg-hover: var(--exec-surface-hi);
 	--exec-hor-date-bg: var(--exec-ink);
