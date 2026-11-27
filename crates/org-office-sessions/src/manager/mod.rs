@@ -49,6 +49,7 @@ mod environment;
 mod failover;
 #[cfg(test)]
 mod helper_tests;
+mod hibernation;
 mod install;
 mod launch;
 mod lifecycle_ops;
@@ -72,6 +73,9 @@ pub(crate) use environment::task_process_context;
 pub(crate) use failover::{
     failover_route_opts, is_host_claude_subscription_refresh_eligible, requeue_contended_failover,
     run_failover_relaunch,
+};
+pub use hibernation::{
+    OfficeRssSnapshot, OsMemorySampler, ProcessMemorySampler, ResourceLimitsConfig, SessionRssEntry,
 };
 #[cfg(test)]
 pub(crate) use install::{install_unrecovered_pre_pump_handle, PrePumpHandleMeta};
@@ -128,6 +132,8 @@ pub struct SessionManagerConfig {
     /// [`crate::turn_attachments::LocalOfficeAttachmentResolver`]; satellites wire a
     /// federation-backed resolver in `org-office-server`.
     pub attachment_resolver: Option<Arc<dyn crate::turn_attachments::TurnAttachmentResolver>>,
+    /// Per-office idle hibernation TTL, resident RSS ceiling, and child build concurrency (`TASK-133`).
+    pub resource_limits: ResourceLimitsConfig,
 }
 
 impl SessionManagerConfig {
@@ -155,6 +161,7 @@ impl SessionManagerConfig {
                 )
             },
             attachment_resolver: None,
+            resource_limits: ResourceLimitsConfig::from_env(),
         }
     }
 }
@@ -456,6 +463,7 @@ pub struct SessionManager {
     pub(crate) dispatching_wakes: Arc<Mutex<HashSet<String>>>,
     pub(crate) waiting_messages: Arc<Mutex<HashMap<String, Arc<AtomicU32>>>>,
     pub(crate) mid_turn_rates: Arc<Mutex<HashMap<String, MidTurnRateTracker>>>,
+    pub(crate) hibernation: hibernation::HibernationState,
     watch_notice_provider: Mutex<Option<WatchNoticeProvider>>,
     startup_recovery: Mutex<RecoveryReport>,
     command_cache: Mutex<HashMap<(String, String, String), CachedRpcResponse>>,
@@ -517,6 +525,7 @@ impl SessionManager {
             dispatching_wakes: Arc::new(Mutex::new(HashSet::new())),
             waiting_messages: Arc::new(Mutex::new(HashMap::new())),
             mid_turn_rates: Arc::new(Mutex::new(HashMap::new())),
+            hibernation: hibernation::HibernationState::default(),
             watch_notice_provider: Mutex::new(None),
             startup_recovery: Mutex::new(RecoveryReport::default()),
             command_cache: Mutex::new(HashMap::new()),
@@ -528,6 +537,7 @@ impl SessionManager {
     /// waiting agents (`LIVE-2`) and relaunch on the next pool connection (`doc-88` §7).
     pub fn attach_self(this: &Arc<Self>) {
         *this.self_ref.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::downgrade(this));
+        Self::maybe_start_resource_sweeper(this);
     }
 
     pub(crate) fn weak_self(&self) -> Option<std::sync::Weak<Self>> {
@@ -778,18 +788,4 @@ pub(crate) fn set_waiting_messages_count(
 fn next_entropy_hex(bytes_len: usize) -> Result<String, ApiError> {
     random_hex(bytes_len)
         .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))
-}
-
-fn next_uuid_v4() -> Result<String, ApiError> {
-    use ring::rand::{SecureRandom, SystemRandom};
-    let mut b = [0_u8; 16];
-    SystemRandom::new()
-        .fill(&mut b)
-        .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))?;
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    Ok(format!(
-        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
-    ))
 }

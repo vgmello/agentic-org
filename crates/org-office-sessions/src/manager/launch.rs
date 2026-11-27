@@ -16,7 +16,8 @@ use crate::subagents::{build_general_subagent_definition, write_subagent_definit
 
 use super::chief_of_staff::partition_switch_reason;
 use super::environment::{
-    assemble_launch_env, resolve_workspace, write_owner_only_binding_file, SessionEnvInput,
+    apply_build_concurrency_env, assemble_launch_env, resolve_workspace,
+    write_owner_only_binding_file, SessionEnvInput,
 };
 use super::operator_home::ensure_operator_home;
 use super::registry_guards::{
@@ -32,8 +33,8 @@ use super::warm::{
     WarmFreshness, WarmHandleTurn,
 };
 use super::{
-    next_entropy_hex, next_uuid_v4, BindingGuard, LiveSessionHandle, PermitGuard,
-    PlannedSessionLaunch, PreparedSessionLaunch, SessionManager,
+    next_entropy_hex, BindingGuard, LiveSessionHandle, PermitGuard, PlannedSessionLaunch,
+    PreparedSessionLaunch, SessionManager,
 };
 
 /// Times a start re-plans when its warm handle is replaced while freshness checks run unlocked.
@@ -317,6 +318,9 @@ impl SessionManager {
         // A stop that overtook this start while its watch notices were read skips admission,
         // disk setup and the spawn (registration re-checks atomically, `TASK-190`).
         ensure_not_stopped_since(&self.registry, &emp_id, opts.start_stop_epoch)?;
+        // Reclaim overdue idle warm sessions and enforce any office RSS budget before launching
+        // a new supervised runtime process (`TASK-133`).
+        self.sweep_resource_limits();
         // Before creating this agent's runtime directory or session-binding token on disk,
         // ensure no already-running sandboxed sibling lacks isolation for `emp_id` (`TASK-166`).
         self.sandbox_runner
@@ -403,27 +407,39 @@ impl SessionManager {
         let mark_str = format!("m-{}", next_entropy_hex(12)?);
         let allow_host_auth =
             crate::host_auth::allows_host_subscription_auth(&admitted.auth_env, admitted.auth_mode);
+        let hibernated_resume = self.resolve_hibernated_resume_id(
+            &emp_id,
+            admitted.adapter.id().as_str(),
+            &spec_hash,
+            &opts,
+        );
         let ctx = build_launch_context(
             binary,
             &runtime_dir,
             &tmpdir,
             &session_id,
-            opts.resume_runtime_session_id,
+            opts.resume_runtime_session_id
+                .or(hibernated_resume.as_deref()),
             host_profile.host_config_subdir,
             allow_host_auth,
         )?;
-        let (plan, session) = admitted
+        let (mut plan, session) = admitted
             .adapter
             .plan_session(&spec, &ctx)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "runtime rejected session spec"))?;
 
-        let (launch_env, oauth_expires_at_ms, oauth_token_fp) = assemble_launch_env(
+        let (mut launch_env, oauth_expires_at_ms, oauth_token_fp) = assemble_launch_env(
             admitted.auth_env,
             admitted.endpoint_env,
             host_profile.uses_host_oauth_token_injection,
             allow_host_auth,
             &ctx.runtime_path,
             &plan,
+        );
+        apply_build_concurrency_env(
+            &mut plan,
+            &mut launch_env,
+            self.config.resource_limits.build_concurrency_jobs,
         );
 
         Ok(PlannedSessionLaunch {
@@ -647,6 +663,12 @@ impl SessionManager {
             .record_identity(|ident| {
                 self.bindings
                     .set_root_pid(emp_id, run_id, ident.pid as libc::pid_t);
+                self.hibernation.record_spawned_pid(
+                    emp_id,
+                    run_id,
+                    ident.pid,
+                    std::time::Instant::now(),
+                );
                 let active_turn = ActiveTurnRecord {
                     version: 1,
                     employee_id: emp_id.to_owned(),
@@ -686,6 +708,37 @@ impl SessionManager {
             .cloned()
             .collect()
     }
+
+    fn resolve_hibernated_resume_id(
+        &self,
+        emp_id: &str,
+        runtime_id: &str,
+        spec_hash: &str,
+        opts: &LaunchRouteOpts<'_>,
+    ) -> Option<String> {
+        if opts.resume_runtime_session_id.is_some()
+            || opts.partition.is_some()
+            || opts.is_failover_switch
+        {
+            return None;
+        }
+        self.hibernation
+            .matching_resume_id(emp_id, runtime_id, spec_hash, opts.start_stop_epoch)
+    }
+}
+
+fn next_uuid_v4() -> Result<String, ApiError> {
+    use ring::rand::{SecureRandom, SystemRandom};
+    let mut b = [0_u8; 16];
+    SystemRandom::new()
+        .fill(&mut b)
+        .map_err(|_| ApiError::new(ErrorCode::Unavailable, "system entropy unavailable"))?;
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    Ok(format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+    ))
 }
 
 pub(super) fn ensure_warm_sandbox_not_stale(sandbox_topology_stale: bool) -> Result<(), ApiError> {

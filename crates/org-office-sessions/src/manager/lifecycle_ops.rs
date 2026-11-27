@@ -405,6 +405,10 @@ pub(super) fn stop_all_inner(mgr: &SessionManager, reason: &str, permanent: bool
             reg.shutting_down = true;
         }
     }
+    mgr.hibernation.clear_all_hibernated();
+    if permanent {
+        mgr.hibernation.stop_and_join_sweeper();
+    }
     loop {
         let ids: Vec<String> = {
             let reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());

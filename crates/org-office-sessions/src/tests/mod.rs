@@ -59,6 +59,7 @@ mod chief_of_staff;
 mod chief_of_staff_partitions;
 mod effort;
 mod enrollment;
+mod hibernation;
 mod instructions;
 mod instructions_fencing;
 mod instructions_guard;

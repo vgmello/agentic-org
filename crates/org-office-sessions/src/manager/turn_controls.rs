@@ -124,6 +124,8 @@ impl SessionManager {
         if !queue_steer(&handle.state, &handle.tx, request) {
             return Err(session_ended());
         }
+        self.hibernation
+            .note_activity(employee_id, std::time::Instant::now());
         let view = handle
             .state
             .lock()

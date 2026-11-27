@@ -36,6 +36,7 @@ pub(crate) fn reap_live_handle(
     mode: ReapMode,
 ) -> Result<ReapedHandle, ApiError> {
     mgr.bindings.revoke(employee_id, None);
+    mgr.hibernation.clear_live_tracking(employee_id);
     if let Some(reason) = stop_reason {
         let _ = handle.tx.send(PumpCommand::Stop {
             reason: reason.to_owned(),

@@ -208,6 +208,11 @@ impl BackgroundRegistry {
         std::mem::take(&mut self.pending_wakes)
     }
 
+    /// Whether completed background tasks still have undrained wakes waiting for the pump.
+    pub fn has_pending_wakes(&self) -> bool {
+        !self.pending_wakes.is_empty()
+    }
+
     /// Number of currently running background tasks / sub-agents (preserved across idle turns).
     pub fn active_count(&self) -> usize {
         self.tasks

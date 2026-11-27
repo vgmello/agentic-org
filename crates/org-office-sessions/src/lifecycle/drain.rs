@@ -480,6 +480,10 @@ pub(super) fn commit_live_drain(
         }
         Ok(false) => {}
         Ok(true) => {
+            if let Some(mgr) = ctx.weak_mgr.as_ref().and_then(|w| w.upgrade()) {
+                mgr.hibernation
+                    .note_activity(employee_id, std::time::Instant::now());
+            }
             if !claim.person_triggered {
                 let mut quota = ctx
                     .store
