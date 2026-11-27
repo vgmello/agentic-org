@@ -162,6 +162,9 @@ pub enum WebErrorCode {
     OperationReused,
     /// Always a confirmed pre-dispatch refusal. Distinct from domain error codes.
     RateLimited,
+    CopilotUnavailable,
+    CopilotFailed,
+    CopilotBusy,
     Unknown,
     /// A newer refusal code is still a refusal; retain its exact spelling.
     #[serde(untagged)]
@@ -306,8 +309,9 @@ impl WebError {
             Expired => 410,
             TooLarge => 413,
             UnsupportedVersion => 426,
-            RateLimited => 429,
-            NotReady | Unavailable | StorageError | Timeout => 503,
+            RateLimited | CopilotBusy => 429,
+            NotReady | Unavailable | StorageError | Timeout | CopilotUnavailable
+            | CopilotFailed => 503,
             Unknown | Other(_) => return None,
         })
     }

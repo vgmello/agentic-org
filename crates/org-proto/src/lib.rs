@@ -91,6 +91,7 @@ pub mod ask;
 pub mod attachments;
 pub mod budgets;
 pub mod chat;
+pub mod copilot;
 pub mod costs;
 pub mod directory;
 pub mod docs;

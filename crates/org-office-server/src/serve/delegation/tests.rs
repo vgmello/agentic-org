@@ -148,6 +148,8 @@ fn member(may_hire: bool) -> CallerAuthority {
 fn secrets_and_owner_reads_are_never_hers_even_for_the_owner() {
     for method in [
         "chat.read_as_owner",
+        "copilot.features",
+        "copilot.draft",
         "provider.credential_status",
         "provider.enrollment_start",
         "provider.connection.create",

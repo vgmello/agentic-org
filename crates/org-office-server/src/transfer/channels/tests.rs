@@ -153,6 +153,7 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
             processes: None,
             docs: None,
             search: None,
+            copilot: None,
             costs: None,
             providers: None,
             federation: None,

@@ -508,3 +508,186 @@ fn uninstall_refuses_symlinks_traversal_busy_registry_lock_and_service_errors() 
     assert_eq!(env7["error"]["code"], "uninstall::service");
     assert!(acct7.root.join("host-registry.created").is_file());
 }
+
+fn plant_adversarial_secrets(office_home: &Path, offline_root: &Path) -> Vec<String> {
+    // Synthesize every required secret shape at runtime (no literal tokens committed).
+    let bearer = ["bearer_adv_", "998877665544"].join("");
+    let cookie = ["cookie_adv_", "session112233"].join("");
+    let proof = ["proof_adv_", "header445566"].join("");
+    let ant_key = ["sk-ant-", "api03-advkey99887766"].join("");
+    let oai_key = ["sk-proj-", "advopenaikey55443322"].join("");
+    let gh_key = ["ghp_", "advgithubpat0123456789ABCDEF"].join("");
+    let aws_key = ["AKIA", "ADVTESTKEY004200"].join("");
+    let vault_tok = ["hvs.", "advVaultToken778899"].join("");
+    let vault_cred = ["vault_cred_", "advSecret332211"].join("");
+    let pem_begin = format!("{}BEGIN RSA PRIVATE KEY{}", "-----", "-----");
+    let pem_end = format!("{}END RSA PRIVATE KEY{}", "-----", "-----");
+    let pem_body = "MIIEpAIBAAKCAQEAadvPemBodySecretMaterial987654321".to_owned();
+    let orphan_body = "MIIOrphanPemBodySecretMaterial123456789".to_owned();
+    let query_tok = ["qry_adv_", "tok665544"].join("");
+    let userinfo_pw = ["gitpw_adv_", "hunter299"].join("");
+    let private_note_marker = ["PRIVATE_NOTE_", "CONFIDENTIAL_0042"].join("");
+    let protected_db_marker = ["PROTECTED_DB_", "MARKER_0042"].join("");
+
+    let host_log = [
+        format!("Authorization: Bearer {bearer}"),
+        format!("Cookie: sid={cookie}; theme=dark"),
+        format!("Set-Cookie: __Host-org-adv={cookie}; HttpOnly"),
+        format!("X-Org-Session-Proof: {proof}"),
+        format!("provider keys: {ant_key} {oai_key} {gh_key} {aws_key}"),
+        format!("X-Vault-Token: {vault_tok}"),
+        format!("VAULT_CREDENTIAL={vault_cred}"),
+        format!("clone https://deploy:{userinfo_pw}@git.example.test/org.git?token={query_tok}"),
+        format!("multibyte é{ant_key}日本語 password=\"ünïcode-{vault_cred}\""),
+        pem_begin,
+        pem_body.clone(),
+        pem_end.clone(),
+        orphan_body.clone(),
+        pem_end,
+    ]
+    .join("\n");
+    write_file(&office_home.join("logs/host.log"), &host_log);
+
+    write_file(
+        &offline_root.join("private/tasks/t1/task.md"),
+        &format!("---\nid: priv-1\n---\n{private_note_marker}\n"),
+    );
+    write_file(
+        &offline_root.join("protected/messaging.db"),
+        &protected_db_marker,
+    );
+    write_file(
+        &offline_root.join("state/tasks/t1/task.md"),
+        &format!("---\nid: t1\ntoken: {ant_key}\nAuthorization: Bearer {bearer}\n"),
+    );
+
+    vec![
+        bearer,
+        cookie,
+        proof,
+        ant_key,
+        oai_key,
+        gh_key,
+        aws_key,
+        vault_tok,
+        vault_cred,
+        pem_body,
+        orphan_body,
+        query_tok,
+        userinfo_pw,
+        private_note_marker,
+        protected_db_marker,
+    ]
+}
+
+fn assert_no_secret_leaks(label: &str, payload: &str, secrets: &[String]) {
+    for secret in secrets {
+        assert!(
+            !payload.contains(secret.as_str()),
+            "{label} leaked `{secret}` in:\n{payload}"
+        );
+    }
+}
+
+#[test]
+fn adversarial_secrets_and_private_notes_never_leak_in_logs_doctor_or_support() {
+    let sb = DiagSandbox::new();
+    let acct = sb.setup_instance(Some("adv"));
+    seed_administrator(&sb.base, Some("adv"), &sb.keys).unwrap();
+    let offline_root = sb.root.join("offline-adv");
+    let secrets = plant_adversarial_secrets(&acct.office_home, &offline_root);
+
+    // 1. `logs` in plain text and JSON modes.
+    for args in [
+        &["logs", "--instance", "adv", "--lines", "100"][..],
+        &["logs", "--instance", "adv", "--lines", "100", "--json"][..],
+    ] {
+        let out = sb.run(args);
+        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+        let combined = format!("{}\n{}", text(&out.stdout), text(&out.stderr));
+        assert_no_secret_leaks(&format!("logs ({args:?})"), &combined, &secrets);
+    }
+
+    // 2. `doctor` against both instance and offline org root (table and JSON modes).
+    for args in [
+        &["doctor", "--instance", "adv", "--json"][..],
+        &[
+            "doctor",
+            "--org-dir",
+            offline_root.to_str().unwrap(),
+            "--json",
+        ][..],
+        &["doctor", "--org-dir", offline_root.to_str().unwrap()][..],
+    ] {
+        let out = sb.run(args);
+        let combined = format!("{}\n{}", text(&out.stdout), text(&out.stderr));
+        assert_no_secret_leaks(&format!("doctor ({args:?})"), &combined, &secrets);
+    }
+
+    // 2b. Direct `--org-dir .../private`, `.../private/tasks`, and `.../protected` MUST fail
+    //     closed without scanning or leaking restricted content.
+    for restricted in [
+        offline_root.join("private"),
+        offline_root.join("private/tasks"),
+        offline_root.join("protected"),
+    ] {
+        let out = sb.run(&[
+            "doctor",
+            "--org-dir",
+            restricted.to_str().unwrap(),
+            "--json",
+        ]);
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "restricted path `{}` must fail closed: {}",
+            restricted.display(),
+            text(&out.stdout)
+        );
+        let parsed: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(parsed["ok"], false, "{parsed}");
+        assert!(parsed["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == "org.integrity.syntax" && c["status"] == "fail"));
+        let combined = format!("{}\n{}", text(&out.stdout), text(&out.stderr));
+        assert_no_secret_leaks(
+            &format!("doctor restricted ({})", restricted.display()),
+            &combined,
+            &secrets,
+        );
+    }
+
+    // 3. `support` stdout JSON and `--output` 0600 file.
+    let stdout_sup = sb.run(&["support", "--instance", "adv", "--lines", "100"]);
+    assert_eq!(
+        stdout_sup.status.code(),
+        Some(0),
+        "{}",
+        text(&stdout_sup.stderr)
+    );
+    let bundle_path = sb.root.join("adv-support.json");
+    let file_sup = sb.run(&[
+        "support",
+        "--instance",
+        "adv",
+        "--lines",
+        "100",
+        "--output",
+        bundle_path.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(
+        file_sup.status.code(),
+        Some(0),
+        "{}",
+        text(&file_sup.stderr)
+    );
+    assert_no_secret_leaks("support stdout", &text(&stdout_sup.stdout), &secrets);
+    assert_no_secret_leaks(
+        "support file",
+        &fs::read_to_string(&bundle_path).unwrap(),
+        &secrets,
+    );
+}

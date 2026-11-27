@@ -2219,7 +2219,8 @@ fn cost_budget_get_query_routes_and_account_preferences_method_not_allowed() {
     }));
     let pair = sign_in(&gateway).pair();
 
-    // `GET /api/v1/account/preferences` returns 400 InvalidRequest (known POST-only route, not 404).
+    // `GET /api/v1/account/preferences` returns 200 with persisted account preferences;
+    // a query string on `/api/v1/account/preferences` returns 400 InvalidRequest.
     let prefs_get = send(
         &gateway,
         Method::GET,
@@ -2228,7 +2229,16 @@ fn cost_budget_get_query_routes_and_account_preferences_method_not_allowed() {
         Some(&pair),
         &[],
     );
-    assert_eq!(prefs_get.status, StatusCode::BAD_REQUEST);
+    assert_eq!(prefs_get.status, StatusCode::OK);
+    let prefs_bad_query = send(
+        &gateway,
+        Method::GET,
+        "/api/v1/account/preferences?extra=1",
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(prefs_bad_query.status, StatusCode::BAD_REQUEST);
 
     // `GET /api/v1/organizations/{org}/costs/prices?...` and `/budgets?...` parse query params
     // instead of returning 404 (unknown param returns 400; valid query dispatches to HQ office).

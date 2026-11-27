@@ -44,6 +44,8 @@
   {"method":"chat.wait_ask","policy":"serve"},
   {"method":"chat.watching_model_get","policy":"serve"},
   {"method":"chat.watching_model_set","policy":"serve"},
+  {"method":"copilot.draft","policy":"serve"},
+  {"method":"copilot.features","policy":"serve"},
   {"method":"cost.export_csv","policy":"serve"},
   {"method":"cost.price.list","policy":"serve"},
   {"method":"cost.price.set","policy":"serve"},

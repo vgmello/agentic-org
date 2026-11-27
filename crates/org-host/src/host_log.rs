@@ -26,15 +26,17 @@ const WRITE_WAIT: Duration = Duration::from_millis(100);
 /// The most lines that wait for the writer; more are dropped and counted.
 const QUEUED: usize = 256;
 
-/// Logs one line. Never pass it secrets; pass text a server sent through [`untrusted`].
+/// Logs one line after passing it through the shared `org-redact` choke-point. Never pass it
+/// secrets directly; pass text a server sent through [`untrusted`].
 pub fn log(message: &str) {
+    let redacted = org_redact::redact_text(message, &[]);
     #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
     CAPTURED.with(|captured| {
         if let Some(lines) = captured.borrow_mut().as_mut() {
-            lines.push(message.to_owned());
+            lines.push(redacted.clone());
         }
     });
-    write_line(format!("agentic-org: {message}\n"));
+    write_line(format!("agentic-org: {redacted}\n"));
 }
 
 /// The lines waiting for the writer, and how far it has got.
@@ -282,5 +284,27 @@ pub(crate) mod tests {
         let long = untrusted(&"x".repeat(10_000));
         assert!(long.len() <= MAX_UNTRUSTED_BYTES + '…'.len_utf8());
         assert!(long.ends_with('…'));
+    }
+
+    #[test]
+    fn host_log_redacts_secrets_through_org_redact() {
+        let api_key = ["sk-ant-", "api03-hostlogsecret99"].join("");
+        let ((), lines) = capture(|| {
+            log(&format!(
+                "auth failure Authorization: Bearer host-bearer-987654 key={api_key} \
+                 X-Org-Session-Proof: host-proof-112233"
+            ));
+            log("Cookie: sid=host-cookie-445566");
+        });
+        let joined = lines.join("\n");
+        for secret in [
+            "host-bearer-987654",
+            api_key.as_str(),
+            "host-proof-112233",
+            "host-cookie-445566",
+        ] {
+            assert!(!joined.contains(secret), "leaked `{secret}` in {joined}");
+        }
+        assert!(joined.contains(org_redact::REDACTED), "{joined}");
     }
 }

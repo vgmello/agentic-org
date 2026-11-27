@@ -8,6 +8,7 @@ pub(crate) mod backup;
 pub(crate) mod completion;
 pub(crate) mod context;
 pub(crate) mod diagnostics;
+pub(crate) mod instance;
 pub(crate) mod office;
 pub(crate) mod org;
 pub(crate) mod project;

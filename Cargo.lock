@@ -1369,6 +1369,7 @@ dependencies = [
 name = "org-copilot"
 version = "0.0.0"
 dependencies = [
+ "org-redact",
  "serde",
  "serde_json",
 ]
@@ -1439,6 +1440,7 @@ dependencies = [
  "org-platform",
  "org-platform-host",
  "org-proto",
+ "org-redact",
  "org-socket",
  "proc-macro2",
  "ring",

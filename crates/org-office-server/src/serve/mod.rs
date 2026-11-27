@@ -172,6 +172,9 @@ pub type DocsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send 
 /// Dispatches unified cross-entity `search.query` (`TASK-91`).
 pub type SearchFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
+/// Dispatches `copilot.features` and `copilot.draft` (`TASK-60` AC #3).
+pub type CopilotFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
 /// Dispatches L2/L3 usage, cost accounting, and budget RPCs (`TASK-53`).
 pub type CostsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
@@ -253,6 +256,8 @@ pub struct OfficePorts {
     /// Unified cross-entity search (`TASK-91`). `None`: `search.query` answers
     /// `unknown_method`.
     pub search: Option<SearchFn>,
+    /// Smart drafting copilot (`copilot.features`, `copilot.draft`; `TASK-60` AC #3).
+    pub copilot: Option<CopilotFn>,
     /// L2/L3 usage, cost accounting, and budget controls dispatcher (`TASK-53`).
     pub costs: Option<CostsFn>,
     /// L4 provider pools, office bindings, discovery, readiness, and quota dispatcher (`TASK-54`).
