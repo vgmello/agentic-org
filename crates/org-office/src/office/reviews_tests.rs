@@ -370,6 +370,303 @@ fn code_request_params(
     }
 }
 
+fn add_four_anchor_findings_and_replies(fx: &Fx) -> Vec<String> {
+    let anchors = [
+        FindingAnchor::general(),
+        FindingAnchor {
+            kind: AnchorKind::FileLine,
+            path: Some("src/auth.rs".into()),
+            start_line: Some(12),
+            end_line: Some(18),
+            anchor_snippet_sha256: Some(SNIPPET_SHA.into()),
+            doc_section: None,
+            checklist_item_id: None,
+        },
+        FindingAnchor {
+            kind: AnchorKind::DocSection,
+            path: Some("docs/security.md".into()),
+            doc_section: Some("Scope Checks".into()),
+            ..Default::default()
+        },
+        FindingAnchor {
+            kind: AnchorKind::ChecklistItem,
+            checklist_item_id: Some(next_uuid()),
+            ..Default::default()
+        },
+    ];
+    let mut finding_ids = Vec::new();
+    for (i, anchor) in anchors.into_iter().enumerate() {
+        let fid = next_uuid();
+        let res = fx
+            .office
+            .review_finding(
+                &fx.contributing_agent,
+                ReviewFindingParams {
+                    command_id: next_uuid(),
+                    review: "rv-a1".into(),
+                    op: ReviewFindingOp::Add(ReviewFindingDraft {
+                        finding_id: fid.clone(),
+                        severity: FindingSeverity::Minor,
+                        anchor: anchor.clone(),
+                        body_markdown: format!("Finding #{i}"),
+                        attachment_ids: vec![],
+                    }),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(res.finding.number, (i as u64) + 1);
+        assert_eq!(res.finding.anchor, anchor);
+        finding_ids.push(fid);
+    }
+    let r1 = fx
+        .office
+        .review_finding(
+            &fx.owning_agent,
+            ReviewFindingParams {
+                command_id: next_uuid(),
+                review: "RV-A1".into(),
+                op: ReviewFindingOp::Reply {
+                    finding_id: finding_ids[0].clone(),
+                    reply_id: next_uuid(),
+                    body_markdown: "Looking into this.".into(),
+                    set_status: None,
+                    attachment_ids: vec![],
+                },
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(r1.finding.status, FindingStatus::Open);
+    assert_eq!(r1.finding.replies.len(), 1);
+    let r2 = fx
+        .office
+        .review_finding(
+            &fx.owning_agent,
+            ReviewFindingParams {
+                command_id: next_uuid(),
+                review: "RV-A1".into(),
+                op: ReviewFindingOp::Reply {
+                    finding_id: finding_ids[0].clone(),
+                    reply_id: next_uuid(),
+                    body_markdown: String::new(),
+                    set_status: Some(FindingStatus::WontFix),
+                    attachment_ids: vec![],
+                },
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(r2.finding.status, FindingStatus::WontFix);
+    assert_eq!(r2.finding.resolved_in_round, Some(1));
+    assert_eq!(r2.finding.replies.len(), 2);
+    finding_ids
+}
+
+fn run_round2_blocker_approval_and_close(fx: &Fx, blocker_id: String, rev: u64) {
+    let round2 = fx
+        .office
+        .review_resubmit(
+            &fx.owning_agent,
+            ReviewResubmitParams {
+                command_id: next_uuid(),
+                review: "RV-A1".into(),
+                expected_revision: rev,
+                expected_head_oid: Some(OID_HEAD2.into()),
+                note_markdown: "Fixed active-caller check.".into(),
+                session_mode: None,
+                fresh: true,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(round2.review.current_round, 2);
+    assert_eq!(round2.review.status, ReviewStatus::Open);
+    assert_eq!(round2.round.head_oid.as_deref(), Some(OID_HEAD2));
+
+    let blocked = fx
+        .office
+        .review_verdict(
+            &fx.contributing_agent,
+            ReviewVerdictParams {
+                command_id: next_uuid(),
+                review: "RV-A1".into(),
+                round_number: 2,
+                head_oid: Some(OID_HEAD2.into()),
+                verdict: ReviewVerdict::Approve,
+                summary_markdown: "Trying to approve early.".into(),
+                findings: vec![],
+                attachment_ids: vec![],
+            },
+        )
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(blocked.code, ErrorCode::Conflict);
+
+    let resolved = fx
+        .office
+        .review_finding(
+            &fx.contributing_agent,
+            ReviewFindingParams {
+                command_id: next_uuid(),
+                review: "RV-A1".into(),
+                op: ReviewFindingOp::Reply {
+                    finding_id: blocker_id,
+                    reply_id: next_uuid(),
+                    body_markdown: "Verified fix in round 2.".into(),
+                    set_status: Some(FindingStatus::Resolved),
+                    attachment_ids: vec![],
+                },
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(resolved.finding.resolved_in_round, Some(2));
+
+    let a1 = fx
+        .office
+        .review_verdict(
+            &fx.contributing_agent,
+            ReviewVerdictParams {
+                command_id: next_uuid(),
+                review: "RV-A1".into(),
+                round_number: 2,
+                head_oid: Some(OID_HEAD2.into()),
+                verdict: ReviewVerdict::Approve,
+                summary_markdown: "LGTM".into(),
+                findings: vec![],
+                attachment_ids: vec![],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(a1.review.status, ReviewStatus::Open);
+
+    let a2 = fx
+        .office
+        .review_verdict(
+            &fx.owner,
+            ReviewVerdictParams {
+                command_id: next_uuid(),
+                review: "RV-A1".into(),
+                round_number: 2,
+                head_oid: Some(OID_HEAD2.into()),
+                verdict: ReviewVerdict::Approve,
+                summary_markdown: "Ship it".into(),
+                findings: vec![],
+                attachment_ids: vec![],
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(a2.review.status, ReviewStatus::Approved);
+
+    let closed = fx
+        .office
+        .review_close(
+            &fx.owning_agent,
+            ReviewCloseParams {
+                command_id: next_uuid(),
+                review: "RV-A1".into(),
+                expected_revision: a2.review.revision,
+                reason: Some("Merged to v1".into()),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(closed.review.status, ReviewStatus::Closed);
+    assert_eq!(closed.review.closed_reason.as_deref(), Some("Merged to v1"));
+    let double_close = fx
+        .office
+        .review_close(
+            &fx.owning_agent,
+            ReviewCloseParams {
+                command_id: next_uuid(),
+                review: "RV-A1".into(),
+                expected_revision: closed.review.revision,
+                reason: None,
+            },
+        )
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(double_close.code, ErrorCode::Conflict);
+}
+
+fn assert_rebuild_parity(fx: Fx, review_id: &str, engine: EngineChoice) {
+    let rid = Id::parse(review_id).unwrap();
+    let rounds_only = fx
+        .office
+        .review_inspect_sections(
+            &fx.owning_agent,
+            ReviewInspectParams {
+                review: review_id.to_owned(),
+            },
+            ReviewInspectSections {
+                rounds: true,
+                reviewers: false,
+                findings: false,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(rounds_only.rounds.len(), 2);
+    assert!(rounds_only.reviewers.is_empty());
+    assert!(rounds_only.findings.is_empty());
+
+    let before_inspect = fx
+        .office
+        .review_inspect(
+            &fx.owner,
+            ReviewInspectParams {
+                review: "RV-A1".into(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let before_events = fx
+        .office
+        .review_events(&fx.owner, "RV-A1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(before_events.len() as u64, before_inspect.review.revision);
+    assert_eq!(
+        before_inspect.findings[1]
+            .anchor
+            .anchor_snippet_sha256
+            .as_deref(),
+        Some(SNIPPET_SHA)
+    );
+    let before_dump = fx.office.dump();
+
+    let fx = reopen(fx).unwrap();
+    let after_inspect = fx
+        .office
+        .review_inspect(
+            &fx.owner,
+            ReviewInspectParams {
+                review: "RV-A1".into(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let after_events = fx
+        .office
+        .review_events(&fx.owner, "RV-A1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        before_inspect, after_inspect,
+        "inspect parity on {engine:?}"
+    );
+    assert_eq!(before_events, after_events, "events parity on {engine:?}");
+    assert_eq!(before_dump, fx.office.dump(), "dump parity on {engine:?}");
+    assert!(fx
+        .roots
+        .durable
+        .join(round_path(&rid, 2).as_str())
+        .is_file());
+}
+
 #[test]
 fn full_lifecycle_anchors_and_rebuild_parity() {
     for engine in ENGINES {
@@ -390,32 +687,17 @@ fn full_lifecycle_anchors_and_rebuild_parity() {
             .unwrap();
         assert_eq!(created.review.key, "RV-A1");
         assert_eq!(created.review.status, ReviewStatus::Open);
-        assert_eq!(created.review.current_round, 1);
-        assert_eq!(created.review.revision, 1);
         assert_eq!(created.round.session_mode, ReviewSessionMode::Fresh);
-        assert_eq!(created.round.head_oid.as_deref(), Some(OID_HEAD1));
-
-        // Verify durable files exist under durable/state/reviews/<id>/ and local/offices/<id>/.
         fx.office.sync_store().unwrap();
         let rid = Id::parse(&review_id).unwrap();
-        assert!(fx.roots.durable.join(review_path(&rid).as_str()).is_file());
-        assert!(fx
-            .roots
-            .durable
-            .join(round_path(&rid, 1).as_str())
-            .is_file());
-        assert!(fx
-            .roots
-            .durable
-            .join(event_path(&rid, 1).as_str())
-            .is_file());
-        assert!(fx
-            .roots
-            .durable
-            .join(counter_path(&identity().office_id).as_str())
-            .is_file());
-
-        // Route: add owner alongside contributing_agent.
+        for p in [
+            review_path(&rid),
+            round_path(&rid, 1),
+            event_path(&rid, 1),
+            counter_path(&identity().office_id),
+        ] {
+            assert!(fx.roots.durable.join(p.as_str()).is_file());
+        }
         let routed = fx
             .office
             .review_route(
@@ -434,104 +716,8 @@ fn full_lifecycle_anchors_and_rebuild_parity() {
             )
             .unwrap()
             .unwrap();
-        assert_eq!(routed.review.revision, 2);
         assert_eq!(routed.reviewers.len(), 2);
-
-        // Add findings covering all 4 anchor kinds (including file_line snippet SHA-256).
-        let anchors = [
-            FindingAnchor::general(),
-            FindingAnchor {
-                kind: AnchorKind::FileLine,
-                path: Some("src/auth.rs".into()),
-                start_line: Some(12),
-                end_line: Some(18),
-                anchor_snippet_sha256: Some(SNIPPET_SHA.into()),
-                doc_section: None,
-                checklist_item_id: None,
-            },
-            FindingAnchor {
-                kind: AnchorKind::DocSection,
-                path: Some("docs/security.md".into()),
-                doc_section: Some("Scope Checks".into()),
-                ..Default::default()
-            },
-            FindingAnchor {
-                kind: AnchorKind::ChecklistItem,
-                checklist_item_id: Some(next_uuid()),
-                ..Default::default()
-            },
-        ];
-        let mut finding_ids = Vec::new();
-        for (i, anchor) in anchors.into_iter().enumerate() {
-            let fid = next_uuid();
-            let res = fx
-                .office
-                .review_finding(
-                    &fx.contributing_agent,
-                    ReviewFindingParams {
-                        command_id: next_uuid(),
-                        review: "rv-a1".into(),
-                        op: ReviewFindingOp::Add(ReviewFindingDraft {
-                            finding_id: fid.clone(),
-                            severity: FindingSeverity::Minor,
-                            anchor: anchor.clone(),
-                            body_markdown: format!("Finding #{i}"),
-                            attachment_ids: vec![],
-                        }),
-                    },
-                )
-                .unwrap()
-                .unwrap();
-            assert_eq!(res.finding.number, (i as u64) + 1);
-            assert_eq!(res.finding.anchor, anchor);
-            finding_ids.push(fid);
-        }
-
-        // Reply comment-only, then wont_fix on finding #1.
-        let r1 = fx
-            .office
-            .review_finding(
-                &fx.owning_agent,
-                ReviewFindingParams {
-                    command_id: next_uuid(),
-                    review: "RV-A1".into(),
-                    op: ReviewFindingOp::Reply {
-                        finding_id: finding_ids[0].clone(),
-                        reply_id: next_uuid(),
-                        body_markdown: "Looking into this.".into(),
-                        set_status: None,
-                        attachment_ids: vec![],
-                    },
-                },
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(r1.finding.status, FindingStatus::Open);
-        assert_eq!(r1.finding.replies.len(), 1);
-
-        let r2 = fx
-            .office
-            .review_finding(
-                &fx.owning_agent,
-                ReviewFindingParams {
-                    command_id: next_uuid(),
-                    review: "RV-A1".into(),
-                    op: ReviewFindingOp::Reply {
-                        finding_id: finding_ids[0].clone(),
-                        reply_id: next_uuid(),
-                        body_markdown: String::new(),
-                        set_status: Some(FindingStatus::WontFix),
-                        attachment_ids: vec![],
-                    },
-                },
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(r2.finding.status, FindingStatus::WontFix);
-        assert_eq!(r2.finding.resolved_in_round, Some(1));
-        assert_eq!(r2.finding.replies.len(), 2);
-
-        // Atomic verdict (changes_requested) with a blocker finding attached.
+        let _ = add_four_anchor_findings_and_replies(&fx);
         let blocker_id = next_uuid();
         let v1 = fx
             .office
@@ -557,220 +743,8 @@ fn full_lifecycle_anchors_and_rebuild_parity() {
             .unwrap()
             .unwrap();
         assert_eq!(v1.review.status, ReviewStatus::ChangesRequested);
-        assert_eq!(v1.findings.len(), 1);
-        assert_eq!(v1.verdict.finding_ids, vec![blocker_id.clone()]);
-
-        // Resubmit round 2 with new head OID.
-        let round2 = fx
-            .office
-            .review_resubmit(
-                &fx.owning_agent,
-                ReviewResubmitParams {
-                    command_id: next_uuid(),
-                    review: "RV-A1".into(),
-                    expected_revision: v1.review.revision,
-                    expected_head_oid: Some(OID_HEAD2.into()),
-                    note_markdown: "Fixed active-caller check.".into(),
-                    session_mode: None,
-                    fresh: true,
-                },
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(round2.review.current_round, 2);
-        assert_eq!(round2.review.status, ReviewStatus::Open);
-        assert_eq!(round2.round.round_number, 2);
-        assert_eq!(round2.round.head_oid.as_deref(), Some(OID_HEAD2));
-
-        // Blocker guard refuses Approve while blocker is still open.
-        let blocked = fx
-            .office
-            .review_verdict(
-                &fx.contributing_agent,
-                ReviewVerdictParams {
-                    command_id: next_uuid(),
-                    review: "RV-A1".into(),
-                    round_number: 2,
-                    head_oid: Some(OID_HEAD2.into()),
-                    verdict: ReviewVerdict::Approve,
-                    summary_markdown: "Trying to approve early.".into(),
-                    findings: vec![],
-                    attachment_ids: vec![],
-                },
-            )
-            .unwrap()
-            .unwrap_err();
-        assert_eq!(blocked.code, ErrorCode::Conflict);
-
-        // Resolve blocker, then both reviewers approve -> review becomes Approved.
-        let resolved = fx
-            .office
-            .review_finding(
-                &fx.contributing_agent,
-                ReviewFindingParams {
-                    command_id: next_uuid(),
-                    review: "RV-A1".into(),
-                    op: ReviewFindingOp::Reply {
-                        finding_id: blocker_id,
-                        reply_id: next_uuid(),
-                        body_markdown: "Verified fix in round 2.".into(),
-                        set_status: Some(FindingStatus::Resolved),
-                        attachment_ids: vec![],
-                    },
-                },
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(resolved.finding.resolved_in_round, Some(2));
-
-        let a1 = fx
-            .office
-            .review_verdict(
-                &fx.contributing_agent,
-                ReviewVerdictParams {
-                    command_id: next_uuid(),
-                    review: "RV-A1".into(),
-                    round_number: 2,
-                    head_oid: Some(OID_HEAD2.into()),
-                    verdict: ReviewVerdict::Approve,
-                    summary_markdown: "LGTM".into(),
-                    findings: vec![],
-                    attachment_ids: vec![],
-                },
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(a1.review.status, ReviewStatus::Open);
-
-        let a2 = fx
-            .office
-            .review_verdict(
-                &fx.owner,
-                ReviewVerdictParams {
-                    command_id: next_uuid(),
-                    review: "RV-A1".into(),
-                    round_number: 2,
-                    head_oid: Some(OID_HEAD2.into()),
-                    verdict: ReviewVerdict::Approve,
-                    summary_markdown: "Ship it".into(),
-                    findings: vec![],
-                    attachment_ids: vec![],
-                },
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(a2.review.status, ReviewStatus::Approved);
-
-        // Close review; verify second close fails closed with Conflict.
-        let closed = fx
-            .office
-            .review_close(
-                &fx.owning_agent,
-                ReviewCloseParams {
-                    command_id: next_uuid(),
-                    review: "RV-A1".into(),
-                    expected_revision: a2.review.revision,
-                    reason: Some("Merged to v1".into()),
-                },
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(closed.review.status, ReviewStatus::Closed);
-        assert_eq!(closed.review.closed_reason.as_deref(), Some("Merged to v1"));
-
-        let double_close = fx
-            .office
-            .review_close(
-                &fx.owning_agent,
-                ReviewCloseParams {
-                    command_id: next_uuid(),
-                    review: "RV-A1".into(),
-                    expected_revision: closed.review.revision,
-                    reason: None,
-                },
-            )
-            .unwrap()
-            .unwrap_err();
-        assert_eq!(double_close.code, ErrorCode::Conflict);
-
-        // Section-filtered inspect.
-        let rounds_only = fx
-            .office
-            .review_inspect_sections(
-                &fx.owning_agent,
-                ReviewInspectParams {
-                    review: review_id.clone(),
-                },
-                ReviewInspectSections {
-                    rounds: true,
-                    reviewers: false,
-                    findings: false,
-                },
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(rounds_only.rounds.len(), 2);
-        assert!(rounds_only.reviewers.is_empty());
-        assert!(rounds_only.findings.is_empty());
-
-        // Snapshot before delete-and-rebuild.
-        let before_inspect = fx
-            .office
-            .review_inspect(
-                &fx.owner,
-                ReviewInspectParams {
-                    review: "RV-A1".into(),
-                },
-            )
-            .unwrap()
-            .unwrap();
-        let before_events = fx
-            .office
-            .review_events(&fx.owner, "RV-A1")
-            .unwrap()
-            .unwrap();
-        assert_eq!(before_events.len() as u64, before_inspect.review.revision);
-        assert_eq!(
-            before_inspect.findings[1]
-                .anchor
-                .anchor_snippet_sha256
-                .as_deref(),
-            Some(SNIPPET_SHA)
-        );
-        let before_dump = fx.office.dump();
-
-        // Delete office.db + reopen -> full deterministic rebuild from ReviewFiles.
-        let fx = reopen(fx).unwrap();
-        let after_inspect = fx
-            .office
-            .review_inspect(
-                &fx.owner,
-                ReviewInspectParams {
-                    review: "RV-A1".into(),
-                },
-            )
-            .unwrap()
-            .unwrap();
-        let after_events = fx
-            .office
-            .review_events(&fx.owner, "RV-A1")
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            before_inspect, after_inspect,
-            "inspect parity on {engine:?}"
-        );
-        assert_eq!(before_events, after_events, "events parity on {engine:?}");
-        assert_eq!(
-            before_dump,
-            fx.office.dump(),
-            "projection dump parity on {engine:?}"
-        );
-        assert!(fx
-            .roots
-            .durable
-            .join(round_path(&rid, 2).as_str())
-            .is_file());
+        run_round2_blocker_approval_and_close(&fx, blocker_id, v1.review.revision);
+        assert_rebuild_parity(fx, &review_id, engine);
     }
 }
 
@@ -1290,7 +1264,7 @@ fn counter_durability_across_reopen_and_fail_closed_when_behind() {
 }
 
 #[test]
-fn security_project_scoping_and_inactive_caller() {
+fn security_project_scoping_and_unrouted_verdict() {
     for engine in ENGINES {
         let fx = fixture(engine);
         let created = fx
@@ -1302,7 +1276,6 @@ fn security_project_scoping_and_inactive_caller() {
             .unwrap()
             .unwrap();
         let key = created.review.key;
-
         assert_eq!(
             fx.office
                 .review_inspect(
@@ -1338,12 +1311,14 @@ fn security_project_scoping_and_inactive_caller() {
                 .code,
             ErrorCode::NotFound
         );
-        let listed = fx
-            .office
-            .review_list(&fx.outsider_agent, ReviewListParams::default())
-            .unwrap()
-            .unwrap();
-        assert_eq!(listed.total, 0);
+        assert_eq!(
+            fx.office
+                .review_list(&fx.outsider_agent, ReviewListParams::default())
+                .unwrap()
+                .unwrap()
+                .total,
+            0
+        );
         assert_eq!(
             fx.office
                 .review_close(
@@ -1360,14 +1335,13 @@ fn security_project_scoping_and_inactive_caller() {
                 .code,
             ErrorCode::NotFound
         );
-
         let unrouted_verdict = fx
             .office
             .review_verdict(
                 &fx.owner,
                 ReviewVerdictParams {
                     command_id: next_uuid(),
-                    review: key.clone(),
+                    review: key,
                     round_number: 1,
                     head_oid: Some(OID_HEAD1.into()),
                     verdict: ReviewVerdict::Approve,
@@ -1379,7 +1353,22 @@ fn security_project_scoping_and_inactive_caller() {
             .unwrap()
             .unwrap_err();
         assert_eq!(unrouted_verdict.code, ErrorCode::NotAuthorized);
+    }
+}
 
+#[test]
+fn security_inactive_and_unknown_callers() {
+    for engine in ENGINES {
+        let fx = fixture(engine);
+        let created = fx
+            .office
+            .review_request(
+                &fx.owning_agent,
+                code_request_params(&fx, next_uuid(), &fx.contributing_agent, true),
+            )
+            .unwrap()
+            .unwrap();
+        let key = created.review.key;
         let rev = fx
             .office
             .load_employee(&fx.person)
@@ -1448,5 +1437,235 @@ fn security_project_scoping_and_inactive_caller() {
                 ErrorCode::NotAuthorized
             );
         }
+    }
+}
+
+#[test]
+fn route_cannot_bypass_open_blocker_and_resets_readded_verdict() {
+    for engine in ENGINES {
+        let fx = fixture(engine);
+        let created = fx
+            .office
+            .review_request(
+                &fx.owning_agent,
+                code_request_params(&fx, next_uuid(), &fx.contributing_agent, true),
+            )
+            .unwrap()
+            .unwrap();
+        let key = created.review.key;
+        // Route both owner and contributing_agent on round 1.
+        let r2 = fx
+            .office
+            .review_route(
+                &fx.owning_agent,
+                ReviewRouteParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    expected_revision: created.review.revision,
+                    routing: ReviewRoutingSpec {
+                        mode: RoutingMode::Explicit,
+                        reviewer_ids: vec![fx.owner.clone(), fx.contributing_agent.clone()],
+                        team_id: None,
+                    },
+                    session_mode: Some(ReviewSessionMode::Fresh),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        // Owner approves cleanly while no blockers exist.
+        let v_ok = fx
+            .office
+            .review_verdict(
+                &fx.owner,
+                ReviewVerdictParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    round_number: 1,
+                    head_oid: Some(OID_HEAD1.into()),
+                    verdict: ReviewVerdict::Approve,
+                    summary_markdown: "Looks fine".into(),
+                    findings: vec![],
+                    attachment_ids: vec![],
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(v_ok.review.status, ReviewStatus::Open);
+        // Contributing agent blocks with a Blocker finding.
+        let v_blk = fx
+            .office
+            .review_verdict(
+                &fx.contributing_agent,
+                ReviewVerdictParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    round_number: 1,
+                    head_oid: Some(OID_HEAD1.into()),
+                    verdict: ReviewVerdict::ChangesRequested,
+                    summary_markdown: "Blocker".into(),
+                    findings: vec![ReviewFindingDraft {
+                        finding_id: next_uuid(),
+                        severity: FindingSeverity::Blocker,
+                        anchor: FindingAnchor::general(),
+                        body_markdown: "Open blocker must prevent route-to-approved".into(),
+                        attachment_ids: vec![],
+                    }],
+                    attachment_ids: vec![],
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(v_blk.review.status, ReviewStatus::ChangesRequested);
+        // Removing contributing_agent leaves only owner (Approve), yet open Blocker prevents Approved (P0-2).
+        let routed = fx
+            .office
+            .review_route(
+                &fx.owning_agent,
+                ReviewRouteParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    expected_revision: v_blk.review.revision,
+                    routing: ReviewRoutingSpec {
+                        mode: RoutingMode::Explicit,
+                        reviewer_ids: vec![fx.owner.clone()],
+                        team_id: None,
+                    },
+                    session_mode: Some(ReviewSessionMode::Fresh),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(routed.review.status, ReviewStatus::Open);
+        // Re-adding contributing_agent clears their previous removed verdict.
+        let readded = fx
+            .office
+            .review_route(
+                &fx.owning_agent,
+                ReviewRouteParams {
+                    command_id: next_uuid(),
+                    review: key,
+                    expected_revision: routed.review.revision,
+                    routing: ReviewRoutingSpec {
+                        mode: RoutingMode::Explicit,
+                        reviewer_ids: vec![fx.owner.clone(), fx.contributing_agent.clone()],
+                        team_id: None,
+                    },
+                    session_mode: Some(ReviewSessionMode::Fresh),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(readded.review.status, ReviewStatus::Open);
+        let contrib = readded
+            .reviewers
+            .iter()
+            .find(|r| r.reviewer_id == fx.contributing_agent)
+            .unwrap();
+        assert_eq!(contrib.last_verdict, None);
+        assert_eq!(r2.reviewers.len(), 2);
+    }
+}
+
+#[test]
+fn pass2_security_and_resubmit_invariants() {
+    for engine in ENGINES {
+        let fx = fixture(engine);
+        // P1-1: outsider cannot probe another project's task_id via review_request.
+        let mut probe = code_request_params(&fx, next_uuid(), &fx.outsider_agent, false);
+        probe.project_id = None;
+        probe.task_id = Some(fx.task_id.clone());
+        let err = fx
+            .office
+            .review_request(&fx.outsider_agent, probe)
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotFound);
+
+        // P2-2: mismatched base_oid with ResolvedCodePin fails closed.
+        let mut bad_base = code_request_params(&fx, next_uuid(), &fx.contributing_agent, true);
+        bad_base.base_oid = Some("f".repeat(40));
+        let err = fx
+            .office
+            .review_request_with_pin(
+                &fx.owning_agent,
+                bad_base,
+                Some(ResolvedCodePin {
+                    base_oid: OID_BASE.into(),
+                    head_oid: OID_HEAD1.into(),
+                }),
+            )
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::Conflict);
+
+        // P2-3 & P2-1: independent reviewer cannot resubmit, and round 3 keeps round 2's rebased base_oid.
+        let created = fx
+            .office
+            .review_request(
+                &fx.owning_agent,
+                code_request_params(&fx, next_uuid(), &fx.contributing_agent, true),
+            )
+            .unwrap()
+            .unwrap();
+        let key = created.review.key;
+        let reviewer_resub = fx
+            .office
+            .review_resubmit(
+                &fx.contributing_agent,
+                ReviewResubmitParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    expected_revision: created.review.revision,
+                    expected_head_oid: Some(OID_HEAD2.into()),
+                    note_markdown: "Reviewer trying to hijack round".into(),
+                    session_mode: None,
+                    fresh: true,
+                },
+            )
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(reviewer_resub.code, ErrorCode::NotAuthorized);
+
+        let rebased_base = "d".repeat(40);
+        let round2 = fx
+            .office
+            .review_resubmit_with_pin(
+                &fx.owning_agent,
+                ReviewResubmitParams {
+                    command_id: next_uuid(),
+                    review: key.clone(),
+                    expected_revision: created.review.revision,
+                    expected_head_oid: Some(OID_HEAD2.into()),
+                    note_markdown: "Rebased".into(),
+                    session_mode: None,
+                    fresh: true,
+                },
+                Some(ResolvedCodePin {
+                    base_oid: rebased_base.clone(),
+                    head_oid: OID_HEAD2.into(),
+                }),
+            )
+            .unwrap()
+            .unwrap();
+        let round3 = fx
+            .office
+            .review_resubmit(
+                &fx.owning_agent,
+                ReviewResubmitParams {
+                    command_id: next_uuid(),
+                    review: key,
+                    expected_revision: round2.review.revision,
+                    expected_head_oid: Some("e".repeat(40)),
+                    note_markdown: "Follow-up".into(),
+                    session_mode: None,
+                    fresh: true,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            round3.round.base_oid.as_deref(),
+            Some(rebased_base.as_str())
+        );
     }
 }

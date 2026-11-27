@@ -15,8 +15,8 @@ use crate::time::format_rfc3339_ms;
 
 use super::super::ports::{ReviewContextRead, ReviewsRead};
 use super::super::records::{
-    compute_review_status, finding_to_view, reviewer_verdict_to_view, ReviewFindingRecord,
-    ReviewFindingReplyRecord,
+    compute_review_status, finding_to_view, has_open_blocker, reviewer_verdict_to_view,
+    ReviewFindingRecord, ReviewFindingReplyRecord,
 };
 use super::super::validation::{
     bad_req, conflict, not_found, refuse, storage_refusal, too_large, unauth,
@@ -178,6 +178,7 @@ pub fn decide_finding<V: ReviewsRead + ReviewContextRead>(
         None,
         ErrorCode::InvalidRequest,
         "cannot modify findings on a closed review",
+        false,
     )?;
     let at = format_rfc3339_ms(now_ms);
     match &p.op {
@@ -253,15 +254,14 @@ fn check_verdict_guards(
                 && r.reviewer_id == *caller_id
         })
         .ok_or_else(|| unauth("only an assigned reviewer may submit a verdict"))?;
-    if loaded.review.independent && *caller_id == loaded.review.created_by {
+    if loaded.review.independent
+        && (*caller_id == loaded.review.created_by || *caller_id == round.submitted_by)
+    {
         return Err(unauth(
-            "author cannot submit a verdict on an independent review",
+            "author or round submitter cannot submit a verdict on an independent review",
         ));
     }
-    let blocker = loaded
-        .findings
-        .iter()
-        .any(|f| f.severity == FindingSeverity::Blocker && f.status == FindingStatus::Open)
+    let blocker = has_open_blocker(&loaded.findings)
         || p.findings
             .iter()
             .any(|d| d.severity == FindingSeverity::Blocker);
@@ -288,6 +288,7 @@ pub fn decide_verdict<V: ReviewsRead + ReviewContextRead>(
         expected_revision,
         ErrorCode::InvalidRequest,
         "cannot submit a verdict on a closed review",
+        false,
     )?;
     let ridx = check_verdict_guards(&loaded, &caller.id, p)?;
     let summary = validate_text_limit(
@@ -319,7 +320,11 @@ pub fn decide_verdict<V: ReviewsRead + ReviewContextRead>(
         .iter()
         .filter(|r| r.round_number == rn && !r.removed)
         .collect();
-    loaded.review.status = compute_review_status(loaded.review.status, &active);
+    loaded.review.status = compute_review_status(
+        loaded.review.status,
+        &active,
+        has_open_blocker(&loaded.findings),
+    );
     loaded.bump(&at);
     let payload = json!({
         "round_number": rn, "verdict": p.verdict.as_str(),

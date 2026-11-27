@@ -194,9 +194,8 @@ pub fn is_valid_office_code(code: &str) -> bool {
 
 pub fn parse_review_key(raw: &str) -> Option<(String, u64)> {
     let s = raw.trim();
-    if s.len() <= REVIEW_KEY_PREFIX.len()
-        || !s[..REVIEW_KEY_PREFIX.len()].eq_ignore_ascii_case(REVIEW_KEY_PREFIX)
-    {
+    let prefix = s.get(..REVIEW_KEY_PREFIX.len())?;
+    if s.len() <= REVIEW_KEY_PREFIX.len() || !prefix.eq_ignore_ascii_case(REVIEW_KEY_PREFIX) {
         return None;
     }
     let rest = &s[REVIEW_KEY_PREFIX.len()..];
@@ -214,7 +213,17 @@ pub fn parse_review_key(raw: &str) -> Option<(String, u64)> {
     (n > 0 && n <= i64::MAX as u64).then_some((code, n))
 }
 
-pub fn compute_review_status(cur: ReviewStatus, active: &[&ReviewReviewerRecord]) -> ReviewStatus {
+pub fn has_open_blocker(findings: &[ReviewFindingRecord]) -> bool {
+    findings
+        .iter()
+        .any(|f| f.severity == FindingSeverity::Blocker && f.status == FindingStatus::Open)
+}
+
+pub fn compute_review_status(
+    cur: ReviewStatus,
+    active: &[&ReviewReviewerRecord],
+    open_blocker: bool,
+) -> ReviewStatus {
     if cur == ReviewStatus::Closed {
         ReviewStatus::Closed
     } else if active
@@ -222,7 +231,8 @@ pub fn compute_review_status(cur: ReviewStatus, active: &[&ReviewReviewerRecord]
         .any(|r| r.verdict == Some(ReviewVerdict::ChangesRequested))
     {
         ReviewStatus::ChangesRequested
-    } else if !active.is_empty()
+    } else if !open_blocker
+        && !active.is_empty()
         && active
             .iter()
             .all(|r| r.verdict == Some(ReviewVerdict::Approve))

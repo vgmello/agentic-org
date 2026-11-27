@@ -304,31 +304,96 @@ fn put_doc(db: &Connection, s: &str, doc: &ReviewDocument) -> Result<(), EngineE
               VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28) \
               ON CONFLICT (organization_id, id) DO UPDATE SET project_id=excluded.project_id, task_id=excluded.task_id, target_kind=excluded.target_kind, repository_id=excluded.repository_id, branch=excluded.branch, target_ref=excluded.target_ref, kind_slug=excluded.kind_slug, category_slug=excluded.category_slug, title=excluded.title, body_markdown=excluded.body_markdown, independent=excluded.independent, status=excluded.status, current_round=excluded.current_round, session_mode=excluded.session_mode, guidance_refs_json=excluded.guidance_refs_json, criteria_json=excluded.criteria_json, closed_reason=excluded.closed_reason, revision=excluded.revision, updated_at=excluded.updated_at, closed_at=excluded.closed_at",
         params![s, r.id.as_str(), r.office_id.as_str(), &r.office_code, i64_u64(r.number)?, r.project_id.as_ref().map(Id::as_str), r.task_id.as_ref().map(Id::as_str), r.target_kind.as_str(), r.repository_id.as_ref().map(Id::as_str), r.branch.as_deref(), r.target_ref.as_deref(), &r.kind_slug, r.category_slug.as_deref(), &r.title, &r.body_markdown, i64::from(r.independent), r.status.as_str(), i64::from(r.current_round), r.session_mode.as_str(), js_str(&r.guidance_refs), js_str(&r.criteria), r.closed_reason.as_deref(), i64_u64(r.revision)?, r.created_by.as_str(), &r.created_at, &r.updated_at, r.closed_at.as_deref(), i64_u64(SCHEMA_VERSION)?])?;
-    for rr in &doc.reviewers {
+    put_reviewers(db, s, &r.id, &doc.reviewers)?;
+    put_findings(db, s, &r.id, &doc.findings)?;
+    put_replies(db, s, &r.id, &doc.replies)
+}
+
+fn put_reviewers(
+    db: &Connection,
+    s: &str,
+    rid: &Id,
+    rows: &[ReviewReviewerRecord],
+) -> Result<(), EngineError> {
+    let keep: std::collections::BTreeSet<(u32, &str)> = rows
+        .iter()
+        .map(|rr| (rr.round_number, rr.reviewer_id.as_str()))
+        .collect();
+    let existing = all(db, "SELECT round_number, reviewer_id FROM review_reviewers WHERE organization_id=?1 AND review_id=?2", vec![txt(s), txt(rid.as_str())], |row| Ok((u32_c(row, 0)?, row.get::<_, String>(1)?)))?;
+    for (rn, rev_id) in existing {
+        if !keep.contains(&(rn, rev_id.as_str())) {
+            exec(db, "DELETE FROM review_reviewers WHERE organization_id=?1 AND review_id=?2 AND round_number=?3 AND reviewer_id=?4", params![s, rid.as_str(), i64::from(rn), rev_id])?;
+        }
+    }
+    for rr in rows {
         let fids: Vec<&str> = rr.finding_ids.iter().map(Id::as_str).collect();
         exec(db, "INSERT INTO review_reviewers (organization_id, review_id, round_number, reviewer_id, routing, team_id, session_mode, assigned_by, assigned_at, removed, verdict, summary_markdown, finding_ids_json, attachment_ids_json, verdict_at, runtime_session_id) \
                   VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16) \
                   ON CONFLICT (organization_id, review_id, round_number, reviewer_id) DO UPDATE SET routing=excluded.routing, team_id=excluded.team_id, session_mode=excluded.session_mode, assigned_by=excluded.assigned_by, assigned_at=excluded.assigned_at, removed=excluded.removed, verdict=excluded.verdict, summary_markdown=excluded.summary_markdown, finding_ids_json=excluded.finding_ids_json, attachment_ids_json=excluded.attachment_ids_json, verdict_at=excluded.verdict_at, runtime_session_id=excluded.runtime_session_id",
             params![s, rr.review_id.as_str(), i64::from(rr.round_number), rr.reviewer_id.as_str(), rr.routing.as_str(), rr.team_id.as_ref().map(Id::as_str), rr.session_mode.as_str(), rr.assigned_by.as_str(), &rr.assigned_at, i64::from(rr.removed), rr.verdict.map(|v| v.as_str()), &rr.summary_markdown, js_str(&fids), js_str(&rr.attachment_ids), rr.verdict_at.as_deref(), rr.runtime_session_id.as_deref()])?;
     }
-    for f in &doc.findings {
+    Ok(())
+}
+
+fn put_findings(
+    db: &Connection,
+    s: &str,
+    rid: &Id,
+    rows: &[ReviewFindingRecord],
+) -> Result<(), EngineError> {
+    let owners: std::collections::BTreeMap<String, String> = all(
+        db,
+        "SELECT id, review_id FROM review_findings WHERE organization_id=?1",
+        vec![txt(s)],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    )?
+    .into_iter()
+    .collect();
+    for f in rows {
+        if owners
+            .get(f.id.as_str())
+            .is_some_and(|ex| ex != rid.as_str())
+        {
+            return Err(EngineError::new(format!(
+                "finding {} belongs to another review",
+                f.id
+            )));
+        }
         exec(db, "INSERT INTO review_findings (organization_id, id, review_id, number, round_number, author_id, severity, status, anchor_kind, anchor_json, body_markdown, attachment_ids_json, resolved_by, resolved_at, resolved_in_round, revision, created_at, updated_at) \
                   VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18) \
                   ON CONFLICT (organization_id, id) DO UPDATE SET severity=excluded.severity, status=excluded.status, anchor_kind=excluded.anchor_kind, anchor_json=excluded.anchor_json, body_markdown=excluded.body_markdown, attachment_ids_json=excluded.attachment_ids_json, resolved_by=excluded.resolved_by, resolved_at=excluded.resolved_at, resolved_in_round=excluded.resolved_in_round, revision=excluded.revision, updated_at=excluded.updated_at",
             params![s, f.id.as_str(), f.review_id.as_str(), i64_u64(f.number)?, i64::from(f.round_number), f.author_id.as_str(), f.severity.as_str(), f.status.as_str(), f.anchor.kind.as_str(), js_str(&f.anchor), &f.body_markdown, js_str(&f.attachment_ids), f.resolved_by.as_ref().map(Id::as_str), f.resolved_at.as_deref(), f.resolved_in_round.map(i64::from), i64_u64(f.revision)?, &f.created_at, &f.updated_at])?;
     }
-    for rep in &doc.replies {
-        let sql = format!(
-            "SELECT {REPLY_COLS} FROM review_finding_replies WHERE organization_id=?1 AND id=?2"
-        );
-        if let Some(ex) = one(db, &sql, vec![txt(s), txt(rep.id.as_str())], reply_row)? {
-            if ex == *rep {
-                continue;
+    Ok(())
+}
+
+fn put_replies(
+    db: &Connection,
+    s: &str,
+    rid: &Id,
+    rows: &[ReviewFindingReplyRecord],
+) -> Result<(), EngineError> {
+    let sql = format!(
+        "SELECT {REPLY_COLS} FROM review_finding_replies WHERE organization_id=?1 AND review_id=?2"
+    );
+    let existing: std::collections::BTreeMap<Id, ReviewFindingReplyRecord> =
+        all(db, &sql, vec![txt(s), txt(rid.as_str())], reply_row)?
+            .into_iter()
+            .map(|rep| (rep.id.clone(), rep))
+            .collect();
+    let next_ids: std::collections::BTreeSet<&Id> = rows.iter().map(|rep| &rep.id).collect();
+    if existing.keys().any(|id| !next_ids.contains(id)) {
+        return Err(EngineError::new("immutable review_finding_reply omitted"));
+    }
+    for rep in rows {
+        if let Some(ex) = existing.get(&rep.id) {
+            if ex != rep {
+                return Err(EngineError::new(format!(
+                    "immutable reply {} modified",
+                    rep.id
+                )));
             }
-            return Err(EngineError::new(format!(
-                "immutable reply {} modified",
-                rep.id
-            )));
+            continue;
         }
         exec(db, "INSERT INTO review_finding_replies (organization_id, id, finding_id, review_id, round_number, author_id, body_markdown, set_status, attachment_ids_json, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
             params![s, rep.id.as_str(), rep.finding_id.as_str(), rep.review_id.as_str(), i64::from(rep.round_number), rep.author_id.as_str(), &rep.body_markdown, rep.set_status.map(|st| st.as_str()), js_str(&rep.attachment_ids), &rep.created_at])?;

@@ -2859,7 +2859,7 @@ BEGIN
       AND r.independent = 1 AND r.created_by = NEW.reviewer_id
   );
 END;
-CREATE TRIGGER review_reviewers_independent_update BEFORE UPDATE OF reviewer_id, removed ON review_reviewers
+CREATE TRIGGER review_reviewers_independent_update BEFORE UPDATE OF organization_id, review_id, reviewer_id, removed ON review_reviewers
 WHEN NEW.removed = 0
 BEGIN
   SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (
@@ -2869,6 +2869,15 @@ BEGIN
   );
 END;
 CREATE TRIGGER reviews_independent_after_insert AFTER INSERT ON reviews
+WHEN NEW.independent = 1
+BEGIN
+  SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (
+    SELECT 1 FROM review_reviewers rr
+    WHERE rr.organization_id = NEW.organization_id AND rr.review_id = NEW.id
+      AND rr.removed = 0 AND rr.reviewer_id = NEW.created_by
+  );
+END;
+CREATE TRIGGER reviews_independent_after_update AFTER UPDATE OF independent, created_by ON reviews
 WHEN NEW.independent = 1
 BEGIN
   SELECT RAISE(ABORT, 'independent review forbids assigning the author as reviewer') WHERE EXISTS (

@@ -81,7 +81,7 @@ pub mod projects;
 pub mod providers;
 pub mod replication;
 /// Universal reviews (`TASK-92.1`, `ADR-0026`, `ADR-0028`): records, durable files, ports, and features.
-pub mod reviews;
+pub use org_reviews as reviews;
 pub mod rules;
 /// Unified cross-entity search (`TASK-91`): its consumer-owned ports, documents and ranking.
 pub mod search;

@@ -2968,13 +2968,36 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         assert_refused(self, self.db, "office review counter cannot decrease",
                        "UPDATE office_review_counters SET next_number=1 WHERE office_code='A'")
 
-        # Independent review refuses assigning the author as reviewer.
+        # Independent review refuses assigning the author as reviewer (INSERT, reviewer UPDATE,
+        # and reviews.independent / reviews.created_by UPDATE — P1-5).
         assert_refused(self, self.db, "independent review forbids assigning the author as reviewer",
                        lambda: insert(self.db, "review_reviewers", organization_id="org",
                                       review_id="rev-1", round_number=1, reviewer_id="reporter",
                                       routing="explicit", session_mode="fresh",
                                       assigned_by="reporter", assigned_at="2026-11-27T10:01:00.000Z",
                                       removed=0))
+        assert_refused(self, self.db, "independent review forbids assigning the author as reviewer",
+                       "UPDATE reviews SET created_by='ana' WHERE id='rev-1'")
+        insert(self.db, "reviews", organization_id="org", id="rev-2",
+               office_id="numbering-a", office_code="A", number=2,
+               schema_version=1, revision=1, project_id="project", task_id="task",
+               target_kind="task", kind_slug="self-check",
+               title="Self check", body_markdown="Self review.",
+               independent=0, status="open", current_round=1, session_mode="warm",
+               guidance_refs_json="[]", criteria_json="[]", created_by="reporter",
+               created_at="2026-11-27T10:00:00.000Z", updated_at="2026-11-27T10:00:00.000Z")
+        insert(self.db, "review_rounds", organization_id="org", review_id="rev-2",
+               round_number=1, session_mode="warm", submitted_by="reporter",
+               submitted_at="2026-11-27T10:00:00.000Z", note_markdown="")
+        insert(self.db, "review_reviewers", organization_id="org", review_id="rev-2",
+               round_number=1, reviewer_id="reporter", routing="explicit",
+               session_mode="warm", assigned_by="reporter",
+               assigned_at="2026-11-27T10:00:00.000Z", removed=0)
+        self.db.commit()
+        assert_refused(self, self.db, "independent review forbids assigning the author as reviewer",
+                       "UPDATE reviews SET independent=1, session_mode='fresh' WHERE id='rev-2'")
+        assert_refused(self, self.db, "independent review forbids assigning the author as reviewer",
+                       "UPDATE review_reviewers SET review_id='rev-1' WHERE review_id='rev-2' AND reviewer_id='reporter'")
 
         # Immutability triggers on review_rounds, review_finding_replies, and review_events
         # (including INSERT OR REPLACE with recursive_triggers ON and OFF).

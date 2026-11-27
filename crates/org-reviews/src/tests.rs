@@ -15,6 +15,18 @@ fn key_path_and_event_hash_parsing_unit_checks() {
     assert_eq!(parse_review_key("RV-I1"), None);
     assert_eq!(parse_review_key("RV-O1"), None);
     assert_eq!(parse_review_key("T-A1"), None);
+    // Multibyte UTF-8 strings straddling byte offset 3 must never panic (P0-1).
+    for bad in ["🚀1", "éé", "🔥a", "日本語", "RV-🚀1"] {
+        assert_eq!(parse_review_key(bad), None, "multibyte {bad}");
+    }
+    // Git ref metacharacters & leading dash refused for branches (P2-4).
+    for bad_branch in ["-main", "feat@{0}", "a~1", "a^2", "a:b", "a\\b", "a..b"] {
+        assert!(
+            super::validation::validate_ref_token(bad_branch, true, "branch").is_err(),
+            "branch {bad_branch} must be rejected"
+        );
+    }
+    assert!(super::validation::validate_ref_token("task/T-A42", true, "branch").is_ok());
 
     let rid = Id::parse(SAMPLE_ID).unwrap();
     assert_eq!(

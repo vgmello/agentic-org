@@ -156,6 +156,10 @@ pub(crate) fn load_visible_review<V: ReviewsRead + ReviewContextRead>(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "shared mutation loader validates caller, command id, visibility, archive policy, closed state, and optimistic revision"
+)]
 pub(crate) fn load_mutable_review<V: ReviewsRead + ReviewContextRead>(
     view: &V,
     caller_id: &str,
@@ -164,12 +168,24 @@ pub(crate) fn load_mutable_review<V: ReviewsRead + ReviewContextRead>(
     expected_revision: Option<u64>,
     closed_code: ErrorCode,
     closed_msg: &str,
+    allow_archived: bool,
 ) -> Result<(ReviewActorInfo, LoadedReview), Refusal> {
     let caller = require_active_caller(view, caller_id)?;
     let _ = validate_uuid(command_id, "command_id")?;
     let loaded = load_visible_review(view, &caller, review_ref)?;
     if loaded.review.status == ReviewStatus::Closed {
         return Err(refuse(closed_code, closed_msg));
+    }
+    if !allow_archived {
+        if let Some(pid) = loaded.review.project_id.as_ref() {
+            if view
+                .project_info(pid)
+                .map_err(storage_refusal)?
+                .is_some_and(|p| p.archived)
+            {
+                return Err(super::validation::unauth("project is archived"));
+            }
+        }
     }
     if let Some(exp) = expected_revision {
         if loaded.review.revision != exp {

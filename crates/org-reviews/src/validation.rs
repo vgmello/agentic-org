@@ -45,6 +45,11 @@ pub(crate) fn conflict_revision(expected: u64, current: u64) -> Refusal {
         expected_revision: expected,
         current_revision: current,
         changed_sections: Vec::new(),
+        events_since: Vec::new(),
+        events_truncated: false,
+        omitted_events: 0,
+        reread_recommended: true,
+        current_summary: None,
     };
     let msg = format!("stale expected_revision {expected}: review is at revision {current}");
     Refusal::rejected(
@@ -190,9 +195,15 @@ pub fn validate_oid(raw: &str, field: &str) -> Result<String, Refusal> {
 
 pub fn validate_ref_token(raw: &str, no_space: bool, label: &str) -> Result<String, Refusal> {
     let s = raw.trim();
+    let bad_branch = no_space
+        && (s.starts_with('-')
+            || s.contains("@{")
+            || s.chars()
+                .any(|c| matches!(c, '\\' | '~' | '^' | ':' | '?' | '*' | '[')));
     if s.is_empty()
         || s.len() > REVIEW_PATH_MAX_LEN
         || s.contains("..")
+        || bad_branch
         || s.chars()
             .any(|c| c.is_control() || (no_space && c.is_whitespace()))
     {
@@ -342,9 +353,7 @@ fn pick_default_agent<C: ReviewContextRead>(
                 scoped.push(e.id.clone());
             }
         }
-        if !scoped.is_empty() {
-            return Ok(pick_seed(scoped, seed));
-        }
+        return Ok(pick_seed(scoped, seed));
     }
     Ok(pick_seed(
         eligible.into_iter().map(|e| e.id).collect(),

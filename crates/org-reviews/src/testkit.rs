@@ -326,7 +326,25 @@ impl ReviewsWrite for MemoryTx {
             );
         }
         for f in &doc.findings {
+            if tables
+                .findings
+                .get(&f.id)
+                .is_some_and(|ex| ex.review_id != rid)
+            {
+                return Err(EngineError::new(format!(
+                    "finding {} belongs to another review",
+                    f.id
+                )));
+            }
             tables.findings.insert(f.id.clone(), f.clone());
+        }
+        let next_reply_ids: BTreeSet<&Id> = doc.replies.iter().map(|r| &r.id).collect();
+        if tables
+            .replies
+            .values()
+            .any(|ex| ex.review_id == rid && !next_reply_ids.contains(&ex.id))
+        {
+            return Err(EngineError::new("immutable review_finding_reply omitted"));
         }
         for rep in &doc.replies {
             if let Some(existing) = tables.replies.get(&rep.id) {

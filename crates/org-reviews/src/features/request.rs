@@ -52,12 +52,8 @@ fn resolve_scope<C: ReviewContextRead>(
         .resolve_task_info(tref)
         .map_err(storage_refusal)?
         .ok_or_else(|| not_found("task not found"))?;
-    if let Some(pid) = task.project_id.as_ref() {
-        if let Some(exp) = project.as_ref() {
-            if exp.id != *pid {
-                return Err(bad_req("task does not belong to project"));
-            }
-        } else {
+    match task.project_id.as_ref() {
+        Some(pid) => {
             let proj = ctx
                 .project_info(pid)
                 .map_err(storage_refusal)?
@@ -65,11 +61,19 @@ fn resolve_scope<C: ReviewContextRead>(
             if !may_see_project(ctx, caller, &proj)? {
                 return Err(not_found("task not found"));
             }
-            if proj.archived {
-                return Err(unauth("project is archived"));
+            if let Some(exp) = project.as_ref() {
+                if exp.id != *pid {
+                    return Err(bad_req("task does not belong to project"));
+                }
+            } else {
+                if proj.archived {
+                    return Err(unauth("project is archived"));
+                }
+                project = Some(proj);
             }
-            project = Some(proj);
         }
+        None if project.is_some() => return Err(bad_req("task does not belong to project")),
+        None => {}
     }
     Ok((project, Some(task.id)))
 }
@@ -113,7 +117,15 @@ fn resolve_target<C: ReviewContextRead>(
                 .ok_or_else(|| bad_req("code review requires branch"))?;
             let branch = validate_ref_token(branch_raw, true, "branch")?;
             let (base, head) = match pin {
-                Some(cp) => check_resolved_code_pin(cp, p.expected_head_oid.as_deref())?,
+                Some(cp) => {
+                    let (b, h) = check_resolved_code_pin(cp, p.expected_head_oid.as_deref())?;
+                    if let Some(raw_base) = p.base_oid.as_deref() {
+                        if validate_oid(raw_base, "base_oid")? != b {
+                            return Err(refuse(ErrorCode::Conflict, "base_oid mismatch"));
+                        }
+                    }
+                    (b, h)
+                }
                 None => {
                     let need = || bad_req("code review requires base_oid and expected_head_oid");
                     (
@@ -257,10 +269,10 @@ pub fn decide_request<V: ReviewsRead + ReviewContextRead>(
     let org_id = require_org_id(view)?;
     let _ = validate_uuid(&p.command_id, "command_id")?;
     let rid = validate_uuid(&p.review_id, "review_id")?;
+    let mut target = resolve_target(view, &caller, p, pin)?;
     if view.review(&rid).map_err(storage_refusal)?.is_some() {
         return Err(refuse(ErrorCode::AlreadyExists, "review_id already exists"));
     }
-    let mut target = resolve_target(view, &caller, p, pin)?;
     let (code, number, counter) = allocate_number(view, office_id)?;
     let at = format_rfc3339_ms(now_ms);
     let review = build_initial_review(office_id, code, number, &caller.id, p, &mut target, &at)?;

@@ -15,12 +15,13 @@ use crate::time::format_rfc3339_ms;
 
 use super::super::ports::{ReviewContextRead, ReviewsRead};
 use super::super::records::{
-    compute_review_status, reviewers_to_views, round_to_view, ResolvedCodePin,
+    compute_review_status, has_open_blocker, reviewers_to_views, round_to_view, ResolvedCodePin,
     ReviewReviewerRecord, ReviewRoundRecord,
 };
 use super::super::validation::{
     bad_req, check_resolved_code_pin, effective_session_mode, refuse, resolve_routing,
-    storage_refusal, validate_close_reason, validate_oid, validate_text_limit, ResolvedRouting,
+    storage_refusal, unauth, validate_close_reason, validate_oid, validate_text_limit,
+    ResolvedRouting,
 };
 use super::{build_event, commit_doc, load_mutable_review, LoadedReview};
 
@@ -44,6 +45,7 @@ fn apply_round_routing(
             .iter_mut()
             .find(|r| r.round_number == rn && r.reviewer_id == *rid)
         {
+            let was_removed = row.removed;
             (
                 row.removed,
                 row.routing,
@@ -59,6 +61,13 @@ fn apply_round_routing(
                 actor.clone(),
                 at.to_owned(),
             );
+            if was_removed {
+                row.verdict = None;
+                row.summary_markdown.clear();
+                row.finding_ids.clear();
+                row.attachment_ids.clear();
+                row.verdict_at = None;
+            }
         } else {
             loaded.reviewers.push(
                 ReviewReviewerRecord::assigned(
@@ -90,6 +99,7 @@ pub fn decide_route<V: ReviewsRead + ReviewContextRead>(
         Some(p.expected_revision),
         ErrorCode::InvalidRequest,
         "cannot route a closed review",
+        false,
     )?;
     let project = loaded
         .review
@@ -119,7 +129,11 @@ pub fn decide_route<V: ReviewsRead + ReviewContextRead>(
         .iter()
         .filter(|r| r.round_number == rn && !r.removed)
         .collect();
-    loaded.review.status = compute_review_status(loaded.review.status, &active);
+    loaded.review.status = compute_review_status(
+        loaded.review.status,
+        &active,
+        has_open_blocker(&loaded.findings),
+    );
     loaded.review.session_mode = mode;
     loaded.bump(&at);
     let payload = json!({
@@ -210,7 +224,19 @@ pub fn decide_resubmit<V: ReviewsRead + ReviewContextRead>(
         Some(p.expected_revision),
         ErrorCode::InvalidRequest,
         "cannot resubmit a closed review",
+        false,
     )?;
+    let prev = loaded.review.current_round;
+    if loaded.review.independent
+        && loaded
+            .reviewers
+            .iter()
+            .any(|r| r.round_number == prev && !r.removed && r.reviewer_id == caller.id)
+    {
+        return Err(unauth(
+            "assigned reviewer cannot resubmit an independent review",
+        ));
+    }
     let mode = effective_session_mode(
         loaded.review.independent,
         p.requested_session_mode().map_err(bad_req)?,
@@ -218,14 +244,13 @@ pub fn decide_resubmit<V: ReviewsRead + ReviewContextRead>(
     )?;
     let note_markdown =
         validate_text_limit(&p.note_markdown, REVIEW_SUMMARY_MAX_CHARS, "note_markdown")?;
-    let prev = loaded.review.current_round;
-    let base0 = loaded
-        .rounds
-        .first()
+    let base_prev = loaded
+        .current_round()
+        .or_else(|| loaded.rounds.last())
         .and_then(|r| r.base_oid.as_deref())
         .map(str::to_owned);
     let (base_oid, head_oid) =
-        resolve_resubmit_pin(loaded.review.target_kind, base0.as_deref(), p, pin)?;
+        resolve_resubmit_pin(loaded.review.target_kind, base_prev.as_deref(), p, pin)?;
     let next = prev
         .checked_add(1)
         .ok_or_else(|| bad_req("round_number overflow"))?;
@@ -281,6 +306,7 @@ pub fn decide_close<V: ReviewsRead + ReviewContextRead>(
         Some(p.expected_revision),
         ErrorCode::Conflict,
         "review is already closed",
+        true,
     )?;
     let reason = validate_close_reason(p.reason.as_deref())?;
     let at = format_rfc3339_ms(now_ms);

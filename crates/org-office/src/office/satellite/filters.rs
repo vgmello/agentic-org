@@ -294,6 +294,9 @@ pub fn classify_replicated_snapshot_path(path: &str) -> SnapshotPathClass {
             _ => SnapshotPathClass::WorkSidecar,
         };
     }
+    if crate::reviews::files::parse_path(&dp).is_some() {
+        return SnapshotPathClass::WorkSidecar;
+    }
     if crate::processes::records::parse_path(&dp).is_some() {
         return SnapshotPathClass::DependentExecutionDocsAndBudgets;
     }

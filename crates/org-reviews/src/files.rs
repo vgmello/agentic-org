@@ -2,7 +2,9 @@
 
 use std::collections::BTreeSet;
 
-use org_proto::reviews::{ReviewSessionMode, ReviewStatus, ReviewTargetKind};
+use org_proto::reviews::{
+    FindingStatus, ReviewSessionMode, ReviewStatus, ReviewTargetKind, RoutingMode,
+};
 use org_store::{DurablePath, Engine, Id, ProjectionError, Projector};
 
 use super::ports::{ReviewListQuery, ReviewsRead, ReviewsWrite};
@@ -10,6 +12,7 @@ use super::records::{
     self, decode_counter, decode_event, decode_versioned, ReviewDocument, ReviewRecord,
     ReviewRoundRecord,
 };
+use super::validation::validate_oid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewFileKind {
@@ -90,24 +93,24 @@ fn refuse(path: &DurablePath, reason: impl Into<String>) -> ProjectionError {
 }
 
 fn check_doc(path: &DurablePath, rid: &Id, doc: &ReviewDocument) -> Result<(), ProjectionError> {
-    let bad = doc.review.id != *rid
-        || !records::is_valid_office_code(&doc.review.office_code)
-        || doc.review.number == 0
-        || doc.review.current_round == 0
-        || doc.review.revision == 0
-        || doc
-            .reviewers
-            .iter()
-            .any(|r| r.review_id != *rid || r.round_number == 0)
-        || doc
+    let hdr_ok = doc.review.id == *rid
+        && records::is_valid_office_code(&doc.review.office_code)
+        && doc.review.number > 0
+        && doc.review.current_round > 0
+        && doc.review.revision > 0;
+    let children_ok = doc
+        .reviewers
+        .iter()
+        .all(|r| r.review_id == *rid && r.round_number > 0)
+        && doc
             .findings
             .iter()
-            .any(|f| f.review_id != *rid || f.number == 0 || f.round_number == 0)
-        || doc
+            .all(|f| f.review_id == *rid && f.number > 0 && f.round_number > 0)
+        && doc
             .replies
             .iter()
-            .any(|r| r.review_id != *rid || r.round_number == 0);
-    if bad {
+            .all(|r| r.review_id == *rid && r.round_number > 0);
+    if !hdr_ok || !children_ok {
         return Err(refuse(path, "invalid review header or child identity"));
     }
     Ok(())
@@ -190,56 +193,126 @@ fn apply_counter<Tx: ReviewsWrite>(
     Ok(())
 }
 
-fn validate_one_review<T: ReviewsRead>(tx: &T, r: &ReviewRecord) -> Result<(), ProjectionError> {
-    let path = review_path(&r.id);
-    if (r.status == ReviewStatus::Closed) != r.closed_at.is_some()
-        || (r.independent && r.session_mode != ReviewSessionMode::Fresh)
-    {
-        return Err(refuse(&path, "invalid review status or session_mode"));
+fn target_fields_valid(r: &ReviewRecord) -> bool {
+    let has_code = (r.repository_id.is_some(), r.branch.is_some());
+    match r.target_kind {
+        ReviewTargetKind::Code => has_code == (true, true) && r.target_ref.is_none(),
+        ReviewTargetKind::Task => {
+            r.task_id.is_some() && has_code == (false, false) && r.target_ref.is_none()
+        }
+        ReviewTargetKind::Doc | ReviewTargetKind::Artifact => {
+            has_code == (false, false) && r.target_ref.is_some()
+        }
     }
+}
+
+fn validate_header(path: &DurablePath, r: &ReviewRecord) -> Result<(), ProjectionError> {
+    let closed_ok = (r.status == ReviewStatus::Closed) == r.closed_at.is_some()
+        && (r.status == ReviewStatus::Closed || r.closed_reason.is_none());
+    let mode_ok = !r.independent || r.session_mode == ReviewSessionMode::Fresh;
+    if !closed_ok || !mode_ok || !target_fields_valid(r) {
+        return Err(refuse(path, "invalid review header invariants"));
+    }
+    Ok(())
+}
+
+fn validate_rounds<T: ReviewsRead>(tx: &T, r: &ReviewRecord) -> Result<(), ProjectionError> {
     let rounds = tx.review_rounds(&r.id)?;
-    if rounds.iter().map(|rd| rd.round_number).collect::<Vec<_>>()
-        != (1..=r.current_round).collect::<Vec<_>>()
-    {
-        return Err(refuse(&path, "review rounds non-contiguous"));
+    let contiguous = rounds.len() == r.current_round as usize
+        && rounds
+            .iter()
+            .enumerate()
+            .all(|(i, rd)| rd.round_number == (i as u32) + 1);
+    if !contiguous {
+        return Err(refuse(&review_path(&r.id), "review rounds non-contiguous"));
     }
     for rd in &rounds {
-        let bad_pin = r.target_kind == ReviewTargetKind::Code
-            && (rd.base_oid.is_none() || rd.head_oid.is_none());
-        if bad_pin || (r.independent && rd.session_mode != ReviewSessionMode::Fresh) {
+        let pin_ok = match r.target_kind {
+            ReviewTargetKind::Code => rd
+                .base_oid
+                .as_deref()
+                .zip(rd.head_oid.as_deref())
+                .is_some_and(|(b, h)| {
+                    validate_oid(b, "base_oid").is_ok() && validate_oid(h, "head_oid").is_ok()
+                }),
+            _ => rd.base_oid.is_none() && rd.head_oid.is_none(),
+        };
+        if !pin_ok || (r.independent && rd.session_mode != ReviewSessionMode::Fresh) {
             return Err(refuse(
                 &round_path(&r.id, rd.round_number),
                 "invalid round snapshot",
             ));
         }
     }
+    Ok(())
+}
+
+fn validate_reviewers<T: ReviewsRead>(
+    tx: &T,
+    r: &ReviewRecord,
+    path: &DurablePath,
+) -> Result<(), ProjectionError> {
     for rr in tx.review_reviewers(&r.id)? {
-        if rr.round_number > r.current_round
-            || (r.independent && !rr.removed && rr.reviewer_id == r.created_by)
-        {
-            return Err(refuse(&path, "invalid reviewer assignment"));
+        let routing_ok = (rr.routing == RoutingMode::Pool) == rr.team_id.is_some();
+        let verdict_ok = rr.verdict.is_some() == rr.verdict_at.is_some()
+            && (rr.verdict.is_some()
+                || (rr.summary_markdown.is_empty()
+                    && rr.finding_ids.is_empty()
+                    && rr.attachment_ids.is_empty()));
+        let indep_ok = !(r.independent && !rr.removed && rr.reviewer_id == r.created_by);
+        if rr.round_number > r.current_round || !routing_ok || !verdict_ok || !indep_ok {
+            return Err(refuse(path, "invalid reviewer assignment"));
         }
     }
+    Ok(())
+}
+
+fn validate_findings_and_replies<T: ReviewsRead>(
+    tx: &T,
+    r: &ReviewRecord,
+    path: &DurablePath,
+) -> Result<(), ProjectionError> {
     let mut fids = BTreeSet::new();
     for (idx, f) in tx.review_findings(&r.id)?.into_iter().enumerate() {
-        if f.number != (idx as u64) + 1 || f.round_number > r.current_round {
-            return Err(refuse(&path, "invalid finding number or round"));
+        let res_ok = match f.status {
+            FindingStatus::Open => {
+                f.resolved_by.is_none() && f.resolved_at.is_none() && f.resolved_in_round.is_none()
+            }
+            FindingStatus::Resolved | FindingStatus::WontFix => {
+                f.resolved_by.is_some() && f.resolved_at.is_some() && f.resolved_in_round.is_some()
+            }
+        };
+        if f.number != (idx as u64) + 1
+            || f.round_number > r.current_round
+            || f.body_markdown.is_empty()
+            || !res_ok
+        {
+            return Err(refuse(path, "invalid finding invariants"));
         }
-        f.anchor.check().map_err(|msg| refuse(&path, msg))?;
+        f.anchor.check().map_err(|msg| refuse(path, msg))?;
         fids.insert(f.id);
     }
     for rep in tx.review_finding_replies(&r.id)? {
         if !fids.contains(&rep.finding_id) || rep.round_number > r.current_round {
-            return Err(refuse(&path, "invalid finding reply"));
+            return Err(refuse(path, "invalid finding reply"));
         }
     }
-    if tx
-        .review_events(&r.id)?
-        .iter()
-        .map(|e| e.revision)
-        .collect::<Vec<_>>()
-        != (1..=r.revision).collect::<Vec<_>>()
-    {
+    Ok(())
+}
+
+fn validate_one_review<T: ReviewsRead>(tx: &T, r: &ReviewRecord) -> Result<(), ProjectionError> {
+    let path = review_path(&r.id);
+    validate_header(&path, r)?;
+    validate_rounds(tx, r)?;
+    validate_reviewers(tx, r, &path)?;
+    validate_findings_and_replies(tx, r, &path)?;
+    let events = tx.review_events(&r.id)?;
+    let events_ok = events.len() as u64 == r.revision
+        && events
+            .iter()
+            .enumerate()
+            .all(|(i, e)| e.revision == (i as u64) + 1);
+    if !events_ok {
         return Err(refuse(&path, "review events non-contiguous"));
     }
     Ok(())

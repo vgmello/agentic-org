@@ -1,0 +1,22 @@
+[package]
+name = "org-reviews"
+description = "Universal reviews domain family: engine-neutral records, ReviewFiles projector, validation, and lifecycle operations."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+testkit = ["org-store/testkit"]
+
+[dependencies]
+org-proto = { path = "../org-proto" }
+org-store = { path = "../org-store" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+org-store = { path = "../org-store", features = ["testkit"] }
+
+[lints]
+workspace = true
