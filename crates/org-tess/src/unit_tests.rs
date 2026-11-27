@@ -834,6 +834,36 @@ fn apply_extract_entity_link_returns_canonical_routes_for_all_receipt_variants()
             None,
             None,
         ),
+        (
+            "team.delete",
+            json!({"id": "team-9", "name": "Retired"}),
+            None,
+            None,
+        ),
+        (
+            "member.remove",
+            json!({"id": "mem-9", "name": "Departed"}),
+            None,
+            None,
+        ),
+        (
+            "member.agent_offboard",
+            json!({"member_id": "agent-9", "name": "FormerBot"}),
+            None,
+            None,
+        ),
+        (
+            "member.offboard",
+            json!({"member_id": "mem-10", "name": "FormerPerson"}),
+            None,
+            None,
+        ),
+        (
+            "team.update",
+            json!({"id": "   ", "name": "Blank"}),
+            None,
+            None,
+        ),
     ];
 
     for (call, payload, expected_href, expected_label) in cases {
@@ -847,6 +877,26 @@ fn apply_extract_entity_link_returns_canonical_routes_for_all_receipt_variants()
             label.as_deref(),
             *expected_label,
             "unexpected label for `{call}` with payload {payload}"
+        );
+    }
+}
+
+#[test]
+fn clean_route_enforces_strict_channel_id_allowlist() {
+    assert_eq!(
+        crate::ui::clean_route("/chat?c=chan_01-AZ", true).unwrap(),
+        "/chat?c=chan_01-AZ"
+    );
+    for bad in [
+        "/chat?c=",
+        "/chat?c=chan;drop",
+        "/chat?c=chan:1",
+        "/chat?c=chan!bad",
+        "/chat?c=chan.dot",
+    ] {
+        assert!(
+            crate::ui::clean_route(bad, true).is_err(),
+            "expected `{bad}` to be rejected"
         );
     }
 }

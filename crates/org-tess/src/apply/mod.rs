@@ -413,13 +413,19 @@ fn build_receipt(
 }
 
 fn field_str(data: &Value, key: &str) -> Option<String> {
-    data.get(key).and_then(Value::as_str).map(str::to_owned)
+    data.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
 }
 
 fn nested_field_str(data: &Value, parent: &str, key: &str) -> Option<String> {
     data.get(parent)
         .and_then(|v| v.get(key))
         .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .map(str::to_owned)
 }
 
@@ -462,6 +468,12 @@ fn extract_id_link(
 }
 
 fn extract_org_entity_link(call: &str, data: &Value) -> Option<(String, String)> {
+    if matches!(
+        call,
+        "team.delete" | "member.remove" | "member.agent_offboard" | "member.offboard"
+    ) {
+        return None;
+    }
     match call.split('.').next().unwrap_or("") {
         "project" => extract_project_link(call, data),
         "team" if call == "team.set_title" => {

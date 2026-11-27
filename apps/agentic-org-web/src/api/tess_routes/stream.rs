@@ -292,11 +292,16 @@ async fn maybe_send_keepalive(
     if last_heartbeat.elapsed() < heartbeat_interval {
         return true;
     }
-    *last_heartbeat = tokio::time::Instant::now();
-    body_tx
+    if body_tx
         .send(Bytes::from_static(b": keepalive\n\n"))
         .await
         .is_ok()
+    {
+        *last_heartbeat = tokio::time::Instant::now();
+        true
+    } else {
+        false
+    }
 }
 
 async fn handle_sse_batch(

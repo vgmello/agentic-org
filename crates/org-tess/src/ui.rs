@@ -146,7 +146,10 @@ fn is_valid_channel_query_route(route: &str) -> bool {
     let Some(channel_id) = route.strip_prefix("/chat?c=") else {
         return false;
     };
-    !channel_id.is_empty() && !channel_id.contains(['?', '&', '=', '/'])
+    !channel_id.is_empty()
+        && channel_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 pub(crate) fn clean_route(raw: &str, allow_channel_query: bool) -> Result<String, ApiError> {
