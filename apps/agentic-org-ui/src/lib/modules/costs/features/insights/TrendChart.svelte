@@ -97,6 +97,9 @@
 	const effectiveActiveIdx = $derived(
 		activeIdx !== null && activeIdx < points.length ? activeIdx : null
 	);
+	const effectiveFocusedIdx = $derived(
+		focusedIdx !== null && focusedIdx < points.length ? focusedIdx : null
+	);
 	const activePoint = $derived(
 		effectiveActiveIdx !== null ? points[effectiveActiveIdx] : (points[points.length - 1] ?? null)
 	);
@@ -332,7 +335,9 @@
 					>
 						{#each points as pt (pt.bucket.key)}
 							{@const tabStop =
-								focusedIdx !== null ? focusedIdx === pt.index : pt.index === points.length - 1}
+								effectiveFocusedIdx !== null
+									? effectiveFocusedIdx === pt.index
+									: pt.index === points.length - 1}
 							<li class="trend-hit-cell">
 								<button
 									type="button"
@@ -346,14 +351,17 @@
 									)} records"
 									onpointerenter={() => (activeIdx = pt.index)}
 									onpointerleave={() => {
-										if (focusedIdx === null) activeIdx = null;
+										if (effectiveFocusedIdx === null) activeIdx = null;
 									}}
 									onfocus={() => {
 										activeIdx = pt.index;
 										focusedIdx = pt.index;
 									}}
 									onblur={() => {
-										if (focusedIdx === pt.index) focusedIdx = null;
+										if (focusedIdx === pt.index) {
+											focusedIdx = null;
+											if (activeIdx === pt.index) activeIdx = null;
+										}
 									}}
 									onkeydown={(e) => handlePointKeydown(e, pt.index)}
 								></button>

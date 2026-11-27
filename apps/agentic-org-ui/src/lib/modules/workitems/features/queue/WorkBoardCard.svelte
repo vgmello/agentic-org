@@ -49,10 +49,11 @@
 		onChangePriority: (row: TaskRow, priority: Priority) => void;
 	} = $props();
 
-	let titleClamped = $state(false);
+	let titleEl = $state<HTMLAnchorElement | null>(null);
+	let titleTipOpen = $state(false);
 
-	function checkTitleClamped(el: HTMLElement) {
-		titleClamped = el.scrollHeight > el.clientHeight + 1;
+	function handleTitleTipOpenChange(next: boolean) {
+		titleTipOpen = next && Boolean(titleEl && titleEl.scrollHeight > titleEl.clientHeight + 1);
 	}
 
 	const priSig = $derived(
@@ -167,29 +168,32 @@
 	{/if}
 </div>
 
-<Tooltip.Root disabled={!titleClamped}>
+<Tooltip.Root bind:open={titleTipOpen} onOpenChange={handleTitleTipOpenChange}>
 	<Tooltip.Trigger>
 		{#snippet child({ props })}
 			<a
-				{...props}
+				bind:this={titleEl}
+				{...mergeProps(props, {
+					onclick: (e: MouseEvent) => onOpen(e, row)
+				})}
 				href={resolve(taskHref(row.ref) as '/')}
-				onclick={(e) => onOpen(e, row)}
-				onpointerenter={(e) => checkTitleClamped(e.currentTarget)}
-				onfocus={(e) => checkTitleClamped(e.currentTarget)}
 				class="bcard-title text-sm/5 font-semibold hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 			>
 				{row.title}
 			</a>
 		{/snippet}
 	</Tooltip.Trigger>
-	<Tooltip.Portal>
-		<Tooltip.Content
-			side="top"
-			sideOffset={6}
-			class="z-50 max-w-xs rounded-md bg-surface-overlay px-2.5 py-1.5 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
-			>{row.title}</Tooltip.Content
-		>
-	</Tooltip.Portal>
+	{#if titleTipOpen}
+		<Tooltip.Portal>
+			<Tooltip.Content
+				role="tooltip"
+				side="top"
+				sideOffset={6}
+				class="z-50 max-w-xs rounded-md bg-surface-overlay px-2.5 py-1.5 text-xs/5 font-medium text-fg shadow-md ring-1 ring-line"
+				>{row.title}</Tooltip.Content
+			>
+		</Tooltip.Portal>
+	{/if}
 </Tooltip.Root>
 
 {#if row.status === 'blocked' && row.blockedReason}

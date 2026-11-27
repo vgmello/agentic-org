@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { resolve } from '$app/paths';
-	import { Tooltip } from 'bits-ui';
+	import { Tooltip, mergeProps } from 'bits-ui';
 	import Activity from '@lucide/svelte/icons/activity';
 	import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -98,6 +98,8 @@
 		dropHint = null;
 		moreDropActive = false;
 		if (zone === 'more') {
+			const wasPinned = uiPrefs.workspaceNav.includes(movedId);
+			if (!wasPinned || uiPrefs.workspaceNav.length <= 1) return;
 			uiPrefs.moveWorkspaceItem(movedId, null, 'more');
 			announce(`Moved ${WORKSPACE_META[movedId].label} to More.`);
 			return;
@@ -122,6 +124,8 @@
 		draggingId = null;
 		dropHint = null;
 		moreDropActive = false;
+		const wasPinned = uiPrefs.workspaceNav.includes(movedId);
+		if (!wasPinned || uiPrefs.workspaceNav.length <= 1) return;
 		uiPrefs.moveWorkspaceItem(movedId, null, 'more');
 		announce(`Moved ${WORKSPACE_META[movedId].label} to More.`);
 	}
@@ -190,11 +194,12 @@
 					<Tooltip.Trigger>
 						{#snippet child({ props })}
 							<a
-								{...props}
+								{...mergeProps(props, {
+									onclick: (e: MouseEvent) => onNavigate?.(e, item.href),
+									onkeydown: (e: KeyboardEvent) => handleItemKeydown(e, item.id, 'pinned')
+								})}
 								data-ws-link={item.id}
 								href={resolve(item.href)}
-								onclick={(e) => onNavigate?.(e, item.href)}
-								onkeydown={(e) => handleItemKeydown(e, item.id, 'pinned')}
 								aria-current={active ? 'page' : undefined}
 								title={collapsed ? undefined : `${item.label} (drag or Alt+↑/↓ to reorder)`}
 								class={[
@@ -222,9 +227,10 @@
 						<Tooltip.Trigger>
 							{#snippet child({ props })}
 								<button
-									{...props}
+									{...mergeProps(props, {
+										onclick: () => handleTogglePin(item, true)
+									})}
 									type="button"
-									onclick={() => handleTogglePin(item, true)}
 									aria-label="Move {item.label} to More"
 									class="ws-pin-btn flex size-7 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:opacity-100"
 								>
@@ -269,7 +275,7 @@
 					<span class="min-w-0 flex-1 truncate text-left">More</span>
 					<ChevronDown
 						class={[
-							'size-3.5 shrink-0 transition-transform duration-150',
+							'size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none',
 							moreOpen && 'rotate-180'
 						]}
 						aria-hidden="true"
@@ -309,9 +315,10 @@
 									<Tooltip.Trigger>
 										{#snippet child({ props })}
 											<button
-												{...props}
+												{...mergeProps(props, {
+													onclick: () => handleTogglePin(item, false)
+												})}
 												type="button"
-												onclick={() => handleTogglePin(item, false)}
 												aria-label="Pin {item.label} to Workspace"
 												class="ws-pin-btn flex size-7 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:opacity-100"
 											>

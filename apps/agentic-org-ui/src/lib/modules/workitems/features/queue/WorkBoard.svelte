@@ -80,7 +80,7 @@
 
 	const uid = $props.id();
 	let doneWindow = $state<DoneWindow>('7d');
-	let revealEmptyInSearch = $state(false);
+	let revealEmptyForQuery = $state<string | null>(null);
 	let phoneLane = $state<BoardStatusColumn | null>(null);
 	let announcement = $state('');
 	let dragRow = $state<TaskRow | null>(null);
@@ -95,11 +95,19 @@
 	);
 
 	const trimmedQuery = $derived(searchQuery.trim());
+	const revealEmptyInSearch = $derived(trimmedQuery !== '' && revealEmptyForQuery === trimmedQuery);
+	const laneHasContent = (col: (typeof allColumns)[number]) =>
+		col.rows.length > 0 || col.hiddenDone > 0;
+	const matchingColumns = $derived(allColumns.filter(laneHasContent));
+	const collapsibleEmptyCount = $derived(allColumns.length - matchingColumns.length);
+	const canCollapseEmptyLanes = $derived(
+		trimmedQuery !== '' && matchingColumns.length > 0 && collapsibleEmptyCount > 0
+	);
 	const hiddenEmptyCount = $derived(
-		trimmedQuery && !revealEmptyInSearch ? allColumns.filter((c) => c.rows.length === 0).length : 0
+		canCollapseEmptyLanes && !revealEmptyInSearch ? collapsibleEmptyCount : 0
 	);
 	const displayedColumns = $derived(
-		trimmedQuery && !revealEmptyInSearch ? allColumns.filter((c) => c.rows.length > 0) : allColumns
+		canCollapseEmptyLanes && !revealEmptyInSearch ? matchingColumns : allColumns
 	);
 	const activePhoneLane = $derived.by<BoardStatusColumn>(() => {
 		if (phoneLane && displayedColumns.some((c) => c.column === phoneLane)) return phoneLane;
@@ -130,11 +138,13 @@
 	}
 
 	function toggleRevealEmptyInSearch() {
-		revealEmptyInSearch = !revealEmptyInSearch;
+		if (!canCollapseEmptyLanes) return;
+		const nextReveal = !revealEmptyInSearch;
+		revealEmptyForQuery = nextReveal ? trimmedQuery : null;
 		announce(
-			revealEmptyInSearch
+			nextReveal
 				? `Showing all ${allColumns.length} lanes.`
-				: `Hiding ${allColumns.filter((c) => c.rows.length === 0).length} empty lanes while searching.`
+				: `Hiding ${collapsibleEmptyCount} empty ${collapsibleEmptyCount === 1 ? 'lane' : 'lanes'} while searching.`
 		);
 	}
 
@@ -244,16 +254,17 @@
 </script>
 
 <div class="sr-only" aria-live="polite" aria-atomic="true" data-testid="board-live-region">
-	{#if announcement}
-		{announcement}
-	{:else if trimmedQuery}
+	{announcement}
+</div>
+<div class="sr-only" aria-live="polite" aria-atomic="true" data-testid="board-search-live">
+	{#if trimmedQuery}
 		{displayedColumns.reduce((sum, c) => sum + c.rows.length, 0)} matching items across {displayedColumns.length}
 		{displayedColumns.length === 1 ? 'lane' : 'lanes'}.
 	{/if}
 </div>
 
 <Tooltip.Provider delayDuration={150}>
-	{#if trimmedQuery && (hiddenEmptyCount > 0 || revealEmptyInSearch)}
+	{#if canCollapseEmptyLanes}
 		<div
 			class="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs/5 text-fg-muted"
 			data-testid="board-search-lanes-bar"
