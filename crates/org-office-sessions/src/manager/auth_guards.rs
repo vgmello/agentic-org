@@ -23,7 +23,7 @@ impl SessionManager {
         self.authorize_owner_only_inner(member_id, false)
     }
 
-    pub(super) fn authorize_owner_only_inner(
+    pub(crate) fn authorize_owner_only_inner(
         &self,
         member_id: &str,
         hq_attested_owner: bool,

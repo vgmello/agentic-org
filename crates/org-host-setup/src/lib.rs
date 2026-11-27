@@ -50,6 +50,7 @@ pub(crate) mod cli_session;
 pub(crate) mod federation_command;
 #[cfg(all(feature = "test-support", debug_assertions))]
 pub mod fixture;
+pub(crate) mod metrics_command;
 pub(crate) mod office_command;
 pub(crate) mod org_command;
 #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
@@ -58,6 +59,7 @@ pub use federation_command::{
     office_approve, office_cancel, office_decline, office_invitations, office_invite,
     office_remove, office_sync_status, OfficeInviteInput,
 };
+pub use metrics_command::{office_metrics, try_office_metrics_noninteractive};
 pub use office_command::{
     office_join, office_list, office_re_enroll, office_remove_pending, office_restart,
     OfficeOperationCompleted, OfficeOperationOutcome, HELP as OFFICE_HELP,

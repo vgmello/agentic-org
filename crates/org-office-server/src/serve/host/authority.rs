@@ -94,6 +94,7 @@ fn requires_owner(method: &str) -> bool {
             | "organization.default_dod.set"
             | "member.session_approval"
             | "member.session_clear_stall"
+            | "office.metrics"
             | "provider.enrollment_start"
             | "provider.enrollment_status"
             | "provider.enrollment_submit"

@@ -64,6 +64,8 @@ impl TessRuntimePort for SessionManagerTessRuntime {
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         };
         let view = self.sessions.start_session(caller_id, &params)?;
         let session_id = view

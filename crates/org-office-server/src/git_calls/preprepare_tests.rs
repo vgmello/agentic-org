@@ -1075,6 +1075,8 @@ fn task160_mid_turn_worktree_prepare_rpc_signals_refresh_and_preserves_isolation
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .expect("start busy Turn 1");
@@ -1211,6 +1213,8 @@ fn warm_up_peer_and_self_idle(h: &TestHarness) {
                     workspace: None,
                     resume_runtime_session_id: None,
                     fresh: false,
+                    model: None,
+                    effort: None,
                 },
             )
             .expect("warm Turn 1");

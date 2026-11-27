@@ -234,6 +234,8 @@ impl SessionManager {
             attachment_ids: attachment_ids.to_vec(),
             session_affinity: None,
             enqueued_at_ms: now_ms(),
+            model_override: None,
+            effort_override: None,
         };
         self.enqueue_wake_durable(asker_id, item)
     }

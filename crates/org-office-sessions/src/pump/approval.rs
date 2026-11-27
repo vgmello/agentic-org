@@ -20,7 +20,7 @@ pub(super) fn handle_approval_request(
     state: &mut SessionRuntimeState,
     req: &ApprovalRequest,
     active_tokens: &[&str],
-) -> Option<Control> {
+) -> (Option<Control>, bool) {
     let writable_roots = state
         .sandbox_enabled
         .then_some(state.writable_roots.as_slice());
@@ -31,17 +31,23 @@ pub(super) fn handle_approval_request(
         state.allowed_tools.as_deref(),
         writable_roots,
     ) {
-        EscalationDisposition::AllowByPolicy => Some(Control::Answer {
-            request_id: req.id.clone(),
-            decision: Decision::AllowOnce,
-        }),
-        EscalationDisposition::AutoDeny { reason } => Some(Control::Answer {
-            request_id: req.id.clone(),
-            decision: Decision::Deny {
-                message: Some(redact_text(&reason, active_tokens)),
-                stop_turn: false,
-            },
-        }),
+        EscalationDisposition::AllowByPolicy => (
+            Some(Control::Answer {
+                request_id: req.id.clone(),
+                decision: Decision::AllowOnce,
+            }),
+            false,
+        ),
+        EscalationDisposition::AutoDeny { reason } => (
+            Some(Control::Answer {
+                request_id: req.id.clone(),
+                decision: Decision::Deny {
+                    message: Some(redact_text(&reason, active_tokens)),
+                    stop_turn: false,
+                },
+            }),
+            true,
+        ),
         EscalationDisposition::EscalateToOwner { warning } => {
             state.state = SessionState::WaitingApproval;
             state.pending_approvals.push(PendingApprovalView {
@@ -51,7 +57,7 @@ pub(super) fn handle_approval_request(
                 reason: Some(redact_text(&warning, active_tokens)),
                 requested_at: format_rfc3339_ms(now_ms()),
             });
-            None
+            (None, false)
         }
     }
 }

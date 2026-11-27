@@ -114,6 +114,7 @@ pub mod rfc3339;
 pub mod search;
 pub mod sessions;
 pub mod tasks;
+pub mod telemetry;
 pub mod tess;
 pub mod tz;
 pub mod web;

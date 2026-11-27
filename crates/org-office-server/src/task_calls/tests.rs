@@ -1006,3 +1006,125 @@ fn tasks_inspect_server_side_fields_pruning_omits_unrequested_wire_keys() {
         assert_eq!(err.code, ErrorCode::InvalidRequest, "{bad:?}");
     }
 }
+
+#[test]
+fn task_routing_labels_validate_fail_closed_on_create_and_update() {
+    let office = Arc::new(Office::for_test(TestOffice::default()));
+    let owner = office.owner_member_id().to_owned();
+    let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+    let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+    let svc = TaskService::new(Arc::clone(&office), live, None);
+
+    // Invalid effort/model routing labels fail closed with InvalidRequest on create.
+    for bad_labels in [
+        vec!["effort:turbo".to_owned()],
+        vec!["effort:--max".to_owned()],
+        vec!["effort:high\n--evil".to_owned()],
+        vec!["model:--dangerously-skip-permissions".to_owned()],
+        vec!["model:".to_owned()],
+        vec!["model:claude sonnet".to_owned()],
+    ] {
+        let req = Request::new::<TasksCreate>(
+            50,
+            &TasksCreateParams {
+                command_id: uuid(200),
+                task_id: uuid(201),
+                team_id: Some(root_team.clone()),
+                project_id: None,
+                assigned_team_id: None,
+                assignee_id: None,
+                task_type: Some("task".into()),
+                work_type: None,
+                title: "Bad routing label".into(),
+                body_markdown: String::new(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: bad_labels.clone(),
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                attachment_ids: vec![],
+                details: None,
+                dod: None,
+            },
+        )
+        .unwrap();
+        let Outcome::Error(err) = svc.dispatch(Some(&owner), &req).unwrap().outcome else {
+            panic!("expected InvalidRequest for bad labels {bad_labels:?}");
+        };
+        assert_eq!(err.code, ErrorCode::InvalidRequest, "{bad_labels:?}");
+    }
+
+    // Valid effort/model routing labels succeed on create and fail closed on invalid update.
+    let create_req = Request::new::<TasksCreate>(
+        51,
+        &TasksCreateParams {
+            command_id: uuid(202),
+            task_id: uuid(203),
+            team_id: Some(root_team),
+            project_id: None,
+            assigned_team_id: None,
+            assignee_id: None,
+            task_type: Some("task".into()),
+            work_type: None,
+            title: "Valid routing label".into(),
+            body_markdown: String::new(),
+            priority: None,
+            effort: None,
+            severity: None,
+            rank_order: None,
+            labels: vec![
+                "backend".into(),
+                "effort:low".into(),
+                "model:claude-haiku-4-5".into(),
+            ],
+            reference_files: vec![],
+            modified_files: vec![],
+            depends_on: vec![],
+            attachment_ids: vec![],
+            details: None,
+            dod: None,
+        },
+    )
+    .unwrap();
+    let created: TasksMutationResult =
+        match svc.dispatch(Some(&owner), &create_req).unwrap().outcome {
+            Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+            Outcome::Error(e) => panic!("valid routing labels must succeed: {e:?}"),
+        };
+    assert!(created.task.labels.contains(&"effort:low".to_owned()));
+    assert!(created
+        .task
+        .labels
+        .contains(&"model:claude-haiku-4-5".to_owned()));
+
+    let bad_update_params: org_proto::tasks::TasksUpdateParams =
+        serde_json::from_value(serde_json::json!({
+            "command_id": uuid(204),
+            "task": created.task.key,
+            "expected_revision": created.task.revision,
+            "labels": ["effort:ultra"],
+        }))
+        .unwrap();
+    let bad_update = Request::new::<TasksUpdate>(52, &bad_update_params).unwrap();
+    let Outcome::Error(err) = svc.dispatch(Some(&owner), &bad_update).unwrap().outcome else {
+        panic!("expected InvalidRequest for invalid effort label on update");
+    };
+    assert_eq!(err.code, ErrorCode::InvalidRequest);
+
+    let bad_add_params: org_proto::tasks::TasksUpdateParams =
+        serde_json::from_value(serde_json::json!({
+            "command_id": uuid(205),
+            "task": created.task.key,
+            "expected_revision": created.task.revision,
+            "add_labels": ["model:--flag-inject"],
+        }))
+        .unwrap();
+    let bad_add = Request::new::<TasksUpdate>(53, &bad_add_params).unwrap();
+    let Outcome::Error(err) = svc.dispatch(Some(&owner), &bad_add).unwrap().outcome else {
+        panic!("expected InvalidRequest for invalid model in add_labels on update");
+    };
+    assert_eq!(err.code, ErrorCode::InvalidRequest);
+}

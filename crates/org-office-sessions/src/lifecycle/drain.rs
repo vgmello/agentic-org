@@ -34,6 +34,7 @@ pub(super) fn recycle_stale_warm_handle(
 pub(super) fn try_send_wake_on_live_handle(
     employee_id: &str,
     queue_task_id: Option<&str>,
+    turn_override: &crate::router::TurnModelOverride,
     turn: crate::pump::QueuedTurn,
     ctx: &TurnEndDrainCtx,
 ) -> Result<bool, WakeHoldReason> {
@@ -55,14 +56,33 @@ pub(super) fn try_send_wake_on_live_handle(
                 handle.oauth_expires_at_ms,
                 Arc::clone(&handle.active_permit),
                 handle.sandbox_plan.clone(),
+                handle.pinned_override.clone(),
             )
         })
     };
-    let Some((run_id, tx, conn_id, route_digest, oauth_expires_at_ms, active_permit, sandbox_plan)) =
-        handle_info
+    let Some((
+        run_id,
+        tx,
+        conn_id,
+        route_digest,
+        oauth_expires_at_ms,
+        active_permit,
+        sandbox_plan,
+        pinned_override,
+    )) = handle_info
     else {
         return Ok(false);
     };
+    if pinned_override != *turn_override {
+        recycle_stale_warm_handle(employee_id, &run_id, "model_or_effort_changed", ctx);
+        if let Some(mgr) = ctx.weak_mgr.as_ref().and_then(|w| w.upgrade()) {
+            let emp = employee_id.to_owned();
+            crate::manager::spawn_bg_worker(&mgr, "org-override-wake", move |m| {
+                let _ = m.process_due_wakes_for(&emp);
+            });
+        }
+        return Ok(false);
+    }
     if crate::host_auth::is_oauth_expiring(oauth_expires_at_ms, now_ms()) {
         recycle_stale_warm_handle(employee_id, &run_id, "oauth_token_expiring", ctx);
         return Ok(false);
@@ -290,6 +310,7 @@ pub(super) fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEn
     let sent = try_send_wake_on_live_handle(
         employee_id,
         claim.task_id.as_deref(),
+        &claim.turn_override,
         crate::pump::QueuedTurn::new(claim.objective.clone(), claim.attachment_ids.clone()),
         ctx,
     );
@@ -323,6 +344,7 @@ pub(super) struct LiveDrainClaim {
     pub(super) requires_session_recycle: bool,
     pub(super) trigger: serde_json::Value,
     pub(super) ts: u64,
+    pub(super) turn_override: crate::router::TurnModelOverride,
 }
 
 /// Phase 1 of the drain, under the employee lock: reads the queue, applies every hold that
@@ -409,6 +431,11 @@ pub(super) fn claim_live_drain_batch(
     });
     let attachment_ids = crate::wake::collect_wake_attachment_ids(&queue.items);
     let requires_session_recycle = queue.items.iter().any(|i| i.session_affinity.is_some());
+    let Ok(turn_override) = crate::wake::extract_wake_model_override(&queue.items) else {
+        queue.set_hold(WakeHoldReason::AdmissionRefused, ts, None);
+        let _ = ctx.store.write_pending_wakes_redacted(&queue, &refs);
+        return None;
+    };
     Some(LiveDrainClaim {
         item_ids: queue.items.iter().map(|i| i.item_id.clone()).collect(),
         objective,
@@ -419,6 +446,7 @@ pub(super) fn claim_live_drain_batch(
         requires_session_recycle,
         trigger,
         ts,
+        turn_override,
     })
 }
 

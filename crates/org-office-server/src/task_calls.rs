@@ -155,6 +155,9 @@ impl TaskService {
     fn dispatch_core(&self, member: &str, request: &Request) -> Option<Response> {
         if request.is::<TasksCreate>() {
             return Some(self.run_write::<TasksCreate>(member, request, |p| {
+                if let Err(err) = org_office_sessions::parse_task_routing_labels(&p.labels) {
+                    return Ok(Err(err));
+                }
                 self.office.task_create(member, p)
             }));
         }
@@ -167,6 +170,14 @@ impl TaskService {
         }
         if request.is::<TasksUpdate>() {
             return Some(self.run_write::<TasksUpdate>(member, request, |p| {
+                if let Some(ref labels) = p.labels {
+                    if let Err(err) = org_office_sessions::parse_task_routing_labels(labels) {
+                        return Ok(Err(err));
+                    }
+                }
+                if let Err(err) = org_office_sessions::parse_task_routing_labels(&p.add_labels) {
+                    return Ok(Err(err));
+                }
                 self.office.task_update(member, p)
             }));
         }
@@ -443,7 +454,12 @@ impl TaskService {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let _ = sessions.on_task_assigned_with_attachments(
+        let Ok(turn_override) =
+            org_office_sessions::parse_task_routing_labels(&outcome.task.labels)
+        else {
+            return;
+        };
+        let _ = sessions.on_task_assigned_with_overrides(
             agent_id.as_str(),
             actor,
             &actor_name,
@@ -451,6 +467,7 @@ impl TaskService {
             &outcome.task.key,
             &outcome.task.title,
             attachment_ids,
+            turn_override,
         );
     }
 

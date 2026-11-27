@@ -7,6 +7,7 @@ use org_proto::sessions::{
     ProviderCredentialStatus, ProviderEnrollmentCancel, ProviderEnrollmentStart,
     ProviderEnrollmentStatus, ProviderEnrollmentSubmit,
 };
+use org_proto::telemetry::OfficeMetrics;
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
 use crate::credentials::EnrollmentVaultError;
@@ -134,9 +135,8 @@ impl SessionManager {
             | "provider.credential_status"
             | "provider.credential_revoke"
             | "member.session_approval"
-            | "member.session_clear_stall" => {
-                self.authorize_owner_only_inner(caller_id, hq_attested_owner)
-            }
+            | "member.session_clear_stall"
+            | "office.metrics" => self.authorize_owner_only_inner(caller_id, hq_attested_owner),
             "member.session_start"
             | "member.session_stop"
             | "member.session_interrupt"
@@ -219,6 +219,11 @@ impl SessionManager {
                 member,
                 |m, p| self.read_session_transcript_inner(m, hq_attested_owner, &p),
             ));
+        }
+        if request.is::<OfficeMetrics>() {
+            return Some(handle_call::<OfficeMetrics>(request, member, |m, _p| {
+                self.office_metrics_snapshot_inner(m, hq_attested_owner)
+            }));
         }
         None
     }
@@ -370,6 +375,7 @@ pub(super) fn is_c3_rpc_method(method: &str) -> bool {
             | "member.session_grants"
             | "member.session_approval"
             | "member.session_clear_stall"
+            | "office.metrics"
             | "provider.enrollment_start"
             | "provider.enrollment_status"
             | "provider.enrollment_submit"

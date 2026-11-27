@@ -71,6 +71,8 @@ fn wake_store_redacts_pending_wakes_and_suspended_asks() {
         attachment_ids: Vec::new(),
         enqueued_at_ms: 1,
         session_affinity: None,
+        model_override: None,
+        effort_override: None,
     });
     store.write_pending_wakes_redacted(&queue, &[]).unwrap();
     let raw = fs::read_to_string(store.pending_wakes_path("emp-redact").unwrap()).unwrap();

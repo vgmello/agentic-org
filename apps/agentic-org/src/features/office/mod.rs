@@ -9,6 +9,7 @@ mod invitations;
 mod invite;
 mod join;
 mod list;
+pub(crate) mod metrics;
 mod re_enroll;
 mod remove;
 mod remove_pending;
@@ -90,6 +91,10 @@ enum OfficeCommand {
     /// Use when: checking that a satellite caught up with HQ over mTLS.
     #[command(verbatim_doc_comment, after_help = sync_status::EXAMPLES)]
     SyncStatus(sync_status::SyncStatusArgs),
+    /// Show live agent session efficiency telemetry for an office
+    /// Use when: inspecting turn latency, token/cache-hit ratios, RSS, and sandbox denials.
+    #[command(verbatim_doc_comment, after_help = metrics::EXAMPLES)]
+    Metrics(metrics::MetricsArgs),
     /// Join this host to an organization with an invitation token (on the satellite)
     /// Use when: enrolling this host as a satellite office.
     #[command(verbatim_doc_comment, after_help = join::EXAMPLES)]
@@ -143,6 +148,7 @@ impl OfficeArgs {
             OfficeCommand::Cancel(args) => &args.login,
             OfficeCommand::Remove(args) => &args.login,
             OfficeCommand::SyncStatus(args) => &args.login,
+            OfficeCommand::Metrics(args) => &args.login,
             OfficeCommand::Join(args) => &args.login,
             OfficeCommand::RemovePending(args) => &args.login,
             OfficeCommand::ReEnroll(args) => &args.login,
@@ -162,6 +168,7 @@ pub(crate) fn run(args: OfficeArgs, ctx: &mut ExecutionContext) -> Result<(), Cl
         OfficeCommand::Cancel(args) => cancel::run(args, ctx),
         OfficeCommand::Remove(args) => remove::run(args, ctx),
         OfficeCommand::SyncStatus(args) => sync_status::run(args, ctx),
+        OfficeCommand::Metrics(args) => metrics::run(args, ctx),
         OfficeCommand::Join(args) => join::run(args, ctx),
         OfficeCommand::RemovePending(args) => remove_pending::run(args, ctx),
         OfficeCommand::ReEnroll(args) => re_enroll::run(args, ctx),

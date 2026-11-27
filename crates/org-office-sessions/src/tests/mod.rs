@@ -78,6 +78,7 @@ mod sandbox;
 mod sandbox_runner;
 mod subagents_binding;
 mod subscription_usage;
+mod telemetry;
 mod wake;
 mod warm;
 mod worktree_refresh;
@@ -731,6 +732,9 @@ fn spawn_stub_bwrap_handle(
             supports_mid_turn: false,
             sandbox_plan: crate::manager::SandboxPlan::linux_bwrap(masked),
             partition: None,
+            active_model: None,
+            active_effort: None,
+            pinned_override: Default::default(),
         },
         stopped,
     )

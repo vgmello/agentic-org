@@ -244,6 +244,8 @@ fn task166_panicking_bwrap_reap_persists_without_existing_file_and_blocks_stop_a
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap_err();
@@ -309,6 +311,8 @@ fn task166_start_and_recycle_fail_closed_on_panicking_stale_bwrap_and_stop_all_d
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap_err();
@@ -588,6 +592,9 @@ fn task166_unrecovered_pre_pump_abort_persists_and_blocks_sibling_isolation() {
                 std::collections::BTreeSet::new(),
             ),
             partition: None,
+            active_model: None,
+            active_effort: None,
+            pinned_override: Default::default(),
         },
     );
 

@@ -143,6 +143,30 @@ pub struct PendingWakeItem {
     /// Optional session resume/fresh directive for review rounds (`TASK-92.1`, ADR-0028).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_affinity: Option<WakeSessionAffinity>,
+    /// Optional per-task / per-turn model override (`TASK-136`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_override: Option<String>,
+    /// Optional per-task / per-turn reasoning effort override (`TASK-136`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort_override: Option<String>,
+}
+
+/// Extracts and validates the effective per-turn `model`/`effort` override carried by a
+/// claimed wake batch (`TASK-136`).
+pub fn extract_wake_model_override(
+    items: &[PendingWakeItem],
+) -> Result<crate::router::TurnModelOverride, org_proto::ApiError> {
+    let mut model: Option<&str> = None;
+    let mut effort: Option<&str> = None;
+    for item in items {
+        if let Some(m) = item.model_override.as_deref() {
+            model = Some(m);
+        }
+        if let Some(e) = item.effort_override.as_deref() {
+            effort = Some(e);
+        }
+    }
+    crate::router::validate_turn_override(model, effort)
 }
 
 /// Durable per-agent pending-start queue persisted in `pending-wakes.v1.json` (`LIVE-4`).

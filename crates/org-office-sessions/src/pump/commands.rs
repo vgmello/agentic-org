@@ -57,6 +57,7 @@ pub(super) fn build_stale_failover_request(
         rate_limit_resets_at: None,
         stop_epoch: ctx.stop_epoch,
         partition: ctx.partition_key(),
+        turn_override: ctx.turn_override.clone(),
     }
 }
 

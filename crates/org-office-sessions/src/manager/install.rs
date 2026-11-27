@@ -60,6 +60,16 @@ impl SessionManager {
             ready.pump_ctx,
             ready.meta,
         )?;
+        self.telemetry.record_session_started(
+            &handoff.emp_id,
+            runtime_state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .runtime_id
+                .as_deref(),
+            handoff.active_model.as_deref(),
+            handoff.active_effort.as_deref(),
+        );
         let view = runtime_state
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -81,6 +91,9 @@ impl SessionManager {
                 supports_mid_turn: handoff.supports_mid_turn,
                 sandbox_plan: handoff.sandbox_plan,
                 partition: handoff.partition,
+                active_model: handoff.active_model,
+                active_effort: handoff.active_effort,
+                pinned_override: handoff.turn_override,
             },
         )?;
         Ok(view)
@@ -110,6 +123,9 @@ impl SessionManager {
             tried_connections,
             start_stop_epoch,
             partition,
+            active_model,
+            active_effort,
+            turn_override,
             attachments_root,
             binding_file,
             objective,
@@ -126,7 +142,17 @@ impl SessionManager {
             oauth_expires_at_ms,
             sandbox_plan.clone(),
             partition.is_some(),
+            turn_override.clone(),
         );
+        let child_pid = self.hibernation.live_pid(&emp_id);
+        let rss_sampler = Arc::clone(&self.config.resource_limits.memory_sampler);
+        let pump_telemetry = crate::telemetry::PumpTelemetry {
+            collector: Arc::clone(&self.telemetry),
+            sample_rss: Arc::new(move |pid| rss_sampler.process_rss_bytes(pid)),
+            child_pid,
+            active_model: active_model.clone(),
+            active_effort: active_effort.clone(),
+        };
         let pump_ctx = PumpContext {
             employee_id: emp_id.clone(),
             run_id,
@@ -164,6 +190,8 @@ impl SessionManager {
             attachments_root,
             model_supports_vision,
             attachment_resolver: Arc::clone(&self.attachment_resolver),
+            turn_override: turn_override.clone(),
+            telemetry: Some(pump_telemetry),
         };
         let pre_pump_meta = PrePumpHandleMeta {
             tx: tx.clone(),
@@ -176,6 +204,9 @@ impl SessionManager {
             supports_mid_turn,
             sandbox_plan: sandbox_plan.clone(),
             partition: partition.clone(),
+            active_model: active_model.clone(),
+            active_effort: active_effort.clone(),
+            pinned_override: turn_override.clone(),
         };
         let handoff = LaunchInstallHandoff {
             emp_id,
@@ -188,6 +219,9 @@ impl SessionManager {
             supports_mid_turn,
             sandbox_plan,
             partition,
+            active_model,
+            active_effort,
+            turn_override,
             objective,
             attachment_ids,
             spawned,
@@ -208,6 +242,9 @@ struct LaunchInstallHandoff {
     supports_mid_turn: bool,
     sandbox_plan: SandboxPlan,
     partition: Option<crate::partition::PartitionKey>,
+    active_model: Option<String>,
+    active_effort: Option<String>,
+    turn_override: crate::router::TurnModelOverride,
     objective: String,
     attachment_ids: Vec<String>,
     spawned: org_supervise::Spawned,
@@ -225,6 +262,9 @@ pub(crate) struct PrePumpHandleMeta {
     pub(crate) supports_mid_turn: bool,
     pub(crate) sandbox_plan: SandboxPlan,
     pub(crate) partition: Option<crate::partition::PartitionKey>,
+    pub(crate) active_model: Option<String>,
+    pub(crate) active_effort: Option<String>,
+    pub(crate) pinned_override: crate::router::TurnModelOverride,
 }
 
 pub(super) struct VerifiedPrePump {
@@ -333,6 +373,9 @@ pub(crate) fn install_unrecovered_pre_pump_handle(
         supports_mid_turn: meta.supports_mid_turn,
         sandbox_plan: meta.sandbox_plan,
         partition: meta.partition,
+        active_model: meta.active_model,
+        active_effort: meta.active_effort,
+        pinned_override: meta.pinned_override,
     };
     reg.live.insert(emp_id.to_owned(), handle);
 }

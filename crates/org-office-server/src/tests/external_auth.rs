@@ -1513,6 +1513,8 @@ fn one_step_bind_succeeds_for_non_owner_operators_warm_idle_sessions_and_full_pe
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap();

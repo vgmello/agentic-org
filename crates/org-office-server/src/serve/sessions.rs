@@ -98,7 +98,9 @@ fn is_provider_enrollment_method(request: &Request) -> bool {
 }
 
 fn is_session_method(request: &Request) -> bool {
-    is_session_control_method(request) || is_provider_enrollment_method(request)
+    is_session_control_method(request)
+        || is_provider_enrollment_method(request)
+        || request.is::<org_proto::telemetry::OfficeMetrics>()
 }
 
 pub(super) fn project_or_hiring(
@@ -140,6 +142,15 @@ fn sessions_rpc(
             ApiError::new(ErrorCode::NotBound, "connection is not bound"),
         ));
     };
+    if request.is::<org_proto::telemetry::OfficeMetrics>() && !binding.via_grant() {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::NotAuthorized,
+                "office metrics require a verified owner grant",
+            ),
+        ));
+    }
     let actor =
         super::delegation::delegated_owner_read_actor(request, delegation).unwrap_or(member);
     let resolved = resolve_session_target_handle(request, shared);

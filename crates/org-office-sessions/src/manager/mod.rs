@@ -54,6 +54,7 @@ mod hibernation;
 mod install;
 mod launch;
 mod lifecycle_ops;
+mod metrics;
 mod office_masks;
 mod operator_home;
 mod reap;
@@ -196,6 +197,9 @@ pub(crate) struct LiveSessionHandle {
     /// The Chief of Staff partition this process serves, and so the caller its run acts for
     /// (`TASK-80.1`); `None` for every other agent.
     pub partition: Option<crate::partition::PartitionKey>,
+    pub active_model: Option<String>,
+    pub active_effort: Option<String>,
+    pub pinned_override: crate::router::TurnModelOverride,
 }
 
 #[derive(Default)]
@@ -307,6 +311,9 @@ struct PlannedSessionLaunch {
     start_stop_epoch: u64,
     /// The Chief of Staff partition the run serves; its caller is the one the run acts for.
     partition: Option<crate::partition::PartitionKey>,
+    active_model: Option<String>,
+    active_effort: Option<String>,
+    turn_override: crate::router::TurnModelOverride,
     home: PathBuf,
     workspace_real: PathBuf,
     workspace_spec: String,
@@ -346,6 +353,9 @@ struct PreparedSessionLaunch {
     start_stop_epoch: u64,
     /// The Chief of Staff partition the run serves (`TASK-80.1`).
     partition: Option<crate::partition::PartitionKey>,
+    active_model: Option<String>,
+    active_effort: Option<String>,
+    turn_override: crate::router::TurnModelOverride,
     home: PathBuf,
     workspace_spec: String,
     attachments_root: PathBuf,
@@ -436,6 +446,7 @@ pub struct SessionManager {
     pub(crate) waiting_messages: Arc<Mutex<HashMap<String, Arc<AtomicU32>>>>,
     pub(crate) mid_turn_rates: Arc<Mutex<HashMap<String, MidTurnRateTracker>>>,
     pub(crate) hibernation: hibernation::HibernationState,
+    pub(crate) telemetry: Arc<crate::telemetry::TelemetryCollector>,
     pub(crate) task_worktree_preparer: Mutex<Option<Arc<dyn TaskWorktreePreparer>>>,
     watch_notice_provider: Mutex<Option<WatchNoticeProvider>>,
     startup_recovery: Mutex<RecoveryReport>,
@@ -502,6 +513,7 @@ impl SessionManager {
             waiting_messages: Arc::new(Mutex::new(HashMap::new())),
             mid_turn_rates: Arc::new(Mutex::new(HashMap::new())),
             hibernation: hibernation::HibernationState::default(),
+            telemetry: Arc::new(crate::telemetry::TelemetryCollector::new()),
             task_worktree_preparer: Mutex::new(None),
             watch_notice_provider: Mutex::new(None),
             startup_recovery: Mutex::new(RecoveryReport::default()),
@@ -537,6 +549,11 @@ impl SessionManager {
     /// Registered runtime adapters configured on this session manager.
     pub fn runtimes(&self) -> &RuntimeRegistry {
         &self.config.runtimes
+    }
+
+    /// Bounded in-memory per-turn & per-session efficiency telemetry collector (`TASK-136`).
+    pub fn telemetry(&self) -> &crate::telemetry::TelemetryCollector {
+        &self.telemetry
     }
 
     /// Returns the lock-free per-employee `AtomicU32` counter tracking pending wakes/messages

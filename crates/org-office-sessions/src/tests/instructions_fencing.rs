@@ -195,6 +195,8 @@ fn wake_item(kind: WakeKind, body: &str) -> PendingWakeItem {
         attachment_ids: Vec::new(),
         enqueued_at_ms: 1,
         session_affinity: None,
+        model_override: None,
+        effort_override: None,
     }
 }
 

@@ -119,6 +119,8 @@ fn test_pump_ctx(
         attachments_root: dir.join("attachments"),
         model_supports_vision: true,
         attachment_resolver: Arc::new(NoopAttachmentResolver),
+        turn_override: Default::default(),
+        telemetry: None,
     }
 }
 
@@ -281,7 +283,9 @@ fn handle_approval_request_enforces_writable_roots_only_when_sandboxed() {
     };
 
     // Sandboxed: write inside writable_roots is allowed; write outside is auto-denied.
-    let inside_ctrl = handle_approval_request(&mut st, &make_req(ws.join("a.rs")), &[]);
+    let (inside_ctrl, inside_denied) =
+        handle_approval_request(&mut st, &make_req(ws.join("a.rs")), &[]);
+    assert!(!inside_denied);
     assert!(matches!(
         inside_ctrl,
         Some(Control::Answer {
@@ -289,7 +293,9 @@ fn handle_approval_request_enforces_writable_roots_only_when_sandboxed() {
             ..
         })
     ));
-    let outside_ctrl = handle_approval_request(&mut st, &make_req(outside.join("b.rs")), &[]);
+    let (outside_ctrl, outside_denied) =
+        handle_approval_request(&mut st, &make_req(outside.join("b.rs")), &[]);
+    assert!(outside_denied);
     assert!(matches!(
         outside_ctrl,
         Some(Control::Answer {
@@ -300,7 +306,9 @@ fn handle_approval_request_enforces_writable_roots_only_when_sandboxed() {
 
     // Unsandboxed: writable_roots check is skipped so preset allow rule governs.
     st.sandbox_enabled = false;
-    let unsandboxed_ctrl = handle_approval_request(&mut st, &make_req(outside.join("b.rs")), &[]);
+    let (unsandboxed_ctrl, unsandboxed_denied) =
+        handle_approval_request(&mut st, &make_req(outside.join("b.rs")), &[]);
+    assert!(!unsandboxed_denied);
     assert!(matches!(
         unsandboxed_ctrl,
         Some(Control::Answer {
@@ -357,7 +365,8 @@ fn pump_event_history_and_approval_views_go_through_the_redaction_choke_point() 
         serde_json::json!({}),
     );
     escalated.capability = Some(org_agent_runtime::ToolCapability::Unknown);
-    assert!(handle_approval_request(&mut st, &escalated, &[]).is_none());
+    let (esc_ctrl, esc_denied) = handle_approval_request(&mut st, &escalated, &[]);
+    assert!(esc_ctrl.is_none() && !esc_denied);
     let pending = st.pending_approvals.last().expect("escalated to the owner");
     assert_no_corpus_secret(&corpus, &pending.tool, "pump/approval tool");
     assert_no_corpus_secret(
@@ -375,10 +384,13 @@ fn pump_event_history_and_approval_views_go_through_the_redaction_choke_point() 
         serde_json::json!({ "command": "ls" }),
     );
     match handle_approval_request(&mut st, &denied, &[]) {
-        Some(Control::Answer {
-            decision: Decision::Deny { message, .. },
-            ..
-        }) => assert_no_corpus_secret(
+        (
+            Some(Control::Answer {
+                decision: Decision::Deny { message, .. },
+                ..
+            }),
+            true,
+        ) => assert_no_corpus_secret(
             &corpus,
             message.as_deref().unwrap_or_default(),
             "pump/approval deny message",

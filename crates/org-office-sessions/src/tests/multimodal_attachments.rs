@@ -709,6 +709,8 @@ fn make_wake(
         attachment_ids,
         enqueued_at_ms: now_ms(),
         session_affinity: None,
+        model_override: None,
+        effort_override: None,
     }
 }
 

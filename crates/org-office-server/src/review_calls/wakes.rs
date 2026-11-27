@@ -109,6 +109,8 @@ pub(super) fn on_review_requested(
                 fresh: true,
             }),
             enqueued_at_ms: ts,
+            model_override: None,
+            effort_override: None,
         };
         let _ = sessions.enqueue_wake(&target, item);
     }
@@ -160,6 +162,8 @@ pub(super) fn on_review_routed(
                 fresh: true,
             }),
             enqueued_at_ms: ts,
+            model_override: None,
+            effort_override: None,
         };
         let _ = sessions.enqueue_wake(&target, item);
     }
@@ -224,6 +228,8 @@ pub(super) fn on_review_finding_activity(
             attachment_ids: wake.attachment_ids.to_vec(),
             session_affinity: None,
             enqueued_at_ms: ts,
+            model_override: None,
+            effort_override: None,
         };
         let _ = sessions.enqueue_wake(&target, item);
     }
@@ -285,6 +291,8 @@ pub(super) fn on_review_verdict(
             attachment_ids: verdict.attachment_ids.clone(),
             session_affinity: None,
             enqueued_at_ms: ts,
+            model_override: None,
+            effort_override: None,
         };
         let _ = sessions.enqueue_wake(&target, item);
     }
@@ -355,6 +363,8 @@ pub(super) fn on_review_resubmitted(
             attachment_ids: Vec::new(),
             session_affinity: Some(affinity),
             enqueued_at_ms: ts,
+            model_override: None,
+            effort_override: None,
         };
         let _ = sessions.enqueue_wake(&target, item);
     }

@@ -218,6 +218,8 @@ fn she_works_only_from_her_private_home() {
                 workspace: Some(elsewhere.path().display().to_string()),
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap_err();

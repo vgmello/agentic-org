@@ -58,7 +58,7 @@ enum StartDecision {
     LiveView(Box<SessionView>),
     WarmSend(WarmSendTarget),
     Cold {
-        finished: Option<LiveSessionHandle>,
+        finished: Option<Box<LiveSessionHandle>>,
         start_stop_epoch: u64,
     },
 }
@@ -98,12 +98,13 @@ impl SessionManager {
             requested_workspace,
             partition,
             WarmReuseControl::Default,
+            &crate::router::TurnModelOverride::default(),
         )
     }
 
     #[expect(
         clippy::too_many_arguments,
-        reason = "start reservation takes employee, turn payload, workspace, partition, and warm-reuse control"
+        reason = "start reservation coordinates employee, turn payload, workspace, partition, affinity control, and model/effort override"
     )]
     pub(super) fn reserve_start_or_send_with_control(
         &self,
@@ -114,6 +115,7 @@ impl SessionManager {
         requested_workspace: Option<&str>,
         partition: Option<&PartitionKey>,
         control: WarmReuseControl<'_>,
+        turn_override: &crate::router::TurnModelOverride,
     ) -> Result<StartReservation, ApiError> {
         let emp_id = employee.id.as_str();
         // Load the lease cache now, so the check under the registry lock below never misses it.
@@ -131,6 +133,7 @@ impl SessionManager {
                 requested_workspace,
                 partition,
                 control,
+                turn_override,
             )?;
             match decision {
                 None => continue,
@@ -148,7 +151,7 @@ impl SessionManager {
                 }) => {
                     return Ok(StartReservation {
                         live_view: None,
-                        finished_handle: finished,
+                        finished_handle: finished.map(|h| *h),
                         start_stop_epoch,
                         partition_turn: self.begin_partition_turn(emp_id, partition),
                     });
@@ -168,6 +171,7 @@ impl SessionManager {
                             text: objective.unwrap_or_default(),
                             attachment_ids,
                             start_stop_epoch: target.start_stop_epoch,
+                            turn_override,
                         },
                     )?;
                     reservation.partition_turn = partition_turn;
@@ -230,7 +234,7 @@ impl SessionManager {
     /// the handle was replaced or removed while unlocked, so the caller plans again.
     #[expect(
         clippy::too_many_arguments,
-        reason = "re-validates snapshotted warm handle under lock with freshness, workspace, partition, and affinity control"
+        reason = "re-validates snapshotted warm handle under lock with freshness, workspace, partition, affinity control, and model/effort override"
     )]
     fn decide_start_or_send(
         &self,
@@ -241,6 +245,7 @@ impl SessionManager {
         requested_workspace: Option<&str>,
         partition: Option<&PartitionKey>,
         control: WarmReuseControl<'_>,
+        turn_override: &crate::router::TurnModelOverride,
     ) -> Result<Option<StartDecision>, ApiError> {
         let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
         check_registry_startable(&reg, emp_id)?;
@@ -279,11 +284,23 @@ impl SessionManager {
         };
         let control_stop = control_stop_reason(control, state.state)?;
         let stop_reason = switch.or(control_stop).or_else(|| {
-            warm_handle_stop_reason(handle, requested_workspace, state.state, freshness)
+            warm_handle_stop_reason(
+                handle,
+                requested_workspace,
+                turn_override,
+                state.state,
+                freshness,
+            )
         });
         if stop_reason.is_none() && is_warm_state_reusable(state.state) {
             if !wants_turn {
                 return Ok(Some(StartDecision::LiveView(Box::new(state.to_view()))));
+            }
+            if handle.pinned_override != *turn_override {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "agent session is busy with a different model or reasoning effort; wait for the current turn to finish or stop the session first",
+                ));
             }
             ensure_warm_sandbox_not_stale(freshness.sandbox_topology_stale)?;
             let target = WarmSendTarget {
@@ -306,7 +323,7 @@ impl SessionManager {
             });
         }
         drop(state);
-        let finished = reg.live.remove(emp_id);
+        let finished = reg.live.remove(emp_id).map(Box::new);
         reg.starting.insert(emp_id.to_owned());
         Ok(Some(StartDecision::Cold {
             finished,
@@ -371,6 +388,7 @@ impl SessionManager {
             task_id: opts.task_ref,
             is_failover_switch: opts.is_failover_switch,
             excluded_connections: &opts.excluded_connections,
+            turn_override: Some(&opts.turn_override),
         })?;
         let mut permit_guard = PermitGuard::new(
             &self.office,
@@ -407,6 +425,8 @@ impl SessionManager {
             build_general_subagent_definition(preset_cfg.allowed_tools.as_deref(), None);
         let _ = write_subagent_definition(&runtime_dir, &subagent_def);
 
+        let active_model = admitted.model_token.as_ref().map(|t| t.as_str().to_owned());
+        let active_effort = admitted.effort.as_ref().map(|t| t.as_str().to_owned());
         let (spec, spec_hash) = self.assemble_launch_spec(
             employee,
             admitted.adapter.as_ref(),
@@ -484,6 +504,9 @@ impl SessionManager {
             tried_connections: opts.tried_connections,
             start_stop_epoch: opts.start_stop_epoch,
             partition: opts.partition,
+            active_model,
+            active_effort,
+            turn_override: opts.turn_override,
             home,
             workspace_real,
             workspace_spec: workspace_spec_str,
@@ -604,6 +627,9 @@ impl SessionManager {
             tried_connections,
             start_stop_epoch,
             partition,
+            active_model,
+            active_effort,
+            turn_override,
             home,
             workspace_real,
             workspace_spec,
@@ -717,6 +743,9 @@ impl SessionManager {
             tried_connections,
             start_stop_epoch,
             partition,
+            active_model,
+            active_effort,
+            turn_override,
             home,
             workspace_spec,
             attachments_root,

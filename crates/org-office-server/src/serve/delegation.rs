@@ -122,6 +122,7 @@ const NEVER: &[&str] = &[
     "msg.notify",
     "msg.read",
     "msg.wait",
+    "office.metrics",
     "office.remove",
     "office.restart",
     "search.query",

@@ -256,6 +256,9 @@ pub(super) fn dispatch_next_turn(
         Ok(outs) => {
             loop_state.turn_active = true;
             loop_state.turns_dispatched = next_seq;
+            if let Some(t) = ctx.telemetry.as_ref() {
+                t.on_turn_started(&ctx.employee_id);
+            }
             loop_state.in_flight_delivery = None;
             loop_state.in_flight_delivery_staged_id = None;
             loop_state.mid_turn_staged_ids.clear();

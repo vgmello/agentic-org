@@ -10,6 +10,9 @@ use crate::Call;
 /// first. Absent means the runtime's default. Anything else is refused as `InvalidRequest`.
 pub const AGENT_EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
+/// Alias for [`AGENT_EFFORT_LEVELS`] used by per-task/per-turn effort routing (`TASK-136`).
+pub const EFFORT_LEVELS: [&str; 5] = AGENT_EFFORT_LEVELS;
+
 /// A role record returned by `role.list` and `role.inspect`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoleRecord {

@@ -188,6 +188,35 @@ impl SessionManager {
         task_title: &str,
         attachment_ids: Vec<String>,
     ) -> WakeOutcome {
+        self.on_task_assigned_with_overrides(
+            assignee_id,
+            actor_id,
+            actor_name,
+            actor_is_person,
+            task_id,
+            task_title,
+            attachment_ids,
+            crate::router::TurnModelOverride::default(),
+        )
+    }
+
+    /// Override-aware task assignment wake carrying validated per-task `model` and `effort`
+    /// routing overrides (`TASK-136`).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "task assignment wake takes assignee, actor metadata, task key/title, attachment ids, and model/effort overrides"
+    )]
+    pub fn on_task_assigned_with_overrides(
+        &self,
+        assignee_id: &str,
+        actor_id: &str,
+        actor_name: &str,
+        actor_is_person: bool,
+        task_id: &str,
+        task_title: &str,
+        attachment_ids: Vec<String>,
+        turn_override: crate::router::TurnModelOverride,
+    ) -> WakeOutcome {
         let item = PendingWakeItem {
             item_id: format!("task:{task_id}:{assignee_id}"),
             kind: WakeKind::TaskAssignment,
@@ -202,6 +231,8 @@ impl SessionManager {
             attachment_ids,
             session_affinity: None,
             enqueued_at_ms: now_ms(),
+            effort_override: turn_override.effort_str().map(str::to_owned),
+            model_override: turn_override.model,
         };
         self.enqueue_wake(assignee_id, item)
     }
@@ -247,6 +278,7 @@ impl SessionManager {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .remove(employee_id);
+        self.telemetry.remove_agent(employee_id);
         let _ = self.store.clear_pending_wakes(employee_id);
         let _ = self.store.clear_suspended_state(employee_id);
         let _ = self.store.clear_session_affinity(employee_id);

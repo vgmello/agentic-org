@@ -120,6 +120,8 @@ fn wake_item(sender: &str, id: &str) -> PendingWakeItem {
         attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
         session_affinity: None,
+        model_override: None,
+        effort_override: None,
     }
 }
 
@@ -326,6 +328,8 @@ fn an_active_lease_holds_wakes_and_refuses_managed_starts_until_revoked() {
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .unwrap_err();
@@ -367,6 +371,8 @@ fn a_live_managed_turn_refuses_approval_without_takeover_and_is_parked_with_it()
             workspace: None,
             resume_runtime_session_id: None,
             fresh: false,
+            model: None,
+            effort: None,
         },
     )
     .unwrap();

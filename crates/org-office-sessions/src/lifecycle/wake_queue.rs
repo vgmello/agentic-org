@@ -214,14 +214,21 @@ impl SessionManager {
         self.preprepare_task_worktrees(emp_id, &task_refs);
         let task_ref = task_refs.first().copied();
         let attachment_ids = crate::wake::collect_wake_attachment_ids(&matching);
-        match self.spawn_or_send_autonomous_with_attachments(
+        let Ok(turn_override) = crate::wake::extract_wake_model_override(&matching) else {
+            return self.hold_refused_batch(emp_id, ts);
+        };
+        match self.spawn_or_send_autonomous_with_affinity(
             employee,
             objective,
             attachment_ids,
             susp.runtime_session_id.as_deref(),
+            false,
+            false,
+            false,
             task_ref,
             trigger,
             partition,
+            turn_override,
         ) {
             Ok(_) => {
                 let notify_remaining = {
@@ -379,6 +386,9 @@ impl SessionManager {
         self.preprepare_task_worktrees(emp_id, &task_refs);
         let task_ref = task_refs.first().copied();
         let attachment_ids = crate::wake::collect_wake_attachment_ids(&queue.items);
+        let Ok(turn_override) = crate::wake::extract_wake_model_override(&queue.items) else {
+            return self.hold_refused_batch(emp_id, ts);
+        };
         match self.spawn_or_send_autonomous_with_affinity(
             employee,
             objective,
@@ -390,6 +400,7 @@ impl SessionManager {
             task_ref,
             trigger,
             partition,
+            turn_override,
         ) {
             Ok(_) => {
                 let notify_remaining = {

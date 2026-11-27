@@ -61,6 +61,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"done"}'
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .expect("session started");
@@ -157,6 +159,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"done"}'
                 workspace: None,
                 resume_runtime_session_id: None,
                 fresh: false,
+                model: None,
+                effort: None,
             },
         )
         .expect("session started");

@@ -212,6 +212,27 @@ pub(crate) fn acquire_warm_permit_for_office(
     task_id: Option<&str>,
     expected_route_digest: Option<&str>,
 ) -> WarmPermitOutcome {
+    acquire_warm_permit_for_office_with_override(
+        office,
+        hq_permits,
+        connection_id,
+        employee_id,
+        task_id,
+        expected_route_digest,
+        None,
+    )
+}
+
+/// Override-aware variant of [`acquire_warm_permit_for_office`] (`TASK-136`).
+pub(crate) fn acquire_warm_permit_for_office_with_override(
+    office: &Office,
+    hq_permits: Option<&dyn HqPermitCoordinator>,
+    connection_id: &str,
+    employee_id: &str,
+    task_id: Option<&str>,
+    expected_route_digest: Option<&str>,
+    turn_override: Option<&super::TurnModelOverride>,
+) -> WarmPermitOutcome {
     let Ok(Some(cfg)) = office.load_agent_execution(employee_id) else {
         return warm_conflict("EXECUTION_DISABLED: agent execution configuration missing");
     };
@@ -239,9 +260,13 @@ pub(crate) fn acquire_warm_permit_for_office(
     if conn.archived || !conn.enabled {
         return WarmPermitOutcome::StaleWarm;
     }
+    let effective_model = turn_override
+        .and_then(|o| o.model.as_deref())
+        .unwrap_or(&cfg.model_id);
+    let effective_effort = turn_override.and_then(|o| o.effort).or(cfg.effort);
     let now_ms = office.current_time_ms();
     let (binding_rev, resolved_model, _supports_vision) =
-        match check_local_readiness(office, &conn, &cfg.model_id, now_ms) {
+        match check_local_readiness(office, &conn, effective_model, now_ms) {
             Ok(Ok(v)) => v,
             Ok(Err(_)) | Err(_) => return WarmPermitOutcome::StaleWarm,
         };
@@ -252,7 +277,7 @@ pub(crate) fn acquire_warm_permit_for_office(
                 &conn,
                 binding_rev,
                 &resolved_model,
-                cfg.effort,
+                effective_effort,
                 cfg.meta.revision,
                 &wt_digest,
             ) != expected
@@ -270,7 +295,7 @@ pub(crate) fn acquire_warm_permit_for_office(
                     connection_id: connection_id.to_owned(),
                     employee_id: employee_id.to_owned(),
                     task_id: task_id.map(str::to_owned),
-                    model_id: cfg.model_id.clone(),
+                    model_id: effective_model.to_owned(),
                     is_failover_switch: false,
                 })
                 .ok()
@@ -289,7 +314,7 @@ pub(crate) fn acquire_warm_permit_for_office(
             connection_id,
             employee_id,
             task_id,
-            &cfg.model_id,
+            effective_model,
             authority,
             false,
         )

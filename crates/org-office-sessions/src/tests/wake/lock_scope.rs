@@ -71,6 +71,9 @@ pub(super) fn stub_live_handle(
         supports_mid_turn: false,
         sandbox_plan: crate::manager::SandboxPlan::host_native(),
         partition: None,
+        active_model: None,
+        active_effort: None,
+        pinned_override: Default::default(),
     };
     (handle, rx)
 }
@@ -90,6 +93,8 @@ fn person_wake(id: &str, sender: &str, summary: &str) -> PendingWakeItem {
         attachment_ids: Vec::new(),
         enqueued_at_ms: now_ms(),
         session_affinity: None,
+        model_override: None,
+        effort_override: None,
     }
 }
 

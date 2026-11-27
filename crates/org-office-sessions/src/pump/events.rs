@@ -102,9 +102,17 @@ pub(super) fn apply_outputs(
                 // Coarse live activity comes from the redacted event only (`TASK-103`).
                 track_activity(ctx, &event, loop_state.interrupt_sent);
                 let ctrl = if let Some(raw_req) = unredacted_approval {
-                    let mut state = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
-                    state.watchdog.record_activity(Instant::now());
-                    handle_approval_request(&mut state, &raw_req, &refs)
+                    let (ctrl, auto_denied) = {
+                        let mut state = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+                        state.watchdog.record_activity(Instant::now());
+                        handle_approval_request(&mut state, &raw_req, &refs)
+                    };
+                    if auto_denied {
+                        if let Some(t) = ctx.telemetry.as_ref() {
+                            t.on_sandbox_denial(&ctx.employee_id, 1);
+                        }
+                    }
+                    ctrl
                 } else {
                     handle_event(&event, ctx, loop_state)
                 };
@@ -169,6 +177,9 @@ pub(super) fn handle_event(
             loop_state.mid_turn_dirty = true;
             state.state = SessionState::Running;
             drop(state);
+            if let Some(t) = ctx.telemetry.as_ref() {
+                t.on_turn_started(&ctx.employee_id);
+            }
             persist_turn_update(ctx, |rec| rec.active = true);
         }
         SessionEvent::MidTurnDelivered { delivery_id } => {
@@ -233,6 +244,14 @@ pub(super) fn handle_event(
             outcome, errors, ..
         } => {
             handle_turn_ended(&mut state, loop_state, ctx, outcome, errors);
+            drop(state);
+            if let Some(t) = ctx.telemetry.as_ref() {
+                t.on_turn_ended(
+                    &ctx.employee_id,
+                    matches!(outcome, org_agent_runtime::TurnOutcome::Completed),
+                    errors,
+                );
+            }
         }
         SessionEvent::StartFailed { reason } => {
             state.last_error = Some(format!("start failed: {reason:?}"));
@@ -244,12 +263,27 @@ pub(super) fn handle_event(
             let emp_id = ctx.employee_id.clone();
             let hook = ctx.hooks.on_usage.clone();
             drop(state);
+            if let Some(t) = ctx.telemetry.as_ref() {
+                t.on_usage(&emp_id, &run_id, usage);
+            }
             // How full the partition's conversation is: at 60% its next turn rotates.
             if let Some(partition) = ctx.partition.as_ref() {
                 partition.observe_usage(usage);
             }
             if let Some(cb) = hook {
                 cb(&emp_id, &run_id, usage);
+            }
+        }
+        SessionEvent::ActionDenied { .. } => {
+            drop(state);
+            if let Some(t) = ctx.telemetry.as_ref() {
+                t.on_sandbox_denial(&ctx.employee_id, 1);
+            }
+        }
+        SessionEvent::Notice { text, .. } => {
+            drop(state);
+            if let Some(t) = ctx.telemetry.as_ref() {
+                t.on_notice(&ctx.employee_id, text);
             }
         }
         SessionEvent::RateLimit(rl) => {
@@ -307,7 +341,7 @@ pub(super) fn handle_tool_or_approval_event(
             );
         }
         SessionEvent::Usage(usage) => state.backgrounds.record_usage(usage),
-        SessionEvent::ApprovalRequested(req) => return handle_approval_request(state, req, &[]),
+        SessionEvent::ApprovalRequested(req) => return handle_approval_request(state, req, &[]).0,
         SessionEvent::ApprovalCancelled { id } => {
             state
                 .pending_approvals
@@ -487,6 +521,7 @@ pub(super) fn evaluate_turn_failover(
         rate_limit_resets_at: loop_state.rate_limit_resets_at.clone(),
         stop_epoch: ctx.stop_epoch,
         partition: ctx.partition_key(),
+        turn_override: ctx.turn_override.clone(),
     });
     loop_state.stop_requested = true;
     false

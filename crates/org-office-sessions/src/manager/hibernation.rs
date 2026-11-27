@@ -18,9 +18,15 @@ pub const DEFAULT_IDLE_HIBERNATION_TTL: Duration = Duration::from_secs(15 * 60);
 pub const DEFAULT_RESOURCE_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const MIB_BYTES: u64 = 1024 * 1024;
 
-/// Consumer-owned port sampling a supervised process tree's resident memory (RSS) in bytes.
+/// Consumer-owned port sampling a supervised process (or tree) resident memory (RSS) in bytes.
 pub trait ProcessMemorySampler: Send + Sync {
     fn process_tree_rss_bytes(&self, root_pid: u32) -> Option<u64>;
+
+    /// Samples the single child process `pid` RSS in bytes (`TASK-136`). Defaults to
+    /// [`Self::process_tree_rss_bytes`] so existing mock samplers keep working unchanged.
+    fn process_rss_bytes(&self, pid: u32) -> Option<u64> {
+        self.process_tree_rss_bytes(pid)
+    }
 }
 
 /// Default local-OS [`ProcessMemorySampler`] backed by `org_platform::process`.
@@ -30,6 +36,10 @@ pub struct OsMemorySampler;
 impl ProcessMemorySampler for OsMemorySampler {
     fn process_tree_rss_bytes(&self, root_pid: u32) -> Option<u64> {
         org_platform::process::process_tree_rss_bytes(root_pid)
+    }
+
+    fn process_rss_bytes(&self, pid: u32) -> Option<u64> {
+        org_platform::process::process_rss_bytes(pid)
     }
 }
 
@@ -167,6 +177,10 @@ impl HibernationState {
 
     pub(crate) fn clear_live_tracking(&self, emp: &str) {
         lock(&self.live_meta).remove(emp);
+    }
+
+    pub(crate) fn live_pid(&self, emp: &str) -> Option<u32> {
+        lock(&self.live_meta).get(emp).and_then(|meta| meta.1)
     }
 
     pub(crate) fn clear_all_hibernated(&self) {

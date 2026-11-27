@@ -130,6 +130,7 @@ pub(crate) struct FailoverRequest {
     /// The Chief of Staff partition the failed run served (`TASK-80.1`): its relaunch serves the
     /// same one and so acts for exactly the same caller ([`Self::acting_for_caller_id`]).
     pub partition: Option<crate::partition::PartitionKey>,
+    pub turn_override: crate::router::TurnModelOverride,
 }
 
 impl FailoverRequest {
@@ -343,6 +344,8 @@ pub(crate) struct PumpContext {
     pub model_supports_vision: bool,
     /// Consumer-owned port resolving policy-authorized attachment payloads at turn preparation.
     pub attachment_resolver: Arc<dyn crate::turn_attachments::TurnAttachmentResolver>,
+    pub turn_override: crate::router::TurnModelOverride,
+    pub telemetry: Option<crate::telemetry::PumpTelemetry>,
 }
 
 impl PumpContext {
