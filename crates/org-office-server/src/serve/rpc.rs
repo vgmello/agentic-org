@@ -183,6 +183,18 @@ pub(super) fn tasks_rpc(request: &Request, shared: &Shared, binding: &Binding) -
             ApiError::new(ErrorCode::NotBound, "connection is not bound"),
         ));
     };
+    if (request.is::<org_proto::tasks::OrganizationDefaultDodSet>()
+        || request.is::<org_proto::tasks::ProjectDefaultDodSet>())
+        && !binding.via_grant()
+    {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::NotAuthorized,
+                "setting default definitions of done requires a verified person grant",
+            ),
+        ));
+    }
     if let Some(tasks) = &shared.ports.tasks {
         if let Some(response) = tasks(Some(member), request) {
             return Some(response);

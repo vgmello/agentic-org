@@ -13,8 +13,9 @@
 use std::collections::BTreeSet;
 
 use org_proto::tasks::{
-    TaskDetailsWire, TaskPriority, TaskStatus, WorkType, TASK_FILE_PATH_MAX_LEN,
-    TASK_LABEL_MAX_LEN, TASK_MAX_FILES_PER_ROLE, TASK_MAX_LABELS,
+    ChecklistSection, TaskDetailsWire, TaskDoneAnywayWire, TaskFinalSummaryWire, TaskPriority,
+    TaskStatus, WorkType, TASK_FILE_PATH_MAX_LEN, TASK_LABEL_MAX_LEN, TASK_MAX_FILES_PER_ROLE,
+    TASK_MAX_LABELS,
 };
 use org_proto::{ApiError, ErrorCode};
 use org_store::Id;
@@ -124,11 +125,49 @@ pub struct OfficeTaskCounterRecord {
     pub reserved_through: u64,
 }
 
+/// Why a task was completed with required steps unticked, and which (`TASK-88`,
+/// `task_details.done_anyway_json`): `{"reason": ..., "steps": [step IDs]}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DoneAnywayRecord {
+    pub reason: String,
+    pub steps: Vec<Id>,
+}
+
+impl DoneAnywayRecord {
+    pub fn to_wire(&self) -> TaskDoneAnywayWire {
+        TaskDoneAnywayWire {
+            reason: self.reason.clone(),
+            steps: self.steps.iter().map(|id| id.as_str().to_owned()).collect(),
+        }
+    }
+}
+
+/// A task's attributed closing summary (`TASK-88`, `tasks.final_summary*`): always written by
+/// an employee, so all four columns are set together or none is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FinalSummaryRecord {
+    pub text: String,
+    pub at: String,
+    pub by_id: Id,
+}
+
+impl FinalSummaryRecord {
+    /// The only `final_summary_by_kind` a summary has.
+    pub const BY_KIND: &'static str = "employee";
+
+    pub fn to_wire(&self) -> TaskFinalSummaryWire {
+        TaskFinalSummaryWire {
+            text: self.text.clone(),
+            at: self.at.clone(),
+            by_kind: Self::BY_KIND.to_owned(),
+            by_id: self.by_id.as_str().to_owned(),
+        }
+    }
+}
+
 /// Optional structured details stored alongside a task (`task_details` in `schema.sql`).
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskDetailsRecord {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub definition_of_done: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub what_happened: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -163,12 +202,14 @@ pub struct TaskDetailsRecord {
     pub suggested_triager_id: Option<Id>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggested_verifier_id: Option<Id>,
+    /// Set by `tasks.transition` only (`TASK-88`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_anyway: Option<DoneAnywayRecord>,
 }
 
 impl TaskDetailsRecord {
     pub fn to_wire(&self) -> TaskDetailsWire {
         TaskDetailsWire {
-            definition_of_done: self.definition_of_done.clone(),
             what_happened: self.what_happened.clone(),
             expected: self.expected.clone(),
             steps: self.steps.clone(),
@@ -204,6 +245,7 @@ impl TaskDetailsRecord {
                 .suggested_verifier_id
                 .as_ref()
                 .map(|id| id.as_str().to_owned()),
+            done_anyway: self.done_anyway.as_ref().map(DoneAnywayRecord::to_wire),
         }
     }
 }
@@ -267,6 +309,9 @@ pub struct TaskRecord {
     pub repositories: Vec<TaskRepositoryRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<TaskDetailsRecord>,
+    /// The attributed closing summary (`TASK-88`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_summary: Option<FinalSummaryRecord>,
     pub meta: TaskMeta,
 }
 
@@ -276,10 +321,13 @@ impl TaskRecord {
     }
 }
 
-/// One checklist step (`checklist.yaml` -> `checklist_steps`).
+/// One checklist step (`checklist.yaml` -> `checklist_steps`). `position` is 0-based and
+/// contiguous within `section` (`TASK-88`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChecklistStepRecord {
     pub id: Id,
+    #[serde(default)]
+    pub section: ChecklistSection,
     pub position: u64,
     pub text: String,
     pub required: bool,

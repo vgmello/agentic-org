@@ -11,6 +11,7 @@
 //! document (`org_docs::SourceDoc`).
 
 use org_docs::MAX_FRONT_MATTER_BYTES;
+use org_proto::tasks::ChecklistSection;
 use org_store::Id;
 use serde_json::{json, Value};
 
@@ -97,15 +98,17 @@ pub fn decode_comment(bytes: &[u8]) -> Result<TaskCommentRecord, RecordError> {
 
 // ---- checklist.yaml ----
 
-/// `checklist.yaml`: the steps in their order; a step's position is its index.
+/// `checklist.yaml`: the steps section by section (`acceptance`, `dod`, `work`; `TASK-88`),
+/// each in its order; a step's position is its index among its section's steps.
 pub fn encode_checklist(steps: &[ChecklistStepRecord]) -> Result<Vec<u8>, String> {
     let mut sorted: Vec<&ChecklistStepRecord> = steps.iter().collect();
-    sorted.sort_by_key(|s| s.position);
+    sorted.sort_by_key(|s| (s.section, s.position));
     let items: Vec<Value> = sorted
         .into_iter()
         .map(|s| {
             json!({
                 "id": s.id.as_str(),
+                "section": s.section.as_str(),
                 "text": s.text,
                 "required": s.required,
                 "done": s.done,
@@ -122,14 +125,33 @@ pub fn encode_checklist(steps: &[ChecklistStepRecord]) -> Result<Vec<u8>, String
     bounded(&fields, "checklist")
 }
 
+/// A step's `section`: a file written before `TASK-88` has none, and its steps are work.
+fn section(item: &mut Reader) -> Result<ChecklistSection, RecordError> {
+    if !item.has("section") {
+        return Ok(ChecklistSection::Work);
+    }
+    let text = item.text("section")?;
+    ChecklistSection::parse(&text)
+        .ok_or_else(|| item.error("section", "not acceptance, dod or work"))
+}
+
+/// The steps of `checklist.yaml`, ordered by section and then position: each step's position
+/// is how many steps of its section the file lists before it.
 pub fn decode_checklist(bytes: &[u8]) -> Result<Vec<ChecklistStepRecord>, RecordError> {
     let mut r = yaml::decode(bytes)?;
     schema(&mut r)?;
     let mut steps = Vec::new();
-    for (position, mut item) in r.list("checklist")?.into_iter().enumerate() {
+    let mut next = [0u64; ChecklistSection::ALL.len()];
+    for mut item in r.list("checklist")? {
+        let id = stable(&mut item, "id")?;
+        let section = section(&mut item)?;
+        let slot = &mut next[section as usize];
+        let position = *slot;
+        *slot += 1;
         let step = ChecklistStepRecord {
-            id: stable(&mut item, "id")?,
-            position: position as u64,
+            id,
+            section,
+            position,
             text: item.text("text")?,
             required: item.flag("required")?,
             done: item.flag("done")?,
@@ -156,6 +178,7 @@ pub fn decode_checklist(bytes: &[u8]) -> Result<Vec<ChecklistStepRecord>, Record
         steps.push(step);
     }
     r.finish()?;
+    steps.sort_by_key(|s| (s.section, s.position));
     Ok(steps)
 }
 

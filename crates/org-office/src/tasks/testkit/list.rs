@@ -74,14 +74,16 @@ pub(super) fn rollups<R: TasksRead>(
         let mut dependents = view.task_dependents(id)?;
         dependents.sort();
         dependents.dedup();
-        let rollup = TaskRollup {
-            checklist_total: steps.len() as u64,
-            checklist_done: steps.iter().filter(|s| s.done).count() as u64,
+        let mut rollup = TaskRollup {
             comment_count: view.task_comments(id)?.len() as u64,
             watcher_count: view.task_watchers(id)?.len() as u64,
             depends_on,
             dependents,
+            ..TaskRollup::default()
         };
+        for step in &steps {
+            rollup.add_steps(step.section, 1, u64::from(step.done));
+        }
         out.insert(id.clone(), rollup);
     }
     Ok(out)

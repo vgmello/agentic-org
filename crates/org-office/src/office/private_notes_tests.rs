@@ -110,6 +110,7 @@ pub(super) fn seed_fixture(engine: EngineChoice) -> PrivateNoteFixture {
                 modified_files: vec![],
                 depends_on: vec![],
                 details: None,
+                dod: None,
             },
         )
         .unwrap()
@@ -561,6 +562,8 @@ fn assert_pn04_sqlite_restart_and_runtime_wipe_survival(
                 blocked_reason: None,
                 resolution: Some("completed".into()),
                 note: None,
+                done_anyway_reason: None,
+                final_summary: None,
             },
         )
         .unwrap()

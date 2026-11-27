@@ -416,6 +416,7 @@ mod tests {
                     modified_files: vec![],
                     depends_on: vec![],
                     details: None,
+                    dod: None,
                 },
             )
             .unwrap()

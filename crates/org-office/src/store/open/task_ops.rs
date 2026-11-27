@@ -9,8 +9,8 @@ use org_proto::tasks::{
     TaskDependenciesResult, TaskInspectResult, TasksAddDependencyParams, TasksAssignParams,
     TasksChecklistAddParams, TasksChecklistCheckParams, TasksChecklistEditParams,
     TasksChecklistMoveParams, TasksChecklistRemoveParams, TasksChecklistResult, TasksCommentParams,
-    TasksCommentResult, TasksCommentsResult, TasksCreateParams, TasksHistoryResult,
-    TasksLabelsParams, TasksLabelsResult, TasksListParams, TasksListResult,
+    TasksCommentResult, TasksCommentsResult, TasksCreateParams, TasksFinalSummaryParams,
+    TasksHistoryResult, TasksLabelsParams, TasksLabelsResult, TasksListParams, TasksListResult,
     TasksRemoveDependencyParams, TasksTransitionParams, TasksUnwatchParams, TasksUpdateParams,
     TasksWatchParams,
 };
@@ -24,8 +24,8 @@ use serde::{Deserialize, Serialize};
 use crate::tasks::features::{
     self, build_task_view, comment_to_wire, decode_refusal, step_to_wire, AddDependency,
     AssignTask, ChecklistAdd, ChecklistCheck, ChecklistEdit, ChecklistMove, ChecklistRemove,
-    CommentTask, CreateTask, RemoveDependency, TaskNumbering, TaskWriteOutcome, TransitionTask,
-    UnwatchTask, UpdateTask, WatchTask,
+    CommentTask, CreateTask, RemoveDependency, SetFinalSummary, TaskNumbering, TaskWriteOutcome,
+    TransitionTask, UnwatchTask, UpdateTask, WatchTask,
 };
 use crate::tasks::ports::TasksRead;
 use crate::tasks::records::{OfficeTaskCounterRecord, TaskCommentRecord};
@@ -421,6 +421,12 @@ macro_rules! simple_task_write_op {
 }
 
 simple_task_write_op!(TaskWatchOp, "tasks.watch", TasksWatchParams, WatchTask);
+simple_task_write_op!(
+    TaskFinalSummaryOp,
+    "tasks.final_summary",
+    TasksFinalSummaryParams,
+    SetFinalSummary
+);
 simple_task_write_op!(
     TaskUnwatchOp,
     "tasks.unwatch",

@@ -91,6 +91,7 @@ pub(super) fn create_task(office: &Office, actor: &str, team_id: &str, title: &s
                 modified_files: Vec::new(),
                 depends_on: Vec::new(),
                 details: None,
+                dod: None,
             },
         )
         .unwrap()

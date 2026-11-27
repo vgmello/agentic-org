@@ -127,10 +127,6 @@ const OFFICE_REACH_INS: &[(&str, &str)] = &[
         "organization",
     ),
     (
-        "crates/org-office/src/projects/features/mod.rs",
-        "organization",
-    ),
-    (
         "crates/org-office/src/projects/features/repositories.rs",
         "organization",
     ),

@@ -2417,6 +2417,9 @@ fn turn_control_routes_check_the_pair_origin_id_and_body_before_reaching_the_off
 #[path = "tests/attachments.rs"]
 mod attachments;
 
+#[path = "tests/task_defaults.rs"]
+mod task_defaults;
+
 #[test]
 fn member_decisions_route_checks_session_member_and_query_before_reaching_hq() {
     let (gateway, calls) = gateway(organization_script(|method, _| {

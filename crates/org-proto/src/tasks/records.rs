@@ -4,13 +4,32 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{TaskPriority, TaskStatus, WorkType};
+use super::{ChecklistSection, TaskPriority, TaskStatus, WorkType};
 
-/// Optional structured bug/request/definition-of-done payload (`doc-77` `task_details`).
+/// Why a task was completed with required checklist steps unticked, and which steps
+/// (`TASK-88`, `task_details.done_anyway_json`). The office sets it when `tasks.transition`
+/// completes a task with a `done_anyway_reason`, and clears it when the task leaves `done`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskDoneAnywayWire {
+    pub reason: String,
+    /// The IDs of the required steps that were unticked, in checklist order.
+    pub steps: Vec<String>,
+}
+
+/// A task's attributed closing summary (`TASK-88`, `tasks.final_summary*`): who wrote it and
+/// when. Only closing a task with one, or `tasks.final_summary`, sets it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskFinalSummaryWire {
+    pub text: String,
+    pub at: String,
+    pub by_kind: String,
+    pub by_id: String,
+}
+
+/// Optional structured bug/request payload (`doc-77` `task_details`). The definition of done
+/// is the checklist's `dod` section (`TASK-88`).
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskDetailsWire {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub definition_of_done: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub what_happened: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -45,6 +64,9 @@ pub struct TaskDetailsWire {
     pub suggested_triager_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggested_verifier_id: Option<String>,
+    /// Set by the office only (`TASK-88`); ignored when a client sends it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_anyway: Option<TaskDoneAnywayWire>,
 }
 
 /// Compact summary row for a dependency/dependent task reference (`TASK-77`).
@@ -61,10 +83,12 @@ pub struct TaskRefSummary {
     pub rank_order: Option<u64>,
 }
 
-/// One checklist step attached to a task.
+/// One checklist step attached to a task. `position` is 0-based within its `section`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChecklistStepWire {
     pub id: String,
+    #[serde(default)]
+    pub section: ChecklistSection,
     pub position: u64,
     pub text: String,
     pub required: bool,
@@ -172,6 +196,9 @@ pub struct TaskView {
     pub dependents: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<TaskDetailsWire>,
+    /// The attributed closing summary (`TASK-88`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_summary: Option<TaskFinalSummaryWire>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     pub created_by_kind: String,
@@ -184,6 +211,21 @@ pub struct TaskView {
     pub updated_by_id: Option<String>,
     pub checklist_total: u64,
     pub checklist_done: u64,
+    /// Acceptance criteria steps, and how many are ticked (`TASK-88`).
+    #[serde(default)]
+    pub ac_total: u64,
+    #[serde(default)]
+    pub ac_done: u64,
+    /// Definition-of-done steps, and how many are ticked (`TASK-88`).
+    #[serde(default)]
+    pub dod_total: u64,
+    #[serde(default)]
+    pub dod_done: u64,
+    /// Work steps, and how many are ticked (`TASK-88`).
+    #[serde(default)]
+    pub work_steps_total: u64,
+    #[serde(default)]
+    pub work_steps_done: u64,
     pub comment_count: u64,
     pub watcher_count: u64,
 }

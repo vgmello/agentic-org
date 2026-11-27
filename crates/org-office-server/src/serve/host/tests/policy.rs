@@ -42,6 +42,7 @@ fn shared() -> Shared {
             revision: 1,
             created_at: None,
             updated_at: None,
+            default_dod: None,
         }))
     });
     ports.operation_get = Box::new(|_, _| {

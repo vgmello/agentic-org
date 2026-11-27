@@ -1,9 +1,11 @@
-//! Checklist mutations (`TASK-49`): each is child-only (`doc-79`), writing `checklist.yaml`
-//! and the next history event, never `task.md`. Checking or unchecking a step is answered
-//! `committed`; adding, editing, removing or moving one is answered `durable` (`ADR-0014`).
+//! Checklist mutations (`TASK-49`, `TASK-88`): each is child-only (`doc-79`), writing
+//! `checklist.yaml` and the next history event, never `task.md`. Checking or unchecking a step
+//! is answered `committed`; adding, editing, removing or moving one is answered `durable`
+//! (`ADR-0014`). A checklist has three sections (`acceptance`, `dod`, `work`), and every
+//! mutation leaves each section's positions 0-based and contiguous.
 
 use org_proto::tasks::{
-    TasksChecklistAddParams, TasksChecklistCheckParams, TasksChecklistEditParams,
+    ChecklistSection, TasksChecklistAddParams, TasksChecklistCheckParams, TasksChecklistEditParams,
     TasksChecklistMoveParams, TasksChecklistRemoveParams, TASK_MAX_CHECKLIST_STEPS,
     TASK_STEP_TEXT_MAX_CHARS,
 };
@@ -51,9 +53,15 @@ fn validate_step_text(raw: &str) -> Result<String, Refusal> {
     Ok(trimmed.to_owned())
 }
 
+/// Orders `steps` section by section, keeping their order within each, and numbers each
+/// section's steps from 0.
 fn reindex_steps(steps: &mut [ChecklistStepRecord]) {
-    for (idx, step) in steps.iter_mut().enumerate() {
-        step.position = idx as u64;
+    steps.sort_by_key(|s| s.section);
+    let mut next = [0u64; ChecklistSection::ALL.len()];
+    for step in steps {
+        let slot = &mut next[step.section as usize];
+        step.position = *slot;
+        *slot += 1;
     }
 }
 
@@ -72,6 +80,11 @@ impl ChecklistAdd {
         let step_id = parse_uuid_v7(&self.params.step_id, "step_id")?;
         let task = require_task(uow.view(), &self.params.task)?;
         let text = validate_step_text(&self.params.text)?;
+        let section = self.params.section.unwrap_or_default();
+        let required = self
+            .params
+            .required
+            .unwrap_or_else(|| section.required_by_default());
         let mut steps = uow
             .view()
             .checklist_steps(&task.id)
@@ -88,11 +101,13 @@ impl ChecklistAdd {
                 format!("checklist step `{step_id}` already exists"),
             ));
         }
+        // Last in its section: `reindex_steps` keeps the order within a section.
         steps.push(ChecklistStepRecord {
             id: step_id.clone(),
-            position: steps.len() as u64,
+            section,
+            position: u64::MAX,
             text: text.clone(),
-            required: self.params.required,
+            required,
             done: false,
             linked_task_id: None,
             checked_by_employee_id: None,
@@ -107,7 +122,13 @@ impl ChecklistAdd {
             &steps,
             Ack::Durable,
             Writer::new(uow.view(), &actor.id, &at, &self.params.command_id)?,
-            json!({ "type": "checklist_step_added", "step_id": step_id.as_str(), "text": text }),
+            json!({
+                "type": "checklist_step_added",
+                "step_id": step_id.as_str(),
+                "section": section.as_str(),
+                "text": text,
+                "required": required,
+            }),
         )?;
         Ok((change, task.id))
     }
@@ -275,8 +296,21 @@ impl ChecklistMove {
         };
         let mut step = steps.remove(pos);
         step.revision = step.revision.saturating_add(1);
-        let dest = (self.params.position as usize).min(steps.len());
-        steps.insert(dest, step);
+        let section = self.params.section.unwrap_or(step.section);
+        step.section = section;
+        // Insert before the `dest`-th step of the target section, or after its last one.
+        let in_section: Vec<usize> = (0..steps.len())
+            .filter(|&i| steps[i].section == section)
+            .collect();
+        let dest = (self.params.position as usize).min(in_section.len());
+        let index = match in_section.get(dest) {
+            Some(&index) => index,
+            None => in_section.last().map_or_else(
+                || steps.iter().take_while(|s| s.section < section).count(),
+                |&last| last + 1,
+            ),
+        };
+        steps.insert(index, step);
         reindex_steps(&mut steps);
         let at = format_rfc3339_ms(uow.now().0);
         let change = write_checklist(
@@ -285,7 +319,12 @@ impl ChecklistMove {
             &steps,
             Ack::Durable,
             Writer::new(uow.view(), &actor.id, &at, &self.params.command_id)?,
-            json!({ "type": "checklist_step_moved", "step_id": step_id.as_str(), "position": dest }),
+            json!({
+                "type": "checklist_step_moved",
+                "step_id": step_id.as_str(),
+                "section": section.as_str(),
+                "position": dest,
+            }),
         )?;
         Ok((change, task.id))
     }
