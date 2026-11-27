@@ -1,5 +1,6 @@
 //! Helpers for tests of commands: an [`ExecutionContext`] whose streams are captured in
-//! memory, with a chosen terminal and environment. Public so the consumer's tests use it too.
+//! memory, with a chosen terminal and environment. Public behind `test-support` so the
+//! consumer's tests use it too.
 
 use std::ffi::OsString;
 use std::io::{self, Write};

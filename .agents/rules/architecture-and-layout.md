@@ -72,4 +72,4 @@ The workspace intentionally runs **two distinct CLI contracts**:
   - `cargo test --locked -p org-platform --test libc_only`
   - `cargo test --locked -p org-office --test engine_boundary` and `-p org-host --test engine_boundary`
   - `cargo test --locked -p agentic-org-web --test dependency_closure`
-  - `cargo test --locked -p org-platform --test vsa_structure` *(ships with `TASK-213`: CLI VSA boundaries + workspace intra-crate module-cycle ratchet + `org-office` cross-domain reach-in ratchet)*
+  - `cargo test --locked -p org-platform --test vsa_structure` *(ships with `TASK-213`: CLI VSA boundaries + workspace intra-crate module-cycle ratchet + `org-office` cross-domain reach-in ratchet + module layout: no `include!`, no `#[path]` outside the declaring module's directory, no ungated module under a test-reserved name, no crate-module glob import outside the crate root)*
