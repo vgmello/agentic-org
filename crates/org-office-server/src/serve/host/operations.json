@@ -1,9 +1,4 @@
 [
-  {"method":"area.create","policy":"unserved"},
-  {"method":"area.delete","policy":"unserved"},
-  {"method":"area.rename","policy":"unserved"},
-  {"method":"area.set_lead","policy":"unserved"},
-  {"method":"area.set_team","policy":"unserved"},
   {"method":"attachment.attach","policy":"serve"},
   {"method":"attachment.inspect","policy":"serve"},
   {"method":"attachment.list","policy":"serve"},

@@ -98,8 +98,7 @@
 //!   `member.offboard`, `member.remove`) stops being its lead, and the area's version goes up;
 //! - `project.remove_team` moves the leaving team's areas to `areas_to_team_id`, or leaves
 //!   them team-less when it was the project's last team (see [`ProjectRemoveTeam`]);
-//! - `team.delete` leaves the areas it owned team-less, with their leads cleared;
-//! - `area.set_team` clears a lead who isn't in the new team.
+//! - `team.delete` leaves the areas it owned team-less, with their leads cleared.
 
 mod commands;
 mod feed;
@@ -107,17 +106,16 @@ mod projects;
 mod structure;
 
 pub use commands::{
-    AreaCreate, AreaCreateParams, AreaDelete, AreaDeleteParams, AreaRename, AreaRenameParams,
-    AreaSetLead, AreaSetLeadParams, AreaSetTeam, AreaSetTeamParams, CommandAccepted, CommandStatus,
-    MemberAddAgent, MemberAddAgentParams, MemberAddPerson, MemberAddPersonParams, MemberMove,
-    MemberMoveParams, MemberOffboard, MemberOffboardParams, MemberRemove, MemberRemoveParams,
-    MemberSetAgentStatus, MemberSetAgentStatusParams, MemberSetReportsTo, MemberSetReportsToParams,
-    MemberSetRunMode, MemberSetRunModeParams, MemberUpdateAgent, MemberUpdateAgentParams,
-    MemberUpdatePerson, MemberUpdatePersonParams, ProjectAddTeam, ProjectAddTeamParams,
-    ProjectArchive, ProjectArchiveParams, ProjectCreate, ProjectCreateParams, ProjectCreateTeam,
-    ProjectRemoveTeam, ProjectRemoveTeamParams, ProjectUpdate, ProjectUpdateParams, TeamCreate,
-    TeamCreateParams, TeamDelete, TeamDeleteParams, TeamMove, TeamMoveParams, TeamRename,
-    TeamRenameParams, TeamSetLead, TeamSetLeadParams, TeamSetTitle, TeamSetTitleParams,
+    CommandAccepted, CommandStatus, MemberAddAgent, MemberAddAgentParams, MemberAddPerson,
+    MemberAddPersonParams, MemberMove, MemberMoveParams, MemberOffboard, MemberOffboardParams,
+    MemberRemove, MemberRemoveParams, MemberSetAgentStatus, MemberSetAgentStatusParams,
+    MemberSetReportsTo, MemberSetReportsToParams, MemberSetRunMode, MemberSetRunModeParams,
+    MemberUpdateAgent, MemberUpdateAgentParams, MemberUpdatePerson, MemberUpdatePersonParams,
+    ProjectAddTeam, ProjectAddTeamParams, ProjectArchive, ProjectArchiveParams, ProjectCreate,
+    ProjectCreateParams, ProjectCreateTeam, ProjectRemoveTeam, ProjectRemoveTeamParams,
+    ProjectUpdate, ProjectUpdateParams, TeamCreate, TeamCreateParams, TeamDelete, TeamDeleteParams,
+    TeamMove, TeamMoveParams, TeamRename, TeamRenameParams, TeamSetLead, TeamSetLeadParams,
+    TeamSetTitle, TeamSetTitleParams,
 };
 pub use feed::{
     OrgChange, OrgChanged, OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot,

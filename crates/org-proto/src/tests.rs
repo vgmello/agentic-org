@@ -1938,11 +1938,6 @@ fn project_and_area_wire_names_and_limits_are_pinned() {
         (ProjectCreate::METHOD, "project.create"),
         (ProjectUpdate::METHOD, "project.update"),
         (ProjectArchive::METHOD, "project.archive"),
-        (AreaCreate::METHOD, "area.create"),
-        (AreaRename::METHOD, "area.rename"),
-        (AreaSetTeam::METHOD, "area.set_team"),
-        (AreaSetLead::METHOD, "area.set_lead"),
-        (AreaDelete::METHOD, "area.delete"),
     ];
     for (got, want) in names {
         assert_eq!(got, want);
@@ -2279,64 +2274,8 @@ fn project_and_area_commands_are_pinned() {
         },
         json!({"command_id": "01C", "project_team_id": "pt1", "expected_version": 1}),
     );
-    pin_params::<AreaCreate>(
-        &AreaCreateParams {
-            command_id: "01C".into(),
-            area_id: "ar2".into(),
-            project_id: "p1".into(),
-            name: "Payments".into(),
-            team_id: Some("t1".into()),
-            lead_member_id: Some("a1".into()),
-        },
-        json!({
-            "command_id": "01C", "area_id": "ar2", "project_id": "p1", "name": "Payments",
-            "team_id": "t1", "lead_member_id": "a1"
-        }),
-    );
-    pin_params::<AreaRename>(
-        &AreaRenameParams {
-            command_id: "01C".into(),
-            area_id: "ar1".into(),
-            expected_version: 1,
-            name: "Core".into(),
-        },
-        json!({"command_id": "01C", "area_id": "ar1", "expected_version": 1, "name": "Core"}),
-    );
-    pin_params::<AreaSetTeam>(
-        &AreaSetTeamParams {
-            command_id: "01C".into(),
-            area_id: "ar1".into(),
-            expected_version: 2,
-            team_id: None,
-        },
-        json!({"command_id": "01C", "area_id": "ar1", "expected_version": 2}),
-    );
-    pin_params::<AreaSetLead>(
-        &AreaSetLeadParams {
-            command_id: "01C".into(),
-            area_id: "ar1".into(),
-            expected_version: 2,
-            lead_member_id: Some("a2".into()),
-        },
-        json!({
-            "command_id": "01C", "area_id": "ar1", "expected_version": 2,
-            "lead_member_id": "a2"
-        }),
-    );
-    pin_params::<AreaDelete>(
-        &AreaDeleteParams {
-            command_id: "01C".into(),
-            area_id: "ar2".into(),
-            expected_version: 3,
-            move_open_to_area_id: "ar1".into(),
-        },
-        json!({
-            "command_id": "01C", "area_id": "ar2", "expected_version": 3,
-            "move_open_to_area_id": "ar1"
-        }),
-    );
     // Every one answers CommandAccepted, as T1's commands do.
-    let ok = Response::ok::<AreaCreate>(
+    let ok = Response::ok::<ProjectCreate>(
         1,
         &CommandAccepted {
             status: CommandStatus::Committed,
