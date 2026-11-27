@@ -7,7 +7,7 @@
 use org_proto::external_auth::{
     challenge_message, AuthChallengeResult, AuthExchangeResult, AuthLoginPollResult,
     AuthLoginRequestParams, AuthLoginRequestResult, AuthLogoutResult, ChallengePurpose,
-    SignedChallengeParams, FAST_TOKEN_TTL_SECS, MAX_WORKSPACE_LABEL_BYTES,
+    SignedChallengeParams, FAST_TOKEN_TTL_SECS,
 };
 use org_proto::{ApiError, ErrorCode};
 use zeroize::Zeroizing;
@@ -16,29 +16,13 @@ use crate::credentials::{format_rfc3339_ms, is_safe_id, now_ms};
 use crate::manager::SessionManager;
 
 use super::nonces::{verify_signature, NonceEntry};
-use super::{decode_pubkey, refuse_chief_of_staff, ExternalLeaseRecord};
+use super::{decode_pubkey, refuse_builtin_agent, validate_workspace_label, ExternalLeaseRecord};
 
 fn refused() -> ApiError {
     ApiError::new(
         ErrorCode::NotAuthorized,
         "this office cannot sign in this workspace",
     )
-}
-
-fn workspace_label(label: &str) -> Result<String, ApiError> {
-    let trimmed = label.trim();
-    if trimmed.is_empty()
-        || trimmed.len() > MAX_WORKSPACE_LABEL_BYTES
-        || trimmed.chars().any(char::is_control)
-    {
-        return Err(ApiError::new(
-            ErrorCode::InvalidRequest,
-            format!(
-                "the workspace label must be 1 to {MAX_WORKSPACE_LABEL_BYTES} bytes without control characters"
-            ),
-        ));
-    }
-    Ok(trimmed.to_owned())
 }
 
 impl SessionManager {
@@ -55,9 +39,9 @@ impl SessionManager {
                 "pubkey_ed25519_b64 must be a base64 Ed25519 public key (32 bytes)",
             ));
         }
-        let label = workspace_label(&params.workspace_label)?;
+        let label = validate_workspace_label(&params.workspace_label)?;
         let employee = self.require_active_agent(employee_id)?;
-        refuse_chief_of_staff(&employee)?;
+        refuse_builtin_agent(&employee)?;
         let emp_id = employee.id.as_str();
         let (entry, code) = self
             .external
@@ -107,7 +91,7 @@ impl SessionManager {
         session_id: &str,
         purpose: ChallengePurpose,
     ) -> Result<AuthChallengeResult, ApiError> {
-        self.refuse_chief_of_staff_id(employee_id)?;
+        self.refuse_builtin_agent_id(employee_id)?;
         let now = now_ms();
         let lease = self
             .external_lease(employee_id)
@@ -195,7 +179,7 @@ impl SessionManager {
         employee_id: &str,
         params: &SignedChallengeParams,
     ) -> Result<AuthExchangeResult, ApiError> {
-        self.refuse_chief_of_staff_id(employee_id)?;
+        self.refuse_builtin_agent_id(employee_id)?;
         let signed = self.verify_signed_answer(employee_id, params, ChallengePurpose::Exchange)?;
         let (lease, binding, expires_ms) = {
             let _serial = self

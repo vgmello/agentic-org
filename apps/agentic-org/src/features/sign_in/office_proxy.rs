@@ -179,11 +179,15 @@ pub(crate) fn run(words: Vec<String>, ctx: &mut ExecutionContext) -> Result<(), 
         let shown = shown(&hire_args, ctx);
         return super::hr_bind::execute_hire_and_bind(
             hire_args,
-            &workspace,
-            shown,
+            super::hr_bind::HireBindOptions {
+                workspace: &workspace,
+                target_office: target.office(),
+                office_selector: target.explicit_office(),
+                shown,
+                state_root: None,
+            },
             ctx,
             &mut transport,
-            None,
         );
     }
     execute(scanned.forwarded, ctx, &mut TransportOffice(transport))
@@ -201,17 +205,27 @@ pub(super) fn sign_in_and_execute(
     office: Option<&str>,
     ctx: &mut ExecutionContext,
 ) -> Result<(), CliError> {
+    if resource_and_verb(&forwarded) == Some(("agent", "bind")) {
+        return Err(
+            CliError::usage("`agent bind` runs via `agentic-org agent bind`")
+                .with_help("Run `agentic-org agent bind --member <id> --workspace <dir>` (or `agentic-org sign-in -- agent bind ...`)."),
+        );
+    }
     let (bind_workspace, hire_args) = super::hr_bind::split_bind_workspace(&forwarded)?;
     if let Some(workspace) = bind_workspace {
         let shown = shown(&hire_args, ctx);
         let mut transport = LazyGrantTransport::new(instance, office);
         let result = super::hr_bind::execute_hire_and_bind(
             hire_args,
-            &workspace,
-            shown,
+            super::hr_bind::HireBindOptions {
+                workspace: &workspace,
+                target_office: office,
+                office_selector: office,
+                shown,
+                state_root: None,
+            },
             ctx,
             &mut transport,
-            None,
         );
         if let Some(error) = transport.failed.take() {
             return Err(error.into());

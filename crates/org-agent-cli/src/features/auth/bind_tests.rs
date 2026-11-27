@@ -169,7 +169,7 @@ fn bind_workspace_refuses_bad_paths_bad_ttl_unsafe_state_and_unsafe_sockets_clos
     let ws_state = WorkspaceState::for_root(&state_root, &canonical);
     let real_target = tmp.path().join("real-target");
     std::fs::create_dir_all(&real_target).unwrap();
-    std::fs::create_dir_all(ws_state.dir().parent().unwrap()).unwrap();
+    org_platform::fs::create_owner_only_dir_all(ws_state.dir().parent().unwrap()).unwrap();
     std::os::unix::fs::symlink(&real_target, ws_state.dir()).unwrap();
     let err = bind_workspace(
         &mut transport,
@@ -207,8 +207,106 @@ fn bind_workspace_refuses_bad_paths_bad_ttl_unsafe_state_and_unsafe_sockets_clos
         )
         .unwrap_err();
         assert_eq!(err.code, ErrorCode::Unavailable, "{bad_socket}");
+        assert_eq!(t.calls.len(), 1, "bad socket must be checked after RPC");
         assert!(!state2.dir().exists(), "{bad_socket}");
     }
+}
+
+#[test]
+fn bind_workspace_refuses_symlinked_or_wide_parent_state_dirs_before_any_rpc_or_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir(&ws).unwrap();
+    let canonical = ws.canonicalize().unwrap();
+
+    // 1. Symlinked `<state_root>/workspaces` while `<hash>` is absent -> refused BEFORE any RPC!
+    let evil_target = tmp.path().join("evil-workspaces");
+    std::fs::create_dir(&evil_target).unwrap();
+    std::fs::set_permissions(&evil_target, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let state_root_1 = tmp.path().join("state-link-ws");
+    std::fs::create_dir(&state_root_1).unwrap();
+    std::os::unix::fs::symlink(&evil_target, state_root_1.join("workspaces")).unwrap();
+    let mut transport = FakeBindTransport::new(Some("/tmp/office.sock"));
+    let err = bind_workspace(
+        &mut transport,
+        &WorkspaceBindRequest {
+            member: "@ada",
+            workspace_dir: &ws,
+            label: None,
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root_1),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::Unavailable, "{err:?}");
+    assert!(
+        transport.calls.is_empty(),
+        "symlinked <state_root>/workspaces must fail BEFORE member.external_bind RPC"
+    );
+    assert_eq!(
+        std::fs::read_dir(&evil_target).unwrap().count(),
+        0,
+        "nothing may be created inside symlink target"
+    );
+
+    // 2. Symlinked `<state_root>` itself (even pointing to a 0700 dir) -> refused BEFORE any RPC!
+    let real_root = tmp.path().join("real-state-root");
+    std::fs::create_dir(&real_root).unwrap();
+    std::fs::set_permissions(&real_root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let linked_root = tmp.path().join("linked-state-root");
+    std::os::unix::fs::symlink(&real_root, &linked_root).unwrap();
+    let err = bind_workspace(
+        &mut transport,
+        &WorkspaceBindRequest {
+            member: "@ada",
+            workspace_dir: &ws,
+            label: None,
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&linked_root),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::Unavailable, "{err:?}");
+    assert!(transport.calls.is_empty());
+    assert_eq!(std::fs::read_dir(&real_root).unwrap().count(), 0);
+
+    // 3. Group-readable `0755` `<state_root>/workspaces` while `<hash>` is absent -> refused!
+    let state_root_wide = tmp.path().join("state-wide-ws");
+    std::fs::create_dir_all(state_root_wide.join("workspaces")).unwrap();
+    std::fs::set_permissions(
+        state_root_wide.join("workspaces"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let err = bind_workspace(
+        &mut transport,
+        &WorkspaceBindRequest {
+            member: "@ada",
+            workspace_dir: &ws,
+            label: None,
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root_wide),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::Unavailable, "{err:?}");
+    assert!(transport.calls.is_empty());
+
+    // 4. `WorkspaceState::ensure()` and `write_key()` also refuse a symlinked `workspaces` dir.
+    let state_via_at = WorkspaceState::at(
+        state_root_1
+            .join("workspaces")
+            .join(store::workspace_key(&canonical)),
+    );
+    assert!(state_via_at.preflight().is_err());
+    assert!(state_via_at.ensure().is_err());
+    assert!(state_via_at.write_key(b"secret").is_err());
 }
 
 #[test]

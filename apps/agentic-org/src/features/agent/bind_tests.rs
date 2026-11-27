@@ -206,3 +206,32 @@ fn unauthorized_refusal_leaves_no_local_state_behind() {
     let state = WorkspaceState::for_root(&state_root, &ws.canonicalize().unwrap());
     assert!(!state.dir().exists());
 }
+
+#[test]
+fn empty_or_control_char_member_fails_with_usage_exit_2_before_any_rpc() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("repo");
+    std::fs::create_dir(&ws).unwrap();
+    let state_root = tmp.path().join("state");
+
+    for bad_member in ["", "   ", "@ada\n"] {
+        let args = BindArgs::try_parse_from([
+            "agentic-org agent bind",
+            "--member",
+            bad_member,
+            "--workspace",
+            ws.to_str().unwrap(),
+        ])
+        .unwrap();
+        let mut transport = FakeTransport {
+            calls: Vec::new(),
+            refuse: None,
+        };
+        let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
+        let err =
+            execute_with_transport(&args, &mut transport, Some(&state_root), &mut ctx).unwrap_err();
+        assert_eq!(err.exit_code(), 2, "{bad_member:?}");
+        assert_eq!(err.code(), "cli::usage", "{bad_member:?}");
+        assert!(transport.calls.is_empty(), "{bad_member:?}");
+    }
+}

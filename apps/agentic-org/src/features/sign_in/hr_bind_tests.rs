@@ -16,7 +16,19 @@ use super::*;
 struct HireAndBindTransport {
     calls: Vec<(String, Value)>,
     fail_hire: Option<Refusal>,
+    hire_reply_override: Option<Value>,
     fail_bind: Option<Refusal>,
+}
+
+impl HireAndBindTransport {
+    fn new() -> Self {
+        Self {
+            calls: Vec::new(),
+            fail_hire: None,
+            hire_reply_override: None,
+            fail_bind: None,
+        }
+    }
 }
 
 impl OfficeTransport for HireAndBindTransport {
@@ -27,7 +39,10 @@ impl OfficeTransport for HireAndBindTransport {
                 if let Some(refusal) = &self.fail_hire {
                     return Err(refusal.clone());
                 }
-                Ok(test_hire_reply("0193a5c0-0000-7000-8000-000000000051"))
+                Ok(self
+                    .hire_reply_override
+                    .clone()
+                    .unwrap_or_else(|| test_hire_reply("0193a5c0-0000-7000-8000-000000000051")))
             }
             "member.external_bind" => {
                 if let Some(refusal) = &self.fail_bind {
@@ -132,11 +147,7 @@ fn execute_hire_and_bind_hires_and_binds_in_one_step_without_leaking_secrets() {
     std::fs::create_dir(&ws).unwrap();
     let state_root = tmp.path().join("state");
 
-    let mut transport = HireAndBindTransport {
-        calls: Vec::new(),
-        fail_hire: None,
-        fail_bind: None,
-    };
+    let mut transport = HireAndBindTransport::new();
     let (mut ctx, out) = captured(
         Modes {
             json: true,
@@ -158,11 +169,15 @@ fn execute_hire_and_bind_hires_and_binds_in_one_step_without_leaking_secrets() {
             "--reason",
             "BYOA engineer",
         ]),
-        &ws,
-        Shown::Json,
+        HireBindOptions {
+            workspace: &ws,
+            target_office: None,
+            office_selector: None,
+            shown: Shown::Json,
+            state_root: Some(&state_root),
+        },
         &mut ctx,
         &mut transport,
-        Some(&state_root),
     )
     .unwrap();
 
@@ -249,11 +264,7 @@ fn invalid_flag_combinations_or_missing_workspace_refuse_before_hiring() {
             false,
         ),
     ] {
-        let mut transport = HireAndBindTransport {
-            calls: Vec::new(),
-            fail_hire: None,
-            fail_bind: None,
-        };
+        let mut transport = HireAndBindTransport::new();
         let (mut ctx, _) = captured(
             Modes {
                 dry_run,
@@ -264,11 +275,15 @@ fn invalid_flag_combinations_or_missing_workspace_refuse_before_hiring() {
         );
         assert!(execute_hire_and_bind(
             words(&args),
-            &dir,
-            Shown::Compact,
+            HireBindOptions {
+                workspace: &dir,
+                target_office: None,
+                office_selector: None,
+                shown: Shown::Compact,
+                state_root: Some(&state_root),
+            },
             &mut ctx,
             &mut transport,
-            Some(&state_root),
         )
         .is_err());
         assert!(
@@ -281,65 +296,356 @@ fn invalid_flag_combinations_or_missing_workspace_refuse_before_hiring() {
 #[test]
 fn hire_failure_skips_bind_and_bind_failure_gives_recovery_command() {
     let tmp = tempfile::tempdir().unwrap();
-    let ws = tmp.path().join("repo");
+    let ws = tmp.path().join("my 'repo' dir");
     std::fs::create_dir(&ws).unwrap();
     let state_root = tmp.path().join("state");
 
-    // Hire refused -> bind never called.
+    // Hire refused on TTY -> bind never called.
     let mut transport = HireAndBindTransport {
-        calls: Vec::new(),
         fail_hire: Some(Refusal::new(
             ErrorCode::NotAuthorized,
             "cannot hire",
             "ask team lead",
         )),
-        fail_bind: None,
+        ..HireAndBindTransport::new()
     };
     let (mut ctx, _) = captured(Modes::default(), tty(Some(80)), &[]);
     let err = execute_hire_and_bind(
         words(&[
             "hr", "hire", "--team", "T1", "--name", "Ada", "--handle", "ada", "--reason", "r",
         ]),
-        &ws,
-        Shown::Rendered,
+        HireBindOptions {
+            workspace: &ws,
+            target_office: None,
+            office_selector: None,
+            shown: Shown::Rendered,
+            state_root: Some(&state_root),
+        },
         &mut ctx,
         &mut transport,
-        Some(&state_root),
     )
     .unwrap_err();
     assert_eq!(err.exit_code(), 1);
     assert_eq!(transport.calls.len(), 1);
     assert_eq!(transport.calls[0].0, "hr.hire");
 
-    // Hire succeeded but bind refused -> actionable hint names `agentic-org agent bind`.
+    // Hire refused under piped default (`Shown::Compact`) -> JSON failure envelope printed on
+    // stdout with exit 1, matching `office_proxy`, and bind never called.
     let mut transport = HireAndBindTransport {
-        calls: Vec::new(),
-        fail_hire: None,
+        fail_hire: Some(Refusal::new(
+            ErrorCode::NotAuthorized,
+            "cannot hire",
+            "ask team lead",
+        )),
+        ..HireAndBindTransport::new()
+    };
+    let (mut ctx, out) = captured(Modes::default(), Terminal::piped(), &[]);
+    let err = execute_hire_and_bind(
+        words(&[
+            "hr", "hire", "--team", "T1", "--name", "Ada", "--handle", "ada", "--reason", "r",
+        ]),
+        HireBindOptions {
+            workspace: &ws,
+            target_office: None,
+            office_selector: None,
+            shown: Shown::Compact,
+            state_root: Some(&state_root),
+        },
+        &mut ctx,
+        &mut transport,
+    )
+    .unwrap_err();
+    assert_eq!(err.exit_code(), 1);
+    assert_eq!(transport.calls.len(), 1);
+    let failure_env: Value = serde_json::from_str(&out.stdout.text()).unwrap();
+    assert_eq!(failure_env["ok"], false);
+    assert_eq!(failure_env["error"]["code"], "not_authorized");
+
+    // Non-hired reply (`state: "failed"`) under piped `Shown::Compact` prints compact output
+    // (never raw JSON) and skips bind.
+    let mut transport = HireAndBindTransport {
+        hire_reply_override: Some(json!({
+            "request_id": "0193a5c0-0000-7000-8000-000000000050",
+            "state": "failed",
+            "failed_step": "provision",
+            "revision": 1,
+            "generation": 5
+        })),
+        ..HireAndBindTransport::new()
+    };
+    let (mut ctx, out) = captured(Modes::default(), Terminal::piped(), &[]);
+    execute_hire_and_bind(
+        words(&[
+            "hr", "hire", "--team", "T1", "--name", "Ada", "--handle", "ada", "--reason", "r",
+        ]),
+        HireBindOptions {
+            workspace: &ws,
+            target_office: None,
+            office_selector: None,
+            shown: Shown::Compact,
+            state_root: Some(&state_root),
+        },
+        &mut ctx,
+        &mut transport,
+    )
+    .unwrap();
+    assert_eq!(transport.calls.len(), 1);
+    let compact_out = out.stdout.text();
+    assert!(!compact_out.trim_start().starts_with('{'), "{compact_out}");
+    assert!(compact_out.contains("state: failed"), "{compact_out}");
+
+    // Hire succeeded but bind refused -> actionable hint names `agentic-org agent bind`,
+    // includes `--office <id>`, and shell-quotes spaces/single-quotes in the workspace path.
+    let mut transport = HireAndBindTransport {
         fail_bind: Some(Refusal::new(
             ErrorCode::NotAuthorized,
             "cannot bind",
             "check role",
         )),
+        ..HireAndBindTransport::new()
     };
     let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
     let err = execute_hire_and_bind(
         words(&[
             "hr", "hire", "--team", "T1", "--name", "Ada", "--handle", "ada", "--reason", "r",
         ]),
-        &ws,
-        Shown::Compact,
+        HireBindOptions {
+            workspace: &ws,
+            target_office: Some("sat-1"),
+            office_selector: Some("sat-1"),
+            shown: Shown::Compact,
+            state_root: Some(&state_root),
+        },
         &mut ctx,
         &mut transport,
-        Some(&state_root),
     )
     .unwrap_err();
     assert_eq!(err.exit_code(), 1);
+    let help = err.help().unwrap();
     assert!(
-        err.help()
-            .as_deref()
-            .is_some_and(|h| h
-                .contains("agentic-org agent bind --member 0193a5c0-0000-7000-8000-000000000051")),
-        "{:?}",
-        err.help()
+        help.contains("agentic-org agent bind --member 0193a5c0-0000-7000-8000-000000000051 --office sat-1 --workspace '"),
+        "{help}"
     );
+    assert!(help.contains("my '\\''repo'\\'' dir'"), "{help}");
+}
+
+#[test]
+fn format_parsing_preserves_flag_values_supports_yaml_and_rejects_bogus_or_mismatched_office() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("repo");
+    std::fs::create_dir(&ws).unwrap();
+    let state_root = tmp.path().join("state");
+
+    // 1. `--reason --format` and `--system-prompt-markdown --format=yaml` are flag VALUES,
+    // never stripped or misinterpreted as `--format`.
+    let args = words(&[
+        "hr",
+        "hire",
+        "--team",
+        "0193a5c0-0000-7000-8000-000000000001",
+        "--name",
+        "Ada",
+        "--handle",
+        "ada",
+        "--reason",
+        "--format",
+        "--system-prompt-markdown",
+        "--format=yaml",
+    ]);
+    let cleaned = with_json_format(&args);
+    assert!(
+        cleaned.windows(2).any(|w| w == ["--reason", "--format"]),
+        "{cleaned:?}"
+    );
+    assert!(
+        cleaned
+            .windows(2)
+            .any(|w| w == ["--system-prompt-markdown", "--format=yaml"]),
+        "{cleaned:?}"
+    );
+    let mut transport = HireAndBindTransport::new();
+    let (mut ctx, out) = captured(
+        Modes {
+            json: true,
+            ..Modes::default()
+        },
+        Terminal::piped(),
+        &[],
+    );
+    execute_hire_and_bind(
+        args,
+        HireBindOptions {
+            workspace: &ws,
+            target_office: None,
+            office_selector: None,
+            shown: Shown::Json,
+            state_root: Some(&state_root),
+        },
+        &mut ctx,
+        &mut transport,
+    )
+    .unwrap();
+    assert_eq!(transport.calls.len(), 2);
+    assert_eq!(transport.calls[0].1["reason"], "--format");
+    assert_eq!(
+        transport.calls[0].1["proposal"]["system_prompt_markdown"],
+        "--format=yaml"
+    );
+    let env: Value = serde_json::from_str(&out.stdout.text()).unwrap();
+    assert_eq!(env["ok"], true);
+
+    // 2. Explicit `--format yaml` serializes a valid YAML envelope with workspace_binding.
+    let mut transport = HireAndBindTransport::new();
+    let (mut ctx, out) = captured(Modes::default(), Terminal::piped(), &[]);
+    execute_hire_and_bind(
+        words(&[
+            "hr",
+            "hire",
+            "--team",
+            "0193a5c0-0000-7000-8000-000000000001",
+            "--name",
+            "Ada",
+            "--handle",
+            "ada",
+            "--reason",
+            "yaml check",
+            "--format",
+            "yaml",
+        ]),
+        HireBindOptions {
+            workspace: &ws,
+            target_office: None,
+            office_selector: None,
+            shown: Shown::AsWritten,
+            state_root: Some(&state_root),
+        },
+        &mut ctx,
+        &mut transport,
+    )
+    .unwrap();
+    let yaml_out = out.stdout.text();
+    assert!(yaml_out.starts_with("ok: true\n"), "{yaml_out}");
+    assert!(yaml_out.contains("workspace_binding:\n"), "{yaml_out}");
+    assert!(
+        yaml_out.contains("session_id: ext-0193a5c0-0000-7000-8000-000000000070"),
+        "{yaml_out}"
+    );
+    assert!(!yaml_out.contains("pkcs8"), "{yaml_out}");
+
+    // 3. Invalid `--format bogus` and missing `--format` value fail with exit 2 BEFORE hiring.
+    for bad in [
+        &[
+            "hr", "hire", "--team", "T1", "--name", "Ada", "--handle", "ada", "--reason", "r",
+            "--format", "bogus",
+        ][..],
+        &[
+            "hr",
+            "hire",
+            "--team",
+            "T1",
+            "--name",
+            "Ada",
+            "--handle",
+            "ada",
+            "--reason",
+            "r",
+            "--format=bogus",
+        ],
+        &[
+            "hr", "hire", "--team", "T1", "--name", "Ada", "--handle", "ada", "--reason", "r",
+            "--format",
+        ],
+    ] {
+        let mut transport = HireAndBindTransport::new();
+        let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
+        let err = execute_hire_and_bind(
+            words(bad),
+            HireBindOptions {
+                workspace: &ws,
+                target_office: None,
+                office_selector: None,
+                shown: Shown::AsWritten,
+                state_root: Some(&state_root),
+            },
+            &mut ctx,
+            &mut transport,
+        )
+        .unwrap_err();
+        assert_eq!(err.exit_code(), 2, "{bad:?}");
+        assert!(transport.calls.is_empty(), "{bad:?}");
+    }
+
+    // 4. `--office-id <sat>` mismatching targeted office fails exit 2 BEFORE hiring with hint.
+    for target_office in [None, Some("hq-1")] {
+        let mut transport = HireAndBindTransport::new();
+        let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
+        let err = execute_hire_and_bind(
+            words(&[
+                "hr",
+                "hire",
+                "--team",
+                "T1",
+                "--name",
+                "Ada",
+                "--handle",
+                "ada",
+                "--reason",
+                "r",
+                "--office-id",
+                "sat-1",
+            ]),
+            HireBindOptions {
+                workspace: &ws,
+                target_office,
+                office_selector: target_office,
+                shown: Shown::Compact,
+                state_root: Some(&state_root),
+            },
+            &mut ctx,
+            &mut transport,
+        )
+        .unwrap_err();
+        assert_eq!(err.exit_code(), 2, "{target_office:?}");
+        assert!(
+            transport.calls.is_empty(),
+            "must never leave an orphan hire"
+        );
+        let help = err.help().unwrap();
+        assert!(help.contains("hr hire --office-id sat-1"), "{help}");
+        assert!(
+            help.contains("agent bind --member <employee-id> --office sat-1 --workspace '"),
+            "{help}"
+        );
+    }
+
+    // Matching `--office-id` and `target_office` proceeds cleanly.
+    let mut transport = HireAndBindTransport::new();
+    let (mut ctx, _) = captured(Modes::default(), Terminal::piped(), &[]);
+    execute_hire_and_bind(
+        words(&[
+            "hr",
+            "hire",
+            "--team",
+            "0193a5c0-0000-7000-8000-000000000001",
+            "--name",
+            "Ada",
+            "--handle",
+            "ada",
+            "--reason",
+            "same office",
+            "--office-id",
+            "0193a5c0-0000-7000-8000-000000000009",
+        ]),
+        HireBindOptions {
+            workspace: &ws,
+            target_office: Some("0193a5c0-0000-7000-8000-000000000009"),
+            office_selector: Some("0193a5c0-0000-7000-8000-000000000009"),
+            shown: Shown::Compact,
+            state_root: Some(&state_root),
+        },
+        &mut ctx,
+        &mut transport,
+    )
+    .unwrap();
+    assert_eq!(transport.calls.len(), 2);
 }

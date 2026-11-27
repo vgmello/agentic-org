@@ -44,3 +44,17 @@ pub(crate) struct SignInArgs {
     #[arg(last = true, value_name = "COMMAND")]
     command: Vec<String>,
 }
+
+impl SignInArgs {
+    pub(crate) fn instance_name(&self) -> Option<&str> {
+        self.instance.name.as_deref()
+    }
+
+    pub(crate) fn office_id(&self) -> Option<&str> {
+        self.office.as_deref()
+    }
+
+    pub(crate) fn command(&self) -> &[String] {
+        &self.command
+    }
+}

@@ -1142,35 +1142,168 @@ fn one_step_bind_refuses_unauthorized_callers_and_chief_of_staff_closed() {
         "external agent must be refused: {refused:?}"
     );
 
-    // 4. Chief of Staff (if seeded in org snapshot) can never be bound externally even by owner.
-    if let Some(tess) = w
+    // 4. Built-in Chief of Staff (even with a live managed turn!) and built-in HR agent can
+    // never be bound externally even by owner, and both return `NotAuthorized` (never `Conflict`).
+    let tess = w.office.chief_of_staff().unwrap().expect("Chief of Staff");
+    let _tess_turn = w
+        .node
+        .sessions
+        .bindings()
+        .issue(
+            tess.id.as_str(),
+            "run-tess-live",
+            "sess-tess-live",
+            std::process::id() as libc::pid_t,
+            None,
+        )
+        .unwrap();
+    let mut owner_transport = GrantTransport::new(&w, &w.owner);
+    let err = bind_workspace(
+        &mut owner_transport,
+        &WorkspaceBindRequest {
+            member: tess.id.as_str(),
+            workspace_dir: &ws,
+            label: None,
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        err.code,
+        ErrorCode::NotAuthorized,
+        "Chief of Staff with live turn must fail NotAuthorized, never Conflict: {err:?}"
+    );
+    assert!(!state.dir().exists());
+    w.node.sessions.bindings().revoke(tess.id.as_str(), None);
+
+    let hr = w
+        .office
+        .list_employees()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.builtin_key == Some(org_office::organization_family::records::BuiltinKey::Hr))
+        .expect("built-in HR agent");
+    let err = bind_workspace(
+        &mut owner_transport,
+        &WorkspaceBindRequest {
+            member: hr.id.as_str(),
+            workspace_dir: &ws,
+            label: None,
+            ttl_secs: None,
+            takeover: true,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        err.code,
+        ErrorCode::NotAuthorized,
+        "built-in HR agent must fail NotAuthorized: {err:?}"
+    );
+    assert!(!state.dir().exists());
+
+    // 5. Targeting a Person returns `InvalidRequest`; targeting a paused or offboarded agent
+    // returns `Conflict`.
+    let err = bind_workspace(
+        &mut owner_transport,
+        &WorkspaceBindRequest {
+            member: &alice_id,
+            workspace_dir: &ws,
+            label: None,
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        err.code,
+        ErrorCode::InvalidRequest,
+        "Person target: {err:?}"
+    );
+    assert!(!state.dir().exists());
+
+    let ben_version = w
         .office
         .org_snapshot()
         .unwrap()
         .members
-        .iter()
-        .find(|m| m.handle.as_deref() == Some("tess"))
-    {
-        let mut owner_transport = GrantTransport::new(&w, &w.owner);
-        let err = bind_workspace(
-            &mut owner_transport,
-            &WorkspaceBindRequest {
-                member: &tess.id,
-                workspace_dir: &ws,
-                label: None,
-                ttl_secs: None,
-                takeover: false,
-                command_id: None,
-                state_root: Some(&state_root),
-            },
-        )
-        .unwrap_err();
-        assert_eq!(err.code, ErrorCode::NotAuthorized, "{err:?}");
-        assert!(!state.dir().exists());
-    }
+        .into_iter()
+        .find(|m| m.id == w.ben)
+        .unwrap()
+        .version;
+    ok_value(grant_call::<org_proto::hiring::AgentSetStatus>(
+        &w,
+        &org_proto::hiring::AgentSetStatusParams {
+            command_id: w.office.next_uuid_v7(),
+            member_id: w.ben.clone(),
+            expected_version: ben_version,
+            paused: true,
+        },
+    ));
+    let err = bind_workspace(
+        &mut owner_transport,
+        &WorkspaceBindRequest {
+            member: "@ben",
+            workspace_dir: &ws,
+            label: None,
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        err.code,
+        ErrorCode::Conflict,
+        "paused agent target: {err:?}"
+    );
+    assert!(!state.dir().exists());
 
-    // 5. None of the refused calls polluted pending logins: owner still binds `@ada` cleanly.
-    let mut owner_transport = GrantTransport::new(&w, &w.owner);
+    let ben_version2 = w
+        .office
+        .org_snapshot()
+        .unwrap()
+        .members
+        .into_iter()
+        .find(|m| m.id == w.ben)
+        .unwrap()
+        .version;
+    ok_value(grant_call::<AgentOffboard>(
+        &w,
+        &AgentOffboardParams {
+            command_id: w.office.next_uuid_v7(),
+            member_id: w.ben.clone(),
+            expected_version: ben_version2,
+        },
+    ));
+    let err = bind_workspace(
+        &mut owner_transport,
+        &WorkspaceBindRequest {
+            member: &w.ben,
+            workspace_dir: &ws,
+            label: None,
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        err.code,
+        ErrorCode::Conflict,
+        "offboarded agent target: {err:?}"
+    );
+    assert!(!state.dir().exists());
+
+    // 6. None of the refused calls polluted pending logins: owner still binds `@ada` cleanly.
     let ok = bind_workspace(
         &mut owner_transport,
         &WorkspaceBindRequest {
@@ -1185,4 +1318,227 @@ fn one_step_bind_refuses_unauthorized_callers_and_chief_of_staff_closed() {
     )
     .unwrap();
     assert_eq!(ok.session.employee_id, w.ada);
+}
+
+#[test]
+fn one_step_bind_succeeds_for_non_owner_operators_warm_idle_sessions_and_full_pending_logins() {
+    use org_agent_cli::external_auth::bind::{bind_workspace, WorkspaceBindRequest};
+    use org_proto::org::{MemberAddPersonParams, TeamSetLeadParams};
+    use org_proto::sessions::{MemberSessionStartParams, SessionState};
+
+    let w = world();
+    let snap = w.office.org_snapshot().unwrap();
+    let team = snap.teams[0].clone();
+    let tmp = tempfile::tempdir().unwrap();
+    let ws_hirer = tmp.path().join("ws-hirer");
+    let ws_lead = tmp.path().join("ws-lead");
+    let ws_warm = tmp.path().join("ws-warm");
+    let ws_dos = tmp.path().join("ws-dos");
+    for d in [&ws_hirer, &ws_lead, &ws_warm, &ws_dos] {
+        std::fs::create_dir(d).unwrap();
+    }
+    let state_root = tmp.path().join("state");
+
+    // 1. Authorized non-owner operator with `may_hire = true` succeeds on `@ada`.
+    let hirer_id = w.office.next_uuid_v7();
+    w.office
+        .submit_org(
+            &w.owner,
+            org_office::rules::OrgCommand::MemberAddPerson(MemberAddPersonParams {
+                command_id: w.office.next_uuid_v7(),
+                member_id: hirer_id.clone(),
+                name: "Hirer".into(),
+                handle: Some("hirer".into()),
+                home_team_id: Some(team.id.clone()),
+                contact: None,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    let mut hirer_transport = GrantTransport::new(&w, &hirer_id);
+    let bound_hirer = bind_workspace(
+        &mut hirer_transport,
+        &WorkspaceBindRequest {
+            member: "@ada",
+            workspace_dir: &ws_hirer,
+            label: Some("hirer-ws"),
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap();
+    assert_eq!(bound_hirer.session.approved_by, hirer_id);
+    let hirer_state = WorkspaceState::for_root(&state_root, &ws_hirer.canonicalize().unwrap());
+    let (code, who) = agent_os(&w, binding_from_workspace_state(&hirer_state), &["who"]);
+    assert_eq!(code, 0, "hirer-bound workspace must authenticate: {who}");
+
+    // 2. Authorized non-owner team lead (with `may_hire = false`!) succeeds on their team's agent.
+    let lead_id = w.office.next_uuid_v7();
+    w.office
+        .submit_org(
+            &w.owner,
+            org_office::rules::OrgCommand::MemberAddPerson(MemberAddPersonParams {
+                command_id: w.office.next_uuid_v7(),
+                member_id: lead_id.clone(),
+                name: "Lead".into(),
+                handle: Some("lead".into()),
+                home_team_id: Some(team.id.clone()),
+                contact: None,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    let lead_version = w
+        .office
+        .org_snapshot()
+        .unwrap()
+        .members
+        .into_iter()
+        .find(|m| m.id == lead_id)
+        .unwrap()
+        .version;
+    ok_value(grant_call::<org_proto::hiring::MemberSetMayHire>(
+        &w,
+        &org_proto::hiring::MemberSetMayHireParams {
+            command_id: w.office.next_uuid_v7(),
+            member_id: lead_id.clone(),
+            expected_version: lead_version,
+            may_hire: false,
+        },
+    ));
+    w.office
+        .submit_org(
+            &w.owner,
+            org_office::rules::OrgCommand::TeamSetLead(TeamSetLeadParams {
+                command_id: w.office.next_uuid_v7(),
+                team_id: team.id.clone(),
+                expected_version: team.version,
+                lead_member_id: Some(lead_id.clone()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    let mut lead_transport = GrantTransport::new(&w, &lead_id);
+    let bound_lead = bind_workspace(
+        &mut lead_transport,
+        &WorkspaceBindRequest {
+            member: "@ben",
+            workspace_dir: &ws_lead,
+            label: Some("lead-ws"),
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap();
+    assert_eq!(bound_lead.session.approved_by, lead_id);
+    let lead_state = WorkspaceState::for_root(&state_root, &ws_lead.canonicalize().unwrap());
+    let (code, who_ben) = agent_os(&w, binding_from_workspace_state(&lead_state), &["who"]);
+    assert_eq!(
+        code, 0,
+        "team-lead-bound workspace must authenticate: {who_ben}"
+    );
+
+    // 3. Filling `PendingLogins` (3 pending logins for `@ada`) must NEVER DoS `member.external_bind`.
+    for _ in 0..3 {
+        let _ = login(&w, "@ada");
+    }
+    let (_, extra_pubkey) = client::generate_key().unwrap();
+    let full = client::call::<AuthLoginRequest>(
+        &target(&w).connect().unwrap(),
+        &AuthLoginRequestParams {
+            member: "@ada".into(),
+            pubkey_ed25519_b64: extra_pubkey,
+            workspace_label: "fourth-pending".into(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        full.code,
+        ErrorCode::Unavailable,
+        "4th pending login must hit MAX_PENDING_PER_EMPLOYEE"
+    );
+    let mut owner_transport = GrantTransport::new(&w, &w.owner);
+    let bound_dos = bind_workspace(
+        &mut owner_transport,
+        &WorkspaceBindRequest {
+            member: "@ada",
+            workspace_dir: &ws_dos,
+            label: Some("post-dos"),
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap();
+    assert_eq!(bound_dos.session.employee_id, w.ada);
+    let dos_state = WorkspaceState::for_root(&state_root, &ws_dos.canonicalize().unwrap());
+    let (code, who_dos) = agent_os(&w, binding_from_workspace_state(&dos_state), &["who"]);
+    assert_eq!(
+        code, 0,
+        "bind must succeed even when PendingLogins is full: {who_dos}"
+    );
+
+    // 4. Warm `SessionState::Idle` managed pump binds cleanly WITHOUT `--takeover` (parity with
+    // `external_approve`), parks the warm pump, and authenticates immediately.
+    ok_value(grant_call::<MemberExternalRevoke>(
+        &w,
+        &MemberExternalRevokeParams {
+            command_id: None,
+            employee_id: "@ada".into(),
+            session_id: None,
+        },
+    ));
+    w.node
+        .sessions
+        .start_session(
+            &w.owner,
+            &MemberSessionStartParams {
+                command_id: w.office.next_uuid_v7(),
+                employee_id: w.ada.clone(),
+                instruction: Some("warm up".into()),
+                workspace: None,
+            },
+        )
+        .unwrap();
+    wait_until(
+        Duration::from_secs(5),
+        "managed session finishes turn and stays warm idle",
+        || {
+            w.node.recorded.count_for("ada") >= 1
+                && w.node
+                    .sessions
+                    .inspect_session(&w.owner, Some(&w.ada))
+                    .ok()
+                    .is_some_and(|insp| insp.session.state == SessionState::Idle)
+        },
+    );
+    let bound_warm = bind_workspace(
+        &mut owner_transport,
+        &WorkspaceBindRequest {
+            member: "@ada",
+            workspace_dir: &ws_warm,
+            label: Some("warm-idle-bind"),
+            ttl_secs: None,
+            takeover: false,
+            command_id: None,
+            state_root: Some(&state_root),
+        },
+    )
+    .unwrap();
+    assert!(
+        !bound_warm.session.took_over_managed,
+        "warm idle session is not a live turn takeover"
+    );
+    assert!(!w.node.sessions.bindings().has_active(&w.ada));
+    let warm_state = WorkspaceState::for_root(&state_root, &ws_warm.canonicalize().unwrap());
+    let (code, who_warm) = agent_os(&w, binding_from_workspace_state(&warm_state), &["who"]);
+    assert_eq!(
+        code, 0,
+        "workspace bound over warm idle session must authenticate immediately: {who_warm}"
+    );
 }

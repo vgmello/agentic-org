@@ -267,7 +267,19 @@ fn dispatch(top: TopCommand, ctx: &mut ExecutionContext) -> Result<(), CliError>
     match top {
         TopCommand::Serve(pass) => serve::run(pass.args, ctx),
         TopCommand::Setup(pass) => setup::run(&pass.args, ctx),
-        TopCommand::SignIn(args) => sign_in::run(args, ctx),
+        TopCommand::SignIn(args) => {
+            if let [first, second, rest @ ..] = args.command() {
+                if first == "agent" && second == "bind" {
+                    return agent::run_after_sign_in(
+                        args.instance_name(),
+                        args.office_id(),
+                        rest,
+                        ctx,
+                    );
+                }
+            }
+            sign_in::run(args, ctx)
+        }
         TopCommand::Context(args) => context::run(args, ctx),
         TopCommand::Admin(args) => admin::run(args, ctx),
         TopCommand::Org(args) => match args.office_words() {

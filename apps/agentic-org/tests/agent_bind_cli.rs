@@ -163,6 +163,87 @@ fn agent_bind_help_usage_errors_and_dry_run_keep_git_repo_clean() {
     }
     assert_eq!(fs::read_dir(sandbox.root.join("state")).unwrap().count(), 0);
 
+    // Empty or control-char `--member` fails exit 2 even with `--dry-run`.
+    for bad_member in ["", "   ", "bad\nid"] {
+        let out = sandbox.run(&[
+            "agent",
+            "bind",
+            "--member",
+            bad_member,
+            "--workspace",
+            repo_str,
+            "--dry-run",
+            "--json",
+        ]);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{bad_member:?}: {}",
+            text(&out.stderr)
+        );
+        let err: Value = serde_json::from_str(text(&out.stderr).trim()).unwrap();
+        assert_eq!(err["error"]["code"], "cli::usage");
+    }
+
+    // `agentic-org sign-in -- agent bind ...` routes cleanly, honors outer `--office`, and
+    // rejects conflicting selectors or invalid `--member` with exit 2.
+    let out = sandbox.run(&[
+        "sign-in",
+        "--office",
+        "off-1",
+        "--",
+        "agent",
+        "bind",
+        "--member",
+        "@ada",
+        "--workspace",
+        repo_str,
+        "--dry-run",
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let preview: Value = serde_json::from_str(text(&out.stdout).trim()).unwrap();
+    assert_eq!(preview["action"], "agent_bind");
+    assert_eq!(preview["office_id"], "off-1");
+    assert_eq!(preview["workspace_root"], repo_str);
+
+    for bad_sign_in in [
+        vec![
+            "sign-in",
+            "--office",
+            "off-1",
+            "--",
+            "agent",
+            "bind",
+            "--office",
+            "off-2",
+            "--member",
+            "@ada",
+            "--workspace",
+            repo_str,
+            "--dry-run",
+        ],
+        vec![
+            "sign-in",
+            "--",
+            "agent",
+            "bind",
+            "--member",
+            "",
+            "--workspace",
+            repo_str,
+            "--dry-run",
+        ],
+    ] {
+        let out = sandbox.run(&bad_sign_in);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{bad_sign_in:?}: {}",
+            text(&out.stderr)
+        );
+    }
+
     // Missing directory fails closed before reaching any host.
     let missing = sandbox.root.join("does-not-exist");
     let out = sandbox.run(&[
@@ -253,6 +334,38 @@ fn hr_hire_bind_workspace_rejects_invalid_combinations_before_contacting_host() 
             "ada",
             "--reason",
             "r",
+            "--bind-workspace",
+            repo_str,
+        ],
+        vec![
+            "hr",
+            "hire",
+            "--team",
+            "T1",
+            "--name",
+            "Ada",
+            "--handle",
+            "ada",
+            "--reason",
+            "r",
+            "--office-id",
+            "sat-1",
+            "--bind-workspace",
+            repo_str,
+        ],
+        vec![
+            "hr",
+            "hire",
+            "--team",
+            "T1",
+            "--name",
+            "Ada",
+            "--handle",
+            "ada",
+            "--reason",
+            "r",
+            "--format",
+            "bogus",
             "--bind-workspace",
             repo_str,
         ],

@@ -4,4 +4,4 @@
 
 mod bind;
 
-pub(crate) use bind::run;
+pub(crate) use bind::{run, run_after_sign_in};

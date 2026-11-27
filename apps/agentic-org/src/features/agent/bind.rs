@@ -11,7 +11,7 @@ use clap::error::ErrorKind;
 use clap::Parser;
 use clap_complete::engine::ArgValueCompleter;
 use org_agent_cli::external_auth::bind::{
-    bind_workspace, parse_lease_ttl, preflight_workspace, workspace_label, WorkspaceBindRequest,
+    parse_lease_ttl, PreparedWorkspaceBind, WorkspaceBindRequest,
 };
 use org_agent_cli::OfficeTransport;
 use org_cli_shell::context::{ColorMode, ExecutionContext};
@@ -190,33 +190,106 @@ fn parse_bind_args(
     }
 }
 
-pub(crate) fn run(raw_args: &[String], ctx: &mut ExecutionContext) -> Result<(), CliError> {
-    let Some(args) = parse_bind_args(raw_args, ctx)? else {
-        return Ok(());
-    };
-    let target = selection::select(args.instance.name.as_deref(), args.office.as_deref())?;
+fn validate_member(raw: &str) -> Result<&str, CliError> {
+    if raw.chars().any(char::is_control) {
+        return Err(
+            CliError::usage("Missing or invalid agent reference for --member.")
+                .with_help("Pass an agent @handle or employee UUIDv7 to --member."),
+        );
+    }
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(
+            CliError::usage("Missing or invalid agent reference for --member.")
+                .with_help("Pass an agent @handle or employee UUIDv7 to --member."),
+        );
+    }
+    Ok(trimmed)
+}
+
+fn merge_selector<'a>(
+    flag: &str,
+    outer: Option<&'a str>,
+    inner: Option<&'a str>,
+) -> Result<Option<&'a str>, CliError> {
+    match (outer, inner) {
+        (Some(a), Some(b)) if a != b => {
+            Err(CliError::usage(format!("{flag} is given more than once")))
+        }
+        (outer, inner) => Ok(inner.or(outer)),
+    }
+}
+
+fn prepare_bind(
+    args: &BindArgs,
+    state_root: Option<&Path>,
+) -> Result<PreparedWorkspaceBind, CliError> {
+    let member = validate_member(&args.member)?;
     let ttl_secs = args
         .ttl
         .as_deref()
         .map(parse_lease_ttl)
         .transpose()
         .map_err(refusal_to_cli)?;
-    let (canonical_root, _) = preflight_workspace(&args.workspace, None).map_err(refusal_to_cli)?;
-    let label = workspace_label(&canonical_root, args.label.as_deref()).map_err(refusal_to_cli)?;
+    PreparedWorkspaceBind::prepare(&WorkspaceBindRequest {
+        member,
+        workspace_dir: &args.workspace,
+        label: args.label.as_deref(),
+        ttl_secs,
+        takeover: args.takeover,
+        command_id: None,
+        state_root,
+    })
+    .map_err(refusal_to_cli)
+}
+
+pub(crate) fn run(raw_args: &[String], ctx: &mut ExecutionContext) -> Result<(), CliError> {
+    run_with_defaults(None, None, raw_args, ctx)
+}
+
+/// Runs `agentic-org sign-in [--name ...] [--office ...] -- agent bind ...`, combining any
+/// outer sign-in selectors with inner `agent bind` flags and validating inputs before touching
+/// the host.
+pub(crate) fn run_after_sign_in(
+    sign_in_instance: Option<&str>,
+    sign_in_office: Option<&str>,
+    raw_args: &[String],
+    ctx: &mut ExecutionContext,
+) -> Result<(), CliError> {
+    run_with_defaults(sign_in_instance, sign_in_office, raw_args, ctx)
+}
+
+fn run_with_defaults(
+    default_instance: Option<&str>,
+    default_office: Option<&str>,
+    raw_args: &[String],
+    ctx: &mut ExecutionContext,
+) -> Result<(), CliError> {
+    let Some(args) = parse_bind_args(raw_args, ctx)? else {
+        return Ok(());
+    };
+    let instance = merge_selector(
+        "--instance",
+        default_instance,
+        args.instance.name.as_deref(),
+    )?;
+    let office = merge_selector("--office", default_office, args.office.as_deref())?;
+    let target = selection::select(instance, office)?;
+    let prepared = prepare_bind(&args, None)?;
     if ctx.modes().dry_run {
         let plan = json!({
             "action": "agent_bind",
-            "member": args.member,
-            "workspace_root": canonical_root.display().to_string(),
-            "workspace_label": label,
-            "ttl_secs": ttl_secs,
-            "takeover": args.takeover,
+            "member": prepared.member,
+            "workspace_root": prepared.canonical_root.display().to_string(),
+            "workspace_label": prepared.label,
+            "ttl_secs": prepared.ttl_secs,
+            "takeover": prepared.takeover,
             "office_id": target.office(),
         });
         let summary = format!(
             "would bind workspace {} to agent {}",
-            canonical_root.display(),
-            args.member
+            prepared.canonical_root.display(),
+            prepared.member
         );
         return Ok(ctx.render_dry_run(&summary, &plan)?);
     }
@@ -226,35 +299,27 @@ pub(crate) fn run(raw_args: &[String], ctx: &mut ExecutionContext) -> Result<(),
         &mut io::stderr(),
     )?;
     let mut transport = ChannelTransport(channel);
-    execute_with_transport(&args, &mut transport, None, ctx)
+    execute_prepared(prepared, &mut transport, ctx)
 }
 
 /// Runs `agent bind` against any [`OfficeTransport`] (real grant-bound channel or test transport).
+#[cfg(test)]
 pub(crate) fn execute_with_transport<T: OfficeTransport + ?Sized>(
     args: &BindArgs,
     transport: &mut T,
     state_root: Option<&Path>,
     ctx: &mut ExecutionContext,
 ) -> Result<(), CliError> {
-    let ttl_secs = args
-        .ttl
-        .as_deref()
-        .map(parse_lease_ttl)
-        .transpose()
-        .map_err(refusal_to_cli)?;
-    let bound = bind_workspace(
-        transport,
-        &WorkspaceBindRequest {
-            member: &args.member,
-            workspace_dir: &args.workspace,
-            label: args.label.as_deref(),
-            ttl_secs,
-            takeover: args.takeover,
-            command_id: None,
-            state_root,
-        },
-    )
-    .map_err(refusal_to_cli)?;
+    let prepared = prepare_bind(args, state_root)?;
+    execute_prepared(prepared, transport, ctx)
+}
+
+fn execute_prepared<T: OfficeTransport + ?Sized>(
+    prepared: PreparedWorkspaceBind,
+    transport: &mut T,
+    ctx: &mut ExecutionContext,
+) -> Result<(), CliError> {
+    let bound = prepared.execute(transport).map_err(refusal_to_cli)?;
     let json = view::json(&bound)?;
     view::detail(ctx, &json, &json, "session_id", &FIELDS)?;
     let who = bound

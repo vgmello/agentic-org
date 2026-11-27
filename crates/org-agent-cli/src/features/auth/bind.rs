@@ -180,75 +180,116 @@ fn validate_office_socket(endpoint: Option<&str>) -> Result<Option<String>, Refu
     Ok(Some(endpoint.to_owned()))
 }
 
+/// Validated and preflighted inputs for one-step workspace binding (`TASK-211`), avoiding
+/// duplicate workspace resolution, state-directory preflight, or TTL/label checks between
+/// dry-run previews and execution.
+#[derive(Debug, Clone)]
+pub struct PreparedWorkspaceBind {
+    pub member: String,
+    pub canonical_root: PathBuf,
+    pub label: String,
+    pub ttl_secs: Option<u64>,
+    pub takeover: bool,
+    pub command_id: Option<String>,
+    state: WorkspaceState,
+}
+
+impl PreparedWorkspaceBind {
+    /// Validates `req`, resolves the workspace folder, and preflights `[state_root,
+    /// state_root/workspaces, self.dir]` without sending any office RPC or creating directories.
+    pub fn prepare(req: &WorkspaceBindRequest<'_>) -> Result<Self, Refusal> {
+        let member = req.member.trim();
+        if member.is_empty() || req.member.chars().any(char::is_control) {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                "Missing or invalid agent reference for --member.",
+                "Pass an agent @handle or employee UUIDv7 to --member.",
+            ));
+        }
+        if let Some(ttl) = req.ttl_secs {
+            validate_ttl_secs(ttl)?;
+        }
+        let (canonical_root, state) = preflight_workspace(req.workspace_dir, req.state_root)?;
+        let label = workspace_label(&canonical_root, req.label)?;
+        Ok(Self {
+            member: member.to_owned(),
+            canonical_root,
+            label,
+            ttl_secs: req.ttl_secs,
+            takeover: req.takeover,
+            command_id: req.command_id.map(str::to_owned),
+            state,
+        })
+    }
+
+    /// Generates a fresh Ed25519 keypair, records an approved external lease via
+    /// `member.external_bind`, and writes the workspace credentials outside Git.
+    pub fn execute<T: OfficeTransport + ?Sized>(
+        self,
+        transport: &mut T,
+    ) -> Result<BoundWorkspace, Refusal> {
+        let (pkcs8, pubkey) = client::generate_key()?;
+        let command_id = self.command_id.or_else(try_new_uuid_v7);
+        let params = MemberExternalBindParams {
+            command_id,
+            employee_id: self.member,
+            pubkey_ed25519_b64: pubkey,
+            workspace_label: self.label,
+            ttl_secs: self.ttl_secs,
+            takeover: self.takeover,
+        };
+        let raw_params = serde_json::to_value(&params).map_err(|_| {
+            Refusal::new(
+                ErrorCode::InvalidRequest,
+                "Could not encode member.external_bind parameters.",
+                "Check the command flags and retry.",
+            )
+        })?;
+        let raw = transport.call_method(MemberExternalBind::METHOD, raw_params)?;
+        let bound: MemberExternalBindResult = serde_json::from_value(raw).map_err(|_| {
+            Refusal::new(
+                ErrorCode::Unavailable,
+                "The office returned an unreadable `member.external_bind` reply.",
+                "Retry the command or check the office version.",
+            )
+        })?;
+        let socket = validate_office_socket(bound.office_socket.as_deref())?;
+        let runtime_dir = socket
+            .as_deref()
+            .and_then(|s| runtime_dir_of_office_socket(Path::new(s)))
+            .map(|p| p.display().to_string());
+        let workspace_root = self.canonical_root.display().to_string();
+        self.state.ensure()?;
+        // Remove any prior cached fast token before writing the new key/binding so a mid-write
+        // failure can never leave a stale token beside newly written state.
+        self.state.remove_token()?;
+        self.state.write_key(&pkcs8)?;
+        self.state.write_binding(&WorkspaceBinding {
+            version: 1,
+            workspace_root: workspace_root.clone(),
+            office_id: bound.office_id.clone(),
+            socket,
+            runtime_dir,
+            member_id: bound.session.employee_id.clone(),
+            handle: bound.session.handle.clone(),
+            session_id: bound.session.session_id.clone(),
+            lease_expires_at: bound.session.expires_at.clone(),
+        })?;
+        Ok(BoundWorkspace {
+            workspace_root,
+            office_id: bound.office_id,
+            session: bound.session,
+        })
+    }
+}
+
 /// Generates a fresh Ed25519 keypair, records an approved external lease via
 /// `member.external_bind`, and writes the workspace credentials outside Git.
 pub fn bind_workspace<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     req: &WorkspaceBindRequest<'_>,
 ) -> Result<BoundWorkspace, Refusal> {
-    let member = req.member.trim();
-    if member.is_empty() || member.chars().any(char::is_control) {
-        return Err(Refusal::new(
-            ErrorCode::InvalidRequest,
-            "Missing or invalid agent reference for --member.",
-            "Pass an agent @handle or employee UUIDv7 to --member.",
-        ));
-    }
-    if let Some(ttl) = req.ttl_secs {
-        validate_ttl_secs(ttl)?;
-    }
-    let (canonical_root, state) = preflight_workspace(req.workspace_dir, req.state_root)?;
-    let label = workspace_label(&canonical_root, req.label)?;
-    let (pkcs8, pubkey) = client::generate_key()?;
-    let command_id = req.command_id.map(str::to_owned).or_else(try_new_uuid_v7);
-    let params = MemberExternalBindParams {
-        command_id,
-        employee_id: member.to_owned(),
-        pubkey_ed25519_b64: pubkey,
-        workspace_label: label,
-        ttl_secs: req.ttl_secs,
-        takeover: req.takeover,
-    };
-    let raw_params = serde_json::to_value(&params).map_err(|_| {
-        Refusal::new(
-            ErrorCode::InvalidRequest,
-            "Could not encode member.external_bind parameters.",
-            "Check the command flags and retry.",
-        )
-    })?;
-    let raw = transport.call_method(MemberExternalBind::METHOD, raw_params)?;
-    let bound: MemberExternalBindResult = serde_json::from_value(raw).map_err(|_| {
-        Refusal::new(
-            ErrorCode::Unavailable,
-            "The office returned an unreadable `member.external_bind` reply.",
-            "Retry the command or check the office version.",
-        )
-    })?;
-    let socket = validate_office_socket(bound.office_socket.as_deref())?;
-    let runtime_dir = socket
-        .as_deref()
-        .and_then(|s| runtime_dir_of_office_socket(Path::new(s)))
-        .map(|p| p.display().to_string());
-    let workspace_root = canonical_root.display().to_string();
-    state.ensure()?;
-    state.write_key(&pkcs8)?;
-    state.write_binding(&WorkspaceBinding {
-        version: 1,
-        workspace_root: workspace_root.clone(),
-        office_id: bound.office_id.clone(),
-        socket,
-        runtime_dir,
-        member_id: bound.session.employee_id.clone(),
-        handle: bound.session.handle.clone(),
-        session_id: bound.session.session_id.clone(),
-        lease_expires_at: bound.session.expires_at.clone(),
-    })?;
-    state.remove_token()?;
-    Ok(BoundWorkspace {
-        workspace_root,
-        office_id: bound.office_id,
-        session: bound.session,
-    })
+    PreparedWorkspaceBind::prepare(req)?.execute(transport)
 }
 
 #[cfg(test)]
