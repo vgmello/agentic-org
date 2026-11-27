@@ -61,12 +61,11 @@ function navInner(activeId) {
 const findStatus = () => (list.q.trim() ? plural(findConversations(list.q.trim().toLowerCase()).length, "conversation", "conversations") : "");
 
 function findHtml() {
-  const kbd = S.singleKey ? '<kbd aria-hidden="true">#</kbd>' : "";
   return `<div class="chlist-tools">
       <div class="chat-find-row">
         <div class="chat-find">${ic("search", "ic16")}<label class="sr-only" for="chat-find">Find a conversation</label>
-          <input class="field" id="chat-find" type="search" placeholder="Find a conversation" value="${esc(list.q)}" autocomplete="off" aria-controls="chat-nav" aria-describedby="chat-find-status"${S.singleKey ? ' aria-keyshortcuts="#"' : ""}>${kbd}</div>
-        <button class="btn ghost icon chat-new" id="chat-new" type="button" data-act="chat-new" aria-label="New message" title="New message">${ic("pencil", "ic16")}</button>
+          <input class="field" id="chat-find" type="search" placeholder="Find" title="Find a conversation${S.singleKey ? " (#)" : ""}" value="${esc(list.q)}" autocomplete="off" aria-controls="chat-nav" aria-describedby="chat-find-status"${S.singleKey ? ' aria-keyshortcuts="#"' : ""}>
+          <button class="btn ghost icon chat-new" id="chat-new" type="button" data-act="chat-new" aria-label="New message" title="New message">${ic("pencil", "ic16")}</button></div>
       </div>
       <p class="sr-only" id="chat-find-status" role="status">${findStatus()}</p>
     </div>`;

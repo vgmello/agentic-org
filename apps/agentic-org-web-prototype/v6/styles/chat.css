@@ -138,25 +138,10 @@
 /* New message is a compose icon beside Find (owner) */
 .chat-find-row { display: flex; align-items: center; gap: 6px; }
 .chat-find-row > .chat-find { flex: 1 1 auto; min-width: 0; }
-#main .chat .chat-find-row > .chat-new { flex: none; width: var(--control-height); min-width: var(--control-height); height: var(--control-height); padding: 0; justify-content: center; color: var(--gray-300); }
-/* A channel's project chip and member stack sit with the header actions (owner) */
-#main .chat .chat-head-meta { display: flex; align-items: center; gap: 6px; margin-inline-end: 4px; }
-#main .chat .chat-proj-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 14rem; padding: 4px 10px; border-radius: 999px; background: var(--hover); color: var(--gray-300); font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; }
-#main .chat .chat-proj-chip a { color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
-#main .chat .chat-proj-chip a:hover { color: var(--white); text-decoration: underline; }
-#main .chat .chat-member-stack { gap: 6px; padding-inline: 6px 10px; color: var(--gray-300); text-decoration: none; }
-#main .chat .chat-stack-avs { display: inline-flex; }
-#main .chat .chat-stack-avs > .av { box-shadow: 0 0 0 2px var(--side-panel-surface, var(--gray-900)); }
-#main .chat .chat-stack-avs > .av + .av { margin-inline-start: -8px; }
-#main .chat .chat-stack-avs > .av { position: relative; flex: none; }
-#main .chat .chat-kind-chip { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; background: var(--hover); color: var(--gray-300); font-size: var(--fs-sm); white-space: nowrap; }
-#main .chat .chat-head-dm .chat-status { display: inline-flex; align-items: center; gap: 6px; color: var(--gray-300); font-size: var(--fs-sm); white-space: nowrap; }
-@media (max-width: 1000px) {
-  #main .chat .chat-head-meta { display: none; }
-  /* The project, members and request status are then in Details */
-  #main .chat > .chhead .chat-details-btn { display: inline-flex; }
-}
-#main .chat .chat-titleline > .chat-desc { overflow-wrap: break-word; word-break: normal; }
+/* Compose sits inside the right end of Find, so the two read as one control (owner) */
+#main .chat .chat-find .field { padding-inline-end: 40px; }
+#main .chat .chat-find > .chat-new { position: absolute; z-index: 1; inset-inline-end: 4px; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0; justify-content: center; color: var(--gray-300); border-radius: calc(var(--radius-md) - 2px); }
+#main .chat .chat-find > .chat-new:hover { color: var(--white); background: var(--hover); }
 .chat-find-empty { padding: 12px 8px 0; font-size: var(--fs-sm); color: var(--gray-400); }
 .chat .chlist .chat-person { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 6px 8px; border-radius: var(--radius-md); text-align: start; font-weight: 500; color: var(--gray-300); }
 .chat .chlist .chat-person:hover { background: var(--hover); color: var(--white); }
