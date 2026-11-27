@@ -28,6 +28,13 @@ async function executeInboxDecision(
 			});
 			return { message: `Recorded “${decision.secondaryAction.label}”.` };
 		}
+		if (
+			decision.secondaryAction?.kind === 'open_work' &&
+			inboxItem.open?.path &&
+			!/^\/work\/[^/?#]+/.test(inboxItem.open.path)
+		) {
+			return { message: '', navigateTo: inboxItem.open.path };
+		}
 		return { message: '', navigateTo: decision.detailHref };
 	}
 

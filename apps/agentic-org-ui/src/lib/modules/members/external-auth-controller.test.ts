@@ -244,4 +244,109 @@ describe('ExternalAuthController', () => {
 
 		controller.dispose();
 	});
+
+	it('aborts in-flight mutations, resets busyAction, and drops late outcomes on target switch (H3)', async () => {
+		const renewGate = deferred<ExternalSessionView>();
+		const revokeGate = deferred<{ employee_id: string; revoked: boolean; session_id?: string }>();
+		const signals: AbortSignal[] = [];
+
+		const memberSessions = vi
+			.fn<ExternalAuthApi['memberSessions']>()
+			.mockImplementation(async (_orgId, memberId) => sampleSessions(memberId, `ws-${memberId}`));
+		const renew = vi.fn<ExternalAuthApi['renew']>((_orgId, _memId, _input, signal) => {
+			if (signal) signals.push(signal);
+			return renewGate.promise;
+		});
+		const revoke = vi.fn<ExternalAuthApi['revoke']>((_orgId, _memId, _input, signal) => {
+			if (signal) signals.push(signal);
+			return revokeGate.promise;
+		});
+
+		const controller = new ExternalAuthController({
+			api: createStubApi({ memberSessions, renew, revoke }),
+			onSessionEnded: () => () => {}
+		});
+
+		await controller.load(ORG_A, MEM_A);
+		const callsBeforeSwitch = memberSessions.mock.calls.length;
+
+		// Start a renew on MEM_A, then switch to MEM_B before it settles.
+		const renewPromise = controller.renew(ORG_A, MEM_A, { session_id: 'sess-a' });
+		expect(controller.busyAction).toBe('renew');
+
+		await controller.load(ORG_A, MEM_B);
+		expect(signals[0]?.aborted).toBe(true);
+		expect(controller.busyAction).toBeUndefined();
+		expect(controller.data?.employee_id).toBe(MEM_B);
+
+		// Late rejection from MEM_A must NOT pollute MEM_B's actionError.
+		renewGate.reject({ source: 'api', code: 'unavailable', message: 'Late MEM_A failure' });
+		await expect(renewPromise).rejects.toMatchObject({ message: 'Late MEM_A failure' });
+		expect(controller.actionError).toBeUndefined();
+		expect(controller.data?.employee_id).toBe(MEM_B);
+		expect(memberSessions).toHaveBeenCalledTimes(callsBeforeSwitch + 1);
+
+		// Start a revoke on MEM_B, then switch orgs before it resolves.
+		const revokePromise = controller.revoke(ORG_A, MEM_B, { session_id: 'sess-b' });
+		expect(controller.busyAction).toBe('revoke');
+
+		await controller.load('0193a5c0-0000-7000-8000-000000000002', MEM_A);
+		expect(signals[1]?.aborted).toBe(true);
+		expect(controller.busyAction).toBeUndefined();
+
+		const callsAfterOrgSwitch = memberSessions.mock.calls.length;
+		// Late resolution from ORG_A/MEM_B must NOT trigger a reload for the old target.
+		revokeGate.resolve({ employee_id: MEM_B, revoked: true, session_id: 'sess-b' });
+		await expect(revokePromise).resolves.toMatchObject({ revoked: true });
+		expect(memberSessions).toHaveBeenCalledTimes(callsAfterOrgSwitch);
+
+		controller.dispose();
+	});
+
+	it('honors reload: false and recordActionError: false for modal-owned revoke (M3)', async () => {
+		const memberSessions = vi
+			.fn<ExternalAuthApi['memberSessions']>()
+			.mockResolvedValue(sampleSessions(MEM_A, 'ws-a'));
+		const revoke = vi
+			.fn<ExternalAuthApi['revoke']>()
+			.mockRejectedValueOnce({
+				source: 'api',
+				code: 'not_authorized',
+				status: 403,
+				message: 'Owner only.'
+			})
+			.mockResolvedValueOnce({ employee_id: MEM_A, revoked: true, session_id: 'sess-1' });
+
+		const controller = new ExternalAuthController({
+			api: createStubApi({ memberSessions, revoke }),
+			onSessionEnded: () => () => {}
+		});
+
+		await controller.load(ORG_A, MEM_A);
+		expect(memberSessions).toHaveBeenCalledTimes(1);
+
+		await expect(
+			controller.revoke(
+				ORG_A,
+				MEM_A,
+				{ session_id: 'sess-1' },
+				{ reload: false, recordActionError: false }
+			)
+		).rejects.toMatchObject({ code: 'not_authorized' });
+		// Error stays inside the confirmation modal instead of leaking into the page banner.
+		expect(controller.actionError).toBeUndefined();
+
+		await expect(
+			controller.revoke(
+				ORG_A,
+				MEM_A,
+				{ session_id: 'sess-1' },
+				{ reload: false, recordActionError: false }
+			)
+		).resolves.toMatchObject({ revoked: true });
+		// Caller (onChanged) owns the single post-revoke refresh.
+		expect(memberSessions).toHaveBeenCalledTimes(1);
+
+		controller.dispose();
+	});
 });

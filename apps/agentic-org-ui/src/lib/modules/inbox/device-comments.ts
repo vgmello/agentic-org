@@ -5,7 +5,7 @@ import {
 	MAX_INBOX_COMMENT_LENGTH,
 	parseInboxCommentsJson,
 	type InboxCommentEntry
-} from './features/triage/triage-model';
+} from './features/triage/triage-types';
 
 const INBOX_COMMENTS_PREFIX = 'agentic-org.inbox.comments.';
 const INBOX_COMMENTS_CALLER_KEY = 'agentic-org.inbox.comments.__caller';

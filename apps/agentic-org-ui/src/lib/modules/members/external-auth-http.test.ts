@@ -6,6 +6,7 @@ import {
 	familiarityMeta,
 	formatApprovalCodeAssist,
 	formatExternalAuthErrorMessage,
+	formatExternalAuthTime,
 	formatHandle,
 	formatRetrySeconds,
 	formatTimeRemaining,
@@ -308,6 +309,8 @@ describe('createHttpExternalAuthApi (live BYOA wire contract)', () => {
 describe('external-auth-present helpers', () => {
 	it('formats & validates Crockford codes, normalizes @handles, and checks prefix mismatch', () => {
 		expect(formatApprovalCodeAssist('k7p4 9m2x')).toBe('K7P4-9M2X');
+		expect(formatApprovalCodeAssist('   k7p4  -  9m2x   ')).toBe('K7P4-9M2X');
+		expect(validateApprovalCode('  o1l2   3456  ')).toEqual({ ok: true, code: '0112-3456' });
 		expect(validateApprovalCode('o1l2-3456')).toEqual({ ok: true, code: '0112-3456' });
 		expect(validateApprovalCode('U123-4567').ok).toBe(false);
 		expect(validateApprovalCode('K7P4').ok).toBe(false);
@@ -316,6 +319,8 @@ describe('external-auth-present helpers', () => {
 		expect(normalizeHandle('@@kai')).toBe('kai');
 		expect(formatHandle('@kai')).toBe('@kai');
 		expect(formatHandle('   ')).toBeUndefined();
+		expect(formatExternalAuthTime('not-a-timestamp')).toBe('Unknown time');
+		expect(formatExternalAuthTime('2026-11-27T12:00:00Z')).not.toBe('Invalid Date');
 	});
 
 	it('classifies familiarity badges, expiring-soon (<24h), countdowns, and 429 retry seconds', () => {

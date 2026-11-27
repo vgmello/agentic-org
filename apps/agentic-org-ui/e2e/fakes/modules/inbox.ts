@@ -3,7 +3,9 @@
 // list in memory. `?mock=more` adds four more open items, `?mock=empty` empties the Inbox, `?mock=error` fails
 // the load and `?mock=live` resolves one item "in another client" a few seconds in.
 import { orgApi } from '$lib/modules/organization/api';
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import type { InboxApi } from '../../../src/lib/modules/inbox/api';
+import { appendPendingExternalAuth } from '../../../src/lib/modules/inbox/http-external-auth';
 import type { InboxItem } from '../../../src/lib/modules/inbox/types';
 import { mockLatency, mockMode, POC_ORG_ID } from '../mock-mode';
 import { pocInboxItems } from '../poc-dataset';
@@ -140,7 +142,21 @@ export const inboxApi: InboxApi = {
 		if (mode.includes('error')) throw new Error('The office did not answer in time.');
 		const all = await load(organizationId);
 		releaseDueSnoozes(all);
-		return structuredClone(mode.includes('empty') ? [] : all);
+		const base = structuredClone(mode.includes('empty') ? [] : all);
+		if (mode.includes('external-auth')) {
+			await appSession.boot();
+			if (appSession.state.kind === 'signed-in') {
+				const extra: { item: InboxItem; rawSource?: string }[] = [];
+				await appendPendingExternalAuth(
+					{ read: (path, signal) => appSession.controller().read(path, signal) },
+					organizationId,
+					new Date().toISOString(),
+					extra
+				);
+				return [...extra.map((entry) => entry.item), ...base];
+			}
+		}
+		return base;
 	},
 	async act(organizationId, itemId, request) {
 		const all = await load(organizationId);

@@ -1,9 +1,11 @@
 <!--
   @component
   Dedicated decision actions for pending BYOA external-agent sign-in requests in Inbox / Needs-You
-  (`TASK-249`, `doc-102` §4). Opens the shared `ExternalAuthApproveDialog` and refreshes shell data.
+  (`TASK-249`, `doc-102` §4). Lazy-loads `ExternalAuthApproveDialog` on first open, refreshes shell
+  data, and recovers focus cleanly when the approved item disappears from the Inbox queue.
 -->
 <script lang="ts">
+	import { onDestroy, tick, untrack } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
@@ -14,19 +16,27 @@
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { tone } from '$lib/components/pills';
 	import {
-		familiarityMeta,
+		familiarityInfo,
 		formatExternalAuthTime,
 		formatHandle,
 		formatLastApproved,
-		formatTimeRemaining
-	} from '$lib/modules/members/external-auth-present';
-	import type {
-		ExternalSessionView,
-		PendingExternalAuthView
-	} from '$lib/modules/members/external-auth-types';
-	import { ExternalAuthApproveDialog } from '$lib/modules/members/ui';
+		formatTimeRemaining,
+		type ExternalSessionView,
+		type FamiliaritySeverity,
+		type PendingExternalAuthView
+	} from '$lib/platform/workspace/external-auth';
 	import type { InboxExternalAuthMeta } from '$lib/platform/workspace/inbox-types';
 	import { useShellData } from '$lib/platform/workspace/shell-data-context';
+
+	type ApproveDialogComponent =
+		typeof import('$lib/modules/members/external-auth-ui').ExternalAuthApproveDialog;
+
+	const FAMILIARITY_TONE: Record<FamiliaritySeverity, string> = {
+		warning: tone.owner,
+		caution: tone.bad,
+		familiar: tone.ok,
+		unknown: tone.neutral
+	};
 
 	let {
 		meta,
@@ -42,11 +52,16 @@
 
 	const shellData = useShellData();
 
+	let ApproveDialog = $state.raw<ApproveDialogComponent | undefined>(undefined);
+	let loadingDialog = $state(false);
 	let dialogOpen = $state(false);
 	let opener = $state<HTMLElement | null>(null);
+	let currentRequestId = '';
+	let destroyed = false;
 
 	const pendingView = $derived<PendingExternalAuthView>({ ...meta });
-	const familiarity = $derived(familiarityMeta(meta.workspace_familiarity));
+	const familiarity = $derived(familiarityInfo(meta.workspace_familiarity));
+	const familiarityTone = $derived(FAMILIARITY_TONE[familiarity.severity]);
 	const lastApproved = $derived(formatLastApproved(meta.last_approved_by, meta.last_approved_at));
 	const handleLabel = $derived(formatHandle(meta.handle));
 	const remaining = $derived(formatTimeRemaining(meta.expires_at, nowMs));
@@ -54,18 +69,92 @@
 	const btnTouch =
 		'[@media(width<=720px)]:min-h-11 [@media(width<=720px)]:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11';
 
+	onDestroy(() => {
+		destroyed = true;
+	});
+
+	function attachRequestSync() {
+		const requestId = meta.request_id;
+		if (currentRequestId && currentRequestId !== requestId) {
+			untrack(() => {
+				dialogOpen = false;
+			});
+		}
+		currentRequestId = requestId;
+	}
+
+	function isVisibleFocusable(el: HTMLElement | null | undefined): el is HTMLElement {
+		return Boolean(el && el.isConnected && el.getClientRects().length > 0);
+	}
+
+	function inboxFocusFallback(): HTMLElement | null {
+		if (typeof document === 'undefined') return null;
+		const candidates = [
+			document.getElementById('triage-detail-heading'),
+			document.querySelector<HTMLElement>('[data-triage-row]'),
+			document.getElementById('shell-page-title')
+		];
+		return candidates.find(isVisibleFocusable) ?? document.getElementById('shell-page-title');
+	}
+
+	function recoverFocusIfStranded() {
+		if (typeof document === 'undefined' || !document.querySelector('.triage-workspace')) return;
+		const active = document.activeElement;
+		if (
+			!active ||
+			active === document.body ||
+			active === document.documentElement ||
+			!active.isConnected
+		) {
+			inboxFocusFallback()?.focus({ preventScroll: true });
+		}
+	}
+
+	async function openApproveDialog(from: HTMLElement | null) {
+		const startRequestId = meta.request_id;
+		opener = from;
+		if (!ApproveDialog) {
+			if (loadingDialog) return;
+			loadingDialog = true;
+			try {
+				const mod = await import('$lib/modules/members/external-auth-ui');
+				if (destroyed || meta.request_id !== startRequestId) return;
+				ApproveDialog = mod.ExternalAuthApproveDialog;
+			} catch {
+				toast.error('Could not open the approval dialog. Refresh and try again.');
+				return;
+			} finally {
+				loadingDialog = false;
+			}
+		}
+		if (!destroyed && meta.request_id === startRequestId) dialogOpen = true;
+	}
+
 	async function handleApproved(session: ExternalSessionView) {
 		toast.success(`Approved external sign-in for ${agentName}.`, {
 			description: `${session.workspace_label} · expires ${formatExternalAuthTime(session.expires_at)}`
 		});
-		await shellData.refresh();
+		await tick();
+		try {
+			await shellData.refresh();
+		} catch {
+			toast.warning('Sign-in approved, but Inbox could not refresh automatically.');
+			return;
+		}
+		await tick();
+		recoverFocusIfStranded();
+		setTimeout(recoverFocusIfStranded, 0);
 	}
 </script>
 
-<div class="ext-auth-card w-full space-y-3" data-testid="inbox-external-auth-actions">
+<div
+	{@attach attachRequestSync}
+	class="ext-auth-card w-full space-y-3"
+	data-testid="inbox-external-auth-actions"
+>
 	<div class="rounded-md border border-line bg-tint/[0.03] p-3.5 text-xs/5">
 		<div class="flex flex-wrap items-center gap-2">
-			<StatusPill label={familiarity.label} class={familiarity.toneClass}>
+			<StatusPill label={familiarity.label} class={familiarityTone}>
 				{#snippet icon()}
 					{#if familiarity.severity === 'familiar'}
 						<ShieldCheck class="size-3.5" />
@@ -116,11 +205,8 @@
 	<div class="flex flex-wrap items-center gap-2">
 		<button
 			type="button"
-			disabled={controlsDisabled}
-			onclick={(e) => {
-				opener = e.currentTarget;
-				dialogOpen = true;
-			}}
+			disabled={controlsDisabled || loadingDialog}
+			onclick={(e) => void openApproveDialog(e.currentTarget)}
 			class="exec-cta min-w-9 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 {btnTouch}"
 		>
 			<span class="exec-cta-fill" aria-hidden="true"></span>
@@ -140,15 +226,18 @@
 	</div>
 </div>
 
-<ExternalAuthApproveDialog
-	bind:open={dialogOpen}
-	organizationId={shellData.organizationId}
-	{agentName}
-	agentHandle={meta.handle}
-	pending={pendingView}
-	{opener}
-	onApproved={handleApproved}
-/>
+{#if ApproveDialog}
+	<ApproveDialog
+		bind:open={dialogOpen}
+		organizationId={shellData.organizationId}
+		{agentName}
+		agentHandle={meta.handle}
+		pending={pendingView}
+		{opener}
+		fallback={inboxFocusFallback}
+		onApproved={handleApproved}
+	/>
+{/if}
 
 <style>
 	.ext-auth-profile-link {

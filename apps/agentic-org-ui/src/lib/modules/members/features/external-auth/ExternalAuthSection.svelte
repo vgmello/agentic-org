@@ -6,7 +6,7 @@
   Zero `$effect`: uses `{@attach}` for target sync + 30s countdown ticker and `onDestroy` teardown.
 -->
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import KeyRound from '@lucide/svelte/icons/key-round';
@@ -23,22 +23,23 @@
 	import { gutters, mobileButton } from '$lib/components/classes';
 	import { tone } from '$lib/components/pills';
 	import { Button } from '$lib/components/ui/button';
+	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { ExternalAuthController } from '../../external-auth-controller.svelte';
 	import {
 		RENEW_7D_TTL_SECONDS,
 		formatExternalAuthErrorMessage,
 		formatHandle,
 		formatTimeRemaining,
-		historyEventLabel,
-		historyEventTone,
 		isExpired,
 		isExpiringSoon
 	} from '../../external-auth-present';
 	import type { ExternalSessionView, PendingExternalAuthView } from '../../external-auth-types';
 	import { whenText } from '../../present';
 	import type { MemberProfile } from '../../types';
-	import ExternalAuthApproveDialog from './ExternalAuthApproveDialog.svelte';
+	import ExternalAuthHistoryList from './ExternalAuthHistoryList.svelte';
 	import ExternalAuthPendingList from './ExternalAuthPendingList.svelte';
+
+	type ApproveDialogComponent = typeof import('./ExternalAuthApproveDialog.svelte').default;
 
 	let {
 		organizationId,
@@ -56,12 +57,17 @@
 	let sectionEl = $state<HTMLElement | null>(null);
 	let nowMs = $state(Date.now());
 
+	let ApproveDialog = $state.raw<ApproveDialogComponent | undefined>(undefined);
+	let loadingApproveDialog = $state(false);
 	let approveOpen = $state(false);
 	let selectedPending = $state<PendingExternalAuthView | undefined>(undefined);
 	let approveOpener = $state<HTMLElement | null>(null);
 
 	let revokeOpen = $state(false);
 	let revokeOpener = $state<HTMLElement | null>(null);
+	let currentTargetKey = '';
+	let lastLoadKey = '';
+	let destroyed = false;
 
 	const activeLease = $derived(
 		controller.data?.active?.active ? controller.data.active : undefined
@@ -85,13 +91,31 @@
 			: `Revokes ${profile.name}'s active external lease immediately.`
 	);
 
-	onDestroy(() => controller.dispose());
+	onDestroy(() => {
+		destroyed = true;
+		controller.dispose();
+	});
 
-	function attachLoad(orgId: string, memId: string, rev: number) {
-		return () => {
-			void rev;
-			void controller.load(orgId, memId);
-		};
+	function attachLoad() {
+		const sessionKind = appSession.state.kind;
+		if (sessionKind === 'loading') return;
+		const orgId = organizationId;
+		const memId = profile.id;
+		const rev = changes;
+		const targetKey = `${orgId}:${memId}`;
+		const loadKey = `${sessionKind}:${targetKey}:${rev}`;
+		if (loadKey === lastLoadKey) return;
+		const targetChanged = targetKey !== currentTargetKey;
+		currentTargetKey = targetKey;
+		lastLoadKey = loadKey;
+		untrack(() => {
+			if (targetChanged) {
+				approveOpen = false;
+				revokeOpen = false;
+				selectedPending = undefined;
+			}
+			void controller.load(orgId, memId, { silent: !targetChanged });
+		});
 	}
 
 	function attachTicker(node: HTMLElement) {
@@ -106,10 +130,40 @@
 		};
 	}
 
-	function openApproveFor(request: PendingExternalAuthView | undefined, from: HTMLElement | null) {
+	async function openApproveFor(
+		request: PendingExternalAuthView | undefined,
+		from: HTMLElement | null
+	) {
+		const startKey = currentTargetKey;
 		selectedPending = request;
 		approveOpener = from;
-		approveOpen = true;
+		if (!ApproveDialog) {
+			if (loadingApproveDialog) return;
+			loadingApproveDialog = true;
+			try {
+				const mod = await import('./ExternalAuthApproveDialog.svelte');
+				if (destroyed || currentTargetKey !== startKey) return;
+				ApproveDialog = mod.default;
+			} catch {
+				toast.error('Could not open the approval dialog. Refresh and try again.');
+				return;
+			} finally {
+				loadingApproveDialog = false;
+			}
+		}
+		if (!destroyed && currentTargetKey === startKey) approveOpen = true;
+	}
+
+	async function refreshAfterMutation() {
+		if (!onChanged) {
+			await controller.reload();
+			return;
+		}
+		try {
+			await onChanged();
+		} catch {
+			await controller.reload();
+		}
 	}
 
 	async function handleApproved(session: ExternalSessionView) {
@@ -117,8 +171,7 @@
 		toast.success(`Approved external sign-in for ${profile.name}.`, {
 			description: `${session.workspace_label} · expires ${whenText(session.expires_at)}`
 		});
-		await controller.reload();
-		await onChanged?.();
+		await refreshAfterMutation();
 	}
 
 	async function handleRenew() {
@@ -146,24 +199,23 @@
 	}
 
 	async function confirmRevoke() {
-		const res = await controller.revoke(organizationId, profile.id, {
-			...(activeLease ? { session_id: activeLease.session_id } : {})
-		});
+		const res = await controller.revoke(
+			organizationId,
+			profile.id,
+			{ ...(activeLease ? { session_id: activeLease.session_id } : {}) },
+			{ reload: !onChanged, recordActionError: false }
+		);
 		nowMs = Date.now();
 		toast.success(
 			res.revoked
 				? `Revoked external lease for ${profile.name}.`
 				: `No active external lease remained for ${profile.name}.`
 		);
-		await onChanged?.();
+		if (onChanged) await refreshAfterMutation();
 	}
 </script>
 
-<div
-	{@attach attachLoad(organizationId, profile.id, changes)}
-	{@attach attachTicker}
-	data-testid="external-auth-section"
->
+<div {@attach attachLoad} {@attach attachTicker} data-testid="external-auth-section">
 	<Section
 		level={3}
 		title="External sign-in (BYOA)"
@@ -192,8 +244,8 @@
 						type="button"
 						variant="outline"
 						class={mobileButton}
-						disabled={Boolean(controller.busyAction)}
-						onclick={(e) => openApproveFor(pendingList[0], e.currentTarget)}
+						disabled={Boolean(controller.busyAction) || loadingApproveDialog}
+						onclick={(e) => void openApproveFor(pendingList[0], e.currentTarget)}
 					>
 						<KeyRound class="size-4" aria-hidden="true" />
 						<span>Enter code…</span>
@@ -266,8 +318,8 @@
 							<ExternalAuthPendingList
 								pending={pendingList}
 								{nowMs}
-								busy={Boolean(controller.busyAction)}
-								onApprove={openApproveFor}
+								busy={Boolean(controller.busyAction) || loadingApproveDialog}
+								onApprove={(req, opener) => void openApproveFor(req, opener)}
 							/>
 						</div>
 					{/if}
@@ -366,69 +418,25 @@
 						{/if}
 					</div>
 
-					<div class="space-y-2.5" data-testid="external-auth-history-block">
-						<h4 class="text-sm/6 font-semibold text-fg">Session history</h4>
-						{#if historyList.length > 0}
-							<ol role="list" class="divide-y divide-line-subtle rounded-md border border-line">
-								{#each historyList as entry (entry.id)}
-									<li
-										class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1.5 px-4 py-3 text-xs/5"
-									>
-										<div class="flex min-w-0 flex-1 basis-52 flex-wrap items-center gap-2">
-											<StatusPill
-												label={historyEventLabel(entry.event)}
-												class={historyEventTone(entry.event)}
-											/>
-											{#if entry.workspace_label || entry.workspace_path}
-												<span class="font-medium text-fg-secondary [overflow-wrap:anywhere]">
-													{entry.workspace_label ?? entry.workspace_path}
-												</span>
-											{/if}
-											{#if entry.hostname}
-												<span class="font-mono text-fg-muted [overflow-wrap:anywhere]">
-													{entry.hostname}
-												</span>
-											{/if}
-											{#if entry.actor_id}
-												<span class="text-fg-muted [overflow-wrap:anywhere]"
-													>by {entry.actor_id}</span
-												>
-											{/if}
-											{#if entry.pubkey_fingerprint}
-												<span class="font-mono text-fg-muted [overflow-wrap:anywhere]">
-													{entry.pubkey_fingerprint}
-												</span>
-											{/if}
-											{#if entry.detail}
-												<span class="text-fg-muted [overflow-wrap:anywhere]">{entry.detail}</span>
-											{/if}
-										</div>
-										<time class="shrink-0 font-mono text-fg-muted" datetime={entry.at}>
-											{whenText(entry.at)}
-										</time>
-									</li>
-								{/each}
-							</ol>
-						{:else}
-							<p class="text-sm/6 text-fg-muted">No prior external session history.</p>
-						{/if}
-					</div>
+					<ExternalAuthHistoryList history={historyList} />
 				{/if}
 			</div>
 		{/if}
 	</Section>
 </div>
 
-<ExternalAuthApproveDialog
-	bind:open={approveOpen}
-	{organizationId}
-	agentName={profile.name}
-	agentHandle={profile.handle}
-	pending={selectedPending}
-	opener={approveOpener}
-	fallback={() => sectionEl?.querySelector<HTMLElement>('button') ?? null}
-	onApproved={handleApproved}
-/>
+{#if ApproveDialog}
+	<ApproveDialog
+		bind:open={approveOpen}
+		{organizationId}
+		agentName={profile.name}
+		agentHandle={profile.handle}
+		pending={selectedPending}
+		opener={approveOpener}
+		fallback={() => sectionEl?.querySelector<HTMLElement>('button') ?? null}
+		onApproved={handleApproved}
+	/>
+{/if}
 
 <ConfirmDialog
 	bind:open={revokeOpen}

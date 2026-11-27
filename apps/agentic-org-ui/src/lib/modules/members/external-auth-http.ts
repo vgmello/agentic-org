@@ -13,11 +13,11 @@ import {
 import type { GatewayHttpTransport, GatewayReply } from '$lib/platform/http/gateway-errors';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import {
-	CROCKFORD_ALPHABET,
-	MAX_LEASE_TTL_SECONDS,
-	MIN_LEASE_TTL_SECONDS,
+	decodePendingExternalAuth,
+	decodePendingList,
 	normalizeHandle
-} from './external-auth-present';
+} from '$lib/platform/workspace/external-auth';
+import { MAX_LEASE_TTL_SECONDS, MIN_LEASE_TTL_SECONDS } from './external-auth-present';
 import type {
 	ExternalAuthApi,
 	ExternalAuthError,
@@ -25,16 +25,10 @@ import type {
 	ExternalHistoryEntry,
 	ExternalSessionView,
 	MemberExternalSessionsView,
-	PendingExternalAuthView,
-	WorkspaceFamiliarity
+	PendingExternalAuthView
 } from './external-auth-types';
 
-const FAMILIARITIES: ReadonlySet<string> = new Set([
-	'first_time',
-	'returning_new_key',
-	'returning_known_key',
-	'unknown'
-]);
+export { decodePendingExternalAuth, decodePendingList };
 
 const ERROR_CODES: ReadonlySet<string> = new Set([
 	'invalid_request',
@@ -47,20 +41,6 @@ const ERROR_CODES: ReadonlySet<string> = new Set([
 	'unavailable',
 	'unknown'
 ]);
-
-const CROCKFORD_CHARS = new Set(CROCKFORD_ALPHABET.split(''));
-
-function maskCodePrefix(raw: string): string {
-	const lookup = raw.split('-')[0]?.trim().toUpperCase() ?? '';
-	return lookup.length === 4 && [...lookup].every((ch) => CROCKFORD_CHARS.has(ch))
-		? `${lookup}-••••`
-		: '••••-••••';
-}
-
-function decodeFamiliarity(raw: unknown): WorkspaceFamiliarity {
-	const value = asStr(raw);
-	return value && FAMILIARITIES.has(value) ? (value as WorkspaceFamiliarity) : 'unknown';
-}
 
 function statusToErrorCode(status: number): ExternalAuthErrorCode {
 	if (status === 401 || status === 403) return 'not_authorized';
@@ -167,44 +147,6 @@ function unwrapExternalAuthResult(reply: GatewayReply, fallbackMessage: string):
 		} satisfies ExternalAuthError;
 	}
 	return result;
-}
-
-export function decodePendingExternalAuth(raw: unknown): PendingExternalAuthView | undefined {
-	const r = asRec(raw);
-	if (!r) return undefined;
-	const req = reqStrs(r, [
-		'request_id',
-		'employee_id',
-		'office_id',
-		'office_name',
-		'workspace_label',
-		'pubkey_fingerprint',
-		'requested_at',
-		'expires_at',
-		'code_prefix'
-	]);
-	if (!req) return undefined;
-	const handle = normalizeHandle(asStr(r.handle));
-	return {
-		...req,
-		...optStrs(r, ['hostname', 'workspace_path', 'last_approved_by', 'last_approved_at']),
-		...(handle ? { handle } : {}),
-		managed_turn_active: asBool(r.managed_turn_active) ?? false,
-		code_prefix: maskCodePrefix(req.code_prefix),
-		workspace_familiarity: decodeFamiliarity(r.workspace_familiarity)
-	};
-}
-
-export function decodePendingList(raw: unknown): PendingExternalAuthView[] {
-	const seen = new Set<string>();
-	const out: PendingExternalAuthView[] = [];
-	for (const entry of asArr(raw)) {
-		const decoded = decodePendingExternalAuth(entry);
-		if (!decoded || seen.has(decoded.request_id)) continue;
-		seen.add(decoded.request_id);
-		out.push(decoded);
-	}
-	return out;
 }
 
 export function decodeExternalSession(raw: unknown): ExternalSessionView | undefined {

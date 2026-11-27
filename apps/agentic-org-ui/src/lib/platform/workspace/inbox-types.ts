@@ -1,4 +1,6 @@
 /** Shared inbox item contract used across shell data context and domain modules. */
+import type { PendingExternalAuthView, WorkspaceFamiliarity } from './external-auth';
+
 export type InboxKind = 'approval' | 'question' | 'decision' | 'problem';
 
 export const KIND_WORD: Record<InboxKind, string> = {
@@ -17,29 +19,10 @@ export interface InboxPerson {
 	kind: 'agent' | 'person';
 }
 
-export type InboxWorkspaceFamiliarity =
-	'first_time' | 'returning_new_key' | 'returning_known_key' | 'unknown';
+export type InboxWorkspaceFamiliarity = WorkspaceFamiliarity;
 
 /** Pending BYOA external-agent sign-in metadata attached to Inbox approval items (`TASK-249`). */
-export interface InboxExternalAuthMeta {
-	request_id: string;
-	employee_id: string;
-	handle?: string;
-	office_id: string;
-	office_name: string;
-	hostname?: string;
-	workspace_path?: string;
-	workspace_label: string;
-	pubkey_fingerprint: string;
-	managed_turn_active: boolean;
-	requested_at: string;
-	expires_at: string;
-	/** Masked lookup half (`XXXX-••••`); never contains the secret half. */
-	code_prefix: string;
-	workspace_familiarity: InboxWorkspaceFamiliarity;
-	last_approved_by?: string;
-	last_approved_at?: string;
-}
+export type InboxExternalAuthMeta = PendingExternalAuthView;
 
 export interface InboxItem {
 	id: string;

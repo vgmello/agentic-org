@@ -81,6 +81,10 @@ export class ExternalAuthController {
 			this.#target?.organizationId !== organizationId || this.#target?.memberId !== memberId;
 		this.#target = { organizationId, memberId };
 		if (changed) {
+			this.#actionGen += 1;
+			this.#actionAbort?.abort();
+			this.#actionAbort = undefined;
+			this.busyAction = undefined;
 			this.data = undefined;
 			this.error = undefined;
 			this.actionError = undefined;
@@ -89,6 +93,11 @@ export class ExternalAuthController {
 			this.error = undefined;
 			this.status = 'loading';
 		}
+	}
+
+	#targetMatches(expected: { organizationId: string; memberId?: string }): boolean {
+		if (!this.#target || this.#target.organizationId !== expected.organizationId) return false;
+		return expected.memberId === undefined || this.#target.memberId === expected.memberId;
 	}
 
 	#applyLoadFailure(err: unknown): void {
@@ -144,8 +153,9 @@ export class ExternalAuthController {
 	async #runAction<T>(
 		kind: ExternalAuthBusyAction,
 		fallbackMessage: string,
+		expectedTarget: { organizationId: string; memberId?: string },
 		execute: (signal: AbortSignal) => Promise<T>,
-		shouldReload: boolean
+		options?: { reload?: boolean; recordActionError?: boolean }
 	): Promise<T> {
 		if (this.#disposed) {
 			throw {
@@ -160,15 +170,25 @@ export class ExternalAuthController {
 		const actionGen = ++this.#actionGen;
 		this.busyAction = kind;
 		this.actionError = undefined;
+		const shouldReload = options?.reload ?? true;
+		const recordError = options?.recordActionError ?? true;
 		try {
 			const result = await execute(abort.signal);
-			if (shouldReload && !this.#isStaleAction(actionGen, abort.signal)) {
+			if (
+				shouldReload &&
+				!this.#isStaleAction(actionGen, abort.signal) &&
+				this.#targetMatches(expectedTarget)
+			) {
 				await this.reload();
 			}
 			return result;
 		} catch (err) {
 			const parsed = asExternalAuthError(err, fallbackMessage);
-			if (!this.#isStaleAction(actionGen, abort.signal)) {
+			if (
+				recordError &&
+				!this.#isStaleAction(actionGen, abort.signal) &&
+				this.#targetMatches(expectedTarget)
+			) {
 				this.actionError = parsed;
 			}
 			throw parsed;
@@ -178,43 +198,47 @@ export class ExternalAuthController {
 		}
 	}
 
-	approve(organizationId: string, input: ExternalAuthApproveInput): Promise<ExternalSessionView> {
-		const matchesTarget = this.#target?.organizationId === organizationId;
+	approve(
+		organizationId: string,
+		input: ExternalAuthApproveInput,
+		options?: { reload?: boolean; recordActionError?: boolean }
+	): Promise<ExternalSessionView> {
 		return this.#runAction(
 			'approve',
 			'External sign-in approval was refused.',
+			{ organizationId },
 			(signal) => this.#api.approve(organizationId, input, signal),
-			matchesTarget
+			options
 		);
 	}
 
 	renew(
 		organizationId: string,
 		memberId: string,
-		input?: ExternalAuthRenewInput
+		input?: ExternalAuthRenewInput,
+		options?: { reload?: boolean; recordActionError?: boolean }
 	): Promise<ExternalSessionView> {
-		const matchesTarget =
-			this.#target?.organizationId === organizationId && this.#target?.memberId === memberId;
 		return this.#runAction(
 			'renew',
 			'External lease renewal was refused.',
+			{ organizationId, memberId },
 			(signal) => this.#api.renew(organizationId, memberId, input, signal),
-			matchesTarget
+			options
 		);
 	}
 
 	revoke(
 		organizationId: string,
 		memberId: string,
-		input?: ExternalAuthRevokeInput
+		input?: ExternalAuthRevokeInput,
+		options?: { reload?: boolean; recordActionError?: boolean }
 	): Promise<ExternalAuthRevokeResult> {
-		const matchesTarget =
-			this.#target?.organizationId === organizationId && this.#target?.memberId === memberId;
 		return this.#runAction(
 			'revoke',
 			'External lease revocation was refused.',
+			{ organizationId, memberId },
 			(signal) => this.#api.revoke(organizationId, memberId, input, signal),
-			matchesTarget
+			options
 		);
 	}
 

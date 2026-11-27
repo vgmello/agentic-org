@@ -1,43 +1,12 @@
 // Live wire contracts for BYOA external-agent sign-in approvals and lease management (`TASK-249`).
 // Mirrors `crates/org-proto/src/external_auth.rs` and `apps/agentic-org-web/src/api/external_auth_routes/`.
+import type {
+	ExternalSessionView,
+	PendingExternalAuthView,
+	WorkspaceFamiliarity
+} from '$lib/platform/workspace/external-auth';
 
-export type WorkspaceFamiliarity =
-	'first_time' | 'returning_new_key' | 'returning_known_key' | 'unknown';
-
-export interface PendingExternalAuthView {
-	request_id: string;
-	employee_id: string;
-	handle?: string;
-	office_id: string;
-	office_name: string;
-	hostname?: string;
-	workspace_path?: string;
-	workspace_label: string;
-	pubkey_fingerprint: string;
-	managed_turn_active: boolean;
-	requested_at: string;
-	expires_at: string;
-	/** Masked lookup half (`XXXX-••••`); never contains the secret half. */
-	code_prefix: string;
-	workspace_familiarity: WorkspaceFamiliarity;
-	last_approved_by?: string;
-	last_approved_at?: string;
-}
-
-export interface ExternalSessionView {
-	session_id: string;
-	employee_id: string;
-	handle?: string;
-	workspace_label: string;
-	pubkey_fingerprint: string;
-	approved_by: string;
-	approved_at: string;
-	expires_at: string;
-	revoked_at?: string;
-	active: boolean;
-	superseded_session_id?: string;
-	took_over_managed: boolean;
-}
+export type { ExternalSessionView, PendingExternalAuthView, WorkspaceFamiliarity };
 
 export type ExternalHistoryEvent =
 	'approved' | 'renewed' | 'superseded' | 'revoked' | 'expired' | (string & {});

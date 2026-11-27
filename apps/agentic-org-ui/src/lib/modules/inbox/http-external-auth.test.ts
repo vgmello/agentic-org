@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { GatewayHttpTransport, GatewayReply } from '$lib/platform/http/gateway-errors';
+import type { PendingExternalAuthView } from '$lib/platform/workspace/external-auth';
 import type { OrgSnapshot } from '$lib/proto';
+import { executeDecisionAction } from './decisions';
 import { createHttpInboxApi } from './http-api';
-import { appendPendingExternalAuth } from './http-external-auth';
+import { appendPendingExternalAuth, mapPendingExternalAuthToInboxItem } from './http-external-auth';
+import { deriveDecisionSpotlight } from './spotlight';
 import { deriveTriageItems } from './features/triage/triage-derive';
 import type { InboxItem } from './types';
 
@@ -140,5 +143,88 @@ describe('appendPendingExternalAuth & Inbox triage derivation', () => {
 				ac.signal
 			)
 		).rejects.toBe(abortErr);
+	});
+
+	it('derives distinct spotlight actions, navigation targets, and familiarity risk/proof signals (H4)', async () => {
+		const snapshot: OrgSnapshot = {
+			position: { epoch: 1, seq: 1 },
+			teams: [],
+			members: [{ id: 'mem-kai', kind: 'agent', name: 'Kai Lindqvist', handle: 'kai', version: 1 }]
+		};
+		const baseReq: PendingExternalAuthView = {
+			...(SAMPLE_PENDING as PendingExternalAuthView),
+			managed_turn_active: false,
+			workspace_familiarity: 'returning_known_key'
+		};
+		const cases: {
+			name: string;
+			req: PendingExternalAuthView;
+			expectedTone: 'bad' | 'warn' | 'neutral';
+			expectedRiskTone: 'bad' | 'warn' | 'muted';
+		}[] = [
+			{
+				name: 'returning_new_key',
+				req: { ...baseReq, request_id: 'req-new-key', workspace_familiarity: 'returning_new_key' },
+				expectedTone: 'bad',
+				expectedRiskTone: 'bad'
+			},
+			{
+				name: 'first_time',
+				req: { ...baseReq, request_id: 'req-first', workspace_familiarity: 'first_time' },
+				expectedTone: 'warn',
+				expectedRiskTone: 'warn'
+			},
+			{
+				name: 'managed_turn_active',
+				req: {
+					...baseReq,
+					request_id: 'req-takeover',
+					workspace_familiarity: 'returning_known_key',
+					managed_turn_active: true
+				},
+				expectedTone: 'warn',
+				expectedRiskTone: 'warn'
+			},
+			{
+				name: 'returning_known_key',
+				req: { ...baseReq, request_id: 'req-known', workspace_familiarity: 'returning_known_key' },
+				expectedTone: 'neutral',
+				expectedRiskTone: 'muted'
+			}
+		];
+
+		for (const c of cases) {
+			const item = mapPendingExternalAuthToInboxItem(c.req, '2026-11-27T10:01:00Z');
+			const [decision] = deriveDecisionSpotlight(
+				[],
+				snapshot,
+				'owner-1',
+				Date.parse('2026-11-27T10:02:00Z'),
+				[item]
+			);
+
+			expect(decision.primaryAction, c.name).toEqual({
+				kind: 'open_inbox',
+				label: 'Review in Inbox'
+			});
+			expect(decision.secondaryAction, c.name).toEqual({
+				kind: 'open_work',
+				label: 'Open agent profile'
+			});
+			expect(decision.recTone, c.name).toBe(c.expectedTone);
+			expect(decision.risk.tone, c.name).toBe(c.expectedRiskTone);
+			expect(decision.risk.label, c.name).not.toBe('Low risk');
+			expect(decision.recRiskLabel, c.name).not.toBe('Low risk');
+			expect(decision.proof, c.name).toMatchObject({
+				label: 'Code required',
+				tone: 'warn'
+			});
+			expect(decision.proof.label, c.name).not.toBe('Reviewed');
+
+			const primaryNav = await executeDecisionAction(ORG, decision, 'primary', snapshot);
+			const secondaryNav = await executeDecisionAction(ORG, decision, 'secondary', snapshot);
+			expect(primaryNav.navigateTo, c.name).toBe(`/inbox?item=${encodeURIComponent(item.id)}`);
+			expect(secondaryNav.navigateTo, c.name).toBe('/members/mem-kai');
+		}
 	});
 });

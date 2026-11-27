@@ -2,10 +2,7 @@ import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import { orgApi } from '$lib/modules/organization/api';
 import { workItemsApi } from '$lib/modules/workitems/api';
-import { externalAuthApi } from './external-auth-http';
-import type { ExternalAuthApi } from './external-auth-types';
 import { createHttpMembersApi } from './http-api';
-export { externalAuthApi, type ExternalAuthApi };
 import type {
 	ActivityEntry,
 	AssignableTask,

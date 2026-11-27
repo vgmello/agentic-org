@@ -1,10 +1,10 @@
 // Live Inbox adapter for pending BYOA external-agent sign-in requests (`TASK-249`).
 // Calls `GET /api/v1/organizations/{org}/external-auth/pending`, fails soft on 403/404/501,
-// and dynamically loads member BYOA decoders only when pending requests exist so Shell first-paint
-// JS stays within its shrink-only bundle budget.
-import type { PendingExternalAuthView } from '$lib/modules/members/external-auth-types';
+// and dynamically loads the shared pending decoder only when pending requests exist so Shell
+// first-paint JS stays within its shrink-only bundle budget.
 import { asRec } from '$lib/platform/http/decode';
 import type { GatewayHttpTransport, GatewayReply } from '$lib/platform/http/gateway-errors';
+import type { PendingExternalAuthView } from '$lib/platform/workspace/external-auth';
 import type { InboxItem } from './types';
 
 export const EXTERNAL_AUTH_INBOX_PREFIX = 'external-auth:pending:';
@@ -98,7 +98,7 @@ export async function appendPendingExternalAuth(
 ): Promise<void> {
 	const rawPending = await readRawPending(http, organizationId, signal);
 	if (!rawPending) return;
-	const { decodePendingList } = await import('$lib/modules/members/external-auth-http');
+	const { decodePendingList } = await import('$lib/platform/workspace/external-auth');
 	if (signal?.aborted) return;
 	const seen = new Set(mapped.map((entry) => entry.item.id));
 	for (const req of decodePendingList(rawPending)) {

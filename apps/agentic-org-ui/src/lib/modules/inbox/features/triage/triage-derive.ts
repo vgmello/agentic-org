@@ -1,5 +1,5 @@
 import { badgeInitials as initialsOf, relativeAge } from '$lib/format';
-import { familiarityMeta } from '$lib/modules/members/external-auth-present';
+import { familiarityInfo } from '$lib/platform/workspace/external-auth';
 import type { Area, Member, OrgSnapshot, Team, WorkItemSummary } from '$lib/proto';
 import { deriveDecisionSpotlight, type SpotlightDecision } from '../../spotlight';
 import { KIND_WORD, type InboxItem } from '../../types';
@@ -216,7 +216,9 @@ function mapOpenDecision(decision: SpotlightDecision, maps: LookupMaps, nowMs: n
 		hasProject: Boolean(links.resolvedProjectId),
 		why: decision.backgroundContext,
 		recommendation,
-		recommendationTone: resolveRecommendationTone(category, decision.urgent),
+		recommendationTone: inbox?.external_auth
+			? decision.recTone
+			: resolveRecommendationTone(category, decision.urgent),
 		urgent: decision.urgent,
 		expiresLabel,
 		expiresAtIso: inbox?.expires_at,
@@ -243,7 +245,7 @@ function externalAuthAuditChecks(item: InboxItem | undefined): string[] {
 	const checks = [
 		`Office: ${ea.office_name}`,
 		`Workspace: ${workspace}`,
-		`Familiarity: ${familiarityMeta(ea.workspace_familiarity).label}`,
+		`Familiarity: ${familiarityInfo(ea.workspace_familiarity).label}`,
 		`Code prefix: ${ea.code_prefix}`,
 		`Key fingerprint: ${ea.pubkey_fingerprint}`
 	];

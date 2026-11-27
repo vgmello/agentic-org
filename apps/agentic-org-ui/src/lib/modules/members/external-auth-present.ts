@@ -1,26 +1,43 @@
 // Pure presentation, Crockford code validation, and expiry helpers for BYOA external sign-in (`TASK-249`).
 import { tone } from '$lib/components/pills';
-import type { ExternalAuthError, WorkspaceFamiliarity } from './external-auth-types';
+import {
+	CROCKFORD_ALPHABET,
+	EXPIRING_SOON_MS,
+	familiarityInfo,
+	formatExternalAuthTime,
+	formatHandle,
+	formatLastApproved,
+	formatTimeRemaining,
+	isExpired,
+	isExpiringSoon,
+	normalizeHandle,
+	type FamiliarityInfo,
+	type FamiliaritySeverity,
+	type WorkspaceFamiliarity
+} from '$lib/platform/workspace/external-auth';
+import type { ExternalAuthError } from './external-auth-types';
 
-/** 24-hour date and time for BYOA leases, approvals, and history entries (e.g. "18 Nov, 09:12"). */
-export function formatExternalAuthTime(iso: string): string {
-	return new Date(iso).toLocaleString(undefined, {
-		day: 'numeric',
-		month: 'short',
-		hour: '2-digit',
-		minute: '2-digit',
-		hourCycle: 'h23'
-	});
-}
+export {
+	CROCKFORD_ALPHABET,
+	EXPIRING_SOON_MS,
+	familiarityInfo,
+	formatExternalAuthTime,
+	formatHandle,
+	formatLastApproved,
+	formatTimeRemaining,
+	isExpired,
+	isExpiringSoon,
+	normalizeHandle,
+	type FamiliarityInfo,
+	type FamiliaritySeverity
+};
 
-export const CROCKFORD_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const CROCKFORD_SET = new Set(CROCKFORD_ALPHABET.split(''));
 
 export const MIN_LEASE_TTL_SECONDS = 300;
 export const MAX_LEASE_TTL_SECONDS = 604_800;
 export const DEFAULT_LEASE_TTL_SECONDS = 86_400;
 export const RENEW_7D_TTL_SECONDS = 604_800;
-export const EXPIRING_SOON_MS = 24 * 60 * 60 * 1000;
 
 export const EXTERNAL_AUTH_TTL_PRESETS = [
 	{ id: '8h', label: '8 hours', shortLabel: '8h', seconds: 28_800 },
@@ -30,59 +47,21 @@ export const EXTERNAL_AUTH_TTL_PRESETS = [
 
 export type ExternalAuthTtlPresetId = (typeof EXTERNAL_AUTH_TTL_PRESETS)[number]['id'];
 
-export interface FamiliarityPresentation {
-	label: string;
+export interface FamiliarityPresentation extends FamiliarityInfo {
 	toneClass: string;
-	severity: 'warning' | 'caution' | 'familiar' | 'unknown';
-	description: string;
 }
+
+const FAMILIARITY_TONE: Record<FamiliaritySeverity, string> = {
+	warning: tone.owner,
+	caution: tone.bad,
+	familiar: tone.ok,
+	unknown: tone.neutral
+};
 
 /** Exact familiarity badges and semantic tones across all 7 themes (`doc-102` §4). */
 export function familiarityMeta(familiarity: WorkspaceFamiliarity): FamiliarityPresentation {
-	switch (familiarity) {
-		case 'first_time':
-			return {
-				label: 'First-time workspace',
-				toneClass: tone.owner,
-				severity: 'warning',
-				description:
-					'No prior approved external session exists for this workspace. Verify host, path, and terminal code.'
-			};
-		case 'returning_new_key':
-			return {
-				label: 'Returning workspace (new key)',
-				toneClass: tone.bad,
-				severity: 'caution',
-				description:
-					'This workspace was approved before, but it is presenting a different Ed25519 key fingerprint.'
-			};
-		case 'returning_known_key':
-			return {
-				label: 'Returning workspace (known key)',
-				toneClass: tone.ok,
-				severity: 'familiar',
-				description:
-					'This workspace was previously approved with the exact same Ed25519 key fingerprint.'
-			};
-		default:
-			return {
-				label: 'Workspace familiarity unknown',
-				toneClass: tone.neutral,
-				severity: 'unknown',
-				description: 'Workspace history could not be classified. Verify the terminal code.'
-			};
-	}
-}
-
-/** Strips any leading `@` so callers never render `@@handle`. */
-export function normalizeHandle(raw: string | undefined): string | undefined {
-	const cleaned = raw?.trim().replace(/^@+/, '');
-	return cleaned ? cleaned : undefined;
-}
-
-export function formatHandle(raw: string | undefined): string | undefined {
-	const clean = normalizeHandle(raw);
-	return clean ? `@${clean}` : undefined;
+	const info = familiarityInfo(familiarity);
+	return { ...info, toneClass: FAMILIARITY_TONE[info.severity] };
 }
 
 /**
@@ -142,46 +121,6 @@ export function codePrefixMismatch(rawCode: string, codePrefix: string | undefin
 	const validated = validateApprovalCode(rawCode);
 	if (!validated.ok) return false;
 	return validated.code.slice(0, 4) !== expected;
-}
-
-export function isExpired(expiresAt: string, nowMs = Date.now()): boolean {
-	const ms = Date.parse(expiresAt);
-	return Number.isFinite(ms) && ms <= nowMs;
-}
-
-/** True when an active lease expires in strictly less than 24 hours and has not yet expired. */
-export function isExpiringSoon(expiresAt: string, nowMs = Date.now()): boolean {
-	const ms = Date.parse(expiresAt);
-	if (!Number.isFinite(ms)) return false;
-	const remaining = ms - nowMs;
-	return remaining > 0 && remaining < EXPIRING_SOON_MS;
-}
-
-export function formatTimeRemaining(expiresAt: string, nowMs = Date.now()): string {
-	const ms = Date.parse(expiresAt);
-	if (!Number.isFinite(ms)) return 'Expiry unknown';
-	const diff = ms - nowMs;
-	if (diff <= 0) return 'Expired';
-	const totalMin = Math.floor(diff / 60_000);
-	if (totalMin < 1) return '< 1 min left';
-	if (totalMin < 60) return `${totalMin} min left`;
-	const totalHours = Math.floor(totalMin / 60);
-	const remMin = totalMin % 60;
-	if (totalHours < 24)
-		return remMin ? `${totalHours} h ${remMin} min left` : `${totalHours} h left`;
-	const days = Math.floor(totalHours / 24);
-	const remHours = totalHours % 24;
-	return remHours ? `${days} d ${remHours} h left` : `${days} d left`;
-}
-
-export function formatLastApproved(by?: string, at?: string): string | undefined {
-	const actor = by?.trim();
-	const formattedAt =
-		at && Number.isFinite(Date.parse(at)) ? formatExternalAuthTime(at) : undefined;
-	if (actor && formattedAt) return `Last approved by ${actor} · ${formattedAt}`;
-	if (actor) return `Last approved by ${actor}`;
-	if (formattedAt) return `Last approved ${formattedAt}`;
-	return undefined;
 }
 
 export function historyEventLabel(event: string): string {
