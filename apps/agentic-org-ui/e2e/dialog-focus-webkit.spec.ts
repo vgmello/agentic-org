@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { enterMockedOrganization } from './mock-organization';
 import { visit } from './ready';
 
-test('pointer-opened dialog resets fields via onOpenAutoFocus and restores focus on close @webkit', async ({
+test('pointer-opened dialog restores focus on close in WebKit and ShortcutsDialog @webkit', async ({
 	page
 }) => {
 	await enterMockedOrganization(page);

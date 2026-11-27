@@ -85,6 +85,7 @@ export class HomeLiveState<TOverview = unknown> {
 		baseConnectionOffices: OfficeInfo[],
 		seed?: HomeInitialSeed
 	): () => void {
+		if (this.#destroyed) return () => {};
 		let cancelled = false;
 		this.reset();
 		if (seed) {
@@ -113,6 +114,7 @@ export class HomeLiveState<TOverview = unknown> {
 		baseConnectionOffices: OfficeInfo[],
 		isCancelled: () => boolean = () => false
 	): Promise<void> {
+		if (this.#destroyed) return Promise.resolve();
 		this.#activeAbort?.abort();
 		const controller = new AbortController();
 		this.#activeAbort = controller;

@@ -97,7 +97,7 @@
 			data-team={team.id}
 		>
 			{team.name}
-			<ModalTooltip label="Remove {row.project.name} from {team.name}">
+			<ModalTooltip label="Remove {row.project.name} from {team.name}" side="bottom-start">
 				<button
 					type="button"
 					aria-label="Remove {row.project.name} from {team.name}"

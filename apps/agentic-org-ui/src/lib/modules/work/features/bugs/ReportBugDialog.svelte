@@ -221,19 +221,16 @@
 			busy = false;
 		}
 	}
+	function setOpen(next: boolean) {
+		if (!next && busy) return;
+		if (!next) flow.cancel();
+		open = next;
+	}
 	const field =
 		'w-full rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus';
 </script>
 
-<Dialog
-	bind:open
-	onOpenChange={(next) => {
-		if (!next) {
-			if (busy) open = true;
-			else flow.cancel();
-		}
-	}}
->
+<Dialog bind:open={() => open, setOpen}>
 	<DialogContent onOpenAutoFocus={resetOnOpen} class="max-h-[90vh] overflow-y-auto sm:max-w-xl">
 		<DialogHeader>
 			<DialogTitle text={'Report a bug'} />
@@ -359,7 +356,7 @@
 										type="button"
 										class="text-left text-brand-text underline underline-offset-2"
 										onclick={() => {
-											open = false;
+											setOpen(false);
 											onopen(b.id);
 										}}>{bugRef(b)} · {b.title}</button
 									>
@@ -493,7 +490,7 @@
 					{error}
 				</p>{/if}
 			<DialogFooter>
-				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}
+				<Button type="button" variant="outline" disabled={busy} onclick={() => setOpen(false)}
 					>Cancel</Button
 				>
 				<Button type="submit" disabled={busy}>Report bug</Button>

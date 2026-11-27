@@ -298,5 +298,13 @@ describe('HomeLiveState', () => {
 		expect(workSignals[2].aborted).toBe(true);
 		expect(inboxSignals[2].aborted).toBe(true);
 		expect(officeSignals[2].aborted).toBe(true);
+
+		// Post-destroy load/connect calls short-circuit without firing new requests.
+		await live.load('org-3', baseOffices);
+		live.connect('org-3', baseOffices);
+		await flushMicrotasks();
+		expect(workSignals).toHaveLength(3);
+		expect(inboxSignals).toHaveLength(3);
+		expect(officeSignals).toHaveLength(3);
 	});
 });

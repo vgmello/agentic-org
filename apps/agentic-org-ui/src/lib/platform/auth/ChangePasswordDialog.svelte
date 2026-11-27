@@ -112,7 +112,10 @@
 <Dialog.Root
 	bind:open
 	onOpenChange={(next) => {
-		if (!next && busy) open = true;
+		if (!next) {
+			if (busy) open = true;
+			else resetFields();
+		}
 	}}
 >
 	<Dialog.Content
@@ -173,7 +176,16 @@
 				readonly={busy}
 			/>
 			<Dialog.Footer class="mt-2">
-				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>
+				<Button
+					type="button"
+					variant="outline"
+					disabled={busy}
+					onclick={() => {
+						if (busy) return;
+						resetFields();
+						open = false;
+					}}
+				>
 					Cancel
 				</Button>
 				<Button type="submit" disabled={busy}>

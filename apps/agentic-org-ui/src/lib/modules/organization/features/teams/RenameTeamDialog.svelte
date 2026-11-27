@@ -35,14 +35,14 @@
 	let busy = $state(false);
 	// Kept while the dialog closes, so its title doesn't flash empty.
 	let lockedTitle = $state('');
-	const title = $derived(lockedTitle || team?.name || '');
+	const title = $derived(open ? team?.name || lockedTitle : lockedTitle);
 
 	function resetOnOpen() {
 		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
+		error = undefined;
 		if (!team) return;
 		name = team.name;
 		lockedTitle = team.name;
-		error = undefined;
 	}
 
 	async function submit(e: SubmitEvent) {

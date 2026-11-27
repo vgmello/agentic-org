@@ -2,8 +2,14 @@ import { answerExecutiveQuestion } from '$lib/modules/home/model';
 import type { HomeDomainData, OrgAiAnswer } from '$lib/modules/home/model';
 import { isBuiltInHandle } from '$lib/proto';
 import type { ShellAiAskOptions, ShellAiDecisionContext } from '$lib/platform/workspace/shell-ai';
-import type { TessActionProposal, TessStreamEvent, TessToolCall, TessUiBlock } from './types';
-import type { TessContextSnapshot, TessTurn } from './tess-panel.svelte';
+import type {
+	TessActionProposal,
+	TessContextSnapshot,
+	TessStreamEvent,
+	TessToolCall,
+	TessTurn,
+	TessUiBlock
+} from './types';
 
 const WRITE_OR_HOWTO_RE =
 	/\b(create|assign|pause|resume|hire|move|delete|archive|approve|deny|how do i|how to|configure|set up|setup)\b/i;

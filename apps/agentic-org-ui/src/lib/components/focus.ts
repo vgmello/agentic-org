@@ -97,6 +97,9 @@ function onDocumentPointerDown(event: Event): void {
 	if (interactive) {
 		lastPointerEl = interactive;
 		lastPointerAt = Date.now();
+	} else {
+		lastPointerEl = null;
+		lastPointerAt = 0;
 	}
 }
 

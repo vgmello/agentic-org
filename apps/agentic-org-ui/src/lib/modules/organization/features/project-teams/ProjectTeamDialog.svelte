@@ -81,7 +81,7 @@
 	}
 </script>
 
-<Dialog bind:open onOpenChange={(next) => !next && busy && (open = false)}>
+<Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<DialogContent onOpenAutoFocus={resetOnOpen}>
 		<DialogHeader>
 			{#if shownTeam}

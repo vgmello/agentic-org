@@ -77,6 +77,9 @@
 	function rememberOpenRow(row: WorkRow) {
 		return () => {
 			lastSeen.row = row;
+			return () => {
+				if (lastSeen.row === row) lastSeen.row = null;
+			};
 		};
 	}
 
