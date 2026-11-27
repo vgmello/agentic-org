@@ -15,8 +15,8 @@
 //! A call whose parameters do not decode is refused, and so is one the office cannot check.
 
 use org_proto::attachments::{
-    AttachmentAttach, AttachmentInspect, AttachmentList, AttachmentReadChunk, AttachmentTargetKind,
-    AttachmentUpdateMeta, AttachmentView,
+    AttachmentAttach, AttachmentInspect, AttachmentList, AttachmentReadChunk, AttachmentRender,
+    AttachmentTargetKind, AttachmentUpdateMeta, AttachmentView, RenderSourceKind,
 };
 use org_proto::{Call, Request, Response};
 
@@ -45,6 +45,18 @@ pub(super) fn admit(request: &Request, view: &View<'_>) -> Result<(), Response> 
         }
         AttachmentList::METHOD => {
             let p = decoded::<AttachmentList>(request)?;
+            of_message(view, p.target_kind, p.target_id.as_deref())
+        }
+        AttachmentRender::METHOD => {
+            let p = decoded::<AttachmentRender>(request)?;
+            let kind = match p.source_kind {
+                RenderSourceKind::Markdown => org_doc_render::SourceKind::Markdown,
+                RenderSourceKind::Html => org_doc_render::SourceKind::Html,
+            };
+            for att_id in org_doc_render::extract_attachment_refs(kind, &p.source, p.css.as_deref())
+            {
+                file(view, &att_id)?;
+            }
             of_message(view, p.target_kind, p.target_id.as_deref())
         }
         _ => Ok(()),

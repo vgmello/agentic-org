@@ -14,7 +14,8 @@ use serde_json::{json, Value};
 
 use super::schema::{
     FILE_EXAMPLE_JSON, FILE_FETCH_INPUT, FILE_FETCH_OUTPUT, FILE_FIELDS, FILE_ID_INPUT,
-    FILE_LIST_INPUT, FILE_UPDATE_INPUT, FILE_UPLOAD_INPUT, READ_ERRORS, WRITE_ERRORS,
+    FILE_LIST_INPUT, FILE_RENDER_EXAMPLE_JSON, FILE_RENDER_INPUT, FILE_RENDER_OUTPUT,
+    FILE_UPDATE_INPUT, FILE_UPLOAD_INPUT, READ_ERRORS, WRITE_ERRORS,
 };
 use crate::runtime::domain::CommandCue;
 use crate::runtime::file_guard::FileRoots;
@@ -109,6 +110,24 @@ pub(super) const COMMANDS: &[Command] = &[
             output: FILE_EXAMPLE_JSON,
         },
     },
+    Command {
+        resource: "file",
+        verb: "render",
+        summary: "Render Markdown/HTML to PDF",
+        call: "attachment.render",
+        kind: Kind::Write {
+            ack: Ack::Durable,
+            if_match: IfMatch::No,
+        },
+        input: FILE_RENDER_INPUT,
+        content_field: None,
+        output: FILE_RENDER_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"from":"report.md","to":"pdf","scope":"org","title":"Report"}"#,
+            output: FILE_RENDER_EXAMPLE_JSON,
+        },
+    },
 ];
 
 /// `Use when:` guidance for every `file` verb.
@@ -130,6 +149,11 @@ pub(super) const CUES: &[CommandCue] = &[
     ),
     (
         "file",
+        "render",
+        "rendering a local Markdown or HTML+CSS file (`--from`, optional `--css`) to PDF via the office and either attaching it (`--scope`) or saving locally (`--output`).",
+    ),
+    (
+        "file",
         "update",
         "updating a hosted or task file's `--title`, `--description`, or `--status`.",
     ),
@@ -148,7 +172,7 @@ fn agent_private_refusal() -> Refusal {
     )
 }
 
-fn parse_status(raw: &str) -> Result<ArtifactStatus, Refusal> {
+pub(super) fn parse_status(raw: &str) -> Result<ArtifactStatus, Refusal> {
     ArtifactStatus::parse(raw).ok_or_else(|| {
         Refusal::new(
             ErrorCode::InvalidRequest,
@@ -196,13 +220,13 @@ fn resolve_task_id<T: OfficeTransport + ?Sized>(
     Ok(res.task.id)
 }
 
-struct TargetResolution {
-    kind: AttachmentTargetKind,
-    id: Option<String>,
-    scope: AttachmentScope,
+pub(super) struct TargetResolution {
+    pub kind: AttachmentTargetKind,
+    pub id: Option<String>,
+    pub scope: AttachmentScope,
 }
 
-fn resolve_scope_target<T: OfficeTransport + ?Sized>(
+pub(super) fn resolve_scope_target<T: OfficeTransport + ?Sized>(
     transport: &mut T,
     scope: &str,
     project: Option<&str>,

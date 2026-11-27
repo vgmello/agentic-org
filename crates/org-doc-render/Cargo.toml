@@ -1,0 +1,19 @@
+[package]
+name = "org-doc-render"
+description = "Pure-Rust zero-Chrome Markdown and HTML+CSS to PDF rendering behind a bounded DocumentRenderer port."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+flate2.workspace = true
+image.workspace = true
+pdf-writer.workspace = true
+pulldown-cmark.workspace = true
+scraper.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

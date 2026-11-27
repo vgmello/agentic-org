@@ -158,11 +158,14 @@ pub(crate) struct PreparedOutputPath {
     pub display_path: PathBuf,
 }
 
-/// Validates and reads a local file for upload under `roots` BEFORE any upload RPC is opened.
-pub(crate) fn read_upload_file(
+/// Single security choke-point validating two-layer allowed-root confinement, explicit denylist,
+/// no-symlink check, and `org_platform::fs::open_regular_beneath` (`O_NOFOLLOW | O_NONBLOCK |
+/// O_CLOEXEC` + `fstat` `S_ISREG`) before reading any local file (`file upload`, `--attach`,
+/// `file render --from`, `file render --css`).
+pub(crate) fn open_confined_regular_file(
     raw_path: &str,
     roots: &FileRoots,
-) -> Result<LocalUploadFile, Refusal> {
+) -> Result<(PathBuf, fs::File), Refusal> {
     validate_raw_path(raw_path)?;
     let abs_raw = resolve_abs(&roots.cwd, raw_path);
     let lexical = lexical_normalize(&abs_raw);
@@ -175,7 +178,7 @@ pub(crate) fn read_upload_file(
     let lmeta = fs::symlink_metadata(&abs_raw).map_err(|err| map_open_err(raw_path, &err))?;
     if lmeta.file_type().is_symlink() {
         return Err(denied_path(
-            "Symbolic links cannot be attached or uploaded.",
+            "Symbolic links cannot be attached, uploaded, or rendered.",
             "Pass a regular file directly inside an allowed workspace, private home, worktree, or session TMPDIR.",
         ));
     }
@@ -188,15 +191,23 @@ pub(crate) fn read_upload_file(
     {
         return Err(denied_path(
             "File path is outside allowed attachment roots.",
-            "Only regular files inside the workspace root, your own private_home, active worktrees, or session-scoped TMPDIR may be attached.",
+            "Only regular files inside the workspace root, your own private_home, active worktrees, or session-scoped TMPDIR may be read.",
         ));
     }
 
     let (root, relative) = match_beneath_root(&lexical, roots)?;
-    let (filename, media) = classify_filename(&canonical)?;
-
     let file = org_platform::fs::open_regular_beneath(&root, &relative)
         .map_err(|err| map_open_err(raw_path, &err))?;
+    Ok((canonical, file))
+}
+
+/// Validates and reads a local file for upload under `roots` BEFORE any upload RPC is opened.
+pub(crate) fn read_upload_file(
+    raw_path: &str,
+    roots: &FileRoots,
+) -> Result<LocalUploadFile, Refusal> {
+    let (canonical, file) = open_confined_regular_file(raw_path, roots)?;
+    let (filename, media) = classify_filename(&canonical)?;
     let max_bytes = media.max_bytes();
     let mut bytes = Vec::new();
     file.take(max_bytes + 1)

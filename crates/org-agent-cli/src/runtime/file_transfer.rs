@@ -4,6 +4,9 @@
 //! Part of the leaf `runtime`: never imports any feature slice. Zero hot-path overhead when
 //! `--attach` and `--attachment-id` are both omitted (ADR-0014).
 
+use std::io::Read as _;
+use std::path::Path;
+
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use org_command::Refusal;
@@ -11,15 +14,17 @@ use org_proto::attachments::{
     AttachmentReadChunk, AttachmentReadChunkParams, AttachmentReadChunkResult,
     AttachmentUploadAbort, AttachmentUploadBegin, AttachmentUploadBeginParams,
     AttachmentUploadBeginResult, AttachmentUploadChunk, AttachmentUploadChunkParams,
-    AttachmentUploadCommit, AttachmentUploadCommitResult, AttachmentUploadRef, StagedUploadView,
-    ATTACHMENT_CHUNK_MAX_BYTES, ATTACHMENT_DOCUMENT_MAX_BYTES,
+    AttachmentUploadCommit, AttachmentUploadCommitResult, AttachmentUploadRef, RenderSourceKind,
+    StagedUploadView, ATTACHMENT_CHUNK_MAX_BYTES, ATTACHMENT_DOCUMENT_MAX_BYTES,
+    ATTACHMENT_FILENAME_MAX_BYTES, ATTACHMENT_RENDER_SOURCE_MAX_BYTES,
 };
 use org_proto::{Call, ErrorCode};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::runtime::file_guard::{
-    prepare_output_path, read_upload_file, write_prepared_output, FileRoots,
+    open_confined_regular_file, prepare_output_path, read_upload_file, write_prepared_output,
+    FileRoots,
 };
 use crate::runtime::input::decode_err;
 use crate::runtime::transport::OfficeTransport;
@@ -300,4 +305,148 @@ pub(crate) fn fetch_attachment_to_path<T: OfficeTransport + ?Sized>(
         byte_count: bytes.len() as u64,
         content_sha256: actual_sha,
     })
+}
+
+/// Validated local Markdown/HTML source (and optional CSS) ready for `attachment.render`.
+#[derive(Clone, Debug)]
+pub(crate) struct LocalRenderInputs {
+    pub filename: String,
+    pub source_kind: RenderSourceKind,
+    pub source: String,
+    pub css: Option<String>,
+}
+
+/// Validates and reads `--from` (`.md`/`.markdown`/`.html`/`.htm`) and optional `--css` (`.css`)
+/// strictly through [`open_confined_regular_file`] (`O_NOFOLLOW`, allowed roots + denylist,
+/// combined `<= 2 MiB` UTF-8 cap) BEFORE any `attachment.render` RPC opens.
+pub(crate) fn read_render_inputs(
+    from_path: &str,
+    css_path: Option<&str>,
+    roots: &FileRoots,
+) -> Result<LocalRenderInputs, Refusal> {
+    let (canonical_src, src_file) = open_confined_regular_file(from_path, roots)?;
+    let (filename, source_kind) = classify_render_source(&canonical_src)?;
+    let source = read_bounded_utf8(
+        src_file,
+        ATTACHMENT_RENDER_SOURCE_MAX_BYTES,
+        "Render source",
+        false,
+    )?;
+
+    let css = match css_path {
+        Some(raw_css) => {
+            let (canonical_css, css_file) = open_confined_regular_file(raw_css, roots)?;
+            classify_render_css(&canonical_css)?;
+            let remaining = ATTACHMENT_RENDER_SOURCE_MAX_BYTES.saturating_sub(source.len());
+            let css_text = read_bounded_utf8(css_file, remaining, "Combined source + CSS", true)?;
+            Some(css_text)
+        }
+        None => None,
+    };
+
+    Ok(LocalRenderInputs {
+        filename,
+        source_kind,
+        source,
+        css,
+    })
+}
+
+fn read_bounded_utf8(
+    file: std::fs::File,
+    max_bytes: usize,
+    label: &str,
+    allow_empty: bool,
+) -> Result<String, Refusal> {
+    let mut bytes = Vec::new();
+    file.take(max_bytes as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|err| {
+            Refusal::new(
+                ErrorCode::InvalidRequest,
+                format!("Could not read {label}: {err}"),
+                "Verify the file is a readable regular UTF-8 file inside an allowed root.",
+            )
+        })?;
+    if !allow_empty && bytes.is_empty() {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!("{label} must not be empty."),
+            "Pass a non-empty Markdown or HTML file.",
+        ));
+    }
+    if bytes.len() > max_bytes {
+        return Err(Refusal::new(
+            ErrorCode::TooLarge,
+            format!("{label} exceeds the 2 MiB render input limit."),
+            "Keep combined Markdown/HTML and CSS at or below 2 MiB.",
+        ));
+    }
+    String::from_utf8(bytes).map_err(|_| {
+        Refusal::new(
+            ErrorCode::InvalidRequest,
+            format!("{label} must be valid UTF-8 text."),
+            "Save the source or stylesheet as UTF-8 and retry.",
+        )
+    })
+}
+
+fn plain_filename(path: &Path) -> Result<String, Refusal> {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            "File name must be valid UTF-8.",
+            "Rename the file to a plain UTF-8 filename.",
+        ));
+    };
+    if name.is_empty()
+        || name.len() > ATTACHMENT_FILENAME_MAX_BYTES
+        || name.starts_with('.')
+        || name
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '/' | '\\'))
+    {
+        return Err(Refusal::new(
+            ErrorCode::InvalidRequest,
+            "Filename must be a single plain non-hidden filename.",
+            "Rename the file to a plain filename (1..=255 bytes, no leading dot).",
+        ));
+    }
+    Ok(name.to_owned())
+}
+
+fn classify_render_source(path: &Path) -> Result<(String, RenderSourceKind), Refusal> {
+    let name = plain_filename(path)?;
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    let kind = match ext.as_str() {
+        "md" | "markdown" => RenderSourceKind::Markdown,
+        "html" | "htm" => RenderSourceKind::Html,
+        _ => {
+            return Err(Refusal::new(
+                ErrorCode::Unsupported,
+                format!("Render source extension `.{ext}` is not supported."),
+                "Pass a `.md`, `.markdown`, `.html`, or `.htm` file to `--from`.",
+            ));
+        }
+    };
+    Ok((name, kind))
+}
+
+fn classify_render_css(path: &Path) -> Result<(), Refusal> {
+    let name = plain_filename(path)?;
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if ext != "css" {
+        return Err(Refusal::new(
+            ErrorCode::Unsupported,
+            format!("Stylesheet extension `.{ext}` is not supported for `--css`."),
+            "Pass a `.css` file to `--css`.",
+        ));
+    }
+    Ok(())
 }
